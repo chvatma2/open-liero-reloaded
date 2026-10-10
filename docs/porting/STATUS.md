@@ -11,9 +11,24 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Gamescript v8 | `CGameScript.cpp` (v8 branches) | — | not started | no content in scope |
 | Pixmap `.lxl` | `MapLoader_LieroX.cpp:440+` | — | not started | no content in scope |
 | Fidelity oracle (test hooks) | `src/game/Game.cpp`, `src/client/CInput.cpp`, `src/common/CWormHuman.cpp` | `tools/olx-oracle`, `rl-oracle` | done (plan 2) | 6 movement scenarios recorded twice and identical; `cargo xtask oracle-record --check` |
-| Simulation | `src/common/PhysicsLX56*.cpp` | — | not started (plan 3) | the 6 oracle scenarios |
+| Frame and physics clocks | `src/game/Game.cpp:897-959`, `src/client/CClient_Game.cpp:60-222` | `rl-sim::World::tick` | ported | all 7 oracle scenarios, bit for bit; `docs/porting/timing.md` |
+| Worm movement and collision | `src/common/PhysicsLX56.cpp:88-469` | `rl-sim::physics` | ported | `fall`, `walk`, `jump`, `dig` |
+| Keyboard input (aim, move, jump, dig, rope) | `src/common/CWormHuman.cpp:81-560`, `src/client/CInput.cpp` | `rl-sim::physics::get_input`, `rl-sim::input` | ported (keyboard, LX56 aim) | `aim`, `tap`, `walk`, `jump`, `dig`, `rope` |
+| Ninja rope | `src/client/CNinjaRope.cpp`, `PhysicsLX56.cpp:505-604` | `rl-sim::rope` | ported | `rope` |
+| Hole carving (material) | `src/common/CMap.cpp:1005-1105`, `2172-2199` | `rl-terrain::Terrain::carve_hole` | ported | `dig` (244 dirt cells), spawn holes (`mh` at frame −1) |
+| Weapons, projectiles, bonuses, damage, `rand()` | `PhysicsLX56_Projectiles.cpp`, `CClient_Game.cpp` | — | not started (plan 4) | — |
 
 ## Deliberate deviations
+
+- `rl-sim` supports LX56 aim only (`ForceLX56Aim`). It rejects wrap-around maps
+  (`InfiniteMap`), Gusanos worm physics and `WormFriction > 0`
+  (`SimSettings::from_olx_features` errors).
+- Not yet emulated (M4): the `rand()` calls OLX makes for cosmetic particles
+  when digging (`CarveHole(CVec)`) and when the rope first hooks dirt. They
+  don't change M3 state, but they shift the random sequence that weapons will use.
+- Unverified path: when the rope hook falls back towards the worm (it flew past
+  `RopeMaxLength`), OLX normalizes with `1.0f/sqrt(length2)`. The port uses
+  `sqrtf`; no scenario reaches this yet.
 
 - Importers reject malformed input that OLX would read as garbage: truncated
   files, unknown weapon or projectile types, and nesting deeper than 128 levels.
@@ -21,6 +36,15 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 - Imported level art is stored at 1×, because OLX's 2× surfaces are plain pixel doubling.
 
 ## Kept OLX quirks
+
+- **The physics step is 11 ms** (`1000 / 84`, integer division), not 1/84 s.
+- **The lossy per-frame Gusanos speed round trip** (`GusSpeedScope`) on worm and
+  rope velocities, from `gusLogicFrame()` (`docs/porting/timing.md`).
+- **The collision scan continues instead of breaking** at the left and right
+  map edges, and breaks at the top edge (`PhysicsLX56.cpp:132-206`). OLX's
+  comments note that LX56 differed here.
+- **`CarveHole` clipping:** near the map edge the stamp is read from its top-left
+  corner, not offset by the clipped amount.
 
 - `ROF /= 1000` and `Recharge /= 10` are applied after loading (`CGameScript.cpp:776-777`).
 - Beam and pixel colors stored as ints are truncated to bytes, as with OLX's `Color(Uint8, …)`.
@@ -41,6 +65,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   own clock (`CClient::fLastSimulationTime`), so some 100 Hz frames run no
   physics sub-step at all. After the oracle aligns that clock when a scenario
   starts, frames 0 and 1 run none, and the first sub-step comes in frame 2.
+  The step is 11 ms, not 1/84 s (see `docs/porting/timing.md`).
 - **Input:** OLX's keyboard handler (`CWormHumanInputHandler::getInput`,
   `src/common/CWormHuman.cpp:81-560`) runs once per physics sub-step and
   latches keyboard events between sub-steps, then clears the latches with

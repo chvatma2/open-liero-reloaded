@@ -566,10 +566,13 @@ dependencies = [
  "rl-import-gfx",
  "rl-import-lgs",
  "rl-import-lxl",
+ "rl-oracle",
  "rl-pack",
+ "rl-scenario",
  "rl-vfs",
  "ron",
  "serde",
+ "serde_json",
  "tempfile",
 ]
 

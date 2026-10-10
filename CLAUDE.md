@@ -33,6 +33,8 @@ traces recorded from a patched OLX (`tools/olx-oracle/`).
 - `cargo xtask oracle-record [name...]` re-records them; it needs Docker.
 - `--check` compares fresh recordings with the committed traces.
 - The simulation must reproduce the traces bit-exactly (crate `rl-oracle`).
+- `rl-cli scenario [name...] [--dump <frame>]` replays scenarios in `rl-sim`
+  and reports the first divergence. Use it when a change breaks the oracle.
 
 ## Content
 
