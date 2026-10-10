@@ -8,6 +8,7 @@
 use rl_math::{GlibcRand, TimeDiff};
 
 use crate::SimSettings;
+use crate::beam::{BeamCtx, draw_beam, shoot_special};
 use crate::mod_rt::{SimMod, SimWeapon, WeaponType};
 use crate::rng::Draws;
 use crate::shots::ShootList;
@@ -103,11 +104,13 @@ pub(crate) fn worm_shoot(w: &mut Worm, ctx: &mut ShootCtx) {
     drain(w.current_slot_mut(), wpn, ctx.settings);
 }
 
-/// `CClient::PlayerShoot` (`src/client/CClient_Game.cpp:496-544`) for a worm
-/// that holds fire and is alive. After the server's shot it only re-sets
-/// `LastFire` (a no-op when ROF > 0). A beam's slot counts down by the
-/// frame time while the beam draws; `DrawBeam` and `ShootSpecial` come with Task 8.
-pub(crate) fn player_shoot(w: &mut Worm, m: &SimMod) {
+/// `CClient::PlayerShoot` (`src/client/CClient_Game.cpp:496-544`) for worm
+/// `i`, which holds fire and is alive. A beam draws ([`draw_beam`]) while
+/// its slot counts down by the frame time. Otherwise, after the server's
+/// shot it only re-sets `LastFire` (a no-op when ROF > 0), so a special
+/// weapon is shot here only when its ROF is 0 or less (`weapons-firing.md` §7).
+pub(crate) fn player_shoot(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut BeamCtx) {
+    let w = &mut worms[i];
     if w.slots.is_empty() {
         return;
     }
@@ -118,8 +121,9 @@ pub(crate) fn player_shoot(w: &mut Worm, m: &SimMod) {
     let Some(wpn) = m.weapon(slot.weapon) else { return };
     if wpn.kind == WeaponType::Beam {
         if slot.last_fire > 0.0 {
+            draw_beam(worms, i, m, ctx);
             // tLX->fDeltaTime is FixedFrameTime (10 ms) inside the frame loop.
-            slot.last_fire -= TimeDiff(10).seconds();
+            worms[i].current_slot_mut().last_fire -= TimeDiff(10).seconds();
         }
         return;
     }
@@ -127,6 +131,9 @@ pub(crate) fn player_shoot(w: &mut Worm, m: &SimMod) {
         return;
     }
     slot.last_fire = wpn.rof;
+    if wpn.kind == WeaponType::Special {
+        shoot_special(w, m, ctx.draws);
+    }
 }
 
 /// `CClient::LaserSight` (`src/client/CClient_Game.cpp:751-808`), called for
@@ -151,7 +158,10 @@ mod tests {
     use crate::mod_rt::tests::{mod_def, pixel_projectile, projectile_weapon};
     use alloc::collections::BTreeMap;
     use alloc::vec;
-    use rl_math::{AbsTime, Vec2};
+    use alloc::vec::Vec;
+    use rl_data::level::{Material, MaterialGrid};
+    use rl_math::{AbsTime, Mt19937, Vec2};
+    use rl_terrain::Terrain;
 
     #[test]
     fn slot_charge_drain_and_reload() {
@@ -169,6 +179,9 @@ mod tests {
         let mut list = ShootList::new();
         let mut rand = GlibcRand::new(1);
         let dt = TimeDiff(11).seconds();
+        let mut terrain = Terrain::from_grid(&MaterialGrid::new(1, 1, Material::Background));
+        let mut draws = Draws::new(GlibcRand::new(1), Mt19937::new(1));
+        let mut parts = Vec::new();
         let mut step = |w: &mut Worm| {
             simulate_worm_weapon(w, dt, &s, &m);
             let mut ctx = ShootCtx {
@@ -179,7 +192,9 @@ mod tests {
                 server_time: TimeDiff(0),
             };
             worm_shoot(w, &mut ctx);
-            player_shoot(w, &m);
+            let mut beam =
+                BeamCtx { terrain: &mut terrain, holes: &[], draws: &mut draws, parts: &mut parts };
+            player_shoot(core::slice::from_mut(w), 0, &m, &mut beam);
             *w.current_slot()
         };
         // Sub-step 1 fires: LastFire = ROF, half the charge gone.

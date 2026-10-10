@@ -22,7 +22,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
-use rl_data::mod_def::{BeamDef, ModDef, ProjectileDef, ProjectileGfx, SpawnDef, TrailKind, WeaponKind};
+use rl_data::mod_def::{
+    BeamDef, ModDef, ProjectileDef, ProjectileGfx, SpawnDef, SpecialKind, TrailKind, WeaponKind,
+};
 
 /// At most this many projectile occurrences after expansion. Classic has 69
 /// and MW 1.0 398; a shared definition reached on exponentially many paths
@@ -127,6 +129,10 @@ pub struct SimWeapon {
     /// `Proj`, for projectile weapons.
     pub spawn: Option<SpawnInfo>,
     pub beam: Option<BeamDef>,
+    /// `Special`, for special weapons (else `SPC_NONE`).
+    pub special: SpecialKind,
+    /// `tSpecial.Thrust` (an `int` in OLX).
+    pub thrust: i32,
 }
 
 /// One OLX `proj_t` occurrence.
@@ -167,13 +173,17 @@ impl SimMod {
         let mut b = Builder { def, frame_counts, projectiles: Vec::new(), stack: Vec::new() };
         let mut weapons = Vec::with_capacity(def.weapons.len());
         for w in &def.weapons {
+            let (mut special, mut thrust) = (SpecialKind::None, 0);
             let (kind, recoil, spawn, beam) = match &w.kind {
                 WeaponKind::Projectile { recoil, spawn, .. } => {
                     let proj = b.expand(&spawn.projectile, &w.id, w.id.clone())?;
                     (WeaponType::Projectile, *recoil, Some(SpawnInfo::new(spawn, proj, &w.id)?), None)
                 }
                 WeaponKind::Beam { recoil, beam } => (WeaponType::Beam, *recoil, None, Some(*beam)),
-                WeaponKind::Special { .. } => (WeaponType::Special, 0, None, None),
+                WeaponKind::Special { special: sp, thrust: t } => {
+                    (special, thrust) = (*sp, *t as i32);
+                    (WeaponType::Special, 0, None, None)
+                }
             };
             weapons.push(SimWeapon {
                 id: w.id.clone(),
@@ -186,6 +196,8 @@ impl SimMod {
                 laser_sight: w.laser_sight,
                 spawn,
                 beam,
+                special,
+                thrust,
             });
         }
         Ok(SimMod { weapons, projectiles: b.projectiles })

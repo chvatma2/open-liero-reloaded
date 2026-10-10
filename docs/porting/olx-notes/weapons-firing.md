@@ -717,6 +717,9 @@ angle, up to `Length` steps. It stops at the first dirt or rock pixel, or the ma
 carves a `Damage`-sized hole there), or at the first other alive worm within 5 px (which takes
 `PlyDamage`).
 
+- **Width:** `MIN(newWidth, MIN(W, H))` mixes `int` and `uint`, so it resolves to
+  `MIN(unsigned long, unsigned int)` (`include/MathLib.h:68`): a negative `newWidth`
+  becomes `MIN(W, H)`. The width is always in `[0, MIN(W, H)]`.
 - **No recoil** is ever applied for beams (`ProcessShot` returns before the recoil code).
 - **No randomness** in the beam itself; only `InjureWorm`'s blood calls `rand()`
   (`CClient_Game.cpp:451-458`, damage report).

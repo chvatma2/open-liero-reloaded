@@ -2,7 +2,7 @@
 //! `CarveHole`, `PlaceDirt` and `PlaceGreenDirt` with their dirt counts.
 
 use rl_math::{AbsTime, Vec2};
-use rl_terrain::PX_DIRT;
+use rl_terrain::{PX_DIRT, Stamp, Terrain};
 
 use crate::damage::injure_worm;
 use crate::proj_sim::ProjCtx;
@@ -29,8 +29,13 @@ fn has_owner(owner: i32) -> bool {
 /// `CMap::CarveHole(size, pos)` (`src/common/CMap.cpp:1005-1105`): the stamp
 /// is the theme's hole `clamp(size, 0, 4)`; a missing hole carves nothing.
 pub(crate) fn carve_hole(ctx: &mut ProjCtx, size: i32, pos: Vec2) -> i32 {
-    let Some(hole) = ctx.holes.get(size.clamp(0, 4) as usize) else { return 0 };
-    ctx.terrain.carve_hole(hole, c_int(pos.x), c_int(pos.y)) as i32
+    carve_at(ctx.terrain, ctx.holes, size, pos)
+}
+
+/// [`carve_hole`] on a terrain and its theme's holes.
+pub(crate) fn carve_at(terrain: &mut Terrain, holes: &[Stamp], size: i32, pos: Vec2) -> i32 {
+    let Some(hole) = holes.get(size.clamp(0, 4) as usize) else { return 0 };
+    terrain.carve_hole(hole, c_int(pos.x), c_int(pos.y)) as i32
 }
 
 /// The `PJ_CARVE` action (`src/common/PhysicsLX56_Projectiles.cpp:781-793`):

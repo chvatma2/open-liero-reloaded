@@ -28,16 +28,13 @@ fn content_dir() -> Option<String> {
 /// The exact first divergence is the guard against hidden regressions: a
 /// change that breaks an already ported field earlier in a listed scenario
 /// moves its first divergence, and the test fails with the new pair. Every
-/// pair here sits at a frame where OLX draws a beam or a bonus (Tasks 8-9),
+/// pair here sits at a frame where OLX places or picks up a bonus (Task 9),
 /// or respawns a worm after a D9 death.
 const EXPECTED_DIVERGENCES: &[(&str, i64, &str, &str)] = &[
-    ("beam-burst", 2, "ents", "Task 8: DrawBeam's entities"),
     ("bonus-health", 5, "ents", "Task 9: a placed bonus's entity"),
     ("bonus-weapon", 5, "ents", "Task 9: a placed bonus's entity"),
-    ("weapons/classic/laser", 2, "ents", "Task 8: DrawBeam's entities"),
     ("weapons/mw-1-0/assassin-s-shot", 276, "mt", D9),
     ("weapons/mw-1-0/flak", 325, "mt", D9),
-    ("weapons/mw-1-0/laser", 2, "ents", "Task 8: DrawBeam's entities"),
     ("weapons/mw-1-0/plasma-launcher", 283, "w[1].x", D9),
 ];
 
@@ -55,13 +52,10 @@ const WITHOUT_DRAWS: Fields = rl_scenario::CHECKED.difference(Fields::RAND);
 
 /// Like [`EXPECTED_DIVERGENCES`], for the second pass ([`WITHOUT_DRAWS`]).
 const EXPECTED_DIVERGENCES_WITHOUT_DRAWS: &[(&str, i64, &str, &str)] = &[
-    ("beam-burst", 40, "w[0].dirt", "Task 8: a beam's hole"),
     ("bonus-health", 140, "w[0].hp", "Task 9: a health bonus"),
     ("bonus-weapon", 129, "w[0].slots[0].id", "Task 9: a weapon bonus"),
-    ("weapons/classic/laser", 4, "w[1].hp", "Task 8: a beam's damage"),
     ("weapons/mw-1-0/assassin-s-shot", 276, "w[1].x", D9),
     ("weapons/mw-1-0/flak", 325, "w[1].x", D9),
-    ("weapons/mw-1-0/laser", 4, "w[1].hp", "Task 8: a beam's damage"),
     ("weapons/mw-1-0/plasma-launcher", 283, "w[1].x", D9),
 ];
 

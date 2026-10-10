@@ -10,9 +10,13 @@
 use alloc::vec::Vec;
 
 use rl_math::{AbsTime, GlibcRand, TimeDiff, Vec2};
+use rl_terrain::{Stamp, Terrain};
 
-use crate::mod_rt::WeaponType;
-use crate::projectile::c_int;
+use crate::SimSettings;
+use crate::beam::{BeamCtx, process_shot_beam};
+use crate::mod_rt::{SimMod, WeaponType};
+use crate::projectile::{ProjectilePool, c_int};
+use crate::rng::Draws;
 use crate::spawn::{SpawnCtx, SpawnParent, spawn_info_apply, vec_from_angle};
 use crate::world::MAX_WORMS;
 use crate::worm::Worm;
@@ -132,10 +136,25 @@ pub fn spawn_time(shot_time: TimeDiff, server_frame: u64, current_time: AbsTime)
     }
 }
 
+/// What delivering a shot reads or changes besides the worms.
+pub(crate) struct ShotCtx<'a> {
+    pub sim_mod: &'a SimMod,
+    pub settings: &'a SimSettings,
+    pub pool: &'a mut ProjectilePool,
+    pub terrain: &'a mut Terrain,
+    pub holes: &'a [Stamp],
+    pub draws: &'a mut Draws,
+    /// The beam trace's `goodWidthParts`.
+    pub parts: &'a mut Vec<bool>,
+    /// `GetPhysicsTime()`: the frame clock.
+    pub now: AbsTime,
+}
+
 /// `CClient::ProcessShot` (`CClient_Game.cpp:852-921`). The shot of a worm
-/// that is dead at delivery is dropped. Beams only update their slot here
-/// (`ProcessShot_Beam`'s trace through the map comes with Task 8).
-pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], ctx: &mut SpawnCtx) {
+/// that is dead at delivery is dropped. A beam's shot is traced through the
+/// map ([`process_shot_beam`]); a projectile weapon's applies recoil and
+/// spawns its projectiles.
+pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], ctx: &mut ShotCtx) {
     let by_worm = (0..MAX_WORMS as i32).contains(&shot.worm);
     if by_worm {
         let Some(w) = worms.iter().find(|w| w.id == shot.worm) else { return };
@@ -149,9 +168,8 @@ pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], 
         return;
     }
     if wpn.kind == WeaponType::Beam {
-        if by_worm && let Some(w) = worms.iter_mut().find(|w| w.id == shot.worm) {
-            process_shot_beam_slot(w, shot.weapon);
-        }
+        let mut beam = BeamCtx { terrain: ctx.terrain, holes: ctx.holes, draws: ctx.draws, parts: ctx.parts };
+        process_shot_beam(shot, wpn, worms, &mut beam, ctx.settings, ctx.now);
         return;
     }
     let Some(info) = &wpn.spawn else { return };
@@ -159,21 +177,14 @@ pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], 
         let dir = vec_from_angle(shot.angle as f32);
         w.vel -= dir * wpn.recoil as f32;
     }
-    spawn_info_apply(info, SpawnParent::Shot(shot), spawn, ctx);
-}
-
-/// The slot part of `CClient::ProcessShot_Beam` (`CClient_Game.cpp:926-946`):
-/// the slot holding the beam becomes current and draws for 0.3 s.
-fn process_shot_beam_slot(w: &mut Worm, weapon: i32) {
-    if w.slots.is_empty() {
-        return;
-    }
-    if w.current_slot().weapon != weapon
-        && let Some(i) = w.slots.iter().position(|s| s.weapon == weapon)
-    {
-        w.current_weapon = i as i32;
-    }
-    w.current_slot_mut().last_fire = 0.3;
+    let mut sctx = SpawnCtx {
+        sim_mod: ctx.sim_mod,
+        pool: ctx.pool,
+        rand: &mut ctx.draws.rand,
+        settings: ctx.settings,
+        now: ctx.now,
+    };
+    spawn_info_apply(info, SpawnParent::Shot(shot), spawn, &mut sctx);
 }
 
 #[cfg(test)]

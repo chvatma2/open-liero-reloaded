@@ -183,30 +183,59 @@ fn entity_counter_saturates_and_gates_gib_draws() {
 #[test]
 fn shots_of_a_dead_worm_are_dropped() {
     // Review Focus 3: `CClient::ProcessShot` drops the shots of a worm that
-    // is dead at delivery; its projectiles already flying keep their owner.
-    let mut w = world(SimSettings::lx56());
+    // is dead at delivery; its projectiles already flying keep their owner
+    // id, also once it has respawned. Both worms fire, so owners differ.
+    let mut s = SimSettings::lx56();
+    (s.respawn_time, s.max_respawn_time) = (0.05, 0.0);
+    let mut w = world(s);
     let slot = Slot { weapon: 0, charge: 1.0, reloading: false, last_fire: 0.0 };
     let loadout = Loadout { slots: vec![slot; 5], current_weapon: 0, lives: -2, kills: 0, deaths: 0 };
     w.set_loadout(0, &loadout);
-    let fire = [Keys(Keys::FIRE)];
+    w.set_loadout(1, &loadout);
+    let fire = [Keys(Keys::FIRE), Keys(Keys::FIRE)];
+    let owned = |w: &World, owner: i32| -> Vec<(usize, AbsTime)> {
+        w.projectiles().filter(|(_, p)| p.owner == owner).map(|(i, p)| (i, p.spawn_time)).collect()
+    };
     for _ in 0..50 {
-        if w.projectiles().count() > 0 {
+        if !owned(&w, 0).is_empty() && !owned(&w, 1).is_empty() {
             break;
         }
         w.tick(&fire);
     }
-    assert!(w.projectiles().count() > 0, "worm 0 fired");
+    assert!(!owned(&w, 0).is_empty() && !owned(&w, 1).is_empty(), "both worms fired");
     w.tick(&fire); // more shots in the list, not delivered yet
-    let flying = w.projectiles().count();
+    let before = owned(&w, 0);
+    let worm1_before = owned(&w, 1).len();
     injure_worm(&mut w.harm(), 0, 500.0, 1);
     let mut delivered = 0;
     for _ in 0..3 {
         w.tick(&fire);
+        assert!(!w.worms()[0].alive, "dead for RespawnTime");
         delivered += w.last_shots().iter().filter(|s| s.worm == 0).count();
+        // Every projectile of worm 0 is one it had before it died.
+        assert!(owned(&w, 0).iter().all(|p| before.contains(p)), "a dropped shot spawned nothing");
     }
     assert!(delivered > 0, "the pending shots were delivered");
-    assert!(w.projectiles().count() <= flying, "and dropped");
-    assert!(w.projectiles().all(|(_, p)| p.owner == 0));
+    assert!(
+        w.projectiles().filter(|(_, p)| p.owner == 1).count() > worm1_before,
+        "worm 1's were not dropped"
+    );
+    for _ in 0..10 {
+        if w.worms()[0].alive {
+            break;
+        }
+        w.tick(&fire);
+    }
+    assert!(w.worms()[0].alive, "respawned");
+    // The old projectiles still flying are worm 0's: same slot, spawn time and owner.
+    let kept =
+        before.iter().filter(|(i, t)| w.projectiles().any(|(j, p)| j == *i && p.spawn_time == *t)).count();
+    assert!(kept > 0);
+    assert!(
+        before
+            .iter()
+            .all(|(i, t)| w.projectiles().all(|(j, p)| j != *i || p.spawn_time != *t || p.owner == 0))
+    );
 }
 
 #[test]

@@ -13,6 +13,7 @@ use rl_math::{AbsTime, GlibcRand, Mt19937, TimeDiff, Vec2};
 use rl_terrain::{GreenMask, Stamp, Terrain};
 
 use crate::SimSettings;
+use crate::beam::BeamCtx;
 use crate::damage::{Harm, die_at_zero_health};
 use crate::input::{Keys, Latches};
 use crate::mod_rt::SimMod;
@@ -21,8 +22,7 @@ use crate::proj_sim::{ProjCtx, simulate_projectiles};
 use crate::projectile::{Projectile, ProjectilePool};
 use crate::respawn::{SPAWN_HOLE, Spawner, simulate_respawns};
 use crate::rng::Draws;
-use crate::shots::{MAX_SHOOTINGS, ShootList, Shot, encode_decode, process_shot, spawn_time};
-use crate::spawn::SpawnCtx;
+use crate::shots::{MAX_SHOOTINGS, ShootList, Shot, ShotCtx, encode_decode, process_shot, spawn_time};
 use crate::weapons::{ShootCtx, laser_sight, player_shoot, worm_shoot};
 use crate::worm::{Loadout, Worm};
 
@@ -62,10 +62,14 @@ pub struct World {
     others: Scratch,
 }
 
-/// The `(id, alive, pos)` of every worm, as the rope needs them. Only a buffer:
-/// it holds no state, so it never makes two worlds unequal.
+/// Buffers only: they hold no state, so they never make two worlds unequal.
 #[derive(Clone, Debug, Default)]
-struct Scratch(Vec<(i32, bool, Vec2)>);
+struct Scratch {
+    /// The `(id, alive, pos)` of every worm, as the rope needs them.
+    others: Vec<(i32, bool, Vec2)>,
+    /// A beam trace's `goodWidthParts`, as wide as the widest beam.
+    beam_parts: Vec<bool>,
+}
 
 impl PartialEq for Scratch {
     fn eq(&self, _: &Self) -> bool {
@@ -86,6 +90,7 @@ impl World {
         start: AbsTime,
         seed: u32,
     ) -> Self {
+        let terrain_min = terrain.width().min(terrain.height());
         Self {
             settings,
             sim_mod,
@@ -101,7 +106,7 @@ impl World {
             last_shots: Vec::with_capacity(MAX_SHOOTINGS),
             projectiles: ProjectilePool::new(ProjectilePool::DEFAULT_CAPACITY),
             draws: Draws::new(GlibcRand::new(seed), Mt19937::new(seed)),
-            others: Scratch::default(),
+            others: Scratch { others: Vec::new(), beam_parts: Vec::with_capacity(terrain_min as usize) },
         }
     }
 
@@ -192,7 +197,7 @@ impl World {
         let pos = Vec2::new(x as f32, y as f32);
         self.worms.push(Worm::spawned(id, pos, self.time, &self.settings));
         self.latches.push(Latches::default());
-        self.others.0 = Vec::with_capacity(self.worms.len());
+        self.others.others = Vec::with_capacity(self.worms.len());
         if let Some(hole) = self.holes.get(SPAWN_HOLE) {
             self.terrain.carve_hole(hole, pos.x as i32, pos.y as i32);
         }
@@ -297,11 +302,14 @@ impl World {
         let decoded = encode_decode(list, self.sim_mod.weapons().len() as i32 - 1);
         list.clear();
         let current = self.time + TimeDiff(CLOCK_OFFSET_MS);
-        let mut ctx = SpawnCtx {
+        let mut ctx = ShotCtx {
             sim_mod: &self.sim_mod,
-            pool: &mut self.projectiles,
-            rand: &mut self.draws.rand,
             settings: &self.settings,
+            pool: &mut self.projectiles,
+            terrain: &mut self.terrain,
+            holes: &self.holes,
+            draws: &mut self.draws,
+            parts: &mut self.others.beam_parts,
             now: self.time,
         };
         for mut shot in decoded {
@@ -318,7 +326,7 @@ impl World {
     fn physics_step(&mut self, dt: f32) {
         for i in 0..self.worms.len() {
             // Taken afresh for each worm: OLX's rope sees the worms already moved this step.
-            let others = &mut self.others.0;
+            let others = &mut self.others.others;
             others.clear();
             others.extend(self.worms.iter().map(|w| (w.id, w.alive, w.pos)));
             let mut ctx = Ctx {
@@ -346,9 +354,15 @@ impl World {
             }
             if w.alive {
                 if w.state.shoot {
-                    player_shoot(w, &self.sim_mod);
+                    let mut ctx = BeamCtx {
+                        terrain: &mut self.terrain,
+                        holes: &self.holes,
+                        draws: &mut self.draws,
+                        parts: &mut self.others.beam_parts,
+                    };
+                    player_shoot(&mut self.worms, i, &self.sim_mod, &mut ctx);
                 }
-                laser_sight(w, &self.sim_mod, &mut self.draws);
+                laser_sight(&self.worms[i], &self.sim_mod, &mut self.draws);
             }
         }
         // `CClient_Game.cpp:213-215`: projectiles after all worms.

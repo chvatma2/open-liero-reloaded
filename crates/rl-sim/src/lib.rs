@@ -9,12 +9,13 @@
 //! Scope: worm movement and collision, keyboard input, digging, the ninja
 //! rope, OLX's two clocks, and (M4) weapon slots, firing, the shot round trip,
 //! projectile spawning, motion, collision and actions, explosions, dirt,
-//! damage, death, bleeding and respawning. Beams and bonuses follow.
+//! damage, death, bleeding and respawning, beams and the jetpack. Bonuses follow.
 #![no_std]
 
 extern crate alloc;
 
 mod actions;
+mod beam;
 mod damage;
 mod effects;
 mod input;

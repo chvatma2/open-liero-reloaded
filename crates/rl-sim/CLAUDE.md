@@ -41,7 +41,11 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   Bleeding is in `physics.rs`. After the physics, the server's respawn loop
   (`respawn.rs`) respawns dead worms at a `FindSpot` position drawn from the
   `Mt19937`. Game over is not ported.
-- **Not here yet (M4):** beams' map trace, bonuses.
+- **Beams and specials** (`beam.rs`): `process_shot_beam` at delivery
+  (damage, carving, `LastFire = 0.3`), `draw_beam` from `player_shoot` in
+  every sub-step the slot counts down (carves, no damage), and the jetpack.
+  The trace's width buffer is sized in `World::new`.
+- **Not here yet (M4):** bonuses.
 
 Test: `cargo nextest run -p rl-sim`. The oracle test needs imported content;
 `cargo xtask check` sets `RL_CONTENT_DIR`.

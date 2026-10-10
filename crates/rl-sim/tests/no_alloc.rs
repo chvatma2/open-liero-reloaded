@@ -88,6 +88,36 @@ fn sim_mod() -> Arc<SimMod> {
             },
         },
     };
+    // A beam that widens by a part every two steps, and a jetpack that thrusts.
+    let beam = WeaponDef {
+        id: "beam".into(),
+        name: "beam".into(),
+        recharge: 1.0,
+        drain: 1.0,
+        rof: 0.009,
+        laser_sight: true,
+        kind: WeaponKind::Beam {
+            recoil: 0,
+            beam: BeamDef {
+                colour: Rgba::rgb(255, 0, 0),
+                damage: 1,
+                player_damage: 2,
+                length: 999_999,
+                init_width: 1,
+                width_increase: 0.5,
+                distribute_damage_over_width: true,
+            },
+        },
+    };
+    let jetpack = WeaponDef {
+        id: "jetpack".into(),
+        name: "jetpack".into(),
+        recharge: 1.0,
+        drain: 1.0,
+        rof: 0.0,
+        laser_sight: false,
+        kind: WeaponKind::Special { special: SpecialKind::Jetpack, thrust: 50 },
+    };
     let def = ModDef {
         name: "test".into(),
         worm: WormParams {
@@ -100,7 +130,7 @@ fn sim_mod() -> Arc<SimMod> {
             ground_friction: 0.4,
         },
         rope: RopeParams { max_length: 300, rest_length: 27, strength: 4.5 },
-        weapons: vec![weapon("minigun", 1, 10.0), weapon("shotgun", 3, 20.0)],
+        weapons: vec![weapon("minigun", 1, 10.0), weapon("shotgun", 3, 20.0), beam, jetpack],
         projectiles: [("pellet".to_string(), pellet), ("bit".to_string(), bit)].into_iter().collect(),
     };
     Arc::new(SimMod::compile(&def, &BTreeMap::new()).unwrap())
@@ -161,4 +191,20 @@ fn tick_does_not_allocate() {
     assert!(flying > 20, "{flying} projectiles");
     assert!(w.worms()[0].last_blood.0 != 0, "worm 0 bled");
     assert!(w.worms()[1].alive && w.mt_calls() > 0, "worm 1 died and respawned");
+
+    // Worm 0 holds the beam (weapon 2) on worm 1, worm 1 the jetpack (3).
+    for (i, weapon) in [(0, 2), (1, 3)] {
+        let slot = Slot { weapon, charge: 1.0, reloading: false, last_fire: 0.0 };
+        let loadout = Loadout { slots: vec![slot; 5], current_weapon: 0, lives: -2, kills: 0, deaths: 0 };
+        w.set_loadout(i, &loadout);
+    }
+    let dirt = w.worms()[0].dirt_count;
+    let fire = [Keys(Keys::FIRE), Keys(Keys::FIRE)];
+    let info = allocation_counter::measure(|| {
+        for _ in 0..300 {
+            w.tick(&fire);
+        }
+    });
+    assert_eq!(info.count_total, 0, "beams and specials allocated");
+    assert_ne!(w.worms()[0].dirt_count, dirt, "the beam carved");
 }

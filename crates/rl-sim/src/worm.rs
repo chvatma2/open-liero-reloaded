@@ -5,6 +5,7 @@ use alloc::vec::Vec;
 use rl_math::{AbsTime, PI_F32, Vec2};
 
 use crate::SimSettings;
+use crate::damage::WRM_UNLIM;
 use crate::rope::NinjaRope;
 
 /// OLX `DIR_TYPE`: left is 0, right is 1.
@@ -163,8 +164,8 @@ pub struct Worm {
 impl Worm {
     /// A worm as `CWorm::Prepare` and `CWorm::Spawn` leave it
     /// (`src/common/CWorm.cpp:300-330`, `591-650`; `fTimeofDeath` is set
-    /// by `Prepare`, `fLastBlood` by the constructor), except the carving, which
-    /// [`crate::World::spawn_worm`] does.
+    /// by `Prepare`, `fLastBlood` by the constructor), with the lives the game's
+    /// start gives (`Lives`), except the carving, which [`crate::World::spawn_worm`] does.
     pub fn spawned(id: i32, pos: Vec2, now: AbsTime, s: &SimSettings) -> Self {
         // Prepare's `clear()`, then Spawn's `clear(vPos)` (`CWorm.cpp:398`, `611`).
         let mut pos_recorder = PosRecorder::default();
@@ -185,7 +186,8 @@ impl Worm {
             current_weapon: 0,
             slots: Vec::new(),
             rope: NinjaRope::default(),
-            lives: -2,
+            // `Game.cpp:851`, `CServer.cpp:1712`: at the start of the game.
+            lives: if s.lives < 0 { WRM_UNLIM } else { s.lives },
             kills: 0,
             deaths: 0,
             suicides: 0,
@@ -246,6 +248,16 @@ impl Worm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spawned_worms_start_with_the_lives_setting() {
+        // `Game.cpp:851`: `FT_Lives < 0 ? WRM_UNLIM : FT_Lives`.
+        let mut s = SimSettings::lx56();
+        for (lives, expected) in [(-2, -2), (-1, -2), (0, 0), (5, 5)] {
+            s.lives = lives;
+            assert_eq!(Worm::spawned(0, Vec2::ZERO, AbsTime(0), &s).lives, expected, "Lives {lives}");
+        }
+    }
 
     #[test]
     fn vec_time_recorder_get0_returns_the_oldest() {
