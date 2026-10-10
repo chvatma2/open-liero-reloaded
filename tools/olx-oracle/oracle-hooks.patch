@@ -158,7 +158,7 @@ index feb1223..c8aa587 100644
  	caller->writeMsg("GameState: " + Game::StateAsStr(game.state), CNC_DEV);
 diff --git a/src/common/OracleHooks.cpp b/src/common/OracleHooks.cpp
 new file mode 100644
-index 0000000..e594622
+index 0000000..4a1cb0c
 --- /dev/null
 +++ b/src/common/OracleHooks.cpp
 @@ -0,0 +1,248 @@
@@ -304,7 +304,7 @@ index 0000000..e594622
 +
 +static unsigned long long materialHash() {
 +	CMap* m = game.gameMap();
-+	unsigned long long h = 1469598103934665603ULL; // FNV-1a 64
++	unsigned long long h = 14695981039346656037ULL; // FNV-1a 64 offset basis
 +	if(!m || !m->material) return 0;
 +	for(uint y = 0; y < m->GetHeight(); y++)
 +		for(uint x = 0; x < m->GetWidth(); x++) {
