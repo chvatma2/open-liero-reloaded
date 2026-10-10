@@ -47,6 +47,8 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Long sessions (plan 5 review focus 5): 60 000 ticks (10 minutes) of the sandbox with chaos keys, `rl-fx`, mock audio and an offscreen render every 10th tick | — | `rl-game/tests/soak.rs` | done (plan 5 task 8) | `soak_sandbox_10_minutes_headless` (`cargo xtask full`, about 15 s): cosmetic entities, projectiles, entity count, audio voices, popups, instance buffer, atlas and terrain texture stay bounded, no panic |
 | Match API (spec §20 F6, F9): `MatchSetup`, `GameMode` callbacks and commands, `Message` and `GameOver` events; game over's effects on the simulation (kills ignored, no respawns or bonus spawns, no input or shooting, the client's projectiles cleared, the physics stopped after `GAMEOVER_WAIT`) | `src/server/CGameMode.cpp:69-252`, `src/server/CServer.cpp:532-625`, `src/server/CServer_Game.cpp:38-42`, `108-113`, `167-261`, `src/client/CClient_Game.cpp:76-91`, `116-117`, `src/common/PhysicsLX56.cpp:300`, `src/client/CClient_Parse.cpp:1436-1451`, `src/game/Game.cpp:1267-1276`, `include/FastVector.h:72-77`, `src/common/Physics.cpp:36-44` | `rl-sim::{setup, mode, referee}` | done (plan 6 task 1) | `oracle_mode_matches_the_hard_coded_credit` and the oracle (unchanged), `mode_commands_apply_inside_tick_deterministically`, `game_over_stops_kills_spawns_input_and_bonuses`, `give_weapon_mid_match_does_not_allocate`; the oracle scenario `dm-kill-limit` (plan 6 task 2): the end in the kill's frame, the client's projectiles cleared, input ignored, no respawn, the physics stopped 300 frames later (`physics_stops_at_exactly_three_seconds_like_olx`) |
 | Deathmatch (`rl-modes`): kill bookkeeping and texts (first blood, killing and dying sprees, out), `CheckGameOver` (kill limit, time limit, fewer than two not out), `Winner`/`HighestScoredWorm`/`CompareWormsScore`, the results order, `Lives` and the respawn gate | `src/server/CGameMode.cpp:31-434`, `src/server/CDeathMatch.cpp`, `src/server/CServer.cpp:435-625`, `src/server/CServer_Game.cpp:167-260`, `src/client/Options.cpp:243-253`, `787-822`, `src/common/MathLib.cpp:85-88`, `src/client/CClient_Draw.cpp:1840-1897` | `rl-modes::{Deathmatch, rules, text}` | done (plan 6 task 2) | `deathmatch_game_over_and_winner_like_olx`, `lives_out_removes_worm_from_respawn`, `spree_messages`, `compare_like_olx`, `check_order_like_olx`, `deathmatch_is_deterministic_and_allocation_free`; the oracle scenario `dm-kill-limit` (KillLimit 2, a double kill: the end and its winner, `go`, match OLX bit for bit) |
+| Weapon restrictions (spec §20 F4): `.wps` presets imported into mod packs (`cfg/presets/<mod dir>/`, then `cfg/presets/`), `CWpnRest` (`loadList`'s parsing and path rule, `updateList`, `findWeapon`, `isEnabled`, `getWeaponState`), natural bonuses from the weapons not banned (`goodWpns`) | `src/common/CWpnRest.cpp:59-277`, `include/CWpnRest.h:28-32`, `src/game/Game_loadWeaponRestrictions.cpp:16-28`, `src/server/CServer_Game.cpp:292-297`, `src/game/Game.cpp:1405-1420`, `src/common/CGameScript.cpp:1211-1231` | `rl-import-lgs::{parse_wps, import_presets}`, `rl-data::restrictions`, `rl-pack` (`restrictions.ron`, format 3), `rl-content` (`LoadedMod::weapon_rules`, `SandboxSetup::restrictions`), `rl-scenario` (the header's `WeaponRestrictionsFile`) | done (plan 6 task 3) | `wps_presets_enable_what_olx_enables` (every bundled Classic and MW 1.0 preset), `parses_like_load_list`, `lookups_follow_cwpnrest`, `natural_bonuses_hold_what_the_restrictions_allow`; the oracle scenarios `bonus-natural` (`Bonus only`) and `bonus-natural-default` (`Standard 100lt`, `natural_bonuses_use_default_restrictions`) match OLX bit for bit |
+| Bot loadouts (spec §20 F1): `initWeaponSelection`'s presets (rifles, 100lt, mortars by mod name, `LoadingTime` and restrictions), `GetRandomWeapons`, `getRandomEnabledWpn`; the bot's own `rand()` stream | `src/common/CWormBot.cpp:4129-4192`, `src/common/CWorm.cpp:788-844`, `src/game/Game.cpp:1405-1420`, `src/common/MathLib.cpp:71-81`, `include/Utils.h:38-43` | `rl-bots::{loadout, BotRng}` | done (plan 6 task 3) | `bot_presets_match_olx`, `random_weapons_follow_restrictions` |
 
 ## Deliberate deviations
 
@@ -105,14 +107,15 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   keep; `rl-scenario` refuses a trace header with other values.
 - Only deathmatch: no team protection in `InjureWorm`, no teamkills, no
   `FindSpotCloseToTeam`, and LX levels have no predefined spawn points.
-- **Bonus weapons ignore weapon restrictions.** OLX spawns weapon bonuses only
-  with weapons that `WeaponRestrictionsFile` (default `Standard 100lt.wps`,
-  which bans Bazooka, Grenade, Larpa, Laser, Minigun and more in Classic)
-  does not ban. The restriction files are not imported yet, so every weapon
-  is allowed unless `MatchSetup::bonus_weapons` gives the list. Only natural
-  spawns use it; the `bonus-natural` scenario records OLX with the `Bonus only`
-  preset, which allows every Classic weapon, so it checks the spawns but not
-  the restrictions.
+- **Weapon restrictions:** a `WeaponRestrictionsFile` that starts with `cfg/`
+  (a path OLX opens as is) finds no imported preset, so every weapon is
+  enabled, as OLX does when the file is missing. Mod packs carry only the
+  presets OLX finds for the mod (`cfg/presets/<mod dir>/*.wps`, then
+  `cfg/presets/*.wps`).
+- **Bots draw from their own `rand()` stream** (`rl_bots::BotRng`, seeded from
+  the match seed, the worm and the personality), not from the game's `rand()`
+  as OLX's do, so loadouts and later bot decisions never shift the world's
+  generators (spec §20 F7).
 - **The bonus spawn timer starts at the world's start** (`T0 + K`), as the
   oracle resets it when a recording starts; OLX sets it in `PrepareGame`.
 - `World::place_bonus` refuses a weapon id outside the mod (the oracle

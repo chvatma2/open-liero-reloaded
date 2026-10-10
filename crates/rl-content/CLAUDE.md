@@ -32,6 +32,12 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   rate, WAV data over byte rate) is silence with a warning, from a mod or
   the core pack, so `rl-audio` never decodes it (`check_sound`). A stream
   whose header lies is bounded only by the byte cap.
+- **Weapon restrictions:** `LoadedMod` keeps the mod's `name` and
+  `restrictions` (its presets); `LoadedMod::weapon_rules(file)` and
+  `Content::weapon_rules(id, file)` give OLX's list for a match
+  (`rl_data::restrictions::WeaponRules`). `SandboxSetup::restrictions` (OLX's
+  `WeaponRestrictionsFile`, `DEFAULT_PRESET` = `Standard 100lt`) decides the
+  weapons natural bonuses may hold (`MatchSetup::bonus_weapons`).
 - **Worlds.** `new_world` loads the mod, level and theme and calls
   `new_world_from(&mod, &level, &theme, &setup)`, which a game restart
   calls with the assets it loaded once: `match_setup` (the `rl_sim::MatchSetup`,

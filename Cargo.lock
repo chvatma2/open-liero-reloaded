@@ -2432,6 +2432,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-bots"
+version = "0.1.0"
+dependencies = [
+ "rl-data",
+ "rl-math",
+ "rl-sim",
+]
+
+[[package]]
 name = "rl-cli"
 version = "0.1.0"
 dependencies = [

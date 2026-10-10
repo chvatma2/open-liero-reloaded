@@ -10,6 +10,7 @@ use rl_data::image::{Rgba, RgbaImage};
 use rl_data::level::{Level, LevelDef, Material, MaterialGrid};
 use rl_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
 use rl_data::mod_def::*;
+use rl_data::restrictions::WeaponState;
 use rl_data::skin::{FrameLayout, MaskKind, Skin, SkinDef};
 use rl_data::theme::{Theme, ThemeDef};
 use rl_sim::{GAME_SOUNDS, Keys, SimSettings, TickEvents};
@@ -91,6 +92,9 @@ fn broken_mod() -> rl_pack::ModPack {
             },
         }],
         projectiles: [("shell".to_string(), shell)].into_iter().collect(),
+        // OLX's default bans the only weapon.
+        restrictions: [("Standard 100lt".to_string(), [("gun".to_string(), WeaponState::Banned)].into())]
+            .into(),
     };
     let mut assets = BTreeMap::new();
     assets.insert(VPath::new("gfx/broken.png").unwrap(), b"not a png".to_vec());
@@ -181,6 +185,7 @@ fn setup(worms: Vec<SpawnSpec>, seed: u32) -> SandboxSetup {
         seed,
         settings: SimSettings::lx56(),
         worms,
+        restrictions: rl_content::DEFAULT_PRESET.into(),
     }
 }
 
@@ -308,6 +313,7 @@ fn new_world_spawns_worms_on_free_spots() {
             seed: 3,
             settings: SimSettings::lx56(),
             worms: vec![SpawnSpec { pos: None, weapons: vec![] }; 4],
+            restrictions: rl_content::DEFAULT_PRESET.into(),
         };
         let world = content.new_world(&s).unwrap();
         for w in world.worms() {
@@ -469,4 +475,23 @@ fn new_world_from_loaded_assets_is_new_world() {
     assert_eq!(world.worms().len(), 2);
     let bad = setup(vec![SpawnSpec { pos: None, weapons: vec![7] }], 9);
     assert!(rl_content::new_world_from(&m, &level, &theme, &bad).is_err());
+}
+
+#[test]
+fn natural_bonuses_hold_what_the_restrictions_allow() {
+    let tmp = tempfile::tempdir().unwrap();
+    synthetic(tmp.path());
+    let content = Content::open(tmp.path()).unwrap();
+    let mut s = setup(vec![SpawnSpec::default()], 9);
+    let m = content.load_mod(&s.mod_id).unwrap();
+    assert_eq!(m.name, "Broken");
+    let level = content.load_level(&s.level_id).unwrap();
+    let theme = content.load_theme(&level.theme).unwrap();
+    // The default preset bans the mod's only weapon (named case-insensitively).
+    let bonus = |s: &SandboxSetup| rl_content::match_setup(&m, &level, &theme, s).unwrap().bonus_weapons;
+    assert_eq!(bonus(&s), Some(vec![]));
+    assert_eq!(content.weapon_rules(&s.mod_id, &s.restrictions).unwrap(), m.weapon_rules(&s.restrictions));
+    // A preset the mod lacks leaves OLX's list empty: every weapon allowed.
+    s.restrictions = "Bonus only".into();
+    assert_eq!(bonus(&s), Some(vec![0]));
 }

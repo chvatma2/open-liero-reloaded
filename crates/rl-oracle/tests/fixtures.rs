@@ -54,11 +54,12 @@ fn first_input_with(sc: &Scenario, worm: usize, key: &str) -> Option<u32> {
     sc.inputs.iter().filter(|c| c.worm == worm && c.keys.split('+').any(|k| k == key)).map(|c| c.frame).min()
 }
 
-const SPECIAL: [&str; 15] = [
+const SPECIAL: [&str; 16] = [
     "beam-burst",
     "bleed",
     "bonus-health",
     "bonus-natural",
+    "bonus-natural-default",
     "bonus-weapon",
     "castle-shoot-rope",
     "die-before-delivery",
@@ -445,6 +446,40 @@ fn natural_bonuses_spawn_by_frequency_and_expire_after_bonus_life() {
     // A slot older than BonusLife (3 s) is freed and used again.
     let reused = spawns.iter().filter(|s| spawns.iter().any(|o| o.1 == s.1 && o.3 < s.3)).count();
     assert!(reused >= 2, "{spawns:?}");
+}
+
+#[test]
+fn natural_bonuses_hold_only_weapons_the_default_restrictions_allow() {
+    let (_, t) = load("bonus-natural");
+    assert_eq!(t.header.features["WeaponRestrictionsFile"], "Bonus only");
+    let (_, t) = load("bonus-natural-default");
+    assert_eq!(t.header.features["WeaponRestrictionsFile"], "Standard 100lt");
+    // Classic's `Standard 100lt.wps` enables these 12 and bans the other 26.
+    let allowed = [
+        "Blaster",
+        "Cannon",
+        "Chaingun",
+        "Dart",
+        "Doomsday",
+        "Handgun",
+        "Mini Rockets",
+        "Napalm",
+        "Shotgun",
+        "Super Shotgun",
+        "Uzi",
+        "Winchester",
+    ];
+    let mut weapons = std::collections::BTreeSet::new();
+    for f in &t.frames {
+        for b in &f.sb {
+            let name = t.header.weapons[b.wpn as usize].as_str();
+            assert!(allowed.contains(&name), "frame {}: {name}", f.f);
+            if b.t == 0 {
+                weapons.insert((b.spawn, name));
+            }
+        }
+    }
+    assert!(weapons.len() >= 5, "{weapons:?}");
 }
 
 #[test]

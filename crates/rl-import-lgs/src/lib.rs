@@ -8,9 +8,11 @@
 mod convert;
 mod parse;
 mod reader;
+mod wps;
 
 pub use convert::{ImportedMod, import_mod};
 pub use parse::{ProjNode, RawMod, RawWeapon, parse_lgs};
+pub use wps::{import_presets, parse_wps};
 
 /// Everything that can go wrong while importing a mod.
 #[derive(Debug, thiserror::Error)]

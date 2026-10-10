@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 /// so there are no migrations.
 ///
 /// - 2: theme packs carry the optional `green_ball.png`.
-pub const PACK_FORMAT_VERSION: u32 = 2;
+/// - 3: mod packs carry their weapon restriction presets (`restrictions.ron`).
+pub const PACK_FORMAT_VERSION: u32 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PackKind {

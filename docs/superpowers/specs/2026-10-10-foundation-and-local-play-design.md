@@ -770,3 +770,19 @@ Made precise while implementing Deathmatch (plan 6 task 2):
 - **Messages are `TextId`s** of `rl_modes::text` with OLX's default texts
   (`olx_text`); the end's texts are sent in the `on_tick` of the frame that
   ended, after the `GameOver` event.
+
+Made precise while implementing weapon restrictions and loadouts (plan 6 task 3):
+
+- **Mod packs carry raw presets** (pack format 3, `restrictions.ron`): the
+  `name → state` lists of every `.wps` OLX finds for the mod
+  (`cfg/presets/<mod dir>/`, then `cfg/presets/`), as `ModDef::restrictions`.
+  `rl_data::restrictions::WeaponRules` resolves a `WeaponRestrictionsFile`
+  value against them like OLX's `CWpnRest` after `updateList`; natural
+  bonuses (`MatchSetup::bonus_weapons`) get its not-banned ids, bots its
+  enabled ids. `SandboxSetup::restrictions` defaults to `Standard 100lt`.
+- **`rl_bots::choose_loadout(&BotConfig, &WeaponRules, &SimSettings, &mut
+  BotRng) -> Loadout`** takes the restrictions and settings rather than a
+  `MatchSetup` (a setup's worms need their loadouts first) and the bot's own
+  generator: a Deathmatch bot plays OLX's presets (`OlxPreset`, default) or
+  random weapons (`Random`); a chaos bot draws random weapons ignoring the
+  restrictions until its mode's rotation (F10) changes them.

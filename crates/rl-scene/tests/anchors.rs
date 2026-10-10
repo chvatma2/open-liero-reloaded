@@ -30,6 +30,7 @@ fn world(content: &Content, weapon: &str, others: &[(i32, i32)], bonuses: bool) 
         seed: 5,
         settings,
         worms,
+        restrictions: rl_content::DEFAULT_PRESET.into(),
     };
     let world = content.new_world(&setup).unwrap();
     let mut assets = SceneAssets::new(content.core(), &m);

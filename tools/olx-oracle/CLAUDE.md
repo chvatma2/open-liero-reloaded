@@ -117,9 +117,9 @@ you rarely need to touch these files.
   `currentTime`, and `FindSpot` and the kind and weapon draws use the seeded
   generators (`bonus-natural` sets `BonusFrequency` to 1 s). Other scenarios
   place bonuses with `simPlaceBonus` and stay shorter than 30 s.
-- Weapon bonuses use the weapons `WeaponRestrictionsFile` does not ban. `rl-sim`
-  does not import restriction files yet, so `bonus-natural` uses OLX's
-  `Bonus only` preset, which allows every Classic weapon.
+- Weapon bonuses use the weapons `WeaponRestrictionsFile` does not ban.
+  `bonus-natural` uses OLX's `Bonus only` preset (every Classic weapon),
+  `bonus-natural-default` the default `Standard 100lt` (12 of 38).
 
 ## Changing the patch
 

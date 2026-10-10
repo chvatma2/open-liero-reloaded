@@ -7,7 +7,8 @@ mod, level, skin, theme and core packs; PNG helpers; content hashing; validation
 - **Deterministic output.** Writing the same value twice gives byte-identical
   files. Never introduce `HashMap` iteration or timestamps into output.
 - **Layouts:**
-  - mod: `mod.ron`, `weapons/<id>.ron`, `projectiles/<name>.ron`, assets (`gfx/`, `sfx/`)
+  - mod: `mod.ron`, `weapons/<id>.ron`, `projectiles/<name>.ron`, `restrictions.ron`
+    (the `.wps` presets, written only when the mod has any), assets (`gfx/`, `sfx/`)
   - level: `level.ron`, `material.png` (8-bit palette; index = `Material`), `front.png`, `back.png`
   - skin: `skin.ron`, `skin.png`, `mask.png` (palette: 0 keep, 1 colorize, 2 transparent)
   - theme: `theme.ron`, `holes/N.png`, `stones/N.png`, `misc/N.png`, `front_tile.png`, `back_tile.png`,
@@ -23,6 +24,6 @@ mod, level, skin, theme and core packs; PNG helpers; content hashing; validation
   version are refused ("re-import the pack"; `cargo xtask check` re-imports); there
   are no migrations while all packs are imports in `target/content` (until packs are
   published). Version 2 added the theme's `green_ball.png`, which a version-1 import
-  may lack although OLX has it.
+  may lack although OLX has it; version 3 the mod's `restrictions.ron`.
 
 Test: `cargo nextest run -p rl-pack`.

@@ -12,6 +12,7 @@ use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 use crate::image::Rgba;
+use crate::restrictions::Preset;
 
 /// A complete mod. `weapons` keeps the original order (it defines weapon ids);
 /// projectiles are shared definitions referenced by name.
@@ -22,6 +23,11 @@ pub struct ModDef {
     pub rope: RopeParams,
     pub weapons: Vec<WeaponDef>,
     pub projectiles: BTreeMap<String, ProjectileDef>,
+    /// The weapon restriction presets OLX finds for the mod, by file name
+    /// without `.wps` (such as `Standard 100lt`): `cfg/presets/<mod dir>/*.wps`,
+    /// then `cfg/presets/*.wps` (`CWpnRest::loadList`). See
+    /// [`crate::restrictions::WeaponRules`].
+    pub restrictions: BTreeMap<String, Preset>,
 }
 
 /// OLX `gs_worm_t` (`src/common/CGameScript.cpp:45-55`).

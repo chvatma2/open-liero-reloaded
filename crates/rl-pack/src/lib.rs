@@ -20,7 +20,7 @@ pub use core_pack::{CorePack, read_core, read_core_tolerant, write_core};
 pub use error::PackError;
 pub use hash::content_hash;
 pub use level_pack::{LevelPack, read_level, write_level};
-pub use mod_pack::{ModPack, read_mod, write_mod};
+pub use mod_pack::{ModPack, RESTRICTIONS_FILE, read_mod, write_mod};
 pub use ron_io::{read_manifest, write_manifest};
 pub use skin_pack::{SkinPack, read_skin, write_skin};
 pub use theme_pack::{ThemePack, read_theme, write_theme};

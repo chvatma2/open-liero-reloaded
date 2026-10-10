@@ -740,12 +740,23 @@ for slot i in 0..slots:
 - **Format:** text, one `Name,State` per line, read with `ReadUntil('\n')`, then
   `explode(",")`. Lines with fewer than 2 fields are ignored.
   - `State` is an int taken `MOD 3`: `0` enabled, `1` bonus only, `2` banned (`CWpnRest.h:28-32`).
-  - Names are trimmed and compared **case-insensitively** (`std::map` keyed by `WeaponName`, `stringcasecmp`).
+  - Names are compared **case-insensitively** (`std::map` keyed by `WeaponName`,
+    `stringcasecmp`). They are stored **as written** (`addWeapon` does not
+    trim), but `findWeapon` trims the query (`TrimSpaces`, C `isspace`), so
+    a file name with surrounding spaces can never be found, and a mod weapon
+    whose name has them is banned (`updateList` stores it untrimmed). No
+    bundled file has such names. (Corrected in plan 6 task 3: names are not
+    trimmed on load.)
   - Duplicates: the last line wins (`addWeapon`, `146-152`).
   - Some files have CRLF line endings (Classic `Firebird`, `Retro*`, `Standard*`;
     MW `Standard 100lt`). The `\r` stays on the state field, and
     `from_string<int>` (`src/util/StringConv.h:44-48`, an `istringstream >> int`)
-    stops at it, so `"2\r"` gives 2. The port should trim whitespace on both fields.
+    stops at it, so `"2\r"` gives 2. A state without digits gives 0 (enabled),
+    and overflow the nearest `int` limit. The port (`rl_import_lgs::parse_wps`)
+    reads the state the same way and keeps names as written.
+  - The file name: `.wps` is appended only to a name **longer than 4 bytes**
+    that lacks it, and a name starting with `cfg/` is a path (`rl-data`'s
+    `WeaponRules` finds no imported preset for it: all enabled).
   - The files list weapons of **many** mods (Classic `Standard 100lt.wps` has
     215 lines). Entries for other mods are harmless.
 - **Missing weapons:** `updateList` adds every mod weapon missing from the file
@@ -763,7 +774,9 @@ for slot i in 0..slots:
 
 `share/gamedir/cfg/presets/<mod>/*.wps`. Weapons in script order are
 `content/olx-manifest.ron` → `target/content/olx-*/mod.ron`. Nothing is
-"bonus only" except in `Bonus only.wps`.
+"bonus only" except in `Bonus only.wps` (MW's `Standard 100lt.wps` has 62
+bonus-only lines, all for other mods' weapons). Plan 6 task 3 checks these
+tables against the imported presets (`wps_presets_enable_what_olx_enables`).
 
 **Classic (38 weapons):**
 
@@ -969,8 +982,8 @@ lives, kills, score, deaths, suicides and damage, in comparator order.
 
 ### 4.1 Crate shape
 
-- A new crate `rl-bots`, registered in `xtask/layers.ron` at layer 4 (above
-  `rl-sim`, beside `rl-scenario`). Make it `#![no_std]` + `alloc` and build it
+- A new crate `rl-bots`, registered in `xtask/layers.ron` at layer 3 with the
+  same-layer pair `rl-bots → rl-sim` (plan 6; this note first said layer 4). Make it `#![no_std]` + `alloc` and build it
   for `wasm32`: bots must run in browser clients too (spec §12.2).
   It depends on `rl-sim`, `rl-terrain`, `rl-math` and `rl-data`.
 - API sketch:

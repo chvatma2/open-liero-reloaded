@@ -138,6 +138,7 @@ fn sim_mod() -> Arc<SimMod> {
         rope: RopeParams { max_length: 300, rest_length: 27, strength: 4.5 },
         weapons: vec![weapon("minigun", 1, 10.0), weapon("shotgun", 3, 20.0), beam, jetpack],
         projectiles: [("pellet".to_string(), pellet), ("bit".to_string(), bit)].into_iter().collect(),
+        restrictions: Default::default(),
     };
     Arc::new(SimMod::compile(&def, &BTreeMap::new()).unwrap())
 }

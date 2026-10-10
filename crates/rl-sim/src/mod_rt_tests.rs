@@ -66,6 +66,7 @@ pub(crate) fn mod_def(weapons: Vec<WeaponDef>, projectiles: Vec<(&str, Projectil
         rope: RopeParams { max_length: 300, rest_length: 27, strength: 4.5 },
         weapons,
         projectiles: projectiles.into_iter().map(|(n, p)| (n.to_string(), p)).collect(),
+        restrictions: Default::default(),
     }
 }
 

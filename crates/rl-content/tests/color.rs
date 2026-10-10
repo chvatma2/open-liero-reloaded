@@ -177,7 +177,8 @@ fn agreement(mod_dir: &str, level_file: &str, seed: u32) {
     // Close together, so they hit each other: blood, deaths and gibs.
     let (x, y) = open_space(&level.material);
     let worms = (0..4).map(|i| SpawnSpec { pos: Some((x + 8 * i, y)), weapons: weapons.clone() }).collect();
-    let setup = SandboxSetup { mod_id, level_id, seed, settings: SimSettings::lx56(), worms };
+    let restrictions = rl_content::DEFAULT_PRESET.into();
+    let setup = SandboxSetup { mod_id, level_id, seed, settings: SimSettings::lx56(), worms, restrictions };
     let mut world = content.new_world(&setup).unwrap();
     // Low health: worms bleed (blood) and die of their own explosions (gibs).
     for i in 0..4 {

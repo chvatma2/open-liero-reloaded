@@ -56,6 +56,16 @@ fn imported_content() {
                     d.rope
                 )
                 .unwrap();
+                for (name, preset) in &d.restrictions {
+                    let rules = rl_data::restrictions::WeaponRules::new(d, name);
+                    let (enabled, bonus) = (rules.enabled_weapons().len(), rules.bonus_weapons().len());
+                    let n = preset.len();
+                    writeln!(
+                        summary,
+                        "  preset {name:?}: {n} entries, {enabled} enabled, {bonus} in bonuses"
+                    )
+                    .unwrap();
+                }
             }
             PackKind::Level => {
                 let p = rl_pack::read_level(&src).unwrap();

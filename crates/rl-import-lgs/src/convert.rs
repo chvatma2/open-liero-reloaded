@@ -26,13 +26,16 @@ pub struct ImportedMod {
 /// Images are looked up in `<mod_dir>/gfx/` then `data/gfx/`, sounds in
 /// `<mod_dir>/sfx/` then `data/sounds/`, ignoring case and retrying sounds with
 /// `.ogg` (`CGameScript::LoadGSImage`, `LoadGSSample`, `src/sound/Sounds.cpp:113`).
+/// The weapon restriction presets come from `cfg/presets/<mod_dir>/` and
+/// `cfg/presets/` ([`crate::import_presets`]).
 pub fn import_mod(olx: &dyn ContentSource, mod_dir: &VPath, origin: Origin) -> Result<ImportedMod, LgsError> {
     let script = find_ci(olx, &mod_dir.join("script.lgs")?)
         .ok_or_else(|| LgsError::MissingFile(format!("{mod_dir}/script.lgs")))?;
     let raw = parse_lgs(&olx.read(&script)?)?;
     let mut cx =
         Converter { olx, mod_dir, assets: BTreeMap::new(), sources: BTreeMap::new(), warnings: Vec::new() };
-    let def = cx.convert(raw)?;
+    let mut def = cx.convert(raw)?;
+    def.restrictions = crate::wps::import_presets(olx, mod_dir)?;
     let manifest = PackManifest {
         format_version: PACK_FORMAT_VERSION,
         id: format!("olx-{}", slug(mod_dir.file_name())),
@@ -81,7 +84,14 @@ impl Converter<'_> {
             }
             weapons.push(w);
         }
-        Ok(ModDef { name: raw.name, worm: raw.worm, rope: raw.rope, weapons, projectiles })
+        Ok(ModDef {
+            name: raw.name,
+            worm: raw.worm,
+            rope: raw.rope,
+            weapons,
+            projectiles,
+            restrictions: BTreeMap::new(),
+        })
     }
 
     /// Names `node` (and its children, depth first), reusing the name of an

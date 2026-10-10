@@ -122,3 +122,34 @@ fn a_changed_trace_is_detected() {
     let d = rl_oracle::compare_fields(&expected, &actual, &[], rl_scenario::CHECKED).unwrap();
     assert_eq!((d.frame, d.path.as_str()), (199, "w[0].x"));
 }
+
+/// Natural weapon bonuses hold only weapons OLX's default restriction file
+/// (`Standard 100lt`) does not ban (spec §20 F4): `bonus-natural-default`
+/// records OLX with the default, and the simulation must reproduce it.
+#[test]
+fn natural_bonuses_use_default_restrictions() {
+    let Some(content) = content_dir() else { return };
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/oracle");
+    let (sc, expected) = rl_scenario::load_fixture(&dir, "bonus-natural-default").unwrap();
+    assert_eq!(
+        expected.header.features.get("WeaponRestrictionsFile").map(String::as_str),
+        Some("Standard 100lt")
+    );
+    let content = rl_content::Content::open(Path::new(&content)).unwrap();
+    let rules = content.weapon_rules(&rl_content::olx_mod_id(&sc.mod_dir), "Standard 100lt").unwrap();
+    let allowed = rules.bonus_weapons();
+    assert_eq!(allowed.len(), 12, "Classic's Standard 100lt allows 12 of 38 weapons");
+    // Every spawned bonus draws its weapon from the allowed ones, and the
+    // scenario spawns enough weapon bonuses to tell the lists apart.
+    let mut spawned = std::collections::BTreeSet::new();
+    for f in &expected.frames {
+        for b in &f.sb {
+            assert!(allowed.contains(&b.wpn), "frame {}: bonus weapon {} is banned", f.f, b.wpn);
+            spawned.insert((b.spawn, b.t));
+        }
+    }
+    assert!(spawned.iter().filter(|(_, t)| *t == 0).count() >= 5, "{spawned:?}");
+    let actual = rl_scenario::replay(&content, &sc, &expected).unwrap();
+    let d = rl_oracle::compare_fields(&expected, &actual, &sc.tolerances, rl_scenario::CHECKED);
+    assert!(d.is_none(), "diverged from OLX: {}", d.unwrap());
+}

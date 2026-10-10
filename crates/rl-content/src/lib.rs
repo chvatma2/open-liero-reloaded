@@ -36,6 +36,8 @@ pub use sandbox::{SANDBOX_START, SandboxSetup, SpawnSpec, match_setup, new_world
 pub use sounds::{MAX_SOUND_BYTES, MAX_SOUND_SECONDS, check_sound};
 
 #[doc(no_inline)]
+pub use rl_data::restrictions::{DEFAULT_PRESET, WeaponRules};
+#[doc(no_inline)]
 pub use rl_sim::{SimMod, World};
 
 /// The pack id `rl-cli import` gives OLX mod directory `dir` (such as `MW 1.0`).

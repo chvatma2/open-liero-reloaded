@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 rl-math.workspace = true
+rl-data.workspace = true
 rl-terrain.workspace = true
 rl-sim.workspace = true
 rl-modes.workspace = true
@@ -17,7 +18,6 @@ rl-content.workspace = true
 anyhow.workspace = true
 
 [dev-dependencies]
-rl-data.workspace = true
 rl-pack.workspace = true
 allocation-counter.workspace = true
 tempfile.workspace = true

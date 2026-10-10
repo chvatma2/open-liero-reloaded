@@ -15,6 +15,7 @@
         "rl-oracle": 2,
         "rl-sim": 3,
         "rl-modes": 3,
+        "rl-bots": 3,
         "rl-scenario": 4,
         "rl-content": 4,
         "rl-scene": 5,
@@ -31,6 +32,8 @@
         ("rl-terrain", "rl-data"),
         // Game modes implement the simulation's `GameMode` (spec §20 F6).
         ("rl-modes", "rl-sim"),
+        // Bots read a `World` and press its `Keys` (spec §20 F3, F7).
+        ("rl-bots", "rl-sim"),
         ("rl-import-lgs", "rl-pack"),
         ("rl-import-lxl", "rl-pack"),
         ("rl-import-gfx", "rl-pack"),
@@ -47,6 +50,6 @@
         ("rl-present", "rl-fx"),
         ("rl-present", "rl-render"),
     ],
-    no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes"],
-    wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
+    no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots"],
+    wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
 )

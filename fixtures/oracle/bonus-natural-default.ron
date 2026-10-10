@@ -1,0 +1,19 @@
+(
+    description: "Natural bonus spawns with OLX's default weapon restrictions: the restriction file is left at `Standard 100lt` (Classic's `cfg/presets/Classic/Standard 100lt.wps`), which enables 12 of Classic's 38 weapons and bans the rest, so a spawned weapon bonus holds one of the 12 (`goodWpns`, drawn by one rand() from the weapons not banned, in id order). Bonuses on, BonusFrequency 1 s, BonusLife 3 s and BonusHealthToWeaponChance 0.8, so most bonuses are weapons. One worm stands on Liero Factory's open rock floor and walks right.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 4242,
+    frames: 1000,
+    settings: {
+        "GameOptions.GameInfo.Bonuses": "1",
+        "GameOptions.GameInfo.BonusFrequency": "1",
+        "GameOptions.GameInfo.BonusLife": "3",
+        "GameOptions.GameInfo.BonusHealthToWeaponChance": "0.8",
+    },
+    worms: [(x: 190, y: 330)],
+    health: [(0, 50.0)],
+    inputs: [
+        (frame: 400, worm: 0, keys: "right"),
+        (frame: 500, worm: 0, keys: ""),
+    ],
+)

@@ -34,6 +34,9 @@ pub struct SandboxSetup {
     pub settings: SimSettings,
     /// At most [`MAX_WORMS`].
     pub worms: Vec<SpawnSpec>,
+    /// OLX's `WeaponRestrictionsFile`, such as [`crate::DEFAULT_PRESET`]: the
+    /// weapons a natural bonus may hold are those it does not ban.
+    pub restrictions: String,
 }
 
 impl Content {
@@ -65,8 +68,9 @@ pub fn new_world_from(
 /// level with the theme's holes and green-dirt mask, and the worms in
 /// order with their weapons. Worms without a position draw one from
 /// `FindSpot` when they spawn, so the same setup always gives the same
-/// world. Settings outside OLX's range, too many worms or an unknown weapon
-/// id are errors. `setup`'s pack ids are not read.
+/// world. Natural bonuses hold the weapons `setup.restrictions` does not ban
+/// ([`LoadedMod::weapon_rules`]). Settings outside OLX's range, too many
+/// worms or an unknown weapon id are errors. `setup`'s pack ids are not read.
 pub fn match_setup(
     m: &LoadedMod,
     level: &LoadedLevel,
@@ -93,6 +97,7 @@ pub fn match_setup(
         start: SANDBOX_START,
         seed: setup.seed,
         worms,
+        bonus_weapons: Some(m.weapon_rules(&setup.restrictions).bonus_weapons()),
         ..MatchSetup::new(setup.settings.clone(), m.sim.clone(), terrain)
     })
 }

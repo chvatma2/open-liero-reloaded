@@ -1,0 +1,16 @@
+[package]
+name = "rl-bots"
+description = "OLX's bots for rl-sim matches: loadouts (presets, random weapons), and later navigation, motor, aim and brain."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rl-sim.workspace = true
+rl-data.workspace = true
+rl-math.workspace = true
+
+[lints]
+workspace = true

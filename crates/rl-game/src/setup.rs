@@ -32,6 +32,7 @@ pub fn sandbox_setup(o: &SandboxOptions) -> SandboxSetup {
         seed: o.seed,
         settings: SimSettings { bonuses: o.bonuses, ..SimSettings::lx56() },
         worms: vec![SpawnSpec::default(); worms],
+        restrictions: rl_content::DEFAULT_PRESET.into(),
     }
 }
 

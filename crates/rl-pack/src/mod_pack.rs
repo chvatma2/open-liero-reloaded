@@ -1,5 +1,6 @@
-//! Mod packs: `mod.ron`, `weapons/<id>.ron`, `projectiles/<name>.ron`, and the
-//! asset files (`gfx/`, `sfx/`) the definitions reference.
+//! Mod packs: `mod.ron`, `weapons/<id>.ron`, `projectiles/<name>.ron`, the
+//! weapon restriction presets (`restrictions.ron`, when the mod has any) and
+//! the asset files (`gfx/`, `sfx/`) the definitions reference.
 
 use std::collections::BTreeMap;
 
@@ -12,6 +13,9 @@ use crate::ron_io::{read_ron, write_ron};
 use crate::{MANIFEST, PackError, read_manifest, write_manifest};
 
 pub const MOD_FILE: &str = "mod.ron";
+/// The mod's weapon restriction presets ([`ModDef::restrictions`]), written
+/// only when it has any; a pack without it has none.
+pub const RESTRICTIONS_FILE: &str = "restrictions.ron";
 const WEAPONS_DIR: &str = "weapons";
 const PROJECTILES_DIR: &str = "projectiles";
 
@@ -55,6 +59,9 @@ pub fn write_mod(sink: &mut dyn ContentSink, pack: &ModPack) -> Result<(), PackE
         weapons: def.weapons.iter().map(|w| w.id.clone()).collect(),
     };
     write_ron(sink, MOD_FILE, &file)?;
+    if !def.restrictions.is_empty() {
+        write_ron(sink, RESTRICTIONS_FILE, &def.restrictions)?;
+    }
     for w in &def.weapons {
         check_name(MOD_FILE, "weapon", &w.id)?;
         write_ron(sink, &format!("{WEAPONS_DIR}/{}.ron", w.id), w)?;
@@ -84,9 +91,14 @@ pub fn read_mod(src: &dyn ContentSource) -> Result<ModPack, PackError> {
     }
     let mut projectiles = BTreeMap::new();
     let mut assets = BTreeMap::new();
+    let mut restrictions = BTreeMap::new();
     for path in walk(src, &VPath::root())? {
         let s = path.as_str();
         if s == MANIFEST || s == MOD_FILE || s.starts_with("weapons/") {
+            continue;
+        }
+        if s == RESTRICTIONS_FILE {
+            restrictions = read_ron(src, s)?;
             continue;
         }
         if let Some(rest) = s.strip_prefix("projectiles/") {
@@ -100,7 +112,8 @@ pub fn read_mod(src: &dyn ContentSource) -> Result<ModPack, PackError> {
             assets.insert(path.clone(), src.read(&path)?);
         }
     }
-    let def = ModDef { name: file.name, worm: file.worm, rope: file.rope, weapons, projectiles };
+    let def =
+        ModDef { name: file.name, worm: file.worm, rope: file.rope, weapons, projectiles, restrictions };
     Ok(ModPack { manifest, def, assets })
 }
 
@@ -110,6 +123,7 @@ pub(crate) mod tests {
     use rl_data::image::Rgba;
     use rl_data::manifest::PACK_FORMAT_VERSION;
     use rl_data::mod_def::*;
+    use rl_data::restrictions::WeaponState;
     use rl_vfs::MemFs;
 
     pub(crate) fn manifest(kind: PackKind) -> PackManifest {
@@ -190,6 +204,14 @@ pub(crate) mod tests {
                 projectiles: [("bits".to_string(), bits), ("rocket".to_string(), rocket)]
                     .into_iter()
                     .collect(),
+                restrictions: [(
+                    "Standard 100lt".to_string(),
+                    [("Rocket".to_string(), WeaponState::Banned), ("Zimm".to_string(), WeaponState::Bonus)]
+                        .into_iter()
+                        .collect(),
+                )]
+                .into_iter()
+                .collect(),
             },
             assets: [
                 (VPath::new("gfx/missile.png").unwrap(), b"png".to_vec()),
@@ -221,6 +243,7 @@ pub(crate) mod tests {
                 "pack.ron",
                 "projectiles/bits.ron",
                 "projectiles/rocket.ron",
+                "restrictions.ron",
                 "sfx/boom.ogg",
                 "weapons/rocket.ron"
             ]
@@ -233,6 +256,16 @@ pub(crate) mod tests {
         write_mod(&mut a, &sample_mod()).unwrap();
         write_mod(&mut b, &sample_mod()).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn a_mod_without_presets_has_no_restrictions_file() {
+        let mut pack = sample_mod();
+        pack.def.restrictions.clear();
+        let mut fs = MemFs::new();
+        write_mod(&mut fs, &pack).unwrap();
+        assert!(fs.files().all(|(p, _)| p.as_str() != RESTRICTIONS_FILE));
+        assert_eq!(read_mod(&fs).unwrap(), pack);
     }
 
     #[test]

@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use rl_content::{Content, olx_level_id, olx_mod_id};
+use rl_data::restrictions::DEFAULT_PRESET;
 use rl_math::AbsTime;
 use rl_modes::{Deathmatch, DeathmatchSettings};
 use rl_oracle::{
@@ -108,8 +109,12 @@ fn t0(expected: &Trace) -> u64 {
 pub fn load_world(content: &Content, sc: &Scenario, expected: &Trace) -> anyhow::Result<World> {
     let level = content.load_level(&olx_level_id(&sc.level))?;
     let theme = content.load_theme(&level.theme).with_context(|| format!("level {}", sc.level))?;
-    let sim_mod = content.sim_mod(&olx_mod_id(&sc.mod_dir))?;
+    let mod_id = olx_mod_id(&sc.mod_dir);
+    let sim_mod = content.sim_mod(&mod_id)?;
     check_ids(&sim_mod, &expected.header)?;
+    // OLX's server loads the header's restriction file (its default for a v1 header).
+    let file = expected.header.features.get("WeaponRestrictionsFile").map_or(DEFAULT_PRESET, String::as_str);
+    let bonus_weapons = content.weapon_rules(&mod_id, file)?.bonus_weapons();
     check_options(&expected.header)?;
     let settings =
         SimSettings::from_olx_features(&expected.header.features).map_err(|e| anyhow::anyhow!(e.0))?;
@@ -149,6 +154,7 @@ pub fn load_world(content: &Content, sc: &Scenario, expected: &Trace) -> anyhow:
         start: AbsTime(t0(expected)),
         seed,
         worms,
+        bonus_weapons: Some(bonus_weapons),
         ..MatchSetup::new(settings, Arc::new(sim_mod), Terrain::from_grid(&level.material))
     };
     let mode = game_mode(sc, &setup.settings, &expected.header)?;

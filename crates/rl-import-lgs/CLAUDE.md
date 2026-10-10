@@ -9,6 +9,12 @@ Imports OLX `script.lgs` gamescript **version 7** mods into `ModPack`s.
 - **Asset lookup is OLX's:** `<mod>/gfx/` then `data/gfx/`; `<mod>/sfx/` then
   `data/sounds/`, case-insensitive, and sounds also try `.ogg`. A missing sound
   is dropped with a warning (OLX does the same); a missing image is an error.
+- **Weapon restriction presets** (`wps.rs`, `CWpnRest::loadList`,
+  `src/common/CWpnRest.cpp:183-213`): `import_mod` adds every
+  `cfg/presets/<mod dir>/*.wps`, then every `cfg/presets/*.wps` of another
+  name, as `ModDef::restrictions`. `parse_wps` reads lines like OLX (split at
+  `,`, a state is `istringstream >> int` taken `MOD 3`, names kept as written,
+  case-insensitive, last line wins).
 - **Never panic on input.** Property tests feed corrupted files.
 - Version 8 files are rejected (`UnsupportedVersion`); no mod in scope uses v8.
 

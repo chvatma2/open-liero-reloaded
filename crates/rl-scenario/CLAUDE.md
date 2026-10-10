@@ -33,6 +33,9 @@ traces in `rl-oracle`'s format.
   pinned draw divergence shows up too. A new row needs a deviation in
   `docs/porting/STATUS.md`. On a mismatch the test prints the new row.
 - The theme pack's green ball becomes the world's green-dirt mask.
+- Natural bonuses hold the weapons the header's `WeaponRestrictionsFile`
+  does not ban, in the mod pack's presets (`Content::weapon_rules`; OLX's
+  default for a header without it).
 - A scenario's bonuses are placed with `World::place_bonus` before the
   frame's tick (weapons by name, ignoring case, as OLX's `FindWeaponId`).
 - `tests/smoke.rs` plays 4-worm matches with random seeded keys on every

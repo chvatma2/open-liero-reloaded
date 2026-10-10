@@ -7,6 +7,7 @@ use anyhow::Context as _;
 use rl_data::image::RgbaImage;
 use rl_data::manifest::PackKind;
 use rl_data::mod_def::ProjectileGfx;
+use rl_data::restrictions::{Preset, WeaponRules};
 use rl_sim::{GAME_SOUND_PREFIX, SimMod};
 use rl_vfs::VPath;
 
@@ -27,6 +28,21 @@ pub struct LoadedMod {
     pub sounds: BTreeMap<String, Vec<u8>>,
     /// Placeholders and silences, to log once.
     pub warnings: Vec<String>,
+    /// The mod's name (`ModDef::name`, OLX's `ModInfo::name`, such as `Liero v1.0`).
+    pub name: String,
+    /// The mod's weapon restriction presets (`ModDef::restrictions`).
+    pub restrictions: BTreeMap<String, Preset>,
+}
+
+impl LoadedMod {
+    /// The restrictions a match of this mod plays with when its
+    /// `WeaponRestrictionsFile` is `file` (such as
+    /// [`rl_data::restrictions::DEFAULT_PRESET`]): OLX's `CWpnRest` after
+    /// `loadList` and `updateList`.
+    pub fn weapon_rules(&self, file: &str) -> WeaponRules {
+        let weapons = self.sim.weapons().iter().map(|w| w.name.as_str());
+        WeaponRules::from_parts(&self.name, weapons, &self.restrictions, file)
+    }
 }
 
 /// Every image projectile must know its image's frame count: OLX's client
@@ -74,6 +90,13 @@ impl Content {
         let m = SimMod::compile(&pack.def, &frames).map_err(|e| anyhow::anyhow!("{id}: {e}"))?;
         check_frames(&m).with_context(|| format!("mod pack {id}"))?;
         Ok(m)
+    }
+
+    /// The restrictions of mod pack `id` with `WeaponRestrictionsFile` `file`
+    /// ([`LoadedMod::weapon_rules`]), for callers of [`Content::sim_mod`].
+    pub fn weapon_rules(&self, id: &str, file: &str) -> anyhow::Result<WeaponRules> {
+        let pack = self.mod_pack(id)?;
+        Ok(WeaponRules::new(&pack.def, file))
     }
 
     /// Mod pack `id` ready to play: like [`Content::sim_mod`], except that a
@@ -125,7 +148,8 @@ impl Content {
                 None => {}
             }
         }
-        Ok(LoadedMod { sim: Arc::new(sim), images, sounds, warnings })
+        let (name, restrictions) = (pack.def.name, pack.def.restrictions);
+        Ok(LoadedMod { sim: Arc::new(sim), images, sounds, warnings, name, restrictions })
     }
 }
 
@@ -185,6 +209,7 @@ mod tests {
                 },
             }],
             projectiles: [("flame".to_string(), flame)].into_iter().collect(),
+            restrictions: Default::default(),
         };
         let missing = SimMod::compile(&def, &BTreeMap::new()).unwrap();
         let err = check_frames(&missing).unwrap_err().to_string();
