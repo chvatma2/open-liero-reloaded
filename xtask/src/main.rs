@@ -1,6 +1,7 @@
 //! Developer workflows. Run from anywhere in the workspace with `cargo xtask <command>`.
 
 mod api;
+mod bless;
 mod check;
 mod fetch;
 mod layers;
@@ -50,6 +51,12 @@ enum Command {
     },
     /// Write one scenario per weapon of the imported mods to fixtures/oracle/weapons/.
     OracleGenWeapons,
+    /// Re-generate the render goldens in fixtures/render/ and record why in fixtures/blessings.log.
+    BlessRender {
+        /// Why the rendering changed (recorded with the date and the changed files).
+        #[arg(long)]
+        reason: String,
+    },
 }
 
 /// The workspace root (the parent of this crate's directory).
@@ -72,6 +79,7 @@ fn main() -> ExitCode {
         Command::InstallHooks => install_hooks().map(|()| true),
         Command::OracleRecord { check, names } => oracle::run(&names, check),
         Command::OracleGenWeapons => oracle_gen::run(),
+        Command::BlessRender { reason } => bless::run(&reason),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

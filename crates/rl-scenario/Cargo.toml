@@ -16,6 +16,8 @@ rl-content.workspace = true
 anyhow.workspace = true
 
 [dev-dependencies]
+rl-data.workspace = true
+rl-pack.workspace = true
 allocation-counter.workspace = true
 tempfile.workspace = true
 

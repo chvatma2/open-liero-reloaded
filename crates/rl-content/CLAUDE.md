@@ -26,7 +26,14 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   draws one from the world's `FindSpot` (`World::find_spot`), so the same
   setup gives the same world. Worms get the mod's first five weapons unless
   the spec names them. The clock starts at `SANDBOX_START`.
+- **Colour terrain** (`color.rs`, plan 5 ruling R1): `LoadedTheme::art()`,
+  `LoadedLevel::color_map(&theme)` (before any edit; spawn holes come with
+  the first tick), `color_edit(&EventKind)` converts a `TerrainEdit`, and
+  `apply_edits(map, events, terrain)` replays a tick's edits and rebuilds a
+  `lost_area`. `tests/color.rs` plays 3000-tick matches and checks every
+  pixel's colour against the material (Review Focus 2).
 - Pack ids of OLX imports: `olx_mod_id("MW 1.0")`, `olx_level_id("CastleStrike.lxl")`.
 
 Test: `cargo nextest run -p rl-content` (`loads_every_manifest_item` and the
-real-level part of `new_world_spawns_worms_on_free_spots` need `RL_CONTENT_DIR`).
+real-level part of `new_world_spawns_worms_on_free_spots` and `tests/color.rs`'s matches
+need `RL_CONTENT_DIR`).

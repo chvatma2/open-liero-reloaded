@@ -12,6 +12,7 @@
 //! The oracle loads mods strictly ([`Content::sim_mod`]): OLX's client
 //! knows every projectile image's frame count, so a missing one is an error.
 
+mod color;
 mod core_assets;
 mod maps;
 mod mods;
@@ -25,6 +26,7 @@ use anyhow::Context as _;
 use rl_data::manifest::PackKind;
 use rl_vfs::DirFs;
 
+pub use color::{apply_edits, color_edit, lost_area};
 pub use core_assets::{CORE_PACK_ID, CORE_SPRITES, CorePack};
 pub use maps::{LoadedLevel, LoadedSkin, LoadedTheme};
 pub use mods::{LoadedMod, check_frames};

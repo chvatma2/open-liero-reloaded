@@ -37,6 +37,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Tick events (sounds, map edits, explosions, cosmetics, shots, damage, kills, pickups, spawns) and the state checksum | every `StartSound`, `PlaySoundSample`, `SpawnEntity` and `SetWormBeamEntity` above; `src/game/Sounds.cpp:25-30` | `rl-sim::events`, `rl-sim::checksum` | done (plan 4 task 10) | unit tests; the oracle traces are unchanged (no draw added); `rl-scenario/tests/smoke.rs` (8 matches, clone checksum streams) |
 | Event data for rendering (spec §19 E6): explosion `shake`, the gib's worm, the dirt particle's probe pixel, each event's sub-step (entity passes before it) and `World::substeps_last_tick`, `Damage.dealt`, the `RotIncrement` 0→1 bump (`World::rot_bumped`), `World::physics_time`, `Projectile::serial` | `CClient_Game.cpp:206-208`, `229-330`, `380`, `PhysicsLX56_Projectiles.cpp:590-593`, `777`, `1115-1130`, `CMap.cpp:2172-2199`, `PhysicsLX56.cpp:595-607`, `CProjectile.cpp:291-292` | `rl-sim::events`, `rl-sim::world` | done (plan 5 task 1) | `events_carry_e6_data`, `projectile_serials_differ_across_slot_reuse`; the oracle traces are unchanged (no draw added); smoke matches check every event's sub-step |
 | Core pack: shared game sprites, game sounds (`.ogg`), `colours.cfg` (spec §19 E9) | `src/client/DeprecatedGUI/Graphics.cpp:56-97`, `134-321`, `src/common/CWorm.cpp:661`, `src/game/Sounds.cpp:25-30`, `src/common/StringUtils.cpp:409-447` | `rl-import-gfx::import_core`, `rl-pack::CorePack`, `rl-content::CorePack` | done (plan 5 task 1) | `rl-content/tests/content.rs` (`loads_every_manifest_item`), the corpus snapshot |
+| Colour terrain (spec §19 E7): carve (back pixels, brown rim), `PlaceDirt` (`FrontTile`), `PlaceGreenDirt` (OLX's shades), beam holes, blood and gib stains, dirty rectangles | `src/common/CMap.cpp:1005-1340`, `2355-2373`, `src/client/Entity.cpp:355-390`, `src/client/GfxPrimitives.cpp` (`DrawImageStretch2`) | `rl-terrain::ColorMap`, `rl-content::{color_edit, apply_edits}` | done (plan 5 task 2) | `rl-terrain` colour tests; `rl-content/tests/color.rs` (`color_map_agrees_with_material_after_a_match`, 3000 ticks); golden `fixtures/render/dig-color.png` (`rl-scenario/tests/render_golden.rs`) |
 
 ## Deliberate deviations
 
@@ -160,6 +161,17 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   files, unknown weapon or projectile types, and nesting deeper than 128 levels.
 - A missing projectile image is an import error. OLX would load the mod and draw nothing.
 - Imported level art is stored at 1×, because OLX's 2× surfaces are plain pixel doubling.
+- **Colour terrain** (`rl-terrain::ColorMap`): the map keeps its own copy of
+  the material grid and replays each edit on it after painting, so the colour
+  rules read the material before the edit, as OLX's single loop does (the plan
+  had `apply(edit, material_after)`, which cannot tell a carved pixel from one
+  that was background already, such as a gib stain on background). Green-dirt
+  shades come from the map's own generator (spec §18 D5). The composite is
+  opaque (OLX's draw surface has no alpha). A gib stain also skips fully
+  transparent source pixels besides OLX's magenta colour key. Terrain edits a
+  tick drops (`lost_area`) are redrawn from the material grid
+  (`ColorMap::rebuild_area`): back image, `FrontTile`, level art; stains and
+  the level's own dirt art there are lost.
 
 ## Spec §18 decisions that deviate from a plain OLX run
 

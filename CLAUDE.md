@@ -36,6 +36,12 @@ traces recorded from a patched OLX (`tools/olx-oracle/`).
 - `rl-cli scenario [name...] [--dump <frame>]` replays scenarios in `rl-sim`
   and reports the first divergence. Use it when a change breaks the oracle.
 
+## Render goldens
+
+`fixtures/render/*.png` are committed render goldens. When a rendering change
+is intended, `cargo xtask bless-render --reason "<why>"` re-generates them and
+logs the reason in `fixtures/blessings.log`.
+
 ## Content
 
 `cargo xtask fetch-olx-content` sparse-clones OLX at the commit pinned in

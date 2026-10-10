@@ -1,6 +1,7 @@
 # rl-terrain
 
-The simulation's terrain (spec §5.4): one `Material` byte per world pixel.
+The simulation's terrain (spec §5.4): one `Material` byte per world pixel,
+and the colour image that follows it (`ColorMap`).
 
 - **Layer 1, `#![no_std]` + `alloc`.**
 - `flags(x, y)` is OLX's `GetPixelFlag`: rock outside the map.
@@ -14,6 +15,19 @@ The simulation's terrain (spec §5.4): one `Material` byte per world pixel.
   `rand` once for each green pixel it places (`GreenMask`, from `greenball.png`).
 - Positions are C `int`s: no position, however far outside, may panic.
 - `material_hash()` is the oracle's `mh`: FNV-1a 64 over the material bytes.
-- Colour art is not here. Rendering (M5) applies the same stamps to the images.
+- **`ColorMap`** (`color.rs`, spec §19 E7) is the visible colour image at art
+  scale (`art_scale` art px per world px), kept in step by replaying the
+  simulation's edits in order (`apply(ColorEdit)`; `rl-content` converts
+  `rl-sim`'s `TerrainEdit`): carving copies back pixels and paints the rim,
+  `PlaceDirt` paints `FrontTile` (tiled from the origin in world px) and the
+  rim over former background, green dirt paints `GREEN_SHADES` (own
+  generator) and the mask's rim. It keeps its own copy of the material
+  (`material()`) and edits it after painting, so every rule reads the
+  material before the edit, like OLX. `stain` (blood) and `stain_image`
+  (gibs, OLX's `DrawImageStretch2` clipping quirk) change only colour.
+  `take_dirty()` drains art-px rectangles covering every change (at most
+  `MAX_DIRTY`, merged beyond). `rebuild_area(area, &material)` is the only
+  fallback for edits a tick dropped (`lost_area`). The image is always
+  opaque; odd art sizes are cropped or padded, never a panic.
 
 Test: `cargo nextest run -p rl-terrain`.

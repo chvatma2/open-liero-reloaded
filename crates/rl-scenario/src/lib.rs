@@ -17,7 +17,7 @@ use rl_oracle::{
     WormRec,
 };
 use rl_sim::{BonusItem, CLOCK_OFFSET_MS, Keys, Loadout, SimMod, SimSettings, Slot, TickEvents, World};
-use rl_terrain::Terrain;
+use rl_terrain::{ColorMap, Terrain};
 
 /// The trace fields the simulation reproduces; the acceptance test compares
 /// these. Since plan 4 task 9 (bonuses) it is every group, [`Fields::ALL`].
@@ -317,11 +317,24 @@ fn bonus_items(world: &World, sc: &Scenario) -> anyhow::Result<Vec<(u32, i32, i3
 /// Plays `sc` from frame -1 to its last frame and returns the Rust trace,
 /// with the same header as `expected`.
 pub fn replay(content: &Content, sc: &Scenario, expected: &Trace) -> anyhow::Result<Trace> {
-    let mut world = load_world(content, sc, expected)?;
     let t0 = t0(expected);
+    let mut frames = Vec::new();
+    play(content, sc, expected, |world, f, _| frames.push(record(world, f, t0)))?;
+    Ok(Trace { header: expected.header.clone(), frames })
+}
+
+/// Plays `sc` and calls `each(world, frame, events)` for frame -1 (no events
+/// yet) and after every frame's tick.
+pub fn play(
+    content: &Content,
+    sc: &Scenario,
+    expected: &Trace,
+    mut each: impl FnMut(&World, i64, &TickEvents),
+) -> anyhow::Result<World> {
+    let mut world = load_world(content, sc, expected)?;
     let bonuses = bonus_items(&world, sc)?;
-    let mut frames = vec![record(&world, -1, t0)];
     let mut events = TickEvents::new();
+    each(&world, -1, &events);
     for (f, keys) in sc.keys_per_frame().into_iter().enumerate() {
         let keys: Vec<Keys> = keys.iter().map(|k| Keys(k.0)).collect();
         for &(frame, x, y, item) in &bonuses {
@@ -330,9 +343,21 @@ pub fn replay(content: &Content, sc: &Scenario, expected: &Trace) -> anyhow::Res
             }
         }
         world.tick(&keys, &mut events);
-        frames.push(record(&world, f as i64, t0));
+        each(&world, f as i64, &events);
     }
-    Ok(Trace { header: expected.header.clone(), frames })
+    Ok(world)
+}
+
+/// The level's colour terrain after `sc` (its terrain edits replayed with
+/// `rl_content::apply_edits`): what the CPU render goldens compare.
+pub fn color_after(content: &Content, sc: &Scenario, expected: &Trace) -> anyhow::Result<ColorMap> {
+    let level = content.load_level(&olx_level_id(&sc.level))?;
+    let theme = content.load_theme(&level.theme).with_context(|| format!("level {}", sc.level))?;
+    let mut map = level.color_map(&theme);
+    play(content, sc, expected, |world, _, events| {
+        rl_content::apply_edits(&mut map, events, world.terrain())
+    })?;
+    Ok(map)
 }
 
 #[cfg(test)]

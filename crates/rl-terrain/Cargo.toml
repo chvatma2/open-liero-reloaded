@@ -1,6 +1,6 @@
 [package]
 name = "rl-terrain"
-description = "The simulation's terrain: material grid, OLX pixel flags, hole carving, material hash."
+description = "The simulation's terrain (material grid, OLX pixel flags, hole carving, material hash) and the colour image that follows its edits."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

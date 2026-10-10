@@ -34,6 +34,13 @@ traces in `rl-oracle`'s format.
   level with both mods (3000 ticks) and checks the invariants every tick,
   and that a clone gives the same checksums and events; `tests/no_alloc.rs`
   fires every Classic weapon without allocating. Both skip without content.
+- `play(content, sc, expected, each)` runs a scenario and hands each frame's
+  world and events to `each` (`replay` records traces with it);
+  `color_after` is the colour terrain after a scenario. `tests/render_golden.rs`
+  compares it with `fixtures/render/*.png` (CPU goldens, in `check`); with
+  `RL_BLESS_RENDER` set it writes them instead, which is what
+  `cargo xtask bless-render --reason "<why>"` does (it logs to
+  `fixtures/blessings.log`). Never edit a golden by hand.
 - For debugging a divergence: `rl-cli scenario <name> --dump <frame>` (`--all`
   compares every field, `--fields checked+projectiles+proj_hidden+clocks` the
   named groups).

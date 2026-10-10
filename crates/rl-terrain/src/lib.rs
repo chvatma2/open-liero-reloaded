@@ -1,17 +1,20 @@
 //! Terrain as the simulation sees it (spec §5.4): one material byte per world
-//! pixel, OLX's pixel-flag view of it, and hole carving.
+//! pixel, OLX's pixel-flag view of it, and hole carving; and as players see
+//! it (spec §19 E7): [`ColorMap`], the colour image that replays the same
+//! edits.
 //!
-//! `#![no_std]` + `alloc`. Colour art is not here: carving reports what changed
-//! and the renderer (M5) applies the same stamp to the images.
+//! `#![no_std]` + `alloc`.
 #![no_std]
 
 extern crate alloc;
 
+mod color;
 mod dirt;
 mod stamp;
 
 use alloc::vec::Vec;
 
+pub use color::{Area, ColorEdit, ColorMap, GREEN_SHADES, Rect, ThemeArt};
 use rl_data::level::{Material, MaterialGrid};
 pub use stamp::{GreenMask, GreenPixel, Stamp, StampPixel};
 

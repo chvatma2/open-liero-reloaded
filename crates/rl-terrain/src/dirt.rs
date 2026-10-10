@@ -12,17 +12,17 @@ use crate::{GreenMask, GreenPixel, PX_EMPTY, PX_ROCK, Stamp, StampPixel, Terrain
 /// same cells as C's `int` arithmetic: where that would overflow, both
 /// leave nothing to visit.
 #[derive(Clone, Copy)]
-struct Clip {
-    x0: i64,
-    x1: i64,
-    y0: i64,
-    y1: i64,
+pub(crate) struct Clip {
+    pub(crate) x0: i64,
+    pub(crate) x1: i64,
+    pub(crate) y0: i64,
+    pub(crate) y1: i64,
     stamp_x: i64,
     stamp_y: i64,
 }
 
 impl Clip {
-    fn new(t: &Terrain, sx: i32, sy: i32, w: u32, h: u32) -> Self {
+    pub(crate) fn new(t: &Terrain, sx: i32, sy: i32, w: u32, h: u32) -> Self {
         let (sx, sy) = (sx as i64, sy as i64);
         Self {
             x0: sx.max(0),
@@ -35,7 +35,7 @@ impl Clip {
     }
 
     /// Every visited `(map index, stamp x, stamp y)`, row-major.
-    fn cells(self, width: u32) -> impl Iterator<Item = (usize, u32, u32)> {
+    pub(crate) fn cells(self, width: u32) -> impl Iterator<Item = (usize, u32, u32)> {
         let (c, width) = (self, width as i64);
         (c.y0..c.y1).flat_map(move |dy| {
             (c.x0..c.x1).map(move |dx| {
@@ -46,7 +46,7 @@ impl Clip {
     }
 }
 
-fn flags_of(cell: u8) -> u8 {
+pub(crate) fn flags_of(cell: u8) -> u8 {
     match Material::from_index(cell) {
         Some(Material::Background) => PX_EMPTY,
         Some(Material::Dirt) => crate::PX_DIRT,

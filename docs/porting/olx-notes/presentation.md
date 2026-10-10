@@ -261,7 +261,10 @@ never material:
   `putColorTo` (`CMap.cpp:2365-2368`, `src/client/Entity.cpp:363-369`).
 - **A slow gib** stamps a 4×4 low-res gib frame, doubled, at
   `(int)pos − (1,1)`: `putSurfaceTo` (`CMap.cpp:2370-2373`, `Entity.cpp:373-389`).
-  It is colour-keyed, so magenta is skipped.
+  It is colour-keyed, so magenta is skipped. `DrawImageStretch2`
+  (`src/client/GfxPrimitives.cpp`) clips the destination but not the source
+  offset: a gib clipped at the map's left or top edge still draws from the
+  frame's first column and row.
 
 A stain on dirt disappears when the dirt is carved, because carving copies the
 back image. A stain on rock is permanent. Stains also change later dirt-particle
