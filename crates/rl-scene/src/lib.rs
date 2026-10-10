@@ -74,8 +74,10 @@ impl Scene {
         self.marks.observe(world, events);
     }
 
-    /// Forgets the history, for a new or restarted world.
+    /// Forgets the history and stops the camera's shake, for a new or
+    /// restarted world.
     pub fn reset(&mut self) {
+        self.camera.stop_shake();
         self.prev.clear();
         self.cur.clear();
         self.marks.clear();

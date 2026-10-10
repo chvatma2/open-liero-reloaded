@@ -126,6 +126,12 @@ impl Camera {
         self.shake_amount = self.shake_amount.max(amount);
     }
 
+    /// Ends any shake (for a new or restarted world).
+    pub fn stop_shake(&mut self) {
+        self.shaking = false;
+        self.shake_amount = 0;
+    }
+
     /// The viewport part of `CClient::Explosion`: every explosion with a
     /// nonzero shake inside the view (as the last frame showed it) shakes.
     /// `now` is the world's time after the tick.
@@ -158,9 +164,9 @@ impl Camera {
             }
         }
         if self.shaking {
-            if now.0.saturating_sub(self.shake_start.0) > SHAKE_MS {
-                self.shaking = false;
-                self.shake_amount = 0;
+            // A clock behind the start (a restarted world) ends it too.
+            if now < self.shake_start || now.0 - self.shake_start.0 > SHAKE_MS {
+                self.stop_shake();
             } else {
                 // Clamp first, so a camera at an edge shakes inward only.
                 self.clamp(map);

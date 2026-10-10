@@ -84,3 +84,21 @@ fn camera_locks_clamps_and_shakes_like_olx() {
     assert_eq!(vp(0.5), Viewport { width: 160, height: 240 });
     assert_eq!(vp(f32::NAN), Viewport { width: 320, height: 240 });
 }
+
+/// A restarted world's clock starts over (`SANDBOX_START`): a shake started
+/// in the old world must not run on until the new clock reaches it.
+#[test]
+fn shake_ends_when_the_world_restarts() {
+    use rl_scene::{Scene, SceneOptions};
+    // The clock went back past the shake's start: the shake is over.
+    let mut c = Camera::new(VP, 0, 7);
+    c.shake(5, AbsTime(200_000));
+    c.process(Some(Vec2::new(200.0, 150.0)), true, MAP, AbsTime(100_000));
+    assert_eq!(view(&c), (40.0, 30.0));
+    assert_eq!(c.shake_amount(), 0);
+    // `Scene::reset` (a new or restarted world) stops the shake.
+    let mut scene = Scene::new(Camera::new(VP, 0, 7), SceneOptions::default(), 1);
+    scene.camera.shake(5, AbsTime(100_000));
+    scene.reset();
+    assert_eq!(scene.camera.shake_amount(), 0);
+}
