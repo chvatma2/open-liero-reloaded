@@ -595,3 +595,4 @@ content. Where they conflict with earlier sections, they take precedence.
 | A7 | §4.1 (7) | `mold` is dropped. | Rust 1.99 links with `rust-lld` by default on Linux. |
 | A8 | §9.1 | Each skin is its own pack (`olx-skin-<slug>`). | Keeps one pack kind per directory; ids stay unique, with numeric suffixes on collision. |
 | A9 | §4.1 (1) | Per-crate notes live in `CLAUDE.md`; a single root `AGENTS.md` points to them. `cargo xtask layers` fails if a crate lacks `CLAUDE.md`. | One source of truth per crate. |
+| A10 | §9.3 | Committed synthetic fixture *packs* (a tiny level, and a mod with one weapon per action type) move to plan 3, where the simulation first consumes them. Plan 1's tests build their synthetic inputs in code: an LGS byte builder, an LXL builder, and sample packs. | Fixtures are most useful when they exercise simulation behavior; nothing in M1 reads them. |
