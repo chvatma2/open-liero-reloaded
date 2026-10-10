@@ -68,7 +68,7 @@ A gamepad works too (left stick walks, right stick aims; see `crates/rl-input`).
 - **Window:** the window has a fixed size (no drag-resizing, no maximise
   button; `--fullscreen` is borderless fullscreen). WSLg's compositor
   (Weston) crashes when a window is resized quickly, which ends every WSLg
-  app; the game then says it lost the connection to the display server.
+  app; the game then says the window system stopped it.
   The game runs under Wayland by default; `--window-system x11` (or
   `RL_WINDOW_SYSTEM=x11`) runs it under X11 instead, which needs
   `libxkbcommon-x11-0` and draws without VSync on WSLg.

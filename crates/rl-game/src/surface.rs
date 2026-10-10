@@ -64,16 +64,6 @@ impl SurfaceState {
         self.size.0 > 0 && self.size.1 > 0 && !self.occluded
     }
 
-    /// Whether a texture of `frame` pixels, acquired earlier, may still be
-    /// presented: the window is drawable and has that size, and the surface
-    /// is configured for it. A frame acquired before a resize is dropped
-    /// instead: presenting it would commit a buffer of the old size after
-    /// the window took the new one (under WSLg's Weston, with the window's
-    /// decorations resized, the compositor can crash on that; `window.rs`).
-    pub fn current(&self, frame: (u32, u32)) -> bool {
-        self.drawable() && self.size == frame && self.configured == Some(frame)
-    }
-
     /// The next frame to draw into, if there is one: none while the window
     /// has no area (minimised), or when the surface keeps failing (the next
     /// frame tries again). Configures the surface first when the window
@@ -144,21 +134,20 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_acquired_before_a_resize_is_not_presented() {
+    fn a_suboptimal_frame_is_presented() {
+        // Every frame `frame` gives is drawn and presented (`Gpu::present`
+        // drops none). A surface that stays suboptimal still gives a frame
+        // every time, configured again before each: the window never freezes.
         let mut s = SurfaceState::new((800, 600));
-        let mut f = Fake::default();
-        assert!(s.frame(&mut f).is_some());
-        assert!(s.current((800, 600)), "the size it was configured for");
-        // The window changed size after the texture was acquired (a
-        // scripted resize, a configure): presenting it would show the
-        // compositor a buffer of the old size for the new window.
-        s.resize((640, 480));
-        assert!(!s.current((800, 600)));
-        assert!(s.frame(&mut f).is_some());
-        assert!(s.current((640, 480)));
-        // Minimised or occluded: nothing is current.
-        s.set_occluded(true);
-        assert!(!s.current((640, 480)));
+        let mut f = Fake { answers: (1..=5).map(Acquire::Suboptimal).collect(), ..Fake::default() };
+        for n in 1..=5 {
+            assert_eq!(s.frame(&mut f), Some(n));
+        }
+        assert_eq!(f.configured.len(), 5, "configured again before each frame");
+        assert_eq!(s.frame(&mut f), Some(1), "then plain frames");
+        assert_eq!(f.configured.len(), 6);
+        assert_eq!(s.frame(&mut f), Some(2));
+        assert_eq!(f.configured.len(), 6);
     }
 
     #[test]

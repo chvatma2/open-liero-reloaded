@@ -167,8 +167,8 @@ fn run(args: Args) -> anyhow::Result<()> {
     println!("rl-game: {}", app.summary());
     println!("rl-game: {}", app.latency_summary());
     match ran {
-        // The game never sets a failing exit code: winit does when the
-        // display server closed the connection (a compositor crash).
+        // The game never sets a failing exit code; winit does, most often
+        // when the display server closed the connection (a compositor crash).
         Err(winit::error::EventLoopError::ExitFailure(_)) if app.error.is_none() => {
             Err(anyhow::anyhow!(window::lost_connection(wayland)))
         }

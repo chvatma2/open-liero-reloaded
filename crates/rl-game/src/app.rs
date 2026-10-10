@@ -173,6 +173,9 @@ impl App {
         println!("rl-game: GPU {}", gpu.info);
         self.stats.gpu = gpu.info.clone();
         self.win = Some(Shown { window, gpu, egui });
+        // Creating the window counts as a change: a scripted `size` right
+        // away waits out the interval (`window::MIN_CHANGE_INTERVAL`).
+        self.requests.opened(Instant::now());
         Ok(())
     }
 

@@ -50,7 +50,8 @@ cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --target
   and mode changes come only from the game (`size`, `fullscreen` script
   commands, the M7 options menu) through `window::Requests`: the latest
   wins, applied at the start of a frame before `acquire`, at most once
-  every `MIN_CHANGE_INTERVAL` (250 ms); a fixed window's min and max move
+  every `MIN_CHANGE_INTERVAL` (250 ms, creating the window counts as a
+  change: `Requests::opened`); a fixed window's min and max move
   with it (`window::apply`). Why: WSLg's Weston 9 segfaults when winit's
   client-side decorations are resized quickly (their `wl_shm` pool grows
   while the compositor still reads it): resizes 50 ms apart crashed it
@@ -58,16 +59,16 @@ cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --target
   `RL_WINDOW_SYSTEM`) picks the window system; auto stays Wayland on WSL
   (paced at 60 Hz; WSLg's X11 path is robust but draws uncapped). When
   winit ends its loop with an exit failure the game did not ask for, the
-  display server dropped the connection: `window::lost_connection` says
-  so and names the other window system.
+  display server probably dropped the connection: `window::lost_connection`
+  says so and names the other window system.
 - **Surface** (`surface.rs`, Review Focus 4): a state machine over a
   `Surface` trait: no frame while minimised or occluded (`drawable`),
   configure on resize (once a frame, at the latest size), reconfigure and
   retry on `Outdated` (Wayland's first frame), recreate on `Lost`, bounded
-  retries; a texture acquired before the window changed size is dropped,
-  not presented (`current`). While not drawable the loop stops redrawing
-  and waits for window events (`ControlFlow::Wait`): the sandbox pauses,
-  and the hidden time is not caught up.
+  retries; every frame it gives is presented (a suboptimal one too; the
+  surface is configured again before the next). While not drawable the
+  loop stops redrawing and waits for window events (`ControlFlow::Wait`):
+  the sandbox pauses, and the hidden time is not caught up.
   `gpu.rs` clamps every surface and screenshot size to the device's
   `max_texture_dimension_2d` (`clamp_size`), picks 8-bit RGBA (gamma
   space first: egui wants it, the readback reads 4 bytes a pixel) and

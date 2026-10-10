@@ -8,8 +8,8 @@
 //! game asks (the `size` and `fullscreen` script commands, later the
 //! options menu, M7). Those requests are coalesced in [`Requests`]: the
 //! latest wins, applied at the start of a frame before its surface texture
-//! is acquired (`SurfaceState::current` drops a texture acquired at the old
-//! size), and at most once every [`MIN_CHANGE_INTERVAL`].
+//! is acquired (so the frame is drawn at the new size), and at most once
+//! every [`MIN_CHANGE_INTERVAL`], counting the window's creation as one.
 //!
 //! Why the interval: WSLg's Weston 9 crashes (SIGSEGV) when a window's
 //! client-side decorations are resized quickly. winit draws them into one
@@ -59,6 +59,12 @@ pub struct Requests {
 }
 
 impl Requests {
+    /// The window was created at `now`: the first change waits out the
+    /// interval from then, like any change after another.
+    pub fn opened(&mut self, now: Instant) {
+        self.last = Some(now);
+    }
+
     /// Asks for a window of `w` × `h` physical pixels.
     pub fn size(&mut self, w: u32, h: u32) {
         self.pending.size = Some((w.max(1), h.max(1)));
@@ -133,19 +139,23 @@ pub fn window_system(cli: Option<WindowSystem>, var: Option<&str>) -> Result<Win
     }
 }
 
-/// What to tell the player when the window system closed the connection
-/// under the game (winit then ends its loop with a bare exit failure).
+/// What to tell the player when winit ended its loop with an exit failure
+/// the game did not ask for. That is almost always the display server
+/// closing the connection, but winit does not say why, so the text says
+/// "probably".
 pub fn lost_connection(wayland: bool) -> String {
     if wayland {
         format!(
-            "lost the connection to the display server (the Wayland compositor closed it or \
-             crashed; under WSLg, Weston crashes when a window is resized quickly); try \
-             --window-system x11 or {WINDOW_SYSTEM_VAR}=x11"
+            "the window system stopped the game, probably by closing the connection to the \
+             display server (e.g. the Wayland compositor crashed: under WSLg, Weston can crash \
+             when a window is resized quickly); try --window-system x11 or \
+             {WINDOW_SYSTEM_VAR}=x11"
         )
     } else {
         format!(
-            "lost the connection to the display server (the X server closed it or crashed); \
-             try --window-system wayland or {WINDOW_SYSTEM_VAR}=wayland"
+            "the window system stopped the game, probably by closing the connection to the \
+             display server (e.g. the X server exited); try --window-system wayland or \
+             {WINDOW_SYSTEM_VAR}=wayland"
         )
     }
 }
@@ -209,6 +219,19 @@ mod tests {
     }
 
     #[test]
+    fn creating_the_window_starts_the_interval() {
+        // A script's `size` at tick 0 must not resize the window right
+        // after it was created (two changes in quick succession).
+        let t0 = Instant::now();
+        let mut r = Requests::default();
+        r.opened(t0);
+        r.size(800, 600);
+        assert_eq!(r.due(t0 + Duration::from_millis(10)), None);
+        let due = r.due(t0 + MIN_CHANGE_INTERVAL);
+        assert_eq!(due, Some(Change { size: Some((800, 600)), fullscreen: None }));
+    }
+
+    #[test]
     fn the_window_system_is_the_command_lines_then_the_variables() {
         use WindowSystem::*;
         assert_eq!(window_system(None, None), Ok(Auto));
@@ -225,7 +248,7 @@ mod tests {
     #[test]
     fn a_lost_connection_names_the_way_out() {
         let w = lost_connection(true);
-        assert!(w.starts_with("lost the connection to the display server"), "{w}");
+        assert!(w.starts_with("the window system stopped the game, probably"), "{w}");
         assert!(w.contains("--window-system x11") && w.contains("RL_WINDOW_SYSTEM=x11"), "{w}");
         assert!(lost_connection(false).contains("--window-system wayland"));
     }
