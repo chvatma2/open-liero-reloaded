@@ -241,6 +241,35 @@ fn missing_assets_use_placeholders() {
     assert!(fired > 0);
 }
 
+/// One undecodable core sprite (or a missing sound file) costs only that
+/// asset: a placeholder or silence and a warning, never the whole core pack.
+#[test]
+fn an_undecodable_core_sprite_is_a_placeholder_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("olx-core");
+    let mut pack = thin_core();
+    pack.def.sprites = vec!["crosshair".into(), "hook".into()];
+    pack.sprites.insert("crosshair".into(), filled(12, 6, Rgba::rgb(0, 255, 0)));
+    pack.sprites.insert("hook".into(), filled(6, 6, Rgba::rgb(255, 0, 0)));
+    rl_pack::write_core(&mut DirFs::new(&dir), &pack).unwrap();
+    std::fs::write(dir.join("gfx/hook.png"), b"not a png").unwrap();
+    let mut def = pack.def.clone();
+    def.sounds.push("throw.ogg".into());
+    std::fs::write(dir.join("core.ron"), ron::to_string(&def).unwrap()).unwrap();
+
+    let content = Content::open(tmp.path()).unwrap();
+    let core = content.core();
+    assert!(core.has_sprite("crosshair"), "the good sprite is kept: {:?}", content.warnings());
+    assert_eq!(core.sprite("crosshair").get(0, 0), Rgba::rgb(0, 255, 0));
+    assert!(!core.has_sprite("hook"));
+    assert_eq!(core.sprite("hook").get(0, 0), PLACEHOLDER);
+    assert_eq!(core.colour("RopeColour1"), Some(Rgba::rgb(160, 80, 0)), "the colours are kept");
+    let w = content.warnings();
+    assert!(w.iter().any(|w| w.contains("gfx/hook.png")), "{w:?}");
+    assert!(w.iter().any(|w| w.contains("sounds/throw.ogg")), "{w:?}");
+    assert!(!w.iter().any(|w| w.contains("placeholders and silence instead")), "{w:?}");
+}
+
 #[test]
 fn new_world_spawns_worms_on_free_spots() {
     let tmp = tempfile::tempdir().unwrap();

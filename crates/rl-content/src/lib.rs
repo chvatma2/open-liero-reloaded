@@ -92,8 +92,13 @@ impl Content {
             }
         }
         let core = match packs.get(CORE_PACK_ID) {
-            Some((PackKind::Core, dir)) => match rl_pack::read_core(&DirFs::new(dir)) {
-                Ok(pack) => CorePack::from_pack(pack, &mut warnings),
+            Some((PackKind::Core, dir)) => match rl_pack::read_core_tolerant(&DirFs::new(dir)) {
+                Ok((pack, skipped)) => {
+                    for e in skipped {
+                        warnings.push(format!("core pack {CORE_PACK_ID}: {e}: left out"));
+                    }
+                    CorePack::from_pack(pack, &mut warnings)
+                }
                 Err(e) => {
                     warnings.push(format!("core pack {CORE_PACK_ID}: {e}: placeholders and silence instead"));
                     CorePack::empty()

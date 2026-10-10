@@ -16,7 +16,7 @@ mod skin_pack;
 mod theme_pack;
 mod validate;
 
-pub use core_pack::{CorePack, read_core, write_core};
+pub use core_pack::{CorePack, read_core, read_core_tolerant, write_core};
 pub use error::PackError;
 pub use hash::content_hash;
 pub use level_pack::{LevelPack, read_level, write_level};

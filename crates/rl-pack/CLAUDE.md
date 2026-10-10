@@ -14,6 +14,9 @@ mod, level, skin, theme and core packs; PNG helpers; content hashing; validation
     optional `green_ball.png`
   - core (OLX's shared game assets, spec §19 E9): `core.ron` (sprite and sound
     lists, `colours.cfg` values), `gfx/<sprite>.png`, `sounds/<file>` (raw Ogg bytes)
+- `read_core` is strict (what `validate` reports); `read_core_tolerant`
+  leaves out each undecodable sprite or missing sound file and returns its
+  error, for loaders that put a placeholder in its place.
 - `validate` never panics and reports `file:line:col` for RON errors.
   Errors: unknown references, cycles, missing assets. Warnings: unused items.
 - Bump `PACK_FORMAT_VERSION` (in `rl-data`) when a layout changes. Packs of any other

@@ -62,31 +62,62 @@ pub fn write_core(sink: &mut dyn ContentSink, pack: &CorePack) -> Result<(), Pac
     Ok(())
 }
 
+/// Reads a core pack; any unreadable sprite or sound file is an error
+/// (what `validate` reports). Games use [`read_core_tolerant`].
 pub fn read_core(src: &dyn ContentSource) -> Result<CorePack, PackError> {
+    let (pack, skipped) = read_core_tolerant(src)?;
+    match skipped.into_iter().next() {
+        None => Ok(pack),
+        Some(e) => Err(e),
+    }
+}
+
+/// Reads a core pack, leaving out each sprite that is missing or does not
+/// decode and each sound file that is missing (they are returned, in list
+/// order; the pack's lists name only what was read), so one bad file costs
+/// only that asset. The manifest, `core.ron`, invalid names and duplicates
+/// are still errors.
+pub fn read_core_tolerant(src: &dyn ContentSource) -> Result<(CorePack, Vec<PackError>), PackError> {
     let manifest = read_manifest(src)?;
     if manifest.kind != PackKind::Core {
         return Err(PackError::invalid(MANIFEST, "manifest kind is not Core"));
     }
-    let def: CoreDef = read_ron(src, CORE_FILE)?;
+    let mut def: CoreDef = read_ron(src, CORE_FILE)?;
+    let mut skipped = Vec::new();
     let mut sprites = BTreeMap::new();
     for name in &def.sprites {
         check_name("sprite", name)?;
-        let file = sprite_path(name);
-        let img = decode_rgba(&src.read(&VPath::new(&file)?)?)
-            .map_err(|message| PackError::Image { file: file.clone(), message })?;
-        if sprites.insert(name.clone(), img).is_some() {
+        if sprites.contains_key(name) {
             return Err(PackError::invalid(CORE_FILE, format!("sprite {name:?} is listed twice")));
+        }
+        let file = sprite_path(name);
+        let img = src
+            .read(&VPath::new(&file)?)
+            .map_err(PackError::from)
+            .and_then(|bytes| decode_rgba(&bytes).map_err(|message| PackError::Image { file, message }));
+        match img {
+            Ok(img) => {
+                sprites.insert(name.clone(), img);
+            }
+            Err(e) => skipped.push(e),
         }
     }
     let mut sounds = BTreeMap::new();
     for name in &def.sounds {
         check_name("sound", name)?;
-        let bytes = src.read(&VPath::new(&sound_path(name))?)?;
-        if sounds.insert(name.clone(), bytes).is_some() {
+        if sounds.contains_key(name) {
             return Err(PackError::invalid(CORE_FILE, format!("sound {name:?} is listed twice")));
         }
+        match src.read(&VPath::new(&sound_path(name))?) {
+            Ok(bytes) => {
+                sounds.insert(name.clone(), bytes);
+            }
+            Err(e) => skipped.push(e.into()),
+        }
     }
-    Ok(CorePack { manifest, def, sprites, sounds })
+    def.sprites.retain(|n| sprites.contains_key(n));
+    def.sounds.retain(|n| sounds.contains_key(n));
+    Ok((CorePack { manifest, def, sprites, sounds }, skipped))
 }
 
 #[cfg(test)]
@@ -140,6 +171,30 @@ mod tests {
         let mut def = pack.def.clone();
         def.sounds.push("bump.ogg".into());
         write_ron(&mut fs, CORE_FILE, &def).unwrap();
+        assert!(read_core(&fs).is_err());
+    }
+
+    /// One undecodable sprite and one missing sound are left out with an
+    /// error each; the rest of the pack is read.
+    #[test]
+    fn tolerant_reading_skips_only_the_bad_files() {
+        let pack = core_pack();
+        let mut fs = MemFs::new();
+        write_core(&mut fs, &pack).unwrap();
+        fs.write(&VPath::new("gfx/hook.png").unwrap(), b"not a png").unwrap();
+        let mut def = pack.def.clone();
+        def.sounds.push("bump.ogg".into());
+        write_ron(&mut fs, CORE_FILE, &def).unwrap();
+        let (read, skipped) = read_core_tolerant(&fs).unwrap();
+        assert_eq!(read.sprites.keys().collect::<Vec<_>>(), ["crosshair"]);
+        assert_eq!(read.def.sprites, ["crosshair"]);
+        assert_eq!(read.sounds.keys().collect::<Vec<_>>(), ["throw.ogg"]);
+        assert_eq!(read.def.sounds, ["throw.ogg"]);
+        assert_eq!(read.def.colours, pack.def.colours);
+        let files: Vec<_> = skipped.iter().map(|e| e.to_string()).collect();
+        assert_eq!(files.len(), 2, "{files:?}");
+        assert!(files[0].contains("gfx/hook.png") && files[1].contains("bump.ogg"), "{files:?}");
+        // The strict reader refuses the same pack.
         assert!(read_core(&fs).is_err());
     }
 }

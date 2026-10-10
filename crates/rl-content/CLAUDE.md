@@ -16,6 +16,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   silence for sounds) and a warning. Warnings are returned
   (`Content::warnings`, `LoadedMod::warnings`, ...), never printed: the
   caller logs each once. A missing pack or unreadable definition is an `Err`.
+  The core pack is read tolerantly (`rl_pack::read_core_tolerant`): an
+  undecodable sprite or a missing sound file costs only that asset.
 - **Hostile levels:** `load_level` refuses an art scale above
   `MAX_ART_SCALE` (8) or a colour image above `MAX_COLOR_MAP_BYTES`
   (256 MiB), so a pack cannot make the colour map allocate gigabytes.
