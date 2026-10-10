@@ -20,11 +20,14 @@ pub(crate) struct Draws {
     pub mt: Mt19937,
     pub ents: u32,
     pub events: TickEvents,
+    /// Spawned children `Proj_SpawnInfo::apply` computed in full (aim, speed,
+    /// position), counted for tests that bound the work per tick. Not state.
+    pub spawn_work: u64,
 }
 
 impl Draws {
     pub fn new(rand: GlibcRand, mt: Mt19937) -> Self {
-        Self { rand, mt, ents: 0, events: TickEvents::new() }
+        Self { rand, mt, ents: 0, events: TickEvents::new(), spawn_work: 0 }
     }
 
     /// `SpawnEntity` (`Entity.cpp:160-205`) for a type that draws nothing itself:

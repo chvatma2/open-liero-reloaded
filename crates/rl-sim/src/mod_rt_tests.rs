@@ -160,6 +160,9 @@ fn compiling_rejects_missing_and_bounds_cycles() {
         SimMod::compile(&def, &BTreeMap::new()),
         Err(SimModError::AbsurdAmount { path: "gun".into(), amount: 1_000_000 })
     );
+    // The limit covers real mods (at most 150) with a wide margin.
+    let def = mod_def(vec![projectile_weapon("gun", "a")], vec![("a", spawning("a", MAX_AMOUNT + 1))]);
+    assert!(matches!(SimMod::compile(&def, &BTreeMap::new()), Err(SimModError::AbsurdAmount { .. })));
 }
 
 #[test]

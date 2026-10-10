@@ -27,7 +27,10 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   its byte-exact network round trip (`shot_codec.rs`) and Model R delivery in
   `shots.rs` (delivered at the start of `tick`), projectiles and their pool
   in `projectile.rs`, spawning in `spawn.rs`. `tick` must not allocate:
-  buffers are sized in `new`.
+  buffers are sized in `new`. Hostile mods must not stall a tick: a spawn
+  `Amount` is at most `MAX_AMOUNT`, and once the pool is full a spawn skips
+  its children's work but makes their draws (`skip_children`);
+  `Draws::spawn_work` counts the children computed in full, for tests.
 - **Projectiles** (`proj_sim.rs`): after all worms in each sub-step, every
   projectile catches up its own clock in slot order (children in higher
   slots run in the same pass). Hit tests read the worm's `PosRecorder`

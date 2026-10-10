@@ -198,10 +198,16 @@ impl ProjectilePool {
         self.slots[i as usize].used
     }
 
+    /// Whether [`get_new`](Self::get_new) would return `None`. Only
+    /// [`set_unused`](Self::set_unused) frees a slot again.
+    pub fn is_full(&self) -> bool {
+        self.first_unused >= self.size()
+    }
+
     /// `getNewObj` (`FastVector.h:87-94`): the lowest free slot, or `None`
     /// when the pool is full. The caller must mark it used.
     pub fn get_new(&mut self) -> Option<usize> {
-        if self.first_unused >= self.size() {
+        if self.is_full() {
             return None;
         }
         let idx = self.first_unused;

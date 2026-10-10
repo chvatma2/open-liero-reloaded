@@ -28,6 +28,8 @@ pub(crate) struct SpawnCtx<'a> {
     pub settings: &'a SimSettings,
     /// `GetPhysicsTime()`: the frame clock (`game.simulationAbsTime()`).
     pub now: AbsTime,
+    /// Children computed in full ([`crate::rng::Draws::spawn_work`]).
+    pub work: &'a mut u64,
 }
 
 /// What spawned the projectiles (`Proj_SpawnParent`).
@@ -74,6 +76,11 @@ impl SpawnParent<'_> {
 
 /// `Proj_SpawnInfo::apply` (`src/common/PhysicsLX56_Projectiles.cpp:562-640`)
 /// with the `Proj_SpawnParent` accessors (`:495-556`).
+///
+/// Once the pool is full, the remaining children cannot spawn (nothing frees
+/// a slot during `apply`), and [`skip_children`] advances only what OLX's
+/// loop advances for them, so a hostile mod's spawn costs no more than the
+/// slots it can fill (Review Focus 2).
 pub(crate) fn spawn_info_apply(
     info: &SpawnInfo,
     mut parent: SpawnParent,
@@ -81,7 +88,14 @@ pub(crate) fn spawn_info_apply(
     ctx: &mut SpawnCtx,
 ) {
     let heading = if info.use_angle { parent.angle() } else { 0.0 };
-    for _ in 0..info.amount {
+    let rot_increment =
+        if info.use_random_rot { ctx.sim_mod.projectiles()[info.proj].rotation() } else { None };
+    for i in 0..info.amount {
+        if ctx.pool.is_full() {
+            skip_children(info, &mut parent, info.amount.abs_diff(i), rot_increment, ctx.rand);
+            return;
+        }
+        *ctx.work = ctx.work.wrapping_add(1);
         let sprd = if info.use_parent_velocity_for_spread {
             parent.velocity() * info.parent_vel_spread_factor
         } else {
@@ -89,9 +103,7 @@ pub(crate) fn spawn_info_apply(
             vec_from_angle(info.angle as f32 + heading + r * info.spread)
         };
         let mut rot = 0;
-        if info.use_random_rot
-            && let Some(inc) = ctx.sim_mod.projectiles()[info.proj].rotation()
-        {
+        if let Some(inc) = rot_increment {
             // OLX sets a zero RotIncrement to 1 in the mod itself; only this reads it.
             let inc = if inc == 0 { 1 } else { inc };
             rot = ctx.rand.random_int((360 / inc).wrapping_abs()).wrapping_mul(inc);
@@ -127,6 +139,53 @@ pub(crate) fn spawn_info_apply(
             s.random = (s.random + 1) % 255;
         }
     }
+}
+
+/// The last `n` children of [`spawn_info_apply`] when the pool has no slot:
+/// what OLX's loop body does for each (`PhysicsLX56_Projectiles.cpp:577-638`)
+/// before `CClient::SpawnProjectile` returns at `getNewObj() == NULL`
+/// (`src/client/CClient_Game.cpp:718-724`), without the vectors. The colour
+/// and wall-shooting draws are made in `CProjectile::Spawn`, so never here.
+/// - The rotation's `GetRandomInt` (one `rand()`), whose value is unused.
+/// - A shot parent's `nRandom`: `+1`, `*5`, `+1`, each `% 255`.
+/// - A projectile parent's `iRandom`: one `getRandomFloat()` for the spread
+///   (unless `UseParentVelocityForSpread`) and one for the speed variation,
+///   each `iRandom = (iRandom + 1) % 255`, in closed form.
+fn skip_children(
+    info: &SpawnInfo,
+    parent: &mut SpawnParent,
+    n: u32,
+    rot_increment: Option<i32>,
+    rand: &mut GlibcRand,
+) {
+    if rot_increment.is_some() {
+        for _ in 0..n {
+            rand.next();
+        }
+    }
+    match parent {
+        SpawnParent::Shot(s) => {
+            for _ in 0..n {
+                s.random = (s.random + 1) % 255;
+                s.random = (s.random * 5) % 255;
+                s.random = (s.random + 1) % 255;
+            }
+        }
+        SpawnParent::Proj(p) => {
+            let per_child = if info.use_parent_velocity_for_spread { 1 } else { 2 };
+            p.random = advance_random(p.random, per_child * n as u64);
+        }
+    }
+}
+
+/// `k` times `r = (r + 1) % 255` (`CProjectile::getRandomFloat`, C's `%`).
+fn advance_random(r: i32, k: u64) -> i32 {
+    if k == 0 {
+        return r;
+    }
+    // After one step, |r| < 255: a negative r counts up to 0, then wraps at 255.
+    let t = (r.wrapping_add(1) % 255) as i64 + (k - 1) as i64;
+    if t <= 0 { t as i32 } else { (t % 255) as i32 }
 }
 
 /// `CClient::SpawnProjectile` (`src/client/CClient_Game.cpp:716-730`) and
@@ -186,57 +245,5 @@ pub(crate) fn spawn_projectile(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::mod_rt::tests::{mod_def, pixel_projectile, projectile_weapon};
-    use alloc::collections::BTreeMap;
-    use alloc::vec;
-    use alloc::vec::Vec;
-
-    #[test]
-    fn spawn_info_random_index_chain() {
-        // weapons-firing.md §5.2: per projectile, spread reads T[n], then
-        // n = (n+1)%255, speed variation reads T[n], n = (n*5)%255 is the
-        // projectile's iRandom, and the next projectile starts at (n+1)%255.
-        let mut spawn = crate::mod_rt::tests::weapon_spawn("pellet");
-        spawn.amount = 3;
-        spawn.speed_var = 10.0;
-        let mut weapon = projectile_weapon("gun", "pellet");
-        if let rl_data::mod_def::WeaponKind::Projectile { spawn: s, .. } = &mut weapon.kind {
-            *s = spawn;
-        }
-        let def = mod_def(vec![weapon], vec![("pellet", pixel_projectile(None))]);
-        let m = SimMod::compile(&def, &BTreeMap::new()).unwrap();
-        let mut settings = SimSettings::lx56();
-        settings.lx56_wall_shooting = false;
-        let mut pool = ProjectilePool::new(10);
-        let mut rand = GlibcRand::new(1);
-        let mut shot = Shot { random: 250, angle: 0, pos: Vec2::new(100.0, 50.0), ..Shot::default() };
-        let mut ctx = SpawnCtx {
-            sim_mod: &m,
-            pool: &mut pool,
-            rand: &mut rand,
-            settings: &settings,
-            now: AbsTime(500),
-        };
-        let info = m.weapons()[0].spawn.clone().unwrap();
-        spawn_info_apply(&info, SpawnParent::Shot(&mut shot), AbsTime(490), &mut ctx);
-        // n: 250 -> 251 -> 251*5%255 = 235 (proj 0) -> 236 -> 237 -> 237*5%255 = 165 (proj 1)
-        //   -> 166 -> 167 -> 167*5%255 = 70 (proj 2) -> 71.
-        assert_eq!(shot.random, 71);
-        let randoms: Vec<_> = pool.iter().map(|(_, p)| p.random).collect();
-        assert_eq!(randoms, [235, 165, 70]);
-        let p0 = pool.get(0).unwrap();
-        let sprd = vec_from_angle(0.0 + 0.0 + get_fixed_random_num(250) * 3.0);
-        let v = sprd * 250.0 + sprd * 10.0 * get_fixed_random_num(251) + Vec2::new(0.0, 0.0);
-        assert_eq!((p0.vel.x.to_bits(), p0.vel.y.to_bits()), (v.x.to_bits(), v.y.to_bits()));
-        assert_eq!(p0.pos, Vec2::new(108.0, 50.0));
-        assert_eq!(
-            (p0.spawn_time, p0.last_sim_time, p0.ignore_worm_coll_before),
-            (AbsTime(490), AbsTime(490), AbsTime(600))
-        );
-        assert_eq!(p0.time_var_random, get_fixed_random_num(235));
-        // Pixel projectiles draw their colour: one rand() each, nothing else here.
-        assert_eq!(rand.calls(), 3);
-    }
-}
+#[path = "spawn_tests.rs"]
+mod tests;

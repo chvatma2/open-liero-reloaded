@@ -86,6 +86,7 @@ impl Bench {
             rand: &mut self.draws.rand,
             settings: &self.settings,
             now: time,
+            work: &mut self.draws.spawn_work,
         };
         spawn_projectile(&mut ctx, proj, pos, vel, 0, -1, random, time, time);
     }

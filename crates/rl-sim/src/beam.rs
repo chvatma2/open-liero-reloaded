@@ -170,8 +170,11 @@ pub(crate) fn process_shot_beam(
     let map_min = ctx.terrain.width().min(ctx.terrain.height());
     let mut set = others(worms, shot.worm);
     let BeamCtx { terrain, holes, draws, parts } = ctx;
+    // The trace only ever frees bonuses, so without one at the start no part
+    // needs the 32-slot scan (a wide, long beam has many parts).
+    let bonus_check = beam.damage != -1 && bonuses.iter().any(|b| b.used);
     trace(beam, shot.pos, dir, map_min, parts, |p, width| {
-        if beam.damage != -1 && bonuses.iter().any(|b| b.used && (p - b.pos).length() < 3.0) {
+        if bonus_check && bonuses.iter().any(|b| b.used && (p - b.pos).length() < 3.0) {
             let mut blast = Blast {
                 settings,
                 terrain,

@@ -34,9 +34,10 @@ use crate::events::{GAME_SOUND_PREFIX, GAME_SOUNDS, SoundId};
 pub const MAX_PROJECTILES: usize = 4096;
 /// OLX's own nesting guard (`CGameScript::LoadProjectile`: `depth > 128`).
 pub const MAX_DEPTH: usize = 128;
-/// The largest `Amount` a spawn may have. Real mods use at most 150; a huge
-/// amount would make one spawn event loop for minutes.
-pub const MAX_AMOUNT: i32 = 10_000;
+/// The largest `Amount` a spawn may have. Classic and MW 1.0 use at most 150;
+/// a spawn loops over its amount for every child it can place, so this bounds
+/// the work of one spawn event.
+pub const MAX_AMOUNT: i32 = 1000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SimModError {

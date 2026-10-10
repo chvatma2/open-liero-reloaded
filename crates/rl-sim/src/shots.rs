@@ -194,6 +194,7 @@ pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], 
         rand: &mut ctx.draws.rand,
         settings: ctx.settings,
         now: ctx.now,
+        work: &mut ctx.draws.spawn_work,
     };
     spawn_info_apply(info, SpawnParent::Shot(shot), spawn, &mut sctx);
 }

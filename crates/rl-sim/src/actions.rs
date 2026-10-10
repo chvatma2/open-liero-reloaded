@@ -348,6 +348,7 @@ fn spawn_children(pool: &mut ProjectilePool, i: usize, s: &SpawnInfo, ctx: &mut 
         rand: &mut ctx.draws.rand,
         settings: ctx.settings,
         now: ctx.now,
+        work: &mut ctx.draws.spawn_work,
     };
     spawn_info_apply(s, SpawnParent::Proj(&mut parent), time, &mut sctx);
     if let Some(p) = pool.get_mut(i) {
