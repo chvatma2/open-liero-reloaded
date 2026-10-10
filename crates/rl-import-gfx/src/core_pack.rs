@@ -94,10 +94,24 @@ pub fn import_core(
                 Err(e) => warnings.push(format!("{e}: skipped")),
             }
         } else if name.ends_with(".ogg") {
-            sounds.entry(name).or_insert(olx.read(&path)?);
+            if sounds.contains_key(&name) {
+                warnings.push(format!("{path}: a second sound {name:?}, skipped"));
+                continue;
+            }
+            match olx.read(&path) {
+                Ok(bytes) => {
+                    sounds.insert(name, bytes);
+                }
+                Err(e) => warnings.push(format!("{e}: silence instead")),
+            }
         } else if name == "colours.cfg" {
-            let text = String::from_utf8_lossy(&olx.read(&path)?).into_owned();
-            colours.extend(parse_colours(&text, path.as_str(), &mut warnings));
+            match olx.read(&path) {
+                Ok(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    colours.extend(parse_colours(&text, path.as_str(), &mut warnings));
+                }
+                Err(e) => warnings.push(format!("{e}: no colours from it")),
+            }
         } else {
             warnings.push(format!("{path}: not a sprite, sound or colours.cfg, skipped"));
         }
@@ -162,5 +176,41 @@ mod tests {
         let mut out = MemFs::new();
         rl_pack::write_core(&mut out, &c.pack).unwrap();
         assert_eq!(rl_pack::read_core(&out).unwrap(), c.pack);
+    }
+
+    /// A source whose files exist but cannot be read, except `readable`.
+    struct Unreadable {
+        fs: MemFs,
+        readable: &'static str,
+    }
+
+    impl ContentSource for Unreadable {
+        fn read(&self, path: &VPath) -> Result<Vec<u8>, rl_vfs::VfsError> {
+            if path.as_str() == self.readable {
+                return self.fs.read(path);
+            }
+            Err(rl_vfs::VfsError::Io { path: path.to_string(), source: std::io::Error::other("denied") })
+        }
+        fn list(&self, dir: &VPath) -> Result<Vec<String>, rl_vfs::VfsError> {
+            self.fs.list(dir)
+        }
+        fn exists(&self, path: &VPath) -> bool {
+            self.fs.exists(path)
+        }
+    }
+
+    #[test]
+    fn unreadable_sounds_and_colours_are_warnings() {
+        let fs = MemFs::new()
+            .with("data/sounds/throw.ogg", "OggS")
+            .with("data/sounds/bump.ogg", "OggS")
+            .with("data/frontend/colours.cfg", "[Colours]\nX = #BE0000\n");
+        let src = Unreadable { fs, readable: "data/sounds/bump.ogg" };
+        let files = ["data/sounds/throw.ogg", "data/sounds/bump.ogg", "data/frontend/colours.cfg"]
+            .map(|f| VPath::new(f).unwrap());
+        let c = import_core(&src, &files, origin()).unwrap();
+        assert_eq!(c.pack.def.sounds, ["bump.ogg"]);
+        assert!(c.pack.def.colours.is_empty());
+        assert_eq!(c.warnings.len(), 2, "{:?}", c.warnings);
     }
 }
