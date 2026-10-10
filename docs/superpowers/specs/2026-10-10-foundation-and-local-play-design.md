@@ -1,0 +1,580 @@
+# rust-liero: Foundation and Local Play Design
+
+- **Date:** 2026-10-10
+- **Status:** Draft, awaiting review
+- **Scope:** Sub-projects 1 (Foundation) and 2 (Local play). Sub-projects 3 (Modernization) and 4 (Networking) are out of scope here and get their own brainstorms.
+
+## 1. Purpose
+
+rust-liero is a Rust reimplementation of [OpenLieroX](https://github.com/openlierox/openlierox) (OLX), modernized for current hardware.
+It is also the author's first game in Rust.
+The working name is `rust-liero`, and crates use the prefix `rl-`.
+The final name must not contain "LieroX" or "Liero Xtreme", because the original LX license forbids it (see §11).
+
+### 1.1 What the user asked for
+
+- Old OLX levels, mods and skins must be **playable**, for nostalgia: they are years of community work.
+  File-format compatibility is **not** required: content is converted into new native formats.
+- Physics, movement and shooting must **feel identical** to OLX.
+  Internal representations may change.
+- Network compatibility with existing OLX servers and clients is **not** required.
+- Modernize where it is feasible and performant, especially for large, modern displays.
+  Graphical effects may be added later.
+- The project is built **agentic-first**: small, unit-tested modules, rapid iteration, little context per task.
+- No split-screen. The first milestone is local play against bots.
+- Gusanos (the second engine bundled in OLX) is **dropped entirely**: no Gusanos engine, mods or levels.
+- The network model gets its own brainstorm later.
+  It must **not depend on a central master server**: OLX's community died when its master server went down.
+- Platforms: desktop first, developed on a Linux build (WSL2).
+  The architecture is web-ready from day one.
+- Content in the OpenLieroX GitHub repository is treated as acceptable to use and bundle in this non-commercial, open-source project.
+- Runtime performance has priority.
+  A large amount of setup code is acceptable, because agents write it.
+
+### 1.2 Initial content scope
+
+| Kind | Item | OLX source (pinned commit `d1ad953f4f20610f2648cce26c9739e7c088409d`) |
+|---|---|---|
+| Level | Liero Factory | `share/gamedir/levels/Liero Factory.lxl` (1200×480) |
+| Level | Castle Strike | `share/gamedir/levels/CastleStrike.lxl` (1350×550) |
+| Level | Fossil Facility | `share/gamedir/levels/FossilFacility.lxl` (640×480) |
+| Level | Dirt | `share/gamedir/levels/Dirt Level.lxl` (504×350) |
+| Mod | Liero 1.0 | `share/gamedir/Classic/` (internal name "Liero v1.0", 38 weapons, LGS v7) |
+| Mod | Modern Warfare 1.0 | `share/gamedir/MW 1.0/` (internal name "Modern Warfare1.0", 50 weapons, LGS v7) |
+| Skins | All 409 | `share/gamedir/skins/*.png` (2.4 MB, one format; `default.png` is the default) |
+| Theme | Dirt | `share/gamedir/data/themes/Dirt/` (hole stamps, used for carving) |
+| Game mode | Deathmatch | — |
+
+The importers are generic, so adding more OLX content later is a one-line change to the manifest (§9.3).
+
+### 1.3 Success criteria for this spec
+
+1. A local Deathmatch game against bots is playable on Linux on any of the 4 levels, with either mod (milestone M7).
+2. Worm movement, ninja rope and every weapon of both mods match OLX **bit-exactly** in recorded oracle scenarios (§6).
+   A documented float tolerance is used only where bit-exactness is proven impossible.
+3. The fast test tier (`cargo xtask check`) runs in under about 60 s and covers unit, corpus, oracle and short bot-match tests.
+4. The simulation crates build for `wasm32-unknown-unknown` in CI.
+
+### 1.4 Non-goals for this spec
+
+- Networking. Only constraints are recorded (§12.2).
+- Game modes other than Deathmatch. The interface supports them (§5.8).
+- Gusanos content, original Liero `.lev` levels, Teeworlds `.map` levels, and LX text-source mods.
+- Enhanced visuals beyond the hooks in §8 (GPU particles, lighting, wider field of view). These belong to sub-project 3.
+- Split-screen, a campaign mode (hooks only, §12.1), a web front end, Android.
+
+## 2. Background: what OLX is
+
+The analysis is summarized here so that implementers do not need to re-derive it.
+Source paths are relative to the OLX repository root.
+
+- **About 155k lines of C++ under `src/`.**
+  The classic simulation (LX56 physics, rope, projectiles, actions, carving) is roughly 10–15k lines.
+  The rest is not ported:
+  - the 640×480 "DeprecatedGUI" menus, 23k lines;
+  - networking with version-compatibility branches, about 30k lines;
+  - Gusanos, 34k lines;
+  - platform glue.
+- **Timing.** The outer loop is a fixed 100 Hz (`src/game/Game.h:105`, `Game.cpp:917-957`).
+  LX56 worm and projectile physics run at **84 Hz** (`include/PhysicsLX56.h:16-21`).
+  The client has its own time accumulator (`src/client/CClient_Game.cpp:60-222`), and **each projectile has its own** accumulator (`src/common/PhysicsLX56_Projectiles.cpp:1376-1410`).
+- **Numbers and randomness.** All state is `float`.
+  There are two sources of randomness:
+  - a 256-entry `RandomNumbers[]` table, indexed per shot (`include/RandomNumberList.h`);
+  - libc `rand()` (`src/common/MathLib.cpp:58-76`).
+- **Worm physics** is in `src/common/PhysicsLX56.cpp:272-469`.
+  Collision is in `moveAndCheckWormCollision` (`:88-269`): recursive step halving, an x −3..+3 / y +5..−4 scan, and deliberate LX56 quirks.
+- **Ninja rope** is in `PhysicsLX56.cpp:505-610` and `src/client/CNinjaRope.cpp`.
+  It applies a constant pull force (not a spring) beyond the rest length.
+- **Projectiles** are in `PhysicsLX56_Projectiles.cpp`. Notable details:
+  - per-pixel terrain collision;
+  - worm hits swept every 2 px;
+  - the "wallshooting" grace window of roughly 11 ms (an LX56 bug that OLX keeps);
+  - 27 action types (`include/ProjAction.h:140-175`);
+  - Timer, Hit and PlayerHit events.
+- **Terrain** is an 8-bit material map at 1× scale, plus front and back color images at 2× scale (`src/common/CMap.cpp:460-466`).
+  `CarveHole` (`CMap.cpp:1007-1106`) uses the theme's hole stamps.
+- **Mods** are `script.lgs` binaries, version 7 (LX 0.56) or 8 (OLX), read by `CGameScript::Load` (`src/common/CGameScript.cpp:582-828`).
+  In v7 the projectiles are inline and recursive.
+- **Levels** are `.lxl` files: a zlib-compressed block with back RGB, front RGB and per-pixel flags, plus optional chunks (`src/common/MapLoader_LieroX.cpp`).
+- **Skins** are 672×36 sheets: the image on top and a colorization mask below (`src/client/CGameSkin.cpp:720-790`).
+- **Test hooks** in `src/common/Command.cpp:2262-2330`: `simSetSeed`, `simStep`, `setWormInput` (move, shoot, jump and carve only) and `dumpGameState`.
+  They are used by `tests/headless/test_physics.py`.
+- **Weaknesses we fix by design:**
+  - the simulation is tangled with rendering, sound and network (global singletons, `cClient->getGameLobby()` read about 57 times in the physics code);
+  - rendering is done in software at 640×480;
+  - networking is client-authoritative;
+  - there are no replays.
+
+## 3. Key decisions
+
+| # | Decision | Rationale |
+|---|---|---|
+| D1 | Rust; the simulation is a pure CPU crate with no engine dependency | Deterministic and testable; it is shared by the game, the CLI, bots and a future server |
+| D2 | wgpu + winit + egui; kira for audio, gilrs for gamepads | Highest performance ceiling and full rendering control; web-ready through standard tooling; egui scales to any DPI |
+| D3 | Physics/material grid fixed at 1× OLX world pixels | A higher grid would change the feel (collision code is pixel-granular) and break bit-exact verification |
+| D4 | Art resolution is per content (2× for imports, up to 8× native); rendering at native resolution | Large-screen sharpness without changing the feel |
+| D5 | Default field of view = OLX's (240 visible world pixels in height); a wider view is a match setting | Field of view affects gameplay on small maps |
+| D6 | Native, text-first formats (RON plus PNG/OGG); OLX content is imported | Diffable, readable by agents, hot-reloadable, extensible |
+| D7 | Gusanos dropped | 15–20k lines for 4 mods; the user decided against it |
+| D8 | Desktop first, web-ready (`no_std` simulation, abstract content I/O, WASM build in CI) | Web constraints are cheap to adopt early and expensive to retrofit |
+| D9 | License GPL-3.0-or-later | Compatible with OLX's LGPL-2+ and zlib code and with Apache/MIT dependencies; ported code is a derivative work |
+| D10 | Behavior is verified against a pinned OLX build (the oracle) | Turns "feels identical" into an automated, objective test |
+| D11 | No ECS framework; plain structs plus index handles | The simulation's data is a few flat pools; this avoids borrow-checker graphs and framework churn |
+
+## 4. Workspace architecture
+
+The project is a single Cargo workspace (Rust 2024 edition) with layered crates.
+A crate may depend on crates in lower layers.
+It may depend on a crate in its own layer only when the dependency table below lists it (for example `rl-terrain` → `rl-data`, `rl-modes` → `rl-sim`, `rl-fx` → `rl-render`).
+Dependencies must not form cycles.
+`cargo xtask check` enforces this with a layering check that compares `cargo metadata` against an allow-list in `xtask/layers.ron`.
+
+```
+L6 apps      rl-game (desktop binary) · rl-cli (headless runner) · xtask (dev workflows)
+L5 present   rl-scene · rl-render · rl-fx · rl-audio · rl-input · rl-ui
+L4 content   rl-content
+L3 sim       rl-sim · rl-modes · rl-bots · rl-replay        ← #![no_std] + alloc
+L2 formats   rl-pack · rl-import-lgs · rl-import-lxl · rl-import-gfx
+L1 model     rl-data · rl-terrain · rl-vfs (ContentSource trait + in-memory backend)
+L0 core      rl-math
+test         rl-oracle (trace format + comparison); tools/olx-oracle/ (Docker + OLX patch, not a crate)
+```
+
+| Crate | Responsibility | Key dependencies |
+|---|---|---|
+| `rl-math` | `Vec2` (f32), angles, trig/sqrt through the `libm` crate, OLX's `RandomNumbers[]` table, a glibc-`rand()`-compatible generator | `libm` |
+| `rl-data` | Content definitions: `ModDef`, `WeaponDef`, `ProjectileDef`, actions/events, `WormParams`, `RopeParams`, `GameSettings`, `LevelDef`, `SkinDef` (serde) | `serde` |
+| `rl-terrain` | Material grid, stamp operations (carve/place dirt) on material **and** on color images, dirty-rectangle tracking, collision queries | `rl-math`, `rl-data` |
+| `rl-vfs` | `ContentSource` trait (list/read), in-memory backend; feature-gated directory and zip backends | `zip` (feature) |
+| `rl-pack` | Read, write and validate native packs (§9.1), with line/column errors and format-version migration | `rl-data`, `rl-vfs`, `ron`, `png` |
+| `rl-import-lgs` | `script.lgs` v7/v8 → `ModDef`; detects repeated inline projectiles and shares them | `rl-data` |
+| `rl-import-lxl` | `.lxl` → level pack (image type; pixmap type rasterized through its theme) | `rl-data`, `rl-terrain`, `flate2` |
+| `rl-import-gfx` | OLX skins, bitmap fonts and themes → native packs | `rl-data`, `png` |
+| `rl-sim` | `World`, worms, rope, projectiles, actions, bonuses, damage, tick timing, events, checksum, `GameMode` trait | `rl-math`, `rl-data`, `rl-terrain` |
+| `rl-modes` | `GameMode` implementations; Deathmatch in this spec | `rl-sim` |
+| `rl-bots` | Bot AI producing `PlayerInput` from a read-only `&World` | `rl-sim` |
+| `rl-replay` | Replay format: pack ids and hashes, settings, seed, per-tick inputs | `rl-sim`, `serde` |
+| `rl-content` | Resolves packs through the VFS, decodes images and sounds, builds ready-to-run `World` inputs and GPU-ready asset data | `rl-pack`, `rl-vfs`, `lewton`/`symphonia` |
+| `rl-scene` | Pure CPU: `&World` plus interpolation → `DrawList`; camera logic | `rl-sim` |
+| `rl-render` | wgpu: `DrawList` → pixels, on screen or offscreen | `wgpu` |
+| `rl-fx` | Cosmetic particles from `SpawnCosmetic` events; classic CPU path, compute-shader hook | `rl-render` |
+| `rl-audio` | `Sound` events → kira, positional, with voice limits | `kira` |
+| `rl-input` | winit/gilrs → action bindings → `PlayerInput`, latched per tick | `winit`, `gilrs` |
+| `rl-ui` | egui menus and HUD | `egui` |
+| `rl-game` | Window, frame loop, wiring | everything in L5 |
+| `rl-cli` | Headless commands (§7.4) | L3–L5 (`rl-render` offscreen) |
+| `rl-oracle` | Oracle trace format, comparison, first-divergence reporting | `rl-sim` |
+| `xtask` | `check`, `full`, `api`, `fetch-olx-content`, `oracle-record`, `bless-regression` | — |
+
+### 4.1 Conventions for agentic development
+
+1. **Each crate ships `CLAUDE.md`** (and `AGENTS.md` pointing to it).
+   It states the crate's purpose, invariants, how to test it, and the OLX source it ports.
+   Agents read that file plus the public APIs of dependencies, not the whole repository.
+2. **Small files.** The target is under 500 lines per file, with one concept per module.
+   `pub(crate)` is the default visibility.
+3. **Compiler-enforced boundaries.** L0–L3 crates are `#![no_std]` + `alloc`, so file I/O, threads and wall-clock time cannot compile in the simulation.
+   Heavy dependencies (wgpu, egui, kira, winit) live only in L5/L6.
+4. **Porting references.** Each ported item carries a doc comment pointing at the OLX code it mirrors, such as `/// OLX: src/common/PhysicsLX56.cpp:272-469`.
+   `docs/porting/STATUS.md` tracks each subsystem: ported / oracle-verified / deliberate deviations and kept quirks.
+5. **API summaries.** `cargo xtask api` writes a compact list of each crate's public items to `target/api/<crate>.txt`.
+6. **Low-noise feedback.** Every xtask command prints only failures, plus paths to artifacts (PNG diffs, replays, first-divergence reports).
+   Test runs use `cargo nextest`.
+7. **Fast builds.**
+   - The `mold` linker.
+   - `[profile.dev] opt-level = 1`, and `opt-level = 3` for dependencies.
+   - Simulation crates have only small dependencies.
+   - The goal for a crate-level edit → test loop is under about 10 s.
+8. **Lints.** CI runs `rustfmt` and `clippy -D warnings`.
+   `#![forbid(unsafe_code)]` applies everywhere except `rl-render` where needed, with a justification.
+
+## 5. Simulation design (`rl-sim`)
+
+### 5.1 Interface
+
+```rust
+impl World {
+    pub fn new(setup: MatchSetup) -> World;            // mod, level terrain, settings, seed, players
+    pub fn tick(&mut self, inputs: &[PlayerInput]) -> &TickEvents;   // fixed 100 Hz
+    pub fn checksum(&self) -> u64;                      // hash of full state
+    // read-only accessors: worms(), projectiles(), bonuses(), terrain(), time(), mode_state() ...
+}
+```
+
+`tick` is the only way game state changes.
+`World: Clone` holds: one clone is a full snapshot, for tests and future rollback.
+
+### 5.2 Timing
+
+- `tick` advances 10 ms of simulated time (100 Hz).
+- Inside each tick, LX56 worm physics runs at 84 Hz from a world-level accumulator.
+  Each projectile has its own accumulator and catches up on its own schedule, exactly as in OLX.
+- Time uses the **same numeric representation and rounding as OLX**.
+  M3 begins by tracing OLX's time types (`TimeDiff`, `AbsTime`, `fLastSimulationTime`) and records the findings in `docs/porting/timing.md` before any physics code is written.
+- `GameSpeed` scales the frame delta as in OLX (clamped to 0.05–10).
+- The game loop interpolates rendering between the last two ticks.
+  Interpolation never feeds back into the simulation.
+
+### 5.3 State layout
+
+- **Worms:** up to 32 entries; `WormId(u8)` is an index. Each worm holds its own `NinjaRope`.
+- **Projectiles:** a pre-allocated pool, with capacity defaulting to OLX's 3000 and a `GameSettings` knob to raise it.
+  Slot allocation, reuse and iteration order **mirror OLX's `FastVector`**, because order determines random-number use and event order.
+  Hot fields used in every physics step are stored together.
+- **Bonuses:** at most 32, as in OLX.
+- **No heap allocation inside `tick`.**
+  The event buffer is reused between ticks.
+  A test with a counting global allocator enforces this.
+
+### 5.4 Terrain
+
+- The simulation owns only the **material grid**: 1 byte per world pixel (rock, dirt, background, and so on).
+- Carving or placing dirt updates the grid and emits `TerrainEdit { op, stamp, pos }`.
+- `rl-terrain` applies the same edit to the color images, either in the renderer or in headless golden tests, using the same function.
+- The terrain type records its scale (cells per world unit); this spec fixes it at 1.
+  The field exists so that a later "HD physics" experiment can be added without changing the interface.
+
+### 5.5 Randomness
+
+The simulation has two sources of randomness, matching OLX:
+
+1. **The shared table.** OLX's 256-entry `RandomNumbers[]` table, indexed by a per-shot seed byte, exactly as `Proj_SpawnInfo::apply` does.
+2. **A glibc-compatible `rand()`.** The generator lives in `World` and is seeded from `MatchSetup`, so oracle runs seeded with `simSetSeed` match.
+
+Cosmetic randomness lives in `rl-fx` with its own generator and never touches either source.
+Any OLX `rand()` call that belongs to cosmetics (blood, gfx entities) is identified during porting.
+Oracle runs use OLX's dedicated mode, which does not spawn those entities, so the comparison is not disturbed.
+
+### 5.6 Input
+
+`PlayerInput` contains:
+
+- buttons: left, right, up, down, jump, fire, rope, change-weapon;
+- an optional mouse-aim target.
+
+Aim acceleration, angle limits and weapon selection are computed **inside** the simulation, as OLX does (`src/common/CWormHuman.cpp:223-265`).
+Bots produce the same type.
+
+### 5.7 Output events
+
+`TickEvents` carries:
+
+- `Sound`
+- `TerrainEdit`
+- `Explosion`
+- `SpawnCosmetic` (blood, smoke, trails, gibs)
+- `WeaponFired`
+- `Damage`
+- `Kill`
+- `BonusPickup`
+- `Message`
+- `GameOver`
+
+The renderer, audio, HUD and tests consume these events, together with read-only accessors.
+The simulation never calls into them.
+
+### 5.8 Settings and game modes
+
+- `GameSettings` is a typed struct that defaults to OLX's "LieroX 0.56" preset.
+  It is immutable during a match.
+  It covers the gameplay features from `src/common/FeatureList.cpp` that are relevant to the classic engine.
+- The `GameMode` trait is defined in `rl-sim` and implemented in `rl-modes`.
+  - **Callbacks:** spawn, kill, damage, pickup, per-tick, is-over, scoring.
+  - **Command interface** (hook H1, §12.1): spawn a worm or bot with a loadout, give a weapon, apply a terrain stamp, emit a message, end the match with a result.
+  - Deathmatch is the only mode implemented in this spec.
+
+### 5.9 Bots (`rl-bots`)
+
+- **Approach:** port OLX's approach from `src/common/CWormBot.cpp`: area-based pathfinding over maximal free rectangles, a ballistic aim solver, heuristic weapon choice, rope use, and difficulty levels.
+  Exact parity with OLX bots is **not** required.
+- **Determinism:**
+  - bots use their own seeded generator;
+  - pathfinding is spread across ticks using a **work-unit** budget, never a wall-clock budget, so bot matches are reproducible.
+- **Configuration:** bots take a behavior configuration (hook H3, §12.1). The default is the Deathmatch brain.
+- **Testing personality:** a "chaos" personality cycles through every weapon, for test coverage.
+
+## 6. Fidelity oracle
+
+The oracle is a pinned build of OLX that records reference behavior for the Rust simulation to match.
+
+- **`tools/olx-oracle/`** contains:
+  - a Dockerfile that builds OLX at commit `d1ad953f` (Ubuntu 22.04, as OLX's own Docker image);
+  - a patch file that adds test hooks.
+- **The hooks patch adds two things:**
+  - Full input injection per worm: all buttons, aim, rope and weapon selection.
+    The existing `setWormInput` covers only move, shoot, jump and carve.
+  - A recording mode that writes one JSON line per frame to a file:
+    - frame number;
+    - per worm: position, velocity, angle, health, weapon slots with charge and reload, and rope state;
+    - per projectile: slot, type, position and velocity;
+    - bonuses;
+    - a hash of the material map.
+- **Scenarios** are RON files: level, mod, settings, seed, worm spawns and per-frame input scripts.
+  `cargo xtask oracle-record <scenario>` runs OLX in dedicated mode and stores the trace in `fixtures/oracle/<scenario>.jsonl.zst`, which is committed.
+  Agents rebuild OLX only to record new scenarios.
+- **Comparison.** `rl-oracle` replays the scenario in `rl-sim` and compares frame by frame.
+  - On failure it reports **only the first diverging frame and field**: for example, `frame 412: worm[0].vel.y expected 31.250000 got 31.249998`.
+  - Bit-exact comparison is the default.
+  - A per-field tolerance is allowed only with a written justification in the scenario file.
+- **Required scenarios for this spec:**
+  - movement: walk, jump, fall, slope climbing, collision against rock and dirt, digging;
+  - ninja rope: shoot, attach, swing, release, attach to a worm;
+  - **every weapon of both mods**: fired in open air, into terrain, and at a dummy worm;
+  - bonuses: spawn, fall, pickup;
+  - damage and death.
+
+## 7. Automated testing
+
+There are two tiers:
+
+- **`cargo xtask check`:** the fast tier, target under about 60 s, run on every agent iteration.
+- **`cargo xtask full`:** nightly and on demand.
+
+| Layer | Content | Tier |
+|---|---|---|
+| Unit | Per-crate tests: parsers, physics functions, stamps, colorization, input latching | check |
+| Corpus | Every item in the content manifest imports, validates and round-trips (native write → read → equal); `insta` snapshot summaries. `xtask check` runs `fetch-olx-content` automatically on first use, and the result is cached in `target/content/` | check |
+| Oracle | All recorded scenarios (§6) | check |
+| Property and fuzz | `proptest`: simulation invariants under random inputs (no worm inside rock, health within bounds, pools within capacity, no panics). `cargo-fuzz` targets for every importer and the pack reader | properties in check, fuzzing in full |
+| Bot matches | §7.1 | short matches in check, full grid in full |
+| Render goldens | Offscreen wgpu rendering with a software adapter (lavapipe/llvmpipe) of fixed scenario states: each level, skin colorization, HUD states, classic effects. Perceptual diff against committed PNGs; diff images written on failure | full |
+| Scene snapshots | `rl-scene` `DrawList` snapshots, which need no GPU | check |
+| GUI flows | `egui_kittest` drives menus by label: Local Play → mod → level → bots → start; then the results screen. Asserts app state and takes snapshot images | full |
+| End to end | `rl-game --autoplay <script.ron> --fake-clock` on a virtual display (Xvfb): menu → bot match → results, with screenshots at checkpoints. Asserts a clean structured log | full |
+| Benchmarks | `divan`: tick time with 3000 projectiles, `DrawList` build, render frame time. CI fails on a regression over 10% against the stored baseline | full |
+
+### 7.1 Bot matches
+
+`rl-cli match --mod <id> --level <id> --mode deathmatch --bots 8 --seed <n> --ticks <n>` runs headless at maximum speed and verifies the following:
+
+- No panic, and invariants hold every tick.
+- The match ends through the mode's win condition, or the tick limit is reached as expected.
+- **Determinism:** two runs produce identical checksum streams.
+- **Replay round-trip:** record, then replay, gives identical checksums.
+- **Performance:** 99th-percentile tick time within budget.
+- **Coverage report:** weapons fired, projectile actions and events triggered, bonuses collected, rope attachments, kills by weapon.
+  The nightly grid runs both mods × the 4 levels × several seeds with chaos and normal bots.
+  It fails if coverage drops below the required list: every weapon of both mods fired, and every action type used by the mods triggered.
+
+### 7.2 Golden match checksums
+
+Checksum streams for fixed-seed matches are committed.
+Any change in behavior shows up as a diff.
+Accepting the new behavior requires `cargo xtask bless-regression --reason "<text>"`, which records the reason in `fixtures/blessings.log`.
+
+### 7.3 Failure capture
+
+A failing match automatically writes its replay and seed to `target/failures/`.
+`rl-cli replay <file> --until <tick> --dump` reproduces it.
+`cargo xtask bless-regression --from <failure>` turns it into a permanent regression test once it is fixed.
+
+### 7.4 `rl-cli` commands
+
+| Command | Purpose |
+|---|---|
+| `import <olx-gamedir> --out <dir>` | Import OLX content into native packs |
+| `validate <pack>` | Check a pack and report errors |
+| `match ...` | Run a headless bot match (§7.1) |
+| `replay <file> [--until N] [--dump]` | Replay a recorded match |
+| `scenario <file>` | Run an oracle scenario |
+| `dump-state` | Write the game state as JSON |
+| `render <scenario|replay> --tick N --out frame.png` | Render a frame offscreen, so agents can inspect it |
+
+## 8. Presentation
+
+### 8.1 Field of view and resolution
+
+- The default field of view matches OLX: 240 world pixels of visible height, with width set by the aspect ratio.
+  Aspect ratio is clamped by the `max_aspect` setting (default 16:9).
+- Field of view is a `GameSettings` value, so it is fixed per match.
+- Rendering is at the display's native resolution.
+
+### 8.2 Render pipeline
+
+1. **`rl-scene` (CPU, pure).** Builds a `DrawList` from `&World`, the previous tick's state and an interpolation factor.
+   It includes camera logic: follow the worm, clamp to map edges, as OLX does.
+2. **World pass** into an offscreen target at art resolution (2× for imported content):
+   - **Terrain:** back and front RGBA textures plus an R8 material texture.
+     `TerrainEdit` is applied to CPU copies by `rl-terrain`, and only the dirty rectangles are uploaded with `queue.write_texture`.
+     The largest initial level, Castle Strike, is 2700×1100 at 2×, well within GPU limits.
+   - **Sprites:** one instanced pipeline over a texture atlas: worms (skins colorized at load), projectiles (pixel, rect, circle, polygon, image), bonuses, rope, laser sight, beams.
+3. **Upscale pass** to native resolution.
+   The filter is selectable: integer-nearest, sharp-bilinear (default) or a pixel-art upscaler.
+   Rendering includes a one-pixel margin, so the camera can move by sub-pixel amounts without shimmering.
+4. **`rl-fx`.**
+   - The classic CPU particle set recreates OLX's blood, smoke, gibs and trails, driven by `SpawnCosmetic`.
+   - The compute-shader particle path and post effects (glow, dynamic light) are interface hooks only in this spec.
+5. **HUD and menus** in egui, drawn at native resolution, scaled by DPI and a UI-scale setting.
+
+### 8.3 HUD and menus
+
+- **HUD:** health, weapon slots with reload and charge, kill feed, scoreboard, minimap.
+  A "classic" style uses the imported OLX bitmap fonts.
+- **Menus:**
+  - main menu;
+  - local play: mod, level with thumbnails, Deathmatch settings, bot count and difficulty;
+  - player profiles: name, skin and color, with a live colorized preview;
+  - options: video, audio, key bindings, gameplay;
+  - content import;
+  - match results.
+- Menu logic is separated from widgets, so `egui_kittest` can test it.
+
+### 8.4 Audio
+
+- `Sound` events are played through kira, panned and attenuated relative to the camera.
+- Voice limits apply per sound and globally.
+- OGG files are decoded when content loads.
+
+### 8.5 Input
+
+- **Keyboard:** winit physical key codes, so bindings work on any layout.
+- **Other devices:** mouse aiming, and gamepads through gilrs.
+- **Sampling:** the current state is sampled at each 100 Hz tick boundary.
+  Presses and releases that happen between ticks are latched, so short taps are never lost.
+- **Defaults** avoid browser-reserved keys (for example Ctrl+W).
+
+### 8.6 Frame loop
+
+- The game is single-threaded on every platform.
+- winit's event loop drives a tick accumulator, then interpolated rendering.
+- Present mode: mailbox when available, otherwise FIFO.
+  Options are uncapped frame rate or VSync, plus borderless or exclusive fullscreen.
+
+## 9. Content
+
+### 9.1 Native pack format
+
+A pack is a directory, or a `.zip` file with the same layout.
+Every pack has a `pack.ron` with these fields:
+
+- `id`, `name`, `version`, `kind` (mod / level / skin / theme)
+- `authors`, `origin`, `license`
+- `format_version`
+- `content_hash`, computed over the normalized contents
+
+| Kind | Contents |
+|---|---|
+| Level | `level.ron` (name, size in world units, `art_scale`, theme, spawns, optional sidecar metadata for hook H2), `material.png` (8-bit), `front.png` and `back.png` at `art_scale`, `thumb.png` |
+| Mod | `mod.ron` (worm and rope physics, weapon list), `weapons/*.ron`, `projectiles/*.ron` (named and shared), `gfx/`, `sfx/*.ogg` |
+| Skin | `skin.png` (any resolution) and `skin.ron` (frame layout, colorization mask) |
+| Theme | Hole stamps, stones, tiles |
+
+- **Naming:** all file names in native packs are canonical lowercase.
+- **Hot reload:** text packs reload while the game runs; the desktop build watches pack folders.
+- **Format changes:** older `format_version`s are migrated forward when loaded.
+- **Gameplay expressiveness:** the native weapon and projectile model can express everything LGS v7 and v8 can.
+  This is checked by oracle parity on imported mods.
+
+### 9.2 Importers
+
+- **Determinism:** the same input produces byte-identical output, so snapshot tests can cover the importers.
+- **Report:** each import writes a report, `import-report.ron`, listing warnings such as malformed skin sizes, ignored chunks and unknown fields.
+- **LGS details:**
+  - the 2-byte padding in the header;
+  - fixed-size strings are read up to the first NUL, since the bytes after it are garbage;
+  - `ROF /= 1000` and `Recharge /= 10` are applied when reading;
+  - `.wav` references are resolved to `.ogg`, as OLX does (`src/sound/Sounds.cpp:113`);
+  - mod file lookups are case-insensitive.
+- **LXL details:**
+  - the image type: a zlib block holding back RGB, then front RGB, then PX flags;
+  - an "OLX hi-res data" chunk replaces the 2× art if present;
+  - the pixmap type is rasterized through its theme;
+  - CTF-variant headers are accepted.
+- **Skin details:** colorization follows `Colorize_Execute` (`src/client/CGameSkin.cpp:720-790`) and is stored as mask metadata.
+
+### 9.3 Bundled OLX content
+
+- `content/olx-manifest.ron` lists each item from §1.2 with its source path, the pinned commit and a SHA-256.
+- `cargo xtask fetch-olx-content` downloads exactly those files from GitHub at the pinned commit, verifies them and imports them into `target/content/`.
+  CI caches the result, and release packaging bundles it.
+- Converted assets are **not** committed.
+- Removing or adding an item is a one-line manifest change.
+- Small **synthetic fixtures** are generated in-repo: a tiny level, and a minimal mod with one weapon per action type.
+  They let unit tests run without the OLX download.
+
+### 9.4 Virtual file system (`rl-vfs`)
+
+- The `ContentSource` trait has backends for a directory, a zip file and in-memory content.
+  A browser-storage backend comes later.
+- Sources are layered: user packs override bundled packs.
+- Case-insensitive lookup is used only by the importers.
+- User data lives in the platform data directory, found with the `directories` crate:
+  - `profiles.ron`, `settings.ron`;
+  - `replays/`, `packs/`.
+
+## 10. Milestones
+
+| # | Milestone | Done when |
+|---|---|---|
+| M0 | Toolchain (rustup, mold), workspace skeleton, layering check, `xtask check`, CI (Linux, plus `wasm32-unknown-unknown` build of L0–L3), `CLAUDE.md` template per crate, license file | `cargo xtask check` passes on the skeleton in CI |
+| M1 | `rl-data`, `rl-vfs`, `rl-pack`, `rl-import-lgs`, `rl-import-lxl`, `rl-import-gfx`, `xtask fetch-olx-content`, synthetic fixtures | All §1.2 content imports, validates and round-trips; importers have fuzz targets |
+| M2 | `tools/olx-oracle` (Docker, hooks patch), scenario format, `xtask oracle-record`, `rl-oracle` comparison, first movement scenarios | Recorded movement traces committed; the comparison tool reports first divergence |
+| M3 | `docs/porting/timing.md`, `rl-math`, `rl-terrain`, core `rl-sim` (worm movement and collision, rope, 100/84 Hz timing, checksum), `rl-cli scenario/dump-state` | Movement and rope scenarios match OLX bit-exactly |
+| M4 | Projectiles, all actions and events used by both mods, explosions and carving, beams, jetpack, damage, bonuses, death and respawn | Every weapon of both mods matches OLX; short bot-free smoke matches pass invariants |
+| M5 | `rl-scene`, `rl-render`, `rl-fx` (classic), `rl-audio`, `rl-input`, a sandbox mode in `rl-game` | Walk, rope and shoot on all 4 levels; render goldens and scene snapshots pass |
+| M6 | Deathmatch in `rl-modes`, `rl-bots`, `rl-replay`, `rl-cli match/replay`, the nightly bot grid | The grid passes with full weapon coverage; determinism and replay round-trip hold |
+| M7 | `rl-ui` (menus, HUD, profiles, results), `--autoplay`, GUI and end-to-end tests, benchmarks | **v0.1: playable local Deathmatch against bots**; `xtask full` passes |
+
+- M1 and M2 are independent and can run in parallel.
+- Within M4, action types and weapons can be split across agents.
+- M5 can start once M3 has stable read-only accessors, in parallel with M4.
+
+## 11. Licensing
+
+- The project is licensed **GPL-3.0-or-later**.
+  - Most of OLX's code is LGPL-2+ ("code under LGPL" headers, `COPYING.LIB`, `debian/copyright`), and LGPL-2.x permits relicensing under the GPL.
+  - The original Liero Xtreme code is zlib-style (`doc/original_source_release/License.txt`).
+- **Credit.** The original LX license asks that the name Liero Xtreme not be used for new releases, and asks for credit.
+  The README and the about screen credit Jason Boettcher (Liero Xtreme), the OpenLieroX team, and Joosa Riekkinen (Liero).
+- **Bundled OLX content.** Per the user's decision, OLX content is acceptable to bundle.
+  The manifest keeps it removable item by item.
+- **Dependencies** must be GPL-3-compatible (MIT, Apache-2.0, BSD, zlib, MPL-2.0).
+  `cargo deny` enforces this.
+
+## 12. Future extensions (designed for, not built)
+
+### 12.1 Campaign and scenario mode
+
+A future `rl-campaign` crate would add a `ScenarioMode` with data-driven triggers (condition → actions), and optionally rhai scripting restricted to the simulation's deterministic API.
+It would ship in the same binary.
+This spec includes three hooks for it:
+
+- **H1:** `GameMode` has a command interface (§5.8).
+- **H2:** levels support an optional sidecar metadata file (§9.1).
+- **H3:** bots take a behavior configuration (§5.9).
+
+### 12.2 Networking constraints for the later brainstorm
+
+- **No central master server dependency.**
+- **Browser clients must be supported.** They use WebRTC data channels or WebTransport, not raw UDP.
+- **The simulation already provides:**
+  - determinism and per-tick checksums;
+  - `World: Clone` snapshots;
+  - events separated from state;
+  - inputs as the only means of change.
+
+### 12.3 Modernization (sub-project 3)
+
+- GPU compute particles that collide with the material texture.
+- Glow and dynamic lighting.
+- Native content at 4×–8× art resolution.
+- A wider field of view as a match setting.
+- An "HD physics" experiment, using the terrain scale field and compared against classic with bot-match statistics.
+
+## 13. Risks
+
+| Risk | Mitigation |
+|---|---|
+| Hidden LX56 quirks (two clocks, step halving, wallshooting, float-to-int conversions) break bit-exactness | The oracle reports the first divergence; `docs/porting/STATUS.md` records deliberate quirks |
+| OLX's `rand()` use interleaves gameplay and cosmetic draws | Oracle runs use dedicated mode (no cosmetic entities); cosmetic draws are audited during porting |
+| Float differences between C++ and Rust (contraction, x87) | OLX is built for x86-64 with SSE and `-std=c++0x`, so no FMA contraction is expected; tolerance only with justification |
+| The OLX oracle build becomes hard to maintain | Pinned commit, Docker, a small patch; traces are committed, so rebuilds are rare |
+| wgpu breaking releases | Versions pinned; upgrades are deliberate tasks |
+| Scope creep | Each sub-project gets its own spec; this spec is limited to v0.1 |
+
+## 14. Open decisions (not blocking this spec)
+
+- **Final project name**, which renames the crate prefix `rl-` mechanically.
+- **Default bot difficulty**, and whether difficulty presets copy OLX's (Easy to Xtreme).
+  This will be decided in M6 from playtesting.
