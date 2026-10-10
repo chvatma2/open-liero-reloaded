@@ -1,0 +1,17 @@
+// OpenLieroX content imported by `cargo xtask fetch-olx-content` (spec §9.3).
+// Paths are relative to `share/gamedir` at `commit`. Git verifies every file
+// against the commit hash. Remove a line to stop bundling that item.
+(
+    repository: "https://github.com/openlierox/openlierox.git",
+    commit: "d1ad953f4f20610f2648cce26c9739e7c088409d",
+    shared: ["data/gfx", "data/sounds"],
+    mods: ["Classic", "MW 1.0"],
+    levels: [
+        "levels/Liero Factory.lxl",
+        "levels/CastleStrike.lxl",
+        "levels/FossilFacility.lxl",
+        "levels/Dirt Level.lxl",
+    ],
+    themes: ["data/themes/Dirt"],
+    skins: true,
+)

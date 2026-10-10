@@ -1,0 +1,33 @@
+# rust-liero
+
+A Rust reimplementation of OpenLieroX (OLX) that feels identical and is
+modernized for current displays.
+
+- **Design:** `docs/superpowers/specs/2026-10-10-foundation-and-local-play-design.md`.
+- **Plans:** `docs/superpowers/plans/`.
+- **Porting status:** `docs/porting/STATUS.md`.
+
+## Rules
+
+1. **Run `cargo xtask check` before every commit.** It prints only failures.
+   Without network access, use `cargo xtask check --offline`.
+2. **One crate per concern, under `crates/`.** Each crate has a `CLAUDE.md`:
+   read it before editing the crate. Register every new crate in `xtask/layers.ron`.
+   A crate may depend only on lower layers (`cargo xtask layers`).
+3. **Learn a dependency's API from its summary.** Run `cargo xtask api`, then
+   read `target/api/<crate>.txt` instead of the crate's source.
+4. **Cite OLX for ported behavior.** Ported code gets a doc comment naming the
+   OLX source, such as `/// OLX: src/common/PhysicsLX56.cpp:272-469`, at
+   commit `d1ad953f`. Faithfulness beats elegance; record deliberate deviations
+   in `docs/porting/STATUS.md`.
+5. **Keep the simulation pure.** Simulation-layer crates are `#![no_std]` and
+   must also build for `wasm32-unknown-unknown`.
+6. **Never panic on content.** Inputs from mods, levels and packs are untrusted.
+7. **Keep output deterministic.** Use no `HashMap` iteration in output, and no wall clock in logic.
+8. **Commits:** small, imperative subject (`rl-pack: validate projectile cycles`).
+
+## Content
+
+`cargo xtask fetch-olx-content` sparse-clones OLX at the commit pinned in
+`content/olx-manifest.ron` into `target/olx/<commit>/`, then imports the
+listed items into `target/content/`. Converted assets are never committed.

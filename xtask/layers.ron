@@ -1,0 +1,12 @@
+// Crate layering (spec §4). A crate may depend on crates in lower layers, and on
+// same-layer crates only when the pair is listed in `same_layer`. Every
+// workspace crate must be listed here. `no_std` crates must declare
+// #![no_std]; `wasm` crates must build for wasm32-unknown-unknown.
+(
+    layers: {
+        "xtask": 6,
+    },
+    same_layer: [],
+    no_std: [],
+    wasm: [],
+)
