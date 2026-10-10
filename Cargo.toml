@@ -39,6 +39,7 @@ quote = "1"
 proptest = "1.11.0"
 insta = "1.49.0"
 tempfile = "3"
+allocation-counter = "0.8.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

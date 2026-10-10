@@ -14,7 +14,7 @@ use rl_terrain::{Stamp, Terrain};
 use crate::SimSettings;
 use crate::input::{Keys, Latches};
 use crate::physics::{Ctx, simulate_worm};
-use crate::worm::Worm;
+use crate::worm::{Loadout, Worm};
 
 /// OLX `SPAWN_HOLESIZE` (`include/Consts.h:36`): the size-4 (largest) hole.
 const SPAWN_HOLE: usize = 4;
@@ -23,8 +23,8 @@ const FRAME_MS: u64 = 10;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct World {
-    pub settings: SimSettings,
-    pub terrain: Terrain,
+    settings: SimSettings,
+    terrain: Terrain,
     /// The theme's five hole stamps, smallest first.
     holes: Vec<Stamp>,
     worms: Vec<Worm>,
@@ -33,12 +33,25 @@ pub struct World {
     time: AbsTime,
     /// `CClient::fLastSimulationTime`: where the physics clock is.
     physics_time: AbsTime,
+    /// Reused each physics step so that `tick` does not allocate (spec §5.3).
+    others: Scratch,
+}
+
+/// The `(id, alive, pos)` of every worm, as the rope needs them. Only a buffer:
+/// it holds no state, so it never makes two worlds unequal.
+#[derive(Clone, Debug, Default)]
+struct Scratch(Vec<(i32, bool, Vec2)>);
+
+impl PartialEq for Scratch {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
 }
 
 impl World {
-    /// `holes` must be the theme's five hole stamps (`hole1` to `hole5`).
+    /// `holes` are the theme's hole stamps (`hole1` to `hole5`). Like OLX, a
+    /// missing hole carves nothing.
     pub fn new(settings: SimSettings, terrain: Terrain, holes: Vec<Stamp>, start: AbsTime) -> Self {
-        assert_eq!(holes.len(), 5, "a theme has five hole stamps");
         Self {
             settings,
             terrain,
@@ -47,6 +60,7 @@ impl World {
             latches: Vec::new(),
             time: start,
             physics_time: start,
+            others: Scratch::default(),
         }
     }
 
@@ -54,8 +68,21 @@ impl World {
         &self.worms
     }
 
-    pub fn worms_mut(&mut self) -> &mut [Worm] {
-        &mut self.worms
+    pub fn settings(&self) -> &SimSettings {
+        &self.settings
+    }
+
+    pub fn terrain(&self) -> &Terrain {
+        &self.terrain
+    }
+
+    /// Gives worm `i` its weapons and counters, before the match starts.
+    /// Panics if there is no worm `i`.
+    pub fn set_loadout(&mut self, i: usize, loadout: &Loadout) {
+        let w = &mut self.worms[i];
+        w.slots.clone_from(&loadout.slots);
+        w.current_weapon = loadout.current_weapon;
+        (w.lives, w.kills, w.deaths) = (loadout.lives, loadout.kills, loadout.deaths);
     }
 
     pub fn time(&self) -> AbsTime {
@@ -66,9 +93,12 @@ impl World {
     pub fn spawn_worm(&mut self, x: i32, y: i32) -> usize {
         let id = self.worms.len() as i32;
         let pos = Vec2::new(x as f32, y as f32);
-        self.worms.push(Worm::spawned(id, pos, self.time, self.settings.worm_speed_factor));
+        self.worms.push(Worm::spawned(id, pos, self.time, &self.settings));
         self.latches.push(Latches::default());
-        self.terrain.carve_hole(&self.holes[SPAWN_HOLE], pos.x as i32, pos.y as i32);
+        self.others.0 = Vec::with_capacity(self.worms.len());
+        if let Some(hole) = self.holes.get(SPAWN_HOLE) {
+            self.terrain.carve_hole(hole, pos.x as i32, pos.y as i32);
+        }
         self.worms.len() - 1
     }
 
@@ -78,8 +108,10 @@ impl World {
         self.physics_time = self.time;
     }
 
+    /// At least 1 ms, so a frame always ends even with settings outside
+    /// OLX's range ([`SimSettings::validate`]).
     fn physics_dt(&self) -> TimeDiff {
-        TimeDiff((1000 / self.settings.lx56_physics_fps.max(1)) as u64)
+        TimeDiff((1000 / self.settings.lx56_physics_fps.max(1)).max(1) as u64)
     }
 
     /// One 100 Hz frame. `keys[i]` is what worm `i` holds during this frame.
@@ -128,14 +160,17 @@ impl World {
 
     fn physics_step(&mut self, dt: f32) {
         for i in 0..self.worms.len() {
-            let others: Vec<(i32, bool, Vec2)> = self.worms.iter().map(|w| (w.id, w.alive, w.pos)).collect();
+            // Taken afresh for each worm: OLX's rope sees the worms already moved this step.
+            let others = &mut self.others.0;
+            others.clear();
+            others.extend(self.worms.iter().map(|w| (w.id, w.alive, w.pos)));
             let mut ctx = Ctx {
                 now: self.time,
                 dt,
                 terrain: &mut self.terrain,
                 holes: &self.holes,
                 settings: &self.settings,
-                worms: &others,
+                worms: others,
             };
             simulate_worm(&mut self.worms[i], &mut self.latches[i], &mut ctx);
         }
@@ -191,7 +226,7 @@ mod tests {
         // From the oracle: OLX turns 6.60000134 into 6.60000086 between frames 7 and 8 of `fall`.
         let mut w = world(Material::Background);
         w.spawn_worm(100, 20);
-        w.worms_mut()[0].vel.y = f32::from_bits(0x40d3_3336);
+        w.worms[0].vel.y = f32::from_bits(0x40d3_3336);
         w.tick(&[Keys(0)]); // frame 0 runs no physics step
         assert_eq!(w.worms()[0].vel.y.to_bits(), 0x40d3_3335);
     }
@@ -200,10 +235,52 @@ mod tests {
     fn spawning_carves_the_largest_hole() {
         let mut w = world(Material::Dirt);
         w.spawn_worm(50, 50);
-        assert_eq!(w.terrain.material(50, 50), Some(Material::Background));
-        assert_eq!(w.terrain.material(43, 50), Some(Material::Background));
-        assert_eq!(w.terrain.material(42, 50), Some(Material::Dirt));
+        assert_eq!(w.terrain().material(50, 50), Some(Material::Background));
+        assert_eq!(w.terrain().material(43, 50), Some(Material::Background));
+        assert_eq!(w.terrain().material(42, 50), Some(Material::Dirt));
         assert_eq!(w.worms()[0].dirt_count, 0, "spawning does not count as digging");
+    }
+
+    #[test]
+    fn weapon_combos_allow_changing_weapons_while_firing() {
+        // OLX getInput: `if(slots > 0 && (!bShoot || allowCombo))`, and the
+        // LX56 preset has WeaponCombos on.
+        let mut w = world(Material::Background);
+        w.spawn_worm(100, 20);
+        let slot = crate::Slot { weapon: 0, charge: 1.0, reloading: false, last_fire: 0.0 };
+        let loadout =
+            crate::Loadout { slots: vec![slot; 5], current_weapon: 0, lives: -2, kills: 0, deaths: 0 };
+        w.set_loadout(0, &loadout);
+        let held = Keys(Keys::CHANGE | Keys::FIRE);
+        w.tick(&[held]);
+        w.tick(&[held]);
+        w.tick(&[Keys(held.0 | Keys::RIGHT)]); // frame 2: the first physics step reads the press
+        assert_eq!(w.worms()[0].current_weapon, 1);
+    }
+
+    #[test]
+    fn instant_air_jump_lets_a_falling_worm_jump() {
+        let mut settings = SimSettings::lx56();
+        settings.instant_air_jump = true;
+        let terrain = Terrain::from_grid(&MaterialGrid::new(200, 200, Material::Background));
+        let mut w = World::new(settings, terrain, holes(), AbsTime(0));
+        w.spawn_worm(100, 20);
+        w.tick(&[Keys(0)]);
+        w.tick(&[Keys(0)]);
+        w.tick(&[Keys(Keys::JUMP)]);
+        assert!(w.worms()[0].vel.y < -60.0, "vy {}", w.worms()[0].vel.y);
+    }
+
+    #[test]
+    fn a_theme_without_holes_does_not_panic() {
+        // OLX's CarveHole returns 0 when the theme lacks the hole image.
+        let terrain = Terrain::from_grid(&MaterialGrid::new(50, 50, Material::Dirt));
+        let mut w = World::new(SimSettings::lx56(), terrain, Vec::new(), AbsTime(0));
+        w.spawn_worm(25, 25);
+        for _ in 0..20 {
+            w.tick(&[Keys(Keys::RIGHT | Keys::LEFT)]);
+        }
+        assert_eq!(w.terrain().material(25, 25), Some(Material::Dirt));
     }
 
     #[test]

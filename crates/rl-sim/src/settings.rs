@@ -35,6 +35,10 @@ pub struct SimSettings {
     pub rope_add_parent_speed: bool,
     pub rope_can_attach_worm: bool,
     pub ninjarope_precision: f32,
+    /// `WeaponCombos`: the weapon can be changed while firing.
+    pub weapon_combos: bool,
+    /// `InstantAirJump`: worms can jump in mid-air (`CWorm::Prepare`, `src/common/CWorm.cpp:323`).
+    pub instant_air_jump: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,13 +74,50 @@ impl SimSettings {
             rope_add_parent_speed: false,
             rope_can_attach_worm: true,
             ninjarope_precision: 1.0,
+            weapon_combos: true,
+            instant_air_jump: false,
         }
+    }
+
+    /// Checks every number against OLX's own range for it (`src/common/FeatureList.cpp`).
+    /// Outside them the simulation could overflow, hang or recurse without bound.
+    /// NaN and infinities are outside every range.
+    pub fn validate(&self) -> Result<(), SettingsError> {
+        let ranges = [
+            ("LX56PhysicsFPS", self.lx56_physics_fps as f32, 1.0, 200.0),
+            ("GameSpeed", self.game_speed, 0.1, 10.0),
+            ("WormGroundSpeed", self.worm_ground_speed, 0.0, 100.0),
+            ("WormAirSpeed", self.worm_air_speed, 0.0, 30.0),
+            ("WormMaxGroundMoveSpeed", self.worm_max_ground_move_speed, 0.1, 200.0),
+            ("WormMaxAirMoveSpeed", self.worm_max_air_move_speed, 0.1, 200.0),
+            ("WormJumpForce", self.worm_jump_force, -500.0, 100.0),
+            ("WormGravity", self.worm_gravity, -200.0, 1000.0),
+            ("WormAirFriction", self.worm_air_friction, 0.0, 10.0),
+            ("WormGroundFriction", self.worm_ground_friction, 0.0, 1.0),
+            ("WormGroundStopSpeed", self.worm_ground_stop_speed, 0.0, 10.0),
+            ("WormSpeedFactor", self.worm_speed_factor, -2.0, 10.0),
+            ("RelativeAirJumpDelay", self.relative_air_jump_delay, 0.0, 5.0),
+            ("RopeMaxLength", self.rope_max_length as f32, 0.0, 2000.0),
+            ("RopeRestLength", self.rope_rest_length as f32, 0.0, 200.0),
+            ("RopeStrength", self.rope_strength, 0.0, 10.0),
+            ("RopeSpeed", self.rope_speed, 0.0, 1000.0),
+            ("RopeGravity", self.rope_gravity, 0.0, 200.0),
+            ("RopeFallingGravity", self.rope_falling_gravity, 0.0, 200.0),
+            ("NinjaropePrecision", self.ninjarope_precision, 0.0, 10.0),
+        ];
+        for (k, v, min, max) in ranges {
+            if !(min..=max).contains(&v) {
+                return Err(SettingsError(format!("feature {k}={v} is outside OLX's range {min} to {max}")));
+            }
+        }
+        Ok(())
     }
 
     /// Reads the settings from OLX feature values (a trace header's `features`).
     /// Fails if a needed feature is missing or malformed, or if OLX had a mode
     /// on that this simulation does not implement (wrap-around maps, Gusanos
-    /// worm physics, worm friction, non-LX56 aim).
+    /// worm physics, worm friction, non-LX56 aim), or a value is outside
+    /// OLX's range ([`SimSettings::validate`]).
     pub fn from_olx_features(f: &BTreeMap<String, String>) -> Result<Self, SettingsError> {
         let get = |k: &str| f.get(k).ok_or_else(|| SettingsError(format!("feature {k} missing")));
         let num = |k: &str| -> Result<f32, SettingsError> {
@@ -100,7 +141,7 @@ impl SimSettings {
         if num("WormFriction")? != 0.0 {
             return Err(SettingsError("feature WormFriction > 0 is not supported".into()));
         }
-        Ok(Self {
+        let settings = Self {
             lx56_physics_fps: int("LX56PhysicsFPS")?,
             game_speed: num("GameSpeed")?,
             game_speed_only_for_projs: flag("GameSpeedOnlyForProjs")?,
@@ -127,7 +168,11 @@ impl SimSettings {
             rope_add_parent_speed: flag("RopeAddParentSpeed")?,
             rope_can_attach_worm: flag("RopeCanAttachWorm")?,
             ninjarope_precision: num("NinjaropePrecision")?,
-        })
+            weapon_combos: flag("WeaponCombos")?,
+            instant_air_jump: flag("InstantAirJump")?,
+        };
+        settings.validate()?;
+        Ok(settings)
     }
 }
 
@@ -169,6 +214,8 @@ mod tests {
             ("RopeAddParentSpeed", "false"),
             ("RopeCanAttachWorm", "true"),
             ("NinjaropePrecision", "1"),
+            ("WeaponCombos", "true"),
+            ("InstantAirJump", "false"),
         ]
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -191,5 +238,25 @@ mod tests {
         let mut f = olx_header();
         f.insert("WormGravity".into(), "heavy".into());
         assert!(SimSettings::from_olx_features(&f).unwrap_err().0.contains("not a number"));
+    }
+
+    #[test]
+    fn values_outside_olx_ranges_are_errors() {
+        // OLX's own limits (src/common/FeatureList.cpp). Outside them the port
+        // could overflow, hang (a 0 ms physics step) or recurse without bound.
+        for (k, v) in [
+            ("LX56PhysicsFPS", "1001"),
+            ("LX56PhysicsFPS", "0"),
+            ("RelativeAirJumpDelay", "1e30"),
+            ("RelativeAirJumpDelay", "-1"),
+            ("NinjaropePrecision", "inf"),
+            ("RopeSpeed", "NaN"),
+            ("GameSpeed", "0"),
+        ] {
+            let mut f = olx_header();
+            f.insert(k.into(), v.into());
+            let err = SimSettings::from_olx_features(&f).unwrap_err().0;
+            assert!(err.contains(k) && err.contains("outside"), "{k}={v}: {err}");
+        }
     }
 }

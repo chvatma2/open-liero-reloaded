@@ -23,6 +23,10 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 - `rl-sim` supports LX56 aim only (`ForceLX56Aim`). It rejects wrap-around maps
   (`InfiniteMap`), Gusanos worm physics and `WormFriction > 0`
   (`SimSettings::from_olx_features` errors).
+- `rl-sim` rejects settings outside the ranges OLX's feature list gives
+  (`src/common/FeatureList.cpp`), and NaN or infinite values
+  (`SimSettings::validate`). Outside them the port could overflow, hang or
+  recurse without bound. For hand-built settings, the physics step is at least 1 ms.
 - Not yet emulated (M4): the `rand()` calls OLX makes for cosmetic particles
   when digging (`CarveHole(CVec)`) and when the rope first hooks dirt. They
   don't change M3 state, but they shift the random sequence that weapons will use.

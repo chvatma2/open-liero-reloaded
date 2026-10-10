@@ -13,5 +13,8 @@ rl-data.workspace = true
 rl-terrain.workspace = true
 libm.workspace = true
 
+[dev-dependencies]
+allocation-counter.workspace = true
+
 [lints]
 workspace = true

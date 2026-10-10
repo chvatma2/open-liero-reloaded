@@ -69,9 +69,10 @@ pub(crate) fn get_input(w: &mut Worm, keys: &mut Latches, now: AbsTime, s: &SimS
     // Taken before this read changes the facing direction.
     let ninja_dir = w.face_direction();
 
+    // `src/common/CWormHuman.cpp:401-421`: with `WeaponCombos` the weapon can change while firing.
     w.state.shoot = keys.fire.is_down();
     let slots = w.slots.len() as i32;
-    if slots > 0 && !w.state.shoot && keys.change.is_down() {
+    if slots > 0 && (!w.state.shoot || s.weapon_combos) && keys.change.is_down() {
         let change = right_once as i32 - left_once as i32;
         w.current_weapon = (w.current_weapon + change).rem_euclid(slots);
     }
@@ -117,10 +118,11 @@ fn check_on_ground(w: &Worm, t: &Terrain) -> bool {
     (1..=6).rev().any(|y| t.flags(px - 2, py + y) & PX_EMPTY == 0 || t.flags(px + 2, py + y) & PX_EMPTY == 0)
 }
 
-/// The one-argument `CarveHole(CVec)` (`src/common/CMap.cpp:2172-2199`): a size-3 hole.
+/// The one-argument `CarveHole(CVec)` (`src/common/CMap.cpp:2172-2199`): a size-3 hole,
+/// or nothing if the theme has no such hole (`CMap.cpp:1014-1016`).
 /// OLX also throws cosmetic dirt particles here (consuming `rand()`, M4).
 fn carve_small(ctx: &mut Ctx, pos: Vec2) -> i32 {
-    ctx.terrain.carve_hole(&ctx.holes[3], pos.x as i32, pos.y as i32) as i32
+    ctx.holes.get(3).map_or(0, |hole| ctx.terrain.carve_hole(hole, pos.x as i32, pos.y as i32) as i32)
 }
 
 /// `PhysicsEngine::simulateWorm` for a local worm (`PhysicsLX56.cpp:272-469`),
@@ -176,7 +178,8 @@ pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
         w.last_air_jump_time = AbsTime(0);
     }
     let relative_ok = s.relative_air_jump
-        && ctx.now > AbsTime(w.last_air_jump_time.0 + (s.relative_air_jump_delay * 1000.0) as u64);
+        && ctx.now
+            > AbsTime(w.last_air_jump_time.0.saturating_add((s.relative_air_jump_delay * 1000.0) as u64));
     if w.state.jump && (on_ground || w.can_air_jump || relative_ok) {
         // Ground jump, or OLX's "instant air jump" (absolute velocity); both set vy.
         if on_ground || (!s.jump_to_aim_dir && w.can_air_jump && w.vel.y > s.worm_jump_force) {

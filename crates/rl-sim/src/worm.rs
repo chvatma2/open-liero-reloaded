@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 
 use rl_math::{AbsTime, PI_F32, Vec2};
 
+use crate::SimSettings;
 use crate::rope::NinjaRope;
 
 /// OLX `DIR_TYPE`: left is 0, right is 1.
@@ -38,6 +39,17 @@ pub struct Slot {
     pub last_fire: f32,
 }
 
+/// What a worm starts a match with: OLX's weapon selection and the
+/// `CWorm::Prepare` counters.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Loadout {
+    pub slots: Vec<Slot>,
+    pub current_weapon: i32,
+    pub lives: i32,
+    pub kills: i32,
+    pub deaths: i32,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Worm {
     pub id: i32,
@@ -69,9 +81,10 @@ pub struct Worm {
 }
 
 impl Worm {
-    /// A worm as `CWorm::Spawn` leaves it (`src/common/CWorm.cpp:591-650`),
-    /// except the carving, which [`crate::World::spawn_worm`] does.
-    pub fn spawned(id: i32, pos: Vec2, now: AbsTime, speed_factor: f32) -> Self {
+    /// A worm as `CWorm::Prepare` and `CWorm::Spawn` leave it
+    /// (`src/common/CWorm.cpp:300-330`, `591-650`), except the carving, which
+    /// [`crate::World::spawn_worm`] does.
+    pub fn spawned(id: i32, pos: Vec2, now: AbsTime, s: &SimSettings) -> Self {
         Self {
             id,
             alive: true,
@@ -92,9 +105,9 @@ impl Worm {
             deaths: 0,
             dirt_count: 0,
             frame: 0.0,
-            speed_factor,
+            speed_factor: s.worm_speed_factor,
             can_use_ninja: true,
-            can_air_jump: false,
+            can_air_jump: s.instant_air_jump,
             last_input_time: now,
             last_air_jump_time: AbsTime(0),
         }

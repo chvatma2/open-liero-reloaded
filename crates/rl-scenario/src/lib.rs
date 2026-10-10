@@ -10,7 +10,7 @@ use std::path::Path;
 use anyhow::Context;
 use rl_math::AbsTime;
 use rl_oracle::{Frame, Num, RopeRec, Scenario, SlotRec, Trace, WormRec};
-use rl_sim::{Keys, SimSettings, Slot, World};
+use rl_sim::{Keys, Loadout, SimSettings, Slot, World};
 use rl_terrain::{Stamp, Terrain};
 use rl_vfs::DirFs;
 
@@ -56,14 +56,19 @@ pub fn load_world(content: &Path, sc: &Scenario, expected: &Trace) -> anyhow::Re
     for (i, spawn) in sc.worms.iter().enumerate() {
         world.spawn_worm(spawn.x, spawn.y);
         let rec = start.w.get(i).context("trace has fewer worms than the scenario")?;
-        let w = &mut world.worms_mut()[i];
-        w.slots = rec
+        let slots = rec
             .slots
             .iter()
             .map(|s| Slot { weapon: s.id, charge: s.ch.0, reloading: s.rl, last_fire: s.lf.0 })
             .collect();
-        w.current_weapon = rec.wpn;
-        (w.lives, w.kills, w.deaths) = (rec.lives, rec.kills, rec.deaths);
+        let loadout = Loadout {
+            slots,
+            current_weapon: rec.wpn,
+            lives: rec.lives,
+            kills: rec.kills,
+            deaths: rec.deaths,
+        };
+        world.set_loadout(i, &loadout);
     }
     Ok(world)
 }
@@ -109,7 +114,7 @@ pub fn record(world: &World, f: i64) -> Frame {
             dirt: w.dirt_count,
         })
         .collect();
-    Frame { f, w, p: vec![], b: vec![], mh: format!("{:016x}", world.terrain.material_hash()) }
+    Frame { f, w, p: vec![], b: vec![], mh: format!("{:016x}", world.terrain().material_hash()) }
 }
 
 /// Plays `sc` from frame -1 to its last frame and returns the Rust trace,
