@@ -54,12 +54,13 @@ fn first_input_with(sc: &Scenario, worm: usize, key: &str) -> Option<u32> {
     sc.inputs.iter().filter(|c| c.worm == worm && c.keys.split('+').any(|k| k == key)).map(|c| c.frame).min()
 }
 
-const SPECIAL: [&str; 13] = [
+const SPECIAL: [&str; 14] = [
     "beam-burst",
     "bleed",
     "bonus-health",
     "bonus-natural",
     "bonus-weapon",
+    "castle-shoot-rope",
     "die-before-delivery",
     "explode-kill-respawn",
     "multi-shot",

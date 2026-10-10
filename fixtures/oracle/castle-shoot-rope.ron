@@ -1,0 +1,21 @@
+(
+    description: "In Castle Strike's great hall (the 1x level): worm 0 fires a bazooka at worm 1, then aims up, fires the ninja rope at the ceiling and swings left. The first scenario on CastleStrike, so every level has a render golden.",
+    level: "CastleStrike.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 300,
+    worms: [(x: 400, y: 320), (x: 470, y: 320)],
+    weapons: [
+        (worm: 0, names: ["Bazooka", "Bazooka", "Bazooka", "Bazooka", "Bazooka"], current: 0),
+    ],
+    inputs: [
+        (frame: 30, worm: 0, keys: "fire"),
+        (frame: 32, worm: 0, keys: ""),
+        (frame: 80, worm: 0, keys: "up"),
+        (frame: 120, worm: 0, keys: ""),
+        (frame: 130, worm: 0, keys: "rope"),
+        (frame: 132, worm: 0, keys: ""),
+        (frame: 180, worm: 0, keys: "left"),
+        (frame: 240, worm: 0, keys: ""),
+    ],
+)
