@@ -10,6 +10,7 @@ extern crate alloc;
 pub mod image;
 pub mod level;
 pub mod manifest;
+pub mod mod_def;
 pub mod skin;
 pub mod slug;
 pub mod theme;
