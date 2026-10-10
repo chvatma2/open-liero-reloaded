@@ -43,7 +43,7 @@ mod worm;
 
 pub use bonus::{Bonus, BonusItem, BonusKind, MAX_BONUSES};
 pub use events::{
-    CosmeticKind, Event, GAME_SOUND_PREFIX, GAME_SOUNDS, SoundId, StampId, TerrainOp, TickEvents,
+    CosmeticKind, Event, GAME_SOUND_PREFIX, GAME_SOUNDS, LostArea, SoundId, StampId, TerrainOp, TickEvents,
 };
 pub use input::{KeyLatch, Keys, Latches};
 pub use mod_rt::{

@@ -152,21 +152,36 @@ fn game_sounds_are_prefixed_and_mod_sounds_never_are() {
 }
 
 #[test]
-fn cosmetics_leave_room_for_gameplay_events() {
+fn each_class_of_events_has_its_own_quota() {
     let mut e = TickEvents::new();
-    for _ in 0..TickEvents::CAPACITY {
-        e.cosmetic(CosmeticKind::Smoke, rl_math::Vec2::ZERO, rl_math::Vec2::ZERO);
-    }
-    assert_eq!(e.len(), TickEvents::COSMETIC_LIMIT);
-    for _ in 0..TickEvents::CAPACITY {
+    let zero = rl_math::Vec2::ZERO;
+    for i in 0..2 * TickEvents::CAPACITY as i32 {
+        e.cosmetic(CosmeticKind::Smoke, zero, zero);
         e.push(Event::Spawned { worm: 0 });
+        e.edit(TerrainOp::Carve, StampId::Hole(0), i, -i, (5, 7));
     }
     assert_eq!(e.len(), TickEvents::CAPACITY);
-    assert_eq!(e.dropped() as usize, 2 * TickEvents::CAPACITY - TickEvents::CAPACITY);
+    let count = |f: fn(&Event) -> bool| e.iter().filter(|x| f(x)).count();
+    assert_eq!(count(|x| matches!(x, Event::SpawnCosmetic { .. })), TickEvents::COSMETIC_LIMIT);
+    assert_eq!(count(|x| matches!(x, Event::TerrainEdit { .. })), TickEvents::EDIT_LIMIT);
+    assert_eq!(count(|x| matches!(x, Event::Spawned { .. })), TickEvents::GAMEPLAY_LIMIT);
+    let n = 2 * TickEvents::CAPACITY;
+    assert_eq!(e.cosmetic_dropped() as usize, n - TickEvents::COSMETIC_LIMIT);
+    let gameplay = (n - TickEvents::EDIT_LIMIT) + (n - TickEvents::GAMEPLAY_LIMIT);
+    assert_eq!(e.gameplay_dropped() as usize, gameplay);
+    // The dropped edits' stamps: x from EDIT_LIMIT on, y down to -(n - 1); a
+    // 5 × 7 stamp covers x - 2..x + 3 and y - 3..y + 4.
+    let (first, last) = (TickEvents::EDIT_LIMIT as i32, n as i32 - 1);
+    let want = LostArea { x0: first - 2, y0: -last - 3, x1: last + 3, y1: -first + 4 };
+    assert_eq!(e.lost_area(), Some(want));
     let c = e.clone();
     assert!(c.list.capacity() >= TickEvents::CAPACITY);
+    assert_eq!(c, e);
     e.begin_tick();
-    assert!(e.is_empty() && e.dropped() == 0);
+    assert!(e.is_empty() && e.cosmetic_dropped() == 0 && e.gameplay_dropped() == 0);
+    assert_eq!(e.lost_area(), None);
+    e.edit(TerrainOp::Dirt, StampId::Hole(4), 1, 1, (15, 15));
+    assert_eq!(e.len(), 1, "the quotas start again");
 }
 
 #[test]
@@ -219,4 +234,43 @@ fn checksum_changes_with_state() {
         v.projectiles.slot_mut(i).life += 1.0;
         assert_ne!(v.checksum(), w.checksum(), "a projectile");
     }
+}
+
+/// Replays `events`' terrain edits on `t` with the world's stamps, as a
+/// renderer does on its colour images (spec §5.4).
+fn replay(t: &mut Terrain, holes: &[Stamp], events: &[Event]) -> usize {
+    let mut n = 0;
+    for e in events {
+        if let Event::TerrainEdit { op, stamp: StampId::Hole(i), x, y } = *e {
+            let hole = &holes[i as usize];
+            match op {
+                TerrainOp::Carve | TerrainOp::Beam => t.carve_hole(hole, x, y),
+                TerrainOp::Dirt => t.place_dirt(hole, x, y),
+                TerrainOp::GreenDirt => unreachable!("no green-dirt mask here"),
+            };
+            n += 1;
+        }
+    }
+    n
+}
+
+#[test]
+fn every_terrain_edit_survives_a_flood_of_other_events() {
+    // A dropped TerrainEdit would desync a renderer's colour images for good:
+    // flood a tick with more cosmetics and other gameplay events than fit,
+    // then make edits (four spawn holes in dirt), and replay them.
+    let terrain = Terrain::from_grid(&MaterialGrid::new(200, 200, Material::Dirt));
+    let mut w = World::new(SimSettings::lx56(), gun_mod(), terrain, holes(), AbsTime(0), 1);
+    let mut shadow = w.terrain().clone();
+    w.draws.events.begin_setup();
+    for _ in 0..20_000 {
+        w.draws.events.cosmetic(CosmeticKind::Smoke, rl_math::Vec2::ZERO, rl_math::Vec2::ZERO);
+        w.draws.events.push(Event::Damage { worm: 0, amount: 0.0, by: -1 });
+    }
+    for i in 0..4 {
+        w.spawn_worm(30 + 40 * i, 100).unwrap();
+    }
+    let events = w.tick(&[]).as_slice().to_vec();
+    assert_eq!(replay(&mut shadow, &holes(), &events), 4, "every spawn hole is reported");
+    assert_eq!(shadow.material_hash(), w.terrain().material_hash());
 }

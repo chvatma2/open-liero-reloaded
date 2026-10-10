@@ -63,6 +63,11 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   sound, spawns an entity (`Draws::entity`, which also takes the pool slot)
   or edits the map (`effects::carve_px`/`carve_at`), never with a draw of
   their own (D4/D5); cosmetics are emitted even when the entity pool is full.
+  Cosmetics, terrain edits and other gameplay events have separate quotas
+  in the buffer, so none can crowd out another; drops are counted
+  (`cosmetic_dropped`, `gameplay_dropped`) and a dropped edit's area is
+  reported (`lost_area`), never lost silently (see `TickEvents`' doc for why
+  no fixed size bounds every tick).
   `SoundId` indexes `SimMod::sounds()`: OLX's game sounds first, each prefixed
   `olx:` (`GAME_SOUND_PREFIX`, a path in OLX's data directory), then the mod's
   (paths in its pack, never prefixed), so a loader can tell the roots apart.

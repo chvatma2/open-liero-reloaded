@@ -60,7 +60,7 @@ pub(crate) fn carve_px(
     y: i32,
 ) -> u32 {
     let Some(stamp) = holes.get(hole) else { return 0 };
-    events.edit(op, StampId::Hole(hole as u8), x, y);
+    events.edit(op, StampId::Hole(hole as u8), x, y, (stamp.width(), stamp.height()));
     terrain.carve_hole(stamp, x, y)
 }
 
@@ -81,7 +81,7 @@ pub(crate) fn make_dirt(ctx: &mut ProjCtx, pos: Vec2, owner: i32) {
     for p in [pos - Vec2::new(6.0, 6.0), pos + Vec2::new(6.0, -6.0), pos + Vec2::new(0.0, 6.0)] {
         if let Some(hole) = ctx.holes.get(4) {
             let (x, y) = (c_int(p.x), c_int(p.y));
-            ctx.draws.events.edit(TerrainOp::Dirt, StampId::Hole(4), x, y);
+            ctx.draws.events.edit(TerrainOp::Dirt, StampId::Hole(4), x, y, (hole.width(), hole.height()));
             d = d.wrapping_add(ctx.terrain.place_dirt(hole, x, y) as i32);
         }
     }
@@ -96,7 +96,7 @@ pub(crate) fn make_dirt(ctx: &mut ProjCtx, pos: Vec2, owner: i32) {
 pub(crate) fn make_green_dirt(ctx: &mut ProjCtx, pos: Vec2, owner: i32) {
     let Some(mask) = ctx.green_mask else { return };
     let (x, y) = (c_int(pos.x), c_int(pos.y));
-    ctx.draws.events.edit(TerrainOp::GreenDirt, StampId::GreenBall, x, y);
+    ctx.draws.events.edit(TerrainOp::GreenDirt, StampId::GreenBall, x, y, (mask.width(), mask.height()));
     let rand = &mut ctx.draws.rand;
     let d = ctx.terrain.place_green_dirt(mask, x, y, &mut || rand.random_int(3)) as i32;
     if has_owner(owner) {

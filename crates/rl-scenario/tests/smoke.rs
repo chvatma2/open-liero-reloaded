@@ -1,7 +1,9 @@
 //! Smoke matches (spec §7.1, plan 4 task 10): four worms with random, seeded
 //! keys and weapons on every imported level with both mods, bonuses on.
 //! Every tick checks the invariants; at [`CLONE_AT`] the world is cloned and
-//! both copies must give the same checksums and events to the end.
+//! both copies must give the same checksums and events to the end. Every
+//! tick's terrain edits are replayed on a shadow terrain, as a renderer
+//! replays them on its colour images, which must keep the world's material.
 //! Needs the imported OLX content: `RL_CONTENT_DIR`, which `.cargo/config.toml`
 //! sets to `target/content` unless the environment already does.
 
@@ -9,8 +11,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rl_math::AbsTime;
-use rl_sim::{Event, Keys, Loadout, MAX_BONUSES, SimSettings, Slot, TickEvents, World};
-use rl_terrain::{PX_ROCK, Terrain};
+use rl_sim::{Event, Keys, Loadout, MAX_BONUSES, SimSettings, Slot, StampId, TerrainOp, TickEvents, World};
+use rl_terrain::{GreenMask, PX_ROCK, Stamp, Terrain};
 
 /// Ticks per match. 3000 (30 s) in the plan; at opt-level 1 eight matches of
 /// 3000 ticks with a checksum per tick fit the gate's budget when nextest
@@ -116,8 +118,30 @@ fn check(w: &World, events: &TickEvents, tick: usize, what: &str) {
     assert!(w.projectiles().count() <= rl_sim::ProjectilePool::DEFAULT_CAPACITY, "{what} tick {tick}");
     assert!(w.entity_count() <= 1024, "{what} tick {tick}: entities {}", w.entity_count());
     assert!(w.bonuses().iter().filter(|b| b.used).count() <= MAX_BONUSES);
+    assert_eq!(events.cosmetic_dropped(), 0, "{what} tick {tick}: cosmetics were dropped");
     // A dropped `TerrainEdit` would desync a renderer's colour image.
-    assert_eq!(events.dropped(), 0, "{what} tick {tick}: events were dropped");
+    assert_eq!(events.gameplay_dropped(), 0, "{what} tick {tick}: gameplay events were dropped");
+    assert_eq!(events.lost_area(), None, "{what} tick {tick}");
+}
+
+/// Applies the tick's terrain edits to `shadow` in order, with the level's
+/// stamps (green-dirt shades are cosmetic, so any `rand` will do).
+fn replay(shadow: &mut Terrain, holes: &[Stamp], mask: Option<&GreenMask>, events: &TickEvents) {
+    for e in events {
+        let Event::TerrainEdit { op, stamp, x, y } = *e else { continue };
+        match (op, stamp) {
+            (TerrainOp::Carve | TerrainOp::Beam, StampId::Hole(i)) => {
+                shadow.carve_hole(&holes[i as usize], x, y);
+            }
+            (TerrainOp::Dirt, StampId::Hole(i)) => {
+                shadow.place_dirt(&holes[i as usize], x, y);
+            }
+            (TerrainOp::GreenDirt, StampId::GreenBall) => {
+                shadow.place_green_dirt(mask.unwrap(), x, y, &mut || 0);
+            }
+            other => panic!("unexpected edit {other:?}"),
+        }
+    }
 }
 
 fn smoke(mod_dir: &str, level: &str, seed: u64) {
@@ -129,6 +153,7 @@ fn smoke(mod_dir: &str, level: &str, seed: u64) {
     let mut rng = Rng(seed);
     let settings = SimSettings { bonuses: true, bonus_frequency: 3.0, ..SimSettings::lx56() };
     let n_weapons = sim_mod.weapons().len() as u64;
+    let (holes, mask) = (map.holes.clone(), map.green_mask.clone());
     let mut w =
         World::new(settings, Arc::new(sim_mod), map.terrain, map.holes, AbsTime(100_000), seed as u32);
     if let Some(mask) = map.green_mask {
@@ -148,6 +173,7 @@ fn smoke(mod_dir: &str, level: &str, seed: u64) {
         w.set_loadout(i, &Loadout { slots, current_weapon: 0, lives: -2, kills: 0, deaths: 0 });
     }
     w.align_physics_clock();
+    let mut shadow = w.terrain().clone();
     let mut players: Vec<Player> = (0..WORMS).map(|_| Player { keys: 0, left: 0 }).collect();
     let (mut fired, mut explosions, mut kills) = (0, 0, 0);
     let mut twin: Option<World> = None;
@@ -166,6 +192,11 @@ fn smoke(mod_dir: &str, level: &str, seed: u64) {
             }
         }
         check(&w, w.events(), tick, &what);
+        replay(&mut shadow, &holes, mask.as_ref(), w.events());
+        if tick % 100 == 99 || tick == TICKS - 1 {
+            let same = shadow.material_hash() == w.terrain().material_hash();
+            assert!(same, "{what} tick {tick}: the replayed edits differ from the material");
+        }
         if let Some(t) = &mut twin {
             let twin_events = t.tick(&keys);
             assert!(twin_events == w.events(), "{what} tick {tick}: the clone's events differ");

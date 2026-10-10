@@ -138,8 +138,42 @@ pub enum Event {
 }
 
 impl Event {
-    fn is_cosmetic(&self) -> bool {
-        matches!(self, Event::SpawnCosmetic { .. } | Event::Sound { .. })
+    fn class(&self) -> Class {
+        match self {
+            Event::SpawnCosmetic { .. } | Event::Sound { .. } => Class::Cosmetic,
+            Event::TerrainEdit { .. } => Class::Edit,
+            _ => Class::Gameplay,
+        }
+    }
+}
+
+/// Which quota of [`TickEvents`] an event counts against.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Class {
+    Cosmetic,
+    Edit,
+    Gameplay,
+}
+
+/// The map area a dropped [`Event::TerrainEdit`] could have changed: the
+/// union of the stamps' boxes, `x0..x1` × `y0..y1` (exclusive ends), not
+/// clipped to the map.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LostArea {
+    pub x0: i32,
+    pub y0: i32,
+    pub x1: i32,
+    pub y1: i32,
+}
+
+impl LostArea {
+    fn union(a: Option<LostArea>, b: LostArea) -> LostArea {
+        match a {
+            None => b,
+            Some(a) => {
+                LostArea { x0: a.x0.min(b.x0), y0: a.y0.min(b.y0), x1: a.x1.max(b.x1), y1: a.y1.max(b.y1) }
+            }
+        }
     }
 }
 
@@ -147,23 +181,53 @@ impl Event {
 /// sized once so that ticking does not allocate (spec §5.3). Events from
 /// setup calls since the last tick ([`crate::World::spawn_worm`]) come first.
 ///
-/// The buffer holds [`TickEvents::CAPACITY`] events. Sounds and cosmetics
-/// stop at [`TickEvents::COSMETIC_LIMIT`], which keeps the rest for gameplay
-/// events; what does not fit is counted in [`TickEvents::dropped`].
+/// Three quotas share the buffer, so no class of events can crowd out
+/// another: sounds and cosmetics ([`TickEvents::COSMETIC_LIMIT`]), terrain
+/// edits ([`TickEvents::EDIT_LIMIT`]) and the other gameplay events
+/// ([`TickEvents::GAMEPLAY_LIMIT`]). What does not fit is counted in
+/// [`TickEvents::cosmetic_dropped`] or [`TickEvents::gameplay_dropped`].
+///
+/// A renderer replays every [`Event::TerrainEdit`] on its colour images
+/// (spec §5.4), so a lost edit would desync them for good. No fixed size
+/// bounds the edits of every tick: a projectile edits the map at most 7
+/// times a step (a `Carve` from its timer and from its hit, an explosion's
+/// hole, three `PlaceDirt` and one `PlaceGreenDirt`, the last three ending
+/// it; an explosion also blows up the bonuses near it, at most 32 a tick),
+/// but how many steps it catches up in one tick grows with the
+/// `GameSpeed` settings and, through children spawned into lower pool slots,
+/// with the mod; and a beam carves once per width part. `EDIT_LIMIT` covers
+/// 7 edits for every slot of a full default pool (3000 × 7 = 21000) with
+/// room for worms, beams and bonuses; the most a smoke match makes in a
+/// tick is 59. A tick beyond it does not drop edits silently: they count in
+/// [`TickEvents::gameplay_dropped`], and [`TickEvents::lost_area`] gives the
+/// area they covered, which a renderer must rebuild from the material grid.
 #[derive(Debug, PartialEq)]
 pub struct TickEvents {
     list: Vec<Event>,
-    dropped: u32,
+    /// Events in `list` per [`Class`].
+    counts: [usize; 3],
+    cosmetic_dropped: u32,
+    gameplay_dropped: u32,
+    lost: Option<LostArea>,
     /// The buffer holds setup events for the next tick.
     carried: bool,
 }
 
 impl TickEvents {
-    pub const CAPACITY: usize = 8192;
-    pub const COSMETIC_LIMIT: usize = Self::CAPACITY - 1024;
+    pub const COSMETIC_LIMIT: usize = 7168;
+    pub const EDIT_LIMIT: usize = 32768;
+    pub const GAMEPLAY_LIMIT: usize = 8192;
+    pub const CAPACITY: usize = Self::COSMETIC_LIMIT + Self::EDIT_LIMIT + Self::GAMEPLAY_LIMIT;
 
     pub(crate) fn new() -> Self {
-        Self { list: Vec::with_capacity(Self::CAPACITY), dropped: 0, carried: false }
+        Self {
+            list: Vec::with_capacity(Self::CAPACITY),
+            counts: [0; 3],
+            cosmetic_dropped: 0,
+            gameplay_dropped: 0,
+            lost: None,
+            carried: false,
+        }
     }
 
     pub fn as_slice(&self) -> &[Event] {
@@ -182,17 +246,47 @@ impl TickEvents {
         self.list.is_empty()
     }
 
-    /// Events that did not fit in the buffer this tick.
-    pub fn dropped(&self) -> u32 {
-        self.dropped
+    /// Sounds and cosmetics that did not fit this tick (harmless: the
+    /// renderer shows fewer effects).
+    pub fn cosmetic_dropped(&self) -> u32 {
+        self.cosmetic_dropped
     }
 
-    pub(crate) fn push(&mut self, e: Event) {
-        let limit = if e.is_cosmetic() { Self::COSMETIC_LIMIT } else { Self::CAPACITY };
-        if self.list.len() < limit {
+    /// Gameplay events, terrain edits included, that did not fit this tick.
+    /// Nonzero only beyond the limits above; never with Classic or MW 1.0
+    /// in the smoke matches.
+    pub fn gameplay_dropped(&self) -> u32 {
+        self.gameplay_dropped
+    }
+
+    /// The area of the terrain edits dropped this tick, if any: the renderer
+    /// must rebuild it from the material grid ([`crate::World::terrain`]).
+    pub fn lost_area(&self) -> Option<LostArea> {
+        self.lost
+    }
+
+    fn limit(class: Class) -> usize {
+        match class {
+            Class::Cosmetic => Self::COSMETIC_LIMIT,
+            Class::Edit => Self::EDIT_LIMIT,
+            Class::Gameplay => Self::GAMEPLAY_LIMIT,
+        }
+    }
+
+    /// Adds `e` within its class's quota. Returns whether it fit.
+    pub(crate) fn push(&mut self, e: Event) -> bool {
+        let class = e.class();
+        let n = &mut self.counts[class as usize];
+        if *n < Self::limit(class) {
+            *n += 1;
             self.list.push(e);
+            true
+        } else if class == Class::Cosmetic {
+            self.cosmetic_dropped = self.cosmetic_dropped.saturating_add(1);
+            false
         } else {
-            self.dropped = self.dropped.saturating_add(1);
+            self.gameplay_dropped = self.gameplay_dropped.saturating_add(1);
+            false
         }
     }
 
@@ -204,16 +298,30 @@ impl TickEvents {
         self.push(Event::SpawnCosmetic { kind, pos, vel });
     }
 
-    pub(crate) fn edit(&mut self, op: TerrainOp, stamp: StampId, x: i32, y: i32) {
-        self.push(Event::TerrainEdit { op, stamp, x, y });
+    /// A terrain edit with a `w` × `h` stamp centred as OLX centres it
+    /// (`x - w / 2`). A dropped edit's box joins [`lost_area`](Self::lost_area).
+    pub(crate) fn edit(&mut self, op: TerrainOp, stamp: StampId, x: i32, y: i32, (w, h): (u32, u32)) {
+        if !self.push(Event::TerrainEdit { op, stamp, x, y }) {
+            let (w, h) = (w.min(i32::MAX as u32) as i32, h.min(i32::MAX as u32) as i32);
+            let (x0, y0) = (x.saturating_sub(w / 2), y.saturating_sub(h / 2));
+            let area = LostArea { x0, y0, x1: x0.saturating_add(w), y1: y0.saturating_add(h) };
+            self.lost = Some(LostArea::union(self.lost, area));
+        }
+    }
+
+    fn clear(&mut self) {
+        self.list.clear();
+        self.counts = [0; 3];
+        self.cosmetic_dropped = 0;
+        self.gameplay_dropped = 0;
+        self.lost = None;
     }
 
     /// At the start of a tick: drops the last tick's events, unless setup
     /// events wait in the buffer.
     pub(crate) fn begin_tick(&mut self) {
         if !self.carried {
-            self.list.clear();
-            self.dropped = 0;
+            self.clear();
         }
         self.carried = false;
     }
@@ -221,8 +329,7 @@ impl TickEvents {
     /// Before a setup call that emits: the last tick's events go, once.
     pub(crate) fn begin_setup(&mut self) {
         if !self.carried {
-            self.list.clear();
-            self.dropped = 0;
+            self.clear();
             self.carried = true;
         }
     }
@@ -233,7 +340,8 @@ impl Clone for TickEvents {
     fn clone(&self) -> Self {
         let mut list = Vec::with_capacity(Self::CAPACITY.max(self.list.len()));
         list.extend_from_slice(&self.list);
-        Self { list, dropped: self.dropped, carried: self.carried }
+        let Self { list: _, counts, cosmetic_dropped, gameplay_dropped, lost, carried } = *self;
+        Self { list, counts, cosmetic_dropped, gameplay_dropped, lost, carried }
     }
 }
 
