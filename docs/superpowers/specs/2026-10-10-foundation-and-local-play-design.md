@@ -578,3 +578,20 @@ This spec includes three hooks for it:
 - **Final project name**, which renames the crate prefix `rl-` mechanically.
 - **Default bot difficulty**, and whether difficulty presets copy OLX's (Easy to Xtreme).
   This will be decided in M6 from playtesting.
+
+## 15. Amendments made while writing plan 1 (2026-10-10)
+
+These came out of building and verifying plan 1's code against the real OLX
+content. Where they conflict with earlier sections, they take precedence.
+
+| # | Amends | Change | Reason |
+|---|---|---|---|
+| A1 | §4.1 (3) | `#![no_std]` applies to `rl-math`, `rl-data`, `rl-terrain` and the L3 crates. `rl-vfs` and the L2 format crates use `std`. | Formats run only at load time and need `ron`, `png` and `std::fs`. The simulation's purity is unaffected. |
+| A2 | §9.1 | `content_hash` is computed from the pack files on demand (`rl_pack::content_hash`), not stored in `pack.ron`. | A stored hash goes stale as soon as someone hand-edits a pack. |
+| A3 | §9.3 | Fetched OLX content is verified by the pinned git commit (`git` checks every object hash). The manifest lists paths, not per-file SHA-256 values. | Same integrity guarantee, without a hand-maintained hash list. |
+| A4 | §8.2, §9.1 | `art_scale` is per pack. Imported levels without an "OLX hi-res data" chunk use `art_scale` 1. | OLX's 2× surfaces are pixel doubling (`PutPixel2x2`), so 1× is lossless; the renderer scales anyway. |
+| A5 | §9.2, §9.4, §7 | Deferred to the plans that first need them: LGS v8 import, pixmap `.lxl`, OLX bitmap fonts (M7), the zip VFS backend, level thumbnails (M7), and `cargo-fuzz` targets. Plan 1 uses stable-Rust `proptest` "never panics" tests on corrupted input instead of fuzzing. | No content in scope needs them (all 6 items are v7 and image-type). `cargo-fuzz` needs a nightly toolchain. |
+| A6 | §7, M0 | No hosted CI. `cargo xtask check` runs locally, optionally from a git pre-push hook (`cargo xtask install-hooks`). The `xtask full` tier also runs locally. | The user: single developer, single machine; keep CI light. |
+| A7 | §4.1 (7) | `mold` is dropped. | Rust 1.99 links with `rust-lld` by default on Linux. |
+| A8 | §9.1 | Each skin is its own pack (`olx-skin-<slug>`). | Keeps one pack kind per directory; ids stay unique, with numeric suffixes on collision. |
+| A9 | §4.1 (1) | Per-crate notes live in `CLAUDE.md`; a single root `AGENTS.md` points to them. `cargo xtask layers` fails if a crate lacks `CLAUDE.md`. | One source of truth per crate. |
