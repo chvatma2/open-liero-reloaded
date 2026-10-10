@@ -6,11 +6,15 @@
 //! [`Trace`] in `fixtures/oracle/<name>.jsonl.gz`. The Rust simulation later
 //! replays the same scenario and [`compare`] reports the first diverging field.
 
+mod compare;
 mod keys;
 mod scenario;
+mod trace;
 
+pub use compare::{Divergence, compare};
 pub use keys::Keys;
 pub use scenario::{InputChange, Scenario, Tolerance, WormSpawn};
+pub use trace::{BonusRec, Frame, Header, Num, ProjRec, RopeRec, SlotRec, Trace, WormRec, gunzip, gzip};
 
 /// Errors from reading scenarios and traces.
 #[derive(Debug, thiserror::Error)]
