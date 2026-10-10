@@ -128,6 +128,10 @@ crates/rl-import-gfx/       + core pack import (gfx, sounds, colours.cfg)
     - `SimMod`/`World` expose `rot_bumped(projectile_type) -> bool`;
     - `World::physics_time() -> AbsTime`;
     - `Projectile::serial() -> u32`.
+  - **Events leave `World` state.**
+    - `TickEvents` (48 128 preallocated entries, about 1.15 MB) moves out of what `World::clone` copies: either a caller-owned buffer, `tick(&mut self, keys, out: &mut TickEvents)`, or a field excluded from `Clone`, `PartialEq` and the checksum.
+    - The non-state `Draws::spawn_work` counter likewise leaves `PartialEq`.
+    - `world_tests` clone equality and `no_alloc` keep passing.
   - All existing oracle and smoke tests stay green, and no draw is added.
 - Produces, in `rl-content`:
   - `Content::open(root: &Path) -> Result<Content>`, which lists packs.
@@ -168,6 +172,7 @@ crates/rl-import-gfx/       + core pack import (gfx, sounds, colours.cfg)
     - beam holes.
   - `stain(x, y, color)` for blood and gibs (presentation §2.2, §7).
   - `take_dirty() -> impl Iterator<Item = Rect>` (dirty rectangles at art scale).
+  - `rebuild_area(rect, material: &Terrain)`: if a tick reports `gameplay_dropped() > 0`, the caller rebuilds `lost_area()` from the material grid: back pixels where it is background, `FrontTile` where it is dirt, the art where it is rock. This is the only fallback for dropped terrain edits (plan 4 ruling); the test is `rebuild_area_matches_material`.
   - `pixels() -> &[u8]`.
   - OLX's rules exactly as the note describes, including the order: the edit is applied after the sim changed the material, so the rim tests read the new material.
 - Consumes: Task 1's `ColorEdit` source data (theme art from `rl-content`).
