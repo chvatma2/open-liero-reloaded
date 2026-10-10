@@ -16,9 +16,11 @@ use crate::SimSettings;
 use crate::input::{Keys, Latches};
 use crate::mod_rt::SimMod;
 use crate::physics::{Ctx, simulate_worm};
-use crate::projectile::{Projectile, ProjectilePool, SpawnCtx};
+use crate::proj_sim::{ProjCtx, simulate_projectiles};
+use crate::projectile::{Projectile, ProjectilePool};
 use crate::rng::Draws;
 use crate::shots::{MAX_SHOOTINGS, ShootList, Shot, encode_decode, process_shot, spawn_time};
+use crate::spawn::SpawnCtx;
 use crate::weapons::{ShootCtx, laser_sight, player_shoot, worm_shoot};
 use crate::worm::{Loadout, Worm};
 
@@ -310,6 +312,19 @@ impl World {
                 laser_sight(w, &self.sim_mod, &mut self.draws);
             }
         }
+        // `CClient_Game.cpp:213-215`: projectiles after all worms.
+        let physics_dt = self.physics_dt();
+        let mut ctx = ProjCtx {
+            sim_mod: &self.sim_mod,
+            settings: &self.settings,
+            terrain: &mut self.terrain,
+            worms: &mut self.worms,
+            draws: &mut self.draws,
+            now: self.time,
+            wall_clock: self.time + TimeDiff(CLOCK_OFFSET_MS),
+            physics_dt,
+        };
+        simulate_projectiles(&mut self.projectiles, &mut ctx);
     }
 }
 

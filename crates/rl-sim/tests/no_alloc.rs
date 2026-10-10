@@ -10,9 +10,9 @@ use rl_math::AbsTime;
 use rl_sim::{Keys, Loadout, SimMod, SimSettings, Slot, World};
 use rl_terrain::{Stamp, Terrain};
 
-/// A Minigun-like weapon that empties and reloads, and a three-pellet shotgun.
-fn sim_mod() -> Arc<SimMod> {
-    let pellet = ProjectileDef {
+/// A plain pixel projectile: explodes on terrain, injures worms.
+fn pellet() -> ProjectileDef {
+    ProjectileDef {
         gfx: ProjectileGfx::Pixel { colours: vec![Rgba::rgb(208, 215, 208), Rgba::rgb(176, 176, 176)] },
         gravity: Some(70),
         dampening: 1.0,
@@ -23,6 +23,45 @@ fn sim_mod() -> Arc<SimMod> {
         hit: ActionDef::olx_default(ActionKind::Explode),
         player_hit: ActionDef::olx_default(ActionKind::Injure),
         event_spawn: None,
+    }
+}
+
+/// A Minigun-like weapon that empties and reloads, and a three-pellet
+/// shotgun. Pellets bounce, leave a projectile trail and explode into bits
+/// after half a second; bits bounce, smoke and disappear on a timer.
+fn sim_mod() -> Arc<SimMod> {
+    let bit = ProjectileDef {
+        timer: TimerDef {
+            time: 0.2,
+            time_var: 0.0,
+            action: Some(ActionDef::olx_default(ActionKind::Disappear2)),
+        },
+        hit: ActionDef::olx_default(ActionKind::Bounce),
+        trail: TrailDef { kind: TrailKind::Smoke, delay: 0.1, spawn: None },
+        ..pellet()
+    };
+    let pellet = ProjectileDef {
+        timer: TimerDef {
+            time: 0.5,
+            time_var: 0.0,
+            action: Some(ActionDef {
+                spawns_projectiles: true,
+                ..ActionDef::olx_default(ActionKind::Explode)
+            }),
+        },
+        trail: TrailDef {
+            kind: TrailKind::Projectile,
+            delay: 0.05,
+            spawn: Some(SpawnDef { amount: 1, speed: 10, ..SpawnDef::olx_default("bit".into()) }),
+        },
+        hit: ActionDef::olx_default(ActionKind::Bounce),
+        event_spawn: Some(SpawnDef {
+            amount: 3,
+            speed: 50,
+            spread: 360.0,
+            ..SpawnDef::olx_default("bit".into())
+        }),
+        ..pellet()
     };
     let weapon = |id: &str, amount: i32, drain: f32| WeaponDef {
         id: id.into(),
@@ -59,7 +98,7 @@ fn sim_mod() -> Arc<SimMod> {
         },
         rope: RopeParams { max_length: 300, rest_length: 27, strength: 4.5 },
         weapons: vec![weapon("minigun", 1, 10.0), weapon("shotgun", 3, 20.0)],
-        projectiles: [("pellet".to_string(), pellet)].into_iter().collect(),
+        projectiles: [("pellet".to_string(), pellet), ("bit".to_string(), bit)].into_iter().collect(),
     };
     Arc::new(SimMod::compile(&def, &BTreeMap::new()).unwrap())
 }
@@ -78,7 +117,10 @@ fn tick_does_not_allocate() {
             Stamp::from_image(&img)
         })
         .collect();
-    let terrain = Terrain::from_grid(&MaterialGrid::new(300, 200, Material::Dirt));
+    // Open air above a dirt floor, so projectiles fly, bounce and spawn.
+    let cells =
+        (0..300 * 200).map(|i| if i / 300 < 150 { Material::Background } else { Material::Dirt }).collect();
+    let terrain = Terrain::from_grid(&MaterialGrid::from_cells(300, 200, cells).unwrap());
     let mut w = World::new(SimSettings::lx56(), sim_mod(), terrain, holes, AbsTime(0), 1);
     w.spawn_worm(100, 100);
     w.spawn_worm(200, 100);

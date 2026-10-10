@@ -24,9 +24,17 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   (`bazooka.spawn`). Slots and firing are in `weapons.rs`, the shot list,
   its byte-exact network round trip (`shot_codec.rs`) and Model R delivery in
   `shots.rs` (delivered at the start of `tick`), projectiles and their pool
-  in `projectile.rs`. `tick` must not allocate: buffers are sized in `new`.
-- **Not here yet (M4):** projectile motion, explosions, beams' map trace,
-  bonuses, damage.
+  in `projectile.rs`, spawning in `spawn.rs`. `tick` must not allocate:
+  buffers are sized in `new`.
+- **Projectiles** (`proj_sim.rs`): after all worms in each sub-step, every
+  projectile catches up its own clock in slot order (children in higher
+  slots run in the same pass). Hit tests read the worm's `PosRecorder`
+  (`worm.rs`, OLX's `get(0)` quirk kept). What events do is `actions.rs`.
+  Projectile `pos`/`vel` assignments that OLX makes through `Attr::operator=`
+  use `attr_set` (an equal value, such as `+0` over `-0`, is not written).
+- **Not here yet (M4):** explosion holes and damage, carving, dirt, green
+  dirt and injuries (stubs in `actions.rs`, Tasks 6-7), beams' map trace,
+  bonuses.
 
 Test: `cargo nextest run -p rl-sim`. The oracle test needs imported content;
 `cargo xtask check` sets `RL_CONTENT_DIR`.

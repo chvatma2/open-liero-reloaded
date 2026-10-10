@@ -49,6 +49,10 @@ pub struct SimSettings {
     pub lx56_wall_shooting: bool,
     /// `DisableWpnsWhenEmpty`: an empty weapon is removed instead of reloading.
     pub disable_wpns_when_empty: bool,
+    /// `ProjGravityFactor`: multiplies every projectile's gravity.
+    pub proj_gravity_factor: f32,
+    /// `SelfHit`: a worm's own projectiles can hit it (after their first 100 ms).
+    pub self_hit: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,6 +95,8 @@ impl SimSettings {
             shoot_spawn_distance: 8.0,
             lx56_wall_shooting: true,
             disable_wpns_when_empty: false,
+            proj_gravity_factor: 1.0,
+            self_hit: true,
         }
     }
 
@@ -121,6 +127,7 @@ impl SimSettings {
             ("NinjaropePrecision", self.ninjarope_precision, 0.0, 10.0),
             ("LoadingTime", self.loading_time as f32, 0.0, 500.0),
             ("ShootSpawnDistance", self.shoot_spawn_distance, 0.0, 20.0),
+            ("ProjGravityFactor", self.proj_gravity_factor, -10.0, 10.0),
         ];
         for (k, v, min, max) in ranges {
             if !(min..=max).contains(&v) {
@@ -133,7 +140,7 @@ impl SimSettings {
     /// Reads the settings from OLX feature values (a trace header's `features`).
     /// Fails if a needed feature is missing or malformed, or if OLX had a mode
     /// on that this simulation does not implement (wrap-around maps, Gusanos
-    /// worm physics, worm friction, non-LX56 aim), or a value is outside
+    /// worm physics, worm or projectile friction, non-LX56 aim), or a value is outside
     /// OLX's range ([`SimSettings::validate`]).
     pub fn from_olx_features(f: &BTreeMap<String, String>) -> Result<Self, SettingsError> {
         let get = |k: &str| f.get(k).ok_or_else(|| SettingsError(format!("feature {k} missing")));
@@ -155,8 +162,10 @@ impl SimSettings {
                 return Err(SettingsError(format!("feature {k}={} is not supported", !want)));
             }
         }
-        if num("WormFriction")? != 0.0 {
-            return Err(SettingsError("feature WormFriction > 0 is not supported".into()));
+        for k in ["WormFriction", "ProjFriction"] {
+            if num(k)? != 0.0 {
+                return Err(SettingsError(format!("feature {k} > 0 is not supported")));
+            }
         }
         let settings = Self {
             lx56_physics_fps: int("LX56PhysicsFPS")?,
@@ -192,6 +201,8 @@ impl SimSettings {
             shoot_spawn_distance: num("ShootSpawnDistance")?,
             lx56_wall_shooting: flag("LX56WallShooting")?,
             disable_wpns_when_empty: flag("DisableWpnsWhenEmpty")?,
+            proj_gravity_factor: num("ProjGravityFactor")?,
+            self_hit: flag("SelfHit")?,
         };
         settings.validate()?;
         Ok(settings)
@@ -243,6 +254,9 @@ mod tests {
             ("ShootSpawnDistance", "8"),
             ("LX56WallShooting", "true"),
             ("DisableWpnsWhenEmpty", "false"),
+            ("ProjFriction", "0"),
+            ("ProjGravityFactor", "1"),
+            ("SelfHit", "true"),
         ]
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))

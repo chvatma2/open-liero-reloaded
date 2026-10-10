@@ -68,7 +68,19 @@ with a `shoot_t` parent) is only summarised where it fixes projectile state.
    `ANI_ONCE` never deletes a projectile, and a projectile with no action at all
    is always deleted after its first step (the "junk projectile" rule,
    `PhysicsLX56_Projectiles.cpp:1217-1224`). A non-dedicated client behaves
-   differently. The oracle records the dedicated behaviour.
+   differently. **Correction (plan 4 task 5):** the oracle patch loads the
+   images in dedicated mode too (spec §18 D3), so the traces show the
+   client's behaviour: `ANI_ONCE` ends projectiles, and an action-less
+   `ANI_ONCE` image projectile lives until its animation ends.
+9. **`Attr` assignments skip equal values** (`src/game/Attr.h:194-204`).
+   `vPos`, `vVelocity` (and `health`) are `Attr`s. `vPos = v`, `setPos`,
+   `setVelocity`, `vPos += d` and `vVelocity *= f` (`AttrWithBasicOpts`
+   assigns `value op d` through `operator=`) do nothing when the new value
+   compares equal, so a zero keeps its old sign. `.write()` paths
+   (`vVelocity.write().y += g`, `multPairwiseInplace` in `Bounce`,
+   `vPos.write().x = ...`) assign directly. In `Spawn`, a reused slot keeps
+   the previous projectile's `-0` when the new velocity is `+0`
+   (`nuclear-mines`, frame 206).
 8. **Macro double evaluation.** `CalculateCheckSteps` uses
    `SIGN(getRandomFloat())`; `SIGN` evaluates its argument up to twice
    (`include/MathLib.h:60`), so a non-positive first draw advances `iRandom`
@@ -450,7 +462,9 @@ return -1
 `push_back` writes `m_data[cur]`, `cur = (cur+1) % 100`, `count = min(count+1, 100)`.
 `clear()` only sets `count = 0`; `clear(v)` = `clear(); push_back(v)`.
 `getBest(11, ms)`: `fb = ms / 11; if fb < count: return get(fb); if count > 0: return get(count-1); return m_data[(cur+99)%100]`,
-with `get(k) = m_data[(cur + 100 - k%100) % 100]`. Pushed once per physics step
+with `get(k) = m_data[(cur + 100 - k%100) % 100]`. With one entry (right
+after `clear(vPos)`), `get(count-1)` is `get(0)` too: every `getBest` returns
+the stale slot, not the spawn position. Pushed once per physics step
 for each **alive** worm at the end of `simulateWorm` (`PhysicsLX56.cpp:468`;
 dead worms return at `:311`); `clear()` at `CWorm` prepare (`CWorm.cpp:398`),
 `clear(vPos)` at spawn (`CWorm.cpp:611`) and on network updates
@@ -995,11 +1009,11 @@ current projectile frees its own slot last.
    `ProcessServerShotList`, `ParseWormDown` and `Simulation` within
    `cClient->Frame()`)? This belongs to the shooting/death research but fixes
    projectile spawn times and the second batch of death `rand()` calls.
-5. `sqrt(float)` in `checkstep = AVG / sqrt(v2)` is assumed to be the float
-   overload (libstdc++ `math.h` wrapper reached via SDL). If it were the double
-   one, `cs` could differ in the last bit and change a whole millisecond of
-   `cstep` in rare cases. Confirm by disassembling `LX56Projectile_checkCollAndMove`
-   in the oracle image (look for `sqrtss` vs `sqrtsd`).
+5. **Resolved (plan 4 task 5):** the oracle binary calls `sqrtf` in
+   `LX56_simulateProjectile` (inlined `checkCollAndMove`), `atan2f` in
+   `Proj_SpawnParent::angle` and `getHeadingVelTo`, and inlines `floorf` in
+   `FMOD<float>`. `angle()` multiplies the float `atan2f` by the double
+   `180.0f / PI` and rounds back to float.
 6. Bots that are not scripted keep their AI and call `rand()` directly
    (`CWormBot.cpp:982-985`, `4234-4236`); scenarios should script every worm
    (or the port must emulate the bot AI's draws).

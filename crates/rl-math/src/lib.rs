@@ -5,15 +5,38 @@
 //! crate, never through the platform's math library.
 #![no_std]
 
+mod atan;
 mod rand;
 mod time;
 mod trig;
 mod vec2;
 
+pub use atan::atan2f;
 pub use rand::{GlibcRand, Mt19937, RAND_MAX, RANDOM_NUMBERS, get_fixed_random_num};
 pub use time::{AbsTime, TimeDiff};
 pub use trig::{cosf, sinf};
 pub use vec2::Vec2;
+
+/// OLX `NormalizeVector` (`src/common/MathLib.cpp:109-121`): divides `v` by
+/// its length unless the length is 0, and returns the length. A NaN length
+/// divides too, as in C (`if(length)` is true for NaN).
+pub fn normalize_vector(v: &mut Vec2) -> f32 {
+    let len = libm::sqrtf(v.x * v.x + v.y * v.y);
+    if len != 0.0 {
+        v.x /= len;
+        v.y /= len;
+    }
+    len
+}
+
+/// OLX `FMOD<float>` (`include/MathLib.h:86`): `a -= b * floor(a / b)`, then
+/// `+ b` if still negative. The binary inlines `floorf`.
+pub fn fmod(a: &mut f32, b: f32) {
+    *a -= b * libm::floorf(*a / b);
+    if *a < 0.0 {
+        *a += b;
+    }
+}
 
 /// OLX `SIGN` (`include/MathLib.h:60`): -1, 0 or 1.
 pub fn sign(x: f32) -> i32 {
@@ -63,6 +86,19 @@ pub const PI_F32: f32 = core::f32::consts::PI;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_vector_and_fmod_follow_olx() {
+        let mut v = Vec2::new(3.0, 4.0);
+        assert_eq!((normalize_vector(&mut v), v), (5.0, Vec2::new(0.6, 0.8)));
+        let mut z = Vec2::ZERO;
+        assert_eq!((normalize_vector(&mut z), z), (0.0, Vec2::ZERO));
+        let (mut a, mut b, mut c) = (370.0, -90.0, 359.5);
+        fmod(&mut a, 360.0);
+        fmod(&mut b, 360.0);
+        fmod(&mut c, 360.0);
+        assert_eq!((a, b, c), (10.0, 270.0, 359.5));
+    }
 
     #[test]
     fn macros_match_olx() {

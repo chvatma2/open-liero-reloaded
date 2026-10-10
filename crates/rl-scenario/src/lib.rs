@@ -26,7 +26,9 @@ pub const CHECKED: Fields = Fields::WORM_MOTION
     .union(Fields::HEALTH)
     .union(Fields::SCORE)
     .union(Fields::RAND)
-    .union(Fields::SHOTS);
+    .union(Fields::SHOTS)
+    .union(Fields::PROJECTILES)
+    .union(Fields::PROJ_HIDDEN);
 
 /// Reads `<dir>/<name>.ron` and `<dir>/<name>.jsonl.gz`.
 pub fn load_fixture(dir: &Path, name: &str) -> anyhow::Result<(Scenario, Trace)> {
@@ -61,7 +63,8 @@ pub fn fixture_names(dir: &Path) -> anyhow::Result<Vec<String>> {
 
 /// The mod pack for OLX mod directory `mod_dir` (such as `MW 1.0`), compiled
 /// for the simulation. Image frame counts are `width / height` of the
-/// pack's PNG images (spec §18 D3).
+/// pack's PNG images (spec §18 D3); an image projectile whose image is
+/// missing (or has height 0) is an error.
 pub fn load_mod(content: &Path, mod_dir: &str) -> anyhow::Result<SimMod> {
     let id = format!("olx-{}", rl_data::slug::slug(mod_dir));
     let pack = rl_pack::read_mod(&DirFs::new(content.join(&id))).with_context(|| format!("mod pack {id}"))?;
@@ -75,7 +78,20 @@ pub fn load_mod(content: &Path, mod_dir: &str) -> anyhow::Result<SimMod> {
             }
         }
     }
-    SimMod::compile(&pack.def, &frames).map_err(|e| anyhow::anyhow!("{id}: {e}"))
+    let m = SimMod::compile(&pack.def, &frames).map_err(|e| anyhow::anyhow!("{id}: {e}"))?;
+    check_frames(&m).with_context(|| format!("mod pack {id}"))?;
+    Ok(m)
+}
+
+/// Every image projectile must know its image's frame count: OLX's client
+/// does, and without it `ANI_ONCE` would never end a projectile.
+fn check_frames(m: &SimMod) -> anyhow::Result<()> {
+    for p in m.projectiles() {
+        if let rl_data::mod_def::ProjectileGfx::Image { file, .. } = &p.def.gfx {
+            anyhow::ensure!(p.frames.is_some(), "projectile {} has no image {file:?}", p.name);
+        }
+    }
+    Ok(())
 }
 
 /// Checks that the simulation numbers weapons and projectiles as OLX did
@@ -281,6 +297,66 @@ pub fn replay(content: &Path, sc: &Scenario, expected: &Trace) -> anyhow::Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rl_data::mod_def::*;
+
+    #[test]
+    fn an_image_projectile_without_its_image_is_an_error() {
+        let gfx = ProjectileGfx::Image {
+            file: "gfx/flame.png".into(),
+            rotating: false,
+            rot_increment: 0,
+            rot_speed: 0,
+            use_angle: false,
+            use_spec_angle: false,
+            angle_images: 0,
+            animation: Some(Animation { rate: 10.0, kind: AnimKind::Once }),
+        };
+        let flame = ProjectileDef {
+            gfx,
+            gravity: None,
+            dampening: 1.0,
+            width: 4,
+            height: 4,
+            timer: TimerDef { time: 0.0, time_var: 0.0, action: None },
+            trail: TrailDef { kind: TrailKind::None, delay: 0.1, spawn: None },
+            hit: ActionDef::olx_default(ActionKind::Explode),
+            player_hit: ActionDef::olx_default(ActionKind::Injure),
+            event_spawn: None,
+        };
+        let def = ModDef {
+            name: "test".into(),
+            worm: WormParams {
+                angle_speed: 150.0,
+                ground_speed: 8.0,
+                air_speed: 4.0,
+                gravity: 100.0,
+                jump_force: -65.0,
+                air_friction: 0.0,
+                ground_friction: 0.4,
+            },
+            rope: RopeParams { max_length: 300, rest_length: 27, strength: 4.5 },
+            weapons: vec![WeaponDef {
+                id: "flamer".into(),
+                name: "Flamer".into(),
+                recharge: 1.0,
+                drain: 1.0,
+                rof: 0.01,
+                laser_sight: false,
+                kind: WeaponKind::Projectile {
+                    class: WeaponClass::Automatic,
+                    recoil: 0,
+                    sound: None,
+                    spawn: SpawnDef { amount: 1, ..SpawnDef::olx_default("flame".into()) },
+                },
+            }],
+            projectiles: [("flame".to_string(), flame)].into_iter().collect(),
+        };
+        let missing = SimMod::compile(&def, &BTreeMap::new()).unwrap();
+        let err = check_frames(&missing).unwrap_err().to_string();
+        assert!(err.contains("flamer") && err.contains("gfx/flame.png"), "{err}");
+        let found = SimMod::compile(&def, &[("gfx/flame.png".to_string(), 7)].into_iter().collect()).unwrap();
+        check_frames(&found).unwrap();
+    }
 
     #[test]
     fn fixture_names_include_subdirectories() {

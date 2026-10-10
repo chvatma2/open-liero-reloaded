@@ -22,14 +22,21 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Mod compiled to OLX's projectile tree (`SimMod`) | `src/common/CGameScript.cpp:833-1157` (`LoadProjectile` order) | `rl-sim::mod_rt` | ported (plan 4 task 4) | every scenario: indices and path names equal the trace header's (`rl-scenario` checks) |
 | Weapon slots, firing, laser sight entity | `src/common/PhysicsLX56.cpp:471-498`, `src/server/CServer_Game.cpp:366-466`, `src/client/CClient_Game.cpp:496-544`, `751-808` | `rl-sim::weapons` | ported (beam drawing and specials: task 8) | `slots` of all 106 scenarios until the first projectile effect; `beam-burst` slots for the whole trace |
 | Shot list, encode/decode round trip, Model R delivery, `ProcessShot` | `src/common/CShootList.cpp`, `CClient_Game.cpp:813-946` | `rl-sim::shots`, `rl-sim::shot_codec` | ported (beam trace: task 8) | `s` of `multi-shot` for the whole trace, including the corrupted `spd` |
-| Projectile pool, `Proj_SpawnInfo::apply` (shots), `CProjectile::Spawn` | `include/FastVector.h`, `src/common/PhysicsLX56_Projectiles.cpp:562-640`, `src/common/CProjectile.cpp:43-166` | `rl-sim::projectile` | ported (projectile parents: task 5) | every projectile field at its spawn frame (`rl-cli scenario --fields checked+projectiles+proj_hidden+clocks`) |
-| Projectile motion, explosions, bonuses, damage | `PhysicsLX56_Projectiles.cpp`, `CClient_Game.cpp` | — | not started (plan 4 tasks 5-9) | — |
+| Projectile pool, `Proj_SpawnInfo::apply` (shots and projectiles), `CProjectile::Spawn` | `include/FastVector.h`, `src/common/PhysicsLX56_Projectiles.cpp:495-640`, `src/common/CProjectile.cpp:43-166` | `rl-sim::projectile`, `rl-sim::spawn` | ported | every projectile field (`p`, hidden fields included) of every scenario until its first explosion, carve, dirt or injury |
+| Projectile motion, collision, timers, trails, animation, worm hit test, position recorder | `PhysicsLX56_Projectiles.cpp:52-491`, `1234-1411`, `src/util/VecTimeRecorder.h`, `PhysicsLX56.cpp:468` | `rl-sim::proj_sim`, `rl-sim::worm::PosRecorder` | ported (plan 4 task 5) | as above; 8 weapon scenarios match fully (`big-nuke`, `booby-trap`, `float-mine`, `mine`, `electro-gun`, `jet-pack`, `nuclear-mines`, `trap-mines`) |
+| Projectile actions (`applyTo`, `execute`): bounce, disappear, nothing, go-through, speed and heading actions, children, the junk rule | `PhysicsLX56_Projectiles.cpp:670-945`, `1115-1230`, `CProjectile.cpp:376-429` | `rl-sim::actions` | ported; explosion holes and damage, carve, dirt, green dirt and injuries are stubs (tasks 6-7) | `rl-scenario`'s `EXPECTED_DIVERGENCES` pins each remaining divergence to its frame and field |
+| Float `atan2f` (projectile headings) | glibc 2.35 `sysdeps/ieee754/flt-32/e_atan2f.c`, `s_atanf.c` | `rl-math::atan2f` | ported | 6 million input pairs bit-identical to the oracle container's glibc; 20 pinned in a test |
+| Explosions, bonuses, damage | `PhysicsLX56_Projectiles.cpp`, `CClient_Game.cpp` | `rl-sim::actions::explosion` (draws and entities only) | partly (plan 4 tasks 6-9) | — |
 
 ## Deliberate deviations
 
 - `rl-sim` supports LX56 aim only (`ForceLX56Aim`). It rejects wrap-around maps
-  (`InfiniteMap`), Gusanos worm physics and `WormFriction > 0`
-  (`SimSettings::from_olx_features` errors).
+  (`InfiniteMap`), Gusanos worm physics, `WormFriction > 0` and
+  `ProjFriction > 0` (`SimSettings::from_olx_features` errors).
+- Projectile actions assume a deathmatch (no team game): `TeamHit` is not
+  read, an "enemy" is any other worm and there are no team mates.
+- `rl-scenario` refuses a mod pack with an image projectile whose image is
+  missing; OLX would run it without an image (no `ANI_ONCE` end, the junk rule).
 - `rl-sim` rejects settings outside the ranges OLX's feature list gives
   (`src/common/FeatureList.cpp`), and NaN or infinite values
   (`SimSettings::validate`). Outside them the port could overflow, hang or
@@ -81,6 +88,22 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   comments note that LX56 differed here.
 - **`CarveHole` clipping:** near the map edge the stamp is read from its top-left
   corner, not offset by the clipped amount.
+- **`VecTimeRecorder::get(0)` is the oldest entry** (spec §18 D7): with the
+  pinned clock, a projectile step at exactly the frame time hit-tests worms
+  where they were 100 physics steps ago, or at a stale or zero position in
+  their first 100 steps after a spawn.
+- **`Attr` assignments skip equal values** (`src/game/Attr.h:194-204`):
+  `vPos = v` and `vVelocity = v` of a projectile or worm do nothing when `v`
+  compares equal, so a zero keeps its old sign. A reused projectile slot can
+  start with the previous projectile's `-0` velocity (`nuclear-mines`, frame 206).
+  `rl-sim` follows this for projectiles (`attr_set`).
+- **LX56's `Bounce`:** each collision side sets both factors, and left/right
+  override top/bottom (`CProjectile.cpp:376-429`).
+- **Wall shooting:** for the first 10-12 ms a projectile ignores the terrain and
+  does not save its position, so a later collision resets it to its spawn position.
+- **The "junk projectile" rule:** a projectile with no hit, worm-hit or timer
+  action is deleted after its first step, unless it ends by an `ANI_ONCE`
+  animation of a loaded image.
 
 - `ROF /= 1000` and `Recharge /= 10` are applied after loading (`CGameScript.cpp:776-777`).
 - Beam and pixel colors stored as ints are truncated to bytes, as with OLX's `Color(Uint8, …)`.

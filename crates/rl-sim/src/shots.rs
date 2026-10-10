@@ -12,7 +12,8 @@ use alloc::vec::Vec;
 use rl_math::{AbsTime, GlibcRand, TimeDiff, Vec2};
 
 use crate::mod_rt::WeaponType;
-use crate::projectile::{SpawnCtx, SpawnParent, c_int, spawn_info_apply, vec_from_angle};
+use crate::projectile::c_int;
+use crate::spawn::{SpawnCtx, SpawnParent, spawn_info_apply, vec_from_angle};
 use crate::world::MAX_WORMS;
 use crate::worm::Worm;
 

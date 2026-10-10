@@ -7,21 +7,25 @@
 //! way state changes, and it does not allocate.
 //!
 //! Scope: worm movement and collision, keyboard input, digging, the ninja
-//! rope, OLX's two clocks, and (M4) weapon slots, firing, the shot round trip
-//! and projectile spawning. Projectile motion, bonuses and damage follow.
+//! rope, OLX's two clocks, and (M4) weapon slots, firing, the shot round trip,
+//! projectile spawning, motion, collision and actions. Explosion holes,
+//! dirt, damage and bonuses follow.
 #![no_std]
 
 extern crate alloc;
 
+mod actions;
 mod input;
 mod mod_rt;
 mod physics;
+mod proj_sim;
 mod projectile;
 mod rng;
 mod rope;
 mod settings;
 mod shot_codec;
 mod shots;
+mod spawn;
 mod weapons;
 mod world;
 mod worm;
@@ -36,4 +40,4 @@ pub use rope::NinjaRope;
 pub use settings::{SettingsError, SimSettings};
 pub use shots::{MAX_SHOOTINGS, RoundTrip, Shot, encode_decode, spawn_time};
 pub use world::{CLOCK_OFFSET_MS, MAX_WORMS, World};
-pub use worm::{Dir, Loadout, Slot, Worm, WormState};
+pub use worm::{Dir, Loadout, PosRecorder, Slot, Worm, WormState};

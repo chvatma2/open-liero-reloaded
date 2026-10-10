@@ -147,7 +147,8 @@ fn carve_small(ctx: &mut Ctx, pos: Vec2) -> i32 {
 }
 
 /// `PhysicsEngine::simulateWorm` for a local worm (`PhysicsLX56.cpp:272-469`).
-/// Input is read first, as in OLX; the weapon slot is simulated last.
+/// Input is read first, as in OLX; the weapon slot is simulated last, then
+/// the position is recorded.
 pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
     let s = ctx.settings;
     get_input(w, keys, ctx.now, s);
@@ -241,6 +242,8 @@ pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
     }
 
     crate::weapons::simulate_worm_weapon(w, dt, s, ctx.sim_mod);
+    // `PhysicsLX56.cpp:468`: projectiles hit the recorded positions.
+    w.pos_recorder.push(w.pos);
 }
 
 /// `moveAndCheckWormCollision` (`PhysicsLX56.cpp:88-269`) without wrap-around.

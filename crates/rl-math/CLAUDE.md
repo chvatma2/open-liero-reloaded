@@ -12,6 +12,10 @@ milliseconds, `seconds() = ms * 0.001f`), and the macros `SIGN`, `CLAMP_DIRECT`,
 - **`sinf` and `cosf` are this crate's own** (`trig.rs`): a port of glibc 2.35's,
   which OLX's oracle uses, checked against it for every `f32` input. Never use
   `libm::sinf`/`cosf`, which are 1 ulp off for about one input in 1300.
+- **`atan2f` too** (`atan.rs`, glibc 2.35's fdlibm version, checked against
+  the container on 6 million pairs). Keep glibc's decimal constants: the hex
+  values in its comments differ in the last bit. `libm::atan2f` differs.
+- `normalize_vector` and `fmod` are OLX's `NormalizeVector` and `FMOD<float>`.
 
 - **Randomness** (`rand.rs`): `GlibcRand` is glibc 2.35's `rand()` with OLX's
   float wrappers (`random_num`, `random_pos_num`, `random_int`, `random_vec`),
