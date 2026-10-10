@@ -39,6 +39,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Core pack: shared game sprites, game sounds (`.ogg`), `colours.cfg` (spec §19 E9) | `src/client/DeprecatedGUI/Graphics.cpp:56-97`, `134-321`, `src/common/CWorm.cpp:661`, `src/game/Sounds.cpp:25-30`, `src/common/StringUtils.cpp:409-447` | `rl-import-gfx::import_core`, `rl-pack::CorePack`, `rl-content::CorePack` | done (plan 5 task 1) | `rl-content/tests/content.rs` (`loads_every_manifest_item`), the corpus snapshot |
 | Colour terrain (spec §19 E7): carve (back pixels, brown rim), `PlaceDirt` (`FrontTile`), `PlaceGreenDirt` (OLX's shades), beam holes, blood and gib stains, dirty rectangles | `src/common/CMap.cpp:1005-1340`, `2355-2373`, `src/client/Entity.cpp:355-390`, `src/client/GfxPrimitives.cpp` (`DrawImageStretch2`) | `rl-terrain::ColorMap`, `rl-content::{color_edit, apply_edits}` | done (plan 5 task 2) | `rl-terrain` colour tests; `rl-content/tests/color.rs` (`color_map_agrees_with_material_after_a_match`, 3000 ticks); golden `fixtures/render/dig-color.png` (`rl-scenario/tests/render_golden.rs`) |
 | Presentation (spec §19 E1-E4): camera (hard lock, clamp, shake, dead worm, respawn), skin frames (the facing-left mirror one column off), crosshair, muzzle flash, old-style health bar, rope, laser sights, beams, projectile frames (animation, special angle, angle, rotation with the `RotIncrement` bump), bonuses (blinking), layer order; interpolation (E2) | `src/client/CViewport.cpp:118-472`, `src/common/CWorm.cpp:1016-1300`, `src/client/CGameSkin.cpp:584-600`, `src/client/CNinjaRope.cpp:132-180`, `src/common/CProjectile.cpp:227-300`, `src/common/CBonus.cpp:49-76`, `src/client/Entity.cpp:30-157`, `305-314`, `src/client/GfxPrimitives.cpp:1795-2520`, `src/gusanos/viewport.cpp:105-253` | `rl-scene` | done (plan 5 task 3) | `camera_locks_clamps_and_shakes_like_olx`, `skin_frame_matches_olx_table`, `projectile_frames_match_olx`, `interpolation_never_blends_reused_slots_or_respawns`, `draw_list_order_matches_olx_layers`, `beams_and_laser_sights_live_two_entity_passes`; scene snapshots (`rl-scene/tests/snapshots`) |
+| Cosmetic entities (spec §19 E1, E8): the 1024-slot pool, per-sub-step physics and animation, stains, blood drips, gib spins and colours, drawing and clipping | `src/client/Entity.cpp:161-468`, `include/FastVector.h`, `src/common/CWorm.cpp:671-757`, `src/common/CMap.cpp:338-352` | `rl-fx` | done (plan 5 task 4) | `blood_falls_and_stains_like_olx`, `explosion_frames_and_invisible_start`, `gibs_use_the_victims_colour`, `entity_cap_drops_new_ones`, `animations_live_as_long_as_olx`, `fx_never_touches_sim_randomness`, `colour_edits_follow_the_sim_like_apply_edits` |
 
 ## Deliberate deviations
 
@@ -195,6 +196,18 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     old-style fallback (five segments in a grid).
   - A hook attached to a worm is drawn at that worm's current position,
     not interpolated.
+- **Entities** (`rl-fx`, plan 5 task 4):
+  - *Dirt colour of a bonus chain:* OLX reads an explosion's dirt colour
+    before the bonuses it destroys explode, but the sim reports the chained
+    explosions (and their carves) before that explosion's particles. A
+    particle whose probe is no longer dirt when `rl-fx` reaches it takes the
+    theme's `iDefaultColour` instead of the colour before the carve.
+  - Entities are drawn at their latest state, not interpolated (E2 applies
+    to worms, projectiles and bonuses).
+  - A falling entity whose position is not finite is removed (OLX's
+    `(uint)` cast of NaN is undefined), so it cannot hold a slot forever.
+  - Only the air jump's sparkles exist in the sim (`Color()`, fade 10), so
+    the coloured-sparkle drawing (`EntityEffect`) is not ported.
 
 ## Spec §18 decisions that deviate from a plain OLX run
 
@@ -301,6 +314,14 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 - **Hi-res level art.** With an "OLX hi-res data" chunk, the front 2×2 block
   becomes the back block wherever `PX_EMPTY` is set, and PNG alpha is ignored
   (`LoadLevelImageHiRes`, `MapLoader_LieroX.cpp:285-360`).
+- **Entities** (`rl-fx`): a large explosion (size > 15) starts before the
+  image and stays invisible (10 sub-steps for size 20); frame sums are
+  floats and drift low (a size-8 explosion is at frame 10 after 10 passes);
+  chemsmoke's and spawn's last frames are past their images and draw
+  nothing; a blood dropper that hits the map still drips in that pass; a
+  jetpack spray that hits the map in the pass its frame ends is freed twice,
+  which can hide the entity below it from the pool's iteration until a
+  higher slot is used (`FastVector::refreshObj`).
 
 ## Facts the oracle established (needed by the simulation port)
 

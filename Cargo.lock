@@ -609,6 +609,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-fx"
+version = "0.1.0"
+dependencies = [
+ "allocation-counter",
+ "rl-content",
+ "rl-data",
+ "rl-math",
+ "rl-scenario",
+ "rl-scene",
+ "rl-sim",
+ "rl-terrain",
+]
+
+[[package]]
 name = "rl-import-gfx"
 version = "0.1.0"
 dependencies = [

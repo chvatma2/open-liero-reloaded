@@ -17,6 +17,7 @@ rl-sim = { path = "crates/rl-sim" }
 rl-scenario = { path = "crates/rl-scenario" }
 rl-content = { path = "crates/rl-content" }
 rl-scene = { path = "crates/rl-scene" }
+rl-fx = { path = "crates/rl-fx" }
 rl-vfs = { path = "crates/rl-vfs" }
 rl-pack = { path = "crates/rl-pack" }
 rl-import-lgs = { path = "crates/rl-import-lgs" }

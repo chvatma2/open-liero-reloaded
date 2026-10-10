@@ -726,7 +726,7 @@ first contact.
 | `SMOKE`, `CHEMSMOKE` | `+0.15` | `(int)fFrame > 4` | 34 sub-steps ≈ 0.37 s |
 | `DOOMSDAY` | `+0.15` | `(int)fFrame > 3` | 27 ≈ 0.30 s |
 | `SPAWN` | `+0.15` | `(int)fFrame > 5` | 40 ≈ 0.44 s |
-| `SPARKLE` | `+0.01·fade`, fade = `type2` or 5; air-jump sparkles use 10 | `(int)fFrame > 2` | fade 10: 30 ≈ 0.33 s |
+| `SPARKLE` | `+0.01·fade`, fade = `type2` or 5; air-jump sparkles use 10 | `(int)fFrame > 2` | fade 10: 31 ≈ 0.34 s (floats) |
 | `JETPACKSPRAY` | `+2.0` | `(int)fFrame > 150` (or hits terrain) | 76 ≈ 0.84 s |
 | `BEAM`, `LASERSIGHT` | `if (int)fFrame == 1: remove; fFrame++` | the sub-step after the one it was spawned in | 2 sub-steps |
 | `BLOODDROPPER` | `if fExtra > 0.1 s: spawn ENT_BLOOD(pos, GetRandomVec(), (colour[GetRandomInt(1)],0,0)) with colour = {128,200}; fExtra = 0`, then `fExtra += 0.011` | as a falling entity | drips a blood drop every 10 sub-steps (first at the 11th) |
@@ -772,8 +772,10 @@ The start frame is `15 − size`. Large explosions start small and grow, while
 small ones start already big and fade. **Quirk:** for `size > 15`, `fFrame`
 starts negative. `int(fFrame) ≤ −1` blits from `x < 0`, and SDL clips that away
 (`DrawImageAdv` uses `SDL_BlitSurface`, `GfxPrimitives.cpp:742-754`). So a
-damage-20 explosion is **invisible for about 0.14 s** before playing frames
-0..15.
+damage-20 explosion is **invisible for 10 sub-steps (about 0.11 s)** before playing frames
+0..15: after 10 passes `fFrame` is `−0.9999991` in floats, which truncates to 0
+(`rl-fx`'s `explosion_frames_and_invisible_start`). The float sums drift low
+elsewhere too: a size-8 explosion is still at frame 10 after 10 passes.
 
 **Dirt-particle colour.** It is read from the colour image **before** the carve
 (the sim emits `Dirt` before the `TerrainEdit`). Each source probes a different
@@ -784,7 +786,14 @@ pixel:
   It throws 3 particles with `GetRandomVec()·(30,10)`.
 - **Explosion** (`CClient_Game.cpp:229-251`). The first dirt pixel at
   `x = px−2 .. px+1` (exclusive `< px+2`), `y = min((uint)pos.y, H−1)`.
-  It throws 2 particles with `·(30,10)`, only if dirt was found.
+  It throws 2 particles with `·(30,10)`, only if dirt was found. The colour is
+  read before the bonuses the explosion blows up explode (and carve) at the same
+  spot; it starts as the theme's `iDefaultColour` (`CMap.cpp:338-352`:
+  `FrontTile`'s top-left pixel, replaced by the first pixel neither black nor
+  pink of every row of `hole1` that has one, so the last such row wins), which
+  never shows: particles spawn only when the scan read a dirt pixel. The sim
+  reports the chained explosions' carves before these particles, so `rl-fx`
+  gives a probe that is no longer dirt this default colour.
 - **Rope hook landing in diggable material** (`PhysicsLX56.cpp:600-607`). The
   colour at the wrapped hook position. 5 particles at `hook + (0,2)` with
   `·40`.

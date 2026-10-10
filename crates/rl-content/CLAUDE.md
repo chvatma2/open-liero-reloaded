@@ -33,7 +33,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   `LoadedLevel::color_map(&theme)` (before any edit; spawn holes come with
   the first tick), `color_edit(&EventKind)` converts a `TerrainEdit`, and
   `apply_edits(map, events, terrain)` replays a tick's edits and rebuilds a
-  `lost_area`. `tests/color.rs` plays 3000-tick matches and checks every
+  `lost_area` (for callers without `rl-fx`, whose `Fx::step_tick` replays
+  them itself between its entity passes: never both). `tests/color.rs` plays 3000-tick matches and checks every
   pixel's colour against the material (Review Focus 2).
 - Pack ids of OLX imports: `olx_mod_id("MW 1.0")`, `olx_level_id("CastleStrike.lxl")`.
 
