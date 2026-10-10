@@ -1,0 +1,462 @@
+diff --git a/include/CGameScript.h b/include/CGameScript.h
+index bd9eaa4..fdbf335 100644
+--- a/include/CGameScript.h
++++ b/include/CGameScript.h
+@@ -178,6 +178,12 @@ public:
+ 	bool	getNeedCollisionInfo()		{ return needCollisionInfo; }
+ 	
+ 	size_t	getProjectileCount() const	{ return projectiles.size(); }
++	// Load-order index of a projectile type, or -1 (OracleHooks).
++	int		projectileIndex(const proj_t* p) const {
++		for(Projectiles::const_iterator it = projectiles.begin(); it != projectiles.end(); ++it)
++			if(it->second == p) return it->first;
++		return -1;
++	}
+ 	
+ 	bool	Compile(const std::string& dir);
+ 
+diff --git a/include/CInput.h b/include/CInput.h
+index 7ca1b1f..7b32e76 100644
+--- a/include/CInput.h
++++ b/include/CInput.h
+@@ -48,6 +48,9 @@
+ 
+ struct KeyboardEvent;
+ 
++// Scripted key state for the rust-liero oracle test hooks (OracleHooks.h).
++struct VirtualKey { bool down; bool once; VirtualKey() : down(false), once(false) {} };
++
+ class CInput {
+ public:
+ 	CInput();
+@@ -128,6 +131,9 @@ public:
+ 	int		wasUp(); // checks if there was an keyup-event; returns the count of up-events
+ 
+ 	std::string getEventName() { return m_EventName; }
++
++	// Test hook: when set, this input reads the scripted key instead of devices.
++	VirtualKey* virt = NULL;
+ 	// onlyAvailable drops bindings that can't currently fire (e.g. an absent gamepad)
+ 	std::string getEventName(bool onlyAvailable) const;
+ 
+diff --git a/include/OracleHooks.h b/include/OracleHooks.h
+new file mode 100644
+index 0000000..906b893
+--- /dev/null
++++ b/include/OracleHooks.h
+@@ -0,0 +1,35 @@
++/*
++	OpenLieroX
++
++	Test hooks for the rust-liero fidelity oracle.
++	Scripted keyboard input for worms and per-frame state recording,
++	used with simSetSeed/simStep to record reference traces.
++
++	code under LGPL
++*/
++
++#ifndef __ORACLEHOOKS_H__
++#define __ORACLEHOOKS_H__
++
++#include <string>
++
++namespace OracleHooks {
++	// Key bits used by the input schedule (simLoadInputs).
++	enum {
++		KEY_UP = 1, KEY_DOWN = 2, KEY_LEFT = 4, KEY_RIGHT = 8,
++		KEY_JUMP = 16, KEY_FIRE = 32, KEY_ROPE = 64, KEY_CHANGE = 128,
++	};
++
++	// Loads "frame worm keys" lines. Frame 0 is the first frame simulated after
++	// this call. The listed worms switch to a human input handler driven by the
++	// schedule. Also aligns the LX56 physics clock with the frame clock; spawn
++	// worms after this call. Returns false and sets err on failure.
++	bool loadInputs(const std::string& file, std::string& err);
++	// Starts writing one JSON line per simulated frame to file ("off" stops).
++	bool record(const std::string& file, std::string& err);
++	// Called by the game loop around each simulated frame.
++	void beforeFrame();
++	void afterFrame();
++}
++
++#endif
+diff --git a/src/client/CInput.cpp b/src/client/CInput.cpp
+index 5ae81c1..90200b2 100644
+--- a/src/client/CInput.cpp
++++ b/src/client/CInput.cpp
+@@ -879,6 +879,7 @@ bool CInput::Binding::isDown() const
+ 
+ bool CInput::isDown() const
+ {
++	if(virt) return virt->down;
+ 	for(std::vector<Binding>::const_iterator it = m_bindings.begin(); it != m_bindings.end(); ++it)
+ 		if(it->isDown()) return true;
+ 	return false;
+@@ -889,6 +890,7 @@ bool CInput::isDown() const
+ // Returns if the input was pushed down once
+ bool CInput::isDownOnce()
+ {
++	if(virt) return virt->once;
+ 	for(std::vector<Binding>::iterator it = m_bindings.begin(); it != m_bindings.end(); ++it)
+ 		if(it->nDownOnce != 0) return true;
+ 	return false;
+@@ -967,12 +969,14 @@ bool CInput::isJoystick() const {
+ }
+ 
+ bool CInput::isJoystickDown() const {
++	if(virt) return false;
+ 	for(std::vector<Binding>::const_iterator it = m_bindings.begin(); it != m_bindings.end(); ++it)
+ 		if(it->isJoystick() && it->isDown()) return true;
+ 	return false;
+ }
+ 
+ bool CInput::isJoystickDownOnce() const {
++	if(virt) return false;
+ 	for(std::vector<Binding>::const_iterator it = m_bindings.begin(); it != m_bindings.end(); ++it)
+ 		if(it->isJoystick() && it->nDownOnce != 0) return true;
+ 	return false;
+@@ -1007,6 +1011,7 @@ bool CInput::usesKeyboardKey(int sym) const {
+ }
+ 
+ void CInput::reset() {
++	if(virt) virt->once = false;
+ 	for(std::vector<Binding>::iterator it = m_bindings.begin(); it != m_bindings.end(); ++it)
+ 		it->reset();
+ }
+diff --git a/src/common/Command.cpp b/src/common/Command.cpp
+index feb1223..c8aa587 100644
+--- a/src/common/Command.cpp
++++ b/src/common/Command.cpp
+@@ -19,6 +19,7 @@
+ 
+ #include <limits.h>
+ #include "LieroX.h"
++#include "OracleHooks.h"
+ #include "Debug.h"
+ #include "CServer.h"
+ #include "CClient.h"
+@@ -2308,6 +2309,18 @@ void Cmd_setWormInput::exec(CmdLineIntf* caller, const std::vector<std::string>&
+ }
+ 
+ 
++COMMAND(simLoadInputs, "load a scripted key schedule: lines 'frame worm keys' (test hook)", "file", 1, 1);
++void Cmd_simLoadInputs::exec(CmdLineIntf* caller, const std::vector<std::string>& params) {
++	std::string err;
++	if(!OracleHooks::loadInputs(params[0], err)) caller->writeMsg(err, CNC_ERROR);
++}
++
++COMMAND(simRecord, "record one JSON line per simulated frame, or 'off' (test hook)", "file|off", 1, 1);
++void Cmd_simRecord::exec(CmdLineIntf* caller, const std::vector<std::string>& params) {
++	std::string err;
++	if(!OracleHooks::record(params[0], err)) caller->writeMsg(err, CNC_ERROR);
++}
++
+ COMMAND(dumpGameState, "dump game state", "", 0, 0);
+ void Cmd_dumpGameState::exec(CmdLineIntf* caller, const std::vector<std::string>& params) {
+ 	caller->writeMsg("GameState: " + Game::StateAsStr(game.state), CNC_DEV);
+diff --git a/src/common/OracleHooks.cpp b/src/common/OracleHooks.cpp
+new file mode 100644
+index 0000000..59bbcd1
+--- /dev/null
++++ b/src/common/OracleHooks.cpp
+@@ -0,0 +1,247 @@
++/*
++	OpenLieroX
++
++	Test hooks for the rust-liero fidelity oracle (see OracleHooks.h).
++
++	code under LGPL
++*/
++
++#include <cmath>
++#include <cstdio>
++#include <fstream>
++#include <map>
++#include <sstream>
++#include <vector>
++
++#include "LieroX.h"
++#include "OracleHooks.h"
++#include "CClient.h"
++#include "CBonus.h"
++#include "CGameScript.h"
++#include "CInput.h"
++#include "CProjectile.h"
++#include "CWormHuman.h"
++#include "FeatureList.h"
++#include "Version.h"
++#include "game/CMap.h"
++#include "game/CWorm.h"
++#include "game/Game.h"
++#include "gusanos/allegro.h"
++
++namespace OracleHooks {
++
++struct Keys {
++	VirtualKey up, down, left, right, jump, fire, rope, change, strafe, prev, next;
++};
++
++struct Event { int worm; unsigned mask; };
++
++static std::map<int, Keys> g_keys;                  // worm id -> scripted keys
++static std::map<long, std::vector<Event> > g_plan;  // frame -> key changes
++static long g_base = -1;                            // serverFrame before frame 0
++static FILE* g_rec = NULL;
++
++// Reads CWorm state that has no public getter (CWorm declares this a friend).
++struct Access {
++	static float angleSpeed(const CWorm* w) { return w->fAngleSpeed; }
++};
++
++static void writeHeader(FILE* o);
++static void writeState(long frame);
++
++static void setKey(VirtualKey& k, bool down) {
++	// A press is latched until the first getInput() consumes it, like CInput's nDownOnce.
++	if(down && !k.down) k.once = true;
++	k.down = down;
++}
++
++static void apply(Keys& k, unsigned m) {
++	setKey(k.up, m & KEY_UP);
++	setKey(k.down, m & KEY_DOWN);
++	setKey(k.left, m & KEY_LEFT);
++	setKey(k.right, m & KEY_RIGHT);
++	setKey(k.jump, m & KEY_JUMP);
++	setKey(k.fire, m & KEY_FIRE);
++	setKey(k.rope, m & KEY_ROPE);
++	setKey(k.change, m & KEY_CHANGE);
++}
++
++static bool installHumanHandler(int wormId, Keys& keys, std::string& err) {
++	CWorm* w = game.wormById(wormId, false);
++	if(!w) { err = "no worm " + itoa(wormId); return false; }
++	if(!w->getLocal()) { err = "worm " + itoa(wormId) + " is not local"; return false; }
++	CWormHumanInputHandler* h = dynamic_cast<CWormHumanInputHandler*>(w->inputHandler());
++	if(!h) {
++		h = new CWormHumanInputHandler(w);
++		w->replaceInputHandlerForTest(h);
++	}
++	h->getInputUp().virt = &keys.up;
++	h->getInputDown().virt = &keys.down;
++	h->getInputLeft().virt = &keys.left;
++	h->getInputRight().virt = &keys.right;
++	h->getInputJump().virt = &keys.jump;
++	h->getInputShoot().virt = &keys.fire;
++	h->getInputRope().virt = &keys.rope;
++	h->getInputWeapon().virt = &keys.change;
++	h->getInputStrafe().virt = &keys.strafe;
++	h->getInputPrevWeapon().virt = &keys.prev;
++	h->getInputNextWeapon().virt = &keys.next;
++	return true;
++}
++
++bool loadInputs(const std::string& file, std::string& err) {
++	std::ifstream in(file.c_str());
++	if(!in) { err = "cannot open " + file; return false; }
++	g_plan.clear();
++	std::string line;
++	while(std::getline(in, line)) {
++		if(line.empty() || line[0] == '#') continue;
++		std::istringstream ls(line);
++		long frame; int worm; unsigned mask;
++		if(!(ls >> frame >> worm >> mask)) { err = "bad line: " + line; return false; }
++		g_plan[frame].push_back(Event{worm, mask});
++		if(!g_keys.count(worm) && !installHumanHandler(worm, g_keys[worm], err)) return false;
++	}
++	g_base = (long)game.serverFrame;
++	// Align the LX56 physics clock (84 Hz) with the 100 Hz frame clock, so frame 0
++	// does not catch up on however much time the setup took (as simStep does once).
++	if(cClient) cClient->fLastSimulationTime = game.simulationAbsTime();
++	return true;
++}
++
++bool record(const std::string& file, std::string& err) {
++	if(g_rec) { fclose(g_rec); g_rec = NULL; }
++	if(file == "off") return true;
++	g_rec = fopen(file.c_str(), "w");
++	if(!g_rec) { err = "cannot write " + file; return false; }
++	if(g_base < 0) g_base = (long)game.serverFrame;
++	writeHeader(g_rec);
++	writeState(-1); // the state frame 0 starts from
++	return true;
++}
++
++static long frameIndex() { return (long)game.serverFrame - g_base - 1; }
++
++void beforeFrame() {
++	if(g_base < 0) return;
++	std::map<long, std::vector<Event> >::iterator it = g_plan.find(frameIndex());
++	if(it == g_plan.end()) return;
++	for(size_t i = 0; i < it->second.size(); i++)
++		apply(g_keys[it->second[i].worm], it->second[i].mask);
++}
++
++// Floats as JSON numbers with 9 significant digits (round-trips f32), or a string if not finite.
++static void f(FILE* o, float v) {
++	if(std::isnan(v)) fputs("\"NaN\"", o);
++	else if(std::isinf(v)) fputs(v > 0 ? "\"inf\"" : "\"-inf\"", o);
++	else fprintf(o, "%.9g", v);
++}
++
++static unsigned long long materialHash() {
++	CMap* m = game.gameMap();
++	unsigned long long h = 1469598103934665603ULL; // FNV-1a 64
++	if(!m || !m->material) return 0;
++	for(uint y = 0; y < m->GetHeight(); y++)
++		for(uint x = 0; x < m->GetWidth(); x++) {
++			h ^= m->material->line[y][x];
++			h *= 1099511628211ULL;
++		}
++	return h;
++}
++
++// JSON string with quotes and backslashes escaped.
++static void str(FILE* o, const std::string& s) {
++	fputc('"', o);
++	for(size_t i = 0; i < s.size(); i++) {
++		if(s[i] == '"' || s[i] == '\\') fputc('\\', o);
++		if((unsigned char)s[i] >= 0x20) fputc(s[i], o);
++	}
++	fputc('"', o);
++}
++
++// First line of a recording: the OLX version and every gameplay setting in effect.
++static void writeHeader(FILE* o) {
++	fputs("{\"olx\":", o);
++	str(o, GetFullGameName());
++	fputs(",\"features\":{", o);
++	for(size_t i = 0; i < featureArrayLen(); i++) {
++		if(i) fputc(',', o);
++		str(o, featureArray[i].name);
++		fputc(':', o);
++		str(o, cClient->getGameLobby()[(FeatureIndex)i].toString());
++	}
++	fputs("}}\n", o);
++}
++
++static void writeState(long frame) {
++	FILE* o = g_rec;
++	fprintf(o, "{\"f\":%ld,\"w\":[", frame);
++	bool first = true;
++	for_each_iterator(CWorm*, it, game.worms()) {
++		CWorm* w = it->get();
++		if(!first) fputc(',', o);
++		first = false;
++		const CNinjaRope& r = w->cNinjaRope.get();
++		fprintf(o, "{\"id\":%d,\"alive\":%s,\"x\":", w->getID(), w->getAlive() ? "true" : "false");
++		f(o, w->getPos().x); fputs(",\"y\":", o); f(o, w->getPos().y);
++		fputs(",\"vx\":", o); f(o, w->getVelocity().x); fputs(",\"vy\":", o); f(o, w->getVelocity().y);
++		fputs(",\"hp\":", o); f(o, w->getHealth());
++		fputs(",\"ang\":", o); f(o, w->getAngle()); fputs(",\"angv\":", o); f(o, Access::angleSpeed(w));
++		fprintf(o, ",\"face\":%d,\"move\":%d,\"ground\":%s,\"keys\":%u,\"wpn\":%d,\"slots\":[",
++			(int)w->getFaceDirectionSide(), (int)w->getMoveDirectionSide(), w->isOnGround() ? "true" : "false",
++			(unsigned)w->tState.get().asInt(), (int)w->iCurrentWeapon);
++		for(size_t i = 0; i < w->weaponSlots.get().size(); i++) {
++			const wpnslot_t& s = w->weaponSlots.get()[i];
++			if(i) fputc(',', o);
++			fprintf(o, "{\"id\":%d,\"ch\":", (int)s.WeaponId); f(o, s.Charge);
++			fprintf(o, ",\"rl\":%s,\"lf\":", s.Reloading ? "true" : "false"); f(o, s.LastFire);
++			fputc('}', o);
++		}
++		fprintf(o, "],\"rope\":{\"rel\":%s,\"sh\":%s,\"at\":%s,\"pw\":%d,\"x\":",
++			r.isReleased() ? "true" : "false", r.isShooting() ? "true" : "false",
++			r.isAttached() ? "true" : "false", r.getAttachedPlayer() ? r.getAttachedPlayer()->getID() : -1);
++		f(o, r.getPos().x); fputs(",\"y\":", o); f(o, r.getPos().y);
++		fputs(",\"vx\":", o); f(o, r.getVelocity().x); fputs(",\"vy\":", o); f(o, r.getVelocity().y);
++		fprintf(o, "},\"lives\":%d,\"kills\":%d,\"deaths\":%d,\"dirt\":%d}",
++			(int)w->getLives(), w->getKills(), w->getDeaths(), w->getDirtCount());
++	}
++	fputs("],\"p\":[", o);
++	first = true;
++	auto& ps = cClient->getProjectiles();
++	for(int i = 0; i <= ps.lastUsed(); i++) {
++		if(!ps.isUsed(i)) continue;
++		CProjectile& p = ps[i];
++		if(!first) fputc(',', o);
++		first = false;
++		fprintf(o, "{\"i\":%d,\"t\":%d,\"x\":", i, game.gameScript()->projectileIndex(p.getProjInfo()));
++		f(o, p.getPos().x); fputs(",\"y\":", o); f(o, p.getPos().y);
++		fputs(",\"vx\":", o); f(o, p.getVelocity().x); fputs(",\"vy\":", o); f(o, p.getVelocity().y);
++		fputs(",\"life\":", o); f(o, p.getLife());
++		fputc('}', o);
++	}
++	fputs("],\"b\":[", o);
++	first = true;
++	CBonus* bs = cClient->getBonusList();
++	for(int i = 0; i < MAX_BONUSES; i++) {
++		if(!bs[i].getUsed()) continue;
++		if(!first) fputc(',', o);
++		first = false;
++		fprintf(o, "{\"i\":%d,\"t\":%d,\"x\":", i, bs[i].getType());
++		f(o, bs[i].getPosition().x); fputs(",\"y\":", o); f(o, bs[i].getPosition().y);
++		fputc('}', o);
++	}
++	fprintf(o, "],\"mh\":\"%016llx\"}\n", materialHash());
++	fflush(o);
++}
++
++void afterFrame() {
++	if(g_rec) writeState(frameIndex());
++}
++
++}
++
++void CWorm::replaceInputHandlerForTest(CWormInputHandler* h) {
++	if(m_inputHandler) m_inputHandler->deleteThis();
++	m_inputHandler = h;
++	m_inputHandler->assignNetworkRole();
++}
+diff --git a/src/game/CWorm.h b/src/game/CWorm.h
+index ede70ca..43dafff 100644
+--- a/src/game/CWorm.h
++++ b/src/game/CWorm.h
+@@ -47,6 +47,7 @@
+ #include <vector>
+ 
+ 
++namespace OracleHooks { struct Access; }
+ class CWormInputHandler;
+ class Weapon;
+ class WeaponType;
+@@ -166,6 +167,7 @@ class CWorm: public CGameObject {
+ 	friend class Client;
+ 	friend class Game;
+ 	friend class PhysicsEngine;
++friend struct OracleHooks::Access; // test hook reads fAngleSpeed
+ public:
+ 	CWorm();
+ 	~CWorm();
+@@ -621,6 +623,8 @@ public:
+ 	float&		frame()						{ return fFrame; }
+ 	
+ 	CWormInputHandler* inputHandler() { return m_inputHandler; }
++	// Test hook (OracleHooks): drive this worm with another input handler.
++	void replaceInputHandlerForTest(CWormInputHandler* h);
+ 	void reinitInputHandler();
+ 	
+ 	std::map< int, DamageReport> & getDamageReport() { return cDamageReport; }
+diff --git a/src/game/Game.cpp b/src/game/Game.cpp
+index 8603bbd..82a969c 100644
+--- a/src/game/Game.cpp
++++ b/src/game/Game.cpp
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include "Game.h"
++#include "OracleHooks.h"
+ #include "AuxLib.h"
+ #include "Debug.h"
+ #include "LieroX.h"
+@@ -948,9 +949,11 @@ void Game::frameInner()
+ 				gusLogicFrame();
+ 			}
+ 
++			OracleHooks::beforeFrame();
+ 			cClient->Frame();
+ 			if(isServer())
+ 				cServer->Frame();
++			OracleHooks::afterFrame();
+ 
+ 			if(manualStep) manualStepBudget--;
+ 			simulationTime += frameDt;

@@ -4,6 +4,7 @@ mod api;
 mod check;
 mod fetch;
 mod layers;
+mod oracle;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -37,6 +38,14 @@ enum Command {
     },
     /// Install a git pre-push hook that runs `cargo xtask check`.
     InstallHooks,
+    /// Record OLX reference traces for fixtures/oracle/*.ron (needs Docker).
+    OracleRecord {
+        /// Re-record and compare with the committed traces instead of writing them.
+        #[arg(long)]
+        check: bool,
+        /// Scenario names (file stems in fixtures/oracle/); all if none.
+        names: Vec<String>,
+    },
 }
 
 /// The workspace root (the parent of this crate's directory).
@@ -57,6 +66,7 @@ fn main() -> ExitCode {
             true
         }),
         Command::InstallHooks => install_hooks().map(|()| true),
+        Command::OracleRecord { check, names } => oracle::run(&names, check),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Developer workflows: cargo xtask check | layers | api | fetch-olx-content | install-hooks."
+description = "Developer workflows: cargo xtask check | layers | api | fetch-olx-content | oracle-record | install-hooks."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,6 +16,9 @@ ron.workspace = true
 syn.workspace = true
 prettyplease.workspace = true
 quote.workspace = true
+rl-oracle.workspace = true
+sha2.workspace = true
+hex.workspace = true
 
 [lints]
 workspace = true

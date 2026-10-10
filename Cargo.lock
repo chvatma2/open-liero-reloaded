@@ -895,10 +895,13 @@ dependencies = [
  "anyhow",
  "cargo_metadata",
  "clap",
+ "hex",
  "prettyplease",
  "quote",
+ "rl-oracle",
  "ron",
  "serde",
+ "sha2",
  "syn 2.0.119",
 ]
 

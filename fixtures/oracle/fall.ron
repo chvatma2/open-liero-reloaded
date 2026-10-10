@@ -1,0 +1,8 @@
+(
+    description: "A worm dropped in the air onto Dirt Level falls and lands. Gravity, ground contact. Same start as OLX's own tests/headless/test_physics.py.",
+    level: "Dirt Level.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 200,
+    worms: [(x: 456, y: 212)],
+)
