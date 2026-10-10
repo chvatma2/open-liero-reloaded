@@ -5,9 +5,11 @@
 //! (`src/common/CGameScript.cpp:582-1152`), and produces a self-contained
 //! [`rl_pack::ModPack`] including the image and sound files the mod uses.
 
+mod convert;
 mod parse;
 mod reader;
 
+pub use convert::{ImportedMod, import_mod};
 pub use parse::{ProjNode, RawMod, RawWeapon, parse_lgs};
 
 /// Everything that can go wrong while importing a mod.
