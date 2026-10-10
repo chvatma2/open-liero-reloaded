@@ -22,6 +22,7 @@
         "rl-audio": 5,
         "rl-input": 5,
         "rl-cli": 6,
+        "rl-game": 6,
         "xtask": 6,
     },
     same_layer: [

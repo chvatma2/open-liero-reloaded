@@ -43,6 +43,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Cosmetic entities (spec §19 E1, E8): the 1024-slot pool, per-sub-step physics and animation, stains, blood drips, gib spins and colours, drawing and clipping | `src/client/Entity.cpp:161-468`, `include/FastVector.h`, `src/common/CWorm.cpp:671-757`, `src/common/CMap.cpp:338-352` | `rl-fx` | done (plan 5 task 4) | `blood_falls_and_stains_like_olx`, `explosion_frames_and_invisible_start`, `gibs_use_the_victims_colour`, `entity_cap_drops_new_ones`, `animations_live_as_long_as_olx`, `fx_never_touches_sim_randomness`, `colour_edits_follow_the_sim_like_apply_edits` |
 | Sound (spec §8.4, §19 E1, E12): positional mix (gain 0.7, inverse distance clamped, reference 50, rolloff 2, listener 20 px out at the view centre), THROW and PICKUP at the listener with gain 1.0, voice limits, live voices re-mixed as the listener moves, silence without a device | `src/sound/sound_sample_openal.cpp:206-270`, `src/sound/sfx.cpp:120-134`, `src/sound/sfxdriver_openal.cpp:43-92`, `src/game/Sounds.cpp:25-30`, `src/common/CGameScript.cpp:1185-1205` | `rl-audio` | done (plan 5 task 6) | `positional_gain_matches_olx_openal_defaults`, `voice_limits`, `silent_when_no_device`, `plays_events_on_a_mock_device`, `decodes_every_mod_sound`; `device_check` example (`cargo xtask full`) |
 | Input devices (spec §8.5, §19 E5): OLX's player 1 keyboard and gamepad defaults, trigger and stick thresholds, presses and releases latched between ticks | `src/client/Options.cpp:45-73`, `src/client/CInput.cpp:200-226` | `rl-input` | done (plan 5 task 6) | `default_bindings_match_olx`, `gamepad_maps_to_keys`, `tap_between_ticks_is_latched`, `tick_latch_sees_every_press_and_release` |
+| Game loop and sandbox (spec §8.6, §19 E10-E12): fixed 100 Hz tick, interpolated frames, catch-up cap, window surface states, WSL GPU defaults, F5 restart from assets loaded once, overlay | `src/game/Game.cpp:897-959` (the frame clock it drives) | `rl-game` | done (plan 5 task 7) | `loop_never_runs_more_than_n_catchup_ticks`, `surface_survives_resize_and_outdated`, `sandbox_setup_spawns_targets`, `session_plays_and_restarts_from_loaded_assets`; scripted runs in a WSLg window on all 4 levels × 2 mods |
 
 ## Deliberate deviations
 
@@ -197,8 +198,10 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     worm stopped it), and the event is matched to the nearest alive worm.
   - *Health bar:* `worm_health.png` is not imported, so the bar is OLX's
     old-style fallback (five segments in a grid).
-  - A hook attached to a worm is drawn at that worm's current position,
-    not interpolated.
+  - With interpolation, a hook attached to a worm is drawn on that worm
+    as drawn, and laser sights and beams start at their worm as drawn (OLX
+    draws them from the worm's position in the sub-step, which matches its
+    unblended worm); bonuses are blended too.
 - **Entities** (`rl-fx`, plan 5 task 4):
   - *Dirt colour of a bonus chain:* OLX reads an explosion's dirt colour
     before the bonuses it destroys explode, but the sim reports the chained
@@ -230,6 +233,11 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   - Between ticks, a key released and pressed again is up for one tick and
     down for the next, so the sim sees both edges (OLX's `CInput` reads the
     devices every sub-step and needs no tick latch).
+- **Game loop** (`rl-game`, plan 5 task 7): the 100 Hz ticks are drawn
+  at the display's rate with interpolation (spec §8.6); at most 10 ticks
+  run per drawn frame, and the rest of a longer stall is dropped. The
+  sandbox HUD, names and damage popups are egui text at the display's
+  resolution (E10), not OLX's bitmap fonts.
 - **Renderer** (`rl-render`, plan 5 task 5): OLX blits each sprite with SDL
   onto a 2× screen; the renderer draws the same texels at art scale (at
   least 2×) and then upscales (E3). With interpolation (E2), a sprite's

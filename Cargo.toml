@@ -54,6 +54,10 @@ pollster = "=1.0.1"
 kira = { version = "=0.12.5", default-features = false, features = ["cpal", "ogg", "vorbis", "wav", "pcm"] }
 gilrs = { version = "=0.11.2", features = ["serde-serialize"] }
 winit = { version = "=0.30.13", features = ["serde"] }
+# The overlay (plan 5, spec §19 E10): exact pins, matching wgpu 30.0.1 and winit 0.30.13.
+egui = "=0.36.2"
+egui-wgpu = { version = "=0.36.2", default-features = false }
+egui-winit = { version = "=0.36.2", default-features = false, features = ["wayland", "x11"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

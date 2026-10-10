@@ -1,0 +1,37 @@
+[package]
+name = "rl-game"
+description = "The game binary: a winit window, the 100 Hz fixed-tick loop over the simulation with interpolated wgpu rendering, cosmetic entities, sound, input and an egui overlay; for now the M5 sandbox."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "rl-game"
+path = "src/main.rs"
+
+[dependencies]
+rl-math.workspace = true
+rl-data.workspace = true
+rl-terrain.workspace = true
+rl-pack.workspace = true
+rl-sim.workspace = true
+rl-content.workspace = true
+rl-scene.workspace = true
+rl-fx.workspace = true
+rl-render.workspace = true
+rl-audio.workspace = true
+rl-input.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+wgpu.workspace = true
+pollster.workspace = true
+winit.workspace = true
+gilrs.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+egui-winit.workspace = true
+
+[lints]
+workspace = true

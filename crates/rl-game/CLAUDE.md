@@ -1,0 +1,57 @@
+# rl-game
+
+The game binary (spec §8.6, §19 E10-E12): a winit window, the 100 Hz
+fixed-tick loop, interpolated wgpu rendering with cosmetic entities, sound,
+input and an egui overlay. For now the M5 sandbox (E11): the player and N
+idle targets on a level with a mod's first five weapons.
+
+```
+cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --targets 3
+```
+
+- **Layer 6.** Uses `rl-content`, `rl-scene`, `rl-fx`, `rl-render`,
+  `rl-audio`, `rl-input`, `rl-sim`, `rl-terrain`, `rl-pack`, plus winit,
+  wgpu, gilrs and egui / egui-wgpu / egui-winit 0.36.2 (exact pins). Logs
+  are `eprintln!("warning: ...")`, each once.
+- **Single thread** (spec §8.6): the device is created and used only on
+  the main (event-loop) thread; under WSL's d3d12 GL driver a thread that
+  used the device crashes when it exits. kira runs its own audio thread.
+- **WSL** (`wsl.rs`): on a WSL kernel, unless the user set `WGPU_BACKEND`
+  or `GALLIUM_DRIVER`, the game starts itself again with
+  `GALLIUM_DRIVER=d3d12 WGPU_BACKEND=gl` (Mesa reads the variable when the
+  driver loads, and `set_var` is unsafe). WSLg presents through GL at the
+  compositor's 60 Hz with FIFO only.
+- **Loop** (`app.rs`): `TickClock` (`clock.rs`) runs the ticks owed, at
+  most `MAX_CATCHUP_TICKS` (10) per frame, dropping the rest. Per tick:
+  script steps, `input.latch_tick()`, `Session::tick` (`world.tick` →
+  `fx.step_tick`, which applies the tick's terrain edits to the colour map
+  and rebuilds a lost area itself, so the game never calls
+  `rl_content::apply_edits` → `audio.play_events` at the view centre →
+  `scene.after_tick` → damage popups), then `renderer.update_terrain`. Per
+  frame: `Session::build` (scene, entities), the overlay, `Gpu::present`,
+  then a screenshot if one is due.
+- **Session** (`session.rs`): the match without a window, so it is tested
+  headless. `restart` (F5) builds the world from the assets loaded once
+  (`setup::Assets`, `rl_content::new_world_from`); the worms are the same,
+  so the atlas stays and only the terrain is uploaded again. Every image
+  (scene, each worm's skin and gibs, entities) is registered before the
+  atlas upload.
+- **Surface** (`surface.rs`, Review Focus 4): a state machine over a
+  `Surface` trait: no frame while minimised, configure on resize,
+  reconfigure and retry on `Outdated` (Wayland's first frame), recreate on
+  `Lost`, bounded retries. `gpu.rs` picks a gamma-space surface format
+  (egui wants one) and Mailbox when there is one, else FIFO; `--uncapped`
+  prefers Immediate.
+- **Overlay** (`overlay.rs`): names over worms, summed damage popups
+  (`Damage.dealt`), the HUD (OLX's kills, deaths and suicides, which a
+  zero score does not count), and F2's counters: FPS, frame and *busy* ms
+  (the frame without the VSync wait), tick ms, entities, projectiles,
+  voices. egui allocates per frame; the world path does not.
+- **Scripts** (`script.rs`): `--script <file>` or `--demo` press keys
+  through the input path at given ticks, plus `shot`, `restart`, `quit`,
+  `size <w> <h>`; `--shot <tick>`, `--autoquit-after <s>`, `--stats`
+  (counters each second) and the exit summary let an agent run the game
+  in a real window and read the PNGs (plan 5 ruling R3).
+
+Test: `cargo nextest run -p rl-game` (the pure parts; `setup` and
+`session` play the imported levels when `RL_CONTENT_DIR` is set).
