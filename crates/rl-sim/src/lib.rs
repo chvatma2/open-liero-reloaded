@@ -12,7 +12,14 @@
 extern crate alloc;
 
 mod input;
+mod physics;
+mod rope;
 mod settings;
+mod world;
+mod worm;
 
 pub use input::{KeyLatch, Keys, Latches};
+pub use rope::NinjaRope;
 pub use settings::{SettingsError, SimSettings};
+pub use world::World;
+pub use worm::{Dir, Slot, Worm, WormState};

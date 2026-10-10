@@ -1,0 +1,21 @@
+[package]
+name = "rl-scenario"
+description = "Replays oracle scenarios in the simulation and records traces to compare with OLX."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rl-math.workspace = true
+rl-data.workspace = true
+rl-terrain.workspace = true
+rl-sim.workspace = true
+rl-oracle.workspace = true
+rl-pack.workspace = true
+rl-vfs.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

@@ -648,6 +648,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-scenario"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rl-data",
+ "rl-math",
+ "rl-oracle",
+ "rl-pack",
+ "rl-sim",
+ "rl-terrain",
+ "rl-vfs",
+]
+
+[[package]]
 name = "rl-sim"
 version = "0.1.0"
 dependencies = [
