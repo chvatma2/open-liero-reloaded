@@ -142,10 +142,12 @@ pub(crate) fn player_shoot(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut B
 
 /// `CClient::LaserSight` (`src/client/CClient_Game.cpp:751-808`), called for
 /// a living worm whose current weapon has a laser sight and is not reloading
-/// (`:179-181`). Its line trace only marks bot targets; what the simulation
-/// keeps is the `ENT_LASERSIGHT` entity it spawns every sub-step (the worm is
-/// visible to everybody outside Hide and Seek), which fills the dedicated
-/// server's entity pool (spec §18 D4) and is reported with the aim direction.
+/// (`:179-181`). Its line trace marks bot targets (not ported) and gives the
+/// sight's length; what the simulation keeps is the `ENT_LASERSIGHT` entity
+/// it spawns every sub-step (the worm is visible to everybody outside Hide
+/// and Seek), which fills the dedicated server's entity pool (spec §18 D4)
+/// and is reported with the aim direction and the trace's length
+/// ([`CosmeticKind::LaserSight`]).
 pub(crate) fn laser_sight(worms: &[Worm], i: usize, m: &SimMod, terrain: &Terrain, draws: &mut Draws) {
     let w = &worms[i];
     if w.slots.is_empty() {

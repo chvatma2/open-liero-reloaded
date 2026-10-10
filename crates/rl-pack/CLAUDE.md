@@ -14,10 +14,10 @@ mod, level, skin and theme packs; PNG helpers; content hashing; validation.
     optional `green_ball.png`
 - `validate` never panics and reports `file:line:col` for RON errors.
   Errors: unknown references, cycles, missing assets. Warnings: unused items.
-- Bump `PACK_FORMAT_VERSION` (in `rl-data`) when a layout changes, and add a migration here.
-  Exception until packs are published: all packs are imports in `target/content`, so a
-  bump adds no migration and older packs are refused ("re-import the pack";
-  `cargo xtask check` re-imports). Version 2 added the theme's `green_ball.png`, which
-  a version-1 import may lack although OLX has it.
+- Bump `PACK_FORMAT_VERSION` (in `rl-data`) when a layout changes. Packs of any other
+  version are refused ("re-import the pack"; `cargo xtask check` re-imports); there
+  are no migrations while all packs are imports in `target/content` (until packs are
+  published). Version 2 added the theme's `green_ball.png`, which a version-1 import
+  may lack although OLX has it.
 
 Test: `cargo nextest run -p rl-pack`.

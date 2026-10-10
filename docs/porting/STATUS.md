@@ -108,8 +108,19 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   (OLX picks them with `rand()`) (the laser sight's length is traced and carried in its event, as OLX
   passes it to the entity). `WeaponFired` and the weapon's
   sound come when the client processes the shot (Model R delivery), as in OLX.
-  A tick reports at most 8192 events, sounds and cosmetics at most 7168; the
-  rest are counted (`TickEvents::dropped`).
+  A tick reports at most 7168 sounds and cosmetics, 32768 terrain edits and
+  8192 other gameplay events, each class in its own quota; the rest are
+  counted (`TickEvents::cosmetic_dropped`, `gameplay_dropped`), and the area
+  of dropped terrain edits is reported (`TickEvents::lost_area`) for the
+  renderer to rebuild from the material grid.
+- **A zero `RotIncrement` is not set to 1 in the mod.** For a rotating image
+  projectile spawned with `UseRandomRot`, OLX writes `RotIncrement = 1` into
+  the loaded `proj_t` before drawing the rotation (`PhysicsLX56_Projectiles.cpp:592-593`),
+  and the change lasts as long as the mod stays loaded. The simulation draws
+  the same rotation but leaves `SimMod` as loaded, so a renderer sees 0 and,
+  following `CProjectile::Draw` (`CProjectile.cpp:291`), does not spin it,
+  where OLX spins it once any such spawn has happened. Cosmetic only, and no
+  Classic or MW 1.0 projectile is rotating with a zero increment.
 
 - **The oracle is not a plain dedicated server** (spec §18, `tools/olx-oracle/CLAUDE.md`):
   - shots are delivered by a hook between frames (Model R), not over UDP;
@@ -125,11 +136,12 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     grabs, damage reports, kill messages) are handed over after the frame they
     were queued in (D10), not over UDP;
   - scenarios place bonuses with `simPlaceBonus` and stay shorter than
-    `BonusFrequency` (30 s), so the server never spawns one at a random spot.
+    `BonusFrequency` (30 s), so the server never spawns one at a random spot,
+    except `bonus-natural`, which sets `BonusFrequency` to 1 s.
 
 - **`SimMod` limits** (`rl-sim::mod_rt`): a pack's projectile tree may have at
   most 4096 occurrences after expansion and 128 levels, and a spawn amount at
-  most 10 000; a missing reference is an error. OLX loads anything and
+  most 1000 (Classic and MW 1.0 use at most 150); a missing reference is an error. OLX loads anything and
   crashes on a missing projectile. A projectile that spawns an ancestor (a
   cycle, which only hand-made packs can express) refers back to it.
 - **Spawn time past frame 819 205** (about 2.3 h): when the decoded shot time is

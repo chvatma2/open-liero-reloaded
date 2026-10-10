@@ -105,6 +105,14 @@ pub(crate) struct Spawner<'a> {
 /// passed too, or if it asked to. Otherwise the local client may respawn it
 /// itself, so the server only allows it (`bCanRespawnNow`) and waits for the
 /// worm's jump key. Game over is not ported (`docs/porting/STATUS.md`).
+///
+/// OLX also skips a dead worm whose `bWeaponsReady` is false
+/// (`CServer_Game.cpp:204`): one still choosing its weapons, which
+/// `GameServer::PrepareWorm` (`CServer.cpp:403-424`, random weapons by
+/// default) or the weapon selection menu (`CWormHuman.cpp:714-748`) settles.
+/// `rl-sim` has no weapon selection and no such flag: every worm counts as
+/// ready (its weapons come from `World::set_loadout` at setup), so the gate
+/// never holds a respawn back.
 pub(crate) fn simulate_respawns(worms: &mut [Worm], latches: &mut [Latches], sp: &mut Spawner) {
     let s = sp.settings;
     for (w, keys) in worms.iter_mut().zip(latches.iter_mut()) {

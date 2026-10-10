@@ -104,7 +104,9 @@ pub(crate) fn spawn_info_apply(
         };
         let mut rot = 0;
         if let Some(inc) = rot_increment {
-            // OLX sets a zero RotIncrement to 1 in the mod itself; only this reads it.
+            // OLX sets a zero RotIncrement to 1 in the mod itself (`:592-593`),
+            // for good; `CProjectile::Draw` (`CProjectile.cpp:291`) reads it
+            // too. The SimMod stays as loaded (docs/porting/STATUS.md).
             let inc = if inc == 0 { 1 } else { inc };
             rot = ctx.rand.random_int((360 / inc).wrapping_abs()).wrapping_mul(inc);
         }
