@@ -14,7 +14,11 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `CInput`. See `docs/porting/STATUS.md`.
 - **Port, don't improve.** Keep OLX's operation order and quirks; cite the
   OLX source for each function. Any change must keep `tests/oracle.rs` green.
-- **Not here yet (M4):** weapons, projectiles, bonuses, damage, `rand()`.
+- **Randomness** (`rng.rs`): the world owns the `rand()` and `FindSpot`
+  generators, seeded by `World::new(.., seed)`, plus the dedicated server's
+  entity counter. Cosmetic draws (digging, rope hook) are made and discarded,
+  in OLX's order, because they advance the stream gameplay draws from.
+- **Not here yet (M4):** weapons, projectiles, bonuses, damage.
 
 Test: `cargo nextest run -p rl-sim`. The oracle test needs imported content;
 `cargo xtask check` sets `RL_CONTENT_DIR`.

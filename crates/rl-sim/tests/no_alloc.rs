@@ -21,7 +21,7 @@ fn tick_does_not_allocate() {
         })
         .collect();
     let terrain = Terrain::from_grid(&MaterialGrid::new(300, 200, Material::Dirt));
-    let mut w = World::new(SimSettings::lx56(), terrain, holes, AbsTime(0));
+    let mut w = World::new(SimSettings::lx56(), terrain, holes, AbsTime(0), 1);
     w.spawn_worm(100, 100);
     w.spawn_worm(200, 100);
     let a = [Keys(Keys::RIGHT | Keys::ROPE | Keys::UP), Keys(Keys::LEFT | Keys::JUMP)];

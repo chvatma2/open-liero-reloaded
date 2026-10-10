@@ -4,10 +4,11 @@
 //! operation order: results must match the oracle bit for bit.
 
 use rl_math::{AbsTime, TimeDiff, Vec2, clamp_direct, reduce_const, reset_small, sign};
-use rl_terrain::{PX_EMPTY, Stamp, Terrain};
+use rl_terrain::{PX_DIRT, PX_EMPTY, Stamp, Terrain};
 
 use crate::SimSettings;
 use crate::input::Latches;
+use crate::rng::Draws;
 use crate::worm::{Dir, Worm};
 
 /// Everything one worm's sub-step needs besides the worm itself.
@@ -19,6 +20,7 @@ pub(crate) struct Ctx<'a> {
     pub settings: &'a SimSettings,
     /// `(id, alive, pos)` of every worm, for the rope.
     pub worms: &'a [(i32, bool, Vec2)],
+    pub draws: &'a mut Draws,
 }
 
 /// LX56 aim (`ForceLX56Aim`): max speed, acceleration.
@@ -120,8 +122,25 @@ fn check_on_ground(w: &Worm, t: &Terrain) -> bool {
 
 /// The one-argument `CarveHole(CVec)` (`src/common/CMap.cpp:2172-2199`): a size-3 hole,
 /// or nothing if the theme has no such hole (`CMap.cpp:1014-1016`).
-/// OLX also throws cosmetic dirt particles here (consuming `rand()`, M4).
+/// Before carving, it looks for dirt in the five pixels around `pos.x` on
+/// row `pos.y` (`CMap.cpp:2181-2192`) and, if it finds some, throws three
+/// cosmetic particles, each drawing `GetRandomVec()` (6 `rand()` calls).
 fn carve_small(ctx: &mut Ctx, pos: Vec2) -> i32 {
+    let (width, height) = (ctx.terrain.width() as i64, ctx.terrain.height() as i64);
+    let y = (pos.y as i32 as i64).min(height - 1).max(0);
+    let px = pos.x as i32 as i64;
+    for x in px - 2..=px + 2 {
+        if x < 0 {
+            continue;
+        }
+        if x >= width {
+            break;
+        }
+        if ctx.terrain.flags(x, y) & PX_DIRT != 0 {
+            ctx.draws.particles(3);
+            break;
+        }
+    }
     ctx.holes.get(3).map_or(0, |hole| ctx.terrain.carve_hole(hole, pos.x as i32, pos.y as i32) as i32)
 }
 
@@ -153,7 +172,7 @@ pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
 
     if w.rope.released {
         let (id, pos) = (w.id, w.pos);
-        w.rope.simulate(dt, id, pos, ctx.worms, ctx.terrain, s);
+        w.rope.simulate(dt, id, pos, ctx.worms, ctx.terrain, s, ctx.draws);
         w.vel += w.rope.force(w.pos, s) * dt;
     }
 
@@ -182,6 +201,12 @@ pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
             > AbsTime(w.last_air_jump_time.0.saturating_add((s.relative_air_jump_delay * 1000.0) as u64));
     if w.state.jump && (on_ground || w.can_air_jump || relative_ok) {
         // Ground jump, or OLX's "instant air jump" (absolute velocity); both set vy.
+        if !on_ground {
+            // Three ENT_SPARKLEs (`PhysicsLX56.cpp:388-390`); their arguments draw nothing.
+            for _ in 0..3 {
+                ctx.draws.spawn_entity();
+            }
+        }
         if on_ground || (!s.jump_to_aim_dir && w.can_air_jump && w.vel.y > s.worm_jump_force) {
             w.vel.y = s.worm_jump_force;
         } else {

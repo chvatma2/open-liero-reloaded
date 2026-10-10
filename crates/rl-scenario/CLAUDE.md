@@ -9,6 +9,8 @@ traces in `rl-oracle`'s format.
   trace header.
 - Weapon slots, lives and kills are copied from OLX's frame −1 until M4
   simulates weapon selection.
+- The world starts at the header's `T0` (OLX's restarted `simulationTime`) and is
+  seeded with the header's seed; frames record `rc`, `mt` and `ents`.
 - `tests/oracle.rs` is the acceptance test: every scenario must match bit for
   bit in the fields `CHECKED` lists, except the scenarios it lists as expected
   to diverge (which must still diverge). Grow `CHECKED` as M4 lands.

@@ -5,6 +5,8 @@ use rl_data::level::Material;
 use rl_math::Vec2;
 use rl_terrain::Terrain;
 
+use crate::rng::Draws;
+
 use crate::SimSettings;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -80,8 +82,10 @@ impl NinjaRope {
 
     /// `simulateNinjarope` for one sub-step of `dt` seconds. `owner_pos` is the
     /// owner's position at the start of the step; `worms` is `(id, alive, pos)`
-    /// of every worm, for hooking onto other worms.
-    pub fn simulate(
+    /// of every worm, for hooking onto other worms. Hooking dirt for the first
+    /// time throws particles, which consume `draws`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn simulate(
         &mut self,
         dt: f32,
         owner_id: i32,
@@ -89,6 +93,7 @@ impl NinjaRope {
         worms: &[(i32, bool, Vec2)],
         terrain: &Terrain,
         s: &SimSettings,
+        draws: &mut Draws,
     ) {
         if !self.released {
             return;
@@ -97,8 +102,8 @@ impl NinjaRope {
         let mut force = Vec2::new(0.0, if self.shooting { s.rope_gravity } else { s.rope_falling_gravity });
 
         if (self.vel + force * dt).length2() * dt * dt * s.ninjarope_precision > 5.0 {
-            self.simulate(dt / 2.0, owner_id, owner_pos, worms, terrain, s);
-            self.simulate(dt / 2.0, owner_id, owner_pos, worms, terrain, s);
+            self.simulate(dt / 2.0, owner_id, owner_pos, worms, terrain, s, draws);
+            self.simulate(dt / 2.0, owner_id, owner_pos, worms, terrain, s, draws);
             return;
         }
 
@@ -153,8 +158,10 @@ impl NinjaRope {
                     self.shooting = false;
                 } else {
                     self.attach();
-                    // OLX spawns cosmetic dirt particles here on the first hit (rand, M4).
-                    let _ = first_hit;
+                    // `px.destroyable && firsthit`: five particles, each `GetRandomVec()`.
+                    if m == Material::Dirt && first_hit {
+                        draws.particles(5);
+                    }
                 }
             }
         }

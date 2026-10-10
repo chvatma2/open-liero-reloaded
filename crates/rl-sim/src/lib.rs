@@ -14,6 +14,7 @@ extern crate alloc;
 
 mod input;
 mod physics;
+mod rng;
 mod rope;
 mod settings;
 mod world;

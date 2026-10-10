@@ -8,12 +8,13 @@
 
 use alloc::vec::Vec;
 
-use rl_math::{AbsTime, TimeDiff, Vec2};
+use rl_math::{AbsTime, GlibcRand, Mt19937, TimeDiff, Vec2};
 use rl_terrain::{Stamp, Terrain};
 
 use crate::SimSettings;
 use crate::input::{Keys, Latches};
 use crate::physics::{Ctx, simulate_worm};
+use crate::rng::Draws;
 use crate::worm::{Loadout, Worm};
 
 /// OLX `SPAWN_HOLESIZE` (`include/Consts.h:36`): the size-4 (largest) hole.
@@ -35,6 +36,8 @@ pub struct World {
     time: AbsTime,
     /// `CClient::fLastSimulationTime`: where the physics clock is.
     physics_time: AbsTime,
+    /// OLX's `rand()` and `FindSpot` generators and the entity counter.
+    draws: Draws,
     /// Reused each physics step so that `tick` does not allocate (spec §5.3).
     others: Scratch,
 }
@@ -52,8 +55,15 @@ impl PartialEq for Scratch {
 
 impl World {
     /// `holes` are the theme's hole stamps (`hole1` to `hole5`). Like OLX, a
-    /// missing hole carves nothing.
-    pub fn new(settings: SimSettings, terrain: Terrain, holes: Vec<Stamp>, start: AbsTime) -> Self {
+    /// missing hole carves nothing. `seed` is the match seed (`simSetSeed`):
+    /// it seeds both the `rand()` stream and the `FindSpot` `mt19937`.
+    pub fn new(
+        settings: SimSettings,
+        terrain: Terrain,
+        holes: Vec<Stamp>,
+        start: AbsTime,
+        seed: u32,
+    ) -> Self {
         Self {
             settings,
             terrain,
@@ -62,6 +72,7 @@ impl World {
             latches: Vec::new(),
             time: start,
             physics_time: start,
+            draws: Draws::new(GlibcRand::new(seed), Mt19937::new(seed)),
             others: Scratch::default(),
         }
     }
@@ -89,6 +100,21 @@ impl World {
 
     pub fn time(&self) -> AbsTime {
         self.time
+    }
+
+    /// How many `rand()` calls the simulation has made since the seed was set.
+    pub fn rand_calls(&self) -> u64 {
+        self.draws.rand.calls()
+    }
+
+    /// How many `FindSpot` `rnd()` draws the simulation has made.
+    pub fn mt_calls(&self) -> u64 {
+        self.draws.mt.calls()
+    }
+
+    /// The dedicated server's entity pool fill (`tEntities`, never freed).
+    pub fn entity_count(&self) -> u32 {
+        self.draws.ents
     }
 
     /// `CWorm::Spawn` at `(x, y)`, including the spawn hole. Returns the worm's
@@ -178,6 +204,7 @@ impl World {
                 holes: &self.holes,
                 settings: &self.settings,
                 worms: others,
+                draws: &mut self.draws,
             };
             simulate_worm(&mut self.worms[i], &mut self.latches[i], &mut ctx);
         }
@@ -209,7 +236,7 @@ mod tests {
 
     fn world(fill: Material) -> World {
         let terrain = Terrain::from_grid(&MaterialGrid::new(200, 200, fill));
-        World::new(SimSettings::lx56(), terrain, holes(), AbsTime(0))
+        World::new(SimSettings::lx56(), terrain, holes(), AbsTime(0), 1)
     }
 
     #[test]
@@ -270,7 +297,7 @@ mod tests {
         let mut settings = SimSettings::lx56();
         settings.instant_air_jump = true;
         let terrain = Terrain::from_grid(&MaterialGrid::new(200, 200, Material::Background));
-        let mut w = World::new(settings, terrain, holes(), AbsTime(0));
+        let mut w = World::new(settings, terrain, holes(), AbsTime(0), 1);
         w.spawn_worm(100, 20);
         w.tick(&[Keys(0)]);
         w.tick(&[Keys(0)]);
@@ -282,7 +309,7 @@ mod tests {
     fn a_theme_without_holes_does_not_panic() {
         // OLX's CarveHole returns 0 when the theme lacks the hole image.
         let terrain = Terrain::from_grid(&MaterialGrid::new(50, 50, Material::Dirt));
-        let mut w = World::new(SimSettings::lx56(), terrain, Vec::new(), AbsTime(0));
+        let mut w = World::new(SimSettings::lx56(), terrain, Vec::new(), AbsTime(0), 1);
         w.spawn_worm(25, 25);
         for _ in 0..20 {
             w.tick(&[Keys(Keys::RIGHT | Keys::LEFT)]);
@@ -354,11 +381,65 @@ mod tests {
     #[test]
     fn an_empty_map_does_not_panic() {
         let terrain = Terrain::from_grid(&MaterialGrid::new(0, 0, Material::Dirt));
-        let mut w = World::new(SimSettings::lx56(), terrain, holes(), AbsTime(0));
+        let mut w = World::new(SimSettings::lx56(), terrain, holes(), AbsTime(0), 1);
         w.spawn_worm(0, 0);
         for k in [0, 0, Keys::ROPE, 0, Keys::RIGHT, Keys::LEFT | Keys::RIGHT, Keys::JUMP] {
             w.tick(&[Keys(k)]);
         }
+    }
+
+    /// Holds right and taps left every 20 frames, as the `dig` scenario does.
+    fn dig_world(fill: Material) -> World {
+        let mut w = world(fill);
+        w.spawn_worm(100, 100);
+        w
+    }
+
+    fn tap_frames(w: &mut World, n: usize) {
+        for f in 0..n {
+            let tap = f > 20 && f % 20 == 0;
+            w.tick(&[Keys(if tap { Keys::RIGHT | Keys::LEFT } else { Keys::RIGHT })]);
+        }
+    }
+
+    #[test]
+    fn digging_into_dirt_draws_six_and_fills_three_entities() {
+        // OLX `CarveHole(CVec)` (CMap.cpp:2172-2199): 3 particles, each `GetRandomVec()`.
+        let mut w = dig_world(Material::Dirt);
+        tap_frames(&mut w, 200);
+        let calls = w.rand_calls();
+        assert!(calls > 0 && calls.is_multiple_of(6), "{calls} draws");
+        assert_eq!(w.entity_count() as u64 * 2, calls);
+    }
+
+    #[test]
+    fn digging_in_the_air_draws_nothing() {
+        let mut w = dig_world(Material::Background);
+        tap_frames(&mut w, 40);
+        assert_eq!((w.rand_calls(), w.entity_count()), (0, 0));
+    }
+
+    #[test]
+    fn the_rope_hooking_dirt_draws_ten_once() {
+        // `simulateNinjarope` (PhysicsLX56.cpp:590-608): 5 particles on the first hit.
+        let mut w = dig_world(Material::Dirt);
+        for k in [0, 0, Keys::ROPE] {
+            w.tick(&[Keys(k)]);
+        }
+        for _ in 0..30 {
+            w.tick(&[Keys(0)]);
+        }
+        assert!(w.worms()[0].rope.attached);
+        assert_eq!((w.rand_calls(), w.entity_count()), (10, 5));
+    }
+
+    #[test]
+    fn generators_are_seeded_from_the_match_seed() {
+        let terrain = Terrain::from_grid(&MaterialGrid::new(10, 10, Material::Background));
+        let a = World::new(SimSettings::lx56(), terrain.clone(), holes(), AbsTime(0), 7);
+        let b = World::new(SimSettings::lx56(), terrain, holes(), AbsTime(0), 8);
+        assert_ne!(a, b);
+        assert_eq!((a.rand_calls(), a.mt_calls()), (0, 0));
     }
 
     #[test]

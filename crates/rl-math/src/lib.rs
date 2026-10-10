@@ -5,10 +5,12 @@
 //! crate, never through the platform's math library.
 #![no_std]
 
+mod rand;
 mod time;
 mod trig;
 mod vec2;
 
+pub use rand::{GlibcRand, Mt19937, RAND_MAX, RANDOM_NUMBERS, get_fixed_random_num};
 pub use time::{AbsTime, TimeDiff};
 pub use trig::{cosf, sinf};
 pub use vec2::Vec2;

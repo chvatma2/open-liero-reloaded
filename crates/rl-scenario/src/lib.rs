@@ -21,7 +21,8 @@ pub const CHECKED: Fields = Fields::WORM_MOTION
     .union(Fields::ROPE)
     .union(Fields::MATERIAL)
     .union(Fields::HEALTH)
-    .union(Fields::SCORE);
+    .union(Fields::SCORE)
+    .union(Fields::RAND);
 
 /// Reads `<dir>/<name>.ron` and `<dir>/<name>.jsonl.gz`.
 pub fn load_fixture(dir: &Path, name: &str) -> anyhow::Result<(Scenario, Trace)> {
@@ -60,7 +61,11 @@ pub fn load_world(content: &Path, sc: &Scenario, expected: &Trace) -> anyhow::Re
     let settings =
         SimSettings::from_olx_features(&expected.header.features).map_err(|e| anyhow::anyhow!(e.0))?;
     let holes = theme.holes.iter().map(Stamp::from_image).collect();
-    let mut world = World::new(settings, Terrain::from_grid(&level.material), holes, AbsTime(0));
+    // OLX restarts `simulationTime` at T0 when the inputs load; older traces have no T0.
+    let t0 = expected.header.options.get("T0").and_then(|t| t.parse().ok()).unwrap_or(0);
+    // The scenario's seed is the header's: the generators start clean at the second `simSetSeed`.
+    let seed = expected.header.seed.unwrap_or(sc.seed);
+    let mut world = World::new(settings, Terrain::from_grid(&level.material), holes, AbsTime(t0), seed);
     let start = expected.frames.first().context("trace has no frames")?;
     for (i, spawn) in sc.worms.iter().enumerate() {
         world.spawn_worm(spawn.x, spawn.y).context("the scenario has more worms than rl-sim allows")?;
@@ -124,7 +129,15 @@ pub fn record(world: &World, f: i64) -> Frame {
             ..WormRec::default()
         })
         .collect();
-    Frame { f, w, mh: format!("{:016x}", world.terrain().material_hash()), ..Frame::default() }
+    Frame {
+        f,
+        w,
+        rc: Some(world.rand_calls()),
+        mt: Some(world.mt_calls()),
+        ents: Some(world.entity_count() as i64),
+        mh: format!("{:016x}", world.terrain().material_hash()),
+        ..Frame::default()
+    }
 }
 
 /// Plays `sc` from frame -1 to its last frame and returns the Rust trace,

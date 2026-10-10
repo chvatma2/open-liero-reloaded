@@ -13,4 +13,11 @@ milliseconds, `seconds() = ms * 0.001f`), and the macros `SIGN`, `CLAMP_DIRECT`,
   which OLX's oracle uses, checked against it for every `f32` input. Never use
   `libm::sinf`/`cosf`, which are 1 ulp off for about one input in 1300.
 
+- **Randomness** (`rand.rs`): `GlibcRand` is glibc 2.35's `rand()` with OLX's
+  float wrappers (`random_num`, `random_pos_num`, `random_int`, `random_vec`),
+  `RANDOM_NUMBERS` is OLX's fixed table, and `Mt19937` is boost's `mt19937`
+  (`FindSpot`). Each generator counts its draws (`calls()`), which the oracle
+  traces record (`rc`, `mt`). Every `random_*` call draws exactly as OLX does,
+  including `random_int(0)`.
+
 Test: `cargo nextest run -p rl-math`.
