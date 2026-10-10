@@ -9,7 +9,7 @@ use rl_math::TimeDiff;
 use crate::checksum::Fnv;
 use crate::effects::carve_px;
 use crate::events::{EventKind, StampId, TerrainOp};
-use crate::mode::{Command, Commands, GameMode, MatchResult, ModeCtx, StampOp, Vacant};
+use crate::mode::{Command, Commands, GameMode, MatchResult, ModeCtx, StampOp};
 use crate::setup::MAX_SLOTS;
 use crate::world::{FRAME_MS, MAX_WORMS, World};
 use crate::worm::{Loadout, Slot};
@@ -124,11 +124,8 @@ impl World {
         if self.referee.over.is_some() {
             return;
         }
-        // Lend the world to the mode: a zero-sized placeholder does not allocate.
-        let mode = core::mem::replace(&mut self.referee.mode, Box::new(Vacant));
-        let result = mode.is_over(self);
-        self.referee.mode = mode;
-        if let Some(r) = result {
+        // The mode reads the whole world, itself included (`World::scores`).
+        if let Some(r) = self.referee.mode.is_over(self) {
             self.game_over(r);
         }
     }
@@ -195,7 +192,8 @@ impl World {
     fn apply(&mut self, c: Command) {
         match c {
             Command::Spawn { team, slots, len, current_weapon, lives, kills, deaths, at } => {
-                if self.worms.len() >= MAX_WORMS {
+                // `GameServer::SpawnWorm` returns while `gameOver` (`CServer_Game.cpp:40`).
+                if self.worms.len() >= MAX_WORMS || self.referee.over.is_some() {
                     return;
                 }
                 let Some(mut vec) = self.spare.take() else { return };

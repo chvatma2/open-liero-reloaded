@@ -177,6 +177,10 @@ const THE_END: MatchResult = MatchResult { winner: 1, reason: EndReason::Other(9
 const HELLO: Message = Message { text: TextId(7), args: [1, 2, 3] };
 
 impl GameMode for Script {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
     fn box_clone(&self) -> Box<dyn GameMode> {
         Box::new(self.clone())
     }
@@ -389,4 +393,90 @@ fn place_bonus_reports_what_it_cannot_place() {
         w.place_bonus(10, 10, crate::BonusItem::Health).unwrap();
     }
     assert_eq!(w.place_bonus(10, 10, crate::BonusItem::Health), Err(crate::PlaceBonusError::Full));
+}
+
+/// A mode with a scoreboard: each worm's kills, kept by `on_tick`; it ends
+/// the match through `is_over` when a score reaches 1, reading `World::scores`.
+#[derive(Clone, Debug, Default)]
+struct FirstBlood {
+    ticks: u32,
+    table: Vec<Score>,
+}
+
+impl GameMode for FirstBlood {
+    fn box_clone(&self) -> Box<dyn GameMode> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
+    fn checksum(&self, h: &mut Fnv) {
+        h.u32(self.ticks);
+        self.table.iter().for_each(|s| h.i32(s.score));
+    }
+
+    fn on_kill(&mut self, victim: i32, killer: i32, ctx: &mut ModeCtx) -> KillCredit {
+        olx_kill_credit(ctx.worms(), ctx.settings(), victim, killer)
+    }
+
+    fn on_tick(&mut self, ctx: &mut ModeCtx) {
+        self.ticks += 1;
+        self.table.clear();
+        for w in ctx.worms() {
+            let s = Score {
+                worm: w.id,
+                score: w.kills,
+                lives: w.lives,
+                kills: w.kills,
+                deaths: w.deaths,
+                suicides: w.suicides,
+                damage: w.damage,
+            };
+            self.table.push(s);
+        }
+    }
+
+    fn is_over(&self, world: &World) -> Option<MatchResult> {
+        let best = world.scores().iter().find(|s| s.score >= 1)?;
+        Some(MatchResult { winner: best.worm, reason: EndReason::KillLimit })
+    }
+
+    fn scores(&self, _: &World) -> &[Score] {
+        &self.table
+    }
+}
+
+#[test]
+fn is_over_sees_the_world_with_its_mode() {
+    let mut m = setup(SimSettings::lx56(), Material::Background);
+    m.worms = vec![worm_at(50, 100), worm_at(150, 100)];
+    let mode = FirstBlood { ticks: 0, table: Vec::with_capacity(crate::MAX_WORMS) };
+    let mut w = World::new(m, Box::new(mode)).unwrap();
+    let mut out = TickEvents::new();
+    w.tick(&[], &mut out);
+    assert_eq!(w.scores().len(), 2);
+    assert_eq!(w.result(), None);
+    kill_worm(&mut w.harm(), 1, 0);
+    w.tick(&[], &mut out); // `on_tick` records the kill
+    w.tick(&[], &mut out); // `is_over` reads it through `World::scores`
+    let end = MatchResult { winner: 0, reason: EndReason::KillLimit };
+    assert_eq!(w.result(), Some(end));
+    assert!(out.iter().any(|e| e.kind == EventKind::GameOver(end)));
+    // The mode's own state, read back through `as_any`.
+    let mode = w.mode_state().as_any().downcast_ref::<FirstBlood>().unwrap();
+    assert_eq!(mode.ticks, 3);
+    assert!(w.mode_state().as_any().downcast_ref::<OracleMode>().is_none());
+}
+
+#[test]
+fn no_spawn_after_the_end() {
+    // OLX: `GameServer::SpawnWorm` returns while `gameOver` (`CServer_Game.cpp:40`).
+    let (mut w, _) = run(scripted(), 5);
+    assert_eq!((w.result(), w.worms().len()), (Some(THE_END), 2));
+    let mut ctx = w.referee.ctx(&w.worms, &w.settings, w.time);
+    ctx.spawn_worm(&worm_at(20, 20)).unwrap();
+    w.apply_commands();
+    assert_eq!(w.worms().len(), 2);
 }

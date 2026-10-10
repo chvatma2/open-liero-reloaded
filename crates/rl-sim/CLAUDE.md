@@ -25,8 +25,9 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   next delivery and stops the physics after 3 s. `OracleMode` is OLX's bare
   crediting (`olx_kill_credit`) with no end: the oracle and the sandbox
   play it. A mode's state is hashed by `GameMode::checksum`; `World::clone`
-  uses `box_clone`, and `is_over(&World)` borrows the world through a
-  zero-sized placeholder mode (no allocation).
+  uses `box_clone`; `is_over(&World)` sees the whole world, the mode
+  included (`World::scores`); `World::mode_state().as_any()` downcasts to
+  the mode's own type.
 - **Two clocks.** `tick` is one 100 Hz frame. Inside it, LX56 physics runs in
   `1000 / LX56PhysicsFPS` ms sub-steps (11 ms by default) while the physics
   clock is behind the frame clock, so some frames run no sub-step.

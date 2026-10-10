@@ -24,6 +24,10 @@ struct Rounds {
 }
 
 impl GameMode for Rounds {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
     fn box_clone(&self) -> Box<dyn GameMode> {
         Box::new(self.clone())
     }

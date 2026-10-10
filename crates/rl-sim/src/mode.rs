@@ -43,6 +43,10 @@ pub trait GameMode: fmt::Debug + Send + Sync {
     /// A copy of the mode, for `World::clone`.
     fn box_clone(&self) -> Box<dyn GameMode>;
 
+    /// The mode itself, so a reader of [`World::mode_state`] can downcast
+    /// it to read its own state (time left, limits): `{ self }`.
+    fn as_any(&self) -> &dyn core::any::Any;
+
     /// Hashes every part of the mode's state that can change during a
     /// match, as `World::checksum` does the world's.
     fn checksum(&self, h: &mut Fnv);
@@ -263,7 +267,8 @@ impl ModeCtx<'_> {
     }
 
     /// Spawns a worm with `setup`'s team and loadout, at its position or
-    /// at a `FindSpot` one. Skipped when the world has `MAX_WORMS` worms.
+    /// at a `FindSpot` one. Skipped when the world has `MAX_WORMS` worms or
+    /// the match is over (`GameServer::SpawnWorm`, `CServer_Game.cpp:40`).
     pub fn spawn_worm(&mut self, setup: &WormSetup) -> Result<(), CommandError> {
         let l = &setup.loadout;
         if l.slots.len() > MAX_SLOTS {
@@ -327,6 +332,10 @@ impl ModeCtx<'_> {
 pub struct OracleMode;
 
 impl GameMode for OracleMode {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
     fn box_clone(&self) -> Box<dyn GameMode> {
         Box::new(*self)
     }
@@ -335,23 +344,6 @@ impl GameMode for OracleMode {
 
     fn on_kill(&mut self, victim: i32, killer: i32, ctx: &mut ModeCtx) -> KillCredit {
         crate::damage::olx_kill_credit(ctx.worms(), ctx.settings(), victim, killer)
-    }
-}
-
-/// A placeholder while the world lends itself to [`GameMode::is_over`]: a
-/// zero-sized mode, so boxing it does not allocate.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Vacant;
-
-impl GameMode for Vacant {
-    fn box_clone(&self) -> Box<dyn GameMode> {
-        Box::new(Vacant)
-    }
-
-    fn checksum(&self, _: &mut Fnv) {}
-
-    fn on_kill(&mut self, _: i32, _: i32, _: &mut ModeCtx) -> KillCredit {
-        KillCredit::default()
     }
 }
 

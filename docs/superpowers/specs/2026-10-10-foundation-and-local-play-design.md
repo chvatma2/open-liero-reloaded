@@ -743,10 +743,12 @@ Made precise while implementing F6 and F9 (plan 6 task 1):
 - **Game over is OLX's `GameServer::GameOver`:** the world records the
   result (`World::result`), emits `GameOver` once and clears every worm's
   input. From then on kills are ignored (`killWorm` returns), nobody
-  respawns, no bonus spawns, worms read no input and do not shoot, pick up
+  spawns or respawns (`SpawnWorm` returns, for a spawn command too), no bonus spawns, worms read no input and do not shoot, pick up
   or aim their laser sight; the client clears its projectiles at the next
   delivery (`ParseGameOver`), and the physics stops 3 s after the end
   (`GAMEOVER_WAIT`).
+- **Reading a mode:** `World::mode_state()` gives the `&dyn GameMode`;
+  `GameMode::as_any` lets a caller downcast it to read the mode's own state.
 - **`OracleMode`** (in `rl-sim`) is OLX's crediting with no end, no
   scoreboard and no commands: the oracle scenarios and the sandbox play it,
   so the oracle stays bit-exact. (The oracle's dedicated server runs with
