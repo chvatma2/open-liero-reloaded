@@ -530,6 +530,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-import-gfx"
+version = "0.1.0"
+dependencies = [
+ "rl-data",
+ "rl-pack",
+ "rl-vfs",
+ "thiserror",
+]
+
+[[package]]
 name = "rl-import-lgs"
 version = "0.1.0"
 dependencies = [

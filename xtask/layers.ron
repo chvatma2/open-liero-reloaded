@@ -9,12 +9,14 @@
         "rl-pack": 2,
         "rl-import-lgs": 2,
         "rl-import-lxl": 2,
+        "rl-import-gfx": 2,
         "xtask": 6,
     },
     same_layer: [
         ("rl-import-lgs", "rl-pack"),
         ("rl-import-lxl", "rl-pack"),
+        ("rl-import-gfx", "rl-pack"),
     ],
     no_std: ["rl-data"],
-    wasm: ["rl-data", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl"],
+    wasm: ["rl-data", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
 )

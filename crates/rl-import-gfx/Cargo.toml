@@ -1,0 +1,17 @@
+[package]
+name = "rl-import-gfx"
+description = "Imports OpenLieroX skins and level themes into native packs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rl-data.workspace = true
+rl-vfs.workspace = true
+rl-pack.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
