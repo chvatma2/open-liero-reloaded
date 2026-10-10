@@ -114,6 +114,7 @@ fixtures/matches/     golden checksum streams
     - canonical NaN in the checksum;
     - `place_bonus` returns a result and is pre-sized;
     - the `bWeaponsReady` note.
+  - **Event data for rendering** (from the final review of plan 5): `CosmeticKind::LaserSight` gains `worm` and `CosmeticKind::Beam` gains its colour, so `rl-scene` stops guessing the owner (`marks.rs` `owner`/`beam_colour`). No draws change.
 
 **Steps:**
 - [ ] **Step 1: RED.** Write:
