@@ -13,6 +13,7 @@ mod mod_pack;
 mod ron_io;
 mod skin_pack;
 mod theme_pack;
+mod validate;
 
 pub use error::PackError;
 pub use hash::content_hash;
@@ -21,6 +22,7 @@ pub use mod_pack::{ModPack, read_mod, write_mod};
 pub use ron_io::{read_manifest, write_manifest};
 pub use skin_pack::{SkinPack, read_skin, write_skin};
 pub use theme_pack::{ThemePack, read_theme, write_theme};
+pub use validate::{Diagnostic, Severity, validate};
 
 /// Path of the manifest inside every pack.
 pub const MANIFEST: &str = "pack.ron";
