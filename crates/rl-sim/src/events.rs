@@ -83,8 +83,11 @@ pub enum CosmeticKind {
     /// `ENT_GIB` with worm `worm`'s gib image (its colorized `giblets.png`).
     Gib { worm: i32 },
     /// `ENT_PARTICLE`: thrown dirt, coloured like the map's colour image at
-    /// `probe` before this tick's edits there (the event precedes its
-    /// carve). Each source probes its own pixel: digging and an explosion
+    /// `probe`. A renderer samples the colour image after applying the
+    /// preceding edits in this buffer (the event precedes its own carve).
+    /// `probe` is in material (world) pixels: scale it by the level's
+    /// `art_scale` to read the colour image (OLX's `getColorAt` reads the
+    /// top-left art pixel). Each source probes its own pixel: digging and an explosion
     /// the first dirt pixel they found near `pos` (`CarveHole(CVec)`,
     /// `CMap.cpp:2181-2192`; `CClient::Explosion`, `CClient_Game.cpp:233-251`),
     /// a rope hook its wrapped position (`PhysicsLX56.cpp:603-606`).
