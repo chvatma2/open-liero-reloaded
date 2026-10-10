@@ -1,0 +1,26 @@
+(
+    description: "Deathmatch scoring with AllowNegativeScore off (the default): a suicide and a death count only while the worm's score is above 0. On FossilFacility's dirt floor, worm 2 (15 hp, score 0) aims down and kills itself with its Cluster bombs: neither its suicide nor its death counts. Worm 0 kills worm 1 (20 hp) with one Bazooka rocket (a kill for worm 0; worm 1's death at score 0 does not count), then switches to its Cluster bombs, aims down and kills itself at 15 hp: at score 1 the suicide counts, and so does the death. Every dead worm is respawned by the server after RespawnTime.",
+    level: "FossilFacility.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 660,
+    settings: {"GameOptions.GameInfo.AllowNegativeScore": "0"},
+    worms: [(x: 118, y: 384), (x: 178, y: 384), (x: 60, y: 384)],
+    weapons: [
+        (worm: 0, names: ["Bazooka", "Cluster bomb", "Cluster bomb", "Cluster bomb", "Cluster bomb"], current: 0),
+        (worm: 1, names: ["Minigun", "Minigun", "Minigun", "Minigun", "Minigun"], current: 0),
+        (worm: 2, names: ["Cluster bomb", "Cluster bomb", "Cluster bomb", "Cluster bomb", "Cluster bomb"], current: 0),
+    ],
+    health: [(0, 15.0), (1, 20.0), (2, 15.0)],
+    inputs: [
+        (frame: 0, worm: 2, keys: "down"),
+        (frame: 30, worm: 0, keys: "fire"),
+        (frame: 32, worm: 0, keys: ""),
+        (frame: 80, worm: 2, keys: "down+fire"),
+        (frame: 110, worm: 2, keys: ""),
+        (frame: 100, worm: 0, keys: "down+change+right"),
+        (frame: 102, worm: 0, keys: "down"),
+        (frame: 180, worm: 0, keys: "down+fire"),
+        (frame: 230, worm: 0, keys: ""),
+    ],
+)

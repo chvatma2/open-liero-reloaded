@@ -108,9 +108,15 @@ you rarely need to touch these files.
 
 ## Known limits
 
-- The server spawns bonuses on its own timer (`BonusFrequency`, 30 s after the
-  recording starts) at random `FindSpot` positions. Scenarios place bonuses with
-  `simPlaceBonus` and stay shorter than that.
+- The server spawns bonuses on its own timer (`BonusFrequency`, default 30 s) at
+  random `FindSpot` positions. This is deterministic: the timer is reset to the
+  pinned clock when the recording starts, `SimulateGame` reads the pinned
+  `currentTime`, and `FindSpot` and the kind and weapon draws use the seeded
+  generators (`bonus-natural` sets `BonusFrequency` to 1 s). Other scenarios
+  place bonuses with `simPlaceBonus` and stay shorter than 30 s.
+- Weapon bonuses use the weapons `WeaponRestrictionsFile` does not ban. `rl-sim`
+  does not import restriction files yet, so `bonus-natural` uses OLX's
+  `Bonus only` preset, which allows every Classic weapon.
 
 ## Changing the patch
 

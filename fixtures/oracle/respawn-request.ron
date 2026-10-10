@@ -1,0 +1,22 @@
+(
+    description: "Respawn on request: with MaxRespawnTime (6 s) above RespawnTime (1 s), the server does not respawn a dead worm by itself once RespawnTime has passed; it only allows it (bCanRespawnNow), and the worm's jump key asks for it (bRespawnRequested). On Liero Factory's open rock floor, worm 0 kills worm 1 (20 hp) with one Bazooka rocket. Worm 1 presses jump before RespawnTime has passed (ignored), then again 1.5 s after it has, and the server respawns it at a FindSpot position in the next frame.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 330,
+    settings: {"GameOptions.GameInfo.RespawnTime": "1", "GameOptions.GameInfo.MaxRespawnTime": "6"},
+    worms: [(x: 190, y: 330), (x: 240, y: 330)],
+    weapons: [
+        (worm: 0, names: ["Bazooka", "Bazooka", "Bazooka", "Bazooka", "Bazooka"], current: 0),
+        (worm: 1, names: ["Minigun", "Minigun", "Minigun", "Minigun", "Minigun"], current: 0),
+    ],
+    health: [(1, 20.0)],
+    inputs: [
+        (frame: 30, worm: 0, keys: "fire"),
+        (frame: 32, worm: 0, keys: ""),
+        (frame: 80, worm: 1, keys: "jump"),
+        (frame: 82, worm: 1, keys: ""),
+        (frame: 300, worm: 1, keys: "jump"),
+        (frame: 302, worm: 1, keys: ""),
+    ],
+)

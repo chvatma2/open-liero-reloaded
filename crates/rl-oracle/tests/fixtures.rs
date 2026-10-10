@@ -54,16 +54,19 @@ fn first_input_with(sc: &Scenario, worm: usize, key: &str) -> Option<u32> {
     sc.inputs.iter().filter(|c| c.worm == worm && c.keys.split('+').any(|k| k == key)).map(|c| c.frame).min()
 }
 
-const SPECIAL: [&str; 10] = [
+const SPECIAL: [&str; 13] = [
     "beam-burst",
     "bleed",
     "bonus-health",
+    "bonus-natural",
     "bonus-weapon",
     "die-before-delivery",
     "explode-kill-respawn",
     "multi-shot",
     "reload-switch",
+    "respawn-request",
     "rope-dirt",
+    "suicide-score",
     "two-worms-fire",
 ];
 
@@ -367,4 +370,77 @@ fn only_the_current_slot_reloads() {
     assert!(away.iter().any(|f| !f.s.is_empty()), "the other slot fires");
     let full = t.frames[reloading..].iter().position(|f| !f.w[0].slots[0].rl).expect("reloads again");
     assert_eq!(t.frames[reloading + full].w[0].slots[0].ch.0, 1.0);
+}
+
+/// The frame in which worm `w` dies for the first time at or after `from`.
+fn death(t: &Trace, w: usize, from: usize) -> usize {
+    from + t.frames[from..].iter().position(|f| !f.w[w].alive).unwrap_or_else(|| panic!("worm {w} dies"))
+}
+
+#[test]
+fn suicides_and_deaths_count_only_above_score_zero() {
+    let (_, t) = load("suicide-score");
+    assert_eq!(t.header.features["AllowNegativeScore"], "false");
+    let score = |f: &Frame, w: usize| (f.w[w].kills, f.w[w].deaths, f.w[w].suicides.unwrap());
+    // Worm 1 is killed by worm 0: a kill for worm 0, and worm 1's death at score 0 does not count.
+    let d1 = death(&t, 1, 0);
+    assert_eq!((score(&t.frames[d1], 0), score(&t.frames[d1], 1)), ((1, 0, 0), (0, 0, 0)));
+    // Worm 2 kills itself at score 0: neither the suicide nor the death counts, and nobody gets a kill.
+    let d2 = death(&t, 2, 0);
+    assert!(d2 > d1);
+    assert_eq!(score(&t.frames[d2], 2), (0, 0, 0));
+    assert_eq!(t.frames[d2].w.iter().map(|w| w.kills).sum::<i32>(), 1, "a suicide, not a kill");
+    // Worm 0 kills itself at score 1: the suicide counts, and so does the death.
+    let d0 = death(&t, 0, 0);
+    assert!(d0 > d2);
+    assert_eq!((score(&t.frames[d0 - 1], 0), score(&t.frames[d0], 0)), ((1, 0, 0), (1, 1, 1)));
+    let last = t.frames.last().unwrap();
+    assert!(last.w.iter().all(|w| w.alive), "the server respawns every worm");
+}
+
+#[test]
+fn a_dead_worm_respawns_when_its_jump_asks_for_it() {
+    let (sc, t) = load("respawn-request");
+    assert_eq!(
+        (t.header.features["RespawnTime"].as_str(), t.header.features["MaxRespawnTime"].as_str()),
+        ("1", "6")
+    );
+    let died = death(&t, 1, 0);
+    let jumps: Vec<u32> =
+        sc.inputs.iter().filter(|c| c.worm == 1 && c.keys == "jump").map(|c| c.frame).collect();
+    // `respawn`: bit 0 bRespawnRequested, bit 1 bCanRespawnNow, bit 2 spawned once.
+    let allowed = died + t.frames[died..].iter().position(|f| f.w[1].respawn == Some(6)).expect("allowed");
+    // RespawnTime 1 s, strict `>`, with currentTime = simulationTime + 10 ms (D2).
+    assert_eq!(allowed - died, 100, "frames between death and bCanRespawnNow");
+    assert!((jumps[0] as usize + 1) < allowed, "the first jump comes too early");
+    let back = died + t.frames[died..].iter().position(|f| f.w[1].alive).expect("worm 1 respawns");
+    assert_eq!(back, jumps[1] as usize + 1, "the second jump respawns it in its own frame");
+    assert!(back - died < 600, "before MaxRespawnTime would force it");
+    assert_eq!(t.frames[back].w[1].respawn, Some(4));
+}
+
+#[test]
+fn natural_bonuses_spawn_by_frequency_and_expire_after_bonus_life() {
+    let (_, t) = load("bonus-natural");
+    let mut spawns: Vec<(usize, i32, i32, i64)> = Vec::new();
+    for (i, f) in t.frames.iter().enumerate() {
+        for b in &f.sb {
+            if !spawns.iter().any(|s| (s.1, s.3) == (b.i, b.spawn)) {
+                spawns.push((i, b.i, b.t, b.spawn));
+            }
+        }
+    }
+    assert!(spawns.len() >= 6, "{spawns:?}");
+    // `currentTime - fLastBonusTime > BonusFrequency` (1 s): one spawn every 101 frames.
+    assert!(spawns.windows(2).all(|s| s[1].3 - s[0].3 == 1010), "{spawns:?}");
+    assert!(spawns.iter().any(|s| s.2 == 0) && spawns.iter().any(|s| s.2 == 1), "both kinds: {spawns:?}");
+    // Each spawn draws its kind and its weapon: two rand() calls, and FindSpot at least two rnd().
+    for &(i, ..) in &spawns {
+        let (a, b) = (&t.frames[i - 1], &t.frames[i]);
+        assert_eq!(b.rc.unwrap() - a.rc.unwrap(), 2, "frame {}", b.f);
+        assert!(b.mt.unwrap() - a.mt.unwrap() >= 2, "frame {}", b.f);
+    }
+    // A slot older than BonusLife (3 s) is freed and used again.
+    let reused = spawns.iter().filter(|s| spawns.iter().any(|o| o.1 == s.1 && o.3 < s.3)).count();
+    assert!(reused >= 2, "{spawns:?}");
 }

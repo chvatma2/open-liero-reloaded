@@ -1,14 +1,13 @@
 //! Unit tests of the bonuses, through [`crate::World`].
 use super::*;
 use crate::mod_rt::tests::{mod_def, pixel_projectile, projectile_weapon};
-use crate::respawn::find_spot;
 use crate::{Keys, Loadout, SimMod, SimSettings, Slot, World};
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec;
 use rl_data::image::{Rgba, RgbaImage};
 use rl_data::level::{Material, MaterialGrid};
-use rl_math::{GlibcRand, Mt19937, TimeDiff};
+use rl_math::{GlibcRand, TimeDiff, Vec2};
 use rl_terrain::{Stamp, Terrain};
 
 const SEED: u32 = 7;
@@ -175,27 +174,28 @@ fn server_slot_stays_busy_after_pickup() {
 #[test]
 fn natural_bonuses_spawn_by_frequency_at_find_spot() {
     let mut w = world_with(SimSettings { bonus_frequency: 1.0, ..bonus_settings() });
-    let terrain = w.terrain().clone();
     // `currentTime - fLastBonusTime > BonusFrequency`, the timer starting at
     // START + 10: frame 101 (currentTime START + 1020).
     ticks(&mut w, 101);
     assert!(w.server_bonuses().iter().all(|b| !b.used));
     ticks(&mut w, 1);
-    let mut mt = Mt19937::new(SEED);
-    let pos = find_spot(&terrain, &mut mt);
-    let mut r = GlibcRand::new(SEED);
-    let kind = if r.random_int(999) as f32 >= 0.5 * 1000.0 { BonusKind::Health } else { BonusKind::Weapon };
-    // `randomChoiceFrom(goodWpns)`: `GetRandomLong(size - 1)`, for health bonuses too.
-    let weapon = (r.random_pos_num() * 2.0) as i32;
+    // Expected values computed outside rl-math (glibc's `srandom(7)`, and boost's
+    // `mt19937(7)` in Python): rand() 1045618677 gives `GetRandomInt(999)` 486,
+    // below 0.5 * 1000, so a weapon bonus; rand() 1863967299 gives
+    // `GetRandomLong(1)` 1; FindSpot's first try is good, at the first two
+    // `rnd()` draws times 200. The `bonus-natural` oracle scenario checks the
+    // same path against OLX.
     let s = w.server_bonuses()[0];
-    assert!(s.used && (s.pos, s.kind, s.weapon) == (pos, kind, weapon.min(1)), "{s:?}");
+    let pos = Vec2::new(f32::from_bits(1098133441), f32::from_bits(1110826763));
+    assert_eq!((pos.x, pos.y), (15.261659, 45.467815));
+    assert!(s.used && (s.pos, s.kind, s.weapon) == (pos, BonusKind::Weapon, 1), "{s:?}");
     assert_eq!(s.spawn_time, START + TimeDiff(1020));
-    assert_eq!((w.rand_calls(), w.mt_calls()), (2, mt.calls()));
+    assert_eq!((w.rand_calls(), w.mt_calls()), (2, 2));
     // S2C_SPAWNBONUS arrives before the next frame, at the integer position.
     assert!(!w.bonuses()[0].used);
     ticks(&mut w, 1);
     let c = w.bonuses()[0];
-    assert!(c.used && c.pos.x == (pos.x as i32) as f32 && c.kind == kind, "{c:?}");
+    assert!(c.used && c.pos.x == 15.0 && c.kind == BonusKind::Weapon, "{c:?}");
     // The next one 1 s after the last spawn: frame 202.
     ticks(&mut w, 99);
     assert!(!w.server_bonuses()[1].used);

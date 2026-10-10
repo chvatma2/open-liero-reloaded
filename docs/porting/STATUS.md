@@ -84,7 +84,9 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   which bans Bazooka, Grenade, Larpa, Laser, Minigun and more in Classic)
   does not ban. The restriction files are not imported yet, so every weapon
   is allowed unless `World::set_bonus_weapons` gives the list. Only natural
-  spawns use it; no scenario reaches one (30 s).
+  spawns use it; the `bonus-natural` scenario records OLX with the `Bonus only`
+  preset, which allows every Classic weapon, so it checks the spawns but not
+  the restrictions.
 - **The bonus spawn timer starts at the world's start** (`T0 + K`), as the
   oracle resets it when a recording starts; OLX sets it in `PrepareGame`.
 - `World::place_bonus` places nothing when no server slot is free or the
