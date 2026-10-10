@@ -5,9 +5,10 @@
 (
     layers: {
         "rl-data": 1,
+        "rl-vfs": 1,
         "xtask": 6,
     },
     same_layer: [],
     no_std: ["rl-data"],
-    wasm: ["rl-data"],
+    wasm: ["rl-data", "rl-vfs"],
 )

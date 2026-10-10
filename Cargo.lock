@@ -403,6 +403,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-vfs"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "ron"
 version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
