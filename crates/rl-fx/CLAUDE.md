@@ -37,6 +37,9 @@ is `docs/porting/olx-notes/presentation.md` §7 (and §2.2 for stains).
 
 ## The frame-loop contract
 
+`rl_present::Presentation` implements this contract (and the registration
+order above); new modes use it rather than wiring `Fx` by hand.
+
 Per tick, after `world.tick(&keys, &mut events)`:
 
 ```rust

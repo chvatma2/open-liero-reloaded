@@ -19,6 +19,7 @@
         "rl-scene": 5,
         "rl-fx": 5,
         "rl-render": 5,
+        "rl-present": 5,
         "rl-audio": 5,
         "rl-input": 5,
         "rl-cli": 6,
@@ -36,6 +37,12 @@
         ("rl-fx", "rl-scene"),
         // The renderer draws the scene's draw list from its atlas images.
         ("rl-render", "rl-scene"),
+        // One viewport's presentation wires the scene, the entities and their
+        // upload to the renderer in the frame loop's order, once for every
+        // mode (sandbox, matches, replays, `rl-cli render`).
+        ("rl-present", "rl-scene"),
+        ("rl-present", "rl-fx"),
+        ("rl-present", "rl-render"),
     ],
     no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim"],
     wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],

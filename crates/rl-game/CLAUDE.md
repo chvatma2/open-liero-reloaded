@@ -9,7 +9,7 @@ idle targets on a level with a mod's first five weapons.
 cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --targets 3
 ```
 
-- **Layer 6.** Uses `rl-content`, `rl-scene`, `rl-fx`, `rl-render`,
+- **Layer 6.** Uses `rl-content`, `rl-present`, `rl-scene`, `rl-fx`, `rl-render`,
   `rl-audio`, `rl-input`, `rl-sim`, `rl-terrain`, `rl-pack`, plus winit,
   wgpu, gilrs and egui / egui-wgpu / egui-winit 0.36.2 (exact pins). Logs
   are `eprintln!("warning: ...")`, each once.
@@ -24,18 +24,18 @@ cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --target
 - **Loop** (`app.rs`): `TickClock` (`clock.rs`) runs the ticks owed, at
   most `MAX_CATCHUP_TICKS` (10) per frame, dropping the rest. Per tick:
   script steps, `input.latch_tick()`, `Session::tick` (`world.tick` →
-  `fx.step_tick`, which applies the tick's terrain edits to the colour map
-  and rebuilds a lost area itself, so the game never calls
-  `rl_content::apply_edits` → `audio.play_events` at the view centre →
-  `scene.after_tick` → damage popups), then `renderer.update_terrain`. Per
-  frame: `Session::build` (scene, entities), the overlay, `Gpu::present`,
-  then a screenshot if one is due.
+  `audio.play_events` at the view centre → `Presentation::on_tick`, see
+  `rl-present` → damage popups). Per frame: `Session::build` (scene,
+  entities), the overlay, `Presentation::upload` (atlas if a worm was
+  added, terrain dirty rectangles), `Gpu::present`, then a screenshot if
+  one is due.
 - **Session** (`session.rs`): the match without a window, so it is tested
-  headless. `restart` (F5) builds the world from the assets loaded once
-  (`setup::Assets`, `rl_content::new_world_from`); the worms are the same,
-  so the atlas stays and only the terrain is uploaded again. Every image
-  (scene, each worm's skin and gibs, entities) is registered before the
-  atlas upload.
+  headless; its presentation is one `rl_present::Presentation`. `restart`
+  (F5) builds the world from the assets loaded once (`setup::Assets`,
+  `rl_content::new_world_from`); the worms are the same, so the atlas
+  stays and only the terrain is uploaded again. Debug builds assert every
+  `DRIFT_CHECK_TICKS` (100) that the colour terrain's material is the
+  world's (`session_catches_terrain_drift`).
 - **Surface** (`surface.rs`, Review Focus 4): a state machine over a
   `Surface` trait: no frame while minimised or occluded (`drawable`),
   configure on resize, reconfigure and retry on `Outdated` (Wayland's

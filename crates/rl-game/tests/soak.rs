@@ -94,8 +94,7 @@ fn soak_sandbox_10_minutes_headless() {
     audio.take_warnings();
 
     let mut renderer = gpu.renderer(RenderSettings::default());
-    renderer.upload_atlas(&s.scene_assets);
-    renderer.upload_terrain(&s.color);
+    s.present.upload(&mut renderer);
     let atlas = renderer.atlas_layout().map(|l| (l.width, l.height));
     let terrain = renderer.terrain_texture().map(|t| (t.width(), t.height()));
     let first_buffer = renderer.instance_buffer_bytes();
@@ -113,24 +112,23 @@ fn soak_sandbox_10_minutes_headless() {
         if t == TICKS / 2 {
             // F5 in the middle: a restart must not leak either.
             s.restart(&a).unwrap();
-            renderer.upload_terrain(&s.color);
             audio.stop_all();
         }
         s.tick(chaos.keys());
-        audio.play_events(&s.events, s.scene.camera.listener());
+        audio.play_events(&s.events, s.present.scene.camera.listener());
         let manager = audio.manager_mut().unwrap();
         manager.backend_mut().on_start_processing();
         for _ in 0..80 {
             manager.backend_mut().process();
         }
-        max_fx = max_fx.max(s.fx.len());
+        max_fx = max_fx.max(s.present.fx.len());
         max_proj = max_proj.max(s.world.projectiles().count());
         max_entities = max_entities.max(s.world.entity_count());
         max_voices = max_voices.max(audio.playing());
         max_popups = max_popups.max(s.popups.len());
         if t % RENDER_EVERY == 0 {
             s.build(0.5, &mut list);
-            renderer.update_terrain(&mut s.color);
+            s.present.upload(&mut renderer);
             let img = gpu.render_to_image(&mut renderer, &list, (640, 360));
             assert_eq!((img.width(), img.height()), (640, 360));
             frames += 1;

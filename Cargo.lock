@@ -2446,6 +2446,7 @@ dependencies = [
  "rl-import-lxl",
  "rl-oracle",
  "rl-pack",
+ "rl-present",
  "rl-render",
  "rl-scenario",
  "rl-scene",
@@ -2514,6 +2515,7 @@ dependencies = [
  "rl-input",
  "rl-math",
  "rl-pack",
+ "rl-present",
  "rl-render",
  "rl-scene",
  "rl-sim",
@@ -2596,6 +2598,21 @@ dependencies = [
  "serde",
  "sha2",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "rl-present"
+version = "0.1.0"
+dependencies = [
+ "rl-content",
+ "rl-data",
+ "rl-fx",
+ "rl-oracle",
+ "rl-render",
+ "rl-scenario",
+ "rl-scene",
+ "rl-sim",
+ "rl-terrain",
 ]
 
 [[package]]

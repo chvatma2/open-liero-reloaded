@@ -8,8 +8,9 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
 - **Layer 5, pure CPU.** Depends on `rl-sim`, `rl-content`, `rl-data`,
   `rl-math`. No GPU or OS handles; it only reads the world, and its
   randomness (shake, laser dots) comes from its own `GlibcRand`s.
-- **Use** (`lib.rs`): a `Scene` per viewport. `after_tick(&world, &events)`
-  after every tick (and once before the first, with an empty buffer):
+- **Use** (`lib.rs`): a `Scene` per viewport (`rl-present` bundles it
+  with the entities). `start(&world)` for a new or restarted world, then
+  `after_tick(&world, &events)` after every tick:
   the old state becomes the previous `Snapshot`, explosions shake the
   camera, and the tick's `Marks` (muzzle flashes, green crosshairs, laser
   sights, beams) replace the last. `build(&world, alpha, &assets, &mut list)`
@@ -32,10 +33,11 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   blends positions at sub-pixel precision, never across a projectile serial
   change (slot reuse), a death or a respawn (`worm_blends`: alive flag and
   `time_of_death`), nor a hook thrown since the snapshot (the rope's
-  `NinjaRope::throws` count, so a rope thrown again while out never slides). Bonuses blend
-  within one bonus (slot and `spawn_time`). Laser sights and beams start at
-  their worm as drawn, and a hook on a worm sits on that worm as drawn
-  (`tests/anchors.rs`), so nothing trails the blended worm.
+  `NinjaRope::throws` count, so a rope thrown again while out never
+  slides). Bonuses blend within one bonus (slot and `spawn_time`). Laser
+  sights and beams start at their worm as drawn, and a hook on a worm
+  sits on that worm as drawn (`tests/anchors.rs`), so nothing trails the
+  blended worm.
   `Interpolation::Latest` is OLX: the latest state at whole pixels.
 - **Exact OLX math** (`worm.rs`, `projectile.rs`, `marks.rs`, `camera.rs`):
   each function cites its OLX source. Offsets are OLX's screen pixels

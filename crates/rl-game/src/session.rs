@@ -1,21 +1,20 @@
-//! One sandbox match without a window: the world, its presentation state
-//! (scene, cosmetic entities, colour terrain), sound and the damage popups.
-//! The window and GPU (`app.rs`, `gpu.rs`) drive it.
+//! One sandbox match without a window: the world, its presentation
+//! (`rl_present::Presentation`: scene, cosmetic entities, colour terrain,
+//! atlas images), sound and the damage popups. The window and GPU
+//! (`app.rs`, `gpu.rs`) drive it.
 
 use rl_audio::Audio;
-use rl_data::image::Rgba;
-use rl_fx::{Fx, FxAssets, FxImages, FxTick, default_dirt_colour};
 use rl_math::Vec2;
-use rl_scene::{Camera, DrawList, Interpolation, Scene, SceneAssets, SceneOptions, Viewport};
+use rl_present::{PresentSetup, Presentation, default_colour};
+use rl_scene::{DrawList, Interpolation, SceneOptions, Viewport};
 use rl_sim::{EventKind, Keys, TickEvents, World};
-use rl_terrain::ColorMap;
 
 use crate::setup::Assets;
 
-/// OLX's default worm colours for the first worms (`Profiles.cpp`): red,
-/// blue, green, yellow.
-pub const COLOURS: [Rgba; 4] =
-    [Rgba::rgb(255, 0, 0), Rgba::rgb(0, 0, 255), Rgba::rgb(0, 255, 0), Rgba::rgb(255, 255, 0)];
+/// How often (ticks) debug builds check that the colour terrain's material
+/// is the world's (`Presentation::terrain_drift`): a terrain change
+/// without its `TerrainEdit` event would leave dirt drawn on background.
+pub const DRIFT_CHECK_TICKS: u64 = 100;
 
 /// How long a damage popup shows, in ticks.
 pub const POPUP_TICKS: u32 = 100;
@@ -37,13 +36,8 @@ pub struct Popup {
 /// The sandbox's match: worm 0 is the player, the others idle targets.
 pub struct Session {
     pub world: World,
-    pub scene: Scene,
-    pub fx: Fx,
-    pub color: ColorMap,
+    pub present: Presentation,
     pub events: TickEvents,
-    /// Every image the renderer's atlas holds (scene, worms, entities).
-    pub scene_assets: SceneAssets,
-    pub fx_assets: FxAssets,
     pub audio: Audio,
     pub popups: Vec<Popup>,
     /// The player's deaths and spawns this run (restarts included), for
@@ -51,14 +45,15 @@ pub struct Session {
     pub player_deaths: u32,
     pub player_spawns: u32,
     keys: Vec<Keys>,
-    seed: u32,
+    /// Ticks since the match (re)started.
+    ticks: u64,
 }
 
 impl Session {
     /// A new match of `a`'s sandbox seen through `viewport`, with its sound
     /// output `audio` (already loaded with the mod's sounds). Registers every
-    /// image (scene, each worm's skin and gibs, entities) before the caller
-    /// uploads the atlas.
+    /// image (scene, each worm's skin and gibs, entities); the caller's
+    /// `Presentation::upload` sends them to the renderer.
     pub fn new(
         a: &Assets,
         viewport: Viewport,
@@ -66,73 +61,71 @@ impl Session {
         audio: Audio,
     ) -> anyhow::Result<Session> {
         let world = a.new_world()?;
-        let core = a.content.core();
-        let mut scene_assets = SceneAssets::new(core, &a.m);
-        let mut fx_assets =
-            FxAssets::new(FxImages::from_core(core), default_dirt_colour(&a.theme), &mut scene_assets);
+        let setup = PresentSetup {
+            core: a.content.core(),
+            m: &a.m,
+            level: &a.level,
+            theme: &a.theme,
+            viewport,
+            options: SceneOptions { interpolation, show_health_bars: false },
+            seed: a.setup.seed,
+        };
+        let mut present = Presentation::new(&setup, &world);
         for i in 0..world.worms().len() {
-            let colour = COLOURS[i % COLOURS.len()];
-            scene_assets.add_worm(&a.skin, colour, i == 0, i == 0);
-            fx_assets.add_worm(colour, &mut scene_assets);
+            present.add_worm(&a.skin, default_colour(i), i == 0, i == 0);
         }
-        let seed = a.setup.seed;
-        let options = SceneOptions { interpolation, show_health_bars: false };
         let n = world.worms().len();
-        let mut s = Session {
+        Ok(Session {
             world,
-            scene: Scene::new(Camera::new(viewport, 0, seed), options, seed.wrapping_add(1)),
-            fx: Fx::new(seed.wrapping_add(2)),
-            color: a.level.color_map(&a.theme),
+            present,
             events: TickEvents::new(),
-            scene_assets,
-            fx_assets,
             audio,
             popups: Vec::with_capacity(64),
             player_deaths: 0,
             player_spawns: 0,
             keys: vec![Keys(0); n],
-            seed,
-        };
-        s.scene.after_tick(&s.world, &s.events);
-        Ok(s)
+            ticks: 0,
+        })
     }
 
     /// F5: the same sandbox from the start, from the assets loaded once.
-    /// The worms are the same, so the atlas stays; the caller uploads the
-    /// new colour map.
+    /// The worms are the same, so the atlas stays; the next upload sends
+    /// the new colour map.
     pub fn restart(&mut self, a: &Assets) -> anyhow::Result<()> {
         let world = a.new_world()?;
         anyhow::ensure!(world.worms().len() == self.keys.len(), "the restarted sandbox has other worms");
         self.world = world;
-        self.scene.reset();
-        self.events = TickEvents::new();
-        self.scene.after_tick(&self.world, &self.events);
-        self.fx.clear();
-        self.color = a.level.color_map(&a.theme);
+        self.present.restart(&self.world, &a.level, &a.theme);
         self.audio.stop_all();
         self.popups.clear();
+        self.ticks = 0;
         Ok(())
     }
 
     /// A window of another shape: the camera's viewport follows.
     pub fn set_viewport(&mut self, viewport: Viewport) {
-        if self.scene.camera.viewport() != viewport {
-            let target = self.scene.camera.target();
-            self.scene.camera = Camera::new(viewport, target, self.seed);
-        }
+        self.present.set_viewport(viewport);
     }
 
     /// One 100 Hz tick with the player holding `player` (the targets hold
     /// nothing): the simulation, then the cosmetic entities (which replay
     /// the tick's terrain edits on the colour map and rebuild any area the
     /// tick lost), the sounds at the view centre, the scene's history and
-    /// marks, and the damage popups. The caller then uploads the terrain.
+    /// marks, and the damage popups. Debug builds check every
+    /// [`DRIFT_CHECK_TICKS`] that the colour terrain has not drifted.
     pub fn tick(&mut self, player: Keys) {
         self.keys[0] = player;
         self.world.tick(&self.keys, &mut self.events);
-        self.fx.step_tick(&FxTick::new(&self.world, &self.events), &mut self.color, &self.fx_assets);
-        self.audio.play_events(&self.events, self.scene.camera.listener());
-        self.scene.after_tick(&self.world, &self.events);
+        self.audio.play_events(&self.events, self.present.scene.camera.listener());
+        self.present.on_tick(&self.world, &self.events);
+        self.ticks += 1;
+        if cfg!(any(debug_assertions, test)) && self.ticks.is_multiple_of(DRIFT_CHECK_TICKS) {
+            assert!(
+                !self.present.terrain_drift(&self.world),
+                "tick {}: the colour terrain's material is not the world's (a terrain change without its TerrainEdit?)",
+                self.ticks
+            );
+        }
         self.popups.retain_mut(|p| {
             p.age += 1;
             p.age < POPUP_TICKS
@@ -162,8 +155,7 @@ impl Session {
     /// One drawn frame at `alpha` between the last two ticks: the scene,
     /// then the cosmetic entities.
     pub fn build(&mut self, alpha: f32, list: &mut DrawList) {
-        self.scene.build(&self.world, alpha, &self.scene_assets, list);
-        self.fx.draw(&self.fx_assets, list);
+        self.present.build(&self.world, alpha, list);
     }
 }
 
@@ -203,7 +195,7 @@ mod tests {
             };
             s.tick(Keys(keys));
             s.build(0.5, &mut list);
-            busiest = busiest.max(s.fx.len());
+            busiest = busiest.max(s.present.fx.len());
         }
         assert!(busiest > 0, "explosions and dirt made entities");
         assert!(
@@ -213,7 +205,45 @@ mod tests {
         assert_ne!(s.world, start);
         s.restart(&a).unwrap();
         assert_eq!(s.world, start, "F5 is the same start");
-        assert!(s.fx.is_empty() && s.popups.is_empty());
-        assert!(s.color.pixels() == a.level.color_map(&a.theme).pixels(), "the colour terrain starts again");
+        assert!(s.present.fx.is_empty() && s.popups.is_empty());
+        assert!(
+            s.present.color().pixels() == a.level.color_map(&a.theme).pixels(),
+            "the colour terrain starts again"
+        );
+    }
+
+    /// Debug builds catch a colour terrain that drifted from the world's
+    /// material (a future terrain change without its `TerrainEdit`).
+    #[test]
+    fn session_catches_terrain_drift() {
+        let Some(dir) = std::env::var_os("RL_CONTENT_DIR").filter(|d| std::path::Path::new(d).is_dir())
+        else {
+            eprintln!("RL_CONTENT_DIR not set; skipping");
+            return;
+        };
+        let o = SandboxOptions {
+            mod_id: String::new(),
+            level_id: String::new(),
+            seed: 4,
+            targets: 1,
+            bonuses: false,
+        };
+        let a = load(std::path::Path::new(&dir), "Classic", "Liero Factory", "default", o).unwrap();
+        let vp = Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
+        let mut s = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
+        for _ in 0..DRIFT_CHECK_TICKS {
+            s.tick(Keys(Keys::FIRE));
+        }
+        // Dirt where the player stands, which the world never placed.
+        let at = s.world.worms()[0].pos;
+        s.present.color_mut().apply(rl_terrain::ColorEdit::Dirt { hole: 0, x: at.x as i32, y: at.y as i32 });
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            for _ in 0..DRIFT_CHECK_TICKS {
+                s.tick(Keys(0));
+            }
+        }));
+        let msg = caught.expect_err("the drift is caught within one check period");
+        let msg = msg.downcast_ref::<String>().cloned().unwrap_or_default();
+        assert!(msg.contains("colour terrain"), "{msg}");
     }
 }

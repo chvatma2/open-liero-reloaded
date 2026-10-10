@@ -83,6 +83,14 @@ impl Scene {
         self.marks.clear();
     }
 
+    /// A new or restarted world: [`Scene::reset`], then `world` as the
+    /// starting state the first tick blends from (what [`Scene::after_tick`]
+    /// with an empty buffer does, without needing one).
+    pub fn start(&mut self, world: &World) {
+        self.reset();
+        self.cur.capture_into(world);
+    }
+
     /// The state before the last tick, which [`Scene::build`] blends from.
     pub fn prev(&self) -> &Snapshot {
         &self.prev

@@ -25,6 +25,7 @@ rl-terrain.workspace = true
 rl-scene.workspace = true
 rl-fx.workspace = true
 rl-render.workspace = true
+rl-present.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 clap.workspace = true

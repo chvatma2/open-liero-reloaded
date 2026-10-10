@@ -90,7 +90,7 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
     let s = o.session;
     let world = &s.world;
     let small = FontId::proportional(13.0);
-    let blend = Blend::new(s.scene.prev(), o.alpha, s.scene.options.interpolation);
+    let blend = Blend::new(s.present.scene.prev(), o.alpha, s.present.scene.options.interpolation);
     let k = o.map.scale();
     for (i, w) in world.worms().iter().enumerate().filter(|(_, w)| w.alive) {
         let at = o.map.to_points(blend.worm(i, w)) - egui::vec2(0.0, 12.0 * k);
@@ -168,12 +168,12 @@ fn debug(p: &Painter, rect: egui::Rect, o: &Overlay) {
         ),
         format!(
             "entities {}   projectiles {}   worms {}   voices {}",
-            s.fx.len(),
+            s.present.fx.len(),
             s.world.projectiles().count(),
             s.world.worms().iter().filter(|w| w.alive).count(),
             s.audio.playing()
         ),
-        format!("{:?} interpolation, alpha {:.2}", s.scene.options.interpolation, o.alpha),
+        format!("{:?} interpolation, alpha {:.2}", s.present.scene.options.interpolation, o.alpha),
         st.gpu.clone(),
         st.audio.clone(),
     ];

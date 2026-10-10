@@ -11,7 +11,7 @@ The headless command-line tool. Its commands:
 - `rl-cli scenario [name...] [--dump F] [--all | --fields a+b]` replays oracle
   scenarios in `rl-sim` and prints the first divergence of each.
 - `rl-cli render <scenario> --frame N --out f.png [--scale S] [--filter F]
-  [--alpha A]` replays the scenario with `rl-scene` and `rl-fx` attached
+  [--alpha A]` replays the scenario with an `rl-present` presentation (`rl-scene` and `rl-fx`)
   (camera on worm 0, OLX's default skin and colours, a 4:3 view of 320 ×
   240 world pixels) and draws frame N (the state after its tick; -1 is the
   start) offscreen with `rl-render`: `S` output pixels per world pixel

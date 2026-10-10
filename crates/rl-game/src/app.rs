@@ -140,18 +140,15 @@ impl App {
             attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
         }
         let window = Arc::new(el.create_window(attrs)?);
-        let mut gpu = Gpu::new(
+        let gpu = Gpu::new(
             window.clone(),
             el.owned_display_handle(),
             self.cfg.backends,
             self.cfg.render,
             self.cfg.uncapped,
         )?;
-        gpu.renderer.upload_atlas(&self.session.scene_assets);
-        gpu.renderer.upload_terrain(&self.session.color);
-        for w in gpu.renderer.warnings().drain(..) {
-            eprintln!("warning: {w}");
-        }
+        // A new renderer: the next frame uploads the atlas and the terrain.
+        self.session.present.invalidate_gpu();
         let size = window.inner_size();
         self.session.set_viewport(viewport((size.width, size.height)));
         let max_side = gpu.renderer.device().limits().max_texture_dimension_2d as usize;
@@ -170,12 +167,9 @@ impl App {
         Ok(())
     }
 
+    /// F5: the next frame uploads the new colour map.
     fn restart(&mut self) -> anyhow::Result<()> {
-        self.session.restart(&self.assets)?;
-        if let Some(w) = &mut self.win {
-            w.gpu.renderer.upload_terrain(&self.session.color);
-        }
-        Ok(())
+        self.session.restart(&self.assets)
     }
 
     /// The window is now `size` pixels: the surface and the view follow.
@@ -218,9 +212,6 @@ impl App {
         let keys = self.input.latch_tick();
         let t0 = Instant::now();
         self.session.tick(keys);
-        if let Some(w) = &mut self.win {
-            w.gpu.renderer.update_terrain(&mut self.session.color);
-        }
         self.meter.tick(t0.elapsed().as_secs_f64());
         self.ticks += 1;
         if self.session.events.gameplay_dropped() > 0 && !self.dropped_warned {
@@ -243,10 +234,13 @@ impl App {
             el.exit();
         }
         let s = &mut self.session;
-        let alpha =
-            if s.scene.options.interpolation == Interpolation::Latest { 1.0 } else { self.clock.alpha() };
+        let alpha = if s.present.scene.options.interpolation == Interpolation::Latest {
+            1.0
+        } else {
+            self.clock.alpha()
+        };
         s.build(alpha, &mut self.list);
-        self.meter.peak_entities = self.meter.peak_entities.max(s.fx.len());
+        self.meter.peak_entities = self.meter.peak_entities.max(s.present.fx.len());
         self.meter.peak_projectiles = self.meter.peak_projectiles.max(s.world.projectiles().count());
         if self.meter.frame(elapsed, &mut self.stats) {
             self.stats.dropped = self.clock.dropped();
@@ -261,7 +255,7 @@ impl App {
                     st.tick_ms,
                     st.tick_ms_max,
                     st.ticks_per_second,
-                    s.fx.len(),
+                    s.present.fx.len(),
                     s.world.projectiles().count(),
                     s.audio.playing()
                 );
@@ -282,6 +276,12 @@ impl App {
         w.egui.handle_platform_output(&w.window, out.platform_output);
         let jobs = self.egui.tessellate(out.shapes, out.pixels_per_point);
         let paint = OverlayPaint { jobs: &jobs, pixels_per_point: out.pixels_per_point };
+        // The images and terrain the ticks since the last frame changed
+        // (the colour map merges their dirty rectangles), then the frame.
+        self.session.present.upload(&mut w.gpu.renderer);
+        for warning in w.gpu.renderer.warnings().drain(..) {
+            eprintln!("warning: {warning}");
+        }
         let wait = w.gpu.present(&self.list, &paint, &mut out.textures_delta).unwrap_or_default();
         self.meter.busy(now.elapsed().saturating_sub(wait).as_secs_f64());
         if std::mem::take(&mut self.shot_due) {
@@ -302,7 +302,7 @@ impl App {
             PhysicalKey::Code(KeyCode::F5) => self.restart()?,
             // OLX's Game.ShowWormHealth toggle.
             PhysicalKey::Code(KeyCode::KeyH) => {
-                let o = &mut self.session.scene.options;
+                let o = &mut self.session.present.scene.options;
                 o.show_health_bars = !o.show_health_bars;
             }
             _ => {}
