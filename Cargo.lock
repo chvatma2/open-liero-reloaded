@@ -541,6 +541,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-import-lxl"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "proptest",
+ "rl-data",
+ "rl-pack",
+ "rl-vfs",
+ "thiserror",
+]
+
+[[package]]
 name = "rl-pack"
 version = "0.1.0"
 dependencies = [
