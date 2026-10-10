@@ -648,6 +648,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-sim"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "rl-data",
+ "rl-math",
+ "rl-terrain",
+]
+
+[[package]]
 name = "rl-terrain"
 version = "0.1.0"
 dependencies = [

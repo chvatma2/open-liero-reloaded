@@ -13,6 +13,7 @@
         "rl-import-lxl": 2,
         "rl-import-gfx": 2,
         "rl-oracle": 2,
+        "rl-sim": 3,
         "rl-cli": 6,
         "xtask": 6,
     },
@@ -22,6 +23,6 @@
         ("rl-import-lxl", "rl-pack"),
         ("rl-import-gfx", "rl-pack"),
     ],
-    no_std: ["rl-math", "rl-data", "rl-terrain"],
-    wasm: ["rl-math", "rl-data", "rl-terrain", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
+    no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim"],
+    wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
 )
