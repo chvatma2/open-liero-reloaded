@@ -3,19 +3,20 @@
 //! `fixtures/oracle` (bit-exact).
 //!
 //! `#![no_std]` + `alloc`: no files, threads or clock. Apart from setup
-//! ([`World::spawn_worm`], [`World::set_loadout`]), [`World::tick`] is the only
+//! ([`World::spawn_worm`], [`World::set_loadout`], [`World::place_bonus`]), [`World::tick`] is the only
 //! way state changes, and it does not allocate.
 //!
 //! Scope: worm movement and collision, keyboard input, digging, the ninja
 //! rope, OLX's two clocks, and (M4) weapon slots, firing, the shot round trip,
 //! projectile spawning, motion, collision and actions, explosions, dirt,
-//! damage, death, bleeding and respawning, beams and the jetpack. Bonuses follow.
+//! damage, death, bleeding and respawning, beams and the jetpack, and bonuses.
 #![no_std]
 
 extern crate alloc;
 
 mod actions;
 mod beam;
+mod bonus;
 mod damage;
 mod effects;
 mod input;
@@ -34,6 +35,7 @@ mod weapons;
 mod world;
 mod worm;
 
+pub use bonus::{Bonus, BonusItem, BonusKind, MAX_BONUSES};
 pub use input::{KeyLatch, Keys, Latches};
 pub use mod_rt::{
     MAX_AMOUNT, MAX_DEPTH, MAX_PROJECTILES, SimMod, SimModError, SimProjectile, SimWeapon, SpawnInfo,

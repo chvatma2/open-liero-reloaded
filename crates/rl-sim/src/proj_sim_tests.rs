@@ -55,6 +55,7 @@ pub(crate) struct Bench {
     pub worms: Vec<Worm>,
     pub draws: Draws,
     pub pool: ProjectilePool,
+    pub bonuses: [Bonus; MAX_BONUSES],
 }
 
 impl Bench {
@@ -68,6 +69,7 @@ impl Bench {
             worms: Vec::new(),
             draws: Draws::new(GlibcRand::new(1), Mt19937::new(1)),
             pool: ProjectilePool::new(capacity),
+            bonuses: [Bonus::default(); MAX_BONUSES],
         }
     }
 
@@ -101,6 +103,7 @@ impl Bench {
             now,
             wall_clock: now + TimeDiff(10),
             physics_dt: TimeDiff(11),
+            bonuses: &mut self.bonuses,
         };
         f(&mut self.pool, &mut ctx)
     }

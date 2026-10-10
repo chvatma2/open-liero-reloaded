@@ -1,6 +1,7 @@
 use super::*;
 use crate::SimSettings;
 use crate::actions::{DoActionInfo, Event, apply_to, execute};
+use crate::bonus::Bonus;
 use crate::proj_sim::tests::{Bench, NOW, inert, sim_mod};
 use crate::proj_sim::{Col, PJC_TERRAIN};
 use alloc::vec;
@@ -53,7 +54,7 @@ fn explosion_has_no_falloff() {
     let mut dead = worm_at(6, c);
     dead.alive = false;
     b.worms.push(dead);
-    b.with_ctx(NOW, |_, ctx| explosion(ctx, NOW, c, 40.0, -1));
+    b.with_ctx(NOW, |_, ctx| explosion(&mut ctx.blast(), NOW, c, 40.0, -1));
     let hp: Vec<f32> = b.worms.iter().map(|w| w.health).collect();
     assert_eq!(hp, [60.0, 60.0, 60.0, 100.0, 100.0, 100.0, 100.0], "d^2 <= 25 gets the full damage");
 }
@@ -79,14 +80,14 @@ fn explosion_hole_size_clamps() {
     for (k, &(damage, cells)) in cases.iter().enumerate() {
         let (dirt, ents) = (b.worms[0].dirt_count, b.draws.ents);
         let pos = Vec2::new(20.0 + 30.0 * k as f32, 20.0);
-        b.with_ctx(NOW, |_, ctx| explosion(ctx, NOW, pos, damage, 0));
+        b.with_ctx(NOW, |_, ctx| explosion(&mut ctx.blast(), NOW, pos, damage, 0));
         assert_eq!(b.worms[0].dirt_count - dirt, cells, "damage {damage}: carved, counted for the owner");
         assert_eq!(b.draws.ents - ents, 3, "two dirt particles and the explosion");
     }
     // A theme without holes carves nothing.
     b.holes.clear();
     let dirt = b.worms[0].dirt_count;
-    b.with_ctx(NOW, |_, ctx| explosion(ctx, NOW, Vec2::new(300.0, 20.0), 4.0, 0));
+    b.with_ctx(NOW, |_, ctx| explosion(&mut ctx.blast(), NOW, Vec2::new(300.0, 20.0), 4.0, 0));
     assert_eq!(b.worms[0].dirt_count, dirt);
 }
 
@@ -186,4 +187,26 @@ fn carve_dirt_green_dirt_and_injure_actions() {
     let draws = exec(&mut b2, Vec2::new(7.9, 30.2), green);
     assert_eq!((b2.terrain.material(7, 30), draws), (Some(Material::Dirt), 1));
     assert_eq!(b2.worms[0].dirt_count, -4);
+}
+
+#[test]
+fn explosions_destroy_and_explode_nearby_bonuses() {
+    // CClient::Explosion (CClient_Game.cpp:255-270): a bonus within 15 px on
+    // both axes is destroyed and explodes, damage 15, at the same position,
+    // before the outer explosion's own damage. 16 px away stays.
+    for on in [true, false] {
+        let mut b = Bench::open(sim_mod(vec![("p", inert())], &[]), 10);
+        b.settings.bonuses = on;
+        let c = Vec2::new(100.0, 100.0);
+        b.worms = vec![worm_at(0, c + Vec2::new(0.0, 4.0))];
+        b.bonuses[0] = Bonus { used: true, pos: c + Vec2::new(10.0, -15.0), ..Bonus::default() };
+        b.bonuses[5] = Bonus { used: true, pos: c + Vec2::new(16.0, 0.0), ..Bonus::default() };
+        b.with_ctx(NOW, |_, ctx| explosion(&mut ctx.blast(), NOW, c, 40.0, -1));
+        let used = (b.bonuses[0].used, b.bonuses[5].used);
+        if on {
+            assert_eq!((used, b.worms[0].health), ((false, true), 100.0 - 15.0 - 40.0));
+        } else {
+            assert_eq!((used, b.worms[0].health), ((true, true), 60.0));
+        }
+    }
 }

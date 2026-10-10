@@ -105,7 +105,15 @@ fn beam_carves_first_solid_pixel() {
     ws[0].slots = vec![slot(0), slot(1), slot(1)];
     let shot = Shot { worm: 0, weapon: 1, pos: Vec2::new(20.0, 25.0), angle: 0, ..Shot::default() };
     let mut ctx = BeamCtx { terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts };
-    process_shot_beam(&shot, &m.weapons()[1], &mut ws, &mut ctx, &s, T0);
+    process_shot_beam(
+        &shot,
+        &m.weapons()[1],
+        &mut ws,
+        &mut ctx,
+        &s,
+        T0,
+        &mut [Bonus::default(); MAX_BONUSES],
+    );
     // The first slot holding the beam becomes current and draws for 0.3 s.
     assert_eq!((ws[0].current_weapon, ws[0].slots[1].last_fire), (1, 0.3));
     // Damage 0 is the smallest hole (5 × 5), centred on the first dirt pixel (60, 25).
@@ -116,7 +124,15 @@ fn beam_carves_first_solid_pixel() {
 
     // A worm within 5 px takes PlyDamage (and bleeds); the beam stops there.
     ws[1].pos = Vec2::new(40.0, 29.0);
-    process_shot_beam(&shot, &m.weapons()[1], &mut ws, &mut ctx, &s, T0);
+    process_shot_beam(
+        &shot,
+        &m.weapons()[1],
+        &mut ws,
+        &mut ctx,
+        &s,
+        T0,
+        &mut [Bonus::default(); MAX_BONUSES],
+    );
     assert_eq!((ws[1].health, ws[0].dirt_count), (99.0, 15));
     assert!(ctx.draws.rand.calls() > 0, "blood");
 
@@ -173,7 +189,15 @@ fn beam_sets_lastfire_burst() {
         if step == 2 {
             // Model R delivers the first shots between frames.
             let shot = Shot { worm: 0, weapon: 1, pos: Vec2::new(20.0, 25.0), ..Shot::default() };
-            process_shot_beam(&shot, &m.weapons()[1], &mut ws, &mut ctx, &s, T0);
+            process_shot_beam(
+                &shot,
+                &m.weapons()[1],
+                &mut ws,
+                &mut ctx,
+                &s,
+                T0,
+                &mut [Bonus::default(); MAX_BONUSES],
+            );
             assert_eq!(ws[0].current_slot().last_fire, 0.3);
         }
     }
@@ -223,4 +247,43 @@ fn jetpack_quirks() {
     step(&m, &mut w, &mut d);
     assert_eq!((w.current_slot().charge, w.current_slot().reloading), (0.0, true));
     assert_eq!((w.vel.y, d.rand.calls()), (vy, 1), "a reloading jetpack does not thrust");
+}
+
+#[test]
+fn beam_explodes_a_bonus_within_3_px() {
+    let m = sim_mod(laser());
+    let s = SimSettings { bonuses: true, ..SimSettings::lx56() };
+    let (holes, mut d, mut parts) = (holes(), draws(), Vec::with_capacity(50));
+    let mut ws = vec![worm(0, 20.0, 25.0)];
+    ws[0].slots = vec![slot(1)];
+    let shot = Shot { worm: 0, weapon: 1, pos: Vec2::new(20.0, 25.0), spawn: T0, ..Shot::default() };
+    let bonus_at = |x: f32, y: f32| {
+        let mut b = [Bonus::default(); MAX_BONUSES];
+        b[3] = Bonus { used: true, pos: Vec2::new(x, y), ..Bonus::default() };
+        b
+    };
+    // 2 px off the line: the part at x = 38 is within 3 px (sqrt(4 + 4)). It
+    // stops there in an explosion of damage 0, which destroys the bonus and
+    // explodes it (damage 15): two explosion entities, and the dirt at
+    // x = 60 is never reached.
+    let mut t = terrain(60);
+    let mut bonuses = bonus_at(40.0, 27.0);
+    let mut ctx = BeamCtx { terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts };
+    process_shot_beam(&shot, &m.weapons()[1], &mut ws, &mut ctx, &s, T0, &mut bonuses);
+    assert!(!bonuses[3].used);
+    assert_eq!((ctx.draws.ents, ws[0].dirt_count), (2, 0));
+    assert_eq!(ctx.terrain.material(60, 25), Some(Material::Dirt));
+
+    // With Bonuses off the beam still stops at it, but nothing explodes it.
+    let lx56 = SimSettings::lx56();
+    let mut bonuses = bonus_at(40.0, 27.0);
+    process_shot_beam(&shot, &m.weapons()[1], &mut ws, &mut ctx, &lx56, T0, &mut bonuses);
+    assert!(bonuses[3].used);
+    assert_eq!((ctx.draws.ents, ws[0].dirt_count), (3, 0));
+
+    // Exactly 3 px away is not within (`GetLength() < 3`): the beam carves the dirt.
+    let mut bonuses = bonus_at(40.0, 28.0);
+    process_shot_beam(&shot, &m.weapons()[1], &mut ws, &mut ctx, &s, T0, &mut bonuses);
+    assert!(bonuses[3].used);
+    assert_eq!((ctx.draws.ents, ws[0].dirt_count), (3, 15));
 }

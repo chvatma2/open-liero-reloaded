@@ -14,6 +14,7 @@ use rl_terrain::{GreenMask, Stamp, Terrain};
 
 use crate::SimSettings;
 use crate::beam::BeamCtx;
+use crate::bonus::{Bonus, BonusItem, Bonuses, ClientCtx, MAX_BONUSES};
 use crate::damage::{Harm, die_at_zero_health};
 use crate::input::{Keys, Latches};
 use crate::mod_rt::SimMod;
@@ -58,6 +59,8 @@ pub struct World {
     projectiles: ProjectilePool,
     /// OLX's `rand()` and `FindSpot` generators and the entity counter.
     draws: Draws,
+    /// The server's and the client's bonuses, and the messages between them.
+    bonuses: Bonuses,
     /// Reused each physics step so that `tick` does not allocate (spec §5.3).
     others: Scratch,
 }
@@ -91,6 +94,7 @@ impl World {
         seed: u32,
     ) -> Self {
         let terrain_min = terrain.width().min(terrain.height());
+        let bonuses = Bonuses::new(sim_mod.weapons().len(), start + TimeDiff(CLOCK_OFFSET_MS));
         Self {
             settings,
             sim_mod,
@@ -106,6 +110,7 @@ impl World {
             last_shots: Vec::with_capacity(MAX_SHOOTINGS),
             projectiles: ProjectilePool::new(ProjectilePool::DEFAULT_CAPACITY),
             draws: Draws::new(GlibcRand::new(seed), Mt19937::new(seed)),
+            bonuses,
             others: Scratch { others: Vec::new(), beam_parts: Vec::with_capacity(terrain_min as usize) },
         }
     }
@@ -141,6 +146,34 @@ impl World {
     /// with their spawn times and their random seeds as spawning left them.
     pub fn last_shots(&self) -> &[Shot] {
         &self.last_shots
+    }
+
+    /// The client's bonuses (`cClient->cBonuses`), which fall and are picked up.
+    pub fn bonuses(&self) -> &[Bonus; MAX_BONUSES] {
+        &self.bonuses.client
+    }
+
+    /// The server's bonuses (`cServer->cBonuses`): a slot stays used for the
+    /// bonus's whole `BonusLife`, even after a pickup.
+    pub fn server_bonuses(&self) -> &[Bonus; MAX_BONUSES] {
+        &self.bonuses.server
+    }
+
+    /// Places a bonus at `(x, y)` at the start of the next [`World::tick`],
+    /// in the first free server slot and the same client slot, without
+    /// `FindSpot` or `rand()` (the oracle's `simPlaceBonus`, spec hook H1).
+    /// Nothing is placed if no server slot is free or the weapon does not exist.
+    pub fn place_bonus(&mut self, x: i32, y: i32, item: BonusItem) {
+        self.bonuses.place(x, y, item);
+    }
+
+    /// The weapons a spawned bonus may hold (`goodWpns`): the ids the weapon
+    /// restrictions do not ban (`FT_WeaponRest`, `CWpnRest::getWeaponState`).
+    /// Ids outside the mod are left out. By default every weapon is allowed,
+    /// as for a mod missing from the restriction file (`CWpnRest::updateList`).
+    pub fn set_bonus_weapons(&mut self, ids: &[i32]) {
+        let n = self.sim_mod.weapons().len() as i32;
+        self.bonuses.set_weapons(ids.iter().copied().filter(|id| (0..n).contains(id)));
     }
 
     /// `game.serverFrame`.
@@ -213,7 +246,7 @@ impl World {
     /// At least 1 ms, so a frame always ends even with settings outside
     /// OLX's range ([`SimSettings::validate`]).
     fn physics_dt(&self) -> TimeDiff {
-        TimeDiff((1000 / self.settings.lx56_physics_fps.max(1)).max(1) as u64)
+        self.settings.lx56_physics_dt()
     }
 
     /// How far the frame clock moves in one frame: 10 ms, scaled by
@@ -236,12 +269,18 @@ impl World {
     /// One 100 Hz frame. `keys[i]` is what worm `i` holds during this frame;
     /// a worm with no entry holds nothing.
     pub fn tick(&mut self, keys: &[Keys]) {
-        // What OLX does between the previous frame and this one (spec §18 D1, D10).
+        // What OLX does between the previous frame and this one (spec §18 D1,
+        // D10): the server's messages, the shots, then the client's messages.
+        let num_weapons = self.sim_mod.weapons().len() as i32;
+        let wall_clock = self.time + TimeDiff(CLOCK_OFFSET_MS);
+        self.bonus_messages(wall_clock, false);
         self.deliver_shots();
+        self.bonuses.deliver_to_server(&mut self.worms, num_weapons);
         self.server_frame += 1;
+        // `OracleHooks::beforeFrame`: bonuses placed for this frame.
+        self.bonus_messages(wall_clock, true);
         self.gus_speed_round_trip();
         // `gusLogicFrame` (`Game.cpp:945-949`): worms left at exactly 0 health die.
-        let wall_clock = self.time + TimeDiff(CLOCK_OFFSET_MS);
         die_at_zero_health(&mut self.harm(), wall_clock);
         for (i, latch) in self.latches.iter_mut().enumerate() {
             latch.set(keys.get(i).copied().unwrap_or(Keys(0)));
@@ -269,7 +308,25 @@ impl World {
             wall_clock,
         };
         simulate_respawns(&mut self.worms, &mut self.latches, &mut spawner);
+        self.bonuses.simulate_server(&self.settings, &self.terrain, &mut self.draws, wall_clock);
         self.time += frame;
+    }
+
+    /// The client parses the server's bonus messages, or (`placed`) the
+    /// bonuses placed for this frame, which the server spawns first.
+    fn bonus_messages(&mut self, wall_clock: AbsTime, placed: bool) {
+        let mut ctx = ClientCtx {
+            terrain: &mut self.terrain,
+            holes: &self.holes,
+            draws: &mut self.draws,
+            num_weapons: self.sim_mod.weapons().len() as i32,
+            wall_clock,
+        };
+        if placed {
+            self.bonuses.apply_placements(&mut ctx);
+        } else {
+            self.bonuses.deliver_to_client(&mut ctx);
+        }
     }
 
     /// OLX runs `gusLogicFrame()` every frame, even for classic mods, inside a
@@ -311,6 +368,7 @@ impl World {
             draws: &mut self.draws,
             parts: &mut self.others.beam_parts,
             now: self.time,
+            bonuses: &mut self.bonuses.client,
         };
         for mut shot in decoded {
             let spawn = spawn_time(shot.time, self.server_frame, current);
@@ -340,6 +398,16 @@ impl World {
                 draws: &mut self.draws,
             };
             simulate_worm(&mut self.worms[i], &mut self.latches[i], &mut ctx);
+            if self.settings.bonuses && self.worms[i].alive {
+                let num_weapons = self.sim_mod.weapons().len() as i32;
+                let mut h = Harm {
+                    settings: &self.settings,
+                    worms: &mut self.worms,
+                    draws: &mut self.draws,
+                    now: self.time,
+                };
+                self.bonuses.pick_up(&mut h, i, num_weapons);
+            }
             // `CClient_Game.cpp:155-176`: the server's fire code, then the client's.
             let w = &mut self.worms[i];
             if w.state.shoot && w.alive {
@@ -378,8 +446,21 @@ impl World {
             now: self.time,
             wall_clock: self.time + TimeDiff(CLOCK_OFFSET_MS),
             physics_dt,
+            bonuses: &mut self.bonuses.client,
         };
         simulate_projectiles(&mut self.projectiles, &mut ctx);
+        // `CClient_Game.cpp:217-218`: bonuses after the projectiles.
+        if self.settings.bonuses {
+            self.bonuses.simulate_client(&self.terrain, dt);
+        }
+    }
+}
+
+#[cfg(test)]
+impl World {
+    /// Worm `i`, to change between ticks in tests.
+    pub(crate) fn worm_mut(&mut self, i: usize) -> &mut Worm {
+        &mut self.worms[i]
     }
 }
 

@@ -4,6 +4,8 @@ use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 
+use rl_math::TimeDiff;
+
 /// Typed gameplay settings. [`SimSettings::lx56`] is OLX's "LieroX 0.56"
 /// preset with the Classic mod, which is what the oracle traces use.
 #[derive(Clone, Debug, PartialEq)]
@@ -77,6 +79,14 @@ pub struct SimSettings {
     pub death_decreases_score: f32,
     /// `SuicideDecreasesScore`: each suicide takes one off the score.
     pub suicide_decreases_score: bool,
+    /// `Bonuses`: bonuses fall, are picked up and explode, and the server spawns them.
+    pub bonuses: bool,
+    /// `BonusFrequency`, in seconds: the server spawns a bonus when this much has passed (strictly).
+    pub bonus_frequency: f32,
+    /// `BonusLife`, in seconds: how long the server keeps a bonus's slot.
+    pub bonus_life: f32,
+    /// `BonusHealthToWeaponChance`: the chance that a spawned bonus is a weapon.
+    pub bonus_health_to_weapon_chance: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,7 +142,18 @@ impl SimSettings {
             allow_negative_score: false,
             death_decreases_score: 0.0,
             suicide_decreases_score: false,
+            bonuses: false,
+            bonus_frequency: 30.0,
+            bonus_life: 60.0,
+            bonus_health_to_weapon_chance: 0.5,
         }
+    }
+
+    /// `LX56PhysicsDT`: `1000 / LX56PhysicsFPS` whole milliseconds, at least
+    /// 1 ms, so a frame always ends even with settings outside OLX's range
+    /// ([`SimSettings::validate`]).
+    pub fn lx56_physics_dt(&self) -> TimeDiff {
+        TimeDiff((1000 / self.lx56_physics_fps.max(1)).max(1) as u64)
     }
 
     /// Checks every number against OLX's own range for it (`src/common/FeatureList.cpp`).
@@ -170,6 +191,9 @@ impl SimSettings {
             ("RespawnTime", self.respawn_time, 0.0, 20.0),
             ("MaxRespawnTime", self.max_respawn_time, -1.0, 20.0),
             ("DeathDecreasesScore", self.death_decreases_score, 0.0, 5.0),
+            ("BonusFrequency", self.bonus_frequency, 1.0, 150.0),
+            ("BonusLife", self.bonus_life, 1.0, 150.0),
+            ("BonusHealthToWeaponChance", self.bonus_health_to_weapon_chance, 0.0, 1.0),
         ];
         for (k, v, min, max) in ranges {
             if !(min..=max).contains(&v) {
@@ -256,6 +280,10 @@ impl SimSettings {
             allow_negative_score: flag("AllowNegativeScore")?,
             death_decreases_score: num("DeathDecreasesScore")?,
             suicide_decreases_score: flag("SuicideDecreasesScore")?,
+            bonuses: flag("Bonuses")?,
+            bonus_frequency: num("BonusFrequency")?,
+            bonus_life: num("BonusLife")?,
+            bonus_health_to_weapon_chance: num("BonusHealthToWeaponChance")?,
         };
         settings.validate()?;
         Ok(settings)
@@ -321,6 +349,10 @@ mod tests {
             ("AllowNegativeScore", "false"),
             ("DeathDecreasesScore", "0"),
             ("SuicideDecreasesScore", "false"),
+            ("Bonuses", "false"),
+            ("BonusFrequency", "30"),
+            ("BonusLife", "60"),
+            ("BonusHealthToWeaponChance", "0.5"),
         ]
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -360,6 +392,9 @@ mod tests {
             ("RespawnTime", "-1"),
             ("Lives", "151"),
             ("WormShieldFactor", "NaN"),
+            ("BonusFrequency", "0.5"),
+            ("BonusLife", "151"),
+            ("BonusHealthToWeaponChance", "1.5"),
         ] {
             let mut f = olx_header();
             f.insert(k.into(), v.into());

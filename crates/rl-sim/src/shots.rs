@@ -14,6 +14,7 @@ use rl_terrain::{Stamp, Terrain};
 
 use crate::SimSettings;
 use crate::beam::{BeamCtx, process_shot_beam};
+use crate::bonus::{Bonus, MAX_BONUSES};
 use crate::mod_rt::{SimMod, WeaponType};
 use crate::projectile::{ProjectilePool, c_int};
 use crate::rng::Draws;
@@ -148,6 +149,8 @@ pub(crate) struct ShotCtx<'a> {
     pub parts: &'a mut Vec<bool>,
     /// `GetPhysicsTime()`: the frame clock.
     pub now: AbsTime,
+    /// The client's bonuses, which beams explode.
+    pub bonuses: &'a mut [Bonus; MAX_BONUSES],
 }
 
 /// `CClient::ProcessShot` (`CClient_Game.cpp:852-921`). The shot of a worm
@@ -169,7 +172,7 @@ pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], 
     }
     if wpn.kind == WeaponType::Beam {
         let mut beam = BeamCtx { terrain: ctx.terrain, holes: ctx.holes, draws: ctx.draws, parts: ctx.parts };
-        process_shot_beam(shot, wpn, worms, &mut beam, ctx.settings, ctx.now);
+        process_shot_beam(shot, wpn, worms, &mut beam, ctx.settings, ctx.now, ctx.bonuses);
         return;
     }
     let Some(info) = &wpn.spawn else { return };

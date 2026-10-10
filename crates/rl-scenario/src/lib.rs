@@ -12,13 +12,16 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use rl_math::AbsTime;
-use rl_oracle::{Fields, Frame, Num, ProjRec, RopeRec, Scenario, ShotRec, SlotRec, Trace, WormRec};
-use rl_sim::{CLOCK_OFFSET_MS, Keys, Loadout, SimMod, SimSettings, Slot, World};
+use rl_oracle::{
+    BonusRec, Fields, Frame, Num, ProjRec, RopeRec, Scenario, ServerBonusRec, ShotRec, SlotRec, Trace,
+    WormRec,
+};
+use rl_sim::{BonusItem, CLOCK_OFFSET_MS, Keys, Loadout, SimMod, SimSettings, Slot, World};
 use rl_terrain::{GreenMask, Stamp, Terrain};
 use rl_vfs::DirFs;
 
-/// The trace fields the simulation reproduces so far; the acceptance test
-/// compares only these. Grows with M4 until it is [`Fields::ALL`].
+/// The trace fields the simulation reproduces; the acceptance test compares
+/// these. Since plan 4 task 9 (bonuses) it is every group, [`Fields::ALL`].
 pub const CHECKED: Fields = Fields::WORM_MOTION
     .union(Fields::SLOTS)
     .union(Fields::ROPE)
@@ -30,7 +33,8 @@ pub const CHECKED: Fields = Fields::WORM_MOTION
     .union(Fields::RAND)
     .union(Fields::SHOTS)
     .union(Fields::PROJECTILES)
-    .union(Fields::PROJ_HIDDEN);
+    .union(Fields::PROJ_HIDDEN)
+    .union(Fields::BONUSES);
 
 /// Reads `<dir>/<name>.ron` and `<dir>/<name>.jsonl.gz`.
 pub fn load_fixture(dir: &Path, name: &str) -> anyhow::Result<(Scenario, Trace)> {
@@ -283,6 +287,32 @@ pub fn record(world: &World, f: i64, t0: u64) -> Frame {
             col: Some(p.colour),
         })
         .collect();
+    let b = (0..)
+        .zip(world.bonuses())
+        .filter(|(_, b)| b.used)
+        .map(|(i, b)| BonusRec {
+            i,
+            t: b.kind as i32,
+            x: Num(b.pos.x),
+            y: Num(b.pos.y),
+            vx: Some(Num(b.vel.x)),
+            vy: Some(Num(b.vel.y)),
+            life: Some(Num(b.life)),
+            wpn: Some(b.weapon),
+        })
+        .collect();
+    let sb = (0..)
+        .zip(world.server_bonuses())
+        .filter(|(_, b)| b.used)
+        .map(|(i, b)| ServerBonusRec {
+            i,
+            t: b.kind as i32,
+            x: Num(b.pos.x),
+            y: Num(b.pos.y),
+            wpn: b.weapon,
+            spawn: since_t0(b.spawn_time, t0).unwrap_or(0),
+        })
+        .collect();
     // OLX records a frame before `simulationTime` advances past it.
     let frame_ms = if f >= 0 { world.frame_dt().0 as i64 } else { 0 };
     let st = world.time().0 as i64 - t0 as i64 - frame_ms;
@@ -294,12 +324,33 @@ pub fn record(world: &World, f: i64, t0: u64) -> Frame {
         s,
         p,
         w,
+        b,
+        sb,
         rc: Some(world.rand_calls()),
         mt: Some(world.mt_calls()),
         ents: Some(world.entity_count() as i64),
         mh: format!("{:016x}", world.terrain().material_hash()),
-        ..Frame::default()
     }
+}
+
+/// The scenario's bonuses as `(frame, x, y, item)`. A weapon is found by
+/// name, ignoring case, as OLX's `FindWeaponId` does.
+fn bonus_items(world: &World, sc: &Scenario) -> anyhow::Result<Vec<(u32, i32, i32, BonusItem)>> {
+    sc.bonuses
+        .iter()
+        .map(|b| {
+            let item = match (b.kind, &b.weapon) {
+                (rl_oracle::BonusKind::Health, _) => BonusItem::Health,
+                (rl_oracle::BonusKind::Weapon, None) => anyhow::bail!("a weapon bonus without a weapon"),
+                (rl_oracle::BonusKind::Weapon, Some(name)) => {
+                    let weapons = world.sim_mod().weapons();
+                    let id = weapons.iter().position(|w| w.name.eq_ignore_ascii_case(name));
+                    BonusItem::Weapon(id.with_context(|| format!("no bonus weapon {name:?}"))? as i32)
+                }
+            };
+            Ok((b.frame, b.x, b.y, item))
+        })
+        .collect()
 }
 
 /// Plays `sc` from frame -1 to its last frame and returns the Rust trace,
@@ -307,9 +358,15 @@ pub fn record(world: &World, f: i64, t0: u64) -> Frame {
 pub fn replay(content: &Path, sc: &Scenario, expected: &Trace) -> anyhow::Result<Trace> {
     let mut world = load_world(content, sc, expected)?;
     let t0 = t0(expected);
+    let bonuses = bonus_items(&world, sc)?;
     let mut frames = vec![record(&world, -1, t0)];
     for (f, keys) in sc.keys_per_frame().into_iter().enumerate() {
         let keys: Vec<Keys> = keys.iter().map(|k| Keys(k.0)).collect();
+        for &(frame, x, y, item) in &bonuses {
+            if frame as usize == f {
+                world.place_bonus(x, y, item);
+            }
+        }
         world.tick(&keys);
         frames.push(record(&world, f as i64, t0));
     }

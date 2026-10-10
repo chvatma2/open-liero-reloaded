@@ -15,14 +15,15 @@ use rl_math::{AbsTime, TimeDiff, Vec2};
 use rl_terrain::{PX_DIRT, PX_ROCK, Stamp, Terrain};
 
 use crate::SimSettings;
+use crate::bonus::{Bonus, MAX_BONUSES};
 use crate::damage::{Harm, injure_worm};
-use crate::effects::{carve_at, increment_dirt_count};
+use crate::effects::{Blast, carve_at, explosion, increment_dirt_count};
 use crate::mod_rt::{SimMod, SimWeapon};
 use crate::projectile::c_int;
 use crate::rng::Draws;
 use crate::shots::Shot;
 use crate::spawn::vec_from_angle;
-use crate::world::MAX_WORMS;
+use crate::world::{CLOCK_OFFSET_MS, MAX_WORMS};
 use crate::worm::{Dir, Worm};
 
 /// What the client's beam and special code reads or changes besides the worms.
@@ -135,9 +136,10 @@ fn hit(worms: &[Worm], set: u32, p: Vec2) -> Option<usize> {
 /// `CClient::ProcessShot_Beam` (`src/client/CClient_Game.cpp:926-1055`), at
 /// delivery. The shooter's slot holding the beam becomes current and draws
 /// for 0.3 s; then the trace from the decoded position along the integer
-/// angle carves the hole or injures the worm it stops at. With `Bonuses`
-/// on, a bonus within 3 px is exploded first (`:986-1002`); bonuses are not
-/// ported yet.
+/// angle carves the hole or injures the worm it stops at. Unless its
+/// `Damage` is -1, a part that comes within 3 px of a client bonus stops
+/// there first, in an explosion of damage 0 at that point (`:986-1002`),
+/// which destroys the bonus when `Bonuses` is on.
 pub(crate) fn process_shot_beam(
     shot: &Shot,
     wpn: &SimWeapon,
@@ -145,6 +147,7 @@ pub(crate) fn process_shot_beam(
     ctx: &mut BeamCtx,
     settings: &SimSettings,
     now: AbsTime,
+    bonuses: &mut [Bonus; MAX_BONUSES],
 ) {
     let Some(beam) = &wpn.beam else { return };
     let by_worm = (0..MAX_WORMS as i32).contains(&shot.worm);
@@ -164,6 +167,21 @@ pub(crate) fn process_shot_beam(
     let mut set = others(worms, shot.worm);
     let BeamCtx { terrain, holes, draws, parts } = ctx;
     trace(beam, shot.pos, dir, map_min, parts, |p, width| {
+        if beam.damage != -1 && bonuses.iter().any(|b| b.used && (p - b.pos).length() < 3.0) {
+            let mut blast = Blast {
+                settings,
+                terrain,
+                holes,
+                worms,
+                draws,
+                bonuses,
+                now,
+                wall_clock: now + TimeDiff(CLOCK_OFFSET_MS),
+                physics_dt: settings.lx56_physics_dt(),
+            };
+            explosion(&mut blast, shot.spawn, p, 0.0, shot.worm);
+            return Part::Stopped;
+        }
         if solid(terrain, p) {
             if beam.damage != -1 {
                 let d = carve_at(terrain, holes, spread(beam.damage, beam, width), p);

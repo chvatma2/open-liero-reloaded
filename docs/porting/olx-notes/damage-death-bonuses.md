@@ -700,6 +700,31 @@ if (Bonuses) for i in 0..32: if used && |b.x - pos.x| <= 15 && |b.y - pos.y| <= 
 This assumes exactly one simulated frame per Game::frame and immediate,
 unthrottled loopback delivery. See section 11 and open question 1.
 
+Confirmed by the port (plan 4 task 9) with the oracle's D10 delivery: a
+placed bonus (`simPlaceBonus`) is in both arrays in the frame it is placed
+and gets that frame's sub-steps; a grab in frame N re-applies the weapon
+before frame N+1 and its `S2C_DESTROYBONUS` reaches the client before frame
+N+2; an expiry in frame N clears the client's slot before frame N+1.
+
+### 4.9 Also on these paths (found while porting, plan 4 task 9)
+
+- **Beams stop at bonuses.** `CClient::ProcessShot_Beam` (`CClient_Game.cpp:986-1002`),
+  unless `Bm.Damage == -1`: a beam part within 3 px of a used client bonus
+  (`(p - b.pos).GetLength() < 3`) stops there in `Explosion(spawnTime, p, 0, 5, owner)`.
+  This check does not read `FT_Bonuses`; with bonuses off the beam still
+  stops, and the explosion (which then skips the bonus chain) leaves the bonus.
+  `DrawBeam` has no such check.
+- **No other projectile code reads bonuses** (`PhysicsLX56_Projectiles.cpp`,
+  `CProjectile.cpp`): projectiles fly through them; only explosions destroy them.
+- **The `wpn` field differs between the arrays.** The client's health bonus
+  has weapon 0 (`ParseSpawnBonus` reads a weapon only for weapon bonuses);
+  the server's has the random `goodWpns` choice (natural) or -1 (`simPlaceBonus`).
+- **Packet widths:** `S2C_SPAWNBONUS` sends the weapon in 1 byte and the
+  position as `(int)pos` in 2 bytes (`writeInt(.., 2)`, read back unsigned);
+  `C2S_GRABBONUS` sends the slot, worm id and `getCurrentWeapon()` in 1 byte each.
+- **`WormShootEnd` on a grab** (`ParseGrabBonus`) acts only on a `FinalProj`,
+  so it is a no-op for LX56 mods.
+
 ## 5. Deathmatch rules
 
 `CDeathMatch` (`src/server/CDeathMatch.cpp`) is the bare `CGameMode`:

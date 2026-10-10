@@ -224,7 +224,7 @@ impl Worm {
 
     /// `MIN(tWeapons.size()-1, (size_t)iCurrentWeapon)`: a negative index
     /// becomes a huge `size_t`, so it picks the last slot too.
-    fn current_slot_index(&self) -> usize {
+    pub(crate) fn current_slot_index(&self) -> usize {
         (self.current_weapon as usize).min(self.slots.len().saturating_sub(1))
     }
 

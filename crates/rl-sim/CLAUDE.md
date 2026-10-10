@@ -5,7 +5,8 @@ commit `d1ad953f`. The oracle traces in `fixtures/oracle` are its acceptance
 tests, and they must match bit for bit (`tests/oracle.rs`).
 
 - **Layer 3, `#![no_std]` + `alloc`.** Apart from setup (`spawn_worm`,
-  `set_loadout`, `set_green_mask`, `align_physics_clock`), `World::tick(&[Keys])` is the only
+  `set_loadout`, `set_green_mask`, `set_bonus_weapons`, `align_physics_clock`,
+  and `place_bonus`, applied at the next tick), `World::tick(&[Keys])` is the only
   way state changes, and it does not allocate (`tests/no_alloc.rs`).
 - **Two clocks.** `tick` is one 100 Hz frame. Inside it, LX56 physics runs in
   `1000 / LX56PhysicsFPS` ms sub-steps (11 ms by default) while the physics
@@ -45,7 +46,13 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   (damage, carving, `LastFire = 0.3`), `draw_beam` from `player_shoot` in
   every sub-step the slot counts down (carves, no damage), and the jetpack.
   The trace's width buffer is sized in `World::new`.
-- **Not here yet (M4):** bonuses.
+- **Bonuses** (`bonus.rs`): the server's and the client's arrays, and the
+  reliable messages between them (D10), delivered at the start of `tick`:
+  spawns and destroys to the client, then the shots, then grabs to the
+  server. The server spawns by `BonusFrequency` (`FindSpot`, two `rand()`)
+  and keeps a slot for the whole `BonusLife`; the client's bonuses fall
+  after the projectiles, are picked up after each worm's physics, and
+  explode in `effects::explosion` and in the beam trace.
 
 Test: `cargo nextest run -p rl-sim`. The oracle test needs imported content;
 `cargo xtask check` sets `RL_CONTENT_DIR`.

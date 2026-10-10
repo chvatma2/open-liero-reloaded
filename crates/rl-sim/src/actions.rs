@@ -115,7 +115,7 @@ pub(crate) fn apply_to(
                 push_worm = false;
                 bounce(p, a.bounce_coeff);
                 if a.bounce_explode > 0 {
-                    explosion(ctx, p.last_sim_time, p.pos, a.bounce_explode as f32, p.owner);
+                    explosion(&mut ctx.blast(), p.last_sim_time, p.pos, a.bounce_explode as f32, p.owner);
                 }
             }
         }
@@ -288,7 +288,7 @@ pub(crate) fn execute(pool: &mut ProjectilePool, i: usize, info: &mut DoActionIn
             def.timer.action.as_ref().map_or(0, |a| a.damage)
         };
         if damage != -1 {
-            explosion(ctx, time, pos, damage as f32, owner);
+            explosion(&mut ctx.blast(), time, pos, damage as f32, owner);
         }
         info.delete_after = true;
     }

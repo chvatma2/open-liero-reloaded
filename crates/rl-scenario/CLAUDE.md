@@ -16,15 +16,16 @@ traces in `rl-oracle`'s format.
   steps by the world's frame time (`World::frame_dt`, GameSpeed-scaled). A
   header with client options `rl-sim` does not model (`Game.Blood` other than 100) is refused.
 - `tests/oracle.rs` is the acceptance test: every scenario must match bit for
-  bit in the fields `CHECKED` lists, except those in `EXPECTED_DIVERGENCES`,
+  bit in the fields `CHECKED` lists (every group since bonuses), except those in `EXPECTED_DIVERGENCES`,
   which must first diverge exactly at the listed frame and field (so a
   regression in ported fields cannot hide there). A second pass does the same
   without `rc`, `mt` and `ents` (`EXPECTED_DIVERGENCES_WITHOUT_DRAWS`), so a
   regression in the frame of a pinned draw divergence shows up too. Rows
-  owned by a deviation (D9) stay after M4.
-  On a mismatch the test prints the new row. Grow `CHECKED` and shrink the
-  lists as M4 lands.
+  owned by a deviation (D9) stay after M4; only those are left.
+  On a mismatch the test prints the new row.
 - The theme pack's green ball becomes the world's green-dirt mask.
+- A scenario's bonuses are placed with `World::place_bonus` before the
+  frame's tick (weapons by name, ignoring case, as OLX's `FindWeaponId`).
 - `load_mod` refuses an image projectile without its image's frame count.
 - For debugging a divergence: `rl-cli scenario <name> --dump <frame>` (`--all`
   compares every field, `--fields checked+projectiles+proj_hidden+clocks` the

@@ -1,12 +1,15 @@
 //! What projectile events do to the map and the worms: `CClient::Explosion`,
 //! `CarveHole`, `PlaceDirt` and `PlaceGreenDirt` with their dirt counts.
 
-use rl_math::{AbsTime, Vec2};
+use rl_math::{AbsTime, TimeDiff, Vec2};
 use rl_terrain::{PX_DIRT, Stamp, Terrain};
 
-use crate::damage::injure_worm;
+use crate::SimSettings;
+use crate::bonus::{Bonus, MAX_BONUSES};
+use crate::damage::{Harm, injure_worm};
 use crate::proj_sim::ProjCtx;
 use crate::projectile::{c_i64, c_int};
+use crate::rng::Draws;
 use crate::world::MAX_WORMS;
 use crate::worm::Worm;
 
@@ -74,13 +77,55 @@ pub(crate) fn make_green_dirt(ctx: &mut ProjCtx, pos: Vec2, owner: i32) {
     }
 }
 
+/// What `CClient::Explosion` reads or changes.
+pub(crate) struct Blast<'a> {
+    pub settings: &'a SimSettings,
+    pub terrain: &'a mut Terrain,
+    pub holes: &'a [Stamp],
+    pub worms: &'a mut [Worm],
+    pub draws: &'a mut Draws,
+    /// The client's bonuses.
+    pub bonuses: &'a mut [Bonus; MAX_BONUSES],
+    /// `GetPhysicsTime()`: the frame clock.
+    pub now: AbsTime,
+    /// `tLX->currentTime`, pinned to `now + K` (spec §18 D2).
+    pub wall_clock: AbsTime,
+    /// `LX56PhysicsDT`.
+    pub physics_dt: TimeDiff,
+}
+
+impl Blast<'_> {
+    fn harm(&mut self) -> Harm<'_> {
+        Harm { settings: self.settings, worms: self.worms, draws: self.draws, now: self.now }
+    }
+}
+
+impl<'a> ProjCtx<'a> {
+    /// The explosion's part of the context.
+    pub fn blast(&mut self) -> Blast<'_> {
+        Blast {
+            settings: self.settings,
+            terrain: self.terrain,
+            holes: self.holes,
+            worms: self.worms,
+            draws: self.draws,
+            bonuses: self.bonuses,
+            now: self.now,
+            wall_clock: self.wall_clock,
+            physics_dt: self.physics_dt,
+        }
+    }
+}
+
 /// `CClient::Explosion` (`src/client/CClient_Game.cpp:227-330`): the dirt
-/// probe and its two particles (4 `rand()`), the explosion entity, a hole of
-/// size `(int)damage` counted for `owner`, then the full `damage` to every
-/// alive worm whose recorded position (`getBest`, as the hit test) is within
-/// 5 px: no falloff. With `Bonuses` on, the bonus chain is Task 9's; the
-/// viewport shake is cosmetic.
-pub(crate) fn explosion(ctx: &mut ProjCtx, time: AbsTime, pos: Vec2, damage: f32, owner: i32) {
+/// probe; with `Bonuses` on, each client bonus within 15 px on both axes is
+/// destroyed (the server is not told) and explodes in turn, a recursive
+/// `Explosion(time, pos, 15, 5, owner)` at this explosion's position
+/// (`:255-270`); then the probe's two particles (4 `rand()`), the explosion
+/// entity, a hole of size `(int)damage` counted for `owner`, and the full
+/// `damage` to every alive worm whose recorded position (`getBest`, as the
+/// hit test) is within 5 px: no falloff. The viewport shake is cosmetic.
+pub(crate) fn explosion(ctx: &mut Blast, time: AbsTime, pos: Vec2, damage: f32, owner: i32) {
     let (w, h) = (ctx.terrain.width() as i64, ctx.terrain.height() as i64);
     // MIN((uint)pos.y, H - 1); px = (uint)pos.x. x86-64 converts through a 64-bit int.
     let y = (c_i64(pos.y) as u32).min((h as u32).wrapping_sub(1)) as i32 as i64;
@@ -98,12 +143,22 @@ pub(crate) fn explosion(ctx: &mut ProjCtx, time: AbsTime, pos: Vec2, damage: f32
             break;
         }
     }
+    if ctx.settings.bonuses {
+        for i in 0..MAX_BONUSES {
+            let b = &ctx.bonuses[i];
+            if !b.used || libm::fabsf(b.pos.x - pos.x) > 15.0 || libm::fabsf(b.pos.y - pos.y) > 15.0 {
+                continue;
+            }
+            ctx.bonuses[i].used = false;
+            explosion(ctx, time, pos, 15.0, owner);
+        }
+    }
     if got_dirt {
         // GetRandomVec().multPairwise(30, 10) each.
         ctx.draws.particles(2);
     }
     ctx.draws.spawn_entity();
-    let d = carve_hole(ctx, c_int(damage), pos);
+    let d = carve_at(ctx.terrain, ctx.holes, c_int(damage), pos);
     increment_dirt_count(ctx.worms, owner, d);
     // `(tLX->currentTime - time).milliseconds()`: wraps (the assert is compiled out).
     let ms_back = ctx.wall_clock.0.wrapping_sub(time.0);

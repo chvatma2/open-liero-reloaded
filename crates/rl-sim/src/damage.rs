@@ -156,7 +156,7 @@ pub(crate) fn injure_worm(h: &mut Harm, id: i32, damage: f32, owner: i32) {
 }
 
 /// OLX `MIN` (`include/MathLib.h:66`): `b` if either is NaN.
-fn min(a: f32, b: f32) -> f32 {
+pub(crate) fn min(a: f32, b: f32) -> f32 {
     if a < b { a } else { b }
 }
 

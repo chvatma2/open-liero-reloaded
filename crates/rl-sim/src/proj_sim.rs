@@ -9,6 +9,7 @@ use rl_terrain::{GreenMask, Stamp, Terrain};
 
 use crate::SimSettings;
 use crate::actions::{DoActionInfo, Event, apply_to, execute, timer_has_action};
+use crate::bonus::{Bonus, MAX_BONUSES};
 use crate::damage::Harm;
 use crate::mod_rt::{SimMod, SimProjectile};
 use crate::projectile::{Projectile, ProjectilePool, attr_set, c_int, c_u64};
@@ -60,6 +61,8 @@ pub(crate) struct ProjCtx<'a> {
     pub wall_clock: AbsTime,
     /// `LX56PhysicsDT`.
     pub physics_dt: TimeDiff,
+    /// The client's bonuses, which explosions destroy.
+    pub bonuses: &'a mut [Bonus; MAX_BONUSES],
 }
 
 impl ProjCtx<'_> {

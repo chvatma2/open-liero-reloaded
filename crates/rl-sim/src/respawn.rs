@@ -47,7 +47,7 @@ pub(crate) fn find_spot(t: &Terrain, mt: &mut Mt19937) -> Vec2 {
 }
 
 /// `TimeDiff(float seconds)` (`include/olx-types.h:33`): `(Uint64)(s * 1000.0f)`.
-fn seconds(s: f32) -> u64 {
+pub(crate) fn seconds(s: f32) -> u64 {
     c_u64(s * 1000.0)
 }
 

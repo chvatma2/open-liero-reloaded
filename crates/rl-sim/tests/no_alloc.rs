@@ -1,5 +1,6 @@
 //! Spec §5.3: `World::tick` does not allocate once the world is set up,
-//! with firing, explosions, dirt, bleeding, deaths and respawns.
+//! with firing, explosions, dirt, bleeding, deaths and respawns, and with
+//! bonuses spawned, placed, picked up and exploded.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -8,7 +9,7 @@ use rl_data::image::{Rgba, RgbaImage};
 use rl_data::level::{Material, MaterialGrid};
 use rl_data::mod_def::*;
 use rl_math::AbsTime;
-use rl_sim::{Keys, Loadout, SimMod, SimSettings, Slot, World};
+use rl_sim::{BonusItem, Keys, Loadout, SimMod, SimSettings, Slot, World};
 use rl_terrain::{GreenMask, Stamp, Terrain};
 
 /// A plain pixel projectile: explodes on terrain, injures worms.
@@ -154,7 +155,10 @@ fn tick_does_not_allocate() {
     let cells =
         (0..300 * 200).map(|i| if i / 300 < 150 { Material::Background } else { Material::Dirt }).collect();
     let terrain = Terrain::from_grid(&MaterialGrid::from_cells(300, 200, cells).unwrap());
-    let mut w = World::new(SimSettings::lx56(), sim_mod(), terrain, holes, AbsTime(100_000), 1);
+    // A bonus every second, each kept for two.
+    let settings =
+        SimSettings { bonuses: true, bonus_frequency: 1.0, bonus_life: 2.0, ..SimSettings::lx56() };
+    let mut w = World::new(settings, sim_mod(), terrain, holes, AbsTime(100_000), 1);
     let mut green = RgbaImage::new(8, 9);
     for y in 0..9 {
         for x in 0..8 {
@@ -171,15 +175,24 @@ fn tick_does_not_allocate() {
     }
     w.set_health(0, 12.0); // bleeds
     w.set_health(1, 0.0); // dies at once (D9) and respawns
+    // Worm 0 picks up the health bonus at once; the others fall to the floor,
+    // where the pellets explode.
+    w.place_bonus(100, 100, BonusItem::Health);
+    for x in [120, 150, 180, 210, 240] {
+        w.place_bonus(x, 120, BonusItem::Weapon(1));
+    }
     // Both worms fire most of the time, so shots are fired, delivered and
     // spawned, and the weapons empty and reload.
     let a =
         [Keys(Keys::RIGHT | Keys::ROPE | Keys::UP | Keys::FIRE), Keys(Keys::LEFT | Keys::JUMP | Keys::FIRE)];
     let b = [Keys(Keys::LEFT | Keys::FIRE), Keys(Keys::RIGHT | Keys::DOWN)];
-    let mut flying = 0;
+    let (mut flying, mut picked) = (0, false);
     let info = allocation_counter::measure(|| {
         for i in 0..600 {
             w.tick(if i % 3 == 0 { &a } else { &b });
+            if i == 5 {
+                picked = !w.bonuses()[0].used && w.server_bonuses()[0].used;
+            }
             if i == 199 {
                 flying = w.projectiles().count();
             }
@@ -191,6 +204,8 @@ fn tick_does_not_allocate() {
     assert!(flying > 20, "{flying} projectiles");
     assert!(w.worms()[0].last_blood.0 != 0, "worm 0 bled");
     assert!(w.worms()[1].alive && w.mt_calls() > 0, "worm 1 died and respawned");
+    assert!(picked, "worm 0 picked up the health bonus");
+    assert!(w.server_bonuses().iter().filter(|b| b.used).count() >= 2, "bonuses spawned");
 
     // Worm 0 holds the beam (weapon 2) on worm 1, worm 1 the jetpack (3).
     for (i, weapon) in [(0, 2), (1, 3)] {
