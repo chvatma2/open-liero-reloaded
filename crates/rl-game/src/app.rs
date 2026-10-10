@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rl_input::{Action, InputState, KeyCode};
 use rl_scene::{DrawList, Interpolation, Viewport};
@@ -21,6 +21,7 @@ use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::clock::TickClock;
 use crate::gpu::{Gpu, OverlayPaint};
+use crate::latency::Latency;
 use crate::overlay::{Overlay, ScreenMap, Stats};
 use crate::script::{Command, Step};
 use crate::session::Session;
@@ -45,6 +46,8 @@ pub struct Config {
     pub shot_dir: PathBuf,
     /// Print the debug counters every second.
     pub print_stats: bool,
+    /// Latency probes (`latency.rs`) this often.
+    pub latency_probe: Option<Duration>,
 }
 
 /// What exists once the window does.
@@ -72,6 +75,7 @@ pub struct App {
     start: Option<Instant>,
     last: Option<Instant>,
     meter: Meter,
+    latency: Latency,
     stats: Stats,
     dropped_warned: bool,
     /// The window could not show frames (minimised or covered): the game
@@ -93,6 +97,7 @@ impl App {
             if session.audio.is_silent() { "audio: silent (no output device)" } else { "audio: opened" };
         let stats = Stats { audio: audio.to_string(), ..Stats::default() };
         App {
+            latency: Latency::new(cfg.latency_probe),
             cfg,
             assets,
             session,
@@ -125,6 +130,11 @@ impl App {
             self.session.player_deaths,
             self.session.player_spawns
         )
+    }
+
+    /// Input latency and swap-chain waits over the run (`latency.rs`).
+    pub fn latency_summary(&self) -> String {
+        self.latency.summary()
     }
 
     fn fail(&mut self, el: &ActiveEventLoop, e: anyhow::Error) {
@@ -210,6 +220,7 @@ impl App {
             }
         }
         let keys = self.input.latch_tick();
+        self.latency.latched();
         let t0 = Instant::now();
         self.session.tick(keys);
         self.meter.tick(t0.elapsed().as_secs_f64());
@@ -221,9 +232,14 @@ impl App {
         Ok(())
     }
 
-    /// One drawn frame: the ticks due, then the picture.
+    /// One drawn frame: the surface texture first (any wait for VSync
+    /// comes before the input is read, not between reading and drawing
+    /// it), the ticks due, then the picture.
     fn frame(&mut self, el: &ActiveEventLoop) -> anyhow::Result<()> {
+        let begin = Instant::now();
+        let frame = self.win.as_mut().and_then(|w| w.gpu.acquire());
         let now = Instant::now();
+        self.latency.frame_start(now);
         let start = *self.start.get_or_insert(now);
         let elapsed = self.last.map_or(0.0, |l| (now - l).as_secs_f64());
         self.last = Some(now);
@@ -282,8 +298,12 @@ impl App {
         for warning in w.gpu.renderer.warnings().drain(..) {
             eprintln!("warning: {warning}");
         }
-        let wait = w.gpu.present(&self.list, &paint, &mut out.textures_delta).unwrap_or_default();
-        self.meter.busy(now.elapsed().saturating_sub(wait).as_secs_f64());
+        let timing = w.gpu.present(frame, &self.list, &paint, &mut out.textures_delta);
+        if let Some(t) = timing {
+            self.latency.presented(Instant::now(), t);
+        }
+        let wait = timing.map_or(Duration::ZERO, |t| t.acquire + t.present);
+        self.meter.busy(begin.elapsed().saturating_sub(wait).as_secs_f64());
         if std::mem::take(&mut self.shot_due) {
             let path = self.cfg.shot_dir.join(format!("shot-{:05}.png", self.ticks));
             // A screenshot that cannot be written is not worth the game.
@@ -299,6 +319,7 @@ impl App {
         if ev.state != ElementState::Pressed || ev.repeat {
             return Ok(());
         }
+        self.latency.press(Instant::now());
         match ev.physical_key {
             PhysicalKey::Code(KeyCode::Escape) => el.exit(),
             PhysicalKey::Code(KeyCode::F2) => self.debug = !self.debug,

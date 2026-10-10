@@ -21,14 +21,23 @@ cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --target
   `GALLIUM_DRIVER=d3d12 WGPU_BACKEND=gl` (Mesa reads the variable when the
   driver loads, and `set_var` is unsafe). WSLg presents through GL at the
   compositor's 60 Hz with FIFO only.
-- **Loop** (`app.rs`): `TickClock` (`clock.rs`) runs the ticks owed, at
-  most `MAX_CATCHUP_TICKS` (10) per frame, dropping the rest. Per tick:
-  script steps, `input.latch_tick()`, `Session::tick` (`world.tick` →
+- **Loop** (`app.rs`): each frame first acquires the surface texture
+  (`Gpu::acquire`), so a VSync wait comes before the input is read, not
+  between reading and drawing it. Then `TickClock` (`clock.rs`) runs the
+  ticks owed, at most `MAX_CATCHUP_TICKS` (10) per frame, dropping the
+  rest. Per tick: script steps, `input.latch_tick()`, `Session::tick` (`world.tick` →
   `audio.play_events` at the view centre → `Presentation::on_tick`, see
   `rl-present` → damage popups). Per frame: `Session::build` (scene,
   entities), the overlay, `Presentation::upload` (atlas if a worm was
   added, terrain dirty rectangles), `Gpu::present`, then a screenshot if
   one is due (one that fails is a warning, never the end of the game).
+- **Latency** (`latency.rs`): the exit summary's `input to present` is a
+  key press to the present call of the first frame drawing a tick that
+  read it; `--latency-probe <ms>` adds probes on a wall-clock grid (they
+  press nothing) for scripted runs. `acquire` and `present` are the swap
+  chain's waits. One frame in flight (`desired_maximum_frame_latency` 1;
+  wgpu's GL backend ignores it). Under WSLg the 60 Hz pacing is Wayland's
+  frame callback, before a frame starts: acquire takes ~0.01 ms.
 - **Session** (`session.rs`): the match without a window, so it is tested
   headless; its presentation is one `rl_present::Presentation`. `restart`
   (F5) builds the world from the assets loaded once (`setup::Assets`,

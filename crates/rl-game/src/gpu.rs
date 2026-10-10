@@ -13,7 +13,15 @@ use rl_render::{RenderSettings, Renderer};
 use rl_scene::DrawList;
 use winit::window::Window;
 
+use crate::latency::PresentTiming;
 use crate::surface::{Acquire, Surface, SurfaceState};
+
+/// A surface texture to draw the next frame into.
+pub struct Acquired {
+    frame: wgpu::SurfaceTexture,
+    /// How long acquiring it waited.
+    wait: Duration,
+}
 
 /// Where egui's texture changes go (`egui_wgpu::Renderer` on the device;
 /// a fake in tests).
@@ -136,7 +144,10 @@ impl Gpu {
             .context("the surface does not work with the adapter")?;
         config.format = format;
         config.present_mode = pick_present_mode(&caps.present_modes, uncapped);
-        config.desired_maximum_frame_latency = 2;
+        // One frame in flight: the least input lag where the backend honours
+        // it (Vulkan, DX12; wgpu's GL backend ignores it). Frames are cheap,
+        // so it costs no throughput (plan 5 final review, `latency.rs`).
+        config.desired_maximum_frame_latency = 1;
         let a = adapter.get_info();
         let info = format!(
             "{} ({:?}, {:?}), {:?}, {:?}",
@@ -176,23 +187,11 @@ impl Gpu {
         self.state.size()
     }
 
-    /// Draws `list` and the overlay into the window and presents it,
-    /// applying the overlay's texture changes (`textures`, left empty)
-    /// whether or not a frame is drawn.
-    /// Returns how long it waited for the surface (acquiring and presenting,
-    /// where VSync blocks), or `None` when no frame was presented (the
-    /// window is minimised or the surface keeps failing).
-    pub fn present(
-        &mut self,
-        list: &DrawList,
-        overlay: &OverlayPaint,
-        textures: &mut egui::TexturesDelta,
-    ) -> Option<Duration> {
-        with_textures(self, textures, |gpu| gpu.present_frame(list, overlay))
-    }
-
-    /// [`Gpu::present`] once the overlay's textures are up to date.
-    fn present_frame(&mut self, list: &DrawList, overlay: &OverlayPaint) -> Option<Duration> {
+    /// Waits for the next surface texture to draw into: none while the
+    /// window is minimised or the surface keeps failing. Acquire before
+    /// reading input, so the wait for VSync is not between reading input
+    /// and drawing it (`latency.rs`).
+    pub fn acquire(&mut self) -> Option<Acquired> {
         let t0 = Instant::now();
         let mut target = WindowSurface {
             window: &self.window,
@@ -203,14 +202,38 @@ impl Gpu {
             config: &mut self.config,
         };
         let frame = self.state.frame(&mut target)?;
-        let acquired = t0.elapsed();
+        Some(Acquired { frame, wait: t0.elapsed() })
+    }
+
+    /// Draws `list` and the overlay into `frame` and presents it, applying
+    /// the overlay's texture changes (`textures`, left empty) whether or
+    /// not there is a frame. Returns how long the swap chain made the frame
+    /// wait, or `None` when there was no frame.
+    pub fn present(
+        &mut self,
+        frame: Option<Acquired>,
+        list: &DrawList,
+        overlay: &OverlayPaint,
+        textures: &mut egui::TexturesDelta,
+    ) -> Option<PresentTiming> {
+        with_textures(self, textures, |gpu| frame.map(|f| gpu.present_frame(f, list, overlay)))
+    }
+
+    /// [`Gpu::present`] once the overlay's textures are up to date.
+    fn present_frame(
+        &mut self,
+        acquired: Acquired,
+        list: &DrawList,
+        overlay: &OverlayPaint,
+    ) -> PresentTiming {
+        let frame = acquired.frame;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let size = (frame.texture.width(), frame.texture.height());
         self.draw(list, overlay, &view, size);
         self.window.pre_present_notify();
         let t1 = Instant::now();
         self.renderer.queue().present(frame);
-        Some(acquired + t1.elapsed())
+        PresentTiming { acquire: acquired.wait, present: t1.elapsed() }
     }
 
     /// The world, then the overlay over it, into `view`.

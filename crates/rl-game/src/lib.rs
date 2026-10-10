@@ -10,6 +10,7 @@
 pub mod app;
 pub mod clock;
 pub mod gpu;
+pub mod latency;
 pub mod overlay;
 pub mod script;
 pub mod session;

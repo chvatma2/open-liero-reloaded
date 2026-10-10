@@ -79,6 +79,10 @@ struct Args {
     /// Print the debug counters (FPS, frame and tick times) every second.
     #[arg(long)]
     stats: bool,
+    /// Measure input latency with a probe press every this many ms (it
+    /// presses no key); the exit summary prints the numbers.
+    #[arg(long)]
+    latency_probe: Option<u64>,
 }
 
 fn run(args: Args) -> anyhow::Result<()> {
@@ -139,6 +143,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         script: steps,
         shot_dir: args.shot_dir.clone(),
         print_stats: args.stats,
+        latency_probe: args.latency_probe.filter(|&ms| ms > 0).map(std::time::Duration::from_millis),
     };
     println!(
         "rl-game: {} on {}, {} worms, audio {}",
@@ -151,6 +156,7 @@ fn run(args: Args) -> anyhow::Result<()> {
     let mut app = App::new(cfg, assets, session, gilrs);
     event_loop.run_app(&mut app).context("the event loop")?;
     println!("rl-game: {}", app.summary());
+    println!("rl-game: {}", app.latency_summary());
     app.error.take().map_or(Ok(()), Err)
 }
 
