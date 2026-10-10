@@ -31,11 +31,17 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   slots run in the same pass). Hit tests read the worm's `PosRecorder`
   (`worm.rs`, OLX's `get(0)` quirk kept). What events do is `actions.rs`;
   their map and health effects (explosions, carving, dirt, green dirt, dirt
-  counts) are `effects.rs`, and worm damage is `damage.rs`.
+  counts) are `effects.rs`.
   Projectile `pos`/`vel` assignments that OLX makes through `Attr::operator=`
   use `attr_set` (an equal value, such as `+0` over `-0`, is not written).
-- **Not here yet (M4):** `damage::injure_worm` only changes health: its
-  blood draws, death and the kill are Task 7's. Beams' map trace, bonuses.
+- **Damage and death** (`damage.rs`): `injure_worm` is `CClient::InjureWorm`
+  with its blood draws; a kill (`kill_worm`) counts kills, deaths, suicides
+  and lives at once, as OLX's server does. A worm left at exactly 0 health
+  dies at the start of the next frame, uncredited (`die_at_zero_health`).
+  Bleeding is in `physics.rs`. After the physics, the server's respawn loop
+  (`respawn.rs`) respawns dead worms at a `FindSpot` position drawn from the
+  `Mt19937`. Game over is not ported.
+- **Not here yet (M4):** beams' map trace, bonuses.
 
 Test: `cargo nextest run -p rl-sim`. The oracle test needs imported content;
 `cargo xtask check` sets `RL_CONTENT_DIR`.

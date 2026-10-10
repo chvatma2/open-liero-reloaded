@@ -37,6 +37,11 @@ pub(crate) fn get_input(w: &mut Worm, keys: &mut Latches, now: AbsTime, s: &SimS
     let right_once = keys.right.is_once();
 
     if !w.alive {
+        // `CWormHuman.cpp:115-119`: a dead worm's jump asks for the respawn
+        // the server allows (`bCanRespawnNow`).
+        if w.can_respawn_now && jump {
+            w.respawn_requested = true;
+        }
         keys.reset();
         return;
     }
@@ -146,6 +151,18 @@ fn carve_small(ctx: &mut Ctx, pos: Vec2) -> i32 {
     ctx.holes.get(3).map_or(0, |hole| ctx.terrain.carve_hole(hole, pos.x as i32, pos.y as i32) as i32)
 }
 
+/// Bleeding (`PhysicsLX56.cpp:317-330`): below 15 health, at most once
+/// every 2 s of frame time (strictly later than `fLastBlood + 2 s`), 20 rounds
+/// of two blood entities, each drawing a `GetRandomVec()`.
+fn bleed(w: &mut Worm, ctx: &mut Ctx) {
+    // `AbsTime + 2.0f`: `time + (Uint64)(2.0f * 1000.0f)`.
+    if w.health < 15.0 && ctx.now.0 > w.last_blood.0.wrapping_add(2000) {
+        w.last_blood = ctx.now;
+        // `((float)iBloodAmount / 100.0f) * 20` with the default 100.
+        ctx.draws.particles(40);
+    }
+}
+
 /// `PhysicsEngine::simulateWorm` for a local worm (`PhysicsLX56.cpp:272-469`).
 /// Input is read first, as in OLX; the weapon slot is simulated last, then
 /// the position is recorded.
@@ -156,6 +173,7 @@ pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
         return;
     }
     let dt = ctx.dt;
+    bleed(w, ctx);
 
     if w.state.carve {
         let dir = w.move_direction();

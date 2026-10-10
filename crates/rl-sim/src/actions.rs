@@ -138,13 +138,13 @@ pub(crate) fn apply_to(
         ActionKind::Disappear2 => info.delete_after = true,
         ActionKind::InjureWorm => {
             if let Some(id) = ev.worm() {
-                injure_worm(ctx, id, a.damage as f32, p.owner);
+                injure_worm(&mut ctx.harm(), id, a.damage as f32, p.owner);
             }
         }
         // Injure falls through to Disappear, which falls through to Nothing.
         ActionKind::Injure if let Some(id) = ev.worm() => {
             info.delete_after = true;
-            injure_worm(ctx, id, a.damage as f32, p.owner);
+            injure_worm(&mut ctx.harm(), id, a.damage as f32, p.owner);
         }
         ActionKind::Disappear if ev.worm().is_some() => {}
         ActionKind::Injure | ActionKind::Disappear | ActionKind::GoThrough | ActionKind::Nothing => {

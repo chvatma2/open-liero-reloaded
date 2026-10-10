@@ -1,4 +1,5 @@
-//! Spec §5.3: `World::tick` does not allocate once the world is set up.
+//! Spec §5.3: `World::tick` does not allocate once the world is set up,
+//! with firing, explosions, dirt, bleeding, deaths and respawns.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -123,7 +124,7 @@ fn tick_does_not_allocate() {
     let cells =
         (0..300 * 200).map(|i| if i / 300 < 150 { Material::Background } else { Material::Dirt }).collect();
     let terrain = Terrain::from_grid(&MaterialGrid::from_cells(300, 200, cells).unwrap());
-    let mut w = World::new(SimSettings::lx56(), sim_mod(), terrain, holes, AbsTime(0), 1);
+    let mut w = World::new(SimSettings::lx56(), sim_mod(), terrain, holes, AbsTime(100_000), 1);
     let mut green = RgbaImage::new(8, 9);
     for y in 0..9 {
         for x in 0..8 {
@@ -138,18 +139,26 @@ fn tick_does_not_allocate() {
         let loadout = Loadout { slots: vec![slot; 5], current_weapon: 0, lives: -2, kills: 0, deaths: 0 };
         w.set_loadout(i, &loadout);
     }
+    w.set_health(0, 12.0); // bleeds
+    w.set_health(1, 0.0); // dies at once (D9) and respawns
     // Both worms fire most of the time, so shots are fired, delivered and
     // spawned, and the weapons empty and reload.
     let a =
         [Keys(Keys::RIGHT | Keys::ROPE | Keys::UP | Keys::FIRE), Keys(Keys::LEFT | Keys::JUMP | Keys::FIRE)];
     let b = [Keys(Keys::LEFT | Keys::FIRE), Keys(Keys::RIGHT | Keys::DOWN)];
+    let mut flying = 0;
     let info = allocation_counter::measure(|| {
-        for i in 0..200 {
+        for i in 0..600 {
             w.tick(if i % 3 == 0 { &a } else { &b });
+            if i == 199 {
+                flying = w.projectiles().count();
+            }
         }
     });
     assert_eq!(info.count_total, 0, "tick allocated");
     let dirt: Vec<i32> = w.worms().iter().map(|w| w.dirt_count).collect();
     assert!(dirt.iter().any(|&d| d != 0), "explosions carved or bits placed dirt: {dirt:?}");
-    assert!(w.projectiles().count() > 20, "{} projectiles", w.projectiles().count());
+    assert!(flying > 20, "{flying} projectiles");
+    assert!(w.worms()[0].last_blood.0 != 0, "worm 0 bled");
+    assert!(w.worms()[1].alive && w.mt_calls() > 0, "worm 1 died and respawned");
 }

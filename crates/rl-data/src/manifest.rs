@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 
 /// Current native pack format. Bump it when the on-disk layout changes and add
 /// a migration in `rl-pack`.
-pub const PACK_FORMAT_VERSION: u32 = 1;
+///
+/// - 2: theme packs carry the optional `green_ball.png`.
+pub const PACK_FORMAT_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PackKind {

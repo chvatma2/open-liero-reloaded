@@ -131,6 +131,23 @@ pub struct Worm {
     pub lives: i32,
     pub kills: i32,
     pub deaths: i32,
+    pub suicides: i32,
+    /// `fDamage`, the damage score (client-side count only, `docs/porting/STATUS.md`).
+    pub damage: f32,
+    /// `fDamageFactor`: multiplies the damage this worm deals.
+    pub damage_factor: f32,
+    /// `fShieldFactor`: divides the damage this worm takes; 0 makes every hit deadly.
+    pub shield_factor: f32,
+    /// `fTimeofDeath`.
+    pub time_of_death: AbsTime,
+    /// `fLastBlood`: when the worm last bled. Never reset.
+    pub last_blood: AbsTime,
+    /// `bSpawnedOnce`.
+    pub spawned_once: bool,
+    /// `bCanRespawnNow`: the server waits for the worm's jump key.
+    pub can_respawn_now: bool,
+    /// `bRespawnRequested`.
+    pub respawn_requested: bool,
     pub dirt_count: i32,
     /// Animation frame (0..3), only for rendering.
     pub frame: f32,
@@ -145,7 +162,8 @@ pub struct Worm {
 
 impl Worm {
     /// A worm as `CWorm::Prepare` and `CWorm::Spawn` leave it
-    /// (`src/common/CWorm.cpp:300-330`, `591-650`), except the carving, which
+    /// (`src/common/CWorm.cpp:300-330`, `591-650`; `fTimeofDeath` is set
+    /// by `Prepare`, `fLastBlood` by the constructor), except the carving, which
     /// [`crate::World::spawn_worm`] does.
     pub fn spawned(id: i32, pos: Vec2, now: AbsTime, s: &SimSettings) -> Self {
         // Prepare's `clear()`, then Spawn's `clear(vPos)` (`CWorm.cpp:398`, `611`).
@@ -170,6 +188,15 @@ impl Worm {
             lives: -2,
             kills: 0,
             deaths: 0,
+            suicides: 0,
+            damage: 0.0,
+            damage_factor: s.worm_damage_factor,
+            shield_factor: s.worm_shield_factor,
+            time_of_death: now,
+            last_blood: AbsTime(0),
+            spawned_once: true,
+            can_respawn_now: false,
+            respawn_requested: false,
             dirt_count: 0,
             frame: 0.0,
             speed_factor: s.worm_speed_factor,

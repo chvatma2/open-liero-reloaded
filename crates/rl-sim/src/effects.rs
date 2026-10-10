@@ -110,7 +110,7 @@ pub(crate) fn explosion(ctx: &mut ProjCtx, time: AbsTime, pos: Vec2, damage: f32
         let wp = w.pos_recorder.get_best(ctx.physics_dt.0, ms_back);
         if (pos - wp).length2() <= 25.0 {
             let id = w.id;
-            injure_worm(ctx, id, damage, owner);
+            injure_worm(&mut ctx.harm(), id, damage, owner);
         }
     }
 }

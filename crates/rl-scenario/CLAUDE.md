@@ -12,13 +12,16 @@ traces in `rl-oracle`'s format.
 - A scenario's weapons are set by name and its health applied; without
   weapons, and for lives and kills, the slots are copied from OLX's frame −1.
 - The world starts at the header's `T0` (OLX's restarted `simulationTime`) and is
-  seeded with the header's seed; frames record `rc`, `mt` and `ents`.
+  seeded with the header's seed; frames record `rc`, `mt` and `ents`, and `st`
+  steps by the world's frame time (`World::frame_dt`, GameSpeed-scaled). A
+  header with client options `rl-sim` does not model (`Game.Blood` other than 100) is refused.
 - `tests/oracle.rs` is the acceptance test: every scenario must match bit for
   bit in the fields `CHECKED` lists, except those in `EXPECTED_DIVERGENCES`,
   which must first diverge exactly at the listed frame and field (so a
   regression in ported fields cannot hide there). A second pass does the same
   without `rc`, `mt` and `ents` (`EXPECTED_DIVERGENCES_WITHOUT_DRAWS`), so a
-  regression in the frame of a pinned blood-draw divergence shows up too.
+  regression in the frame of a pinned draw divergence shows up too. Rows
+  owned by a deviation (D9) stay after M4.
   On a mismatch the test prints the new row. Grow `CHECKED` and shrink the
   lists as M4 lands.
 - The theme pack's green ball becomes the world's green-dirt mask.

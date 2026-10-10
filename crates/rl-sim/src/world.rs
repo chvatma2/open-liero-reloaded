@@ -13,19 +13,19 @@ use rl_math::{AbsTime, GlibcRand, Mt19937, TimeDiff, Vec2};
 use rl_terrain::{GreenMask, Stamp, Terrain};
 
 use crate::SimSettings;
+use crate::damage::{Harm, die_at_zero_health};
 use crate::input::{Keys, Latches};
 use crate::mod_rt::SimMod;
 use crate::physics::{Ctx, simulate_worm};
 use crate::proj_sim::{ProjCtx, simulate_projectiles};
 use crate::projectile::{Projectile, ProjectilePool};
+use crate::respawn::{SPAWN_HOLE, Spawner, simulate_respawns};
 use crate::rng::Draws;
 use crate::shots::{MAX_SHOOTINGS, ShootList, Shot, encode_decode, process_shot, spawn_time};
 use crate::spawn::SpawnCtx;
 use crate::weapons::{ShootCtx, laser_sight, player_shoot, worm_shoot};
 use crate::worm::{Loadout, Worm};
 
-/// OLX `SPAWN_HOLESIZE` (`include/Consts.h:36`): the size-4 (largest) hole.
-const SPAWN_HOLE: usize = 4;
 /// OLX `MAX_WORMS` (`include/Consts.h:34`).
 pub const MAX_WORMS: usize = 32;
 /// `Game::FixedFrameTime`.
@@ -177,6 +177,11 @@ impl World {
         self.draws.ents
     }
 
+    /// What `CClient::InjureWorm` and `GameServer::killWorm` need, at the frame clock.
+    pub(crate) fn harm(&mut self) -> Harm<'_> {
+        Harm { settings: &self.settings, worms: &mut self.worms, draws: &mut self.draws, now: self.time }
+    }
+
     /// `CWorm::Spawn` at `(x, y)`, including the spawn hole. Returns the worm's
     /// index, or `None` if the world already has [`MAX_WORMS`] worms.
     pub fn spawn_worm(&mut self, x: i32, y: i32) -> Option<usize> {
@@ -206,6 +211,23 @@ impl World {
         TimeDiff((1000 / self.settings.lx56_physics_fps.max(1)).max(1) as u64)
     }
 
+    /// How far the frame clock moves in one frame: 10 ms, scaled by
+    /// `1 / GameSpeed` unless `GameSpeedOnlyForProjs`, and at least 1 ms.
+    pub fn frame_dt(&self) -> TimeDiff {
+        let mut frame = TimeDiff(FRAME_MS);
+        if !self.settings.game_speed_only_for_projs {
+            frame = frame.scaled(1.0 / self.game_speed());
+            if frame.0 == 0 {
+                frame = TimeDiff(1);
+            }
+        }
+        frame
+    }
+
+    fn game_speed(&self) -> f32 {
+        self.settings.game_speed.clamp(0.05, 10.0)
+    }
+
     /// One 100 Hz frame. `keys[i]` is what worm `i` holds during this frame;
     /// a worm with no entry holds nothing.
     pub fn tick(&mut self, keys: &[Keys]) {
@@ -213,27 +235,35 @@ impl World {
         self.deliver_shots();
         self.server_frame += 1;
         self.gus_speed_round_trip();
+        // `gusLogicFrame` (`Game.cpp:945-949`): worms left at exactly 0 health die.
+        let wall_clock = self.time + TimeDiff(CLOCK_OFFSET_MS);
+        die_at_zero_health(&mut self.harm(), wall_clock);
         for (i, latch) in self.latches.iter_mut().enumerate() {
             latch.set(keys.get(i).copied().unwrap_or(Keys(0)));
         }
-        let speed = self.settings.game_speed.clamp(0.05, 10.0);
         let step = self.physics_dt();
         let mut step_clock = step;
-        let mut frame = TimeDiff(FRAME_MS);
         if !self.settings.game_speed_only_for_projs {
-            step_clock = step.scaled(1.0 / speed);
+            step_clock = step.scaled(1.0 / self.game_speed());
             if step_clock.0 == 0 {
                 step_clock = TimeDiff(1);
             }
-            frame = frame.scaled(1.0 / speed);
-            if frame.0 == 0 {
-                frame = TimeDiff(1);
-            }
         }
+        let frame = self.frame_dt();
         while self.physics_time + step_clock <= self.time {
             self.physics_step(step.seconds());
             self.physics_time += step_clock;
         }
+        // `GameServer::SimulateGame` (`src/server/CServer_Game.cpp:167-261`).
+        let mut spawner = Spawner {
+            settings: &self.settings,
+            terrain: &mut self.terrain,
+            holes: &self.holes,
+            mt: &mut self.draws.mt,
+            now: self.time,
+            wall_clock,
+        };
+        simulate_respawns(&mut self.worms, &mut self.latches, &mut spawner);
         self.time += frame;
     }
 

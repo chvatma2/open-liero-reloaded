@@ -26,8 +26,11 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Projectile motion, collision, timers, trails, animation, worm hit test, position recorder | `PhysicsLX56_Projectiles.cpp:52-491`, `1234-1411`, `src/util/VecTimeRecorder.h`, `PhysicsLX56.cpp:468` | `rl-sim::proj_sim`, `rl-sim::worm::PosRecorder` | ported (plan 4 task 5) | as above; 8 weapon scenarios match fully (`big-nuke`, `booby-trap`, `float-mine`, `mine`, `electro-gun`, `jet-pack`, `nuclear-mines`, `trap-mines`) |
 | Projectile actions (`applyTo`, `execute`): bounce, disappear, nothing, go-through, speed and heading actions, children, the junk rule | `PhysicsLX56_Projectiles.cpp:670-945`, `1115-1230`, `CProjectile.cpp:376-429` | `rl-sim::actions` | ported (plan 4 tasks 5-6) | `rl-scenario`'s `EXPECTED_DIVERGENCES` pins each remaining divergence to its frame and field |
 | Float `atan2f` (projectile headings) | glibc 2.35 `sysdeps/ieee754/flt-32/e_atan2f.c`, `s_atanf.c` | `rl-math::atan2f` | ported | 6 million input pairs bit-identical to the oracle container's glibc; 20 pinned in a test |
-| Explosions, carve, dirt, green dirt and their dirt counts; injury actions | `CClient_Game.cpp:227-330`, `CMap.cpp:1114-1340`, `PhysicsLX56_Projectiles.cpp:781-824`, `1115-1154`, `CWorm.cpp:1381-1389` | `rl-sim::effects`, `rl-terrain::Terrain::{place_dirt, place_green_dirt}` | ported (plan 4 task 6); the bonus chain is task 9 | `mh`, `dirt` and `hp` of every scenario until its first kill or beam; 23 scenarios match fully, and every other weapon scenario except the beams matches up to the first injury's blood draws |
-| Worm damage (`InjureWorm`) | `CClient_Game.cpp:335-460` | `rl-sim::damage::injure_worm` | health only; blood, death and kill are task 7 | as above |
+| Explosions, carve, dirt, green dirt and their dirt counts; injury actions | `CClient_Game.cpp:227-330`, `CMap.cpp:1114-1340`, `PhysicsLX56_Projectiles.cpp:781-824`, `1115-1154`, `CWorm.cpp:1381-1389` | `rl-sim::effects`, `rl-terrain::Terrain::{place_dirt, place_green_dirt}` | ported (plan 4 task 6); the bonus chain is task 9 | `mh`, `dirt` and `hp` of every scenario; since task 7, 98 of 106 scenarios match fully (not yet: the 3 beam and 2 bonus scenarios; the 3 D9 ones from their respawn) |
+| Worm damage (`InjureWorm`): factors, `SelfInjure`, damage score, blood draws | `CClient_Game.cpp:335-460`, `CGameObject.cpp:35-44`, `CWorm.cpp:1600-1627` | `rl-sim::damage::injure_worm` | ported (plan 4 task 7) | `hp`, `rc`, `ents` of every weapon scenario except the beams; factors and `SelfInjure` by unit tests only |
+| Death, kills, deaths, suicides, lives; death draws (sound, gibs by the entity pool, blood); the exact-zero death (`CWorm::think`) | `CServer_Game.cpp:108-162`, `CGameMode.cpp:69-252`, `CWorm.cpp:1399-1449`, `src/gusanos/base_worm.cpp:365-381`, `623-659`, `src/client/Entity.cpp:161-205` | `rl-sim::damage::{kill_worm, die_at_zero_health}` | ported (plan 4 task 7); game over is not | `explode-kill-respawn`, `die-before-delivery`, the weapon scenarios' kills; exact-zero deaths in `assassin-s-shot`, `flak`, `plasma-launcher` |
+| Bleeding | `PhysicsLX56.cpp:317-330` | `rl-sim::physics::bleed` | ported | `bleed`, `die-before-delivery` |
+| Respawn loop, `SpawnWorm`, `FindSpot`, `CWorm::Spawn` | `CServer_Game.cpp:38-104`, `200-225`, `CMap.cpp:2381-2396`, `CWorm.cpp:591-651`, `CWormHuman.cpp:115-119` | `rl-sim::respawn` | ported (DM; no predefined spawns, no team spawns) | `explode-kill-respawn` and every weapon scenario whose dummy dies (`tod`, `respawn`, positions, `mt`) |
 
 ## Deliberate deviations
 
@@ -47,9 +50,27 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   (`src/common/FeatureList.cpp`), and NaN or infinite values
   (`SimSettings::validate`). Outside them the port could overflow, hang or
   recurse without bound. For hand-built settings, the physics step is at least 1 ms.
-- Not yet emulated (M4): the `rand()` calls OLX makes for cosmetic particles
-  when digging (`CarveHole(CVec)`) and when the rope first hooks dirt. They
-  don't change M3 state, but they shift the random sequence that weapons will use.
+- **Game over is not ported** (`CGameMode::CheckGameOver`, `GameServer::GameOver`):
+  no kill limit, time limit or last-worm-standing end, so `killWorm` and
+  `SpawnWorm` never return early for it. `KillLimit` is read but unused. No
+  scenario reaches it (`KillLimit` 15, `TimeLimit` 6 min).
+- **The damage score (`fDamage`) is counted once**, on the client
+  (`addDamage(.., false)` in `InjureWorm`). OLX also counts it a second time on
+  the server, a frame or more later, from the batched `C2S_REPORTDAMAGE`
+  (`ParseReportDamage`), so its `fDamage` is about twice the real damage. It
+  only breaks score ties and is not in the trace.
+- **Exact-zero deaths' Gusanos particles (spec §18 D9).** A worm left at exactly
+  0 health dies at the start of the next frame, uncredited, as in OLX; the
+  Gusanos `death.obj` particles OLX then spawns are not simulated. They draw
+  from the `FindSpot` stream for as long as they live (597, 544 and 669 draws
+  before the next respawn in `weapons/mw-1-0/{assassin-s-shot,flak,plasma-launcher}`),
+  so later spawn and bonus positions differ. Those three scenarios stay in the
+  acceptance test's divergence tables from their respawn frame.
+- **Blood amount and particles:** `rl-sim` uses OLX's defaults, `Game.Blood`
+  100 and `Game.Particles` on (blood entities exist), which dedicated servers
+  keep; `rl-scenario` refuses a trace header with other values.
+- Only deathmatch: no team protection in `InjureWorm`, no teamkills, no
+  `FindSpotCloseToTeam`, and LX levels have no predefined spawn points.
 
 - **The oracle is not a plain dedicated server** (spec §18, `tools/olx-oracle/CLAUDE.md`):
   - shots are delivered by a hook between frames (Model R), not over UDP;
@@ -178,7 +199,18 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     its charge (`reload-switch`).
 - **Death and respawn:** a worm killed in frame F is respawned by the server in
   frame F + 250 at a `FindSpot` position (one try, 2 `rnd()` draws): RespawnTime
-  2.5 s, compared strictly with the pinned clock (`explode-kill-respawn`).
+  2.5 s, compared strictly with the pinned clock (`explode-kill-respawn`). The
+  respawn is synchronous: the local client shares the server's worm, and
+  `SendSpawnWorm` sends it nothing.
+- **Deaths at a score of 0 are not counted** without `AllowNegativeScore`
+  (`die-before-delivery`, most weapon scenarios: the dummy gets no death);
+  a killer that is already dead still gets the kill.
+- **Gibs draw 4 `rand()` while the entity pool has room, 2 after** (the
+  dedicated server's pool never frees; `disease-bomb`, `nuclear-bomb` and
+  `sunray-beamer` kill with a full pool). The gib image exists in dedicated
+  mode (`explode-kill-respawn`'s 580 draws).
+- **The position recorder survives a respawn** (`clear(vPos)`): `get(0)` is
+  a position from the previous life (D7).
 - **Bleeding:** below 15 hp a worm bleeds in the first sub-step and then every
   2 s, 80 `rand()` calls and 40 entities each time (`bleed`).
 - **Bonuses:** a grab reaches the server one frame later, and its

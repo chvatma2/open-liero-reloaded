@@ -26,10 +26,13 @@ impl Draws {
     /// `SpawnEntity` (`Entity.cpp:160-205`) for a type that draws nothing itself:
     /// it takes a pool slot while there is one. Its arguments' draws (the
     /// callers' `random_vec` calls) happen first, whether or not it does.
-    pub fn spawn_entity(&mut self) {
-        if self.ents < MAX_ENTITIES {
+    /// Returns whether it took one.
+    pub fn spawn_entity(&mut self) -> bool {
+        let room = self.ents < MAX_ENTITIES;
+        if room {
             self.ents += 1;
         }
+        room
     }
 
     /// `n` particles thrown with `GetRandomVec()` velocities.

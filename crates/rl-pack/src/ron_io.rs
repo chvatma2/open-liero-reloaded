@@ -40,7 +40,7 @@ pub fn read_manifest(src: &dyn ContentSource) -> Result<PackManifest, PackError>
         return Err(PackError::invalid(
             MANIFEST,
             format!(
-                "unsupported format_version {} (this build reads {PACK_FORMAT_VERSION})",
+                "unsupported format_version {} (this build reads {PACK_FORMAT_VERSION}; re-import the pack)",
                 m.format_version
             ),
         ));
@@ -50,4 +50,24 @@ pub fn read_manifest(src: &dyn ContentSource) -> Result<PackManifest, PackError>
 
 pub fn write_manifest(sink: &mut dyn ContentSink, m: &PackManifest) -> Result<(), PackError> {
     write_ron(sink, MANIFEST, m)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rl_data::manifest::PackKind;
+    use rl_vfs::MemFs;
+
+    #[test]
+    fn an_older_pack_format_is_refused_with_a_re_import_hint() {
+        let mut m = crate::mod_pack::tests::manifest(PackKind::Theme);
+        let mut fs = MemFs::new();
+        write_manifest(&mut fs, &m).unwrap();
+        assert_eq!(read_manifest(&fs).unwrap(), m);
+        // Version 1 theme packs may lack the green ball OLX has.
+        m.format_version = 1;
+        write_manifest(&mut fs, &m).unwrap();
+        let err = read_manifest(&fs).unwrap_err().to_string();
+        assert!(err.contains("format_version 1") && err.contains("re-import"), "{err}");
+    }
 }

@@ -9,6 +9,7 @@ use rl_terrain::{GreenMask, Stamp, Terrain};
 
 use crate::SimSettings;
 use crate::actions::{DoActionInfo, Event, apply_to, execute, timer_has_action};
+use crate::damage::Harm;
 use crate::mod_rt::{SimMod, SimProjectile};
 use crate::projectile::{Projectile, ProjectilePool, attr_set, c_int, c_u64};
 use crate::rng::Draws;
@@ -59,6 +60,13 @@ pub(crate) struct ProjCtx<'a> {
     pub wall_clock: AbsTime,
     /// `LX56PhysicsDT`.
     pub physics_dt: TimeDiff,
+}
+
+impl ProjCtx<'_> {
+    /// What `CClient::InjureWorm` needs.
+    pub fn harm(&mut self) -> Harm<'_> {
+        Harm { settings: self.settings, worms: self.worms, draws: self.draws, now: self.now }
+    }
 }
 
 /// `LX56_simulateProjectiles` (`:1400-1411`) and `LX56_simulateProjectile`

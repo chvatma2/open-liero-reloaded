@@ -53,6 +53,30 @@ pub struct SimSettings {
     pub proj_gravity_factor: f32,
     /// `SelfHit`: a worm's own projectiles can hit it (after their first 100 ms).
     pub self_hit: bool,
+    /// `SelfInjure`: a worm's own damage hurts it (`CClient::InjureWorm`).
+    pub self_injure: bool,
+    /// `WormDamageFactor`: each worm's initial `fDamageFactor` (`CWorm::Prepare`).
+    pub worm_damage_factor: f32,
+    /// `WormShieldFactor`: each worm's initial `fShieldFactor`.
+    pub worm_shield_factor: f32,
+    /// `Lives`: below 0 unlimited (`WRM_UNLIM`).
+    pub lives: i32,
+    /// `KillLimit`. Read for `CGameMode::CheckGameOver`, which is not ported yet
+    /// (`docs/porting/STATUS.md`).
+    pub kill_limit: i32,
+    /// `RespawnTime`, in seconds.
+    pub respawn_time: f32,
+    /// `MaxRespawnTime`, in seconds: from 0 on, the server spawns a dead worm
+    /// itself once both times have passed; below 0 the worm waits for its jump key.
+    pub max_respawn_time: f32,
+    /// `EmptyWeaponsOnRespawn`: a respawned worm's weapons start empty and reloading.
+    pub empty_weapons_on_respawn: bool,
+    /// `AllowNegativeScore`: deaths and suicides count even at a score of 0 or less.
+    pub allow_negative_score: bool,
+    /// `DeathDecreasesScore`: each death takes this much off the score.
+    pub death_decreases_score: f32,
+    /// `SuicideDecreasesScore`: each suicide takes one off the score.
+    pub suicide_decreases_score: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,6 +121,17 @@ impl SimSettings {
             disable_wpns_when_empty: false,
             proj_gravity_factor: 1.0,
             self_hit: true,
+            self_injure: true,
+            worm_damage_factor: 1.0,
+            worm_shield_factor: 1.0,
+            lives: -2,
+            kill_limit: 15,
+            respawn_time: 2.5,
+            max_respawn_time: 0.0,
+            empty_weapons_on_respawn: false,
+            allow_negative_score: false,
+            death_decreases_score: 0.0,
+            suicide_decreases_score: false,
         }
     }
 
@@ -128,6 +163,13 @@ impl SimSettings {
             ("LoadingTime", self.loading_time as f32, 0.0, 500.0),
             ("ShootSpawnDistance", self.shoot_spawn_distance, 0.0, 20.0),
             ("ProjGravityFactor", self.proj_gravity_factor, -10.0, 10.0),
+            ("WormDamageFactor", self.worm_damage_factor, -2.0, 10.0),
+            ("WormShieldFactor", self.worm_shield_factor, -2.0, 10.0),
+            ("Lives", self.lives as f32, -2.0, 150.0),
+            ("KillLimit", self.kill_limit as f32, -1.0, 150.0),
+            ("RespawnTime", self.respawn_time, 0.0, 20.0),
+            ("MaxRespawnTime", self.max_respawn_time, -1.0, 20.0),
+            ("DeathDecreasesScore", self.death_decreases_score, 0.0, 5.0),
         ];
         for (k, v, min, max) in ranges {
             if !(min..=max).contains(&v) {
@@ -203,6 +245,17 @@ impl SimSettings {
             disable_wpns_when_empty: flag("DisableWpnsWhenEmpty")?,
             proj_gravity_factor: num("ProjGravityFactor")?,
             self_hit: flag("SelfHit")?,
+            self_injure: flag("SelfInjure")?,
+            worm_damage_factor: num("WormDamageFactor")?,
+            worm_shield_factor: num("WormShieldFactor")?,
+            lives: int("Lives")?,
+            kill_limit: int("KillLimit")?,
+            respawn_time: num("RespawnTime")?,
+            max_respawn_time: num("MaxRespawnTime")?,
+            empty_weapons_on_respawn: flag("EmptyWeaponsOnRespawn")?,
+            allow_negative_score: flag("AllowNegativeScore")?,
+            death_decreases_score: num("DeathDecreasesScore")?,
+            suicide_decreases_score: flag("SuicideDecreasesScore")?,
         };
         settings.validate()?;
         Ok(settings)
@@ -257,6 +310,17 @@ mod tests {
             ("ProjFriction", "0"),
             ("ProjGravityFactor", "1"),
             ("SelfHit", "true"),
+            ("SelfInjure", "true"),
+            ("WormDamageFactor", "1"),
+            ("WormShieldFactor", "1"),
+            ("Lives", "-2"),
+            ("KillLimit", "15"),
+            ("RespawnTime", "2.5"),
+            ("MaxRespawnTime", "0"),
+            ("EmptyWeaponsOnRespawn", "false"),
+            ("AllowNegativeScore", "false"),
+            ("DeathDecreasesScore", "0"),
+            ("SuicideDecreasesScore", "false"),
         ]
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -293,6 +357,9 @@ mod tests {
             ("NinjaropePrecision", "inf"),
             ("RopeSpeed", "NaN"),
             ("GameSpeed", "0"),
+            ("RespawnTime", "-1"),
+            ("Lives", "151"),
+            ("WormShieldFactor", "NaN"),
         ] {
             let mut f = olx_header();
             f.insert(k.into(), v.into());

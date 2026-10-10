@@ -241,3 +241,18 @@ fn at_most_32_worms() {
     assert_eq!(w.spawn_worm(10, 80), None);
     assert_eq!(w.worms().len(), 32);
 }
+
+#[test]
+fn frame_dt_follows_game_speed() {
+    // `Game::frameInner`: the frame clock moves 10 ms / GameSpeed, unless
+    // GameSpeedOnlyForProjs; rl-scenario's `st` reads it.
+    for (speed, only_projs, ms) in [(1.0, false, 10), (2.0, false, 5), (0.5, false, 20), (2.0, true, 10)] {
+        let mut s = SimSettings::lx56();
+        (s.game_speed, s.game_speed_only_for_projs) = (speed, only_projs);
+        let terrain = Terrain::from_grid(&MaterialGrid::new(10, 10, Material::Background));
+        let mut w = World::new(s, test_mod(), terrain, holes(), AbsTime(1000), 1);
+        assert_eq!(w.frame_dt(), TimeDiff(ms));
+        w.tick(&[]);
+        assert_eq!(w.time(), AbsTime(1000 + ms));
+    }
+}

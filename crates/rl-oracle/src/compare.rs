@@ -69,6 +69,11 @@ impl Fields {
         Fields(self.0 | other.0)
     }
 
+    /// `self` without the groups in `other`, usable in constants.
+    pub const fn difference(self, other: Fields) -> Fields {
+        Fields(self.0 & !other.0)
+    }
+
     /// Whether every group in `other` is in `self`.
     pub const fn contains(self, other: Fields) -> bool {
         self.0 & other.0 == other.0
@@ -406,6 +411,9 @@ mod tests {
         let f = Fields::SLOTS | Fields::ROPE;
         assert!(f.contains(Fields::ROPE) && f.contains(Fields::SLOTS) && !f.contains(Fields::HEALTH));
         assert_eq!(Fields::SLOTS.union(Fields::ROPE), f);
+        assert_eq!(f.difference(Fields::ROPE), Fields::SLOTS);
+        assert_eq!(f.difference(Fields::HEALTH), f);
+        assert_eq!(Fields::ALL.difference(Fields::ALL), Fields::NONE);
         let mut g = Fields::NONE;
         g |= Fields::RAND;
         assert_eq!(g, Fields::RAND);

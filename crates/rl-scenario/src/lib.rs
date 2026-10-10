@@ -25,6 +25,8 @@ pub const CHECKED: Fields = Fields::WORM_MOTION
     .union(Fields::MATERIAL)
     .union(Fields::HEALTH)
     .union(Fields::SCORE)
+    .union(Fields::RESPAWN)
+    .union(Fields::CLOCKS)
     .union(Fields::RAND)
     .union(Fields::SHOTS)
     .union(Fields::PROJECTILES)
@@ -108,6 +110,17 @@ fn check_ids(m: &SimMod, header: &rl_oracle::Header) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The client options `rl-sim` assumes (`Game.Blood` 100, `Game.Particles`
+/// on, OLX's defaults); a v1 header without them passes.
+fn check_options(header: &rl_oracle::Header) -> anyhow::Result<()> {
+    for (k, want) in [("Game.Blood", "100"), ("Game.Particles", "true")] {
+        if let Some(v) = header.options.get(k) {
+            anyhow::ensure!(v == want, "option {k}={v} is not supported (rl-sim assumes {want})");
+        }
+    }
+    Ok(())
+}
+
 /// `T0`, frame -1's absolute `simulationTime` (0 for traces without it).
 fn t0(expected: &Trace) -> u64 {
     expected.header.options.get("T0").and_then(|t| t.parse().ok()).unwrap_or(0)
@@ -127,6 +140,7 @@ pub fn load_world(content: &Path, sc: &Scenario, expected: &Trace) -> anyhow::Re
         .theme;
     let sim_mod = load_mod(content, &sc.mod_dir)?;
     check_ids(&sim_mod, &expected.header)?;
+    check_options(&expected.header)?;
     let settings =
         SimSettings::from_olx_features(&expected.header.features).map_err(|e| anyhow::anyhow!(e.0))?;
     let holes = theme.holes.iter().map(Stamp::from_image).collect();
@@ -220,7 +234,12 @@ pub fn record(world: &World, f: i64, t0: u64) -> Frame {
             kills: w.kills,
             deaths: w.deaths,
             dirt: w.dirt_count,
-            ..WormRec::default()
+            suicides: Some(w.suicides),
+            tod: if w.alive { None } else { since_t0(w.time_of_death, t0) },
+            respawn: Some(
+                w.respawn_requested as u32 | (w.can_respawn_now as u32) << 1 | (w.spawned_once as u32) << 2,
+            ),
+            blood: since_t0(w.last_blood, t0),
         })
         .collect();
     let s = world
@@ -265,7 +284,7 @@ pub fn record(world: &World, f: i64, t0: u64) -> Frame {
         })
         .collect();
     // OLX records a frame before `simulationTime` advances past it.
-    let frame_ms = if f >= 0 { 10 } else { 0 };
+    let frame_ms = if f >= 0 { world.frame_dt().0 as i64 } else { 0 };
     let st = world.time().0 as i64 - t0 as i64 - frame_ms;
     Frame {
         f,
@@ -359,6 +378,17 @@ mod tests {
         assert!(err.contains("flamer") && err.contains("gfx/flame.png"), "{err}");
         let found = SimMod::compile(&def, &[("gfx/flame.png".to_string(), 7)].into_iter().collect()).unwrap();
         check_frames(&found).unwrap();
+    }
+
+    #[test]
+    fn unsupported_client_options_are_errors() {
+        let mut h = rl_oracle::Header::default();
+        check_options(&h).unwrap();
+        h.options.insert("Game.Blood".into(), "100".into());
+        h.options.insert("Game.Particles".into(), "true".into());
+        check_options(&h).unwrap();
+        h.options.insert("Game.Blood".into(), "50".into());
+        assert!(check_options(&h).unwrap_err().to_string().contains("Game.Blood=50"));
     }
 
     #[test]

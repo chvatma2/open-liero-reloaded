@@ -8,8 +8,8 @@
 //!
 //! Scope: worm movement and collision, keyboard input, digging, the ninja
 //! rope, OLX's two clocks, and (M4) weapon slots, firing, the shot round trip,
-//! projectile spawning, motion, collision and actions. Explosion holes,
-//! dirt, damage and bonuses follow.
+//! projectile spawning, motion, collision and actions, explosions, dirt,
+//! damage, death, bleeding and respawning. Beams and bonuses follow.
 #![no_std]
 
 extern crate alloc;
@@ -22,6 +22,7 @@ mod mod_rt;
 mod physics;
 mod proj_sim;
 mod projectile;
+mod respawn;
 mod rng;
 mod rope;
 mod settings;

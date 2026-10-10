@@ -310,6 +310,11 @@ Effects of a hit that leaves exactly 0 health:
   **Recommendation:** port the gameplay part (delayed death, no killer, rope
   cleared). Document the `rnd()`-stream divergence after such a death as a
   deviation, unless the oracle shows it is needed.
+  **Oracle (plan 4 task 7):** confirmed. In `weapons/mw-1-0/assassin-s-shot`,
+  `flak` and `plasma-launcher` the dummy dies at exactly 0 health, and OLX's
+  next `FindSpot` starts 597, 544 and 669 draws into the stream: the particles
+  draw over their whole life, not a fixed count, so only simulating them
+  would reproduce it. Kept as the D9 deviation.
 
 ### 2.7 The entity pool and rand inside `SpawnEntity` — `src/client/Entity.cpp:161-205`
 
@@ -427,8 +432,11 @@ for each worm w (id order):
   truncates (0.7 → 699 ms). The comparisons are strict `>`.
 - With the defaults (`RespawnTime` 2.5, `MaxRespawnTime` **0**), the worm is
   spawned by the server in the first frame where
-  `currentTime > timeOfDeath + 2500`. If `currentTime` is pinned to the frame's
-  simulation time, that is **251 frames** after the frame of death. The respawn
+  `currentTime > timeOfDeath + 2500`. With `currentTime` pinned to the frame's
+  simulation time + 10 ms (the oracle, spec §18 D2), that is **250 frames**
+  after the frame of death (`explode-kill-respawn`: death in frame 61, respawn
+  in frame 311). The respawn is synchronous (the local client shares the worm;
+  `SendSpawnWorm` returns for it), so no message latency applies. The respawn
   happens in the server phase, so the first physics sub-step comes in the frame after.
 - With `MaxRespawnTime < 0`: `bCanRespawnNow` is set first, the jump key (once,
   in a later sub-step) sets `bRespawnRequested`, and the next `SimulateGame` spawns
@@ -905,7 +913,8 @@ Constants:
 1. **Loopback latency:** does reliable `CChannel` delivery between the local
    client and the server ever take more than one Game::frame (window or ack
    limits, `GetTime()`-based rate control)? Check with recordings once hook 6 is in.
-2. **Gib image in dedicated mode:** is `bmpGibs` non-NULL? Almost certainly
+2. **Answered (plan 4 task 7): yes**, gibs draw 4 `rand()` with room in the pool
+   (`explode-kill-respawn`'s 580 draws at its kill). **Gib image in dedicated mode:** is `bmpGibs` non-NULL? Almost certainly
    (`giblets.png` exists, `LoadGameImage` works headless), but confirm with a
    hook (record `w->getGibimg().get() != NULL`), since it changes the gib
    `rand()` count from 2 to 4.
@@ -916,7 +925,7 @@ Constants:
    so either that spot was already empty (likely on Dirt Level) or the first
    spawn happens later than assumed. Record the position of the first spawn, or
    reset the terrain/`rnd` state. This matters for bonus and respawn scenarios on maps with dirt.
-4. **Zero-health deaths:** should the port emulate the Gusanos death-particle
+4. **Answered (plan 4 task 7): no** (see 2.6). **Zero-health deaths:** should the port emulate the Gusanos death-particle
    `rnd()` consumption (2.6)? It needs a minimal Gusanos particle simulation:
    `meat.obj`, `bloodgen.obj` and `blood.obj` with ground collision on the same
    map. Recommendation: document it as a deviation, and avoid exact-zero health

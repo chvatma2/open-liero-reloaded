@@ -22,195 +22,47 @@ fn content_dir() -> Option<String> {
 /// Scenarios the simulation cannot play yet: each must still diverge, and
 /// first exactly at the `(frame, field)` listed (as `compare_fields` with
 /// `CHECKED` reports it). The last column names the task that owns that
-/// divergence. The list shrinks as M4 lands and is empty at its end.
+/// divergence, or the deviation behind it. The list shrinks as M4 lands;
+/// at its end only deviations stay.
 ///
 /// The exact first divergence is the guard against hidden regressions: a
 /// change that breaks an already ported field earlier in a listed scenario
 /// moves its first divergence, and the test fails with the new pair. Every
-/// pair here sits at a frame where OLX injures a worm (its blood draws) or
-/// draws a beam or bonus (Tasks 7-9).
+/// pair here sits at a frame where OLX draws a beam or a bonus (Tasks 8-9),
+/// or respawns a worm after a D9 death.
 const EXPECTED_DIVERGENCES: &[(&str, i64, &str, &str)] = &[
     ("beam-burst", 2, "ents", "Task 8: DrawBeam's entities"),
-    ("bleed", 2, "rc", "Task 7: bleeding"),
     ("bonus-health", 5, "ents", "Task 9: a placed bonus's entity"),
     ("bonus-weapon", 5, "ents", "Task 9: a placed bonus's entity"),
-    ("die-before-delivery", 2, "rc", "Task 7: bleeding"),
-    ("explode-kill-respawn", 61, "rc", "Task 7: an injury's blood"),
-    ("two-worms-fire", 51, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/bazooka", 41, "rc", "Task 7: an explosion's blood"),
-    ("weapons/classic/blaster", 52, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/bouncy-larpa", 39, "rc", "Task 7: an explosion's blood"),
-    ("weapons/classic/bouncy-mine", 85, "rc", "Task 7: an explosion's blood"),
-    ("weapons/classic/cannon", 44, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/chaingun", 35, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/chiquita-bomb", 237, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/cluster-bomb", 211, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/crackler", 50, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/dart", 39, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/doomsday", 46, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/flamer", 63, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/gauss-gun", 11, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/grenade", 185, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/handgun", 24, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/hellraider", 334, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/larpa", 29, "rc", "Task 7: an injury's blood"),
     ("weapons/classic/laser", 2, "ents", "Task 8: DrawBeam's entities"),
-    ("weapons/classic/mini-nuke", 117, "rc", "Task 7: an explosion's blood"),
-    ("weapons/classic/mini-rockets", 46, "rc", "Task 7: an explosion's blood"),
-    ("weapons/classic/minigun", 25, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/napalm", 57, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/rb-rampage", 44, "rc", "Task 7: an explosion's blood"),
-    ("weapons/classic/rifle", 13, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/shotgun", 30, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/spikeballs", 72, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/super-shotgun", 30, "rc", "Task 7: an explosion's blood"),
-    ("weapons/classic/uzi", 29, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/winchester", 13, "rc", "Task 7: an injury's blood"),
-    ("weapons/classic/zimm", 29, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/acid-gun", 39, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/anti-air-gun", 318, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/apache", 72, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/assassin-s-shot", 25, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/bazooka", 52, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/cluster-grenade", 115, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/demolition-grenade", 139, "rc", "Task 7: an explosion's blood"),
-    ("weapons/mw-1-0/disease-bomb", 50, "rc", "Task 7: an explosion's blood"),
-    ("weapons/mw-1-0/disease-grenade", 229, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/doomrockets", 29, "rc", "Task 7: an explosion's blood"),
-    ("weapons/mw-1-0/energy-ball", 40, "rc", "Task 7: an explosion's blood"),
-    ("weapons/mw-1-0/fireball", 39, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/flak", 35, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/flak-grenade", 113, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/flamer", 65, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/floating-bomber", 125, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/force-field", 31, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/hellfire", 35, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/inferno", 212, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/infest", 35, "rc", "Task 7: an injury's blood"),
+    ("weapons/mw-1-0/assassin-s-shot", 276, "mt", D9),
+    ("weapons/mw-1-0/flak", 325, "mt", D9),
     ("weapons/mw-1-0/laser", 2, "ents", "Task 8: DrawBeam's entities"),
-    ("weapons/mw-1-0/medical-camp", 361, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/mortar-launcher", 39, "rc", "Task 7: an explosion's blood"),
-    ("weapons/mw-1-0/napalm-grenade", 216, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/nuclear-bomb", 22, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/nuclear-missile", 306, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/nuclear-waste", 47, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/nw-bomb", 163, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/petrol-bomb", 47, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/plasma-launcher", 17, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/poison-rifle", 17, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/ripper", 28, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/rocket-launcher", 43, "rc", "Task 7: an explosion's blood"),
-    ("weapons/mw-1-0/shockrifle", 25, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/shockstrike", 42, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/smoking-bomb", 125, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/spikeballs", 31, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/sunray-beamer", 18, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/sunray-grenade", 118, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/surface-sweeper", 79, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/toxic-bomb", 310, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/toxic-strike", 39, "rc", "Task 7: an explosion's blood"),
-    ("weapons/mw-1-0/toxic-waste", 90, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/twin-rockets", 40, "rc", "Task 7: an explosion's blood"),
-    ("weapons/mw-1-0/twin-shotgun", 28, "rc", "Task 7: an injury's blood"),
-    ("weapons/mw-1-0/volcanic-gun", 25, "rc", "Task 7: an injury's blood"),
+    ("weapons/mw-1-0/plasma-launcher", 283, "w[1].x", D9),
 ];
 
-/// `CHECKED` without `rc`, `mt` and `ents`: the second pass. Most pinned
-/// divergences above are an injury's blood draws (`rc`), which come first in
-/// their frame, so a regression in health, the map, motion, shots or
-/// projectiles in that very frame would hide behind them. This pass pins
-/// the first divergence of the other fields too; at an injury frame they
-/// all match (only a kill or a beam diverges there).
-const WITHOUT_DRAWS: Fields = Fields::WORM_MOTION
-    .union(Fields::SLOTS)
-    .union(Fields::ROPE)
-    .union(Fields::MATERIAL)
-    .union(Fields::HEALTH)
-    .union(Fields::SCORE)
-    .union(Fields::SHOTS)
-    .union(Fields::PROJECTILES)
-    .union(Fields::PROJ_HIDDEN);
+/// The owner of a divergence that stays (spec §18 D9): the dummy dies at
+/// exactly 0 health, and the Gusanos death particles OLX then spawns draw
+/// from the `FindSpot` stream (597, 544 and 669 draws here), so its respawn
+/// position differs.
+const D9: &str = "D9: Gusanos death particles' rnd() draws (not ported)";
+
+/// `CHECKED` without `rc`, `mt` and `ents`: the second pass. Draw counters
+/// come first in a frame, so a regression in health, the map, motion, shots
+/// or projectiles in the frame of a pinned draw divergence above would hide
+/// behind it. This pass pins the first divergence of the other fields too.
+const WITHOUT_DRAWS: Fields = rl_scenario::CHECKED.difference(Fields::RAND);
 
 /// Like [`EXPECTED_DIVERGENCES`], for the second pass ([`WITHOUT_DRAWS`]).
 const EXPECTED_DIVERGENCES_WITHOUT_DRAWS: &[(&str, i64, &str, &str)] = &[
     ("beam-burst", 40, "w[0].dirt", "Task 8: a beam's hole"),
     ("bonus-health", 140, "w[0].hp", "Task 9: a health bonus"),
     ("bonus-weapon", 129, "w[0].slots[0].id", "Task 9: a weapon bonus"),
-    ("die-before-delivery", 64, "s[0].rnd", "Task 7: bleeding's draws"),
-    ("explode-kill-respawn", 61, "w[0].kills", "Task 7: a kill"),
-    ("two-worms-fire", 54, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/bazooka", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/blaster", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/bouncy-larpa", 46, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/bouncy-mine", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/cannon", 61, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/chaingun", 39, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/chiquita-bomb", 290, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/cluster-bomb", 290, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/crackler", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/dart", 46, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/doomsday", 53, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/flamer", 67, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/gauss-gun", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/grenade", 290, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/handgun", 32, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/larpa", 34, "s[0].rnd", "Task 7: draws after an injury"),
     ("weapons/classic/laser", 4, "w[1].hp", "Task 8: a beam's damage"),
-    ("weapons/classic/mini-nuke", 118, "p[0].col", "Task 7: draws after an injury"),
-    ("weapons/classic/mini-rockets", 52, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/minigun", 28, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/napalm", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/rb-rampage", 48, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/rifle", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/shotgun", 89, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/spikeballs", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/super-shotgun", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/uzi", 34, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/winchester", 56, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/classic/zimm", 101, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/acid-gun", 45, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/anti-air-gun", 325, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/apache", 102, "w[0].kills", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/assassin-s-shot", 26, "w[1].alive", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/bazooka", 53, "w[0].kills", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/cluster-grenade", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/demolition-grenade", 143, "p.len", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/disease-bomb", 101, "p.len", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/disease-grenade", 290, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/doomrockets", 43, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/energy-ball", 41, "p.len", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/fireball", 50, "p.len", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/flak", 39, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/flak-grenade", 113, "w[0].kills", "Task 7: a kill"),
-    ("weapons/mw-1-0/flamer", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/floating-bomber", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/force-field", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/hellfire", 45, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/inferno", 290, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/infest", 163, "s[0].rnd", "Task 7: draws after an injury"),
+    ("weapons/mw-1-0/assassin-s-shot", 276, "w[1].x", D9),
+    ("weapons/mw-1-0/flak", 325, "w[1].x", D9),
     ("weapons/mw-1-0/laser", 4, "w[1].hp", "Task 8: a beam's damage"),
-    ("weapons/mw-1-0/mortar-launcher", 41, "p.len", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/napalm-grenade", 290, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/nuclear-bomb", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/nuclear-waste", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/nw-bomb", 290, "p[20].vx", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/petrol-bomb", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/plasma-launcher", 33, "p.len", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/poison-rifle", 39, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/ripper", 29, "p[2].col", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/rocket-launcher", 54, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/shockrifle", 30, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/shockstrike", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/smoking-bomb", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/spikeballs", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/sunray-beamer", 34, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/sunray-grenade", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/surface-sweeper", 80, "p.len", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/toxic-strike", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/toxic-waste", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/twin-rockets", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/twin-shotgun", 163, "s[0].rnd", "Task 7: draws after an injury"),
-    ("weapons/mw-1-0/volcanic-gun", 28, "s[0].rnd", "Task 7: draws after an injury"),
+    ("weapons/mw-1-0/plasma-launcher", 283, "w[1].x", D9),
 ];
 
 /// Checks one pass: a listed scenario must first diverge exactly as listed,
