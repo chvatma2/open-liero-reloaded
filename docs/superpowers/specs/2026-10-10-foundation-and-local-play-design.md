@@ -611,3 +611,19 @@ conflict with earlier sections, they take precedence.
 | B5 | §6, §10 M2 | M2's scenarios cover movement only: fall, walk, jump, aim, rope, dig. Weapon scenarios, and a hook to set worm weapons, come with M4. | Weapons need their own hook and the M4 simulation work to be useful. |
 | B6 | §4 | `rl-oracle` is a layer-2 crate with no simulation code. In M3 the simulation turns a `Scenario` into a `Trace` in its own tests. | Keeps the oracle independent of the simulation's layering. |
 | B7 | §7 | `cargo xtask oracle-record --check` (Docker, about 1 minute) is not part of the fast gate. Run it after touching `tools/olx-oracle/`. The fast gate checks the committed traces' consistency and behaviour (`rl-oracle` fixtures test). | Keeps `cargo xtask check` fast and free of a Docker requirement. |
+
+## 17. Amendments made while writing plan 3 (2026-10-10)
+
+These came out of porting the LX56 simulation against the oracle until all
+seven scenarios matched bit for bit. Where they conflict with earlier
+sections, they take precedence.
+
+| # | Amends | Change | Reason |
+|---|---|---|---|
+| C1 | §4 (`rl-math`) | `rl-math` holds `Vec2` (OLX `CVec`), `AbsTime`/`TimeDiff` (whole ms) and OLX's math macros. OLX's `RandomNumbers[]` table and the glibc-compatible `rand()` move to M4, where they are first used. | Nothing in M3 reads random numbers. |
+| C2 | §5.1, §5.7, §5.8 | M3's `World` has `tick(&[Keys])` and derives `Clone`. `TickEvents`, `World::checksum`, the `GameMode` trait and bots arrive with their first users: M4 (events), M5 (rendering consumes `TerrainEdit`), M6 (checksum, modes, bots). | YAGNI: each needs a consumer to be tested against. |
+| C3 | §5.2 | Two OLX behaviours are part of the port and documented in `docs/porting/timing.md`: the physics step is `1000 / LX56PhysicsFPS` **whole ms** (11 ms, not 1/84 s), and every frame starts with OLX's lossy Gusanos speed round trip on worm and rope velocities. | Without either, the oracle diverges within 10 frames. |
+| C4 | §5.4 | `rl-terrain` carves the material grid only. Applying stamps to the colour images comes with the renderer (M5). | Only the material affects simulation. |
+| C5 | §4, §7.4 | New layer-4 crate `rl-scenario` replays oracle scenarios in `rl-sim`. It is used by the M3 acceptance test and by `rl-cli scenario [name...] [--dump <frame>]`, which is the spec's `scenario` and `dump-state` commands in one. | One implementation for the test and for debugging. |
+| C6 | §5.8 | `SimSettings` is read from OLX feature values (`from_olx_features`, the trace header); `SimSettings::lx56()` gives the same values. M3 supports LX56 aim only, and rejects wrap-around maps, Gusanos worm physics and `WormFriction > 0`. | These are what the oracle covers; the rest has no reference yet. |
+| C7 | §6 | The oracle's material hash now uses the real FNV-1a 64 offset basis (14695981039346656037). The hook had a typo (1469598103934665603). All traces are re-recorded; only their `mh` values change. | Found while porting: the Rust hash did not match. |
