@@ -1,0 +1,25 @@
+---
+source: crates/rl-scene/tests/snapshots.rs
+expression: text
+---
+view 0,240 320x240 map 640x480
+[entities]
+[beams]
+[projectiles]
+mod:gfx/icesmoke.png 10,0 10x10 at 172.5,383.5 5x5
+mod:gfx/missile5.png 156,0 12x12 at 188,383 6x6
+mod:gfx/icesmoke.png 10,0 10x10 at 176.5,383.5 5x5
+mod:gfx/icesmoke.png 0,0 10x10 at 179.5,383.5 5x5
+mod:gfx/icesmoke.png 0,0 10x10 at 182.5,383.5 5x5
+mod:gfx/icesmoke.png 0,0 10x10 at 186.5,383.5 5x5
+mod:gfx/icesmoke.png 30,0 10x10 at 149.5,383.5 5x5
+mod:gfx/icesmoke.png 30,0 10x10 at 153.5,383.5 5x5
+mod:gfx/icesmoke.png 30,0 10x10 at 156.5,383.5 5x5
+mod:gfx/icesmoke.png 20,0 10x10 at 159.5,383.5 5x5
+mod:gfx/icesmoke.png 20,0 10x10 at 162.5,383.5 5x5
+mod:gfx/icesmoke.png 20,0 10x10 at 166.5,383.5 5x5
+mod:gfx/icesmoke.png 10,0 10x10 at 169.5,383.5 5x5
+[bonuses]
+[worms]
+crosshair 0,0 6x6 at 128.5,382 3x3
+skin:0 100,0 20x18 at 109,381.5 10x9

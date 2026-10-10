@@ -115,8 +115,8 @@ at the top-left, with black around it.
 
 ### 1.4 Screen shake (`Shake`, `:453-461`; `Process`, `:336-358`)
 
-`CClient::Explosion(.., shake, ..)` calls `Shake(shake)` on every used viewport
-whose world rectangle contains the explosion. The test is inclusive:
+`CClient::Explosion(.., shake, ..)` calls `Shake(shake)`, for a nonzero
+`shake`, on every used viewport whose world rectangle contains the explosion. The test is inclusive:
 `WorldX ≤ x ≤ WorldX + Width` (`inView`, `:466-472`;
 `src/client/CClient_Game.cpp:307-317`).
 

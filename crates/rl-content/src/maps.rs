@@ -74,12 +74,39 @@ impl LoadedSkin {
     }
 }
 
+/// The largest art scale a level may have (OLX's levels use 1 or 2).
+pub const MAX_ART_SCALE: u32 = 8;
+
+/// The largest colour image a level may need, in bytes (RGBA at art
+/// scale): 256 MiB, about 12 times Castle Strike at 2×.
+pub const MAX_COLOR_MAP_BYTES: u64 = 256 << 20;
+
+/// Refuses art that would make the colour map (`rl_terrain::ColorMap`,
+/// which keeps three images of this size) allocate absurd amounts: a
+/// hostile pack must fail to load, not exhaust memory.
+fn check_art_size(width: u32, height: u32, art_scale: u32) -> anyhow::Result<()> {
+    if art_scale > MAX_ART_SCALE {
+        anyhow::bail!("art scale {art_scale} is above {MAX_ART_SCALE}");
+    }
+    let s = art_scale as u128;
+    let bytes = width as u128 * s * height as u128 * s * 4;
+    if bytes > MAX_COLOR_MAP_BYTES as u128 {
+        anyhow::bail!(
+            "{width}x{height} at art scale {art_scale} needs a {bytes}-byte colour image, above {MAX_COLOR_MAP_BYTES}"
+        );
+    }
+    Ok(())
+}
+
 impl Content {
-    /// Level pack `id` (such as `olx-level-castlestrike`).
+    /// Level pack `id` (such as `olx-level-castlestrike`). Art above
+    /// [`MAX_ART_SCALE`] or [`MAX_COLOR_MAP_BYTES`] is an error.
     pub fn load_level(&self, id: &str) -> anyhow::Result<LoadedLevel> {
         let pack = rl_pack::read_level(&self.pack(id, PackKind::Level)?)
             .with_context(|| format!("level pack {id}"))?;
         let l = pack.level;
+        check_art_size(l.material.width(), l.material.height(), l.def.art_scale)
+            .with_context(|| format!("level pack {id}"))?;
         Ok(LoadedLevel {
             name: l.def.name,
             material: l.material,
@@ -144,5 +171,20 @@ impl Content {
         let mut s = self.load_skin("olx-skin-default").unwrap_or_else(|_| LoadedSkin::placeholder());
         s.warnings.insert(0, format!("{err}: using {} instead", s.skin.def.name));
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colour_map_size_is_capped() {
+        // Castle Strike at 2x is fine; a 2048 x 2048 level at 8x (1 GiB) is not.
+        assert!(check_art_size(1350, 550, 2).is_ok());
+        assert!(check_art_size(4096, 4096, 2).is_ok());
+        assert!(check_art_size(2048, 2048, 8).is_err());
+        assert!(check_art_size(u32::MAX, u32::MAX, MAX_ART_SCALE).is_err());
+        assert!(check_art_size(4, 4, 9).is_err());
     }
 }

@@ -16,6 +16,9 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   silence for sounds) and a warning. Warnings are returned
   (`Content::warnings`, `LoadedMod::warnings`, ...), never printed: the
   caller logs each once. A missing pack or unreadable definition is an `Err`.
+- **Hostile levels:** `load_level` refuses an art scale above
+  `MAX_ART_SCALE` (8) or a colour image above `MAX_COLOR_MAP_BYTES`
+  (256 MiB), so a pack cannot make the colour map allocate gigabytes.
 - **Two mod loaders.** `sim_mod(id)` is strict, as OLX's client (what the
   oracle replays): an unreadable PNG or an image projectile without its
   frame count is an error (`check_frames`). `load_mod(id)` gives such a

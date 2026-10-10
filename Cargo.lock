@@ -690,6 +690,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-scene"
+version = "0.1.0"
+dependencies = [
+ "allocation-counter",
+ "insta",
+ "rl-content",
+ "rl-data",
+ "rl-math",
+ "rl-scenario",
+ "rl-sim",
+]
+
+[[package]]
 name = "rl-sim"
 version = "0.1.0"
 dependencies = [

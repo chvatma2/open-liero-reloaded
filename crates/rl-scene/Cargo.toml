@@ -1,0 +1,22 @@
+[package]
+name = "rl-scene"
+description = "Turns a simulation world into a draw list: OLX's camera, interpolation between ticks, and the sprite math of worms, ropes, projectiles and bonuses."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rl-math.workspace = true
+rl-data.workspace = true
+rl-sim.workspace = true
+rl-content.workspace = true
+
+[dev-dependencies]
+rl-scenario.workspace = true
+insta.workspace = true
+allocation-counter.workspace = true
+
+[lints]
+workspace = true

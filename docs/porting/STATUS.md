@@ -38,6 +38,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Event data for rendering (spec §19 E6): explosion `shake`, the gib's worm, the dirt particle's probe pixel, each event's sub-step (entity passes before it) and `World::substeps_last_tick`, `Damage.dealt`, the `RotIncrement` 0→1 bump (`World::rot_bumped`), `World::physics_time`, `Projectile::serial` | `CClient_Game.cpp:206-208`, `229-330`, `380`, `PhysicsLX56_Projectiles.cpp:590-593`, `777`, `1115-1130`, `CMap.cpp:2172-2199`, `PhysicsLX56.cpp:595-607`, `CProjectile.cpp:291-292` | `rl-sim::events`, `rl-sim::world` | done (plan 5 task 1) | `events_carry_e6_data`, `projectile_serials_differ_across_slot_reuse`; the oracle traces are unchanged (no draw added); smoke matches check every event's sub-step |
 | Core pack: shared game sprites, game sounds (`.ogg`), `colours.cfg` (spec §19 E9) | `src/client/DeprecatedGUI/Graphics.cpp:56-97`, `134-321`, `src/common/CWorm.cpp:661`, `src/game/Sounds.cpp:25-30`, `src/common/StringUtils.cpp:409-447` | `rl-import-gfx::import_core`, `rl-pack::CorePack`, `rl-content::CorePack` | done (plan 5 task 1) | `rl-content/tests/content.rs` (`loads_every_manifest_item`), the corpus snapshot |
 | Colour terrain (spec §19 E7): carve (back pixels, brown rim), `PlaceDirt` (`FrontTile`), `PlaceGreenDirt` (OLX's shades), beam holes, blood and gib stains, dirty rectangles | `src/common/CMap.cpp:1005-1340`, `2355-2373`, `src/client/Entity.cpp:355-390`, `src/client/GfxPrimitives.cpp` (`DrawImageStretch2`) | `rl-terrain::ColorMap`, `rl-content::{color_edit, apply_edits}` | done (plan 5 task 2) | `rl-terrain` colour tests; `rl-content/tests/color.rs` (`color_map_agrees_with_material_after_a_match`, 3000 ticks); golden `fixtures/render/dig-color.png` (`rl-scenario/tests/render_golden.rs`) |
+| Presentation (spec §19 E1-E4): camera (hard lock, clamp, shake, dead worm, respawn), skin frames (the facing-left mirror one column off), crosshair, muzzle flash, old-style health bar, rope, laser sights, beams, projectile frames (animation, special angle, angle, rotation with the `RotIncrement` bump), bonuses (blinking), layer order; interpolation (E2) | `src/client/CViewport.cpp:118-472`, `src/common/CWorm.cpp:1016-1300`, `src/client/CGameSkin.cpp:584-600`, `src/client/CNinjaRope.cpp:132-180`, `src/common/CProjectile.cpp:227-300`, `src/common/CBonus.cpp:49-76`, `src/client/Entity.cpp:30-157`, `305-314`, `src/client/GfxPrimitives.cpp:1795-2520`, `src/gusanos/viewport.cpp:105-253` | `rl-scene` | done (plan 5 task 3) | `camera_locks_clamps_and_shakes_like_olx`, `skin_frame_matches_olx_table`, `projectile_frames_match_olx`, `interpolation_never_blends_reused_slots_or_respawns`, `draw_list_order_matches_olx_layers`, `beams_and_laser_sights_live_two_entity_passes`; scene snapshots (`rl-scene/tests/snapshots`) |
 
 ## Deliberate deviations
 
@@ -172,6 +173,28 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   tick drops (`lost_area`) are redrawn from the material grid
   (`ColorMap::rebuild_area`): back image, `FrontTile`, level art; stains and
   the level's own dirt art there are lost.
+- **Scene** (`rl-scene`, plan 5 task 3):
+  - *Interpolation* (E2, the default) draws positions between the last two
+    ticks at sub-pixel precision, without OLX's `(int)` truncation; the
+    camera follows the blended position. `Interpolation::Latest` is OLX's
+    whole-pixel drawing of the latest state.
+  - *Per tick, not per drawn frame:* OLX shows the muzzle flash and the
+    green crosshair for one drawn frame (about one tick at its 95 FPS cap);
+    the scene shows them for every frame drawn of that tick. The shake's
+    0.2 s runs on the world's clock.
+  - *Lines at world resolution* (E3): the rope is the non-antialiased one,
+    alternating `RopeColour2`, `RopeColour1` per world pixel from the hook;
+    beams are solid 1-pixel lines (a wide beam, which LX56 mods cannot
+    define, is drawn as its centre line); laser dots run OLX's recurrence
+    per screen pixel and land on world pixels.
+  - *Laser sights* are drawn after the other entities (OLX draws them in
+    entity slot order); the green crosshair is recomputed from the
+    trace's end (a pixel that lets particles through before 9999 means a
+    worm stopped it), and the event is matched to the nearest alive worm.
+  - *Health bar:* `worm_health.png` is not imported, so the bar is OLX's
+    old-style fallback (five segments in a grid).
+  - A hook attached to a worm is drawn at that worm's current position,
+    not interpolated.
 
 ## Spec §18 decisions that deviate from a plain OLX run
 

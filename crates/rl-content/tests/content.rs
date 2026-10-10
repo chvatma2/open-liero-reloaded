@@ -358,3 +358,35 @@ fn loads_every_manifest_item() {
         assert!(core.colour(k).is_some(), "{k}");
     }
 }
+
+/// A `size` × `size` level of background at `art_scale`.
+fn scaled_level(id: &str, size: u32, art_scale: u32) -> rl_pack::LevelPack {
+    let def = LevelDef {
+        name: id.into(),
+        width: size,
+        height: size,
+        art_scale,
+        theme: "test-theme".into(),
+        spawns: vec![],
+    };
+    let art = filled(size * art_scale, size * art_scale, Rgba::BLACK);
+    let material = MaterialGrid::new(size, size, Material::Background);
+    rl_pack::LevelPack {
+        manifest: manifest(id, PackKind::Level),
+        level: Level { def, material, front: art.clone(), back: art },
+    }
+}
+
+/// A hostile level pack cannot make the colour map allocate gigabytes:
+/// an art scale above `MAX_ART_SCALE` is an error, never an allocation.
+#[test]
+fn hostile_art_scale_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    for (id, scale) in [("scale-8", 8), ("scale-9", 9)] {
+        rl_pack::write_level(&mut DirFs::new(tmp.path().join(id)), &scaled_level(id, 4, scale)).unwrap();
+    }
+    let content = Content::open(tmp.path()).unwrap();
+    assert_eq!(content.load_level("scale-8").unwrap().art_scale, 8);
+    let err = format!("{:#}", content.load_level("scale-9").unwrap_err());
+    assert!(err.contains("art scale 9"), "{err}");
+}
