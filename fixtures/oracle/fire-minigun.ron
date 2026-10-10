@@ -1,0 +1,13 @@
+(
+    description: "On Liero Factory's open rock floor, a worm holding the Minigun fires for one second, then waits. Shot delivery (Model R), the multi-shot encoding, projectile spawning and flight, charge drain and reload.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 200,
+    worms: [(x: 190, y: 320)],
+    weapons: [(worm: 0, names: ["Minigun", "Shotgun", "Bazooka", "Grenade", "Rifle"], current: 0)],
+    inputs: [
+        (frame: 0, worm: 0, keys: "fire"),
+        (frame: 100, worm: 0, keys: ""),
+    ],
+)

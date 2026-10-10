@@ -11,6 +11,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Gamescript v8 | `CGameScript.cpp` (v8 branches) | — | not started | no content in scope |
 | Pixmap `.lxl` | `MapLoader_LieroX.cpp:440+` | — | not started | no content in scope |
 | Fidelity oracle (test hooks) | `src/game/Game.cpp`, `src/client/CInput.cpp`, `src/common/CWormHuman.cpp` | `tools/olx-oracle`, `rl-oracle` | done (plans 2–3) | 7 movement scenarios recorded twice and identical; `cargo xtask oracle-record --check` |
+| Oracle v2: shots, weapons, bonuses, clocks (spec §18) | `src/common/CShootList.cpp`, `src/server/CServer_Send.cpp:556-569`, `src/server/CServer_Game.cpp:266-316`, `src/common/CGameScript.cpp:937,1159` | `tools/olx-oracle`, `rl-oracle` (`Fields`, `compare_fields`), `rl-scenario::CHECKED` | done (plan 4 task 1) | `fire-minigun` recorded twice and identical; the 7 M3 traces changed only in added fields |
 | Frame and physics clocks | `src/game/Game.cpp:897-959`, `src/client/CClient_Game.cpp:60-222` | `rl-sim::World::tick` | ported | all 7 oracle scenarios, bit for bit; `docs/porting/timing.md` |
 | Worm movement and collision | `src/common/PhysicsLX56.cpp:88-469` | `rl-sim::physics` | ported | `fall`, `walk`, `jump`, `dig` |
 | Keyboard input (aim, move, jump, dig, rope) | `src/common/CWormHuman.cpp:81-560`, `src/client/CInput.cpp` | `rl-sim::physics::get_input`, `rl-sim::input` | ported (keyboard, LX56 aim) | `aim`, `tap`, `walk`, `jump`, `dig`, `rope` |
@@ -31,6 +32,20 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 - Not yet emulated (M4): the `rand()` calls OLX makes for cosmetic particles
   when digging (`CarveHole(CVec)`) and when the rope first hooks dirt. They
   don't change M3 state, but they shift the random sequence that weapons will use.
+
+- **The oracle is not a plain dedicated server** (spec §18, `tools/olx-oracle/CLAUDE.md`):
+  - shots are delivered by a hook between frames (Model R), not over UDP;
+  - while recording, `tLX->currentTime` is `simulationTime + 10 ms`;
+  - `simulationTime` restarts at 100 000 ms when the inputs load (`T0` in the
+    trace header). OLX starts it at the wall clock, about 0.4 s after launch,
+    which made bleeding (`fLastBlood + 2 s` with `fLastBlood = 0`) start at a
+    different frame in every run;
+  - projectile images are loaded in full in dedicated mode, so animations end
+    as on a player's client;
+  - the entity pool is cleared and the server's bonus timer reset when a recording starts.
+  - Bonuses spawned by the server's own timer (`BonusFrequency`) still reach the
+    client over the network, after the whole `simStep` batch. Scenarios place
+    bonuses with `simPlaceBonus` instead, and keep runs shorter than `BonusFrequency`.
 
 - Importers reject malformed input that OLX would read as garbage: truncated
   files, unknown weapon or projectile types, and nesting deeper than 128 levels.
@@ -80,6 +95,10 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   - The simulation's `PlayerInput` must keep both latches.
 - **Digging** with the keyboard is a tap of the opposite direction while
   holding a direction (`leftOnce` / `rightOnce`), not a dedicated key.
+- **Shots:** a Minigun shot fired in frame 2's sub-step (the first one) is
+  delivered after frame 3 and its projectile appears in frame 4's trace line
+  (`fire-minigun`). Two lists from different worms go out as separate packets;
+  in a multi-shot packet every later shot reuses the first shot's random seed.
 - **Aim:** the traces use LX56 aim (`ForceLX56Aim`: max speed 100,
   acceleration 500, no friction, `REDUCE_CONST(200)` when no key is held). The
   angle is clamped to [−90°, 60°].

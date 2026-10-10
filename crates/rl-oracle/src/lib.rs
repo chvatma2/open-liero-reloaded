@@ -11,10 +11,13 @@ mod keys;
 mod scenario;
 mod trace;
 
-pub use compare::{Divergence, compare};
+pub use compare::{Divergence, Fields, compare, compare_fields};
 pub use keys::Keys;
-pub use scenario::{InputChange, Scenario, Tolerance, WormSpawn};
-pub use trace::{BonusRec, Frame, Header, Num, ProjRec, RopeRec, SlotRec, Trace, WormRec, gunzip, gzip};
+pub use scenario::{BonusKind, BonusPlacement, InputChange, Scenario, Tolerance, WormSpawn, WormWeapons};
+pub use trace::{
+    BonusRec, Frame, Header, Num, ProjRec, RopeRec, ServerBonusRec, ShotRec, SlotRec, Trace, WormRec, gunzip,
+    gzip,
+};
 
 /// Errors from reading scenarios and traces.
 #[derive(Debug, thiserror::Error)]

@@ -627,3 +627,22 @@ sections, they take precedence.
 | C5 | §4, §7.4 | New layer-4 crate `rl-scenario` replays oracle scenarios in `rl-sim`. It is used by the M3 acceptance test and by `rl-cli scenario [name...] [--dump <frame>]`, which is the spec's `scenario` and `dump-state` commands in one. | One implementation for the test and for debugging. |
 | C6 | §5.8 | `SimSettings` is read from OLX feature values (`from_olx_features`, the trace header); `SimSettings::lx56()` gives the same values. M3 supports LX56 aim only, and rejects wrap-around maps, Gusanos worm physics and `WormFriction > 0`. | These are what the oracle covers; the rest has no reference yet. |
 | C7 | §6 | The oracle's material hash now uses the real FNV-1a 64 offset basis (14695981039346656037). The hook had a typo (1469598103934665603). All traces are re-recorded; only their `mh` values change. | Found while porting: the Rust hash did not match. |
+
+## 18. Amendments made while writing plan 4 (2026-10-10)
+
+These decide how M4's weapons, projectiles, damage and bonuses are recorded
+by the oracle and reproduced by the simulation. Where they conflict with
+earlier sections, they take precedence. The oracle hooks that implement
+D1, D2, D3, D6 and D8 are described in `tools/olx-oracle/CLAUDE.md`.
+
+| # | Decision | Reason |
+|---|---|---|
+| D1 | **Shot delivery, Model R.** Shots added during frames F and F+1 form one list, which is encoded, decoded and processed before frame F+2 (after `simulationTime` advanced past F+1), exactly as in real play at one frame per main-loop iteration (`weapons-firing.md` §1.1). | It reproduces the latency and the lossy multi-shot encoding a player gets. |
+| D2 | **Wall clock pinned:** `tLX->currentTime = simulationTime + 10 ms` (K = 10) for the whole frame and for delivery. | Real play has `currentTime` in (T, T+10]. The hit-test position recorder (`get(0)` quirk), explosion damage, spawn times, respawn and bonus timers all read it. |
+| D3 | **Client animation semantics.** The oracle loads projectile images in dedicated mode, so `ANI_ONCE` deletes projectiles when their animation ends and action-less animated projectiles live until then. `SimMod` carries each image projectile's frame count (`width / height`). | That is what a player's client does; Classic's Flamer and many MW projectiles use `ANI_ONCE`. |
+| D4 | **Cosmetic `rand()` draws are emulated** (dig, rope hook, explosion dirt, blood, bleeding, death, gibs, colour), including the dedicated server's 1024-entry entity pool, which is never freed (a saturating counter reset at match start). | They advance the same generator as gameplay draws. Emulating the dedicated server's count is the only verifiable choice; a real client frees entities and simulates them with `rand()`, which no port can reproduce. Recorded as a deviation. |
+| D5 | **Cosmetic effects get their own generator** in `rl-fx` (M5), never the simulation's. | Spec §5.5. |
+| D6 | **`FindSpot`'s boost `mt19937` instances are reseeded** by `simSetSeed` in the oracle; the sim seeds its copy from the match seed. | Spawns and bonuses need a reproducible position; OLX seeds 5489 once per process. |
+| D7 | **The `VecTimeRecorder::get(0)` quirk is kept.** | It is real-play behaviour; worms are hit at stale positions in OLX too. |
+| D8 | **All worms in a scenario use scripted input** (no bot AI during recording). | Bot AI draws `rand()` and reads the wall clock. |
+| D9 | **Exact-zero health:** the Gusanos `think()` death path is ported (the worm dies next frame, credited to nobody), but its Gusanos particles' `rnd()` use is not; scenarios avoid exact-zero health. | Rare; the Gusanos particle system is out of scope. Recorded as a deviation. |

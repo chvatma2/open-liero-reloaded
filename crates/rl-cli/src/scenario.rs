@@ -14,6 +14,10 @@ pub struct Args {
     /// Print OLX's and the simulation's state at this frame as JSON lines.
     #[arg(long)]
     dump: Option<i64>,
+    /// Compare every trace field, not only those the simulation reproduces so far
+    /// (`rl_scenario::CHECKED`).
+    #[arg(long)]
+    all: bool,
 }
 
 /// Returns `Ok(false)` if any scenario diverges from OLX.
@@ -24,9 +28,10 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     for name in names {
         let (sc, expected) = rl_scenario::load_fixture(&args.fixtures, &name)?;
         let actual = rl_scenario::replay(&args.content, &sc, &expected)?;
-        match rl_oracle::compare(&expected, &actual, &sc.tolerances) {
-            Ok(n) => println!("ok   {name}: {n} frames match OLX"),
-            Err(d) => {
+        let fields = if args.all { rl_oracle::Fields::ALL } else { rl_scenario::CHECKED };
+        match rl_oracle::compare_fields(&expected, &actual, &sc.tolerances, fields) {
+            None => println!("ok   {name}: {} frames match OLX", expected.frames.len()),
+            Some(d) => {
                 ok = false;
                 println!("DIFF {name}: {d}");
             }

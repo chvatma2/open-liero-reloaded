@@ -1,5 +1,6 @@
-//! M3 acceptance (spec §6, §10): every scenario in `fixtures/oracle`, replayed
-//! in the Rust simulation, matches OLX's recorded trace bit for bit.
+//! Acceptance (spec §6, §10): every scenario in `fixtures/oracle`, replayed in
+//! the Rust simulation, matches OLX's recorded trace bit for bit in every field
+//! the simulation reproduces so far (`rl_scenario::CHECKED`).
 //! Needs the imported OLX content (`RL_CONTENT_DIR`, default `target/content`).
 
 use std::path::{Path, PathBuf};
@@ -16,18 +17,25 @@ fn content_dir() -> Option<String> {
     }
 }
 
+/// Scenarios the simulation cannot play yet; each must still diverge, so the
+/// list shrinks as M4 lands. Empty at the end of M4.
+const EXPECTED_TO_DIVERGE: [&str; 1] = ["fire-minigun"];
+
 #[test]
 fn every_scenario_matches_olx_bit_for_bit() {
     let Some(content) = content_dir() else { return };
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/oracle");
     let names = rl_scenario::fixture_names(&dir).unwrap();
-    assert_eq!(names, ["aim", "dig", "fall", "jump", "rope", "tap", "walk"]);
+    assert_eq!(names, ["aim", "dig", "fall", "fire-minigun", "jump", "rope", "tap", "walk"]);
     let mut failures = Vec::new();
     for name in names {
         let (sc, expected) = rl_scenario::load_fixture(&dir, &name).unwrap();
         let actual = rl_scenario::replay(Path::new(&content), &sc, &expected).unwrap();
-        if let Err(d) = rl_oracle::compare(&expected, &actual, &sc.tolerances) {
-            failures.push(format!("{name}: {d}"));
+        let divergence = rl_oracle::compare_fields(&expected, &actual, &sc.tolerances, rl_scenario::CHECKED);
+        match (divergence, EXPECTED_TO_DIVERGE.contains(&name.as_str())) {
+            (Some(d), false) => failures.push(format!("{name}: {d}")),
+            (None, true) => failures.push(format!("{name}: matches now; remove it from EXPECTED_TO_DIVERGE")),
+            _ => {}
         }
     }
     assert!(failures.is_empty(), "diverged from OLX:\n{}", failures.join("\n"));
@@ -40,6 +48,6 @@ fn a_changed_trace_is_detected() {
     let (sc, mut expected) = rl_scenario::load_fixture(&dir, "walk").unwrap();
     let actual = rl_scenario::replay(Path::new(&content), &sc, &expected).unwrap();
     expected.frames[200].w[0].x = rl_oracle::Num(expected.frames[200].w[0].x.0 + 1.0);
-    let d = rl_oracle::compare(&expected, &actual, &[]).unwrap_err();
+    let d = rl_oracle::compare_fields(&expected, &actual, &[], rl_scenario::CHECKED).unwrap();
     assert_eq!((d.frame, d.path.as_str()), (199, "w[0].x"));
 }

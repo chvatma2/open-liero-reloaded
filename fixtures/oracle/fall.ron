@@ -5,4 +5,5 @@
     seed: 12345,
     frames: 200,
     worms: [(x: 456, y: 212)],
+    inputs: [(frame: 0, worm: 0, keys: "")],
 )

@@ -41,12 +41,73 @@ index 7ca1b1f..076c115 100644
  	// onlyAvailable drops bindings that can't currently fire (e.g. an absent gamepad)
  	std::string getEventName(bool onlyAvailable) const;
  
+diff --git a/include/CProjectile.h b/include/CProjectile.h
+index 7eae57f..b0bbc66 100644
+--- a/include/CProjectile.h
++++ b/include/CProjectile.h
+@@ -71,7 +71,10 @@ struct ProjTimerState {
+ 
+ typedef std::map<const Proj_TimerEvent*, ProjTimerState> ProjTimerInfo; // saves CProj->fLife of last event hit
+ 
++namespace OracleHooks { struct Access; }
++
+ class CProjectile: public CGameObject {
++	friend struct OracleHooks::Access; // test hook reads fSpawnTime, fWallshootTime, vOldPos
+ 	friend struct Proj_TimerEvent;
+ 	friend struct Proj_DoActionInfo;
+ 	friend struct Proj_Action;
+diff --git a/include/CServer.h b/include/CServer.h
+index e3c7780..be0bd6c 100644
+--- a/include/CServer.h
++++ b/include/CServer.h
+@@ -30,6 +30,8 @@
+ 
+ class CWorm;
+ class CServerConnection;
++class CBytestream;
++namespace OracleHooks { struct Access; }
+ class CMap;
+ struct Version;
+ class CGameMode;
+@@ -126,6 +128,7 @@ private:
+ 	friend class CServerNetEngine;
+ 	friend class CServerNetEngineBeta7;
+ 	friend class CServerNetEngineBeta9;
++	friend struct OracleHooks::Access; // test hook reads cBonuses, sets fLastBonusTime
+ 	
+ public:
+ 	// Methods
+@@ -148,7 +151,11 @@ public:
+ 	void		SpawnWorm(CWorm *Worm, const std::string& reason, CVec * _pos = NULL, CServerConnection * client = NULL);
+ 	void		SimulateGame();
+ 	
+-	void		SpawnBonus();
++	// Test hook (OracleHooks): a bonus to spawn instead of a random one. Its
++	// S2C_SPAWNBONUS packet is appended to `packet` instead of being sent.
++	struct GivenBonus { CVec pos; int type; int weapon; CBytestream* packet; };
++	// Returns false if no bonus was spawned.
++	bool		SpawnBonus(const GivenBonus* given = NULL);
+ 	void		WormShoot(CWorm *w);
+ 	void		WormShootEnd(CWorm* w, const weapon_t* weapon);
+     void        RecheckGame();
+diff --git a/include/Entity.h b/include/Entity.h
+index 5f73e25..c12907c 100644
+--- a/include/Entity.h
++++ b/include/Entity.h
+@@ -130,6 +130,7 @@ class EntityEffect
+ int		InitializeEntities();
+ void	ShutdownEntities();
+ void	ClearEntities();
++size_t	EntitiesUsed(); // used pool slots (test hook, OracleHooks)
+ 
+ void	SpawnEntity(int type, int type2, CVec pos, CVec vel, Color colour, SmartPointer<SDL_Surface> img);
+ void	DrawEntities(SDL_Surface * bmpDest, CViewport *v);
 diff --git a/include/OracleHooks.h b/include/OracleHooks.h
 new file mode 100644
-index 0000000..906b893
+index 0000000..2683808
 --- /dev/null
 +++ b/include/OracleHooks.h
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,61 @@
 +/*
 +	OpenLieroX
 +
@@ -68,17 +129,43 @@ index 0000000..906b893
 +		KEY_UP = 1, KEY_DOWN = 2, KEY_LEFT = 4, KEY_RIGHT = 8,
 +		KEY_JUMP = 16, KEY_FIRE = 32, KEY_ROPE = 64, KEY_CHANGE = 128,
 +	};
++	// While recording, tLX->currentTime = simulationTime + CLOCK_OFFSET_MS
++	// during each frame and during shot delivery (rust-liero spec §18 D2).
++	enum { CLOCK_OFFSET_MS = 10 };
++	// simLoadInputs restarts simulationTime at this value, so code that measures
++	// time since 0 (bleeding, relative air jumps) does not depend on how long
++	// OLX took to start.
++	enum { START_TIME_MS = 100000 };
 +
-+	// Loads "frame worm keys" lines. Frame 0 is the first frame simulated after
-+	// this call. The listed worms switch to a human input handler driven by the
-+	// schedule. Also aligns the LX56 physics clock with the frame clock; spawn
-+	// worms after this call. Returns false and sets err on failure.
++	// Loads the schedule: "frame worm keys" lines, and "frame bonus x y health|weapon [name]"
++	// lines. Frame 0 is the first frame simulated after this call. Every worm switches
++	// to a human input handler driven by the schedule (no bot AI). Also restarts the
++	// simulation clock at START_TIME_MS and aligns the LX56 physics clock with it;
++	// spawn worms after this call.
++	// Returns false and sets err on failure.
 +	bool loadInputs(const std::string& file, std::string& err);
 +	// Starts writing one JSON line per simulated frame to file ("off" stops).
++	// "off" also reports a failure that happened during the recording.
 +	bool record(const std::string& file, std::string& err);
-+	// Called by the game loop around each simulated frame.
++	// True while a recording is armed: the clock is pinned, and shots are delivered
++	// by betweenFrames() instead of GameServer::SendUpdate.
++	bool active();
++	// Called by simSetSeed after srand(): reseeds the FindSpot MT19937 streams
++	// (rnd, rndgen, midrnd) and restarts the rand()/rnd() counters.
++	void seed(unsigned int s);
++	// simSetWeapons: "name0,name1,...,cur=k", one name per weapon slot.
++	bool setWeapons(int wormId, const std::string& spec, std::string& err);
++	bool setHealth(int wormId, float hp, std::string& err);
++	// Spawns a bonus through GameServer::SpawnBonus at (x, y) and delivers its
++	// packet to the local client at once. kind is "health" or "weapon".
++	bool placeBonus(int x, int y, const std::string& kind, const std::string& weapon, std::string& err);
++	// Called by the game loop around each simulated frame, and after
++	// simulationTime advanced (shot delivery, Model R).
 +	void beforeFrame();
 +	void afterFrame();
++	void betweenFrames();
++	// rnd() draws, counted in CMap::FindSpot.
++	extern unsigned long long rndDraws;
 +}
 +
 +#endif
@@ -125,8 +212,90 @@ index 5ae81c1..fc8507a 100644
  	for(std::vector<Binding>::iterator it = m_bindings.begin(); it != m_bindings.end(); ++it)
  		it->reset();
  }
+diff --git a/src/client/Entity.cpp b/src/client/Entity.cpp
+index d11613c..ca54d07 100644
+--- a/src/client/Entity.cpp
++++ b/src/client/Entity.cpp
+@@ -96,6 +96,12 @@ void ShutdownEntities()
+ }
+ 
+ 
++size_t EntitiesUsed()
++{
++	return tEntities.size();
++}
++
++
+ ///////////////////
+ // Clear all the entities
+ void ClearEntities()
+diff --git a/src/common/CGameScript.cpp b/src/common/CGameScript.cpp
+index 0a707e5..eb10a52 100644
+--- a/src/common/CGameScript.cpp
++++ b/src/common/CGameScript.cpp
+@@ -934,11 +934,13 @@ proj_t *CGameScript::LoadProjectile(FILE *fp, bool loadImagesAndSounds, int dept
+ 		case PRJ_IMAGE:
+ 			proj->ImgFilename = readString(fp);
+ 		
+-			if(!bDedicated && loadImagesAndSounds) {
++			// Test hook (rust-liero oracle): dedicated servers load projectile images too,
++			// so animations end (ANI_ONCE) as on a player's client.
++			if(loadImagesAndSounds) {
+ 				proj->bmpImage = LoadGSImage(sDirectory, proj->ImgFilename);
+ 				if(!proj->bmpImage)
+ 					modLog("Could not open image '" + proj->ImgFilename + "'");
+-				else
++				else if(!bDedicated)
+ 					proj->bmpShadow = GenerateShadowSurface(proj->bmpImage);
+ 			}
+ 			
+@@ -1158,7 +1160,8 @@ proj_t *CGameScript::LoadProjectile(FILE *fp, bool loadImagesAndSounds, int dept
+ // Load an image
+ SDL_Surface * CGameScript::LoadGSImage(const std::string& dir, const std::string& filename)
+ {
+-	if(bDedicated) return NULL;
++	// Test hook (rust-liero oracle): no early return in dedicated mode; projectile
++	// physics needs the image's size (frame count = width / height).
+ 
+ 	SmartPointer<SDL_Surface> img = NULL;
+ 
+@@ -1771,11 +1774,12 @@ proj_t *CGameScript::CompileProjectile(const std::string& dir, const std::string
+ 				ini.ReadKeyword("General","AnimType",(int*)&proj->AnimType,ANI_ONCE);
+ 			}
+ 	
+-			if(!bDedicated) {
++			// Test hook (rust-liero oracle): load projectile images in dedicated mode too.
++			{
+ 				proj->bmpImage = LoadGSImage(dir, proj->ImgFilename);
+ 				if(!proj->bmpImage)
+ 					modLog("Could not open image '" + proj->ImgFilename + "'");
+-				else
++				else if(!bDedicated)
+ 					proj->bmpShadow = GenerateShadowSurface(proj->bmpImage);
+ 			}
+ 			break;
+diff --git a/src/common/CMap.cpp b/src/common/CMap.cpp
+index 070c1cf..2bb67ab 100644
+--- a/src/common/CMap.cpp
++++ b/src/common/CMap.cpp
+@@ -24,6 +24,7 @@
+ #include "game/CMap.h"
+ #include "EndianSwap.h"
+ #include "MathLib.h"
++#include "OracleHooks.h"
+ #include "Error.h"
+ #include "ConfigHandler.h"
+ #include "GfxPrimitives.h"
+@@ -2387,6 +2388,7 @@ CVec CMap::FindSpot()
+ 	do {
+ 		pos.x = float((double)rnd() * Width);
+ 		pos.y = float((double)rnd() * Height);
++		OracleHooks::rndDraws += 2;
+ 		tries--;
+ 	} while ( tries > 0 && !IsGoodSpawnPoint(flags, pos) );
+ 	
 diff --git a/src/common/Command.cpp b/src/common/Command.cpp
-index feb1223..c8aa587 100644
+index feb1223..5fa508d 100644
 --- a/src/common/Command.cpp
 +++ b/src/common/Command.cpp
 @@ -19,6 +19,7 @@
@@ -137,7 +306,15 @@ index feb1223..c8aa587 100644
  #include "Debug.h"
  #include "CServer.h"
  #include "CClient.h"
-@@ -2308,6 +2309,18 @@ void Cmd_setWormInput::exec(CmdLineIntf* caller, const std::vector<std::string>&
+@@ -2272,6 +2273,7 @@ void Cmd_simSetSeed::exec(CmdLineIntf* caller, const std::vector<std::string>& p
+ 	int seed = from_string<int>(params[0], fail);
+ 	if(fail) { printUsage(caller); return; }
+ 	srand((unsigned int)seed);
++	OracleHooks::seed((unsigned int)seed);
+ }
+ 
+ COMMAND(simStep, "advance the simulation by N fixed frames (test hook)", "[n]", 0, 1);
+@@ -2308,6 +2310,48 @@ void Cmd_setWormInput::exec(CmdLineIntf* caller, const std::vector<std::string>&
  }
  
  
@@ -153,15 +330,45 @@ index feb1223..c8aa587 100644
 +	if(!OracleHooks::record(params[0], err)) caller->writeMsg(err, CNC_ERROR);
 +}
 +
++COMMAND(simSetWeapons, "set a worm's weapon slots by name, all full (test hook)", "id \"name0,name1,...,cur=n\"", 2, 2);
++void Cmd_simSetWeapons::exec(CmdLineIntf* caller, const std::vector<std::string>& params) {
++	bool fail = false;
++	int id = from_string<int>(params[0], fail);
++	if(fail) { printUsage(caller); return; }
++	std::string err;
++	if(!OracleHooks::setWeapons(id, params[1], err)) caller->writeMsg(err, CNC_ERROR);
++}
++
++COMMAND(simSetHealth, "set a worm's health (test hook)", "id hp", 2, 2);
++void Cmd_simSetHealth::exec(CmdLineIntf* caller, const std::vector<std::string>& params) {
++	bool fail = false;
++	int id = from_string<int>(params[0], fail);
++	float hp = from_string<float>(params[1], fail);
++	if(fail) { printUsage(caller); return; }
++	std::string err;
++	if(!OracleHooks::setHealth(id, hp, err)) caller->writeMsg(err, CNC_ERROR);
++}
++
++COMMAND(simPlaceBonus, "spawn a bonus at a position through the server (test hook)", "x y health|weapon [weapon]", 3, 4);
++void Cmd_simPlaceBonus::exec(CmdLineIntf* caller, const std::vector<std::string>& params) {
++	bool fail = false;
++	int x = from_string<int>(params[0], fail);
++	int y = from_string<int>(params[1], fail);
++	if(fail) { printUsage(caller); return; }
++	std::string err;
++	if(!OracleHooks::placeBonus(x, y, params[2], params.size() > 3 ? params[3] : "", err))
++		caller->writeMsg(err, CNC_ERROR);
++}
++
  COMMAND(dumpGameState, "dump game state", "", 0, 0);
  void Cmd_dumpGameState::exec(CmdLineIntf* caller, const std::vector<std::string>& params) {
  	caller->writeMsg("GameState: " + Game::StateAsStr(game.state), CNC_DEV);
 diff --git a/src/common/OracleHooks.cpp b/src/common/OracleHooks.cpp
 new file mode 100644
-index 0000000..4a1cb0c
+index 0000000..c3f6a6a
 --- /dev/null
 +++ b/src/common/OracleHooks.cpp
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,594 @@
 +/*
 +	OpenLieroX
 +
@@ -170,8 +377,11 @@ index 0000000..4a1cb0c
 +	code under LGPL
 +*/
 +
++#include <algorithm>
++#include <cctype>
 +#include <cmath>
 +#include <cstdio>
++#include <cstdlib>
 +#include <fstream>
 +#include <map>
 +#include <sstream>
@@ -179,39 +389,88 @@ index 0000000..4a1cb0c
 +
 +#include "LieroX.h"
 +#include "OracleHooks.h"
++#include "CBytestream.h"
 +#include "CClient.h"
++#include "CClientNetEngine.h"
 +#include "CBonus.h"
 +#include "CGameScript.h"
 +#include "CInput.h"
 +#include "CProjectile.h"
++#include "CServer.h"
++#include "CServerConnection.h"
++#include "CShootList.h"
 +#include "CWormHuman.h"
++#include "Entity.h"
 +#include "FeatureList.h"
++#include "Options.h"
++#include "ProjectileDesc.h"
++#include "StringUtils.h"
 +#include "Version.h"
++#include "WeaponDesc.h"
 +#include "game/CMap.h"
 +#include "game/CWorm.h"
 +#include "game/Game.h"
 +#include "gusanos/allegro.h"
++#include "util/math_func.h"
++
++// rand() and srand() are interposed so the hooks can count rand() calls.
++// They delegate to random()/srandom(), as glibc's own rand()/srand() do,
++// so the sequence is unchanged.
++static unsigned long long g_randCalls = 0;
++extern "C" int rand(void) __THROW { ++g_randCalls; return (int)random(); }
++extern "C" void srand(unsigned int s) __THROW { srandom(s); }
 +
 +namespace OracleHooks {
++
++unsigned long long rndDraws = 0;
 +
 +struct Keys {
 +	VirtualKey up, down, left, right, jump, fire, rope, change, strafe, prev, next;
 +};
 +
 +struct Event { int worm; unsigned mask; };
++struct BonusEvent { int x, y; std::string kind, weapon; };
 +
-+static std::map<int, Keys> g_keys;                  // worm id -> scripted keys
-+static std::map<long, std::vector<Event> > g_plan;  // frame -> key changes
-+static long g_base = -1;                            // serverFrame before frame 0
++static std::map<int, Keys> g_keys;                       // worm id -> scripted keys
++static std::map<long, std::vector<Event> > g_plan;       // frame -> key changes
++static std::map<long, std::vector<BonusEvent> > g_bonusPlan; // frame -> bonuses to place
++static long g_base = -1;                                 // serverFrame before frame 0
 +static FILE* g_rec = NULL;
++static unsigned int g_seed = 0;
++static Uint64 g_t0 = 0;                // simulationTime (ms) at frame -1; trace times are relative to it
++static long g_shotListFrame = -1;      // frame in which the pending shot list was started
++struct Delivered { shoot_t shot; AbsTime spawn; };
++static std::vector<Delivered> g_delivered; // shots processed before the next frame
++static std::string g_failure;          // first failure during the recording
++static bool g_pinned = false;
++static AbsTime g_wallTime;             // tLX->currentTime while it is pinned
 +
-+// Reads CWorm state that has no public getter (CWorm declares this a friend).
++// Reads state that has no public getter (the classes declare this a friend).
 +struct Access {
 +	static float angleSpeed(const CWorm* w) { return w->fAngleSpeed; }
++	static AbsTime spawnTime(const CProjectile& p) { return p.fSpawnTime; }
++	static float wallshootTime(const CProjectile& p) { return p.fWallshootTime; }
++	static CVec oldPos(const CProjectile& p) { return p.vOldPos; }
++	static CBonus* serverBonuses() { return cServer->cBonuses; }
++	static void setLastBonusTime(AbsTime t) { cServer->fLastBonusTime = t; }
 +};
 +
 +static void writeHeader(FILE* o);
 +static void writeState(long frame);
++
++static AbsTime pinnedTime() { return game.simulationAbsTime() + TimeDiff(CLOCK_OFFSET_MS); }
++
++// Pins tLX->currentTime to the simulation clock for its lifetime.
++struct PinnedClock {
++	AbsTime saved;
++	PinnedClock() : saved(tLX->currentTime) { tLX->currentTime = pinnedTime(); }
++	~PinnedClock() { tLX->currentTime = saved; }
++};
++
++static void fail(const std::string& msg) {
++	errors << "OracleHooks: " << msg << endl;
++	if(g_failure.empty()) g_failure = msg;
++}
 +
 +static void setKey(VirtualKey& k, bool down) {
 +	// A press is latched until the next getInput() resets it, like CInput's
@@ -231,10 +490,16 @@ index 0000000..4a1cb0c
 +	setKey(k.change, m & KEY_CHANGE);
 +}
 +
-+static bool installHumanHandler(int wormId, Keys& keys, std::string& err) {
++static CWorm* localWorm(int wormId, std::string& err) {
 +	CWorm* w = game.wormById(wormId, false);
-+	if(!w) { err = "no worm " + itoa(wormId); return false; }
-+	if(!w->getLocal()) { err = "worm " + itoa(wormId) + " is not local"; return false; }
++	if(!w) { err = "no worm " + itoa(wormId); return NULL; }
++	if(!w->getLocal()) { err = "worm " + itoa(wormId) + " is not local"; return NULL; }
++	return w;
++}
++
++static bool installHumanHandler(int wormId, Keys& keys, std::string& err) {
++	CWorm* w = localWorm(wormId, err);
++	if(!w) return false;
 +	CWormHumanInputHandler* h = dynamic_cast<CWormHumanInputHandler*>(w->inputHandler());
 +	if(!h) {
 +		h = new CWormHumanInputHandler(w);
@@ -254,45 +519,215 @@ index 0000000..4a1cb0c
 +	return true;
 +}
 +
++static bool bonusType(const std::string& kind, int& type, std::string& err) {
++	if(kind == "health") type = BNS_HEALTH;
++	else if(kind == "weapon") type = BNS_WEAPON;
++	else { err = "bonus kind must be health or weapon, not " + kind; return false; }
++	return true;
++}
++
 +bool loadInputs(const std::string& file, std::string& err) {
 +	std::ifstream in(file.c_str());
 +	if(!in) { err = "cannot open " + file; return false; }
 +	g_plan.clear();
++	g_bonusPlan.clear();
 +	std::string line;
 +	while(std::getline(in, line)) {
 +		if(line.empty() || line[0] == '#') continue;
 +		std::istringstream ls(line);
-+		long frame; int worm; unsigned mask;
-+		if(!(ls >> frame >> worm >> mask)) { err = "bad line: " + line; return false; }
++		long frame; std::string what;
++		if(!(ls >> frame >> what)) { err = "bad line: " + line; return false; }
++		if(what == "bonus") {
++			BonusEvent b; int type;
++			if(!(ls >> b.x >> b.y >> b.kind)) { err = "bad bonus line: " + line; return false; }
++			std::getline(ls, b.weapon);
++			TrimSpaces(b.weapon);
++			if(!bonusType(b.kind, type, err)) return false;
++			if(type == BNS_WEAPON && game.gameScript()->FindWeaponId(b.weapon) < 0) {
++				err = "no weapon '" + b.weapon + "'"; return false;
++			}
++			g_bonusPlan[frame].push_back(b);
++			continue;
++		}
++		bool bad = false;
++		int worm = from_string<int>(what, bad);
++		unsigned mask;
++		if(bad || !(ls >> mask)) { err = "bad line: " + line; return false; }
 +		g_plan[frame].push_back(Event{worm, mask});
 +		if(!g_keys.count(worm) && !installHumanHandler(worm, g_keys[worm], err)) return false;
 +	}
++	// Every worm is driven by the schedule, so no bot AI runs (spec §18 D8).
++	for_each_iterator(CWorm*, it, game.worms()) {
++		int id = it->get()->getID();
++		if(!g_keys.count(id) && !installHumanHandler(id, g_keys[id], err)) return false;
++	}
 +	g_base = (long)game.serverFrame;
-+	// Align the LX56 physics clock (84 Hz) with the 100 Hz frame clock, so frame 0
++	// The simulation clock starts where OLX happened to be after startup. Restart it
++	// at a fixed time, then align the LX56 physics clock (84 Hz) with it, so frame 0
 +	// does not catch up on however much time the setup took (as simStep does once).
++	game.setSimulationTimeForTest(AbsTime((Uint64)START_TIME_MS));
 +	if(cClient) cClient->fLastSimulationTime = game.simulationAbsTime();
 +	return true;
 +}
 +
 +bool record(const std::string& file, std::string& err) {
-+	if(g_rec) { fclose(g_rec); g_rec = NULL; }
++	if(g_rec) {
++		fclose(g_rec); g_rec = NULL;
++		if(!g_failure.empty()) { err = "the recording failed: " + g_failure; return false; }
++	}
 +	if(file == "off") return true;
 +	g_rec = fopen(file.c_str(), "w");
 +	if(!g_rec) { err = "cannot write " + file; return false; }
 +	if(g_base < 0) g_base = (long)game.serverFrame;
++	g_t0 = game.simulationAbsTime().milliseconds();
++	notes << "OracleHooks: recording from simulationTime " << g_t0 << " ms, serverFrame " << game.serverFrame << endl;
++	g_shotListFrame = -1;
++	g_delivered.clear();
++	g_failure.clear();
++	PinnedClock pin;
++	// The dedicated server never frees entities, so the pool fills up for good.
++	// Start each recording from an empty pool and a known bonus timer.
++	ClearEntities();
++	Access::setLastBonusTime(tLX->currentTime);
 +	writeHeader(g_rec);
 +	writeState(-1); // the state frame 0 starts from
++	return true;
++}
++
++bool active() { return g_rec != NULL; }
++
++void seed(unsigned int s) {
++	g_seed = s;
++	rndgen.seed(s);
++	rnd.base().seed(s);
++	midrnd.engine().seed(s);
++	g_randCalls = 0;
++	rndDraws = 0;
++}
++
++bool setWeapons(int wormId, const std::string& spec, std::string& err) {
++	CWorm* w = localWorm(wormId, err);
++	if(!w) return false;
++	std::vector<std::string> names;
++	int cur = 0;
++	std::istringstream in(spec);
++	std::string item;
++	while(std::getline(in, item, ',')) {
++		if(item.compare(0, 4, "cur=") == 0) {
++			bool bad = false;
++			cur = from_string<int>(item.substr(4), bad);
++			if(bad) { err = "bad " + item; return false; }
++		}
++		else
++			names.push_back(item);
++	}
++	const size_t slots = w->weaponSlots.get().size();
++	if(names.size() != slots) {
++		err = "worm " + itoa(wormId) + " has " + itoa((int)slots) + " weapon slots, got " + itoa((int)names.size()) + " names";
++		return false;
++	}
++	if(cur < 0 || (size_t)cur >= slots) { err = "bad current slot " + itoa(cur); return false; }
++	std::vector<int> ids;
++	for(size_t i = 0; i < names.size(); i++) {
++		int id = game.gameScript()->FindWeaponId(names[i]);
++		if(id < 0) { err = "no weapon '" + names[i] + "'"; return false; }
++		ids.push_back(id);
++	}
++	for(size_t i = 0; i < slots; i++) {
++		wpnslot_t& s = w->weaponSlots.write()[i];
++		s.WeaponId = ids[i];
++		s.Charge = 1.f;
++		s.Reloading = false;
++		s.LastFire = 0.f;
++	}
++	w->setCurrentWeapon(cur);
++	return true;
++}
++
++bool setHealth(int wormId, float hp, std::string& err) {
++	CWorm* w = localWorm(wormId, err);
++	if(!w) return false;
++	w->setHealth(hp);
++	return true;
++}
++
++bool placeBonus(int x, int y, const std::string& kind, const std::string& weapon, std::string& err) {
++	int type;
++	if(!bonusType(kind, type, err)) return false;
++	int wpn = -1;
++	if(type == BNS_WEAPON) {
++		wpn = game.gameScript()->FindWeaponId(weapon);
++		if(wpn < 0) { err = "no weapon '" + weapon + "'"; return false; }
++	}
++	PinnedClock pin;
++	CBytestream packet;
++	GameServer::GivenBonus given = { CVec((float)x, (float)y), type, wpn, &packet };
++	if(!cServer->SpawnBonus(&given)) { err = "no free bonus slot"; return false; }
++	// The client sees it now, as if the packet had arrived.
++	packet.ResetPosToBegin();
++	cClient->getNetEngine()->ParsePacket(&packet);
 +	return true;
 +}
 +
 +static long frameIndex() { return (long)game.serverFrame - g_base - 1; }
 +
 +void beforeFrame() {
++	if(g_rec) {
++		g_wallTime = tLX->currentTime;
++		tLX->currentTime = pinnedTime();
++		g_pinned = true;
++	}
 +	if(g_base < 0) return;
-+	std::map<long, std::vector<Event> >::iterator it = g_plan.find(frameIndex());
-+	if(it == g_plan.end()) return;
-+	for(size_t i = 0; i < it->second.size(); i++)
-+		apply(g_keys[it->second[i].worm], it->second[i].mask);
++	const long frame = frameIndex();
++	std::map<long, std::vector<Event> >::iterator it = g_plan.find(frame);
++	if(it != g_plan.end())
++		for(size_t i = 0; i < it->second.size(); i++)
++			apply(g_keys[it->second[i].worm], it->second[i].mask);
++	std::map<long, std::vector<BonusEvent> >::iterator bt = g_bonusPlan.find(frame);
++	if(bt != g_bonusPlan.end())
++		for(size_t i = 0; i < bt->second.size(); i++) {
++			const BonusEvent& b = bt->second[i];
++			std::string err;
++			if(!placeBonus(b.x, b.y, b.kind, b.weapon, err))
++				fail("frame " + itoa((int)frame) + ": " + err);
++		}
++}
++
++void afterFrame() {
++	if(g_rec) writeState(frameIndex());
++	if(g_pinned) {
++		tLX->currentTime = g_wallTime;
++		g_pinned = false;
++	}
++}
++
++// Shot delivery, Model R (spec §18 D1): the shots added during frames F and F+1
++// form one list, which is encoded, decoded and processed after frame F+1, so
++// before frame F+2, like real play at one frame per main-loop iteration.
++void betweenFrames() {
++	if(!g_rec || !cServer || !cServer->isServerRunning()) return;
++	CServerConnection* cl = cServer->localClientConnection();
++	if(!cl) return;
++	CShootList* sl = cl->getShootList();
++	if(sl->getNumShots() == 0) return;
++	const long frame = frameIndex();
++	if(g_shotListFrame < 0) { g_shotListFrame = frame; return; } // started this frame: not sent yet
++	if(g_shotListFrame >= frame) return;
++	CBytestream bs;
++	if(sl->writePacket(&bs, cl->getClientVersion())) sl->Clear();
++	g_shotListFrame = -1;
++	PinnedClock pin;
++	bs.ResetPosToBegin();
++	// As CClient::ReadPackets: each packet is parsed (readSingle/readMulti) and processed.
++	while(cClient->getNetEngine()->ParsePacket(&bs)) {
++		if(!cClient->canSimulate()) continue;
++		CShootList* in = cClient->getShootList();
++		for(int i = 0; i < in->getNumShots(); i++) {
++			shoot_t* sh = in->getShot(i);
++			// spawnTime() reads the clock and serverFrame, which are still what ProcessShot saw.
++			if(sh) g_delivered.push_back(Delivered{*sh, sh->spawnTime()});
++		}
++	}
 +}
 +
 +// Floats as JSON numbers with 9 significant digits (round-trips f32), or a string if not finite.
@@ -300,6 +735,12 @@ index 0000000..4a1cb0c
 +	if(std::isnan(v)) fputs("\"NaN\"", o);
 +	else if(std::isinf(v)) fputs(v > 0 ? "\"inf\"" : "\"-inf\"", o);
 +	else fprintf(o, "%.9g", v);
++}
++
++// A time as ms since frame -1, or null if it was never set (AbsTime 0).
++static void t(FILE* o, AbsTime v) {
++	if(v == AbsTime()) fputs("null", o);
++	else fprintf(o, "%lld", (long long)v.milliseconds() - (long long)g_t0);
 +}
 +
 +static unsigned long long materialHash() {
@@ -324,7 +765,43 @@ index 0000000..4a1cb0c
 +	fputc('"', o);
 +}
 +
-+// First line of a recording: the OLX version and every gameplay setting in effect.
++// rl-data's slug(): lowercase ASCII letters and digits, one '-' for each run of anything else.
++static std::string slug(const std::string& s) {
++	std::string out;
++	bool dash = false;
++	for(size_t i = 0; i < s.size(); i++) {
++		unsigned char c = (unsigned char)s[i];
++		if(c < 0x80 && isalnum(c)) {
++			if(dash && !out.empty()) out += '-';
++			dash = false;
++			out += (char)tolower(c);
++		}
++		else
++			dash = true;
++	}
++	return out.empty() ? "unnamed" : out;
++}
++
++// Names a projectile and its children by their path, as rl-import-lgs does
++// before it shares identical definitions: "<weapon id>", then ".spawn" or ".trail".
++static void nameProjectile(const proj_t* p, const std::string& name, std::map<const proj_t*, std::string>& out) {
++	if(!p || out.count(p)) return;
++	out[p] = name;
++	nameProjectile(p->GeneralSpawnInfo.Proj, name + ".spawn", out);
++	if(p->Trail.Type == TRL_PROJECTILE) nameProjectile(p->Trail.Proj.Proj, name + ".trail", out);
++}
++
++static void writeNames(FILE* o, const std::vector<std::string>& names) {
++	fputc('[', o);
++	for(size_t i = 0; i < names.size(); i++) {
++		if(i) fputc(',', o);
++		str(o, names[i]);
++	}
++	fputc(']', o);
++}
++
++// First line of a recording: the OLX version, every gameplay setting in effect,
++// the mod's weapon and projectile names, other options and the seed.
 +static void writeHeader(FILE* o) {
 +	fputs("{\"olx\":", o);
 +	str(o, GetFullGameName());
@@ -335,12 +812,62 @@ index 0000000..4a1cb0c
 +		fputc(':', o);
 +		str(o, cClient->getGameLobby()[(FeatureIndex)i].toString());
 +	}
-+	fputs("}}\n", o);
++	CGameScript* gs = game.gameScript();
++	std::vector<std::string> weapons;
++	std::map<const proj_t*, std::string> projNames;
++	std::vector<std::string> ids;
++	for(int i = 0; i < gs->GetNumWeapons(); i++) {
++		const weapon_t& wpn = gs->GetWeapons()[i];
++		weapons.push_back(wpn.Name);
++		// rl-import-lgs's weapon id: the slug, made unique with "-2", "-3", ...
++		std::string id = slug(wpn.Name);
++		for(int n = 2; std::find(ids.begin(), ids.end(), id) != ids.end(); n++)
++			id = slug(wpn.Name) + "-" + itoa(n);
++		ids.push_back(id);
++		if(wpn.Type == WPN_PROJECTILE) nameProjectile(wpn.Proj.Proj, id, projNames);
++	}
++	std::vector<std::string> projectiles(gs->getProjectileCount());
++	for(std::map<const proj_t*, std::string>::iterator it = projNames.begin(); it != projNames.end(); ++it) {
++		int i = gs->projectileIndex(it->first);
++		if(i >= 0 && (size_t)i < projectiles.size()) projectiles[i] = it->second;
++	}
++	fputs("},\"weapons\":", o);
++	writeNames(o, weapons);
++	fputs(",\"projectiles\":", o);
++	writeNames(o, projectiles);
++	fprintf(o, ",\"options\":{\"DoProjectileSimulationInDedicated\":\"%s\",\"Game.Blood\":\"%d\",\"Game.Particles\":\"%s\",\"K\":\"%d\",\"T0\":\"%llu\"}",
++		tLXOptions->doProjectileSimulationInDedicated ? "true" : "false", tLXOptions->iBloodAmount,
++		tLXOptions->bParticles ? "true" : "false", (int)CLOCK_OFFSET_MS, (unsigned long long)g_t0);
++	fprintf(o, ",\"seed\":%u}\n", g_seed);
++}
++
++static void writeShots(FILE* o) {
++	fputs(",\"s\":[", o);
++	for(size_t i = 0; i < g_delivered.size(); i++) {
++		const shoot_t& s = g_delivered[i].shot;
++		if(i) fputc(',', o);
++		fprintf(o, "{\"w\":%d,\"wpn\":%d,\"x\":", s.nWormID, s.nWeapon);
++		f(o, s.cPos.x); fputs(",\"y\":", o); f(o, s.cPos.y);
++		fputs(",\"vx\":", o); f(o, s.cWormVel.x); fputs(",\"vy\":", o); f(o, s.cWormVel.y);
++		fprintf(o, ",\"ang\":%d,\"rnd\":%d,\"spd\":%d,\"rel\":%s,\"t\":%llu,\"spawn\":",
++			s.nAngle, s.nRandom, s.nSpeed, s.release ? "true" : "false",
++			(unsigned long long)s.fTime.milliseconds());
++		t(o, g_delivered[i].spawn);
++		fputc('}', o);
++	}
++	fputc(']', o);
++	g_delivered.clear();
 +}
 +
 +static void writeState(long frame) {
 +	FILE* o = g_rec;
-+	fprintf(o, "{\"f\":%ld,\"w\":[", frame);
++	fprintf(o, "{\"f\":%ld,\"sf\":%ld,\"st\":", frame, (long)game.serverFrame);
++	t(o, game.simulationAbsTime());
++	fputs(",\"ct\":", o);
++	t(o, tLX->currentTime);
++	fprintf(o, ",\"rc\":%llu,\"mt\":%llu,\"ents\":%d", g_randCalls, rndDraws, (int)EntitiesUsed());
++	writeShots(o);
++	fputs(",\"w\":[", o);
 +	bool first = true;
 +	for_each_iterator(CWorm*, it, game.worms()) {
 +		CWorm* w = it->get();
@@ -367,8 +894,14 @@ index 0000000..4a1cb0c
 +			r.isAttached() ? "true" : "false", r.getAttachedPlayer() ? r.getAttachedPlayer()->getID() : -1);
 +		f(o, r.getPos().x); fputs(",\"y\":", o); f(o, r.getPos().y);
 +		fputs(",\"vx\":", o); f(o, r.getVelocity().x); fputs(",\"vy\":", o); f(o, r.getVelocity().y);
-+		fprintf(o, "},\"lives\":%d,\"kills\":%d,\"deaths\":%d,\"dirt\":%d}",
-+			(int)w->getLives(), w->getKills(), w->getDeaths(), w->getDirtCount());
++		fprintf(o, "},\"lives\":%d,\"kills\":%d,\"deaths\":%d,\"dirt\":%d,\"suicides\":%d,\"tod\":",
++			(int)w->getLives(), w->getKills(), w->getDeaths(), w->getDirtCount(), w->getSuicides());
++		// fTimeofDeath is a wall-clock time from CWorm::Prepare until the first death.
++		if(w->getAlive()) fputs("null", o); else t(o, w->getTimeofDeath());
++		fprintf(o, ",\"respawn\":%u,\"blood\":",
++			((bool)w->bRespawnRequested ? 1u : 0u) | ((bool)w->bCanRespawnNow ? 2u : 0u) | (w->haveSpawnedOnce() ? 4u : 0u));
++		t(o, w->getLastBlood());
++		fputc('}', o);
 +	}
 +	fputs("],\"p\":[", o);
 +	first = true;
@@ -382,7 +915,16 @@ index 0000000..4a1cb0c
 +		f(o, p.getPos().x); fputs(",\"y\":", o); f(o, p.getPos().y);
 +		fputs(",\"vx\":", o); f(o, p.getVelocity().x); fputs(",\"vy\":", o); f(o, p.getVelocity().y);
 +		fputs(",\"life\":", o); f(o, p.getLife());
-+		fputc('}', o);
++		fprintf(o, ",\"own\":%d,\"rnd\":%d,\"ls\":", p.GetOwner(), p.getRandomIndex());
++		t(o, p.fLastSimulationTime); fputs(",\"sp\":", o); t(o, Access::spawnTime(p));
++		fputs(",\"ig\":", o); t(o, p.getIgnoreWormCollBeforeTime());
++		fputs(",\"ws\":", o); f(o, Access::wallshootTime(p));
++		fputs(",\"tr\":", o); t(o, p.lastTrailProj());
++		const CVec op = Access::oldPos(p);
++		fputs(",\"ox\":", o); f(o, op.x); fputs(",\"oy\":", o); f(o, op.y);
++		fputs(",\"fr\":", o); f(o, p.frame());
++		const Color c = p.renderColorAt(0, 0);
++		fprintf(o, ",\"col\":%u}", ((unsigned)c.r << 16) | ((unsigned)c.g << 8) | (unsigned)c.b);
 +	}
 +	fputs("],\"b\":[", o);
 +	first = true;
@@ -393,14 +935,25 @@ index 0000000..4a1cb0c
 +		first = false;
 +		fprintf(o, "{\"i\":%d,\"t\":%d,\"x\":", i, bs[i].getType());
 +		f(o, bs[i].getPosition().x); fputs(",\"y\":", o); f(o, bs[i].getPosition().y);
++		fputs(",\"vx\":", o); f(o, bs[i].velocity().x); fputs(",\"vy\":", o); f(o, bs[i].velocity().y);
++		fputs(",\"life\":", o); f(o, bs[i].life());
++		fprintf(o, ",\"wpn\":%d}", bs[i].getWeapon());
++	}
++	fputs("],\"sb\":[", o);
++	first = true;
++	CBonus* sbs = Access::serverBonuses();
++	for(int i = 0; i < MAX_BONUSES; i++) {
++		if(!sbs[i].getUsed()) continue;
++		if(!first) fputc(',', o);
++		first = false;
++		fprintf(o, "{\"i\":%d,\"t\":%d,\"x\":", i, sbs[i].getType());
++		f(o, sbs[i].getPosition().x); fputs(",\"y\":", o); f(o, sbs[i].getPosition().y);
++		fprintf(o, ",\"wpn\":%d,\"spawn\":", sbs[i].getWeapon());
++		t(o, sbs[i].getSpawnTime());
 +		fputc('}', o);
 +	}
 +	fprintf(o, "],\"mh\":\"%016llx\"}\n", materialHash());
 +	fflush(o);
-+}
-+
-+void afterFrame() {
-+	if(g_rec) writeState(frameIndex());
 +}
 +
 +}
@@ -440,7 +993,7 @@ index ede70ca..43dafff 100644
  	
  	std::map< int, DamageReport> & getDamageReport() { return cDamageReport; }
 diff --git a/src/game/Game.cpp b/src/game/Game.cpp
-index 8603bbd..82a969c 100644
+index 8603bbd..054c449 100644
 --- a/src/game/Game.cpp
 +++ b/src/game/Game.cpp
 @@ -8,6 +8,7 @@
@@ -451,11 +1004,16 @@ index 8603bbd..82a969c 100644
  #include "AuxLib.h"
  #include "Debug.h"
  #include "LieroX.h"
-@@ -948,9 +949,11 @@ void Game::frameInner()
- 				gusLogicFrame();
- 			}
+@@ -942,6 +943,8 @@ void Game::frameInner()
+ 			if(game.state == Game::S_Playing && !isGamePaused())
+ 				serverFrame++;
  
 +			OracleHooks::beforeFrame();
++
+ 			// do lua/gus frames in all cases
+ 			{
+ 				GusSpeedScope speedScope;
+@@ -951,9 +954,11 @@ void Game::frameInner()
  			cClient->Frame();
  			if(isServer())
  				cServer->Frame();
@@ -463,3 +1021,98 @@ index 8603bbd..82a969c 100644
  
  			if(manualStep) manualStepBudget--;
  			simulationTime += frameDt;
++			OracleHooks::betweenFrames();
+ 		}
+ 		tLX->fDeltaTime = tLX->fRealDeltaTime = curDeltaTime;
+ 	}
+diff --git a/src/game/Game.h b/src/game/Game.h
+index 0d748ed..65c0015 100644
+--- a/src/game/Game.h
++++ b/src/game/Game.h
+@@ -122,6 +122,8 @@ public:
+ 	// so physics tests are frame-exact and reproducible.
+ 	bool manualStep;
+ 	int manualStepBudget;
++	// Test hook (OracleHooks): restart the simulation clock at a fixed value.
++	void setSimulationTimeForTest(AbsTime t) { simulationTime = t; }
+ 
+ 	bool hasHighSimulationDelay();
+ 	bool hasSeriousHighSimulationDelay();
+diff --git a/src/server/CServer_Game.cpp b/src/server/CServer_Game.cpp
+index f6502fd..ae32e10 100644
+--- a/src/server/CServer_Game.cpp
++++ b/src/server/CServer_Game.cpp
+@@ -263,16 +263,16 @@ void GameServer::SimulateGame()
+ 
+ ///////////////////
+ // Spawn a bonus
+-void GameServer::SpawnBonus()
++bool GameServer::SpawnBonus(const GivenBonus* given)
+ {
+ 	// Find an empty spot for the bonus
+-	CVec pos = game.gameMap()->FindSpot();
++	CVec pos = given ? given->pos : game.gameMap()->FindSpot();
+ 
+ 	// Carve a hole for it
+ 	//game.gameMap()->CarveHole(SPAWN_HOLESIZE,pos);
+ 
+ 	// NOTE: Increase to 2 when we want to use the fullcharge bonus
+-	int type = (GetRandomInt(999) >= (float)gameSettings[FT_BonusHealthToWeaponChance] * 1000.0f) ? BNS_HEALTH : BNS_WEAPON;
++	int type = given ? given->type : ((GetRandomInt(999) >= (float)gameSettings[FT_BonusHealthToWeaponChance] * 1000.0f) ? BNS_HEALTH : BNS_WEAPON);
+ 
+ 	// Find a free bonus spot
+ 	CBonus *b = cBonuses;
+@@ -287,15 +287,15 @@ void GameServer::SpawnBonus()
+ 
+ 	// No spots
+ 	if(spot == -1)
+-		return;
++		return false;
+ 
+ 	std::vector<int> goodWpns;
+ 	for(int i = 0; i < game.gameScript()->GetNumWeapons(); ++i)
+ 		if(game.weaponRestrictions()->getWeaponState( (game.gameScript()->GetWeapons()+i)->Name ) != wpr_banned)
+ 			goodWpns.push_back(i);
+ 	
+-	int wpn = (goodWpns.size() > 0) ? randomChoiceFrom(goodWpns) : -1;
+-	if(type == BNS_WEAPON && wpn < 0) return; // no weapon found
++	int wpn = given ? given->weapon : ((goodWpns.size() > 0) ? randomChoiceFrom(goodWpns) : -1);
++	if(type == BNS_WEAPON && wpn < 0) return false; // no weapon found
+ 	
+ 	b->Spawn(pos, type, wpn, game.gameScript());
+ 
+@@ -312,7 +312,11 @@ void GameServer::SpawnBonus()
+ 	bs.writeInt((int)pos.x, 2);
+ 	bs.writeInt((int)pos.y, 2);
+ 
+-	SendGlobalPacket(&bs);
++	if(given)
++		given->packet->Append(&bs);
++	else
++		SendGlobalPacket(&bs);
++	return true;
+ }
+ 
+ 
+diff --git a/src/server/CServer_Send.cpp b/src/server/CServer_Send.cpp
+index fa618cf..0d03648 100644
+--- a/src/server/CServer_Send.cpp
++++ b/src/server/CServer_Send.cpp
+@@ -18,6 +18,7 @@
+ #include <boost/bind/bind.hpp>
+ 
+ #include "LieroX.h"
++#include "OracleHooks.h"
+ #include "CServer.h"
+ #include "Debug.h"
+ #include "StringUtils.h"
+@@ -558,7 +559,8 @@ bool GameServer::SendUpdate()
+ 			CShootList *sh = cl->getShootList();
+ 			float delay = shootDelay[cl->getNetSpeed()];
+ 
+-			if(tLX->currentTime - sh->getStartTime() > delay && sh->getNumShots() > 0) {
++			// While an oracle recording runs, OracleHooks::betweenFrames() delivers the shots.
++			if(!OracleHooks::active() && tLX->currentTime - sh->getStartTime() > delay && sh->getNumShots() > 0) {
+ 				CBytestream shootBs;
+ 
+ 				// Send the shootlist

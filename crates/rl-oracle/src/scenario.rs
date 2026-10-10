@@ -16,7 +16,7 @@ pub struct Scenario {
     /// Mod directory inside OLX's `share/gamedir/`, such as `"Classic"`.
     #[serde(rename = "mod")]
     pub mod_dir: String,
-    /// Seed for OLX's `rand()` (`simSetSeed`).
+    /// Seed for OLX's `rand()` and the `FindSpot` generators (`simSetSeed`).
     pub seed: u32,
     /// Number of frames to simulate (100 per second).
     pub frames: u32,
@@ -27,6 +27,15 @@ pub struct Scenario {
     /// Key changes; a worm holds its keys until its next change.
     #[serde(default)]
     pub inputs: Vec<InputChange>,
+    /// Weapon slots set right after the spawns (`simSetWeapons`).
+    #[serde(default)]
+    pub weapons: Vec<WormWeapons>,
+    /// `(worm, hp)`: health set right after the spawns (`simSetHealth`).
+    #[serde(default)]
+    pub health: Vec<(usize, f32)>,
+    /// Bonuses placed through OLX's server path at given frames (`simPlaceBonus`).
+    #[serde(default)]
+    pub bonuses: Vec<BonusPlacement>,
     /// Fields allowed to differ from OLX, each with a written reason (spec §6).
     #[serde(default)]
     pub tolerances: Vec<Tolerance>,
@@ -48,6 +57,65 @@ pub struct InputChange {
     pub frame: u32,
     pub worm: usize,
     pub keys: String,
+}
+
+/// Worm `worm`'s weapon slots, by OLX weapon name, one per slot (OLX's
+/// `WeaponSlotsNum`, 5 by default), with slot `current` selected. Every slot
+/// starts full: charge 1, not reloading, no last fire.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WormWeapons {
+    pub worm: usize,
+    pub names: Vec<String>,
+    pub current: usize,
+}
+
+/// A bonus that appears at the start of frame `frame` at `(x, y)`, in the
+/// first free bonus slot of both the server and the client. `weapon` names
+/// the weapon of a weapon bonus.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BonusPlacement {
+    pub frame: u32,
+    pub x: i32,
+    pub y: i32,
+    pub kind: BonusKind,
+    #[serde(default)]
+    pub weapon: Option<String>,
+}
+
+/// A bonus kind, written `"health"` or `"weapon"`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub enum BonusKind {
+    Health,
+    Weapon,
+}
+
+impl BonusKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BonusKind::Health => "health",
+            BonusKind::Weapon => "weapon",
+        }
+    }
+}
+
+impl TryFrom<String> for BonusKind {
+    type Error = String;
+    fn try_from(s: String) -> Result<BonusKind, String> {
+        match s.as_str() {
+            "health" => Ok(BonusKind::Health),
+            "weapon" => Ok(BonusKind::Weapon),
+            other => Err(format!("unknown bonus kind {other:?} (health or weapon)")),
+        }
+    }
+}
+
+impl From<BonusKind> for String {
+    fn from(k: BonusKind) -> String {
+        k.as_str().to_string()
+    }
 }
 
 /// Allows numeric field `field` (a trace path such as `"w[0].vy"`, where `[*]`
@@ -86,6 +154,41 @@ impl Scenario {
                 return bad(format!("input for worm {} but only {} worms", c.worm, self.worms.len()));
             }
             Keys::parse(&c.keys).map_err(OracleError::Scenario)?;
+        }
+        for w in &self.weapons {
+            if w.worm >= self.worms.len() {
+                return bad(format!("weapons for worm {} but only {} worms", w.worm, self.worms.len()));
+            }
+            if w.current >= w.names.len() {
+                return bad(format!(
+                    "current weapon {} but worm {} has {} slots",
+                    w.current,
+                    w.worm,
+                    w.names.len()
+                ));
+            }
+            if let Some(n) = w.names.iter().find(|n| !valid_weapon_name(n)) {
+                return bad(format!("weapon name {n:?} must be non-empty, without commas or line breaks"));
+            }
+        }
+        for &(worm, hp) in &self.health {
+            if worm >= self.worms.len() {
+                return bad(format!("health for worm {worm} but only {} worms", self.worms.len()));
+            }
+            if !hp.is_finite() || hp < 0.0 {
+                return bad(format!("health {hp} for worm {worm} must be finite and >= 0"));
+            }
+        }
+        for b in &self.bonuses {
+            if b.frame >= self.frames {
+                return bad(format!("bonus at frame {} is past the last frame {}", b.frame, self.frames - 1));
+            }
+            match (b.kind, &b.weapon) {
+                (BonusKind::Health, Some(_)) => return bad("a health bonus has no weapon".into()),
+                (BonusKind::Weapon, None) => return bad("a weapon bonus needs a weapon".into()),
+                (_, Some(n)) if !valid_weapon_name(n) => return bad(format!("bad bonus weapon name {n:?}")),
+                _ => {}
+            }
         }
         for t in &self.tolerances {
             if t.reason.trim().is_empty() || t.max_abs.is_nan() || t.max_abs < 0.0 {
@@ -129,6 +232,13 @@ impl Scenario {
             self.schedule().into_iter().map(|(f, w, k)| (f, w, k.0)).collect();
         let worms: Vec<serde_json::Value> =
             self.worms.iter().map(|w| serde_json::json!({ "x": w.x, "y": w.y })).collect();
+        let bonuses: Vec<serde_json::Value> = self
+            .bonuses
+            .iter()
+            .map(|b| {
+                serde_json::json!([b.frame, b.x, b.y, b.kind.as_str(), b.weapon.as_deref().unwrap_or("")])
+            })
+            .collect();
         serde_json::json!({
             "level": self.level,
             "mod": self.mod_dir,
@@ -137,10 +247,19 @@ impl Scenario {
             "settings": self.settings,
             "worms": worms,
             "inputs": inputs,
+            "weapons": self.weapons,
+            "health": self.health,
+            "bonuses": bonuses,
             "out": out,
         })
         .to_string()
     }
+}
+
+/// A weapon name that survives `simSetWeapons`'s comma list and the
+/// line-based input schedule.
+fn valid_weapon_name(n: &str) -> bool {
+    !n.trim().is_empty() && !n.contains([',', '\n', '\r'])
 }
 
 #[cfg(test)]
@@ -215,6 +334,73 @@ mod tests {
         }
         let err = Scenario::from_ron("(oops").unwrap_err().to_string();
         assert!(err.starts_with("1:"), "{err}");
+    }
+
+    const ARMED: &str = r#"(
+        description: "fire",
+        level: "Liero Factory.lxl",
+        mod: "Classic",
+        seed: 1,
+        frames: 10,
+        worms: [(x: 190, y: 320), (x: 300, y: 320)],
+        weapons: [(worm: 1, names: ["Minigun", "Big Nuke"], current: 1)],
+        health: [(0, 14.5)],
+        bonuses: [
+            (frame: 3, x: 200, y: 300, kind: "health"),
+            (frame: 4, x: 210, y: 300, kind: "weapon", weapon: Some("Big Nuke")),
+        ],
+    )"#;
+
+    #[test]
+    fn parses_weapons_health_and_bonuses() {
+        let sc = Scenario::from_ron(ARMED).unwrap();
+        assert_eq!(
+            sc.weapons,
+            [WormWeapons { worm: 1, names: vec!["Minigun".into(), "Big Nuke".into()], current: 1 }]
+        );
+        assert_eq!(sc.health, [(0, 14.5)]);
+        assert_eq!(
+            sc.bonuses[0],
+            BonusPlacement { frame: 3, x: 200, y: 300, kind: BonusKind::Health, weapon: None }
+        );
+        assert_eq!(sc.bonuses[1].kind, BonusKind::Weapon);
+        assert_eq!(sc.bonuses[1].weapon.as_deref(), Some("Big Nuke"));
+        let plain = Scenario::from_ron(SAMPLE).unwrap();
+        assert!(plain.weapons.is_empty() && plain.health.is_empty() && plain.bonuses.is_empty());
+    }
+
+    #[test]
+    fn control_json_has_weapons_health_and_bonuses() {
+        let v: serde_json::Value =
+            serde_json::from_str(&Scenario::from_ron(ARMED).unwrap().control_json("/work/t.jsonl")).unwrap();
+        assert_eq!(
+            v["weapons"][0],
+            serde_json::json!({ "worm": 1, "names": ["Minigun", "Big Nuke"], "current": 1 })
+        );
+        assert_eq!(v["health"][0], serde_json::json!([0, 14.5]));
+        assert_eq!(v["bonuses"][0], serde_json::json!([3, 200, 300, "health", ""]));
+        assert_eq!(v["bonuses"][1], serde_json::json!([4, 210, 300, "weapon", "Big Nuke"]));
+    }
+
+    #[test]
+    fn rejects_invalid_weapons_health_and_bonuses() {
+        let cases = [
+            ("(worm: 1, names", "(worm: 2, names", "weapons for worm 2"),
+            ("current: 1", "current: 2", "current weapon 2"),
+            ("names: [\"Minigun\", \"Big Nuke\"], current: 1", "names: [], current: 0", "current weapon 0"),
+            ("\"Big Nuke\"], current", "\"Big,Nuke\"], current", "weapon name"),
+            ("health: [(0, 14.5)]", "health: [(5, 14.5)]", "health for worm 5"),
+            ("health: [(0, 14.5)]", "health: [(0, -1.0)]", "health -1"),
+            ("frame: 3,", "frame: 10,", "bonus at frame 10"),
+            ("kind: \"health\")", "kind: \"health\", weapon: Some(\"Minigun\"))", "health bonus"),
+            ("kind: \"weapon\", weapon: Some(\"Big Nuke\")", "kind: \"weapon\"", "weapon bonus"),
+            ("kind: \"health\"", "kind: \"ammo\"", "unknown bonus kind"),
+        ];
+        for (from, to, msg) in cases {
+            assert!(ARMED.contains(from), "{from}");
+            let err = Scenario::from_ron(&ARMED.replace(from, to)).unwrap_err().to_string();
+            assert!(err.contains(msg), "{to}: {err}");
+        }
     }
 
     #[test]

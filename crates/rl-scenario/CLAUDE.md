@@ -9,7 +9,10 @@ traces in `rl-oracle`'s format.
   trace header.
 - Weapon slots, lives and kills are copied from OLX's frame −1 until M4
   simulates weapon selection.
-- `tests/oracle.rs` is M3's acceptance test: every scenario must match bit for bit.
-- For debugging a divergence: `rl-cli scenario <name> --dump <frame>`.
+- `tests/oracle.rs` is the acceptance test: every scenario must match bit for
+  bit in the fields `CHECKED` lists, except the scenarios it lists as expected
+  to diverge (which must still diverge). Grow `CHECKED` as M4 lands.
+- For debugging a divergence: `rl-cli scenario <name> --dump <frame>` (`--all`
+  compares every field, not only `CHECKED`).
 
 Test: `cargo nextest run -p rl-scenario` (with `RL_CONTENT_DIR`; `cargo xtask check` sets it).

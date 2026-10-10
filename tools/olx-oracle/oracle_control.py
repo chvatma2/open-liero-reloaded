@@ -8,7 +8,10 @@ command, OLX answers with ":arg" lines and a lone ".".
 The scenario comes from the JSON file named by ORACLE_SCENARIO, written by
 `cargo xtask oracle-record`:
   level, mod, seed, frames, settings {setvar name: value}, worms [{x, y}],
-  inputs [[frame, worm index, key mask]], out (trace path).
+  inputs [[frame, worm index, key mask]],
+  weapons [{worm, names, current}], health [[worm index, hp]],
+  bonuses [[frame, x, y, "health"|"weapon", weapon name or ""]],
+  out (trace path).
 The whole run is driven by simStep, so no frame depends on the wall clock.
 """
 
@@ -87,10 +90,17 @@ def main():
     with open(schedule, "w") as fh:
         for frame_no, worm, keys in sc["inputs"]:
             fh.write("%d %s %d\n" % (frame_no, ids[worm], keys))
+        for frame_no, x, y, kind, weapon in sc.get("bonuses", []):
+            fh.write("%d bonus %d %d %s %s\n" % (frame_no, x, y, kind, weapon))
     command("simSetSeed %d" % sc["seed"])
     command("simLoadInputs " + schedule)  # also aligns the physics clock
     for wid, w in zip(ids, sc["worms"]):
         command('spawnWorm %s "%d,%d"' % (wid, w["x"], w["y"]))
+    for wpns in sc.get("weapons", []):
+        spec = ",".join(wpns["names"] + ["cur=%d" % wpns["current"]])
+        command('simSetWeapons %s "%s"' % (ids[wpns["worm"]], spec))
+    for worm, hp in sc.get("health", []):
+        command("simSetHealth %s %r" % (ids[worm], float(hp)))
     command("simRecord " + sc["out"])
     target = frame() + sc["frames"]
     command("simStep %d" % sc["frames"])

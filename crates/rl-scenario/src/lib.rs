@@ -9,10 +9,19 @@ use std::path::Path;
 
 use anyhow::Context;
 use rl_math::AbsTime;
-use rl_oracle::{Frame, Num, RopeRec, Scenario, SlotRec, Trace, WormRec};
+use rl_oracle::{Fields, Frame, Num, RopeRec, Scenario, SlotRec, Trace, WormRec};
 use rl_sim::{Keys, Loadout, SimSettings, Slot, World};
 use rl_terrain::{Stamp, Terrain};
 use rl_vfs::DirFs;
+
+/// The trace fields the simulation reproduces so far; the acceptance test
+/// compares only these. Grows with M4 until it is [`Fields::ALL`].
+pub const CHECKED: Fields = Fields::WORM_MOTION
+    .union(Fields::SLOTS)
+    .union(Fields::ROPE)
+    .union(Fields::MATERIAL)
+    .union(Fields::HEALTH)
+    .union(Fields::SCORE);
 
 /// Reads `<dir>/<name>.ron` and `<dir>/<name>.jsonl.gz`.
 pub fn load_fixture(dir: &Path, name: &str) -> anyhow::Result<(Scenario, Trace)> {
@@ -112,9 +121,10 @@ pub fn record(world: &World, f: i64) -> Frame {
             kills: w.kills,
             deaths: w.deaths,
             dirt: w.dirt_count,
+            ..WormRec::default()
         })
         .collect();
-    Frame { f, w, p: vec![], b: vec![], mh: format!("{:016x}", world.terrain().material_hash()) }
+    Frame { f, w, mh: format!("{:016x}", world.terrain().material_hash()), ..Frame::default() }
 }
 
 /// Plays `sc` from frame -1 to its last frame and returns the Rust trace,
