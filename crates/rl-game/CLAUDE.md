@@ -28,7 +28,7 @@ cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --target
   `rl-present` → damage popups). Per frame: `Session::build` (scene,
   entities), the overlay, `Presentation::upload` (atlas if a worm was
   added, terrain dirty rectangles), `Gpu::present`, then a screenshot if
-  one is due.
+  one is due (one that fails is a warning, never the end of the game).
 - **Session** (`session.rs`): the match without a window, so it is tested
   headless; its presentation is one `rl_present::Presentation`. `restart`
   (F5) builds the world from the assets loaded once (`setup::Assets`,

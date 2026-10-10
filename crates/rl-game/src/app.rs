@@ -286,8 +286,11 @@ impl App {
         self.meter.busy(now.elapsed().saturating_sub(wait).as_secs_f64());
         if std::mem::take(&mut self.shot_due) {
             let path = self.cfg.shot_dir.join(format!("shot-{:05}.png", self.ticks));
-            w.gpu.screenshot(&self.list, &paint, &path)?;
-            println!("rl-game: wrote {} (tick {})", path.display(), self.ticks);
+            // A screenshot that cannot be written is not worth the game.
+            match w.gpu.screenshot(&self.list, &paint, &path) {
+                Ok(()) => println!("rl-game: wrote {} (tick {})", path.display(), self.ticks),
+                Err(e) => eprintln!("warning: screenshot {}: {e:#}", path.display()),
+            }
         }
         Ok(())
     }
