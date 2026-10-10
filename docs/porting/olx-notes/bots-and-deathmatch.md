@@ -881,7 +881,12 @@ score = kills
 ### 3.3 Game over and winner
 
 **Check order** (`CGameMode::CheckGameOver`, `CGameMode.cpp:276-360`). It is
-evaluated every server frame while playing (`recheckGame`):
+evaluated every server frame while playing: `SimulateGame` checks only while
+`recheckGame` is set (`CServer_Game.cpp:169-176`), but `BeginMatch` sets it
+(`CServer.cpp:521`) and only `GameServer::Clear` resets it (`CServer.cpp:80`),
+so during a match it stays set, and a kill reaching the limit ends the match
+in its own frame (the local client's kill calls `killWorm` directly,
+`CClient_Game.cpp:419`):
 1. Team score limit (teams only).
 2. Kill limit: `KillLimit > 0` and some worm (id order) has `getScore() >= KillLimit`.
    Message: `"Kill limit 15 hit by worm <name>"`.
@@ -908,8 +913,13 @@ else: winner = the max over worms (id order) of the comparator; only a strictly 
         more lives wins
     not OUT beats OUT
     higher score wins
-    Round(damage1 - damage2) (0 if |diff| < 0.5) → tie keeps the earlier worm
+    Round(damage1 - damage2), Round = (int)ceil(x - 0.5) (MathLib.cpp:85-88):
+    0 for a difference in (-0.5, 0.5] → tie keeps the earlier worm
 ```
+With limited lives, a worm at the kill limit ranks first whichever side of
+the comparison it is on, so when two worms reach the limit together the
+**later** one (by id) replaces the leader and wins; with unlimited lives the
+tie goes to the earlier worm.
 `getAliveWormCount`/`getFirstAliveWorm` count **not OUT**, not `bAlive`
 (`CServer.cpp:671-690`). A dead worm waiting to respawn still counts.
 

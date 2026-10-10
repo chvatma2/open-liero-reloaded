@@ -14,6 +14,7 @@ rl-math = { path = "crates/rl-math" }
 rl-data = { path = "crates/rl-data" }
 rl-terrain = { path = "crates/rl-terrain" }
 rl-sim = { path = "crates/rl-sim" }
+rl-modes = { path = "crates/rl-modes" }
 rl-scenario = { path = "crates/rl-scenario" }
 rl-content = { path = "crates/rl-content" }
 rl-scene = { path = "crates/rl-scene" }

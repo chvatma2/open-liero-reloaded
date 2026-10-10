@@ -14,6 +14,7 @@
         "rl-import-gfx": 2,
         "rl-oracle": 2,
         "rl-sim": 3,
+        "rl-modes": 3,
         "rl-scenario": 4,
         "rl-content": 4,
         "rl-scene": 5,
@@ -28,6 +29,8 @@
     },
     same_layer: [
         ("rl-terrain", "rl-data"),
+        // Game modes implement the simulation's `GameMode` (spec §20 F6).
+        ("rl-modes", "rl-sim"),
         ("rl-import-lgs", "rl-pack"),
         ("rl-import-lxl", "rl-pack"),
         ("rl-import-gfx", "rl-pack"),
@@ -44,6 +47,6 @@
         ("rl-present", "rl-fx"),
         ("rl-present", "rl-render"),
     ],
-    no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim"],
-    wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
+    no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes"],
+    wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
 )

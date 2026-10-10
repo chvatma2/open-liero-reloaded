@@ -756,3 +756,17 @@ Made precise while implementing F6 and F9 (plan 6 task 1):
   time limit, so OLX never ends a recorded match either.)
 - **The checksum** includes the mode's state (`GameMode::checksum`) and the
   match's end, and hashes every NaN as one canonical NaN.
+
+Made precise while implementing Deathmatch (plan 6 task 2):
+
+- **`rl_modes::Deathmatch::prepare(DeathmatchSettings, &mut MatchSetup)`**
+  refuses fewer than two worms (F5) and copies the rules the simulation
+  applies (lives, kill limit, scoring) into `MatchSetup::settings` and the
+  worms' lives; the time limit and the spree thresholds are the mode's.
+- **OLX checks for the end every frame of a match** (`recheckGame` is set
+  by `BeginMatch` and never cleared while playing), so Deathmatch's
+  `is_over` ends the match in the frame of the deciding kill or the first
+  frame past the time limit, with no delay to model.
+- **Messages are `TextId`s** of `rl_modes::text` with OLX's default texts
+  (`olx_text`); the end's texts are sent in the `on_tick` of the frame that
+  ended, after the `GameOver` event.

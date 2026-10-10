@@ -46,6 +46,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Game loop and sandbox (spec §8.6, §19 E10-E12): fixed 100 Hz tick, interpolated frames, catch-up cap, window surface states, WSL GPU defaults, F5 restart from assets loaded once, overlay | `src/game/Game.cpp:897-959` (the frame clock it drives) | `rl-game` | done (plan 5 task 7) | `loop_never_runs_more_than_n_catchup_ticks`, `surface_survives_resize_and_outdated`, `sandbox_setup_spawns_targets`, `session_plays_and_restarts_from_loaded_assets`; scripted runs in a WSLg window on all 4 levels × 2 mods |
 | Long sessions (plan 5 review focus 5): 60 000 ticks (10 minutes) of the sandbox with chaos keys, `rl-fx`, mock audio and an offscreen render every 10th tick | — | `rl-game/tests/soak.rs` | done (plan 5 task 8) | `soak_sandbox_10_minutes_headless` (`cargo xtask full`, about 15 s): cosmetic entities, projectiles, entity count, audio voices, popups, instance buffer, atlas and terrain texture stay bounded, no panic |
 | Match API (spec §20 F6, F9): `MatchSetup`, `GameMode` callbacks and commands, `Message` and `GameOver` events; game over's effects on the simulation (kills ignored, no respawns or bonus spawns, no input or shooting, the client's projectiles cleared, the physics stopped after `GAMEOVER_WAIT`) | `src/server/CGameMode.cpp:69-252`, `src/server/CServer.cpp:532-625`, `src/server/CServer_Game.cpp:38-42`, `108-113`, `167-261`, `src/client/CClient_Game.cpp:76-91`, `116-117`, `src/common/PhysicsLX56.cpp:300`, `src/client/CClient_Parse.cpp:1436-1451`, `src/game/Game.cpp:1267-1276`, `include/FastVector.h:72-77`, `src/common/Physics.cpp:36-44` | `rl-sim::{setup, mode, referee}` | done (plan 6 task 1) | `oracle_mode_matches_the_hard_coded_credit` and the oracle (unchanged), `mode_commands_apply_inside_tick_deterministically`, `game_over_stops_kills_spawns_input_and_bonuses`, `give_weapon_mid_match_does_not_allocate`; no oracle scenario reaches a game over |
+| Deathmatch (`rl-modes`): kill bookkeeping and texts (first blood, killing and dying sprees, out), `CheckGameOver` (kill limit, time limit, fewer than two not out), `Winner`/`HighestScoredWorm`/`CompareWormsScore`, the results order, `Lives` and the respawn gate | `src/server/CGameMode.cpp:31-434`, `src/server/CDeathMatch.cpp`, `src/server/CServer.cpp:435-625`, `src/server/CServer_Game.cpp:167-260`, `src/client/Options.cpp:243-253`, `787-822`, `src/common/MathLib.cpp:85-88`, `src/client/CClient_Draw.cpp:1840-1897` | `rl-modes::{Deathmatch, rules, text}` | done (plan 6 task 2) | `deathmatch_game_over_and_winner_like_olx`, `lives_out_removes_worm_from_respawn`, `spree_messages`, `compare_like_olx`, `check_order_like_olx`, `deathmatch_is_deterministic_and_allocation_free` |
 
 ## Deliberate deviations
 
@@ -67,9 +68,9 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   recurse without bound. For hand-built settings, the physics step is at least 1 ms.
 - **Game over** (`GameServer::GameOver` and its gates) is in `rl-sim`; when
   a match ends is the mode's (`GameMode::is_over`, OLX's
-  `CGameMode::CheckGameOver`: Deathmatch in `rl-modes`). The oracle cannot
-  check it: its dedicated server allows empty games with unlimited lives,
-  and no scenario reaches the kill or time limit. Three details differ:
+  `CGameMode::CheckGameOver`: Deathmatch in `rl-modes`). The recorded
+  scenarios play `OracleMode` and never reach the kill or time limit.
+  Three details differ:
   `S2C_GAMEOVER` is parsed right after the frame's other server messages
   (OLX queues it among them, before that frame's bonus messages when
   `CheckGameOver` ends the match), skipped projectiles' clocks move by
@@ -118,8 +119,25 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   if the worm holds fire: it acts only on a `FinalProj`, which LX56 mods do not have.
 - **`Message` events are the mode's** (`ModeCtx::message`, a text id and
   three numbers): OLX's kill and spree texts come with Deathmatch
-  (`rl-modes`); `rl-sim` sends none itself, nor OLX's "<player> has won
-  the match" (the `GameOver` event carries the winner).
+  (`rl-modes`); `rl-sim` sends none itself (the `GameOver` event carries
+  the winner).
+- **Deathmatch's texts and sounds** (`rl-modes`): the kill text's weapon is
+  always unknown (-1; OLX then drops " with <weapon>"), as `rl-sim` does not
+  keep the weapon an injury came from. The end's texts ("Kill limit … hit by
+  worm …", "Timelimit has been reached", "… has won the match") are queued
+  in the `on_tick` of the frame that ended, so in a tick's events they come
+  after `GameOver`, and a kill's texts are applied with the frame's other
+  commands, after the physics. OLX's sounds of `CGameMode` (sprees,
+  "N frags left", lead changes, time remaining, "terminated",
+  "timeoutcalled") are not sent: modes have no sound command.
+- **Deathmatch's results order** keeps ties in id order (a stable sort);
+  OLX's `std::sort` leaves it unspecified, and its comparator is not a
+  strict order (with limited lives, two worms at the kill limit each rank
+  before the other).
+- **A Deathmatch needs two worms** (spec §20 F5, `Deathmatch::prepare`);
+  the check itself keeps OLX's single-worm local game (fewer than one not
+  out). A local game never allows empty games, so the "fewer than two not
+  out" check always runs.
 - **Sound ids** (`SimMod::sounds`): OLX's game sounds come first, each with the
   `olx:` prefix (a path in OLX's data directory); mod sounds are paths in the
   mod's pack and never carry it (a mod path that does is ignored).

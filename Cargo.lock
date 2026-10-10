@@ -2576,6 +2576,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-modes"
+version = "0.1.0"
+dependencies = [
+ "allocation-counter",
+ "libm",
+ "rl-data",
+ "rl-math",
+ "rl-sim",
+ "rl-terrain",
+]
+
+[[package]]
 name = "rl-oracle"
 version = "0.1.0"
 dependencies = [
