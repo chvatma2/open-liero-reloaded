@@ -17,6 +17,8 @@ pub struct WormSnap {
     pub time_of_death: AbsTime,
     /// The rope is out.
     pub rope_released: bool,
+    /// [`rl_sim::NinjaRope::throws`]: a rope thrown again has another.
+    pub rope_throws: u32,
     pub hook: Vec2,
 }
 
@@ -29,6 +31,7 @@ impl WormSnap {
             frame: w.frame,
             time_of_death: w.time_of_death,
             rope_released: w.rope.released,
+            rope_throws: w.rope.throws(),
             hook: w.rope.pos,
         }
     }
@@ -197,9 +200,12 @@ impl<'a> Blend<'a> {
     }
 
     /// Worm `i`'s hook position (unsnapped); a hook thrown since the
-    /// snapshot is not blended.
+    /// snapshot is not blended, even when the rope was out before (thrown
+    /// again: OLX `CWormHuman.cpp:565-572`).
     pub fn hook(&self, i: usize, w: &Worm) -> Vec2 {
-        match self.prev_worm(i, w).filter(|p| p.rope_released && w.rope.released) {
+        let same_throw =
+            |p: &&WormSnap| p.rope_released && w.rope.released && p.rope_throws == w.rope.throws();
+        match self.prev_worm(i, w).filter(same_throw) {
             Some(p) => lerp(p.hook, w.rope.pos, self.alpha),
             None => w.rope.pos,
         }

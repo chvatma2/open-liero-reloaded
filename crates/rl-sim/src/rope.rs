@@ -19,6 +19,8 @@ pub struct NinjaRope {
     /// Hook position and velocity.
     pub pos: Vec2,
     pub vel: Vec2,
+    /// How many times the rope was thrown ([`NinjaRope::throws`]).
+    pub(crate) throws: u32,
 }
 
 impl Default for NinjaRope {
@@ -31,6 +33,7 @@ impl Default for NinjaRope {
             player_attached: -1,
             pos: Vec2::ZERO,
             vel: Vec2::ZERO,
+            throws: 0,
         }
     }
 }
@@ -52,12 +55,21 @@ impl NinjaRope {
             return;
         }
         self.released = true;
+        self.throws = self.throws.wrapping_add(1);
         self.shooting = true;
         self.pos = owner_pos;
         self.vel = dir * s.rope_speed;
         if s.rope_add_parent_speed {
             self.vel += owner_vel;
         }
+    }
+
+    /// How many times this worm's rope was thrown (it wraps after 2^32; not
+    /// OLX state, the renderer's): a rope thrown again while it is out keeps
+    /// `released` but gets another count, so its hook is never drawn
+    /// sliding from the old anchor.
+    pub fn throws(&self) -> u32 {
+        self.throws
     }
 
     /// `CNinjaRope::Attach`.

@@ -34,7 +34,9 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `Draws::spawn_work` counts the children computed in full, for tests (not
   state: `WorkCounter` is always equal). `Draws::rot_bumped` keeps OLX's
   `RotIncrement` 0→1 mutation per projectile type (`World::rot_bumped`), and
-  each projectile gets a spawn serial (`Projectile::serial`).
+  each projectile gets a spawn serial (`Projectile::serial`), each rope
+  throw a count (`NinjaRope::throws`), so the renderer never blends across
+  a re-throw.
 - **Projectiles** (`proj_sim.rs`): after all worms in each sub-step, every
   projectile catches up its own clock in slot order (children in higher
   slots run in the same pass). Hit tests read the worm's `PosRecorder`

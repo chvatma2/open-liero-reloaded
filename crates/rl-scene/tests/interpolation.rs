@@ -106,3 +106,44 @@ fn interpolation_never_blends_reused_slots_or_respawns() {
     });
     assert_eq!((deaths, respawns), (1, 1));
 }
+
+/// Review Focus 1, the rope: a rope thrown again while it is out (a rope
+/// press, or jump and rope in one tick; OLX `CWormHuman.cpp:565-572`) is
+/// released in both snapshots, but the new hook starts at the worm and must
+/// not be drawn sliding back from the old anchor.
+#[test]
+fn rethrown_rope_is_not_blended() {
+    use rl_scene::Snapshot;
+    use rl_sim::{Keys, TickEvents};
+    let Some(content) = common::content() else { return };
+    let (sc, trace) = rl_scenario::load_fixture(&common::root().join("fixtures/oracle"), "rope").unwrap();
+    let mut world = rl_scenario::load_world(&content, &sc, &trace).unwrap();
+    let mut events = TickEvents::new();
+    let mut prev = Snapshot::new();
+    let keys = |t: u32| match t {
+        40..70 => Keys::UP,
+        80 | 130 => Keys::ROPE,
+        180 => Keys::JUMP | Keys::ROPE,
+        _ => 0,
+    };
+    let (mut rethrows, mut flights) = (0, 0);
+    for t in 0..230 {
+        prev.capture_into(&world);
+        world.tick(&[Keys(keys(t))], &mut events);
+        let (p, w) = (prev.worms()[0], &world.worms()[0]);
+        let drawn = Blend::new(&prev, 0.5, Interpolation::Linear).hook(0, w);
+        if !(p.rope_released && w.rope.released) {
+            continue;
+        }
+        if keys(t) & Keys::ROPE != 0 {
+            assert!((p.hook - w.rope.pos).length() > 20.0, "tick {t}: the old hook is far away");
+            assert_eq!(drawn, w.rope.pos, "tick {t}: the re-thrown hook is drawn where it is");
+            rethrows += 1;
+        } else {
+            assert_eq!(drawn, lerp(p.hook, w.rope.pos), "tick {t}: one throw blends");
+            flights += 1;
+        }
+    }
+    assert_eq!(rethrows, 2);
+    assert!(flights > 100);
+}

@@ -154,6 +154,26 @@ fn a_rope_press_without_permission_still_clears_the_rope() {
 }
 
 #[test]
+fn every_rope_throw_counts_even_while_the_rope_is_out() {
+    let mut w = world(Material::Background);
+    w.spawn_worm(100, 100);
+    let mut throws = vec![];
+    // Each press is followed by idle frames: a frame may run no sub-step,
+    // and the latched press is read by the next one that does.
+    for k in [Keys::ROPE, Keys::ROPE, Keys::JUMP | Keys::ROPE, Keys::JUMP] {
+        for k in [k, 0, 0] {
+            w.tick_new(&[Keys(k)]);
+        }
+        throws.push((w.worms()[0].rope.released, w.worms()[0].rope.throws()));
+    }
+    assert_eq!(throws, [(true, 1), (true, 2), (true, 3), (false, 3)]);
+    // A press that may not throw only clears the rope: no new throw.
+    w.worms[0].can_use_ninja = false;
+    w.tick_new(&[Keys(Keys::ROPE)]);
+    assert_eq!(w.worms()[0].rope.throws(), 3);
+}
+
+#[test]
 fn missing_keys_mean_nothing_is_held() {
     let mut w = world(Material::Background);
     w.spawn_worm(50, 100);

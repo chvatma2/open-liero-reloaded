@@ -250,13 +250,14 @@ impl Checksum for Slot {
 
 impl Checksum for NinjaRope {
     fn hash(&self, h: &mut Fnv) {
-        let NinjaRope { released, shooting, attached, player_attached, pos, vel } = self;
+        let NinjaRope { released, shooting, attached, player_attached, pos, vel, throws } = self;
         h.bool(*released);
         h.bool(*shooting);
         h.bool(*attached);
         h.i32(*player_attached);
         h.vec2(*pos);
         h.vec2(*vel);
+        h.u32(*throws);
     }
 }
 
