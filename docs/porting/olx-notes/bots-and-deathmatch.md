@@ -217,6 +217,12 @@ cost is about the area's pixel count, because each probed line is new.
       if left + right >= 7:  addAreaNode(pt' + dist, this)   // pt' = the last probed point
   ```
   So a passage must be at least 7 px wide and 5 px deep beyond the edge.
+  Precisely (checked in `rl-bots`' `areas_grow_like_olx`): `pt` itself is
+  never traced, so a gap of 7 passes only when the checkpoint is on the row
+  just outside it (7 traces on one side), one of 8 or more always passes,
+  6 never; and the new area is grown at `pt + dist`, one step past the last
+  `-dir` trace, so a long corridor must itself hold an area (8 px, since
+  `v2 - v1 >= 7`).
 - **`addAreaNode(p, pred)`** (`648-679`):
   - It ignores points outside the map.
   - If an existing area contains `p` (a linear scan, `562-584`), it relaxes:

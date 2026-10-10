@@ -1,6 +1,6 @@
 [package]
 name = "rl-bots"
-description = "OLX's bots for rl-sim matches: loadouts (presets, random weapons), and later navigation, motor, aim and brain."
+description = "OLX's bots for rl-sim matches: loadouts, navigation over free rectangles, the motor that presses keys, and aim."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,6 +11,11 @@ publish.workspace = true
 rl-sim.workspace = true
 rl-data.workspace = true
 rl-math.workspace = true
+rl-terrain.workspace = true
+libm.workspace = true
+
+[dev-dependencies]
+allocation-counter.workspace = true
 
 [lints]
 workspace = true

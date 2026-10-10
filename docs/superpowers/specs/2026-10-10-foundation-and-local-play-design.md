@@ -786,3 +786,23 @@ Made precise while implementing weapon restrictions and loadouts (plan 6 task 3)
   generator: a Deathmatch bot plays OLX's presets (`OlxPreset`, default) or
   random weapons (`Random`); a chaos bot draws random weapons ignoring the
   restrictions until its mode's rotation (F10) changes them.
+
+Made precise while implementing the bots' navigation, motor and aim (plan 6 task 4):
+
+- **`rl_bots::Bot::new(worm, BotConfig, seed: u32, &World)`** (the match
+  seed, as `MatchSetup::seed`) or `Bot::with_cache(.., Arc<AreaCache>)` to
+  share one per-match area cache between a match's bots, which then think
+  in a fixed order; `think(&World, &TickEvents) -> Keys` runs before each
+  `World::tick` with the previous tick's events. `BotConfig` gains `params:
+  Option<DifficultyParams>` (`None`: the difficulty's), `aim: AimModel` and
+  `budget` (8192 units by default; `Bot::budget` raises it to what the
+  level's longest worm line needs).
+- **A work unit is one terrain pixel read.** Every trace checks its worst
+  case before it starts, so a `think` never spends more than its budget;
+  growing an area pauses per pixel, a search between checkpoints and
+  traces. Bots allocate only in `new`.
+- **The 7 px passage rule, as OLX has it:** the checkpoint's own row is not
+  traced and an area must span 8 px, so a gap in a wall passes only from 8
+  px, or at 7 px when a checkpoint (every 5 px along the area's edge) lies
+  on the row just outside it; 6 px never.
+

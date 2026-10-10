@@ -49,6 +49,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Deathmatch (`rl-modes`): kill bookkeeping and texts (first blood, killing and dying sprees, out), `CheckGameOver` (kill limit, time limit, fewer than two not out), `Winner`/`HighestScoredWorm`/`CompareWormsScore`, the results order, `Lives` and the respawn gate | `src/server/CGameMode.cpp:31-434`, `src/server/CDeathMatch.cpp`, `src/server/CServer.cpp:435-625`, `src/server/CServer_Game.cpp:167-260`, `src/client/Options.cpp:243-253`, `787-822`, `src/common/MathLib.cpp:85-88`, `src/client/CClient_Draw.cpp:1840-1897` | `rl-modes::{Deathmatch, rules, text}` | done (plan 6 task 2) | `deathmatch_game_over_and_winner_like_olx`, `lives_out_removes_worm_from_respawn`, `spree_messages`, `compare_like_olx`, `check_order_like_olx`, `deathmatch_is_deterministic_and_allocation_free`; the oracle scenario `dm-kill-limit` (KillLimit 2, a double kill: the end and its winner, `go`, match OLX bit for bit) |
 | Weapon restrictions (spec §20 F4): `.wps` presets imported into mod packs (`cfg/presets/<mod dir>/`, then `cfg/presets/`), `CWpnRest` (`loadList`'s parsing and path rule, `updateList`, `findWeapon`, `isEnabled`, `getWeaponState`), natural bonuses from the weapons not banned (`goodWpns`) | `src/common/CWpnRest.cpp:59-277`, `include/CWpnRest.h:28-32`, `src/game/Game_loadWeaponRestrictions.cpp:16-28`, `src/server/CServer_Game.cpp:292-297`, `src/game/Game.cpp:1405-1420`, `src/common/CGameScript.cpp:1211-1231` | `rl-import-lgs::{parse_wps, import_presets}`, `rl-data::restrictions`, `rl-pack` (`restrictions.ron`, format 3), `rl-content` (`LoadedMod::weapon_rules`, `SandboxSetup::restrictions`), `rl-scenario` (the header's `WeaponRestrictionsFile`) | done (plan 6 task 3) | `wps_presets_enable_what_olx_enables` (every bundled Classic and MW 1.0 preset), `parses_like_load_list`, `lookups_follow_cwpnrest`, `natural_bonuses_hold_what_the_restrictions_allow`; the oracle scenarios `bonus-natural` (`Bonus only`) and `bonus-natural-default` (`Standard 100lt`, `natural_bonuses_use_default_restrictions`) match OLX bit for bit |
 | Bot loadouts (spec §20 F1): `initWeaponSelection`'s presets (rifles, 100lt, mortars by mod name, `LoadingTime` and restrictions), `GetRandomWeapons`, `getRandomEnabledWpn`; the bot's own `rand()` stream | `src/common/CWormBot.cpp:4129-4192`, `src/common/CWorm.cpp:788-844`, `src/game/Game.cpp:1405-1420`, `src/common/MathLib.cpp:71-81`, `include/Utils.h:38-43` | `rl-bots::{loadout, BotRng}` | done (plan 6 task 3) | `bot_presets_match_olx`, `random_weapons_follow_restrictions` |
+| Bot navigation, motor and aim (spec §20 F2, F3, F7): `getMaxFreeArea`, `searchpath_base` (checklist, passage rule, costs, worm-line goal test, `buildPath`, `simplifyPath`, `splitUpNodes`), `traceWormLine`/`fastTraceLine`/`simpleTraceLine`, the node advance of `AI_MoveToTarget`, `AI_SetAim`, `AI_GetAimingAngle`, `AI_Carve`/`AI_Jump` timers, `isJumpingGivingDisadvantage`; the difficulty numbers | `src/common/CWormBot.cpp:110-878`, `1022-1122`, `1651-1713`, `1896-1960`, `2834-2853`, `3304-3366`, `3578-3627`, `src/level/FastTraceLine.h:24-104`, `include/MathLib.h:140-153`, `include/CVec.h:157-185` | `rl-bots::{nav, motor, aim, Bot, Budget}` | done (plan 6 task 4; the brain is task 5) | `areas_grow_like_olx`, `search_finds_paths_and_resumes_across_ticks`, `motor_reaches_target_angle_like_olx_turning`, `motor_switches_weapons_in_two_ticks_per_slot`, `ballistic_hits_static_target`, `think_stays_within_budget`, `bots_are_deterministic`, `think_does_not_allocate`, `think_never_panics_on_odd_worlds` |
 
 ## Deliberate deviations
 
@@ -116,6 +117,24 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   the match seed, the worm and the personality), not from the game's `rand()`
   as OLX's do, so loadouts and later bot decisions never shift the world's
   generators (spec §20 F7).
+- **Bots think once per 100 Hz tick, not per 11 ms physics step,** on
+  `World::time()`, and spend a budget of work units (terrain pixels read),
+  not wall-clock time; pathfinding runs as a resumable state machine instead
+  of a thread (spec §20 F7). Areas are kept in a per-match `AreaCache`
+  shared by every search and bot (OLX grows them anew for each search), the
+  open set breaks ties by insertion order (OLX's `std::set` drops tied
+  areas), `simplifyPath`'s dead second loop is left out, a search visits at
+  most 1024 areas, a path has at most 256 nodes, and the node advance looks
+  8 nodes ahead and back (OLX: all of them).
+- **Bots press keys** (spec §20 F3; `rl_bots::Motor`): the aim turns through
+  UP/DOWN at about 100°/s with 0.2 s to speed up and to brake (60° takes
+  0.8 s; OLX's bot sets `fAngle` at 91°/s, 0.66 s, and snaps within 3°);
+  turning around takes one step of walking; carving needs walking (OLX
+  carves standing too); a jump is never pressed while the rope is out (it
+  would release it); a weapon change takes two ticks a slot and stops
+  walking. The aim offset of a difficulty is drawn per bot from its own
+  generator (OLX shares one per difficulty between all bots), and the aim is
+  good only when the worm also faces the target's side.
 - **The bonus spawn timer starts at the world's start** (`T0 + K`), as the
   oracle resets it when a recording starts; OLX sets it in `PrepareGame`.
 - `World::place_bonus` refuses a weapon id outside the mod (the oracle
