@@ -8,7 +8,7 @@ use rl_data::level::{Material, MaterialGrid};
 use rl_data::mod_def::*;
 use rl_math::AbsTime;
 use rl_sim::{Keys, Loadout, SimMod, SimSettings, Slot, World};
-use rl_terrain::{Stamp, Terrain};
+use rl_terrain::{GreenMask, Stamp, Terrain};
 
 /// A plain pixel projectile: explodes on terrain, injures worms.
 fn pellet() -> ProjectileDef {
@@ -27,14 +27,15 @@ fn pellet() -> ProjectileDef {
 }
 
 /// A Minigun-like weapon that empties and reloads, and a three-pellet
-/// shotgun. Pellets bounce, leave a projectile trail and explode into bits
-/// after half a second; bits bounce, smoke and disappear on a timer.
+/// shotgun. Pellets bounce, leave a projectile trail and explode (carving,
+/// injuring) into bits after half a second; bits bounce, smoke and place
+/// green dirt on a timer.
 fn sim_mod() -> Arc<SimMod> {
     let bit = ProjectileDef {
         timer: TimerDef {
             time: 0.2,
             time_var: 0.0,
-            action: Some(ActionDef::olx_default(ActionKind::Disappear2)),
+            action: Some(ActionDef::olx_default(ActionKind::GreenDirt)),
         },
         hit: ActionDef::olx_default(ActionKind::Bounce),
         trail: TrailDef { kind: TrailKind::Smoke, delay: 0.1, spawn: None },
@@ -46,6 +47,7 @@ fn sim_mod() -> Arc<SimMod> {
             time_var: 0.0,
             action: Some(ActionDef {
                 spawns_projectiles: true,
+                damage: 3,
                 ..ActionDef::olx_default(ActionKind::Explode)
             }),
         },
@@ -122,6 +124,13 @@ fn tick_does_not_allocate() {
         (0..300 * 200).map(|i| if i / 300 < 150 { Material::Background } else { Material::Dirt }).collect();
     let terrain = Terrain::from_grid(&MaterialGrid::from_cells(300, 200, cells).unwrap());
     let mut w = World::new(SimSettings::lx56(), sim_mod(), terrain, holes, AbsTime(0), 1);
+    let mut green = RgbaImage::new(8, 9);
+    for y in 0..9 {
+        for x in 0..8 {
+            green.set(x, y, if (x + y) % 3 == 0 { Rgba::rgb(108, 80, 0) } else { Rgba::rgb(0, 255, 0) });
+        }
+    }
+    w.set_green_mask(GreenMask::from_image(&green));
     w.spawn_worm(100, 100);
     w.spawn_worm(200, 100);
     for (i, weapon) in [(0, 0), (1, 1)] {
@@ -140,5 +149,7 @@ fn tick_does_not_allocate() {
         }
     });
     assert_eq!(info.count_total, 0, "tick allocated");
+    let dirt: Vec<i32> = w.worms().iter().map(|w| w.dirt_count).collect();
+    assert!(dirt.iter().any(|&d| d != 0), "explosions carved or bits placed dirt: {dirt:?}");
     assert!(w.projectiles().count() > 20, "{} projectiles", w.projectiles().count());
 }

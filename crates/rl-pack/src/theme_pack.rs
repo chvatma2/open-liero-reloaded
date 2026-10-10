@@ -1,5 +1,6 @@
 //! Theme packs: `theme.ron`, `holes/<n>.png`, `stones/<n>.png`, `misc/<n>.png`
-//! (numbered from 1), `front_tile.png`, `back_tile.png`.
+//! (numbered from 1), `front_tile.png`, `back_tile.png`, and optionally
+//! `green_ball.png`.
 
 use rl_data::image::RgbaImage;
 use rl_data::manifest::{PackKind, PackManifest};
@@ -11,6 +12,7 @@ use crate::ron_io::{read_ron, write_ron};
 use crate::{MANIFEST, PackError, read_manifest, write_manifest};
 
 pub const THEME_FILE: &str = "theme.ron";
+const GREEN_BALL: &str = "green_ball.png";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThemePack {
@@ -45,7 +47,11 @@ pub fn write_theme(sink: &mut dyn ContentSink, pack: &ThemePack) -> Result<(), P
         }
     }
     put(sink, "front_tile.png", &t.front_tile)?;
-    put(sink, "back_tile.png", &t.back_tile)
+    put(sink, "back_tile.png", &t.back_tile)?;
+    if let Some(img) = &t.green_ball {
+        put(sink, GREEN_BALL, img)?;
+    }
+    Ok(())
 }
 
 pub fn read_theme(src: &dyn ContentSource) -> Result<ThemePack, PackError> {
@@ -63,6 +69,10 @@ pub fn read_theme(src: &dyn ContentSource) -> Result<ThemePack, PackError> {
         misc: list("misc", def.misc)?,
         front_tile: get(src, "front_tile.png")?,
         back_tile: get(src, "back_tile.png")?,
+        green_ball: match src.exists(&VPath::new(GREEN_BALL)?) {
+            true => Some(get(src, GREEN_BALL)?),
+            false => None,
+        },
         def,
     };
     Ok(ThemePack { manifest, theme })
@@ -85,12 +95,19 @@ mod tests {
                 stones: vec![img.clone()],
                 misc: vec![],
                 front_tile: img.clone(),
-                back_tile: img,
+                back_tile: img.clone(),
+                green_ball: None,
             },
         };
         let mut fs = MemFs::new();
         write_theme(&mut fs, &pack).unwrap();
         assert!(fs.exists(&VPath::new("holes/2.png").unwrap()));
+        assert!(!fs.exists(&VPath::new("green_ball.png").unwrap()));
+        assert_eq!(read_theme(&fs).unwrap(), pack);
+        let pack = ThemePack { theme: Theme { green_ball: Some(img), ..pack.theme }, ..pack };
+        let mut fs = MemFs::new();
+        write_theme(&mut fs, &pack).unwrap();
+        assert!(fs.exists(&VPath::new("green_ball.png").unwrap()));
         assert_eq!(read_theme(&fs).unwrap(), pack);
     }
 }

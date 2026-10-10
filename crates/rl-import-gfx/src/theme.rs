@@ -1,6 +1,7 @@
 //! Level themes (`CMap::LoadTheme`, `src/common/CMap.cpp:308-370`):
 //! five holes, `NumStones` stones and `NumMisc` misc images from `theme.txt`,
-//! plus the front and back tiles.
+//! plus the front and back tiles, and the shared green-dirt mask
+//! `data/gfx/greenball.png` (`CMap.cpp:365-367`).
 
 use rl_data::manifest::{Origin, PackKind};
 use rl_data::slug::slug;
@@ -11,6 +12,7 @@ use rl_vfs::{ContentSource, VPath, find_ci};
 use crate::{GfxError, decode, manifest};
 
 const HOLES: u32 = 5;
+const GREEN_BALL: &str = "data/gfx/greenball.png";
 
 #[derive(Debug)]
 pub struct ImportedTheme {
@@ -63,6 +65,13 @@ pub fn import_theme(olx: &dyn ContentSource, dir: &VPath, origin: Origin) -> Res
         misc: list("misc", misc)?,
         front_tile: decode(olx, &find("Fronttile.png")?)?,
         back_tile: decode(olx, &find("Backtile.png")?)?,
+        green_ball: match find_ci(olx, &VPath::new(GREEN_BALL)?) {
+            Some(p) => Some(decode(olx, &p)?),
+            None => {
+                warnings.push(format!("{GREEN_BALL} missing: green dirt will place nothing, like OLX"));
+                None
+            }
+        },
     };
     let pack = ThemePack {
         manifest: manifest(format!("olx-theme-{}", slug(&name)), name, PackKind::Theme, origin),
@@ -88,8 +97,9 @@ mod tests {
     #[test]
     fn imports_with_case_insensitive_names() {
         let png = rl_pack::image_io::encode_rgba(&RgbaImage::new(2, 2));
-        let mut fs =
-            MemFs::new().with("data/themes/Dirt/theme.txt", "[General]\nNumStones = 1\nNumMisc = 0\n");
+        let mut fs = MemFs::new()
+            .with("data/themes/Dirt/theme.txt", "[General]\nNumStones = 1\nNumMisc = 0\n")
+            .with("data/gfx/GreenBall.png", png.clone());
         for f in ["hole1", "hole2", "hole3", "hole4", "hole5", "Stone1", "FrontTile", "BackTile"] {
             fs = fs.with(&format!("data/themes/Dirt/{f}.png"), png.clone());
         }
@@ -98,6 +108,21 @@ mod tests {
         assert!(t.warnings.is_empty());
         assert_eq!(t.pack.manifest.id, "olx-theme-dirt");
         assert_eq!((t.pack.theme.holes.len(), t.pack.theme.stones.len()), (5, 1));
+        assert!(t.pack.theme.green_ball.is_some());
+    }
+
+    #[test]
+    fn a_missing_green_ball_is_a_warning() {
+        let png = rl_pack::image_io::encode_rgba(&RgbaImage::new(2, 2));
+        let mut fs =
+            MemFs::new().with("data/themes/Dirt/theme.txt", "[General]\nNumStones = 0\nNumMisc = 0\n");
+        for f in ["Hole1", "Hole2", "Hole3", "Hole4", "Hole5", "Fronttile", "Backtile"] {
+            fs = fs.with(&format!("data/themes/Dirt/{f}.png"), png.clone());
+        }
+        let origin = Origin { source: "t".into(), path: "Dirt".into(), revision: "0".into() };
+        let t = import_theme(&fs, &VPath::new("data/themes/Dirt").unwrap(), origin).unwrap();
+        assert_eq!(t.pack.theme.green_ball, None);
+        assert!(t.warnings[0].contains("greenball.png missing"), "{:?}", t.warnings);
     }
 
     #[test]

@@ -7,12 +7,13 @@
 
 extern crate alloc;
 
+mod dirt;
 mod stamp;
 
 use alloc::vec::Vec;
 
 use rl_data::level::{Material, MaterialGrid};
-pub use stamp::{Stamp, StampPixel};
+pub use stamp::{GreenMask, GreenPixel, Stamp, StampPixel};
 
 /// OLX pixel flags (`src/level/LXMapFlags.h`).
 pub const PX_EMPTY: u8 = 0x01;
@@ -72,7 +73,8 @@ impl Terrain {
     /// from its top-left corner (the stamp is not offset by the clipped amount).
     pub fn carve_hole(&mut self, stamp: &Stamp, pos_x: i32, pos_y: i32) -> u32 {
         let (w, h) = (stamp.width() as i32, stamp.height() as i32);
-        let (mut x, mut y, mut cw, mut ch) = (pos_x - w / 2, pos_y - h / 2, w, h);
+        // C's int arithmetic; it wraps on x86 where Rust would panic.
+        let (mut x, mut y, mut cw, mut ch) = (pos_x.wrapping_sub(w / 2), pos_y.wrapping_sub(h / 2), w, h);
         if !clip(&mut x, &mut cw, self.width as i32) || !clip(&mut y, &mut ch, self.height as i32) {
             return 0;
         }
@@ -101,7 +103,7 @@ impl Terrain {
 
 /// OLX `OLXRect::clipWith` on one axis against `[0, limit)`: returns false if nothing is left.
 fn clip(start: &mut i32, len: &mut i32, limit: i32) -> bool {
-    let end = *start + *len;
+    let end = start.saturating_add(*len);
     *start = (*start).max(0);
     let end = end.min(limit).max(*start);
     *len = end - *start;
@@ -162,6 +164,9 @@ mod tests {
         assert_eq!(t.material(0, 0), Some(Material::Background));
         assert_eq!(t.material(1, 0), Some(Material::Dirt));
         assert_eq!(t.carve_hole(&s, -10, 0), 0, "fully outside");
+        for p in [i32::MIN, i32::MIN + 1, i32::MAX - 1, i32::MAX] {
+            assert_eq!(t.carve_hole(&s, p, 0) + t.carve_hole(&s, 0, p), 0, "{p}: no panic");
+        }
     }
 
     #[test]

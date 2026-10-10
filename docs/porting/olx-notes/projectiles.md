@@ -650,9 +650,10 @@ the position **after** this step's move (except `Carve` and `BounceExplode`,
 which act inside `applyTo`, and the timer's `Carve`, which acts **before** the
 move). Explode and dirt can both happen in one step (explosion first).
 
-`projectile_doMakeDirt` (`:1132-1144`): `d = PlaceDirt(5, pos - (6,6)) + PlaceDirt(5, pos + (6,-6)) + PlaceDirt(5, pos + (0,6))`;
-owner `incrementDirtCount(-d)`.
-`projectile_doMakeGreenDirt` (`:1146-1154`): `d = PlaceGreenDirt(pos)`; owner `incrementDirtCount(-d)`.
+`projectile_doMakeDirt` (`:1132-1144`): `d = PlaceDirt(5, pos - (6,6)) + PlaceDirt(5, pos + (6,-6)) + PlaceDirt(5, pos + (0,6))`
+(float sums, which `PlaceDirt` truncates toward zero: `5.5 - 6` lands on x = 0);
+`if hasOwner()` (owner in 0..31): owner `incrementDirtCount(-d)`.
+`projectile_doMakeGreenDirt` (`:1146-1154`): `d = PlaceGreenDirt(pos)`; `if hasOwner()`: owner `incrementDirtCount(-d)`.
 `incrementDirtCount(d)` (`CWorm.cpp:1381-1389`): `if d != 0: iDirtCount += d; if isServer: gameMode()->Carve(this, d)`.
 
 ### 4.5 Spawning children from a projectile (`Proj_SpawnInfo::apply`, `:562-640`)
@@ -703,11 +704,12 @@ if gotDirt: repeat 2: SpawnEntity(ENT_PARTICLE, 0, pos, GetRandomVec().multPairw
 // 4. cosmetic entity
 SpawnEntity(ENT_EXPLOSION, damage > 5 ? (int)damage : 8, pos, ...)            // no rand, takes a pool slot
 // 5. carve
-d = CarveHole((int)damage, pos)                                              // owner incrementDirtCount(+d)
+d = CarveHole((int)damage, pos)               // wormById(owner) (any worm, dead too): incrementDirtCount(+d)
+                                              // (int) is cvttss2si: NaN or |damage| >= 2^31 gives INT_MIN -> Hole1
 // 6. viewport shake: cosmetic, no rand
 // 7. damage: NO falloff
 for w in aliveWorms (id order):
-    wPos = w.posRecordings.getBest(11, (size_t)(tLX->currentTime - time).ms)
+    wPos = w.posRecordings.getBest(11, (size_t)(tLX->currentTime - time).ms)   // as the hit test (§3.6)
     if (pos - wPos).GetLength2() <= 25: InjureWorm(w, damage, owner, weapon)
 ```
 

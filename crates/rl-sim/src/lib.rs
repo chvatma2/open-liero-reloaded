@@ -15,6 +15,8 @@
 extern crate alloc;
 
 mod actions;
+mod damage;
+mod effects;
 mod input;
 mod mod_rt;
 mod physics;

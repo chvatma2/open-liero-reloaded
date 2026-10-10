@@ -87,9 +87,13 @@ fn imported_content() {
                 rl_pack::write_theme(&mut copy, &p).unwrap();
                 assert_eq!(rl_pack::read_theme(&copy).unwrap(), p);
                 let t = &p.theme.def;
+                let green = match &p.theme.green_ball {
+                    Some(g) => format!("green ball {}x{}", g.width(), g.height()),
+                    None => "no green ball".into(),
+                };
                 writeln!(
                     summary,
-                    "theme {}: {} holes, {} stones, {} misc",
+                    "theme {}: {} holes, {} stones, {} misc, {green}",
                     p.manifest.id, t.holes, t.stones, t.misc
                 )
                 .unwrap();

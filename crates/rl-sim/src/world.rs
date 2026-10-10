@@ -10,7 +10,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use rl_math::{AbsTime, GlibcRand, Mt19937, TimeDiff, Vec2};
-use rl_terrain::{Stamp, Terrain};
+use rl_terrain::{GreenMask, Stamp, Terrain};
 
 use crate::SimSettings;
 use crate::input::{Keys, Latches};
@@ -40,6 +40,8 @@ pub struct World {
     terrain: Terrain,
     /// The theme's five hole stamps, smallest first.
     holes: Vec<Stamp>,
+    /// The green-dirt mask (`bmpGreenMask`), if the theme has one.
+    green_mask: Option<GreenMask>,
     worms: Vec<Worm>,
     latches: Vec<Latches>,
     /// `Game::simulationTime`.
@@ -89,6 +91,7 @@ impl World {
             sim_mod,
             terrain,
             holes,
+            green_mask: None,
             worms: Vec::new(),
             latches: Vec::new(),
             time: start,
@@ -100,6 +103,12 @@ impl World {
             draws: Draws::new(GlibcRand::new(seed), Mt19937::new(seed)),
             others: Scratch::default(),
         }
+    }
+
+    /// Sets the green-dirt mask (`data/gfx/greenball.png`) before the match
+    /// starts. Like OLX, green dirt places nothing without it.
+    pub fn set_green_mask(&mut self, mask: GreenMask) {
+        self.green_mask = Some(mask);
     }
 
     pub fn worms(&self) -> &[Worm] {
@@ -320,6 +329,8 @@ impl World {
             terrain: &mut self.terrain,
             worms: &mut self.worms,
             draws: &mut self.draws,
+            holes: &self.holes,
+            green_mask: self.green_mask.as_ref(),
             now: self.time,
             wall_clock: self.time + TimeDiff(CLOCK_OFFSET_MS),
             physics_dt,

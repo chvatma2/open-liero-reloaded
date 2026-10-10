@@ -5,12 +5,12 @@
 use rl_data::level::Material;
 use rl_data::mod_def::{ActionKind, AnimKind, ProjectileGfx, TrailKind};
 use rl_math::{AbsTime, TimeDiff, Vec2, fmod, normalize_vector};
-use rl_terrain::Terrain;
+use rl_terrain::{GreenMask, Stamp, Terrain};
 
 use crate::SimSettings;
 use crate::actions::{DoActionInfo, Event, apply_to, execute, timer_has_action};
 use crate::mod_rt::{SimMod, SimProjectile};
-use crate::projectile::{Projectile, ProjectilePool, attr_set, c_int};
+use crate::projectile::{Projectile, ProjectilePool, attr_set, c_int, c_u64};
 use crate::rng::Draws;
 use crate::world::MAX_WORMS;
 use crate::worm::Worm;
@@ -49,6 +49,10 @@ pub(crate) struct ProjCtx<'a> {
     pub terrain: &'a mut Terrain,
     pub worms: &'a mut [Worm],
     pub draws: &'a mut Draws,
+    /// The theme's hole stamps, smallest first.
+    pub holes: &'a [Stamp],
+    /// `bmpGreenMask`, if the theme has it.
+    pub green_mask: Option<&'a GreenMask>,
     /// `GetPhysicsTime()`: the frame clock.
     pub now: AbsTime,
     /// `tLX->currentTime`, pinned to `now + K` (spec §18 D2).
@@ -167,7 +171,7 @@ fn low_level(
         TrailKind::Projectile if p.last_sim_time > p.last_trail_proj => {
             // AbsTime + float: `time + (Uint64)(td * 1000.0f)`.
             let delay = trail.delay / ctx.settings.game_speed;
-            p.last_trail_proj = AbsTime(p.last_sim_time.0.wrapping_add((delay * 1000.0) as u64));
+            p.last_trail_proj = AbsTime(p.last_sim_time.0.wrapping_add(c_u64(delay * 1000.0)));
             info.trail_spawn = true;
         }
         _ => {}
@@ -199,7 +203,7 @@ fn check_coll_and_move(p: &mut Projectile, pi: &SimProjectile, dt: TimeDiff, ctx
     let mut checkstep = p.avg_checkstep as f32 / libm::sqrtf(v2);
     // MAX(a, b) is `a > b ? a : b`.
     checkstep = if checkstep > 0.001 { checkstep } else { 0.001 };
-    let cstep = TimeDiff((checkstep * 1000.0) as u64);
+    let cstep = TimeDiff(c_u64(checkstep * 1000.0));
     if cstep < dt {
         let mut time = TimeDiff(0);
         while time < dt {
@@ -255,7 +259,7 @@ fn move_frame(p: &mut Projectile, pi: &SimProjectile, dt: TimeDiff, ctx: &mut Pr
         );
     }
     // Wall shooting: LX56 ignores the terrain for the first 10-12 ms.
-    let window = TimeDiff((p.wallshoot_time * 1000.0) as u64);
+    let window = TimeDiff(c_u64(p.wallshoot_time * 1000.0));
     if p.last_sim_time <= AbsTime(p.spawn_time.0.wrapping_add(window.0)) {
         return final_worm_check(p, pi, frame_old_pos, old_vel, NO_COL, ctx);
     }
@@ -480,4 +484,4 @@ fn proj_worm_coll(p: &mut Projectile, pos: Vec2, ctx: &ProjCtx) -> i32 {
 
 #[cfg(test)]
 #[path = "proj_sim_tests.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -15,6 +15,20 @@ pub(crate) fn c_int(f: f32) -> i32 {
     if f.is_nan() || f >= 2_147_483_648.0 || f < -2_147_483_648.0 { i32::MIN } else { f as i32 }
 }
 
+/// `cvttss2si` with a 64-bit destination: `i64::MIN` for NaN or out of range.
+pub(crate) fn c_i64(f: f32) -> i64 {
+    if f.is_nan() || f >= 9.223_372e18 || f < -9.223_372e18 { i64::MIN } else { f as i64 }
+}
+
+/// C's `(Uint64)f` as GCC compiles it for x86-64 without AVX-512: below
+/// 2^63 (and for NaN) a 64-bit `cvttss2si`, so negative values wrap; from
+/// 2^63 on, `cvttss2si(f - 2^63) ^ 2^63`, so infinity and values from 2^64
+/// on give 0. `TimeDiff(float)` and `AbsTime + float` go through it.
+pub(crate) fn c_u64(f: f32) -> u64 {
+    const TWO_63: f32 = 9_223_372_036_854_775_808.0;
+    if f >= TWO_63 { (c_i64(f - TWO_63) as u64) ^ (1 << 63) } else { c_i64(f) as u64 }
+}
+
 /// An assignment through OLX's `Attr<CVec>::operator=` (`src/game/Attr.h:194-204`),
 /// which `vPos` and `vVelocity` of projectiles and worms use: it is skipped
 /// when the new value compares equal, so a zero keeps its old sign (a reused
@@ -290,6 +304,41 @@ mod tests {
         assert_eq!(take(&mut pool), Some(2));
         assert_eq!(pool.next_used(None), Some(0));
         assert_eq!(pool.next_used(Some(2)), None);
+    }
+
+    #[test]
+    fn c_u64_wraps_like_gcc() {
+        // Values from a GCC 15 -O2 build on x86-64 (`(uint64_t)f`).
+        let cases = [
+            (-1500.0, 18_446_744_073_709_550_116),
+            (-0.0, 0),
+            (f32::NAN, 1 << 63),
+            (f32::NEG_INFINITY, 1 << 63),
+            (f32::INFINITY, 0),
+            (1e22, 0),
+            (-1e22, 1 << 63),
+            (5500.0, 5500),
+            (1e19, 9_999_999_980_506_447_872),
+        ];
+        for (f, want) in cases {
+            assert_eq!(c_u64(f), want, "{f}");
+        }
+    }
+
+    #[test]
+    fn attr_set_keeps_the_sign_of_zero() {
+        let mut v = Vec2::new(-0.0, 0.0);
+        attr_set(&mut v, Vec2::new(0.0, -0.0));
+        assert_eq!(
+            (v.x.to_bits(), v.y.to_bits()),
+            ((-0.0f32).to_bits(), 0.0f32.to_bits()),
+            "equal: not written"
+        );
+        attr_set(&mut v, Vec2::new(0.0, 1.0));
+        assert_eq!((v.x.to_bits(), v.y), (0.0f32.to_bits(), 1.0), "one component differs: both written");
+        let mut n = Vec2::new(f32::NAN, 0.0);
+        attr_set(&mut n, Vec2::new(f32::NAN, 0.0));
+        assert!(n.x.is_nan(), "NaN never compares equal, so it is written");
     }
 
     #[test]

@@ -14,7 +14,7 @@ use anyhow::Context;
 use rl_math::AbsTime;
 use rl_oracle::{Fields, Frame, Num, ProjRec, RopeRec, Scenario, ShotRec, SlotRec, Trace, WormRec};
 use rl_sim::{CLOCK_OFFSET_MS, Keys, Loadout, SimMod, SimSettings, Slot, World};
-use rl_terrain::{Stamp, Terrain};
+use rl_terrain::{GreenMask, Stamp, Terrain};
 use rl_vfs::DirFs;
 
 /// The trace fields the simulation reproduces so far; the acceptance test
@@ -134,6 +134,9 @@ pub fn load_world(content: &Path, sc: &Scenario, expected: &Trace) -> anyhow::Re
     let seed = expected.header.seed.unwrap_or(sc.seed);
     let terrain = Terrain::from_grid(&level.material);
     let mut world = World::new(settings, Arc::new(sim_mod), terrain, holes, AbsTime(t0(expected)), seed);
+    if let Some(img) = &theme.green_ball {
+        world.set_green_mask(GreenMask::from_image(img));
+    }
     let start = expected.frames.first().context("trace has no frames")?;
     for (i, spawn) in sc.worms.iter().enumerate() {
         world.spawn_worm(spawn.x, spawn.y).context("the scenario has more worms than rl-sim allows")?;

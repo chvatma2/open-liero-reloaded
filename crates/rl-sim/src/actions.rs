@@ -2,15 +2,14 @@
 //! `Proj_DoActionInfo::execute` (`src/common/PhysicsLX56_Projectiles.cpp:670-945`,
 //! `1115-1230`), with the v7 (LX56) defaults for the fields only v8 mods set.
 //!
-//! Explosions, carving, dirt and worm damage are stubs until Tasks 6 and 7:
-//! they keep OLX's control flow (what is deleted, spawned and pushed) and
-//! the explosion's cosmetic draws and entities, but do not change the map
-//! or any worm's health.
+//! The map and health effects are in [`crate::effects`] and
+//! [`crate::damage`].
 
 use rl_data::mod_def::{ActionDef, ActionKind, AnimKind, ProjectileGfx, TimerDef};
-use rl_math::{AbsTime, PI_F32, TimeDiff, Vec2, atan2f, normalize_vector};
-use rl_terrain::PX_DIRT;
+use rl_math::{PI_F32, TimeDiff, Vec2, atan2f, normalize_vector};
 
+use crate::damage::injure_worm;
+use crate::effects::{carve, explosion, make_dirt, make_green_dirt};
 use crate::mod_rt::SpawnInfo;
 use crate::proj_sim::{COL_BOTTOM, COL_LEFT, COL_RIGHT, COL_TOP, Col, PJC_MAPBORDER, ProjCtx};
 use crate::projectile::{Projectile, ProjectilePool, attr_set};
@@ -122,7 +121,7 @@ pub(crate) fn apply_to(
         }
         ActionKind::Carve => {
             if ev.timer_hit || ev.terrain().is_some() {
-                // Task 6: CarveHole(Damage, pos) and the owner's dirt count.
+                carve(ctx, a.damage, p.pos, p.owner);
                 info.delete_after = true;
             }
         }
@@ -138,12 +137,14 @@ pub(crate) fn apply_to(
         }
         ActionKind::Disappear2 => info.delete_after = true,
         ActionKind::InjureWorm => {
-            // Task 7: InjureWorm(worm, Damage, owner).
+            if let Some(id) = ev.worm() {
+                injure_worm(ctx, id, a.damage as f32, p.owner);
+            }
         }
         // Injure falls through to Disappear, which falls through to Nothing.
-        ActionKind::Injure if ev.worm().is_some() => {
+        ActionKind::Injure if let Some(id) = ev.worm() => {
             info.delete_after = true;
-            // Task 7: InjureWorm(worm, Damage, owner).
+            injure_worm(ctx, id, a.damage as f32, p.owner);
         }
         ActionKind::Disappear if ev.worm().is_some() => {}
         ActionKind::Injure | ActionKind::Disappear | ActionKind::GoThrough | ActionKind::Nothing => {
@@ -268,40 +269,6 @@ fn heading_vel_to(target: Option<Vec2>, src: &Projectile) -> Vec2 {
     ret * (angle / PI_F32)
 }
 
-/// `CClient::Explosion` (`src/client/CClient_Game.cpp:227-330`), so far only
-/// its draws and entities: two dirt particles when there is dirt within 2 px
-/// (4 `rand()`), then the explosion entity. Task 6 adds the hole, the dirt
-/// count and the damage; with `Bonuses` on, the bonus chain is Task 9's.
-pub(crate) fn explosion(ctx: &mut ProjCtx, _time: AbsTime, pos: Vec2, _damage: f32, _owner: i32) {
-    let (w, h) = (ctx.terrain.width() as i64, ctx.terrain.height() as i64);
-    // MIN((uint)pos.y, H - 1); px = (uint)pos.x. x86-64 converts through a 64-bit int.
-    let y = (c_i64(pos.y) as u32).min((h as u32).wrapping_sub(1)) as i32 as i64;
-    let px = c_i64(pos.x) as u32 as i32 as i64;
-    let mut got_dirt = false;
-    for x in px - 2..px + 2 {
-        if x < 0 {
-            continue;
-        }
-        if x >= w {
-            break;
-        }
-        if ctx.terrain.flags(x, y) & PX_DIRT != 0 {
-            got_dirt = true;
-            break;
-        }
-    }
-    if got_dirt {
-        // GetRandomVec().multPairwise(30, 10) each.
-        ctx.draws.particles(2);
-    }
-    ctx.draws.spawn_entity();
-}
-
-/// `cvttss2si` with a 64-bit destination: `i64::MIN` for NaN or out of range.
-fn c_i64(f: f32) -> i64 {
-    if f.is_nan() || f >= 9.223_372e18 || f < -9.223_372e18 { i64::MIN } else { f as i64 }
-}
-
 /// `Proj_DoActionInfo::execute` (`:1165-1230`): explosion, dirt, then the
 /// children (trail first), then the junk-projectile rule, and only then
 /// the projectile frees its slot, so children never take it.
@@ -326,11 +293,11 @@ pub(crate) fn execute(pool: &mut ProjectilePool, i: usize, info: &mut DoActionIn
         info.delete_after = true;
     }
     if info.dirt {
-        // Task 6: projectile_doMakeDirt.
+        make_dirt(ctx, pos, owner);
         info.delete_after = true;
     }
     if info.green_dirt {
-        // Task 6: projectile_doMakeGreenDirt.
+        make_green_dirt(ctx, pos, owner);
         info.delete_after = true;
     }
     if info.trail_spawn

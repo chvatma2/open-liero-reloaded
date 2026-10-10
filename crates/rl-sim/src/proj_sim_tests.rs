@@ -11,10 +11,10 @@ use rl_data::mod_def::{ActionDef, Animation, ProjectileDef, SpawnDef, TimerDef, 
 use rl_math::{GlibcRand, Mt19937};
 
 /// The frame clock the tests simulate up to.
-const NOW: AbsTime = AbsTime(10_000);
+pub(crate) const NOW: AbsTime = AbsTime(10_000);
 
 /// A projectile that never collides with anything: no gravity, no actions.
-fn inert() -> ProjectileDef {
+pub(crate) fn inert() -> ProjectileDef {
     ProjectileDef {
         gravity: Some(0),
         hit: ActionDef::olx_default(ActionKind::Nothing),
@@ -24,7 +24,7 @@ fn inert() -> ProjectileDef {
 }
 
 /// Lives `secs` seconds, then disappears.
-fn timed(secs: f32, p: ProjectileDef) -> ProjectileDef {
+pub(crate) fn timed(secs: f32, p: ProjectileDef) -> ProjectileDef {
     let action = Some(ActionDef::olx_default(ActionKind::Disappear2));
     ProjectileDef { timer: TimerDef { time: secs, time_var: 0.0, action }, ..p }
 }
@@ -39,40 +39,44 @@ fn trailing(child: &str, amount: i32) -> ProjectileDef {
 
 /// One weapon per projectile, named like it, so each projectile's path
 /// name is its own name and its children are `<name>.trail`.
-fn sim_mod(projectiles: Vec<(&str, ProjectileDef)>, frames: &[(&str, u32)]) -> SimMod {
+pub(crate) fn sim_mod(projectiles: Vec<(&str, ProjectileDef)>, frames: &[(&str, u32)]) -> SimMod {
     let weapons = projectiles.iter().map(|(n, _)| projectile_weapon(n, n)).collect();
     let def = mod_def(weapons, projectiles);
     let frames: BTreeMap<_, _> = frames.iter().map(|(f, n)| (f.to_string(), *n)).collect();
     SimMod::compile(&def, &frames).unwrap()
 }
 
-struct Bench {
-    sim_mod: SimMod,
-    settings: SimSettings,
-    terrain: Terrain,
-    worms: Vec<Worm>,
-    draws: Draws,
-    pool: ProjectilePool,
+pub(crate) struct Bench {
+    pub sim_mod: SimMod,
+    pub settings: SimSettings,
+    pub terrain: Terrain,
+    pub holes: Vec<Stamp>,
+    pub green_mask: Option<GreenMask>,
+    pub worms: Vec<Worm>,
+    pub draws: Draws,
+    pub pool: ProjectilePool,
 }
 
 impl Bench {
-    fn new(sim_mod: SimMod, terrain: MaterialGrid, capacity: usize) -> Self {
+    pub fn new(sim_mod: SimMod, terrain: MaterialGrid, capacity: usize) -> Self {
         Self {
             sim_mod,
             settings: SimSettings::lx56(),
             terrain: Terrain::from_grid(&terrain),
+            holes: Vec::new(),
+            green_mask: None,
             worms: Vec::new(),
             draws: Draws::new(GlibcRand::new(1), Mt19937::new(1)),
             pool: ProjectilePool::new(capacity),
         }
     }
 
-    fn open(sim_mod: SimMod, capacity: usize) -> Self {
+    pub fn open(sim_mod: SimMod, capacity: usize) -> Self {
         Self::new(sim_mod, MaterialGrid::new(200, 200, Material::Background), capacity)
     }
 
     /// Spawns projectile type `proj` at `time` (`CClient::SpawnProjectile`).
-    fn spawn(&mut self, proj: &str, pos: Vec2, vel: Vec2, random: i32, time: AbsTime) {
+    pub fn spawn(&mut self, proj: &str, pos: Vec2, vel: Vec2, random: i32, time: AbsTime) {
         let proj = self.sim_mod.projectile_index(proj).unwrap();
         let mut ctx = SpawnCtx {
             sim_mod: &self.sim_mod,
@@ -84,19 +88,26 @@ impl Bench {
         spawn_projectile(&mut ctx, proj, pos, vel, 0, -1, random, time, time);
     }
 
-    /// One `simulateProjectiles` pass up to `now`.
-    fn simulate(&mut self, now: AbsTime) {
+    /// Runs `f` with the pool and a context at frame time `now`.
+    pub fn with_ctx<R>(&mut self, now: AbsTime, f: impl FnOnce(&mut ProjectilePool, &mut ProjCtx) -> R) -> R {
         let mut ctx = ProjCtx {
             sim_mod: &self.sim_mod,
             settings: &self.settings,
             terrain: &mut self.terrain,
             worms: &mut self.worms,
             draws: &mut self.draws,
+            holes: &self.holes,
+            green_mask: self.green_mask.as_ref(),
             now,
             wall_clock: now + TimeDiff(10),
             physics_dt: TimeDiff(11),
         };
-        simulate_projectiles(&mut self.pool, &mut ctx);
+        f(&mut self.pool, &mut ctx)
+    }
+
+    /// One `simulateProjectiles` pass up to `now`.
+    pub fn simulate(&mut self, now: AbsTime) {
+        self.with_ctx(now, simulate_projectiles);
     }
 
     fn slots(&self) -> Vec<usize> {

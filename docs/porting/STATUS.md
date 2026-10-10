@@ -24,9 +24,10 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Shot list, encode/decode round trip, Model R delivery, `ProcessShot` | `src/common/CShootList.cpp`, `CClient_Game.cpp:813-946` | `rl-sim::shots`, `rl-sim::shot_codec` | ported (beam trace: task 8) | `s` of `multi-shot` for the whole trace, including the corrupted `spd` |
 | Projectile pool, `Proj_SpawnInfo::apply` (shots and projectiles), `CProjectile::Spawn` | `include/FastVector.h`, `src/common/PhysicsLX56_Projectiles.cpp:495-640`, `src/common/CProjectile.cpp:43-166` | `rl-sim::projectile`, `rl-sim::spawn` | ported | every projectile field (`p`, hidden fields included) of every scenario until its first explosion, carve, dirt or injury |
 | Projectile motion, collision, timers, trails, animation, worm hit test, position recorder | `PhysicsLX56_Projectiles.cpp:52-491`, `1234-1411`, `src/util/VecTimeRecorder.h`, `PhysicsLX56.cpp:468` | `rl-sim::proj_sim`, `rl-sim::worm::PosRecorder` | ported (plan 4 task 5) | as above; 8 weapon scenarios match fully (`big-nuke`, `booby-trap`, `float-mine`, `mine`, `electro-gun`, `jet-pack`, `nuclear-mines`, `trap-mines`) |
-| Projectile actions (`applyTo`, `execute`): bounce, disappear, nothing, go-through, speed and heading actions, children, the junk rule | `PhysicsLX56_Projectiles.cpp:670-945`, `1115-1230`, `CProjectile.cpp:376-429` | `rl-sim::actions` | ported; explosion holes and damage, carve, dirt, green dirt and injuries are stubs (tasks 6-7) | `rl-scenario`'s `EXPECTED_DIVERGENCES` pins each remaining divergence to its frame and field |
+| Projectile actions (`applyTo`, `execute`): bounce, disappear, nothing, go-through, speed and heading actions, children, the junk rule | `PhysicsLX56_Projectiles.cpp:670-945`, `1115-1230`, `CProjectile.cpp:376-429` | `rl-sim::actions` | ported (plan 4 tasks 5-6) | `rl-scenario`'s `EXPECTED_DIVERGENCES` pins each remaining divergence to its frame and field |
 | Float `atan2f` (projectile headings) | glibc 2.35 `sysdeps/ieee754/flt-32/e_atan2f.c`, `s_atanf.c` | `rl-math::atan2f` | ported | 6 million input pairs bit-identical to the oracle container's glibc; 20 pinned in a test |
-| Explosions, bonuses, damage | `PhysicsLX56_Projectiles.cpp`, `CClient_Game.cpp` | `rl-sim::actions::explosion` (draws and entities only) | partly (plan 4 tasks 6-9) | — |
+| Explosions, carve, dirt, green dirt and their dirt counts; injury actions | `CClient_Game.cpp:227-330`, `CMap.cpp:1114-1340`, `PhysicsLX56_Projectiles.cpp:781-824`, `1115-1154`, `CWorm.cpp:1381-1389` | `rl-sim::effects`, `rl-terrain::Terrain::{place_dirt, place_green_dirt}` | ported (plan 4 task 6); the bonus chain is task 9 | `mh`, `dirt` and `hp` of every scenario until its first kill or beam; 23 scenarios match fully, and every other weapon scenario except the beams matches up to the first injury's blood draws |
+| Worm damage (`InjureWorm`) | `CClient_Game.cpp:335-460` | `rl-sim::damage::injure_worm` | health only; blood, death and kill are task 7 | as above |
 
 ## Deliberate deviations
 
@@ -35,6 +36,11 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   `ProjFriction > 0` (`SimSettings::from_olx_features` errors).
 - Projectile actions assume a deathmatch (no team game): `TeamHit` is not
   read, an "enemy" is any other worm and there are no team mates.
+- The green-dirt mask, OLX's shared `data/gfx/greenball.png`, is imported
+  into the theme pack (optional `green_ball.png`). Without it green dirt
+  places nothing, as in OLX.
+- `rl-sim` does not keep the weapon name an injury passes on (OLX uses it only
+  for the kill message).
 - `rl-scenario` refuses a mod pack with an image projectile whose image is
   missing; OLX would run it without an image (no `ANI_ONCE` end, the junk rule).
 - `rl-sim` rejects settings outside the ranges OLX's feature list gives
@@ -87,7 +93,23 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   map edges, and breaks at the top edge (`PhysicsLX56.cpp:132-206`). OLX's
   comments note that LX56 differed here.
 - **`CarveHole` clipping:** near the map edge the stamp is read from its top-left
-  corner, not offset by the clipped amount.
+  corner, not offset by the clipped amount. `PlaceDirt` and `PlaceGreenDirt`
+  do offset it.
+- **`PlaceDirt` counts twice:** a background cell under an edge-coloured
+  (non-magenta, non-black) hole pixel adds 2 to the placed count, so to the
+  owner's dirt count.
+- **Explosions have no falloff:** every alive worm whose recorded position is
+  within 5 px (`d² <= 25`) takes the full damage. The hole is
+  `clamp((int)damage, 0, 4)`; on x86 `(int)` of NaN or a huge value is
+  `INT_MIN`, so those carve the smallest hole.
+- **A timer explosion takes `PlyHit`'s damage** when `PlyHit` is an explosion
+  (`projectile_doTimerExplode`).
+- **Projectile dirt** is three `PlaceDirt(5, ...)` (the largest hole) at
+  `pos - (6,6)`, `pos + (6,-6)`, `pos + (0,6)`, added in float and truncated
+  toward zero.
+- **`(Uint64)` of a float** (`TimeDiff(float)`, `AbsTime + float`) is GCC's
+  x86-64 sequence: negative values and NaN wrap through a 64-bit `cvttss2si`,
+  infinity and values from 2^64 on give 0 (`rl-sim::projectile::c_u64`).
 - **`VecTimeRecorder::get(0)` is the oldest entry** (spec §18 D7): with the
   pinned clock, a projectile step at exactly the frame time hit-tests worms
   where they were 100 physics steps ago, or at a stale or zero position in

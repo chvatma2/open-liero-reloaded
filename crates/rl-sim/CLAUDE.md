@@ -5,7 +5,7 @@ commit `d1ad953f`. The oracle traces in `fixtures/oracle` are its acceptance
 tests, and they must match bit for bit (`tests/oracle.rs`).
 
 - **Layer 3, `#![no_std]` + `alloc`.** Apart from setup (`spawn_worm`,
-  `set_loadout`, `align_physics_clock`), `World::tick(&[Keys])` is the only
+  `set_loadout`, `set_green_mask`, `align_physics_clock`), `World::tick(&[Keys])` is the only
   way state changes, and it does not allocate (`tests/no_alloc.rs`).
 - **Two clocks.** `tick` is one 100 Hz frame. Inside it, LX56 physics runs in
   `1000 / LX56PhysicsFPS` ms sub-steps (11 ms by default) while the physics
@@ -29,12 +29,13 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
 - **Projectiles** (`proj_sim.rs`): after all worms in each sub-step, every
   projectile catches up its own clock in slot order (children in higher
   slots run in the same pass). Hit tests read the worm's `PosRecorder`
-  (`worm.rs`, OLX's `get(0)` quirk kept). What events do is `actions.rs`.
+  (`worm.rs`, OLX's `get(0)` quirk kept). What events do is `actions.rs`;
+  their map and health effects (explosions, carving, dirt, green dirt, dirt
+  counts) are `effects.rs`, and worm damage is `damage.rs`.
   Projectile `pos`/`vel` assignments that OLX makes through `Attr::operator=`
   use `attr_set` (an equal value, such as `+0` over `-0`, is not written).
-- **Not here yet (M4):** explosion holes and damage, carving, dirt, green
-  dirt and injuries (stubs in `actions.rs`, Tasks 6-7), beams' map trace,
-  bonuses.
+- **Not here yet (M4):** `damage::injure_worm` only changes health: its
+  blood draws, death and the kill are Task 7's. Beams' map trace, bonuses.
 
 Test: `cargo nextest run -p rl-sim`. The oracle test needs imported content;
 `cargo xtask check` sets `RL_CONTENT_DIR`.

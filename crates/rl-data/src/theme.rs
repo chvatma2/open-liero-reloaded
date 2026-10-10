@@ -26,4 +26,9 @@ pub struct Theme {
     pub misc: Vec<RgbaImage>,
     pub front_tile: RgbaImage,
     pub back_tile: RgbaImage,
+    /// The green-dirt mask, OLX's shared `data/gfx/greenball.png`, which
+    /// `CMap::LoadTheme` loads with the theme (`src/common/CMap.cpp:365-367`).
+    /// Raw colors: green places green dirt, pink nothing, others the rim.
+    /// Without it, green dirt places nothing, as in OLX.
+    pub green_ball: Option<RgbaImage>,
 }

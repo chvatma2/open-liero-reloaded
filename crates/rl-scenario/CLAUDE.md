@@ -16,8 +16,12 @@ traces in `rl-oracle`'s format.
 - `tests/oracle.rs` is the acceptance test: every scenario must match bit for
   bit in the fields `CHECKED` lists, except those in `EXPECTED_DIVERGENCES`,
   which must first diverge exactly at the listed frame and field (so a
-  regression in ported fields cannot hide there). On a mismatch the test
-  prints the new pair. Grow `CHECKED` and shrink the list as M4 lands.
+  regression in ported fields cannot hide there). A second pass does the same
+  without `rc`, `mt` and `ents` (`EXPECTED_DIVERGENCES_WITHOUT_DRAWS`), so a
+  regression in the frame of a pinned blood-draw divergence shows up too.
+  On a mismatch the test prints the new row. Grow `CHECKED` and shrink the
+  lists as M4 lands.
+- The theme pack's green ball becomes the world's green-dirt mask.
 - `load_mod` refuses an image projectile without its image's frame count.
 - For debugging a divergence: `rl-cli scenario <name> --dump <frame>` (`--all`
   compares every field, `--fields checked+projectiles+proj_hidden+clocks` the
