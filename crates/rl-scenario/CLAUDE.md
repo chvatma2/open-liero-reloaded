@@ -40,7 +40,12 @@ traces in `rl-oracle`'s format.
   compares it with `fixtures/render/*.png` (CPU goldens, in `check`); with
   `RL_BLESS_RENDER` set it writes them instead, which is what
   `cargo xtask bless-render --reason "<why>"` does (it logs to
-  `fixtures/blessings.log`). Never edit a golden by hand.
+  `fixtures/blessings.log`). Never edit a golden by hand. The GPU frame
+  goldens (`fixtures/render/frame-*.png`) are `rl-cli render`'s, tested in
+  `rl-cli/tests/render_golden.rs` (see `rl-render`'s CLAUDE.md). All goldens
+  are drawn from the imported OLX content at test time (scenario, level,
+  art scale from the packs in `RL_CONTENT_DIR`); the PNGs are accepted
+  fixtures, the packs are never committed.
 - For debugging a divergence: `rl-cli scenario <name> --dump <frame>` (`--all`
   compares every field, `--fields checked+projectiles+proj_hidden+clocks` the
   named groups).

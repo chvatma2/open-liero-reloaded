@@ -1,4 +1,5 @@
-//! `cargo xtask check`: every step runs; only failing steps print their output.
+//! `cargo xtask check` and `cargo xtask full`: every step runs; only failing
+//! steps print their output.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -31,6 +32,48 @@ fn has_nextest() -> bool {
 }
 
 pub fn run(offline: bool) -> anyhow::Result<bool> {
+    run_with(offline, false)
+}
+
+/// `cargo xtask full`: `check`, then the GPU tier (the renderer's GPU tests
+/// and the render goldens, with `RL_GPU_TESTS` set), skipped with a notice
+/// when no graphics adapter opens.
+pub fn full(offline: bool) -> anyhow::Result<bool> {
+    run_with(offline, true)
+}
+
+/// The test targets of the GPU tier as `(package, test target)`.
+pub const GPU_TESTS: &[(&str, &str)] = &[("rl-render", "gpu"), ("rl-cli", "render_golden")];
+
+fn gpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
+    let probe = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+        .args(["run", "--quiet", "-p", "rl-render", "--example", "adapter"])
+        .current_dir(root())
+        .output()
+        .map_err(|e| format!("cannot run cargo: {e}"))?;
+    let said = String::from_utf8_lossy(&probe.stdout).trim().to_string();
+    match probe.status.code() {
+        Some(0) => println!("     gpu adapter: {said}"),
+        Some(3) => {
+            println!("skip gpu ({said})");
+            return Ok(());
+        }
+        _ => return Err(format!("{said}{}", String::from_utf8_lossy(&probe.stderr))),
+    }
+    let mut args =
+        vec!["nextest", "run", "--no-fail-fast", "--status-level", "fail", "--final-status-level", "fail"];
+    if !has_nextest() {
+        args = vec!["test", "--quiet"];
+    }
+    for (package, test) in GPU_TESTS {
+        args.extend(["-p", package, "--test", test]);
+    }
+    let mut envs = envs.to_vec();
+    envs.push(("RL_GPU_TESTS", PathBuf::from("1")));
+    cargo(&args, &envs)
+}
+
+fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
     let rules = layers::load_rules()?;
     let mut failed = Vec::new();
     let mut step = |name: &str, f: &mut dyn FnMut() -> StepResult| {
@@ -89,11 +132,15 @@ pub fn run(offline: bool) -> anyhow::Result<bool> {
         }
     });
 
+    if gpu {
+        step("gpu", &mut || gpu_step(&envs));
+    }
+    let what = if gpu { "full" } else { "check" };
     if failed.is_empty() {
-        println!("check passed");
+        println!("{what} passed");
         Ok(true)
     } else {
-        println!("check failed: {}", failed.join(", "));
+        println!("{what} failed: {}", failed.join(", "));
         Ok(false)
     }
 }

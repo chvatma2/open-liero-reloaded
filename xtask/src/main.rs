@@ -28,6 +28,13 @@ enum Command {
         #[arg(long)]
         offline: bool,
     },
+    /// `check`, then the GPU tier: the renderer's GPU tests and the render goldens
+    /// (skipped with a notice when no graphics adapter opens).
+    Full {
+        /// Do not download OLX content; tests that need it are skipped.
+        #[arg(long)]
+        offline: bool,
+    },
     /// Check crate layering rules from xtask/layers.ron.
     Layers,
     /// Write public API summaries to target/api/<crate>.txt.
@@ -67,6 +74,7 @@ pub fn root() -> PathBuf {
 fn main() -> ExitCode {
     let result = match Cli::parse().command {
         Command::Check { offline } => check::run(offline),
+        Command::Full { offline } => check::full(offline),
         Command::Layers => layers::run().map(|()| true),
         Command::Api => api::run().map(|()| true),
         Command::FetchOlxContent { no_import } => fetch::run(!no_import).map(|p| {

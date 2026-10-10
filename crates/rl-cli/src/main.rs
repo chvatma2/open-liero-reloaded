@@ -1,6 +1,7 @@
 //! `rl-cli`: headless tools for rust-liero. Run `rl-cli --help`.
 
 mod import;
+mod render;
 mod scenario;
 mod validate;
 
@@ -23,6 +24,8 @@ enum Command {
     /// Replay oracle scenarios in the simulation and compare them with OLX's traces;
     /// exits with status 1 if any diverges.
     Scenario(scenario::Args),
+    /// Render one frame of an oracle scenario to a PNG, offscreen with wgpu.
+    Render(render::Args),
     /// Validate packs; exits with status 1 if any pack has errors.
     Validate {
         /// Pack directories, or directories containing pack directories.
@@ -35,6 +38,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Import(args) => import::run(&args),
         Command::Scenario(args) => scenario::run(&args),
+        Command::Render(args) => render::run(&args),
         Command::Validate { paths } => validate::run(&paths),
     };
     match result {

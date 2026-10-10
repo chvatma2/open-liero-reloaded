@@ -10,7 +10,9 @@ modernized for current displays.
 ## Rules
 
 1. **Run `cargo xtask check` before every commit.** It prints only failures.
-   Without network access, use `cargo xtask check --offline`.
+   Without network access, use `cargo xtask check --offline`. `cargo xtask
+   full` adds the GPU tier (renderer tests, render goldens); run it before
+   merging rendering changes.
 2. **One crate per concern, under `crates/`.** Each crate has a `CLAUDE.md`:
    read it before editing the crate. Register every new crate in `xtask/layers.ron`.
    A crate may depend only on lower layers (`cargo xtask layers`).
@@ -47,3 +49,7 @@ logs the reason in `fixtures/blessings.log`.
 `cargo xtask fetch-olx-content` sparse-clones OLX at the commit pinned in
 `content/olx-manifest.ron` into `target/olx/<commit>/`, then imports the
 listed items into `target/content/`. Converted assets are never committed.
+The render goldens in `fixtures/render/` are drawn from them at test time
+(scenario, level and art scale from the packs); the goldens are accepted
+fixtures, changed only with `cargo xtask bless-render --reason "<why>"`.
+`rl-cli render <scenario> --frame N --out f.png` draws any scenario frame.

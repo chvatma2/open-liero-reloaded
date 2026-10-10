@@ -1,2 +1,7 @@
 2026-10-10 bless-render: Add the first CPU golden: the colour terrain after the dig scenario (plan 5 task 2)
   fixtures/render/dig-color.png
+2026-10-10 bless-render: Add the GPU frame goldens of rl-cli render, one scenario per level, drawn on lavapipe (plan 5 task 5)
+  fixtures/render/frame-bazooka.png
+  fixtures/render/frame-castle.png
+  fixtures/render/frame-dig.png
+  fixtures/render/frame-rope.png

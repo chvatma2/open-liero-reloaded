@@ -1,0 +1,157 @@
+//! Rendering without a window: for goldens, tests and `rl-cli render`.
+
+use std::path::Path;
+use std::sync::mpsc;
+
+use rl_data::image::RgbaImage;
+use rl_scene::DrawList;
+
+use crate::renderer::{RenderSettings, Renderer};
+
+/// The output format of offscreen renders (PNG bytes as they are).
+pub const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// No adapter could be opened (a headless machine without a software
+/// rasteriser): GPU tests skip with this as their notice.
+#[derive(Debug)]
+pub struct NoAdapter(pub String);
+
+impl std::fmt::Display for NoAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "no graphics adapter: {}", self.0)
+    }
+}
+
+impl std::error::Error for NoAdapter {}
+
+/// A device and queue without a surface.
+pub struct Offscreen {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    info: wgpu::AdapterInfo,
+}
+
+/// The adapter offscreen renders prefer: a software rasteriser (lavapipe
+/// through Vulkan, then llvmpipe through GL) draws the same pixels on every
+/// machine, so goldens compare tightly; any other adapter comes last.
+fn rank(info: &wgpu::AdapterInfo) -> u8 {
+    match (info.device_type, info.backend) {
+        (wgpu::DeviceType::Cpu, wgpu::Backend::Vulkan) => 0,
+        (wgpu::DeviceType::Cpu, _) => 1,
+        _ => 2,
+    }
+}
+
+impl Offscreen {
+    /// Opens the preferred adapter ([`rank`]); `WGPU_BACKEND` and the other
+    /// `WGPU_*` variables narrow the choice.
+    pub fn new() -> Result<Offscreen, NoAdapter> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+        adapters.sort_by_key(|a| rank(&a.get_info()));
+        let adapter = match adapters.into_iter().next() {
+            Some(a) => a,
+            None => pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+                .map_err(|e| NoAdapter(e.to_string()))?,
+        };
+        let info = adapter.get_info();
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("rl-render offscreen"),
+            required_limits: adapter.limits(),
+            ..Default::default()
+        }))
+        .map_err(|e| NoAdapter(format!("{} ({:?}): {e}", info.name, info.backend)))?;
+        Ok(Offscreen { device, queue, info })
+    }
+
+    /// The adapter's name, backend and type, for logs and reports.
+    pub fn adapter_info(&self) -> &wgpu::AdapterInfo {
+        &self.info
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    /// A renderer drawing [`OUTPUT_FORMAT`] targets on this device.
+    pub fn renderer(&self, settings: RenderSettings) -> Renderer {
+        Renderer::new(self.device.clone(), self.queue.clone(), OUTPUT_FORMAT, settings)
+    }
+
+    /// Renders `list` at `size` pixels and reads the picture back.
+    pub fn render_to_image(&self, renderer: &mut Renderer, list: &DrawList, size: (u32, u32)) -> RgbaImage {
+        let size = (size.0.max(1), size.1.max(1));
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("rl-render output"),
+            size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: OUTPUT_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        renderer.render(list, &view, size);
+        self.read_texture(&texture)
+    }
+
+    /// [`Offscreen::render_to_image`], written to `path` as a PNG.
+    pub fn render_to_png(
+        &self,
+        renderer: &mut Renderer,
+        list: &DrawList,
+        size: (u32, u32),
+        path: &Path,
+    ) -> std::io::Result<RgbaImage> {
+        let img = self.render_to_image(renderer, list, size);
+        std::fs::write(path, rl_pack::image_io::encode_rgba(&img))?;
+        Ok(img)
+    }
+
+    /// Reads an RGBA8 texture (made with `COPY_SRC`) back to the CPU.
+    pub fn read_texture(&self, texture: &wgpu::Texture) -> RgbaImage {
+        let (w, h) = (texture.width(), texture.height());
+        let row = (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rl-render readback"),
+            size: u64::from(row) * u64::from(h),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("rl-render readback") });
+        encoder.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        self.queue.submit([encoder.finish()]);
+        let (tx, rx) = mpsc::channel();
+        buffer.map_async(wgpu::MapMode::Read, .., move |r| {
+            let _ = tx.send(r);
+        });
+        self.device.poll(wgpu::PollType::wait_indefinitely()).expect("the device is lost");
+        rx.recv().expect("the map callback ran").expect("the readback buffer maps");
+        let mapped = buffer.get_mapped_range(..).expect("mapped above");
+        let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+        for line in mapped.chunks_exact(row as usize) {
+            pixels.extend_from_slice(&line[..(w * 4) as usize]);
+        }
+        drop(mapped);
+        buffer.unmap();
+        RgbaImage::from_raw(w, h, pixels).expect("w x h texels")
+    }
+}

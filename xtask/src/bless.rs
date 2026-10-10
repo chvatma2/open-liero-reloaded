@@ -1,7 +1,8 @@
 //! `cargo xtask bless-render --reason <text>`: re-generates the committed
 //! render goldens in `fixtures/render/` and records why in
 //! `fixtures/blessings.log` (spec §7.2), with the date and the files that
-//! changed. Each golden test writes its PNGs when `RL_BLESS_RENDER` is set.
+//! changed. Each golden test writes its PNGs when `RL_BLESS_RENDER` is set;
+//! the GPU goldens (`rl-cli render` frames) need a graphics adapter.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -13,8 +14,9 @@ use anyhow::{Context, bail, ensure};
 
 use crate::root;
 
-/// The golden tests as `(package, test target)`.
-const GOLDEN_TESTS: &[(&str, &str)] = &[("rl-scenario", "render_golden")];
+/// The golden tests as `(package, test target)`: the colour terrain (CPU)
+/// and `rl-cli render`'s frames (GPU; blessing them needs an adapter).
+const GOLDEN_TESTS: &[(&str, &str)] = &[("rl-scenario", "render_golden"), ("rl-cli", "render_golden")];
 const GOLDEN_DIR: &str = "fixtures/render";
 const LOG: &str = "fixtures/blessings.log";
 
@@ -61,6 +63,7 @@ pub fn run(reason: &str) -> anyhow::Result<bool> {
             .args(["test", "--quiet", "-p", package, "--test", test])
             .current_dir(&root)
             .env("RL_BLESS_RENDER", "1")
+            .env("RL_GPU_TESTS", "1")
             .env("RL_CONTENT_DIR", &content)
             .output()
             .context("cannot run cargo")?;

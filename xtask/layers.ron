@@ -18,6 +18,7 @@
         "rl-content": 4,
         "rl-scene": 5,
         "rl-fx": 5,
+        "rl-render": 5,
         "rl-cli": 6,
         "xtask": 6,
     },
@@ -30,6 +31,8 @@
         ("rl-scenario", "rl-content"),
         // Cosmetic entities draw into the scene's draw list with its atlas ids.
         ("rl-fx", "rl-scene"),
+        // The renderer draws the scene's draw list from its atlas images.
+        ("rl-render", "rl-scene"),
     ],
     no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim"],
     wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],

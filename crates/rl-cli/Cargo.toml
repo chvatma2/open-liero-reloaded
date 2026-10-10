@@ -1,6 +1,6 @@
 [package]
 name = "rl-cli"
-description = "Headless command-line tool: import OLX content, validate packs, replay oracle scenarios."
+description = "Headless command-line tool: import OLX content, validate packs, replay and render oracle scenarios."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -21,6 +21,10 @@ rl-import-gfx.workspace = true
 rl-oracle.workspace = true
 rl-scenario.workspace = true
 rl-content.workspace = true
+rl-terrain.workspace = true
+rl-scene.workspace = true
+rl-fx.workspace = true
+rl-render.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 clap.workspace = true
