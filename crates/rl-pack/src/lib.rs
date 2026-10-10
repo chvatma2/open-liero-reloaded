@@ -5,6 +5,7 @@
 //! Readers and writers are deterministic: writing the same value twice yields
 //! byte-identical files.
 
+mod core_pack;
 mod error;
 mod hash;
 pub mod image_io;
@@ -15,6 +16,7 @@ mod skin_pack;
 mod theme_pack;
 mod validate;
 
+pub use core_pack::{CorePack, read_core, write_core};
 pub use error::PackError;
 pub use hash::content_hash;
 pub use level_pack::{LevelPack, read_level, write_level};

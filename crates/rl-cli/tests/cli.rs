@@ -28,6 +28,10 @@ fn gamedir(root: &Path) {
     std::fs::write(skins.join("Default.png"), png(672, 36, Rgba::rgb(100, 100, 100))).unwrap();
     std::fs::write(skins.join("broken.png"), b"not a png").unwrap();
     std::fs::write(skins.join("readme.txt"), b"ignored").unwrap();
+    std::fs::create_dir_all(root.join("data/gfx")).unwrap();
+    std::fs::write(root.join("data/gfx/crosshair.png"), png(12, 6, Rgba::MAGENTA)).unwrap();
+    std::fs::create_dir_all(root.join("data/frontend")).unwrap();
+    std::fs::write(root.join("data/frontend/colours.cfg"), "[Colours]\nRopeColour1 = #A05000\n").unwrap();
 }
 
 fn rl_cli() -> Command {
@@ -45,9 +49,13 @@ fn import_then_validate() {
         .arg("--out")
         .arg(&out)
         .args(["--revision", "abc", "--theme", "data/themes/Dirt", "--skins"])
+        .args(["--core", "data/gfx/crosshair.png", "--core", "data/frontend/colours.cfg"])
         .status()
         .unwrap();
     assert!(!status.success(), "the broken skin must make import fail");
+    let core = std::fs::read_to_string(out.join("olx-core/core.ron")).unwrap();
+    assert!(core.contains("crosshair") && core.contains("RopeColour1"), "{core}");
+    assert!(out.join("olx-core/gfx/crosshair.png").is_file());
     // Both skins slug to the same id; the second gets a suffix.
     assert!(out.join("olx-skin-default/pack.ron").is_file());
     assert!(out.join("olx-skin-default-2/pack.ron").is_file());

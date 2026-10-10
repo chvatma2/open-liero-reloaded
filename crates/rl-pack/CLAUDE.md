@@ -1,7 +1,7 @@
 # rl-pack
 
 The native pack format (spec §9.1): `pack.ron` plus kind-specific files, for
-mod, level, skin and theme packs; PNG helpers; content hashing; validation.
+mod, level, skin, theme and core packs; PNG helpers; content hashing; validation.
 
 - **Layer 2.** Depends on `rl-data`, `rl-vfs`, `ron`, `png`, `sha2`.
 - **Deterministic output.** Writing the same value twice gives byte-identical
@@ -12,6 +12,8 @@ mod, level, skin and theme packs; PNG helpers; content hashing; validation.
   - skin: `skin.ron`, `skin.png`, `mask.png` (palette: 0 keep, 1 colorize, 2 transparent)
   - theme: `theme.ron`, `holes/N.png`, `stones/N.png`, `misc/N.png`, `front_tile.png`, `back_tile.png`,
     optional `green_ball.png`
+  - core (OLX's shared game assets, spec §19 E9): `core.ron` (sprite and sound
+    lists, `colours.cfg` values), `gfx/<sprite>.png`, `sounds/<file>` (raw Ogg bytes)
 - `validate` never panics and reports `file:line:col` for RON errors.
   Errors: unknown references, cycles, missing assets. Warnings: unused items.
 - Bump `PACK_FORMAT_VERSION` (in `rl-data`) when a layout changes. Packs of any other

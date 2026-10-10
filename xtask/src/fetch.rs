@@ -20,6 +20,8 @@ struct Manifest {
     levels: Vec<String>,
     themes: Vec<String>,
     skins: bool,
+    /// Files of the core pack `olx-core`.
+    core: Vec<String>,
 }
 
 pub struct Paths {
@@ -47,6 +49,9 @@ fn patterns(m: &Manifest) -> Vec<String> {
     }
     if m.skins {
         p.push("/share/gamedir/skins/".into());
+    }
+    for f in &m.core {
+        p.push(format!("/share/gamedir/{f}"));
     }
     p
 }
@@ -113,6 +118,9 @@ pub fn run(import: bool) -> anyhow::Result<Paths> {
     }
     if m.skins {
         cmd.arg("--skins");
+    }
+    for x in &m.core {
+        cmd.args(["--core", x]);
     }
     let out = cmd.output().context("running rl-cli import")?;
     if !out.status.success() {

@@ -29,6 +29,10 @@ pub struct Args {
     /// Import every PNG in `skins/`.
     #[arg(long)]
     skins: bool,
+    /// Files relative to the game directory for the core pack `olx-core`
+    /// (shared sprites, game sounds, `data/frontend/colours.cfg`).
+    #[arg(long = "core")]
+    core: Vec<String>,
 }
 
 /// One line of `import-report.ron`.
@@ -45,6 +49,7 @@ enum Imported {
     Level(rl_import_lxl::ImportedLevel),
     Skin(rl_import_gfx::ImportedSkin),
     Theme(rl_import_gfx::ImportedTheme),
+    Core(rl_import_gfx::ImportedCore),
 }
 
 impl Imported {
@@ -54,6 +59,7 @@ impl Imported {
             Imported::Level(l) => &l.pack.manifest.id,
             Imported::Skin(s) => &s.pack.manifest.id,
             Imported::Theme(t) => &t.pack.manifest.id,
+            Imported::Core(c) => &c.pack.manifest.id,
         }
     }
 
@@ -63,6 +69,7 @@ impl Imported {
             Imported::Level(l) => l.pack.manifest.id = id,
             Imported::Skin(s) => s.pack.manifest.id = id,
             Imported::Theme(t) => t.pack.manifest.id = id,
+            Imported::Core(c) => c.pack.manifest.id = id,
         }
     }
 
@@ -72,6 +79,7 @@ impl Imported {
             Imported::Level(l) => l.warnings.clone(),
             Imported::Skin(s) => s.warnings.clone(),
             Imported::Theme(t) => t.warnings.clone(),
+            Imported::Core(c) => c.warnings.clone(),
         }
     }
 
@@ -85,6 +93,7 @@ impl Imported {
             Imported::Level(l) => rl_pack::write_level(&mut sink, &l.pack)?,
             Imported::Skin(s) => rl_pack::write_skin(&mut sink, &s.pack)?,
             Imported::Theme(t) => rl_pack::write_theme(&mut sink, &t.pack)?,
+            Imported::Core(c) => rl_pack::write_core(&mut sink, &c.pack)?,
         }
         Ok(())
     }
@@ -95,6 +104,8 @@ enum Job {
     Level(String),
     Theme(String),
     Skin(VPath),
+    /// The core pack's files.
+    Core(Vec<String>),
 }
 
 impl Job {
@@ -102,6 +113,7 @@ impl Job {
         match self {
             Job::Mod(s) | Job::Level(s) | Job::Theme(s) => s.clone(),
             Job::Skin(p) => p.to_string(),
+            Job::Core(_) => "data".to_string(),
         }
     }
 
@@ -117,6 +129,10 @@ impl Job {
             Job::Level(l) => Imported::Level(rl_import_lxl::import_lxl(olx, &VPath::new(l)?, origin)?),
             Job::Theme(t) => Imported::Theme(rl_import_gfx::import_theme(olx, &VPath::new(t)?, origin)?),
             Job::Skin(p) => Imported::Skin(rl_import_gfx::import_skin(olx, p, origin)?),
+            Job::Core(files) => {
+                let files = files.iter().map(|f| VPath::new(f)).collect::<Result<Vec<_>, _>>()?;
+                Imported::Core(rl_import_gfx::import_core(olx, &files, origin)?)
+            }
         })
     }
 }
@@ -128,6 +144,9 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     jobs.extend(args.mods.iter().cloned().map(Job::Mod));
     jobs.extend(args.levels.iter().cloned().map(Job::Level));
     jobs.extend(args.themes.iter().cloned().map(Job::Theme));
+    if !args.core.is_empty() {
+        jobs.push(Job::Core(args.core.clone()));
+    }
     if args.skins {
         let skins = VPath::new("skins")?;
         for name in olx.list(&skins).context("listing skins/")? {

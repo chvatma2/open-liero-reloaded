@@ -3,6 +3,7 @@ source: crates/rl-cli/tests/corpus.rs
 expression: summary
 ---
 mod olx-classic: "Liero v1.0", 38 weapons, 58 projectiles, 39 assets, rope RopeParams { max_length: 300, rest_length: 27, strength: 4.5 }
+core olx-core: sprites ["bonus", "chemsmoke", "crosshair", "explosion", "giblets", "health", "hook", "muzzle", "smoke", "sparkle", "spawn"], sounds ["bump.ogg", "death1.ogg", "death2.ogg", "death3.ogg", "pickup.ogg", "throw.ogg"], 83 colours, rope [Some((160, 80, 0)), Some((200, 100, 0))]
 level olx-level-castlestrike: "Castle Strike" 1350x550 art x1, dirt 5536, rock 147603, theme olx-theme-dirt
 level olx-level-dirt-level: "Dirt Level" 504x350 art x1, dirt 159596, rock 4949, theme olx-theme-dirt
 level olx-level-fossilfacility: "Fossil Facility" 640x480 art x1, dirt 19261, rock 79490, theme olx-theme-dirt

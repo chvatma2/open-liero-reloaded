@@ -7,6 +7,7 @@
 
 extern crate alloc;
 
+pub mod core_pack;
 pub mod image;
 pub mod level;
 pub mod manifest;

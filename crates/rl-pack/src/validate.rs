@@ -7,7 +7,7 @@ use rl_data::manifest::PackKind;
 use rl_data::mod_def::ModDef;
 use rl_vfs::{ContentSource, VPath};
 
-use crate::{ModPack, PackError, read_level, read_manifest, read_mod, read_skin, read_theme};
+use crate::{ModPack, PackError, read_core, read_level, read_manifest, read_mod, read_skin, read_theme};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
@@ -88,6 +88,7 @@ pub fn validate(src: &dyn ContentSource) -> Vec<Diagnostic> {
         PackKind::Level => read_level(src).map(|_| ()),
         PackKind::Skin => read_skin(src).map(|_| ()),
         PackKind::Theme => read_theme(src).map(|_| ()),
+        PackKind::Core => read_core(src).map(|_| ()),
     };
     if let Err(e) = result {
         out.push(Diagnostic::from_error(&e));

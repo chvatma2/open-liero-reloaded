@@ -1,8 +1,10 @@
-//! OpenLieroX skin and theme importers.
+//! OpenLieroX skin, theme and core pack importers.
 
+mod core_pack;
 mod skin;
 mod theme;
 
+pub use core_pack::{CORE_PACK_ID, ImportedCore, import_core};
 pub use skin::{ImportedSkin, import_skin};
 pub use theme::{ImportedTheme, import_theme};
 

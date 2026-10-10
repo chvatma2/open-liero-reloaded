@@ -98,6 +98,22 @@ fn imported_content() {
                 )
                 .unwrap();
             }
+            PackKind::Core => {
+                let p = rl_pack::read_core(&src).unwrap();
+                rl_pack::write_core(&mut copy, &p).unwrap();
+                assert_eq!(rl_pack::read_core(&copy).unwrap(), p);
+                let d = &p.def;
+                let rope = ["RopeColour1", "RopeColour2"].map(|k| d.colours.get(k).map(|c| (c.r, c.g, c.b)));
+                writeln!(
+                    summary,
+                    "core {}: sprites {:?}, sounds {:?}, {} colours, rope {rope:?}",
+                    p.manifest.id,
+                    d.sprites,
+                    d.sounds,
+                    d.colours.len()
+                )
+                .unwrap();
+            }
         }
     }
     writeln!(summary, "skins: {skins}").unwrap();

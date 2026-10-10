@@ -18,6 +18,8 @@ pub enum PackKind {
     Level,
     Skin,
     Theme,
+    /// OLX's shared game assets ([`crate::core_pack::CoreDef`]).
+    Core,
 }
 
 /// Where imported content came from.

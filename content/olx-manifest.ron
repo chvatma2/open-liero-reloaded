@@ -14,4 +14,26 @@
     ],
     themes: ["data/themes/Dirt"],
     skins: true,
+    // The core pack `olx-core` (spec §19 E9): shared game sprites, the game
+    // sounds and the frontend colours. Mod packs keep their own sounds.
+    core: [
+        "data/gfx/crosshair.png",
+        "data/gfx/muzzle.png",
+        "data/gfx/explosion.png",
+        "data/gfx/smoke.png",
+        "data/gfx/chemsmoke.png",
+        "data/gfx/spawn.png",
+        "data/gfx/sparkle.png",
+        "data/gfx/giblets.png",
+        "data/gfx/hook.png",
+        "data/gfx/bonus.png",
+        "data/gfx/health.png",
+        "data/sounds/throw.ogg",
+        "data/sounds/pickup.ogg",
+        "data/sounds/bump.ogg",
+        "data/sounds/death1.ogg",
+        "data/sounds/death2.ogg",
+        "data/sounds/death3.ogg",
+        "data/frontend/colours.cfg",
+    ],
 )
