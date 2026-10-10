@@ -1,6 +1,8 @@
 //! Spec §5.3: `World::tick` does not allocate once the world is set up,
 //! with firing, explosions, dirt, bleeding, deaths and respawns, and with
-//! bonuses spawned, placed, picked up and exploded.
+//! bonuses spawned, placed, picked up and exploded; nor do its events, also
+//! in a cloned world. (`rl-scenario`'s `tests/no_alloc.rs` fires every
+//! weapon of the imported Classic mod.)
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -77,7 +79,7 @@ fn sim_mod() -> Arc<SimMod> {
         kind: WeaponKind::Projectile {
             class: WeaponClass::Automatic,
             recoil: 6,
-            sound: None,
+            sound: Some(format!("sfx/{id}.wav")),
             spawn: SpawnDef {
                 amount,
                 speed: 250,
@@ -186,10 +188,10 @@ fn tick_does_not_allocate() {
     let a =
         [Keys(Keys::RIGHT | Keys::ROPE | Keys::UP | Keys::FIRE), Keys(Keys::LEFT | Keys::JUMP | Keys::FIRE)];
     let b = [Keys(Keys::LEFT | Keys::FIRE), Keys(Keys::RIGHT | Keys::DOWN)];
-    let (mut flying, mut picked) = (0, false);
+    let (mut flying, mut picked, mut events) = (0, false, 0);
     let info = allocation_counter::measure(|| {
         for i in 0..600 {
-            w.tick(if i % 3 == 0 { &a } else { &b });
+            events += w.tick(if i % 3 == 0 { &a } else { &b }).len();
             if i == 5 {
                 picked = !w.bonuses()[0].used && w.server_bonuses()[0].used;
             }
@@ -206,6 +208,16 @@ fn tick_does_not_allocate() {
     assert!(w.worms()[1].alive && w.mt_calls() > 0, "worm 1 died and respawned");
     assert!(picked, "worm 0 picked up the health bonus");
     assert!(w.server_bonuses().iter().filter(|b| b.used).count() >= 2, "bonuses spawned");
+    assert!(events > 1000, "{events} events");
+
+    // A clone's event buffer has the full capacity too.
+    let mut c = w.clone();
+    let info = allocation_counter::measure(|| {
+        for i in 0..100 {
+            c.tick(if i % 3 == 0 { &a } else { &b });
+        }
+    });
+    assert_eq!(info.count_total, 0, "a cloned world's tick allocated");
 
     // Worm 0 holds the beam (weapon 2) on worm 1, worm 1 the jetpack (3).
     for (i, weapon) in [(0, 2), (1, 3)] {

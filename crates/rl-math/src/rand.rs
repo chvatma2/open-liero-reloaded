@@ -90,6 +90,14 @@ impl GlibcRand {
         self.calls
     }
 
+    /// Feeds the whole generator state to `f`, one word at a time, for checksums.
+    pub fn visit_state(&self, mut f: impl FnMut(u64)) {
+        self.r.iter().for_each(|&w| f(w as u32 as u64));
+        f(self.fptr as u64);
+        f(self.rptr as u64);
+        f(self.calls);
+    }
+
     /// `GetRandomNum` (`MathLib.cpp:58-62`).
     pub fn random_num(&mut self) -> f32 {
         num_from(self.next())
@@ -191,6 +199,13 @@ impl Mt19937 {
     }
     pub fn calls(&self) -> u64 {
         self.calls
+    }
+
+    /// Feeds the whole generator state to `f`, one word at a time, for checksums.
+    pub fn visit_state(&self, mut f: impl FnMut(u64)) {
+        self.state.iter().for_each(|&w| f(w as u64));
+        f(self.index as u64);
+        f(self.calls);
     }
 }
 

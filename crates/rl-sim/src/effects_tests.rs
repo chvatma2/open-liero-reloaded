@@ -135,7 +135,7 @@ fn carve_dirt_green_dirt_and_injure_actions() {
     let apply = |b: &mut Bench, a: &ActionDef, ev: &Event| {
         b.with_ctx(NOW, |pool, ctx| {
             let mut info = DoActionInfo::default();
-            apply_to(a, ev, pool.get_mut(0).unwrap(), &mut info, ctx);
+            apply_to(a, None, ev, pool.get_mut(0).unwrap(), &mut info, ctx);
             info.delete_after
         })
     };

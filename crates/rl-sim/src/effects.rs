@@ -7,6 +7,7 @@ use rl_terrain::{PX_DIRT, Stamp, Terrain};
 use crate::SimSettings;
 use crate::bonus::{Bonus, MAX_BONUSES};
 use crate::damage::{Harm, injure_worm};
+use crate::events::{CosmeticKind, Event, StampId, TerrainOp, TickEvents};
 use crate::proj_sim::ProjCtx;
 use crate::projectile::{c_i64, c_int};
 use crate::rng::Draws;
@@ -32,13 +33,35 @@ fn has_owner(owner: i32) -> bool {
 /// `CMap::CarveHole(size, pos)` (`src/common/CMap.cpp:1005-1105`): the stamp
 /// is the theme's hole `clamp(size, 0, 4)`; a missing hole carves nothing.
 pub(crate) fn carve_hole(ctx: &mut ProjCtx, size: i32, pos: Vec2) -> i32 {
-    carve_at(ctx.terrain, ctx.holes, size, pos)
+    carve_at(ctx.terrain, ctx.holes, &mut ctx.draws.events, TerrainOp::Carve, size, pos)
 }
 
-/// [`carve_hole`] on a terrain and its theme's holes.
-pub(crate) fn carve_at(terrain: &mut Terrain, holes: &[Stamp], size: i32, pos: Vec2) -> i32 {
-    let Some(hole) = holes.get(size.clamp(0, 4) as usize) else { return 0 };
-    terrain.carve_hole(hole, c_int(pos.x), c_int(pos.y)) as i32
+/// [`carve_hole`] on a terrain and its theme's holes, reported as `op`.
+pub(crate) fn carve_at(
+    terrain: &mut Terrain,
+    holes: &[Stamp],
+    events: &mut TickEvents,
+    op: TerrainOp,
+    size: i32,
+    pos: Vec2,
+) -> i32 {
+    carve_px(terrain, holes, events, op, size.clamp(0, 4) as usize, c_int(pos.x), c_int(pos.y)) as i32
+}
+
+/// `Terrain::carve_hole` with the theme's hole `hole` at `(x, y)`, reported as
+/// a [`Event::TerrainEdit`]; a missing hole carves and reports nothing.
+pub(crate) fn carve_px(
+    terrain: &mut Terrain,
+    holes: &[Stamp],
+    events: &mut TickEvents,
+    op: TerrainOp,
+    hole: usize,
+    x: i32,
+    y: i32,
+) -> u32 {
+    let Some(stamp) = holes.get(hole) else { return 0 };
+    events.edit(op, StampId::Hole(hole as u8), x, y);
+    terrain.carve_hole(stamp, x, y)
 }
 
 /// The `PJ_CARVE` action (`src/common/PhysicsLX56_Projectiles.cpp:781-793`):
@@ -57,7 +80,9 @@ pub(crate) fn make_dirt(ctx: &mut ProjCtx, pos: Vec2, owner: i32) {
     let mut d: i32 = 0;
     for p in [pos - Vec2::new(6.0, 6.0), pos + Vec2::new(6.0, -6.0), pos + Vec2::new(0.0, 6.0)] {
         if let Some(hole) = ctx.holes.get(4) {
-            d = d.wrapping_add(ctx.terrain.place_dirt(hole, c_int(p.x), c_int(p.y)) as i32);
+            let (x, y) = (c_int(p.x), c_int(p.y));
+            ctx.draws.events.edit(TerrainOp::Dirt, StampId::Hole(4), x, y);
+            d = d.wrapping_add(ctx.terrain.place_dirt(hole, x, y) as i32);
         }
     }
     if has_owner(owner) {
@@ -70,8 +95,10 @@ pub(crate) fn make_dirt(ctx: &mut ProjCtx, pos: Vec2, owner: i32) {
 /// the mask OLX places nothing (`CMap.cpp:1233-1236`).
 pub(crate) fn make_green_dirt(ctx: &mut ProjCtx, pos: Vec2, owner: i32) {
     let Some(mask) = ctx.green_mask else { return };
+    let (x, y) = (c_int(pos.x), c_int(pos.y));
+    ctx.draws.events.edit(TerrainOp::GreenDirt, StampId::GreenBall, x, y);
     let rand = &mut ctx.draws.rand;
-    let d = ctx.terrain.place_green_dirt(mask, c_int(pos.x), c_int(pos.y), &mut || rand.random_int(3)) as i32;
+    let d = ctx.terrain.place_green_dirt(mask, x, y, &mut || rand.random_int(3)) as i32;
     if has_owner(owner) {
         increment_dirt_count(ctx.worms, owner, d.wrapping_neg());
     }
@@ -125,6 +152,8 @@ impl<'a> ProjCtx<'a> {
 /// entity, a hole of size `(int)damage` counted for `owner`, and the full
 /// `damage` to every alive worm whose recorded position (`getBest`, as the
 /// hit test) is within 5 px: no falloff. The viewport shake is cosmetic.
+/// Reported as an [`Event::Explosion`], the `ENT_EXPLOSION` of size
+/// `(int)damage` (8 up to damage 5) and the hole's terrain edit.
 pub(crate) fn explosion(ctx: &mut Blast, time: AbsTime, pos: Vec2, damage: f32, owner: i32) {
     let (w, h) = (ctx.terrain.width() as i64, ctx.terrain.height() as i64);
     // MIN((uint)pos.y, H - 1); px = (uint)pos.x. x86-64 converts through a 64-bit int.
@@ -154,11 +183,12 @@ pub(crate) fn explosion(ctx: &mut Blast, time: AbsTime, pos: Vec2, damage: f32, 
         }
     }
     if got_dirt {
-        // GetRandomVec().multPairwise(30, 10) each.
-        ctx.draws.particles(2);
+        ctx.draws.particles(2, pos, |v| Vec2::new(v.x * 30.0, v.y * 10.0));
     }
-    ctx.draws.spawn_entity();
-    let d = carve_at(ctx.terrain, ctx.holes, c_int(damage), pos);
+    let size = if damage > 5.0 { c_int(damage) } else { 8 };
+    ctx.draws.events.push(Event::Explosion { pos, damage });
+    ctx.draws.entity(CosmeticKind::Explosion { size }, pos, Vec2::ZERO);
+    let d = carve_at(ctx.terrain, ctx.holes, &mut ctx.draws.events, TerrainOp::Carve, c_int(damage), pos);
     increment_dirt_count(ctx.worms, owner, d);
     // `(tLX->currentTime - time).milliseconds()`: wraps (the assert is compiled out).
     let ms_back = ctx.wall_clock.0.wrapping_sub(time.0);

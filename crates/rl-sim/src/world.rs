@@ -15,7 +15,10 @@ use rl_terrain::{GreenMask, Stamp, Terrain};
 use crate::SimSettings;
 use crate::beam::BeamCtx;
 use crate::bonus::{Bonus, BonusItem, Bonuses, ClientCtx, MAX_BONUSES};
+use crate::buf::Buf;
 use crate::damage::{Harm, die_at_zero_health};
+use crate::effects::carve_px;
+use crate::events::{CosmeticKind, Event, TerrainOp, TickEvents};
 use crate::input::{Keys, Latches};
 use crate::mod_rt::SimMod;
 use crate::physics::{Ctx, simulate_worm};
@@ -36,42 +39,42 @@ pub const CLOCK_OFFSET_MS: u64 = 10;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct World {
-    settings: SimSettings,
-    sim_mod: Arc<SimMod>,
-    terrain: Terrain,
+    pub(crate) settings: SimSettings,
+    pub(crate) sim_mod: Arc<SimMod>,
+    pub(crate) terrain: Terrain,
     /// The theme's five hole stamps, smallest first.
-    holes: Vec<Stamp>,
+    pub(crate) holes: Vec<Stamp>,
     /// The green-dirt mask (`bmpGreenMask`), if the theme has one.
-    green_mask: Option<GreenMask>,
-    worms: Vec<Worm>,
-    latches: Vec<Latches>,
+    pub(crate) green_mask: Option<GreenMask>,
+    pub(crate) worms: Vec<Worm>,
+    pub(crate) latches: Vec<Latches>,
     /// `Game::simulationTime`.
-    time: AbsTime,
+    pub(crate) time: AbsTime,
     /// `CClient::fLastSimulationTime`: where the physics clock is.
-    physics_time: AbsTime,
+    pub(crate) physics_time: AbsTime,
     /// `game.serverFrame`: 0 at the start, +1 at the start of each frame.
-    server_frame: u64,
+    pub(crate) server_frame: u64,
     /// The server's shot list for the local client.
-    shots: ShootList,
+    pub(crate) shots: ShootList,
     /// The shots delivered right before the last frame.
-    last_shots: Vec<Shot>,
+    pub(crate) last_shots: Buf<Shot>,
     /// The client's projectiles (`cProjectiles`).
-    projectiles: ProjectilePool,
+    pub(crate) projectiles: ProjectilePool,
     /// OLX's `rand()` and `FindSpot` generators and the entity counter.
-    draws: Draws,
+    pub(crate) draws: Draws,
     /// The server's and the client's bonuses, and the messages between them.
-    bonuses: Bonuses,
+    pub(crate) bonuses: Bonuses,
     /// Reused each physics step so that `tick` does not allocate (spec §5.3).
-    others: Scratch,
+    pub(crate) others: Scratch,
 }
 
 /// Buffers only: they hold no state, so they never make two worlds unequal.
 #[derive(Clone, Debug, Default)]
-struct Scratch {
+pub(crate) struct Scratch {
     /// The `(id, alive, pos)` of every worm, as the rope needs them.
-    others: Vec<(i32, bool, Vec2)>,
+    others: Buf<(i32, bool, Vec2)>,
     /// A beam trace's `goodWidthParts`, as wide as the widest beam.
-    beam_parts: Vec<bool>,
+    beam_parts: Buf<bool>,
 }
 
 impl PartialEq for Scratch {
@@ -107,11 +110,11 @@ impl World {
             physics_time: start,
             server_frame: 0,
             shots: ShootList::new(),
-            last_shots: Vec::with_capacity(MAX_SHOOTINGS),
+            last_shots: Buf::with_capacity(MAX_SHOOTINGS),
             projectiles: ProjectilePool::new(ProjectilePool::DEFAULT_CAPACITY),
             draws: Draws::new(GlibcRand::new(seed), Mt19937::new(seed)),
             bonuses,
-            others: Scratch { others: Vec::new(), beam_parts: Vec::with_capacity(terrain_min as usize) },
+            others: Scratch { others: Buf::default(), beam_parts: Buf::with_capacity(terrain_min as usize) },
         }
     }
 
@@ -221,7 +224,8 @@ impl World {
     }
 
     /// `CWorm::Spawn` at `(x, y)`, including the spawn hole. Returns the worm's
-    /// index, or `None` if the world already has [`MAX_WORMS`] worms.
+    /// index, or `None` if the world already has [`MAX_WORMS`] worms. Its
+    /// events (`Spawned`, the hole, the spawn sparkle) come with the next tick's.
     pub fn spawn_worm(&mut self, x: i32, y: i32) -> Option<usize> {
         if self.worms.len() >= MAX_WORMS {
             return None;
@@ -230,10 +234,20 @@ impl World {
         let pos = Vec2::new(x as f32, y as f32);
         self.worms.push(Worm::spawned(id, pos, self.time, &self.settings));
         self.latches.push(Latches::default());
-        self.others.others = Vec::with_capacity(self.worms.len());
-        if let Some(hole) = self.holes.get(SPAWN_HOLE) {
-            self.terrain.carve_hole(hole, pos.x as i32, pos.y as i32);
-        }
+        self.others.others = Buf::with_capacity(self.worms.len());
+        let ev = &mut self.draws.events;
+        ev.begin_setup();
+        ev.push(Event::Spawned { worm: id });
+        carve_px(
+            &mut self.terrain,
+            &self.holes,
+            ev,
+            TerrainOp::Carve,
+            SPAWN_HOLE,
+            pos.x as i32,
+            pos.y as i32,
+        );
+        ev.cosmetic(CosmeticKind::Spawn, pos, Vec2::ZERO);
         Some(self.worms.len() - 1)
     }
 
@@ -267,8 +281,10 @@ impl World {
     }
 
     /// One 100 Hz frame. `keys[i]` is what worm `i` holds during this frame;
-    /// a worm with no entry holds nothing.
-    pub fn tick(&mut self, keys: &[Keys]) {
+    /// a worm with no entry holds nothing. Returns what happened
+    /// ([`TickEvents`]), after the events of setup calls since the last tick.
+    pub fn tick(&mut self, keys: &[Keys]) -> &TickEvents {
+        self.draws.events.begin_tick();
         // What OLX does between the previous frame and this one (spec §18 D1,
         // D10): the server's messages, the shots, then the client's messages.
         let num_weapons = self.sim_mod.weapons().len() as i32;
@@ -303,13 +319,19 @@ impl World {
             settings: &self.settings,
             terrain: &mut self.terrain,
             holes: &self.holes,
-            mt: &mut self.draws.mt,
+            draws: &mut self.draws,
             now: self.time,
             wall_clock,
         };
         simulate_respawns(&mut self.worms, &mut self.latches, &mut spawner);
         self.bonuses.simulate_server(&self.settings, &self.terrain, &mut self.draws, wall_clock);
         self.time += frame;
+        &self.draws.events
+    }
+
+    /// The last tick's events (and those of setup calls since).
+    pub fn events(&self) -> &TickEvents {
+        &self.draws.events
     }
 
     /// The client parses the server's bonus messages, or (`placed`) the

@@ -8,8 +8,11 @@ use rl_terrain::{PX_ROCK, Stamp, Terrain};
 
 use crate::SimSettings;
 use crate::damage::{WRM_OUT, WRM_UNLIM};
+use crate::effects::carve_px;
+use crate::events::{CosmeticKind, Event, TerrainOp};
 use crate::input::Latches;
 use crate::projectile::{c_i64, c_int, c_u64};
+use crate::rng::Draws;
 use crate::worm::{Dir, Worm, WormState};
 
 /// OLX `SPAWN_HOLESIZE` (`include/Consts.h:36`): the size-4 (largest) hole.
@@ -89,7 +92,7 @@ pub(crate) struct Spawner<'a> {
     pub settings: &'a SimSettings,
     pub terrain: &'a mut Terrain,
     pub holes: &'a [Stamp],
-    pub mt: &'a mut Mt19937,
+    pub draws: &'a mut Draws,
     /// `GetPhysicsTime()`.
     pub now: AbsTime,
     /// `tLX->currentTime`, pinned to `now + K` (spec §18 D2).
@@ -128,15 +131,18 @@ pub(crate) fn simulate_respawns(worms: &mut [Worm], latches: &mut [Latches], sp:
 /// `EmptyWeaponsOnRespawn` (`GameServer::SendEmptyWeaponsOnRespawn`,
 /// `src/server/CServer_Send.cpp:1066-1072`).
 fn spawn_worm(w: &mut Worm, keys: &mut Latches, sp: &mut Spawner) {
-    let mut pos = find_spot(sp.terrain, sp.mt);
+    let mut pos = find_spot(sp.terrain, &mut sp.draws.mt);
     if pos.x == -1.0 && pos.y == -1.0 {
-        pos = find_spot(sp.terrain, sp.mt);
+        pos = find_spot(sp.terrain, &mut sp.draws.mt);
     }
     w.respawn(pos, sp.now);
     keys.reset();
-    if let Some(hole) = sp.holes.get(SPAWN_HOLE) {
-        sp.terrain.carve_hole(hole, c_int(pos.x), c_int(pos.y));
-    }
+    let ev = &mut sp.draws.events;
+    ev.push(Event::Spawned { worm: w.id });
+    carve_px(sp.terrain, sp.holes, ev, TerrainOp::Carve, SPAWN_HOLE, c_int(pos.x), c_int(pos.y));
+    // The local client's `ParseSpawnWorm` (`src/client/CClient_Parse.cpp:1047-1053`)
+    // shows `ENT_SPAWN`; a dedicated server has no viewport, so it takes no slot.
+    ev.cosmetic(CosmeticKind::Spawn, pos, Vec2::ZERO);
     if w.lives == WRM_OUT {
         w.lives = if sp.settings.lives < 0 { WRM_UNLIM } else { 0 };
     }

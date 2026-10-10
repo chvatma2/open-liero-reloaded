@@ -4,9 +4,10 @@
 //! (`src/server/CGameMode.cpp:69-252`) and `CWorm::Kill`
 //! (`src/common/CWorm.cpp:1399-1413`).
 
-use rl_math::AbsTime;
+use rl_math::{AbsTime, Vec2};
 
 use crate::SimSettings;
+use crate::events::{CosmeticKind, Event, SoundId};
 use crate::projectile::c_int;
 use crate::rng::Draws;
 use crate::world::MAX_WORMS;
@@ -70,10 +71,16 @@ fn add_damage(w: &mut Worm, damage: f32, victim: i32, s: &SimSettings) {
     }
 }
 
-/// One `SpawnEntity` whose velocity is a `GetRandomVec()` (2 `rand()`).
-fn entity(d: &mut Draws) {
-    d.rand.random_vec();
-    d.spawn_entity();
+/// The three blood entities of one round of `InjureWorm`'s blood at `pos`,
+/// each with a `GetRandomVec()` velocity (2 `rand()`) scaled by `sp`; the
+/// dropper's by `(sp, dropper_y)`.
+fn blood_round(d: &mut Draws, pos: Vec2, sp: f32, dropper_y: f32, reds: [u8; 2]) {
+    let v = d.rand.random_vec();
+    d.entity(CosmeticKind::BloodDropper, pos, Vec2::new(v.x * sp, v.y * dropper_y));
+    for red in reds {
+        let v = d.rand.random_vec() * sp;
+        d.entity(CosmeticKind::Blood { red }, pos, v);
+    }
 }
 
 /// `CClient::InjureWorm(w, damage, owner)` on the worm with id `id`, for a
@@ -121,35 +128,34 @@ pub(crate) fn injure_worm(h: &mut Harm, id: i32, damage: f32, owner: i32) {
     }
     let w = &mut h.worms[vi];
     w.health -= damage;
+    let pos = w.pos;
+    h.draws.events.push(Event::Damage { worm: id, amount: damage, by: owner });
     if w.health < 0.0 {
         w.health = 0.0;
         kill_worm(h, id, owner);
         let d = &mut *h.draws;
-        d.rand.random_int(2); // the death sound
+        let s = d.rand.random_int(2);
+        d.events.sound(SoundId::DEATH[s.clamp(0, 2) as usize], pos);
         for _ in 0..7 {
             // A gib draws its spin inside SpawnEntity, if the pool has room.
-            d.rand.random_vec();
-            if d.spawn_entity() {
+            let v = d.rand.random_vec() * 80.0;
+            if d.entity(CosmeticKind::Gib, pos, v) {
                 d.rand.random_num();
                 d.rand.random_num();
             }
         }
         let amount = (50.0f32 * (BLOOD_AMOUNT as f32 / 100.0)) as i32;
         for _ in 0..amount {
-            d.rand.random_num();
-            for _ in 0..3 {
-                entity(d);
-            }
+            let sp = d.rand.random_num() * 100.0 + 50.0;
+            blood_round(d, pos, sp, sp, [200, 128]);
         }
     }
     if damage > 0.0 {
         let amount = clamp(damage, 10.0, 100.0) * (BLOOD_AMOUNT as f32 / 100.0);
         let mut i: u16 = 0;
         while (i as f32) < amount {
-            h.draws.rand.random_num();
-            for _ in 0..3 {
-                entity(h.draws);
-            }
+            let sp = h.draws.rand.random_num() * (50.0 + damage * 2.0);
+            blood_round(h.draws, pos, sp, sp * 4.0, [128, 200]);
             i = i.wrapping_add(1);
         }
     }
@@ -196,6 +202,7 @@ pub(crate) fn kill_worm(h: &mut Harm, victim: i32, killer: i32) {
             w.kills = w.kills.wrapping_add(1);
         }
     }
+    h.draws.events.push(Event::Kill { victim, killer });
     // `CWorm::Kill(true)`.
     let w = &mut h.worms[vi];
     w.alive = false;

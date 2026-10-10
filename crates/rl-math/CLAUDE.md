@@ -22,6 +22,6 @@ milliseconds, `seconds() = ms * 0.001f`), and the macros `SIGN`, `CLAMP_DIRECT`,
   `RANDOM_NUMBERS` is OLX's fixed table, and `Mt19937` is boost's `mt19937`
   (`FindSpot`). Each generator counts its draws (`calls()`), which the oracle
   traces record (`rc`, `mt`). Every `random_*` call draws exactly as OLX does,
-  including `random_int(0)`.
+  including `random_int(0)`. `visit_state` feeds the full state to a checksum.
 
 Test: `cargo nextest run -p rl-math`.

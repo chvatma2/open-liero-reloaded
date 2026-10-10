@@ -10,6 +10,7 @@
 
 use alloc::vec::Vec;
 
+use rl_data::image::Rgba;
 use rl_data::mod_def::{BeamDef, SpecialKind};
 use rl_math::{AbsTime, TimeDiff, Vec2};
 use rl_terrain::{PX_DIRT, PX_ROCK, Stamp, Terrain};
@@ -18,6 +19,7 @@ use crate::SimSettings;
 use crate::bonus::{Bonus, MAX_BONUSES};
 use crate::damage::{Harm, injure_worm};
 use crate::effects::{Blast, carve_at, explosion, increment_dirt_count};
+use crate::events::{CosmeticKind, TerrainOp};
 use crate::mod_rt::{SimMod, SimWeapon};
 use crate::projectile::c_int;
 use crate::rng::Draws;
@@ -51,6 +53,7 @@ enum Part {
 /// (`src/client/CClient_Game.cpp:965-1047` and `640-697`): up to `Length`
 /// steps of `dir` from `pos`, `width` parts side by side along
 /// `dir.orthogonal()`. `part` gets each live part's point and the width.
+/// Returns where the trace stopped.
 fn trace(
     beam: &BeamDef,
     mut pos: Vec2,
@@ -58,7 +61,7 @@ fn trace(
     map_min: u32,
     parts: &mut Vec<bool>,
     mut part: impl FnMut(Vec2, i32) -> Part,
-) {
+) -> Vec2 {
     let orth = Vec2::new(dir.y, -dir.x);
     parts.clear();
     let mut width: i32 = 0;
@@ -100,6 +103,7 @@ fn trace(
         }
         pos += dir;
     }
+    pos
 }
 
 /// `(p.x <= 0 || p.y <= 0) ? PX_ROCK : GetPixelFlag((int)p.x, (int)p.y)`.
@@ -184,7 +188,8 @@ pub(crate) fn process_shot_beam(
         }
         if solid(terrain, p) {
             if beam.damage != -1 {
-                let d = carve_at(terrain, holes, spread(beam.damage, beam, width), p);
+                let size = spread(beam.damage, beam, width);
+                let d = carve_at(terrain, holes, &mut draws.events, TerrainOp::Beam, size, p);
                 if by_worm {
                     increment_dirt_count(worms, shot.worm, d);
                 }
@@ -206,7 +211,8 @@ pub(crate) fn process_shot_beam(
 /// from `PlayerShoot` while its beam's slot counts down. Not cosmetic: it
 /// carves the first dirt or rock it reaches, from the worm's current
 /// position at its unrounded aim, every sub-step. A worm stops it unharmed.
-/// Its explosion entities take pool slots; the beam entity is drawn apart.
+/// Its explosion entities take pool slots; the beam entity
+/// (`SetWormBeamEntity`) takes none and is reported as a `Beam` cosmetic.
 pub(crate) fn draw_beam(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut BeamCtx) {
     let w = &worms[i];
     if w.slots.is_empty() {
@@ -225,26 +231,31 @@ pub(crate) fn draw_beam(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut Beam
     let map_min = ctx.terrain.width().min(ctx.terrain.height());
     let mut set = others(worms, id);
     let BeamCtx { terrain, holes, draws, parts } = ctx;
-    trace(beam, pos, dir, map_min, parts, |p, width| {
+    let end = trace(beam, pos, dir, map_min, parts, |p, width| {
         if solid(terrain, p) {
             if beam.damage != -1 {
                 if width <= 2 {
-                    draws.spawn_entity();
+                    draws.entity(CosmeticKind::Explosion { size: 5 }, p, Vec2::ZERO);
                 }
-                let d = carve_at(terrain, holes, spread(beam.damage, beam, width), p);
+                let size = spread(beam.damage, beam, width);
+                let d = carve_at(terrain, holes, &mut draws.events, TerrainOp::Beam, size, p);
                 increment_dirt_count(worms, id, d);
             }
             return Part::Stopped;
         }
         if let Some(i) = hit(worms, set, p) {
             if beam.damage != -1 {
-                draws.spawn_entity();
+                draws.entity(CosmeticKind::Explosion { size: 3 }, p + Vec2::new(1.0, 1.0), Vec2::ZERO);
             }
             set &= !(1 << i);
             return Part::StoppedLate;
         }
         Part::Clear
     });
+    // `SetWormBeamEntity` (`:699-710`), unless the beam is pink.
+    if beam.colour != Rgba::MAGENTA {
+        draws.events.cosmetic(CosmeticKind::Beam { worm: id }, pos, end - pos);
+    }
 }
 
 /// `CClient::ShootSpecial` (`src/client/CClient_Game.cpp:549-585`). The
@@ -260,9 +271,9 @@ pub(crate) fn shoot_special(w: &mut Worm, m: &SimMod, draws: &mut Draws) {
     let dt = TimeDiff(10).seconds();
     if wpn.special == SpecialKind::Jetpack {
         w.vel.y += -50.0 * (wpn.thrust as f32 * dt);
-        // `CVec(15,0) * GetRandomNum()`, the spray entity's velocity.
-        draws.rand.random_num();
-        draws.spawn_entity();
+        let s = Vec2::new(15.0, 0.0) * draws.rand.random_num();
+        let vel = s + Vec2::new(0.0, 1.0) * wpn.thrust as f32;
+        draws.entity(CosmeticKind::JetpackSpray, w.pos, vel);
     }
     let slot = w.current_slot_mut();
     slot.charge -= wpn.drain / 100.0;

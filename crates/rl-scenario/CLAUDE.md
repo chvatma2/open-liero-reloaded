@@ -27,6 +27,11 @@ traces in `rl-oracle`'s format.
 - A scenario's bonuses are placed with `World::place_bonus` before the
   frame's tick (weapons by name, ignoring case, as OLX's `FindWeaponId`).
 - `load_mod` refuses an image projectile without its image's frame count.
+  `load_map` reads a level pack and its theme (holes, green-dirt mask).
+- `tests/smoke.rs` plays 4-worm matches with random seeded keys on every
+  level with both mods (3000 ticks) and checks the invariants every tick,
+  and that a clone gives the same checksums and events; `tests/no_alloc.rs`
+  fires every Classic weapon without allocating. Both skip without content.
 - For debugging a divergence: `rl-cli scenario <name> --dump <frame>` (`--all`
   compares every field, `--fields checked+projectiles+proj_hidden+clocks` the
   named groups).

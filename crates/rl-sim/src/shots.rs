@@ -15,6 +15,8 @@ use rl_terrain::{Stamp, Terrain};
 use crate::SimSettings;
 use crate::beam::{BeamCtx, process_shot_beam};
 use crate::bonus::{Bonus, MAX_BONUSES};
+use crate::buf::Buf;
+use crate::events::Event;
 use crate::mod_rt::{SimMod, WeaponType};
 use crate::projectile::{ProjectilePool, c_int};
 use crate::rng::Draws;
@@ -56,14 +58,14 @@ pub struct Shot {
 /// The server's list for the local client, with Model R's send rule.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ShootList {
-    shots: Vec<Shot>,
+    shots: Buf<Shot>,
     /// The list was started in an earlier frame, so the next delivery sends it.
     started: bool,
 }
 
 impl ShootList {
     pub fn new() -> Self {
-        Self { shots: Vec::with_capacity(MAX_SHOOTINGS), started: false }
+        Self { shots: Buf::with_capacity(MAX_SHOOTINGS), started: false }
     }
 
     /// `CShootList::addShoot` (`CShootList.cpp:80-112`). A full list drops the
@@ -155,8 +157,8 @@ pub(crate) struct ShotCtx<'a> {
 
 /// `CClient::ProcessShot` (`CClient_Game.cpp:852-921`). The shot of a worm
 /// that is dead at delivery is dropped. A beam's shot is traced through the
-/// map ([`process_shot_beam`]); a projectile weapon's applies recoil and
-/// spawns its projectiles.
+/// map ([`process_shot_beam`]); a projectile weapon's plays its sound,
+/// applies recoil and spawns its projectiles. Both report `WeaponFired`.
 pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], ctx: &mut ShotCtx) {
     let by_worm = (0..MAX_WORMS as i32).contains(&shot.worm);
     if by_worm {
@@ -170,12 +172,18 @@ pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], 
         // `FinalProj` exists only in mods newer than LX56.
         return;
     }
+    let fired = Event::WeaponFired { worm: shot.worm, weapon: shot.weapon };
     if wpn.kind == WeaponType::Beam {
+        ctx.draws.events.push(fired);
         let mut beam = BeamCtx { terrain: ctx.terrain, holes: ctx.holes, draws: ctx.draws, parts: ctx.parts };
         process_shot_beam(shot, wpn, worms, &mut beam, ctx.settings, ctx.now, ctx.bonuses);
         return;
     }
     let Some(info) = &wpn.spawn else { return };
+    ctx.draws.events.push(fired);
+    if let Some(id) = wpn.sound {
+        ctx.draws.events.sound(id, shot.pos);
+    }
     if by_worm && let Some(w) = worms.iter_mut().find(|w| w.id == shot.worm) {
         let dir = vec_from_angle(shot.angle as f32);
         w.vel -= dir * wpn.recoil as f32;
@@ -188,6 +196,14 @@ pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], 
         now: ctx.now,
     };
     spawn_info_apply(info, SpawnParent::Shot(shot), spawn, &mut sctx);
+}
+
+impl crate::checksum::Checksum for ShootList {
+    fn hash(&self, h: &mut crate::checksum::Fnv) {
+        let ShootList { shots, started } = self;
+        shots.hash(h);
+        h.bool(*started);
+    }
 }
 
 #[cfg(test)]

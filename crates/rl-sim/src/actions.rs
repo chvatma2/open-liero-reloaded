@@ -10,6 +10,7 @@ use rl_math::{PI_F32, TimeDiff, Vec2, atan2f, normalize_vector};
 
 use crate::damage::injure_worm;
 use crate::effects::{carve, explosion, make_dirt, make_green_dirt};
+use crate::events::SoundId;
 use crate::mod_rt::SpawnInfo;
 use crate::proj_sim::{COL_BOTTOM, COL_LEFT, COL_RIGHT, COL_TOP, Col, PJC_MAPBORDER, ProjCtx};
 use crate::projectile::{Projectile, ProjectilePool, attr_set};
@@ -40,7 +41,7 @@ impl Event {
     }
 }
 
-/// `Proj_DoActionInfo` (`include/ProjAction.h:477-500`), without sounds.
+/// `Proj_DoActionInfo` (`include/ProjAction.h:477-500`).
 #[derive(Debug, PartialEq)]
 pub(crate) struct DoActionInfo {
     pub explode: bool,
@@ -54,6 +55,8 @@ pub(crate) struct DoActionInfo {
     pub trail_spawn: bool,
     /// `spawnprojectiles`: spawn `GeneralSpawnInfo`.
     pub spawn_projectiles: bool,
+    /// The last sound an `Explode` or `PlaySound` action set.
+    pub sound: Option<SoundId>,
 }
 
 impl Default for DoActionInfo {
@@ -68,6 +71,7 @@ impl Default for DoActionInfo {
             delete_after: false,
             trail_spawn: false,
             spawn_projectiles: false,
+            sound: None,
         }
     }
 }
@@ -87,9 +91,10 @@ fn speed_mult(v: Vec2) -> Vec2 {
     Vec2::new(1.0 * v.x + 0.0 * v.y, 0.0 * v.x + 1.0 * v.y)
 }
 
-/// `Proj_Action::applyTo` (`:740-945`).
+/// `Proj_Action::applyTo` (`:740-945`). `sound` is the action's `Sound`.
 pub(crate) fn apply_to(
     a: &ActionDef,
+    sound: Option<SoundId>,
     ev: &Event,
     p: &mut Projectile,
     info: &mut DoActionInfo,
@@ -106,6 +111,14 @@ pub(crate) fn apply_to(
             }
             if a.shake > info.shake {
                 info.shake = a.shake;
+            }
+            if sound.is_some() {
+                info.sound = sound;
+            }
+        }
+        ActionKind::PlaySound => {
+            if sound.is_some() {
+                info.sound = sound;
             }
         }
         ActionKind::Bounce => {
@@ -194,9 +207,8 @@ pub(crate) fn apply_to(
             let v = p.vel + speed_mult(heading_vel_to(None, p));
             attr_set(&mut p.vel, v);
         }
-        // LX56 events have no targets; sounds are not simulated.
+        // LX56 events have no targets.
         ActionKind::InjureProj
-        | ActionKind::PlaySound
         | ActionKind::OverwriteTargetSpeed
         | ActionKind::MultiplyTargetSpeed
         | ActionKind::DiffTargetSpeed
@@ -270,7 +282,7 @@ fn heading_vel_to(target: Option<Vec2>, src: &Projectile) -> Vec2 {
 }
 
 /// `Proj_DoActionInfo::execute` (`:1165-1230`): explosion, dirt, then the
-/// children (trail first), then the junk-projectile rule, and only then
+/// children (trail first), the sound, then the junk-projectile rule, and only then
 /// the projectile frees its slot, so children never take it.
 pub(crate) fn execute(pool: &mut ProjectilePool, i: usize, info: &mut DoActionInfo, ctx: &mut ProjCtx) {
     let sim_mod = ctx.sim_mod;
@@ -309,6 +321,9 @@ pub(crate) fn execute(pool: &mut ProjectilePool, i: usize, info: &mut DoActionIn
         && let Some(s) = &pi.event_spawn
     {
         spawn_children(pool, i, s, ctx);
+    }
+    if let Some(id) = info.sound {
+        ctx.draws.events.sound(id, pos);
     }
     let has_any_action = has_action(&def.hit) || has_action(&def.player_hit) || timer_has_action(&def.timer);
     let ends_by_animation = matches!(

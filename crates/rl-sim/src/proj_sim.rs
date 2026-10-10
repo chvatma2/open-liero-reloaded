@@ -11,6 +11,7 @@ use crate::SimSettings;
 use crate::actions::{DoActionInfo, Event, apply_to, execute, timer_has_action};
 use crate::bonus::{Bonus, MAX_BONUSES};
 use crate::damage::Harm;
+use crate::events::CosmeticKind;
 use crate::mod_rt::{SimMod, SimProjectile};
 use crate::projectile::{Projectile, ProjectilePool, attr_set, c_int, c_u64};
 use crate::rng::Draws;
@@ -112,13 +113,17 @@ fn do_frame(pool: &mut ProjectilePool, i: usize, ctx: &mut ProjCtx) -> bool {
         && timer_has_action(&def.timer)
         && def.timer.time + def.timer.time_var * p.time_var_random < p.life
     {
-        apply_to(timer, &Event { timer_hit: true, col: None, dt }, p, &mut info, ctx);
+        apply_to(timer, pi.timer_sound, &Event { timer_hit: true, col: None, dt }, p, &mut info, ctx);
     }
     let res = low_level(p, pi, dt, &mut info, ctx);
     let ev = Event { timer_hit: false, col: Some(res), dt };
     match res {
-        Col::Terrain(mask) if mask & PJC_TERRAIN != 0 => apply_to(&def.hit, &ev, p, &mut info, ctx),
-        Col::Worm(_) if !info.explode => apply_to(&def.player_hit, &ev, p, &mut info, ctx),
+        Col::Terrain(mask) if mask & PJC_TERRAIN != 0 => {
+            apply_to(&def.hit, pi.hit_sound, &ev, p, &mut info, ctx)
+        }
+        Col::Worm(_) if !info.explode => {
+            apply_to(&def.player_hit, pi.player_hit_sound, &ev, p, &mut info, ctx)
+        }
         _ => {}
     }
     execute(pool, i, &mut info, ctx);
@@ -168,16 +173,23 @@ fn low_level(
             }
         }
     }
-    // Smoke and explosive trails are entities: only their pool slots matter (spec §18 D4).
+    // Smoke and explosive trails are entities: only their pool slots matter
+    // to the simulation (spec §18 D4).
     let trail = &pi.def.trail;
     match trail.kind {
         TrailKind::Smoke | TrailKind::ChemSmoke if p.extra >= 0.075 => {
             p.extra = 0.0;
-            ctx.draws.spawn_entity();
+            let kind =
+                if trail.kind == TrailKind::Smoke { CosmeticKind::Smoke } else { CosmeticKind::ChemSmoke };
+            ctx.draws.entity(kind, p.pos, Vec2::ZERO);
         }
         TrailKind::Doomsday | TrailKind::Explosive if p.extra >= 0.05 => {
             p.extra = 0.0;
-            ctx.draws.spawn_entity();
+            if trail.kind == TrailKind::Doomsday {
+                ctx.draws.entity(CosmeticKind::Doomsday, p.pos, p.vel);
+            } else {
+                ctx.draws.entity(CosmeticKind::Explosion { size: 10 }, p.pos, Vec2::ZERO);
+            }
         }
         TrailKind::Projectile if p.last_sim_time > p.last_trail_proj => {
             // AbsTime + float: `time + (Uint64)(td * 1000.0f)`.

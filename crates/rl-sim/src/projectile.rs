@@ -173,6 +173,8 @@ pub struct ProjectilePool {
     slots: Vec<Projectile>,
     first_unused: i32,
     last_used: i32,
+    /// One past the highest slot ever taken: the slots above are untouched.
+    touched: usize,
 }
 
 impl ProjectilePool {
@@ -181,7 +183,7 @@ impl ProjectilePool {
 
     pub fn new(capacity: usize) -> Self {
         let capacity = capacity.min(i32::MAX as usize);
-        Self { slots: vec![Projectile::default(); capacity], first_unused: 0, last_used: -1 }
+        Self { slots: vec![Projectile::default(); capacity], first_unused: 0, last_used: -1, touched: 0 }
     }
 
     pub fn capacity(&self) -> usize {
@@ -206,6 +208,7 @@ impl ProjectilePool {
         if idx > self.last_used {
             self.last_used = idx;
         }
+        self.touched = self.touched.max(idx as usize + 1);
         // findNewFirstUnused (FastVector.h:34-41).
         loop {
             self.first_unused += 1;
@@ -273,6 +276,18 @@ impl ProjectilePool {
     /// Slot `i`, used or not (spawning fills a slot [`get_new`](Self::get_new) returned).
     pub(crate) fn slot_mut(&mut self, i: usize) -> &mut Projectile {
         &mut self.slots[i]
+    }
+}
+
+impl crate::checksum::Checksum for ProjectilePool {
+    /// Every slot ever used (a freed slot keeps values its next projectile
+    /// reads), then the free-list indices.
+    fn hash(&self, h: &mut crate::checksum::Fnv) {
+        let ProjectilePool { slots, first_unused, last_used, touched } = self;
+        h.usize(slots.len());
+        slots[..*touched].hash(h);
+        h.i32(*first_unused);
+        h.i32(*last_used);
     }
 }
 

@@ -18,6 +18,7 @@ rl-vfs.workspace = true
 anyhow.workspace = true
 
 [dev-dependencies]
+allocation-counter.workspace = true
 tempfile.workspace = true
 
 [lints]

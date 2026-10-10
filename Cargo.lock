@@ -660,6 +660,7 @@ dependencies = [
 name = "rl-scenario"
 version = "0.1.0"
 dependencies = [
+ "allocation-counter",
  "anyhow",
  "rl-data",
  "rl-math",

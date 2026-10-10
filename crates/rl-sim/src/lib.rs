@@ -6,6 +6,9 @@
 //! ([`World::spawn_worm`], [`World::set_loadout`], [`World::place_bonus`]), [`World::tick`] is the only
 //! way state changes, and it does not allocate.
 //!
+//! [`World::tick`] returns the tick's [`TickEvents`] (spec §5.7), and
+//! [`World::checksum`] hashes the whole simulation state.
+//!
 //! Scope: worm movement and collision, keyboard input, digging, the ninja
 //! rope, OLX's two clocks, and (M4) weapon slots, firing, the shot round trip,
 //! projectile spawning, motion, collision and actions, explosions, dirt,
@@ -17,8 +20,11 @@ extern crate alloc;
 mod actions;
 mod beam;
 mod bonus;
+mod buf;
+mod checksum;
 mod damage;
 mod effects;
+mod events;
 mod input;
 mod mod_rt;
 mod physics;
@@ -36,6 +42,7 @@ mod world;
 mod worm;
 
 pub use bonus::{Bonus, BonusItem, BonusKind, MAX_BONUSES};
+pub use events::{CosmeticKind, Event, GAME_SOUNDS, SoundId, StampId, TerrainOp, TickEvents};
 pub use input::{KeyLatch, Keys, Latches};
 pub use mod_rt::{
     MAX_AMOUNT, MAX_DEPTH, MAX_PROJECTILES, SimMod, SimModError, SimProjectile, SimWeapon, SpawnInfo,

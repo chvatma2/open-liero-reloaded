@@ -130,30 +130,47 @@ fn t0(expected: &Trace) -> u64 {
     expected.header.options.get("T0").and_then(|t| t.parse().ok()).unwrap_or(0)
 }
 
+/// An imported level's material grid with its theme's holes and green-dirt
+/// mask, what [`World::new`] and [`World::set_green_mask`] take.
+pub struct Map {
+    pub terrain: Terrain,
+    pub holes: Vec<Stamp>,
+    pub green_mask: Option<GreenMask>,
+}
+
+/// The level pack `level_id` (such as `olx-level-dirt-level`) and its theme from `content`.
+pub fn load_map(content: &Path, level_id: &str) -> anyhow::Result<Map> {
+    let level = rl_pack::read_level(&DirFs::new(content.join(level_id)))
+        .with_context(|| format!("level pack {level_id}"))?
+        .level;
+    let theme = rl_pack::read_theme(&DirFs::new(content.join(&level.def.theme)))
+        .with_context(|| format!("theme pack {}", level.def.theme))?
+        .theme;
+    Ok(Map {
+        terrain: Terrain::from_grid(&level.material),
+        holes: theme.holes.iter().map(Stamp::from_image).collect(),
+        green_mask: theme.green_ball.as_ref().map(GreenMask::from_image),
+    })
+}
+
 /// The world a scenario starts from: the imported level, theme and mod from
 /// `content` (packs written by `rl-cli import`), OLX's settings from the
 /// trace header, and the scenario's worms spawned with their weapons and health.
 pub fn load_world(content: &Path, sc: &Scenario, expected: &Trace) -> anyhow::Result<World> {
     let stem = sc.level.rsplit_once('.').map_or(sc.level.as_str(), |(s, _)| s);
     let level_id = format!("olx-level-{}", rl_data::slug::slug(stem));
-    let level = rl_pack::read_level(&DirFs::new(content.join(&level_id)))
-        .with_context(|| format!("level pack {level_id}"))?
-        .level;
-    let theme = rl_pack::read_theme(&DirFs::new(content.join(&level.def.theme)))
-        .with_context(|| format!("theme pack {}", level.def.theme))?
-        .theme;
+    let map = load_map(content, &level_id)?;
     let sim_mod = load_mod(content, &sc.mod_dir)?;
     check_ids(&sim_mod, &expected.header)?;
     check_options(&expected.header)?;
     let settings =
         SimSettings::from_olx_features(&expected.header.features).map_err(|e| anyhow::anyhow!(e.0))?;
-    let holes = theme.holes.iter().map(Stamp::from_image).collect();
     // The scenario's seed is the header's: the generators start clean at the second `simSetSeed`.
     let seed = expected.header.seed.unwrap_or(sc.seed);
-    let terrain = Terrain::from_grid(&level.material);
+    let Map { terrain, holes, green_mask } = map;
     let mut world = World::new(settings, Arc::new(sim_mod), terrain, holes, AbsTime(t0(expected)), seed);
-    if let Some(img) = &theme.green_ball {
-        world.set_green_mask(GreenMask::from_image(img));
+    if let Some(mask) = green_mask {
+        world.set_green_mask(mask);
     }
     let start = expected.frames.first().context("trace has no frames")?;
     for (i, spawn) in sc.worms.iter().enumerate() {

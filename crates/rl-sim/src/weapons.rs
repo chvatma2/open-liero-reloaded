@@ -9,9 +9,11 @@ use rl_math::{GlibcRand, TimeDiff};
 
 use crate::SimSettings;
 use crate::beam::{BeamCtx, draw_beam, shoot_special};
+use crate::events::CosmeticKind;
 use crate::mod_rt::{SimMod, SimWeapon, WeaponType};
 use crate::rng::Draws;
 use crate::shots::ShootList;
+use crate::spawn::vec_from_angle;
 use crate::worm::{Dir, Slot, Worm};
 
 /// `simulateWormWeapon` (`src/common/PhysicsLX56.cpp:471-498`): only the
@@ -141,14 +143,26 @@ pub(crate) fn player_shoot(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut B
 /// (`:179-181`). Its line trace only marks bot targets; what the simulation
 /// keeps is the `ENT_LASERSIGHT` entity it spawns every sub-step (the worm is
 /// visible to everybody outside Hide and Seek), which fills the dedicated
-/// server's entity pool (spec §18 D4).
+/// server's entity pool (spec §18 D4) and is reported with the aim direction.
 pub(crate) fn laser_sight(w: &Worm, m: &SimMod, draws: &mut Draws) {
     if w.slots.is_empty() {
         return;
     }
     let slot = w.current_slot();
     if m.weapon(slot.weapon).is_some_and(|wpn| wpn.laser_sight) && !slot.reloading {
-        draws.spawn_entity();
+        // `:754-765`: the aim, mirrored when facing left, in (-180, 180].
+        let mut angle = w.angle;
+        if w.face == Dir::Left {
+            angle = 180.0 - angle;
+        }
+        // Aims are clamped to [-90, 90], so these loops end (infinity is left alone).
+        while angle.is_finite() && angle > 180.0 {
+            angle -= 360.0;
+        }
+        while angle.is_finite() && angle < -180.0 {
+            angle += 360.0;
+        }
+        draws.entity(CosmeticKind::LaserSight, w.pos, vec_from_angle(angle));
     }
 }
 

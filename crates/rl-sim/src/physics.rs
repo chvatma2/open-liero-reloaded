@@ -7,6 +7,8 @@ use rl_math::{AbsTime, TimeDiff, Vec2, clamp_direct, reduce_const, reset_small, 
 use rl_terrain::{PX_DIRT, PX_EMPTY, Stamp, Terrain};
 
 use crate::SimSettings;
+use crate::effects::carve_px;
+use crate::events::{CosmeticKind, SoundId, TerrainOp, TickEvents};
 use crate::input::Latches;
 use crate::mod_rt::SimMod;
 use crate::rng::Draws;
@@ -31,7 +33,13 @@ const AIM_ACCEL: f32 = 500.0;
 
 /// The keyboard part of `CWormHumanInputHandler::getInput` with OLX's default
 /// client options (no mouse aim, no strafing, no old-school rope).
-pub(crate) fn get_input(w: &mut Worm, keys: &mut Latches, now: AbsTime, s: &SimSettings) {
+pub(crate) fn get_input(
+    w: &mut Worm,
+    keys: &mut Latches,
+    now: AbsTime,
+    s: &SimSettings,
+    ev: &mut TickEvents,
+) {
     let jump = keys.jump.is_once();
     let left_once = keys.left.is_once();
     let right_once = keys.right.is_once();
@@ -116,6 +124,8 @@ pub(crate) fn get_input(w: &mut Worm, keys: &mut Latches, now: AbsTime, s: &SimS
     if keys.rope.is_once() {
         let (pos, vel, can_use) = (w.pos, w.vel, w.can_use_ninja);
         w.rope.shoot(pos, vel, ninja_dir, can_use, s);
+        // `PlaySoundSample(sfxGame.smpNinja)` (`CWormHuman.cpp:572-574`), even without the rope.
+        ev.sound(SoundId::THROW, pos);
     }
 
     keys.reset();
@@ -144,11 +154,13 @@ fn carve_small(ctx: &mut Ctx, pos: Vec2) -> i32 {
             break;
         }
         if ctx.terrain.flags(x, y) & PX_DIRT != 0 {
-            ctx.draws.particles(3);
+            // `GetRandomVec().multPairwise(30, 10)`.
+            ctx.draws.particles(3, pos, |v| Vec2::new(v.x * 30.0, v.y * 10.0));
             break;
         }
     }
-    ctx.holes.get(3).map_or(0, |hole| ctx.terrain.carve_hole(hole, pos.x as i32, pos.y as i32) as i32)
+    let (x, y) = (pos.x as i32, pos.y as i32);
+    carve_px(ctx.terrain, ctx.holes, &mut ctx.draws.events, TerrainOp::Carve, 3, x, y) as i32
 }
 
 /// Bleeding (`PhysicsLX56.cpp:317-330`): below 15 health, at most once
@@ -159,7 +171,13 @@ fn bleed(w: &mut Worm, ctx: &mut Ctx) {
     if w.health < 15.0 && ctx.now.0 > w.last_blood.0.wrapping_add(2000) {
         w.last_blood = ctx.now;
         // `((float)iBloodAmount / 100.0f) * 20` with the default 100.
-        ctx.draws.particles(40);
+        let d = &mut *ctx.draws;
+        for _ in 0..20 {
+            for red in [200, 180] {
+                let v = d.rand.random_vec() * 100.0;
+                d.entity(CosmeticKind::Blood { red }, w.pos, v);
+            }
+        }
     }
 }
 
@@ -168,7 +186,7 @@ fn bleed(w: &mut Worm, ctx: &mut Ctx) {
 /// the position is recorded.
 pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
     let s = ctx.settings;
-    get_input(w, keys, ctx.now, s);
+    get_input(w, keys, ctx.now, s, &mut ctx.draws.events);
     if !w.alive {
         return;
     }
@@ -224,8 +242,9 @@ pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
         // Ground jump, or OLX's "instant air jump" (absolute velocity); both set vy.
         if !on_ground {
             // Three ENT_SPARKLEs (`PhysicsLX56.cpp:388-390`); their arguments draw nothing.
-            for _ in 0..3 {
-                ctx.draws.spawn_entity();
+            for x in [0.0, 2.0, -2.0] {
+                let (pos, vel) = (w.pos + Vec2::new(x, 4.0), w.vel + Vec2::new(x * 10.0, 40.0));
+                ctx.draws.entity(CosmeticKind::Sparkle, pos, vel);
             }
         }
         if on_ground || (!s.jump_to_aim_dir && w.can_air_jump && w.vel.y > s.worm_jump_force) {
@@ -249,7 +268,7 @@ pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
 
     let mut vel = w.vel;
     let pos = w.pos;
-    move_and_check_collision(dt, w, pos, &mut vel, pos, jumped, ctx.terrain);
+    move_and_check_collision(dt, w, pos, &mut vel, pos, jumped, ctx.terrain, &mut ctx.draws.events);
     w.vel = vel;
 
     if w.on_ground {
@@ -265,7 +284,9 @@ pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
 }
 
 /// `moveAndCheckWormCollision` (`PhysicsLX56.cpp:88-269`) without wrap-around.
-/// It writes `w.pos` and `w.on_ground` directly and updates `vel`.
+/// It writes `w.pos` and `w.on_ground` directly and updates `vel`. A fast
+/// collision makes the bump sound (`:261-266`).
+#[allow(clippy::too_many_arguments)]
 fn move_and_check_collision(
     mut dt: f32,
     w: &mut Worm,
@@ -274,6 +295,7 @@ fn move_and_check_collision(
     old_pos: Vec2,
     jump: bool,
     t: &Terrain,
+    ev: &mut TickEvents,
 ) -> bool {
     const MAX_SPEED2: f32 = 10.0;
     let (map_w, map_h) = (t.width(), t.height());
@@ -283,11 +305,11 @@ fn move_and_check_collision(
     }
     if (*vel * dt * w.speed_factor).length2() > MAX_SPEED2 && dt > 0.001 {
         dt /= 2.0;
-        if move_and_check_collision(dt, w, pos, vel, old_pos, jump, t) {
+        if move_and_check_collision(dt, w, pos, vel, old_pos, jump, t, ev) {
             return true;
         }
         let pos2 = w.pos;
-        return move_and_check_collision(dt, w, pos2, vel, old_pos, jump, t);
+        return move_and_check_collision(dt, w, pos2, vel, old_pos, jump, t, ev);
     }
 
     pos += *vel * dt * w.speed_factor;
@@ -381,6 +403,12 @@ fn move_and_check_collision(
         if !w.state.jump {
             w.pos.x = old_pos.x;
         }
+    }
+    if coll
+        && ((libm::fabsf(vel.x) > 30.0 && clip & 0x03 != 0)
+            || (libm::fabsf(vel.y) > 30.0 && clip & 0x0c != 0))
+    {
+        ev.sound(SoundId::BUMP, w.pos);
     }
     coll
 }

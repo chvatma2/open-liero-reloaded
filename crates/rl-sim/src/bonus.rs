@@ -17,8 +17,10 @@ use rl_math::{AbsTime, GlibcRand, Vec2};
 use rl_terrain::{PX_DIRT, PX_ROCK, Stamp, Terrain};
 
 use crate::SimSettings;
+use crate::buf::Buf;
 use crate::damage::{Harm, injure_worm, min};
 use crate::effects::carve_at;
+use crate::events::{CosmeticKind, Event, SoundId, TerrainOp};
 use crate::projectile::{c_int, c_u64};
 use crate::respawn::{SPAWN_HOLE, find_spot, seconds};
 use crate::rng::Draws;
@@ -109,8 +111,8 @@ pub(crate) struct Bonuses {
     last_spawn: AbsTime,
     /// `goodWpns`: the weapon ids a spawned bonus may hold.
     weapons: Vec<i32>,
-    to_client: Vec<ToClient>,
-    to_server: Vec<Grab>,
+    to_client: Buf<ToClient>,
+    to_server: Buf<Grab>,
     /// [`crate::World::place_bonus`] calls, for the next tick.
     placements: Vec<(i32, i32, BonusItem)>,
 }
@@ -136,9 +138,9 @@ impl Bonuses {
             last_spawn: wall_clock,
             weapons: (0..num_weapons as i32).collect(),
             // At most one expiry per slot, one spawn and one grab reply per slot a frame.
-            to_client: Vec::with_capacity(2 * MAX_BONUSES + 1),
+            to_client: Buf::with_capacity(2 * MAX_BONUSES + 1),
             // A client slot is picked up at most once a frame.
-            to_server: Vec::with_capacity(MAX_BONUSES),
+            to_server: Buf::with_capacity(MAX_BONUSES),
             placements: Vec::new(),
         }
     }
@@ -224,8 +226,15 @@ impl Bonuses {
                 }
                 let p = Vec2::new(x as f32, y as f32);
                 self.client[id as usize].spawn(p, kind, wpn, ctx.wall_clock);
-                carve_at(ctx.terrain, ctx.holes, SPAWN_HOLE as i32, p);
-                ctx.draws.spawn_entity();
+                carve_at(
+                    ctx.terrain,
+                    ctx.holes,
+                    &mut ctx.draws.events,
+                    TerrainOp::Carve,
+                    SPAWN_HOLE as i32,
+                    p,
+                );
+                ctx.draws.entity(CosmeticKind::Spawn, p, Vec2::ZERO);
             }
         }
     }
@@ -278,6 +287,12 @@ impl Bonuses {
             if give_bonus(h, i, &b, num_weapons) {
                 self.client[n].used = false;
                 let w = &h.worms[i];
+                let kind = match b.kind {
+                    BonusKind::Weapon => BonusItem::Weapon(b.weapon),
+                    BonusKind::Health => BonusItem::Health,
+                };
+                h.draws.events.push(Event::BonusPickup { worm: w.id, kind });
+                h.draws.events.sound(SoundId::PICKUP, w.pos);
                 let current = w.current_slot_index() as u8;
                 self.to_server.push(Grab { id: n as u8, worm: w.id as u8, current });
             }
@@ -420,6 +435,38 @@ fn simulate_bonus(b: &mut Bonus, t: &Terrain, dt: f32) {
             if x >= mw || t.flags(x, y) & (PX_DIRT | PX_ROCK) != 0 {
                 return collide(b, y);
             }
+        }
+    }
+}
+
+impl crate::checksum::Checksum for Bonuses {
+    fn hash(&self, h: &mut crate::checksum::Fnv) {
+        let Bonuses { client, server, last_spawn, weapons, to_client, to_server, placements } = self;
+        client.hash(h);
+        server.hash(h);
+        h.time(*last_spawn);
+        h.usize(weapons.len());
+        weapons.iter().for_each(|&w| h.i32(w));
+        h.usize(to_client.len());
+        for m in to_client.iter() {
+            match *m {
+                ToClient::Spawn { kind, weapon, id, x, y } => {
+                    h.bytes(&[0, kind as u8, weapon, id]);
+                    h.bytes(&x.to_le_bytes());
+                    h.bytes(&y.to_le_bytes());
+                }
+                ToClient::Destroy(id) => h.bytes(&[1, id]),
+            }
+        }
+        h.usize(to_server.len());
+        for &Grab { id, worm, current } in to_server.iter() {
+            h.bytes(&[id, worm, current]);
+        }
+        h.usize(placements.len());
+        for &(x, y, item) in placements {
+            h.i32(x);
+            h.i32(y);
+            item.hash(h);
         }
     }
 }

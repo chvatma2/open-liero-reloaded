@@ -1,0 +1,193 @@
+//! Smoke matches (spec §7.1, plan 4 task 10): four worms with random, seeded
+//! keys and weapons on every imported level with both mods, bonuses on.
+//! Every tick checks the invariants; at [`CLONE_AT`] the world is cloned and
+//! both copies must give the same checksums and events to the end.
+//! Needs the imported OLX content (`RL_CONTENT_DIR`, default `target/content`).
+
+use std::path::Path;
+use std::sync::Arc;
+
+use rl_math::AbsTime;
+use rl_sim::{Event, Keys, Loadout, MAX_BONUSES, SimSettings, Slot, TickEvents, World};
+use rl_terrain::{PX_ROCK, Terrain};
+
+/// Ticks per match. 3000 (30 s) in the plan; at opt-level 1 eight matches of
+/// 3000 ticks with a checksum per tick fit the gate's budget when nextest
+/// runs them in parallel.
+const TICKS: usize = 3000;
+const CLONE_AT: usize = 1500;
+const WORMS: usize = 4;
+
+/// The imported content, or `None` with a notice if it has not been imported.
+fn content_dir() -> Option<String> {
+    let dir = std::env::var("RL_CONTENT_DIR").ok()?;
+    if Path::new(&dir).is_dir() {
+        Some(dir)
+    } else {
+        eprintln!("{dir} not found (run `cargo xtask fetch-olx-content`); skipping");
+        None
+    }
+}
+
+/// xorshift64*: the test's own generator, so the keys do not touch the world's.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+    }
+
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+
+    fn chance(&mut self, percent: u64) -> bool {
+        self.below(100) < percent
+    }
+}
+
+/// Keys a worm holds for a random 5 to 50 ticks: mostly firing and moving,
+/// sometimes jumping, roping, aiming or changing weapons.
+struct Player {
+    keys: u8,
+    left: u64,
+}
+
+impl Player {
+    fn keys(&mut self, rng: &mut Rng) -> Keys {
+        if self.left == 0 {
+            self.left = 5 + rng.below(46);
+            let mut k = 0;
+            for (bit, percent) in [
+                (Keys::FIRE, 60),
+                (Keys::LEFT, 35),
+                (Keys::RIGHT, 35),
+                (Keys::JUMP, 20),
+                (Keys::ROPE, 10),
+                (Keys::UP, 25),
+                (Keys::DOWN, 20),
+                (Keys::CHANGE, 5),
+            ] {
+                if rng.chance(percent) {
+                    k |= bit;
+                }
+            }
+            self.keys = k;
+        }
+        self.left -= 1;
+        Keys(self.keys)
+    }
+}
+
+fn in_rock(t: &Terrain, x: f32, y: f32) -> bool {
+    t.flags(x as i64, y as i64) & PX_ROCK != 0
+}
+
+/// A position with no rock in the 9 × 9 square around it, or the map centre.
+fn free_spot(t: &Terrain, rng: &mut Rng) -> (i32, i32) {
+    for _ in 0..10_000 {
+        let (x, y) = (rng.below(t.width() as u64) as i64, rng.below(t.height() as u64) as i64);
+        if (y - 4..=y + 4).all(|yy| (x - 4..=x + 4).all(|xx| t.flags(xx, yy) & PX_ROCK == 0)) {
+            return (x as i32, y as i32);
+        }
+    }
+    (t.width() as i32 / 2, t.height() as i32 / 2)
+}
+
+fn check(w: &World, events: &TickEvents, tick: usize, what: &str) {
+    for (i, worm) in w.worms().iter().enumerate() {
+        assert!(worm.health <= 100.0, "{what} tick {tick}: worm {i} has health {}", worm.health);
+        if worm.alive {
+            assert!(
+                !in_rock(w.terrain(), worm.pos.x, worm.pos.y),
+                "{what} tick {tick}: worm {i} is inside rock at {:?}",
+                worm.pos
+            );
+        }
+    }
+    assert!(w.projectiles().count() <= rl_sim::ProjectilePool::DEFAULT_CAPACITY, "{what} tick {tick}");
+    assert!(w.entity_count() <= 1024, "{what} tick {tick}: entities {}", w.entity_count());
+    assert!(w.bonuses().iter().filter(|b| b.used).count() <= MAX_BONUSES);
+    assert!(events.len() <= TickEvents::CAPACITY, "{what} tick {tick}");
+}
+
+fn smoke(mod_dir: &str, level: &str, seed: u64) {
+    let Some(content) = content_dir() else { return };
+    let content = Path::new(&content);
+    let what = format!("{mod_dir} on {level}");
+    let sim_mod = rl_scenario::load_mod(content, mod_dir).unwrap();
+    let map = rl_scenario::load_map(content, level).unwrap();
+    let mut rng = Rng(seed);
+    let settings = SimSettings { bonuses: true, bonus_frequency: 3.0, ..SimSettings::lx56() };
+    let n_weapons = sim_mod.weapons().len() as u64;
+    let mut w =
+        World::new(settings, Arc::new(sim_mod), map.terrain, map.holes, AbsTime(100_000), seed as u32);
+    if let Some(mask) = map.green_mask {
+        w.set_green_mask(mask);
+    }
+    for i in 0..WORMS {
+        let (x, y) = free_spot(w.terrain(), &mut rng);
+        w.spawn_worm(x, y).unwrap();
+        let slots = (0..5)
+            .map(|_| Slot {
+                weapon: rng.below(n_weapons) as i32,
+                charge: 1.0,
+                reloading: false,
+                last_fire: 0.0,
+            })
+            .collect();
+        w.set_loadout(i, &Loadout { slots, current_weapon: 0, lives: -2, kills: 0, deaths: 0 });
+    }
+    w.align_physics_clock();
+    let mut players: Vec<Player> = (0..WORMS).map(|_| Player { keys: 0, left: 0 }).collect();
+    let (mut fired, mut explosions, mut kills) = (0, 0, 0);
+    let mut twin: Option<World> = None;
+    for tick in 0..TICKS {
+        if tick == CLONE_AT {
+            twin = Some(w.clone());
+        }
+        let keys: Vec<Keys> = players.iter_mut().map(|p| p.keys(&mut rng)).collect();
+        let events = w.tick(&keys);
+        for e in events {
+            match e {
+                Event::WeaponFired { .. } => fired += 1,
+                Event::Explosion { .. } => explosions += 1,
+                Event::Kill { .. } => kills += 1,
+                _ => {}
+            }
+        }
+        check(&w, w.events(), tick, &what);
+        if let Some(t) = &mut twin {
+            let twin_events = t.tick(&keys);
+            assert!(twin_events == w.events(), "{what} tick {tick}: the clone's events differ");
+            assert_eq!(t.checksum(), w.checksum(), "{what} tick {tick}: the clone's checksum differs");
+        }
+    }
+    eprintln!("{what}: {fired} shots, {explosions} explosions, {kills} kills");
+    assert!(fired > 0 && explosions > 0, "{what}: nothing happened");
+}
+
+macro_rules! smoke_tests {
+    ($($name:ident: $mod_dir:literal, $level:literal, $seed:literal;)*) => {
+        $(
+            #[test]
+            fn $name() {
+                smoke($mod_dir, $level, $seed);
+            }
+        )*
+    };
+}
+
+smoke_tests! {
+    classic_on_castlestrike: "Classic", "olx-level-castlestrike", 1;
+    classic_on_dirt_level: "Classic", "olx-level-dirt-level", 2;
+    classic_on_fossilfacility: "Classic", "olx-level-fossilfacility", 3;
+    classic_on_liero_factory: "Classic", "olx-level-liero-factory", 4;
+    mw_on_castlestrike: "MW 1.0", "olx-level-castlestrike", 5;
+    mw_on_dirt_level: "MW 1.0", "olx-level-dirt-level", 6;
+    mw_on_fossilfacility: "MW 1.0", "olx-level-fossilfacility", 7;
+    mw_on_liero_factory: "MW 1.0", "olx-level-liero-factory", 8;
+}

@@ -17,8 +17,9 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   OLX source for each function. Any change must keep `tests/oracle.rs` green.
 - **Randomness** (`rng.rs`): the world owns the `rand()` and `FindSpot`
   generators, seeded by `World::new(.., seed)`, plus the dedicated server's
-  entity counter. Cosmetic draws (digging, rope hook) are made and discarded,
-  in OLX's order, because they advance the stream gameplay draws from.
+  entity counter. Cosmetic draws (digging, rope hook, blood) are made in
+  OLX's order, because they advance the stream gameplay draws from, and only
+  reported as events.
 - **Weapons** (M4): `World::new` takes an `Arc<SimMod>` (`mod_rt.rs`), the
   mod compiled to OLX's indices: weapon ids are `ModDef` order, projectiles
   are expanded into OLX's per-occurrence load-order tree with path names
@@ -53,6 +54,18 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   and keeps a slot for the whole `BonusLife`; the client's bonuses fall
   after the projectiles, are picked up after each worm's physics, and
   explode in `effects::explosion` and in the beam trace.
+- **Events** (`events.rs`, spec §5.7): `tick` returns `&TickEvents`, a
+  buffer kept in `Draws` and refilled each tick (setup events such as
+  `spawn_worm`'s come with the next tick's). Emit them where OLX plays a
+  sound, spawns an entity (`Draws::entity`, which also takes the pool slot)
+  or edits the map (`effects::carve_px`/`carve_at`), never with a draw of
+  their own (D4/D5); cosmetics are emitted even when the entity pool is full.
+  `SoundId` indexes `SimMod::sounds()` (OLX's game sounds, then the mod's).
+- **Checksum** (`checksum.rs`): FNV-1a 64 over all mutable state, through an
+  exhaustive destructuring of each type; a new field must be hashed there
+  (types with private fields hash themselves in their module). Tick-time
+  buffers are `buf::Buf`, whose clone keeps the capacity, so a cloned world
+  ticks without allocating too.
 
 Test: `cargo nextest run -p rl-sim`. The oracle test needs imported content;
 `cargo xtask check` sets `RL_CONTENT_DIR`.

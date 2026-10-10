@@ -101,6 +101,15 @@ impl Latches {
     }
 }
 
+impl crate::checksum::Checksum for Latches {
+    fn hash(&self, h: &mut crate::checksum::Fnv) {
+        let Latches { up, down, left, right, jump, fire, rope, change } = self;
+        for KeyLatch { down, pressed, once } in [up, down, left, right, jump, fire, rope, change] {
+            h.bytes(&[*down as u8 | (*pressed as u8) << 1 | (*once as u8) << 2]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

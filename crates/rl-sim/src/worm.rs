@@ -245,6 +245,15 @@ impl Worm {
     }
 }
 
+impl crate::checksum::Checksum for PosRecorder {
+    fn hash(&self, h: &mut crate::checksum::Fnv) {
+        let PosRecorder { data, cur, count } = self;
+        data.iter().for_each(|&p| h.vec2(p));
+        h.usize(*cur);
+        h.usize(*count);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

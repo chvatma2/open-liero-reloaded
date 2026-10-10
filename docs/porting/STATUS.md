@@ -33,6 +33,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Bleeding | `PhysicsLX56.cpp:317-330` | `rl-sim::physics::bleed` | ported | `bleed`, `die-before-delivery` |
 | Respawn loop, `SpawnWorm`, `FindSpot`, `CWorm::Spawn` | `CServer_Game.cpp:38-104`, `200-225`, `CMap.cpp:2381-2396`, `CWorm.cpp:591-651`, `CWormHuman.cpp:115-119` | `rl-sim::respawn` | ported (DM; no predefined spawns, no team spawns) | `explode-kill-respawn` and every weapon scenario whose dummy dies (`tod`, `respawn`, positions, `mt`) |
 | Bonuses: server spawn, lifetime and grab handling; client spawn (hole), physics, pickup, health and weapon effects; the messages between them (D10); explosions and beams destroying bonuses | `src/server/CServer_Game.cpp:227-316`, `src/server/CServer_Parse.cpp:834-903`, `src/client/CClient_Parse.cpp:1464-1516`, `1977-1990`, `PhysicsLX56.cpp:619-715`, `CClient_Game.cpp:128-151`, `255-270`, `736-745`, `986-1002`, `CWorm.cpp:1454-1506` | `rl-sim::bonus`, `rl-sim::effects::explosion`, `rl-sim::beam` | ported (plan 4 task 9) | `bonus-health`, `bonus-weapon` (`b`, `sb` and every other field); natural spawning, lifetime, explosions and beams by unit tests only |
+| Tick events (sounds, map edits, explosions, cosmetics, shots, damage, kills, pickups, spawns) and the state checksum | every `StartSound`, `PlaySoundSample`, `SpawnEntity` and `SetWormBeamEntity` above; `src/game/Sounds.cpp:25-30` | `rl-sim::events`, `rl-sim::checksum` | done (plan 4 task 10) | unit tests; the oracle traces are unchanged (no draw added); `rl-scenario/tests/smoke.rs` (8 matches, clone checksum streams) |
 
 ## Deliberate deviations
 
@@ -86,6 +87,16 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   `CBonus::Spawn` would read the weapon name out of bounds).
 - A grabbed weapon bonus does not call `WormShootEnd` for the replaced weapon
   if the worm holds fire: it acts only on a `FinalProj`, which LX56 mods do not have.
+- **Tick events report what a player's client shows** (spec §5.7): every
+  cosmetic entity, even when the dedicated server's pool (D4) is full, and the
+  local client's `ENT_SPAWN` sparkle when a worm (re)spawns, which takes no
+  pool slot on a dedicated server. Two cosmetic details are left to the
+  renderer, which uses its own generator (D5): the shades of green dirt
+  (OLX picks them with `rand()`) and the laser sight's length (OLX's 3 px
+  trace; the event carries the direction). `WeaponFired` and the weapon's
+  sound come when the client processes the shot (Model R delivery), as in OLX.
+  A tick reports at most 8192 events, sounds and cosmetics at most 7168; the
+  rest are counted (`TickEvents::dropped`).
 
 - **The oracle is not a plain dedicated server** (spec §18, `tools/olx-oracle/CLAUDE.md`):
   - shots are delivered by a hook between frames (Model R), not over UDP;
