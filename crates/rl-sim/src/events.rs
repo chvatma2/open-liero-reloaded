@@ -419,3 +419,7 @@ mod tests;
 #[cfg(test)]
 #[path = "events_data_tests.rs"]
 mod data_tests;
+
+#[cfg(test)]
+#[path = "events_source_tests.rs"]
+mod source_tests;

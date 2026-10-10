@@ -175,8 +175,12 @@ fn the_caller_owns_the_event_buffer() {
     let mut w = walled_world(0);
     let mut out = TickEvents::new();
     w.tick(&[Keys(Keys::FIRE)], &mut out);
-    assert!(out.iter().any(|e| e.kind == EventKind::Spawned { worm: 0 }), "setup events come first");
-    assert!(out.iter().all(|e| e.substep == 0 || e.kind != EventKind::Spawned { worm: 0 }));
+    // Setup events come first: `spawn_worm`'s `Spawned`, hole and sparkle.
+    let first: Vec<EventKind> = out.iter().take(3).map(|e| e.kind).collect();
+    assert_eq!(first[0], EventKind::Spawned { worm: 0 }, "{first:?}");
+    assert!(matches!(first[1], EventKind::TerrainEdit { op: TerrainOp::Carve, .. }), "{first:?}");
+    assert!(matches!(first[2], EventKind::SpawnCosmetic { kind: CosmeticKind::Spawn, .. }), "{first:?}");
+    assert!(out.iter().take(3).all(|e| e.substep == 0));
     // A clone copies no events: it ticks into its own buffer, and the same keys give the same events.
     let mut c = w.clone();
     assert_eq!(c, w);
