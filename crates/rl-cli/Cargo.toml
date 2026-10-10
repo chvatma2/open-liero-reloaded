@@ -1,0 +1,31 @@
+[package]
+name = "rl-cli"
+description = "Headless command-line tool: import OLX content, validate packs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "rl-cli"
+path = "src/main.rs"
+
+[dependencies]
+rl-data.workspace = true
+rl-vfs.workspace = true
+rl-pack.workspace = true
+rl-import-lgs.workspace = true
+rl-import-lxl.workspace = true
+rl-import-gfx.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde = { workspace = true, features = ["std"] }
+ron.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+insta.workspace = true
+
+[lints]
+workspace = true
