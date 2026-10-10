@@ -32,7 +32,7 @@ pub use core_assets::{CORE_PACK_ID, CORE_SPRITES, CorePack};
 pub use maps::{LoadedLevel, LoadedSkin, LoadedTheme, MAX_ART_SCALE, MAX_COLOR_MAP_BYTES};
 pub use mods::{LoadedMod, check_frames};
 pub use placeholder::{PLACEHOLDER, placeholder_image};
-pub use sandbox::{SANDBOX_START, SandboxSetup, SpawnSpec, new_world_from};
+pub use sandbox::{SANDBOX_START, SandboxSetup, SpawnSpec, match_setup, new_world_from};
 pub use sounds::{MAX_SOUND_BYTES, MAX_SOUND_SECONDS, check_sound};
 
 #[doc(no_inline)]

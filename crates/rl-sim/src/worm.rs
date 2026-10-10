@@ -40,6 +40,14 @@ pub struct Slot {
     pub last_fire: f32,
 }
 
+impl Slot {
+    /// A slot holding `weapon`, full and ready (OLX's `simSetWeapons`, and
+    /// `GameServer::PrepareWorm`'s selection).
+    pub fn ready(weapon: i32) -> Slot {
+        Slot { weapon, charge: 1.0, reloading: false, last_fire: 0.0 }
+    }
+}
+
 /// What a worm starts a match with: OLX's weapon selection and the
 /// `CWorm::Prepare` counters.
 #[derive(Clone, Debug, PartialEq)]
@@ -49,6 +57,16 @@ pub struct Loadout {
     pub lives: i32,
     pub kills: i32,
     pub deaths: i32,
+}
+
+impl Loadout {
+    /// `slots` with the counters a game's start gives (`Game.cpp:845-890`):
+    /// the first slot current, the `Lives` setting (unlimited below 0), no
+    /// kills or deaths.
+    pub fn new(slots: Vec<Slot>, s: &SimSettings) -> Loadout {
+        let lives = if s.lives < 0 { WRM_UNLIM } else { s.lives };
+        Loadout { slots, current_weapon: 0, lives, kills: 0, deaths: 0 }
+    }
 }
 
 /// `VecTimeRecorder`, OLX's `DataTimeRecorder<CVec, 100>`
@@ -115,6 +133,8 @@ impl PosRecorder {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Worm {
     pub id: i32,
+    /// Its team ([`crate::WormSetup::team`]); Deathmatch has none.
+    pub team: u8,
     pub alive: bool,
     pub pos: Vec2,
     pub vel: Vec2,
@@ -173,6 +193,7 @@ impl Worm {
         pos_recorder.clear_to(pos);
         Self {
             id,
+            team: 0,
             alive: true,
             pos,
             vel: Vec2::ZERO,

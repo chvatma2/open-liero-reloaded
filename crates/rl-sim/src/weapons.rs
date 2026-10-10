@@ -187,7 +187,7 @@ pub(crate) fn laser_sight(worms: &[Worm], i: usize, m: &SimMod, terrain: &Terrai
             pos += dir * 3.0;
             len += 3;
         }
-        draws.entity(CosmeticKind::LaserSight { len }, w.pos, dir);
+        draws.entity(CosmeticKind::LaserSight { worm: w.id, len }, w.pos, dir);
     }
 }
 
@@ -320,9 +320,9 @@ mod tests {
                 .events
                 .iter()
                 .filter_map(|e| match e.kind {
-                    crate::EventKind::SpawnCosmetic { kind: CosmeticKind::LaserSight { len }, .. } => {
-                        Some(len)
-                    }
+                    crate::EventKind::SpawnCosmetic {
+                        kind: CosmeticKind::LaserSight { len, .. }, ..
+                    } => Some(len),
                     _ => None,
                 })
                 .collect();

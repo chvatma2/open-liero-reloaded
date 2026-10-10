@@ -7,7 +7,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use rl_math::{AbsTime, Vec2, get_fixed_random_num};
+use rl_math::{AbsTime, TimeDiff, Vec2, get_fixed_random_num};
 
 /// C's `(int)f` as x86-64 compiles it (`cvttss2si`): truncation toward zero,
 /// and `INT_MIN` for NaN or a value outside `int`'s range.
@@ -215,6 +215,25 @@ impl ProjectilePool {
 
     fn is_used(&self, i: i32) -> bool {
         self.slots[i as usize].used
+    }
+
+    /// `FastVector::clear` (`include/FastVector.h:72-77`): every slot unused.
+    pub fn clear(&mut self) {
+        let end = (self.last_used + 1).max(0) as usize;
+        for p in &mut self.slots[..end] {
+            p.used = false;
+        }
+        self.first_unused = 0;
+        self.last_used = -1;
+    }
+
+    /// `PhysicsEngine::skipProjectiles` (`src/common/Physics.cpp:36-44`):
+    /// every projectile's clock moves by `dt`.
+    pub fn skip(&mut self, dt: TimeDiff) {
+        let end = (self.last_used + 1).max(0) as usize;
+        for p in self.slots[..end].iter_mut().filter(|p| p.used) {
+            p.last_sim_time += dt;
+        }
     }
 
     /// Whether [`get_new`](Self::get_new) would return `None`. Only

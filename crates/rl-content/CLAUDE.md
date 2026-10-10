@@ -34,10 +34,12 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   whose header lies is bounded only by the byte cap.
 - **Worlds.** `new_world` loads the mod, level and theme and calls
   `new_world_from(&mod, &level, &theme, &setup)`, which a game restart
-  calls with the assets it loaded once. Both spawn worms in order; a worm without a position
-  draws one from the world's `FindSpot` (`World::find_spot`), so the same
-  setup gives the same world. Worms get the mod's first five weapons unless
-  the spec names them. The clock starts at `SANDBOX_START`.
+  calls with the assets it loaded once: `match_setup` (the `rl_sim::MatchSetup`,
+  for a world of any game mode) played with `rl_sim::OracleMode`. Worms
+  spawn in order; a worm without a position draws one from the world's
+  `FindSpot` when it spawns, so the same setup gives the same world. Worms
+  get the mod's first five weapons unless the spec names them. The clock
+  starts at `SANDBOX_START` (`MatchSetup::T0`).
 - **Colour terrain** (`color.rs`, plan 5 ruling R1): `LoadedTheme::art()`,
   `LoadedLevel::color_map(&theme)` (before any edit; spawn holes come with
   the first tick), `color_edit(&EventKind)` converts a `TerrainEdit`, and

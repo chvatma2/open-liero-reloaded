@@ -3,9 +3,11 @@
 //! Every type is hashed field by field in declaration order, through an
 //! exhaustive destructuring, so a new field does not compile until it is
 //! hashed. Integers are hashed as their little-endian bytes, floats as their
-//! bits (`-0.0` and `+0.0` differ, as they do in the simulation), `bool` and
-//! enums as one byte, and a variable-length list after its length. Types with
-//! private fields hash themselves in their own module.
+//! bits (`-0.0` and `+0.0` differ, as they do in the simulation; every NaN
+//! as the one canonical quiet NaN, since targets differ in the payloads they
+//! produce), `bool` and enums as one byte, and a variable-length list after
+//! its length. Types with private fields hash themselves in their own module,
+//! and the game mode its own state ([`crate::GameMode::checksum`]).
 
 use rl_math::{AbsTime, TimeDiff, Vec2};
 
@@ -17,8 +19,16 @@ use crate::rope::NinjaRope;
 use crate::shots::Shot;
 use crate::worm::{Dir, Slot, Worm, WormState};
 
-/// FNV-1a 64 (offset basis `0xcbf29ce484222325`, prime `0x100000001b3`).
-pub(crate) struct Fnv(u64);
+/// FNV-1a 64 (offset basis `0xcbf29ce484222325`, prime `0x100000001b3`),
+/// the hash of [`World::checksum`], which game modes feed their state into.
+#[derive(Clone, Debug)]
+pub struct Fnv(u64);
+
+impl Default for Fnv {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Fnv {
     pub fn new() -> Self {
@@ -43,8 +53,9 @@ impl Fnv {
         self.bytes(&v.to_le_bytes());
     }
 
+    /// The bits, with every NaN as `0x7fc0_0000`.
     pub fn f32(&mut self, v: f32) {
-        self.u32(v.to_bits());
+        self.u32(if v.is_nan() { 0x7fc0_0000 } else { v.to_bits() });
     }
 
     pub fn bool(&mut self, v: bool) {
@@ -91,15 +102,16 @@ impl World {
     /// server frame, the last tick's sub-step count, the shot list and the
     /// last delivered shots, every projectile slot ever used (with its
     /// serial) and the pool's indices and spawn counter, the generators, the
-    /// entity counter and the `RotIncrement` bumps, then both bonus arrays
-    /// with the messages between them. Two worlds that evolve identically
+    /// entity counter and the `RotIncrement` bumps, both bonus arrays
+    /// with the messages between them, then the game mode's state and the
+    /// match's end. Two worlds that evolve identically
     /// have equal checksums, and any change to that state changes it
     /// (barring a hash collision).
     ///
     /// Left out: what only setup sets (the settings, the mod, the theme's
     /// holes and the green-dirt mask), events (output, not state: setup
     /// events waiting for the next tick too), the spawn work counter and
-    /// scratch buffers.
+    /// scratch and spare buffers.
     pub fn checksum(&self) -> u64 {
         let World {
             settings: _,
@@ -118,14 +130,16 @@ impl World {
             projectiles,
             draws,
             bonuses,
+            referee,
             others: _,
+            spare: _,
         } = self;
         let mut h = Fnv::new();
         h.u32(terrain.width());
         h.u32(terrain.height());
         h.u64(terrain.material_hash());
-        worms.hash(&mut h);
-        latches.hash(&mut h);
+        worms[..].hash(&mut h);
+        latches[..].hash(&mut h);
         h.time(*time);
         h.time(*physics_time);
         h.u64(*server_frame);
@@ -135,6 +149,7 @@ impl World {
         projectiles.hash(&mut h);
         draws.hash(&mut h);
         bonuses.hash(&mut h);
+        referee.hash(&mut h);
         h.finish()
     }
 }
@@ -156,6 +171,7 @@ impl Checksum for Worm {
     fn hash(&self, h: &mut Fnv) {
         let Worm {
             id,
+            team,
             alive,
             pos,
             vel,
@@ -191,6 +207,7 @@ impl Checksum for Worm {
             pos_recorder,
         } = self;
         h.i32(*id);
+        h.bytes(&[*team]);
         h.bool(*alive);
         h.vec2(*pos);
         h.vec2(*vel);

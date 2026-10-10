@@ -101,8 +101,12 @@ fn animations_live_as_long_as_olx() {
     assert_eq!(lifetime(CosmeticKind::Spawn), 40);
     assert_eq!(lifetime(CosmeticKind::Sparkle), 31, "an air jump's sparkle fades at 10");
     assert_eq!(lifetime(CosmeticKind::JetpackSpray), 76);
-    assert_eq!(lifetime(CosmeticKind::LaserSight { len: 30 }), 2);
-    assert_eq!(lifetime(CosmeticKind::Beam { worm: 0 }), 0, "beams are rl-scene's");
+    assert_eq!(lifetime(CosmeticKind::LaserSight { worm: 0, len: 30 }), 2);
+    assert_eq!(
+        lifetime(CosmeticKind::Beam { worm: 0, colour: Rgba::rgb(255, 0, 0) }),
+        0,
+        "beams are rl-scene's"
+    );
 
     // Frames past the image draw nothing: chemsmoke's 5th of 4, spawn's 6th of 5.
     let mut s = Setup::new();
@@ -211,7 +215,8 @@ fn entity_cap_drops_new_ones() {
     assert!(s.fx.is_empty());
 
     // Free slots are reused lowest first.
-    let ev = [smoke, cosmetic(0, CosmeticKind::LaserSight { len: 9 }, (20.0, 20.0), (1.0, 0.0)), smoke];
+    let ev =
+        [smoke, cosmetic(0, CosmeticKind::LaserSight { worm: 0, len: 9 }, (20.0, 20.0), (1.0, 0.0)), smoke];
     s.tick(&ev, 0);
     assert_eq!(s.kinds(), [(0, Kind::Smoke), (1, Kind::LaserSight), (2, Kind::Smoke)]);
     s.passes(2);

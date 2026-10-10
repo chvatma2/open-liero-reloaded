@@ -49,7 +49,7 @@ fn world_with(settings: SimSettings) -> World {
     let cells =
         (0..200 * 200).map(|i| if i / 200 < 150 { Material::Background } else { Material::Dirt }).collect();
     let terrain = Terrain::from_grid(&MaterialGrid::from_cells(200, 200, cells).unwrap());
-    World::new(settings, two_weapons(), terrain, holes(), START, SEED)
+    World::test_new(settings, two_weapons(), terrain, holes(), START, SEED)
 }
 
 fn world() -> World {
@@ -73,8 +73,8 @@ fn ticks(w: &mut World, n: usize) {
 #[test]
 fn bonus_falls_and_rests_on_dirt() {
     let mut w = world();
-    w.place_bonus(100, 100, BonusItem::Health);
-    w.place_bonus(50, 160, BonusItem::Weapon(1));
+    w.place_bonus(100, 100, BonusItem::Health).unwrap();
+    w.place_bonus(50, 160, BonusItem::Weapon(1)).unwrap();
     assert!(!w.bonuses()[0].used, "placed at the next tick");
     // Frames 0 and 1 run no physics sub-step.
     ticks(&mut w, 2);
@@ -106,7 +106,7 @@ fn bonuses_off_neither_fall_nor_count() {
     let mut w = world_with(SimSettings::lx56());
     let i = armed_worm(&mut w, 100, 140);
     w.set_health(i, 50.0);
-    w.place_bonus(100, 100, BonusItem::Health);
+    w.place_bonus(100, 100, BonusItem::Health).unwrap();
     ticks(&mut w, 50);
     let b = w.bonuses()[0];
     assert!(b.used && b.pos == Vec2::new(100.0, 100.0) && b.life == 0.0, "{b:?}");
@@ -118,7 +118,7 @@ fn health_bonus_heals_with_olx_draw() {
     let mut w = world();
     let i = armed_worm(&mut w, 100, 140);
     w.set_health(i, 50.0);
-    w.place_bonus(100, 140, BonusItem::Health);
+    w.place_bonus(100, 140, BonusItem::Health).unwrap();
     // The first sub-step (frame 2) picks it up: `GetRandomInt(40) + 10`.
     ticks(&mut w, 3);
     let heal = (GlibcRand::new(SEED).random_int(40) + 10) as f32;
@@ -130,8 +130,8 @@ fn health_bonus_heals_with_olx_draw() {
     let mut w = world();
     let i = armed_worm(&mut w, 100, 140);
     w.set_health(i, 95.0);
-    w.place_bonus(100, 140, BonusItem::Health);
-    w.place_bonus(102, 140, BonusItem::Health);
+    w.place_bonus(100, 140, BonusItem::Health).unwrap();
+    w.place_bonus(102, 140, BonusItem::Health).unwrap();
     ticks(&mut w, 3);
     assert_eq!((w.worms()[0].health, w.rand_calls()), (100.0, 1));
     assert!(!w.bonuses()[0].used && w.bonuses()[1].used, "the second one stays: health is 100");
@@ -141,7 +141,7 @@ fn health_bonus_heals_with_olx_draw() {
 fn server_slot_stays_busy_after_pickup() {
     let mut w = world_with(SimSettings { bonus_life: 1.0, ..bonus_settings() });
     armed_worm(&mut w, 100, 140);
-    w.place_bonus(100, 140, BonusItem::Weapon(1));
+    w.place_bonus(100, 140, BonusItem::Weapon(1)).unwrap();
     ticks(&mut w, 3);
     // Picked up in frame 2: the current slot holds the Cannon, full.
     assert_eq!(w.worms()[0].slots[0], Slot { weapon: 1, charge: 1.0, reloading: false, last_fire: 0.0 });
@@ -154,7 +154,7 @@ fn server_slot_stays_busy_after_pickup() {
     let s = w.worms()[0].slots[0];
     assert_eq!((s.weapon, s.charge, s.reloading), (1, 1.0, false), "{s:?}");
     // The server's slot is still busy, so the next bonus takes slot 1 on both sides.
-    w.place_bonus(150, 100, BonusItem::Health);
+    w.place_bonus(150, 100, BonusItem::Health).unwrap();
     ticks(&mut w, 1); // frame 4
     assert!(w.server_bonuses()[0].used && w.server_bonuses()[1].used && w.bonuses()[1].used);
     // `currentTime - spawnTime > BonusLife`: placed at frame 0 (spawn time

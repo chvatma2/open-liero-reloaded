@@ -5,11 +5,50 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use rl_math::AbsTime;
-use rl_sim::{EventKind, Keys, Loadout, SimSettings, Slot, TickEvents, WeaponType, World};
+use rl_sim::{
+    EventKind, Fnv, GameMode, Keys, KillCredit, Loadout, MatchSetup, ModeCtx, SimSettings, Slot, TickEvents,
+    WeaponType, World, WormSetup, olx_kill_credit,
+};
 
 const TICKS: usize = 500;
 const WORMS: usize = 4;
+
+/// Gives each worm the next weapon in all five slots every `per_round`
+/// ticks: worm `i` gets weapon `(round * WORMS + i) % n` (a mode's command,
+/// applied at the end of the round's last tick).
+#[derive(Clone, Debug)]
+struct Rounds {
+    ticks: usize,
+    per_round: usize,
+    n: usize,
+}
+
+impl GameMode for Rounds {
+    fn box_clone(&self) -> Box<dyn GameMode> {
+        Box::new(self.clone())
+    }
+
+    fn checksum(&self, h: &mut Fnv) {
+        h.usize(self.ticks);
+    }
+
+    fn on_kill(&mut self, victim: i32, killer: i32, ctx: &mut ModeCtx) -> KillCredit {
+        olx_kill_credit(ctx.worms(), ctx.settings(), victim, killer)
+    }
+
+    fn on_tick(&mut self, ctx: &mut ModeCtx) {
+        self.ticks += 1;
+        if self.ticks.is_multiple_of(self.per_round) {
+            let round = self.ticks / self.per_round;
+            for i in 0..WORMS {
+                let weapon = ((round * WORMS + i) % self.n) as i32;
+                for slot in 0..5 {
+                    ctx.give_weapon(i as i32, slot, weapon).unwrap();
+                }
+            }
+        }
+    }
+}
 
 #[test]
 fn firing_every_classic_weapon_does_not_allocate() {
@@ -30,25 +69,28 @@ fn firing_every_classic_weapon_does_not_allocate() {
     let settings =
         SimSettings { respawn_time: 0.0, bonuses: true, bonus_frequency: 1.0, ..SimSettings::lx56() };
     let terrain = rl_terrain::Terrain::from_grid(&level.material);
-    let mut w = World::new(settings, sim_mod.clone(), terrain, theme.stamps(), AbsTime(100_000), 7);
-    if let Some(mask) = theme.green_mask() {
-        w.set_green_mask(mask);
-    }
-    for i in 0..WORMS {
-        w.spawn_worm(100 + 80 * i as i32, 100).unwrap();
-    }
     // Each round gives the worms the next four weapons, in all five slots.
     let rounds = n.div_ceil(WORMS);
+    let worms = (0..WORMS)
+        .map(|i| WormSetup {
+            team: 0,
+            loadout: Loadout::new(vec![Slot::ready((i % n) as i32); 5], &settings),
+            spawn: Some((100 + 80 * i as i32, 100)),
+        })
+        .collect();
+    let setup = MatchSetup {
+        holes: theme.stamps(),
+        green_mask: theme.green_mask(),
+        seed: 7,
+        worms,
+        ..MatchSetup::new(settings, sim_mod.clone(), terrain)
+    };
+    let mode = Rounds { ticks: 0, per_round: TICKS / rounds, n };
+    let mut w = World::new(setup, Box::new(mode)).unwrap();
     let mut fired = vec![false; n];
     let mut allocations = 0;
     let mut events = TickEvents::new();
-    for round in 0..rounds {
-        for i in 0..WORMS {
-            let weapon = ((round * WORMS + i) % n) as i32;
-            let slot = Slot { weapon, charge: 1.0, reloading: false, last_fire: 0.0 };
-            let loadout = Loadout { slots: vec![slot; 5], current_weapon: 0, lives: -2, kills: 0, deaths: 0 };
-            w.set_loadout(i, &loadout);
-        }
+    for _ in 0..rounds {
         let keys = [
             Keys::FIRE | Keys::UP,
             Keys::FIRE | Keys::LEFT,

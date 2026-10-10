@@ -61,7 +61,7 @@ fn world(m: Arc<SimMod>, settings: SimSettings, x: i32) -> World {
         .map(|i| if i % 200 >= 120 || i / 200 >= 150 { Material::Dirt } else { Material::Background })
         .collect();
     let terrain = Terrain::from_grid(&MaterialGrid::from_cells(200, 200, cells).unwrap());
-    let mut w = World::new(settings, m, terrain, holes(), T0, 1);
+    let mut w = World::test_new(settings, m, terrain, holes(), T0, 1);
     w.spawn_worm(x, 140);
     let slot = Slot { weapon: 0, charge: 1.0, reloading: false, last_fire: 0.0 };
     w.set_loadout(0, &Loadout { slots: vec![slot; 5], current_weapon: 0, lives: -2, kills: 0, deaths: 0 });
@@ -106,7 +106,7 @@ fn a_bonus_blown_up_by_an_explosion_shakes_5() {
     let hit = ActionDef { damage: 5, shake: 7, ..ActionDef::olx_default(ActionKind::Explode) };
     let settings = SimSettings { bonuses: true, ..SimSettings::lx56() };
     let mut w = world(gun_mod(hit, false), settings, 60);
-    w.place_bonus(114, 140, crate::BonusItem::Health);
+    w.place_bonus(114, 140, crate::BonusItem::Health).unwrap();
     let ev = play(&mut w, 60, |f| if (2..4).contains(&f) { Keys::FIRE } else { 0 });
     // The chained explosion is reported first: OLX recurses before its own spawn.
     assert_eq!(explosions(&ev), [(15.0, 5), (5.0, 7)]);
@@ -148,7 +148,16 @@ fn a_bonus_hit_by_a_beam_shakes_5() {
     let mut t = Terrain::from_grid(&MaterialGrid::from_cells(100, 50, cells).unwrap());
     let (holes, mut d, mut parts) = (holes(), Draws::new(GlibcRand::new(1), Mt19937::new(1), 0), Vec::new());
     let mut ctx = BeamCtx { terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts };
-    process_shot_beam(&shot, &m.weapons()[1], &mut ws, &mut ctx, &s, T0, &mut bonuses);
+    process_shot_beam(
+        &shot,
+        &m.weapons()[1],
+        &mut ws,
+        &mut ctx,
+        &s,
+        T0,
+        &mut bonuses,
+        &mut crate::referee::Referee::oracle(),
+    );
     let shakes: Vec<(f32, i32)> = d
         .events
         .iter()
@@ -230,4 +239,24 @@ fn worm_loop_events_of_sub_step_k_carry_k() {
         with_substeps += (n > 0) as u32;
     }
     assert!(with_substeps > 50);
+}
+
+#[test]
+fn laser_sights_name_their_worm() {
+    // Worm 1 stands nearer worm 0's sight than worm 0 itself does at times;
+    // the event names the worm, so nobody guesses.
+    let mut w = world(gun_mod(ActionDef::olx_default(ActionKind::Explode), true), SimSettings::lx56(), 60);
+    w.spawn_worm(64, 140);
+    let slot = Slot { weapon: 0, charge: 1.0, reloading: false, last_fire: 0.0 };
+    w.set_loadout(1, &Loadout { slots: vec![slot; 5], current_weapon: 0, lives: -2, kills: 0, deaths: 0 });
+    let ev = play(&mut w, 30, |_| 0);
+    let mut seen = [0; 2];
+    for (e, _) in &ev {
+        if let EventKind::SpawnCosmetic { kind: CosmeticKind::LaserSight { worm, .. }, pos, .. } = e.kind {
+            let i = worm as usize;
+            assert_eq!(pos.x, w.worms()[i].pos.x, "worm {worm}'s sight starts at it");
+            seen[i] += 1;
+        }
+    }
+    assert!(seen[0] > 10 && seen[0] == seen[1], "{seen:?}");
 }

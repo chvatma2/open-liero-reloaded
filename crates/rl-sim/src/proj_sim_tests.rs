@@ -56,6 +56,7 @@ pub(crate) struct Bench {
     pub draws: Draws,
     pub pool: ProjectilePool,
     pub bonuses: [Bonus; MAX_BONUSES],
+    pub referee: crate::referee::Referee,
 }
 
 impl Bench {
@@ -71,6 +72,7 @@ impl Bench {
             draws,
             pool: ProjectilePool::new(capacity),
             bonuses: [Bonus::default(); MAX_BONUSES],
+            referee: crate::referee::Referee::oracle(),
         }
     }
 
@@ -107,6 +109,7 @@ impl Bench {
             wall_clock: now + TimeDiff(10),
             physics_dt: TimeDiff(11),
             bonuses: &mut self.bonuses,
+            referee: &mut self.referee,
         };
         f(&mut self.pool, &mut ctx)
     }

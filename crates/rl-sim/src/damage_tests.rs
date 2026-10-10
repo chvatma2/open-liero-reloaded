@@ -37,7 +37,7 @@ fn holes() -> Vec<Stamp> {
 /// Two worms on an open 200 × 200 map, 100 px apart, at T0.
 fn world(settings: SimSettings) -> World {
     let terrain = Terrain::from_grid(&MaterialGrid::new(200, 200, Material::Background));
-    let mut w = World::new(settings, test_mod(), terrain, holes(), T0, 1);
+    let mut w = World::test_new(settings, test_mod(), terrain, holes(), T0, 1);
     w.spawn_worm(50, 100);
     w.spawn_worm(150, 100);
     w
@@ -48,7 +48,8 @@ fn worms(n: i32, s: &SimSettings) -> Vec<Worm> {
 }
 
 fn harm<'a>(s: &'a SimSettings, worms: &'a mut [Worm], draws: &'a mut Draws) -> Harm<'a> {
-    Harm { settings: s, worms, draws, now: T0 }
+    let referee = alloc::boxed::Box::leak(alloc::boxed::Box::new(crate::referee::Referee::oracle()));
+    Harm { settings: s, worms, draws, now: T0, referee }
 }
 
 fn draws() -> Draws {

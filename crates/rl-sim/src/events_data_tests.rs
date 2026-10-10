@@ -65,7 +65,7 @@ fn walled_world(weapon: i32) -> World {
         .map(|i| if i % 200 >= 120 || i / 200 >= 150 { Material::Dirt } else { Material::Background })
         .collect();
     let terrain = Terrain::from_grid(&MaterialGrid::from_cells(200, 200, cells).unwrap());
-    let mut w = World::new(SimSettings::lx56(), shaky_mod(), terrain, holes(), AbsTime(100_000), 1);
+    let mut w = World::test_new(SimSettings::lx56(), shaky_mod(), terrain, holes(), AbsTime(100_000), 1);
     w.spawn_worm(60, 140);
     let slot = Slot { weapon, charge: 1.0, reloading: false, last_fire: 0.0 };
     w.set_loadout(0, &Loadout { slots: vec![slot; 5], current_weapon: 0, lives: -2, kills: 0, deaths: 0 });

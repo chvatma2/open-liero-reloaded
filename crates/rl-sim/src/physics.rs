@@ -25,6 +25,9 @@ pub(crate) struct Ctx<'a> {
     /// `(id, alive, pos)` of every worm, for the rope.
     pub worms: &'a [(i32, bool, Vec2)],
     pub draws: &'a mut Draws,
+    /// Whether the worm reads its input: not once the match is over
+    /// (`PhysicsLX56.cpp:300`, `!game.gameOver`).
+    pub input: bool,
 }
 
 /// LX56 aim (`ForceLX56Aim`): max speed, acceleration.
@@ -186,7 +189,9 @@ fn bleed(w: &mut Worm, ctx: &mut Ctx) {
 /// the position is recorded.
 pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
     let s = ctx.settings;
-    get_input(w, keys, ctx.now, s, &mut ctx.draws.events);
+    if ctx.input {
+        get_input(w, keys, ctx.now, s, &mut ctx.draws.events);
+    }
     if !w.alive {
         return;
     }

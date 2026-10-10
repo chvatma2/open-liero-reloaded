@@ -12,6 +12,7 @@ use rl_math::TimeDiff;
 impl World {
     /// One LX56 sub-step of `CClient::Simulation` (`src/client/CClient_Game.cpp:97-221`).
     pub(crate) fn physics_step(&mut self, dt: f32) {
+        let over = self.referee.over.is_some();
         for i in 0..self.worms.len() {
             // Taken afresh for each worm: OLX's rope sees the worms already moved this step.
             let others = &mut self.others.others;
@@ -26,8 +27,13 @@ impl World {
                 sim_mod: &self.sim_mod,
                 worms: others,
                 draws: &mut self.draws,
+                input: !over,
             };
             simulate_worm(&mut self.worms[i], &mut self.latches[i], &mut ctx);
+            // `CClient_Game.cpp:116-117`: nothing more for any worm once the match is over.
+            if over {
+                continue;
+            }
             if self.settings.bonuses && self.worms[i].alive {
                 let num_weapons = self.sim_mod.weapons().len() as i32;
                 let mut h = Harm {
@@ -35,6 +41,7 @@ impl World {
                     worms: &mut self.worms,
                     draws: &mut self.draws,
                     now: self.time,
+                    referee: &mut self.referee,
                 };
                 self.bonuses.pick_up(&mut h, i, num_weapons);
             }
@@ -81,6 +88,7 @@ impl World {
             wall_clock: self.time + TimeDiff(CLOCK_OFFSET_MS),
             physics_dt,
             bonuses: &mut self.bonuses.client,
+            referee: &mut self.referee,
         };
         simulate_projectiles(&mut self.projectiles, &mut ctx);
         // `CClient_Game.cpp:217-218`: bonuses after the projectiles.

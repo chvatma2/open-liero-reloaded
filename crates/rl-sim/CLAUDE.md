@@ -4,11 +4,29 @@ The deterministic simulation (spec §5), a port of OLX's LX56 physics at
 commit `d1ad953f`. The oracle traces in `fixtures/oracle` are its acceptance
 tests, and they must match bit for bit (`tests/oracle.rs`).
 
-- **Layer 3, `#![no_std]` + `alloc`.** Apart from setup (`spawn_worm`,
-  `set_loadout`, `set_green_mask`, `set_bonus_weapons`, `align_physics_clock`,
-  `place_bonus`, applied at the next tick, and `find_spot`), `World::tick(&[Keys],
-  &mut TickEvents)` is the only way state changes, and it does not allocate
-  (`tests/no_alloc.rs`).
+- **Layer 3, `#![no_std]` + `alloc`.** A match is `World::new(MatchSetup,
+  Box<dyn GameMode>) -> Result<World, SetupError>` (`setup.rs`: settings
+  checked, worms spawned in order, `MatchSetup::T0` start, pool size).
+  Apart from setup (`set_health`, `align_physics_clock`, `place_bonus`,
+  applied at the next tick, and `find_spot`), `World::tick(&[Keys], &mut
+  TickEvents)` is the only way state changes, and it does not allocate,
+  mode callbacks and commands included (`tests/no_alloc.rs`). In-crate
+  tests build worlds with `World::test_new` (the old positional form,
+  settings unchecked) and `spawn_worm`/`set_loadout`.
+- **Game modes** (`mode.rs`, `referee.rs`; spec §20 F6): the world calls
+  the mode where OLX calls its `CGameMode` (`on_kill` inside `killWorm`,
+  returning a `KillCredit`; `on_damage`, `on_pickup`, `on_spawn`;
+  `is_over` at the start of `SimulateGame`, `on_tick` at its end). Its
+  commands (`ModeCtx`: spawn, give weapon, stamp, message, end) are checked
+  when queued and applied in order right after `on_tick`; a spawn's slots
+  come from vectors made at setup (`setup::Spare`). Game over
+  (`World::game_over`, OLX's `GameServer::GameOver`) gates kills, respawns,
+  bonus spawns, input and shooting, clears the client's projectiles at the
+  next delivery and stops the physics after 3 s. `OracleMode` is OLX's bare
+  crediting (`olx_kill_credit`) with no end: the oracle and the sandbox
+  play it. A mode's state is hashed by `GameMode::checksum`; `World::clone`
+  uses `box_clone`, and `is_over(&World)` borrows the world through a
+  zero-sized placeholder mode (no allocation).
 - **Two clocks.** `tick` is one 100 Hz frame. Inside it, LX56 physics runs in
   `1000 / LX56PhysicsFPS` ms sub-steps (11 ms by default) while the physics
   clock is behind the frame clock, so some frames run no sub-step.
@@ -17,11 +35,11 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
 - **Port, don't improve.** Keep OLX's operation order and quirks; cite the
   OLX source for each function. Any change must keep `tests/oracle.rs` green.
 - **Randomness** (`rng.rs`): the world owns the `rand()` and `FindSpot`
-  generators, seeded by `World::new(.., seed)`, plus the dedicated server's
+  generators, seeded by `MatchSetup::seed`, plus the dedicated server's
   entity counter. Cosmetic draws (digging, rope hook, blood) are made in
   OLX's order, because they advance the stream gameplay draws from, and only
   reported as events.
-- **Weapons** (M4): `World::new` takes an `Arc<SimMod>` (`mod_rt.rs`), the
+- **Weapons** (M4): `MatchSetup` holds an `Arc<SimMod>` (`mod_rt.rs`), the
   mod compiled to OLX's indices: weapon ids are `ModDef` order, projectiles
   are expanded into OLX's per-occurrence load-order tree with path names
   (`bazooka.spawn`). Slots and firing are in `weapons.rs`, the shot list,
@@ -47,11 +65,12 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   use `attr_set` (an equal value, such as `+0` over `-0`, is not written).
 - **Damage and death** (`damage.rs`): `injure_worm` is `CClient::InjureWorm`
   with its blood draws; a kill (`kill_worm`) counts kills, deaths, suicides
-  and lives at once, as OLX's server does. A worm left at exactly 0 health
-  dies at the start of the next frame, uncredited (`die_at_zero_health`).
+  (as the mode's `KillCredit` says) and lives at once, as OLX's server
+  does. A worm left at exactly 0 health dies at the start of the next
+  frame, uncredited (`die_at_zero_health`).
   Bleeding is in `physics.rs`. After the physics, the server's respawn loop
   (`respawn.rs`) respawns dead worms at a `FindSpot` position drawn from the
-  `Mt19937`. Game over is not ported.
+  `Mt19937`.
 - **Beams and specials** (`beam.rs`): `process_shot_beam` at delivery
   (damage, carving, `LastFire = 0.3`), `draw_beam` from `player_shoot` in
   every sub-step the slot counts down (carves, no damage), and the jetpack.
@@ -84,14 +103,15 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   (paths in its pack, never prefixed), so a loader can tell the roots apart.
   The renderer's data (spec §19 E6): `Explosion.shake`, `Gib { worm }`,
   `Dirt { probe }` (the pixel the colour comes from), `Damage.dealt`,
-  `LaserSight { len }` (OLX's trace length), `World::physics_time()`.
-  Spec §5.7's `Message` and
-  `GameOver` events are not emitted yet (plan 6).
+  `LaserSight { worm, len }` (OLX's trace length), `Beam { worm, colour }`,
+  `World::physics_time()`. `Message` comes from a mode's command,
+  `GameOver` once when the match ends.
 - **Checksum** (`checksum.rs`): FNV-1a 64 over all mutable state, through an
   exhaustive destructuring of each type; a new field must be hashed there
-  (types with private fields hash themselves in their module). Tick-time
-  buffers are `buf::Buf`, whose clone keeps the capacity, so a cloned world
-  ticks without allocating too.
+  (types with private fields hash themselves in their module, the mode
+  through `GameMode::checksum` with the public `Fnv`). Every NaN hashes as
+  one canonical NaN. Tick-time buffers are `buf::Buf`, whose clone keeps
+  the capacity, so a cloned world ticks without allocating too.
 
 Test: `cargo nextest run -p rl-sim`. The oracle test needs imported content;
 `cargo xtask check` sets `RL_CONTENT_DIR`.

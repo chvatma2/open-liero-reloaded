@@ -13,6 +13,8 @@ traces in `rl-oracle`'s format.
   projectile names must equal the header's, so ids compare directly.
 - A scenario's weapons are set by name and its health applied; without
   weapons, and for lives and kills, the slots are copied from OLX's frame −1.
+  The world is a `MatchSetup` played with `rl_sim::OracleMode` (OLX's
+  crediting, no end), as OLX's oracle server never ends a match.
 - The world starts at the header's `T0` (OLX's restarted `simulationTime`) and is
   seeded with the header's seed; frames record `rc`, `mt` and `ents`, and `st`
   steps by the world's frame time (`World::frame_dt`, GameSpeed-scaled). A

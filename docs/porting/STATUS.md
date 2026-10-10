@@ -29,7 +29,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Float `atan2f` (projectile headings) | glibc 2.35 `sysdeps/ieee754/flt-32/e_atan2f.c`, `s_atanf.c` | `rl-math::atan2f` | ported | 6 million input pairs bit-identical to the oracle container's glibc; 20 pinned in a test |
 | Explosions, carve, dirt, green dirt and their dirt counts; injury actions | `CClient_Game.cpp:227-330`, `CMap.cpp:1114-1340`, `PhysicsLX56_Projectiles.cpp:781-824`, `1115-1154`, `CWorm.cpp:1381-1389` | `rl-sim::effects`, `rl-terrain::Terrain::{place_dirt, place_green_dirt}` | ported (plan 4 task 6; the bonus chain task 9) | `mh`, `dirt` and `hp` of every scenario; 103 of 106 scenarios match fully (the 3 D9 ones up to their respawn); `place_dirt_at_the_edges` and `green_dirt_at_the_edges` for the map edges |
 | Worm damage (`InjureWorm`): factors, `SelfInjure`, damage score, blood draws | `CClient_Game.cpp:335-460`, `CGameObject.cpp:35-44`, `CWorm.cpp:1600-1627` | `rl-sim::damage::injure_worm` | ported (plan 4 task 7) | `hp`, `rc`, `ents` of every weapon scenario (`classic/*`, `mw-1-0/*`); factors and `SelfInjure` by unit tests only |
-| Death, kills, deaths, suicides, lives; death draws (sound, gibs by the entity pool, blood); the exact-zero death (`CWorm::think`) | `CServer_Game.cpp:108-162`, `CGameMode.cpp:69-252`, `CWorm.cpp:1399-1449`, `src/gusanos/base_worm.cpp:365-381`, `623-659`, `src/client/Entity.cpp:161-205` | `rl-sim::damage::{kill_worm, die_at_zero_health}` | ported (plan 4 task 7); game over is not | `explode-kill-respawn`, `die-before-delivery`, the weapon scenarios' kills; exact-zero deaths in `assassin-s-shot`, `flak`, `plasma-launcher` |
+| Death, kills, deaths, suicides, lives; death draws (sound, gibs by the entity pool, blood); the exact-zero death (`CWorm::think`) | `CServer_Game.cpp:108-162`, `CGameMode.cpp:69-252`, `CWorm.cpp:1399-1449`, `src/gusanos/base_worm.cpp:365-381`, `623-659`, `src/client/Entity.cpp:161-205` | `rl-sim::damage::{kill_worm, die_at_zero_health, olx_kill_credit}` | ported (plan 4 task 7); the crediting is the game mode's since plan 6 task 1 (`GameMode::on_kill`; `OracleMode` is OLX's rule) | `explode-kill-respawn`, `die-before-delivery`, the weapon scenarios' kills; exact-zero deaths in `assassin-s-shot`, `flak`, `plasma-launcher` |
 | Bleeding | `PhysicsLX56.cpp:317-330` | `rl-sim::physics::bleed` | ported | `bleed`, `die-before-delivery` |
 | Respawn loop, `SpawnWorm`, `FindSpot`, `CWorm::Spawn` | `CServer_Game.cpp:38-104`, `200-225`, `CMap.cpp:2381-2396`, `CWorm.cpp:591-651`, `CWormHuman.cpp:115-119` | `rl-sim::respawn` | ported (DM; no predefined spawns, no team spawns) | `explode-kill-respawn` and every weapon scenario whose dummy dies (`tod`, `respawn`, positions, `mt`) |
 | Bonuses: server spawn, lifetime and grab handling; client spawn (hole), physics, pickup, health and weapon effects; the messages between them (D10); explosions and beams destroying bonuses | `src/server/CServer_Game.cpp:227-316`, `src/server/CServer_Parse.cpp:834-903`, `src/client/CClient_Parse.cpp:1464-1516`, `1977-1990`, `PhysicsLX56.cpp:619-715`, `CClient_Game.cpp:128-151`, `255-270`, `736-745`, `986-1002`, `CWorm.cpp:1454-1506` | `rl-sim::bonus`, `rl-sim::effects::explosion`, `rl-sim::beam` | ported (plan 4 task 9) | `bonus-health`, `bonus-weapon` (`b`, `sb` and every other field); natural spawning, lifetime, explosions and beams by unit tests only |
@@ -45,6 +45,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Input devices (spec §8.5, §19 E5): OLX's player 1 keyboard and gamepad defaults, trigger and stick thresholds, presses and releases latched between ticks | `src/client/Options.cpp:45-73`, `src/client/CInput.cpp:200-226` | `rl-input` | done (plan 5 task 6) | `default_bindings_match_olx`, `gamepad_maps_to_keys`, `tap_between_ticks_is_latched`, `tick_latch_sees_every_press_and_release` |
 | Game loop and sandbox (spec §8.6, §19 E10-E12): fixed 100 Hz tick, interpolated frames, catch-up cap, window surface states, WSL GPU defaults, F5 restart from assets loaded once, overlay | `src/game/Game.cpp:897-959` (the frame clock it drives) | `rl-game` | done (plan 5 task 7) | `loop_never_runs_more_than_n_catchup_ticks`, `surface_survives_resize_and_outdated`, `sandbox_setup_spawns_targets`, `session_plays_and_restarts_from_loaded_assets`; scripted runs in a WSLg window on all 4 levels × 2 mods |
 | Long sessions (plan 5 review focus 5): 60 000 ticks (10 minutes) of the sandbox with chaos keys, `rl-fx`, mock audio and an offscreen render every 10th tick | — | `rl-game/tests/soak.rs` | done (plan 5 task 8) | `soak_sandbox_10_minutes_headless` (`cargo xtask full`, about 15 s): cosmetic entities, projectiles, entity count, audio voices, popups, instance buffer, atlas and terrain texture stay bounded, no panic |
+| Match API (spec §20 F6, F9): `MatchSetup`, `GameMode` callbacks and commands, `Message` and `GameOver` events; game over's effects on the simulation (kills ignored, no respawns or bonus spawns, no input or shooting, the client's projectiles cleared, the physics stopped after `GAMEOVER_WAIT`) | `src/server/CGameMode.cpp:69-252`, `src/server/CServer.cpp:532-625`, `src/server/CServer_Game.cpp:38-42`, `108-113`, `167-261`, `src/client/CClient_Game.cpp:76-91`, `116-117`, `src/common/PhysicsLX56.cpp:300`, `src/client/CClient_Parse.cpp:1436-1451`, `src/game/Game.cpp:1267-1276`, `include/FastVector.h:72-77`, `src/common/Physics.cpp:36-44` | `rl-sim::{setup, mode, referee}` | done (plan 6 task 1) | `oracle_mode_matches_the_hard_coded_credit` and the oracle (unchanged), `mode_commands_apply_inside_tick_deterministically`, `game_over_stops_kills_spawns_input_and_bonuses`, `give_weapon_mid_match_does_not_allocate`; no oracle scenario reaches a game over |
 
 ## Deliberate deviations
 
@@ -64,10 +65,20 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   (`src/common/FeatureList.cpp`), and NaN or infinite values
   (`SimSettings::validate`). Outside them the port could overflow, hang or
   recurse without bound. For hand-built settings, the physics step is at least 1 ms.
-- **Game over is not ported** (`CGameMode::CheckGameOver`, `GameServer::GameOver`):
-  no kill limit, time limit or last-worm-standing end, so `killWorm` and
-  `SpawnWorm` never return early for it. `KillLimit` is read but unused. No
-  scenario reaches it (`KillLimit` 15, `TimeLimit` 6 min).
+- **Game over** (`GameServer::GameOver` and its gates) is in `rl-sim`; when
+  a match ends is the mode's (`GameMode::is_over`, OLX's
+  `CGameMode::CheckGameOver`: Deathmatch in `rl-modes`). The oracle cannot
+  check it: its dedicated server allows empty games with unlimited lives,
+  and no scenario reaches the kill or time limit. Three details differ:
+  `S2C_GAMEOVER` is parsed right after the frame's other server messages
+  (OLX queues it among them, before that frame's bonus messages when
+  `CheckGameOver` ends the match), skipped projectiles' clocks move by
+  10 ms a frame (`skipProjectiles` adds the real frame time), and
+  `GameMode::on_spawn` runs after the spawn (OLX asks `CGameMode::Spawn`
+  first; Deathmatch's always agrees).
+- **Mode commands have no OLX equivalent** (spec §12.1 H1): they are applied
+  after `CGameMode::Simulate`, in queue order. `give_weapon` makes the slot
+  full and ready, `LastFire` included (a weapon bonus keeps `LastFire`).
 - **The damage score (`fDamage`) is counted once**, on the client
   (`addDamage(.., false)` in `InjureWorm`). OLX also counts it a second time on
   the server, a frame or more later, from the batched `C2S_REPORTDAMAGE`
@@ -93,20 +104,22 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   with weapons that `WeaponRestrictionsFile` (default `Standard 100lt.wps`,
   which bans Bazooka, Grenade, Larpa, Laser, Minigun and more in Classic)
   does not ban. The restriction files are not imported yet, so every weapon
-  is allowed unless `World::set_bonus_weapons` gives the list. Only natural
+  is allowed unless `MatchSetup::bonus_weapons` gives the list. Only natural
   spawns use it; the `bonus-natural` scenario records OLX with the `Bonus only`
   preset, which allows every Classic weapon, so it checks the spawns but not
   the restrictions.
 - **The bonus spawn timer starts at the world's start** (`T0 + K`), as the
   oracle resets it when a recording starts; OLX sets it in `PrepareGame`.
-- `World::place_bonus` places nothing when no server slot is free or the
-  weapon id is outside the mod (the oracle reports an error; OLX's
-  `CBonus::Spawn` would read the weapon name out of bounds).
+- `World::place_bonus` refuses a weapon id outside the mod (the oracle
+  reports an error; OLX's `CBonus::Spawn` would read the weapon name out of
+  bounds) and more than 32 placements a tick, and places nothing when no
+  server slot is free.
 - A grabbed weapon bonus does not call `WormShootEnd` for the replaced weapon
   if the worm holds fire: it acts only on a `FinalProj`, which LX56 mods do not have.
-- **Message and GameOver events are not emitted yet** (spec §5.7): there is no
-  game over (above), so no `GameOver`, and OLX's kill and other chat messages
-  have no event. They come with Deathmatch in plan 6.
+- **`Message` events are the mode's** (`ModeCtx::message`, a text id and
+  three numbers): OLX's kill and spree texts come with Deathmatch
+  (`rl-modes`); `rl-sim` sends none itself, nor OLX's "<player> has won
+  the match" (the `GameOver` event carries the winner).
 - **Sound ids** (`SimMod::sounds`): OLX's game sounds come first, each with the
   `olx:` prefix (a path in OLX's data directory); mod sounds are paths in the
   mod's pack and never carry it (a mod path that does is ignored).

@@ -113,6 +113,7 @@ fn beam_carves_first_solid_pixel() {
         &s,
         T0,
         &mut [Bonus::default(); MAX_BONUSES],
+        &mut crate::referee::Referee::oracle(),
     );
     // The first slot holding the beam becomes current and draws for 0.3 s.
     assert_eq!((ws[0].current_weapon, ws[0].slots[1].last_fire), (1, 0.3));
@@ -132,6 +133,7 @@ fn beam_carves_first_solid_pixel() {
         &s,
         T0,
         &mut [Bonus::default(); MAX_BONUSES],
+        &mut crate::referee::Referee::oracle(),
     );
     assert_eq!((ws[1].health, ws[0].dirt_count), (99.0, 15));
     assert!(ctx.draws.rand.calls() > 0, "blood");
@@ -153,6 +155,19 @@ fn beam_carves_first_solid_pixel() {
     (ws[0].face, ws[1].alive) = (Dir::Left, false);
     draw_beam(&mut ws, 0, &m, &mut ctx);
     assert_eq!((ws[0].dirt_count, ctx.draws.ents), (30, ents + 3));
+    // Each drawn beam names its worm and the weapon's colour (`SetWormBeamEntity`).
+    let beams: Vec<_> = ctx
+        .draws
+        .events
+        .iter()
+        .filter_map(|e| match e.kind {
+            crate::EventKind::SpawnCosmetic { kind: CosmeticKind::Beam { worm, colour }, .. } => {
+                Some((worm, colour))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(beams, vec![(0, Rgba::rgb(255, 0, 0)); 3]);
 }
 
 #[test]
@@ -197,6 +212,7 @@ fn beam_sets_lastfire_burst() {
                 &s,
                 T0,
                 &mut [Bonus::default(); MAX_BONUSES],
+                &mut crate::referee::Referee::oracle(),
             );
             assert_eq!(ws[0].current_slot().last_fire, 0.3);
         }
@@ -269,7 +285,16 @@ fn beam_explodes_a_bonus_within_3_px() {
     let mut t = terrain(60);
     let mut bonuses = bonus_at(40.0, 27.0);
     let mut ctx = BeamCtx { terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts };
-    process_shot_beam(&shot, &m.weapons()[1], &mut ws, &mut ctx, &s, T0, &mut bonuses);
+    process_shot_beam(
+        &shot,
+        &m.weapons()[1],
+        &mut ws,
+        &mut ctx,
+        &s,
+        T0,
+        &mut bonuses,
+        &mut crate::referee::Referee::oracle(),
+    );
     assert!(!bonuses[3].used);
     assert_eq!((ctx.draws.ents, ws[0].dirt_count), (2, 0));
     assert_eq!(ctx.terrain.material(60, 25), Some(Material::Dirt));
@@ -277,13 +302,31 @@ fn beam_explodes_a_bonus_within_3_px() {
     // With Bonuses off the beam still stops at it, but nothing explodes it.
     let lx56 = SimSettings::lx56();
     let mut bonuses = bonus_at(40.0, 27.0);
-    process_shot_beam(&shot, &m.weapons()[1], &mut ws, &mut ctx, &lx56, T0, &mut bonuses);
+    process_shot_beam(
+        &shot,
+        &m.weapons()[1],
+        &mut ws,
+        &mut ctx,
+        &lx56,
+        T0,
+        &mut bonuses,
+        &mut crate::referee::Referee::oracle(),
+    );
     assert!(bonuses[3].used);
     assert_eq!((ctx.draws.ents, ws[0].dirt_count), (3, 0));
 
     // Exactly 3 px away is not within (`GetLength() < 3`): the beam carves the dirt.
     let mut bonuses = bonus_at(40.0, 28.0);
-    process_shot_beam(&shot, &m.weapons()[1], &mut ws, &mut ctx, &s, T0, &mut bonuses);
+    process_shot_beam(
+        &shot,
+        &m.weapons()[1],
+        &mut ws,
+        &mut ctx,
+        &s,
+        T0,
+        &mut bonuses,
+        &mut crate::referee::Referee::oracle(),
+    );
     assert!(bonuses[3].used);
     assert_eq!((ctx.draws.ents, ws[0].dirt_count), (3, 15));
 }

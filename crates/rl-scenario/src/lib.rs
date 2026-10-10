@@ -16,7 +16,10 @@ use rl_oracle::{
     BonusRec, Fields, Frame, Num, ProjRec, RopeRec, Scenario, ServerBonusRec, ShotRec, SlotRec, Trace,
     WormRec,
 };
-use rl_sim::{BonusItem, CLOCK_OFFSET_MS, Keys, Loadout, SimMod, SimSettings, Slot, TickEvents, World};
+use rl_sim::{
+    BonusItem, CLOCK_OFFSET_MS, Keys, Loadout, MAX_WORMS, MatchSetup, OracleMode, SimMod, SimSettings, Slot,
+    TickEvents, World, WormSetup,
+};
 use rl_terrain::{ColorMap, Terrain};
 
 /// The trace fields the simulation reproduces; the acceptance test compares
@@ -110,15 +113,10 @@ pub fn load_world(content: &Content, sc: &Scenario, expected: &Trace) -> anyhow:
         SimSettings::from_olx_features(&expected.header.features).map_err(|e| anyhow::anyhow!(e.0))?;
     // The scenario's seed is the header's: the generators start clean at the second `simSetSeed`.
     let seed = expected.header.seed.unwrap_or(sc.seed);
-    let terrain = Terrain::from_grid(&level.material);
-    let mut world =
-        World::new(settings, Arc::new(sim_mod), terrain, theme.stamps(), AbsTime(t0(expected)), seed);
-    if let Some(mask) = theme.green_mask() {
-        world.set_green_mask(mask);
-    }
     let start = expected.frames.first().context("trace has no frames")?;
+    anyhow::ensure!(sc.worms.len() <= MAX_WORMS, "the scenario has more worms than rl-sim allows");
+    let mut worms = Vec::with_capacity(sc.worms.len());
     for (i, spawn) in sc.worms.iter().enumerate() {
-        world.spawn_worm(spawn.x, spawn.y).context("the scenario has more worms than rl-sim allows")?;
         let rec = start.w.get(i).context("trace has fewer worms than the scenario")?;
         let mut loadout = Loadout {
             slots: rec
@@ -133,21 +131,26 @@ pub fn load_world(content: &Content, sc: &Scenario, expected: &Trace) -> anyhow:
         };
         if let Some(ws) = sc.weapons.iter().find(|w| w.worm == i) {
             // OLX's simSetWeapons: FindWeaponId by name, full and ready.
-            let id = |name: &String| {
-                world.sim_mod().weapons().iter().position(|w| &w.name == name).map(|i| i as i32)
-            };
+            let id = |name: &String| sim_mod.weapons().iter().position(|w| &w.name == name).map(|i| i as i32);
             loadout.slots = ws
                 .names
                 .iter()
-                .map(|n| {
-                    let weapon = id(n).with_context(|| format!("no weapon {n:?}"))?;
-                    Ok(Slot { weapon, charge: 1.0, reloading: false, last_fire: 0.0 })
-                })
+                .map(|n| Ok(Slot::ready(id(n).with_context(|| format!("no weapon {n:?}"))?)))
                 .collect::<anyhow::Result<_>>()?;
             loadout.current_weapon = ws.current as i32;
         }
-        world.set_loadout(i, &loadout);
+        worms.push(WormSetup { team: 0, loadout, spawn: Some((spawn.x, spawn.y)) });
     }
+    let setup = MatchSetup {
+        holes: theme.stamps(),
+        green_mask: theme.green_mask(),
+        start: AbsTime(t0(expected)),
+        seed,
+        worms,
+        ..MatchSetup::new(settings, Arc::new(sim_mod), Terrain::from_grid(&level.material))
+    };
+    // OLX's oracle runs with game over off: `OracleMode` credits kills and never ends.
+    let mut world = World::new(setup, Box::new(OracleMode)).map_err(|e| anyhow::anyhow!("{e}"))?;
     for &(i, hp) in &sc.health {
         anyhow::ensure!(i < world.worms().len(), "health for missing worm {i}");
         world.set_health(i, hp);
@@ -339,7 +342,7 @@ pub fn play(
         let keys: Vec<Keys> = keys.iter().map(|k| Keys(k.0)).collect();
         for &(frame, x, y, item) in &bonuses {
             if frame as usize == f {
-                world.place_bonus(x, y, item);
+                world.place_bonus(x, y, item).map_err(|e| anyhow::anyhow!("frame {f}: bonus: {e}"))?;
             }
         }
         world.tick(&keys, &mut events);

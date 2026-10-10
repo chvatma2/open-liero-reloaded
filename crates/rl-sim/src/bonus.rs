@@ -114,7 +114,26 @@ pub(crate) struct Bonuses {
     to_client: Buf<ToClient>,
     to_server: Buf<Grab>,
     /// [`crate::World::place_bonus`] calls, for the next tick.
-    placements: Vec<(i32, i32, BonusItem)>,
+    placements: Buf<(i32, i32, BonusItem)>,
+}
+
+/// Why [`crate::World::place_bonus`] refused a bonus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaceBonusError {
+    /// [`MAX_BONUSES`] placements wait for the next tick already.
+    Full,
+    /// No such weapon id in the mod (OLX's `CBonus::Spawn` would read its
+    /// name out of bounds).
+    NoSuchWeapon(i32),
+}
+
+impl core::fmt::Display for PlaceBonusError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            PlaceBonusError::Full => write!(f, "{MAX_BONUSES} bonuses wait to be placed already"),
+            PlaceBonusError::NoSuchWeapon(id) => write!(f, "no weapon {id}"),
+        }
+    }
 }
 
 /// What the client needs to parse `S2C_SPAWNBONUS`.
@@ -141,7 +160,7 @@ impl Bonuses {
             to_client: Buf::with_capacity(2 * MAX_BONUSES + 1),
             // A client slot is picked up at most once a frame.
             to_server: Buf::with_capacity(MAX_BONUSES),
-            placements: Vec::new(),
+            placements: Buf::with_capacity(MAX_BONUSES),
         }
     }
 
@@ -150,8 +169,23 @@ impl Bonuses {
         self.weapons.extend(ids);
     }
 
-    pub fn place(&mut self, x: i32, y: i32, item: BonusItem) {
+    pub fn place(
+        &mut self,
+        x: i32,
+        y: i32,
+        item: BonusItem,
+        num_weapons: i32,
+    ) -> Result<(), PlaceBonusError> {
+        if let BonusItem::Weapon(w) = item
+            && !(0..num_weapons).contains(&w)
+        {
+            return Err(PlaceBonusError::NoSuchWeapon(w));
+        }
+        if self.placements.len() >= MAX_BONUSES {
+            return Err(PlaceBonusError::Full);
+        }
         self.placements.push((x, y, item));
+        Ok(())
     }
 
     /// The oracle's `placeBonus` (`OracleHooks.cpp:286-301`) at the start of
@@ -293,8 +327,9 @@ impl Bonuses {
                 };
                 h.draws.events.push(EventKind::BonusPickup { worm: w.id, kind });
                 h.draws.events.sound(SoundId::PICKUP, w.pos);
-                let current = w.current_slot_index() as u8;
-                self.to_server.push(Grab { id: n as u8, worm: w.id as u8, current });
+                let (id, current) = (w.id, w.current_slot_index() as u8);
+                self.to_server.push(Grab { id: n as u8, worm: id as u8, current });
+                h.mode(|m, ctx| m.on_pickup(id, kind, ctx));
             }
         }
     }
@@ -310,13 +345,14 @@ impl Bonuses {
     /// The bonus part of `GameServer::SimulateGame` (`src/server/CServer_Game.cpp:227-250`),
     /// after the respawn loop: with `Bonuses` on, a slot older than `BonusLife`
     /// (strictly) is freed, then a bonus spawns once `BonusFrequency` has passed
-    /// since the last spawn (strictly). Game over, which stops spawning, is not ported.
+    /// since the last spawn (strictly), unless the match is `over`.
     pub fn simulate_server(
         &mut self,
         s: &SimSettings,
         terrain: &Terrain,
         draws: &mut Draws,
         wall_clock: AbsTime,
+        over: bool,
     ) {
         if s.bonuses {
             for i in 0..MAX_BONUSES {
@@ -328,7 +364,7 @@ impl Bonuses {
                 }
             }
         }
-        if wall_clock.0.wrapping_sub(self.last_spawn.0) > seconds(s.bonus_frequency) && s.bonuses {
+        if wall_clock.0.wrapping_sub(self.last_spawn.0) > seconds(s.bonus_frequency) && s.bonuses && !over {
             self.spawn_natural(s, terrain, draws, wall_clock);
             self.last_spawn = wall_clock;
         }
@@ -463,7 +499,7 @@ impl crate::checksum::Checksum for Bonuses {
             h.bytes(&[id, worm, current]);
         }
         h.usize(placements.len());
-        for &(x, y, item) in placements {
+        for &(x, y, item) in placements.iter() {
             h.i32(x);
             h.i32(y);
             item.hash(h);

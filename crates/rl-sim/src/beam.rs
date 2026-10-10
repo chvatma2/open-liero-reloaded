@@ -22,6 +22,7 @@ use crate::effects::{Blast, carve_at, explosion, increment_dirt_count};
 use crate::events::{CosmeticKind, TerrainOp};
 use crate::mod_rt::{SimMod, SimWeapon};
 use crate::projectile::c_int;
+use crate::referee::Referee;
 use crate::rng::Draws;
 use crate::shots::Shot;
 use crate::spawn::vec_from_angle;
@@ -144,6 +145,7 @@ fn hit(worms: &[Worm], set: u32, p: Vec2) -> Option<usize> {
 /// `Damage` is -1, a part that comes within 3 px of a client bonus stops
 /// there first, in an explosion of damage 0 at that point (`:986-1002`),
 /// which destroys the bonus when `Bonuses` is on.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn process_shot_beam(
     shot: &Shot,
     wpn: &SimWeapon,
@@ -152,6 +154,7 @@ pub(crate) fn process_shot_beam(
     settings: &SimSettings,
     now: AbsTime,
     bonuses: &mut [Bonus; MAX_BONUSES],
+    referee: &mut Referee,
 ) {
     let Some(beam) = &wpn.beam else { return };
     let by_worm = (0..MAX_WORMS as i32).contains(&shot.worm);
@@ -185,6 +188,7 @@ pub(crate) fn process_shot_beam(
                 now,
                 wall_clock: now + TimeDiff(CLOCK_OFFSET_MS),
                 physics_dt: settings.lx56_physics_dt(),
+                referee,
             };
             explosion(&mut blast, shot.spawn, p, 0.0, 5, shot.worm);
             return Part::Stopped;
@@ -202,7 +206,7 @@ pub(crate) fn process_shot_beam(
         if let Some(i) = hit(worms, set, p) {
             let damage = spread(beam.player_damage, beam, width) as f32;
             let id = worms[i].id;
-            injure_worm(&mut Harm { settings, worms, draws, now }, id, damage, shot.worm);
+            injure_worm(&mut Harm { settings, worms, draws, now, referee }, id, damage, shot.worm);
             set &= !(1 << i);
             return Part::Stopped;
         }
@@ -257,7 +261,7 @@ pub(crate) fn draw_beam(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut Beam
     });
     // `SetWormBeamEntity` (`:699-710`), unless the beam is pink.
     if beam.colour != Rgba::MAGENTA {
-        draws.events.cosmetic(CosmeticKind::Beam { worm: id }, pos, end - pos);
+        draws.events.cosmetic(CosmeticKind::Beam { worm: id, colour: beam.colour }, pos, end - pos);
     }
 }
 

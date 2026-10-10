@@ -693,3 +693,64 @@ Made precise while implementing E6 and E9 (plan 5 task 1):
   `rl-terrain` already composites on the CPU (E7) and the shader needs no
   material grid. Edits upload as dirty rectangles. A shader-side blend can
   return with a pixel-art upscaler or a lighting pass if one needs it.
+
+## 20. Amendments made while writing plan 6 (2026-10-10)
+
+These decide how M6 plays a Deathmatch against bots, records replays and
+runs headless matches. Where they conflict with earlier sections, they take
+precedence. The OLX behaviours behind them are in
+`docs/porting/olx-notes/bots-and-deathmatch.md` and
+`docs/porting/olx-notes/damage-death-bonuses.md`.
+
+| # | Decision | Reason |
+|---|---|---|
+| F1 | **Bot loadouts:** OLX's presets by default (with Classic at `LoadingTime` 100 and "Standard 100lt", the fixed 100lt set and tactics: notes §2.2). A setting gives random weapons through the ported `GetRandomWeapons` instead. | Faithful default, with variety on demand. |
+| F2 | **Bot aim:** a gravity-aware ballistic solver by default (the low root, correct sign, rejected when impossible), with OLX's per-difficulty noise and tolerance. `AimModel::OlxDirect` is kept for comparison. | OLX computes the ballistic angle and then discards it, so its bots lob grenades badly. |
+| F3 | **Bots press keys like humans** (the 8 `Keys`), through a motor that turns intents into keys under the sim's input rules. They get no mouse aim. | The same physics and constraints as a player; replays store keys only. |
+| F4 | **Weapon restriction files** (`.wps`) are imported into mod packs: the raw `name → state` lists and the preset names. Random weapons, bot presets and natural bonuses (`MatchSetup::bonus_weapons`) use them. | Needed for OLX's bot loadouts and bonus weapons; it closes the plan-4 deviation. |
+| F5 | **Deathmatch needs ≥ 2 worms.** The sandbox stays for single-worm play. | OLX ends a one-worm local game at once. |
+| F6 | **`World::new(MatchSetup)` and the `GameMode` trait live in `rl-sim`.** The callbacks are spawn, kill, damage, pickup, per-tick, is-over and scoring. The command interface: spawn a worm or bot with a loadout, give a weapon, apply a terrain stamp, emit a message, end the match. Deathmatch is in `rl-modes`. The world emits `Message` and `GameOver` events. | Spec §5.1, §5.8, H1; the final review of plan 4. |
+| F7 | **Bots run once per 100 Hz tick.** Each owns a PRNG seeded from (match seed, worm, personality). Work is budgeted in units (terrain probes and traces), resumable across ticks. Free rectangles of the static rock are cached per level and shared. | Deterministic and bounded (notes §4.3). |
+| F8 | **Replays store setup, pack ids, content hashes, settings, seed and every worm's keys per tick** (bots included), plus a checksum every N ticks. A format version is refused when unknown. | Bot code changes cannot break replays; mismatches are detected. |
+| F9 | **Matches start at `T0 = 100 000 ms`,** as the oracle does. | Bleeding and bonus timers depend on absolute time (final review of plan 4). |
+| F10 | **The chaos personality** changes loadout on respawn through the mode's "give weapon" command, ignores restrictions, and tracks fired weapons for coverage. | Spec §5.9 and §7.1 coverage. |
+
+Made precise while implementing F6 and F9 (plan 6 task 1):
+
+- **`World::new(MatchSetup, Box<dyn GameMode>) -> Result<World, SetupError>`**
+  replaces §5.1's `new(setup) -> World` and the positional constructor.
+  `MatchSetup` holds the settings, the `Arc<SimMod>`, the terrain, the
+  theme's holes and green-dirt mask, `start` (`MatchSetup::T0` by default),
+  the seed, the worms (`WormSetup { team, loadout, spawn }`, spawned in
+  order, `None` drawing a `FindSpot` position), `pool_capacity` (OLX's 3000
+  by default, 1 to 65 536) and `bonus_weapons`. `World::new` refuses
+  settings outside OLX's ranges, more than 32 worms, a bad pool size and a
+  loadout of more than 5 slots (`WeaponSlotsNum`).
+- **Callbacks run where OLX runs its `CGameMode`:** `on_kill` replaces
+  `CGameMode::Kill` inside `killWorm` and returns a `KillCredit` (kill,
+  suicide, death) that the world applies before `CWorm::Kill`;
+  `olx_kill_credit` is OLX's rule. `on_damage` after `InjureWorm`'s health
+  change, `on_pickup` after `GiveBonus`, `on_spawn` after every spawn,
+  `is_over` at the start of `GameServer::SimulateGame` (before the
+  respawns), `on_tick` at its end (`CGameMode::Simulate`).
+- **Commands are queued and applied at one point:** in queue order right
+  after `on_tick`, before the frame clock advances (those queued during
+  setup at the end of `World::new`). At most 128 a tick; each is checked
+  when queued (`CommandError`). A spawned worm's loadout is copied into the
+  command and its slots come from vectors made at setup, so no command
+  allocates. `give_weapon` makes the slot full and ready (unlike a bonus,
+  `LastFire` is reset). `message` carries a `TextId` and three numbers.
+- **Game over is OLX's `GameServer::GameOver`:** the world records the
+  result (`World::result`), emits `GameOver` once and clears every worm's
+  input. From then on kills are ignored (`killWorm` returns), nobody
+  respawns, no bonus spawns, worms read no input and do not shoot, pick up
+  or aim their laser sight; the client clears its projectiles at the next
+  delivery (`ParseGameOver`), and the physics stops 3 s after the end
+  (`GAMEOVER_WAIT`).
+- **`OracleMode`** (in `rl-sim`) is OLX's crediting with no end, no
+  scoreboard and no commands: the oracle scenarios and the sandbox play it,
+  so the oracle stays bit-exact. (The oracle's dedicated server runs with
+  `AllowEmptyGames` and unlimited lives, and no scenario reaches the kill or
+  time limit, so OLX never ends a recorded match either.)
+- **The checksum** includes the mode's state (`GameMode::checksum`) and the
+  match's end, and hashes every NaN as one canonical NaN.

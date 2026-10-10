@@ -14,6 +14,7 @@ use crate::damage::Harm;
 use crate::events::CosmeticKind;
 use crate::mod_rt::{SimMod, SimProjectile};
 use crate::projectile::{Projectile, ProjectilePool, attr_set, c_int, c_u64};
+use crate::referee::Referee;
 use crate::rng::Draws;
 use crate::world::MAX_WORMS;
 use crate::worm::Worm;
@@ -64,12 +65,20 @@ pub(crate) struct ProjCtx<'a> {
     pub physics_dt: TimeDiff,
     /// The client's bonuses, which explosions destroy.
     pub bonuses: &'a mut [Bonus; MAX_BONUSES],
+    /// The game mode, which credits kills.
+    pub referee: &'a mut Referee,
 }
 
 impl ProjCtx<'_> {
     /// What `CClient::InjureWorm` needs.
     pub fn harm(&mut self) -> Harm<'_> {
-        Harm { settings: self.settings, worms: self.worms, draws: self.draws, now: self.now }
+        Harm {
+            settings: self.settings,
+            worms: self.worms,
+            draws: self.draws,
+            now: self.now,
+            referee: self.referee,
+        }
     }
 }
 

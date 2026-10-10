@@ -9,22 +9,25 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use rl_math::{AbsTime, GlibcRand, Mt19937, TimeDiff, Vec2};
+use rl_math::{AbsTime, TimeDiff, Vec2};
 use rl_terrain::{GreenMask, Stamp, Terrain};
 
 use crate::SimSettings;
-use crate::bonus::{Bonus, BonusItem, Bonuses, ClientCtx, MAX_BONUSES};
+use crate::bonus::{Bonus, BonusItem, Bonuses, ClientCtx, MAX_BONUSES, PlaceBonusError};
 use crate::buf::Buf;
 use crate::damage::{Harm, die_at_zero_health};
 use crate::effects::carve_px;
 use crate::events::{CosmeticKind, EventKind, TerrainOp, TickEvents};
 use crate::input::{Keys, Latches};
 use crate::mod_rt::SimMod;
+use crate::mode::{GameMode, MatchResult, Score};
 use crate::projectile::{Projectile, ProjectilePool, c_int};
+use crate::referee::Referee;
 use crate::respawn::{SPAWN_HOLE, Spawner, find_spot, simulate_respawns};
 use crate::rng::Draws;
+use crate::setup::Spare;
 use crate::shots::{MAX_SHOOTINGS, ShootList, Shot, ShotCtx, encode_decode, process_shot, spawn_time};
-use crate::worm::{Loadout, Worm};
+use crate::worm::Worm;
 
 /// OLX `MAX_WORMS` (`include/Consts.h:34`).
 pub const MAX_WORMS: usize = 32;
@@ -42,8 +45,9 @@ pub struct World {
     pub(crate) holes: Vec<Stamp>,
     /// The green-dirt mask (`bmpGreenMask`), if the theme has one.
     pub(crate) green_mask: Option<GreenMask>,
-    pub(crate) worms: Vec<Worm>,
-    pub(crate) latches: Vec<Latches>,
+    /// Sized for [`MAX_WORMS`], so a worm spawned mid-match does not allocate.
+    pub(crate) worms: Buf<Worm>,
+    pub(crate) latches: Buf<Latches>,
     /// `Game::simulationTime`.
     pub(crate) time: AbsTime,
     /// `CClient::fLastSimulationTime`: where the physics clock is.
@@ -62,8 +66,12 @@ pub struct World {
     pub(crate) draws: Draws,
     /// The server's and the client's bonuses, and the messages between them.
     pub(crate) bonuses: Bonuses,
+    /// The game mode, its commands and the match's end.
+    pub(crate) referee: Referee,
     /// Reused each physics step so that `tick` does not allocate (spec §5.3).
     pub(crate) others: Scratch,
+    /// Slot vectors for worms spawned mid-match.
+    pub(crate) spare: Spare,
 }
 
 /// Buffers only: they hold no state, so they never make two worlds unequal.
@@ -82,48 +90,6 @@ impl PartialEq for Scratch {
 }
 
 impl World {
-    /// `holes` are the theme's hole stamps (`hole1` to `hole5`). Like OLX, a
-    /// missing hole carves nothing. `seed` is the match seed (`simSetSeed`):
-    /// it seeds both the `rand()` stream and the `FindSpot` `mt19937`.
-    /// Weapon and projectile ids are indices into `sim_mod`.
-    pub fn new(
-        settings: SimSettings,
-        sim_mod: Arc<SimMod>,
-        terrain: Terrain,
-        holes: Vec<Stamp>,
-        start: AbsTime,
-        seed: u32,
-    ) -> Self {
-        let terrain_min = terrain.width().min(terrain.height());
-        let bonuses = Bonuses::new(sim_mod.weapons().len(), start + TimeDiff(CLOCK_OFFSET_MS));
-        let draws = Draws::new(GlibcRand::new(seed), Mt19937::new(seed), sim_mod.projectiles().len());
-        Self {
-            settings,
-            sim_mod,
-            terrain,
-            holes,
-            green_mask: None,
-            worms: Vec::new(),
-            latches: Vec::new(),
-            time: start,
-            physics_time: start,
-            server_frame: 0,
-            substeps: 0,
-            shots: ShootList::new(),
-            last_shots: Buf::with_capacity(MAX_SHOOTINGS),
-            projectiles: ProjectilePool::new(ProjectilePool::DEFAULT_CAPACITY),
-            draws,
-            bonuses,
-            others: Scratch { others: Buf::default(), beam_parts: Buf::with_capacity(terrain_min as usize) },
-        }
-    }
-
-    /// Sets the green-dirt mask (`data/gfx/greenball.png`) before the match
-    /// starts. Like OLX, green dirt places nothing without it.
-    pub fn set_green_mask(&mut self, mask: GreenMask) {
-        self.green_mask = Some(mask);
-    }
-
     pub fn worms(&self) -> &[Worm] {
         &self.worms
     }
@@ -138,6 +104,26 @@ impl World {
 
     pub fn sim_mod(&self) -> &SimMod {
         &self.sim_mod
+    }
+
+    /// The game mode, to read its state ([`GameMode::scores`]).
+    pub fn mode_state(&self) -> &dyn GameMode {
+        &*self.referee.mode
+    }
+
+    /// The mode's scoreboard ([`GameMode::scores`]).
+    pub fn scores(&self) -> &[Score] {
+        self.referee.mode.scores(self)
+    }
+
+    /// How the match ended, once it has (`game.gameOver`).
+    pub fn result(&self) -> Option<MatchResult> {
+        self.referee.over
+    }
+
+    /// The projectile pool's size ([`crate::MatchSetup::pool_capacity`]).
+    pub fn projectile_capacity(&self) -> usize {
+        self.projectiles.capacity()
     }
 
     /// Used projectile slots in slot order.
@@ -165,16 +151,14 @@ impl World {
     /// Places a bonus at `(x, y)` at the start of the next [`World::tick`],
     /// in the first free server slot and the same client slot, without
     /// `FindSpot` or `rand()` (the oracle's `simPlaceBonus`, spec hook H1).
-    /// Nothing is placed if no server slot is free or the weapon does not exist.
-    pub fn place_bonus(&mut self, x: i32, y: i32, item: BonusItem) {
-        self.bonuses.place(x, y, item);
+    /// Refused for a weapon outside the mod, or when [`MAX_BONUSES`]
+    /// placements wait already; nothing is placed if no server slot is free then.
+    pub fn place_bonus(&mut self, x: i32, y: i32, item: BonusItem) -> Result<(), PlaceBonusError> {
+        self.bonuses.place(x, y, item, self.sim_mod.weapons().len() as i32)
     }
 
-    /// The weapons a spawned bonus may hold (`goodWpns`): the ids the weapon
-    /// restrictions do not ban (`FT_WeaponRest`, `CWpnRest::getWeaponState`).
-    /// Ids outside the mod are left out. By default every weapon is allowed,
-    /// as for a mod missing from the restriction file (`CWpnRest::updateList`).
-    pub fn set_bonus_weapons(&mut self, ids: &[i32]) {
+    /// The weapons a spawned bonus may hold ([`crate::MatchSetup::bonus_weapons`]).
+    pub(crate) fn set_bonus_weapons(&mut self, ids: &[i32]) {
         let n = self.sim_mod.weapons().len() as i32;
         self.bonuses.set_weapons(ids.iter().copied().filter(|id| (0..n).contains(id)));
     }
@@ -190,9 +174,10 @@ impl World {
         self.worms[i].health = health;
     }
 
-    /// Gives worm `i` its weapons and counters, before the match starts.
+    /// Gives worm `i` its weapons and counters, for tests.
     /// Panics if there is no worm `i`.
-    pub fn set_loadout(&mut self, i: usize, loadout: &Loadout) {
+    #[cfg(test)]
+    pub(crate) fn set_loadout(&mut self, i: usize, loadout: &crate::Loadout) {
         let w = &mut self.worms[i];
         w.slots.clone_from(&loadout.slots);
         w.current_weapon = loadout.current_weapon;
@@ -253,13 +238,20 @@ impl World {
 
     /// What `CClient::InjureWorm` and `GameServer::killWorm` need, at the frame clock.
     pub(crate) fn harm(&mut self) -> Harm<'_> {
-        Harm { settings: &self.settings, worms: &mut self.worms, draws: &mut self.draws, now: self.time }
+        Harm {
+            settings: &self.settings,
+            worms: &mut self.worms,
+            draws: &mut self.draws,
+            now: self.time,
+            referee: &mut self.referee,
+        }
     }
 
-    /// `CWorm::Spawn` at `(x, y)`, including the spawn hole. Returns the worm's
-    /// index, or `None` if the world already has [`MAX_WORMS`] worms. Its
-    /// events (`Spawned`, the hole, the spawn sparkle) come with the next tick's.
-    pub fn spawn_worm(&mut self, x: i32, y: i32) -> Option<usize> {
+    /// `CWorm::Spawn` at `(x, y)`, including the spawn hole, with no
+    /// weapons. Returns the worm's index, or `None` if the world already has
+    /// [`MAX_WORMS`] worms. Outside a tick, its events (`Spawned`, the hole,
+    /// the spawn sparkle) come with the next tick's.
+    pub(crate) fn spawn_worm(&mut self, x: i32, y: i32) -> Option<usize> {
         if self.worms.len() >= MAX_WORMS {
             return None;
         }
@@ -267,7 +259,6 @@ impl World {
         let pos = Vec2::new(x as f32, y as f32);
         self.worms.push(Worm::spawned(id, pos, self.time, &self.settings));
         self.latches.push(Latches::default());
-        self.others.others = Buf::with_capacity(self.worms.len());
         let ev = &mut self.draws.events;
         ev.push(EventKind::Spawned { worm: id });
         carve_px(
@@ -331,14 +322,20 @@ impl World {
         let num_weapons = self.sim_mod.weapons().len() as i32;
         let wall_clock = self.time + TimeDiff(CLOCK_OFFSET_MS);
         self.bonus_messages(wall_clock, false);
+        self.parse_game_over();
         self.deliver_shots();
         self.bonuses.deliver_to_server(&mut self.worms, num_weapons);
         self.server_frame += 1;
         // `OracleHooks::beforeFrame`: bonuses placed for this frame.
         self.bonus_messages(wall_clock, true);
         self.gus_speed_round_trip();
-        // `gusLogicFrame` (`Game.cpp:945-949`): worms left at exactly 0 health die.
-        die_at_zero_health(&mut self.harm(), wall_clock);
+        // `Game::shouldDoPhysicsFrame` (`Game.cpp:1267-1276`): false from
+        // `GAMEOVER_WAIT` after the end, for the Gusanos logic and the client.
+        let frozen = self.referee.frozen(self.server_frame);
+        if !frozen {
+            // `gusLogicFrame` (`Game.cpp:945-949`): worms left at exactly 0 health die.
+            die_at_zero_health(&mut self.harm(), wall_clock);
+        }
         for (i, latch) in self.latches.iter_mut().enumerate() {
             latch.set(keys.get(i).copied().unwrap_or(Keys(0)));
         }
@@ -352,11 +349,20 @@ impl World {
         }
         let frame = self.frame_dt();
         self.substeps = 0;
+        if self.referee.over.is_some() {
+            // `CClient::Simulation` (`CClient_Game.cpp:76-79`): `clearLocalWormInputs`.
+            crate::referee::clear_input(self);
+        }
+        if frozen {
+            self.skip_physics();
+        }
         while self.physics_time + step_clock <= self.time {
             self.physics_step(step.seconds());
             self.physics_time += step_clock;
         }
-        // `GameServer::SimulateGame` (`src/server/CServer_Game.cpp:167-261`).
+        // `GameServer::SimulateGame` (`src/server/CServer_Game.cpp:167-261`):
+        // the end, the respawns, the bonuses, then the mode.
+        self.check_game_over();
         let mut spawner = Spawner {
             settings: &self.settings,
             terrain: &mut self.terrain,
@@ -364,9 +370,13 @@ impl World {
             draws: &mut self.draws,
             now: self.time,
             wall_clock,
+            referee: &mut self.referee,
         };
         simulate_respawns(&mut self.worms, &mut self.latches, &mut spawner);
-        self.bonuses.simulate_server(&self.settings, &self.terrain, &mut self.draws, wall_clock);
+        let over = self.referee.over.is_some();
+        self.bonuses.simulate_server(&self.settings, &self.terrain, &mut self.draws, wall_clock, over);
+        // `CGameMode::Simulate`, and the commands (hook H1).
+        self.mode_tick();
         self.time += frame;
     }
 
@@ -396,7 +406,7 @@ impl World {
     fn gus_speed_round_trip(&mut self) {
         let to_gus = TimeDiff(FRAME_MS).seconds();
         let from_gus = 1.0 / to_gus;
-        for w in &mut self.worms {
+        for w in self.worms.iter_mut() {
             w.vel *= to_gus;
             w.vel *= from_gus;
             w.rope.vel *= to_gus;
@@ -427,6 +437,7 @@ impl World {
             parts: &mut self.others.beam_parts,
             now: self.time,
             bonuses: &mut self.bonuses.client,
+            referee: &mut self.referee,
         };
         for mut shot in decoded {
             let spawn = spawn_time(shot.time, self.server_frame, current);
@@ -441,6 +452,21 @@ impl World {
 
 #[cfg(test)]
 impl World {
+    /// The positional constructor of old, for tests: no worms, OLX's
+    /// crediting ([`crate::OracleMode`]), settings unchecked.
+    pub(crate) fn test_new(
+        settings: SimSettings,
+        sim_mod: Arc<SimMod>,
+        terrain: Terrain,
+        holes: Vec<Stamp>,
+        start: AbsTime,
+        seed: u32,
+    ) -> World {
+        let setup =
+            crate::MatchSetup { holes, start, seed, ..crate::MatchSetup::new(settings, sim_mod, terrain) };
+        World::build(setup, alloc::boxed::Box::new(crate::OracleMode))
+    }
+
     /// Worm `i`, to change between ticks in tests.
     pub(crate) fn worm_mut(&mut self, i: usize) -> &mut Worm {
         &mut self.worms[i]

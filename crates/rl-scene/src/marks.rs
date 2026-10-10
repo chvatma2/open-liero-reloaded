@@ -2,7 +2,6 @@
 //! flashes, green crosshairs, laser sights and beams. The sim reports them
 //! as events; OLX keeps them as worm flags and short-lived entities.
 
-use rl_data::image::Rgba;
 use rl_data::level::Material;
 use rl_math::{GlibcRand, Vec2};
 use rl_sim::{CosmeticKind, EventKind, MAX_WORMS, TickEvents, WeaponType, World};
@@ -13,8 +12,8 @@ use crate::draw_list::{DrawList, Item, Layer, Line, View, perform_line};
 /// A laser sight entity alive at the end of the tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Laser {
-    /// The worm id it belongs to (the alive worm nearest its start), if any.
-    worm: Option<i32>,
+    /// The worm id it belongs to.
+    worm: i32,
     start: Vec2,
     dir: Vec2,
     len: i16,
@@ -98,19 +97,17 @@ impl Marks {
                         *f = false;
                     }
                 }
-                EventKind::SpawnCosmetic { kind: CosmeticKind::LaserSight { len }, pos, vel } => {
-                    let worm = owner(world, pos);
+                EventKind::SpawnCosmetic { kind: CosmeticKind::LaserSight { worm, len }, pos, vel } => {
                     if stopped_at_worm(world, pos, vel, len)
-                        && let Some(f) = worm.and_then(|i| self.target.get_mut(i))
+                        && let Some(f) = usize::try_from(worm).ok().and_then(|i| self.target.get_mut(i))
                     {
                         *f = true;
                     }
                     if substeps > 0 && e.substep + 1 == substeps && self.lasers.len() < MAX_WORMS {
-                        let worm = worm.and_then(|i| i32::try_from(i).ok());
                         self.lasers.push(Laser { worm, start: pos, dir: vel, len });
                     }
                 }
-                EventKind::SpawnCosmetic { kind: CosmeticKind::Beam { worm }, pos, vel } => {
+                EventKind::SpawnCosmetic { kind: CosmeticKind::Beam { worm, colour }, pos, vel } => {
                     let slot = usize::try_from(worm).ok().filter(|&i| i < MAX_WORMS);
                     if let Some(i) = slot
                         && substeps > 0
@@ -118,11 +115,7 @@ impl Marks {
                     {
                         let end = pos + vel;
                         let a = (pos.x as i32, pos.y as i32);
-                        self.beams[i] = Some(Line {
-                            a,
-                            b: (end.x as i32, end.y as i32),
-                            colour: beam_colour(world, worm),
-                        });
+                        self.beams[i] = Some(Line { a, b: (end.x as i32, end.y as i32), colour });
                     }
                 }
                 _ => {}
@@ -151,7 +144,7 @@ impl Marks {
     ) {
         let Marks { lasers, rng, laser_alt, beams, .. } = self;
         for l in lasers.iter() {
-            let start = l.worm.and_then(&drawn).unwrap_or(l.start);
+            let start = drawn(l.worm).unwrap_or(l.start);
             let end = start + l.dir * l.len as f32;
             let screen = |v: f32| (v as i32).saturating_mul(2);
             let (a, b) = ((screen(start.x), screen(start.y)), (screen(end.x), screen(end.y)));
@@ -177,15 +170,6 @@ impl Marks {
     }
 }
 
-/// The worm (an id, as an index into the marks) a laser sight event came
-/// from: it starts at the worm's position in its sub-step, so the alive
-/// worm nearest to it now (the first on a tie).
-fn owner(world: &World, pos: Vec2) -> Option<usize> {
-    let d = |p: Vec2| (p - pos).length2();
-    let w = world.worms().iter().filter(|w| w.alive).min_by(|a, b| d(a.pos).total_cmp(&d(b.pos)))?;
-    usize::try_from(w.id).ok()
-}
-
 /// Redoes the end of the sim's 3-pixel trace (`len / 3` steps from `pos`)
 /// and reads the material there, wrapped like `getMaterialWrapped`.
 fn stopped_at_worm(world: &World, pos: Vec2, dir: Vec2, len: i16) -> bool {
@@ -200,12 +184,4 @@ fn stopped_at_worm(world: &World, pos: Vec2, dir: Vec2, len: i16) -> bool {
     let (tw, th) = (t.width().max(1) as i64, t.height().max(1) as i64);
     let (x, y) = ((p.x as i64).rem_euclid(tw), (p.y as i64).rem_euclid(th));
     t.material(x, y) == Some(Material::Background)
-}
-
-/// The beam colour of worm id `worm`'s current weapon (`Bm.Colour`).
-fn beam_colour(world: &World, worm: i32) -> Rgba {
-    let w = world.worms().iter().find(|w| w.id == worm);
-    let slot = w.and_then(|w| usize::try_from(w.current_weapon).ok().and_then(|i| w.slots.get(i)));
-    let beam = slot.and_then(|s| world.sim_mod().weapon(s.weapon)).and_then(|wpn| wpn.beam.as_ref());
-    beam.map_or(Rgba::rgb(255, 255, 255), |b| b.colour)
 }

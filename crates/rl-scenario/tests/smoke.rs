@@ -11,9 +11,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rl_content::{Content, olx_mod_id};
-use rl_math::AbsTime;
 use rl_sim::{
-    EventKind, Keys, Loadout, MAX_BONUSES, SimSettings, Slot, StampId, TerrainOp, TickEvents, World,
+    EventKind, Keys, Loadout, MAX_BONUSES, MatchSetup, OracleMode, SimSettings, Slot, StampId, TerrainOp,
+    TickEvents, World, WormSetup,
 };
 use rl_terrain::{GreenMask, PX_ROCK, Stamp, Terrain};
 
@@ -160,24 +160,22 @@ fn smoke(mod_dir: &str, level: &str, seed: u64) {
     let n_weapons = sim_mod.weapons().len() as u64;
     let (holes, mask) = (theme.stamps(), theme.green_mask());
     let terrain = Terrain::from_grid(&level.material);
-    let mut w =
-        World::new(settings, Arc::new(sim_mod), terrain, theme.stamps(), AbsTime(100_000), seed as u32);
-    if let Some(mask) = theme.green_mask() {
-        w.set_green_mask(mask);
-    }
-    for i in 0..WORMS {
-        let (x, y) = free_spot(w.terrain(), &mut rng);
-        w.spawn_worm(x, y).unwrap();
-        let slots = (0..5)
-            .map(|_| Slot {
-                weapon: rng.below(n_weapons) as i32,
-                charge: 1.0,
-                reloading: false,
-                last_fire: 0.0,
-            })
-            .collect();
-        w.set_loadout(i, &Loadout { slots, current_weapon: 0, lives: -2, kills: 0, deaths: 0 });
-    }
+    // Spawn holes carve no rock, so the free spots are the level's.
+    let worms = (0..WORMS)
+        .map(|_| {
+            let spawn = Some(free_spot(&terrain, &mut rng));
+            let slots = (0..5).map(|_| Slot::ready(rng.below(n_weapons) as i32)).collect();
+            WormSetup { team: 0, loadout: Loadout::new(slots, &settings), spawn }
+        })
+        .collect();
+    let setup = MatchSetup {
+        holes: theme.stamps(),
+        green_mask: theme.green_mask(),
+        seed: seed as u32,
+        worms,
+        ..MatchSetup::new(settings, Arc::new(sim_mod), terrain)
+    };
+    let mut w = World::new(setup, Box::new(OracleMode)).unwrap();
     w.align_physics_clock();
     let mut shadow = w.terrain().clone();
     let mut players: Vec<Player> = (0..WORMS).map(|_| Player { keys: 0, left: 0 }).collect();

@@ -26,7 +26,7 @@ fn holes() -> Vec<Stamp> {
 
 fn world(fill: Material) -> World {
     let terrain = Terrain::from_grid(&MaterialGrid::new(200, 200, fill));
-    World::new(SimSettings::lx56(), test_mod(), terrain, holes(), AbsTime(0), 1)
+    World::test_new(SimSettings::lx56(), test_mod(), terrain, holes(), AbsTime(0), 1)
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn instant_air_jump_lets_a_falling_worm_jump() {
     let mut settings = SimSettings::lx56();
     settings.instant_air_jump = true;
     let terrain = Terrain::from_grid(&MaterialGrid::new(200, 200, Material::Background));
-    let mut w = World::new(settings, test_mod(), terrain, holes(), AbsTime(0), 1);
+    let mut w = World::test_new(settings, test_mod(), terrain, holes(), AbsTime(0), 1);
     w.spawn_worm(100, 20);
     w.tick_new(&[Keys(0)]);
     w.tick_new(&[Keys(0)]);
@@ -98,7 +98,7 @@ fn instant_air_jump_lets_a_falling_worm_jump() {
 fn a_theme_without_holes_does_not_panic() {
     // OLX's CarveHole returns 0 when the theme lacks the hole image.
     let terrain = Terrain::from_grid(&MaterialGrid::new(50, 50, Material::Dirt));
-    let mut w = World::new(SimSettings::lx56(), test_mod(), terrain, Vec::new(), AbsTime(0), 1);
+    let mut w = World::test_new(SimSettings::lx56(), test_mod(), terrain, Vec::new(), AbsTime(0), 1);
     w.spawn_worm(25, 25);
     for _ in 0..20 {
         w.tick_new(&[Keys(Keys::RIGHT | Keys::LEFT)]);
@@ -190,7 +190,7 @@ fn missing_keys_mean_nothing_is_held() {
 #[test]
 fn an_empty_map_does_not_panic() {
     let terrain = Terrain::from_grid(&MaterialGrid::new(0, 0, Material::Dirt));
-    let mut w = World::new(SimSettings::lx56(), test_mod(), terrain, holes(), AbsTime(0), 1);
+    let mut w = World::test_new(SimSettings::lx56(), test_mod(), terrain, holes(), AbsTime(0), 1);
     w.spawn_worm(0, 0);
     for k in [0, 0, Keys::ROPE, 0, Keys::RIGHT, Keys::LEFT | Keys::RIGHT, Keys::JUMP] {
         w.tick_new(&[Keys(k)]);
@@ -245,8 +245,8 @@ fn the_rope_hooking_dirt_draws_ten_once() {
 #[test]
 fn generators_are_seeded_from_the_match_seed() {
     let terrain = Terrain::from_grid(&MaterialGrid::new(10, 10, Material::Background));
-    let a = World::new(SimSettings::lx56(), test_mod(), terrain.clone(), holes(), AbsTime(0), 7);
-    let b = World::new(SimSettings::lx56(), test_mod(), terrain, holes(), AbsTime(0), 8);
+    let a = World::test_new(SimSettings::lx56(), test_mod(), terrain.clone(), holes(), AbsTime(0), 7);
+    let b = World::test_new(SimSettings::lx56(), test_mod(), terrain, holes(), AbsTime(0), 8);
     assert_ne!(a, b);
     assert_eq!((a.rand_calls(), a.mt_calls()), (0, 0));
 }
@@ -270,7 +270,7 @@ fn frame_dt_follows_game_speed() {
         let mut s = SimSettings::lx56();
         (s.game_speed, s.game_speed_only_for_projs) = (speed, only_projs);
         let terrain = Terrain::from_grid(&MaterialGrid::new(10, 10, Material::Background));
-        let mut w = World::new(s, test_mod(), terrain, holes(), AbsTime(1000), 1);
+        let mut w = World::test_new(s, test_mod(), terrain, holes(), AbsTime(1000), 1);
         assert_eq!(w.frame_dt(), TimeDiff(ms));
         w.tick_new(&[]);
         assert_eq!(w.time(), AbsTime(1000 + ms));
@@ -291,7 +291,7 @@ fn find_spot_draws_a_position_without_rock() {
         })
         .collect();
     let terrain = Terrain::from_grid(&MaterialGrid::from_cells(200, 200, cells).unwrap());
-    let mut w = World::new(SimSettings::lx56(), test_mod(), terrain, holes(), AbsTime(0), 1);
+    let mut w = World::test_new(SimSettings::lx56(), test_mod(), terrain, holes(), AbsTime(0), 1);
     let (x, y) = w.find_spot();
     assert!((103..117).contains(&x) && (53..67).contains(&y), "({x}, {y})");
     assert!(w.mt_calls() >= 2 && w.rand_calls() == 0, "two FindSpot draws per try");

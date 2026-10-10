@@ -2,20 +2,20 @@
 
 use anyhow::Context as _;
 use rl_math::AbsTime;
-use rl_sim::{Loadout, MAX_WORMS, SimSettings, Slot, World};
+use rl_sim::{Loadout, MAX_WORMS, MatchSetup, OracleMode, SimSettings, Slot, World, WormSetup};
 use rl_terrain::Terrain;
 
 use crate::{Content, LoadedLevel, LoadedMod, LoadedTheme};
 
-/// Where a sandbox world's frame clock starts. Not 0: OLX treats time 0 as
-/// "never" (a worm's last bleeding, a bonus's spawn time).
-pub const SANDBOX_START: AbsTime = AbsTime(100_000);
+/// Where a sandbox world's frame clock starts: [`MatchSetup::T0`]. Not 0:
+/// OLX treats time 0 as "never" (a worm's last bleeding, a bonus's spawn time).
+pub const SANDBOX_START: AbsTime = MatchSetup::T0;
 
 /// One worm of a [`SandboxSetup`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SpawnSpec {
     /// Where it spawns; `None` draws a position with the world's `FindSpot`
-    /// ([`World::find_spot`]), as OLX's server spawns worms.
+    /// ([`rl_sim::WormSetup::spawn`]), as OLX's server spawns worms.
     pub pos: Option<(i32, i32)>,
     /// Weapon ids for its five slots (cycled if fewer); empty for the mod's
     /// weapons from the first one. All start full and ready.
@@ -49,42 +49,50 @@ impl Content {
 
 /// The world `setup` describes, from its mod `m` (with placeholders, as
 /// [`Content::load_mod`]), `level` and its `theme` already loaded (a restart
-/// decodes nothing again): the level with the theme's holes and green-dirt
-/// mask, and the worms spawned in order with their weapons. Worms without a
-/// position draw one from `FindSpot` when they spawn, so the same setup
-/// always gives the same world. Settings outside OLX's range, too many
-/// worms or an unknown weapon id are errors. `setup`'s pack ids are not
-/// read.
+/// decodes nothing again): [`match_setup`], played with OLX's crediting and
+/// no end ([`OracleMode`]).
 pub fn new_world_from(
     m: &LoadedMod,
     level: &LoadedLevel,
     theme: &LoadedTheme,
     setup: &SandboxSetup,
 ) -> anyhow::Result<World> {
+    let setup = match_setup(m, level, theme, setup)?;
+    World::new(setup, Box::new(OracleMode)).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// The [`MatchSetup`] `setup` describes, for a world of any game mode: the
+/// level with the theme's holes and green-dirt mask, and the worms in
+/// order with their weapons. Worms without a position draw one from
+/// `FindSpot` when they spawn, so the same setup always gives the same
+/// world. Settings outside OLX's range, too many worms or an unknown weapon
+/// id are errors. `setup`'s pack ids are not read.
+pub fn match_setup(
+    m: &LoadedMod,
+    level: &LoadedLevel,
+    theme: &LoadedTheme,
+    setup: &SandboxSetup,
+) -> anyhow::Result<MatchSetup> {
     setup.settings.validate().map_err(|e| anyhow::anyhow!("settings: {}", e.0))?;
     anyhow::ensure!(setup.worms.len() <= MAX_WORMS, "{} worms, at most {MAX_WORMS}", setup.worms.len());
     let n = m.sim.weapons().len() as i32;
+    let mut worms = Vec::with_capacity(setup.worms.len());
     for (i, w) in setup.worms.iter().enumerate() {
         if let Some(bad) = w.weapons.iter().find(|&&id| !(0..n).contains(&id)) {
             anyhow::bail!("worm {i}: no weapon {bad} in {} ({n} weapons)", setup.mod_id);
         }
+        let ids: Vec<i32> = if w.weapons.is_empty() { (0..n.min(5)).collect() } else { w.weapons.clone() };
+        let slots =
+            (0..5).filter_map(|s| ids.get(s % ids.len().max(1))).map(|&weapon| Slot::ready(weapon)).collect();
+        worms.push(WormSetup { team: 0, loadout: Loadout::new(slots, &setup.settings), spawn: w.pos });
     }
     let terrain = Terrain::from_grid(&level.material);
-    let mut world =
-        World::new(setup.settings.clone(), m.sim.clone(), terrain, theme.stamps(), SANDBOX_START, setup.seed);
-    if let Some(mask) = theme.green_mask() {
-        world.set_green_mask(mask);
-    }
-    for w in &setup.worms {
-        let (x, y) = w.pos.unwrap_or_else(|| world.find_spot());
-        let i = world.spawn_worm(x, y).context("too many worms")?;
-        let ids: Vec<i32> = if w.weapons.is_empty() { (0..n.min(5)).collect() } else { w.weapons.clone() };
-        let slots = (0..5)
-            .filter_map(|s| ids.get(s % ids.len().max(1)))
-            .map(|&weapon| Slot { weapon, charge: 1.0, reloading: false, last_fire: 0.0 })
-            .collect();
-        let lives = world.worms()[i].lives;
-        world.set_loadout(i, &Loadout { slots, current_weapon: 0, lives, kills: 0, deaths: 0 });
-    }
-    Ok(world)
+    Ok(MatchSetup {
+        holes: theme.stamps(),
+        green_mask: theme.green_mask(),
+        start: SANDBOX_START,
+        seed: setup.seed,
+        worms,
+        ..MatchSetup::new(setup.settings.clone(), m.sim.clone(), terrain)
+    })
 }

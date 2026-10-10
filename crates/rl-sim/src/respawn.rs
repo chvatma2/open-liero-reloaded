@@ -11,7 +11,9 @@ use crate::damage::{WRM_OUT, WRM_UNLIM};
 use crate::effects::carve_px;
 use crate::events::{CosmeticKind, EventKind, TerrainOp};
 use crate::input::Latches;
+use crate::mode::ModeCtx;
 use crate::projectile::{c_i64, c_int, c_u64};
+use crate::referee::Referee;
 use crate::rng::Draws;
 use crate::worm::{Dir, Worm, WormState};
 
@@ -97,6 +99,8 @@ pub(crate) struct Spawner<'a> {
     pub now: AbsTime,
     /// `tLX->currentTime`, pinned to `now + K` (spec §18 D2).
     pub wall_clock: AbsTime,
+    /// The game mode, told of each spawn, and whether the match is over.
+    pub referee: &'a mut Referee,
 }
 
 /// The respawn loop of `GameServer::SimulateGame`, once per frame after the
@@ -104,18 +108,21 @@ pub(crate) struct Spawner<'a> {
 /// (strictly), and the server spawns it if `MaxRespawnTime` (from 0 on) has
 /// passed too, or if it asked to. Otherwise the local client may respawn it
 /// itself, so the server only allows it (`bCanRespawnNow`) and waits for the
-/// worm's jump key. Game over is not ported (`docs/porting/STATUS.md`).
+/// worm's jump key. Once the match is over, `SpawnWorm` returns at once.
 ///
 /// OLX also skips a dead worm whose `bWeaponsReady` is false
 /// (`CServer_Game.cpp:204`): one still choosing its weapons, which
 /// `GameServer::PrepareWorm` (`CServer.cpp:403-424`, random weapons by
 /// default) or the weapon selection menu (`CWormHuman.cpp:714-748`) settles.
-/// `rl-sim` has no weapon selection and no such flag: every worm counts as
-/// ready (its weapons come from `World::set_loadout` at setup), so the gate
-/// never holds a respawn back.
+/// `rl-sim` has no weapon selection and no such flag: a worm's weapons come
+/// with it, from its [`crate::WormSetup`] or a mode's spawn command, so every
+/// worm is ready and the gate never holds a respawn back. A mode that wants
+/// other weapons on a respawn gives them in `on_spawn`
+/// ([`crate::ModeCtx::give_weapon`]), applied before the next physics step.
 pub(crate) fn simulate_respawns(worms: &mut [Worm], latches: &mut [Latches], sp: &mut Spawner) {
     let s = sp.settings;
-    for (w, keys) in worms.iter_mut().zip(latches.iter_mut()) {
+    for i in 0..worms.len().min(latches.len()) {
+        let w = &mut worms[i];
         if w.alive || w.lives == WRM_OUT {
             continue;
         }
@@ -127,18 +134,26 @@ pub(crate) fn simulate_respawns(worms: &mut [Worm], latches: &mut [Latches], sp:
         // "max respawn-time reached" or "respawn requested".
         let forced = s.max_respawn_time >= 0.0 && current > tod.wrapping_add(seconds(s.max_respawn_time));
         if forced || w.respawn_requested {
-            spawn_worm(w, keys, sp);
+            if spawn_worm(w, &mut latches[i], sp) {
+                let (id, r) = (w.id, &mut *sp.referee);
+                let mut ctx = ModeCtx { worms: &*worms, settings: s, now: sp.now, commands: &mut r.commands };
+                r.mode.on_spawn(id, &mut ctx);
+            }
         } else {
             w.can_respawn_now = true;
         }
     }
 }
 
-/// `GameServer::SpawnWorm` in deathmatch: `FindSpot`, `CWorm::Spawn` with its
-/// size-4 hole (not counted as dirt), lives back from `WRM_OUT`, and
-/// `EmptyWeaponsOnRespawn` (`GameServer::SendEmptyWeaponsOnRespawn`,
-/// `src/server/CServer_Send.cpp:1066-1072`).
-fn spawn_worm(w: &mut Worm, keys: &mut Latches, sp: &mut Spawner) {
+/// `GameServer::SpawnWorm` in deathmatch: nothing once the match is over;
+/// else `FindSpot`, `CWorm::Spawn` with its size-4 hole (not counted as
+/// dirt), lives back from `WRM_OUT`, and `EmptyWeaponsOnRespawn`
+/// (`GameServer::SendEmptyWeaponsOnRespawn`,
+/// `src/server/CServer_Send.cpp:1066-1072`). Returns whether it spawned.
+fn spawn_worm(w: &mut Worm, keys: &mut Latches, sp: &mut Spawner) -> bool {
+    if sp.referee.over.is_some() {
+        return false;
+    }
     let mut pos = find_spot(sp.terrain, &mut sp.draws.mt);
     if pos.x == -1.0 && pos.y == -1.0 {
         pos = find_spot(sp.terrain, &mut sp.draws.mt);
@@ -160,4 +175,5 @@ fn spawn_worm(w: &mut Worm, keys: &mut Latches, sp: &mut Spawner) {
             s.reloading = true;
         }
     }
+    true
 }

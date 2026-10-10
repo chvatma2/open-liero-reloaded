@@ -12,9 +12,11 @@
 
 use alloc::vec::Vec;
 
+use rl_data::image::Rgba;
 use rl_math::Vec2;
 
 use crate::bonus::BonusItem;
+use crate::mode::{MatchResult, Message};
 
 /// An index into [`crate::SimMod::sounds`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -106,13 +108,15 @@ pub enum CosmeticKind {
     Doomsday,
     /// `ENT_JETPACKSPRAY`.
     JetpackSpray,
-    /// `ENT_LASERSIGHT`: `vel` is the unit aim direction and `len` the
-    /// length OLX passes (`CClient_Game.cpp:807`): the pixels the 3 px trace
-    /// went before the first solid pixel or worm (a multiple of 3, at most 9999).
-    LaserSight { len: i16 },
+    /// `ENT_LASERSIGHT` of worm `worm` (an id): `vel` is the unit aim
+    /// direction and `len` the length OLX passes (`CClient_Game.cpp:807`):
+    /// the pixels the 3 px trace went before the first solid pixel or worm
+    /// (a multiple of 3, at most 9999).
+    LaserSight { worm: i32, len: i16 },
     /// The beam `DrawBeam` draws for this worm in this sub-step: from `pos`
-    /// (the worm) to `pos + vel` (where the trace stopped).
-    Beam { worm: i32 },
+    /// (the worm) to `pos + vel` (where the trace stopped), in the beam
+    /// weapon's `Colour` (`SetWormBeamEntity`, `CClient_Game.cpp:699-710`).
+    Beam { worm: i32, colour: Rgba },
 }
 
 /// One thing that happened during a tick, and when.
@@ -164,6 +168,10 @@ pub enum EventKind {
     BonusPickup { worm: i32, kind: BonusItem },
     /// Worm `worm` spawned or respawned.
     Spawned { worm: i32 },
+    /// A game mode's message for the players ([`crate::ModeCtx::message`]).
+    Message(Message),
+    /// The match ended (`GameServer::GameOver`), once.
+    GameOver(MatchResult),
 }
 
 impl EventKind {

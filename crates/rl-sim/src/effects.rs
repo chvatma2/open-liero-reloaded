@@ -10,6 +10,7 @@ use crate::damage::{Harm, injure_worm};
 use crate::events::{CosmeticKind, EventKind, StampId, TerrainOp, TickEvents};
 use crate::proj_sim::ProjCtx;
 use crate::projectile::{c_i64, c_int};
+use crate::referee::Referee;
 use crate::rng::Draws;
 use crate::world::MAX_WORMS;
 use crate::worm::Worm;
@@ -119,11 +120,19 @@ pub(crate) struct Blast<'a> {
     pub wall_clock: AbsTime,
     /// `LX56PhysicsDT`.
     pub physics_dt: TimeDiff,
+    /// The game mode, which credits kills.
+    pub referee: &'a mut Referee,
 }
 
 impl Blast<'_> {
     fn harm(&mut self) -> Harm<'_> {
-        Harm { settings: self.settings, worms: self.worms, draws: self.draws, now: self.now }
+        Harm {
+            settings: self.settings,
+            worms: self.worms,
+            draws: self.draws,
+            now: self.now,
+            referee: self.referee,
+        }
     }
 }
 
@@ -140,6 +149,7 @@ impl<'a> ProjCtx<'a> {
             now: self.now,
             wall_clock: self.wall_clock,
             physics_dt: self.physics_dt,
+            referee: self.referee,
         }
     }
 }

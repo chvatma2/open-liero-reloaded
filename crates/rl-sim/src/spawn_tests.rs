@@ -182,7 +182,7 @@ fn a_self_trailing_projectile_costs_at_most_one_full_child_per_free_slot() {
     let grid = rl_data::level::MaterialGrid::new(200, 200, rl_data::level::Material::Background);
     let terrain = rl_terrain::Terrain::from_grid(&grid);
     let mut w =
-        crate::World::new(SimSettings::lx56(), alloc::sync::Arc::new(m), terrain, vec![], AbsTime(0), 1);
+        crate::World::test_new(SimSettings::lx56(), alloc::sync::Arc::new(m), terrain, vec![], AbsTime(0), 1);
     let i = w.spawn_worm(100, 100).unwrap();
     let slot = crate::Slot { weapon: 0, charge: 1.0, reloading: false, last_fire: 0.0 };
     let loadout = crate::Loadout { slots: vec![slot; 5], current_weapon: 0, lives: -2, kills: 0, deaths: 0 };

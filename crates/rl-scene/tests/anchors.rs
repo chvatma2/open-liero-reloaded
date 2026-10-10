@@ -105,7 +105,7 @@ fn laser_sights_start_at_the_drawn_worm() {
             let n = world.substeps_last_tick();
             let Some((dir, len)) =
                 events.iter().filter(|e| n > 0 && e.substep + 1 == n).find_map(|e| match e.kind {
-                    EventKind::SpawnCosmetic { kind: CosmeticKind::LaserSight { len }, vel, .. } => {
+                    EventKind::SpawnCosmetic { kind: CosmeticKind::LaserSight { len, .. }, vel, .. } => {
                         Some((vel, len))
                     }
                     _ => None,
@@ -173,7 +173,7 @@ fn bonuses_blend_between_ticks() {
     let Some(content) = common::content() else { return };
     let (mut w, assets) = world(&content, "Laser", &[], true);
     // A health bonus dropped in the open falls for a while.
-    w.place_bonus(150, 250, BonusItem::Health);
+    w.place_bonus(150, 250, BonusItem::Health).unwrap();
     let mut blended = 0;
     run(
         &mut w,

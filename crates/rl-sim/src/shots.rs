@@ -153,6 +153,8 @@ pub(crate) struct ShotCtx<'a> {
     pub now: AbsTime,
     /// The client's bonuses, which beams explode.
     pub bonuses: &'a mut [Bonus; MAX_BONUSES],
+    /// The game mode, which credits kills.
+    pub referee: &'a mut crate::referee::Referee,
 }
 
 /// `CClient::ProcessShot` (`CClient_Game.cpp:852-921`). The shot of a worm
@@ -176,7 +178,7 @@ pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], 
     if wpn.kind == WeaponType::Beam {
         ctx.draws.events.push(fired);
         let mut beam = BeamCtx { terrain: ctx.terrain, holes: ctx.holes, draws: ctx.draws, parts: ctx.parts };
-        process_shot_beam(shot, wpn, worms, &mut beam, ctx.settings, ctx.now, ctx.bonuses);
+        process_shot_beam(shot, wpn, worms, &mut beam, ctx.settings, ctx.now, ctx.bonuses, ctx.referee);
         return;
     }
     let Some(info) = &wpn.spawn else { return };

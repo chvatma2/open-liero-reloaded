@@ -54,7 +54,7 @@ fn walled_world() -> World {
         .map(|i| if i % 200 >= 120 || i / 200 >= 150 { Material::Dirt } else { Material::Background })
         .collect();
     let terrain = Terrain::from_grid(&MaterialGrid::from_cells(200, 200, cells).unwrap());
-    let mut w = World::new(SimSettings::lx56(), gun_mod(), terrain, holes(), AbsTime(100_000), 1);
+    let mut w = World::test_new(SimSettings::lx56(), gun_mod(), terrain, holes(), AbsTime(100_000), 1);
     w.spawn_worm(60, 140);
     let slot = Slot { weapon: 0, charge: 1.0, reloading: false, last_fire: 0.0 };
     w.set_loadout(0, &Loadout { slots: vec![slot; 5], current_weapon: 0, lives: -2, kills: 0, deaths: 0 });
@@ -208,7 +208,7 @@ fn checksum_changes_with_state() {
         |w| {
             w.draws.mt.next_u32();
         },
-        |w| w.place_bonus(10, 10, crate::BonusItem::Health),
+        |w| w.place_bonus(10, 10, crate::BonusItem::Health).unwrap(),
         |w| w.time.0 += 1,
         |w| w.worms[0].pos_recorder.push(rl_math::Vec2::new(1.0, 2.0)),
     ];
@@ -262,7 +262,7 @@ fn every_terrain_edit_survives_a_flood_of_other_events() {
     // flood a tick with more cosmetics and other gameplay events than fit,
     // then make edits (four spawn holes in dirt), and replay them.
     let terrain = Terrain::from_grid(&MaterialGrid::new(200, 200, Material::Dirt));
-    let mut w = World::new(SimSettings::lx56(), gun_mod(), terrain, holes(), AbsTime(0), 1);
+    let mut w = World::test_new(SimSettings::lx56(), gun_mod(), terrain, holes(), AbsTime(0), 1);
     let mut shadow = w.terrain().clone();
     for _ in 0..20_000 {
         w.draws.events.cosmetic(CosmeticKind::Smoke, rl_math::Vec2::ZERO, rl_math::Vec2::ZERO);
