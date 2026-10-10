@@ -19,6 +19,8 @@
         "rl-scene": 5,
         "rl-fx": 5,
         "rl-render": 5,
+        "rl-audio": 5,
+        "rl-input": 5,
         "rl-cli": 6,
         "xtask": 6,
     },

@@ -37,7 +37,8 @@ pub fn run(offline: bool) -> anyhow::Result<bool> {
 
 /// `cargo xtask full`: `check`, then the GPU tier (the renderer's GPU tests
 /// and the render goldens, with `RL_GPU_TESTS` set), skipped with a notice
-/// when no graphics adapter opens.
+/// when no graphics adapter opens, and the audio device check (OLX sounds
+/// on the default output), skipped with a notice when no device opens.
 pub fn full(offline: bool) -> anyhow::Result<bool> {
     run_with(offline, true)
 }
@@ -71,6 +72,26 @@ fn gpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
     let mut envs = envs.to_vec();
     envs.push(("RL_GPU_TESTS", PathBuf::from("1")));
     cargo(&args, &envs)
+}
+
+/// `rl-audio`'s `device_check` example: plays two OLX sounds on the default
+/// output device. Exit 3 means no device opened (the game runs silently).
+fn audio_step(envs: &[(&str, PathBuf)]) -> StepResult {
+    let mut cmd = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+    cmd.args(["run", "--quiet", "-p", "rl-audio", "--example", "device_check"]).current_dir(root());
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().map_err(|e| format!("cannot run cargo: {e}"))?;
+    let said = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    match out.status.code() {
+        Some(0) => Ok(()),
+        Some(3) => {
+            println!("skip audio ({said})");
+            Ok(())
+        }
+        _ => Err(format!("{said}{}", String::from_utf8_lossy(&out.stderr))),
+    }
 }
 
 fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
@@ -134,6 +155,7 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
 
     if gpu {
         step("gpu", &mut || gpu_step(&envs));
+        step("audio", &mut || audio_step(&envs));
     }
     let what = if gpu { "full" } else { "check" };
     if failed.is_empty() {

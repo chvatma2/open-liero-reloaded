@@ -41,6 +41,8 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Presentation (spec §19 E1-E4): camera (hard lock, clamp, shake, dead worm, respawn), skin frames (the facing-left mirror one column off), crosshair, muzzle flash, old-style health bar, rope, laser sights, beams, projectile frames (animation, special angle, angle, rotation with the `RotIncrement` bump), bonuses (blinking), layer order; interpolation (E2) | `src/client/CViewport.cpp:118-472`, `src/common/CWorm.cpp:1016-1300`, `src/client/CGameSkin.cpp:584-600`, `src/client/CNinjaRope.cpp:132-180`, `src/common/CProjectile.cpp:227-300`, `src/common/CBonus.cpp:49-76`, `src/client/Entity.cpp:30-157`, `305-314`, `src/client/GfxPrimitives.cpp:1795-2520`, `src/gusanos/viewport.cpp:105-253` | `rl-scene` | done (plan 5 task 3) | `camera_locks_clamps_and_shakes_like_olx`, `skin_frame_matches_olx_table`, `projectile_frames_match_olx`, `interpolation_never_blends_reused_slots_or_respawns`, `draw_list_order_matches_olx_layers`, `beams_and_laser_sights_live_two_entity_passes`; scene snapshots (`rl-scene/tests/snapshots`) |
 | Renderer (spec §8.2, §19 E3): art-scale world pass (terrain, instanced sprites from one atlas, world-pixel lines), upscale (integer nearest, sharp bilinear), offscreen PNGs; OLX's corner-rule colour key for sprites | `src/client/GfxPrimitives.cpp:116-150` (`SetColorKey`); OLX blits with SDL onto a 2× screen | `rl-render`, `rl-data::image`, `rl-cli render` | done (plan 5 task 5) | `dirty_rect_upload_equals_full_upload`, `upscale_filters_are_selectable`, `missing_assets_use_placeholders`, `srgb_targets_show_the_same_colours`; goldens `fixtures/render/frame-*.png` (`rl-cli/tests/render_golden.rs`, `cargo xtask full`) |
 | Cosmetic entities (spec §19 E1, E8): the 1024-slot pool, per-sub-step physics and animation, stains, blood drips, gib spins and colours, drawing and clipping | `src/client/Entity.cpp:161-468`, `include/FastVector.h`, `src/common/CWorm.cpp:671-757`, `src/common/CMap.cpp:338-352` | `rl-fx` | done (plan 5 task 4) | `blood_falls_and_stains_like_olx`, `explosion_frames_and_invisible_start`, `gibs_use_the_victims_colour`, `entity_cap_drops_new_ones`, `animations_live_as_long_as_olx`, `fx_never_touches_sim_randomness`, `colour_edits_follow_the_sim_like_apply_edits` |
+| Sound (spec §8.4, §19 E1, E12): positional mix (gain 0.7, inverse distance clamped, reference 50, rolloff 2, listener 20 px out at the view centre), THROW and PICKUP at the listener with gain 1.0, voice limits, live voices re-mixed as the listener moves, silence without a device | `src/sound/sound_sample_openal.cpp:206-270`, `src/sound/sfx.cpp:120-134`, `src/sound/sfxdriver_openal.cpp:43-92`, `src/game/Sounds.cpp:25-30`, `src/common/CGameScript.cpp:1185-1205` | `rl-audio` | done (plan 5 task 6) | `positional_gain_matches_olx_openal_defaults`, `voice_limits`, `silent_when_no_device`, `plays_events_on_a_mock_device`, `decodes_every_mod_sound`; `device_check` example (`cargo xtask full`) |
+| Input devices (spec §8.5, §19 E5): OLX's player 1 keyboard and gamepad defaults, trigger and stick thresholds, presses and releases latched between ticks | `src/client/Options.cpp:45-73`, `src/client/CInput.cpp:200-226` | `rl-input` | done (plan 5 task 6) | `default_bindings_match_olx`, `gamepad_maps_to_keys`, `tap_between_ticks_is_latched`, `tick_latch_sees_every_press_and_release` |
 
 ## Deliberate deviations
 
@@ -209,6 +211,25 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     `(uint)` cast of NaN is undefined), so it cannot hold a slot forever.
   - Only the air jump's sparkles exist in the sim (`Color()`, fade 10), so
     the coloured-sparkle drawing (`EntityEffect`) is not ported.
+- **Sound** (`rl-audio`, plan 5 task 6):
+  - *Pan:* OLX gets stereo from OpenAL Soft's panning of the 3D source
+    direction; the remake pans by the direction's left-right component
+    `dx / d` with kira's constant-power law. Gains are OpenAL's exactly.
+  - *Global voice limit:* OLX's only global limit is OpenAL's source count;
+    the remake skips a start beyond 256 voices (OpenAL Soft's default).
+  - A voice that ended counts against its sound's limit until the next
+    tick's play call, as OLX's copies count until the next `Sfx::think`.
+  - The announcer, team-score and menu sounds are not played (the sim does
+    not emit them yet).
+- **Input devices** (`rl-input`, plan 5 task 6):
+  - OLX's twin-stick controls (left stick walks, right stick aims
+    analogue) are not ported: the sim has 8 digital keys. The left stick's
+    X axis presses Left/Right and the right stick's Y axis Up/Down, from
+    OLX's 60 % deadzone.
+  - Mouse aiming (spec §8.5) is not implemented yet.
+  - Between ticks, a key released and pressed again is up for one tick and
+    down for the next, so the sim sees both edges (OLX's `CInput` reads the
+    devices every sub-step and needs no tick latch).
 - **Renderer** (`rl-render`, plan 5 task 5): OLX blits each sprite with SDL
   onto a 2× screen; the renderer draws the same texels at art scale (at
   least 2×) and then upscales (E3). With interpolation (E2), a sprite's

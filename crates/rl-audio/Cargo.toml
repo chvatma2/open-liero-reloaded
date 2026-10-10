@@ -1,0 +1,20 @@
+[package]
+name = "rl-audio"
+description = "Plays the simulation's Sound events through kira: OLX's OpenAL attenuation and panning around the view centre, voice limits per sound and globally, silence when no device opens."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rl-math.workspace = true
+rl-sim.workspace = true
+rl-content.workspace = true
+kira.workspace = true
+
+[dev-dependencies]
+rl-data.workspace = true
+
+[lints]
+workspace = true
