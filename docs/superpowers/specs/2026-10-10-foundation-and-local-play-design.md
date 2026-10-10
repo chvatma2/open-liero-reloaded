@@ -687,3 +687,9 @@ Made precise while implementing E6 and E9 (plan 5 task 1):
 - **The core pack's files** are listed under `core` in
   `content/olx-manifest.ron`; `rl-content` gives a missing or differently
   sized core sprite a placeholder of its OLX size, and a missing sound silence.
+- **One terrain texture (E7, deviating from §8.2).** §8.2 lists separate
+  back, front and material textures with the blend in the shader. The
+  renderer uploads one opaque RGBA texture, the `ColorMap` composite, because
+  `rl-terrain` already composites on the CPU (E7) and the shader needs no
+  material grid. Edits upload as dirty rectangles. A shader-side blend can
+  return with a pixel-art upscaler or a lighting pass if one needs it.

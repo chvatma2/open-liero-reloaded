@@ -62,5 +62,10 @@ cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --target
   (counters each second) and the exit summary let an agent run the game
   in a real window and read the PNGs (plan 5 ruling R3).
 
+- **Soak** (`tests/soak.rs`, `cargo xtask full`): `soak_sandbox_10_minutes_headless`
+  plays 60 000 ticks of `Session` with chaos keys, an offscreen render every
+  10th tick (main thread only) and a kira mock device for sound, and bounds
+  the counters; it needs `RL_GPU_TESTS`, content and an adapter, else skips.
+
 Test: `cargo nextest run -p rl-game` (the pure parts; `setup` and
 `session` play the imported levels when `RL_CONTENT_DIR` is set).

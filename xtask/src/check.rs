@@ -44,9 +44,13 @@ pub fn full(offline: bool) -> anyhow::Result<bool> {
 }
 
 /// The test targets of the GPU tier as `(package, test target)`.
-pub const GPU_TESTS: &[(&str, &str)] = &[("rl-render", "gpu"), ("rl-cli", "render_golden")];
+pub const GPU_TESTS: &[(&str, &str)] =
+    &[("rl-render", "gpu"), ("rl-cli", "render_golden"), ("rl-game", "soak")];
 
-fn gpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
+/// Whether `rl-render`'s `adapter` example opens a graphics adapter:
+/// `Ok(Ok(adapter))` when it does, `Ok(Err(notice))` when none opens, `Err`
+/// when the probe itself fails.
+pub fn probe_adapter() -> Result<Result<String, String>, String> {
     let probe = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
         .args(["run", "--quiet", "-p", "rl-render", "--example", "adapter"])
         .current_dir(root())
@@ -54,12 +58,19 @@ fn gpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
         .map_err(|e| format!("cannot run cargo: {e}"))?;
     let said = String::from_utf8_lossy(&probe.stdout).trim().to_string();
     match probe.status.code() {
-        Some(0) => println!("     gpu adapter: {said}"),
-        Some(3) => {
+        Some(0) => Ok(Ok(said)),
+        Some(3) => Ok(Err(said)),
+        _ => Err(format!("{said}{}", String::from_utf8_lossy(&probe.stderr))),
+    }
+}
+
+fn gpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
+    match probe_adapter()? {
+        Ok(said) => println!("     gpu adapter: {said}"),
+        Err(said) => {
             println!("skip gpu ({said})");
             return Ok(());
         }
-        _ => return Err(format!("{said}{}", String::from_utf8_lossy(&probe.stderr))),
     }
     let mut args =
         vec!["nextest", "run", "--no-fail-fast", "--status-level", "fail", "--final-status-level", "fail"];

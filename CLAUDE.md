@@ -11,7 +11,7 @@ modernized for current displays.
 
 1. **Run `cargo xtask check` before every commit.** It prints only failures.
    Without network access, use `cargo xtask check --offline`. `cargo xtask
-   full` adds the device tier (renderer GPU tests, render goldens, the audio
+   full` adds the device tier (renderer GPU tests, render goldens, the 10-minute soak, the audio
    device check); run it before merging rendering or audio changes.
 2. **One crate per concern, under `crates/`.** Each crate has a `CLAUDE.md`:
    read it before editing the crate. Register every new crate in `xtask/layers.ron`.

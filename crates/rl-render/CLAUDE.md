@@ -45,10 +45,13 @@ on screen or offscreen.
   `rope` on Liero Factory, `weapons/classic/bazooka` on FossilFacility,
   `castle-shoot-rope` on CastleStrike, the 1× level), drawn from the
   imported OLX content at test time (`RL_CONTENT_DIR`) and compared with
-  `perceptual_diff` (tolerance 0.1, at most 0.1 % of pixels). They were
+  `perceptual_diff` (tolerance 0.1, at most 0.002 % of pixels: lavapipe and llvmpipe GL both draw the four goldens with no differing pixel). They were
   blessed on lavapipe; they are accepted fixtures, the OLX packs they are
   drawn from are never committed. Re-bless with `cargo xtask bless-render
-  --reason "<why>"`.
+  --reason "<why>"` (without an adapter it re-draws only the CPU golden).
+- **Instance buffer** (`instance_buffer_bytes()`): grows to the busiest
+  frame's next power of two and never shrinks; `rl-game`'s soak test
+  (`tests/soak.rs`) bounds it.
 - **WSL:** under `GALLIUM_DRIVER=d3d12` with `WGPU_BACKEND=gl` (the real
   GPU) a thread that used the device segfaults when it exits (a driver
   bug), so the GPU tests, which run on test threads, crash there; the

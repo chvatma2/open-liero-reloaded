@@ -44,6 +44,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Sound (spec §8.4, §19 E1, E12): positional mix (gain 0.7, inverse distance clamped, reference 50, rolloff 2, listener 20 px out at the view centre), THROW and PICKUP at the listener with gain 1.0, voice limits, live voices re-mixed as the listener moves, silence without a device | `src/sound/sound_sample_openal.cpp:206-270`, `src/sound/sfx.cpp:120-134`, `src/sound/sfxdriver_openal.cpp:43-92`, `src/game/Sounds.cpp:25-30`, `src/common/CGameScript.cpp:1185-1205` | `rl-audio` | done (plan 5 task 6) | `positional_gain_matches_olx_openal_defaults`, `voice_limits`, `silent_when_no_device`, `plays_events_on_a_mock_device`, `decodes_every_mod_sound`; `device_check` example (`cargo xtask full`) |
 | Input devices (spec §8.5, §19 E5): OLX's player 1 keyboard and gamepad defaults, trigger and stick thresholds, presses and releases latched between ticks | `src/client/Options.cpp:45-73`, `src/client/CInput.cpp:200-226` | `rl-input` | done (plan 5 task 6) | `default_bindings_match_olx`, `gamepad_maps_to_keys`, `tap_between_ticks_is_latched`, `tick_latch_sees_every_press_and_release` |
 | Game loop and sandbox (spec §8.6, §19 E10-E12): fixed 100 Hz tick, interpolated frames, catch-up cap, window surface states, WSL GPU defaults, F5 restart from assets loaded once, overlay | `src/game/Game.cpp:897-959` (the frame clock it drives) | `rl-game` | done (plan 5 task 7) | `loop_never_runs_more_than_n_catchup_ticks`, `surface_survives_resize_and_outdated`, `sandbox_setup_spawns_targets`, `session_plays_and_restarts_from_loaded_assets`; scripted runs in a WSLg window on all 4 levels × 2 mods |
+| Long sessions (plan 5 review focus 5): 60 000 ticks (10 minutes) of the sandbox with chaos keys, `rl-fx`, mock audio and an offscreen render every 10th tick | — | `rl-game/tests/soak.rs` | done (plan 5 task 8) | `soak_sandbox_10_minutes_headless` (`cargo xtask full`, about 15 s): cosmetic entities, projectiles, entity count, audio voices, popups, instance buffer, atlas and terrain texture stay bounded, no panic |
 
 ## Deliberate deviations
 
@@ -244,6 +245,17 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   blended position snaps to the nearest art pixel. A 1× level's art is
   doubled with nearest sampling. Blending is on the stored 8-bit values,
   like SDL's.
+- **One terrain texture** (spec §8.2, E7): the renderer uploads the
+  `ColorMap` composite as one opaque RGBA texture, not separate back, front
+  and material textures with a shader blend as §8.2 sketches; the composite is
+  made on the CPU (E7), and edits upload as dirty rectangles. Recorded as an
+  amendment under spec §19.
+- **Render goldens** are compared at YIQ distance 0.1 with at most 0.002 % of
+  pixels differing (about 6 at 640x480). On this machine lavapipe (Vulkan) and
+  llvmpipe (GL) reproduce all four goldens with no differing pixel.
+- **Bless without a GPU:** `cargo xtask bless-render` re-draws the CPU golden
+  and, when no adapter opens, skips the GPU goldens with a notice; it records
+  what changed in `fixtures/blessings.log` even when a later test fails.
 
 ## Spec §18 decisions that deviate from a plain OLX run
 

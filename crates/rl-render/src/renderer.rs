@@ -305,6 +305,12 @@ impl Renderer {
         self.atlas.as_ref().map(|(l, _)| l)
     }
 
+    /// The world pass's instance buffer, in bytes (it only grows, to the
+    /// largest frame's next power of two; the soak test watches it).
+    pub fn instance_buffer_bytes(&self) -> u64 {
+        self.instance_buffer.size()
+    }
+
     /// The terrain texture (for tests and tools that read it back).
     pub fn terrain_texture(&self) -> Option<&wgpu::Texture> {
         self.terrain.as_ref().map(|t| &t.texture)

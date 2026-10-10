@@ -14,9 +14,10 @@ use anyhow::{Context, bail, ensure};
 
 use crate::root;
 
-/// The golden tests as `(package, test target)`: the colour terrain (CPU)
-/// and `rl-cli render`'s frames (GPU; blessing them needs an adapter).
-const GOLDEN_TESTS: &[(&str, &str)] = &[("rl-scenario", "render_golden"), ("rl-cli", "render_golden")];
+/// The golden tests as `(package, test target, needs a graphics adapter)`:
+/// the colour terrain (CPU) and `rl-cli render`'s frames (GPU).
+const GOLDEN_TESTS: &[(&str, &str, bool)] =
+    &[("rl-scenario", "render_golden", false), ("rl-cli", "render_golden", true)];
 const GOLDEN_DIR: &str = "fixtures/render";
 const LOG: &str = "fixtures/blessings.log";
 
@@ -48,6 +49,23 @@ pub fn date(secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
+/// The golden tests to run: all of them with an adapter, else only the CPU ones.
+fn tests_to_run(adapter: bool) -> Vec<(&'static str, &'static str)> {
+    GOLDEN_TESTS.iter().filter(|(_, _, gpu)| adapter || !gpu).map(|&(p, t, _)| (p, t)).collect()
+}
+
+/// The golden files that differ between two snapshots, as repository paths.
+fn changed_files(before: &BTreeMap<String, Vec<u8>>, after: &BTreeMap<String, Vec<u8>>) -> Vec<String> {
+    before
+        .keys()
+        .chain(after.keys())
+        .filter(|f| before.get(*f) != after.get(*f))
+        .map(|f| format!("{GOLDEN_DIR}/{f}"))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 pub fn run(reason: &str) -> anyhow::Result<bool> {
     let reason = reason.trim();
     ensure!(!reason.is_empty(), "--reason must say why the goldens change");
@@ -58,7 +76,20 @@ pub fn run(reason: &str) -> anyhow::Result<bool> {
     }
     let dir = root.join(GOLDEN_DIR);
     let before = snapshot(&dir)?;
-    for (package, test) in GOLDEN_TESTS {
+    let adapter = match crate::check::probe_adapter().map_err(anyhow::Error::msg)? {
+        Ok(said) => {
+            println!("gpu adapter: {said}");
+            true
+        }
+        Err(said) => {
+            println!("skip the GPU goldens ({said}); only the CPU goldens are re-drawn");
+            false
+        }
+    };
+    // A failing test must not leave a changed golden unlogged: record what
+    // changed first, then fail.
+    let mut failure = None;
+    for (package, test) in tests_to_run(adapter) {
         let out = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
             .args(["test", "--quiet", "-p", package, "--test", test])
             .current_dir(&root)
@@ -69,19 +100,16 @@ pub fn run(reason: &str) -> anyhow::Result<bool> {
             .context("cannot run cargo")?;
         if !out.status.success() {
             eprintln!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-            bail!("{package} --test {test} failed while blessing");
+            failure = Some(format!("{package} --test {test} failed while blessing"));
+            break;
         }
     }
     let after = snapshot(&dir)?;
-    let changed: Vec<String> = before
-        .keys()
-        .chain(after.keys())
-        .filter(|f| before.get(*f) != after.get(*f))
-        .map(|f| format!("{GOLDEN_DIR}/{f}"))
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    let changed = changed_files(&before, &after);
     if changed.is_empty() {
+        if let Some(f) = failure {
+            bail!(f);
+        }
         println!("the render goldens are unchanged: nothing to bless");
         return Ok(true);
     }
@@ -93,11 +121,38 @@ pub fn run(reason: &str) -> anyhow::Result<bool> {
     let mut log = std::fs::OpenOptions::new().create(true).append(true).open(root.join(LOG))?;
     log.write_all(entry.as_bytes())?;
     print!("blessed, recorded in {LOG}:\n{entry}");
+    if !adapter {
+        println!("the GPU goldens were not re-drawn (no adapter): bless them on a machine with one");
+    }
+    if let Some(f) = failure {
+        bail!(f);
+    }
     Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn without_an_adapter_only_the_cpu_goldens_run() {
+        assert_eq!(super::tests_to_run(false), [("rl-scenario", "render_golden")]);
+        assert_eq!(super::tests_to_run(true).len(), 2);
+    }
+
+    #[test]
+    fn changed_files_lists_added_removed_and_edited_goldens() {
+        let snap = |v: &[(&str, &str)]| -> BTreeMap<String, Vec<u8>> {
+            v.iter().map(|(k, b)| (k.to_string(), b.as_bytes().to_vec())).collect()
+        };
+        let before = snap(&[("a.png", "1"), ("b.png", "1"), ("c.png", "1")]);
+        let after = snap(&[("a.png", "1"), ("b.png", "2"), ("d.png", "1")]);
+        assert_eq!(
+            super::changed_files(&before, &after),
+            ["fixtures/render/b.png", "fixtures/render/c.png", "fixtures/render/d.png"]
+        );
+    }
+
     #[test]
     fn dates_are_civil_utc() {
         assert_eq!(super::date(0), "1970-01-01");

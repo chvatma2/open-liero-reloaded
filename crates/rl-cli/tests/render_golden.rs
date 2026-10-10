@@ -18,8 +18,10 @@ use rl_data::image::RgbaImage;
 
 /// A pixel differs when its YIQ distance is above this (pixelmatch's 0.1).
 const TOLERANCE: f32 = 0.1;
-/// The share of differing pixels a golden tolerates.
-const MAX_DIFFERING: f64 = 0.001;
+/// The share of differing pixels a golden tolerates: about 6 pixels at
+/// 640x480. Lavapipe and llvmpipe (GL) both reproduce all four goldens with
+/// no differing pixel; the allowance is for another LLVM's rounding.
+const MAX_DIFFERING: f64 = 0.00002;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).expect("the workspace root").to_path_buf()
