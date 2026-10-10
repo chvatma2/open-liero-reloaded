@@ -54,12 +54,19 @@ impl At {
 /// One entity, unless its position is outside the view (`x < Left` or
 /// `x > Left + VirtW`, likewise `y`).
 ///
+/// OLX's view corner (`GetWorldX`, `GetWorldY`) is a whole pixel, so
+/// entities sit on the world's half-pixel grid; an interpolated camera's
+/// view is not, so the grid is measured from its corner truncated, and only
+/// the clip uses the true view.
+///
 /// OLX: src/client/Entity.cpp:210-315
 pub(crate) fn entity(e: &Entity, assets: &FxAssets, out: &mut DrawList) {
     let v = out.view;
-    let at = At { x: ((e.pos.x - v.x) * 2.0) as i32, y: ((e.pos.y - v.y) * 2.0) as i32, view: (v.x, v.y) };
-    let (vw, vh) = ((v.w * 2.0) as i32, (v.h * 2.0) as i32);
-    if at.x < 0 || at.x > vw || at.y < 0 || at.y > vh {
+    let (ox, oy) = (v.x.trunc(), v.y.trunc());
+    let at = At { x: ((e.pos.x - ox) * 2.0) as i32, y: ((e.pos.y - oy) * 2.0) as i32, view: (ox, oy) };
+    let (left, top) = ((v.x - ox) * 2.0, (v.y - oy) * 2.0);
+    let (x, y) = (at.x as f32, at.y as f32);
+    if x < left || x > left + v.w * 2.0 || y < top || y > top + v.h * 2.0 {
         return;
     }
     let frame = e.frame as i32 as i64;

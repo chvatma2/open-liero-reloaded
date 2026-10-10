@@ -20,7 +20,8 @@ is `docs/porting/olx-notes/presentation.md` §7 (and §2.2 for stains).
   material, which is in step with the edits replayed so far.
 - **Drawing** (`draw.rs`): `DrawEntities` into `Layer::Entities` of the
   scene's `DrawList`, at OLX's half-pixel screen position relative to
-  `out.view`, with OLX's clipping and SDL's source clipping (frames before
+  `out.view`'s corner truncated to whole pixels (OLX's `WorldX` is an int,
+  so the grid stays the world's under a sub-pixel camera), with OLX's clipping and SDL's source clipping (frames before
   or past an image draw nothing). Entities are drawn at their latest state
   (no interpolation).
 - **Assets** (`assets.rs`): `FxAssets` registers the core sprites and each

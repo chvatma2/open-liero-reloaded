@@ -107,3 +107,22 @@ fn odd_input_never_panics() {
     s.passes(3);
     s.draw();
 }
+
+#[test]
+fn entities_stay_on_the_world_grid_under_a_sub_pixel_camera() {
+    let mut s = Setup::new();
+    s.tick(&[cosmetic(0, CosmeticKind::Blood { red: 200 }, (30.3, 20.7), (0.0, 0.0))], 0);
+    let at = |x: f32| {
+        let mut out = rl_scene::DrawList::new();
+        out.view = rl_scene::View { x, y: x, w: 40.0, h: 30.0 };
+        s.fx.draw(&s.assets, &mut out);
+        match out.layer(rl_scene::Layer::Entities) {
+            [rl_scene::Item::Sprite(sp)] => sp.pos,
+            other => panic!("{other:?}"),
+        }
+    };
+    // OLX's view corner is a whole pixel: the half-pixel grid is the world's.
+    assert_eq!(at(10.0), [29.5, 20.0]);
+    assert_eq!(at(10.3), [29.5, 20.0]);
+    assert_eq!(at(10.6), [29.5, 20.0]);
+}
