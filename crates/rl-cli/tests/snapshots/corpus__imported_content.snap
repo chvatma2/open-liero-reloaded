@@ -1,0 +1,12 @@
+---
+source: crates/rl-cli/tests/corpus.rs
+expression: summary
+---
+mod olx-classic: "Liero v1.0", 38 weapons, 58 projectiles, 39 assets, rope RopeParams { max_length: 300, rest_length: 27, strength: 4.5 }
+level olx-level-castlestrike: "Castle Strike" 1350x550 art x1, dirt 5536, rock 147603, theme olx-theme-dirt
+level olx-level-dirt-level: "Dirt Level" 504x350 art x1, dirt 159596, rock 4949, theme olx-theme-dirt
+level olx-level-fossilfacility: "Fossil Facility" 640x480 art x1, dirt 19261, rock 79490, theme olx-theme-dirt
+level olx-level-liero-factory: "Liero Factory" 1200x480 art x1, dirt 24490, rock 102337, theme olx-theme-dirt
+mod olx-mw-1-0: "Modern Warfare1.0", 50 weapons, 302 projectiles, 129 assets, rope RopeParams { max_length: 300, rest_length: 30, strength: 3.5 }
+theme olx-theme-dirt: 5 holes, 8 stones, 8 misc
+skins: 409
