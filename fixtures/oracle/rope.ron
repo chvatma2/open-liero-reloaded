@@ -1,0 +1,19 @@
+(
+    description: "Aim up, fire the ninja rope, swing right then left while hooked, then release it with a jump. Hook flight, attaching, rope pull, release.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 400,
+    worms: [(x: 190, y: 320)],
+    inputs: [
+        (frame: 40, worm: 0, keys: "up"),
+        (frame: 70, worm: 0, keys: ""),
+        (frame: 80, worm: 0, keys: "rope"),
+        (frame: 82, worm: 0, keys: ""),
+        (frame: 150, worm: 0, keys: "right"),
+        (frame: 200, worm: 0, keys: "left"),
+        (frame: 260, worm: 0, keys: ""),
+        (frame: 330, worm: 0, keys: "jump"),
+        (frame: 332, worm: 0, keys: ""),
+    ],
+)

@@ -1,0 +1,14 @@
+(
+    description: "On Liero Factory's open rock floor: walk right for a second, stop, walk left for a second, stop. Walking speed, friction, facing and move direction.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 330,
+    worms: [(x: 190, y: 320)],
+    inputs: [
+        (frame: 60, worm: 0, keys: "right"),
+        (frame: 160, worm: 0, keys: ""),
+        (frame: 170, worm: 0, keys: "left"),
+        (frame: 270, worm: 0, keys: ""),
+    ],
+)

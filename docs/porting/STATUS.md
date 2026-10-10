@@ -10,7 +10,8 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Theme loading | `src/common/CMap.cpp:308-370` | `rl-import-gfx` | ported | Dirt theme imports |
 | Gamescript v8 | `CGameScript.cpp` (v8 branches) | — | not started | no content in scope |
 | Pixmap `.lxl` | `MapLoader_LieroX.cpp:440+` | — | not started | no content in scope |
-| Simulation | `src/common/PhysicsLX56*.cpp` | — | not started (plan 3) | — |
+| Fidelity oracle (test hooks) | `src/game/Game.cpp`, `src/client/CInput.cpp`, `src/common/CWormHuman.cpp` | `tools/olx-oracle`, `rl-oracle` | done (plan 2) | 6 movement scenarios recorded twice and identical; `cargo xtask oracle-record --check` |
+| Simulation | `src/common/PhysicsLX56*.cpp` | — | not started (plan 3) | the 6 oracle scenarios |
 
 ## Deliberate deviations
 
@@ -33,3 +34,21 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 - **Hi-res level art.** With an "OLX hi-res data" chunk, the front 2×2 block
   becomes the back block wherever `PX_EMPTY` is set, and PNG alpha is ignored
   (`LoadLevelImageHiRes`, `MapLoader_LieroX.cpp:285-360`).
+
+## Facts the oracle established (needed by the simulation port)
+
+- **Frames:** a frame is 10 ms. LX56 physics runs in 84 Hz sub-steps from its
+  own clock (`CClient::fLastSimulationTime`), so some 100 Hz frames run no
+  physics sub-step at all (in `fall`, frame 0 does not move the worm). The
+  oracle aligns that clock with the frame clock when a scenario starts.
+- **Input:** OLX's keyboard handler (`CWormHumanInputHandler::getInput`,
+  `src/common/CWormHuman.cpp:81-560`) runs once per physics sub-step.
+  - Held keys are read directly.
+  - "Pressed once" events are latched until the next sub-step consumes them
+    (`CInput::nDownOnce`, reset by `CInput::reset()`).
+  - The simulation's `PlayerInput` must keep the same latch semantics.
+- **Digging** with the keyboard is a tap of the opposite direction while
+  holding a direction (`leftOnce` / `rightOnce`), not a dedicated key.
+- **Aim:** the traces use LX56 aim (`ForceLX56Aim`: max speed 100,
+  acceleration 500, no friction, `REDUCE_CONST(200)` when no key is held). The
+  angle is clamped to [−90°, 60°].

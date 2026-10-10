@@ -26,6 +26,14 @@ modernized for current displays.
 7. **Keep output deterministic.** Use no `HashMap` iteration in output, and no wall clock in logic.
 8. **Commits:** small, imperative subject (`rl-pack: validate projectile cycles`).
 
+## Oracle
+
+`fixtures/oracle/<name>.ron` are scenarios, and `<name>.jsonl.gz` are their
+traces recorded from a patched OLX (`tools/olx-oracle/`).
+- `cargo xtask oracle-record [name...]` re-records them; it needs Docker.
+- `--check` compares fresh recordings with the committed traces.
+- The simulation must reproduce the traces bit-exactly (crate `rl-oracle`).
+
 ## Content
 
 `cargo xtask fetch-olx-content` sparse-clones OLX at the commit pinned in

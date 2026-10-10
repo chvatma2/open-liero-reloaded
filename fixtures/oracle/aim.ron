@@ -1,0 +1,17 @@
+(
+    description: "Aim up to the -90 degree limit, down to the 60 degree limit, then turn around by tapping left and right. LX56 aim speed, acceleration, slow-down and clamping.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 260,
+    worms: [(x: 190, y: 320)],
+    inputs: [
+        (frame: 40, worm: 0, keys: "up"),
+        (frame: 100, worm: 0, keys: "down"),
+        (frame: 200, worm: 0, keys: "left"),
+        (frame: 203, worm: 0, keys: ""),
+        (frame: 220, worm: 0, keys: "right"),
+        (frame: 223, worm: 0, keys: "up"),
+        (frame: 240, worm: 0, keys: ""),
+    ],
+)

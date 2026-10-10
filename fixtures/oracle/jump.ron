@@ -1,0 +1,18 @@
+(
+    description: "Jumps while walking right, while standing, and while walking left. Jump force, air control, landing. Jump is a 2-frame tap.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 300,
+    worms: [(x: 190, y: 320)],
+    inputs: [
+        (frame: 50, worm: 0, keys: "right"),
+        (frame: 60, worm: 0, keys: "right+jump"),
+        (frame: 62, worm: 0, keys: "right"),
+        (frame: 120, worm: 0, keys: "right+jump"),
+        (frame: 122, worm: 0, keys: ""),
+        (frame: 180, worm: 0, keys: "left+jump"),
+        (frame: 182, worm: 0, keys: "left"),
+        (frame: 240, worm: 0, keys: ""),
+    ],
+)
