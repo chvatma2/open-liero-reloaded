@@ -1,0 +1,13 @@
+(
+    description: "On Liero Factory's open rock floor, a worm holds fire with Classic's Laser for 1.5 s. When each beam shot arrives, ProcessShot_Beam sets the slot's LastFire to 0.3, which gates the server's fire check, so the beam fires in bursts.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 200,
+    worms: [(x: 190, y: 320)],
+    weapons: [(worm: 0, names: ["Laser", "Laser", "Laser", "Laser", "Laser"], current: 0)],
+    inputs: [
+        (frame: 0, worm: 0, keys: "fire"),
+        (frame: 150, worm: 0, keys: ""),
+    ],
+)

@@ -1,0 +1,10 @@
+(
+    description: "On Liero Factory's open rock floor, a worm with 14.5 hp stands still for 4.5 s. Below 15 hp it bleeds in the first sub-step and then every 2 s (fLastBlood + 2 s, strict), drawing 80 rand() calls and spawning 40 blood entities each time.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 450,
+    worms: [(x: 190, y: 320)],
+    health: [(0, 14.5)],
+    inputs: [],
+)

@@ -1,0 +1,21 @@
+(
+    description: "On FossilFacility's dirt floor, worm 0 (1 hp) fires the Minigun straight up without pause while worm 1 turns left and hits it with one Shotgun blast. Worm 0 dies with shots of its last two frames still in the list; they are delivered after its death, and ProcessShot drops them (no projectiles).",
+    level: "FossilFacility.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 150,
+    worms: [(x: 118, y: 384), (x: 178, y: 384)],
+    weapons: [
+        (worm: 0, names: ["Minigun", "Minigun", "Minigun", "Minigun", "Minigun"], current: 0),
+        (worm: 1, names: ["Shotgun", "Shotgun", "Shotgun", "Shotgun", "Shotgun"], current: 0),
+    ],
+    health: [(0, 1.0)],
+    inputs: [
+        (frame: 0, worm: 0, keys: "up"),
+        (frame: 0, worm: 1, keys: "left"),
+        (frame: 3, worm: 1, keys: ""),
+        (frame: 62, worm: 0, keys: "up+fire"),
+        (frame: 70, worm: 1, keys: "fire"),
+        (frame: 72, worm: 1, keys: ""),
+    ],
+)

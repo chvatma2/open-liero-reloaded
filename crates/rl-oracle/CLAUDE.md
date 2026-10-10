@@ -7,7 +7,10 @@ OpenLieroX, and first-divergence comparison.
   into a `Trace`, and `compare` checks it against the recording.
 - **Scenarios** (`fixtures/oracle/<name>.ron`): level, mod, seed, frame count,
   worm spawns, key changes (`"right+jump"`), and optionally weapon slots by
-  name, health, and bonuses placed at given frames.
+  name (exactly `WEAPON_SLOTS` = 5 per worm), health (> 0), and bonuses placed
+  at given frames.
+  - Names may contain `/`: `weapons/<mod>/<weapon>.ron` holds one generated
+    scenario per weapon (`cargo xtask oracle-gen-weapons`; do not edit them).
   - Each worm holds its keys until its next change.
   - `Scenario::schedule()` adds a frame-0 entry for every worm, so OLX never runs bot AI.
 - **Traces** (`fixtures/oracle/<name>.jsonl.gz`): a header line with every OLX
@@ -22,5 +25,8 @@ OpenLieroX, and first-divergence comparison.
     reproduces so far); `compare` checks all of them.
 - **Key masks** match `OracleHooks.h` in `tools/olx-oracle/oracle-hooks.patch`.
   Change both together.
+
+`tests/fixtures.rs` checks that every committed trace is complete and shows
+what its scenario's description claims.
 
 Test: `cargo nextest run -p rl-oracle`. Recording needs Docker: `cargo xtask oracle-record`.

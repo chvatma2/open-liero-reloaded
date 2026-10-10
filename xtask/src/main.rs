@@ -5,6 +5,7 @@ mod check;
 mod fetch;
 mod layers;
 mod oracle;
+mod oracle_gen;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -38,14 +39,17 @@ enum Command {
     },
     /// Install a git pre-push hook that runs `cargo xtask check`.
     InstallHooks,
-    /// Record OLX reference traces for fixtures/oracle/*.ron (needs Docker).
+    /// Record OLX reference traces for fixtures/oracle/**/*.ron (needs Docker).
     OracleRecord {
         /// Re-record and compare with the committed traces instead of writing them.
         #[arg(long)]
         check: bool,
-        /// Scenario names (file stems in fixtures/oracle/); all if none.
+        /// Scenario names (paths in fixtures/oracle/ without `.ron`, such as
+        /// `walk` or `weapons/classic/bazooka`); all if none.
         names: Vec<String>,
     },
+    /// Write one scenario per weapon of the imported mods to fixtures/oracle/weapons/.
+    OracleGenWeapons,
 }
 
 /// The workspace root (the parent of this crate's directory).
@@ -67,6 +71,7 @@ fn main() -> ExitCode {
         }),
         Command::InstallHooks => install_hooks().map(|()| true),
         Command::OracleRecord { check, names } => oracle::run(&names, check),
+        Command::OracleGenWeapons => oracle_gen::run(),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

@@ -1,0 +1,15 @@
+(
+    description: "On Liero Factory's open rock floor, with Bonuses on, a health bonus is placed at frame 5 and falls to the floor; the worm (50 hp) walks right into it and is healed by 10 to 50 hp (one rand()). The grab goes to the server, which sends S2C_DESTROYBONUS but keeps its own copy of the bonus until BonusLife ends.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 200,
+    settings: {"GameOptions.GameInfo.Bonuses": "1"},
+    worms: [(x: 190, y: 320)],
+    health: [(0, 50.0)],
+    bonuses: [(frame: 5, x: 220, y: 310, kind: "health")],
+    inputs: [
+        (frame: 60, worm: 0, keys: "right"),
+        (frame: 120, worm: 0, keys: ""),
+    ],
+)

@@ -17,5 +17,8 @@ rl-pack.workspace = true
 rl-vfs.workspace = true
 anyhow.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

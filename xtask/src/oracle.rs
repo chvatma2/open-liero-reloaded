@@ -1,5 +1,5 @@
 //! `cargo xtask oracle-record`: records OLX reference traces for the scenarios
-//! in `fixtures/oracle/*.ron` with the patched OpenLieroX in `tools/olx-oracle/`
+//! in `fixtures/oracle/**/*.ron` with the patched OpenLieroX in `tools/olx-oracle/`
 //! (needs Docker). Each scenario is recorded twice and must come out identical,
 //! which proves the recording is deterministic. `--check` compares with the
 //! committed traces instead of writing them.
@@ -101,16 +101,24 @@ fn record_once(image: &str, user: &str, work: &Path, sc: &Scenario) -> anyhow::R
     std::fs::read_to_string(work.join("trace.jsonl")).context("OLX wrote no trace")
 }
 
-/// Scenario files in `fixtures/oracle/`, sorted, optionally only `names`.
+/// Scenario files in `fixtures/oracle/` and its subdirectories, sorted by name
+/// (the path without `.ron`, such as `weapons/classic/bazooka`), optionally only `names`.
 fn scenarios(root: &Path, names: &[String]) -> anyhow::Result<Vec<(String, PathBuf)>> {
-    let mut all = Vec::new();
-    for e in std::fs::read_dir(root.join(FIXTURES)).context("reading fixtures/oracle")? {
-        let p = e?.path();
-        if p.extension().is_some_and(|x| x == "ron") {
-            let stem = p.file_stem().expect("file name").to_string_lossy().to_string();
-            all.push((stem, p));
+    fn walk(dir: &Path, prefix: &str, all: &mut Vec<(String, PathBuf)>) -> anyhow::Result<()> {
+        for e in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+            let p = e?.path();
+            if p.is_dir() {
+                let sub = p.file_name().expect("directory name").to_string_lossy().to_string();
+                walk(&p, &format!("{prefix}{sub}/"), all)?;
+            } else if p.extension().is_some_and(|x| x == "ron") {
+                let stem = p.file_stem().expect("file name").to_string_lossy().to_string();
+                all.push((format!("{prefix}{stem}"), p));
+            }
         }
+        Ok(())
     }
+    let mut all = Vec::new();
+    walk(&root.join(FIXTURES), "", &mut all)?;
     all.sort();
     for n in names {
         if !all.iter().any(|(s, _)| s == n) {
@@ -208,7 +216,11 @@ mod tests {
     #[test]
     fn every_scenario_is_listed_and_unknown_names_fail() {
         let all = scenarios(&root(), &[]).unwrap();
-        assert!(!all.is_empty());
+        assert!(all.iter().any(|(n, _)| n == "walk"));
+        assert!(
+            all.iter()
+                .any(|(n, p)| n == "weapons/classic/bazooka" && p.ends_with("weapons/classic/bazooka.ron"))
+        );
         assert!(scenarios(&root(), &["no-such-scenario".into()]).is_err());
     }
 }

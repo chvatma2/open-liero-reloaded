@@ -1,0 +1,18 @@
+(
+    description: "In a hole in Dirt Level's solid dirt (the fall scenario's spot), the worm lands, aims up and fires the ninja rope, which hooks the dirt a few pixels away: OLX spawns 5 dirt particles (10 rand() calls). The worm swings left, then releases the rope with a jump.",
+    level: "Dirt Level.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 300,
+    worms: [(x: 456, y: 212)],
+    inputs: [
+        (frame: 100, worm: 0, keys: "up"),
+        (frame: 130, worm: 0, keys: ""),
+        (frame: 140, worm: 0, keys: "rope"),
+        (frame: 142, worm: 0, keys: ""),
+        (frame: 200, worm: 0, keys: "left"),
+        (frame: 230, worm: 0, keys: ""),
+        (frame: 260, worm: 0, keys: "jump"),
+        (frame: 262, worm: 0, keys: ""),
+    ],
+)

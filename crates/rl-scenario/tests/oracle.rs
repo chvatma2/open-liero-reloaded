@@ -19,20 +19,42 @@ fn content_dir() -> Option<String> {
 
 /// Scenarios the simulation cannot play yet; each must still diverge, so the
 /// list shrinks as M4 lands. Empty at the end of M4.
-const EXPECTED_TO_DIVERGE: [&str; 1] = ["fire-minigun"];
+const EXPECTED_TO_DIVERGE: [&str; 10] = [
+    "beam-burst",
+    "bleed",
+    "bonus-health",
+    "bonus-weapon",
+    "die-before-delivery",
+    "explode-kill-respawn",
+    "fire-minigun",
+    "multi-shot",
+    "reload-switch",
+    "two-worms-fire",
+];
+
+/// The scenarios that must still diverge: [`EXPECTED_TO_DIVERGE`] and every
+/// weapon scenario (`weapons/<mod>/<weapon>`, `cargo xtask oracle-gen-weapons`).
+fn expected_to_diverge(name: &str) -> bool {
+    name.starts_with("weapons/") || EXPECTED_TO_DIVERGE.contains(&name)
+}
 
 #[test]
 fn every_scenario_matches_olx_bit_for_bit() {
     let Some(content) = content_dir() else { return };
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/oracle");
     let names = rl_scenario::fixture_names(&dir).unwrap();
-    assert_eq!(names, ["aim", "dig", "fall", "fire-minigun", "jump", "rope", "tap", "walk"]);
+    let matching = ["aim", "dig", "fall", "jump", "rope", "rope-dirt", "tap", "walk"];
+    for n in matching.iter().chain(&EXPECTED_TO_DIVERGE) {
+        assert!(names.iter().any(|m| m == n), "missing scenario {n}");
+    }
+    assert_eq!(names.iter().filter(|n| n.starts_with("weapons/")).count(), 38 + 50, "weapon scenarios");
+    assert_eq!(names.len(), matching.len() + EXPECTED_TO_DIVERGE.len() + 38 + 50, "{names:?}");
     let mut failures = Vec::new();
     for name in names {
         let (sc, expected) = rl_scenario::load_fixture(&dir, &name).unwrap();
         let actual = rl_scenario::replay(Path::new(&content), &sc, &expected).unwrap();
         let divergence = rl_oracle::compare_fields(&expected, &actual, &sc.tolerances, rl_scenario::CHECKED);
-        match (divergence, EXPECTED_TO_DIVERGE.contains(&name.as_str())) {
+        match (divergence, expected_to_diverge(&name)) {
             (Some(d), false) => failures.push(format!("{name}: {d}")),
             (None, true) => failures.push(format!("{name}: matches now; remove it from EXPECTED_TO_DIVERGE")),
             _ => {}

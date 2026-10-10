@@ -1,6 +1,7 @@
 # rl-scenario
 
-Plays oracle scenarios (`fixtures/oracle/*.ron`) in `rl-sim` and records
+Plays oracle scenarios (`fixtures/oracle/**/*.ron`, named by their path such as
+`weapons/classic/bazooka`) in `rl-sim` and records
 traces in `rl-oracle`'s format.
 
 - **Layer 4, uses `std`.**
@@ -13,7 +14,8 @@ traces in `rl-oracle`'s format.
   seeded with the header's seed; frames record `rc`, `mt` and `ents`.
 - `tests/oracle.rs` is the acceptance test: every scenario must match bit for
   bit in the fields `CHECKED` lists, except the scenarios it lists as expected
-  to diverge (which must still diverge). Grow `CHECKED` as M4 lands.
+  to diverge (which must still diverge; every `weapons/` scenario too). Grow
+  `CHECKED` and shrink the list as M4 lands.
 - For debugging a divergence: `rl-cli scenario <name> --dump <frame>` (`--all`
   compares every field, not only `CHECKED`).
 

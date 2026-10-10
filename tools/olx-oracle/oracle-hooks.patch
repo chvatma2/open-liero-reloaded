@@ -104,10 +104,10 @@ index 5f73e25..c12907c 100644
  void	DrawEntities(SDL_Surface * bmpDest, CViewport *v);
 diff --git a/include/OracleHooks.h b/include/OracleHooks.h
 new file mode 100644
-index 0000000..2683808
+index 0000000..8ff5d42
 --- /dev/null
 +++ b/include/OracleHooks.h
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,63 @@
 +/*
 +	OpenLieroX
 +
@@ -147,8 +147,9 @@ index 0000000..2683808
 +	// Starts writing one JSON line per simulated frame to file ("off" stops).
 +	// "off" also reports a failure that happened during the recording.
 +	bool record(const std::string& file, std::string& err);
-+	// True while a recording is armed: the clock is pinned, and shots are delivered
-+	// by betweenFrames() instead of GameServer::SendUpdate.
++	// True while a recording is armed: the clock is pinned, and shots and the local
++	// connection's reliable messages are delivered by betweenFrames() instead of
++	// GameServer::SendUpdate and the network.
 +	bool active();
 +	// Called by simSetSeed after srand(): reseeds the FindSpot MT19937 streams
 +	// (rnd, rndgen, midrnd) and restarts the rand()/rnd() counters.
@@ -160,7 +161,8 @@ index 0000000..2683808
 +	// packet to the local client at once. kind is "health" or "weapon".
 +	bool placeBonus(int x, int y, const std::string& kind, const std::string& weapon, std::string& err);
 +	// Called by the game loop around each simulated frame, and after
-+	// simulationTime advanced (shot delivery, Model R).
++	// simulationTime advanced: delivers the local connection's reliable messages
++	// of that frame in both directions and the shot list (Model R; spec §18 D1, D10).
 +	void beforeFrame();
 +	void afterFrame();
 +	void betweenFrames();
@@ -365,10 +367,10 @@ index feb1223..5fa508d 100644
  	caller->writeMsg("GameState: " + Game::StateAsStr(game.state), CNC_DEV);
 diff --git a/src/common/OracleHooks.cpp b/src/common/OracleHooks.cpp
 new file mode 100644
-index 0000000..c3f6a6a
+index 0000000..daf2472
 --- /dev/null
 +++ b/src/common/OracleHooks.cpp
-@@ -0,0 +1,594 @@
+@@ -0,0 +1,640 @@
 +/*
 +	OpenLieroX
 +
@@ -383,6 +385,7 @@ index 0000000..c3f6a6a
 +#include <cstdio>
 +#include <cstdlib>
 +#include <fstream>
++#include <list>
 +#include <map>
 +#include <sstream>
 +#include <vector>
@@ -390,6 +393,7 @@ index 0000000..c3f6a6a
 +#include "LieroX.h"
 +#include "OracleHooks.h"
 +#include "CBytestream.h"
++#include "CChannel.h"
 +#include "CClient.h"
 +#include "CClientNetEngine.h"
 +#include "CBonus.h"
@@ -398,6 +402,7 @@ index 0000000..c3f6a6a
 +#include "CProjectile.h"
 +#include "CServer.h"
 +#include "CServerConnection.h"
++#include "CServerNetEngine.h"
 +#include "CShootList.h"
 +#include "CWormHuman.h"
 +#include "Entity.h"
@@ -701,13 +706,25 @@ index 0000000..c3f6a6a
 +	}
 +}
 +
++// The reliable messages one side queued for the other on the local connection, in
++// queue order. Taking them out of the channel means the network never sends them.
++static std::list<CBytestream> takeMessages(CChannel* ch) {
++	std::list<CBytestream> out;
++	if(ch) out.swap(ch->Messages);
++	return out;
++}
++
++static std::string messageTypes(const std::list<CBytestream>& msgs) {
++	std::string out;
++	for(std::list<CBytestream>::const_iterator it = msgs.begin(); it != msgs.end(); ++it)
++		if(it->GetLength() > 0) out += " " + itoa((int)(uchar)it->data()[0]);
++	return out;
++}
++
 +// Shot delivery, Model R (spec §18 D1): the shots added during frames F and F+1
 +// form one list, which is encoded, decoded and processed after frame F+1, so
 +// before frame F+2, like real play at one frame per main-loop iteration.
-+void betweenFrames() {
-+	if(!g_rec || !cServer || !cServer->isServerRunning()) return;
-+	CServerConnection* cl = cServer->localClientConnection();
-+	if(!cl) return;
++static void deliverShots(CServerConnection* cl) {
 +	CShootList* sl = cl->getShootList();
 +	if(sl->getNumShots() == 0) return;
 +	const long frame = frameIndex();
@@ -716,7 +733,6 @@ index 0000000..c3f6a6a
 +	CBytestream bs;
 +	if(sl->writePacket(&bs, cl->getClientVersion())) sl->Clear();
 +	g_shotListFrame = -1;
-+	PinnedClock pin;
 +	bs.ResetPosToBegin();
 +	// As CClient::ReadPackets: each packet is parsed (readSingle/readMulti) and processed.
 +	while(cClient->getNetEngine()->ParsePacket(&bs)) {
@@ -727,6 +743,38 @@ index 0000000..c3f6a6a
 +			// spawnTime() reads the clock and serverFrame, which are still what ProcessShot saw.
 +			if(sh) g_delivered.push_back(Delivered{*sh, sh->spawnTime()});
 +		}
++	}
++}
++
++// Runs after each frame, once simulationTime has advanced (spec §18 D1, D10), in the
++// order a real local game at one frame per main-loop iteration handles them at the
++// start of the next iteration (CClient::ReadPackets, then GameServer::ReadPackets):
++//  1. every reliable message the server queued for the local client during the frame
++//     (bonus spawns and destruction, worm and weapon updates, ...), parsed by the client;
++//  2. the shot list, Model R;
++//  3. every reliable message the local client queued for the server during the frame
++//     (bonus grabs, damage reports, ...), parsed by the server.
++// Messages that step 3 makes the server queue go out after the next frame.
++void betweenFrames() {
++	if(!g_rec || !cServer || !cServer->isServerRunning()) return;
++	CServerConnection* cl = cServer->localClientConnection();
++	if(!cl) return;
++	PinnedClock pin;
++	const long frame = frameIndex();
++	std::list<CBytestream> toClient = takeMessages(cl->getChannel());
++	if(!toClient.empty())
++		notes << "OracleHooks: frame " << frame << ": server -> client" << messageTypes(toClient) << endl;
++	for(std::list<CBytestream>::iterator it = toClient.begin(); it != toClient.end(); ++it) {
++		it->ResetPosToBegin();
++		while(cClient->getNetEngine()->ParsePacket(&*it)) {}
++	}
++	deliverShots(cl);
++	std::list<CBytestream> toServer = takeMessages(cClient->getChannel());
++	if(!toServer.empty())
++		notes << "OracleHooks: frame " << frame << ": client -> server" << messageTypes(toServer) << endl;
++	for(std::list<CBytestream>::iterator it = toServer.begin(); it != toServer.end(); ++it) {
++		it->ResetPosToBegin();
++		cl->getNetEngine()->ParsePacket(&*it);
 +	}
 +}
 +

@@ -1,5 +1,5 @@
 (
-    description: "On Liero Factory's open rock floor, a worm holding the Minigun fires for one second, then waits. Shot delivery (Model R), the multi-shot encoding, projectile spawning and flight, charge drain and reload.",
+    description: "On Liero Factory's open rock floor, a worm holding the Minigun fires for one second, then waits. Shot delivery (Model R), single-shot packets (the Minigun fires at most once per two-frame list), projectile spawning and flight, and charge drain.",
     level: "Liero Factory.lxl",
     mod: "Classic",
     seed: 12345,

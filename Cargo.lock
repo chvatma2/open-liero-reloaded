@@ -668,6 +668,7 @@ dependencies = [
  "rl-sim",
  "rl-terrain",
  "rl-vfs",
+ "tempfile",
 ]
 
 [[package]]
@@ -952,11 +953,15 @@ dependencies = [
  "hex",
  "prettyplease",
  "quote",
+ "rl-data",
  "rl-oracle",
+ "rl-pack",
+ "rl-vfs",
  "ron",
  "serde",
  "sha2",
  "syn 2.0.119",
+ "tempfile",
 ]
 
 [[package]]

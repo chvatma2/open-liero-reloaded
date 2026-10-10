@@ -1,0 +1,18 @@
+(
+    description: "On Liero Factory's open rock floor, worm 0 fires one Bazooka rocket at worm 1 (20 hp) 50 px away. The explosion kills it (a kill for worm 0, a death for worm 1; AllowNegativeScore is on, so the death counts at score 0), and the server respawns it at a FindSpot position once RespawnTime (2.5 s) has passed, 250 frames later with the pinned clock (spec section 18, D2).",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 360,
+    settings: {"GameOptions.GameInfo.AllowNegativeScore": "1"},
+    worms: [(x: 190, y: 330), (x: 240, y: 330)],
+    weapons: [
+        (worm: 0, names: ["Bazooka", "Bazooka", "Bazooka", "Bazooka", "Bazooka"], current: 0),
+        (worm: 1, names: ["Minigun", "Minigun", "Minigun", "Minigun", "Minigun"], current: 0),
+    ],
+    health: [(1, 20.0)],
+    inputs: [
+        (frame: 30, worm: 0, keys: "fire"),
+        (frame: 32, worm: 0, keys: ""),
+    ],
+)

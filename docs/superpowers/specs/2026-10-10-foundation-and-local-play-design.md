@@ -633,7 +633,7 @@ sections, they take precedence.
 These decide how M4's weapons, projectiles, damage and bonuses are recorded
 by the oracle and reproduced by the simulation. Where they conflict with
 earlier sections, they take precedence. The oracle hooks that implement
-D1, D2, D3, D6 and D8 are described in `tools/olx-oracle/CLAUDE.md`.
+D1, D2, D3, D6, D8 and D10 are described in `tools/olx-oracle/CLAUDE.md`.
 
 | # | Decision | Reason |
 |---|---|---|
@@ -646,3 +646,4 @@ D1, D2, D3, D6 and D8 are described in `tools/olx-oracle/CLAUDE.md`.
 | D7 | **The `VecTimeRecorder::get(0)` quirk is kept.** | It is real-play behaviour; worms are hit at stale positions in OLX too. |
 | D8 | **All worms in a scenario use scripted input** (no bot AI during recording). | Bot AI draws `rand()` and reads the wall clock. |
 | D9 | **Exact-zero health:** the Gusanos `think()` death path is ported (the worm dies next frame, credited to nobody), but its Gusanos particles' `rnd()` use is not; scenarios avoid exact-zero health. | Rare; the Gusanos particle system is out of scope. Recorded as a deviation. |
+| D10 | **Other messages of the local connection are delivered between frames too:** every reliable message the server queues for the local client during frame F (bonus spawns and destruction, kill messages, ...) is parsed by the client after frame F, then the shot list (D1), then every reliable message the client queued for the server (bonus grabs, damage reports); none goes over the network. | One frame of latency, as a real local game at one frame per main-loop iteration sees them; over the network they arrived only after a whole `simStep` batch, which made respawn and bonus traces depend on the batching. |

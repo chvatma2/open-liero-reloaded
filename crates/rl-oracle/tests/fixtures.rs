@@ -3,12 +3,37 @@
 //! A failure here usually means a trace must be re-recorded with
 //! `cargo xtask oracle-record <name>` (needs Docker).
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
-use rl_oracle::{Scenario, Trace};
+use rl_oracle::{Frame, Scenario, Trace, WormRec};
 
 fn dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/oracle")
+}
+
+/// Scenario names relative to `fixtures/oracle`, such as `walk` or
+/// `weapons/classic/bazooka`, sorted.
+fn names() -> Vec<String> {
+    fn walk(root: &Path, sub: &Path, out: &mut Vec<String>) {
+        for e in std::fs::read_dir(root.join(sub)).unwrap() {
+            let p = e.unwrap().path();
+            let rel = sub.join(p.file_name().unwrap());
+            if p.is_dir() {
+                walk(root, &rel, out);
+            } else if p.extension().is_some_and(|x| x == "ron") {
+                out.push(rel.with_extension("").to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&dir(), Path::new(""), &mut out);
+    out.sort();
+    out
+}
+
+fn weapon_names() -> Vec<String> {
+    names().into_iter().filter(|n| n.starts_with("weapons/")).collect()
 }
 
 fn load(name: &str) -> (Scenario, Trace) {
@@ -19,16 +44,39 @@ fn load(name: &str) -> (Scenario, Trace) {
     (sc, Trace::from_gz(&gz).unwrap())
 }
 
+/// The trace line of frame `f` (frame -1 is the first line).
+fn frame(t: &Trace, f: i64) -> &Frame {
+    &t.frames[(f + 1) as usize]
+}
+
+/// The first frame in which worm `worm` holds a key set containing `key`.
+fn first_input_with(sc: &Scenario, worm: usize, key: &str) -> Option<u32> {
+    sc.inputs.iter().filter(|c| c.worm == worm && c.keys.split('+').any(|k| k == key)).map(|c| c.frame).min()
+}
+
+const SPECIAL: [&str; 10] = [
+    "beam-burst",
+    "bleed",
+    "bonus-health",
+    "bonus-weapon",
+    "die-before-delivery",
+    "explode-kill-respawn",
+    "multi-shot",
+    "reload-switch",
+    "rope-dirt",
+    "two-worms-fire",
+];
+
 #[test]
 fn every_scenario_has_a_consistent_trace() {
-    let mut names: Vec<String> = std::fs::read_dir(dir())
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|x| x == "ron"))
-        .map(|p| p.file_stem().unwrap().to_string_lossy().into_owned())
-        .collect();
-    names.sort();
-    assert_eq!(names, ["aim", "dig", "fall", "fire-minigun", "jump", "rope", "tap", "walk"]);
+    let names = names();
+    for n in ["aim", "dig", "fall", "fire-minigun", "jump", "rope", "tap", "walk"].iter().chain(&SPECIAL) {
+        assert!(names.iter().any(|m| m == n), "missing scenario {n}");
+    }
+    // One scenario per weapon of each mod (`cargo xtask oracle-gen-weapons`).
+    let count = |m: &str| names.iter().filter(|n| n.starts_with(&format!("weapons/{m}/"))).count();
+    assert_eq!((count("classic"), count("mw-1-0")), (38, 50), "weapon scenarios");
+    assert_eq!(names.len(), 8 + SPECIAL.len() + 38 + 50, "{names:?}");
     for name in names {
         let (sc, t) = load(&name);
         let h = &t.header;
@@ -39,6 +87,7 @@ fn every_scenario_has_a_consistent_trace() {
             h.weapons.len() > 10 && h.projectiles.len() >= h.weapons.len() / 2,
             "{name}: names in the header"
         );
+        assert!(h.weapons.iter().chain(&h.projectiles).all(|n| !n.is_empty()), "{name}: an empty name");
         assert_eq!(t.frames.len(), sc.frames as usize + 1, "{name}: frames -1..{}", sc.frames - 1);
         for (i, f) in t.frames.iter().enumerate() {
             assert_eq!(f.f, i as i64 - 1, "{name}");
@@ -46,12 +95,20 @@ fn every_scenario_has_a_consistent_trace() {
             let st = f.st.unwrap_or_else(|| panic!("{name}: v2 trace"));
             assert_eq!((st, f.ct), (10 * f.f.max(0), Some(st + 10)), "{name}: pinned clock at frame {}", f.f);
         }
-        let start = &t.frames[0].w[0];
-        assert_eq!((start.x.0, start.y.0), (sc.worms[0].x as f32, sc.worms[0].y as f32), "{name}: spawn");
+        for (i, spawn) in sc.worms.iter().enumerate() {
+            let start = &t.frames[0].w[i];
+            assert_eq!((start.x.0, start.y.0), (spawn.x as f32, spawn.y as f32), "{name}: spawn of worm {i}");
+        }
+        for w in &sc.weapons {
+            let ids: Vec<i32> = t.frames[0].w[w.worm].slots.iter().map(|s| s.id).collect();
+            let want: Vec<i32> =
+                w.names.iter().map(|n| h.weapons.iter().position(|m| m == n).unwrap() as i32).collect();
+            assert_eq!(ids, want, "{name}: simSetWeapons for worm {}", w.worm);
+        }
     }
 }
 
-fn worm(t: &Trace) -> impl Iterator<Item = &rl_oracle::WormRec> {
+fn worm(t: &Trace) -> impl Iterator<Item = &WormRec> {
     t.frames.iter().map(|f| &f.w[0])
 }
 
@@ -93,6 +150,17 @@ fn rope_hooks_and_releases() {
 }
 
 #[test]
+fn rope_hooking_dirt_draws_ten_cosmetic_rands() {
+    let (_, t) = load("rope-dirt");
+    let i = t.frames.iter().position(|f| f.w[0].rope.at).expect("the rope hooks");
+    assert!(t.frames[i..].iter().filter(|f| f.w[0].rope.at).count() > 50, "stays hooked");
+    // OLX's rope spawns 5 dirt particles (2 rand() each) when it first hooks dirt.
+    assert_eq!((t.frames[i - 1].rc, t.frames[i].rc), (Some(0), Some(10)), "rand() calls around the hook");
+    assert_eq!(t.frames[i].ents, Some(5));
+    assert!(!t.frames.last().unwrap().w[0].rope.at, "released at the end");
+}
+
+#[test]
 fn dig_changes_the_material_map() {
     let (_, t) = load("dig");
     let hashes: std::collections::BTreeSet<&str> = t.frames.iter().map(|f| f.mh.as_str()).collect();
@@ -124,4 +192,179 @@ fn minigun_shots_arrive_two_frames_later_and_fly() {
 fn tap_between_sub_steps_still_turns_the_aim() {
     let (_, t) = load("tap");
     assert!(worm(&t).any(|w| w.ang.0 != 0.0), "a press during frames without a sub-step was lost");
+}
+
+/// Every weapon scenario (`fixtures/oracle/weapons/<mod>/<weapon>.ron`) shows
+/// its weapon working: within 20 frames of the first fire key there are
+/// projectiles, or a beam's effect (carved terrain or a hurt dummy); the
+/// firer aims as the scenario says when each later phase fires; and the dummy
+/// (worm 1) is hurt in at least 70 % of the scenarios.
+#[test]
+fn weapon_scenarios_fire_aim_and_hurt_the_dummy() {
+    let names = weapon_names();
+    assert_eq!(names.len(), 88, "weapon scenarios");
+    let mut hurt = 0;
+    let mut problems = Vec::new();
+    for name in &names {
+        let (sc, t) = load(name);
+        let fire = first_input_with(&sc, 0, "fire").expect("a fire key") as i64;
+        let start = frame(&t, fire);
+        let acted = (fire..=fire + 20)
+            .map(|f| frame(&t, f))
+            .any(|f| !f.p.is_empty() || f.mh != start.mh || f.w[1].hp.0 < start.w[1].hp.0 || !f.w[1].alive);
+        if !acted {
+            problems.push(format!("{name}: nothing within 20 frames of the first fire (frame {fire})"));
+        }
+        for (keys, angle) in [("up+fire", -90.0), ("down+fire", 60.0)] {
+            let Some(c) = sc.inputs.iter().find(|c| c.worm == 0 && c.keys == keys) else {
+                problems.push(format!("{name}: no {keys} phase"));
+                continue;
+            };
+            let w = &frame(&t, c.frame as i64).w[0];
+            if w.alive && w.ang.0 != angle {
+                problems.push(format!("{name}: angle {} when {keys} starts, not {angle}", w.ang.0));
+            }
+        }
+        if t.frames.iter().any(|f| f.w[1].hp.0 < 100.0 || !f.w[1].alive) {
+            hurt += 1;
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+    assert!(hurt * 10 >= names.len() * 7, "the dummy was hurt in only {hurt} of {} scenarios", names.len());
+}
+
+/// Spec §18 D3: Classic's Flamer flames have no timer, but their image
+/// animation plays once (6 frames at rate 10), so a flame fired straight up
+/// into the open sky disappears after 0.6 s instead of rising off the map.
+#[test]
+fn flames_vanish_when_their_animation_ends() {
+    let (sc, t) = load("weapons/classic/flamer");
+    let flamer = t.header.projectiles.iter().position(|n| n == "flamer").unwrap() as i32;
+    let up = sc.inputs.iter().find(|c| c.keys == "up+fire").unwrap().frame as i64;
+    let down = first_input_with(&sc, 0, "down").unwrap() as i64;
+    // Projectile slots are reused, so a flame is (slot, spawn time).
+    let mut life: BTreeMap<(i32, Option<i64>), (i64, i64)> = BTreeMap::new();
+    for f in &t.frames {
+        for p in f.p.iter().filter(|p| p.t == flamer) {
+            life.entry((p.i, p.sp)).and_modify(|l| l.1 = f.f).or_insert((f.f, f.f));
+        }
+    }
+    let rising: Vec<i64> =
+        life.values().filter(|(first, _)| (up..down).contains(first)).map(|(a, b)| b - a).collect();
+    assert!(rising.len() > 20, "{} flames fired up", rising.len());
+    assert!(rising.iter().all(|l| (55..=62).contains(l)), "flame lifetimes in frames: {rising:?}");
+}
+
+/// Two frames of Flamer shots (one per sub-step) form one list. When they make
+/// one run, the S2C_MULTISHOOT packet gives every later shot the first shot's
+/// position and random seed. Runs also break, for instance while the worm's
+/// speed changes, and then the shots arrive as single-shot packets.
+#[test]
+fn multi_shot_packets_reuse_the_first_shots_seed_and_position() {
+    let (_, t) = load("multi-shot");
+    let lists: Vec<&Frame> = t.frames.iter().filter(|f| f.s.len() > 1).collect();
+    assert!(lists.iter().all(|f| f.s.iter().all(|s| s.w == 0)), "one worm fires");
+    assert!(lists.iter().all(|f| f.s.windows(2).all(|p| p[0].t < p[1].t)), "later shots are later");
+    let runs: Vec<&&Frame> = lists
+        .iter()
+        .filter(|f| f.s.iter().all(|s| s.rnd == f.s[0].rnd && s.x == f.s[0].x && s.y == f.s[0].y))
+        .collect();
+    assert!(runs.len() > 10, "{} multi-shot packets", runs.len());
+    assert!(runs.iter().any(|f| f.w[0].vx.0 != 0.0), "some are fired while walking");
+    assert!(runs.len() < lists.len(), "some two-shot lists are split into single shots");
+}
+
+#[test]
+fn two_worms_firing_send_separate_runs() {
+    let (_, t) = load("two-worms-fire");
+    assert!(t.frames.iter().any(|f| f.s.iter().any(|s| s.w == 0) && f.s.iter().any(|s| s.w == 1)));
+    assert!(t.frames.last().unwrap().w.iter().all(|w| w.hp.0 < 100.0), "both worms are hit");
+}
+
+#[test]
+fn shots_of_a_worm_that_died_before_delivery_are_dropped() {
+    let (_, t) = load("die-before-delivery");
+    let died = t.frames.iter().position(|f| !f.w[0].alive).expect("worm 0 dies");
+    let late = t.frames[died..].iter().position(|f| f.s.iter().any(|s| s.w == 0));
+    assert!(late.is_some(), "a shot of worm 0 is delivered after it died");
+    let spawned_late = t.frames[died..]
+        .iter()
+        .flat_map(|f| &f.p)
+        .any(|p| p.own == Some(0) && p.sp.unwrap() >= t.frames[died].st.unwrap());
+    assert!(!spawned_late, "a dead worm's shot spawned a projectile");
+}
+
+#[test]
+fn a_beam_fires_in_bursts() {
+    let (_, t) = load("beam-burst");
+    // ProcessShot_Beam sets the shared slot's LastFire to 0.3 when the shot arrives.
+    let lf: Vec<f32> = worm(&t).map(|w| w.slots[0].lf.0).collect();
+    let bursts = lf.windows(2).filter(|p| p[0] <= 0.0 && p[1] > 0.25).count();
+    assert!(bursts >= 5, "{bursts} bursts");
+}
+
+#[test]
+fn explosion_kills_and_the_server_respawns_after_respawn_time() {
+    let (_, t) = load("explode-kill-respawn");
+    let died = t.frames.iter().position(|f| !f.w[1].alive).expect("worm 1 dies");
+    let (before, at) = (&t.frames[died - 1], &t.frames[died]);
+    assert_eq!((at.w[1].deaths, at.w[0].kills), (before.w[1].deaths + 1, before.w[0].kills + 1));
+    assert!(at.p.len() > 1, "the bazooka exploded into fragments");
+    let back = died + t.frames[died..].iter().position(|f| f.w[1].alive).expect("worm 1 respawns");
+    // RespawnTime 2.5 s, strict `>`, and currentTime = simulationTime + 10 ms (D2).
+    assert_eq!(back - died, 250, "frames between death and respawn");
+    let w = &t.frames[back].w[1];
+    assert_eq!(w.hp.0, 100.0);
+    assert!((w.x.0, w.y.0) != (at.w[1].x.0, at.w[1].y.0), "FindSpot chose a new place");
+    assert_eq!(t.frames[back].mt, Some(at.mt.unwrap() + 2), "one FindSpot try");
+}
+
+#[test]
+fn a_worm_below_15_hp_bleeds_every_two_seconds() {
+    let (_, t) = load("bleed");
+    let mut bleeds = Vec::new();
+    for p in t.frames.windows(2) {
+        if p[1].w[0].blood != p[0].w[0].blood {
+            bleeds.push((p[1].w[0].blood.unwrap(), p[1].rc.unwrap() - p[0].rc.unwrap()));
+        }
+    }
+    assert!(bleeds.len() >= 3, "{bleeds:?}");
+    assert!(bleeds.iter().all(|(_, rc)| *rc == 80), "80 rand() per bleed: {bleeds:?}");
+    assert!(bleeds.windows(2).all(|b| b[1].0 - b[0].0 > 2000), "{bleeds:?}");
+}
+
+#[test]
+fn a_health_bonus_is_picked_up() {
+    let (_, t) = load("bonus-health");
+    let i = t.frames.iter().position(|f| !f.b.is_empty()).expect("the bonus appears");
+    let took = i + t.frames[i..].iter().position(|f| f.b.is_empty()).expect("the bonus is taken");
+    let (before, after) = (&t.frames[took - 1].w[0], &t.frames[took].w[0]);
+    assert!(after.hp.0 > before.hp.0, "health {} -> {}", before.hp.0, after.hp.0);
+    // The server keeps its copy until BonusLife ends (ParseGrabBonus never frees it).
+    assert_eq!(t.frames.last().unwrap().sb.len(), 1);
+}
+
+#[test]
+fn a_weapon_bonus_replaces_the_current_weapon() {
+    let (sc, t) = load("bonus-weapon");
+    let want = sc.bonuses[0].weapon.as_deref().unwrap();
+    let id = t.header.weapons.iter().position(|w| w == want).unwrap() as i32;
+    let i = t.frames.iter().position(|f| !f.b.is_empty()).expect("the bonus appears");
+    let took = i + t.frames[i..].iter().position(|f| f.b.is_empty()).expect("the bonus is taken");
+    let (before, after) = (&t.frames[took - 1].w[0], &t.frames[took].w[0]);
+    assert_ne!(before.slots[before.wpn as usize].id, id);
+    assert_eq!(after.slots[after.wpn as usize].id, id);
+    assert!(t.frames[took..].iter().any(|f| f.s.iter().any(|s| s.wpn == id)), "the new weapon fires");
+}
+
+#[test]
+fn only_the_current_slot_reloads() {
+    let (_, t) = load("reload-switch");
+    let reloading = t.frames.iter().position(|f| f.w[0].slots[0].rl).expect("slot 0 empties and reloads");
+    let away: Vec<&Frame> = t.frames[reloading..].iter().filter(|f| f.w[0].wpn != 0).collect();
+    assert!(away.len() > 20, "switched away while reloading");
+    assert!(away.iter().all(|f| f.w[0].slots[0].rl && f.w[0].slots[0].ch == away[0].w[0].slots[0].ch));
+    assert!(away.iter().any(|f| !f.s.is_empty()), "the other slot fires");
+    let full = t.frames[reloading..].iter().position(|f| !f.w[0].slots[0].rl).expect("reloads again");
+    assert_eq!(t.frames[reloading + full].w[0].slots[0].ch.0, 1.0);
 }

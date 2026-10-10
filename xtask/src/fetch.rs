@@ -77,11 +77,20 @@ fn checkout(m: &Manifest, dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn manifest(root: &Path) -> anyhow::Result<Manifest> {
+    let text = std::fs::read_to_string(root.join("content/olx-manifest.ron"))?;
+    ron::from_str(&text).context("parsing content/olx-manifest.ron")
+}
+
+/// The OLX mod directories the manifest imports, such as `"Classic"`.
+pub fn mods() -> anyhow::Result<Vec<String>> {
+    Ok(manifest(&root())?.mods)
+}
+
 /// Fetches the pinned checkout and, if `import` is set, imports it with `rl-cli`.
 pub fn run(import: bool) -> anyhow::Result<Paths> {
     let root = root();
-    let text = std::fs::read_to_string(root.join("content/olx-manifest.ron"))?;
-    let m: Manifest = ron::from_str(&text).context("parsing content/olx-manifest.ron")?;
+    let m = manifest(&root)?;
     let src = root.join("target/olx").join(&m.commit);
     checkout(&m, &src).context("fetching OpenLieroX content")?;
     let gamedir = src.join("share/gamedir");

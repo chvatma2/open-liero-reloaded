@@ -1,0 +1,20 @@
+(
+    description: "On Liero Factory's open rock floor, a worm empties the Uzi (slot 0), switches to the Shotgun while the Uzi reloads and fires it, switches back, waits until the Uzi is full, and fires again. Only the current slot reloads, so the Uzi's charge stays frozen while the Shotgun is selected.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 450,
+    worms: [(x: 190, y: 320)],
+    weapons: [(worm: 0, names: ["Uzi", "Shotgun", "Bazooka", "Grenade", "Rifle"], current: 0)],
+    inputs: [
+        (frame: 0, worm: 0, keys: "fire"),
+        (frame: 100, worm: 0, keys: "change+right"),
+        (frame: 102, worm: 0, keys: ""),
+        (frame: 110, worm: 0, keys: "fire"),
+        (frame: 112, worm: 0, keys: ""),
+        (frame: 160, worm: 0, keys: "change+left"),
+        (frame: 162, worm: 0, keys: ""),
+        (frame: 380, worm: 0, keys: "fire"),
+        (frame: 400, worm: 0, keys: ""),
+    ],
+)

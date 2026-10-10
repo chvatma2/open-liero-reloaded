@@ -59,9 +59,13 @@ pub struct InputChange {
     pub keys: String,
 }
 
-/// Worm `worm`'s weapon slots, by OLX weapon name, one per slot (OLX's
-/// `WeaponSlotsNum`, 5 by default), with slot `current` selected. Every slot
-/// starts full: charge 1, not reloading, no last fire.
+/// Weapon slots per worm: OLX's `WeaponSlotsNum` (default 5, the value in every
+/// trace header so far). `simSetWeapons` needs one name per slot.
+pub const WEAPON_SLOTS: usize = 5;
+
+/// Worm `worm`'s weapon slots, by OLX weapon name, exactly one per slot
+/// ([`WEAPON_SLOTS`]), with slot `current` selected. Every slot starts full:
+/// charge 1, not reloading, no last fire.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WormWeapons {
@@ -159,6 +163,13 @@ impl Scenario {
             if w.worm >= self.worms.len() {
                 return bad(format!("weapons for worm {} but only {} worms", w.worm, self.worms.len()));
             }
+            if w.names.len() != WEAPON_SLOTS {
+                return bad(format!(
+                    "worm {} needs exactly {WEAPON_SLOTS} weapon names (one per slot), got {}",
+                    w.worm,
+                    w.names.len()
+                ));
+            }
             if w.current >= w.names.len() {
                 return bad(format!(
                     "current weapon {} but worm {} has {} slots",
@@ -168,20 +179,29 @@ impl Scenario {
                 ));
             }
             if let Some(n) = w.names.iter().find(|n| !valid_weapon_name(n)) {
-                return bad(format!("weapon name {n:?} must be non-empty, without commas or line breaks"));
+                return bad(format!(
+                    "weapon name {n:?} must be non-empty, without commas, quotes or line breaks"
+                ));
             }
         }
         for &(worm, hp) in &self.health {
             if worm >= self.worms.len() {
                 return bad(format!("health for worm {worm} but only {} worms", self.worms.len()));
             }
-            if !hp.is_finite() || hp < 0.0 {
-                return bad(format!("health {hp} for worm {worm} must be finite and >= 0"));
+            // Exactly 0 is a Gusanos death path the port does not reproduce (spec §18 D9).
+            if !hp.is_finite() || hp <= 0.0 {
+                return bad(format!("health {hp} for worm {worm} must be finite and > 0"));
             }
         }
         for b in &self.bonuses {
             if b.frame >= self.frames {
                 return bad(format!("bonus at frame {} is past the last frame {}", b.frame, self.frames - 1));
+            }
+            if i16::try_from(b.x).is_err() || i16::try_from(b.y).is_err() {
+                return bad(format!(
+                    "bonus position ({}, {}) must fit in 16 bits, as OLX sends it (S2C_SPAWNBONUS)",
+                    b.x, b.y
+                ));
             }
             match (b.kind, &b.weapon) {
                 (BonusKind::Health, Some(_)) => return bad("a health bonus has no weapon".into()),
@@ -256,10 +276,10 @@ impl Scenario {
     }
 }
 
-/// A weapon name that survives `simSetWeapons`'s comma list and the
+/// A weapon name that survives `simSetWeapons`'s quoted comma list and the
 /// line-based input schedule.
 fn valid_weapon_name(n: &str) -> bool {
-    !n.trim().is_empty() && !n.contains([',', '\n', '\r'])
+    !n.trim().is_empty() && !n.contains([',', '"', '\n', '\r'])
 }
 
 #[cfg(test)]
@@ -343,7 +363,7 @@ mod tests {
         seed: 1,
         frames: 10,
         worms: [(x: 190, y: 320), (x: 300, y: 320)],
-        weapons: [(worm: 1, names: ["Minigun", "Big Nuke"], current: 1)],
+        weapons: [(worm: 1, names: ["Minigun", "Big Nuke", "Uzi", "Laser", "Zimm"], current: 1)],
         health: [(0, 14.5)],
         bonuses: [
             (frame: 3, x: 200, y: 300, kind: "health"),
@@ -356,7 +376,11 @@ mod tests {
         let sc = Scenario::from_ron(ARMED).unwrap();
         assert_eq!(
             sc.weapons,
-            [WormWeapons { worm: 1, names: vec!["Minigun".into(), "Big Nuke".into()], current: 1 }]
+            [WormWeapons {
+                worm: 1,
+                names: ["Minigun", "Big Nuke", "Uzi", "Laser", "Zimm"].map(String::from).to_vec(),
+                current: 1
+            }]
         );
         assert_eq!(sc.health, [(0, 14.5)]);
         assert_eq!(
@@ -375,7 +399,7 @@ mod tests {
             serde_json::from_str(&Scenario::from_ron(ARMED).unwrap().control_json("/work/t.jsonl")).unwrap();
         assert_eq!(
             v["weapons"][0],
-            serde_json::json!({ "worm": 1, "names": ["Minigun", "Big Nuke"], "current": 1 })
+            serde_json::json!({ "worm": 1, "names": ["Minigun", "Big Nuke", "Uzi", "Laser", "Zimm"], "current": 1 })
         );
         assert_eq!(v["health"][0], serde_json::json!([0, 14.5]));
         assert_eq!(v["bonuses"][0], serde_json::json!([3, 200, 300, "health", ""]));
@@ -386,11 +410,21 @@ mod tests {
     fn rejects_invalid_weapons_health_and_bonuses() {
         let cases = [
             ("(worm: 1, names", "(worm: 2, names", "weapons for worm 2"),
-            ("current: 1", "current: 2", "current weapon 2"),
-            ("names: [\"Minigun\", \"Big Nuke\"], current: 1", "names: [], current: 0", "current weapon 0"),
-            ("\"Big Nuke\"], current", "\"Big,Nuke\"], current", "weapon name"),
+            ("current: 1", "current: 5", "current weapon 5"),
+            (
+                "\"Uzi\", \"Laser\", \"Zimm\"], current",
+                "\"Uzi\", \"Laser\"], current",
+                "exactly 5 weapon names",
+            ),
+            ("\"Zimm\"], current", "\"Zimm\", \"Uzi\"], current", "exactly 5 weapon names"),
+            ("\"Big Nuke\", \"Uzi\"", "\"Big,Nuke\", \"Uzi\"", "weapon name"),
+            ("\"Big Nuke\", \"Uzi\"", "\"Big\\\"Nuke\", \"Uzi\"", "weapon name"),
             ("health: [(0, 14.5)]", "health: [(5, 14.5)]", "health for worm 5"),
             ("health: [(0, 14.5)]", "health: [(0, -1.0)]", "health -1"),
+            ("health: [(0, 14.5)]", "health: [(0, 0.0)]", "health 0"),
+            ("x: 200, y: 300", "x: 32768, y: 300", "bonus position (32768, 300)"),
+            ("x: 200, y: 300", "x: 200, y: -32769", "bonus position (200, -32769)"),
+            ("weapon: Some(\"Big Nuke\")", "weapon: Some(\"Big\\\"Nuke\")", "bad bonus weapon name"),
             ("frame: 3,", "frame: 10,", "bonus at frame 10"),
             ("kind: \"health\")", "kind: \"health\", weapon: Some(\"Minigun\"))", "health bonus"),
             ("kind: \"weapon\", weapon: Some(\"Big Nuke\")", "kind: \"weapon\"", "weapon bonus"),
@@ -400,6 +434,18 @@ mod tests {
             assert!(ARMED.contains(from), "{from}");
             let err = Scenario::from_ron(&ARMED.replace(from, to)).unwrap_err().to_string();
             assert!(err.contains(msg), "{to}: {err}");
+        }
+    }
+
+    #[test]
+    fn accepts_the_edges_of_the_valid_ranges() {
+        for (from, to) in [
+            ("x: 200, y: 300", "x: 32767, y: -32768"),
+            ("health: [(0, 14.5)]", "health: [(0, 0.001)]"),
+            ("\"Big Nuke\", \"Uzi\"", "\"Assassin's Shot\", \"Uzi\""),
+        ] {
+            assert!(ARMED.contains(from), "{from}");
+            Scenario::from_ron(&ARMED.replace(from, to)).unwrap_or_else(|e| panic!("{to}: {e}"));
         }
     }
 

@@ -12,6 +12,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Pixmap `.lxl` | `MapLoader_LieroX.cpp:440+` | — | not started | no content in scope |
 | Fidelity oracle (test hooks) | `src/game/Game.cpp`, `src/client/CInput.cpp`, `src/common/CWormHuman.cpp` | `tools/olx-oracle`, `rl-oracle` | done (plans 2–3) | 7 movement scenarios recorded twice and identical; `cargo xtask oracle-record --check` |
 | Oracle v2: shots, weapons, bonuses, clocks (spec §18) | `src/common/CShootList.cpp`, `src/server/CServer_Send.cpp:556-569`, `src/server/CServer_Game.cpp:266-316`, `src/common/CGameScript.cpp:937,1159` | `tools/olx-oracle`, `rl-oracle` (`Fields`, `compare_fields`), `rl-scenario::CHECKED` | done (plan 4 task 1) | `fire-minigun` recorded twice and identical; the 7 M3 traces changed only in added fields |
+| Oracle v2: message delivery (spec §18 D10); weapon, damage and bonus scenarios | `src/common/CChannel.cpp:69-85`, `src/client/CClient_Parse.cpp:468`, `src/server/CServer_Parse.cpp:90` | `tools/olx-oracle`, `xtask oracle-gen-weapons`, `fixtures/oracle/weapons/` | done (plan 4 task 3) | 88 weapon scenarios and 10 special ones recorded twice and identical; `rl-oracle/tests/fixtures.rs` checks what each shows |
 | Frame and physics clocks | `src/game/Game.cpp:897-959`, `src/client/CClient_Game.cpp:60-222` | `rl-sim::World::tick` | ported | all 7 oracle scenarios, bit for bit; `docs/porting/timing.md` |
 | Worm movement and collision | `src/common/PhysicsLX56.cpp:88-469` | `rl-sim::physics` | ported | `fall`, `walk`, `jump`, `dig` |
 | Keyboard input (aim, move, jump, dig, rope) | `src/common/CWormHuman.cpp:81-560`, `src/client/CInput.cpp` | `rl-sim::physics::get_input`, `rl-sim::input` | ported (keyboard, LX56 aim) | `aim`, `tap`, `walk`, `jump`, `dig`, `rope` |
@@ -43,9 +44,11 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   - projectile images are loaded in full in dedicated mode, so animations end
     as on a player's client;
   - the entity pool is cleared and the server's bonus timer reset when a recording starts.
-  - Bonuses spawned by the server's own timer (`BonusFrequency`) still reach the
-    client over the network, after the whole `simStep` batch. Scenarios place
-    bonuses with `simPlaceBonus` instead, and keep runs shorter than `BonusFrequency`.
+  - the local connection's reliable messages (bonus spawns and destruction, bonus
+    grabs, damage reports, kill messages) are handed over after the frame they
+    were queued in (D10), not over UDP;
+  - scenarios place bonuses with `simPlaceBonus` and stay shorter than
+    `BonusFrequency` (30 s), so the server never spawns one at a random spot.
 
 - Importers reject malformed input that OLX would read as garbage: truncated
   files, unknown weapon or projectile types, and nesting deeper than 128 levels.
@@ -97,8 +100,22 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   holding a direction (`leftOnce` / `rightOnce`), not a dedicated key.
 - **Shots:** a Minigun shot fired in frame 2's sub-step (the first one) is
   delivered after frame 3 and its projectile appears in frame 4's trace line
-  (`fire-minigun`). Two lists from different worms go out as separate packets;
-  in a multi-shot packet every later shot reuses the first shot's random seed.
+  (`fire-minigun`). Shots of different worms form separate runs, so separate
+  packets (`two-worms-fire`). In a multi-shot packet every later shot reuses the
+  first shot's position and random seed (`multi-shot`).
+  - A shot delivered after its worm died spawns nothing (`die-before-delivery`).
+  - When a beam shot arrives, the slot's `LastFire` becomes 0.3, so a held beam
+    fires in bursts of two shots every 17–18 frames (`beam-burst`).
+  - Only the current slot reloads; a reloading slot that is not selected keeps
+    its charge (`reload-switch`).
+- **Death and respawn:** a worm killed in frame F is respawned by the server in
+  frame F + 250 at a `FindSpot` position (one try, 2 `rnd()` draws): RespawnTime
+  2.5 s, compared strictly with the pinned clock (`explode-kill-respawn`).
+- **Bleeding:** below 15 hp a worm bleeds in the first sub-step and then every
+  2 s, 80 `rand()` calls and 40 entities each time (`bleed`).
+- **Bonuses:** a grab reaches the server one frame later, and its
+  S2C_DESTROYBONUS the client one more frame later; the server keeps its copy
+  until BonusLife ends (`bonus-health`, `bonus-weapon`).
 - **Aim:** the traces use LX56 aim (`ForceLX56Aim`: max speed 100,
   acceleration 500, no friction, `REDUCE_CONST(200)` when no key is held). The
   angle is clamped to [−90°, 60°].

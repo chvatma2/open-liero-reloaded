@@ -1,0 +1,17 @@
+(
+    description: "On Liero Factory's open rock floor, with Bonuses on, a Cannon weapon bonus is placed at frame 5 and falls to the floor; the worm walks right into it, the Cannon replaces the Minigun in the current slot (full charge), and the worm fires it once.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 200,
+    settings: {"GameOptions.GameInfo.Bonuses": "1"},
+    worms: [(x: 190, y: 320)],
+    weapons: [(worm: 0, names: ["Minigun", "Shotgun", "Bazooka", "Grenade", "Rifle"], current: 0)],
+    bonuses: [(frame: 5, x: 220, y: 310, kind: "weapon", weapon: Some("Cannon"))],
+    inputs: [
+        (frame: 60, worm: 0, keys: "right"),
+        (frame: 140, worm: 0, keys: ""),
+        (frame: 150, worm: 0, keys: "fire"),
+        (frame: 152, worm: 0, keys: ""),
+    ],
+)

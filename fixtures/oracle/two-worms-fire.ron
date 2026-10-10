@@ -1,0 +1,20 @@
+(
+    description: "On FossilFacility's dirt floor, worm 0 (Uzi) and worm 1 (Flamer, turned left) fire at each other for 1 s. Each worm's shots form their own runs in the shot list, so packets mix single and multi shots of both worms, and both worms take damage.",
+    level: "FossilFacility.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 200,
+    worms: [(x: 118, y: 384), (x: 178, y: 384)],
+    weapons: [
+        (worm: 0, names: ["Uzi", "Uzi", "Uzi", "Uzi", "Uzi"], current: 0),
+        (worm: 1, names: ["Flamer", "Flamer", "Flamer", "Flamer", "Flamer"], current: 0),
+    ],
+    inputs: [
+        (frame: 0, worm: 1, keys: "left"),
+        (frame: 3, worm: 1, keys: ""),
+        (frame: 20, worm: 0, keys: "fire"),
+        (frame: 20, worm: 1, keys: "fire"),
+        (frame: 120, worm: 0, keys: ""),
+        (frame: 120, worm: 1, keys: ""),
+    ],
+)

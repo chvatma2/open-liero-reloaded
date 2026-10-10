@@ -1,4 +1,4 @@
-//! Plays oracle scenarios (`fixtures/oracle/*.ron`) in the Rust simulation and
+//! Plays oracle scenarios (`fixtures/oracle/**/*.ron`) in the Rust simulation and
 //! records a [`Trace`] in the oracle's format, so `rl_oracle::compare` can
 //! check it against OLX's recording.
 //!
@@ -33,15 +33,24 @@ pub fn load_fixture(dir: &Path, name: &str) -> anyhow::Result<(Scenario, Trace)>
     Ok((sc, trace))
 }
 
-/// Scenario names in `dir`, sorted.
+/// Scenario names in `dir` and its subdirectories, sorted: the `.ron` paths
+/// relative to `dir` without the extension, with `/` separators (such as
+/// `walk` or `weapons/classic/bazooka`).
 pub fn fixture_names(dir: &Path) -> anyhow::Result<Vec<String>> {
-    let mut names = Vec::new();
-    for e in std::fs::read_dir(dir).with_context(|| dir.display().to_string())? {
-        let p = e?.path();
-        if p.extension().is_some_and(|x| x == "ron") {
-            names.push(p.file_stem().expect("file name").to_string_lossy().into_owned());
+    fn walk(dir: &Path, prefix: &str, names: &mut Vec<String>) -> anyhow::Result<()> {
+        for e in std::fs::read_dir(dir).with_context(|| dir.display().to_string())? {
+            let p = e?.path();
+            if p.is_dir() {
+                let sub = p.file_name().expect("directory name").to_string_lossy();
+                walk(&p, &format!("{prefix}{sub}/"), names)?;
+            } else if p.extension().is_some_and(|x| x == "ron") {
+                names.push(format!("{prefix}{}", p.file_stem().expect("file name").to_string_lossy()));
+            }
         }
+        Ok(())
     }
+    let mut names = Vec::new();
+    walk(dir, "", &mut names)?;
     names.sort();
     Ok(names)
 }
@@ -151,4 +160,30 @@ pub fn replay(content: &Path, sc: &Scenario, expected: &Trace) -> anyhow::Result
         frames.push(record(&world, f as i64));
     }
     Ok(Trace { header: expected.header.clone(), frames })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixture_names_include_subdirectories() {
+        let dir = tempfile::tempdir().unwrap();
+        for f in [
+            "walk.ron",
+            "walk.jsonl.gz",
+            "v1.0/x.ron",
+            "weapons/classic/zimm.ron",
+            "weapons/classic/bazooka.ron",
+            "a/notes.txt",
+        ] {
+            let p = dir.path().join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "").unwrap();
+        }
+        assert_eq!(
+            fixture_names(dir.path()).unwrap(),
+            ["v1.0/x", "walk", "weapons/classic/bazooka", "weapons/classic/zimm"]
+        );
+    }
 }

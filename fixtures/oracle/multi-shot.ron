@@ -1,0 +1,15 @@
+(
+    description: "On FossilFacility's dirt floor, a worm fires Classic's Flamer (one shot per physics sub-step) for 0.8 s, walking right for part of it. Two frames' shots go out as one list, so many packets are S2C_MULTISHOOT: every later shot in one gets the first shot's position and random seed, and its worm velocity loses increases (the multi-shot quirk, weapons-firing.md section 4). Some lists, mostly while the worm's speed changes, are split into single-shot packets.",
+    level: "FossilFacility.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 150,
+    worms: [(x: 118, y: 384)],
+    weapons: [(worm: 0, names: ["Flamer", "Flamer", "Flamer", "Flamer", "Flamer"], current: 0)],
+    inputs: [
+        (frame: 20, worm: 0, keys: "fire"),
+        (frame: 50, worm: 0, keys: "fire+right"),
+        (frame: 80, worm: 0, keys: "fire"),
+        (frame: 100, worm: 0, keys: ""),
+    ],
+)

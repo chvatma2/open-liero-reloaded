@@ -9,7 +9,7 @@ you rarely need to touch these files.
 - `Dockerfile`: OLX at commit `d1ad953f` from GitHub, plus the patch, built as a
   headless dedicated server (Ubuntu 22.04, as OLX's own Docker image).
   The image tag is a hash of the three files here, so any edit rebuilds it.
-- `oracle-hooks.patch`: the test hooks, 17 OLX files and about 770 added lines.
+- `oracle-hooks.patch`: the test hooks, 17 OLX files and about 820 added lines.
 - `oracle_control.py`: drives one recording over OLX's dedicated-control pipe.
 
 ## What the patch adds
@@ -46,12 +46,27 @@ you rarely need to touch these files.
   - `beforeFrame()` at the start of each simulated frame: pins the clock,
     applies the frame's key changes and bonuses.
   - `afterFrame()` after `cServer->Frame()`: writes the trace line, unpins.
-  - `betweenFrames()` after `simulationTime` advanced: shot delivery.
+  - `betweenFrames()` after `simulationTime` advanced: message and shot delivery.
 - **Shot delivery, Model R (D1).** The shots added during frames F and F+1 form one
   list. After frame F+1 the hook encodes it (`writePacket`) and feeds it to the
   client's packet parser (`readSingle`/`readMulti`, `ProcessServerShotList`), so
   the projectiles exist before frame F+2. While recording, `GameServer::SendUpdate`
   sends no shot lists.
+- **Message delivery (D10).** After each frame, with the clock pinned, `betweenFrames()`
+  takes the local connection's queued reliable messages out of both channels
+  (`CChannel::Messages`), so the network never sends them, and parses them in the
+  order a real local game at one frame per main-loop iteration would at the start
+  of the next iteration:
+  1. the server's messages to the client (bonus spawns and destruction, kill
+     messages, ...), by `CClientNetEngine::ParsePacket`;
+  2. the shot list (Model R, above);
+  3. the client's messages to the server (bonus grabs, damage reports), by
+     `CServerNetEngine::ParsePacket`. What the server queues in reply goes out
+     after the next frame.
+
+  `olx.log` lists each delivery as `OracleHooks: frame F: server -> client <message
+  ids>` (`include/Protocol.h`). Unreliable data (none for the local client in
+  these scenarios) still goes over the network.
 - **Pinned clock (D2).** While recording, `tLX->currentTime = simulationTime + 10 ms`
   during each frame (from before `gusLogicFrame()`) and during delivery. Between
   frames it is the wall clock again, for the network code.
@@ -93,10 +108,9 @@ you rarely need to touch these files.
 
 ## Known limits
 
-- Bonuses that the server spawns on its own timer (`BonusFrequency`), bonus
-  destruction and other server packets reach the client over the network,
-  after the whole `simStep` batch. Use `simPlaceBonus`, and keep scenarios
-  shorter than `BonusFrequency` when `Bonuses` is on.
+- The server spawns bonuses on its own timer (`BonusFrequency`, 30 s after the
+  recording starts) at random `FindSpot` positions. Scenarios place bonuses with
+  `simPlaceBonus` and stay shorter than that.
 
 ## Changing the patch
 
