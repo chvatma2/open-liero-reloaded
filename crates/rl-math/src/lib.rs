@@ -6,9 +6,11 @@
 #![no_std]
 
 mod time;
+mod trig;
 mod vec2;
 
 pub use time::{AbsTime, TimeDiff};
+pub use trig::{cosf, sinf};
 pub use vec2::Vec2;
 
 /// OLX `SIGN` (`include/MathLib.h:60`): -1, 0 or 1.

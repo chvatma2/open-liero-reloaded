@@ -116,7 +116,7 @@ impl Worm {
     fn direction(&self, side: Dir) -> Vec2 {
         let rad = self.angle * (PI_F32 / 180.0);
         let sx = if side == Dir::Left { -1.0 } else { 1.0 };
-        Vec2::new(libm::cosf(rad) * sx, libm::sinf(rad))
+        Vec2::new(rl_math::cosf(rad) * sx, rl_math::sinf(rad))
     }
 
     /// `CWorm::getFaceDirection` (`src/game/CWorm.h:514-516`).
