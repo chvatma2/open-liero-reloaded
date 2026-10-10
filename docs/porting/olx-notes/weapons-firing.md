@@ -411,6 +411,13 @@ following shots i while all of these hold:
 - `|(int)S[i].vx − (int)S[i−1].vx| ≤ 255`, and the same for vy;
 - `num < 255`.
 
+The rule is checked against the source and the `multi-shot` trace. Note that
+`nSpeed` is `(int)(|worm velocity| * 100)` with `ProjRelativeVel`, so a change of
+only 2.55 px/s in the worm's speed between two shots breaks the run: a walking
+worm's two-shot lists often go out as two single-shot packets (with their own
+`nRandom`). Comparing the *decoded* `spd` values does not show this, because they
+are not `nSpeed` (§4.3).
+
 A run of 1 is written as a single shot. A longer run gets an `S2C_MULTISHOOT` header followed by
 `writeSmallShot(prev = S[k−1], cur = S[k])` for each later shot. The writer then recurses to the
 rest of the list.
@@ -459,7 +466,16 @@ rest of the list.
 - **Time** (`SHF_TIMEOFF`): `fTime += TimeDiff((float)byte / 1000.0f)`, i.e.
   `(Uint64)((b/1000.0f)*1000.0f)`. Exact except b = 251 → 250 and b = 253 → 252.
 - **Angle:** `nAngle` += or −= the delta byte, which gives the exact original angle.
-- **Speed:** changes `nSpeed` only, which nothing uses.
+- **Speed:** changes `nSpeed` only, which nothing uses. The decoded value is
+  still wrong, and the oracle traces record it (`s[].spd`):
+  - in a header, the speed byte is `nSpeed − 255` truncated to a byte when
+    `|nSpeed| > 255`, so speeds above 510 come back modulo 256;
+  - in a small shot, `SHF_XWRMVEL` set in `flags` is `SHF_SPEEDOFF`, so a change
+    of the integer x velocity also writes `nSpeed − prev.nSpeed` as a byte
+    (wrapped when negative), which the reader adds on top of the
+    `SHF_NG_SPEEDOFF` byte it subtracts.
+
+  `rl-sim::shot_codec` ports the bytes, not a formula.
 - **Position:** x and y offsets are read, negated, and **never applied to `cPos`**. Every
   small shot keeps the first shot's decoded position.
 - **Velocity:** `cWormVel.x -= byte` only when `SHF_NG_XWRMVEL` is set, i.e.

@@ -39,6 +39,16 @@ pub struct SimSettings {
     pub weapon_combos: bool,
     /// `InstantAirJump`: worms can jump in mid-air (`CWorm::Prepare`, `src/common/CWorm.cpp:323`).
     pub instant_air_jump: bool,
+    /// `LoadingTime`, in percent: weapons reload in `100 / LoadingTime` times their time.
+    pub loading_time: i32,
+    /// `ProjRelativeVel`: shots carry the worm's velocity.
+    pub proj_relative_vel: bool,
+    /// `ShootSpawnDistance`: projectiles spawn this far from the worm along the aim.
+    pub shoot_spawn_distance: f32,
+    /// `LX56WallShooting`: new projectiles ignore collisions for 11-12 ms.
+    pub lx56_wall_shooting: bool,
+    /// `DisableWpnsWhenEmpty`: an empty weapon is removed instead of reloading.
+    pub disable_wpns_when_empty: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +86,11 @@ impl SimSettings {
             ninjarope_precision: 1.0,
             weapon_combos: true,
             instant_air_jump: false,
+            loading_time: 100,
+            proj_relative_vel: true,
+            shoot_spawn_distance: 8.0,
+            lx56_wall_shooting: true,
+            disable_wpns_when_empty: false,
         }
     }
 
@@ -104,6 +119,8 @@ impl SimSettings {
             ("RopeGravity", self.rope_gravity, 0.0, 200.0),
             ("RopeFallingGravity", self.rope_falling_gravity, 0.0, 200.0),
             ("NinjaropePrecision", self.ninjarope_precision, 0.0, 10.0),
+            ("LoadingTime", self.loading_time as f32, 0.0, 500.0),
+            ("ShootSpawnDistance", self.shoot_spawn_distance, 0.0, 20.0),
         ];
         for (k, v, min, max) in ranges {
             if !(min..=max).contains(&v) {
@@ -170,6 +187,11 @@ impl SimSettings {
             ninjarope_precision: num("NinjaropePrecision")?,
             weapon_combos: flag("WeaponCombos")?,
             instant_air_jump: flag("InstantAirJump")?,
+            loading_time: int("LoadingTime")?,
+            proj_relative_vel: flag("ProjRelativeVel")?,
+            shoot_spawn_distance: num("ShootSpawnDistance")?,
+            lx56_wall_shooting: flag("LX56WallShooting")?,
+            disable_wpns_when_empty: flag("DisableWpnsWhenEmpty")?,
         };
         settings.validate()?;
         Ok(settings)
@@ -216,6 +238,11 @@ mod tests {
             ("NinjaropePrecision", "1"),
             ("WeaponCombos", "true"),
             ("InstantAirJump", "false"),
+            ("LoadingTime", "100"),
+            ("ProjRelativeVel", "true"),
+            ("ShootSpawnDistance", "8"),
+            ("LX56WallShooting", "true"),
+            ("DisableWpnsWhenEmpty", "false"),
         ]
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))

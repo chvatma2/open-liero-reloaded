@@ -6,6 +6,7 @@
 //! 11 ms by default) as fit up to the current frame time, then advances the
 //! frame clock by 10 ms. Some frames run no sub-step at all.
 
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use rl_math::{AbsTime, GlibcRand, Mt19937, TimeDiff, Vec2};
@@ -13,8 +14,12 @@ use rl_terrain::{Stamp, Terrain};
 
 use crate::SimSettings;
 use crate::input::{Keys, Latches};
+use crate::mod_rt::SimMod;
 use crate::physics::{Ctx, simulate_worm};
+use crate::projectile::{Projectile, ProjectilePool, SpawnCtx};
 use crate::rng::Draws;
+use crate::shots::{MAX_SHOOTINGS, ShootList, Shot, encode_decode, process_shot, spawn_time};
+use crate::weapons::{ShootCtx, laser_sight, player_shoot, worm_shoot};
 use crate::worm::{Loadout, Worm};
 
 /// OLX `SPAWN_HOLESIZE` (`include/Consts.h:36`): the size-4 (largest) hole.
@@ -23,10 +28,13 @@ const SPAWN_HOLE: usize = 4;
 pub const MAX_WORMS: usize = 32;
 /// `Game::FixedFrameTime`.
 const FRAME_MS: u64 = 10;
+/// The oracle pins `tLX->currentTime` to `simulationTime + K` (spec §18 D2).
+pub const CLOCK_OFFSET_MS: u64 = 10;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct World {
     settings: SimSettings,
+    sim_mod: Arc<SimMod>,
     terrain: Terrain,
     /// The theme's five hole stamps, smallest first.
     holes: Vec<Stamp>,
@@ -36,6 +44,14 @@ pub struct World {
     time: AbsTime,
     /// `CClient::fLastSimulationTime`: where the physics clock is.
     physics_time: AbsTime,
+    /// `game.serverFrame`: 0 at the start, +1 at the start of each frame.
+    server_frame: u64,
+    /// The server's shot list for the local client.
+    shots: ShootList,
+    /// The shots delivered right before the last frame.
+    last_shots: Vec<Shot>,
+    /// The client's projectiles (`cProjectiles`).
+    projectiles: ProjectilePool,
     /// OLX's `rand()` and `FindSpot` generators and the entity counter.
     draws: Draws,
     /// Reused each physics step so that `tick` does not allocate (spec §5.3).
@@ -57,8 +73,10 @@ impl World {
     /// `holes` are the theme's hole stamps (`hole1` to `hole5`). Like OLX, a
     /// missing hole carves nothing. `seed` is the match seed (`simSetSeed`):
     /// it seeds both the `rand()` stream and the `FindSpot` `mt19937`.
+    /// Weapon and projectile ids are indices into `sim_mod`.
     pub fn new(
         settings: SimSettings,
+        sim_mod: Arc<SimMod>,
         terrain: Terrain,
         holes: Vec<Stamp>,
         start: AbsTime,
@@ -66,12 +84,17 @@ impl World {
     ) -> Self {
         Self {
             settings,
+            sim_mod,
             terrain,
             holes,
             worms: Vec::new(),
             latches: Vec::new(),
             time: start,
             physics_time: start,
+            server_frame: 0,
+            shots: ShootList::new(),
+            last_shots: Vec::with_capacity(MAX_SHOOTINGS),
+            projectiles: ProjectilePool::new(ProjectilePool::DEFAULT_CAPACITY),
             draws: Draws::new(GlibcRand::new(seed), Mt19937::new(seed)),
             others: Scratch::default(),
         }
@@ -87,6 +110,32 @@ impl World {
 
     pub fn terrain(&self) -> &Terrain {
         &self.terrain
+    }
+
+    pub fn sim_mod(&self) -> &SimMod {
+        &self.sim_mod
+    }
+
+    /// Used projectile slots in slot order.
+    pub fn projectiles(&self) -> impl Iterator<Item = (usize, &Projectile)> {
+        self.projectiles.iter()
+    }
+
+    /// The shots delivered and processed right before the last frame (Model R),
+    /// with their spawn times and their random seeds as spawning left them.
+    pub fn last_shots(&self) -> &[Shot] {
+        &self.last_shots
+    }
+
+    /// `game.serverFrame`.
+    pub fn server_frame(&self) -> u64 {
+        self.server_frame
+    }
+
+    /// Sets worm `i`'s health before the match starts (the oracle's
+    /// `simSetHealth`). Panics if there is no worm `i`.
+    pub fn set_health(&mut self, i: usize, health: f32) {
+        self.worms[i].health = health;
     }
 
     /// Gives worm `i` its weapons and counters, before the match starts.
@@ -149,6 +198,9 @@ impl World {
     /// One 100 Hz frame. `keys[i]` is what worm `i` holds during this frame;
     /// a worm with no entry holds nothing.
     pub fn tick(&mut self, keys: &[Keys]) {
+        // What OLX does between the previous frame and this one (spec §18 D1, D10).
+        self.deliver_shots();
+        self.server_frame += 1;
         self.gus_speed_round_trip();
         for (i, latch) in self.latches.iter_mut().enumerate() {
             latch.set(keys.get(i).copied().unwrap_or(Keys(0)));
@@ -191,6 +243,37 @@ impl World {
         }
     }
 
+    /// Model R (spec §18 D1, `OracleHooks::deliverShots`): between frames,
+    /// once the frame clock has advanced, the shot list started before the
+    /// last frame goes through OLX's encode/decode round trip, and each
+    /// decoded shot is processed (`CClient::ProcessServerShotList`,
+    /// `src/client/CClient_Game.cpp:813-824`) with the clock pinned to
+    /// `simulationTime + K`. It runs at the start of [`World::tick`], before
+    /// `serverFrame` advances, which is the same moment.
+    fn deliver_shots(&mut self) {
+        self.last_shots.clear();
+        let Some(list) = self.shots.take_due() else { return };
+        let decoded = encode_decode(list, self.sim_mod.weapons().len() as i32 - 1);
+        list.clear();
+        let current = self.time + TimeDiff(CLOCK_OFFSET_MS);
+        let mut ctx = SpawnCtx {
+            sim_mod: &self.sim_mod,
+            pool: &mut self.projectiles,
+            rand: &mut self.draws.rand,
+            settings: &self.settings,
+            now: self.time,
+        };
+        for mut shot in decoded {
+            let spawn = spawn_time(shot.time, self.server_frame, current);
+            shot.spawn = spawn;
+            process_shot(&mut shot, spawn, &mut self.worms, &mut ctx);
+            if self.last_shots.len() < MAX_SHOOTINGS {
+                self.last_shots.push(shot);
+            }
+        }
+    }
+
+    /// One LX56 sub-step of `CClient::Simulation` (`src/client/CClient_Game.cpp:97-221`).
     fn physics_step(&mut self, dt: f32) {
         for i in 0..self.worms.len() {
             // Taken afresh for each worm: OLX's rope sees the worms already moved this step.
@@ -203,253 +286,33 @@ impl World {
                 terrain: &mut self.terrain,
                 holes: &self.holes,
                 settings: &self.settings,
+                sim_mod: &self.sim_mod,
                 worms: others,
                 draws: &mut self.draws,
             };
             simulate_worm(&mut self.worms[i], &mut self.latches[i], &mut ctx);
+            // `CClient_Game.cpp:155-176`: the server's fire code, then the client's.
+            let w = &mut self.worms[i];
+            if w.state.shoot && w.alive {
+                let mut ctx = ShootCtx {
+                    sim_mod: &self.sim_mod,
+                    settings: &self.settings,
+                    list: &mut self.shots,
+                    rand: &mut self.draws.rand,
+                    server_time: TimeDiff(self.server_frame.wrapping_mul(FRAME_MS)),
+                };
+                worm_shoot(w, &mut ctx);
+            }
+            if w.alive {
+                if w.state.shoot {
+                    player_shoot(w, &self.sim_mod);
+                }
+                laser_sight(w, &self.sim_mod, &mut self.draws);
+            }
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use alloc::vec;
-    use rl_data::image::{Rgba, RgbaImage};
-    use rl_data::level::{Material, MaterialGrid};
-
-    fn holes() -> Vec<Stamp> {
-        // Same sizes as the Dirt theme's hole1..hole5.
-        [5, 7, 9, 11, 15]
-            .into_iter()
-            .map(|size| {
-                let mut img = RgbaImage::new(size, size);
-                for y in 0..size {
-                    for x in 0..size {
-                        img.set(x, y, Rgba::MAGENTA);
-                    }
-                }
-                Stamp::from_image(&img)
-            })
-            .collect()
-    }
-
-    fn world(fill: Material) -> World {
-        let terrain = Terrain::from_grid(&MaterialGrid::new(200, 200, fill));
-        World::new(SimSettings::lx56(), terrain, holes(), AbsTime(0), 1)
-    }
-
-    #[test]
-    fn physics_steps_follow_the_two_clocks() {
-        // 11 ms physics steps against 10 ms frames: none in frames 0 and 1,
-        // one per frame from frame 2, none again in frame 12 (OLX trace `fall`).
-        let mut w = world(Material::Background);
-        w.spawn_worm(100, 20);
-        let mut stepped = vec![];
-        for _ in 0..13 {
-            let before = w.worms()[0].vel.y;
-            w.tick(&[Keys(0)]);
-            stepped.push(w.worms()[0].vel.y - before > 0.5);
-        }
-        let expected = [false, false, true, true, true, true, true, true, true, true, true, true, false];
-        assert_eq!(stepped, expected);
-    }
-
-    #[test]
-    fn gus_speed_round_trip_matches_olx() {
-        // From the oracle: OLX turns 6.60000134 into 6.60000086 between frames 7 and 8 of `fall`.
-        let mut w = world(Material::Background);
-        w.spawn_worm(100, 20);
-        w.worms[0].vel.y = f32::from_bits(0x40d3_3336);
-        w.tick(&[Keys(0)]); // frame 0 runs no physics step
-        assert_eq!(w.worms()[0].vel.y.to_bits(), 0x40d3_3335);
-    }
-
-    #[test]
-    fn spawning_carves_the_largest_hole() {
-        let mut w = world(Material::Dirt);
-        w.spawn_worm(50, 50);
-        assert_eq!(w.terrain().material(50, 50), Some(Material::Background));
-        assert_eq!(w.terrain().material(43, 50), Some(Material::Background));
-        assert_eq!(w.terrain().material(42, 50), Some(Material::Dirt));
-        assert_eq!(w.worms()[0].dirt_count, 0, "spawning does not count as digging");
-    }
-
-    #[test]
-    fn weapon_combos_allow_changing_weapons_while_firing() {
-        // OLX getInput: `if(slots > 0 && (!bShoot || allowCombo))`, and the
-        // LX56 preset has WeaponCombos on.
-        let mut w = world(Material::Background);
-        w.spawn_worm(100, 20);
-        let slot = crate::Slot { weapon: 0, charge: 1.0, reloading: false, last_fire: 0.0 };
-        let loadout =
-            crate::Loadout { slots: vec![slot; 5], current_weapon: 0, lives: -2, kills: 0, deaths: 0 };
-        w.set_loadout(0, &loadout);
-        let held = Keys(Keys::CHANGE | Keys::FIRE);
-        w.tick(&[held]);
-        w.tick(&[held]);
-        w.tick(&[Keys(held.0 | Keys::RIGHT)]); // frame 2: the first physics step reads the press
-        assert_eq!(w.worms()[0].current_weapon, 1);
-    }
-
-    #[test]
-    fn instant_air_jump_lets_a_falling_worm_jump() {
-        let mut settings = SimSettings::lx56();
-        settings.instant_air_jump = true;
-        let terrain = Terrain::from_grid(&MaterialGrid::new(200, 200, Material::Background));
-        let mut w = World::new(settings, terrain, holes(), AbsTime(0), 1);
-        w.spawn_worm(100, 20);
-        w.tick(&[Keys(0)]);
-        w.tick(&[Keys(0)]);
-        w.tick(&[Keys(Keys::JUMP)]);
-        assert!(w.worms()[0].vel.y < -60.0, "vy {}", w.worms()[0].vel.y);
-    }
-
-    #[test]
-    fn a_theme_without_holes_does_not_panic() {
-        // OLX's CarveHole returns 0 when the theme lacks the hole image.
-        let terrain = Terrain::from_grid(&MaterialGrid::new(50, 50, Material::Dirt));
-        let mut w = World::new(SimSettings::lx56(), terrain, Vec::new(), AbsTime(0), 1);
-        w.spawn_worm(25, 25);
-        for _ in 0..20 {
-            w.tick(&[Keys(Keys::RIGHT | Keys::LEFT)]);
-        }
-        assert_eq!(w.terrain().material(25, 25), Some(Material::Dirt));
-    }
-
-    /// Two worms digging, jumping and roping through dirt, varying every few frames.
-    fn busy_keys(frame: usize) -> [Keys; 2] {
-        const SEQ: [u8; 6] = [
-            Keys::RIGHT,
-            Keys::RIGHT | Keys::LEFT,
-            Keys::ROPE | Keys::UP,
-            Keys::JUMP | Keys::LEFT,
-            Keys::DOWN | Keys::RIGHT,
-            0,
-        ];
-        [Keys(SEQ[(frame / 7) % 6]), Keys(SEQ[(frame / 5 + 3) % 6])]
-    }
-
-    #[test]
-    fn a_clone_evolves_identically() {
-        let mut a = world(Material::Dirt);
-        a.spawn_worm(60, 100);
-        a.spawn_worm(140, 100);
-        let start = a.clone();
-        for f in 0..100 {
-            a.tick(&busy_keys(f));
-        }
-        let mut b = a.clone();
-        for f in 100..400 {
-            a.tick(&busy_keys(f));
-            b.tick(&busy_keys(f));
-        }
-        assert_eq!(a, b);
-        assert_ne!(a.terrain().material_hash(), start.terrain().material_hash(), "the worms dug");
-        assert_ne!(a.worms()[0].pos, start.worms()[0].pos, "the worms moved");
-    }
-
-    #[test]
-    fn a_rope_press_without_permission_still_clears_the_rope() {
-        // OLX CNinjaRope::Shoot clears the rope before it checks canUseNinja.
-        let mut w = world(Material::Background);
-        w.spawn_worm(100, 100);
-        for k in [0, 0, Keys::ROPE] {
-            w.tick(&[Keys(k)]);
-        }
-        assert!(w.worms()[0].rope.released);
-        w.worms[0].can_use_ninja = false;
-        w.tick(&[Keys(0)]);
-        w.tick(&[Keys(Keys::ROPE)]);
-        assert!(!w.worms()[0].rope.released);
-    }
-
-    #[test]
-    fn missing_keys_mean_nothing_is_held() {
-        let mut w = world(Material::Background);
-        w.spawn_worm(50, 100);
-        w.spawn_worm(150, 100);
-        for _ in 0..5 {
-            w.tick(&[Keys(Keys::RIGHT), Keys(Keys::RIGHT)]);
-        }
-        w.tick(&[Keys(Keys::RIGHT)]);
-        w.tick(&[Keys(Keys::RIGHT)]);
-        assert!(w.worms()[0].state.moving);
-        assert!(!w.worms()[1].state.moving);
-    }
-
-    #[test]
-    fn an_empty_map_does_not_panic() {
-        let terrain = Terrain::from_grid(&MaterialGrid::new(0, 0, Material::Dirt));
-        let mut w = World::new(SimSettings::lx56(), terrain, holes(), AbsTime(0), 1);
-        w.spawn_worm(0, 0);
-        for k in [0, 0, Keys::ROPE, 0, Keys::RIGHT, Keys::LEFT | Keys::RIGHT, Keys::JUMP] {
-            w.tick(&[Keys(k)]);
-        }
-    }
-
-    /// Holds right and taps left every 20 frames, as the `dig` scenario does.
-    fn dig_world(fill: Material) -> World {
-        let mut w = world(fill);
-        w.spawn_worm(100, 100);
-        w
-    }
-
-    fn tap_frames(w: &mut World, n: usize) {
-        for f in 0..n {
-            let tap = f > 20 && f % 20 == 0;
-            w.tick(&[Keys(if tap { Keys::RIGHT | Keys::LEFT } else { Keys::RIGHT })]);
-        }
-    }
-
-    #[test]
-    fn digging_into_dirt_draws_six_and_fills_three_entities() {
-        // OLX `CarveHole(CVec)` (CMap.cpp:2172-2199): 3 particles, each `GetRandomVec()`.
-        let mut w = dig_world(Material::Dirt);
-        tap_frames(&mut w, 200);
-        let calls = w.rand_calls();
-        assert!(calls > 0 && calls.is_multiple_of(6), "{calls} draws");
-        assert_eq!(w.entity_count() as u64 * 2, calls);
-    }
-
-    #[test]
-    fn digging_in_the_air_draws_nothing() {
-        let mut w = dig_world(Material::Background);
-        tap_frames(&mut w, 40);
-        assert_eq!((w.rand_calls(), w.entity_count()), (0, 0));
-    }
-
-    #[test]
-    fn the_rope_hooking_dirt_draws_ten_once() {
-        // `simulateNinjarope` (PhysicsLX56.cpp:590-608): 5 particles on the first hit.
-        let mut w = dig_world(Material::Dirt);
-        for k in [0, 0, Keys::ROPE] {
-            w.tick(&[Keys(k)]);
-        }
-        for _ in 0..30 {
-            w.tick(&[Keys(0)]);
-        }
-        assert!(w.worms()[0].rope.attached);
-        assert_eq!((w.rand_calls(), w.entity_count()), (10, 5));
-    }
-
-    #[test]
-    fn generators_are_seeded_from_the_match_seed() {
-        let terrain = Terrain::from_grid(&MaterialGrid::new(10, 10, Material::Background));
-        let a = World::new(SimSettings::lx56(), terrain.clone(), holes(), AbsTime(0), 7);
-        let b = World::new(SimSettings::lx56(), terrain, holes(), AbsTime(0), 8);
-        assert_ne!(a, b);
-        assert_eq!((a.rand_calls(), a.mt_calls()), (0, 0));
-    }
-
-    #[test]
-    fn at_most_32_worms() {
-        // OLX MAX_WORMS (include/Consts.h:34).
-        let mut w = world(Material::Background);
-        for i in 0..32 {
-            assert_eq!(w.spawn_worm(10 + i * 5, 50), Some(i as usize));
-        }
-        assert_eq!(w.spawn_worm(10, 80), None);
-        assert_eq!(w.worms().len(), 32);
-    }
-}
+#[path = "world_tests.rs"]
+mod tests;

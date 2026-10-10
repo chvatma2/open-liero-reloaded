@@ -8,6 +8,7 @@ use rl_terrain::{PX_DIRT, PX_EMPTY, Stamp, Terrain};
 
 use crate::SimSettings;
 use crate::input::Latches;
+use crate::mod_rt::SimMod;
 use crate::rng::Draws;
 use crate::worm::{Dir, Worm};
 
@@ -18,6 +19,7 @@ pub(crate) struct Ctx<'a> {
     pub terrain: &'a mut Terrain,
     pub holes: &'a [Stamp],
     pub settings: &'a SimSettings,
+    pub sim_mod: &'a SimMod,
     /// `(id, alive, pos)` of every worm, for the rope.
     pub worms: &'a [(i32, bool, Vec2)],
     pub draws: &'a mut Draws,
@@ -144,8 +146,8 @@ fn carve_small(ctx: &mut Ctx, pos: Vec2) -> i32 {
     ctx.holes.get(3).map_or(0, |hole| ctx.terrain.carve_hole(hole, pos.x as i32, pos.y as i32) as i32)
 }
 
-/// `PhysicsEngine::simulateWorm` for a local worm (`PhysicsLX56.cpp:272-469`),
-/// without the weapon part (M4). Input is read first, as in OLX.
+/// `PhysicsEngine::simulateWorm` for a local worm (`PhysicsLX56.cpp:272-469`).
+/// Input is read first, as in OLX; the weapon slot is simulated last.
 pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
     let s = ctx.settings;
     get_input(w, keys, ctx.now, s);
@@ -237,6 +239,8 @@ pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
             w.vel.x = 0.0;
         }
     }
+
+    crate::weapons::simulate_worm_weapon(w, dt, s, ctx.sim_mod);
 }
 
 /// `moveAndCheckWormCollision` (`PhysicsLX56.cpp:88-269`) without wrap-around.

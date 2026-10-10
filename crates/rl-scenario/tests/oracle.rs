@@ -32,10 +32,23 @@ const EXPECTED_TO_DIVERGE: [&str; 10] = [
     "two-worms-fire",
 ];
 
+/// Weapon scenarios (`weapons/<mod>/<weapon>`, `cargo xtask oracle-gen-weapons`)
+/// that already match: their projectiles neither move far nor change
+/// anything `CHECKED` compares. Every other weapon scenario must still diverge.
+const MATCHING_WEAPONS: [&str; 7] = [
+    "weapons/classic/booby-trap",
+    "weapons/classic/float-mine",
+    "weapons/classic/mine",
+    "weapons/mw-1-0/electro-gun",
+    "weapons/mw-1-0/jet-pack",
+    "weapons/mw-1-0/nuclear-mines",
+    "weapons/mw-1-0/trap-mines",
+];
+
 /// The scenarios that must still diverge: [`EXPECTED_TO_DIVERGE`] and every
-/// weapon scenario (`weapons/<mod>/<weapon>`, `cargo xtask oracle-gen-weapons`).
+/// weapon scenario not in [`MATCHING_WEAPONS`].
 fn expected_to_diverge(name: &str) -> bool {
-    name.starts_with("weapons/") || EXPECTED_TO_DIVERGE.contains(&name)
+    (name.starts_with("weapons/") && !MATCHING_WEAPONS.contains(&name)) || EXPECTED_TO_DIVERGE.contains(&name)
 }
 
 #[test]
@@ -44,7 +57,7 @@ fn every_scenario_matches_olx_bit_for_bit() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/oracle");
     let names = rl_scenario::fixture_names(&dir).unwrap();
     let matching = ["aim", "dig", "fall", "jump", "rope", "rope-dirt", "tap", "walk"];
-    for n in matching.iter().chain(&EXPECTED_TO_DIVERGE) {
+    for n in matching.iter().chain(&EXPECTED_TO_DIVERGE).chain(&MATCHING_WEAPONS) {
         assert!(names.iter().any(|m| m == n), "missing scenario {n}");
     }
     assert_eq!(names.iter().filter(|n| n.starts_with("weapons/")).count(), 38 + 50, "weapon scenarios");

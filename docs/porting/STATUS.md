@@ -19,7 +19,11 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Ninja rope | `src/client/CNinjaRope.cpp`, `PhysicsLX56.cpp:505-604` | `rl-sim::rope` | ported | `rope` |
 | Hole carving (material) | `src/common/CMap.cpp:1005-1105`, `2172-2199` | `rl-terrain::Terrain::carve_hole` | ported | `dig` (244 dirt cells), spawn holes (`mh` at frame −1) |
 | Float `sinf`/`cosf` (aim directions) | glibc 2.35 `sysdeps/ieee754/flt-32/s_sinf.c`, `s_cosf.c` (x86-64 FMA variant) | `rl-math::trig` | ported | all 2³² inputs bit-identical to the oracle container's glibc (a throwaway FFI comparator run in `rl-olx-src`) |
-| Weapons, projectiles, bonuses, damage, `rand()` | `PhysicsLX56_Projectiles.cpp`, `CClient_Game.cpp` | — | not started (plan 4) | — |
+| Mod compiled to OLX's projectile tree (`SimMod`) | `src/common/CGameScript.cpp:833-1157` (`LoadProjectile` order) | `rl-sim::mod_rt` | ported (plan 4 task 4) | every scenario: indices and path names equal the trace header's (`rl-scenario` checks) |
+| Weapon slots, firing, laser sight entity | `src/common/PhysicsLX56.cpp:471-498`, `src/server/CServer_Game.cpp:366-466`, `src/client/CClient_Game.cpp:496-544`, `751-808` | `rl-sim::weapons` | ported (beam drawing and specials: task 8) | `slots` of all 106 scenarios until the first projectile effect; `beam-burst` slots for the whole trace |
+| Shot list, encode/decode round trip, Model R delivery, `ProcessShot` | `src/common/CShootList.cpp`, `CClient_Game.cpp:813-946` | `rl-sim::shots`, `rl-sim::shot_codec` | ported (beam trace: task 8) | `s` of `multi-shot` for the whole trace, including the corrupted `spd` |
+| Projectile pool, `Proj_SpawnInfo::apply` (shots), `CProjectile::Spawn` | `include/FastVector.h`, `src/common/PhysicsLX56_Projectiles.cpp:562-640`, `src/common/CProjectile.cpp:43-166` | `rl-sim::projectile` | ported (projectile parents: task 5) | every projectile field at its spawn frame (`rl-cli scenario --fields checked+projectiles+proj_hidden+clocks`) |
+| Projectile motion, explosions, bonuses, damage | `PhysicsLX56_Projectiles.cpp`, `CClient_Game.cpp` | — | not started (plan 4 tasks 5-9) | — |
 
 ## Deliberate deviations
 
@@ -49,6 +53,18 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     were queued in (D10), not over UDP;
   - scenarios place bonuses with `simPlaceBonus` and stay shorter than
     `BonusFrequency` (30 s), so the server never spawns one at a random spot.
+
+- **`SimMod` limits** (`rl-sim::mod_rt`): a pack's projectile tree may have at
+  most 4096 occurrences after expansion and 128 levels, and a spawn amount at
+  most 10 000; a missing reference is an error. OLX loads anything and
+  crashes on a missing projectile. A projectile that spawns an ancestor (a
+  cycle, which only hand-made packs can express) refers back to it.
+- **Spawn time past frame 819 205** (about 2.3 h): when the decoded shot time is
+  later than the server time, OLX falls back to `currentTime - ping / 2`
+  (`shoot_t::spawnTime`). The port takes the local client's ping as 0.
+- `rl-sim` delivers the shot list at the start of `World::tick`, before
+  `serverFrame` advances; that is the oracle's `betweenFrames` moment, and a
+  frame's state is recorded before it, as in OLX's trace.
 
 - Importers reject malformed input that OLX would read as garbage: truncated
   files, unknown weapon or projectile types, and nesting deeper than 128 levels.
@@ -98,6 +114,13 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   - The simulation's `PlayerInput` must keep both latches.
 - **Digging** with the keyboard is a tap of the opposite direction while
   holding a direction (`leftOnce` / `rightOnce`), not a dedicated key.
+- **Shot runs:** consecutive shots share a packet only while worm, weapon,
+  time (≤ 255 ms), angle, `nSpeed` and the integer worm velocity each change
+  by at most 255 between neighbours. `nSpeed` is the worm's speed × 100, so a
+  speed change of 2.55 px/s already splits a pair (`multi-shot`, frames 59–63).
+  The decoded `spd` in a trace is not `nSpeed`: the header keeps it modulo 256
+  above 510, and a small shot gets a wrapped extra speed byte through the
+  misplaced `SHF_XWRMVEL` flag.
 - **Shots:** a Minigun shot fired in frame 2's sub-step (the first one) is
   delivered after frame 3 and its projectile appears in frame 4's trace line
   (`fire-minigun`). Shots of different worms form separate runs, so separate

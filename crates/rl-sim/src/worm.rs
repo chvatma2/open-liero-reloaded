@@ -30,7 +30,7 @@ impl WormState {
     }
 }
 
-/// OLX `wpnslot_t`. Not simulated in M3: weapons arrive with M4.
+/// OLX `wpnslot_t`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Slot {
     pub weapon: i32,
@@ -111,6 +111,24 @@ impl Worm {
             last_input_time: now,
             last_air_jump_time: AbsTime(0),
         }
+    }
+
+    /// `CWorm::getCurWeapon`/`writeCurWeapon` (`src/game/CWorm.h:539-549`): the
+    /// current slot, or the last one if the index is past the end. Panics
+    /// if the worm has no slots; callers check first, as OLX does.
+    pub fn current_slot(&self) -> &Slot {
+        &self.slots[self.current_slot_index()]
+    }
+
+    pub fn current_slot_mut(&mut self) -> &mut Slot {
+        let i = self.current_slot_index();
+        &mut self.slots[i]
+    }
+
+    /// `MIN(tWeapons.size()-1, (size_t)iCurrentWeapon)`: a negative index
+    /// becomes a huge `size_t`, so it picks the last slot too.
+    fn current_slot_index(&self) -> usize {
+        (self.current_weapon as usize).min(self.slots.len().saturating_sub(1))
     }
 
     fn direction(&self, side: Dir) -> Vec2 {

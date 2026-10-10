@@ -16,19 +16,54 @@ pub struct Args {
     dump: Option<i64>,
     /// Compare every trace field, not only those the simulation reproduces so far
     /// (`rl_scenario::CHECKED`).
-    #[arg(long)]
+    #[arg(long, conflicts_with = "fields")]
     all: bool,
+    /// Compare these field groups, `+`-separated, such as
+    /// `checked+projectiles+proj_hidden+clocks` (`checked` is `rl_scenario::CHECKED`).
+    #[arg(long)]
+    fields: Option<String>,
+}
+
+/// Parses `--fields`.
+fn parse_fields(s: &str) -> anyhow::Result<rl_oracle::Fields> {
+    use rl_oracle::Fields;
+    let mut out = Fields::NONE;
+    for name in s.split('+') {
+        out = out.union(match name {
+            "checked" => rl_scenario::CHECKED,
+            "all" => Fields::ALL,
+            "worm_motion" => Fields::WORM_MOTION,
+            "slots" => Fields::SLOTS,
+            "rope" => Fields::ROPE,
+            "material" => Fields::MATERIAL,
+            "rand" => Fields::RAND,
+            "shots" => Fields::SHOTS,
+            "projectiles" => Fields::PROJECTILES,
+            "proj_hidden" => Fields::PROJ_HIDDEN,
+            "health" => Fields::HEALTH,
+            "score" => Fields::SCORE,
+            "respawn" => Fields::RESPAWN,
+            "bonuses" => Fields::BONUSES,
+            "clocks" => Fields::CLOCKS,
+            other => anyhow::bail!("unknown field group {other:?}"),
+        });
+    }
+    Ok(out)
 }
 
 /// Returns `Ok(false)` if any scenario diverges from OLX.
 pub fn run(args: &Args) -> anyhow::Result<bool> {
     let names =
         if args.names.is_empty() { rl_scenario::fixture_names(&args.fixtures)? } else { args.names.clone() };
+    let fields = match (&args.fields, args.all) {
+        (Some(f), _) => parse_fields(f)?,
+        (None, true) => rl_oracle::Fields::ALL,
+        (None, false) => rl_scenario::CHECKED,
+    };
     let mut ok = true;
     for name in names {
         let (sc, expected) = rl_scenario::load_fixture(&args.fixtures, &name)?;
         let actual = rl_scenario::replay(&args.content, &sc, &expected)?;
-        let fields = if args.all { rl_oracle::Fields::ALL } else { rl_scenario::CHECKED };
         match rl_oracle::compare_fields(&expected, &actual, &sc.tolerances, fields) {
             None => println!("ok   {name}: {} frames match OLX", expected.frames.len()),
             Some(d) => {

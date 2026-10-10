@@ -18,7 +18,15 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   generators, seeded by `World::new(.., seed)`, plus the dedicated server's
   entity counter. Cosmetic draws (digging, rope hook) are made and discarded,
   in OLX's order, because they advance the stream gameplay draws from.
-- **Not here yet (M4):** weapons, projectiles, bonuses, damage.
+- **Weapons** (M4): `World::new` takes an `Arc<SimMod>` (`mod_rt.rs`), the
+  mod compiled to OLX's indices: weapon ids are `ModDef` order, projectiles
+  are expanded into OLX's per-occurrence load-order tree with path names
+  (`bazooka.spawn`). Slots and firing are in `weapons.rs`, the shot list,
+  its byte-exact network round trip (`shot_codec.rs`) and Model R delivery in
+  `shots.rs` (delivered at the start of `tick`), projectiles and their pool
+  in `projectile.rs`. `tick` must not allocate: buffers are sized in `new`.
+- **Not here yet (M4):** projectile motion, explosions, beams' map trace,
+  bonuses, damage.
 
 Test: `cargo nextest run -p rl-sim`. The oracle test needs imported content;
 `cargo xtask check` sets `RL_CONTENT_DIR`.

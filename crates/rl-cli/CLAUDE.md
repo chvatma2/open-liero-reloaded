@@ -1,12 +1,14 @@
 # rl-cli
 
-The headless command-line tool. In this milestone it has two commands:
+The headless command-line tool. Its commands:
 
 - `rl-cli import --olx <share/gamedir> --out <dir> [--mod D]... [--level F]... [--theme D]... [--skins]`
   writes one pack per item to `<out>/<pack id>/`, plus `import-report.ron`.
   It exits with status 1 if any item failed, and still imports the rest.
 - `rl-cli validate <pack-or-parent-dir>...` prints diagnostics and exits with
   status 1 on any error.
+- `rl-cli scenario [name...] [--dump F] [--all | --fields a+b]` replays oracle
+  scenarios in `rl-sim` and prints the first divergence of each.
 
 **Layer 6.** Later milestones add `match`, `replay`, `scenario`, `dump-state` and `render` (spec §7.4).
 
