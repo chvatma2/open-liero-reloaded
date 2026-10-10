@@ -5,14 +5,31 @@ use rl_data::image::{Rgba, RgbaImage};
 use rl_scene::{AtlasId, SceneAssets};
 
 /// Where [`FxAssets`] registers its images: [`SceneAssets`], or a test's list.
+///
+/// Registration happens before the renderer packs the atlas
+/// (`rl_render::Renderer::upload_atlas`): an image added later (a worm's
+/// gibs) is drawn only after the atlas is uploaded again.
 pub trait Atlas {
     /// Adds `image` (already colour-keyed) and returns its id.
     fn add_image(&mut self, name: String, image: RgbaImage, px_per_world: u32) -> AtlasId;
+
+    /// A 1 × 1 white image (tinted, a solid pixel block): the atlas's own
+    /// when it has one, else a new one.
+    fn white(&mut self) -> AtlasId {
+        let mut white = RgbaImage::new(1, 1);
+        white.set(0, 0, Rgba::rgb(255, 255, 255));
+        self.add_image("fx:white".into(), white, 2)
+    }
 }
 
 impl Atlas for SceneAssets {
     fn add_image(&mut self, name: String, image: RgbaImage, px_per_world: u32) -> AtlasId {
         SceneAssets::add_image(self, name, image, px_per_world)
+    }
+
+    /// [`SceneAssets::white`], shared rather than duplicated.
+    fn white(&mut self) -> AtlasId {
+        self.white
     }
 }
 
@@ -78,15 +95,10 @@ pub struct FxAssets {
     dirt_default: Rgba,
 }
 
-/// OLX's colour key, made transparent.
+/// OLX's colour key (magenta, or (254,0,254) by the corner rule of
+/// [`RgbaImage::olx_color_key`]), made transparent.
 fn keyed(mut img: RgbaImage) -> RgbaImage {
-    for y in 0..img.height() {
-        for x in 0..img.width() {
-            if img.get(x, y).same_rgb(Rgba::MAGENTA) {
-                img.set(x, y, Rgba::TRANSPARENT);
-            }
-        }
-    }
+    img.key_transparent();
     img
 }
 
@@ -94,13 +106,11 @@ impl FxAssets {
     /// Registers `images` in `atlas`. `dirt_default` is the theme's
     /// [`default_dirt_colour`].
     pub fn new(images: FxImages, dirt_default: Rgba, atlas: &mut impl Atlas) -> FxAssets {
-        let mut white = RgbaImage::new(1, 1);
-        white.set(0, 0, Rgba::rgb(255, 255, 255));
+        let white = atlas.white();
         let mut add = |name: &str, image: RgbaImage| {
             let (w, h) = (image.width(), image.height());
             FxSprite { atlas: atlas.add_image(format!("fx:{name}"), keyed(image), 2), w, h }
         };
-        let white = add("white", white).atlas;
         let explosion = add("explosion", images.explosion);
         let smoke = add("smoke", images.smoke);
         let chemsmoke = add("chemsmoke", images.chemsmoke);
@@ -212,6 +222,21 @@ mod tests {
             }
         }
         img
+    }
+
+    #[test]
+    fn keying_follows_olx_corner_rule() {
+        let bugged = Rgba::rgb(254, 0, 254);
+        let img = image(3, 3, |x, y| match (x, y) {
+            (0, 0) | (1, 1) => bugged,
+            (2, 1) => Rgba::MAGENTA,
+            _ => Rgba::BLACK,
+        });
+        let img = keyed(img);
+        assert_eq!(img.get(1, 1), Rgba::TRANSPARENT, "a bugged corner makes (254,0,254) the key");
+        assert_eq!(img.get(2, 1), Rgba::MAGENTA, "and magenta an ordinary colour");
+        let img = keyed(image(2, 1, |x, _| [Rgba::MAGENTA, Rgba::BLACK][x as usize]));
+        assert_eq!(img.get(0, 0), Rgba::TRANSPARENT);
     }
 
     #[test]

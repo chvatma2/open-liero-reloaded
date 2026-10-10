@@ -61,15 +61,10 @@ pub struct SceneAssets {
     default_look: WormLook,
 }
 
-/// OLX's colour key, made transparent.
+/// OLX's colour key (magenta, or (254,0,254) by the corner rule of
+/// [`RgbaImage::olx_color_key`]), made transparent.
 fn keyed(mut img: RgbaImage) -> RgbaImage {
-    for y in 0..img.height() {
-        for x in 0..img.width() {
-            if img.get(x, y).same_rgb(Rgba::MAGENTA) {
-                img.set(x, y, Rgba::TRANSPARENT);
-            }
-        }
-    }
+    img.key_transparent();
     img
 }
 
@@ -172,5 +167,17 @@ mod tests {
         let img = keyed(img);
         assert_eq!(img.get(0, 0), Rgba::TRANSPARENT);
         assert_eq!(img.get(1, 0), PLACEHOLDER);
+    }
+
+    #[test]
+    fn keying_follows_olx_corner_rule() {
+        let bugged = Rgba::rgb(254, 0, 254);
+        let mut img = RgbaImage::new(3, 3);
+        img.set(2, 2, bugged);
+        img.set(1, 1, bugged);
+        img.set(0, 1, Rgba::MAGENTA);
+        let img = keyed(img);
+        assert_eq!(img.get(1, 1), Rgba::TRANSPARENT, "a bugged corner makes (254,0,254) the key");
+        assert_eq!(img.get(0, 1), Rgba::MAGENTA, "and magenta an ordinary colour");
     }
 }

@@ -1,7 +1,7 @@
 //! Skin sheets (`CGameSkin`, `src/client/CGameSkin.cpp`): the top half is the
 //! image, the bottom half the colorization mask, each `frame_height` rows tall.
 
-use rl_data::image::{Rgba, RgbaImage};
+use rl_data::image::Rgba;
 use rl_data::manifest::{Origin, PackKind};
 use rl_data::skin::{FrameLayout, MaskKind, Skin, SkinDef};
 use rl_data::slug::slug;
@@ -37,7 +37,8 @@ pub fn import_skin(olx: &dyn ContentSource, path: &VPath, origin: Origin) -> Res
         warnings.push(format!("{path}: sheet is {w}x{h}, cropped to {SHEET_WIDTH}x{}", fh * 2));
     }
     let mut image = sheet.crop(0, 0, SHEET_WIDTH, fh);
-    let key = color_key(&sheet);
+    // OLX `SetColorKey`'s corner rule (`GfxPrimitives.cpp:116-150`).
+    let key = sheet.olx_color_key();
     let mut mask = Vec::with_capacity((SHEET_WIDTH * fh) as usize);
     for y in 0..fh {
         for x in 0..SHEET_WIDTH {
@@ -70,16 +71,6 @@ pub fn import_skin(olx: &dyn ContentSource, path: &VPath, origin: Origin) -> Res
         skin: Skin { def: SkinDef { name, layout }, image, mask },
     };
     Ok(ImportedSkin { pack, warnings })
-}
-
-/// OLX `SetColorKey` (`src/client/GfxPrimitives.cpp:116-150`): some editors saved
-/// magenta as (254,0,254), so if any corner of the sheet has that colour, it is
-/// the transparent colour for the whole sheet; otherwise magenta is.
-fn color_key(sheet: &RgbaImage) -> Rgba {
-    let bugged = Rgba::rgb(254, 0, 254);
-    let (w, h) = (sheet.width() - 1, sheet.height() - 1);
-    let corners = [(0, 0), (w, 0), (0, h), (w, h)];
-    if corners.iter().any(|&(x, y)| sheet.get(x, y).same_rgb(bugged)) { bugged } else { Rgba::MAGENTA }
 }
 
 #[cfg(test)]

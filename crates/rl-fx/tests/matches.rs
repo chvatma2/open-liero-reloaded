@@ -132,3 +132,14 @@ fn colour_edits_follow_the_sim_like_apply_edits() {
         assert!(map.pixels() == expected.pixels(), "{name}: the colour maps differ");
     }
 }
+
+#[test]
+fn fx_assets_share_the_scene_white_pixel() {
+    let Some(content) = common::content() else { return };
+    let m = content.load_mod(&olx_mod_id("Classic")).unwrap();
+    let mut scene = SceneAssets::new(content.core(), &m);
+    let before = scene.images().len();
+    let assets = FxAssets::new(FxImages::from_core(content.core()), Rgba::BLACK, &mut scene);
+    assert_eq!(assets.white, scene.white);
+    assert_eq!(scene.images().len(), before + 6, "five sprites and the plain gibs, no second white");
+}

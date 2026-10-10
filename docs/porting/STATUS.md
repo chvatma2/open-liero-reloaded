@@ -309,8 +309,10 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   any corner pixel of the image has that colour, otherwise (255,0,255)
   (`SetColorKey`, `src/client/GfxPrimitives.cpp:116-150`).
   - Skins: applied at import.
-  - Mod sprites and theme images: still stored raw, so the renderer must apply
-    the same rule (plan 5). One affected file in scope is `skins/Wario.png`.
+  - Core sprites, mod projectile images and gibs: stored raw and keyed when
+    `rl-scene`/`rl-fx` load them (`RgbaImage::key_transparent`, the same rule).
+    One affected file in scope is `skins/Wario.png`; no core sprite, mod image
+    or theme image at `d1ad953f` has a (254,0,254) corner.
 - **Hi-res level art.** With an "OLX hi-res data" chunk, the front 2×2 block
   becomes the back block wherever `PX_EMPTY` is set, and PNG alpha is ignored
   (`LoadLevelImageHiRes`, `MapLoader_LieroX.cpp:285-360`).

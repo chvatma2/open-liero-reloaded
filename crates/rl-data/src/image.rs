@@ -87,6 +87,32 @@ impl RgbaImage {
         out
     }
 
+    /// The image's colour key as OLX's `SetColorKey` picks it: some editors
+    /// saved magenta as (254,0,254), so when any corner pixel has that
+    /// colour it is the key of the whole image (and pure magenta an
+    /// ordinary colour); otherwise the key is [`Rgba::MAGENTA`].
+    ///
+    /// OLX: src/client/GfxPrimitives.cpp:116-150
+    pub fn olx_color_key(&self) -> Rgba {
+        let bugged = Rgba::rgb(254, 0, 254);
+        let (Some(w), Some(h)) = (self.width.checked_sub(1), self.height.checked_sub(1)) else {
+            return Rgba::MAGENTA;
+        };
+        let corners = [(0, 0), (w, 0), (0, h), (w, h)];
+        if corners.iter().any(|&(x, y)| self.get(x, y).same_rgb(bugged)) { bugged } else { Rgba::MAGENTA }
+    }
+
+    /// Makes every pixel of [`RgbaImage::olx_color_key`] transparent, as
+    /// OLX draws a colour-keyed surface.
+    pub fn key_transparent(&mut self) {
+        let key = self.olx_color_key();
+        for p in self.pixels.as_chunks_mut::<4>().0 {
+            if p[..3] == [key.r, key.g, key.b] {
+                *p = [0; 4];
+            }
+        }
+    }
+
     fn index(&self, x: u32, y: u32) -> usize {
         assert!(x < self.width && y < self.height, "pixel ({x},{y}) out of bounds");
         (y as usize * self.width as usize + x as usize) * 4
@@ -118,6 +144,40 @@ mod tests {
         let c = img.crop(1, 1, 2, 2);
         assert_eq!((c.width(), c.height()), (2, 2));
         assert_eq!(c.get(0, 1), Rgba::rgb(9, 9, 9));
+    }
+
+    #[test]
+    fn olx_color_key_follows_the_corner_rule() {
+        let bugged = Rgba::rgb(254, 0, 254);
+        let mut img = RgbaImage::new(3, 2);
+        img.set(1, 0, Rgba::MAGENTA);
+        img.set(1, 1, bugged);
+        assert_eq!(img.olx_color_key(), Rgba::MAGENTA, "(254,0,254) inside only");
+        for (x, y) in [(0, 0), (2, 0), (0, 1), (2, 1)] {
+            let mut corner = img.clone();
+            corner.set(x, y, bugged);
+            assert_eq!(corner.olx_color_key(), bugged, "corner ({x},{y})");
+        }
+        assert_eq!(RgbaImage::new(0, 0).olx_color_key(), Rgba::MAGENTA, "an empty image never panics");
+    }
+
+    #[test]
+    fn keying_clears_only_the_key() {
+        let bugged = Rgba::rgb(254, 0, 254);
+        let mut img = RgbaImage::new(3, 1);
+        img.set(0, 0, Rgba::MAGENTA);
+        img.set(1, 0, bugged);
+        let mut plain = img.clone();
+        plain.key_transparent();
+        assert_eq!(plain.get(0, 0), Rgba::TRANSPARENT);
+        assert_eq!(plain.get(1, 0), bugged, "(254,0,254) is a colour without a bugged corner");
+        // With a bugged corner, (254,0,254) is the key and magenta a colour.
+        let mut img = RgbaImage::new(2, 2);
+        img.set(0, 0, Rgba::MAGENTA);
+        img.set(1, 1, bugged);
+        img.key_transparent();
+        assert_eq!(img.get(0, 0), Rgba::MAGENTA);
+        assert_eq!(img.get(1, 1), Rgba::TRANSPARENT);
     }
 
     #[test]
