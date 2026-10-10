@@ -1,0 +1,360 @@
+//! `rl-content` on synthetic packs (placeholders, worlds) and on the imported
+//! OLX content (`RL_CONTENT_DIR`, skipped with a notice when it is missing).
+
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use rl_content::{Content, PLACEHOLDER, SandboxSetup, SpawnSpec, olx_level_id, olx_mod_id};
+use rl_data::core_pack::CoreDef;
+use rl_data::image::{Rgba, RgbaImage};
+use rl_data::level::{Level, LevelDef, Material, MaterialGrid};
+use rl_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
+use rl_data::mod_def::*;
+use rl_data::skin::{FrameLayout, MaskKind, Skin, SkinDef};
+use rl_data::theme::{Theme, ThemeDef};
+use rl_sim::{GAME_SOUNDS, Keys, SimSettings, TickEvents};
+use rl_terrain::PX_ROCK;
+use rl_vfs::{DirFs, VPath};
+
+fn manifest(id: &str, kind: PackKind) -> PackManifest {
+    PackManifest {
+        format_version: PACK_FORMAT_VERSION,
+        id: id.into(),
+        name: id.into(),
+        version: "1".into(),
+        kind,
+        authors: vec![],
+        origin: None,
+        license: None,
+    }
+}
+
+fn filled(w: u32, h: u32, c: Rgba) -> RgbaImage {
+    let mut img = RgbaImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            img.set(x, y, c);
+        }
+    }
+    img
+}
+
+/// A mod whose one weapon fires an image projectile whose image is missing,
+/// with a missing firing sound.
+fn broken_mod() -> rl_pack::ModPack {
+    let gfx = ProjectileGfx::Image {
+        file: "gfx/missing.png".into(),
+        rotating: false,
+        rot_increment: 0,
+        rot_speed: 0,
+        use_angle: false,
+        use_spec_angle: false,
+        angle_images: 0,
+        animation: Some(Animation { rate: 10.0, kind: AnimKind::Once }),
+    };
+    let shell = ProjectileDef {
+        gfx,
+        gravity: None,
+        dampening: 1.0,
+        width: 4,
+        height: 4,
+        timer: TimerDef { time: 0.0, time_var: 0.0, action: None },
+        trail: TrailDef { kind: TrailKind::None, delay: 0.1, spawn: None },
+        hit: ActionDef { damage: 5, ..ActionDef::olx_default(ActionKind::Explode) },
+        player_hit: ActionDef::olx_default(ActionKind::Injure),
+        event_spawn: None,
+    };
+    let def = ModDef {
+        name: "Broken".into(),
+        worm: WormParams {
+            angle_speed: 150.0,
+            ground_speed: 8.0,
+            air_speed: 4.0,
+            gravity: 100.0,
+            jump_force: -65.0,
+            air_friction: 0.0,
+            ground_friction: 0.4,
+        },
+        rope: RopeParams { max_length: 300, rest_length: 27, strength: 4.5 },
+        weapons: vec![WeaponDef {
+            id: "gun".into(),
+            name: "Gun".into(),
+            recharge: 1.0,
+            drain: 1.0,
+            rof: 0.5,
+            laser_sight: false,
+            kind: WeaponKind::Projectile {
+                class: WeaponClass::Automatic,
+                recoil: 0,
+                sound: Some("sfx/missing.ogg".into()),
+                spawn: SpawnDef { amount: 1, speed: 100, ..SpawnDef::olx_default("shell".into()) },
+            },
+        }],
+        projectiles: [("shell".to_string(), shell)].into_iter().collect(),
+    };
+    let mut assets = BTreeMap::new();
+    assets.insert(VPath::new("gfx/broken.png").unwrap(), b"not a png".to_vec());
+    rl_pack::ModPack { manifest: manifest("broken-mod", PackKind::Mod), def, assets }
+}
+
+/// A 100 × 100 level of rock with a 30 × 30 room of background at (40..70, 40..70).
+fn room_level() -> rl_pack::LevelPack {
+    let cells = (0..100 * 100)
+        .map(|i| {
+            let (x, y) = (i % 100, i / 100);
+            if (40..70).contains(&x) && (40..70).contains(&y) { Material::Background } else { Material::Rock }
+        })
+        .collect();
+    let def = LevelDef {
+        name: "Room".into(),
+        width: 100,
+        height: 100,
+        art_scale: 1,
+        theme: "test-theme".into(),
+        spawns: vec![],
+    };
+    let level = Level {
+        def,
+        material: MaterialGrid::from_cells(100, 100, cells).unwrap(),
+        front: filled(100, 100, Rgba::rgb(128, 128, 128)),
+        back: filled(100, 100, Rgba::BLACK),
+    };
+    rl_pack::LevelPack { manifest: manifest("test-level", PackKind::Level), level }
+}
+
+fn theme() -> rl_pack::ThemePack {
+    let hole = |n| filled(n, n, Rgba::MAGENTA);
+    let theme = Theme {
+        def: ThemeDef { name: "Test".into(), holes: 5, stones: 0, misc: 0 },
+        holes: vec![hole(5), hole(7), hole(9), hole(11), hole(15)],
+        stones: vec![],
+        misc: vec![],
+        front_tile: filled(4, 4, Rgba::rgb(139, 90, 43)),
+        back_tile: filled(4, 4, Rgba::rgb(60, 30, 10)),
+        green_ball: None,
+    };
+    rl_pack::ThemePack { manifest: manifest("test-theme", PackKind::Theme), theme }
+}
+
+/// A core pack whose only sprite, the hook, has the wrong size, and no sounds.
+fn thin_core() -> rl_pack::CorePack {
+    rl_pack::CorePack {
+        manifest: manifest("olx-core", PackKind::Core),
+        def: CoreDef {
+            sprites: vec!["hook".into()],
+            sounds: vec![],
+            colours: [("RopeColour1".to_string(), Rgba::rgb(160, 80, 0))].into_iter().collect(),
+        },
+        sprites: [("hook".to_string(), filled(3, 3, Rgba::BLACK))].into_iter().collect(),
+        sounds: BTreeMap::new(),
+    }
+}
+
+/// A skin too narrow for OLX's frame layout.
+fn narrow_skin() -> rl_pack::SkinPack {
+    let skin = Skin {
+        def: SkinDef { name: "narrow".into(), layout: FrameLayout::OLX },
+        image: filled(100, 18, Rgba::rgb(10, 200, 10)),
+        mask: vec![MaskKind::Keep; 100 * 18],
+    };
+    rl_pack::SkinPack { manifest: manifest("narrow-skin", PackKind::Skin), skin }
+}
+
+/// Writes the synthetic packs into `dir`.
+fn synthetic(dir: &Path) {
+    let sink = |id: &str| DirFs::new(dir.join(id));
+    rl_pack::write_mod(&mut sink("broken-mod"), &broken_mod()).unwrap();
+    rl_pack::write_level(&mut sink("test-level"), &room_level()).unwrap();
+    rl_pack::write_theme(&mut sink("test-theme"), &theme()).unwrap();
+    rl_pack::write_core(&mut sink("olx-core"), &thin_core()).unwrap();
+    rl_pack::write_skin(&mut sink("narrow-skin"), &narrow_skin()).unwrap();
+    // Not a pack, and a pack this build cannot read: listed as warnings, never fatal.
+    std::fs::create_dir_all(dir.join("junk")).unwrap();
+    std::fs::create_dir_all(dir.join("future")).unwrap();
+    std::fs::write(dir.join("future/pack.ron"), "(format_version: 99)").unwrap();
+}
+
+fn setup(worms: Vec<SpawnSpec>, seed: u32) -> SandboxSetup {
+    SandboxSetup {
+        mod_id: "broken-mod".into(),
+        level_id: "test-level".into(),
+        seed,
+        settings: SimSettings::lx56(),
+        worms,
+    }
+}
+
+/// No rock in the 6 × 6 square `FindSpot` checks around `(x, y)`.
+fn free(t: &rl_terrain::Terrain, x: f32, y: f32) -> bool {
+    let (x, y) = (x as i64, y as i64);
+    (y - 3..y + 3).all(|yy| (x - 3..x + 3).all(|xx| t.flags(xx, yy) & PX_ROCK == 0))
+}
+
+#[test]
+fn missing_assets_use_placeholders() {
+    let tmp = tempfile::tempdir().unwrap();
+    synthetic(tmp.path());
+    let content = Content::open(tmp.path()).unwrap();
+    assert!(content.warnings().iter().any(|w| w.contains("future")), "{:?}", content.warnings());
+
+    // The core pack: a missing sprite and a wrong-sized one get a placeholder
+    // of the size the renderer expects; the colours that are there are kept.
+    let core = content.core();
+    assert_eq!((core.sprite("crosshair").width(), core.sprite("crosshair").height()), (12, 6));
+    assert_eq!(core.sprite("crosshair").get(0, 0), PLACEHOLDER);
+    assert_eq!((core.sprite("hook").width(), core.sprite("hook").height()), (6, 6));
+    assert_eq!(core.sprite("hook").get(0, 0), PLACEHOLDER);
+    assert!(content.warnings().iter().any(|w| w.contains("hook")), "{:?}", content.warnings());
+    assert_eq!(core.colour("RopeColour1"), Some(Rgba::rgb(160, 80, 0)));
+    assert_eq!(core.game_sound(GAME_SOUNDS[0]), None, "silence");
+
+    // The mod: its missing image is a one-frame placeholder, its missing
+    // sounds (its own and OLX's) are silent, and each is reported once.
+    let m = content.load_mod("broken-mod").unwrap();
+    let img = &m.images["gfx/missing.png"];
+    assert_eq!((img.width(), img.height(), img.get(0, 0)), (8, 8, PLACEHOLDER));
+    assert_eq!(m.sim.projectiles()[0].frames, Some(1));
+    assert!(!m.sounds.contains_key("sfx/missing.ogg"));
+    assert!(m.warnings.iter().any(|w| w.contains("gfx/missing.png")), "{:?}", m.warnings);
+    assert!(m.warnings.iter().any(|w| w.contains("sfx/missing.ogg")), "{:?}", m.warnings);
+    assert!(m.warnings.iter().any(|w| w.contains("gfx/broken.png")), "{:?}", m.warnings);
+    // The oracle's strict loader still refuses it, as OLX's client would not run it.
+    assert!(content.sim_mod("broken-mod").is_err());
+
+    // A skin of the wrong size, or none at all, is a placeholder sheet.
+    let skin = content.load_skin("narrow-skin").unwrap();
+    assert_eq!((skin.skin.image.width(), skin.skin.image.height()), (672, 18));
+    assert!(!skin.warnings.is_empty());
+    let fallback = content.skin_or_default("no-such-skin");
+    assert_eq!((fallback.skin.image.width(), fallback.skin.image.height()), (672, 18));
+    assert!(content.load_skin("no-such-skin").is_err());
+
+    // And the game plays: the gun fires its placeholder shells for 3 s.
+    let spec = SpawnSpec { pos: Some((50, 60)), weapons: vec![] };
+    let mut world = content.new_world(&setup(vec![spec], 1)).unwrap();
+    let mut events = TickEvents::new();
+    let mut fired = 0;
+    for _ in 0..300 {
+        world.tick(&[Keys(Keys::FIRE)], &mut events);
+        fired += events.iter().filter(|e| matches!(e.kind, rl_sim::EventKind::WeaponFired { .. })).count();
+    }
+    assert!(fired > 0);
+}
+
+#[test]
+fn new_world_spawns_worms_on_free_spots() {
+    let tmp = tempfile::tempdir().unwrap();
+    synthetic(tmp.path());
+    let content = Content::open(tmp.path()).unwrap();
+    let specs = vec![
+        SpawnSpec { pos: None, weapons: vec![] },
+        SpawnSpec { pos: Some((50, 50)), weapons: vec![0] },
+        SpawnSpec { pos: None, weapons: vec![] },
+    ];
+    let world = content.new_world(&setup(specs.clone(), 7)).unwrap();
+    assert_eq!(world.worms().len(), 3);
+    assert_eq!((world.worms()[1].pos.x, world.worms()[1].pos.y), (50.0, 50.0));
+    for w in [&world.worms()[0], &world.worms()[2]] {
+        assert!(free(world.terrain(), w.pos.x, w.pos.y), "worm {} at {:?}", w.id, w.pos);
+        assert_eq!(w.slots.len(), 5, "the mod's weapons, from the first");
+    }
+    assert!(world.mt_calls() > 0, "FindSpot drew the positions");
+    // The same setup gives the same world.
+    assert_eq!(content.new_world(&setup(specs.clone(), 7)).unwrap(), world);
+    // Bad setups are errors, not panics.
+    let bad = SpawnSpec { pos: None, weapons: vec![5] };
+    assert!(content.new_world(&setup(vec![bad], 7)).is_err());
+    assert!(content.new_world(&setup(vec![SpawnSpec { pos: None, weapons: vec![] }; 33], 7)).is_err());
+    let mut s = setup(vec![], 7);
+    s.level_id = "nope".into();
+    assert!(content.new_world(&s).is_err());
+
+    // On every imported level, when there is content.
+    let Some(dir) = content_dir() else { return };
+    let content = Content::open(Path::new(&dir)).unwrap();
+    for level in ["Liero Factory.lxl", "CastleStrike.lxl", "FossilFacility.lxl", "Dirt Level.lxl"] {
+        let s = SandboxSetup {
+            mod_id: olx_mod_id("Classic"),
+            level_id: olx_level_id(level),
+            seed: 3,
+            settings: SimSettings::lx56(),
+            worms: vec![SpawnSpec { pos: None, weapons: vec![] }; 4],
+        };
+        let world = content.new_world(&s).unwrap();
+        for w in world.worms() {
+            assert!(free(world.terrain(), w.pos.x, w.pos.y), "{level}: worm {} at {:?}", w.id, w.pos);
+        }
+    }
+}
+
+/// The imported content (`RL_CONTENT_DIR`), or `None` with a notice.
+fn content_dir() -> Option<String> {
+    let Ok(dir) = std::env::var("RL_CONTENT_DIR") else {
+        eprintln!("RL_CONTENT_DIR is not set (run `cargo xtask fetch-olx-content`); skipping");
+        return None;
+    };
+    if Path::new(&dir).is_dir() {
+        Some(dir)
+    } else {
+        eprintln!("{dir} not found (run `cargo xtask fetch-olx-content`); skipping");
+        None
+    }
+}
+
+/// `content/olx-manifest.ron`, the list of imported OLX content.
+#[derive(serde::Deserialize)]
+struct Manifest {
+    mods: Vec<String>,
+    levels: Vec<String>,
+    themes: Vec<String>,
+    skins: bool,
+    core: Vec<String>,
+}
+
+#[test]
+fn loads_every_manifest_item() {
+    let Some(dir) = content_dir() else { return };
+    let text =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../content/olx-manifest.ron"));
+    let manifest: Manifest = ron::from_str(&text.unwrap()).unwrap();
+    let content = Content::open(Path::new(&dir)).unwrap();
+    assert!(content.warnings().is_empty(), "{:?}", content.warnings());
+    for m in &manifest.mods {
+        let loaded = content.load_mod(&olx_mod_id(m)).unwrap();
+        assert!(loaded.warnings.is_empty(), "{m}: {:?}", loaded.warnings);
+        // Every sound the simulation can play has bytes, OLX's game sounds from the core pack.
+        assert_eq!(loaded.sounds.len(), loaded.sim.sounds().len(), "{m}");
+        assert_eq!(content.sim_mod(&olx_mod_id(m)).unwrap(), *loaded.sim, "{m}: strict and lenient agree");
+    }
+    for l in &manifest.levels {
+        let level = content.load_level(&olx_level_id(l.trim_start_matches("levels/"))).unwrap();
+        assert_eq!(level.front.width(), level.material.width() * level.art_scale, "{l}");
+        let theme = content.load_theme(&level.theme).unwrap();
+        assert!(theme.warnings.is_empty() && theme.green_ball.is_some(), "{l}: {:?}", theme.warnings);
+    }
+    for t in &manifest.themes {
+        let id = format!("olx-theme-{}", rl_data::slug::slug(t.rsplit('/').next().unwrap()));
+        assert_eq!(content.load_theme(&id).unwrap().holes.len(), 5, "{t}");
+    }
+    let skins = content.ids(PackKind::Skin);
+    assert_eq!(skins.is_empty(), !manifest.skins);
+    for id in &skins {
+        let skin = content.load_skin(id).unwrap();
+        assert!(skin.warnings.is_empty(), "{id}: {:?}", skin.warnings);
+    }
+    let core = content.core();
+    for f in &manifest.core {
+        let name = f.rsplit('/').next().unwrap();
+        if let Some(sprite) = name.strip_suffix(".png") {
+            assert!(core.has_sprite(sprite), "{f}");
+        } else if name.ends_with(".ogg") {
+            assert!(core.sound(name).is_some(), "{f}");
+        }
+    }
+    for s in GAME_SOUNDS {
+        assert!(core.game_sound(s).is_some(), "{s}");
+    }
+    for k in ["RopeColour1", "RopeColour2", "LaserSightColour1", "LaserSightColour2", "PlayerName"] {
+        assert!(core.colour(k).is_some(), "{k}");
+    }
+}

@@ -6,19 +6,18 @@
 //! without them, and for lives and kills, the slots are copied from OLX's
 //! frame -1 (OLX picks them before the scenario's seed is set).
 
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
+use rl_content::{Content, olx_level_id, olx_mod_id};
 use rl_math::AbsTime;
 use rl_oracle::{
     BonusRec, Fields, Frame, Num, ProjRec, RopeRec, Scenario, ServerBonusRec, ShotRec, SlotRec, Trace,
     WormRec,
 };
 use rl_sim::{BonusItem, CLOCK_OFFSET_MS, Keys, Loadout, SimMod, SimSettings, Slot, TickEvents, World};
-use rl_terrain::{GreenMask, Stamp, Terrain};
-use rl_vfs::DirFs;
+use rl_terrain::Terrain;
 
 /// The trace fields the simulation reproduces; the acceptance test compares
 /// these. Since plan 4 task 9 (bonuses) it is every group, [`Fields::ALL`].
@@ -67,39 +66,6 @@ pub fn fixture_names(dir: &Path) -> anyhow::Result<Vec<String>> {
     Ok(names)
 }
 
-/// The mod pack for OLX mod directory `mod_dir` (such as `MW 1.0`), compiled
-/// for the simulation. Image frame counts are `width / height` of the
-/// pack's PNG images (spec §18 D3); an image projectile whose image is
-/// missing (or has height 0) is an error.
-pub fn load_mod(content: &Path, mod_dir: &str) -> anyhow::Result<SimMod> {
-    let id = format!("olx-{}", rl_data::slug::slug(mod_dir));
-    let pack = rl_pack::read_mod(&DirFs::new(content.join(&id))).with_context(|| format!("mod pack {id}"))?;
-    let mut frames = BTreeMap::new();
-    for (path, bytes) in &pack.assets {
-        if path.as_str().ends_with(".png") {
-            let img =
-                rl_pack::image_io::decode_rgba(bytes).map_err(|e| anyhow::anyhow!("{id}/{path}: {e}"))?;
-            if img.height() > 0 {
-                frames.insert(path.as_str().to_string(), img.width() / img.height());
-            }
-        }
-    }
-    let m = SimMod::compile(&pack.def, &frames).map_err(|e| anyhow::anyhow!("{id}: {e}"))?;
-    check_frames(&m).with_context(|| format!("mod pack {id}"))?;
-    Ok(m)
-}
-
-/// Every image projectile must know its image's frame count: OLX's client
-/// does, and without it `ANI_ONCE` would never end a projectile.
-fn check_frames(m: &SimMod) -> anyhow::Result<()> {
-    for p in m.projectiles() {
-        if let rl_data::mod_def::ProjectileGfx::Image { file, .. } = &p.def.gfx {
-            anyhow::ensure!(p.frames.is_some(), "projectile {} has no image {file:?}", p.name);
-        }
-    }
-    Ok(())
-}
-
 /// Checks that the simulation numbers weapons and projectiles as OLX did
 /// (the trace header's names, indexed by OLX's ids). v1 headers have none.
 fn check_ids(m: &SimMod, header: &rl_oracle::Header) -> anyhow::Result<()> {
@@ -130,46 +96,24 @@ fn t0(expected: &Trace) -> u64 {
     expected.header.options.get("T0").and_then(|t| t.parse().ok()).unwrap_or(0)
 }
 
-/// An imported level's material grid with its theme's holes and green-dirt
-/// mask, what [`World::new`] and [`World::set_green_mask`] take.
-pub struct Map {
-    pub terrain: Terrain,
-    pub holes: Vec<Stamp>,
-    pub green_mask: Option<GreenMask>,
-}
-
-/// The level pack `level_id` (such as `olx-level-dirt-level`) and its theme from `content`.
-pub fn load_map(content: &Path, level_id: &str) -> anyhow::Result<Map> {
-    let level = rl_pack::read_level(&DirFs::new(content.join(level_id)))
-        .with_context(|| format!("level pack {level_id}"))?
-        .level;
-    let theme = rl_pack::read_theme(&DirFs::new(content.join(&level.def.theme)))
-        .with_context(|| format!("theme pack {}", level.def.theme))?
-        .theme;
-    Ok(Map {
-        terrain: Terrain::from_grid(&level.material),
-        holes: theme.holes.iter().map(Stamp::from_image).collect(),
-        green_mask: theme.green_ball.as_ref().map(GreenMask::from_image),
-    })
-}
-
 /// The world a scenario starts from: the imported level, theme and mod from
-/// `content` (packs written by `rl-cli import`), OLX's settings from the
-/// trace header, and the scenario's worms spawned with their weapons and health.
-pub fn load_world(content: &Path, sc: &Scenario, expected: &Trace) -> anyhow::Result<World> {
-    let stem = sc.level.rsplit_once('.').map_or(sc.level.as_str(), |(s, _)| s);
-    let level_id = format!("olx-level-{}", rl_data::slug::slug(stem));
-    let map = load_map(content, &level_id)?;
-    let sim_mod = load_mod(content, &sc.mod_dir)?;
+/// `content` (packs written by `rl-cli import`; the mod loaded strictly, as
+/// OLX's client, [`Content::sim_mod`]), OLX's settings from the trace header,
+/// and the scenario's worms spawned with their weapons and health.
+pub fn load_world(content: &Content, sc: &Scenario, expected: &Trace) -> anyhow::Result<World> {
+    let level = content.load_level(&olx_level_id(&sc.level))?;
+    let theme = content.load_theme(&level.theme).with_context(|| format!("level {}", sc.level))?;
+    let sim_mod = content.sim_mod(&olx_mod_id(&sc.mod_dir))?;
     check_ids(&sim_mod, &expected.header)?;
     check_options(&expected.header)?;
     let settings =
         SimSettings::from_olx_features(&expected.header.features).map_err(|e| anyhow::anyhow!(e.0))?;
     // The scenario's seed is the header's: the generators start clean at the second `simSetSeed`.
     let seed = expected.header.seed.unwrap_or(sc.seed);
-    let Map { terrain, holes, green_mask } = map;
-    let mut world = World::new(settings, Arc::new(sim_mod), terrain, holes, AbsTime(t0(expected)), seed);
-    if let Some(mask) = green_mask {
+    let terrain = Terrain::from_grid(&level.material);
+    let mut world =
+        World::new(settings, Arc::new(sim_mod), terrain, theme.stamps(), AbsTime(t0(expected)), seed);
+    if let Some(mask) = theme.green_mask() {
         world.set_green_mask(mask);
     }
     let start = expected.frames.first().context("trace has no frames")?;
@@ -372,7 +316,7 @@ fn bonus_items(world: &World, sc: &Scenario) -> anyhow::Result<Vec<(u32, i32, i3
 
 /// Plays `sc` from frame -1 to its last frame and returns the Rust trace,
 /// with the same header as `expected`.
-pub fn replay(content: &Path, sc: &Scenario, expected: &Trace) -> anyhow::Result<Trace> {
+pub fn replay(content: &Content, sc: &Scenario, expected: &Trace) -> anyhow::Result<Trace> {
     let mut world = load_world(content, sc, expected)?;
     let t0 = t0(expected);
     let bonuses = bonus_items(&world, sc)?;
@@ -394,66 +338,6 @@ pub fn replay(content: &Path, sc: &Scenario, expected: &Trace) -> anyhow::Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rl_data::mod_def::*;
-
-    #[test]
-    fn an_image_projectile_without_its_image_is_an_error() {
-        let gfx = ProjectileGfx::Image {
-            file: "gfx/flame.png".into(),
-            rotating: false,
-            rot_increment: 0,
-            rot_speed: 0,
-            use_angle: false,
-            use_spec_angle: false,
-            angle_images: 0,
-            animation: Some(Animation { rate: 10.0, kind: AnimKind::Once }),
-        };
-        let flame = ProjectileDef {
-            gfx,
-            gravity: None,
-            dampening: 1.0,
-            width: 4,
-            height: 4,
-            timer: TimerDef { time: 0.0, time_var: 0.0, action: None },
-            trail: TrailDef { kind: TrailKind::None, delay: 0.1, spawn: None },
-            hit: ActionDef::olx_default(ActionKind::Explode),
-            player_hit: ActionDef::olx_default(ActionKind::Injure),
-            event_spawn: None,
-        };
-        let def = ModDef {
-            name: "test".into(),
-            worm: WormParams {
-                angle_speed: 150.0,
-                ground_speed: 8.0,
-                air_speed: 4.0,
-                gravity: 100.0,
-                jump_force: -65.0,
-                air_friction: 0.0,
-                ground_friction: 0.4,
-            },
-            rope: RopeParams { max_length: 300, rest_length: 27, strength: 4.5 },
-            weapons: vec![WeaponDef {
-                id: "flamer".into(),
-                name: "Flamer".into(),
-                recharge: 1.0,
-                drain: 1.0,
-                rof: 0.01,
-                laser_sight: false,
-                kind: WeaponKind::Projectile {
-                    class: WeaponClass::Automatic,
-                    recoil: 0,
-                    sound: None,
-                    spawn: SpawnDef { amount: 1, ..SpawnDef::olx_default("flame".into()) },
-                },
-            }],
-            projectiles: [("flame".to_string(), flame)].into_iter().collect(),
-        };
-        let missing = SimMod::compile(&def, &BTreeMap::new()).unwrap();
-        let err = check_frames(&missing).unwrap_err().to_string();
-        assert!(err.contains("flamer") && err.contains("gfx/flame.png"), "{err}");
-        let found = SimMod::compile(&def, &[("gfx/flame.png".to_string(), 7)].into_iter().collect()).unwrap();
-        check_frames(&found).unwrap();
-    }
 
     #[test]
     fn unsupported_client_options_are_errors() {

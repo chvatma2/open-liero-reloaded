@@ -1162,26 +1162,32 @@ Not needed:
    OLX's `shake` argument: the action's `Shake`, or 5 for bonus chain and beam
    bonus explosions. Add `shake: i32` to the event (`rl-sim::effects`,
    `actions.rs:112-148` already tracks `info.shake`).
+   **Resolved** (spec §19 E6): `Explosion { pos, damage, shake }`.
 2. **The gib's owner is not reported.** `CosmeticKind::Gib` has no worm, but each
    worm has its own colorized `giblets.png`. Gibs are emitted right after
    `Kill { victim }` at the victim's position, so the renderer can infer the
    owner. A `worm` field would be cleaner.
+   **Resolved** (E6): `CosmeticKind::Gib { worm }`.
 3. **The dirt-particle colour source is not reported.** The three `Dirt` sources
    (dig, explosion, rope hook) probe different pixels (§7.3). The renderer
    cannot tell them apart from `Dirt { pos, vel }`. Add the probe pixel or the
    colour to the event.
+   **Resolved** (E6): `CosmeticKind::Dirt { probe }`, the pixel each source reads.
 4. **Sub-step boundaries are not reported.** OLX runs entities per sub-step and
    spawns them mid-tick. Beams and laser sights live 2 sub-steps; dropper drips
    every 10. Events carry no sub-step index, and `World` does not expose how many
    sub-steps a tick ran. Either expose that, or let the renderer run its own
    11-ms accumulator against 10-ms ticks, accepting that spawns land on tick
    boundaries.
+   **Resolved** (E6): `Event::substep` counts the entity passes before the
+   event, and `World::substeps_last_tick()` the tick's sub-steps.
 5. **The `RotIncrement` 0→1 mutation is not kept.** The renderer needs to know
    whether the mutation has happened for a projectile type (§5).
    - The approximation is: treat `RotIncrement == 0` as 1 once any projectile of
      that type has been spawned by a `UseRandomRot` spawn info.
    - Alternatively the sim could expose a per-type flag.
    - OLX keeps the mutation across games while the mod stays cached.
+   **Resolved** (E6): the sim exposes `World::rot_bumped(type)`, per match.
 6. **Muzzle and `WeaponFired`.** `WeaponFired` is emitted for beams too, but OLX
    shows no muzzle and plays no sound for beams. The renderer must check the
    weapon type. OLX shows the muzzle for one drawn frame, in the first viewport
@@ -1190,6 +1196,7 @@ Not needed:
    per attacker. `Event::Damage` has the damage after factors, and `World` has
    only the health after. Keep the previous tick's health in the renderer, or add
    the clamped amount to the event.
+   **Resolved** (E6): `Damage { .., dealt }`.
 8. **Shadows.** This OLX build draws none (§2.3). Classic LX/OLX had map and
    object shadows (`SHADOW_DROP` 3, black α 96). Decide "faithful to
    `d1ad953f`" versus "classic look".

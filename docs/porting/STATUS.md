@@ -35,6 +35,8 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Bonuses: server spawn, lifetime and grab handling; client spawn (hole), physics, pickup, health and weapon effects; the messages between them (D10); explosions and beams destroying bonuses | `src/server/CServer_Game.cpp:227-316`, `src/server/CServer_Parse.cpp:834-903`, `src/client/CClient_Parse.cpp:1464-1516`, `1977-1990`, `PhysicsLX56.cpp:619-715`, `CClient_Game.cpp:128-151`, `255-270`, `736-745`, `986-1002`, `CWorm.cpp:1454-1506` | `rl-sim::bonus`, `rl-sim::effects::explosion`, `rl-sim::beam` | ported (plan 4 task 9) | `bonus-health`, `bonus-weapon` (`b`, `sb` and every other field); natural spawning, lifetime, explosions and beams by unit tests only |
 | Acceptance: all weapons of both mods | `fixtures/oracle/weapons/` | `rl-scenario/tests/oracle.rs` (`CHECKED == Fields::ALL`) | done (plan 4 task 11) | 103 of 106 scenarios match OLX bit for bit in every field; the other 3 are pinned to their first divergence (D9, below) |
 | Tick events (sounds, map edits, explosions, cosmetics, shots, damage, kills, pickups, spawns) and the state checksum | every `StartSound`, `PlaySoundSample`, `SpawnEntity` and `SetWormBeamEntity` above; `src/game/Sounds.cpp:25-30` | `rl-sim::events`, `rl-sim::checksum` | done (plan 4 task 10) | unit tests; the oracle traces are unchanged (no draw added); `rl-scenario/tests/smoke.rs` (8 matches, clone checksum streams) |
+| Event data for rendering (spec §19 E6): explosion `shake`, the gib's worm, the dirt particle's probe pixel, each event's sub-step (entity passes before it) and `World::substeps_last_tick`, `Damage.dealt`, the `RotIncrement` 0→1 bump (`World::rot_bumped`), `World::physics_time`, `Projectile::serial` | `CClient_Game.cpp:206-208`, `229-330`, `380`, `PhysicsLX56_Projectiles.cpp:590-593`, `777`, `1115-1130`, `CMap.cpp:2172-2199`, `PhysicsLX56.cpp:595-607`, `CProjectile.cpp:291-292` | `rl-sim::events`, `rl-sim::world` | done (plan 5 task 1) | `events_carry_e6_data`, `projectile_serials_differ_across_slot_reuse`; the oracle traces are unchanged (no draw added); smoke matches check every event's sub-step |
+| Core pack: shared game sprites, game sounds (`.ogg`), `colours.cfg` (spec §19 E9) | `src/client/DeprecatedGUI/Graphics.cpp:56-97`, `134-321`, `src/common/CWorm.cpp:661`, `src/game/Sounds.cpp:25-30`, `src/common/StringUtils.cpp:409-447` | `rl-import-gfx::import_core`, `rl-pack::CorePack`, `rl-content::CorePack` | done (plan 5 task 1) | `rl-content/tests/content.rs` (`loads_every_manifest_item`), the corpus snapshot |
 
 ## Deliberate deviations
 
@@ -113,14 +115,17 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   counted (`TickEvents::cosmetic_dropped`, `gameplay_dropped`), and the area
   of dropped terrain edits is reported (`TickEvents::lost_area`) for the
   renderer to rebuild from the material grid.
-- **A zero `RotIncrement` is not set to 1 in the mod.** For a rotating image
-  projectile spawned with `UseRandomRot`, OLX writes `RotIncrement = 1` into
-  the loaded `proj_t` before drawing the rotation (`PhysicsLX56_Projectiles.cpp:592-593`),
-  and the change lasts as long as the mod stays loaded. The simulation draws
-  the same rotation but leaves `SimMod` as loaded, so a renderer sees 0 and,
-  following `CProjectile::Draw` (`CProjectile.cpp:291`), does not spin it,
-  where OLX spins it once any such spawn has happened. Cosmetic only, and no
-  Classic or MW 1.0 projectile is rotating with a zero increment.
+- **A zero `RotIncrement` is set to 1 per world, not in the mod.** For a
+  rotating image projectile spawned with `UseRandomRot`, OLX writes
+  `RotIncrement = 1` into the loaded `proj_t` before drawing the rotation
+  (`PhysicsLX56_Projectiles.cpp:590-593`), and the change lasts as long as the
+  mod stays loaded, across games. The simulation draws the same rotation,
+  leaves `SimMod` as loaded and records the bump in the world
+  (`World::rot_bumped`, spec §19 E6), so a renderer spins such a projectile
+  as `CProjectile::Draw` does (`CProjectile.cpp:291-292`) from the first such
+  spawn of the match, where OLX would remember it from an earlier game.
+  Cosmetic only, and no Classic or MW 1.0 projectile is rotating with a zero
+  increment.
 
 - **The oracle is not a plain dedicated server** (spec §18, `tools/olx-oracle/CLAUDE.md`):
   - shots are delivered by a hook between frames (Model R), not over UDP;

@@ -60,10 +60,11 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         (None, true) => rl_oracle::Fields::ALL,
         (None, false) => rl_scenario::CHECKED,
     };
+    let content = rl_content::Content::open(&args.content)?;
     let mut ok = true;
     for name in names {
         let (sc, expected) = rl_scenario::load_fixture(&args.fixtures, &name)?;
-        let actual = rl_scenario::replay(&args.content, &sc, &expected)?;
+        let actual = rl_scenario::replay(&content, &sc, &expected)?;
         match rl_oracle::compare_fields(&expected, &actual, &sc.tolerances, fields) {
             None => println!("ok   {name}: {} frames match OLX", expected.frames.len()),
             Some(d) => {

@@ -92,10 +92,11 @@ fn every_scenario_matches_olx_bit_for_bit() {
         assert!(names.iter().any(|m| m == n), "missing scenario {n}");
     }
     assert_eq!(names.iter().filter(|n| n.starts_with("weapons/")).count(), 38 + 50, "weapon scenarios");
+    let content = rl_content::Content::open(Path::new(&content)).unwrap();
     let mut failures = Vec::new();
     for name in names {
         let (sc, expected) = rl_scenario::load_fixture(&dir, &name).unwrap();
-        let actual = rl_scenario::replay(Path::new(&content), &sc, &expected).unwrap();
+        let actual = rl_scenario::replay(&content, &sc, &expected).unwrap();
         let tol = &sc.tolerances;
         let first = rl_oracle::compare_fields(&expected, &actual, tol, rl_scenario::CHECKED);
         check(&name, first, ("EXPECTED_DIVERGENCES", EXPECTED_DIVERGENCES), &mut failures);
@@ -115,7 +116,8 @@ fn a_changed_trace_is_detected() {
     let Some(content) = content_dir() else { return };
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/oracle");
     let (sc, mut expected) = rl_scenario::load_fixture(&dir, "walk").unwrap();
-    let actual = rl_scenario::replay(Path::new(&content), &sc, &expected).unwrap();
+    let content = rl_content::Content::open(Path::new(&content)).unwrap();
+    let actual = rl_scenario::replay(&content, &sc, &expected).unwrap();
     expected.frames[200].w[0].x = rl_oracle::Num(expected.frames[200].w[0].x.0 + 1.0);
     let d = rl_oracle::compare_fields(&expected, &actual, &[], rl_scenario::CHECKED).unwrap();
     assert_eq!((d.frame, d.path.as_str()), (199, "w[0].x"));

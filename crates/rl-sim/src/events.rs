@@ -121,7 +121,8 @@ pub struct Event {
     /// delivery and the worm loop of the first sub-step) up to
     /// [`crate::World::substeps_last_tick`] (projectiles and bonuses of the
     /// last sub-step, and the server after the physics). A renderer that
-    /// spawns an entity before its `substep`-th entity pass of the tick
+    /// spawns each entity right before the tick's entity pass number
+    /// `substep` (from 0; `substeps_last_tick()` means after the last one)
     /// steps it exactly as often as OLX's client does.
     pub substep: u8,
     pub kind: EventKind,

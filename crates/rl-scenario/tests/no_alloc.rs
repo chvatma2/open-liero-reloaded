@@ -21,14 +21,17 @@ fn firing_every_classic_weapon_does_not_allocate() {
         eprintln!("{dir} not found (run `cargo xtask fetch-olx-content`); skipping");
         return;
     }
-    let sim_mod = Arc::new(rl_scenario::load_mod(content, "Classic").unwrap());
-    let map = rl_scenario::load_map(content, "olx-level-dirt-level").unwrap();
+    let content = rl_content::Content::open(content).unwrap();
+    let sim_mod = Arc::new(content.sim_mod(&rl_content::olx_mod_id("Classic")).unwrap());
+    let level = content.load_level("olx-level-dirt-level").unwrap();
+    let theme = content.load_theme(&level.theme).unwrap();
     let n = sim_mod.weapons().len();
     // Dead worms respawn the next frame, so every round's worms can fire.
     let settings =
         SimSettings { respawn_time: 0.0, bonuses: true, bonus_frequency: 1.0, ..SimSettings::lx56() };
-    let mut w = World::new(settings, sim_mod.clone(), map.terrain, map.holes, AbsTime(100_000), 7);
-    if let Some(mask) = map.green_mask {
+    let terrain = rl_terrain::Terrain::from_grid(&level.material);
+    let mut w = World::new(settings, sim_mod.clone(), terrain, theme.stamps(), AbsTime(100_000), 7);
+    if let Some(mask) = theme.green_mask() {
         w.set_green_mask(mask);
     }
     for i in 0..WORMS {

@@ -39,6 +39,7 @@ mod shots;
 mod spawn;
 mod weapons;
 mod world;
+mod world_step;
 mod worm;
 
 pub use bonus::{Bonus, BonusItem, BonusKind, MAX_BONUSES};

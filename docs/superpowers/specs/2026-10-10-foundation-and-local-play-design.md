@@ -647,3 +647,43 @@ D1, D2, D3, D6, D8 and D10 are described in `tools/olx-oracle/CLAUDE.md`.
 | D8 | **All worms in a scenario use scripted input** (no bot AI during recording). | Bot AI draws `rand()` and reads the wall clock. |
 | D9 | **Exact-zero health:** the Gusanos `think()` death path is ported (the worm dies next frame, credited to nobody), but its Gusanos particles' `rnd()` use is not; scenarios avoid exact-zero health. | Rare; the Gusanos particle system is out of scope. Recorded as a deviation. |
 | D10 | **Other messages of the local connection are delivered between frames too:** every reliable message the server queues for the local client during frame F (bonus spawns and destruction, kill messages, ...) is parsed by the client after frame F, then the shot list (D1), then every reliable message the client queued for the server (bonus grabs, damage reports); none goes over the network. | One frame of latency, as a real local game at one frame per main-loop iteration sees them; over the network they arrived only after a whole `simStep` batch, which made respawn and bonus traces depend on the batching. |
+
+## 19. Amendments made while writing plan 5 (2026-10-10)
+
+These decide how M5 presents the simulation: rendering, effects, audio,
+input and content loading. Where they conflict with earlier sections, they
+take precedence. The OLX behaviours behind them are in
+`docs/porting/olx-notes/presentation.md`.
+
+| # | Decision | Reason |
+|---|---|---|
+| E1 | **Faithful to OLX `d1ad953f`** wherever a choice is visible in play: <ul><li>hard-locked camera, staying on the dead worm and snapping on respawn;</li><li>shake as a random offset for 0.2 s, clamped inward;</li><li>no shadows;</li><li>OLX's colours, frames and entity physics;</li><li>large explosions start invisible;</li><li>the 1024-entity cap;</li><li>THROW and PICKUP play globally at gain 1.0, other sounds positionally.</li></ul> | The user wants the old feel; this OLX build is the reference. |
+| E2 | **Rendering interpolates** between the last two ticks (spec §8.2), with an option to draw the latest state like OLX. | High-refresh displays. |
+| E3 | **No antialiasing in the world pass:** the rope, beams and laser sight are exact 1-world-px lines at art scale. The upscale filter is selectable: integer-nearest, sharp-bilinear (default), or a pixel-art upscaler later. | Crisp pixels at any size. |
+| E4 | **Field of view:** 240 world px of visible height (fork layout); width from the aspect ratio, clamped to `max_aspect` 16:9. | Spec §8.1; matches this OLX fork. |
+| E5 | **Input:** the classic 8 keys only. OLX's defaults are arrows, Shoot `LCtrl`, Jump `LAlt`, Rope `X`, SelectWeapon `LShift` (hold to cycle with left and right). Rebindable; gamepad defaults through gilrs. | Classic feel; the sim has exactly these 8 keys. |
+| E6 | **New sim event data** (no draws, no behaviour change; the oracle stays green): <ul><li>`Explosion.shake`;</li><li>`CosmeticKind::Gib { worm }`;</li><li>`Dirt` gets the probe pixel to sample colour from;</li><li>every event gets the index of the physics sub-step that emitted it, and `World::substeps_last_tick()`;</li><li>`Damage` gets the clamped amount (health before);</li><li>a per-projectile-type `rot_bumped` flag (OLX's sticky `RotIncrement` 0→1);</li><li>`World::physics_time()`;</li><li>`Projectile::serial` (a spawn counter), so interpolation never blends two projectiles that reused one slot.</li></ul> | The renderer cannot recover these otherwise (presentation note, open questions 1–5 and 7; final review of plan 4). |
+| E7 | **Colour terrain lives in `rl-terrain`** (`ColorMap`, no_std). It applies the same `TerrainEdit`s as the sim, in order: <ul><li>carving copies back-image pixels and paints the brown rim;</li><li>`PlaceDirt` colours come from the theme's `FrontTile`;</li><li>green dirt uses OLX's shades;</li><li>beam holes;</li><li>blood and gib stains.</li></ul> | Spec §5.4, so the same code serves the renderer and headless goldens. |
+| E8 | **Cosmetic entities (`rl-fx`)** step per sub-step: motion with dt 0.011, animation with 0.010 (OLX). They use their own seeded generator, and are capped at 1024 like OLX. | Faithful look, without touching sim randomness (spec §5.5). |
+| E9 | **A core asset pack** `olx-core` (new pack kind `Core`) holds OLX's shared gfx and sounds: crosshair, muzzle, explosion, smoke, chemsmoke, spawn, sparkle, giblets, hook, bonus and health icons, game sounds as `.ogg`, and the `colours.cfg` values. Mod packs keep their own sounds. | One place for shared assets; the manifest stays the single list of imported OLX content. |
+| E10 | **Text in the world and HUD** (names, damage popups, the sandbox HUD) uses egui at native resolution. OLX's bitmap fonts wait for M7's classic HUD style. | Spec §8.3; the bitmap fonts are deferred by A5. |
+| E11 | **Sandbox mode** in `rl-game`: <ul><li>pick a level, a mod and a skin on the command line;</li><li>one human worm plus N idle target worms;</li><li>F5 restarts; F2 toggles the debug overlay (FPS, tick time, entity counts).</li></ul> No menus yet (M7). | The M5 "done" criterion: walk, rope and shoot on all 4 levels. |
+| E12 | **Audio degrades to silence** when no output device opens, logging once. On WSL, sound needs the ALSA PulseAudio plugin (`libasound2-plugins` and an `~/.asoundrc` with `pcm.!default pulse`, `ctl.!default pulse`). The user installs these; the game never requires them. | Probe on the dev machine: no ALSA→Pulse plugin is installed. |
+
+Made precise while implementing E6 and E9 (plan 5 task 1):
+
+- **Events are the caller's.** `World::tick(&keys, &mut TickEvents)` refills
+  a buffer the caller owns (`TickEvents::new` sizes it once), so a world
+  clone, such as the renderer's previous-tick snapshot, copies no events.
+  Setup events (`spawn_worm`'s) wait in the world and come first in the next
+  tick's buffer. This replaces §5.1's `tick(..) -> &TickEvents`.
+- **An event's sub-step** is the number of the tick's physics sub-steps whose
+  entity pass (OLX's `SimulateEntities`, after the worm loop) ran before it:
+  0 for setup, shot delivery and the first worm loop, up to
+  `World::substeps_last_tick()` for the last sub-step's projectiles and the
+  server after the physics. A renderer that spawns each effect right before
+  the tick's entity pass number `substep` (from 0; `substeps_last_tick()`
+  means after the last one) steps it exactly as often as OLX's client does.
+- **The core pack's files** are listed under `core` in
+  `content/olx-manifest.ron`; `rl-content` gives a missing or differently
+  sized core sprite a placeholder of its OLX size, and a missing sound silence.

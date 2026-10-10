@@ -10,6 +10,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use rl_content::{Content, olx_mod_id};
 use rl_math::AbsTime;
 use rl_sim::{
     EventKind, Keys, Loadout, MAX_BONUSES, SimSettings, Slot, StampId, TerrainOp, TickEvents, World,
@@ -150,15 +151,18 @@ fn smoke(mod_dir: &str, level: &str, seed: u64) {
     let Some(content) = content_dir() else { return };
     let content = Path::new(&content);
     let what = format!("{mod_dir} on {level}");
-    let sim_mod = rl_scenario::load_mod(content, mod_dir).unwrap();
-    let map = rl_scenario::load_map(content, level).unwrap();
+    let content = Content::open(content).unwrap();
+    let sim_mod = content.sim_mod(&olx_mod_id(mod_dir)).unwrap();
+    let level = content.load_level(level).unwrap();
+    let theme = content.load_theme(&level.theme).unwrap();
     let mut rng = Rng(seed);
     let settings = SimSettings { bonuses: true, bonus_frequency: 3.0, ..SimSettings::lx56() };
     let n_weapons = sim_mod.weapons().len() as u64;
-    let (holes, mask) = (map.holes.clone(), map.green_mask.clone());
+    let (holes, mask) = (theme.stamps(), theme.green_mask());
+    let terrain = Terrain::from_grid(&level.material);
     let mut w =
-        World::new(settings, Arc::new(sim_mod), map.terrain, map.holes, AbsTime(100_000), seed as u32);
-    if let Some(mask) = map.green_mask {
+        World::new(settings, Arc::new(sim_mod), terrain, theme.stamps(), AbsTime(100_000), seed as u32);
+    if let Some(mask) = theme.green_mask() {
         w.set_green_mask(mask);
     }
     for i in 0..WORMS {

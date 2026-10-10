@@ -1,0 +1,25 @@
+[package]
+name = "rl-content"
+description = "Loads content packs into ready-to-run inputs: simulation mods, terrain, worlds, images and sounds."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rl-math.workspace = true
+rl-data.workspace = true
+rl-terrain.workspace = true
+rl-sim.workspace = true
+rl-pack.workspace = true
+rl-vfs.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+ron.workspace = true
+serde = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

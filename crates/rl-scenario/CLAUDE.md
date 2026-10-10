@@ -4,10 +4,12 @@ Plays oracle scenarios (`fixtures/oracle/**/*.ron`, named by their path such as
 `weapons/classic/bazooka`) in `rl-sim` and records
 traces in `rl-oracle`'s format.
 
-- **Layer 4, uses `std`.**
+- **Layer 4, uses `std`.** Depends on `rl-content` (same layer).
 - The scenario's world comes from the imported packs in a content directory
-  (`target/content`, written by `rl-cli import`) plus OLX's settings from the
-  trace header. The mod pack becomes a `SimMod` (`load_mod`); its weapon and
+  (`target/content`, written by `rl-cli import`, opened with
+  `rl_content::Content`) plus OLX's settings from the trace header. The mod
+  pack becomes a `SimMod` with `Content::sim_mod` (strict: an image
+  projectile without its image's frame count is an error); its weapon and
   projectile names must equal the header's, so ids compare directly.
 - A scenario's weapons are set by name and its health applied; without
   weapons, and for lives and kills, the slots are copied from OLX's frame −1.
@@ -28,8 +30,6 @@ traces in `rl-oracle`'s format.
 - The theme pack's green ball becomes the world's green-dirt mask.
 - A scenario's bonuses are placed with `World::place_bonus` before the
   frame's tick (weapons by name, ignoring case, as OLX's `FindWeaponId`).
-- `load_mod` refuses an image projectile without its image's frame count.
-  `load_map` reads a level pack and its theme (holes, green-dirt mask).
 - `tests/smoke.rs` plays 4-worm matches with random seeded keys on every
   level with both mods (3000 ticks) and checks the invariants every tick,
   and that a clone gives the same checksums and events; `tests/no_alloc.rs`

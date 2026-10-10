@@ -9,12 +9,10 @@ publish.workspace = true
 
 [dependencies]
 rl-math.workspace = true
-rl-data.workspace = true
 rl-terrain.workspace = true
 rl-sim.workspace = true
 rl-oracle.workspace = true
-rl-pack.workspace = true
-rl-vfs.workspace = true
+rl-content.workspace = true
 anyhow.workspace = true
 
 [dev-dependencies]

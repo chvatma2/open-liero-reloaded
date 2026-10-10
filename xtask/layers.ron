@@ -15,6 +15,7 @@
         "rl-oracle": 2,
         "rl-sim": 3,
         "rl-scenario": 4,
+        "rl-content": 4,
         "rl-cli": 6,
         "xtask": 6,
     },
@@ -23,6 +24,8 @@
         ("rl-import-lgs", "rl-pack"),
         ("rl-import-lxl", "rl-pack"),
         ("rl-import-gfx", "rl-pack"),
+        // The oracle replays worlds built from packs the way the game loads them.
+        ("rl-scenario", "rl-content"),
     ],
     no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim"],
     wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
