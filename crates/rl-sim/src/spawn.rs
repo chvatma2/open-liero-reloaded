@@ -30,6 +30,8 @@ pub(crate) struct SpawnCtx<'a> {
     pub now: AbsTime,
     /// Children computed in full ([`crate::rng::Draws::spawn_work`]).
     pub work: &'a mut u64,
+    /// [`crate::rng::Draws::rot_bumped`].
+    pub rot_bumped: &'a mut [bool],
 }
 
 /// What spawned the projectiles (`Proj_SpawnParent`).
@@ -90,6 +92,14 @@ pub(crate) fn spawn_info_apply(
     let heading = if info.use_angle { parent.angle() } else { 0.0 };
     let rot_increment =
         if info.use_random_rot { ctx.sim_mod.projectiles()[info.proj].rotation() } else { None };
+    if rot_increment == Some(0)
+        && info.amount > 0
+        && let Some(bumped) = ctx.rot_bumped.get_mut(info.proj)
+    {
+        // The first child sets the mod's `RotIncrement` to 1 (`:590-593`),
+        // even one the full pool then drops.
+        *bumped = true;
+    }
     for i in 0..info.amount {
         if ctx.pool.is_full() {
             skip_children(info, &mut parent, info.amount.abs_diff(i), rot_increment, ctx.rand);

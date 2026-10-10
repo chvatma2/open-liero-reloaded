@@ -186,7 +186,7 @@ pub(crate) fn process_shot_beam(
                 wall_clock: now + TimeDiff(CLOCK_OFFSET_MS),
                 physics_dt: settings.lx56_physics_dt(),
             };
-            explosion(&mut blast, shot.spawn, p, 0.0, shot.worm);
+            explosion(&mut blast, shot.spawn, p, 0.0, 5, shot.worm);
             return Part::Stopped;
         }
         if solid(terrain, p) {

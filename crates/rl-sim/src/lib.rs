@@ -6,7 +6,7 @@
 //! ([`World::spawn_worm`], [`World::set_loadout`], [`World::place_bonus`]), [`World::tick`] is the only
 //! way state changes, and it does not allocate.
 //!
-//! [`World::tick`] returns the tick's [`TickEvents`] (spec §5.7), and
+//! [`World::tick`] refills the caller's [`TickEvents`] (spec §5.7), and
 //! [`World::checksum`] hashes the whole simulation state.
 //!
 //! Scope: worm movement and collision, keyboard input, digging, the ninja
@@ -43,7 +43,8 @@ mod worm;
 
 pub use bonus::{Bonus, BonusItem, BonusKind, MAX_BONUSES};
 pub use events::{
-    CosmeticKind, Event, GAME_SOUND_PREFIX, GAME_SOUNDS, LostArea, SoundId, StampId, TerrainOp, TickEvents,
+    CosmeticKind, Event, EventKind, GAME_SOUND_PREFIX, GAME_SOUNDS, LostArea, SoundId, StampId, TerrainOp,
+    TickEvents,
 };
 pub use input::{KeyLatch, Keys, Latches};
 pub use mod_rt::{

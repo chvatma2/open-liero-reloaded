@@ -7,7 +7,7 @@ use rl_terrain::{PX_DIRT, Stamp, Terrain};
 use crate::SimSettings;
 use crate::bonus::{Bonus, MAX_BONUSES};
 use crate::damage::{Harm, injure_worm};
-use crate::events::{CosmeticKind, Event, StampId, TerrainOp, TickEvents};
+use crate::events::{CosmeticKind, EventKind, StampId, TerrainOp, TickEvents};
 use crate::proj_sim::ProjCtx;
 use crate::projectile::{c_i64, c_int};
 use crate::rng::Draws;
@@ -151,15 +151,15 @@ impl<'a> ProjCtx<'a> {
 /// (`:255-270`); then the probe's two particles (4 `rand()`), the explosion
 /// entity, a hole of size `(int)damage` counted for `owner`, and the full
 /// `damage` to every alive worm whose recorded position (`getBest`, as the
-/// hit test) is within 5 px: no falloff. The viewport shake is cosmetic.
-/// Reported as an [`Event::Explosion`], the `ENT_EXPLOSION` of size
+/// hit test) is within 5 px: no falloff. The viewport shake (`shake`) is
+/// cosmetic. Reported as an [`EventKind::Explosion`], the `ENT_EXPLOSION` of size
 /// `(int)damage` (8 up to damage 5) and the hole's terrain edit.
-pub(crate) fn explosion(ctx: &mut Blast, time: AbsTime, pos: Vec2, damage: f32, owner: i32) {
+pub(crate) fn explosion(ctx: &mut Blast, time: AbsTime, pos: Vec2, damage: f32, shake: i32, owner: i32) {
     let (w, h) = (ctx.terrain.width() as i64, ctx.terrain.height() as i64);
     // MIN((uint)pos.y, H - 1); px = (uint)pos.x. x86-64 converts through a 64-bit int.
     let y = (c_i64(pos.y) as u32).min((h as u32).wrapping_sub(1)) as i32 as i64;
     let px = c_i64(pos.x) as u32 as i32 as i64;
-    let mut got_dirt = false;
+    let mut got_dirt = None;
     for x in px - 2..px + 2 {
         if x < 0 {
             continue;
@@ -168,7 +168,7 @@ pub(crate) fn explosion(ctx: &mut Blast, time: AbsTime, pos: Vec2, damage: f32, 
             break;
         }
         if ctx.terrain.flags(x, y) & PX_DIRT != 0 {
-            got_dirt = true;
+            got_dirt = Some((x as i32, y as i32));
             break;
         }
     }
@@ -179,14 +179,14 @@ pub(crate) fn explosion(ctx: &mut Blast, time: AbsTime, pos: Vec2, damage: f32, 
                 continue;
             }
             ctx.bonuses[i].used = false;
-            explosion(ctx, time, pos, 15.0, owner);
+            explosion(ctx, time, pos, 15.0, 5, owner);
         }
     }
-    if got_dirt {
-        ctx.draws.particles(2, pos, |v| Vec2::new(v.x * 30.0, v.y * 10.0));
+    if let Some(probe) = got_dirt {
+        ctx.draws.particles(2, pos, probe, |v| Vec2::new(v.x * 30.0, v.y * 10.0));
     }
     let size = if damage > 5.0 { c_int(damage) } else { 8 };
-    ctx.draws.events.push(Event::Explosion { pos, damage });
+    ctx.draws.events.push(EventKind::Explosion { pos, damage, shake });
     ctx.draws.entity(CosmeticKind::Explosion { size }, pos, Vec2::ZERO);
     let d = carve_at(ctx.terrain, ctx.holes, &mut ctx.draws.events, TerrainOp::Carve, c_int(damage), pos);
     increment_dirt_count(ctx.worms, owner, d);

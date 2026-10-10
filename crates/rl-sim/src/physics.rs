@@ -155,7 +155,7 @@ fn carve_small(ctx: &mut Ctx, pos: Vec2) -> i32 {
         }
         if ctx.terrain.flags(x, y) & PX_DIRT != 0 {
             // `GetRandomVec().multPairwise(30, 10)`.
-            ctx.draws.particles(3, pos, |v| Vec2::new(v.x * 30.0, v.y * 10.0));
+            ctx.draws.particles(3, pos, (x as i32, y as i32), |v| Vec2::new(v.x * 30.0, v.y * 10.0));
             break;
         }
     }

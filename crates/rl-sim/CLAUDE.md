@@ -6,8 +6,9 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
 
 - **Layer 3, `#![no_std]` + `alloc`.** Apart from setup (`spawn_worm`,
   `set_loadout`, `set_green_mask`, `set_bonus_weapons`, `align_physics_clock`,
-  and `place_bonus`, applied at the next tick), `World::tick(&[Keys])` is the only
-  way state changes, and it does not allocate (`tests/no_alloc.rs`).
+  `place_bonus`, applied at the next tick, and `find_spot`), `World::tick(&[Keys],
+  &mut TickEvents)` is the only way state changes, and it does not allocate
+  (`tests/no_alloc.rs`).
 - **Two clocks.** `tick` is one 100 Hz frame. Inside it, LX56 physics runs in
   `1000 / LX56PhysicsFPS` ms sub-steps (11 ms by default) while the physics
   clock is behind the frame clock, so some frames run no sub-step.
@@ -30,7 +31,10 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   buffers are sized in `new`. Hostile mods must not stall a tick: a spawn
   `Amount` is at most `MAX_AMOUNT`, and once the pool is full a spawn skips
   its children's work but makes their draws (`skip_children`);
-  `Draws::spawn_work` counts the children computed in full, for tests.
+  `Draws::spawn_work` counts the children computed in full, for tests (not
+  state: `WorkCounter` is always equal). `Draws::rot_bumped` keeps OLX's
+  `RotIncrement` 0→1 mutation per projectile type (`World::rot_bumped`), and
+  each projectile gets a spawn serial (`Projectile::serial`).
 - **Projectiles** (`proj_sim.rs`): after all worms in each sub-step, every
   projectile catches up its own clock in slot order (children in higher
   slots run in the same pass). Hit tests read the worm's `PosRecorder`
@@ -57,9 +61,14 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   and keeps a slot for the whole `BonusLife`; the client's bonuses fall
   after the projectiles, are picked up after each worm's physics, and
   explode in `effects::explosion` and in the beam trace.
-- **Events** (`events.rs`, spec §5.7): `tick` returns `&TickEvents`, a
-  buffer kept in `Draws` and refilled each tick (setup events such as
-  `spawn_worm`'s come with the next tick's). Emit them where OLX plays a
+- **Events** (`events.rs`, spec §5.7): `tick` refills the caller's
+  `TickEvents` (`TickEvents::new` sizes it once), so a world clone copies
+  no events. During the tick the buffer is swapped into `Draws::events`,
+  where the emitters push; between ticks `Draws::events` holds the few
+  setup events (`spawn_worm`'s), which come first in the next tick's. Each
+  `Event` is `{ substep, kind: EventKind }`: `substep` counts the sub-steps
+  whose entity pass (after the worm loop) ran before it, up to
+  `World::substeps_last_tick()`. Emit them where OLX plays a
   sound, spawns an entity (`Draws::entity`, which also takes the pool slot)
   or edits the map (`effects::carve_px`/`carve_at`), never with a draw of
   their own (D4/D5); cosmetics are emitted even when the entity pool is full.
@@ -71,10 +80,10 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `SoundId` indexes `SimMod::sounds()`: OLX's game sounds first, each prefixed
   `olx:` (`GAME_SOUND_PREFIX`, a path in OLX's data directory), then the mod's
   (paths in its pack, never prefixed), so a loader can tell the roots apart.
-  **For consumers:** `tick` returns `&TickEvents` borrowing the world
-  mutably; when you also need world state, ignore the return value and read
-  the events after the tick with `world.events()`.
-  `LaserSight { len }` carries OLX's trace length. Spec §5.7's `Message` and
+  The renderer's data (spec §19 E6): `Explosion.shake`, `Gib { worm }`,
+  `Dirt { probe }` (the pixel the colour comes from), `Damage.dealt`,
+  `LaserSight { len }` (OLX's trace length), `World::physics_time()`.
+  Spec §5.7's `Message` and
   `GameOver` events are not emitted yet (plan 6).
 - **Checksum** (`checksum.rs`): FNV-1a 64 over all mutable state, through an
   exhaustive destructuring of each type; a new field must be hashed there

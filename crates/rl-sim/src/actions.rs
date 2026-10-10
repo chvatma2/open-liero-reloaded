@@ -128,7 +128,8 @@ pub(crate) fn apply_to(
                 push_worm = false;
                 bounce(p, a.bounce_coeff);
                 if a.bounce_explode > 0 {
-                    explosion(&mut ctx.blast(), p.last_sim_time, p.pos, a.bounce_explode as f32, p.owner);
+                    // `Explosion(.., (float)BounceExplode, false, ..)` (`:777`): no shake.
+                    explosion(&mut ctx.blast(), p.last_sim_time, p.pos, a.bounce_explode as f32, 0, p.owner);
                 }
             }
         }
@@ -300,7 +301,7 @@ pub(crate) fn execute(pool: &mut ProjectilePool, i: usize, info: &mut DoActionIn
             def.timer.action.as_ref().map_or(0, |a| a.damage)
         };
         if damage != -1 {
-            explosion(&mut ctx.blast(), time, pos, damage as f32, owner);
+            explosion(&mut ctx.blast(), time, pos, damage as f32, info.shake, owner);
         }
         info.delete_after = true;
     }
@@ -348,7 +349,8 @@ fn spawn_children(pool: &mut ProjectilePool, i: usize, s: &SpawnInfo, ctx: &mut 
         rand: &mut ctx.draws.rand,
         settings: ctx.settings,
         now: ctx.now,
-        work: &mut ctx.draws.spawn_work,
+        work: &mut ctx.draws.spawn_work.0,
+        rot_bumped: &mut ctx.draws.rot_bumped,
     };
     spawn_info_apply(s, SpawnParent::Proj(&mut parent), time, &mut sctx);
     if let Some(p) = pool.get_mut(i) {

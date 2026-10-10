@@ -91,7 +91,7 @@ fn worm(id: i32, x: f32, y: f32) -> Worm {
 }
 
 fn draws() -> Draws {
-    Draws::new(GlibcRand::new(1), Mt19937::new(1))
+    Draws::new(GlibcRand::new(1), Mt19937::new(1), 0)
 }
 
 #[test]

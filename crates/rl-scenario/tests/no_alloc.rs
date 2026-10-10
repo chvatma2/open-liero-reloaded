@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rl_math::AbsTime;
-use rl_sim::{Event, Keys, Loadout, SimSettings, Slot, WeaponType, World};
+use rl_sim::{EventKind, Keys, Loadout, SimSettings, Slot, TickEvents, WeaponType, World};
 
 const TICKS: usize = 500;
 const WORMS: usize = 4;
@@ -38,6 +38,7 @@ fn firing_every_classic_weapon_does_not_allocate() {
     let rounds = n.div_ceil(WORMS);
     let mut fired = vec![false; n];
     let mut allocations = 0;
+    let mut events = TickEvents::new();
     for round in 0..rounds {
         for i in 0..WORMS {
             let weapon = ((round * WORMS + i) % n) as i32;
@@ -54,8 +55,9 @@ fn firing_every_classic_weapon_does_not_allocate() {
         .map(Keys);
         let info = allocation_counter::measure(|| {
             for _ in 0..TICKS / rounds {
-                for e in w.tick(&keys) {
-                    if let Event::WeaponFired { weapon, .. } = *e {
+                w.tick(&keys, &mut events);
+                for e in &events {
+                    if let EventKind::WeaponFired { weapon, .. } = e.kind {
                         fired[weapon as usize] = true;
                     }
                 }

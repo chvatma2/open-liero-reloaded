@@ -7,7 +7,7 @@
 use rl_math::{AbsTime, Vec2};
 
 use crate::SimSettings;
-use crate::events::{CosmeticKind, Event, SoundId};
+use crate::events::{CosmeticKind, EventKind, SoundId};
 use crate::projectile::c_int;
 use crate::rng::Draws;
 use crate::world::MAX_WORMS;
@@ -129,7 +129,7 @@ pub(crate) fn injure_worm(h: &mut Harm, id: i32, damage: f32, owner: i32) {
     let w = &mut h.worms[vi];
     w.health -= damage;
     let pos = w.pos;
-    h.draws.events.push(Event::Damage { worm: id, amount: damage, by: owner });
+    h.draws.events.push(EventKind::Damage { worm: id, amount: damage, by: owner, dealt: real });
     if w.health < 0.0 {
         w.health = 0.0;
         kill_worm(h, id, owner);
@@ -139,7 +139,7 @@ pub(crate) fn injure_worm(h: &mut Harm, id: i32, damage: f32, owner: i32) {
         for _ in 0..7 {
             // A gib draws its spin inside SpawnEntity, if the pool has room.
             let v = d.rand.random_vec() * 80.0;
-            if d.entity(CosmeticKind::Gib, pos, v) {
+            if d.entity(CosmeticKind::Gib { worm: id }, pos, v) {
                 d.rand.random_num();
                 d.rand.random_num();
             }
@@ -202,7 +202,7 @@ pub(crate) fn kill_worm(h: &mut Harm, victim: i32, killer: i32) {
             w.kills = w.kills.wrapping_add(1);
         }
     }
-    h.draws.events.push(Event::Kill { victim, killer });
+    h.draws.events.push(EventKind::Kill { victim, killer });
     // `CWorm::Kill(true)`.
     let w = &mut h.worms[vi];
     w.alive = false;

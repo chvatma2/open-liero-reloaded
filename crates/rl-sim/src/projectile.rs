@@ -87,6 +87,10 @@ pub struct Projectile {
     /// `fLastSimulationTime`, the projectile's own physics clock.
     pub last_sim_time: AbsTime,
     pub health: f32,
+    /// Which spawn this is: the pool's spawn counter when the slot was taken
+    /// (not OLX's: a renderer must not blend two projectiles that used one
+    /// slot in consecutive ticks).
+    pub(crate) serial: u32,
 }
 
 impl Default for Projectile {
@@ -125,11 +129,18 @@ impl Default for Projectile {
             first_bounce: false,
             last_sim_time: AbsTime(0),
             health: 0.0,
+            serial: 0,
         }
     }
 }
 
 impl Projectile {
+    /// This projectile's spawn number, unique in its world (it wraps after
+    /// 2^32 spawns): a slot reused by a new projectile gets a new serial.
+    pub fn serial(&self) -> u32 {
+        self.serial
+    }
+
     /// `CProjectile::getRandomFloat` (`src/common/CProjectile.cpp:118-125`).
     pub fn random_float(&mut self) -> f32 {
         let r = get_fixed_random_num(self.random as u8);
@@ -175,6 +186,8 @@ pub struct ProjectilePool {
     last_used: i32,
     /// One past the highest slot ever taken: the slots above are untouched.
     touched: usize,
+    /// The serial of the next projectile ([`Projectile::serial`]).
+    next_serial: u32,
 }
 
 impl ProjectilePool {
@@ -183,7 +196,13 @@ impl ProjectilePool {
 
     pub fn new(capacity: usize) -> Self {
         let capacity = capacity.min(i32::MAX as usize);
-        Self { slots: vec![Projectile::default(); capacity], first_unused: 0, last_used: -1, touched: 0 }
+        Self {
+            slots: vec![Projectile::default(); capacity],
+            first_unused: 0,
+            last_used: -1,
+            touched: 0,
+            next_serial: 0,
+        }
     }
 
     pub fn capacity(&self) -> usize {
@@ -215,6 +234,8 @@ impl ProjectilePool {
             self.last_used = idx;
         }
         self.touched = self.touched.max(idx as usize + 1);
+        self.slots[idx as usize].serial = self.next_serial;
+        self.next_serial = self.next_serial.wrapping_add(1);
         // findNewFirstUnused (FastVector.h:34-41).
         loop {
             self.first_unused += 1;
@@ -289,11 +310,12 @@ impl crate::checksum::Checksum for ProjectilePool {
     /// Every slot ever used (a freed slot keeps values its next projectile
     /// reads), then the free-list indices.
     fn hash(&self, h: &mut crate::checksum::Fnv) {
-        let ProjectilePool { slots, first_unused, last_used, touched } = self;
+        let ProjectilePool { slots, first_unused, last_used, touched, next_serial } = self;
         h.usize(slots.len());
         slots[..*touched].hash(h);
         h.i32(*first_unused);
         h.i32(*last_used);
+        h.u32(*next_serial);
     }
 }
 

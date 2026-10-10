@@ -33,6 +33,7 @@ fn spawn_info_random_index_chain() {
         settings: &settings,
         now: AbsTime(500),
         work: &mut 0,
+        rot_bumped: &mut [],
     };
     let info = m.weapons()[0].spawn.clone().unwrap();
     spawn_info_apply(&info, SpawnParent::Shot(&mut shot), AbsTime(490), &mut ctx);
@@ -112,6 +113,7 @@ fn apply(m: &SimMod, info: &SpawnInfo, room: usize, shot: bool) -> After {
         settings: &settings,
         now: AbsTime(500),
         work: &mut work,
+        rot_bumped: &mut [],
     };
     let random = if shot {
         let mut s = Shot { random: 250, angle: 30, pos: Vec2::new(100.0, 50.0), ..Shot::default() };
@@ -187,10 +189,11 @@ fn a_self_trailing_projectile_costs_at_most_one_full_child_per_free_slot() {
     w.set_loadout(i, &loadout);
     w.align_physics_clock();
     let mut per_tick = Vec::new();
+    let mut events = crate::TickEvents::new();
     for _ in 0..20 {
-        let before = w.draws.spawn_work;
-        w.tick(&[crate::Keys(crate::Keys::FIRE)]);
-        per_tick.push(w.draws.spawn_work - before);
+        let before = w.draws.spawn_work.0;
+        w.tick(&[crate::Keys(crate::Keys::FIRE)], &mut events);
+        per_tick.push(w.draws.spawn_work.0 - before);
     }
     assert_eq!(w.projectiles().count(), ProjectilePool::DEFAULT_CAPACITY, "the pool is full");
     let total: u64 = per_tick.iter().sum();

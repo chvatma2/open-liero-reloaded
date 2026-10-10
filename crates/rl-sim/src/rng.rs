@@ -1,5 +1,8 @@
 //! The generators the simulation draws from, in OLX's order (spec §5.5).
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 use rl_math::{GlibcRand, Mt19937, Vec2};
 
 use crate::events::{CosmeticKind, TickEvents};
@@ -8,8 +11,9 @@ use crate::events::{CosmeticKind, TickEvents};
 /// `src/client/Entity.cpp:31-32`).
 const MAX_ENTITIES: u32 = 1024;
 
-/// `rand()`, `FindSpot`'s `rnd()` and the entity counter, and the tick's
-/// events, which are emitted where these draws happen.
+/// `rand()`, `FindSpot`'s `rnd()` and the entity counter, the projectile
+/// types whose `RotIncrement` a rotation draw bumped, and the tick's events,
+/// which are emitted where these draws happen.
 ///
 /// OLX throws cosmetic entities (particles, blood, sparkles) that draw from the
 /// same `rand()` stream as gameplay, so the draws are made, and only reported
@@ -19,15 +23,39 @@ pub(crate) struct Draws {
     pub rand: GlibcRand,
     pub mt: Mt19937,
     pub ents: u32,
+    /// During [`crate::World::tick`], the caller's buffer; between ticks,
+    /// the setup events for the next tick (`TickEvents::start_tick`).
     pub events: TickEvents,
-    /// Spawned children `Proj_SpawnInfo::apply` computed in full (aim, speed,
-    /// position), counted for tests that bound the work per tick. Not state.
-    pub spawn_work: u64,
+    /// Per projectile type: `Proj_SpawnInfo::apply` set its zero
+    /// `RotIncrement` to 1 (`PhysicsLX56_Projectiles.cpp:590-593`), which
+    /// OLX keeps in the loaded mod and `CProjectile::Draw` reads.
+    pub rot_bumped: Vec<bool>,
+    pub spawn_work: WorkCounter,
+}
+
+/// Spawned children `Proj_SpawnInfo::apply` computed in full (aim, speed,
+/// position), counted for tests that bound the work per tick. Not state: it
+/// never makes two worlds unequal, and the checksum leaves it out.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct WorkCounter(pub u64);
+
+impl PartialEq for WorkCounter {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
 }
 
 impl Draws {
-    pub fn new(rand: GlibcRand, mt: Mt19937) -> Self {
-        Self { rand, mt, ents: 0, events: TickEvents::new(), spawn_work: 0 }
+    /// `projectile_types` sizes [`Draws::rot_bumped`].
+    pub fn new(rand: GlibcRand, mt: Mt19937, projectile_types: usize) -> Self {
+        Self {
+            rand,
+            mt,
+            ents: 0,
+            events: TickEvents::pending(),
+            rot_bumped: vec![false; projectile_types],
+            spawn_work: WorkCounter(0),
+        }
     }
 
     /// `SpawnEntity` (`Entity.cpp:160-205`) for a type that draws nothing itself:
@@ -50,11 +78,12 @@ impl Draws {
         self.spawn_entity()
     }
 
-    /// `n` dirt particles at `pos`, each thrown with `vel(GetRandomVec())`.
-    pub fn particles(&mut self, n: u32, pos: Vec2, vel: impl Fn(Vec2) -> Vec2) {
+    /// `n` dirt particles at `pos`, coloured like the map at `probe`, each
+    /// thrown with `vel(GetRandomVec())`.
+    pub fn particles(&mut self, n: u32, pos: Vec2, probe: (i32, i32), vel: impl Fn(Vec2) -> Vec2) {
         for _ in 0..n {
             let v = self.rand.random_vec();
-            self.entity(CosmeticKind::Dirt, pos, vel(v));
+            self.entity(CosmeticKind::Dirt { probe }, pos, vel(v));
         }
     }
 }

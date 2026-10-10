@@ -64,9 +64,12 @@ fn walled_world() -> World {
 #[test]
 fn events_are_emitted_once_per_cause() {
     let mut w = walled_world();
-    let setup: Vec<Event> = w.tick(&[Keys(Keys::FIRE)]).iter().copied().collect();
-    assert!(setup.contains(&Event::Spawned { worm: 0 }), "setup events come with the first tick: {setup:?}");
-    assert!(setup.contains(&Event::TerrainEdit {
+    let setup: Vec<EventKind> = w.tick_new(&[Keys(Keys::FIRE)]).iter().map(|e| e.kind).collect();
+    assert!(
+        setup.contains(&EventKind::Spawned { worm: 0 }),
+        "setup events come with the first tick: {setup:?}"
+    );
+    assert!(setup.contains(&EventKind::TerrainEdit {
         op: TerrainOp::Carve,
         stamp: StampId::Hole(4),
         x: 60,
@@ -75,53 +78,52 @@ fn events_are_emitted_once_per_cause() {
     let mut all = Vec::new();
     for f in 1..100 {
         let keys = if f < 4 { Keys(Keys::FIRE) } else { Keys(0) };
-        all.extend(w.tick(&[keys]).iter().copied());
+        all.extend(w.tick_new(&[keys]).iter().map(|e| e.kind));
     }
-    let count = |f: &dyn Fn(&Event) -> bool| all.iter().filter(|e| f(e)).count();
+    let count = |f: &dyn Fn(&EventKind) -> bool| all.iter().filter(|e| f(e)).count();
     let sounds = w.sim_mod().sounds();
     let id = |name: &str| SoundId(sounds.iter().position(|s| s == name).unwrap() as u16);
-    assert_eq!(count(&|e| matches!(e, Event::WeaponFired { worm: 0, weapon: 0 })), 1, "{all:?}");
-    assert_eq!(count(&|e| matches!(e, Event::Sound { id: s, .. } if *s == id("sfx/gun.wav"))), 1);
-    assert_eq!(count(&|e| matches!(e, Event::Explosion { damage: 5.0, .. })), 1, "{all:?}");
-    assert_eq!(count(&|e| matches!(e, Event::Explosion { .. })), 1);
-    assert_eq!(count(&|e| matches!(e, Event::Sound { id: s, .. } if *s == id("sfx/boom.wav"))), 1);
+    assert_eq!(count(&|e| matches!(e, EventKind::WeaponFired { worm: 0, weapon: 0 })), 1, "{all:?}");
+    assert_eq!(count(&|e| matches!(e, EventKind::Sound { id: s, .. } if *s == id("sfx/gun.wav"))), 1);
+    assert_eq!(count(&|e| matches!(e, EventKind::Explosion { damage: 5.0, .. })), 1, "{all:?}");
+    assert_eq!(count(&|e| matches!(e, EventKind::Explosion { .. })), 1);
+    assert_eq!(count(&|e| matches!(e, EventKind::Sound { id: s, .. } if *s == id("sfx/boom.wav"))), 1);
     // One hole, of size 5 (the largest, index 4), where the pellet hit the wall.
-    let edits: Vec<&Event> = all.iter().filter(|e| matches!(e, Event::TerrainEdit { .. })).collect();
+    let edits: Vec<&EventKind> = all.iter().filter(|e| matches!(e, EventKind::TerrainEdit { .. })).collect();
     assert_eq!(edits.len(), 1, "{edits:?}");
-    let Event::TerrainEdit { op: TerrainOp::Carve, stamp: StampId::Hole(4), x, .. } = *edits[0] else {
+    let EventKind::TerrainEdit { op: TerrainOp::Carve, stamp: StampId::Hole(4), x, .. } = *edits[0] else {
         panic!("{edits:?}")
     };
     assert!((115..=125).contains(&x), "{x}");
     // The explosion entity (size 8 below damage 6) and its two dirt particles.
     assert_eq!(
-        count(&|e| matches!(e, Event::SpawnCosmetic { kind: CosmeticKind::Explosion { size: 8 }, .. })),
+        count(&|e| matches!(e, EventKind::SpawnCosmetic { kind: CosmeticKind::Explosion { size: 8 }, .. })),
         1
     );
-    assert_eq!(count(&|e| matches!(e, Event::SpawnCosmetic { kind: CosmeticKind::Dirt, .. })), 2);
+    assert_eq!(count(&|e| matches!(e, EventKind::SpawnCosmetic { kind: CosmeticKind::Dirt { .. }, .. })), 2);
 }
 
 #[test]
 fn a_death_reports_damage_the_kill_its_sound_and_gore() {
     let mut w = walled_world();
     w.spawn_worm(80, 140);
-    w.tick(&[]);
+    w.tick_new(&[]);
     w.draws.ents = 1024; // A full entity pool still reports every cosmetic.
-    w.draws.events.begin_tick();
     injure_worm(&mut w.harm(), 1, 150.0, 0);
-    let ev = w.draws.events.as_slice();
-    assert_eq!(ev[0], Event::Damage { worm: 1, amount: 150.0, by: 0 });
-    assert_eq!(ev[1], Event::Kill { victim: 1, killer: 0 });
-    assert!(matches!(ev[2], Event::Sound { id, .. } if SoundId::DEATH.contains(&id)), "{:?}", ev[2]);
+    let ev: Vec<EventKind> = w.draws.events.iter().map(|e| e.kind).collect();
+    assert_eq!(ev[0], EventKind::Damage { worm: 1, amount: 150.0, by: 0, dealt: 100.0 });
+    assert_eq!(ev[1], EventKind::Kill { victim: 1, killer: 0 });
+    assert!(matches!(ev[2], EventKind::Sound { id, .. } if SoundId::DEATH.contains(&id)), "{:?}", ev[2]);
     let kind = |k: CosmeticKind| {
-        ev.iter().filter(|e| matches!(e, Event::SpawnCosmetic { kind, .. } if *kind == k)).count()
+        ev.iter().filter(|e| matches!(e, EventKind::SpawnCosmetic { kind, .. } if *kind == k)).count()
     };
-    assert_eq!(kind(CosmeticKind::Gib), 7);
+    assert_eq!(kind(CosmeticKind::Gib { worm: 1 }), 7);
     // 50 death rounds and 100 hit rounds (clamp(150, 10, 100)), 3 entities each.
     assert_eq!(kind(CosmeticKind::BloodDropper), 150);
     assert_eq!(kind(CosmeticKind::Blood { red: 200 }) + kind(CosmeticKind::Blood { red: 128 }), 300);
     assert_eq!(ev.len(), 3 + 7 + 450);
     let pos = w.worms()[1].pos;
-    assert!(ev[3..].iter().all(|e| matches!(e, Event::SpawnCosmetic { pos: p, .. } if *p == pos)));
+    assert!(ev[3..].iter().all(|e| matches!(e, EventKind::SpawnCosmetic { pos: p, .. } if *p == pos)));
 }
 
 #[test]
@@ -157,14 +159,14 @@ fn each_class_of_events_has_its_own_quota() {
     let zero = rl_math::Vec2::ZERO;
     for i in 0..2 * TickEvents::CAPACITY as i32 {
         e.cosmetic(CosmeticKind::Smoke, zero, zero);
-        e.push(Event::Spawned { worm: 0 });
+        e.push(EventKind::Spawned { worm: 0 });
         e.edit(TerrainOp::Carve, StampId::Hole(0), i, -i, (5, 7));
     }
     assert_eq!(e.len(), TickEvents::CAPACITY);
-    let count = |f: fn(&Event) -> bool| e.iter().filter(|x| f(x)).count();
-    assert_eq!(count(|x| matches!(x, Event::SpawnCosmetic { .. })), TickEvents::COSMETIC_LIMIT);
-    assert_eq!(count(|x| matches!(x, Event::TerrainEdit { .. })), TickEvents::EDIT_LIMIT);
-    assert_eq!(count(|x| matches!(x, Event::Spawned { .. })), TickEvents::GAMEPLAY_LIMIT);
+    let count = |f: fn(&EventKind) -> bool| e.iter().filter(|x| f(&x.kind)).count();
+    assert_eq!(count(|x| matches!(x, EventKind::SpawnCosmetic { .. })), TickEvents::COSMETIC_LIMIT);
+    assert_eq!(count(|x| matches!(x, EventKind::TerrainEdit { .. })), TickEvents::EDIT_LIMIT);
+    assert_eq!(count(|x| matches!(x, EventKind::Spawned { .. })), TickEvents::GAMEPLAY_LIMIT);
     let n = 2 * TickEvents::CAPACITY;
     assert_eq!(e.cosmetic_dropped() as usize, n - TickEvents::COSMETIC_LIMIT);
     let gameplay = (n - TickEvents::EDIT_LIMIT) + (n - TickEvents::GAMEPLAY_LIMIT);
@@ -177,7 +179,7 @@ fn each_class_of_events_has_its_own_quota() {
     let c = e.clone();
     assert!(c.list.capacity() >= TickEvents::CAPACITY);
     assert_eq!(c, e);
-    e.begin_tick();
+    e.start_tick(&mut TickEvents::pending());
     assert!(e.is_empty() && e.cosmetic_dropped() == 0 && e.gameplay_dropped() == 0);
     assert_eq!(e.lost_area(), None);
     e.edit(TerrainOp::Dirt, StampId::Hole(4), 1, 1, (15, 15));
@@ -216,15 +218,15 @@ fn checksum_changes_with_state() {
         assert_ne!(v.checksum(), c0, "change {i}");
     }
     let mut v = w.clone();
-    v.draws.events.push(Event::Spawned { worm: 3 });
+    v.draws.events.push(EventKind::Spawned { worm: 3 });
     assert_eq!(v.checksum(), c0, "events are output, not state");
-    w.tick(&[Keys(Keys::FIRE)]);
+    w.tick_new(&[Keys(Keys::FIRE)]);
     let c1 = w.checksum();
     assert_ne!(c1, c0);
     let mut t = w.clone();
     for _ in 0..30 {
-        w.tick(&[Keys(Keys::FIRE)]);
-        t.tick(&[Keys(Keys::FIRE)]);
+        w.tick_new(&[Keys(Keys::FIRE)]);
+        t.tick_new(&[Keys(Keys::FIRE)]);
         assert_eq!(w.checksum(), t.checksum());
     }
     assert!(w.projectiles().count() > 0 || w.worms()[0].dirt_count != 0);
@@ -241,7 +243,7 @@ fn checksum_changes_with_state() {
 fn replay(t: &mut Terrain, holes: &[Stamp], events: &[Event]) -> usize {
     let mut n = 0;
     for e in events {
-        if let Event::TerrainEdit { op, stamp: StampId::Hole(i), x, y } = *e {
+        if let EventKind::TerrainEdit { op, stamp: StampId::Hole(i), x, y } = e.kind {
             let hole = &holes[i as usize];
             match op {
                 TerrainOp::Carve | TerrainOp::Beam => t.carve_hole(hole, x, y),
@@ -262,15 +264,14 @@ fn every_terrain_edit_survives_a_flood_of_other_events() {
     let terrain = Terrain::from_grid(&MaterialGrid::new(200, 200, Material::Dirt));
     let mut w = World::new(SimSettings::lx56(), gun_mod(), terrain, holes(), AbsTime(0), 1);
     let mut shadow = w.terrain().clone();
-    w.draws.events.begin_setup();
     for _ in 0..20_000 {
         w.draws.events.cosmetic(CosmeticKind::Smoke, rl_math::Vec2::ZERO, rl_math::Vec2::ZERO);
-        w.draws.events.push(Event::Damage { worm: 0, amount: 0.0, by: -1 });
+        w.draws.events.push(EventKind::Damage { worm: 0, amount: 0.0, by: -1, dealt: 0.0 });
     }
     for i in 0..4 {
         w.spawn_worm(30 + 40 * i, 100).unwrap();
     }
-    let events = w.tick(&[]).as_slice().to_vec();
+    let events = w.tick_new(&[]).as_slice().to_vec();
     assert_eq!(replay(&mut shadow, &holes(), &events), 4, "every spawn hole is reported");
     assert_eq!(shadow.material_hash(), w.terrain().material_hash());
 }

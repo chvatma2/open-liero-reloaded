@@ -52,7 +52,7 @@ fn harm<'a>(s: &'a SimSettings, worms: &'a mut [Worm], draws: &'a mut Draws) -> 
 }
 
 fn draws() -> Draws {
-    Draws::new(GlibcRand::new(1), Mt19937::new(1))
+    Draws::new(GlibcRand::new(1), Mt19937::new(1), 0)
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn exact_zero_health_dies_next_frame_uncredited() {
     let mut s = SimSettings::lx56();
     s.allow_negative_score = true;
     let mut w = world(s);
-    w.tick(&[]);
+    w.tick_new(&[]);
     let now = w.time();
     {
         let h = &mut w.harm();
@@ -74,7 +74,7 @@ fn exact_zero_health_dies_next_frame_uncredited() {
         assert_eq!(h.worms[1].health, 0.0);
     }
     assert_eq!(w.rand_calls(), 70, "10 rounds of hit blood, no death draws");
-    w.tick(&[]);
+    w.tick_new(&[]);
     let (killer, victim) = (&w.worms()[0], &w.worms()[1]);
     assert!(!victim.alive);
     assert_eq!(victim.time_of_death, now, "Kill() sets the frame clock");
@@ -126,7 +126,7 @@ fn respawn_keeps_weapons_and_refills_them() {
     };
     w.set_loadout(0, &loadout);
     for _ in 0..120 {
-        w.tick(&[]); // fills the position recorder
+        w.tick_new(&[]); // fills the position recorder
     }
     let died = w.time();
     injure_worm(&mut w.harm(), 0, 500.0, 1);
@@ -134,10 +134,10 @@ fn respawn_keeps_weapons_and_refills_them() {
     // `tLX->currentTime > fTimeofDeath + RespawnTime` with the clock pinned
     // to frame time + 10 ms: 250 frames later, in the server phase.
     for _ in 0..250 {
-        w.tick(&[]);
+        w.tick_new(&[]);
         assert!(!w.worms()[0].alive);
     }
-    w.tick(&[]);
+    w.tick_new(&[]);
     let r = &w.worms()[0];
     assert!(r.alive && r.spawned_once && !r.can_respawn_now);
     assert_eq!(r.time_of_death, died);
@@ -200,16 +200,16 @@ fn shots_of_a_dead_worm_are_dropped() {
         if !owned(&w, 0).is_empty() && !owned(&w, 1).is_empty() {
             break;
         }
-        w.tick(&fire);
+        w.tick_new(&fire);
     }
     assert!(!owned(&w, 0).is_empty() && !owned(&w, 1).is_empty(), "both worms fired");
-    w.tick(&fire); // more shots in the list, not delivered yet
+    w.tick_new(&fire); // more shots in the list, not delivered yet
     let before = owned(&w, 0);
     let worm1_before = owned(&w, 1).len();
     injure_worm(&mut w.harm(), 0, 500.0, 1);
     let mut delivered = 0;
     for _ in 0..3 {
-        w.tick(&fire);
+        w.tick_new(&fire);
         assert!(!w.worms()[0].alive, "dead for RespawnTime");
         delivered += w.last_shots().iter().filter(|s| s.worm == 0).count();
         // Every projectile of worm 0 is one it had before it died.
@@ -224,7 +224,7 @@ fn shots_of_a_dead_worm_are_dropped() {
         if w.worms()[0].alive {
             break;
         }
-        w.tick(&fire);
+        w.tick_new(&fire);
     }
     assert!(w.worms()[0].alive, "respawned");
     // The old projectiles still flying are worm 0's: same slot, spawn time and owner.

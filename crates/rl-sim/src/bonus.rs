@@ -20,7 +20,7 @@ use crate::SimSettings;
 use crate::buf::Buf;
 use crate::damage::{Harm, injure_worm, min};
 use crate::effects::carve_at;
-use crate::events::{CosmeticKind, Event, SoundId, TerrainOp};
+use crate::events::{CosmeticKind, EventKind, SoundId, TerrainOp};
 use crate::projectile::{c_int, c_u64};
 use crate::respawn::{SPAWN_HOLE, find_spot, seconds};
 use crate::rng::Draws;
@@ -291,7 +291,7 @@ impl Bonuses {
                     BonusKind::Weapon => BonusItem::Weapon(b.weapon),
                     BonusKind::Health => BonusItem::Health,
                 };
-                h.draws.events.push(Event::BonusPickup { worm: w.id, kind });
+                h.draws.events.push(EventKind::BonusPickup { worm: w.id, kind });
                 h.draws.events.sound(SoundId::PICKUP, w.pos);
                 let current = w.current_slot_index() as u8;
                 self.to_server.push(Grab { id: n as u8, worm: w.id as u8, current });

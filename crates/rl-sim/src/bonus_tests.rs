@@ -66,7 +66,7 @@ fn armed_worm(w: &mut World, x: i32, y: i32) -> usize {
 
 fn ticks(w: &mut World, n: usize) {
     for _ in 0..n {
-        w.tick(&[Keys(0)]);
+        w.tick_new(&[Keys(0)]);
     }
 }
 

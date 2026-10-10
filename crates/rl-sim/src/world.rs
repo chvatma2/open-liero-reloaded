@@ -18,13 +18,13 @@ use crate::bonus::{Bonus, BonusItem, Bonuses, ClientCtx, MAX_BONUSES};
 use crate::buf::Buf;
 use crate::damage::{Harm, die_at_zero_health};
 use crate::effects::carve_px;
-use crate::events::{CosmeticKind, Event, TerrainOp, TickEvents};
+use crate::events::{CosmeticKind, EventKind, TerrainOp, TickEvents};
 use crate::input::{Keys, Latches};
 use crate::mod_rt::SimMod;
 use crate::physics::{Ctx, simulate_worm};
 use crate::proj_sim::{ProjCtx, simulate_projectiles};
-use crate::projectile::{Projectile, ProjectilePool};
-use crate::respawn::{SPAWN_HOLE, Spawner, simulate_respawns};
+use crate::projectile::{Projectile, ProjectilePool, c_int};
+use crate::respawn::{SPAWN_HOLE, Spawner, find_spot, simulate_respawns};
 use crate::rng::Draws;
 use crate::shots::{MAX_SHOOTINGS, ShootList, Shot, ShotCtx, encode_decode, process_shot, spawn_time};
 use crate::weapons::{ShootCtx, laser_sight, player_shoot, worm_shoot};
@@ -54,6 +54,8 @@ pub struct World {
     pub(crate) physics_time: AbsTime,
     /// `game.serverFrame`: 0 at the start, +1 at the start of each frame.
     pub(crate) server_frame: u64,
+    /// The physics sub-steps the last tick ran.
+    pub(crate) substeps: u8,
     /// The server's shot list for the local client.
     pub(crate) shots: ShootList,
     /// The shots delivered right before the last frame.
@@ -98,6 +100,7 @@ impl World {
     ) -> Self {
         let terrain_min = terrain.width().min(terrain.height());
         let bonuses = Bonuses::new(sim_mod.weapons().len(), start + TimeDiff(CLOCK_OFFSET_MS));
+        let draws = Draws::new(GlibcRand::new(seed), Mt19937::new(seed), sim_mod.projectiles().len());
         Self {
             settings,
             sim_mod,
@@ -109,10 +112,11 @@ impl World {
             time: start,
             physics_time: start,
             server_frame: 0,
+            substeps: 0,
             shots: ShootList::new(),
             last_shots: Buf::with_capacity(MAX_SHOOTINGS),
             projectiles: ProjectilePool::new(ProjectilePool::DEFAULT_CAPACITY),
-            draws: Draws::new(GlibcRand::new(seed), Mt19937::new(seed)),
+            draws,
             bonuses,
             others: Scratch { others: Buf::default(), beam_parts: Buf::with_capacity(terrain_min as usize) },
         }
@@ -203,6 +207,39 @@ impl World {
         self.time
     }
 
+    /// `CClient::fLastSimulationTime`: where the physics clock is, at most
+    /// the frame clock ([`World::time`]). A renderer that interpolates
+    /// sub-steps reads how far it lags.
+    pub fn physics_time(&self) -> AbsTime {
+        self.physics_time
+    }
+
+    /// How many physics sub-steps the last [`World::tick`] ran (0 in some
+    /// frames: 11-ms sub-steps in 10-ms frames). Each event's
+    /// [`crate::Event::substep`] is at most this.
+    pub fn substeps_last_tick(&self) -> u8 {
+        self.substeps
+    }
+
+    /// Whether OLX has set projectile type `proj`'s zero `RotIncrement` to 1
+    /// (`Proj_SpawnInfo::apply`, `PhysicsLX56_Projectiles.cpp:590-593`): a
+    /// projectile of that type was spawned with `UseRandomRot`. From then on
+    /// `CProjectile::Draw` animates its rotation as if `RotIncrement` were 1
+    /// (`CProjectile.cpp:291-292`). OLX keeps the change in the cached mod,
+    /// across games; here it lasts as long as the world. False for unknown types.
+    pub fn rot_bumped(&self, proj: usize) -> bool {
+        self.draws.rot_bumped.get(proj).copied().unwrap_or(false)
+    }
+
+    /// `CMap::FindSpot` (`src/common/CMap.cpp:2381-2396`) with the world's
+    /// `FindSpot` generator, as `GameServer::SpawnWorm` picks a spawn
+    /// position, for setup before [`World::spawn_worm`]. It advances the
+    /// generator, so call it in the same order to replay a match.
+    pub fn find_spot(&mut self) -> (i32, i32) {
+        let p = find_spot(&self.terrain, &mut self.draws.mt);
+        (c_int(p.x), c_int(p.y))
+    }
+
     /// How many `rand()` calls the simulation has made since the seed was set.
     pub fn rand_calls(&self) -> u64 {
         self.draws.rand.calls()
@@ -236,8 +273,7 @@ impl World {
         self.latches.push(Latches::default());
         self.others.others = Buf::with_capacity(self.worms.len());
         let ev = &mut self.draws.events;
-        ev.begin_setup();
-        ev.push(Event::Spawned { worm: id });
+        ev.push(EventKind::Spawned { worm: id });
         carve_px(
             &mut self.terrain,
             &self.holes,
@@ -281,10 +317,19 @@ impl World {
     }
 
     /// One 100 Hz frame. `keys[i]` is what worm `i` holds during this frame;
-    /// a worm with no entry holds nothing. Returns what happened
-    /// ([`TickEvents`]), after the events of setup calls since the last tick.
-    pub fn tick(&mut self, keys: &[Keys]) -> &TickEvents {
-        self.draws.events.begin_tick();
+    /// a worm with no entry holds nothing. Refills `out` with what happened,
+    /// after the events of setup calls since the last tick. `out` is the
+    /// caller's, so cloning the world never copies events; one made with
+    /// [`TickEvents::new`] is never reallocated.
+    pub fn tick(&mut self, keys: &[Keys], out: &mut TickEvents) {
+        out.start_tick(&mut self.draws.events);
+        // The emitters push to `draws.events`: lend them `out` for the tick.
+        core::mem::swap(&mut self.draws.events, out);
+        self.frame(keys);
+        core::mem::swap(&mut self.draws.events, out);
+    }
+
+    fn frame(&mut self, keys: &[Keys]) {
         // What OLX does between the previous frame and this one (spec §18 D1,
         // D10): the server's messages, the shots, then the client's messages.
         let num_weapons = self.sim_mod.weapons().len() as i32;
@@ -310,6 +355,7 @@ impl World {
             }
         }
         let frame = self.frame_dt();
+        self.substeps = 0;
         while self.physics_time + step_clock <= self.time {
             self.physics_step(step.seconds());
             self.physics_time += step_clock;
@@ -326,12 +372,6 @@ impl World {
         simulate_respawns(&mut self.worms, &mut self.latches, &mut spawner);
         self.bonuses.simulate_server(&self.settings, &self.terrain, &mut self.draws, wall_clock);
         self.time += frame;
-        &self.draws.events
-    }
-
-    /// The last tick's events (and those of setup calls since).
-    pub fn events(&self) -> &TickEvents {
-        &self.draws.events
     }
 
     /// The client parses the server's bonus messages, or (`placed`) the
@@ -455,6 +495,10 @@ impl World {
                 laser_sight(&self.worms, i, &self.sim_mod, &self.terrain, &mut self.draws);
             }
         }
+        // `CClient_Game.cpp:206-208`: the client's entity pass (cosmetic,
+        // not simulated here) runs now; later events come after it.
+        self.substeps = self.substeps.saturating_add(1);
+        self.draws.events.set_substep(self.substeps);
         // `CClient_Game.cpp:213-215`: projectiles after all worms.
         let physics_dt = self.physics_dt();
         let mut ctx = ProjCtx {
@@ -483,6 +527,13 @@ impl World {
     /// Worm `i`, to change between ticks in tests.
     pub(crate) fn worm_mut(&mut self, i: usize) -> &mut Worm {
         &mut self.worms[i]
+    }
+
+    /// [`World::tick`] into a new buffer, for tests that do not count allocations.
+    pub(crate) fn tick_new(&mut self, keys: &[Keys]) -> TickEvents {
+        let mut out = TickEvents::new();
+        self.tick(keys, &mut out);
+        out
     }
 }
 

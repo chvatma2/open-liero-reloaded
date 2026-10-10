@@ -60,6 +60,7 @@ pub(crate) struct Bench {
 
 impl Bench {
     pub fn new(sim_mod: SimMod, terrain: MaterialGrid, capacity: usize) -> Self {
+        let draws = Draws::new(GlibcRand::new(1), Mt19937::new(1), sim_mod.projectiles().len());
         Self {
             sim_mod,
             settings: SimSettings::lx56(),
@@ -67,7 +68,7 @@ impl Bench {
             holes: Vec::new(),
             green_mask: None,
             worms: Vec::new(),
-            draws: Draws::new(GlibcRand::new(1), Mt19937::new(1)),
+            draws,
             pool: ProjectilePool::new(capacity),
             bonuses: [Bonus::default(); MAX_BONUSES],
         }
@@ -86,7 +87,8 @@ impl Bench {
             rand: &mut self.draws.rand,
             settings: &self.settings,
             now: time,
-            work: &mut self.draws.spawn_work,
+            work: &mut self.draws.spawn_work.0,
+            rot_bumped: &mut self.draws.rot_bumped,
         };
         spawn_projectile(&mut ctx, proj, pos, vel, 0, -1, random, time, time);
     }

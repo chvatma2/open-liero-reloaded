@@ -9,7 +9,7 @@ use rl_terrain::{PX_ROCK, Stamp, Terrain};
 use crate::SimSettings;
 use crate::damage::{WRM_OUT, WRM_UNLIM};
 use crate::effects::carve_px;
-use crate::events::{CosmeticKind, Event, TerrainOp};
+use crate::events::{CosmeticKind, EventKind, TerrainOp};
 use crate::input::Latches;
 use crate::projectile::{c_i64, c_int, c_u64};
 use crate::rng::Draws;
@@ -146,7 +146,7 @@ fn spawn_worm(w: &mut Worm, keys: &mut Latches, sp: &mut Spawner) {
     w.respawn(pos, sp.now);
     keys.reset();
     let ev = &mut sp.draws.events;
-    ev.push(Event::Spawned { worm: w.id });
+    ev.push(EventKind::Spawned { worm: w.id });
     carve_px(sp.terrain, sp.holes, ev, TerrainOp::Carve, SPAWN_HOLE, c_int(pos.x), c_int(pos.y));
     // The local client's `ParseSpawnWorm` (`src/client/CClient_Parse.cpp:1047-1053`)
     // shows `ENT_SPAWN`; a dedicated server has no viewport, so it takes no slot.

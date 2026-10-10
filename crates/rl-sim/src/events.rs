@@ -48,7 +48,7 @@ pub const GAME_SOUNDS: [&str; 6] = [
     "olx:data/sounds/death3.wav",
 ];
 
-/// What a [`Event::TerrainEdit`] did to the map.
+/// What a [`EventKind::TerrainEdit`] did to the map.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TerrainOp {
     /// `CMap::CarveHole`: an explosion, a `Carve` action, digging, or a spawn hole.
@@ -63,7 +63,7 @@ pub enum TerrainOp {
     Beam,
 }
 
-/// The stamp a [`Event::TerrainEdit`] applied.
+/// The stamp a [`EventKind::TerrainEdit`] applied.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StampId {
     /// The theme's hole `0..=4` (`hole1` to `hole5`), as the simulation's.
@@ -80,10 +80,15 @@ pub enum CosmeticKind {
     Blood { red: u8 },
     /// `ENT_BLOODDROPPER`, colour `(128, 0, 0)`.
     BloodDropper,
-    /// `ENT_GIB` with the worm's gib image.
-    Gib,
-    /// `ENT_PARTICLE`: thrown dirt, coloured like the map at `pos`.
-    Dirt,
+    /// `ENT_GIB` with worm `worm`'s gib image (its colorized `giblets.png`).
+    Gib { worm: i32 },
+    /// `ENT_PARTICLE`: thrown dirt, coloured like the map's colour image at
+    /// `probe` before this tick's edits there (the event precedes its
+    /// carve). Each source probes its own pixel: digging and an explosion
+    /// the first dirt pixel they found near `pos` (`CarveHole(CVec)`,
+    /// `CMap.cpp:2181-2192`; `CClient::Explosion`, `CClient_Game.cpp:233-251`),
+    /// a rope hook its wrapped position (`PhysicsLX56.cpp:603-606`).
+    Dirt { probe: (i32, i32) },
     /// `ENT_EXPLOSION` of this size.
     Explosion { size: i32 },
     /// `ENT_SPARKLE`: an air jump.
@@ -107,9 +112,24 @@ pub enum CosmeticKind {
     Beam { worm: i32 },
 }
 
-/// One thing that happened during a tick.
+/// One thing that happened during a tick, and when.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Event {
+pub struct Event {
+    /// How many of the tick's physics sub-steps had run OLX's entity pass
+    /// (`SimulateEntities`, after the worm loop of each sub-step,
+    /// `CClient_Game.cpp:206-208`) when this happened: from 0 (setup, shot
+    /// delivery and the worm loop of the first sub-step) up to
+    /// [`crate::World::substeps_last_tick`] (projectiles and bonuses of the
+    /// last sub-step, and the server after the physics). A renderer that
+    /// spawns an entity before its `substep`-th entity pass of the tick
+    /// steps it exactly as often as OLX's client does.
+    pub substep: u8,
+    pub kind: EventKind,
+}
+
+/// What happened (spec §5.7).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum EventKind {
     /// A sound starts at `pos`.
     Sound { id: SoundId, pos: Vec2 },
     /// The map changed: `stamp` applied by `op` at `(x, y)`, the integer
@@ -117,8 +137,11 @@ pub enum Event {
     /// the colour images keeps them in step with the material grid.
     TerrainEdit { op: TerrainOp, stamp: StampId, x: i32, y: i32 },
     /// `CClient::Explosion` at `pos` with `damage` (its hole is a separate
-    /// [`Event::TerrainEdit`]).
-    Explosion { pos: Vec2, damage: f32 },
+    /// [`EventKind::TerrainEdit`]). `shake` is OLX's viewport shake
+    /// argument: the projectile's largest `Shake` among its explode actions,
+    /// 0 for a `BounceExplode`, 5 for a bonus blown up by an explosion or a
+    /// beam (`CClient_Game.cpp:268`, `:1000`).
+    Explosion { pos: Vec2, damage: f32, shake: i32 },
     /// A cosmetic entity.
     SpawnCosmetic { kind: CosmeticKind, pos: Vec2, vel: Vec2 },
     /// Worm `worm` fired `weapon` (a weapon id): the client processed its
@@ -126,8 +149,10 @@ pub enum Event {
     /// weapon's sound and draws the muzzle flash.
     WeaponFired { worm: i32, weapon: i32 },
     /// Worm `worm` lost `amount` health (negative heals) to worm `by` (-1
-    /// for nobody), after the damage and shield factors.
-    Damage { worm: i32, amount: f32, by: i32 },
+    /// for nobody), after the damage and shield factors. `dealt` is the
+    /// amount OLX credits to the attacker: `MIN(health before, amount)`
+    /// (`CClient::InjureWorm`, `CClient_Game.cpp:380`), what damage popups sum.
+    Damage { worm: i32, amount: f32, by: i32, dealt: f32 },
     /// Worm `victim` died, credited to `killer` (-1 for nobody, the victim
     /// itself for a suicide).
     Kill { victim: i32, killer: i32 },
@@ -137,11 +162,11 @@ pub enum Event {
     Spawned { worm: i32 },
 }
 
-impl Event {
+impl EventKind {
     fn class(&self) -> Class {
         match self {
-            Event::SpawnCosmetic { .. } | Event::Sound { .. } => Class::Cosmetic,
-            Event::TerrainEdit { .. } => Class::Edit,
+            EventKind::SpawnCosmetic { .. } | EventKind::Sound { .. } => Class::Cosmetic,
+            EventKind::TerrainEdit { .. } => Class::Edit,
             _ => Class::Gameplay,
         }
     }
@@ -155,7 +180,7 @@ enum Class {
     Gameplay,
 }
 
-/// The map area a dropped [`Event::TerrainEdit`] could have changed: the
+/// The map area a dropped [`EventKind::TerrainEdit`] could have changed: the
 /// union of the stamps' boxes, `x0..x1` × `y0..y1` (exclusive ends), not
 /// clipped to the map.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -177,9 +202,12 @@ impl LostArea {
     }
 }
 
-/// The events of the last tick, in the order they happened, in a buffer
-/// sized once so that ticking does not allocate (spec §5.3). Events from
+/// The events of a tick, in the order they happened, in a buffer the caller
+/// owns and passes to [`crate::World::tick`], which refills it. Events from
 /// setup calls since the last tick ([`crate::World::spawn_worm`]) come first.
+/// [`TickEvents::new`] sizes it once (32-byte events, about 1.5 MB), so ticking does not
+/// allocate (spec §5.3); it is not part of the world, so a cloned world (a
+/// snapshot) copies no events.
 ///
 /// Three quotas share the buffer, so no class of events can crowd out
 /// another: sounds and cosmetics ([`TickEvents::COSMETIC_LIMIT`]), terrain
@@ -187,7 +215,7 @@ impl LostArea {
 /// ([`TickEvents::GAMEPLAY_LIMIT`]). What does not fit is counted in
 /// [`TickEvents::cosmetic_dropped`] or [`TickEvents::gameplay_dropped`].
 ///
-/// A renderer replays every [`Event::TerrainEdit`] on its colour images
+/// A renderer replays every [`EventKind::TerrainEdit`] on its colour images
 /// (spec §5.4), so a lost edit would desync them for good. No fixed size
 /// bounds the edits of every tick: a projectile edits the map at most 7
 /// times a step (a `Carve` from its timer and from its hit, an explosion's
@@ -209,8 +237,14 @@ pub struct TickEvents {
     cosmetic_dropped: u32,
     gameplay_dropped: u32,
     lost: Option<LostArea>,
-    /// The buffer holds setup events for the next tick.
-    carried: bool,
+    /// The [`Event::substep`] of the events pushed now.
+    substep: u8,
+}
+
+impl Default for TickEvents {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TickEvents {
@@ -219,14 +253,25 @@ impl TickEvents {
     pub const GAMEPLAY_LIMIT: usize = 8192;
     pub const CAPACITY: usize = Self::COSMETIC_LIMIT + Self::EDIT_LIMIT + Self::GAMEPLAY_LIMIT;
 
-    pub(crate) fn new() -> Self {
+    /// An empty buffer with room for [`TickEvents::CAPACITY`] events.
+    pub fn new() -> Self {
+        Self::with_capacity(Self::CAPACITY)
+    }
+
+    /// The world's buffer for setup events between ticks: they are few, and
+    /// a cloned world copies them.
+    pub(crate) fn pending() -> Self {
+        Self::with_capacity(0)
+    }
+
+    fn with_capacity(n: usize) -> Self {
         Self {
-            list: Vec::with_capacity(Self::CAPACITY),
+            list: Vec::with_capacity(n),
             counts: [0; 3],
             cosmetic_dropped: 0,
             gameplay_dropped: 0,
             lost: None,
-            carried: false,
+            substep: 0,
         }
     }
 
@@ -273,13 +318,14 @@ impl TickEvents {
         }
     }
 
-    /// Adds `e` within its class's quota. Returns whether it fit.
-    pub(crate) fn push(&mut self, e: Event) -> bool {
+    /// Adds `e` at the current sub-step within its class's quota. Returns
+    /// whether it fit.
+    pub(crate) fn push(&mut self, e: EventKind) -> bool {
         let class = e.class();
         let n = &mut self.counts[class as usize];
         if *n < Self::limit(class) {
             *n += 1;
-            self.list.push(e);
+            self.list.push(Event { substep: self.substep, kind: e });
             true
         } else if class == Class::Cosmetic {
             self.cosmetic_dropped = self.cosmetic_dropped.saturating_add(1);
@@ -291,22 +337,30 @@ impl TickEvents {
     }
 
     pub(crate) fn sound(&mut self, id: SoundId, pos: Vec2) {
-        self.push(Event::Sound { id, pos });
+        self.push(EventKind::Sound { id, pos });
     }
 
     pub(crate) fn cosmetic(&mut self, kind: CosmeticKind, pos: Vec2, vel: Vec2) {
-        self.push(Event::SpawnCosmetic { kind, pos, vel });
+        self.push(EventKind::SpawnCosmetic { kind, pos, vel });
     }
 
     /// A terrain edit with a `w` × `h` stamp centred as OLX centres it
     /// (`x - w / 2`). A dropped edit's box joins [`lost_area`](Self::lost_area).
     pub(crate) fn edit(&mut self, op: TerrainOp, stamp: StampId, x: i32, y: i32, (w, h): (u32, u32)) {
-        if !self.push(Event::TerrainEdit { op, stamp, x, y }) {
+        if !self.push(EventKind::TerrainEdit { op, stamp, x, y }) {
             let (w, h) = (w.min(i32::MAX as u32) as i32, h.min(i32::MAX as u32) as i32);
             let (x0, y0) = (x.saturating_sub(w / 2), y.saturating_sub(h / 2));
-            let area = LostArea { x0, y0, x1: x0.saturating_add(w), y1: y0.saturating_add(h) };
-            self.lost = Some(LostArea::union(self.lost, area));
+            self.add_lost(LostArea { x0, y0, x1: x0.saturating_add(w), y1: y0.saturating_add(h) });
         }
+    }
+
+    fn add_lost(&mut self, area: LostArea) {
+        self.lost = Some(LostArea::union(self.lost, area));
+    }
+
+    /// Stamps the events pushed from now on with `substep`.
+    pub(crate) fn set_substep(&mut self, substep: u8) {
+        self.substep = substep;
     }
 
     fn clear(&mut self) {
@@ -315,33 +369,33 @@ impl TickEvents {
         self.cosmetic_dropped = 0;
         self.gameplay_dropped = 0;
         self.lost = None;
+        self.substep = 0;
     }
 
-    /// At the start of a tick: drops the last tick's events, unless setup
-    /// events wait in the buffer.
-    pub(crate) fn begin_tick(&mut self) {
-        if !self.carried {
-            self.clear();
+    /// At the start of a tick: empties this buffer, then moves the setup
+    /// events waiting in `pending` (and their drop counts) into it.
+    pub(crate) fn start_tick(&mut self, pending: &mut TickEvents) {
+        self.clear();
+        for e in &pending.list {
+            self.push(e.kind);
         }
-        self.carried = false;
-    }
-
-    /// Before a setup call that emits: the last tick's events go, once.
-    pub(crate) fn begin_setup(&mut self) {
-        if !self.carried {
-            self.clear();
-            self.carried = true;
+        self.cosmetic_dropped = self.cosmetic_dropped.saturating_add(pending.cosmetic_dropped);
+        self.gameplay_dropped = self.gameplay_dropped.saturating_add(pending.gameplay_dropped);
+        if let Some(area) = pending.lost {
+            self.add_lost(area);
         }
+        pending.clear();
     }
 }
 
 impl Clone for TickEvents {
-    /// Keeps the full capacity, so a cloned world's ticks do not allocate either.
+    /// Keeps the capacity, so a clone of a full-sized buffer ticks without
+    /// allocating either, and a clone of the world's small setup buffer stays small.
     fn clone(&self) -> Self {
-        let mut list = Vec::with_capacity(Self::CAPACITY.max(self.list.len()));
+        let mut list = Vec::with_capacity(self.list.capacity());
         list.extend_from_slice(&self.list);
-        let Self { list: _, counts, cosmetic_dropped, gameplay_dropped, lost, carried } = *self;
-        Self { list, counts, cosmetic_dropped, gameplay_dropped, lost, carried }
+        let Self { list: _, counts, cosmetic_dropped, gameplay_dropped, lost, substep } = *self;
+        Self { list, counts, cosmetic_dropped, gameplay_dropped, lost, substep }
     }
 }
 
@@ -357,3 +411,7 @@ impl<'a> IntoIterator for &'a TickEvents {
 #[cfg(test)]
 #[path = "events_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "events_data_tests.rs"]
+mod data_tests;

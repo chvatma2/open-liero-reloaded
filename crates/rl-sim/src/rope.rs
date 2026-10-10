@@ -160,7 +160,8 @@ impl NinjaRope {
                     self.attach();
                     // `px.destroyable && firsthit`: five particles, each `GetRandomVec()`.
                     if m == Material::Dirt && first_hit {
-                        draws.particles(5, self.pos + Vec2::new(0.0, 2.0), |v| v * 40.0);
+                        let probe = (wx as i32, wy as i32);
+                        draws.particles(5, self.pos + Vec2::new(0.0, 2.0), probe, |v| v * 40.0);
                     }
                 }
             }

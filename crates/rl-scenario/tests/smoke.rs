@@ -11,7 +11,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rl_math::AbsTime;
-use rl_sim::{Event, Keys, Loadout, MAX_BONUSES, SimSettings, Slot, StampId, TerrainOp, TickEvents, World};
+use rl_sim::{
+    EventKind, Keys, Loadout, MAX_BONUSES, SimSettings, Slot, StampId, TerrainOp, TickEvents, World,
+};
 use rl_terrain::{GreenMask, PX_ROCK, Stamp, Terrain};
 
 /// Ticks per match. 3000 (30 s) in the plan; at opt-level 1 eight matches of
@@ -128,7 +130,7 @@ fn check(w: &World, events: &TickEvents, tick: usize, what: &str) {
 /// stamps (green-dirt shades are cosmetic, so any `rand` will do).
 fn replay(shadow: &mut Terrain, holes: &[Stamp], mask: Option<&GreenMask>, events: &TickEvents) {
     for e in events {
-        let Event::TerrainEdit { op, stamp, x, y } = *e else { continue };
+        let EventKind::TerrainEdit { op, stamp, x, y } = e.kind else { continue };
         match (op, stamp) {
             (TerrainOp::Carve | TerrainOp::Beam, StampId::Hole(i)) => {
                 shadow.carve_hole(&holes[i as usize], x, y);
@@ -177,29 +179,31 @@ fn smoke(mod_dir: &str, level: &str, seed: u64) {
     let mut players: Vec<Player> = (0..WORMS).map(|_| Player { keys: 0, left: 0 }).collect();
     let (mut fired, mut explosions, mut kills) = (0, 0, 0);
     let mut twin: Option<World> = None;
+    let (mut events, mut twin_events) = (TickEvents::new(), TickEvents::new());
     for tick in 0..TICKS {
         if tick == CLONE_AT {
             twin = Some(w.clone());
         }
         let keys: Vec<Keys> = players.iter_mut().map(|p| p.keys(&mut rng)).collect();
-        let events = w.tick(&keys);
-        for e in events {
-            match e {
-                Event::WeaponFired { .. } => fired += 1,
-                Event::Explosion { .. } => explosions += 1,
-                Event::Kill { .. } => kills += 1,
+        w.tick(&keys, &mut events);
+        for e in &events {
+            assert!(e.substep <= w.substeps_last_tick(), "{what} tick {tick}: {e:?}");
+            match e.kind {
+                EventKind::WeaponFired { .. } => fired += 1,
+                EventKind::Explosion { .. } => explosions += 1,
+                EventKind::Kill { .. } => kills += 1,
                 _ => {}
             }
         }
-        check(&w, w.events(), tick, &what);
-        replay(&mut shadow, &holes, mask.as_ref(), w.events());
+        check(&w, &events, tick, &what);
+        replay(&mut shadow, &holes, mask.as_ref(), &events);
         if tick % 100 == 99 || tick == TICKS - 1 {
             let same = shadow.material_hash() == w.terrain().material_hash();
             assert!(same, "{what} tick {tick}: the replayed edits differ from the material");
         }
         if let Some(t) = &mut twin {
-            let twin_events = t.tick(&keys);
-            assert!(twin_events == w.events(), "{what} tick {tick}: the clone's events differ");
+            t.tick(&keys, &mut twin_events);
+            assert!(twin_events == events, "{what} tick {tick}: the clone's events differ");
             assert_eq!(t.checksum(), w.checksum(), "{what} tick {tick}: the clone's checksum differs");
         }
     }

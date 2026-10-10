@@ -11,7 +11,7 @@ use rl_data::image::{Rgba, RgbaImage};
 use rl_data::level::{Material, MaterialGrid};
 use rl_data::mod_def::*;
 use rl_math::AbsTime;
-use rl_sim::{BonusItem, Keys, Loadout, SimMod, SimSettings, Slot, World};
+use rl_sim::{BonusItem, Keys, Loadout, SimMod, SimSettings, Slot, TickEvents, World};
 use rl_terrain::{GreenMask, Stamp, Terrain};
 
 /// A plain pixel projectile: explodes on terrain, injures worms.
@@ -189,9 +189,11 @@ fn tick_does_not_allocate() {
         [Keys(Keys::RIGHT | Keys::ROPE | Keys::UP | Keys::FIRE), Keys(Keys::LEFT | Keys::JUMP | Keys::FIRE)];
     let b = [Keys(Keys::LEFT | Keys::FIRE), Keys(Keys::RIGHT | Keys::DOWN)];
     let (mut flying, mut picked, mut events) = (0, false, 0);
+    let mut out = TickEvents::new();
     let info = allocation_counter::measure(|| {
         for i in 0..600 {
-            events += w.tick(if i % 3 == 0 { &a } else { &b }).len();
+            w.tick(if i % 3 == 0 { &a } else { &b }, &mut out);
+            events += out.len();
             if i == 5 {
                 picked = !w.bonuses()[0].used && w.server_bonuses()[0].used;
             }
@@ -210,11 +212,11 @@ fn tick_does_not_allocate() {
     assert!(w.server_bonuses().iter().filter(|b| b.used).count() >= 2, "bonuses spawned");
     assert!(events > 1000, "{events} events");
 
-    // A clone's event buffer has the full capacity too.
+    // A clone ticks without allocating too, into the same buffer.
     let mut c = w.clone();
     let info = allocation_counter::measure(|| {
         for i in 0..100 {
-            c.tick(if i % 3 == 0 { &a } else { &b });
+            c.tick(if i % 3 == 0 { &a } else { &b }, &mut out);
         }
     });
     assert_eq!(info.count_total, 0, "a cloned world's tick allocated");
@@ -229,7 +231,7 @@ fn tick_does_not_allocate() {
     let fire = [Keys(Keys::FIRE), Keys(Keys::FIRE)];
     let info = allocation_counter::measure(|| {
         for _ in 0..300 {
-            w.tick(&fire);
+            w.tick(&fire, &mut out);
         }
     });
     assert_eq!(info.count_total, 0, "beams and specials allocated");

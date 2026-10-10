@@ -88,15 +88,18 @@ impl<T: Checksum> Checksum for [T] {
 impl World {
     /// FNV-1a 64 over all simulation state, in a fixed order: the terrain
     /// (its material hash), the worms, their key latches, both clocks, the
-    /// server frame, the shot list and the last delivered shots, every
-    /// projectile slot ever used and the pool's indices, the generators and
-    /// the entity counter, then both bonus arrays with the messages between
-    /// them. Two worlds that evolve identically have equal checksums, and any
-    /// change to that state changes it (barring a hash collision).
+    /// server frame, the last tick's sub-step count, the shot list and the
+    /// last delivered shots, every projectile slot ever used (with its
+    /// serial) and the pool's indices and spawn counter, the generators, the
+    /// entity counter and the `RotIncrement` bumps, then both bonus arrays
+    /// with the messages between them. Two worlds that evolve identically
+    /// have equal checksums, and any change to that state changes it
+    /// (barring a hash collision).
     ///
     /// Left out: what only setup sets (the settings, the mod, the theme's
-    /// holes and the green-dirt mask), the tick's events (output, not state)
-    /// and scratch buffers.
+    /// holes and the green-dirt mask), events (output, not state: setup
+    /// events waiting for the next tick too), the spawn work counter and
+    /// scratch buffers.
     pub fn checksum(&self) -> u64 {
         let World {
             settings: _,
@@ -109,6 +112,7 @@ impl World {
             time,
             physics_time,
             server_frame,
+            substeps,
             shots,
             last_shots,
             projectiles,
@@ -125,6 +129,7 @@ impl World {
         h.time(*time);
         h.time(*physics_time);
         h.u64(*server_frame);
+        h.bytes(&[*substeps]);
         shots.hash(&mut h);
         last_shots.hash(&mut h);
         projectiles.hash(&mut h);
@@ -136,10 +141,14 @@ impl World {
 
 impl Checksum for Draws {
     fn hash(&self, h: &mut Fnv) {
-        let Draws { rand, mt, ents, events: _, spawn_work: _ } = self;
+        let Draws { rand, mt, ents, events: _, rot_bumped, spawn_work: _ } = self;
         rand.visit_state(|w| h.u64(w));
         mt.visit_state(|w| h.u64(w));
         h.u32(*ents);
+        h.usize(rot_bumped.len());
+        for b in rot_bumped {
+            h.bool(*b);
+        }
     }
 }
 
@@ -302,6 +311,7 @@ impl Checksum for Projectile {
             first_bounce,
             last_sim_time,
             health,
+            serial,
         } = self;
         h.bool(*used);
         h.usize(*proj);
@@ -333,6 +343,7 @@ impl Checksum for Projectile {
         h.bool(*first_bounce);
         h.time(*last_sim_time);
         h.f32(*health);
+        h.u32(*serial);
     }
 }
 

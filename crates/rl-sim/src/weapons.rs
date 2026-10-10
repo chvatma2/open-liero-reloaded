@@ -219,7 +219,7 @@ mod tests {
         let mut rand = GlibcRand::new(1);
         let dt = TimeDiff(11).seconds();
         let mut terrain = Terrain::from_grid(&MaterialGrid::new(1, 1, Material::Background));
-        let mut draws = Draws::new(GlibcRand::new(1), Mt19937::new(1));
+        let mut draws = Draws::new(GlibcRand::new(1), Mt19937::new(1), 0);
         let mut parts = Vec::new();
         let mut step = |w: &mut Worm| {
             simulate_worm_weapon(w, dt, &s, &m);
@@ -314,13 +314,15 @@ mod tests {
             w
         };
         let len = |worms: &[Worm]| {
-            let mut draws = Draws::new(GlibcRand::new(1), Mt19937::new(1));
+            let mut draws = Draws::new(GlibcRand::new(1), Mt19937::new(1), 0);
             laser_sight(worms, 0, &m, &terrain, &mut draws);
             let lens: Vec<i16> = draws
                 .events
                 .iter()
-                .filter_map(|e| match e {
-                    crate::Event::SpawnCosmetic { kind: CosmeticKind::LaserSight { len }, .. } => Some(*len),
+                .filter_map(|e| match e.kind {
+                    crate::EventKind::SpawnCosmetic { kind: CosmeticKind::LaserSight { len }, .. } => {
+                        Some(len)
+                    }
                     _ => None,
                 })
                 .collect();

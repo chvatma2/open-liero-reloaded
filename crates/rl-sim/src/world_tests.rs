@@ -38,7 +38,7 @@ fn physics_steps_follow_the_two_clocks() {
     let mut stepped = vec![];
     for _ in 0..13 {
         let before = w.worms()[0].vel.y;
-        w.tick(&[Keys(0)]);
+        w.tick_new(&[Keys(0)]);
         stepped.push(w.worms()[0].vel.y - before > 0.5);
     }
     let expected = [false, false, true, true, true, true, true, true, true, true, true, true, false];
@@ -51,7 +51,7 @@ fn gus_speed_round_trip_matches_olx() {
     let mut w = world(Material::Background);
     w.spawn_worm(100, 20);
     w.worms[0].vel.y = f32::from_bits(0x40d3_3336);
-    w.tick(&[Keys(0)]); // frame 0 runs no physics step
+    w.tick_new(&[Keys(0)]); // frame 0 runs no physics step
     assert_eq!(w.worms()[0].vel.y.to_bits(), 0x40d3_3335);
 }
 
@@ -75,9 +75,9 @@ fn weapon_combos_allow_changing_weapons_while_firing() {
     let loadout = crate::Loadout { slots: vec![slot; 5], current_weapon: 0, lives: -2, kills: 0, deaths: 0 };
     w.set_loadout(0, &loadout);
     let held = Keys(Keys::CHANGE | Keys::FIRE);
-    w.tick(&[held]);
-    w.tick(&[held]);
-    w.tick(&[Keys(held.0 | Keys::RIGHT)]); // frame 2: the first physics step reads the press
+    w.tick_new(&[held]);
+    w.tick_new(&[held]);
+    w.tick_new(&[Keys(held.0 | Keys::RIGHT)]); // frame 2: the first physics step reads the press
     assert_eq!(w.worms()[0].current_weapon, 1);
 }
 
@@ -88,9 +88,9 @@ fn instant_air_jump_lets_a_falling_worm_jump() {
     let terrain = Terrain::from_grid(&MaterialGrid::new(200, 200, Material::Background));
     let mut w = World::new(settings, test_mod(), terrain, holes(), AbsTime(0), 1);
     w.spawn_worm(100, 20);
-    w.tick(&[Keys(0)]);
-    w.tick(&[Keys(0)]);
-    w.tick(&[Keys(Keys::JUMP)]);
+    w.tick_new(&[Keys(0)]);
+    w.tick_new(&[Keys(0)]);
+    w.tick_new(&[Keys(Keys::JUMP)]);
     assert!(w.worms()[0].vel.y < -60.0, "vy {}", w.worms()[0].vel.y);
 }
 
@@ -101,7 +101,7 @@ fn a_theme_without_holes_does_not_panic() {
     let mut w = World::new(SimSettings::lx56(), test_mod(), terrain, Vec::new(), AbsTime(0), 1);
     w.spawn_worm(25, 25);
     for _ in 0..20 {
-        w.tick(&[Keys(Keys::RIGHT | Keys::LEFT)]);
+        w.tick_new(&[Keys(Keys::RIGHT | Keys::LEFT)]);
     }
     assert_eq!(w.terrain().material(25, 25), Some(Material::Dirt));
 }
@@ -126,12 +126,12 @@ fn a_clone_evolves_identically() {
     a.spawn_worm(140, 100);
     let start = a.clone();
     for f in 0..100 {
-        a.tick(&busy_keys(f));
+        a.tick_new(&busy_keys(f));
     }
     let mut b = a.clone();
     for f in 100..400 {
-        a.tick(&busy_keys(f));
-        b.tick(&busy_keys(f));
+        a.tick_new(&busy_keys(f));
+        b.tick_new(&busy_keys(f));
     }
     assert_eq!(a, b);
     assert_ne!(a.terrain().material_hash(), start.terrain().material_hash(), "the worms dug");
@@ -144,12 +144,12 @@ fn a_rope_press_without_permission_still_clears_the_rope() {
     let mut w = world(Material::Background);
     w.spawn_worm(100, 100);
     for k in [0, 0, Keys::ROPE] {
-        w.tick(&[Keys(k)]);
+        w.tick_new(&[Keys(k)]);
     }
     assert!(w.worms()[0].rope.released);
     w.worms[0].can_use_ninja = false;
-    w.tick(&[Keys(0)]);
-    w.tick(&[Keys(Keys::ROPE)]);
+    w.tick_new(&[Keys(0)]);
+    w.tick_new(&[Keys(Keys::ROPE)]);
     assert!(!w.worms()[0].rope.released);
 }
 
@@ -159,10 +159,10 @@ fn missing_keys_mean_nothing_is_held() {
     w.spawn_worm(50, 100);
     w.spawn_worm(150, 100);
     for _ in 0..5 {
-        w.tick(&[Keys(Keys::RIGHT), Keys(Keys::RIGHT)]);
+        w.tick_new(&[Keys(Keys::RIGHT), Keys(Keys::RIGHT)]);
     }
-    w.tick(&[Keys(Keys::RIGHT)]);
-    w.tick(&[Keys(Keys::RIGHT)]);
+    w.tick_new(&[Keys(Keys::RIGHT)]);
+    w.tick_new(&[Keys(Keys::RIGHT)]);
     assert!(w.worms()[0].state.moving);
     assert!(!w.worms()[1].state.moving);
 }
@@ -173,7 +173,7 @@ fn an_empty_map_does_not_panic() {
     let mut w = World::new(SimSettings::lx56(), test_mod(), terrain, holes(), AbsTime(0), 1);
     w.spawn_worm(0, 0);
     for k in [0, 0, Keys::ROPE, 0, Keys::RIGHT, Keys::LEFT | Keys::RIGHT, Keys::JUMP] {
-        w.tick(&[Keys(k)]);
+        w.tick_new(&[Keys(k)]);
     }
 }
 
@@ -187,7 +187,7 @@ fn dig_world(fill: Material) -> World {
 fn tap_frames(w: &mut World, n: usize) {
     for f in 0..n {
         let tap = f > 20 && f % 20 == 0;
-        w.tick(&[Keys(if tap { Keys::RIGHT | Keys::LEFT } else { Keys::RIGHT })]);
+        w.tick_new(&[Keys(if tap { Keys::RIGHT | Keys::LEFT } else { Keys::RIGHT })]);
     }
 }
 
@@ -213,10 +213,10 @@ fn the_rope_hooking_dirt_draws_ten_once() {
     // `simulateNinjarope` (PhysicsLX56.cpp:590-608): 5 particles on the first hit.
     let mut w = dig_world(Material::Dirt);
     for k in [0, 0, Keys::ROPE] {
-        w.tick(&[Keys(k)]);
+        w.tick_new(&[Keys(k)]);
     }
     for _ in 0..30 {
-        w.tick(&[Keys(0)]);
+        w.tick_new(&[Keys(0)]);
     }
     assert!(w.worms()[0].rope.attached);
     assert_eq!((w.rand_calls(), w.entity_count()), (10, 5));
@@ -252,7 +252,27 @@ fn frame_dt_follows_game_speed() {
         let terrain = Terrain::from_grid(&MaterialGrid::new(10, 10, Material::Background));
         let mut w = World::new(s, test_mod(), terrain, holes(), AbsTime(1000), 1);
         assert_eq!(w.frame_dt(), TimeDiff(ms));
-        w.tick(&[]);
+        w.tick_new(&[]);
         assert_eq!(w.time(), AbsTime(1000 + ms));
     }
+}
+
+#[test]
+fn find_spot_draws_a_position_without_rock() {
+    // Rock everywhere but a 20 × 20 hole at (100..120, 50..70).
+    let cells = (0..200 * 200)
+        .map(|i| {
+            let (x, y) = (i % 200, i / 200);
+            if (100..120).contains(&x) && (50..70).contains(&y) {
+                Material::Background
+            } else {
+                Material::Rock
+            }
+        })
+        .collect();
+    let terrain = Terrain::from_grid(&MaterialGrid::from_cells(200, 200, cells).unwrap());
+    let mut w = World::new(SimSettings::lx56(), test_mod(), terrain, holes(), AbsTime(0), 1);
+    let (x, y) = w.find_spot();
+    assert!((103..117).contains(&x) && (53..67).contains(&y), "({x}, {y})");
+    assert!(w.mt_calls() >= 2 && w.rand_calls() == 0, "two FindSpot draws per try");
 }

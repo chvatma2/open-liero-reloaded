@@ -16,7 +16,7 @@ use rl_oracle::{
     BonusRec, Fields, Frame, Num, ProjRec, RopeRec, Scenario, ServerBonusRec, ShotRec, SlotRec, Trace,
     WormRec,
 };
-use rl_sim::{BonusItem, CLOCK_OFFSET_MS, Keys, Loadout, SimMod, SimSettings, Slot, World};
+use rl_sim::{BonusItem, CLOCK_OFFSET_MS, Keys, Loadout, SimMod, SimSettings, Slot, TickEvents, World};
 use rl_terrain::{GreenMask, Stamp, Terrain};
 use rl_vfs::DirFs;
 
@@ -377,6 +377,7 @@ pub fn replay(content: &Path, sc: &Scenario, expected: &Trace) -> anyhow::Result
     let t0 = t0(expected);
     let bonuses = bonus_items(&world, sc)?;
     let mut frames = vec![record(&world, -1, t0)];
+    let mut events = TickEvents::new();
     for (f, keys) in sc.keys_per_frame().into_iter().enumerate() {
         let keys: Vec<Keys> = keys.iter().map(|k| Keys(k.0)).collect();
         for &(frame, x, y, item) in &bonuses {
@@ -384,7 +385,7 @@ pub fn replay(content: &Path, sc: &Scenario, expected: &Trace) -> anyhow::Result
                 world.place_bonus(x, y, item);
             }
         }
-        world.tick(&keys);
+        world.tick(&keys, &mut events);
         frames.push(record(&world, f as i64, t0));
     }
     Ok(Trace { header: expected.header.clone(), frames })

@@ -16,7 +16,7 @@ use crate::SimSettings;
 use crate::beam::{BeamCtx, process_shot_beam};
 use crate::bonus::{Bonus, MAX_BONUSES};
 use crate::buf::Buf;
-use crate::events::Event;
+use crate::events::EventKind;
 use crate::mod_rt::{SimMod, WeaponType};
 use crate::projectile::{ProjectilePool, c_int};
 use crate::rng::Draws;
@@ -172,7 +172,7 @@ pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], 
         // `FinalProj` exists only in mods newer than LX56.
         return;
     }
-    let fired = Event::WeaponFired { worm: shot.worm, weapon: shot.weapon };
+    let fired = EventKind::WeaponFired { worm: shot.worm, weapon: shot.weapon };
     if wpn.kind == WeaponType::Beam {
         ctx.draws.events.push(fired);
         let mut beam = BeamCtx { terrain: ctx.terrain, holes: ctx.holes, draws: ctx.draws, parts: ctx.parts };
@@ -194,7 +194,8 @@ pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], 
         rand: &mut ctx.draws.rand,
         settings: ctx.settings,
         now: ctx.now,
-        work: &mut ctx.draws.spawn_work,
+        work: &mut ctx.draws.spawn_work.0,
+        rot_bumped: &mut ctx.draws.rot_bumped,
     };
     spawn_info_apply(info, SpawnParent::Shot(shot), spawn, &mut sctx);
 }
