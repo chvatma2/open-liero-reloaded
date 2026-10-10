@@ -596,3 +596,18 @@ content. Where they conflict with earlier sections, they take precedence.
 | A8 | §9.1 | Each skin is its own pack (`olx-skin-<slug>`). | Keeps one pack kind per directory; ids stay unique, with numeric suffixes on collision. |
 | A9 | §4.1 (1) | Per-crate notes live in `CLAUDE.md`; a single root `AGENTS.md` points to them. `cargo xtask layers` fails if a crate lacks `CLAUDE.md`. | One source of truth per crate. |
 | A10 | §9.3 | Committed synthetic fixture *packs* (a tiny level, and a mod with one weapon per action type) move to plan 3, where the simulation first consumes them. Plan 1's tests build their synthetic inputs in code: an LGS byte builder, an LXL builder, and sample packs. | Fixtures are most useful when they exercise simulation behavior; nothing in M1 reads them. |
+
+## 16. Amendments made while writing plan 2 (2026-10-10)
+
+These came out of building the oracle against a real OLX build. Where they
+conflict with earlier sections, they take precedence.
+
+| # | Amends | Change | Reason |
+|---|---|---|---|
+| B1 | §6 | Traces are gzip-compressed JSON lines (`fixtures/oracle/<name>.jsonl.gz`, via `flate2`), not zstd. Scenarios live next to them as `fixtures/oracle/<name>.ron`. | `flate2` is pure Rust and already in the workspace; zstd adds a C dependency for no real gain at 4–11 KB per trace. |
+| B2 | §6 | A trace starts with a header line holding OLX's version and **every feature value in effect**, then frame −1 (the state when recording starts), then frames 0..n−1. | The simulation can check its default settings against exactly what OLX used, and frame −1 pins the start state. |
+| B3 | §6 | Key input goes through OLX's real keyboard handler (`CWormHumanInputHandler`) with virtual keys. The hooks are `simLoadInputs` (key schedule) and `simRecord` (per-frame recording), on top of the existing `simSetSeed` / `simStep`. The extended `setWormInput` from §6 is not needed. | Aim acceleration, facing, rope and digging combos come from OLX's own code, so the oracle captures the real game feel. |
+| B4 | §6 | Determinism measures: manual stepping from the lobby on; the LX56 physics clock is aligned with the frame clock when inputs load; worms spawn after that; `ForceLX56Aim` is forced. Every recording is made twice and must match byte for byte. | Without the clock alignment, frame 0 replayed a varying amount of setup time; three runs gave three different traces. |
+| B5 | §6, §10 M2 | M2's scenarios cover movement only: fall, walk, jump, aim, rope, dig. Weapon scenarios, and a hook to set worm weapons, come with M4. | Weapons need their own hook and the M4 simulation work to be useful. |
+| B6 | §4 | `rl-oracle` is a layer-2 crate with no simulation code. In M3 the simulation turns a `Scenario` into a `Trace` in its own tests. | Keeps the oracle independent of the simulation's layering. |
+| B7 | §7 | `cargo xtask oracle-record --check` (Docker, about 1 minute) is not part of the fast gate. Run it after touching `tools/olx-oracle/`. The fast gate checks the committed traces' consistency and behaviour (`rl-oracle` fixtures test). | Keeps `cargo xtask check` fast and free of a Docker requirement. |
