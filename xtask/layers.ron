@@ -4,6 +4,7 @@
 // #![no_std]; `wasm` crates must build for wasm32-unknown-unknown.
 (
     layers: {
+        "rl-math": 0,
         "rl-data": 1,
         "rl-vfs": 1,
         "rl-pack": 2,
@@ -19,6 +20,6 @@
         ("rl-import-lxl", "rl-pack"),
         ("rl-import-gfx", "rl-pack"),
     ],
-    no_std: ["rl-data"],
-    wasm: ["rl-data", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
+    no_std: ["rl-math", "rl-data"],
+    wasm: ["rl-math", "rl-data", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
 )
