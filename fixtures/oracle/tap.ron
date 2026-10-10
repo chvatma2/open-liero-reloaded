@@ -1,0 +1,12 @@
+(
+    description: "A one-frame-long tap of up on frames 0 and 1, where no LX56 sub-step runs. OLX counts a key pressed since the previous sub-step as held (CInput::Binding::isDown: wasDown() || bDown), so the tap must still turn the aim.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 60,
+    worms: [(x: 190, y: 320)],
+    inputs: [
+        (frame: 0, worm: 0, keys: "up"),
+        (frame: 2, worm: 0, keys: ""),
+    ],
+)

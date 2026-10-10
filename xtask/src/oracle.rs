@@ -65,6 +65,13 @@ fn id(flag: &str) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// Messages that OLX console commands (`setvar`, `simLoadInputs`, `spawnWorm`,
+/// `simSetSeed`, ...) wrote back to the control script. OLX only logs them, so
+/// a failed command would otherwise go unnoticed; a clean run has none.
+fn olx_command_errors(log: &str) -> Vec<&str> {
+    log.lines().filter(|l| l.contains("Script Dedicated:")).collect()
+}
+
 /// Plays `sc` once in OLX and returns the trace text.
 fn record_once(image: &str, user: &str, work: &Path, sc: &Scenario) -> anyhow::Result<String> {
     if work.exists() {
@@ -82,6 +89,10 @@ fn record_once(image: &str, user: &str, work: &Path, sc: &Scenario) -> anyhow::R
         .context("running docker")?;
     let log = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
     std::fs::write(work.join("olx.log"), &log)?;
+    let errors = olx_command_errors(&log);
+    if !errors.is_empty() {
+        bail!("an OLX command failed (see {}):\n{}", work.join("olx.log").display(), errors.join("\n"));
+    }
     if !log.contains("ORACLE_DONE") {
         let errors: Vec<&str> =
             log.lines().filter(|l| l.contains("ORACLE_ERROR") || l.starts_with("E:")).collect();
@@ -183,6 +194,15 @@ mod tests {
         assert_eq!(t, image_tag(&[("a", b"1"), ("b", b"2")]));
         assert_ne!(t, image_tag(&[("a", b"1"), ("b", b"3")]));
         assert_ne!(t, image_tag(&[("a", b"12"), ("b", b"")]));
+    }
+
+    #[test]
+    fn olx_command_errors_are_found_in_the_log() {
+        let clean = "n: Loading (100%): Done!\nH: DEDICATED MODE\nORACLE_DONE frames=200\n";
+        assert!(olx_command_errors(clean).is_empty());
+        let bad = "n: x\nH: Script Dedicated: SetVar: no var with name GameOptions.GameInfo.GameSped\n\
+                   E: Script Dedicated: worm 3 is not local\nORACLE_DONE frames=200\n";
+        assert_eq!(olx_command_errors(bad).len(), 2);
     }
 
     #[test]

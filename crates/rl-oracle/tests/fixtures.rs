@@ -28,7 +28,7 @@ fn every_scenario_has_a_consistent_trace() {
         .map(|p| p.file_stem().unwrap().to_string_lossy().into_owned())
         .collect();
     names.sort();
-    assert_eq!(names, ["aim", "dig", "fall", "jump", "rope", "walk"]);
+    assert_eq!(names, ["aim", "dig", "fall", "jump", "rope", "tap", "walk"]);
     for name in names {
         let (sc, t) = load(&name);
         assert_eq!(t.header.features["ForceLX56Aim"], "true", "{name}");
@@ -89,4 +89,10 @@ fn dig_changes_the_material_map() {
     let (_, t) = load("dig");
     let hashes: std::collections::BTreeSet<&str> = t.frames.iter().map(|f| f.mh.as_str()).collect();
     assert!(hashes.len() > 3, "material changed {} times", hashes.len() - 1);
+}
+
+#[test]
+fn tap_between_sub_steps_still_turns_the_aim() {
+    let (_, t) = load("tap");
+    assert!(worm(&t).any(|w| w.ang.0 != 0.0), "a press during frames without a sub-step was lost");
 }

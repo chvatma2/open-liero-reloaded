@@ -39,14 +39,18 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 
 - **Frames:** a frame is 10 ms. LX56 physics runs in 84 Hz sub-steps from its
   own clock (`CClient::fLastSimulationTime`), so some 100 Hz frames run no
-  physics sub-step at all (in `fall`, frame 0 does not move the worm). The
-  oracle aligns that clock with the frame clock when a scenario starts.
+  physics sub-step at all. After the oracle aligns that clock when a scenario
+  starts, frames 0 and 1 run none, and the first sub-step comes in frame 2.
 - **Input:** OLX's keyboard handler (`CWormHumanInputHandler::getInput`,
-  `src/common/CWormHuman.cpp:81-560`) runs once per physics sub-step.
-  - Held keys are read directly.
-  - "Pressed once" events are latched until the next sub-step consumes them
-    (`CInput::nDownOnce`, reset by `CInput::reset()`).
-  - The simulation's `PlayerInput` must keep the same latch semantics.
+  `src/common/CWormHuman.cpp:81-560`) runs once per physics sub-step and
+  latches keyboard events between sub-steps, then clears the latches with
+  `CInput::reset()`.
+  - **Held:** a key counts as held if it is down now *or* was pressed since the
+    previous sub-step (`CInput::Binding::isDown`: `wasDown() || bDown`,
+    `src/client/CInput.cpp:861-862`). A tap shorter than the gap between two
+    sub-steps is still seen once (oracle scenario `tap`).
+  - **Pressed once:** `isDownOnce` (`nDownOnce`) is true at the first sub-step after a press.
+  - The simulation's `PlayerInput` must keep both latches.
 - **Digging** with the keyboard is a tap of the opposite direction while
   holding a direction (`leftOnce` / `rightOnce`), not a dedicated key.
 - **Aim:** the traces use LX56 aim (`ForceLX56Aim`: max speed 100,

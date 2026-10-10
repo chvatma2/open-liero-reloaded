@@ -16,20 +16,22 @@ index bd9eaa4..fdbf335 100644
  	bool	Compile(const std::string& dir);
  
 diff --git a/include/CInput.h b/include/CInput.h
-index 7ca1b1f..7b32e76 100644
+index 7ca1b1f..076c115 100644
 --- a/include/CInput.h
 +++ b/include/CInput.h
-@@ -48,6 +48,9 @@
+@@ -48,6 +48,11 @@
  
  struct KeyboardEvent;
  
 +// Scripted key state for the rust-liero oracle test hooks (OracleHooks.h).
-+struct VirtualKey { bool down; bool once; VirtualKey() : down(false), once(false) {} };
++// Like a keyboard binding: `pressed` mirrors nDown (a press since the last reset()
++// counts as held, CInput::Binding::isDown), `once` mirrors nDownOnce.
++struct VirtualKey { bool down; bool pressed; bool once; VirtualKey() : down(false), pressed(false), once(false) {} };
 +
  class CInput {
  public:
  	CInput();
-@@ -128,6 +131,9 @@ public:
+@@ -128,6 +133,9 @@ public:
  	int		wasUp(); // checks if there was an keyup-event; returns the count of up-events
  
  	std::string getEventName() { return m_EventName; }
@@ -81,14 +83,14 @@ index 0000000..906b893
 +
 +#endif
 diff --git a/src/client/CInput.cpp b/src/client/CInput.cpp
-index 5ae81c1..90200b2 100644
+index 5ae81c1..fc8507a 100644
 --- a/src/client/CInput.cpp
 +++ b/src/client/CInput.cpp
 @@ -879,6 +879,7 @@ bool CInput::Binding::isDown() const
  
  bool CInput::isDown() const
  {
-+	if(virt) return virt->down;
++	if(virt) return virt->down || virt->pressed;
  	for(std::vector<Binding>::const_iterator it = m_bindings.begin(); it != m_bindings.end(); ++it)
  		if(it->isDown()) return true;
  	return false;
@@ -119,7 +121,7 @@ index 5ae81c1..90200b2 100644
  }
  
  void CInput::reset() {
-+	if(virt) virt->once = false;
++	if(virt) virt->once = virt->pressed = false;
  	for(std::vector<Binding>::iterator it = m_bindings.begin(); it != m_bindings.end(); ++it)
  		it->reset();
  }
@@ -156,10 +158,10 @@ index feb1223..c8aa587 100644
  	caller->writeMsg("GameState: " + Game::StateAsStr(game.state), CNC_DEV);
 diff --git a/src/common/OracleHooks.cpp b/src/common/OracleHooks.cpp
 new file mode 100644
-index 0000000..59bbcd1
+index 0000000..e594622
 --- /dev/null
 +++ b/src/common/OracleHooks.cpp
-@@ -0,0 +1,247 @@
+@@ -0,0 +1,248 @@
 +/*
 +	OpenLieroX
 +
@@ -212,8 +214,9 @@ index 0000000..59bbcd1
 +static void writeState(long frame);
 +
 +static void setKey(VirtualKey& k, bool down) {
-+	// A press is latched until the first getInput() consumes it, like CInput's nDownOnce.
-+	if(down && !k.down) k.once = true;
++	// A press is latched until the next getInput() resets it, like CInput's
++	// nDown (counts as held) and nDownOnce (counts as pressed once).
++	if(down && !k.down) k.once = k.pressed = true;
 +	k.down = down;
 +}
 +

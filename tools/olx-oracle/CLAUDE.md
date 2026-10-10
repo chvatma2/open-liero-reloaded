@@ -9,7 +9,7 @@ you rarely need to touch these files.
 - `Dockerfile`: OLX at commit `d1ad953f` from GitHub, plus the patch, built as a
   headless dedicated server (Ubuntu 22.04, as OLX's own Docker image).
   The image tag is a hash of the three files here, so any edit rebuilds it.
-- `oracle-hooks.patch`: the test hooks, 8 OLX files and about 320 lines.
+- `oracle-hooks.patch`: the test hooks, 8 OLX files and about 320 added lines.
 - `oracle_control.py`: drives one recording over OLX's dedicated-control pipe.
 
 ## What the patch adds
@@ -18,9 +18,10 @@ you rarely need to touch these files.
   - The listed worms switch to OLX's human input handler, driven by virtual keys
     (`CInput::virt`), so aim, facing, rope and weapon switching run through
     OLX's real keyboard code.
-  - A key press is latched until the first `getInput()` consumes it, as
-    `CInput::nDownOnce` does. `getInput()` runs once per 84 Hz physics
-    sub-step, not once per 100 Hz frame.
+  - A key press is latched until the next `getInput()` resets it. It counts as
+    held (`pressed`, like `CInput`'s `nDown`) and as pressed once (`once`, like
+    `nDownOnce`). `getInput()` runs once per 84 Hz physics sub-step, not once
+    per 100 Hz frame.
   - It also aligns the LX56 physics clock with the frame clock. Without that,
     frame 0 would replay however much time the setup took.
 - **`simRecord <file|off>`:** writes one JSON line per simulated frame.

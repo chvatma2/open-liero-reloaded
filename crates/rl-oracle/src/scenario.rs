@@ -8,6 +8,7 @@ use crate::{Keys, OracleError};
 
 /// A deterministic OLX run to record and to replay in Rust.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Scenario {
     pub description: String,
     /// Level file name inside OLX's `share/gamedir/levels/`, such as `"Dirt Level.lxl"`.
@@ -33,6 +34,7 @@ pub struct Scenario {
 
 /// Where a worm is spawned, in world pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WormSpawn {
     pub x: i32,
     pub y: i32,
@@ -41,6 +43,7 @@ pub struct WormSpawn {
 /// From frame `frame` on, worm `worm` (index into `worms`) holds `keys`,
 /// written as `"right+jump"`; `""` releases everything.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InputChange {
     pub frame: u32,
     pub worm: usize,
@@ -50,6 +53,7 @@ pub struct InputChange {
 /// Allows numeric field `field` (a trace path such as `"w[0].vy"`, where `[*]`
 /// matches any index) to differ by at most `max_abs`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Tolerance {
     pub field: String,
     pub max_abs: f32,
@@ -201,6 +205,9 @@ mod tests {
             ("frame: 5, worm: 0", "frame: 10, worm: 0", "past the last frame"),
             ("frame: 5, worm: 0", "frame: 5, worm: 2", "only 2 worms"),
             ("keys: \"right\"", "keys: \"rigth\"", "unknown key"),
+            ("inputs: [", "input: [", "Unexpected field"),
+            ("(x: 190, y: 320)", "(x: 190, y: 320, z: 1)", "Unexpected field"),
+            ("(frame: 2, worm: 0,", "(frame: 2, worm: 0, wrom: 0,", "Unexpected field"),
         ];
         for (from, to, msg) in cases {
             let err = Scenario::from_ron(&SAMPLE.replace(from, to)).unwrap_err().to_string();
