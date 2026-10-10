@@ -74,6 +74,9 @@ pub struct App {
     meter: Meter,
     stats: Stats,
     dropped_warned: bool,
+    /// The window could not show frames (minimised or covered): the game
+    /// waits for window events and the sandbox is paused.
+    paused: bool,
     /// What stopped the game, if something went wrong.
     pub error: Option<anyhow::Error>,
 }
@@ -108,6 +111,7 @@ impl App {
             meter: Meter::new(),
             stats,
             dropped_warned: false,
+            paused: false,
             error: None,
         }
     }
@@ -274,15 +278,11 @@ impl App {
         let map = ScreenMap { view: self.list.view, dest, pixels_per_point: ppp };
         let input = w.egui.take_egui_input(&w.window);
         let overlay = Overlay { session: &self.session, alpha, map, debug: self.debug, stats: &self.stats };
-        let out = self.egui.run_ui(input, |ui| crate::overlay::paint(ui, &overlay));
+        let mut out = self.egui.run_ui(input, |ui| crate::overlay::paint(ui, &overlay));
         w.egui.handle_platform_output(&w.window, out.platform_output);
         let jobs = self.egui.tessellate(out.shapes, out.pixels_per_point);
-        let paint = OverlayPaint {
-            jobs: &jobs,
-            textures: &out.textures_delta,
-            pixels_per_point: out.pixels_per_point,
-        };
-        let wait = w.gpu.present(&self.list, &paint).unwrap_or_default();
+        let paint = OverlayPaint { jobs: &jobs, pixels_per_point: out.pixels_per_point };
+        let wait = w.gpu.present(&self.list, &paint, &mut out.textures_delta).unwrap_or_default();
         self.meter.busy(now.elapsed().saturating_sub(wait).as_secs_f64());
         if std::mem::take(&mut self.shot_due) {
             let path = self.cfg.shot_dir.join(format!("shot-{:05}.png", self.ticks));
@@ -335,6 +335,12 @@ impl ApplicationHandler for App {
                 self.resized((size.width, size.height));
                 Ok(())
             }
+            WindowEvent::Occluded(occluded) => {
+                if let Some(w) = &mut self.win {
+                    w.gpu.set_occluded(*occluded);
+                }
+                Ok(())
+            }
             WindowEvent::KeyboardInput { event, .. } => self.on_key(el, event),
             WindowEvent::RedrawRequested => self.frame(el),
             _ => Ok(()),
@@ -344,14 +350,26 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
+    /// Draws continuously while the window can show frames. Minimised,
+    /// covered or of no size, it stops asking for frames and sleeps until a
+    /// window event (`Resized`, `Occluded`) changes that: the sandbox pauses
+    /// (no ticks run, and the time hidden is not caught up afterwards).
+    fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         if let Some(g) = &mut self.gilrs {
             while let Some(ev) = g.next_event() {
                 self.input.on_gamepad(&ev);
             }
         }
-        if let Some(w) = &self.win {
+        let Some(w) = &self.win else { return };
+        if w.gpu.drawable() {
+            if std::mem::take(&mut self.paused) {
+                self.last = None;
+            }
+            el.set_control_flow(ControlFlow::Poll);
             w.window.request_redraw();
+        } else {
+            self.paused = true;
+            el.set_control_flow(ControlFlow::Wait);
         }
     }
 }

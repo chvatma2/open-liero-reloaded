@@ -37,11 +37,20 @@ cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --target
   (scene, each worm's skin and gibs, entities) is registered before the
   atlas upload.
 - **Surface** (`surface.rs`, Review Focus 4): a state machine over a
-  `Surface` trait: no frame while minimised, configure on resize,
-  reconfigure and retry on `Outdated` (Wayland's first frame), recreate on
-  `Lost`, bounded retries. `gpu.rs` picks a gamma-space surface format
-  (egui wants one) and Mailbox when there is one, else FIFO; `--uncapped`
-  prefers Immediate.
+  `Surface` trait: no frame while minimised or occluded (`drawable`),
+  configure on resize, reconfigure and retry on `Outdated` (Wayland's
+  first frame), recreate on `Lost`, bounded retries. While not drawable
+  the loop stops redrawing and waits for window events (`ControlFlow::
+  Wait`): the sandbox pauses, and the hidden time is not caught up.
+  `gpu.rs` clamps every surface and screenshot size to the device's
+  `max_texture_dimension_2d` (`clamp_size`), picks 8-bit RGBA (gamma
+  space first: egui wants it, the readback reads 4 bytes a pixel) and
+  Mailbox when there is one, else FIFO; `--uncapped` prefers Immediate.
+- **egui textures** (`gpu::with_textures`): each frame's `TexturesDelta`
+  is applied (set before drawing, free after) and drained whether or not
+  a frame is drawn; egui hands each change out once (a lost font-atlas
+  delta makes egui-wgpu panic on the next patch) and debug builds assert
+  every delta was handled.
 - **Overlay** (`overlay.rs`): names over worms, summed damage popups
   (`Damage.dealt`), the HUD (OLX's kills, deaths and suicides, which a
   zero score does not count), and F2's counters: FPS, frame and *busy* ms

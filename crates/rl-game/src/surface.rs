@@ -34,13 +34,14 @@ pub const RETRIES: u32 = 2;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SurfaceState {
     size: (u32, u32),
+    occluded: bool,
     configured: Option<(u32, u32)>,
 }
 
 impl SurfaceState {
     /// A window of `size` pixels; the surface is configured on the first frame.
     pub fn new(size: (u32, u32)) -> SurfaceState {
-        SurfaceState { size, configured: None }
+        SurfaceState { size, occluded: false, configured: None }
     }
 
     /// The window is now `size` pixels (0 when minimised).
@@ -52,6 +53,17 @@ impl SurfaceState {
         self.size
     }
 
+    /// The window is hidden (minimised, covered) or shown again.
+    pub fn set_occluded(&mut self, occluded: bool) {
+        self.occluded = occluded;
+    }
+
+    /// Whether frames can be drawn: the window has an area and is not
+    /// occluded. While it cannot, the game stops drawing and waits.
+    pub fn drawable(&self) -> bool {
+        self.size.0 > 0 && self.size.1 > 0 && !self.occluded
+    }
+
     /// The next frame to draw into, if there is one: none while the window
     /// has no area (minimised), or when the surface keeps failing (the next
     /// frame tries again). Configures the surface first when the window
@@ -59,7 +71,7 @@ impl SurfaceState {
     /// after `Lost`; a suboptimal frame is used and the surface configured
     /// again next time.
     pub fn frame<S: Surface>(&mut self, surface: &mut S) -> Option<S::Frame> {
-        if self.size.0 == 0 || self.size.1 == 0 {
+        if !self.drawable() {
             return None;
         }
         for _ in 0..=RETRIES {
@@ -161,6 +173,17 @@ mod tests {
         f.answers = std::iter::repeat_with(|| Acquire::Outdated).take(RETRIES as usize + 1).collect();
         assert_eq!(s.frame(&mut f), None);
         assert_eq!(s.frame(&mut f), Some(8));
+        // Occluded (winit's `Occluded`): no frame and no acquire, until shown.
+        s.set_occluded(true);
+        assert!(!s.drawable());
+        f.answers = [Acquire::Skip].into();
+        assert_eq!(s.frame(&mut f), None);
+        assert_eq!(f.answers.len(), 1, "not acquired while occluded");
+        s.set_occluded(false);
+        assert!(s.drawable());
+        s.resize((0, 720));
+        assert!(!s.drawable(), "minimised");
+        s.resize((1280, 720));
         // A timeout or an occluded window skips the frame.
         f.answers = [Acquire::Skip].into();
         assert_eq!(s.frame(&mut f), None);

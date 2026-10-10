@@ -15,10 +15,47 @@ use winit::window::Window;
 
 use crate::surface::{Acquire, Surface, SurfaceState};
 
+/// Where egui's texture changes go (`egui_wgpu::Renderer` on the device;
+/// a fake in tests).
+pub trait TextureSink {
+    fn set(&mut self, id: egui::TextureId, delta: &egui::epaint::ImageDelta);
+    fn free(&mut self, id: egui::TextureId);
+}
+
+/// Applies a frame's egui texture changes around `draw`, whether or not it
+/// draws anything: new textures and patches first, frees after, leaving
+/// `delta` empty (egui checks that every delta was handled). egui hands
+/// each change out once, so a frame that is not drawn (a minimised window,
+/// a skipped surface) must still apply them, or later patches refer to
+/// textures never allocated (egui-wgpu panics).
+pub fn with_textures<S: TextureSink, R>(
+    sink: &mut S,
+    delta: &mut egui::TexturesDelta,
+    draw: impl FnOnce(&mut S) -> R,
+) -> R {
+    // Each id's deltas apply in order; ids are independent of each other.
+    for (id, deltas) in delta.set.drain() {
+        for d in &deltas {
+            sink.set(id, d);
+        }
+    }
+    let drawn = draw(sink);
+    for id in delta.free.drain() {
+        sink.free(id);
+    }
+    drawn
+}
+
+/// `size` within the device's largest texture side (`max`) and at least 1,
+/// so a huge or spanned window never asks for a surface the device refuses.
+pub fn clamp_size(size: (u32, u32), max: u32) -> (u32, u32) {
+    let max = max.max(1);
+    (size.0.clamp(1, max), size.1.clamp(1, max))
+}
+
 /// The overlay's paint jobs for one frame.
 pub struct OverlayPaint<'a> {
     pub jobs: &'a [egui::ClippedPrimitive],
-    pub textures: &'a egui::TexturesDelta,
     pub pixels_per_point: f32,
 }
 
@@ -38,7 +75,11 @@ pub struct Gpu {
 /// The surface format: a gamma-space one when the surface has it (egui
 /// wants one; `rl-render` writes the same bytes either way).
 fn pick_format(formats: &[wgpu::TextureFormat]) -> Option<wgpu::TextureFormat> {
-    formats.iter().copied().find(|f| !f.is_srgb()).or_else(|| formats.first().copied())
+    use wgpu::TextureFormat as F;
+    // 8-bit RGBA first (the screenshot readback reads 4 bytes a pixel),
+    // gamma-space before sRGB.
+    let preferred = [F::Bgra8Unorm, F::Rgba8Unorm, F::Bgra8UnormSrgb, F::Rgba8UnormSrgb];
+    preferred.into_iter().find(|f| formats.contains(f)).or_else(|| formats.first().copied())
 }
 
 /// Mailbox when the surface has it (no tearing, no queueing), else FIFO
@@ -48,6 +89,16 @@ fn pick_present_mode(modes: &[wgpu::PresentMode], uncapped: bool) -> wgpu::Prese
     use wgpu::PresentMode as P;
     let order: &[P] = if uncapped { &[P::Immediate, P::Mailbox] } else { &[P::Mailbox] };
     order.iter().copied().find(|m| modes.contains(m)).unwrap_or(P::Fifo)
+}
+
+impl TextureSink for Gpu {
+    fn set(&mut self, id: egui::TextureId, delta: &egui::epaint::ImageDelta) {
+        self.egui.update_texture(self.renderer.device(), self.renderer.queue(), id, delta);
+    }
+
+    fn free(&mut self, id: egui::TextureId) {
+        self.egui.free_texture(&id);
+    }
 }
 
 impl Gpu {
@@ -77,9 +128,11 @@ impl Gpu {
         .context("opening the GPU device")?;
         let caps = surface.get_capabilities(&adapter);
         let format = pick_format(&caps.formats).context("the surface has no format")?;
-        let size = window.inner_size();
+        let inner = window.inner_size();
+        let max = device.limits().max_texture_dimension_2d;
+        let first = clamp_size((inner.width, inner.height), max);
         let mut config = surface
-            .get_default_config(&adapter, size.width.max(1), size.height.max(1))
+            .get_default_config(&adapter, first.0, first.1)
             .context("the surface does not work with the adapter")?;
         config.format = format;
         config.present_mode = pick_present_mode(&caps.present_modes, uncapped);
@@ -91,13 +144,31 @@ impl Gpu {
         );
         let egui = egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default());
         let renderer = Renderer::new(device, queue, format, settings);
-        let state = SurfaceState::new((size.width, size.height));
+        let zero = inner.width == 0 || inner.height == 0;
+        let state = SurfaceState::new(if zero { (inner.width, inner.height) } else { first });
         Ok(Gpu { window, instance, surface, adapter, config, state, renderer, egui, info })
     }
 
     /// The window is now `size` pixels (0 when minimised).
     pub fn resize(&mut self, size: (u32, u32)) {
+        // Minimised stays 0 (no frames); otherwise within the device's limit.
+        let size = if size.0 == 0 || size.1 == 0 { size } else { clamp_size(size, self.max_side()) };
         self.state.resize(size);
+    }
+
+    /// The window is hidden or shown again (winit's `Occluded`).
+    pub fn set_occluded(&mut self, occluded: bool) {
+        self.state.set_occluded(occluded);
+    }
+
+    /// Whether frames can be drawn now.
+    pub fn drawable(&self) -> bool {
+        self.state.drawable()
+    }
+
+    /// The device's largest texture side.
+    fn max_side(&self) -> u32 {
+        self.renderer.device().limits().max_texture_dimension_2d
     }
 
     /// The size frames are drawn at.
@@ -105,11 +176,23 @@ impl Gpu {
         self.state.size()
     }
 
-    /// Draws `list` and the overlay into the window and presents it.
+    /// Draws `list` and the overlay into the window and presents it,
+    /// applying the overlay's texture changes (`textures`, left empty)
+    /// whether or not a frame is drawn.
     /// Returns how long it waited for the surface (acquiring and presenting,
     /// where VSync blocks), or `None` when no frame was presented (the
     /// window is minimised or the surface keeps failing).
-    pub fn present(&mut self, list: &DrawList, overlay: &OverlayPaint) -> Option<Duration> {
+    pub fn present(
+        &mut self,
+        list: &DrawList,
+        overlay: &OverlayPaint,
+        textures: &mut egui::TexturesDelta,
+    ) -> Option<Duration> {
+        with_textures(self, textures, |gpu| gpu.present_frame(list, overlay))
+    }
+
+    /// [`Gpu::present`] once the overlay's textures are up to date.
+    fn present_frame(&mut self, list: &DrawList, overlay: &OverlayPaint) -> Option<Duration> {
         let t0 = Instant::now();
         let mut target = WindowSurface {
             window: &self.window,
@@ -134,11 +217,6 @@ impl Gpu {
     fn draw(&mut self, list: &DrawList, overlay: &OverlayPaint, view: &wgpu::TextureView, size: (u32, u32)) {
         self.renderer.render(list, view, size);
         let (device, queue) = (self.renderer.device().clone(), self.renderer.queue().clone());
-        for (id, deltas) in &overlay.textures.set {
-            for delta in deltas {
-                self.egui.update_texture(&device, &queue, *id, delta);
-            }
-        }
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [size.0, size.1],
             pixels_per_point: overlay.pixels_per_point,
@@ -162,16 +240,14 @@ impl Gpu {
             self.egui.render(&mut pass, overlay.jobs, &screen);
         }
         queue.submit(extra.into_iter().chain([encoder.finish()]));
-        for id in &overlay.textures.free {
-            self.egui.free_texture(id);
-        }
     }
 
     /// Draws the frame the window shows into a texture of the window's
     /// size and writes it to `path` as a PNG.
+    /// Call it after [`Gpu::present`], which applies the overlay's texture
+    /// changes.
     pub fn screenshot(&mut self, list: &DrawList, overlay: &OverlayPaint, path: &Path) -> anyhow::Result<()> {
-        let (w, h) = self.state.size();
-        let size = (w.max(1), h.max(1));
+        let size = clamp_size(self.state.size(), self.max_side());
         let texture = self.renderer.device().create_texture(&wgpu::TextureDescriptor {
             label: Some("rl-game screenshot"),
             size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
@@ -183,9 +259,8 @@ impl Gpu {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        // The overlay's textures were uploaded with the window's frame.
-        let paint = OverlayPaint { textures: &egui::TexturesDelta::default(), ..*overlay };
-        self.draw(list, &paint, &view, size);
+        // `present` applied this frame's texture changes, drawn or not.
+        self.draw(list, overlay, &view, size);
         let img = self.read(&texture)?;
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
@@ -259,8 +334,9 @@ impl Surface for WindowSurface<'_> {
     type Frame = wgpu::SurfaceTexture;
 
     fn configure(&mut self, size: (u32, u32)) {
-        self.config.width = size.0;
-        self.config.height = size.1;
+        let (w, h) = clamp_size(size, self.device.limits().max_texture_dimension_2d);
+        self.config.width = w;
+        self.config.height = h;
         self.surface.configure(self.device, self.config);
     }
 
@@ -293,11 +369,61 @@ mod tests {
         assert_eq!(pick_format(&[F::Bgra8UnormSrgb, F::Bgra8Unorm]), Some(F::Bgra8Unorm));
         assert_eq!(pick_format(&[F::Rgba8UnormSrgb]), Some(F::Rgba8UnormSrgb));
         assert_eq!(pick_format(&[]), None);
+        // 8-bit RGBA layouts first: the screenshot readback assumes 4 bytes a pixel.
+        assert_eq!(pick_format(&[F::Rgba16Float, F::Rgb10a2Unorm, F::Rgba8Unorm]), Some(F::Rgba8Unorm));
+        assert_eq!(pick_format(&[F::Rgba16Float, F::Bgra8UnormSrgb]), Some(F::Bgra8UnormSrgb));
         use wgpu::PresentMode as P;
         assert_eq!(pick_present_mode(&[P::Fifo, P::Mailbox, P::Immediate], false), P::Mailbox);
         assert_eq!(pick_present_mode(&[P::Fifo, P::Immediate], false), P::Fifo);
         assert_eq!(pick_present_mode(&[P::Fifo, P::Mailbox, P::Immediate], true), P::Immediate);
         assert_eq!(pick_present_mode(&[P::Fifo, P::Mailbox], true), P::Mailbox);
         assert_eq!(pick_present_mode(&[P::Fifo], true), P::Fifo);
+    }
+
+    #[derive(Default)]
+    struct Sink(Vec<String>);
+
+    impl TextureSink for Sink {
+        fn set(&mut self, id: egui::TextureId, _: &egui::epaint::ImageDelta) {
+            self.0.push(format!("set {id:?}"));
+        }
+        fn free(&mut self, id: egui::TextureId) {
+            self.0.push(format!("free {id:?}"));
+        }
+    }
+
+    #[test]
+    fn texture_changes_apply_even_without_a_frame() {
+        let image = egui::epaint::ImageDelta::full(
+            egui::ColorImage::filled([2, 2], egui::Color32::WHITE),
+            egui::TextureOptions::default(),
+        );
+        let mut delta = egui::TexturesDelta::default();
+        delta.set.insert(egui::TextureId::Managed(0), [image].into_iter().collect());
+        delta.free.insert(egui::TextureId::Managed(1));
+        // No frame acquired (minimised, occluded, skipped): still applied.
+        let mut sink = Sink::default();
+        let drawn: Option<()> = with_textures(&mut sink, &mut delta, |_| None);
+        assert_eq!(drawn, None);
+        assert_eq!(sink.0, ["set Managed(0)", "free Managed(1)"]);
+        assert!(delta.is_empty(), "every change handled");
+        // A drawn frame: set before drawing, free after.
+        let image = egui::epaint::ImageDelta::full(
+            egui::ColorImage::filled([2, 2], egui::Color32::WHITE),
+            egui::TextureOptions::default(),
+        );
+        delta.set.insert(egui::TextureId::Managed(0), [image].into_iter().collect());
+        delta.free.insert(egui::TextureId::Managed(1));
+        let mut sink = Sink::default();
+        with_textures(&mut sink, &mut delta, |s| s.0.push("draw".into()));
+        assert_eq!(sink.0, ["set Managed(0)", "draw", "free Managed(1)"]);
+    }
+
+    #[test]
+    fn surface_size_is_clamped_to_the_device_limit() {
+        assert_eq!(clamp_size((1920, 1080), 8192), (1920, 1080));
+        assert_eq!(clamp_size((10000, 3000), 8192), (8192, 3000));
+        assert_eq!(clamp_size((20000, 20000), 2048), (2048, 2048));
+        assert_eq!(clamp_size((0, 5), 2048), (1, 5));
     }
 }
