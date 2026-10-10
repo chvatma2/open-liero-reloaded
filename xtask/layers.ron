@@ -6,6 +6,7 @@
     layers: {
         "rl-math": 0,
         "rl-data": 1,
+        "rl-terrain": 1,
         "rl-vfs": 1,
         "rl-pack": 2,
         "rl-import-lgs": 2,
@@ -16,10 +17,11 @@
         "xtask": 6,
     },
     same_layer: [
+        ("rl-terrain", "rl-data"),
         ("rl-import-lgs", "rl-pack"),
         ("rl-import-lxl", "rl-pack"),
         ("rl-import-gfx", "rl-pack"),
     ],
-    no_std: ["rl-math", "rl-data"],
-    wasm: ["rl-math", "rl-data", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
+    no_std: ["rl-math", "rl-data", "rl-terrain"],
+    wasm: ["rl-math", "rl-data", "rl-terrain", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
 )

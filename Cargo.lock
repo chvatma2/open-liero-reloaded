@@ -648,6 +648,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-terrain"
+version = "0.1.0"
+dependencies = [
+ "rl-data",
+]
+
+[[package]]
 name = "rl-vfs"
 version = "0.1.0"
 dependencies = [
