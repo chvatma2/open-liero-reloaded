@@ -40,8 +40,9 @@ OLX commit `d1ad953f`.
 6. **`simulationTime += 10 ms`.**
 
 With both clocks aligned when a scenario starts, frames 0 and 1 run no physics
-step, frames 2 to 11 run one each, frame 12 runs none, and so on: the physics
-clock falls 1 ms further behind every frame.
+step, frames 2 to 11 run one each, frame 12 runs none, and so on. Each step
+moves the physics clock 11 ms while the frame clock moves 10 ms, so it gains
+1 ms per frame on the frame clock, until a frame has no room for a step.
 
 ## Input timing
 

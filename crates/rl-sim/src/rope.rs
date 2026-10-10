@@ -42,9 +42,13 @@ impl NinjaRope {
         self.player_attached = -1;
     }
 
-    /// `CNinjaRope::Shoot` from `owner_pos` towards `dir`.
-    pub fn shoot(&mut self, owner_pos: Vec2, owner_vel: Vec2, dir: Vec2, s: &SimSettings) {
+    /// `CNinjaRope::Shoot` from `owner_pos` towards `dir`. Like OLX, a worm
+    /// that may not use the rope (`can_use`) only loses its current one.
+    pub fn shoot(&mut self, owner_pos: Vec2, owner_vel: Vec2, dir: Vec2, can_use: bool, s: &SimSettings) {
         self.clear();
+        if !can_use {
+            return;
+        }
         self.released = true;
         self.shooting = true;
         self.pos = owner_pos;
@@ -137,8 +141,8 @@ impl NinjaRope {
 
         if !player_attached {
             self.attached = false;
-            let wx = (self.pos.x as i64).rem_euclid(terrain.width() as i64);
-            let wy = (self.pos.y as i64).rem_euclid(terrain.height() as i64);
+            let wx = (self.pos.x as i64).rem_euclid(terrain.width().max(1) as i64);
+            let wy = (self.pos.y as i64).rem_euclid(terrain.height().max(1) as i64);
             let m = terrain.material(wx, wy).unwrap_or(Material::Rock);
             // Rock and dirt stop particles and can be hooked; background lets them pass.
             let particle_pass = m == Material::Background;

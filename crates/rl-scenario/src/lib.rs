@@ -54,7 +54,7 @@ pub fn load_world(content: &Path, sc: &Scenario, expected: &Trace) -> anyhow::Re
     let mut world = World::new(settings, Terrain::from_grid(&level.material), holes, AbsTime(0));
     let start = expected.frames.first().context("trace has no frames")?;
     for (i, spawn) in sc.worms.iter().enumerate() {
-        world.spawn_worm(spawn.x, spawn.y);
+        world.spawn_worm(spawn.x, spawn.y).context("the scenario has more worms than rl-sim allows")?;
         let rec = start.w.get(i).context("trace has fewer worms than the scenario")?;
         let slots = rec
             .slots

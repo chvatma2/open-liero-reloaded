@@ -22,5 +22,5 @@ mod worm;
 pub use input::{KeyLatch, Keys, Latches};
 pub use rope::NinjaRope;
 pub use settings::{SettingsError, SimSettings};
-pub use world::World;
+pub use world::{MAX_WORMS, World};
 pub use worm::{Dir, Loadout, Slot, Worm, WormState};

@@ -1,15 +1,24 @@
 //! M3 acceptance (spec §6, §10): every scenario in `fixtures/oracle`, replayed
 //! in the Rust simulation, matches OLX's recorded trace bit for bit.
-//! Needs the imported OLX content; `cargo xtask check` sets `RL_CONTENT_DIR`.
+//! Needs the imported OLX content (`RL_CONTENT_DIR`, default `target/content`).
 
 use std::path::{Path, PathBuf};
 
+/// The imported content (`RL_CONTENT_DIR`, which `.cargo/config.toml` defaults
+/// to `target/content`), or `None` with a notice if it has not been imported.
+fn content_dir() -> Option<String> {
+    let dir = std::env::var("RL_CONTENT_DIR").ok()?;
+    if std::path::Path::new(&dir).is_dir() {
+        Some(dir)
+    } else {
+        eprintln!("{dir} not found (run `cargo xtask fetch-olx-content`); skipping");
+        None
+    }
+}
+
 #[test]
 fn every_scenario_matches_olx_bit_for_bit() {
-    let Ok(content) = std::env::var("RL_CONTENT_DIR") else {
-        eprintln!("RL_CONTENT_DIR not set; skipping the oracle comparison");
-        return;
-    };
+    let Some(content) = content_dir() else { return };
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/oracle");
     let names = rl_scenario::fixture_names(&dir).unwrap();
     assert_eq!(names, ["aim", "dig", "fall", "jump", "rope", "tap", "walk"]);
@@ -26,7 +35,7 @@ fn every_scenario_matches_olx_bit_for_bit() {
 
 #[test]
 fn a_changed_trace_is_detected() {
-    let Ok(content) = std::env::var("RL_CONTENT_DIR") else { return };
+    let Some(content) = content_dir() else { return };
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/oracle");
     let (sc, mut expected) = rl_scenario::load_fixture(&dir, "walk").unwrap();
     let actual = rl_scenario::replay(Path::new(&content), &sc, &expected).unwrap();

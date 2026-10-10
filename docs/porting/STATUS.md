@@ -10,7 +10,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Theme loading | `src/common/CMap.cpp:308-370` | `rl-import-gfx` | ported | Dirt theme imports |
 | Gamescript v8 | `CGameScript.cpp` (v8 branches) | — | not started | no content in scope |
 | Pixmap `.lxl` | `MapLoader_LieroX.cpp:440+` | — | not started | no content in scope |
-| Fidelity oracle (test hooks) | `src/game/Game.cpp`, `src/client/CInput.cpp`, `src/common/CWormHuman.cpp` | `tools/olx-oracle`, `rl-oracle` | done (plan 2) | 6 movement scenarios recorded twice and identical; `cargo xtask oracle-record --check` |
+| Fidelity oracle (test hooks) | `src/game/Game.cpp`, `src/client/CInput.cpp`, `src/common/CWormHuman.cpp` | `tools/olx-oracle`, `rl-oracle` | done (plans 2–3) | 7 movement scenarios recorded twice and identical; `cargo xtask oracle-record --check` |
 | Frame and physics clocks | `src/game/Game.cpp:897-959`, `src/client/CClient_Game.cpp:60-222` | `rl-sim::World::tick` | ported | all 7 oracle scenarios, bit for bit; `docs/porting/timing.md` |
 | Worm movement and collision | `src/common/PhysicsLX56.cpp:88-469` | `rl-sim::physics` | ported | `fall`, `walk`, `jump`, `dig` |
 | Keyboard input (aim, move, jump, dig, rope) | `src/common/CWormHuman.cpp:81-560`, `src/client/CInput.cpp` | `rl-sim::physics::get_input`, `rl-sim::input` | ported (keyboard, LX56 aim) | `aim`, `tap`, `walk`, `jump`, `dig`, `rope` |
@@ -31,9 +31,6 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 - Not yet emulated (M4): the `rand()` calls OLX makes for cosmetic particles
   when digging (`CarveHole(CVec)`) and when the rope first hooks dirt. They
   don't change M3 state, but they shift the random sequence that weapons will use.
-- Unverified path: when the rope hook falls back towards the worm (it flew past
-  `RopeMaxLength`), OLX normalizes with `1.0f/sqrt(length2)`. The port uses
-  `sqrtf`; no scenario reaches this yet.
 
 - Importers reject malformed input that OLX would read as garbage: truncated
   files, unknown weapon or projectile types, and nesting deeper than 128 levels.
@@ -66,7 +63,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 
 ## Facts the oracle established (needed by the simulation port)
 
-- **Frames:** a frame is 10 ms. LX56 physics runs in 84 Hz sub-steps from its
+- **Frames:** a frame is 10 ms. LX56 physics runs in 11 ms sub-steps (`1000 / 84`) from its
   own clock (`CClient::fLastSimulationTime`), so some 100 Hz frames run no
   physics sub-step at all. After the oracle aligns that clock when a scenario
   starts, frames 0 and 1 run none, and the first sub-step comes in frame 2.

@@ -10,12 +10,21 @@ use rl_data::manifest::PackKind;
 use rl_pack::Severity;
 use rl_vfs::{DirFs, MemFs};
 
+/// The imported content (`RL_CONTENT_DIR`, which `.cargo/config.toml` defaults
+/// to `target/content`), or `None` with a notice if it has not been imported.
+fn content_dir() -> Option<String> {
+    let dir = std::env::var("RL_CONTENT_DIR").ok()?;
+    if std::path::Path::new(&dir).is_dir() {
+        Some(dir)
+    } else {
+        eprintln!("{dir} not found (run `cargo xtask fetch-olx-content`); skipping");
+        None
+    }
+}
+
 #[test]
 fn imported_content() {
-    let Ok(dir) = std::env::var("RL_CONTENT_DIR") else {
-        eprintln!("RL_CONTENT_DIR not set; skipping corpus test");
-        return;
-    };
+    let Some(dir) = content_dir() else { return };
     let mut dirs: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .map(|e| e.unwrap().path())

@@ -18,6 +18,8 @@ use crate::worm::{Loadout, Worm};
 
 /// OLX `SPAWN_HOLESIZE` (`include/Consts.h:36`): the size-4 (largest) hole.
 const SPAWN_HOLE: usize = 4;
+/// OLX `MAX_WORMS` (`include/Consts.h:34`).
+pub const MAX_WORMS: usize = 32;
 /// `Game::FixedFrameTime`.
 const FRAME_MS: u64 = 10;
 
@@ -89,8 +91,12 @@ impl World {
         self.time
     }
 
-    /// `CWorm::Spawn` at `(x, y)`, including the spawn hole. Returns the worm's index.
-    pub fn spawn_worm(&mut self, x: i32, y: i32) -> usize {
+    /// `CWorm::Spawn` at `(x, y)`, including the spawn hole. Returns the worm's
+    /// index, or `None` if the world already has [`MAX_WORMS`] worms.
+    pub fn spawn_worm(&mut self, x: i32, y: i32) -> Option<usize> {
+        if self.worms.len() >= MAX_WORMS {
+            return None;
+        }
         let id = self.worms.len() as i32;
         let pos = Vec2::new(x as f32, y as f32);
         self.worms.push(Worm::spawned(id, pos, self.time, &self.settings));
@@ -99,7 +105,7 @@ impl World {
         if let Some(hole) = self.holes.get(SPAWN_HOLE) {
             self.terrain.carve_hole(hole, pos.x as i32, pos.y as i32);
         }
-        self.worms.len() - 1
+        Some(self.worms.len() - 1)
     }
 
     /// Puts the physics clock at the frame clock, as OLX does when a match or
@@ -114,11 +120,12 @@ impl World {
         TimeDiff((1000 / self.settings.lx56_physics_fps.max(1)).max(1) as u64)
     }
 
-    /// One 100 Hz frame. `keys[i]` is what worm `i` holds during this frame.
+    /// One 100 Hz frame. `keys[i]` is what worm `i` holds during this frame;
+    /// a worm with no entry holds nothing.
     pub fn tick(&mut self, keys: &[Keys]) {
         self.gus_speed_round_trip();
-        for (latch, k) in self.latches.iter_mut().zip(keys) {
-            latch.set(*k);
+        for (i, latch) in self.latches.iter_mut().enumerate() {
+            latch.set(keys.get(i).copied().unwrap_or(Keys(0)));
         }
         let speed = self.settings.game_speed.clamp(0.05, 10.0);
         let step = self.physics_dt();
@@ -283,15 +290,85 @@ mod tests {
         assert_eq!(w.terrain().material(25, 25), Some(Material::Dirt));
     }
 
+    /// Two worms digging, jumping and roping through dirt, varying every few frames.
+    fn busy_keys(frame: usize) -> [Keys; 2] {
+        const SEQ: [u8; 6] = [
+            Keys::RIGHT,
+            Keys::RIGHT | Keys::LEFT,
+            Keys::ROPE | Keys::UP,
+            Keys::JUMP | Keys::LEFT,
+            Keys::DOWN | Keys::RIGHT,
+            0,
+        ];
+        [Keys(SEQ[(frame / 7) % 6]), Keys(SEQ[(frame / 5 + 3) % 6])]
+    }
+
     #[test]
     fn a_clone_evolves_identically() {
-        let mut a = world(Material::Background);
-        a.spawn_worm(100, 20);
+        let mut a = world(Material::Dirt);
+        a.spawn_worm(60, 100);
+        a.spawn_worm(140, 100);
+        let start = a.clone();
+        for f in 0..100 {
+            a.tick(&busy_keys(f));
+        }
         let mut b = a.clone();
-        for k in [Keys(Keys::RIGHT), Keys(Keys::JUMP), Keys(0), Keys(Keys::ROPE | Keys::UP)] {
-            a.tick(&[k]);
-            b.tick(&[k]);
+        for f in 100..400 {
+            a.tick(&busy_keys(f));
+            b.tick(&busy_keys(f));
         }
         assert_eq!(a, b);
+        assert_ne!(a.terrain().material_hash(), start.terrain().material_hash(), "the worms dug");
+        assert_ne!(a.worms()[0].pos, start.worms()[0].pos, "the worms moved");
+    }
+
+    #[test]
+    fn a_rope_press_without_permission_still_clears_the_rope() {
+        // OLX CNinjaRope::Shoot clears the rope before it checks canUseNinja.
+        let mut w = world(Material::Background);
+        w.spawn_worm(100, 100);
+        for k in [0, 0, Keys::ROPE] {
+            w.tick(&[Keys(k)]);
+        }
+        assert!(w.worms()[0].rope.released);
+        w.worms[0].can_use_ninja = false;
+        w.tick(&[Keys(0)]);
+        w.tick(&[Keys(Keys::ROPE)]);
+        assert!(!w.worms()[0].rope.released);
+    }
+
+    #[test]
+    fn missing_keys_mean_nothing_is_held() {
+        let mut w = world(Material::Background);
+        w.spawn_worm(50, 100);
+        w.spawn_worm(150, 100);
+        for _ in 0..5 {
+            w.tick(&[Keys(Keys::RIGHT), Keys(Keys::RIGHT)]);
+        }
+        w.tick(&[Keys(Keys::RIGHT)]);
+        w.tick(&[Keys(Keys::RIGHT)]);
+        assert!(w.worms()[0].state.moving);
+        assert!(!w.worms()[1].state.moving);
+    }
+
+    #[test]
+    fn an_empty_map_does_not_panic() {
+        let terrain = Terrain::from_grid(&MaterialGrid::new(0, 0, Material::Dirt));
+        let mut w = World::new(SimSettings::lx56(), terrain, holes(), AbsTime(0));
+        w.spawn_worm(0, 0);
+        for k in [0, 0, Keys::ROPE, 0, Keys::RIGHT, Keys::LEFT | Keys::RIGHT, Keys::JUMP] {
+            w.tick(&[Keys(k)]);
+        }
+    }
+
+    #[test]
+    fn at_most_32_worms() {
+        // OLX MAX_WORMS (include/Consts.h:34).
+        let mut w = world(Material::Background);
+        for i in 0..32 {
+            assert_eq!(w.spawn_worm(10 + i * 5, 50), Some(i as usize));
+        }
+        assert_eq!(w.spawn_worm(10, 80), None);
+        assert_eq!(w.worms().len(), 32);
     }
 }

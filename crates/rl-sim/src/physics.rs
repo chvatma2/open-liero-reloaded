@@ -104,9 +104,9 @@ pub(crate) fn get_input(w: &mut Worm, keys: &mut Latches, now: AbsTime, s: &SimS
     if jump && w.rope.released {
         w.rope.clear();
     }
-    if keys.rope.is_once() && w.can_use_ninja {
-        let (pos, vel) = (w.pos, w.vel);
-        w.rope.shoot(pos, vel, ninja_dir, s);
+    if keys.rope.is_once() {
+        let (pos, vel, can_use) = (w.pos, w.vel, w.can_use_ninja);
+        w.rope.shoot(pos, vel, ninja_dir, can_use, s);
     }
 
     keys.reset();

@@ -16,9 +16,21 @@ fn scenario(content: &str, fixtures: &std::path::Path, extra: &[&str]) -> std::p
         .unwrap()
 }
 
+/// The imported content (`RL_CONTENT_DIR`, which `.cargo/config.toml` defaults
+/// to `target/content`), or `None` with a notice if it has not been imported.
+fn content_dir() -> Option<String> {
+    let dir = std::env::var("RL_CONTENT_DIR").ok()?;
+    if std::path::Path::new(&dir).is_dir() {
+        Some(dir)
+    } else {
+        eprintln!("{dir} not found (run `cargo xtask fetch-olx-content`); skipping");
+        None
+    }
+}
+
 #[test]
 fn reports_matches_and_dumps_frames() {
-    let Ok(content) = std::env::var("RL_CONTENT_DIR") else { return };
+    let Some(content) = content_dir() else { return };
     let out = scenario(&content, &fixtures(), &["fall", "--dump", "8"]);
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "{text}");
@@ -28,7 +40,7 @@ fn reports_matches_and_dumps_frames() {
 
 #[test]
 fn reports_a_divergence_with_status_1() {
-    let Ok(content) = std::env::var("RL_CONTENT_DIR") else { return };
+    let Some(content) = content_dir() else { return };
     let tmp = tempfile::tempdir().unwrap();
     std::fs::copy(fixtures().join("fall.ron"), tmp.path().join("fall.ron")).unwrap();
     let mut trace =
