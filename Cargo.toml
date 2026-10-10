@@ -16,8 +16,10 @@ rl-pack = { path = "crates/rl-pack" }
 rl-import-lgs = { path = "crates/rl-import-lgs" }
 rl-import-lxl = { path = "crates/rl-import-lxl" }
 rl-import-gfx = { path = "crates/rl-import-gfx" }
+rl-oracle = { path = "crates/rl-oracle" }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "alloc"] }
 ron = "0.12.2"
+serde_json = "1.0.151"
 png = "0.18.1"
 flate2 = "1.1.10"
 sha2 = "0.11.0"
