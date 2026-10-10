@@ -159,45 +159,47 @@ fn check_mod(pack: &ModPack) -> Vec<Diagnostic> {
 }
 
 /// Returns the first cycle in the projectile spawn graph, if any, as a list of
-/// names starting and ending with the same projectile.
+/// names starting and ending with the same projectile. Iterative, so a crafted
+/// pack with a very long spawn chain cannot overflow the stack.
 fn find_cycle(def: &ModDef) -> Option<Vec<String>> {
     #[derive(Clone, Copy, PartialEq)]
     enum State {
         Visiting,
         Done,
     }
-    fn visit<'a>(
-        def: &'a ModDef,
-        name: &'a str,
-        state: &mut BTreeMap<&'a str, State>,
-        stack: &mut Vec<&'a str>,
-    ) -> Option<Vec<String>> {
-        match state.get(name) {
-            Some(State::Done) => return None,
-            Some(State::Visiting) => {
-                let start = stack.iter().position(|n| *n == name).expect("visiting nodes are on the stack");
-                let mut cycle: Vec<String> = stack[start..].iter().map(|s| s.to_string()).collect();
-                cycle.push(name.to_string());
-                return Some(cycle);
-            }
-            None => {}
+    let mut state: BTreeMap<&str, State> = BTreeMap::new();
+    for root in def.projectiles.keys() {
+        if state.contains_key(root.as_str()) {
+            continue;
         }
-        let p = def.projectiles.get(name)?;
-        state.insert(name, State::Visiting);
-        stack.push(name);
-        for c in p.children() {
-            if let Some(cycle) = visit(def, c, state, stack) {
-                return Some(cycle);
+        // Path from `root` to the current node, each with the index of its next child.
+        let mut path: Vec<(&str, usize)> = vec![(root.as_str(), 0)];
+        state.insert(root.as_str(), State::Visiting);
+        while let Some(&mut (name, ref mut next)) = path.last_mut() {
+            let child = def.projectiles.get(name).and_then(|p| p.children().nth(*next));
+            *next += 1;
+            match child {
+                None => {
+                    state.insert(name, State::Done);
+                    path.pop();
+                }
+                Some(c) => match state.get(c) {
+                    Some(State::Done) => {}
+                    Some(State::Visiting) => {
+                        let start =
+                            path.iter().position(|(n, _)| *n == c).expect("visiting nodes are on the path");
+                        let mut cycle: Vec<String> =
+                            path[start..].iter().map(|(n, _)| n.to_string()).collect();
+                        cycle.push(c.to_string());
+                        return Some(cycle);
+                    }
+                    None if def.projectiles.contains_key(c) => {
+                        state.insert(c, State::Visiting);
+                        path.push((c, 0));
+                    }
+                    None => {} // unknown projectile: reported separately
+                },
             }
-        }
-        stack.pop();
-        state.insert(name, State::Done);
-        None
-    }
-    let mut state = BTreeMap::new();
-    for name in def.projectiles.keys() {
-        if let Some(c) = visit(def, name, &mut state, &mut Vec::new()) {
-            return Some(c);
         }
     }
     None
@@ -247,6 +249,23 @@ mod tests {
         let msg = d.iter().find(|d| d.message.contains("cycle")).expect("cycle reported");
         assert_eq!(msg.severity, Severity::Error);
         assert!(msg.message.contains("bits -> rocket -> bits"), "{}", msg.message);
+    }
+
+    #[test]
+    fn long_spawn_chain_does_not_overflow_the_stack() {
+        let mut pack = sample_mod();
+        let n = 200_000;
+        let template = pack.def.projectiles["bits"].clone();
+        for i in 0..n {
+            let mut p = template.clone();
+            p.event_spawn = (i + 1 < n).then(|| SpawnDef::olx_default(format!("c{}", i + 1)));
+            pack.def.projectiles.insert(format!("c{i}"), p);
+        }
+        assert!(find_cycle(&pack.def).is_none());
+        let last = format!("c{}", n - 1);
+        pack.def.projectiles.get_mut(&last).unwrap().event_spawn = Some(SpawnDef::olx_default("c0".into()));
+        let cycle = find_cycle(&pack.def).expect("cycle found");
+        assert_eq!((cycle.first(), cycle.len()), (Some(&"c0".to_string()), n + 1));
     }
 
     #[test]

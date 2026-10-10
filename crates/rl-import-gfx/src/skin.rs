@@ -1,7 +1,7 @@
 //! Skin sheets (`CGameSkin`, `src/client/CGameSkin.cpp`): the top half is the
 //! image, the bottom half the colorization mask, each `frame_height` rows tall.
 
-use rl_data::image::Rgba;
+use rl_data::image::{Rgba, RgbaImage};
 use rl_data::manifest::{Origin, PackKind};
 use rl_data::skin::{FrameLayout, MaskKind, Skin, SkinDef};
 use rl_data::slug::slug;
@@ -37,21 +37,22 @@ pub fn import_skin(olx: &dyn ContentSource, path: &VPath, origin: Origin) -> Res
         warnings.push(format!("{path}: sheet is {w}x{h}, cropped to {SHEET_WIDTH}x{}", fh * 2));
     }
     let mut image = sheet.crop(0, 0, SHEET_WIDTH, fh);
+    let key = color_key(&sheet);
     let mut mask = Vec::with_capacity((SHEET_WIDTH * fh) as usize);
     for y in 0..fh {
         for x in 0..SHEET_WIDTH {
             let px = image.get(x, y);
             let m = sheet.get(x, y + fh);
-            // Same order as Colorize_Execute: black keeps, magenta hides, anything else tints.
+            // Same order as Colorize_Execute: black keeps, the colour key hides, anything else tints.
             let mut kind = if m.same_rgb(Rgba::BLACK) {
                 MaskKind::Keep
-            } else if m.same_rgb(Rgba::MAGENTA) {
+            } else if m.same_rgb(key) {
                 MaskKind::Transparent
             } else {
                 MaskKind::Colorize
             };
-            // A magenta or fully transparent image pixel is never drawn (color key).
-            if px.same_rgb(Rgba::MAGENTA) || px.a == 0 || m.a == 0 {
+            // A colour-key or fully transparent image pixel is never drawn.
+            if px.same_rgb(key) || px.a == 0 || m.a == 0 {
                 kind = MaskKind::Transparent;
             }
             if kind == MaskKind::Transparent {
@@ -69,6 +70,16 @@ pub fn import_skin(olx: &dyn ContentSource, path: &VPath, origin: Origin) -> Res
         skin: Skin { def: SkinDef { name, layout }, image, mask },
     };
     Ok(ImportedSkin { pack, warnings })
+}
+
+/// OLX `SetColorKey` (`src/client/GfxPrimitives.cpp:116-150`): some editors saved
+/// magenta as (254,0,254), so if any corner of the sheet has that colour, it is
+/// the transparent colour for the whole sheet; otherwise magenta is.
+fn color_key(sheet: &RgbaImage) -> Rgba {
+    let bugged = Rgba::rgb(254, 0, 254);
+    let (w, h) = (sheet.width() - 1, sheet.height() - 1);
+    let corners = [(0, 0), (w, 0), (0, h), (w, h)];
+    if corners.iter().any(|&(x, y)| sheet.get(x, y).same_rgb(bugged)) { bugged } else { Rgba::MAGENTA }
 }
 
 #[cfg(test)]
@@ -111,6 +122,24 @@ mod tests {
         assert_eq!(skin.mask_at(2, 0), MaskKind::Colorize);
         assert_eq!(skin.mask_at(3, 0), MaskKind::Transparent);
         assert_eq!(skin.image.get(1, 0).a, 0);
+    }
+
+    #[test]
+    fn bugged_colour_key_in_a_corner_switches_the_key() {
+        // OLX SetColorKey (GfxPrimitives.cpp:116-150): a (254,0,254) corner makes
+        // (254,0,254) the transparent colour of the whole sheet.
+        let bugged = Rgba::rgb(254, 0, 254);
+        let mut img = sheet(672, 36);
+        img.set(671, 35, bugged);
+        img.set(5, 18, bugged); // mask pixel
+        img.set(6, 0, bugged); // image pixel, colorize mask
+        let s = import(&img).unwrap();
+        assert_eq!(s.pack.skin.mask_at(5, 0), MaskKind::Transparent);
+        assert_eq!(s.pack.skin.mask_at(6, 0), MaskKind::Transparent);
+        // Without the bugged corner, (254,0,254) is an ordinary colour.
+        let mut img = sheet(672, 36);
+        img.set(5, 18, bugged);
+        assert_eq!(import(&img).unwrap().pack.skin.mask_at(5, 0), MaskKind::Colorize);
     }
 
     #[test]

@@ -154,7 +154,16 @@ pub fn parse_lxl(data: &[u8]) -> Result<(Level, Vec<String>), LxlError> {
         rest = &rest[20 + len..];
         if chunk.eq_ignore_ascii_case("OLX hi-res data") {
             match hires(body, w, h) {
-                Ok((f, b)) => {
+                Ok((mut f, b)) => {
+                    // As in LoadLevelImageHiRes: show the back 2x2 block where PX_EMPTY is set.
+                    for i in 0..n {
+                        if raw[n * 6 + i] & PX_EMPTY != 0 {
+                            let (x, y) = ((i % w as usize) as u32 * 2, (i / w as usize) as u32 * 2);
+                            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                                f.set(x + dx, y + dy, b.get(x + dx, y + dy));
+                            }
+                        }
+                    }
                     front = f;
                     back = b;
                     art_scale = 2;
@@ -178,13 +187,22 @@ pub fn parse_lxl(data: &[u8]) -> Result<(Level, Vec<String>), LxlError> {
 }
 
 /// "OLX hi-res data": a PNG of 2W x 4H with the front image on top and the back
-/// image below (`LoadLevelImageHiRes`, `MapLoader_LieroX.cpp:285-360`).
+/// image below (`LoadLevelImageHiRes`, `MapLoader_LieroX.cpp:285-360`), alpha dropped.
 fn hires(png: &[u8], w: u32, h: u32) -> Result<(RgbaImage, RgbaImage), String> {
     let img = rl_pack::image_io::decode_rgba(png)?;
     if (img.width(), img.height()) != (w * 2, h * 4) {
         return Err(format!("size {}x{} is not {}x{}", img.width(), img.height(), w * 2, h * 4));
     }
-    Ok((img.crop(0, 0, w * 2, h * 2), img.crop(0, h * 2, w * 2, h * 2)))
+    // OLX reads only RGB from this PNG.
+    let opaque = |mut part: RgbaImage| {
+        for y in 0..part.height() {
+            for x in 0..part.width() {
+                part.set(x, y, Rgba { a: 255, ..part.get(x, y) });
+            }
+        }
+        part
+    };
+    Ok((opaque(img.crop(0, 0, w * 2, h * 2)), opaque(img.crop(0, h * 2, w * 2, h * 2))))
 }
 
 #[cfg(test)]
@@ -249,12 +267,37 @@ mod tests {
         let mut chunk = b"OLX hi-res data\0".to_vec();
         chunk.extend((png.len() as u32).to_le_bytes());
         chunk.extend(&png);
-        let data = lxl(2, 1, &[[0; 3]; 2], &[[0; 3]; 2], &[1, 1], &chunk);
+        let data = lxl(2, 1, &[[0; 3]; 2], &[[0; 3]; 2], &[2, 2], &chunk);
         let (level, warnings) = parse_lxl(&data).unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(level.def.art_scale, 2);
         assert_eq!(level.front.get(0, 0), Rgba::rgb(7, 7, 7));
         assert_eq!(level.back.get(3, 1), Rgba::rgb(9, 9, 9));
+    }
+
+    #[test]
+    fn hires_front_shows_back_where_empty_and_drops_alpha() {
+        // LoadLevelImageHiRes (MapLoader_LieroX.cpp:340-360) copies the back 2x2
+        // block over the front wherever PX_EMPTY is set, and reads RGB only.
+        let mut hi = RgbaImage::new(4, 4);
+        for (x, y) in [(0, 0), (1, 1), (2, 0), (3, 1)] {
+            hi.set(x, y, Rgba { r: 7, g: 7, b: 7, a: 0 }); // front, transparent in the PNG
+        }
+        for (x, y) in [(0, 2), (1, 3)] {
+            hi.set(x, y, Rgba::rgb(9, 9, 9)); // back of world pixel 0
+        }
+        let png = rl_pack::image_io::encode_rgba(&hi);
+        let mut chunk = b"OLX hi-res data\0".to_vec();
+        chunk.extend((png.len() as u32).to_le_bytes());
+        chunk.extend(&png);
+        // World pixel 0 is empty, world pixel 1 is dirt.
+        let data = lxl(2, 1, &[[0; 3]; 2], &[[0; 3]; 2], &[1, 2], &chunk);
+        let (level, _) = parse_lxl(&data).unwrap();
+        assert_eq!(level.front.get(0, 0), Rgba::rgb(9, 9, 9));
+        assert_eq!(level.front.get(1, 1), Rgba::rgb(9, 9, 9));
+        assert_eq!(level.front.get(2, 0), Rgba::rgb(7, 7, 7));
+        assert_eq!(level.front.get(3, 1), Rgba::rgb(7, 7, 7));
+        assert_eq!(level.back.get(0, 0).a, 255);
     }
 
     #[test]

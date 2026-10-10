@@ -33,7 +33,9 @@ fn check_dims(level: &Level) -> Result<(), PackError> {
     if (level.material.width(), level.material.height()) != (d.width, d.height) {
         return Err(PackError::invalid(MATERIAL_FILE, format!("material must be {}x{}", d.width, d.height)));
     }
-    let (aw, ah) = (d.width * d.art_scale, d.height * d.art_scale);
+    let (Some(aw), Some(ah)) = (d.width.checked_mul(d.art_scale), d.height.checked_mul(d.art_scale)) else {
+        return Err(PackError::invalid(LEVEL_FILE, "size x art_scale is too large"));
+    };
     for (file, img) in [(FRONT_FILE, &level.front), (BACK_FILE, &level.back)] {
         if (img.width(), img.height()) != (aw, ah) {
             return Err(PackError::invalid(file, format!("art must be {aw}x{ah} (size x art_scale)")));
@@ -130,6 +132,17 @@ pub(crate) mod tests {
         let mut pack = sample_level();
         pack.level.front = RgbaImage::new(3, 4);
         assert!(write_level(&mut MemFs::new(), &pack).unwrap_err().to_string().contains("front.png"));
+    }
+
+    #[test]
+    fn huge_art_scale_is_an_error_not_a_panic() {
+        let mut pack = sample_level();
+        pack.level.def.width = 70_000;
+        pack.level.def.height = 1;
+        pack.level.def.art_scale = 70_000;
+        pack.level.material = MaterialGrid::new(70_000, 1, Material::Dirt);
+        let err = write_level(&mut MemFs::new(), &pack).unwrap_err().to_string();
+        assert!(err.contains("too large"), "{err}");
     }
 
     #[test]

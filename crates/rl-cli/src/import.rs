@@ -160,6 +160,15 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
             }
         }
     }
+    // Packs from earlier runs that this run did not produce (dropped from the
+    // manifest, failed this time, or renamed) must not linger as current content.
+    for entry in std::fs::read_dir(&args.out)? {
+        let path = entry?.path();
+        let id = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
+        if path.join(rl_pack::MANIFEST).is_file() && !ids.contains(&id) {
+            std::fs::remove_dir_all(&path).with_context(|| format!("removing stale {}", path.display()))?;
+        }
+    }
     let text = ron::ser::to_string_pretty(&report, ron::ser::PrettyConfig::default())? + "\n";
     std::fs::write(args.out.join("import-report.ron"), text)?;
     let failed = report.iter().filter(|e| e.error.is_some()).count();

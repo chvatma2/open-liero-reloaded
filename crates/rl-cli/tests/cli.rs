@@ -95,3 +95,29 @@ fn reimport_replaces_stale_files() {
     assert!(import().success());
     assert!(!stale.exists(), "re-import must remove files the importer no longer writes");
 }
+
+#[test]
+fn reimport_removes_packs_no_longer_imported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, out) = (tmp.path().join("gamedir"), tmp.path().join("packs"));
+    gamedir(&src);
+    let import = |extra: &[&str]| {
+        rl_cli()
+            .args(["import", "--olx"])
+            .arg(&src)
+            .arg("--out")
+            .arg(&out)
+            .args(["--theme", "data/themes/Dirt"])
+            .args(extra)
+            .status()
+            .unwrap()
+    };
+    import(&["--skins"]);
+    assert!(out.join("olx-skin-default/pack.ron").is_file());
+    let unrelated = out.join("notes.txt");
+    std::fs::write(&unrelated, b"not a pack").unwrap();
+    assert!(import(&[]).success());
+    assert!(!out.join("olx-skin-default").exists(), "packs dropped from the import must be removed");
+    assert!(out.join("olx-theme-dirt/pack.ron").is_file());
+    assert!(unrelated.exists(), "only pack directories are removed");
+}

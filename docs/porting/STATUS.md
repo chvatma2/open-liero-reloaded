@@ -24,3 +24,12 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 - `ROF /= 1000` and `Recharge /= 10` are applied after loading (`CGameScript.cpp:776-777`).
 - Beam and pixel colors stored as ints are truncated to bytes, as with OLX's `Color(Uint8, …)`.
 - Front pixels where the `PX_EMPTY` flag is set become the back pixel, even when other flags are set.
+- **Colour key with a corner rule.** OLX uses (254,0,254) as the colour key when
+  any corner pixel of the image has that colour, otherwise (255,0,255)
+  (`SetColorKey`, `src/client/GfxPrimitives.cpp:116-150`).
+  - Skins: applied at import.
+  - Mod sprites and theme images: still stored raw, so the renderer must apply
+    the same rule (plan 5). One affected file in scope is `skins/Wario.png`.
+- **Hi-res level art.** With an "OLX hi-res data" chunk, the front 2×2 block
+  becomes the back block wherever `PX_EMPTY` is set, and PNG alpha is ignored
+  (`LoadLevelImageHiRes`, `MapLoader_LieroX.cpp:285-360`).
