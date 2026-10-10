@@ -4,9 +4,10 @@
 // #![no_std]; `wasm` crates must build for wasm32-unknown-unknown.
 (
     layers: {
+        "rl-data": 1,
         "xtask": 6,
     },
     same_layer: [],
-    no_std: [],
-    wasm: [],
+    no_std: ["rl-data"],
+    wasm: ["rl-data"],
 )
