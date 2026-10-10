@@ -207,7 +207,8 @@ impl Gpu {
 
     /// Draws `list` and the overlay into `frame` and presents it, applying
     /// the overlay's texture changes (`textures`, left empty) whether or
-    /// not there is a frame. Returns how long the swap chain made the frame
+    /// not there is a frame. A frame of a size the window no longer has is
+    /// not presented. Returns how long the swap chain made the frame
     /// wait, or `None` when there was no frame.
     pub fn present(
         &mut self,
@@ -216,6 +217,9 @@ impl Gpu {
         overlay: &OverlayPaint,
         textures: &mut egui::TexturesDelta,
     ) -> Option<PresentTiming> {
+        // A texture acquired before the window changed size is dropped
+        // unpresented (`SurfaceState::current`); the next frame configures.
+        let frame = frame.filter(|f| self.state.current((f.frame.texture.width(), f.frame.texture.height())));
         with_textures(self, textures, |gpu| frame.map(|f| gpu.present_frame(f, list, overlay)))
     }
 

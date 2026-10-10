@@ -9,7 +9,9 @@
 //!   `select`), through the same input path as the keyboard;
 //! - `shot` saves a screenshot after that tick, `restart` is F5, `debug`
 //!   F2, `quit` Esc;
-//! - `size <w> <h>` asks for a window of `w` × `h` physical pixels.
+//! - `size <w> <h>` asks for a window of `w` × `h` physical pixels,
+//!   `fullscreen on` / `fullscreen off` for borderless fullscreen or a
+//!   window (both apply at the start of the next frame, the latest wins).
 
 use rl_input::Action;
 
@@ -23,6 +25,7 @@ pub enum Command {
     Debug,
     Quit,
     Size(u32, u32),
+    Fullscreen(bool),
 }
 
 /// A command at a tick (ticks count from the start, across restarts).
@@ -64,6 +67,8 @@ pub fn parse(text: &str) -> Result<Vec<Step>, String> {
             "restart" => Command::Restart,
             "debug" => Command::Debug,
             "quit" => Command::Quit,
+            "fullscreen on" => Command::Fullscreen(true),
+            "fullscreen off" => Command::Fullscreen(false),
             _ if cmd.starts_with("size ") => {
                 let mut wh = cmd["size ".len()..].split_whitespace().map(str::parse::<u32>);
                 match (wh.next(), wh.next(), wh.next()) {
@@ -237,7 +242,7 @@ mod tests {
     #[test]
     fn scripts_parse_in_tick_order() {
         let s = parse(
-            "# a comment\n10 +right\n5 shot  # trailing\n\n10 -right\n7 restart\n9 quit\n8 size 640 480\n8 debug\n",
+            "# a comment\n10 +right\n5 shot  # trailing\n\n10 -right\n7 restart\n9 quit\n8 size 640 480\n8 debug\n9 fullscreen on\n",
         )
         .unwrap();
         let c: Vec<_> = s.iter().map(|s| (s.tick, s.command)).collect();
@@ -249,13 +254,23 @@ mod tests {
                 (8, Command::Size(640, 480)),
                 (8, Command::Debug),
                 (9, Command::Quit),
+                (9, Command::Fullscreen(true)),
                 (10, Command::Press(Action::Right)),
                 (10, Command::Release(Action::Right)),
             ]
         );
-        for bad in
-            ["x +right", "10", "10 +fly", "10 jump", "-1 shot", "10 size 5", "10 size a b", "10 size 1 2 3"]
-        {
+        for bad in [
+            "x +right",
+            "10",
+            "10 +fly",
+            "10 jump",
+            "-1 shot",
+            "10 size 5",
+            "10 size a b",
+            "10 size 1 2 3",
+            "10 fullscreen",
+            "10 fullscreen yes",
+        ] {
             assert!(parse(bad).unwrap_err().contains("line 1"), "{bad}");
         }
         assert!(parse(DEMO).unwrap().len() > 30);

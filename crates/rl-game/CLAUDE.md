@@ -45,12 +45,29 @@ cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --target
   stays and only the terrain is uploaded again. Debug builds assert every
   `DRIFT_CHECK_TICKS` (100) that the colour terrain's material is the
   world's (`session_catches_terrain_drift`).
+- **Window** (`window.rs`, the user's ruling after the plan 6 playtest):
+  not resizable, no maximise button; `--fullscreen` is borderless. Size
+  and mode changes come only from the game (`size`, `fullscreen` script
+  commands, the M7 options menu) through `window::Requests`: the latest
+  wins, applied at the start of a frame before `acquire`, at most once
+  every `MIN_CHANGE_INTERVAL` (250 ms); a fixed window's min and max move
+  with it (`window::apply`). Why: WSLg's Weston 9 segfaults when winit's
+  client-side decorations are resized quickly (their `wl_shm` pool grows
+  while the compositor still reads it): resizes 50 ms apart crashed it
+  every run, 250 ms apart never. `--window-system auto|wayland|x11` (or
+  `RL_WINDOW_SYSTEM`) picks the window system; auto stays Wayland on WSL
+  (paced at 60 Hz; WSLg's X11 path is robust but draws uncapped). When
+  winit ends its loop with an exit failure the game did not ask for, the
+  display server dropped the connection: `window::lost_connection` says
+  so and names the other window system.
 - **Surface** (`surface.rs`, Review Focus 4): a state machine over a
   `Surface` trait: no frame while minimised or occluded (`drawable`),
-  configure on resize, reconfigure and retry on `Outdated` (Wayland's
-  first frame), recreate on `Lost`, bounded retries. While not drawable
-  the loop stops redrawing and waits for window events (`ControlFlow::
-  Wait`): the sandbox pauses, and the hidden time is not caught up.
+  configure on resize (once a frame, at the latest size), reconfigure and
+  retry on `Outdated` (Wayland's first frame), recreate on `Lost`, bounded
+  retries; a texture acquired before the window changed size is dropped,
+  not presented (`current`). While not drawable the loop stops redrawing
+  and waits for window events (`ControlFlow::Wait`): the sandbox pauses,
+  and the hidden time is not caught up.
   `gpu.rs` clamps every surface and screenshot size to the device's
   `max_texture_dimension_2d` (`clamp_size`), picks 8-bit RGBA (gamma
   space first: egui wants it, the readback reads 4 bytes a pixel) and
@@ -67,9 +84,11 @@ cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --target
   voices. egui allocates per frame; the world path does not.
 - **Scripts** (`script.rs`): `--script <file>` or `--demo` press keys
   through the input path at given ticks, plus `shot`, `restart`, `quit`,
-  `size <w> <h>`; `--shot <tick>`, `--autoquit-after <s>`, `--stats`
-  (counters each second) and the exit summary let an agent run the game
-  in a real window and read the PNGs (plan 5 ruling R3).
+  `size <w> <h>`, `fullscreen on|off` (window changes wait out
+  `MIN_CHANGE_INTERVAL`, so a `shot` within 250 ms may show the old
+  size); `--shot <tick>`, `--autoquit-after <s>`, `--stats` (counters
+  each second) and the exit summary let an agent run the game in a real
+  window and read the PNGs (plan 5 ruling R3).
 
 - **Soak** (`tests/soak.rs`, `cargo xtask full`): `soak_sandbox_10_minutes_headless`
   plays 60 000 ticks of `Session` with chaos keys, an offscreen render every

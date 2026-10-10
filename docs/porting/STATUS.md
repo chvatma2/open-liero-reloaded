@@ -252,6 +252,11 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   run per drawn frame, and the rest of a longer stall is dropped. The
   sandbox HUD, names and damage popups are egui text at the display's
   resolution (E10), not OLX's bitmap fonts.
+- **Window** (`rl-game`, plan 6 hotfix, the user's ruling): the window
+  cannot be drag-resized or maximised; its size comes from the defaults
+  (later the options menu, M7) and `--fullscreen` (borderless). The game's
+  own size changes are applied at most every 250 ms, because WSLg's Weston
+  crashes on quick resizes of a decorated Wayland window.
 - **Renderer** (`rl-render`, plan 5 task 5): OLX blits each sprite with SDL
   onto a 2× screen; the renderer draws the same texels at art scale (at
   least 2×) and then upscales (E3). With interpolation (E2), a sprite's

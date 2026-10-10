@@ -17,7 +17,7 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::PhysicalKey;
-use winit::window::{Fullscreen, Window, WindowId};
+use winit::window::{Window, WindowId};
 
 use crate::clock::TickClock;
 use crate::gpu::{Gpu, OverlayPaint};
@@ -27,6 +27,7 @@ use crate::script::{Command, Step};
 use crate::session::Session;
 use crate::setup::Assets;
 use crate::stats::Meter;
+use crate::window::{self, Requests};
 
 /// The widest view (spec §19 E4: 16:9).
 pub const MAX_ASPECT: f32 = 16.0 / 9.0;
@@ -81,6 +82,8 @@ pub struct App {
     /// The window could not show frames (minimised or covered): the game
     /// waits for window events and the sandbox is paused.
     paused: bool,
+    /// Window size and mode changes asked for and not yet applied.
+    requests: Requests,
     /// What stopped the game, if something went wrong.
     pub error: Option<anyhow::Error>,
 }
@@ -117,6 +120,7 @@ impl App {
             stats,
             dropped_warned: false,
             paused: false,
+            requests: Requests::default(),
             error: None,
         }
     }
@@ -143,12 +147,7 @@ impl App {
     }
 
     fn open(&mut self, el: &ActiveEventLoop) -> anyhow::Result<()> {
-        let mut attrs = Window::default_attributes()
-            .with_title("rust-liero")
-            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
-        if self.cfg.fullscreen {
-            attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
-        }
+        let attrs = window::attributes(window::DEFAULT_SIZE, self.cfg.fullscreen);
         let window = Arc::new(el.create_window(attrs)?);
         let gpu = Gpu::new(
             window.clone(),
@@ -190,6 +189,17 @@ impl App {
         self.session.set_viewport(viewport(size));
     }
 
+    /// The window size and mode changes asked for, at most once a frame
+    /// (and once every `window::MIN_CHANGE_INTERVAL`), before the frame's
+    /// surface texture is acquired.
+    fn apply_requests(&mut self) {
+        let Some(change) = self.requests.due(Instant::now()) else { return };
+        // Wayland applies the size at once and sends no `Resized`.
+        if let Some(size) = self.win.as_ref().and_then(|w| window::apply(&w.window, change)) {
+            self.resized((size.width, size.height));
+        }
+    }
+
     /// The key bound to `action` (the script presses keys as a player would).
     fn key_of(&self, action: Action) -> Option<KeyCode> {
         self.input.bindings().keys.iter().find(|(a, _)| *a == action).map(|&(_, k)| k)
@@ -209,14 +219,9 @@ impl App {
                 Command::Restart => self.restart()?,
                 Command::Debug => self.debug = !self.debug,
                 Command::Quit => el.exit(),
-                Command::Size(w, h) => {
-                    let asked = winit::dpi::PhysicalSize::new(w, h);
-                    // Wayland applies the size at once and sends no `Resized`.
-                    if let Some(size) = self.win.as_ref().and_then(|win| win.window.request_inner_size(asked))
-                    {
-                        self.resized((size.width, size.height));
-                    }
-                }
+                // Applied at the start of the next frame (`apply_requests`).
+                Command::Size(w, h) => self.requests.size(w, h),
+                Command::Fullscreen(on) => self.requests.fullscreen(on),
             }
         }
         let keys = self.input.latch_tick();
@@ -237,6 +242,7 @@ impl App {
     /// it), the ticks due, then the picture.
     fn frame(&mut self, el: &ActiveEventLoop) -> anyhow::Result<()> {
         let begin = Instant::now();
+        self.apply_requests();
         let frame = self.win.as_mut().and_then(|w| w.gpu.acquire());
         let now = Instant::now();
         self.latency.frame_start(now);

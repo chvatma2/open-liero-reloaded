@@ -9,6 +9,7 @@ use rl_game::app::{App, Config};
 use rl_game::script::{self, Command, Step};
 use rl_game::session::Session;
 use rl_game::setup::{self, SandboxOptions};
+use rl_game::window::{self, WindowSystem};
 use rl_game::wsl;
 use rl_render::{RenderSettings, UpscaleFilter};
 use rl_scene::Interpolation;
@@ -52,6 +53,11 @@ struct Args {
     /// Borderless fullscreen.
     #[arg(long)]
     fullscreen: bool,
+    /// The window system (Linux); else `RL_WINDOW_SYSTEM`, else auto
+    /// (Wayland when available). Try x11 if the Wayland compositor drops
+    /// the game.
+    #[arg(long, value_enum)]
+    window_system: Option<WindowSystem>,
     /// No VSync: present as fast as the GPU draws (Immediate or Mailbox).
     #[arg(long)]
     uncapped: bool,
@@ -86,6 +92,8 @@ struct Args {
 }
 
 fn run(args: Args) -> anyhow::Result<()> {
+    let var = std::env::var(window::WINDOW_SYSTEM_VAR).ok();
+    let ws = window::window_system(args.window_system, var.as_deref()).map_err(anyhow::Error::msg)?;
     let mut steps: Vec<Step> = match (&args.script, args.demo) {
         (Some(path), _) => {
             let text = std::fs::read_to_string(path).with_context(|| format!("{}", path.display()))?;
@@ -152,12 +160,52 @@ fn run(args: Args) -> anyhow::Result<()> {
         assets.setup.worms.len(),
         if opened { "opened" } else { "silent" }
     );
-    let event_loop = winit::event_loop::EventLoop::new().context("opening the window system")?;
+    let event_loop = event_loop(ws)?;
+    let wayland = is_wayland(&event_loop);
     let mut app = App::new(cfg, assets, session, gilrs);
-    event_loop.run_app(&mut app).context("the event loop")?;
+    let ran = event_loop.run_app(&mut app);
     println!("rl-game: {}", app.summary());
     println!("rl-game: {}", app.latency_summary());
-    app.error.take().map_or(Ok(()), Err)
+    match ran {
+        // The game never sets a failing exit code: winit does when the
+        // display server closed the connection (a compositor crash).
+        Err(winit::error::EventLoopError::ExitFailure(_)) if app.error.is_none() => {
+            Err(anyhow::anyhow!(window::lost_connection(wayland)))
+        }
+        ran => {
+            ran.context("the event loop")?;
+            app.error.take().map_or(Ok(()), Err)
+        }
+    }
+}
+
+/// The event loop on window system `ws`.
+fn event_loop(ws: WindowSystem) -> anyhow::Result<winit::event_loop::EventLoop<()>> {
+    let mut builder = winit::event_loop::EventLoop::builder();
+    #[cfg(target_os = "linux")]
+    match ws {
+        WindowSystem::Auto => {}
+        WindowSystem::Wayland => {
+            winit::platform::wayland::EventLoopBuilderExtWayland::with_wayland(&mut builder);
+        }
+        WindowSystem::X11 => {
+            winit::platform::x11::EventLoopBuilderExtX11::with_x11(&mut builder);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = ws;
+    builder.build().with_context(|| format!("opening the window system ({ws:?})"))
+}
+
+/// Whether the event loop runs on Wayland.
+fn is_wayland(event_loop: &winit::event_loop::EventLoop<()>) -> bool {
+    #[cfg(target_os = "linux")]
+    return winit::platform::wayland::EventLoopExtWayland::is_wayland(event_loop);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = event_loop;
+        false
+    }
 }
 
 /// On WSL without the user's choice, runs this program again with Mesa's

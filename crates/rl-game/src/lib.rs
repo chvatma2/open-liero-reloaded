@@ -3,8 +3,9 @@
 //! entities, sound, input and an egui overlay. For now the M5 sandbox
 //! (spec §19 E11): one player and idle targets on any level and mod.
 //!
-//! The pure parts (the tick clock, the surface state machine, the sandbox
-//! setup, scripts, timing) are unit-tested; the window, GPU and devices are
+//! The pure parts (the tick clock, the surface state machine, window
+//! requests and the window-system choice, the sandbox setup, scripts,
+//! timing) are unit-tested; the window, GPU and devices are
 //! checked by running the game (`--autoquit-after`, `--demo`, `--shot`).
 
 pub mod app;
@@ -17,4 +18,5 @@ pub mod session;
 pub mod setup;
 pub mod stats;
 pub mod surface;
+pub mod window;
 pub mod wsl;

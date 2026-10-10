@@ -64,6 +64,16 @@ impl SurfaceState {
         self.size.0 > 0 && self.size.1 > 0 && !self.occluded
     }
 
+    /// Whether a texture of `frame` pixels, acquired earlier, may still be
+    /// presented: the window is drawable and has that size, and the surface
+    /// is configured for it. A frame acquired before a resize is dropped
+    /// instead: presenting it would commit a buffer of the old size after
+    /// the window took the new one (under WSLg's Weston, with the window's
+    /// decorations resized, the compositor can crash on that; `window.rs`).
+    pub fn current(&self, frame: (u32, u32)) -> bool {
+        self.drawable() && self.size == frame && self.configured == Some(frame)
+    }
+
     /// The next frame to draw into, if there is one: none while the window
     /// has no area (minimised), or when the surface keeps failing (the next
     /// frame tries again). Configures the surface first when the window
@@ -131,6 +141,24 @@ mod tests {
             self.recreated += 1;
             self.current = None;
         }
+    }
+
+    #[test]
+    fn a_frame_acquired_before_a_resize_is_not_presented() {
+        let mut s = SurfaceState::new((800, 600));
+        let mut f = Fake::default();
+        assert!(s.frame(&mut f).is_some());
+        assert!(s.current((800, 600)), "the size it was configured for");
+        // The window changed size after the texture was acquired (a
+        // scripted resize, a configure): presenting it would show the
+        // compositor a buffer of the old size for the new window.
+        s.resize((640, 480));
+        assert!(!s.current((800, 600)));
+        assert!(s.frame(&mut f).is_some());
+        assert!(s.current((640, 480)));
+        // Minimised or occluded: nothing is current.
+        s.set_occluded(true);
+        assert!(!s.current((640, 480)));
     }
 
     #[test]
