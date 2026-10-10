@@ -104,10 +104,10 @@ index 5f73e25..c12907c 100644
  void	DrawEntities(SDL_Surface * bmpDest, CViewport *v);
 diff --git a/include/OracleHooks.h b/include/OracleHooks.h
 new file mode 100644
-index 0000000..8ff5d42
+index 0000000..be83c1e
 --- /dev/null
 +++ b/include/OracleHooks.h
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,66 @@
 +/*
 +	OpenLieroX
 +
@@ -166,6 +166,9 @@ index 0000000..8ff5d42
 +	void beforeFrame();
 +	void afterFrame();
 +	void betweenFrames();
++	// GameServer::GameOver: the winner it computed (Winner()), recorded as the
++	// frames' "go" field from then on.
++	void onGameOver(int winner);
 +	// rnd() draws, counted in CMap::FindSpot.
 +	extern unsigned long long rndDraws;
 +}
@@ -367,10 +370,10 @@ index feb1223..5fa508d 100644
  	caller->writeMsg("GameState: " + Game::StateAsStr(game.state), CNC_DEV);
 diff --git a/src/common/OracleHooks.cpp b/src/common/OracleHooks.cpp
 new file mode 100644
-index 0000000..daf2472
+index 0000000..64f7d0e
 --- /dev/null
 +++ b/src/common/OracleHooks.cpp
-@@ -0,0 +1,640 @@
+@@ -0,0 +1,649 @@
 +/*
 +	OpenLieroX
 +
@@ -448,6 +451,7 @@ index 0000000..daf2472
 +static std::vector<Delivered> g_delivered; // shots processed before the next frame
 +static std::string g_failure;          // first failure during the recording
 +static bool g_pinned = false;
++static int g_gameOverWinner = -1;   // GameServer::GameOver's winner
 +static AbsTime g_wallTime;             // tLX->currentTime while it is pinned
 +
 +// Reads state that has no public getter (the classes declare this a friend).
@@ -675,6 +679,10 @@ index 0000000..daf2472
 +}
 +
 +static long frameIndex() { return (long)game.serverFrame - g_base - 1; }
++
++void onGameOver(int winner) {
++	g_gameOverWinner = winner;
++}
 +
 +void beforeFrame() {
 +	if(g_rec) {
@@ -1000,7 +1008,11 @@ index 0000000..daf2472
 +		t(o, sbs[i].getSpawnTime());
 +		fputc('}', o);
 +	}
-+	fprintf(o, "],\"mh\":\"%016llx\"}\n", materialHash());
++	fputc(']', o);
++	// From the frame GameServer::GameOver ran in: its frame and winner.
++	if(game.gameOver)
++		fprintf(o, ",\"go\":{\"f\":%llu,\"w\":%d}", (unsigned long long)(uint64_t)game.gameOverFrame, g_gameOverWinner);
++	fprintf(o, ",\"mh\":\"%016llx\"}\n", materialHash());
 +	fflush(o);
 +}
 +
@@ -1086,6 +1098,26 @@ index 0d748ed..65c0015 100644
  
  	bool hasHighSimulationDelay();
  	bool hasSeriousHighSimulationDelay();
+diff --git a/src/server/CServer.cpp b/src/server/CServer.cpp
+index 81997ce..536c00f 100644
+--- a/src/server/CServer.cpp
++++ b/src/server/CServer.cpp
+@@ -24,6 +24,7 @@
+ #include "Cache.h"
+ #include "CClient.h"
+ #include "CServer.h"
++#include "OracleHooks.h"
+ #include "OLXConsole.h"
+ #include "CBanList.h"
+ #include "GfxPrimitives.h"
+@@ -542,6 +543,7 @@ void GameServer::GameOver()
+ 	hints << "Server: gameover"; 
+ 
+ 	int winner = game.gameMode()->Winner();
++	OracleHooks::onGameOver(winner); // test hook: recorded in the trace
+ 	if(winner >= 0) {
+ 		if (networkTexts->sPlayerHasWon != "<none>")
+ 			SendGlobalText((replacemax(networkTexts->sPlayerHasWon, "<player>",
 diff --git a/src/server/CServer_Game.cpp b/src/server/CServer_Game.cpp
 index f6502fd..ae32e10 100644
 --- a/src/server/CServer_Game.cpp

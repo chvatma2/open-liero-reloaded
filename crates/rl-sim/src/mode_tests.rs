@@ -480,3 +480,15 @@ fn no_spawn_after_the_end() {
     w.apply_commands();
     assert_eq!(w.worms().len(), 2);
 }
+
+/// `gameOverTime().seconds() > GAMEOVER_WAIT` compares `ms * 0.001f` with 3:
+/// 3000 ms is 3.0000002 s, so the physics stops exactly 300 frames after
+/// the end (`dm-kill-limit` records it).
+#[test]
+fn physics_stops_at_exactly_three_seconds_like_olx() {
+    let mut r = crate::referee::Referee::oracle();
+    r.over = Some(MatchResult { winner: 0, reason: EndReason::KillLimit });
+    r.over_frame = 62;
+    assert!(!r.frozen(361), "2990 ms");
+    assert!(r.frozen(362), "3000 ms is past 3 s in float");
+}

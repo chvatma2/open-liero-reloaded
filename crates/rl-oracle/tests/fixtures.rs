@@ -54,7 +54,7 @@ fn first_input_with(sc: &Scenario, worm: usize, key: &str) -> Option<u32> {
     sc.inputs.iter().filter(|c| c.worm == worm && c.keys.split('+').any(|k| k == key)).map(|c| c.frame).min()
 }
 
-const SPECIAL: [&str; 14] = [
+const SPECIAL: [&str; 15] = [
     "beam-burst",
     "bleed",
     "bonus-health",
@@ -62,6 +62,7 @@ const SPECIAL: [&str; 14] = [
     "bonus-weapon",
     "castle-shoot-rope",
     "die-before-delivery",
+    "dm-kill-limit",
     "explode-kill-respawn",
     "multi-shot",
     "reload-switch",
@@ -444,4 +445,32 @@ fn natural_bonuses_spawn_by_frequency_and_expire_after_bonus_life() {
     // A slot older than BonusLife (3 s) is freed and used again.
     let reused = spawns.iter().filter(|s| spawns.iter().any(|o| o.1 == s.1 && o.3 < s.3)).count();
     assert!(reused >= 2, "{spawns:?}");
+}
+
+#[test]
+fn deathmatch_ends_in_the_frame_of_the_deciding_kill() {
+    let (sc, t) = load("dm-kill-limit");
+    assert_eq!(sc.mode, rl_oracle::ScenarioMode::Deathmatch);
+    assert_eq!(t.header.features["KillLimit"], "2");
+    // One explosion kills worms 1 and 2: worm 0 reaches the kill limit.
+    let d = death(&t, 1, 0);
+    assert_eq!(death(&t, 2, 0), d, "both in one frame");
+    assert_eq!(t.frames[d].w[0].kills, 2);
+    // `CheckGameOver` ends the match in that frame: `go` names its server
+    // frame and worm 0, and stays.
+    assert!(t.frames[..d].iter().all(|f| f.go.is_none()), "no game over before");
+    let go = t.frames[d].go.expect("game over in the kill's frame");
+    assert_eq!((go.f, go.w), (t.frames[d].sf.unwrap(), 0));
+    assert!(t.frames[d..].iter().all(|f| f.go == Some(go)));
+    // The client clears the explosion's projectiles at the next delivery
+    // (`ParseGameOver`), and worm 0, holding "up", aims no more.
+    assert!(t.frames[d].p.len() > 5 && t.frames[d + 1].p.is_empty());
+    assert!(t.frames[d - 1].w[0].ang != t.frames[d - 2].w[0].ang, "aiming before");
+    assert!(t.frames[d..].iter().all(|f| f.w[0].ang == t.frames[d].w[0].ang), "no input after");
+    // Nobody respawns, and the physics stops 300 frames (3.0000002 s in
+    // `float`) after the end: worm 0's fall freezes.
+    assert!(t.frames[d..].iter().all(|f| !f.w[1].alive && !f.w[2].alive));
+    let y = |i: usize| t.frames[i].w[0].y;
+    assert!(y(d + 299) != y(d + 298), "still falling");
+    assert!(t.frames[d + 300..].iter().all(|f| f.w[0].y == y(d + 299)), "frozen");
 }

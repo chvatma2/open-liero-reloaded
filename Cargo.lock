@@ -2650,6 +2650,7 @@ dependencies = [
  "rl-content",
  "rl-data",
  "rl-math",
+ "rl-modes",
  "rl-oracle",
  "rl-pack",
  "rl-sim",

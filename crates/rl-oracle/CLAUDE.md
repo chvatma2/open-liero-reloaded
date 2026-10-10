@@ -7,8 +7,10 @@ OpenLieroX, and first-divergence comparison.
   into a `Trace`, and `compare` checks it against the recording.
 - **Scenarios** (`fixtures/oracle/<name>.ron`): level, mod, seed, frame count,
   worm spawns, key changes (`"right+jump"`), and optionally weapon slots by
-  name (exactly `WEAPON_SLOTS` = 5 per worm), health (> 0), and bonuses placed
-  at given frames.
+  name (exactly `WEAPON_SLOTS` = 5 per worm), health (> 0), bonuses placed
+  at given frames, and the `mode` the simulation replays it with
+  (`ScenarioMode`: `Oracle` by default, or `Deathmatch`, whose match can
+  end; OLX always plays its own Deathmatch).
   - Names may contain `/`: `weapons/<mod>/<weapon>.ron` holds one generated
     scenario per weapon (`cargo xtask oracle-gen-weapons`; do not edit them).
   - Each worm holds its keys until its next change.
@@ -17,6 +19,8 @@ OpenLieroX, and first-divergence comparison.
   feature value (v2 also: weapon and projectile names, options, seed), then
   frame −1 (the state when recording started) and frames 0..n.
   - Fields added in M4 (v2) are optional on parse, so v1 traces still load.
+  - `go` (plan 6) is written only from the frame the match ended in; the
+    `GAME_OVER` group compares it (`null` before).
   - Times are integer ms since frame −1 (`tools/olx-oracle/CLAUDE.md`).
   - Floats are OLX's `%.9g`, which round-trips `f32` exactly.
   - `Num` compares bitwise (`-0.0 != 0.0`); all NaNs are equal.

@@ -39,6 +39,23 @@ pub struct Scenario {
     /// Fields allowed to differ from OLX, each with a written reason (spec §6).
     #[serde(default)]
     pub tolerances: Vec<Tolerance>,
+    /// The game mode the simulation plays (OLX always plays its Deathmatch;
+    /// only the replay differs).
+    #[serde(default)]
+    pub mode: ScenarioMode,
+}
+
+/// The game mode a scenario is replayed with.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScenarioMode {
+    /// `rl_sim::OracleMode`: OLX's crediting with no end. OLX's oracle
+    /// server allows empty games with unlimited lives, so a scenario that
+    /// reaches neither the kill nor the time limit never ends there either.
+    #[default]
+    Oracle,
+    /// `rl_modes::Deathmatch` with the trace header's settings: the match
+    /// can end (`go`).
+    Deathmatch,
 }
 
 /// Where a worm is spawned, in world pixels.

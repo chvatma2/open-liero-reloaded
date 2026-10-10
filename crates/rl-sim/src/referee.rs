@@ -16,7 +16,7 @@ use crate::worm::{Loadout, Slot};
 
 /// OLX `GAMEOVER_WAIT` (`include/Consts.h:47`), in seconds: the physics
 /// stops this long after the end (`Game::shouldDoPhysicsFrame`).
-const GAMEOVER_WAIT_MS: u64 = 3000;
+const GAMEOVER_WAIT: f32 = 3.0;
 
 /// The game mode and what the world keeps for it.
 #[derive(Clone, Debug)]
@@ -74,11 +74,13 @@ impl Referee {
         ModeCtx { worms, settings, now, commands: &mut self.commands }
     }
 
-    /// `Game::gameOverTime() > GAMEOVER_WAIT`: the physics no longer runs.
+    /// `Game::gameOverTime().seconds() > GAMEOVER_WAIT`
+    /// (`src/game/Game.cpp:1272`): the physics no longer runs. `seconds()`
+    /// is `ms * 0.001f` (`include/olx-types.h:40`), so 3000 ms (3.0000002 s)
+    /// is already past the wait: the physics stops 300 frames after the end.
     pub fn frozen(&self, server_frame: u64) -> bool {
-        self.over.is_some()
-            && server_frame > self.over_frame
-            && (server_frame - self.over_frame).saturating_mul(FRAME_MS) > GAMEOVER_WAIT_MS
+        let ms = server_frame.saturating_sub(self.over_frame).saturating_mul(FRAME_MS);
+        self.over.is_some() && server_frame > self.over_frame && ms as f32 * 0.001 > GAMEOVER_WAIT
     }
 
     pub fn hash(&self, h: &mut Fnv) {

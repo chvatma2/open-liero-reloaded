@@ -1,0 +1,21 @@
+(
+    description: "Deathmatch with KillLimit 2 on Liero Factory: worm 0 fires one Bazooka rocket at worms 1 and 2 (20 hp each), which stand on the same spot 50 px away. The explosion kills both in one frame, so worm 0 reaches the kill limit and OLX ends the match in that frame (`CheckGameOver` runs every frame of a match) with worm 0 as the winner (`go`). Worm 0 then aims up, which stops at the end (input cleared), the client clears the explosion's projectiles at the next delivery (`ParseGameOver`), nobody respawns, and the physics stops 3 s after the end (`GAMEOVER_WAIT`).",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 420,
+    mode: Deathmatch,
+    settings: {"GameOptions.GameInfo.KillLimit": "2"},
+    worms: [(x: 190, y: 330), (x: 240, y: 330), (x: 240, y: 330)],
+    weapons: [
+        (worm: 0, names: ["Bazooka", "Bazooka", "Bazooka", "Bazooka", "Bazooka"], current: 0),
+        (worm: 1, names: ["Minigun", "Minigun", "Minigun", "Minigun", "Minigun"], current: 0),
+        (worm: 2, names: ["Minigun", "Minigun", "Minigun", "Minigun", "Minigun"], current: 0),
+    ],
+    health: [(1, 20.0), (2, 20.0)],
+    inputs: [
+        (frame: 30, worm: 0, keys: "fire"),
+        (frame: 32, worm: 0, keys: ""),
+        (frame: 50, worm: 0, keys: "up"),
+    ],
+)

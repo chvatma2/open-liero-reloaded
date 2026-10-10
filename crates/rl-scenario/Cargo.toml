@@ -11,6 +11,7 @@ publish.workspace = true
 rl-math.workspace = true
 rl-terrain.workspace = true
 rl-sim.workspace = true
+rl-modes.workspace = true
 rl-oracle.workspace = true
 rl-content.workspace = true
 anyhow.workspace = true

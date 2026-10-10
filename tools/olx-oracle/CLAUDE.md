@@ -9,7 +9,7 @@ you rarely need to touch these files.
 - `Dockerfile`: OLX at commit `d1ad953f` from GitHub, plus the patch, built as a
   headless dedicated server (Ubuntu 22.04, as OLX's own Docker image).
   The image tag is a hash of the three files here, so any edit rebuilds it.
-- `oracle-hooks.patch`: the test hooks, 17 OLX files and about 820 added lines.
+- `oracle-hooks.patch`: the test hooks, 18 OLX files and about 830 added lines.
 - `oracle_control.py`: drives one recording over OLX's dedicated-control pipe.
 
 ## What the patch adds
@@ -86,7 +86,10 @@ you rarely need to touch these files.
 - **Frame:** `f`, `sf` (`serverFrame`), `st` (`simulationTime`), `ct`
   (`tLX->currentTime`), `rc` (`rand()` calls since the seed), `mt` (`rnd()` draws
   since the seed), `ents` (used entity slots), `s` (shots delivered right before
-  this frame), `w`, `p`, `b` (client bonuses), `sb` (server bonuses), `mh`.
+  this frame), `w`, `p`, `b` (client bonuses), `sb` (server bonuses), `go`
+  (from the frame `GameServer::GameOver` ran in: `{"f": gameOverFrame, "w":
+  winner}`, the winner it computed; absent before, so traces of matches that
+  never end are unchanged), `mh`.
 - **Times** (`st`, `ct`, a worm's `tod` and `blood`, a projectile's `ls`, `sp`,
   `ig`, `tr`, a shot's `spawn`, a server bonus's `spawn`) are integer ms since
   frame −1's `simulationTime`, so traces do not depend on absolute process time.

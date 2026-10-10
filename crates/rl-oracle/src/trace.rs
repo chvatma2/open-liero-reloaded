@@ -122,8 +122,20 @@ pub struct Frame {
     /// The server's bonuses.
     #[serde(default)]
     pub sb: Vec<ServerBonusRec>,
+    /// From the frame `GameServer::GameOver` ran in on (absent before):
+    /// that frame and the winner (plan 6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go: Option<GameOverRec>,
     /// FNV-1a 64 of the material grid, row by row, as 16 hex digits.
     pub mh: String,
+}
+
+/// The match's end: `game.gameOverFrame` (a `serverFrame`) and the winner
+/// `GameServer::GameOver` computed (`CGameMode::Winner`, -1 for none).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GameOverRec {
+    pub f: i64,
+    pub w: i32,
 }
 
 /// A shot as the client decoded it (`shoot_t` after `readSingle`/`readMulti`).

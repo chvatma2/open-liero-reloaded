@@ -12,13 +12,14 @@ use std::sync::Arc;
 use anyhow::Context;
 use rl_content::{Content, olx_level_id, olx_mod_id};
 use rl_math::AbsTime;
+use rl_modes::{Deathmatch, DeathmatchSettings};
 use rl_oracle::{
-    BonusRec, Fields, Frame, Num, ProjRec, RopeRec, Scenario, ServerBonusRec, ShotRec, SlotRec, Trace,
-    WormRec,
+    BonusRec, Fields, Frame, GameOverRec, Num, ProjRec, RopeRec, Scenario, ScenarioMode, ServerBonusRec,
+    ShotRec, SlotRec, Trace, WormRec,
 };
 use rl_sim::{
-    BonusItem, CLOCK_OFFSET_MS, Keys, Loadout, MAX_WORMS, MatchSetup, OracleMode, SimMod, SimSettings, Slot,
-    TickEvents, World, WormSetup,
+    BonusItem, CLOCK_OFFSET_MS, GameMode, Keys, Loadout, MAX_WORMS, MatchSetup, OracleMode, SimMod,
+    SimSettings, Slot, TickEvents, World, WormSetup,
 };
 use rl_terrain::{ColorMap, Terrain};
 
@@ -36,7 +37,8 @@ pub const CHECKED: Fields = Fields::WORM_MOTION
     .union(Fields::SHOTS)
     .union(Fields::PROJECTILES)
     .union(Fields::PROJ_HIDDEN)
-    .union(Fields::BONUSES);
+    .union(Fields::BONUSES)
+    .union(Fields::GAME_OVER);
 
 /// Reads `<dir>/<name>.ron` and `<dir>/<name>.jsonl.gz`.
 pub fn load_fixture(dir: &Path, name: &str) -> anyhow::Result<(Scenario, Trace)> {
@@ -149,13 +151,41 @@ pub fn load_world(content: &Content, sc: &Scenario, expected: &Trace) -> anyhow:
         worms,
         ..MatchSetup::new(settings, Arc::new(sim_mod), Terrain::from_grid(&level.material))
     };
-    // OLX's oracle runs with game over off: `OracleMode` credits kills and never ends.
-    let mut world = World::new(setup, Box::new(OracleMode)).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mode = game_mode(sc, &setup.settings, &expected.header)?;
+    let mut world = World::new(setup, mode).map_err(|e| anyhow::anyhow!("{e}"))?;
     for &(i, hp) in &sc.health {
         anyhow::ensure!(i < world.worms().len(), "health for missing worm {i}");
         world.set_health(i, hp);
     }
     Ok(world)
+}
+
+/// The scenario's game mode. By default `OracleMode`, OLX's crediting with
+/// no end: OLX's oracle server allows empty games with unlimited lives, and
+/// a scenario that reaches neither the kill nor the time limit never ends.
+/// A `Deathmatch` scenario plays `rl_modes::Deathmatch` with the header's
+/// rules (`TimeLimit` from its features), so the match can end there too.
+fn game_mode(
+    sc: &Scenario,
+    s: &SimSettings,
+    header: &rl_oracle::Header,
+) -> anyhow::Result<Box<dyn GameMode>> {
+    Ok(match sc.mode {
+        ScenarioMode::Oracle => Box::new(OracleMode),
+        ScenarioMode::Deathmatch => {
+            let time_limit = header.features.get("TimeLimit").context("the header has no TimeLimit")?;
+            let rules = DeathmatchSettings {
+                lives: s.lives,
+                kill_limit: s.kill_limit,
+                time_limit: time_limit.parse().with_context(|| format!("TimeLimit {time_limit:?}"))?,
+                allow_negative_score: s.allow_negative_score,
+                death_decreases_score: s.death_decreases_score,
+                suicide_decreases_score: s.suicide_decreases_score,
+                ..DeathmatchSettings::default()
+            };
+            Box::new(Deathmatch::new(rules))
+        }
+    })
 }
 
 /// Milliseconds since frame -1, or `None` for OLX's unset time (0).
@@ -164,6 +194,8 @@ fn since_t0(t: AbsTime, t0: u64) -> Option<i64> {
 }
 
 /// The world's state as a trace frame. `t0` is frame -1's absolute time.
+/// `go` stays `None`: the world does not say in which frame it ended, so
+/// [`replay`] fills it in.
 pub fn record(world: &World, f: i64, t0: u64) -> Frame {
     let w = world
         .worms()
@@ -293,6 +325,7 @@ pub fn record(world: &World, f: i64, t0: u64) -> Frame {
         rc: Some(world.rand_calls()),
         mt: Some(world.mt_calls()),
         ents: Some(world.entity_count() as i64),
+        go: None,
         mh: format!("{:016x}", world.terrain().material_hash()),
     }
 }
@@ -322,7 +355,16 @@ fn bonus_items(world: &World, sc: &Scenario) -> anyhow::Result<Vec<(u32, i32, i3
 pub fn replay(content: &Content, sc: &Scenario, expected: &Trace) -> anyhow::Result<Trace> {
     let t0 = t0(expected);
     let mut frames = Vec::new();
-    play(content, sc, expected, |world, f, _| frames.push(record(world, f, t0)))?;
+    let mut over: Option<GameOverRec> = None;
+    play(content, sc, expected, |world, f, _| {
+        // `game.gameOverFrame`: the server frame of the tick that ended the match.
+        if over.is_none()
+            && let Some(r) = world.result()
+        {
+            over = Some(GameOverRec { f: world.server_frame() as i64, w: r.winner });
+        }
+        frames.push(Frame { go: over, ..record(world, f, t0) });
+    })?;
     Ok(Trace { header: expected.header.clone(), frames })
 }
 

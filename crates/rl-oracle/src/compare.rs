@@ -62,7 +62,9 @@ impl Fields {
     pub const BONUSES: Fields = Fields(1 << 11);
     /// `sf`, `st`, `ct`.
     pub const CLOCKS: Fields = Fields(1 << 12);
-    pub const ALL: Fields = Fields((1 << 13) - 1);
+    /// `go`: the frame the match ended and its winner (`null` before).
+    pub const GAME_OVER: Fields = Fields(1 << 13);
+    pub const ALL: Fields = Fields((1 << 14) - 1);
 
     /// `self | other`, usable in constants.
     pub const fn union(self, other: Fields) -> Fields {
@@ -261,6 +263,12 @@ fn fields(fr: &Frame, mask: Fields) -> Vec<(String, Value)> {
         add(bonuses, p("wpn"), Int(b.wpn.into()));
         add(bonuses, p("spawn"), Int(b.spawn));
     }
+    let (go_f, go_w) = match fr.go {
+        Some(g) => (Int(g.f), Int(g.w.into())),
+        None => (Null, Null),
+    };
+    add(Fields::GAME_OVER, "go.f".into(), go_f);
+    add(Fields::GAME_OVER, "go.w".into(), go_w);
     add(material, "mh".into(), Str(fr.mh.clone()));
     out
 }
@@ -431,6 +439,7 @@ mod tests {
             Fields::RESPAWN,
             Fields::BONUSES,
             Fields::CLOCKS,
+            Fields::GAME_OVER,
         ] {
             assert!(Fields::ALL.contains(one) && !Fields::NONE.contains(one));
         }

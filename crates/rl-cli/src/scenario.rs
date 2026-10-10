@@ -45,6 +45,7 @@ fn parse_fields(s: &str) -> anyhow::Result<rl_oracle::Fields> {
             "respawn" => Fields::RESPAWN,
             "bonuses" => Fields::BONUSES,
             "clocks" => Fields::CLOCKS,
+            "game_over" => Fields::GAME_OVER,
             other => anyhow::bail!("unknown field group {other:?}"),
         });
     }
