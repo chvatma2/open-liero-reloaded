@@ -26,7 +26,7 @@ use rl_data::mod_def::{
     ActionDef, BeamDef, ModDef, ProjectileDef, ProjectileGfx, SpawnDef, SpecialKind, TrailKind, WeaponKind,
 };
 
-use crate::events::{GAME_SOUNDS, SoundId};
+use crate::events::{GAME_SOUND_PREFIX, GAME_SOUNDS, SoundId};
 
 /// At most this many projectile occurrences after expansion. Classic has 69
 /// and MW 1.0 398; a shared definition reached on exponentially many paths
@@ -216,7 +216,8 @@ impl SimMod {
     }
 
     /// The sounds events name ([`SoundId`] indexes this): OLX's
-    /// [`GAME_SOUNDS`], then the mod's sound paths in first use (each weapon,
+    /// [`GAME_SOUNDS`] (prefixed [`GAME_SOUND_PREFIX`], paths in OLX's data
+    /// directory), then the mod's sound paths (in its pack, never prefixed) in first use (each weapon,
     /// then its projectiles' `Hit`, `PlayerHit` and `Timer` actions, in
     /// projectile load order).
     pub fn sounds(&self) -> &[String] {
@@ -255,9 +256,10 @@ struct Builder<'a> {
 
 impl<'a> Builder<'a> {
     /// The id of sound `name`, added if new. A table already holding every
-    /// `u16` gets no more sounds.
+    /// `u16` gets no more sounds. A name with [`GAME_SOUND_PREFIX`] is not a
+    /// mod sound and gets none.
     fn sound(&mut self, name: Option<&str>) -> Option<SoundId> {
-        let name = name?;
+        let name = name.filter(|n| !n.starts_with(GAME_SOUND_PREFIX))?;
         let i = match self.sounds.iter().position(|s| s == name) {
             Some(i) => i,
             None => {

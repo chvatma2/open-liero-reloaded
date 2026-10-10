@@ -60,7 +60,14 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   sound, spawns an entity (`Draws::entity`, which also takes the pool slot)
   or edits the map (`effects::carve_px`/`carve_at`), never with a draw of
   their own (D4/D5); cosmetics are emitted even when the entity pool is full.
-  `SoundId` indexes `SimMod::sounds()` (OLX's game sounds, then the mod's).
+  `SoundId` indexes `SimMod::sounds()`: OLX's game sounds first, each prefixed
+  `olx:` (`GAME_SOUND_PREFIX`, a path in OLX's data directory), then the mod's
+  (paths in its pack, never prefixed), so a loader can tell the roots apart.
+  **For consumers:** `tick` returns `&TickEvents` borrowing the world
+  mutably; when you also need world state, ignore the return value and read
+  the events after the tick with `world.events()`.
+  `LaserSight { len }` carries OLX's trace length. Spec §5.7's `Message` and
+  `GameOver` events are not emitted yet (plan 6).
 - **Checksum** (`checksum.rs`): FNV-1a 64 over all mutable state, through an
   exhaustive destructuring of each type; a new field must be hashed there
   (types with private fields hash themselves in their module). Tick-time

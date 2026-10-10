@@ -1109,7 +1109,7 @@ require every scenario to list every worm.
 
 ## 14. Open questions
 
-1. **Which delivery model should the port adopt?** Real OLX is wall-clock dependent. Model R
+1. **Answered (plan 4, D1, D2): Model R with δ = 10 ms.** **Which delivery model should the port adopt?** Real OLX is wall-clock dependent. Model R
    (lists span two frames, processed before frame F+2) matches a 95–100 FPS main loop; Model S
    (every frame) is simpler. Model R also reproduces the multi-shot quirks that players get
    with continuous fire.
@@ -1118,13 +1118,13 @@ require every scenario to list every worm.
    - δ shifts every projectile's clock origin, and thus which frame it first moves in.
    - The oracle hook and `rl-sim` must use the same model and δ. This decision belongs to the
      user and lead.
-2. **Should the port model iterations that run two frames, or a delivery that slips a frame?**
+2. **Answered (plan 4, D1): no; one frame per main-loop iteration, recorded in STATUS.** **Should the port model iterations that run two frames, or a delivery that slips a frame?**
    Real play has them (95 FPS cap with 100 Hz frames). The recommendation is no: assume the
    idealized one frame per iteration and record it as a deliberate deviation in `STATUS.md`.
-3. **The ping-based `spawnTime` fallback** (`fTime > serverTime`, only from `serverFrame` ≥
+3. **Answered (plan 4): only the main formula is ported; the ping is taken as 0 (STATUS).** **The ping-based `spawnTime` fallback** (`fTime > serverTime`, only from `serverFrame` ≥
    819205 through the float round trip) depends on the measured ping. Proposal: port only the
    main formula and document that.
-4. **`tLX->currentTime` is wall clock in other gameplay code too:**
+4. **Answered (plan 4, D2): the pinned clock covers respawn, bonus timers and spawn times.** **`tLX->currentTime` is wall clock in other gameplay code too:**
    - respawn timing (`GameServer::SimulateGame`, `CServer_Game.cpp:204-216`, and
      `fTimeofDeath = tLX->currentTime`);
    - carve-throttle bookkeeping (`fLastCarve`);
@@ -1134,14 +1134,14 @@ require every scenario to list every worm.
    respawn report should decide whether the hooks pin `tLX->currentTime` around the frame
    loop. That is risky: the time goes backwards against the real clock used by `CChannel` and
    ping code, but asserts are off in the Release build.
-5. **Weapon id order:** `target/content/olx-classic/mod.ron` lists weapons alphabetically. This
+5. **Answered (plan 4): weapon ids are `ModDef` order, and the trace header's names are checked against `SimMod` in every scenario.** **Weapon id order:** `target/content/olx-classic/mod.ron` lists weapons alphabetically. This
    was not verified against OLX's gamescript load order. If `rl-import-lgs` preserves file
    order, the two agree. Recording weapon names in the header (§13.4) settles it.
-6. **Jetpack and other specials** cannot be checked against the oracle with Classic or MW 1.0,
+6. **Still open: the specials are covered by unit tests only (STATUS).** **Jetpack and other specials** cannot be checked against the oracle with Classic or MW 1.0,
    which contain none. A test mod would be needed if the port must be verified there.
-7. **Entity pool saturation in dedicated mode** (1024 slots never freed) changes the `rand()`
+7. **Answered (plan 4, D4): a saturating dedicated-server entity counter (`rl-sim::rng::Draws`).** **Entity pool saturation in dedicated mode** (1024 slots never freed) changes the `rand()`
    count of later gib spawns, so oracle and local play differ. The death report should confirm
    it and decide how the port models it, probably as a dedicated-only counter of entity slots.
-8. **`InjureWorm` from beam hits** (damage report, `QueueReportDamage`, kills via
+8. **Answered (plan 4 tasks 7-8): beam hits injure through `damage::injure_worm`.** **`InjureWorm` from beam hits** (damage report, `QueueReportDamage`, kills via
    `cServer->killWorm`) is owned by the damage and death report. This report covers only the
    call site and its arguments.

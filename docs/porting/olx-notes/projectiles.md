@@ -994,19 +994,19 @@ current projectile frees its own slot last.
 
 ## Open questions
 
-1. **Which `K`** (wall clock pinned to `simulationTime + K`)? It changes which
+1. **Answered (plan 4, D2): `K` = 10 ms.** **Which `K`** (wall clock pinned to `simulationTime + K`)? It changes which
    worm position projectiles collide with, because of the `get(0)` quirk. Real
    play is a mix; any fixed `K` is a deviation to note in `STATUS.md`.
-2. **Port the dedicated semantics or the client's?** In a client with images,
+2. **Answered (plan 4, D3): the port follows a player's client (`ANI_ONCE` ends projectiles); the oracle loads images in dedicated mode so it records the same.** **Port the dedicated semantics or the client's?** In a client with images,
    `ANI_ONCE` deletes projectiles when their animation ends, and action-less
    animated projectiles survive until then; in the dedicated oracle they are
    deleted after one step and `ANI_ONCE` never ends anything. The same applies
    to the entity-pool gating of gib draws (a client frees entities). Matching
    the oracle means porting dedicated behaviour; feel-wise the client matters.
-3. **The `get(0)` recorder bug**: should the port keep it for the oracle and
+3. **Answered (plan 4, D7): the `get(0)` quirk is kept (`VecTimeRecorder`, `rl-sim::worm::PosRecorder`).** **The `get(0)` recorder bug**: should the port keep it for the oracle and
    offer a fixed variant later? A scenario where a bullet hits a walking worm
    will show it immediately.
-4. Does the shared host client also receive and parse its own `WormDied` /
+4. **Answered (plan 4, D1/D10): Model R shot delivery at the start of `tick`, and the reliable messages arrive a frame after being queued; the weapon scenarios pin projectile spawn times and death draws.** Does the shared host client also receive and parse its own `WormDied` /
    shoot-list messages in the same frame or the next (the order of
    `ProcessServerShotList`, `ParseWormDown` and `Simulation` within
    `cClient->Frame()`)? This belongs to the shooting/death research but fixes
@@ -1016,7 +1016,7 @@ current projectile frees its own slot last.
    `Proj_SpawnParent::angle` and `getHeadingVelTo`, and inlines `floorf` in
    `FMOD<float>`. `angle()` multiplies the float `atan2f` by the double
    `180.0f / PI` and rounds back to float.
-6. Bots that are not scripted keep their AI and call `rand()` directly
+6. **Answered (plan 4, D8): every scenario worm uses scripted input.** Bots that are not scripted keep their AI and call `rand()` directly
    (`CWormBot.cpp:982-985`, `4234-4236`); scenarios should script every worm
    (or the port must emulate the bot AI's draws).
 7. Integer edge cases to decide for untrusted content: `(int)` of huge or NaN
@@ -1024,6 +1024,6 @@ current projectile frees its own slot last.
    (`INT_MIN`), and `abs(INT_MIN - x)` overflows in C; `Amount` may be
    negative; a NULL child `Proj` crashes OLX. The port should mirror x86 where
    the oracle can see it and refuse or clamp the rest (record in `STATUS.md`).
-8. Themes other than Dirt have their own `Hole*.png`; `PlaceDirt`'s double
+8. **Answered (plan 4): `World::new` takes the theme's hole stamps (`PlaceDirt` uses them).** Themes other than Dirt have their own `Hole*.png`; `PlaceDirt`'s double
    count depends on how many edge-colour pixels a hole has, so it must use the
    level's theme stamps, not a fixed table.

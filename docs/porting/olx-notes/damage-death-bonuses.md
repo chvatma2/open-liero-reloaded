@@ -935,7 +935,7 @@ Constants:
 
 ## 9. Open questions
 
-1. **Loopback latency:** does reliable `CChannel` delivery between the local
+1. **Answered (plan 4, D10): reliable messages between the local client and the server arrive after the frame they were queued in, and the oracle hands them over exactly so (`bonus-health`, `bonus-weapon`, `explode-kill-respawn`).** **Loopback latency:** does reliable `CChannel` delivery between the local
    client and the server ever take more than one Game::frame (window or ack
    limits, `GetTime()`-based rate control)? Check with recordings once hook 6 is in.
 2. **Answered (plan 4 task 7): yes**, gibs draw 4 `rand()` with room in the pool
@@ -943,7 +943,7 @@ Constants:
    (`giblets.png` exists, `LoadGameImage` works headless), but confirm with a
    hook (record `w->getGibimg().get() != NULL`), since it changes the gib
    `rand()` count from 2 to 4.
-3. **Automatic first spawn:** once the state reaches Playing, `SimulateGame`
+3. **Resolved in effect (plan 4): every scenario matches `mh` and `mt` from frame −1, so the automatic first spawn needs no special handling.** **Automatic first spawn:** once the state reaches Playing, `SimulateGame`
    spawns every ready worm with `FindSpot` (`!haveSpawnedOnce`) before
    `oracle_control.py` calls `spawnWorm`. That carves a size-4 hole at a
    `FindSpot` position and uses `rnd()`. The M3 traces match `mh` at frame −1,
@@ -959,14 +959,14 @@ Constants:
    default Gusanos scripts may call Lua `random` (`rnd()`/`rndInt`) during the
    game. A quick check found only GUI/score code in `common.lua`. Confirm with
    the `rnd()` counter in the hooks.
-6. **`fDamage` double count:** should the oracle compare `fDamage`? It depends
+6. **Answered (plan 4): `fDamage` is not in the trace; the port counts it once, on the client (STATUS, deviations).** **`fDamage` double count:** should the oracle compare `fDamage`? It depends
    on `C2S_REPORTDAMAGE` batching by `tLX->currentTime`
    (`0.1 × (NST_LOCAL − netSpeed)` s) and on packet timing. It affects only the
    winner tie-break. Suggest excluding it, or comparing only the client-side
    half (track the two sources separately in the port).
-7. **Which `simulationTime` base should the Rust world use?** The port's
+7. **Answered (plan 4): the trace header's `T0`, 100 000 ms (spec §18 D2).** **Which `simulationTime` base should the Rust world use?** The port's
    `World::new(start)` already takes one, so hook 2 should define it.
-8. **Weapon restrictions:** the port must load the mod's `Standard 100lt.wps`
+8. **Still open: recorded in STATUS (bonus weapons ignore restrictions unless `World::set_bonus_weapons` is given).** **Weapon restrictions:** the port must load the mod's `Standard 100lt.wps`
    (or whatever `WeaponRestrictionsFile` names) for bonus weapons and random
    weapons to match. This needs coordinating with the weapons research. Is that
    file in `content/olx-manifest.ron`?

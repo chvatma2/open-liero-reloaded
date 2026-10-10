@@ -13,7 +13,7 @@ use rl_terrain::{Stamp, Terrain};
 
 use crate::damage::injure_worm;
 use crate::mod_rt::tests::{mod_def, pixel_projectile, projectile_weapon};
-use crate::{Keys, Loadout, SimMod, SimSettings, Slot, World};
+use crate::{GAME_SOUND_PREFIX, GAME_SOUNDS, Keys, Loadout, SimMod, SimSettings, Slot, World};
 
 fn holes() -> Vec<Stamp> {
     [5, 7, 9, 11, 15]
@@ -132,6 +132,23 @@ fn the_sound_table_lists_game_sounds_then_mod_sounds_once() {
     assert_eq!(m.weapons()[0].sound, Some(SoundId(6)));
     assert_eq!(m.projectiles()[0].hit_sound, Some(SoundId(7)));
     assert_eq!(m.projectiles()[0].player_hit_sound, None);
+}
+
+#[test]
+fn game_sounds_are_prefixed_and_mod_sounds_never_are() {
+    assert!(GAME_SOUNDS.iter().all(|s| s.starts_with(GAME_SOUND_PREFIX)));
+    let m = gun_mod();
+    assert!(m.sounds()[GAME_SOUNDS.len()..].iter().all(|s| !s.starts_with(GAME_SOUND_PREFIX)));
+    // A mod naming a game sound by its table path gets no sound, not OLX's.
+    let mut weapon = projectile_weapon("gun", "pellet");
+    if let WeaponKind::Projectile { sound, .. } = &mut weapon.kind {
+        *sound = Some(GAME_SOUNDS[0].into());
+    }
+    let m =
+        SimMod::compile(&mod_def(vec![weapon], vec![("pellet", pixel_projectile(None))]), &BTreeMap::new())
+            .unwrap();
+    assert_eq!(m.weapons()[0].sound, None);
+    assert_eq!(m.sounds().len(), GAME_SOUNDS.len());
 }
 
 #[test]

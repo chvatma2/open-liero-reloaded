@@ -20,19 +20,20 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Hole carving (material) | `src/common/CMap.cpp:1005-1105`, `2172-2199` | `rl-terrain::Terrain::carve_hole` | ported | `dig` (244 dirt cells), spawn holes (`mh` at frame −1) |
 | Float `sinf`/`cosf` (aim directions) | glibc 2.35 `sysdeps/ieee754/flt-32/s_sinf.c`, `s_cosf.c` (x86-64 FMA variant) | `rl-math::trig` | ported | all 2³² inputs bit-identical to the oracle container's glibc (a throwaway FFI comparator run in `rl-olx-src`) |
 | Mod compiled to OLX's projectile tree (`SimMod`) | `src/common/CGameScript.cpp:833-1157` (`LoadProjectile` order) | `rl-sim::mod_rt` | ported (plan 4 task 4) | every scenario: indices and path names equal the trace header's (`rl-scenario` checks) |
-| Weapon slots, firing, laser sight entity | `src/common/PhysicsLX56.cpp:471-498`, `src/server/CServer_Game.cpp:366-466`, `src/client/CClient_Game.cpp:496-544`, `751-808` | `rl-sim::weapons` | ported | `slots` of all 106 scenarios until the first projectile effect; `beam-burst` slots for the whole trace |
-| Shot list, encode/decode round trip, Model R delivery, `ProcessShot` | `src/common/CShootList.cpp`, `CClient_Game.cpp:813-946` | `rl-sim::shots`, `rl-sim::shot_codec` | ported | `s` of `multi-shot` for the whole trace, including the corrupted `spd` |
+| Weapon slots, firing, laser sight entity | `src/common/PhysicsLX56.cpp:471-498`, `src/server/CServer_Game.cpp:366-466`, `src/client/CClient_Game.cpp:496-544`, `751-808` | `rl-sim::weapons` | ported | `s` (slots) of all 106 scenarios for the whole trace (103 match fully); `beam-burst`; the laser sight event's length by a unit test |
+| Shot list, encode/decode round trip, Model R delivery, `ProcessShot` | `src/common/CShootList.cpp`, `CClient_Game.cpp:813-946` | `rl-sim::shots`, `rl-sim::shot_codec` | ported | `s` of every scenario, `multi-shot` in particular (corrupted `spd`), `die-before-delivery` (dropped shots) |
 | Beams (`ProcessShot_Beam`, `DrawBeam`) and specials (`ShootSpecial`, the jetpack) | `CClient_Game.cpp:549-711`, `926-1055` | `rl-sim::beam` | ported (plan 4 task 8; the bonus check task 9) | `weapons/classic/laser`, `weapons/mw-1-0/laser` and `beam-burst` match fully; specials by unit tests only (`jetpack_quirks`: no special weapon in Classic or MW 1.0) |
-| Projectile pool, `Proj_SpawnInfo::apply` (shots and projectiles), `CProjectile::Spawn` | `include/FastVector.h`, `src/common/PhysicsLX56_Projectiles.cpp:495-640`, `src/common/CProjectile.cpp:43-166` | `rl-sim::projectile`, `rl-sim::spawn` | ported | every projectile field (`p`, hidden fields included) of every scenario until its first explosion, carve, dirt or injury |
-| Projectile motion, collision, timers, trails, animation, worm hit test, position recorder | `PhysicsLX56_Projectiles.cpp:52-491`, `1234-1411`, `src/util/VecTimeRecorder.h`, `PhysicsLX56.cpp:468` | `rl-sim::proj_sim`, `rl-sim::worm::PosRecorder` | ported (plan 4 task 5) | as above; 8 weapon scenarios match fully (`big-nuke`, `booby-trap`, `float-mine`, `mine`, `electro-gun`, `jet-pack`, `nuclear-mines`, `trap-mines`) |
-| Projectile actions (`applyTo`, `execute`): bounce, disappear, nothing, go-through, speed and heading actions, children, the junk rule | `PhysicsLX56_Projectiles.cpp:670-945`, `1115-1230`, `CProjectile.cpp:376-429` | `rl-sim::actions` | ported (plan 4 tasks 5-6) | `rl-scenario`'s `EXPECTED_DIVERGENCES` pins each remaining divergence to its frame and field |
+| Projectile pool, `Proj_SpawnInfo::apply` (shots and projectiles), `CProjectile::Spawn` | `include/FastVector.h`, `src/common/PhysicsLX56_Projectiles.cpp:495-640`, `src/common/CProjectile.cpp:43-166` | `rl-sim::projectile`, `rl-sim::spawn` | ported | every projectile field (`p`, hidden fields included) of every scenario for the whole trace; the pool limit by `pool_full_drops_new_projectiles_like_olx` |
+| Projectile motion, collision, timers, trails, animation, worm hit test, position recorder | `PhysicsLX56_Projectiles.cpp:52-491`, `1234-1411`, `src/util/VecTimeRecorder.h`, `PhysicsLX56.cpp:468` | `rl-sim::proj_sim`, `rl-sim::worm::PosRecorder` | ported (plan 4 task 5) | as above; trails and animation by every weapon scenario (`mine`, `float-mine`, `nuclear-mines`, `trap-mines`, `booby-trap`, `electro-gun`, `jet-pack`, `big-nuke` for the timers and recorder) |
+| Projectile actions (`applyTo`, `execute`): bounce, disappear, nothing, go-through, speed and heading actions, children, the junk rule | `PhysicsLX56_Projectiles.cpp:670-945`, `1115-1230`, `CProjectile.cpp:376-429` | `rl-sim::actions` | ported (plan 4 tasks 5-6) | all 88 weapon scenarios of both mods (`p`, `mh`, `dirt`, `hp`, `rc`); 103 of 106 scenarios match fully |
 | Float `atan2f` (projectile headings) | glibc 2.35 `sysdeps/ieee754/flt-32/e_atan2f.c`, `s_atanf.c` | `rl-math::atan2f` | ported | 6 million input pairs bit-identical to the oracle container's glibc; 20 pinned in a test |
-| Explosions, carve, dirt, green dirt and their dirt counts; injury actions | `CClient_Game.cpp:227-330`, `CMap.cpp:1114-1340`, `PhysicsLX56_Projectiles.cpp:781-824`, `1115-1154`, `CWorm.cpp:1381-1389` | `rl-sim::effects`, `rl-terrain::Terrain::{place_dirt, place_green_dirt}` | ported (plan 4 task 6; the bonus chain task 9) | `mh`, `dirt` and `hp` of every scenario; since task 9, 103 of 106 scenarios match fully (the 3 D9 ones up to their respawn) |
-| Worm damage (`InjureWorm`): factors, `SelfInjure`, damage score, blood draws | `CClient_Game.cpp:335-460`, `CGameObject.cpp:35-44`, `CWorm.cpp:1600-1627` | `rl-sim::damage::injure_worm` | ported (plan 4 task 7) | `hp`, `rc`, `ents` of every weapon scenario; factors and `SelfInjure` by unit tests only |
+| Explosions, carve, dirt, green dirt and their dirt counts; injury actions | `CClient_Game.cpp:227-330`, `CMap.cpp:1114-1340`, `PhysicsLX56_Projectiles.cpp:781-824`, `1115-1154`, `CWorm.cpp:1381-1389` | `rl-sim::effects`, `rl-terrain::Terrain::{place_dirt, place_green_dirt}` | ported (plan 4 task 6; the bonus chain task 9) | `mh`, `dirt` and `hp` of every scenario; 103 of 106 scenarios match fully (the 3 D9 ones up to their respawn); `place_dirt_at_the_edges` and `green_dirt_at_the_edges` for the map edges |
+| Worm damage (`InjureWorm`): factors, `SelfInjure`, damage score, blood draws | `CClient_Game.cpp:335-460`, `CGameObject.cpp:35-44`, `CWorm.cpp:1600-1627` | `rl-sim::damage::injure_worm` | ported (plan 4 task 7) | `hp`, `rc`, `ents` of every weapon scenario (`classic/*`, `mw-1-0/*`); factors and `SelfInjure` by unit tests only |
 | Death, kills, deaths, suicides, lives; death draws (sound, gibs by the entity pool, blood); the exact-zero death (`CWorm::think`) | `CServer_Game.cpp:108-162`, `CGameMode.cpp:69-252`, `CWorm.cpp:1399-1449`, `src/gusanos/base_worm.cpp:365-381`, `623-659`, `src/client/Entity.cpp:161-205` | `rl-sim::damage::{kill_worm, die_at_zero_health}` | ported (plan 4 task 7); game over is not | `explode-kill-respawn`, `die-before-delivery`, the weapon scenarios' kills; exact-zero deaths in `assassin-s-shot`, `flak`, `plasma-launcher` |
 | Bleeding | `PhysicsLX56.cpp:317-330` | `rl-sim::physics::bleed` | ported | `bleed`, `die-before-delivery` |
 | Respawn loop, `SpawnWorm`, `FindSpot`, `CWorm::Spawn` | `CServer_Game.cpp:38-104`, `200-225`, `CMap.cpp:2381-2396`, `CWorm.cpp:591-651`, `CWormHuman.cpp:115-119` | `rl-sim::respawn` | ported (DM; no predefined spawns, no team spawns) | `explode-kill-respawn` and every weapon scenario whose dummy dies (`tod`, `respawn`, positions, `mt`) |
 | Bonuses: server spawn, lifetime and grab handling; client spawn (hole), physics, pickup, health and weapon effects; the messages between them (D10); explosions and beams destroying bonuses | `src/server/CServer_Game.cpp:227-316`, `src/server/CServer_Parse.cpp:834-903`, `src/client/CClient_Parse.cpp:1464-1516`, `1977-1990`, `PhysicsLX56.cpp:619-715`, `CClient_Game.cpp:128-151`, `255-270`, `736-745`, `986-1002`, `CWorm.cpp:1454-1506` | `rl-sim::bonus`, `rl-sim::effects::explosion`, `rl-sim::beam` | ported (plan 4 task 9) | `bonus-health`, `bonus-weapon` (`b`, `sb` and every other field); natural spawning, lifetime, explosions and beams by unit tests only |
+| Acceptance: all weapons of both mods | `fixtures/oracle/weapons/` | `rl-scenario/tests/oracle.rs` (`CHECKED == Fields::ALL`) | done (plan 4 task 11) | 103 of 106 scenarios match OLX bit for bit in every field; the other 3 are pinned to their first divergence (D9, below) |
 | Tick events (sounds, map edits, explosions, cosmetics, shots, damage, kills, pickups, spawns) and the state checksum | every `StartSound`, `PlaySoundSample`, `SpawnEntity` and `SetWormBeamEntity` above; `src/game/Sounds.cpp:25-30` | `rl-sim::events`, `rl-sim::checksum` | done (plan 4 task 10) | unit tests; the oracle traces are unchanged (no draw added); `rl-scenario/tests/smoke.rs` (8 matches, clone checksum streams) |
 
 ## Deliberate deviations
@@ -62,13 +63,17 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   the server, a frame or more later, from the batched `C2S_REPORTDAMAGE`
   (`ParseReportDamage`), so its `fDamage` is about twice the real damage. It
   only breaks score ties and is not in the trace.
-- **Exact-zero deaths' Gusanos particles (spec §18 D9).** A worm left at exactly
+- **Exact-zero deaths' Gusanos particles (spec §18 D9).** Three scenarios stay
+  pinned in `rl-scenario/tests/oracle.rs`, the only ones that do not match
+  bit for bit (each row there carries this reason: bit-exactness is impossible
+  without porting the Gusanos particle system, whose `rnd()` draws shift the
+  next random respawn spot). A worm left at exactly
   0 health dies at the start of the next frame, uncredited, as in OLX; the
   Gusanos `death.obj` particles OLX then spawns are not simulated. They draw
   from the `FindSpot` stream for as long as they live (597, 544 and 669 draws
   before the next respawn in `weapons/mw-1-0/{assassin-s-shot,flak,plasma-launcher}`),
-  so later spawn and bonus positions differ. Those three scenarios stay in the
-  acceptance test's divergence tables from their respawn frame.
+  so later spawn and bonus positions differ. Those three scenarios diverge
+  from their respawn frame on (`mt`, then the worm's position).
 - **Blood amount and particles:** `rl-sim` uses OLX's defaults, `Game.Blood`
   100 and `Game.Particles` on (blood entities exist), which dedicated servers
   keep; `rl-scenario` refuses a trace header with other values.
@@ -87,13 +92,19 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   `CBonus::Spawn` would read the weapon name out of bounds).
 - A grabbed weapon bonus does not call `WormShootEnd` for the replaced weapon
   if the worm holds fire: it acts only on a `FinalProj`, which LX56 mods do not have.
+- **Message and GameOver events are not emitted yet** (spec §5.7): there is no
+  game over (above), so no `GameOver`, and OLX's kill and other chat messages
+  have no event. They come with Deathmatch in plan 6.
+- **Sound ids** (`SimMod::sounds`): OLX's game sounds come first, each with the
+  `olx:` prefix (a path in OLX's data directory); mod sounds are paths in the
+  mod's pack and never carry it (a mod path that does is ignored).
 - **Tick events report what a player's client shows** (spec §5.7): every
   cosmetic entity, even when the dedicated server's pool (D4) is full, and the
   local client's `ENT_SPAWN` sparkle when a worm (re)spawns, which takes no
   pool slot on a dedicated server. Two cosmetic details are left to the
   renderer, which uses its own generator (D5): the shades of green dirt
-  (OLX picks them with `rand()`) and the laser sight's length (OLX's 3 px
-  trace; the event carries the direction). `WeaponFired` and the weapon's
+  (OLX picks them with `rand()`) (the laser sight's length is traced and carried in its event, as OLX
+  passes it to the entity). `WeaponFired` and the weapon's
   sound come when the client processes the shot (Model R delivery), as in OLX.
   A tick reports at most 8192 events, sounds and cosmetics at most 7168; the
   rest are counted (`TickEvents::dropped`).
@@ -130,6 +141,21 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   files, unknown weapon or projectile types, and nesting deeper than 128 levels.
 - A missing projectile image is an import error. OLX would load the mod and draw nothing.
 - Imported level art is stored at 1×, because OLX's 2× surfaces are plain pixel doubling.
+
+## Spec §18 decisions that deviate from a plain OLX run
+
+- **D3, client animation semantics.** `ANI_ONCE` deletes projectiles when
+  their animation ends and action-less animated projectiles live until then,
+  as on a player's client (the oracle loads images in dedicated mode).
+  `SimMod` carries each image projectile's frame count.
+- **D4, cosmetic `rand()` draws are emulated** (dig, rope hook, explosion dirt,
+  blood, bleeding, death, gibs, colour), including the dedicated server's
+  1024-entry entity pool that is never freed. A real client frees entities
+  and simulates them with `rand()`, which no port can reproduce, so a client
+  game's draw count differs from the traces.
+- **D7, the `VecTimeRecorder::get(0)` quirk is kept** (see Kept OLX quirks).
+- **D9, exact-zero health** (see above): the death is ported, the Gusanos
+  particles' `rnd()` use is not.
 
 ## Kept OLX quirks
 

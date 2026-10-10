@@ -1,7 +1,8 @@
 //! Acceptance (spec §6, §10): every scenario in `fixtures/oracle`, replayed in
 //! the Rust simulation, matches OLX's recorded trace bit for bit in every field
-//! the simulation reproduces so far (`rl_scenario::CHECKED`).
-//! Needs the imported OLX content (`RL_CONTENT_DIR`, default `target/content`).
+//! the trace records (`Fields::ALL`), except the three pinned D9 scenarios below.
+//! Needs the imported OLX content: `RL_CONTENT_DIR`, which `.cargo/config.toml`
+//! sets to `target/content` unless the environment already does.
 
 use std::path::{Path, PathBuf};
 
@@ -19,11 +20,11 @@ fn content_dir() -> Option<String> {
     }
 }
 
-/// Scenarios the simulation cannot play yet: each must still diverge, and
-/// first exactly at the `(frame, field)` listed (as `compare_fields` with
-/// `CHECKED` reports it). The last column names the task that owns that
-/// divergence, or the deviation behind it. The list shrinks as M4 lands;
-/// at its end only deviations stay.
+/// Scenarios whose bit-exact match is impossible without porting something
+/// the simulation deliberately leaves out. Each must still diverge, and first
+/// exactly at the `(frame, field)` listed (as `compare_fields` with `CHECKED`
+/// reports it); the last column is the reason. Every other scenario must match
+/// in every field.
 ///
 /// The exact first divergence is the guard against hidden regressions: a
 /// change that breaks an already ported field earlier in a listed scenario
@@ -35,11 +36,16 @@ const EXPECTED_DIVERGENCES: &[(&str, i64, &str, &str)] = &[
     ("weapons/mw-1-0/plasma-launcher", 283, "w[1].x", D9),
 ];
 
-/// The owner of a divergence that stays (spec §18 D9): the dummy dies at
-/// exactly 0 health, and the Gusanos death particles OLX then spawns draw
-/// from the `FindSpot` stream (597, 544 and 669 draws here), so its respawn
-/// position differs.
-const D9: &str = "D9: Gusanos death particles' rnd() draws (not ported)";
+/// Why the rows above cannot match (spec §18 D9, `docs/porting/STATUS.md`).
+/// The dummy's health reaches exactly 0, which takes OLX's Gusanos `think()`
+/// death path. Its Gusanos particles draw from the `FindSpot` generator
+/// (597, 544 and 669 `rnd()` draws in these scenarios), and that particle
+/// system is out of scope, so the simulation's generator stays behind. The
+/// worm's death, its credit and everything else match; only the next random
+/// respawn position differs. Reproducing it bit for bit would need the
+/// Gusanos particle system ported.
+const D9: &str = "D9: exact-zero health; OLX's Gusanos death particles consume the FindSpot rnd() \
+                  stream and are not ported, so the next random respawn spot differs";
 
 /// `CHECKED` without `rc`, `mt` and `ents`: the second pass. Draw counters
 /// come first in a frame, so a regression in health, the map, motion, shots
@@ -78,6 +84,7 @@ fn check(
 
 #[test]
 fn every_scenario_matches_olx_bit_for_bit() {
+    assert_eq!(rl_scenario::CHECKED, Fields::ALL, "every trace field must be compared");
     let Some(content) = content_dir() else { return };
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/oracle");
     let names = rl_scenario::fixture_names(&dir).unwrap();

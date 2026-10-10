@@ -2,7 +2,8 @@
 //! keys and weapons on every imported level with both mods, bonuses on.
 //! Every tick checks the invariants; at [`CLONE_AT`] the world is cloned and
 //! both copies must give the same checksums and events to the end.
-//! Needs the imported OLX content (`RL_CONTENT_DIR`, default `target/content`).
+//! Needs the imported OLX content: `RL_CONTENT_DIR`, which `.cargo/config.toml`
+//! sets to `target/content` unless the environment already does.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -18,9 +19,13 @@ const TICKS: usize = 3000;
 const CLONE_AT: usize = 1500;
 const WORMS: usize = 4;
 
-/// The imported content, or `None` with a notice if it has not been imported.
+/// The imported content (`RL_CONTENT_DIR`), or `None` with a notice if it is
+/// unset or has not been imported.
 fn content_dir() -> Option<String> {
-    let dir = std::env::var("RL_CONTENT_DIR").ok()?;
+    let Ok(dir) = std::env::var("RL_CONTENT_DIR") else {
+        eprintln!("RL_CONTENT_DIR is not set (run `cargo xtask fetch-olx-content`); skipping");
+        return None;
+    };
     if Path::new(&dir).is_dir() {
         Some(dir)
     } else {
@@ -111,7 +116,8 @@ fn check(w: &World, events: &TickEvents, tick: usize, what: &str) {
     assert!(w.projectiles().count() <= rl_sim::ProjectilePool::DEFAULT_CAPACITY, "{what} tick {tick}");
     assert!(w.entity_count() <= 1024, "{what} tick {tick}: entities {}", w.entity_count());
     assert!(w.bonuses().iter().filter(|b| b.used).count() <= MAX_BONUSES);
-    assert!(events.len() <= TickEvents::CAPACITY, "{what} tick {tick}");
+    // A dropped `TerrainEdit` would desync a renderer's colour image.
+    assert_eq!(events.dropped(), 0, "{what} tick {tick}: events were dropped");
 }
 
 fn smoke(mod_dir: &str, level: &str, seed: u64) {

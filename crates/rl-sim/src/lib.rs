@@ -42,7 +42,9 @@ mod world;
 mod worm;
 
 pub use bonus::{Bonus, BonusItem, BonusKind, MAX_BONUSES};
-pub use events::{CosmeticKind, Event, GAME_SOUNDS, SoundId, StampId, TerrainOp, TickEvents};
+pub use events::{
+    CosmeticKind, Event, GAME_SOUND_PREFIX, GAME_SOUNDS, SoundId, StampId, TerrainOp, TickEvents,
+};
 pub use input::{KeyLatch, Keys, Latches};
 pub use mod_rt::{
     MAX_AMOUNT, MAX_DEPTH, MAX_PROJECTILES, SimMod, SimModError, SimProjectile, SimWeapon, SpawnInfo,

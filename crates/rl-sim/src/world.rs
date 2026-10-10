@@ -452,7 +452,7 @@ impl World {
                     };
                     player_shoot(&mut self.worms, i, &self.sim_mod, &mut ctx);
                 }
-                laser_sight(&self.worms[i], &self.sim_mod, &mut self.draws);
+                laser_sight(&self.worms, i, &self.sim_mod, &self.terrain, &mut self.draws);
             }
         }
         // `CClient_Game.cpp:213-215`: projectiles after all worms.

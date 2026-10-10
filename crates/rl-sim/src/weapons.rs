@@ -5,7 +5,9 @@
 //! game both work on the same slots, the server first
 //! (`docs/porting/olx-notes/weapons-firing.md` §1, §3).
 
+use rl_data::level::Material;
 use rl_math::{GlibcRand, TimeDiff};
+use rl_terrain::Terrain;
 
 use crate::SimSettings;
 use crate::beam::{BeamCtx, draw_beam, shoot_special};
@@ -144,7 +146,8 @@ pub(crate) fn player_shoot(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut B
 /// keeps is the `ENT_LASERSIGHT` entity it spawns every sub-step (the worm is
 /// visible to everybody outside Hide and Seek), which fills the dedicated
 /// server's entity pool (spec §18 D4) and is reported with the aim direction.
-pub(crate) fn laser_sight(w: &Worm, m: &SimMod, draws: &mut Draws) {
+pub(crate) fn laser_sight(worms: &[Worm], i: usize, m: &SimMod, terrain: &Terrain, draws: &mut Draws) {
+    let w = &worms[i];
     if w.slots.is_empty() {
         return;
     }
@@ -162,7 +165,27 @@ pub(crate) fn laser_sight(w: &Worm, m: &SimMod, draws: &mut Draws) {
         while angle.is_finite() && angle < -180.0 {
             angle += 360.0;
         }
-        draws.entity(CosmeticKind::LaserSight, w.pos, vec_from_angle(angle));
+        let dir = vec_from_angle(angle);
+        // `:768-804`: 3 px steps until a pixel that stops particles or another
+        // living worm within 5 px; `i` is what the entity carries.
+        let (mut pos, mut len) = (w.pos, 0i16);
+        let (tw, th) = (terrain.width().max(1) as i64, terrain.height().max(1) as i64);
+        while len < 9999 {
+            let (x, y) = ((pos.x as i64).rem_euclid(tw), (pos.y as i64).rem_euclid(th));
+            if terrain.material(x, y).unwrap_or(Material::Rock) != Material::Background {
+                break;
+            }
+            let hit = worms.iter().enumerate().any(|(j, o)| {
+                let d = pos - o.pos;
+                j != i && o.alive && d.x * d.x + d.y * d.y < 25.0
+            });
+            if hit {
+                break;
+            }
+            pos += dir * 3.0;
+            len += 3;
+        }
+        draws.entity(CosmeticKind::LaserSight { len }, w.pos, dir);
     }
 }
 
@@ -263,5 +286,54 @@ mod tests {
             worm_shoot(&mut w, &mut ctx);
             assert_eq!(list.last().map(|s| s.angle), Some(expected));
         }
+    }
+
+    #[test]
+    fn the_laser_sight_event_carries_the_trace_length() {
+        let mut weapon = projectile_weapon("gun", "pellet");
+        weapon.laser_sight = true;
+        let m = SimMod::compile(
+            &mod_def(vec![weapon], vec![("pellet", pixel_projectile(None))]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let s = SimSettings::lx56();
+        // 100 x 10 background with rock at x = 40.
+        let mut cells = vec![Material::Background; 1000];
+        for y in 0..10 {
+            cells[y * 100 + 40] = Material::Rock;
+        }
+        let grid = MaterialGrid::from_cells(100, 10, cells).unwrap();
+        let terrain = Terrain::from_grid(&grid);
+        let worm = |x: f32| {
+            let mut w = Worm::spawned(0, Vec2::new(x, 5.0), AbsTime(0), &s);
+            w.slots = vec![Slot { weapon: 0, charge: 1.0, reloading: false, last_fire: 0.0 }];
+            (w.face, w.angle) = (Dir::Right, 0.0);
+            w
+        };
+        let len = |worms: &[Worm]| {
+            let mut draws = Draws::new(GlibcRand::new(1), Mt19937::new(1));
+            laser_sight(worms, 0, &m, &terrain, &mut draws);
+            let lens: Vec<i16> = draws
+                .events
+                .iter()
+                .filter_map(|e| match e {
+                    crate::Event::SpawnCosmetic { kind: CosmeticKind::LaserSight { len }, .. } => Some(*len),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(lens.len(), 1);
+            lens[0]
+        };
+        // From x = 10: 10, 13, ..., 40 is the first rock pixel, 10 steps.
+        assert_eq!(len(&[worm(10.0)]), 30);
+        // A worm at x = 25 stops the trace at x = 22 (within 5 px): 4 steps.
+        let mut other = worm(25.0);
+        other.alive = true;
+        assert_eq!(len(&[worm(10.0), other]), 12);
+        // A dead worm does not.
+        let mut dead = worm(25.0);
+        dead.alive = false;
+        assert_eq!(len(&[worm(10.0), dead]), 30);
     }
 }

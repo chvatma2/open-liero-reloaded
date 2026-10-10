@@ -15,14 +15,16 @@ traces in `rl-oracle`'s format.
   seeded with the header's seed; frames record `rc`, `mt` and `ents`, and `st`
   steps by the world's frame time (`World::frame_dt`, GameSpeed-scaled). A
   header with client options `rl-sim` does not model (`Game.Blood` other than 100) is refused.
-- `tests/oracle.rs` is the acceptance test: every scenario must match bit for
-  bit in the fields `CHECKED` lists (every group since bonuses), except those in `EXPECTED_DIVERGENCES`,
+- `tests/oracle.rs` is the acceptance test: `CHECKED == Fields::ALL`, and
+  every scenario must match bit for bit in all of it, except the three D9 rows
+  of `EXPECTED_DIVERGENCES` (`weapons/mw-1-0/{assassin-s-shot,flak,plasma-launcher}`),
   which must first diverge exactly at the listed frame and field (so a
-  regression in ported fields cannot hide there). A second pass does the same
-  without `rc`, `mt` and `ents` (`EXPECTED_DIVERGENCES_WITHOUT_DRAWS`), so a
-  regression in the frame of a pinned draw divergence shows up too. Rows
-  owned by a deviation (D9) stay after M4; only those are left.
-  On a mismatch the test prints the new row.
+  regression elsewhere cannot hide there). Each row's reason says why
+  bit-exactness is impossible without porting Gusanos particles. A second
+  pass does the same without `rc`, `mt` and `ents`
+  (`EXPECTED_DIVERGENCES_WITHOUT_DRAWS`), so a regression in the frame of a
+  pinned draw divergence shows up too. A new row needs a deviation in
+  `docs/porting/STATUS.md`. On a mismatch the test prints the new row.
 - The theme pack's green ball becomes the world's green-dirt mask.
 - A scenario's bonuses are placed with `World::place_bonus` before the
   frame's tick (weapons by name, ignoring case, as OLX's `FindWeaponId`).

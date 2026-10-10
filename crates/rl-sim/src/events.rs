@@ -31,15 +31,21 @@ impl SoundId {
     pub const DEATH: [SoundId; 3] = [SoundId(3), SoundId(4), SoundId(5)];
 }
 
+/// The prefix of OLX's game sounds in [`crate::SimMod::sounds`]: the rest is
+/// a path in OLX's data directory. Every other entry is a mod sound, a path
+/// in the mod's pack (a mod's own path with this prefix is ignored, so the
+/// roots cannot be confused).
+pub const GAME_SOUND_PREFIX: &str = "olx:";
+
 /// OLX's game sounds (`src/game/Sounds.cpp:25-30`), the first entries of
-/// every [`crate::SimMod::sounds`] table, as paths in OLX's data directory.
+/// every [`crate::SimMod::sounds`] table, each with [`GAME_SOUND_PREFIX`].
 pub const GAME_SOUNDS: [&str; 6] = [
-    "data/sounds/throw.wav",
-    "data/sounds/pickup.wav",
-    "data/sounds/bump.wav",
-    "data/sounds/death1.wav",
-    "data/sounds/death2.wav",
-    "data/sounds/death3.wav",
+    "olx:data/sounds/throw.wav",
+    "olx:data/sounds/pickup.wav",
+    "olx:data/sounds/bump.wav",
+    "olx:data/sounds/death1.wav",
+    "olx:data/sounds/death2.wav",
+    "olx:data/sounds/death3.wav",
 ];
 
 /// What a [`Event::TerrainEdit`] did to the map.
@@ -92,9 +98,10 @@ pub enum CosmeticKind {
     Doomsday,
     /// `ENT_JETPACKSPRAY`.
     JetpackSpray,
-    /// `ENT_LASERSIGHT`: `vel` is the unit aim direction; the renderer
-    /// traces the line (OLX's 3 px steps up to the first solid pixel or worm).
-    LaserSight,
+    /// `ENT_LASERSIGHT`: `vel` is the unit aim direction and `len` the
+    /// length OLX passes (`CClient_Game.cpp:807`): the pixels the 3 px trace
+    /// went before the first solid pixel or worm (a multiple of 3, at most 9999).
+    LaserSight { len: i16 },
     /// The beam `DrawBeam` draws for this worm in this sub-step: from `pos`
     /// (the worm) to `pos + vel` (where the trace stopped).
     Beam { worm: i32 },

@@ -560,7 +560,7 @@ Boost (only for `FindSpot`, if it is ever ported):
 
 ## Open questions
 
-1. **Shot delivery latency (§3.4).** Under manual stepping, how many fixed frames
+1. **Answered (plan 4, D1): Model R; shots of frames F and F+1 are processed before frame F+2.** **Shot delivery latency (§3.4).** Under manual stepping, how many fixed frames
    pass between `WormShoot` (draw #8) and `ProcessShot` (draws #13, #14)?
    - Analysis says the earliest is the second `frameInner` after the shot.
      `SendPackets` needs `tLX->currentTime` to advance; then it crosses loopback UDP.
@@ -569,13 +569,13 @@ Boost (only for `FindSpot`, if it is ever ported):
      `ProcessServerShotList`). It also decides when projectiles appear in traces.
    - The Rust port will probably need to model a fixed delivery delay to match,
      or the oracle needs a synchronous-delivery hook.
-2. **Gib images in dedicated mode.** Is `bmpGibs` non-NULL? That decides whether
+2. **Answered (plan 4 task 7): non-NULL; gibs draw 4 `rand()` with room in the pool (`explode-kill-respawn`'s 580 draws).** **Gib images in dedicated mode.** Is `bmpGibs` non-NULL? That decides whether
    gibs take a pool slot and draw 2 more. Check with a scenario that kills a worm
    plus the RNG probe, or log `getGibimg().get()` once.
-3. **`bParticles` in the container's options.** It defaults to true; confirm that
+3. **Answered (plan 4): `Game.Particles` is on and `Game.Blood` 100 in the traces; `rl-scenario` refuses a header with other values.** **`bParticles` in the container's options.** It defaults to true; confirm that
    the dedicated server's `cfg/options.cfg` does not override it. It gates the
    pool accounting of `ENT_PARTICLE`/`ENT_BLOOD`, not the argument draws.
-4. **Wall-clock gated server logic.** Respawn (`tLX->currentTime >
+4. **Answered (plan 4, D2): the oracle pins `currentTime = simulationTime + 10 ms`; respawn and bonus timers read it.** **Wall-clock gated server logic.** Respawn (`tLX->currentTime >
    timeOfDeath + RespawnTime`, where `timeOfDeath` is physics time) and bonus
    spawning compare the wall clock with physics time. Scenarios with deaths or
    bonuses will not be reproducible until the oracle patch pins `tLX->currentTime`
@@ -584,7 +584,7 @@ Boost (only for `FindSpot`, if it is ever ported):
 5. **`getchallenge`.** Could a stray UDP packet reach port 23400 inside Docker
    during a recording? It would draw 2 `rand()` in P2. This is low risk with no
    published port.
-6. **Pool counter start value.** Do any `SpawnEntity` calls happen between
+6. **Answered (plan 4, D4): the oracle clears the entity pool when a recording starts, and the port's counter starts at 0 at match start.** **Pool counter start value.** Do any `SpawnEntity` calls happen between
    `ClearEntities` (game preparation) and frame 0 of the recording? For example
    `ENT_SPAWN` from `ParseSpawnBonus`, or laser sights during the stepping to
    Playing. The RNG probe (Recommendation 7) or a one-off log of
