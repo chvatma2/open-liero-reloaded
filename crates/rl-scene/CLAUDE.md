@@ -31,7 +31,10 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
 - **Interpolation** (`snapshot.rs`, Review Focus 1): `Interpolation::Linear`
   blends positions at sub-pixel precision, never across a projectile serial
   change (slot reuse), a death or a respawn (`worm_blends`: alive flag and
-  `time_of_death`), nor a hook thrown since the snapshot.
+  `time_of_death`), nor a hook thrown since the snapshot. Bonuses blend
+  within one bonus (slot and `spawn_time`). Laser sights and beams start at
+  their worm as drawn, and a hook on a worm sits on that worm as drawn
+  (`tests/anchors.rs`), so nothing trails the blended worm.
   `Interpolation::Latest` is OLX: the latest state at whole pixels.
 - **Exact OLX math** (`worm.rs`, `projectile.rs`, `marks.rs`, `camera.rs`):
   each function cites its OLX source. Offsets are OLX's screen pixels
@@ -39,6 +42,6 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   `docs/porting/STATUS.md` (presentation rows).
 
 Test: `cargo nextest run -p rl-scene`. The scenario tests (interpolation,
-order, marks, no-alloc, snapshots) need `RL_CONTENT_DIR` and skip without
+order, marks, anchors, no-alloc, snapshots) need `RL_CONTENT_DIR` and skip without
 it. Snapshots (`tests/snapshots/*.snap`) are `insta`'s: an intended change
 is accepted with `INSTA_UPDATE=always` after reading the `.snap.new` diff.

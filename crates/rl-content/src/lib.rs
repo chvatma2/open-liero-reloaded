@@ -18,6 +18,7 @@ mod maps;
 mod mods;
 mod placeholder;
 mod sandbox;
+mod sounds;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -31,7 +32,8 @@ pub use core_assets::{CORE_PACK_ID, CORE_SPRITES, CorePack};
 pub use maps::{LoadedLevel, LoadedSkin, LoadedTheme, MAX_ART_SCALE, MAX_COLOR_MAP_BYTES};
 pub use mods::{LoadedMod, check_frames};
 pub use placeholder::{PLACEHOLDER, placeholder_image};
-pub use sandbox::{SANDBOX_START, SandboxSetup, SpawnSpec};
+pub use sandbox::{SANDBOX_START, SandboxSetup, SpawnSpec, new_world_from};
+pub use sounds::{MAX_SOUND_BYTES, MAX_SOUND_SECONDS, check_sound};
 
 #[doc(no_inline)]
 pub use rl_sim::{SimMod, World};

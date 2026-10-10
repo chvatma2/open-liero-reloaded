@@ -68,6 +68,13 @@ impl CorePack {
             }
             core.placeholders.insert(name.to_string(), placeholder_image(w, h));
         }
+        core.sounds.retain(|name, bytes| match crate::check_sound(bytes) {
+            Ok(()) => true,
+            Err(e) => {
+                warnings.push(format!("core sound {name}: {e}: silence instead"));
+                false
+            }
+        });
         for s in GAME_SOUNDS {
             if core.game_sound(s).is_none() {
                 warnings.push(format!("game sound {s} is missing from the core pack: silence instead"));

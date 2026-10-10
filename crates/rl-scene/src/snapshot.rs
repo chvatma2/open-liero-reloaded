@@ -2,7 +2,7 @@
 //! the current world (spec §8.2, §19 E2).
 
 use rl_math::{AbsTime, Vec2};
-use rl_sim::{MAX_WORMS, Projectile, ProjectilePool, World, Worm};
+use rl_sim::{Bonus, MAX_BONUSES, MAX_WORMS, Projectile, ProjectilePool, World, Worm};
 
 /// What a worm looked like at a tick.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -43,6 +43,21 @@ pub struct ProjSnap {
     pub pos: Vec2,
 }
 
+/// What a client bonus slot held at a tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BonusSnap {
+    pub used: bool,
+    /// `fSpawnTime`: another bonus in the same slot has another.
+    pub spawn_time: AbsTime,
+    pub pos: Vec2,
+}
+
+impl BonusSnap {
+    pub fn of(b: &Bonus) -> BonusSnap {
+        BonusSnap { used: b.used, spawn_time: b.spawn_time, pos: b.pos }
+    }
+}
+
 /// The drawable state of a world at one tick: positions, angles, frames,
 /// serials and alive flags. [`Snapshot::capture_into`] reuses its buffers,
 /// so recapturing allocates nothing once they are big enough.
@@ -50,6 +65,7 @@ pub struct ProjSnap {
 pub struct Snapshot {
     worms: Vec<WormSnap>,
     projectiles: Vec<ProjSnap>,
+    bonuses: [BonusSnap; MAX_BONUSES],
     time: Option<AbsTime>,
 }
 
@@ -65,6 +81,7 @@ impl Snapshot {
         Snapshot {
             worms: Vec::with_capacity(MAX_WORMS),
             projectiles: Vec::with_capacity(ProjectilePool::DEFAULT_CAPACITY),
+            bonuses: [BonusSnap::default(); MAX_BONUSES],
             time: None,
         }
     }
@@ -84,6 +101,9 @@ impl Snapshot {
             serial: p.serial(),
             pos: p.pos,
         }));
+        for (s, b) in self.bonuses.iter_mut().zip(world.bonuses()) {
+            *s = BonusSnap::of(b);
+        }
         self.time = Some(world.time());
     }
 
@@ -91,6 +111,7 @@ impl Snapshot {
     pub fn clear(&mut self) {
         self.worms.clear();
         self.projectiles.clear();
+        self.bonuses = [BonusSnap::default(); MAX_BONUSES];
         self.time = None;
     }
 
@@ -101,6 +122,11 @@ impl Snapshot {
     /// Used slots in slot order.
     pub fn projectiles(&self) -> &[ProjSnap] {
         &self.projectiles
+    }
+
+    /// The client's bonus slots ([`World::bonuses`]); unused when empty.
+    pub fn bonuses(&self) -> &[BonusSnap; MAX_BONUSES] {
+        &self.bonuses
     }
 
     /// The world's time when captured; `None` when empty.
@@ -176,6 +202,19 @@ impl<'a> Blend<'a> {
         match self.prev_worm(i, w).filter(|p| p.rope_released && w.rope.released) {
             Some(p) => lerp(p.hook, w.rope.pos, self.alpha),
             None => w.rope.pos,
+        }
+    }
+
+    /// The bonus in `slot`'s drawn position (unsnapped): blended only with
+    /// the snapshot's bonus of the same slot and spawn time, so a bonus
+    /// picked up and another spawned in its slot never slides.
+    pub fn bonus(&self, slot: usize, b: &Bonus) -> Vec2 {
+        if self.exact() {
+            return b.pos;
+        }
+        match self.prev.bonuses.get(slot) {
+            Some(p) if p.used && b.used && p.spawn_time == b.spawn_time => lerp(p.pos, b.pos, self.alpha),
+            _ => b.pos,
         }
     }
 

@@ -13,6 +13,8 @@ use crate::draw_list::{DrawList, Item, Layer, Line, View, perform_line};
 /// A laser sight entity alive at the end of the tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Laser {
+    /// The worm id it belongs to (the alive worm nearest its start), if any.
+    worm: Option<i32>,
     start: Vec2,
     dir: Vec2,
     len: i16,
@@ -97,13 +99,15 @@ impl Marks {
                     }
                 }
                 EventKind::SpawnCosmetic { kind: CosmeticKind::LaserSight { len }, pos, vel } => {
+                    let worm = owner(world, pos);
                     if stopped_at_worm(world, pos, vel, len)
-                        && let Some(f) = owner(world, pos).and_then(|i| self.target.get_mut(i))
+                        && let Some(f) = worm.and_then(|i| self.target.get_mut(i))
                     {
                         *f = true;
                     }
                     if substeps > 0 && e.substep + 1 == substeps && self.lasers.len() < MAX_WORMS {
-                        self.lasers.push(Laser { start: pos, dir: vel, len });
+                        let worm = worm.and_then(|i| i32::try_from(i).ok());
+                        self.lasers.push(Laser { worm, start: pos, dir: vel, len });
                     }
                 }
                 EventKind::SpawnCosmetic { kind: CosmeticKind::Beam { worm }, pos, vel } => {
@@ -132,13 +136,25 @@ impl Marks {
     /// and a dot of a random laser colour where it is 0, snapped to world
     /// pixels. The dots change every drawn frame (their own generator).
     ///
+    /// `drawn(id)` is worm id `id`'s drawn position when it is interpolated
+    /// (`None` draws OLX's: where the worm was in the sub-step): a laser
+    /// sight then starts there, keeping its direction and length, and a
+    /// beam runs from there to where it stopped, so neither trails the worm.
+    ///
     /// OLX: src/client/Entity.cpp:305-314, src/client/GfxPrimitives.cpp:1878-1901, :2507-2520
-    pub fn draw(&mut self, assets: &SceneAssets, view: View, out: &mut DrawList) {
+    pub fn draw(
+        &mut self,
+        assets: &SceneAssets,
+        view: View,
+        drawn: impl Fn(i32) -> Option<Vec2>,
+        out: &mut DrawList,
+    ) {
         let Marks { lasers, rng, laser_alt, beams, .. } = self;
         for l in lasers.iter() {
-            let end = l.start + l.dir * l.len as f32;
+            let start = l.worm.and_then(&drawn).unwrap_or(l.start);
+            let end = start + l.dir * l.len as f32;
             let screen = |v: f32| (v as i32).saturating_mul(2);
-            let (a, b) = ((screen(l.start.x), screen(l.start.y)), (screen(end.x), screen(end.y)));
+            let (a, b) = ((screen(start.x), screen(start.y)), (screen(end.x), screen(end.y)));
             perform_line(a, b, |x, y| {
                 *laser_alt = (*laser_alt + 1) % (rng.random_int(35) + 1);
                 if *laser_alt != 0 {
@@ -151,8 +167,12 @@ impl Marks {
                 }
             });
         }
-        for line in beams.iter().flatten() {
-            out.push(Layer::Beams, Item::Line(*line));
+        for (id, line) in beams.iter().enumerate() {
+            let Some(mut line) = *line else { continue };
+            if let Some(p) = i32::try_from(id).ok().and_then(&drawn) {
+                line.a = (p.x as i32, p.y as i32);
+            }
+            out.push(Layer::Beams, Item::Line(line));
         }
     }
 }

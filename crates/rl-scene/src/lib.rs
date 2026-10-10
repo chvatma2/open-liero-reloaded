@@ -25,7 +25,7 @@ pub use camera::{Camera, FOV_HEIGHT, SHAKE_MS, Viewport};
 pub use draw_list::{AtlasId, DrawList, Item, Layer, Line, Rect, Sprite, View, perform_line};
 pub use marks::Marks;
 pub use projectile::{draw_bonus, draw_projectile, frame_x, framestep};
-pub use snapshot::{Blend, Interpolation, ProjBlend, ProjSnap, Snapshot, WormSnap, worm_blends};
+pub use snapshot::{Blend, BonusSnap, Interpolation, ProjBlend, ProjSnap, Snapshot, WormSnap, worm_blends};
 pub use worm::{
     CROSSHAIR_DISTANCE, FRAME_WIDTH, SKIN_HEIGHT, SKIN_WIDTH, WormExtras, WormFrame, crosshair_offset,
     draw_worm, health_segments, muzzle_frame, skin_frame,
@@ -109,7 +109,12 @@ impl Scene {
         out.clear();
         out.view = view;
         out.map = map;
-        self.marks.draw(assets, view, out);
+        // Linear: marks start at the worms as drawn, not where the sub-step left them.
+        let drawn = |id: i32| {
+            let i = worms.iter().position(|w| w.id == id)?;
+            (!blend.exact()).then(|| blend.worm(i, &worms[i]))
+        };
+        self.marks.draw(assets, view, drawn, out);
         let m = world.sim_mod();
         let mut projectiles = blend.projectiles();
         for (slot, p) in world.projectiles() {
@@ -118,8 +123,8 @@ impl Scene {
                 draw_projectile(def, p, at, world.rot_bumped(p.proj), assets, view, out);
             }
         }
-        for b in world.bonuses().iter().filter(|b| b.used) {
-            draw_bonus(b, blend.snap(b.pos), assets, view, out);
+        for (slot, b) in world.bonuses().iter().enumerate().filter(|(_, b)| b.used) {
+            draw_bonus(b, blend.snap(blend.bonus(slot, b)), assets, view, out);
         }
         let frame = WormFrame { world, assets, view, show_health_bars: self.options.show_health_bars };
         for (i, w) in worms.iter().enumerate().filter(|(_, w)| w.alive) {
@@ -127,9 +132,23 @@ impl Scene {
             let extras = WormExtras {
                 muzzle: self.marks.muzzle(w.id),
                 target: self.marks.target(w.id),
-                hook: blend.hook(i, w),
+                hook: hook(&blend, worms, i, w),
             };
             draw_worm(&frame, i, w, p, &extras, out);
         }
+    }
+}
+
+/// Worm `i`'s drawn hook: on the worm it is attached to, as that worm is
+/// drawn (OLX draws it at that worm's current position, which keeps it on
+/// the worm; interpolated, the worm's current position is not where it is
+/// drawn), else the blended hook.
+///
+/// OLX: src/client/CNinjaRope.cpp:139-146
+fn hook(blend: &Blend, worms: &[rl_sim::Worm], i: usize, w: &rl_sim::Worm) -> rl_math::Vec2 {
+    let on = w.rope.attached && w.rope.player_attached >= 0;
+    match worms.iter().position(|o| on && o.id == w.rope.player_attached) {
+        Some(j) => blend.worm(j, &worms[j]),
+        None => blend.hook(i, w),
     }
 }

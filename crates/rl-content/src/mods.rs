@@ -117,8 +117,12 @@ impl Content {
                 }
                 found
             };
-            if let Some(bytes) = bytes {
-                sounds.insert(name.clone(), bytes);
+            match bytes.map(|b| (crate::check_sound(&b), b)) {
+                Some((Ok(()), bytes)) => {
+                    sounds.insert(name.clone(), bytes);
+                }
+                Some((Err(e), _)) => warnings.push(format!("{id}/{name}: {e}: silence instead")),
+                None => {}
             }
         }
         Ok(LoadedMod { sim: Arc::new(sim), images, sounds, warnings })

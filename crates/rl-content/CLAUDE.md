@@ -25,7 +25,14 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   projectile a one-frame placeholder. On good content both give the same
   `SimMod` (`tests/content.rs`). Frame counts are `width / height` of the
   pack's PNGs (spec §18 D3).
-- **Worlds.** `new_world` spawns worms in order; a worm without a position
+- **Hostile sounds** (`sounds.rs`): a sound above `MAX_SOUND_BYTES` (2 MiB)
+  or longer than `MAX_SOUND_SECONDS` (60 s) by its header (Ogg granule over
+  rate, WAV data over byte rate) is silence with a warning, from a mod or
+  the core pack, so `rl-audio` never decodes it (`check_sound`). A stream
+  whose header lies is bounded only by the byte cap.
+- **Worlds.** `new_world` loads the mod, level and theme and calls
+  `new_world_from(&mod, &level, &theme, &setup)`, which a game restart
+  calls with the assets it loaded once. Both spawn worms in order; a worm without a position
   draws one from the world's `FindSpot` (`World::find_spot`), so the same
   setup gives the same world. Worms get the mod's first five weapons unless
   the spec names them. The clock starts at `SANDBOX_START`.

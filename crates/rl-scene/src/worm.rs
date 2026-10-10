@@ -125,7 +125,7 @@ pub struct WormExtras {
 pub fn draw_worm(f: &WormFrame, i: usize, w: &Worm, p: Vec2, extras: &WormExtras, out: &mut DrawList) {
     let look: WormLook = f.assets.worm(i);
     if w.rope.released {
-        draw_rope(f, w, p, extras.hook, out);
+        draw_rope(f, p, extras.hook, out);
     }
     // `x+l+10 < l || x-10 > VirtW || ...` in screen pixels.
     let (rx, ry) = (2.0 * (p.x - f.view.x), 2.0 * (p.y - f.view.y));
@@ -183,20 +183,12 @@ pub(crate) fn clip(src: Rect, w: u32, h: u32) -> Rect {
 /// The ninja rope from the hook to the worm, then the hook if it is in
 /// view. At world resolution (spec §19 E3) the non-antialiased rope is a
 /// 1-pixel line alternating `RopeColour2`, `RopeColour1` per pixel from the
-/// hook (`DrawRope` resets the phase each call). A hook attached to a worm
-/// is drawn at that worm.
+/// hook (`DrawRope` resets the phase each call). `hook` is the drawn hook:
+/// a hook attached to a worm is at that worm as drawn (`Scene::build`).
 ///
 /// OLX: src/client/CNinjaRope.cpp:132-180, src/client/GfxPrimitives.cpp:1828-1846, :2458-2477
-fn draw_rope(f: &WormFrame, w: &Worm, p: Vec2, hook: Vec2, out: &mut DrawList) {
-    let mut h = hook;
-    if w.rope.attached && w.rope.player_attached >= 0 {
-        // The other worm's current position (OLX corrects the order of
-        // simulation this way); interpolation is not applied to it.
-        if let Some(o) = f.world.worms().iter().find(|o| o.id == w.rope.player_attached) {
-            h = o.pos;
-        }
-    }
-    let h = Vec2::new((h.x as i32) as f32, (h.y as i32) as f32);
+fn draw_rope(f: &WormFrame, p: Vec2, hook: Vec2, out: &mut DrawList) {
+    let h = Vec2::new((hook.x as i32) as f32, (hook.y as i32) as f32);
     let (a, b) = ((h.x as i32, h.y as i32), (p.x as i32, p.y as i32));
     let (white, colours) = (f.assets.white, f.assets.rope_colours);
     let (v, mut n) = (f.view, 0usize);

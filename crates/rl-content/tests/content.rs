@@ -390,3 +390,54 @@ fn hostile_art_scale_is_refused() {
     let err = format!("{:#}", content.load_level("scale-9").unwrap_err());
     assert!(err.contains("art scale 9"), "{err}");
 }
+
+/// Hostile packs: a sound too large or too long is never handed to the
+/// decoder; it is silence with a warning, from the mod or the core pack.
+#[test]
+fn oversized_sounds_are_silent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sink = |id: &str| DirFs::new(tmp.path().join(id));
+    let huge = vec![0u8; rl_content::MAX_SOUND_BYTES + 1];
+    let mut m = broken_mod();
+    m.assets.insert(VPath::new("sfx/missing.ogg").unwrap(), huge.clone());
+    rl_pack::write_mod(&mut sink("broken-mod"), &m).unwrap();
+    let mut core = thin_core();
+    core.def.sounds = vec!["throw.ogg".into()];
+    core.sounds.insert("throw.ogg".into(), huge);
+    rl_pack::write_core(&mut sink("olx-core"), &core).unwrap();
+
+    let content = Content::open(tmp.path()).unwrap();
+    assert_eq!(content.core().sound("throw.ogg"), None);
+    assert!(
+        content.warnings().iter().any(|w| w.contains("throw.ogg") && w.contains("bytes")),
+        "{:?}",
+        content.warnings()
+    );
+    let m = content.load_mod("broken-mod").unwrap();
+    assert!(!m.sounds.contains_key("sfx/missing.ogg"));
+    assert!(
+        m.warnings.iter().any(|w| w.contains("sfx/missing.ogg") && w.contains("bytes")),
+        "{:?}",
+        m.warnings
+    );
+}
+
+/// A restart builds its world from the assets loaded once, the same world
+/// `new_world` loads from the packs.
+#[test]
+fn new_world_from_loaded_assets_is_new_world() {
+    let tmp = tempfile::tempdir().unwrap();
+    synthetic(tmp.path());
+    let content = Content::open(tmp.path()).unwrap();
+    let specs =
+        vec![SpawnSpec { pos: None, weapons: vec![] }, SpawnSpec { pos: Some((50, 50)), weapons: vec![0] }];
+    let s = setup(specs, 9);
+    let m = content.load_mod(&s.mod_id).unwrap();
+    let level = content.load_level(&s.level_id).unwrap();
+    let theme = content.load_theme(&level.theme).unwrap();
+    let world = rl_content::new_world_from(&m, &level, &theme, &s).unwrap();
+    assert_eq!(world, content.new_world(&s).unwrap());
+    assert_eq!(world.worms().len(), 2);
+    let bad = setup(vec![SpawnSpec { pos: None, weapons: vec![7] }], 9);
+    assert!(rl_content::new_world_from(&m, &level, &theme, &bad).is_err());
+}
