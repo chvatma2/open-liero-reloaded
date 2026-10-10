@@ -530,6 +530,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-import-lgs"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "rl-data",
+ "rl-pack",
+ "rl-vfs",
+ "thiserror",
+]
+
+[[package]]
 name = "rl-pack"
 version = "0.1.0"
 dependencies = [
