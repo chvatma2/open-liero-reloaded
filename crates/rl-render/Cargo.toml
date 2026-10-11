@@ -18,6 +18,11 @@ pollster.workspace = true
 
 [dev-dependencies]
 allocation-counter.workspace = true
+divan.workspace = true
+
+[[bench]]
+name = "frame"
+harness = false
 
 [lints]
 workspace = true

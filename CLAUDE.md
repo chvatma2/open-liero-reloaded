@@ -13,9 +13,13 @@ modernized for current displays.
    Without network access, use `cargo xtask check --offline`. `cargo xtask
    full` adds the bot-match grid (`bot-grid`: `rl-cli`'s `tests/grid.rs`, both
    mods × 4 levels × 3 seeds, every weapon and action covered, a 30-minute
-   match bounded) and the device tier (renderer GPU tests, render goldens,
-   the 10-minute soak, the audio device check); run it before merging bot,
-   rendering or audio changes.
+   match bounded), the device tier (renderer GPU tests, render goldens,
+   the 10-minute soak, the audio device check), the end-to-end autoplay on
+   Xvfb (`e2e`) and the benchmarks and short stress run against
+   `fixtures/bench/` (`bench`, `stress`; re-baseline with `cargo xtask bench
+   --bless --reason "<why>"`); run it before merging bot, rendering, audio
+   or performance-sensitive changes. `cargo xtask stress` is the long
+   engine stress run.
 2. **One crate per concern, under `crates/`.** Each crate has a `CLAUDE.md`:
    read it before editing the crate. Register every new crate in `xtask/layers.ron`.
    A crate may depend only on lower layers (`cargo xtask layers`).

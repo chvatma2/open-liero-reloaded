@@ -73,6 +73,8 @@ pack when `RL_CONTENT_DIR` is set. To accept a reviewed snapshot change, run
 given, so goldens and failure records keep their form) are the stress
 test's; without them a match is OLX's (`LoadingTime` 100, pool 3000).
 `tests/stress.rs` (check) plays a 4 s stress run on a 200-slot pool.
+`benches/game.rs` (divan, `cargo xtask bench`): 8 bots' think + tick and a
+draw-list build on a warm Classic match (needs `RL_CONTENT_DIR`).
 `tests/render_golden.rs` (the GPU frame goldens) runs in `cargo xtask full`
 (`RL_GPU_TESTS=1`). `tests/matches.rs` (two 8-bot matches, determinism and
 round trip; failure capture through the binary) and `tests/golden.rs` (the

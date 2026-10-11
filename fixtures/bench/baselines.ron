@@ -1,0 +1,11 @@
+(
+    note: "Medians in ns (`cargo xtask bench --bless --reason`); this machine\'s: WSL2, 12 cores, lavapipe.",
+    benches: {
+        "rl-cli/game/bots_8_tick": 23670.0,
+        "rl-cli/game/drawlist_build": 2870.0,
+        "rl-render/frame/frame_1080p": 5123000.0,
+        "rl-render/frame/frame_1440p": 6996000.0,
+        "rl-sim/tick/tick_32_worms": 7188.0,
+        "rl-sim/tick/tick_full_pool": 225000.0,
+    },
+)

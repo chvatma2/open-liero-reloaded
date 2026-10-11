@@ -13,3 +13,6 @@
   fixtures/matches/classic-dirt-level-8dm.ron
   fixtures/matches/classic-fossilfacility-4xtreme-kill-limit.ron
   fixtures/matches/mw-castlestrike-8chaos.ron
+2026-10-11 bench: first baselines: divan benchmarks and the short stress run (plan 7 task 8)
+  fixtures/bench/baselines.ron
+  fixtures/bench/stress.ron

@@ -40,7 +40,9 @@ pub fn run(offline: bool) -> anyhow::Result<bool> {
 /// the render goldens and the HUD snapshots, with `RL_GPU_TESTS` set), skipped with a notice
 /// when no graphics adapter opens, the audio device check (OLX sounds
 /// on the default output), skipped with a notice when no device opens,
-/// and the end-to-end autoplay on Xvfb (`e2e.rs`; skipped without Xvfb).
+/// the end-to-end autoplay on Xvfb (`e2e.rs`; skipped without Xvfb), and
+/// the benchmarks and the short stress run against their baselines
+/// (`bench.rs`).
 pub fn full(offline: bool) -> anyhow::Result<bool> {
     run_with(offline, true)
 }
@@ -194,6 +196,8 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
         step("audio", &mut || audio_step(&envs));
         let content = envs.iter().find(|(k, _)| *k == "RL_CONTENT_DIR").map(|(_, v)| v.clone());
         step("e2e", &mut || crate::e2e::run(content.as_deref()));
+        step("bench", &mut || crate::bench::bench_step(&envs, false));
+        step("stress", &mut || crate::bench::stress_step(content.as_deref(), false));
     }
     let what = if gpu { "full" } else { "check" };
     if failed.is_empty() {

@@ -117,5 +117,9 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   one canonical NaN. Tick-time buffers are `buf::Buf`, whose clone keeps
   the capacity, so a cloned world ticks without allocating too.
 
+Bench: `benches/tick.rs` (divan, `cargo xtask bench`): a tick with OLX's
+pool full (3000 bouncing pellets of a mod made there) and a tick of 32
+walking worms; no content needed.
+
 Test: `cargo nextest run -p rl-sim`. The oracle test needs imported content;
 `cargo xtask check` sets `RL_CONTENT_DIR`.

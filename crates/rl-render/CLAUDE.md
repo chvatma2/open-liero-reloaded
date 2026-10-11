@@ -59,6 +59,11 @@ on screen or offscreen.
   goldens (one `rl-cli` process each, main thread) pass. The default
   software adapter has no such problem.
 
+Bench: `benches/frame.rs` (divan, `cargo xtask bench`): a frame of a
+synthetic 504 × 350 level with 2000 sprites and 500 line pixels at 1080p
+and 1440p, waited for on the device; without an adapter it prints a
+notice and measures nothing.
+
 Test: `cargo nextest run -p rl-render` (CPU: packing, quads, upscale
 geometry, image diff). The GPU tests (`tests/gpu.rs`) and goldens need
 `RL_GPU_TESTS=1`; `cargo xtask full` sets it and runs them, skipping with a

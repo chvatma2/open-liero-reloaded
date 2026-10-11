@@ -54,6 +54,8 @@ proptest = "1.11.0"
 insta = "1.49.0"
 tempfile = "3"
 allocation-counter = "0.8.1"
+# Benchmarks (plan 7 G8): an exact pin, dev-dependency only.
+divan = "=0.1.21"
 # Graphics (plan 5): exact pins, in lockstep with egui-wgpu 0.36.2.
 wgpu = "=30.0.1"
 bytemuck = "=1.25.2"

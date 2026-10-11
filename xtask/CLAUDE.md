@@ -2,11 +2,32 @@
 
 Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `oracle-record`, `tidy`, `bless-render`, `bless-regression`, `fetch-olx-content`,
-`e2e`.
+`e2e`, `bench`, `stress`.
 
 - `full` runs `check`, then `bot-grid` (`check::FULL_TESTS`: `rl-cli`'s
   `tests/grid.rs` with `RL_FULL_TESTS=1`), then the GPU and audio steps,
-  then `e2e`.
+  then `e2e`, `bench` and `stress`.
+- `bench` (`bench.rs`, also `cargo xtask bench [--offline]`, spec §21 G8):
+  the divan benchmarks (`BENCHES`: `rl-sim/benches/tick.rs`,
+  `rl-render/benches/frame.rs`, `rl-cli/benches/game.rs`; bench profile)
+  `RUNS` (3) times, each one's median of the runs' medians against
+  `fixtures/bench/baselines.ron` (ns); then `stress`: the short stress run
+  (`STRESS`: MW 1.0 and Classic × pool 3000 and 20 000 on Castle Strike,
+  32 chaos bots, `STRESS_SECONDS` (20) each, `rl-cli stress` in release,
+  determinism checked on the first run) `RUNS` times, the median tick p50
+  and frame p50 against `fixtures/bench/stress.ron`. Noise guard: a
+  measurement fails only over `TOLERANCE` (+10 %), and then only if the
+  best of `RETRIES` (2) more runs is still over (a notice says it was
+  retried). A baseline not measured (no adapter, no content) or a
+  measurement without one is a notice. `full` prints one summary line
+  each; the command prints every measurement. `bench --bless --reason
+  "<why>"` measures and writes both files (logged like `bless-render`).
+  Baselines are this machine's (WSL2, 12 cores, lavapipe); in repeated
+  runs here the medians stayed within ±6 %. About 35 s once built.
+- `stress [--seconds 180]` (`bench::stress_command`): the long stress
+  run, every `STRESS` configuration through `rl-cli stress` (progress and
+  each report as it plays, determinism checked), then a summary table
+  (tick µs, projectiles, entities, frame ms, MiB) and the adapter.
 - `e2e` (`e2e.rs`, also `cargo xtask e2e [--offline]`): builds `rl-game`
   (dev profile), starts Xvfb on the first display from `:90` without a
   lock file (`-displayfd` says when it is ready; stopped with SIGTERM so

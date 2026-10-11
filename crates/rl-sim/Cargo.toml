@@ -15,6 +15,11 @@ libm.workspace = true
 
 [dev-dependencies]
 allocation-counter.workspace = true
+divan.workspace = true
+
+[[bench]]
+name = "tick"
+harness = false
 
 [lints]
 workspace = true

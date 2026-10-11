@@ -41,6 +41,11 @@ ron.workspace = true
 tempfile.workspace = true
 allocation-counter.workspace = true
 insta.workspace = true
+divan.workspace = true
+
+[[bench]]
+name = "game"
+harness = false
 
 [lints]
 workspace = true

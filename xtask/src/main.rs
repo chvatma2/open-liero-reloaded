@@ -1,6 +1,7 @@
 //! Developer workflows. Run from anywhere in the workspace with `cargo xtask <command>`.
 
 mod api;
+mod bench;
 mod bless;
 mod bless_regression;
 mod check;
@@ -63,6 +64,26 @@ enum Command {
         #[arg(long)]
         offline: bool,
     },
+    /// The benchmarks (divan) and the short stress run against their
+    /// baselines in fixtures/bench/ (medians of 3 runs, fail over +10 %).
+    Bench {
+        /// Measure and write the baselines instead, logged in fixtures/blessings.log.
+        #[arg(long, requires = "reason")]
+        bless: bool,
+        /// Why the baselines change (with --bless).
+        #[arg(long)]
+        reason: Option<String>,
+        /// Do not download OLX content (the content benchmarks and stress are skipped).
+        #[arg(long)]
+        offline: bool,
+    },
+    /// The engine stress test: 32 chaos bots on Castle Strike for minutes, both
+    /// mods, OLX's projectile pool and a raised one; prints each report.
+    Stress {
+        /// Seconds of match time per configuration.
+        #[arg(long, default_value_t = 180.0)]
+        seconds: f32,
+    },
     /// Install a git pre-push hook that runs `cargo xtask check`.
     InstallHooks,
     /// Record OLX reference traces for fixtures/oracle/**/*.ron (needs Docker).
@@ -114,6 +135,8 @@ fn main() -> ExitCode {
         }),
         Command::Tidy { docker_cache } => tidy::run(docker_cache),
         Command::E2e { offline } => e2e_command(offline),
+        Command::Bench { bless, reason, offline } => bench::run(reason.as_deref().filter(|_| bless), offline),
+        Command::Stress { seconds } => bench::stress_command(seconds),
         Command::InstallHooks => install_hooks().map(|()| true),
         Command::OracleRecord { check, names } => oracle::run(&names, check),
         Command::OracleGenWeapons => oracle_gen::run(),
