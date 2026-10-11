@@ -48,6 +48,9 @@ fn a_recorded_match_is_drawn_timed_and_probed() {
     assert_eq!((s.size, s.frames, s.probe.len()), ((320, 180), 50, 2));
     assert!(s.total_ms.p50 >= s.frame_ms.p50 && s.frame_ms.p50 > 0.0, "{s:?}");
     assert_eq!(s.gpu_ms.is_some(), r.timestamps);
+    if r.timestamps {
+        assert!(s.gpu_ms.unwrap().p50 > 0.0, "{s:?}");
+    }
     // The probe's passes cost GPU time when timestamps time them (the view
     // is drawn over the whole target, so they cover all of it: ruling P11).
     let probed = &s.probe[1];

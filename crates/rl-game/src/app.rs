@@ -693,6 +693,8 @@ impl App {
             self.latency.presented(Instant::now(), t);
         }
         let wait = timing.map_or(Duration::ZERO, |t| t.acquire + t.present);
+        // `Meter`'s busy times are indexed beside its frame times (`frame`
+        // above): no early return may come between the two calls.
         self.meter.busy(begin.elapsed().saturating_sub(wait).as_secs_f64());
         if std::mem::take(&mut self.shot_due) {
             let name = self.shot_name.take();

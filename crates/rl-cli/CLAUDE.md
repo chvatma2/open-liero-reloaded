@@ -86,9 +86,11 @@ The headless command-line tool. Its commands:
   `tick_ms` (the world's tick and `on_tick`), `cpu_ms` (draw list, uploads,
   encoding and submit), `frame_ms` (the draw list to the device idle),
   `total_ms` (tick and frame), `gpu_ms` (the world and upscale passes, with
-  timestamps) and `probe` (`ProbePoint`: the probe passes' GPU ms, or the
-  frame's wall ms over the baseline's median, `timed_on_gpu` saying
-  which). `check_adapter`: a hardware run that got a software rasteriser
+  timestamps; a frame whose span was not written or runs backwards is
+  left out and counted in `gpu_dropped`, never a 0 ms sample) and `probe`
+  (`ProbePoint`: the probe passes' GPU ms, or the frame's wall ms over the
+  baseline's median, `timed_on_gpu` saying which; its own
+  `gpu_dropped`). `check_adapter`: a hardware run that got a software rasteriser
   (`DeviceType::Cpu`: llvmpipe, lavapipe) is an error naming WSL's
   `GALLIUM_DRIVER=d3d12 WGPU_BACKEND=gl`; `--adapter software` allows it.
   At the end it plays on to the next recorded checksum and compares, so

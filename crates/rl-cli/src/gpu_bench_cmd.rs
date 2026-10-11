@@ -114,6 +114,13 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
             s.frame_ms.p99,
             s.probe.iter().map(|p| (p.passes, (p.ms.p50 * 1000.0).round() / 1000.0)).collect::<Vec<_>>()
         );
+        let probe_dropped: u32 = s.probe.iter().map(|p| p.gpu_dropped).sum();
+        if s.gpu_dropped + probe_dropped > 0 {
+            println!(
+                "    timestamps without a real span (left out): {} of {} frames, {probe_dropped} probe frames",
+                s.gpu_dropped, s.frames
+            );
+        }
     }
     if let Some(out) = &args.out {
         let text = ron::ser::to_string_pretty(&report, ron::ser::PrettyConfig::default())?;

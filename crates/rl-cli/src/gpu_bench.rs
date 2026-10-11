@@ -12,7 +12,9 @@ use std::time::Instant;
 use anyhow::{Context as _, anyhow, bail, ensure};
 use rl_content::{Content, World};
 use rl_present::{PresentSetup, Presentation, default_colour};
-use rl_render::{AdapterPreference, OUTPUT_FORMAT, Offscreen, OffscreenOptions, Probe, RenderSettings};
+use rl_render::{
+    AdapterPreference, GpuTimes, OUTPUT_FORMAT, Offscreen, OffscreenOptions, Probe, RenderSettings,
+};
 use rl_replay::{Cursor, Replay};
 use rl_scene::{DrawList, Interpolation, SceneOptions, Viewport};
 use rl_sim::TickEvents;
@@ -46,6 +48,10 @@ pub struct ProbePoint {
     /// the 0-pass baseline's median.
     pub ms: Spread,
     pub timed_on_gpu: bool,
+    /// Frames whose timestamps gave no real span (unwritten, backwards):
+    /// left out of `ms`, not counted as 0 ms.
+    #[serde(default)]
+    pub gpu_dropped: u32,
 }
 
 /// One size.
@@ -63,6 +69,11 @@ pub struct SizeReport {
     pub total_ms: Spread,
     /// The world and upscale passes on the GPU (timestamps), ms.
     pub gpu_ms: Option<Spread>,
+    /// Measured frames whose timestamps gave no real span (unwritten,
+    /// backwards; a driver's fault): left out of `gpu_ms`, not counted as
+    /// 0 ms, so they cannot pull it low.
+    #[serde(default)]
+    pub gpu_dropped: u32,
     pub probe: Vec<ProbePoint>,
 }
 
@@ -109,6 +120,25 @@ pub fn check_adapter(
         );
     }
     Ok(())
+}
+
+/// A positive, finite span (`gpu_times` gives 0 for one not written or
+/// running backwards).
+fn real(ms: f64) -> Option<f64> {
+    (ms.is_finite() && ms > 0.0).then_some(ms)
+}
+
+/// The frame's GPU ms, if the frame was timed and its span is real.
+fn frame_sample(times: Option<GpuTimes>) -> Option<f64> {
+    times.and_then(|g| real(g.frame_ms))
+}
+
+/// The probe passes' GPU ms of a frame drawn with `passes` (0, the
+/// baseline: 0 ms), if the frame's span and the probe's are real.
+fn probe_sample(times: Option<GpuTimes>, passes: u32) -> Option<f64> {
+    let g = times?;
+    real(g.frame_ms)?;
+    if passes == 0 { Some(0.0) } else { real(g.probe_ms) }
 }
 
 fn ms(t: Instant) -> f64 {
@@ -207,6 +237,7 @@ pub fn run(
         gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
         let _ = renderer.gpu_times();
         let (mut tick, mut cpu, mut frame, mut total, mut gpu_ms) = (vec![], vec![], vec![], vec![], vec![]);
+        let mut gpu_dropped = 0;
         for t in cfg.start_tick..end {
             let t0 = Instant::now();
             world.tick(replay.row(t), &mut out);
@@ -224,8 +255,9 @@ pub fn run(
             gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
             frame.push(ms(t1));
             total.push(ms(t0));
-            if let Some(g) = renderer.gpu_times() {
-                gpu_ms.push(g.frame_ms);
+            match frame_sample(renderer.gpu_times()) {
+                Some(g) => gpu_ms.push(g),
+                None => gpu_dropped += u32::from(report.timestamps),
             }
         }
         check_on(replay, &mut world, &mut out, end)?;
@@ -234,14 +266,15 @@ pub fn run(
         let mut base = 0.0;
         for &passes in &cfg.probe_passes {
             renderer.set_probe((passes > 0).then_some(Probe { passes, taps: cfg.probe_taps }));
-            let (mut wall, mut on_gpu) = (vec![], vec![]);
+            let (mut wall, mut on_gpu, mut dropped) = (vec![], vec![], 0);
             for _ in 0..cfg.probe_frames {
                 let t0 = Instant::now();
                 renderer.render(&list, &view, size);
                 gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
                 wall.push(ms(t0));
-                if let Some(g) = renderer.gpu_times() {
-                    on_gpu.push(g.probe_ms);
+                match probe_sample(renderer.gpu_times(), passes) {
+                    Some(g) => on_gpu.push(g),
+                    None => dropped += u32::from(report.timestamps),
                 }
             }
             if passes == 0 {
@@ -253,7 +286,7 @@ pub fn run(
             } else {
                 Spread::of(&wall.iter().map(|w| (w - base).max(0.0)).collect::<Vec<_>>())
             };
-            probe.push(ProbePoint { passes, taps: cfg.probe_taps, ms, timed_on_gpu });
+            probe.push(ProbePoint { passes, taps: cfg.probe_taps, ms, timed_on_gpu, gpu_dropped: dropped });
         }
         renderer.set_probe(None);
         for w in renderer.warnings().drain(..) {
@@ -267,6 +300,7 @@ pub fn run(
             frame_ms: Spread::of(&frame),
             total_ms: Spread::of(&total),
             gpu_ms: (!gpu_ms.is_empty()).then(|| Spread::of(&gpu_ms)),
+            gpu_dropped,
             probe,
         });
     }
@@ -281,6 +315,22 @@ mod tests {
     fn sizes_parse() {
         assert_eq!(parse_sizes("1920x1080,3440x1440").unwrap(), [(1920, 1080), (3440, 1440)]);
         assert!(parse_sizes("1920").is_err() && parse_sizes("0x10").is_err() && parse_sizes("").is_err());
+    }
+
+    /// An unwritten or backwards timestamp span (`gpu_times` gives 0) is no
+    /// sample: counted as dropped, never a 0 ms frame.
+    #[test]
+    fn only_real_gpu_spans_are_samples() {
+        let t = |frame_ms, probe_ms| Some(GpuTimes { frame_ms, probe_ms });
+        assert_eq!(frame_sample(t(0.5, 0.0)), Some(0.5));
+        assert_eq!(frame_sample(t(0.0, 0.0)), None);
+        assert_eq!(frame_sample(t(f64::NAN, 0.0)), None);
+        assert_eq!(frame_sample(None), None);
+        assert_eq!(probe_sample(t(0.5, 0.2), 4), Some(0.2));
+        assert_eq!(probe_sample(t(0.5, 0.0), 4), None, "the probe's span was not written");
+        assert_eq!(probe_sample(t(0.0, 0.2), 4), None, "nor the frame's");
+        assert_eq!(probe_sample(t(0.5, 0.0), 0), Some(0.0), "the baseline runs no probe");
+        assert_eq!(probe_sample(t(0.0, 0.0), 0), None);
     }
 
     /// Review Focus 2: llvmpipe is never "the GPU".
