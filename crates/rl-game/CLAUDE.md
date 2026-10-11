@@ -37,6 +37,10 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   start is loaded by `Shell::poll` after the frame that showed "Loading…";
   a failure (a pack missing or broken: `setup::load_match`, `load`,
   `load_replay`) returns to the menu with the reason (Review Focus 3).
+  A replay file (a typed path too) is read by `setup::read_replay_file`:
+  a regular file only (a FIFO never blocks), its header checked first, at
+  most `MAX_REPLAY_BYTES` (twice `MAX_TICKS` × `MAX_WORMS` key bytes plus
+  16 MiB).
   Esc and F5 are the menus' there: Esc pauses (ticks stop; the pause menu
   resumes, opens the options or leaves), F5 restarts in place. A
   Deathmatch starts on the weapon selection (`shell::weapon_menu` gives

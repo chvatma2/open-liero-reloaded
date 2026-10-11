@@ -240,10 +240,43 @@ pub fn load_match(roots: &[&Path], o: &MatchOptions, skin: &str) -> anyhow::Resu
     open(content, o.mod_id.clone(), o.level_id.clone(), skin, Game::Deathmatch { options, packs })
 }
 
-/// The replay in file `file`, on the packs it names (refused when they
-/// are missing or differ from the recorded ones).
+/// The largest replay file read: [`rl_replay::MAX_TICKS`] ticks of
+/// [`MAX_WORMS`] worms' keys (a byte each, 23 MB; deflated, a little more
+/// at worst) twice over, plus 16 MiB for the header, setup and checksums.
+pub const MAX_REPLAY_BYTES: u64 = 2 * rl_replay::MAX_TICKS as u64 * MAX_WORMS as u64 + (16 << 20);
+
+/// The bytes of the replay file `file` (a path the player typed): a
+/// regular file only (a FIFO or a device is refused before it is opened,
+/// so it never blocks the UI thread), its header checked before the rest
+/// is read, at most [`MAX_REPLAY_BYTES`].
+pub fn read_replay_file(file: &Path) -> anyhow::Result<Vec<u8>> {
+    use std::io::Read as _;
+    let meta = std::fs::metadata(file)?;
+    anyhow::ensure!(meta.is_file(), "not a regular file");
+    let mb = |n: u64| n.div_ceil(1_000_000);
+    let too_large =
+        |n| anyhow::anyhow!("{} MB is too large for a replay (at most {} MB)", mb(n), mb(MAX_REPLAY_BYTES));
+    if meta.len() > MAX_REPLAY_BYTES {
+        return Err(too_large(meta.len()));
+    }
+    let f = std::fs::File::open(file)?;
+    anyhow::ensure!(f.metadata()?.is_file(), "not a regular file");
+    let mut bytes = Vec::with_capacity(rl_replay::HEADER_BYTES);
+    (&f).take(rl_replay::HEADER_BYTES as u64).read_to_end(&mut bytes)?;
+    Replay::check_header(&bytes)?;
+    bytes.reserve(usize::try_from(meta.len()).unwrap_or(0));
+    // It may grow after its length was read: never past the limit.
+    (&f).take(MAX_REPLAY_BYTES + 1 - bytes.len() as u64).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_REPLAY_BYTES {
+        return Err(too_large(bytes.len() as u64));
+    }
+    Ok(bytes)
+}
+
+/// The replay in file `file` (read by [`read_replay_file`]), on the packs
+/// it names (refused when they are missing or differ from the recorded ones).
 pub fn load_replay(roots: &[&Path], file: &Path, skin: &str) -> anyhow::Result<Assets> {
-    let bytes = std::fs::read(file).with_context(|| format!("{}", file.display()))?;
+    let bytes = read_replay_file(file).with_context(|| format!("{}", file.display()))?;
     let replay = Replay::decode(&bytes).with_context(|| format!("{}", file.display()))?;
     let content = Content::open_layers(roots)?;
     content.check_replay_packs(&replay.setup).with_context(|| format!("{}", file.display()))?;
@@ -377,5 +410,56 @@ mod tests {
             "olx-level-liero-factory"
         );
         assert!(resolve_id("nope", "olx-", &ids).unwrap_err().to_string().contains("olx-classic"));
+    }
+
+    /// `load_replay` in a thread: its error, or `None` when it did not
+    /// return within 10 s (a FIFO would block the UI thread forever).
+    fn load_replay_soon(file: &Path) -> Option<String> {
+        let file = file.to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let r = load_replay(&[], &file, "default").err().map(|e| format!("{e:#}"));
+            let _ = tx.send(r.unwrap_or_default());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(10)).ok()
+    }
+
+    /// A typed replay path is read bounded: a regular file only (a FIFO
+    /// never blocks), its header checked first, at most
+    /// `MAX_REPLAY_BYTES`, each refusal saying why.
+    #[test]
+    fn replay_files_are_read_bounded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        let e = load_replay_soon(d).expect("a directory returns");
+        assert!(e.contains("not a regular file"), "{e}");
+        std::fs::write(d.join("text.rlrp"), b"hello, not a replay at all").unwrap();
+        let e = load_replay_soon(&d.join("text.rlrp")).unwrap();
+        assert!(e.contains("not a replay"), "{e}");
+        // A file with a good header but far too large: refused by its
+        // length, unread (sparse, so the test writes nothing).
+        let big = d.join("big.rlrp");
+        let mut head = rl_replay::MAGIC.to_vec();
+        head.extend_from_slice(&rl_replay::FORMAT_VERSION.to_le_bytes());
+        std::fs::write(&big, &head).unwrap();
+        std::fs::OpenOptions::new().write(true).open(&big).unwrap().set_len(MAX_REPLAY_BYTES + 1).unwrap();
+        let e = load_replay_soon(&big).unwrap();
+        assert!(e.contains("too large"), "{e}");
+        assert!(MAX_REPLAY_BYTES >= 2 * u64::from(rl_replay::MAX_TICKS) * MAX_WORMS as u64);
+        // A good header, the size allowed: read, then refused by its body.
+        std::fs::write(d.join("short.rlrp"), &head).unwrap();
+        let e = load_replay_soon(&d.join("short.rlrp")).unwrap();
+        assert!(e.contains("malformed"), "{e}");
+        #[cfg(unix)]
+        {
+            let fifo = d.join("fifo.rlrp");
+            let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+            if made.is_ok_and(|s| s.success()) {
+                let e = load_replay_soon(&fifo).expect("a FIFO never blocks the read");
+                assert!(e.contains("not a regular file"), "{e}");
+            } else {
+                eprintln!("mkfifo unavailable; skipping the FIFO");
+            }
+        }
     }
 }
