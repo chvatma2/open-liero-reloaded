@@ -3,9 +3,14 @@
 //! the content in Windows' temp directory (`%TEMP%\rust-liero-envelope`)
 //! and run from WSL through interop: nothing is installed on Windows.
 //! Interop forwards only the variables `WSLENV` names, so `run` adds them.
+//! A run that outlives its timeout is stopped on the Windows side too, by
+//! image path under the stage (never by image name: the user's own
+//! processes are never touched).
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::root;
 
@@ -14,6 +19,11 @@ pub const LINKER: &str = "x86_64-w64-mingw32-gcc";
 pub const OBJDUMP: &str = "x86_64-w64-mingw32-objdump";
 /// `appendWindowsPath` may be off: `cmd.exe` by its full path.
 pub const CMD: &str = "/mnt/c/Windows/System32/cmd.exe";
+/// Windows PowerShell (part of Windows), to stop a run's processes.
+pub const POWERSHELL: &str = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe";
+/// A generous bound for one run (an envelope point takes a minute or two):
+/// past it `run` stops the process and fails.
+pub const RUN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const EXES: [&str; 2] = ["rl-cli.exe", "rl-game.exe"];
 /// mingw's runtime DLLs an exe may import; copied beside it when it does.
 pub const MINGW_DLLS: [&str; 3] = ["libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll"];
@@ -36,7 +46,9 @@ pub fn missing() -> Option<String> {
             .is_ok_and(|s| s.starts_with("enabled"))
     });
     if !enabled {
-        return Some("Windows interop is disabled (/proc/sys/fs/binfmt_misc/WSLInterop)".into());
+        return Some(
+            "Windows interop is disabled (/proc/sys/fs/binfmt_misc/WSLInterop or WSLInterop-late)".into(),
+        );
     }
     let installed = Command::new("rustup")
         .current_dir(root())
@@ -105,7 +117,7 @@ pub fn wslenv(existing: Option<&str>, names: &[&str]) -> String {
 pub fn windows_temp() -> Result<PathBuf, String> {
     let out = Command::new(CMD)
         .current_dir("/mnt/c")
-        .args(["/c", "echo %TEMP%"])
+        .args(["/d", "/c", "echo %TEMP%"])
         .output()
         .map_err(|e| format!("cannot run {CMD}: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -129,23 +141,40 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The content's file count and bytes: copied again only when it changes.
+/// The content's file count, bytes and newest modification time: copied
+/// again only when it changes (a same-size edit moves the newest time).
 fn content_stamp(dir: &Path) -> Result<String, String> {
-    fn walk(d: &Path, n: &mut u64, bytes: &mut u64) -> Result<(), String> {
+    #[derive(Default)]
+    struct Sum {
+        files: u64,
+        bytes: u64,
+        newest: Duration,
+    }
+    fn walk(d: &Path, sum: &mut Sum) -> Result<(), String> {
         for e in std::fs::read_dir(d).map_err(|e| format!("{}: {e}", d.display()))? {
             let p = e.map_err(|e| e.to_string())?.path();
             if p.is_dir() {
-                walk(&p, n, bytes)?;
+                walk(&p, sum)?;
             } else {
-                *n += 1;
-                *bytes += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+                let m = std::fs::metadata(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+                let modified = m.modified().map_err(|e| format!("{}: {e}", p.display()))?;
+                sum.files += 1;
+                sum.bytes += m.len();
+                sum.newest =
+                    sum.newest.max(modified.duration_since(std::time::UNIX_EPOCH).unwrap_or_default());
             }
         }
         Ok(())
     }
-    let (mut n, mut bytes) = (0, 0);
-    walk(dir, &mut n, &mut bytes)?;
-    Ok(format!("{n} files, {bytes} bytes"))
+    let mut sum = Sum::default();
+    walk(dir, &mut sum)?;
+    Ok(format!(
+        "{} files, {} bytes, newest {}.{:09}",
+        sum.files,
+        sum.bytes,
+        sum.newest.as_secs(),
+        sum.newest.subsec_nanos()
+    ))
 }
 
 fn mingw_dll(name: &str) -> Option<PathBuf> {
@@ -168,11 +197,21 @@ pub struct Stage {
 pub fn stage(release: &Path, content: &Path, files: &[PathBuf]) -> Result<Stage, String> {
     let dir = windows_temp()?.join(STAGE);
     std::fs::create_dir_all(dir.join("replays")).map_err(|e| format!("{}: {e}", dir.display()))?;
+    // A run an interrupted xtask left behind would hold the exes.
+    stop_stage_processes(&dir)?;
     for exe in EXES {
         let src = release.join(exe);
         copy(&src, &dir.join(exe))?;
         let dump =
             Command::new(OBJDUMP).arg("-p").arg(&src).output().map_err(|e| format!("{OBJDUMP}: {e}"))?;
+        if !dump.status.success() {
+            return Err(format!(
+                "{OBJDUMP} -p {} failed ({}): {}",
+                src.display(),
+                dump.status,
+                tail(&String::from_utf8_lossy(&dump.stderr), 5)
+            ));
+        }
         for dll in imported_dlls(&String::from_utf8_lossy(&dump.stdout)) {
             if MINGW_DLLS.iter().any(|d| d.eq_ignore_ascii_case(&dll)) {
                 let found = mingw_dll(&dll)
@@ -185,7 +224,12 @@ pub fn stage(release: &Path, content: &Path, files: &[PathBuf]) -> Result<Stage,
     let stamp_file = dir.join("content.stamp");
     if std::fs::read_to_string(&stamp_file).ok().as_deref() != Some(stamp.as_str()) {
         println!("  copying the content to {} (once)", dir.display());
-        let _ = std::fs::remove_dir_all(dir.join("content"));
+        match std::fs::remove_dir_all(dir.join("content")) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(format!("removing the old content in {}: {e}", dir.display()));
+            }
+            _ => {}
+        }
         copy_dir(content, &dir.join("content"))?;
         std::fs::write(&stamp_file, &stamp).map_err(|e| format!("{}: {e}", stamp_file.display()))?;
     }
@@ -195,11 +239,77 @@ pub fn stage(release: &Path, content: &Path, files: &[PathBuf]) -> Result<Stage,
     Ok(Stage { dir })
 }
 
+/// `/mnt/c/Users/x` as `C:\Users\x` (`None` outside a `/mnt/<drive>` path).
+pub fn to_windows_path(wsl: &Path) -> Option<String> {
+    let rest = wsl.to_str()?.strip_prefix("/mnt/")?;
+    let (drive, rest) = rest.split_once('/').unwrap_or((rest, ""));
+    let mut d = drive.chars();
+    let letter = d.next().filter(|c| c.is_ascii_alphabetic() && d.next().is_none())?;
+    Some(format!("{}:\\{}", letter.to_ascii_uppercase(), rest.trim_end_matches('/').replace('/', "\\")))
+}
+
+/// The PowerShell that force-stops every process whose image lies under
+/// `stage_win` (a Windows path), and nothing else: matched by path prefix,
+/// never by image name, so the user's own processes are never touched.
+/// `None` unless the path names a stage directory (`STAGE`), so a wrong
+/// path can never stop a whole drive's processes.
+pub fn stop_script(stage_win: &str) -> Option<String> {
+    let dir = stage_win.trim_end_matches('\\');
+    if dir.rsplit('\\').next() != Some(STAGE) {
+        return None;
+    }
+    let prefix = format!("{dir}\\").replace('\'', "''");
+    Some(format!(
+        "Get-Process | Where-Object {{ $_.Path -and $_.Path.StartsWith('{prefix}', \
+         [StringComparison]::OrdinalIgnoreCase) }} | Stop-Process -Force"
+    ))
+}
+
+/// Stops whatever runs from the stage directory `dir` (`stop_script`).
+fn stop_stage_processes(dir: &Path) -> Result<(), String> {
+    let win = to_windows_path(dir).ok_or_else(|| format!("{} is not on a Windows drive", dir.display()))?;
+    let script = stop_script(&win).ok_or_else(|| format!("{win} is not a {STAGE} directory"))?;
+    let out = Command::new(POWERSHELL)
+        .current_dir("/mnt/c")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run {POWERSHELL}: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "stopping the processes under {win} failed ({}): {}",
+            out.status,
+            tail(&String::from_utf8_lossy(&out.stderr), 5)
+        ));
+    }
+    Ok(())
+}
+
+fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut p) = pipe {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    })
+}
+
 /// Runs `exe` of `stage` with the stage as its working directory (paths in
-/// `args` are relative to it); `env` reaches Windows through `WSLENV`.
-pub fn run(stage: &Stage, exe: &str, args: &[String], env: &[(&str, &str)]) -> Result<Output, String> {
+/// `args` are relative to it); `env` reaches Windows through `WSLENV`. It
+/// fails when the exe exits unsuccessfully (the status in the message:
+/// interop keeps a Windows exit code's low 8 bits, so 0xC0000135 shows as
+/// 53) or outlives `timeout`: then it is killed and every process under
+/// the stage is stopped on the Windows side.
+pub fn run(
+    stage: &Stage,
+    exe: &str,
+    args: &[String],
+    env: &[(&str, &str)],
+    timeout: Duration,
+) -> Result<Output, String> {
     let mut c = Command::new(stage.dir.join(exe));
-    c.current_dir(&stage.dir).args(args);
+    c.current_dir(&stage.dir).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     if !env.is_empty() {
         for (k, v) in env {
             c.env(k, v);
@@ -207,7 +317,41 @@ pub fn run(stage: &Stage, exe: &str, args: &[String], env: &[(&str, &str)]) -> R
         let names: Vec<&str> = env.iter().map(|(k, _)| *k).collect();
         c.env("WSLENV", wslenv(std::env::var("WSLENV").ok().as_deref(), &names));
     }
-    c.output().map_err(|e| format!("cannot run {exe} through Windows interop: {e}"))
+    let mut child = c.spawn().map_err(|e| format!("cannot run {exe} through Windows interop: {e}"))?;
+    let (stdout, stderr) = (drain(child.stdout.take()), drain(child.stderr.take()));
+    let start = Instant::now();
+    let status = loop {
+        let why = match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if start.elapsed() < timeout => {
+                std::thread::sleep(Duration::from_millis(20));
+                continue;
+            }
+            Ok(None) => format!("{exe} did not finish within {} s", timeout.as_secs()),
+            Err(e) => format!("waiting for {exe}: {e}"),
+        };
+        // The pipes' readers are left behind: a Windows process that
+        // survived would keep them open.
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(match stop_stage_processes(&stage.dir) {
+            Ok(()) => format!("{why}; stopped it"),
+            Err(e) => format!("{why}; {e}"),
+        });
+    };
+    let output = Output {
+        status,
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    };
+    if !status.success() {
+        return Err(format!(
+            "{exe} {} failed ({status}):\n{}",
+            args.join(" "),
+            tail(&String::from_utf8_lossy(&output.stderr), 20)
+        ));
+    }
+    Ok(output)
 }
 
 /// `cargo xtask windows`: builds, stages, and lists what each backend sees.
@@ -220,16 +364,22 @@ pub fn command() -> anyhow::Result<bool> {
     let release = build().map_err(anyhow::Error::msg)?;
     let stage = stage(&release, &root().join("content/packs"), &[]).map_err(anyhow::Error::msg)?;
     println!("staged in {}", stage.dir.display());
+    let mut ok = true;
     for backend in ["dx12", "vulkan"] {
         let args = ["gpu-bench", "--list-adapters", "--backend", backend].map(String::from);
-        let out = run(&stage, "rl-cli.exe", &args, &[]).map_err(anyhow::Error::msg)?;
-        println!(
-            "{backend}:\n{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+        match run(&stage, "rl-cli.exe", &args, &[], RUN_TIMEOUT) {
+            Ok(out) => println!(
+                "{backend}:\n{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+            Err(why) => {
+                println!("FAIL windows ({backend}): {why}");
+                ok = false;
+            }
+        }
     }
-    Ok(true)
+    Ok(ok)
 }
 
 #[cfg(test)]
@@ -251,6 +401,72 @@ mod tests {
     fn imported_dlls_are_read_from_objdump() {
         let dump = "The Import Tables\n\tDLL Name: KERNEL32.dll\n\tvma: x\n\tDLL Name: libwinpthread-1.dll\n";
         assert_eq!(imported_dlls(dump), ["KERNEL32.dll", "libwinpthread-1.dll"]);
+    }
+
+    #[test]
+    fn stage_paths_map_back_to_windows() {
+        assert_eq!(
+            to_windows_path(Path::new("/mnt/c/Users/Martin/AppData/Local/Temp/rust-liero-envelope"))
+                .as_deref(),
+            Some("C:\\Users\\Martin\\AppData\\Local\\Temp\\rust-liero-envelope")
+        );
+        assert_eq!(to_windows_path(Path::new("/mnt/d")).as_deref(), Some("D:\\"));
+        assert_eq!(to_windows_path(Path::new("/home/martin")), None);
+        assert_eq!(to_windows_path(Path::new("/mnt/wsl/x")), None);
+    }
+
+    #[test]
+    fn the_stop_script_targets_only_the_stage() {
+        let script = stop_script("C:\\Users\\O'Neil\\Temp\\rust-liero-envelope").unwrap();
+        // Only processes whose image lies under the stage (quotes doubled for
+        // PowerShell), never by image name.
+        assert!(
+            script.contains("$_.Path.StartsWith('C:\\Users\\O''Neil\\Temp\\rust-liero-envelope\\'"),
+            "{script}"
+        );
+        assert!(script.contains("Stop-Process -Force"), "{script}");
+        assert!(!script.contains("rl-"), "{script}");
+        assert!(!script.contains("-Name"), "{script}");
+        // Never a drive or any directory that is not a stage.
+        assert_eq!(stop_script("C:\\"), None);
+        assert_eq!(stop_script("C:\\Users\\Martin\\AppData\\Local\\Temp"), None);
+    }
+
+    #[test]
+    fn the_content_stamp_sees_a_same_size_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.ron");
+        std::fs::write(&file, "one").unwrap();
+        let f = std::fs::File::options().write(true).open(&file).unwrap();
+        f.set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1_000_000)).unwrap();
+        let before = content_stamp(dir.path()).unwrap();
+        std::fs::write(&file, "two").unwrap();
+        f.set_modified(std::time::UNIX_EPOCH + Duration::from_secs(2_000_000)).unwrap();
+        assert_ne!(content_stamp(dir.path()).unwrap(), before);
+    }
+
+    /// On the real machine: `cargo nextest run -p xtask winbuild --run-ignored only`
+    /// after `cargo xtask windows` (it opens a game window for 5 s).
+    #[test]
+    #[ignore = "needs Windows interop and the stage `cargo xtask windows` writes"]
+    fn runs_fail_on_a_bad_exit_and_are_stopped_past_their_timeout() {
+        let stage = Stage { dir: windows_temp().unwrap().join(STAGE) };
+        let bad = ["gpu-bench", "--backend", "nope"].map(String::from);
+        let err = run(&stage, "rl-cli.exe", &bad, &[], RUN_TIMEOUT).unwrap_err();
+        assert!(err.contains("failed (exit status: "), "{err}");
+
+        let game = ["--no-sound", "--content", "content", "--data-dir", "data"].map(String::from);
+        let err = run(&stage, "rl-game.exe", &game, &[], Duration::from_secs(5)).unwrap_err();
+        assert!(err.ends_with("did not finish within 5 s; stopped it"), "{err}");
+        let win = to_windows_path(&stage.dir).unwrap();
+        let count =
+            format!("@(Get-Process | Where-Object {{ $_.Path -and $_.Path.StartsWith('{win}\\') }}).Count");
+        let out = Command::new(POWERSHELL)
+            .current_dir("/mnt/c")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &count])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0");
     }
 
     #[test]

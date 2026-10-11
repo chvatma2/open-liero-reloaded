@@ -66,15 +66,26 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   (about 1 min from cold here; no `crt-static` needed). `stage()` copies
   the exes, any `MINGW_DLLS` an exe imports (`objdump -p`: today none,
   the toolchain links mingw's runtime statically; only system DLLs) and
-  the content (re-copied only when `content.stamp`, its file count and
-  bytes, changes) to `%TEMP%\rust-liero-envelope` (`windows_temp()`:
-  `cmd.exe /c echo %TEMP%`, started in `/mnt/c`), the given files into
-  its `replays/`. `run()` starts an exe there (the stage as its working
-  directory, so arguments use relative paths) and forwards its `env`
-  through `WSLENV` (`wslenv`; interop passes nothing else). The command
-  builds, stages and lists `gpu-bench --list-adapters` for `dx12` and
-  `vulkan`. On the user's machine: DX12 and Vulkan both see the RTX 5070
-  Ti (and the AMD iGPU; DX12 also Microsoft's Basic Render Driver, a
+  the content (re-copied only when `content.stamp`, its file count,
+  bytes and newest modification time, changes) to
+  `%TEMP%\rust-liero-envelope` (`windows_temp()`: `cmd.exe /d /c echo
+  %TEMP%`, started in `/mnt/c`), the given files into its `replays/`;
+  first it stops any process left running from the stage (an interrupted
+  run would hold the exes). `run()` starts an exe there (the stage as its
+  working directory, so arguments use relative paths), forwards its `env`
+  through `WSLENV` (`wslenv`; interop passes nothing else) and fails on
+  an unsuccessful exit (interop keeps a Windows code's low 8 bits:
+  0xC0000135 is 53) or past its `timeout` (`RUN_TIMEOUT`, 10 min, for
+  the command and envelope points): it kills the interop child, then
+  Windows PowerShell's `stop_script` force-stops every process whose
+  image path lies under the stage (by path prefix, never by image name;
+  refused for a path that is not a `rust-liero-envelope` directory), so
+  the user's own processes are never touched. The ignored test
+  `runs_fail_on_a_bad_exit_and_are_stopped_past_their_timeout` checks
+  both on the real machine (`--run-ignored only`, after a stage). The
+  command builds, stages and lists `gpu-bench --list-adapters` for `dx12`
+  and `vulkan`, failing when either run fails. On the user's machine: DX12
+  and Vulkan both see the RTX 5070 Ti (and the AMD iGPU; DX12 also Microsoft's Basic Render Driver, a
   `Cpu` adapter), with timestamps on both; `rl-game.exe --demo` writes
   its shots under the stage's `target/`. Nothing is left running; the
   stage stays for the next run.
