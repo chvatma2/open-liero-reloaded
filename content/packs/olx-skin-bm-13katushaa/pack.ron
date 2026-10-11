@@ -1,0 +1,14 @@
+(
+    format_version: 4,
+    id: "olx-skin-bm-13katushaa",
+    name: "BM-13KatushaA",
+    version: "1",
+    kind: Skin,
+    authors: [],
+    origin: Some((
+        source: "OpenLieroX 0.58 rc5 (Windows release)",
+        path: "skins/BM-13KatushaA.png",
+        revision: "0.58_rc5",
+    )),
+    license: None,
+)

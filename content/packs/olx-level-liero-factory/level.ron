@@ -1,0 +1,8 @@
+(
+    name: "Liero Factory",
+    width: 1200,
+    height: 480,
+    art_scale: 1,
+    theme: "olx-theme-dirt",
+    spawns: [],
+)

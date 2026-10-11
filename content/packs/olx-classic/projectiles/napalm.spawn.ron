@@ -1,0 +1,53 @@
+(
+    gfx: Pixel(
+        colours: [
+            (
+                r: 248,
+                g: 192,
+                b: 36,
+                a: 255,
+            ),
+        ],
+    ),
+    gravity: None,
+    dampening: 1.0,
+    width: 2,
+    height: 2,
+    timer: (
+        time: 0.5,
+        time_var: 0.0,
+        action: Some((
+            kind: Explode,
+            damage: 0,
+            spawns_projectiles: false,
+            sound: None,
+            shake: 0,
+            bounce_coeff: 0.5,
+            bounce_explode: 0,
+        )),
+    ),
+    trail: (
+        kind: Explosive,
+        delay: 0.1,
+        spawn: None,
+    ),
+    hit: (
+        kind: Explode,
+        damage: 5,
+        spawns_projectiles: false,
+        sound: None,
+        shake: 0,
+        bounce_coeff: 0.5,
+        bounce_explode: 0,
+    ),
+    player_hit: (
+        kind: Injure,
+        damage: 15,
+        spawns_projectiles: false,
+        sound: None,
+        shake: 0,
+        bounce_coeff: 0.5,
+        bounce_explode: 0,
+    ),
+    event_spawn: None,
+)

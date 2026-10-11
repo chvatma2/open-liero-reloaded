@@ -1,0 +1,14 @@
+(
+    format_version: 4,
+    id: "olx-skin-dancingclown",
+    name: "DancingClown",
+    version: "1",
+    kind: Skin,
+    authors: [],
+    origin: Some((
+        source: "OpenLieroX 0.58 rc5 (Windows release)",
+        path: "skins/DancingClown.png",
+        revision: "0.58_rc5",
+    )),
+    license: None,
+)

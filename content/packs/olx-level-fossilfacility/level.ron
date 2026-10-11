@@ -1,0 +1,8 @@
+(
+    name: "Fossil Facility",
+    width: 640,
+    height: 480,
+    art_scale: 1,
+    theme: "olx-theme-dirt",
+    spawns: [],
+)

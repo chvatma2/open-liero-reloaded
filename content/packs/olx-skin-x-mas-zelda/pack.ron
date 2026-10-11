@@ -1,0 +1,14 @@
+(
+    format_version: 4,
+    id: "olx-skin-x-mas-zelda",
+    name: "X-Mas_Zelda",
+    version: "1",
+    kind: Skin,
+    authors: [],
+    origin: Some((
+        source: "OpenLieroX",
+        path: "share/gamedir/skins/X-Mas_Zelda.png",
+        revision: "d1ad953f4f20610f2648cce26c9739e7c088409d",
+    )),
+    license: None,
+)

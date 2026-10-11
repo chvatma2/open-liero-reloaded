@@ -1,0 +1,14 @@
+(
+    format_version: 4,
+    id: "olx-skin-dancingsmoke",
+    name: "DancingSmoke",
+    version: "1",
+    kind: Skin,
+    authors: [],
+    origin: Some((
+        source: "OpenLieroX",
+        path: "share/gamedir/skins/DancingSmoke.png",
+        revision: "d1ad953f4f20610f2648cce26c9739e7c088409d",
+    )),
+    license: None,
+)

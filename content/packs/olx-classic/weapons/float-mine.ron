@@ -1,0 +1,27 @@
+(
+    name: "Float Mine",
+    recharge: 0.25,
+    drain: 50.001,
+    rof: 0.28,
+    laser_sight: false,
+    kind: Projectile(
+        class: Grenade,
+        recoil: 2,
+        sound: Some("sfx/throw.ogg"),
+        spawn: (
+            projectile: "float-mine",
+            amount: 1,
+            speed: 28,
+            speed_var: 0.0,
+            spread: 8.0,
+            use_angle: true,
+            angle: 0,
+            use_parent_velocity_for_spread: false,
+            parent_vel_spread_factor: 0.3,
+            use_special11_vec_for_speed_var: false,
+            use_random_rot: true,
+            add_parent_vel: true,
+            parent_vel_factor: 1.0,
+        ),
+    ),
+)

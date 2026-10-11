@@ -1,0 +1,27 @@
+(
+    name: "Spikeballs",
+    recharge: 0.178,
+    drain: 100.001,
+    rof: 0.1,
+    laser_sight: false,
+    kind: Projectile(
+        class: Grenade,
+        recoil: 0,
+        sound: None,
+        spawn: (
+            projectile: "spikeballs",
+            amount: 8,
+            speed: 110,
+            speed_var: 30.0,
+            spread: 10.0,
+            use_angle: true,
+            angle: 0,
+            use_parent_velocity_for_spread: false,
+            parent_vel_spread_factor: 0.3,
+            use_special11_vec_for_speed_var: false,
+            use_random_rot: true,
+            add_parent_vel: true,
+            parent_vel_factor: 1.0,
+        ),
+    ),
+)

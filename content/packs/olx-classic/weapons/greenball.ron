@@ -1,0 +1,27 @@
+(
+    name: "Greenball",
+    recharge: 0.31800002,
+    drain: 2.501,
+    rof: 0.057,
+    laser_sight: false,
+    kind: Projectile(
+        class: Grenade,
+        recoil: 5,
+        sound: None,
+        spawn: (
+            projectile: "greenball",
+            amount: 1,
+            speed: 140,
+            speed_var: 0.0,
+            spread: 4.0,
+            use_angle: true,
+            angle: 0,
+            use_parent_velocity_for_spread: false,
+            parent_vel_spread_factor: 0.3,
+            use_special11_vec_for_speed_var: false,
+            use_random_rot: true,
+            add_parent_vel: true,
+            parent_vel_factor: 1.0,
+        ),
+    ),
+)

@@ -1,0 +1,10 @@
+(
+    name: "heart2",
+    layout: (
+        frame_width: 32,
+        frame_height: 18,
+        frame_spacing: 4,
+        worm_width: 20,
+        worm_height: 18,
+    ),
+)

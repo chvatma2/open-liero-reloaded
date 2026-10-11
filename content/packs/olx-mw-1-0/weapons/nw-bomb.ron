@@ -1,0 +1,27 @@
+(
+    name: "NW Bomb",
+    recharge: 0.15,
+    drain: 101.0,
+    rof: 5.0,
+    laser_sight: false,
+    kind: Projectile(
+        class: CloseRange,
+        recoil: 0,
+        sound: Some("sfx/throw.ogg"),
+        spawn: (
+            projectile: "nw-bomb",
+            amount: 1,
+            speed: 50,
+            speed_var: 15.0,
+            spread: 5.0,
+            use_angle: true,
+            angle: 0,
+            use_parent_velocity_for_spread: false,
+            parent_vel_spread_factor: 0.3,
+            use_special11_vec_for_speed_var: false,
+            use_random_rot: true,
+            add_parent_vel: true,
+            parent_vel_factor: 1.0,
+        ),
+    ),
+)

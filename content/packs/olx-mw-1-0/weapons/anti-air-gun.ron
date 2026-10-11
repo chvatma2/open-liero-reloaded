@@ -1,0 +1,27 @@
+(
+    name: "Anti-Air Gun",
+    recharge: 0.3,
+    drain: 34.0,
+    rof: 0.35,
+    laser_sight: true,
+    kind: Projectile(
+        class: Automatic,
+        recoil: 5,
+        sound: Some("sfx/aagunfire.ogg"),
+        spawn: (
+            projectile: "anti-air-gun",
+            amount: 1,
+            speed: 500,
+            speed_var: 0.0,
+            spread: 10.0,
+            use_angle: true,
+            angle: 0,
+            use_parent_velocity_for_spread: false,
+            parent_vel_spread_factor: 0.3,
+            use_special11_vec_for_speed_var: false,
+            use_random_rot: true,
+            add_parent_vel: true,
+            parent_vel_factor: 1.0,
+        ),
+    ),
+)

@@ -1,0 +1,24 @@
+(
+    name: "Laser",
+    recharge: 0.17999999,
+    drain: 1.25,
+    rof: 0.009,
+    laser_sight: false,
+    kind: Beam(
+        recoil: 0,
+        beam: (
+            colour: (
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            ),
+            damage: 0,
+            player_damage: 1,
+            length: 999999,
+            init_width: 1,
+            width_increase: 0.0,
+            distribute_damage_over_width: false,
+        ),
+    ),
+)

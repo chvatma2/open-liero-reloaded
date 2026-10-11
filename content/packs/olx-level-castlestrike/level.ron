@@ -1,0 +1,8 @@
+(
+    name: "Castle Strike",
+    width: 1350,
+    height: 550,
+    art_scale: 1,
+    theme: "olx-theme-dirt",
+    spawns: [],
+)

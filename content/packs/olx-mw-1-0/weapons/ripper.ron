@@ -1,0 +1,27 @@
+(
+    name: "Ripper",
+    recharge: 0.4,
+    drain: 26.0,
+    rof: 0.125,
+    laser_sight: false,
+    kind: Projectile(
+        class: Automatic,
+        recoil: 1,
+        sound: Some("sfx/laser3.ogg"),
+        spawn: (
+            projectile: "ripper",
+            amount: 1,
+            speed: 350,
+            speed_var: 0.0,
+            spread: 0.0,
+            use_angle: true,
+            angle: 0,
+            use_parent_velocity_for_spread: false,
+            parent_vel_spread_factor: 0.3,
+            use_special11_vec_for_speed_var: false,
+            use_random_rot: true,
+            add_parent_vel: true,
+            parent_vel_factor: 1.0,
+        ),
+    ),
+)

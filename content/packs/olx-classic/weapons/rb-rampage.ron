@@ -1,0 +1,27 @@
+(
+    name: "RB Rampage",
+    recharge: 0.275,
+    drain: 10.001,
+    rof: 0.05,
+    laser_sight: false,
+    kind: Projectile(
+        class: Automatic,
+        recoil: 4,
+        sound: Some("sfx/shot.ogg"),
+        spawn: (
+            projectile: "rb-rampage",
+            amount: 1,
+            speed: 133,
+            speed_var: 0.0,
+            spread: 2.0,
+            use_angle: true,
+            angle: 0,
+            use_parent_velocity_for_spread: false,
+            parent_vel_spread_factor: 0.3,
+            use_special11_vec_for_speed_var: false,
+            use_random_rot: true,
+            add_parent_vel: true,
+            parent_vel_factor: 1.0,
+        ),
+    ),
+)

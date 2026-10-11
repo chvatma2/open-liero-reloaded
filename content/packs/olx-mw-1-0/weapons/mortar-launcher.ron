@@ -1,0 +1,27 @@
+(
+    name: "Mortar Launcher",
+    recharge: 0.35,
+    drain: 101.0,
+    rof: 0.75,
+    laser_sight: false,
+    kind: Projectile(
+        class: Grenade,
+        recoil: 5,
+        sound: Some("sfx/launcherfire1.ogg"),
+        spawn: (
+            projectile: "mortar-launcher",
+            amount: 1,
+            speed: 150,
+            speed_var: 0.0,
+            spread: 0.0,
+            use_angle: true,
+            angle: 0,
+            use_parent_velocity_for_spread: false,
+            parent_vel_spread_factor: 0.3,
+            use_special11_vec_for_speed_var: false,
+            use_random_rot: true,
+            add_parent_vel: true,
+            parent_vel_factor: 1.0,
+        ),
+    ),
+)

@@ -1,0 +1,14 @@
+(
+    format_version: 4,
+    id: "olx-skin-flying-goblin-2",
+    name: "Flying Goblin 2",
+    version: "1",
+    kind: Skin,
+    authors: [],
+    origin: Some((
+        source: "OpenLieroX 0.58 rc5 (Windows release)",
+        path: "skins/Flying Goblin 2.png",
+        revision: "0.58_rc5",
+    )),
+    license: None,
+)

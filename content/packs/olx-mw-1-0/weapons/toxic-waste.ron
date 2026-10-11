@@ -1,0 +1,27 @@
+(
+    name: "Toxic Waste",
+    recharge: 0.5,
+    drain: 2.0,
+    rof: 0.001,
+    laser_sight: false,
+    kind: Projectile(
+        class: CloseRange,
+        recoil: 0,
+        sound: None,
+        spawn: (
+            projectile: "toxic-waste",
+            amount: 1,
+            speed: 150,
+            speed_var: 0.0,
+            spread: 10.0,
+            use_angle: true,
+            angle: 0,
+            use_parent_velocity_for_spread: false,
+            parent_vel_spread_factor: 0.3,
+            use_special11_vec_for_speed_var: false,
+            use_random_rot: true,
+            add_parent_vel: true,
+            parent_vel_factor: 1.0,
+        ),
+    ),
+)
