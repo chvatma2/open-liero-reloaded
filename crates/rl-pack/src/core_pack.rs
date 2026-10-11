@@ -92,7 +92,7 @@ pub fn read_core_tolerant(src: &dyn ContentSource) -> Result<(CorePack, Vec<Pack
         }
         let file = sprite_path(name);
         let img = src
-            .read(&VPath::new(&file)?)
+            .read_max(&VPath::new(&file)?, crate::MAX_FILE_BYTES)
             .map_err(PackError::from)
             .and_then(|bytes| decode_rgba(&bytes).map_err(|message| PackError::Image { file, message }));
         match img {
@@ -108,11 +108,11 @@ pub fn read_core_tolerant(src: &dyn ContentSource) -> Result<(CorePack, Vec<Pack
         if sounds.contains_key(name) {
             return Err(PackError::invalid(CORE_FILE, format!("sound {name:?} is listed twice")));
         }
-        match src.read(&VPath::new(&sound_path(name))?) {
+        match crate::ron_io::read_file(src, &VPath::new(&sound_path(name))?) {
             Ok(bytes) => {
                 sounds.insert(name.clone(), bytes);
             }
-            Err(e) => skipped.push(e.into()),
+            Err(e) => skipped.push(e),
         }
     }
     def.sprites.retain(|n| sprites.contains_key(n));

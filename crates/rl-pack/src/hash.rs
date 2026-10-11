@@ -19,7 +19,7 @@ pub fn content_hash(src: &dyn ContentSource) -> Result<String, PackError> {
         if path.as_str() == MANIFEST || PRESENTATION_FILES.contains(&path.as_str()) {
             continue;
         }
-        let data = src.read(&path)?;
+        let data = crate::ron_io::read_file(src, &path)?;
         h.update(path.as_str().as_bytes());
         h.update([0u8]);
         h.update((data.len() as u64).to_le_bytes());

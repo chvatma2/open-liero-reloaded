@@ -21,6 +21,10 @@ pub enum VfsError {
     NotFound(String),
     #[error("invalid path {path:?}: {reason}")]
     InvalidPath { path: String, reason: &'static str },
+    #[error("{path} is {len} bytes, above the {limit} read at most")]
+    TooLarge { path: String, len: u64, limit: u64 },
+    #[error("{0} is not a regular file")]
+    NotAFile(String),
     #[error("i/o error on {path}: {source}")]
     Io {
         path: String,
@@ -41,6 +45,32 @@ pub trait ContentSource {
     /// Whether a file exists at `path`.
     fn exists(&self, path: &VPath) -> bool {
         self.read(path).is_ok()
+    }
+
+    /// The bytes of the file at `path`, refused ([`VfsError::TooLarge`])
+    /// when it is longer than `limit`: a backend that knows the length
+    /// refuses it unread, so untrusted content cannot make a reader
+    /// allocate without bound.
+    fn read_max(&self, path: &VPath, limit: u64) -> Result<Vec<u8>, VfsError> {
+        let bytes = self.read(path)?;
+        let len = bytes.len() as u64;
+        if len > limit {
+            return Err(VfsError::TooLarge { path: path.to_string(), len, limit });
+        }
+        Ok(bytes)
+    }
+
+    /// The first `n` bytes of the file at `path` (all of it when shorter),
+    /// such as an image header.
+    fn read_prefix(&self, path: &VPath, n: usize) -> Result<Vec<u8>, VfsError> {
+        let mut bytes = self.read(path)?;
+        bytes.truncate(n);
+        Ok(bytes)
+    }
+
+    /// The length of the file at `path`, in bytes.
+    fn file_len(&self, path: &VPath) -> Result<u64, VfsError> {
+        self.read(path).map(|b| b.len() as u64)
     }
 }
 

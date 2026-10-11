@@ -83,7 +83,11 @@ fn imported_content() {
                     l.material.count(Material::Dirt),
                     l.material.count(Material::Rock),
                     l.def.theme,
-                    p.thumb.as_ref().map_or("none".to_string(), |t| format!("{}x{}", t.width(), t.height()))
+                    rl_pack::read_level_thumb(&src).unwrap().map_or("none".to_string(), |t| format!(
+                        "{}x{}",
+                        t.width(),
+                        t.height()
+                    ))
                 )
                 .unwrap();
             }

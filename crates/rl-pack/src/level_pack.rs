@@ -8,7 +8,7 @@ use rl_data::manifest::{PackKind, PackManifest};
 use rl_vfs::{ContentSink, ContentSource, VPath};
 
 use crate::image_io::{decode_indexed, decode_rgba, encode_indexed, encode_rgba, png_size};
-use crate::ron_io::{read_ron, write_ron};
+use crate::ron_io::{read_file, read_ron, write_ron};
 use crate::{MANIFEST, PackError, read_manifest, write_manifest};
 
 pub const LEVEL_FILE: &str = "level.ron";
@@ -27,7 +27,9 @@ pub const THUMB_SIZE: (u32, u32) = (160, 96);
 /// it is decoded (a pack must not make the menus decode a huge image).
 pub const MAX_THUMB_SIDE: u32 = 512;
 
-/// The largest `thumb.png` read, in bytes.
+/// The largest `thumb.png` read, in bytes. A 512 × 512 thumbnail that
+/// compresses badly may exceed it and be refused (not shown), which is
+/// harmless: importers write 160 × 96.
 pub const MAX_THUMB_BYTES: usize = 1 << 20;
 
 /// Palette for `material.png`, indexed by `Material as u8`: rock is gray,
@@ -100,7 +102,7 @@ pub fn read_level_thumb(src: &dyn ContentSource) -> Result<Option<RgbaImage>, Pa
     if !src.exists(&path) {
         return Ok(None);
     }
-    decode_thumb(&src.read(&path)?).map(Some)
+    decode_thumb(&src.read_max(&path, MAX_THUMB_BYTES as u64)?).map(Some)
 }
 
 /// Decodes `thumb.png`'s bytes after checking their length and the size the
@@ -117,7 +119,7 @@ pub fn decode_thumb(bytes: &[u8]) -> Result<RgbaImage, PackError> {
 }
 
 fn read_png(src: &dyn ContentSource, file: &str) -> Result<RgbaImage, PackError> {
-    let bytes = src.read(&VPath::new(file)?)?;
+    let bytes = read_file(src, &VPath::new(file)?)?;
     decode_rgba(&bytes).map_err(|message| PackError::Image { file: file.into(), message })
 }
 
@@ -131,16 +133,18 @@ pub fn read_level_def(src: &dyn ContentSource) -> Result<(PackManifest, LevelDef
     Ok((manifest, read_ron(src, LEVEL_FILE)?))
 }
 
-/// Reads a level pack. Its thumbnail is presentation only: one that cannot
-/// be read is left out (`thumb: None`; [`crate::validate`] warns), never
-/// an error that would keep the level from being played.
+/// Reads a level pack, every file bounded ([`crate::MAX_FILE_BYTES`]).
+/// The thumbnail is presentation only and not read (`thumb: None`): a
+/// match or a replay never pays for it, and a bad one never keeps the
+/// level from being played. The menus read it with [`read_level_thumb`];
+/// [`crate::validate`] warns about a bad one.
 pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
     let manifest = read_manifest(src)?;
     if manifest.kind != PackKind::Level {
         return Err(PackError::invalid(MANIFEST, "manifest kind is not Level"));
     }
     let def: LevelDef = read_ron(src, LEVEL_FILE)?;
-    let bytes = src.read(&VPath::new(MATERIAL_FILE)?)?;
+    let bytes = read_file(src, &VPath::new(MATERIAL_FILE)?)?;
     let (w, h, indices) =
         decode_indexed(&bytes).map_err(|message| PackError::Image { file: MATERIAL_FILE.into(), message })?;
     let cells = indices
@@ -156,8 +160,7 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
     let material = MaterialGrid::from_cells(w, h, cells).expect("decoder returns w*h indices");
     let level = Level { def, material, front: read_png(src, FRONT_FILE)?, back: read_png(src, BACK_FILE)? };
     check_dims(&level)?;
-    let thumb = read_level_thumb(src).ok().flatten();
-    Ok(LevelPack { manifest, level, thumb })
+    Ok(LevelPack { manifest, level, thumb: None })
 }
 
 #[cfg(test)]
@@ -206,14 +209,20 @@ pub(crate) mod tests {
         pack.thumb = Some(thumb);
         let mut fs = MemFs::new();
         write_level(&mut fs, &pack).unwrap();
+        // `read_level` leaves the thumbnail out; `read_level_thumb` reads it.
+        assert_eq!(read_level_thumb(&fs).unwrap(), pack.thumb);
+        let thumb = pack.thumb.take();
         assert_eq!(read_level(&fs).unwrap(), pack);
-        // Not a PNG, or too large by its header: the level still reads.
-        for bad in [b"not a png".to_vec(), encode_rgba(&RgbaImage::new(MAX_THUMB_SIDE + 1, 1))] {
+        pack.thumb = thumb;
+        // Not a PNG, too large by its header or by its length: the level
+        // still reads, the thumbnail does not.
+        let huge = vec![0u8; MAX_THUMB_BYTES + 1];
+        for bad in [b"not a png".to_vec(), encode_rgba(&RgbaImage::new(MAX_THUMB_SIDE + 1, 1)), huge.clone()]
+        {
             let fs = fs.clone().with(THUMB_FILE, bad.clone());
             assert!(read_level(&fs).unwrap().thumb.is_none());
             assert!(read_level_thumb(&fs).is_err());
         }
-        let huge = vec![0u8; MAX_THUMB_BYTES + 1];
         assert!(decode_thumb(&huge).unwrap_err().to_string().contains("bytes"));
         // The writer refuses what the reader would.
         pack.thumb = Some(RgbaImage::new(0, 3));
@@ -229,6 +238,34 @@ pub(crate) mod tests {
         assert_eq!(read_level_def(&fs).unwrap(), (pack.manifest, pack.level.def));
         let fs = fs.with(LEVEL_FILE, b"(".to_vec());
         assert!(read_level_def(&fs).is_err());
+    }
+
+    /// A level file longer than `MAX_FILE_BYTES` is refused unread, never
+    /// an allocation of its size (a source that knows lengths: `DirFs`;
+    /// here one that reports a huge length without holding the bytes).
+    #[test]
+    fn oversized_level_files_are_refused_unread() {
+        struct Huge(MemFs);
+        impl ContentSource for Huge {
+            fn read(&self, path: &VPath) -> Result<Vec<u8>, rl_vfs::VfsError> {
+                assert_ne!(path.as_str(), FRONT_FILE, "front.png must not be read");
+                self.0.read(path)
+            }
+            fn list(&self, dir: &VPath) -> Result<Vec<String>, rl_vfs::VfsError> {
+                self.0.list(dir)
+            }
+            fn read_max(&self, path: &VPath, limit: u64) -> Result<Vec<u8>, rl_vfs::VfsError> {
+                if path.as_str() == FRONT_FILE {
+                    let len = 8 << 30;
+                    return Err(rl_vfs::VfsError::TooLarge { path: path.to_string(), len, limit });
+                }
+                self.0.read_max(path, limit)
+            }
+        }
+        let mut fs = MemFs::new();
+        write_level(&mut fs, &sample_level()).unwrap();
+        let err = read_level(&Huge(fs)).unwrap_err().to_string();
+        assert!(err.contains("front.png") && err.contains(&crate::MAX_FILE_BYTES.to_string()), "{err}");
     }
 
     #[test]

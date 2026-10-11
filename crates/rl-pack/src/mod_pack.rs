@@ -109,7 +109,7 @@ pub fn read_mod(src: &dyn ContentSource) -> Result<ModPack, PackError> {
             let p: ProjectileDef = read_ron(src, s)?;
             projectiles.insert(name.to_string(), p);
         } else {
-            assets.insert(path.clone(), src.read(&path)?);
+            assets.insert(path.clone(), crate::ron_io::read_file(src, &path)?);
         }
     }
     let def =

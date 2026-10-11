@@ -24,7 +24,7 @@ pub use level_pack::{
     read_level_def, read_level_thumb, write_level,
 };
 pub use mod_pack::{ModPack, RESTRICTIONS_FILE, read_mod, read_preset_names, write_mod};
-pub use ron_io::{read_manifest, write_manifest};
+pub use ron_io::{MAX_FILE_BYTES, MAX_RON_BYTES, read_manifest, write_manifest};
 pub use skin_pack::{SkinPack, read_skin, write_skin};
 pub use theme_pack::{ThemePack, read_theme, write_theme};
 pub use validate::{Diagnostic, Severity, validate};

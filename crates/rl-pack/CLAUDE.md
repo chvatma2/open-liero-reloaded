@@ -13,13 +13,18 @@ header's size); content hashing; validation.
   - level: `level.ron`, `material.png` (8-bit palette; index = `Material`), `front.png`, `back.png`,
     optional `thumb.png` (`THUMB_FILE`, `LevelPack::thumb`: the menus' thumbnail, made at
     import at `THUMB_SIZE` 160 × 96; read bounded by `MAX_THUMB_SIDE` and `MAX_THUMB_BYTES`
-    from the PNG header before decoding: `read_level_thumb`, `decode_thumb`; one that cannot
-    be read is left out by `read_level` and a warning of `validate`)
+    from the PNG header before decoding: `read_level_thumb`, `decode_thumb`; `read_level`
+    leaves it out; a bad one is a warning of `validate`)
   - skin: `skin.ron`, `skin.png`, `mask.png` (palette: 0 keep, 1 colorize, 2 transparent)
   - theme: `theme.ron`, `holes/N.png`, `stones/N.png`, `misc/N.png`, `front_tile.png`, `back_tile.png`,
     optional `green_ball.png`
   - core (OLX's shared game assets, spec §19 E9): `core.ron` (sprite and sound
     lists, `colours.cfg` values), `gfx/<sprite>.png`, `sounds/<file>` (raw Ogg bytes)
+- **Bounded reads:** every pack file is read with `read_max`: at most
+  `MAX_FILE_BYTES` (64 MiB; OLX's largest level art is under 1 MB encoded,
+  and `png` decodes at most 64 MiB), RON at most `MAX_RON_BYTES` (4 MiB),
+  `thumb.png` at most `MAX_THUMB_BYTES`. `read_level` does not read the
+  thumbnail (`thumb: None`): matches and replays never pay for it.
 - **Presentation-only files** (`PRESENTATION_FILES`: `thumb.png`) are left out of
   `content_hash` like `pack.ron` (plan 7 ruling Q4): adding or changing a thumbnail
   keeps every replay of the pack valid (`hash::thumbnails_are_not_content`).

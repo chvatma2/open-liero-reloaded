@@ -70,6 +70,16 @@ mod tests {
     }
 
     #[test]
+    fn bounded_reads() {
+        let fs = fs();
+        let p = VPath::new("d/b.txt").unwrap();
+        assert_eq!(fs.read_max(&p, 1).unwrap(), b"2");
+        assert!(matches!(fs.read_max(&p, 0), Err(VfsError::TooLarge { len: 1, limit: 0, .. })));
+        assert_eq!(fs.read_prefix(&p, 0).unwrap(), b"");
+        assert_eq!(fs.file_len(&p).unwrap(), 1);
+    }
+
+    #[test]
     fn read_and_list() {
         let fs = fs();
         assert_eq!(fs.read(&VPath::new("d/b.txt").unwrap()).unwrap(), b"2");

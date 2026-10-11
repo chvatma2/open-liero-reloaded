@@ -26,7 +26,7 @@ fn put(sink: &mut dyn ContentSink, file: &str, img: &RgbaImage) -> Result<(), Pa
 }
 
 fn get(src: &dyn ContentSource, file: &str) -> Result<RgbaImage, PackError> {
-    decode_rgba(&src.read(&VPath::new(file)?)?)
+    decode_rgba(&crate::ron_io::read_file(src, &VPath::new(file)?)?)
         .map_err(|message| PackError::Image { file: file.into(), message })
 }
 

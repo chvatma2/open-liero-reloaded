@@ -54,9 +54,9 @@ pub fn read_skin(src: &dyn ContentSource) -> Result<SkinPack, PackError> {
         return Err(PackError::invalid(MANIFEST, "manifest kind is not Skin"));
     }
     let def: SkinDef = read_ron(src, SKIN_FILE)?;
-    let image = decode_rgba(&src.read(&VPath::new(IMAGE_FILE)?)?)
+    let image = decode_rgba(&crate::ron_io::read_file(src, &VPath::new(IMAGE_FILE)?)?)
         .map_err(|message| PackError::Image { file: IMAGE_FILE.into(), message })?;
-    let (w, h, idx) = decode_indexed(&src.read(&VPath::new(MASK_FILE)?)?)
+    let (w, h, idx) = decode_indexed(&crate::ron_io::read_file(src, &VPath::new(MASK_FILE)?)?)
         .map_err(|message| PackError::Image { file: MASK_FILE.into(), message })?;
     if (w, h) != (image.width(), image.height()) {
         return Err(PackError::invalid(MASK_FILE, "mask size does not match skin.png"));
