@@ -189,10 +189,12 @@ pub fn parse_lxl(data: &[u8]) -> Result<(Level, Vec<String>), LxlError> {
 /// "OLX hi-res data": a PNG of 2W x 4H with the front image on top and the back
 /// image below (`LoadLevelImageHiRes`, `MapLoader_LieroX.cpp:285-360`), alpha dropped.
 fn hires(png: &[u8], w: u32, h: u32) -> Result<(RgbaImage, RgbaImage), String> {
-    let img = rl_pack::image_io::decode_rgba(png)?;
-    if (img.width(), img.height()) != (w * 2, h * 4) {
-        return Err(format!("size {}x{} is not {}x{}", img.width(), img.height(), w * 2, h * 4));
+    // The size from the header first: nothing else is decoded.
+    let (pw, ph) = rl_pack::image_io::png_size(png).ok_or("not a PNG")?;
+    if (pw, ph) != (w * 2, h * 4) {
+        return Err(format!("size {pw}x{ph} is not {}x{}", w * 2, h * 4));
     }
+    let img = rl_pack::image_io::decode_rgba_within(png, rl_pack::image_io::LEVEL_ART)?;
     // OLX reads only RGB from this PNG.
     let opaque = |mut part: RgbaImage| {
         for y in 0..part.height() {

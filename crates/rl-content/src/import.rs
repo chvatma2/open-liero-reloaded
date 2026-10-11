@@ -17,10 +17,14 @@
 //!   skips names starting with `.`) and renamed into place; the pack it
 //!   replaces is first renamed aside (`.replaced-<id>`) and then removed.
 //!   Leftovers of an import that was killed are removed by the next one.
-//! - **Bounded reads:** every file of the game directory is read at most
-//!   [`MAX_SOURCE_BYTES`] (no OLX file is near it), so a hostile directory
-//!   cannot make the import allocate without bound; only regular files are
-//!   read (`DirFs`).
+//! - **Bounded memory:** every file of the game directory is read at most
+//!   [`MAX_SOURCE_BYTES`] (no OLX file is near it), and only regular files
+//!   (`DirFs`); every image is decoded only after its header's size is
+//!   checked (`rl_pack::image_io::IMAGES`, `LEVEL_ART`: at most 64 MiB, a
+//!   level's art 256 MiB), and a level's data decompresses to at most
+//!   its size's worth (`rl-import-lxl`). A small file declaring a huge
+//!   image (a decompression bomb) is that item's error, never an
+//!   allocation.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

@@ -111,7 +111,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   colliding in a run get `-2`, ..., and writes `import-report.ron`
   (`ImportEntry`: source, pack, error, warnings; byte-identical to the
   CLI's before the move). `prune` (the CLI's) removes packs of earlier
-  runs. Every file is read at most `MAX_SOURCE_BYTES`. A failed item is in
+  runs. Every file is read at most `MAX_SOURCE_BYTES`, every image
+  decoded within `rl_pack::image_io`'s bounds. A failed item is in
   the report; a failed write (permission, full disk) is the import's
   error. `discover(path)` lists what an OLX game directory (or its
   `share/gamedir`) holds where OLX's menus look (directories with a

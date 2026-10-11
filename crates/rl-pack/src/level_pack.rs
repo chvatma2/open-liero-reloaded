@@ -7,7 +7,9 @@ use rl_data::level::{Level, LevelDef, Material, MaterialGrid};
 use rl_data::manifest::{PackKind, PackManifest};
 use rl_vfs::{ContentSink, ContentSource, VPath};
 
-use crate::image_io::{decode_indexed, decode_rgba, encode_indexed, encode_rgba, png_size};
+use crate::image_io::{
+    LEVEL_ART, decode_indexed_within, decode_rgba, decode_rgba_within, encode_indexed, encode_rgba, png_size,
+};
 use crate::ron_io::{read_file, read_ron, write_ron};
 use crate::{MANIFEST, PackError, read_manifest, write_manifest};
 
@@ -118,9 +120,10 @@ pub fn decode_thumb(bytes: &[u8]) -> Result<RgbaImage, PackError> {
     decode_rgba(bytes).map_err(|message| PackError::Image { file: THUMB_FILE.into(), message })
 }
 
+/// A level's art, within [`LEVEL_ART`].
 fn read_png(src: &dyn ContentSource, file: &str) -> Result<RgbaImage, PackError> {
     let bytes = read_file(src, &VPath::new(file)?)?;
-    decode_rgba(&bytes).map_err(|message| PackError::Image { file: file.into(), message })
+    decode_rgba_within(&bytes, LEVEL_ART).map_err(|message| PackError::Image { file: file.into(), message })
 }
 
 /// The manifest and `level.ron` alone, decoding no image: what a menu
@@ -145,8 +148,8 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
     }
     let def: LevelDef = read_ron(src, LEVEL_FILE)?;
     let bytes = read_file(src, &VPath::new(MATERIAL_FILE)?)?;
-    let (w, h, indices) =
-        decode_indexed(&bytes).map_err(|message| PackError::Image { file: MATERIAL_FILE.into(), message })?;
+    let (w, h, indices) = decode_indexed_within(&bytes, LEVEL_ART)
+        .map_err(|message| PackError::Image { file: MATERIAL_FILE.into(), message })?;
     let cells = indices
         .iter()
         .enumerate()

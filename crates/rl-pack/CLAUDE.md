@@ -25,6 +25,14 @@ header's size); content hashing; validation.
   and `png` decodes at most 64 MiB), RON at most `MAX_RON_BYTES` (4 MiB),
   `thumb.png` at most `MAX_THUMB_BYTES`. `read_level` does not read the
   thumbnail (`thumb: None`): matches and replays never pay for it.
+- **Bounded decoding** (`image_io`): every PNG's size is checked from its
+  header before anything is allocated (`ImageBound`): `decode_rgba` /
+  `decode_indexed` within `IMAGES` (a side up to `MAX_IMAGE_SIDE` 16384,
+  above OLX's 11563-wide `out_font.png`; at most 4096² pixels, 64 MiB),
+  a level's art and material (`read_level`, an `.lxl`'s hi-res chunk)
+  within `LEVEL_ART` (side 4096 × art scale 8, at most 64 Mi pixels,
+  256 MiB, `rl-content`'s `MAX_COLOR_MAP_BYTES`). Decoding expands in
+  place: 4 bytes a pixel at most. `declared_png` makes a bomb for tests.
 - **Presentation-only files** (`PRESENTATION_FILES`: `thumb.png`) are left out of
   `content_hash` like `pack.ron` (plan 7 ruling Q4): adding or changing a thumbnail
   keeps every replay of the pack valid (`hash::thumbnails_are_not_content`).

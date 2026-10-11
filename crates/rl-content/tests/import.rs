@@ -232,3 +232,34 @@ fn imported_packs_override_bundled() {
     assert!(c.warnings().iter().all(|w| !w.contains("missing")), "{:?}", c.warnings());
     assert!(Content::open_layers(&[none.as_path(), &none.join("x")]).is_err());
 }
+
+/// A decompression bomb (a small PNG declaring 12000 × 12000) is refused
+/// from its header, never decoded: on import (a skin) and when a pack
+/// holding one is loaded (a skin sheet; a mod's image at match start).
+#[test]
+fn a_decompression_bomb_is_refused_on_import_and_load() {
+    let bomb = rl_pack::image_io::declared_png(12000, 12000, false);
+    let olx = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(olx.path().join("skins")).unwrap();
+    std::fs::write(olx.path().join("skins/bomb.png"), &bomb).unwrap();
+    std::fs::copy(olx_mini().join("skins/default.png"), olx.path().join("skins/default.png")).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let plan = ImportPlan { skins: true, ..ImportPlan::default() };
+    let r = import::import(olx.path(), &plan, out.path(), &local(), &mut |_| true).unwrap();
+    let e = r.entries.iter().find(|e| e.source == "skins/bomb.png").unwrap();
+    assert!(e.error.as_deref().is_some_and(|e| e.contains("above")), "{e:?}");
+    assert_eq!(r.imported(), 1);
+
+    // Packs that hold one: a skin sheet, and a mod's image.
+    let mini = import::discover(&olx_mini()).unwrap();
+    let mods = ImportPlan { mods: vec!["Tiny Mod".into()], ..ImportPlan::default() };
+    import::import(&mini.gamedir, &mods, out.path(), &local(), &mut |_| true).unwrap();
+    std::fs::write(out.path().join("olx-skin-default/skin.png"), &bomb).unwrap();
+    std::fs::create_dir_all(out.path().join("olx-tiny-mod/gfx")).unwrap();
+    std::fs::write(out.path().join("olx-tiny-mod/gfx/bomb.png"), &bomb).unwrap();
+    let c = Content::open(out.path()).unwrap();
+    let e = format!("{:#}", c.load_skin("olx-skin-default").unwrap_err());
+    assert!(e.contains("above"), "{e}");
+    let m = c.load_mod("olx-tiny-mod").unwrap();
+    assert!(m.warnings.iter().any(|w| w.contains("bomb.png") && w.contains("above")), "{:?}", m.warnings);
+}
