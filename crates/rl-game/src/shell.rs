@@ -27,6 +27,7 @@ use rl_ui::{AppCommand, AudioSettings, Profiles, Settings, Store, UiAction, UiSt
 
 use crate::session::Session;
 use crate::setup::{self, Assets, PlayerLook, SandboxOptions};
+use crate::video::{self, Overrides};
 
 /// What the shell needs besides the menus' state.
 #[derive(Clone, Debug)]
@@ -91,6 +92,9 @@ pub struct Shell {
     /// the textures shown (dropping them frees them).
     preview_skin: Option<(String, LoadedSkin)>,
     preview_textures: Vec<TextureHandle>,
+    /// The command line's video flags over the saved options, and the
+    /// options as loaded (`video::Overrides`).
+    overrides: Option<(VideoSettings, Overrides)>,
 }
 
 impl Shell {
@@ -129,6 +133,7 @@ impl Shell {
             content,
             preview_skin: None,
             preview_textures: Vec::new(),
+            overrides: None,
         };
         let audio = shell.ui.settings().audio.clone();
         shell.set_volume(&audio);
@@ -157,6 +162,7 @@ impl Shell {
             content: None,
             preview_skin: None,
             preview_textures: Vec::new(),
+            overrides: None,
         }
     }
 
@@ -255,10 +261,21 @@ impl Shell {
             AppCommand::EndMatch => self.end(),
             AppCommand::SetPaused(on) => self.paused = on,
             AppCommand::Restart => self.restart(),
-            AppCommand::ApplyVideo(v) => out.push(Outcome::Video(v)),
+            AppCommand::ApplyVideo(v) => {
+                if let Some((_, o)) = &mut self.overrides {
+                    o.follow(&v);
+                }
+                self.set_interpolation(video::interpolation(v.interpolation));
+                out.push(Outcome::Video(v));
+            }
             AppCommand::ApplyAudio(a) => self.set_volume(&a),
             AppCommand::ApplyBindings(b) => out.push(Outcome::Bindings(b)),
-            AppCommand::SaveSettings(s) => self.unsaved_settings = Some(s),
+            AppCommand::SaveSettings(mut s) => {
+                if let Some((file, o)) = &self.overrides {
+                    o.unsaved(file, &mut s.video);
+                }
+                self.unsaved_settings = Some(s);
+            }
             AppCommand::SaveProfiles(p) => self.unsaved_profiles = Some(p),
             AppCommand::Quit => out.push(Outcome::Quit),
         }
@@ -354,6 +371,35 @@ impl Shell {
         match rl_ui::replays::auto_save(&dir, &r.encode()) {
             Ok(path) => println!("rl-game: saved replay {} ({} ticks)", path.display(), r.ticks()),
             Err(e) => eprintln!("warning: saving the replay in {}: {e}", dir.display()),
+        }
+    }
+
+    /// The command line's video flags (`overrides`) win over `file`, the
+    /// options as loaded: the menus show them (the caller made the
+    /// `UiState` with them applied), and the file keeps its own values
+    /// until the player changes those options.
+    pub fn set_overrides(&mut self, file: VideoSettings, overrides: Overrides) {
+        self.overrides = Some((file, overrides));
+    }
+
+    /// How games are drawn between ticks (new games, and the one playing).
+    pub fn interpolation(&self) -> Interpolation {
+        self.cfg.interpolation
+    }
+
+    fn set_interpolation(&mut self, i: Interpolation) {
+        self.cfg.interpolation = i;
+        if let Some(s) = self.session_mut() {
+            s.present.scene.options.interpolation = i;
+        }
+    }
+
+    /// The sound output's volume now (the game's, else the menus').
+    pub fn volume(&self) -> f32 {
+        match (self.session(), &self.audio) {
+            (Some(s), _) => s.audio.volume(),
+            (None, Some(a)) => a.volume(),
+            (None, None) => 0.0,
         }
     }
 

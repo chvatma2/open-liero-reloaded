@@ -166,8 +166,9 @@ impl Profiles {
 
     /// Makes the list usable: at least one profile and at most
     /// [`MAX_PROFILES`], names without control characters, trimmed, not
-    /// empty and at most [`MAX_NAME_CHARS`] long, a skin named, `selected` in range. One
-    /// warning per fix.
+    /// empty and at most [`MAX_NAME_CHARS`] long, a skin named, own keys
+    /// that reach every action (`Bindings::repair`), `selected` in range.
+    /// One warning per fix.
     pub fn sanitize(&mut self) -> Vec<String> {
         let mut w = Vec::new();
         if self.list.len() > MAX_PROFILES {
@@ -191,6 +192,9 @@ impl Profiles {
             if p.skin_id.trim().is_empty() {
                 w.push(format!("profile {}: no skin: the default", i + 1));
                 p.skin_id = Profile::default().skin_id;
+            }
+            if let Some(b) = &mut p.bindings {
+                w.extend(b.repair().into_iter().map(|x| format!("profile {}: {x}", i + 1)));
             }
         }
         if self.selected >= self.list.len() {

@@ -22,6 +22,10 @@ impl ApplicationHandler for App {
             let _ = w.egui.on_window_event(&w.window, &event);
         }
         self.input.on_window_event(&event);
+        // The options' "press a key" box, while open.
+        if let Some(c) = &mut self.shell.data.capture {
+            c.on_window_event(&event);
+        }
         let result = match &event {
             WindowEvent::CloseRequested => {
                 el.exit();
@@ -58,6 +62,9 @@ impl ApplicationHandler for App {
         if let Some(g) = &mut self.gilrs {
             while let Some(ev) = g.next_event() {
                 self.input.on_gamepad(&ev);
+                if let Some(c) = &mut self.shell.data.capture {
+                    c.on_gamepad(&ev);
+                }
             }
         }
         let Some(w) = &self.win else { return };

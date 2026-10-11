@@ -39,6 +39,8 @@ impl Settings {
     pub fn sanitize(&mut self) -> Vec<String> {
         let mut w = self.video.sanitize();
         w.extend(self.audio.sanitize());
+        // Keys that leave an action unreachable get OLX's back (Review Focus 2).
+        w.extend(self.input.repair().into_iter().map(|x| format!("input: {x}")));
         w.extend(self.gameplay.match_prefs.sanitize());
         w
     }
@@ -149,18 +151,23 @@ pub enum UpscaleFilter {
     Sharp,
 }
 
-/// Volumes, 0 to 1.
+/// Volumes, 0 to 1. The game's sound plays at `master * sfx`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioSettings {
+    /// OLX's sound volume (`Audio.Volume / 100`).
     pub master: f32,
+    /// The game's sound effects.
     pub sfx: f32,
+    /// Music (none plays yet).
     pub music: f32,
 }
 
 impl Default for AudioSettings {
+    /// OLX's default volume, 70.
+    /// OLX: src/client/Options.cpp:209 (`Audio.Volume`, 70).
     fn default() -> Self {
-        AudioSettings { master: 1.0, sfx: 1.0, music: 0.7 }
+        AudioSettings { master: 0.7, sfx: 1.0, music: 0.7 }
     }
 }
 

@@ -73,6 +73,8 @@ pub struct Gpu {
     surface: wgpu::Surface<'static>,
     adapter: wgpu::Adapter,
     config: wgpu::SurfaceConfiguration,
+    /// The present modes the surface offers.
+    present_modes: Vec<wgpu::PresentMode>,
     state: SurfaceState,
     pub renderer: Renderer,
     egui: egui_wgpu::Renderer,
@@ -157,7 +159,8 @@ impl Gpu {
         let renderer = Renderer::new(device, queue, format, settings);
         let zero = inner.width == 0 || inner.height == 0;
         let state = SurfaceState::new(if zero { (inner.width, inner.height) } else { first });
-        Ok(Gpu { window, instance, surface, adapter, config, state, renderer, egui, info })
+        let present_modes = caps.present_modes;
+        Ok(Gpu { window, instance, surface, adapter, config, present_modes, state, renderer, egui, info })
     }
 
     /// The window is now `size` pixels (0 when minimised).
@@ -165,6 +168,17 @@ impl Gpu {
         // Minimised stays 0 (no frames); otherwise within the device's limit.
         let size = if size.0 == 0 || size.1 == 0 { size } else { clamp_size(size, self.max_side()) };
         self.state.resize(size);
+    }
+
+    /// VSync (`false`) or as fast as the GPU draws: the surface is
+    /// configured again before the next frame when its present mode
+    /// changes (never under WSLg, which offers FIFO only).
+    pub fn set_uncapped(&mut self, uncapped: bool) {
+        let mode = pick_present_mode(&self.present_modes, uncapped);
+        if mode != self.config.present_mode {
+            self.config.present_mode = mode;
+            self.state.reconfigure();
+        }
     }
 
     /// The window is hidden or shown again (winit's `Occluded`).

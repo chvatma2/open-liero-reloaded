@@ -31,7 +31,8 @@ cargo run --release -p rl-game -- --replay f.rlrp
   game playing (`Playing { assets, session }`); `app.rs` draws
   `rl_ui::screens::show` over the overlay, feeds the actions to
   `Shell::act` and does the `Outcome`s (`app/menus.rs`: quit, bindings,
-  video through the paced window requests, a started game's upload). A
+  video through `video::Video` and the paced window requests, a started
+  game's upload). A
   start is loaded by `Shell::poll` after the frame that showed "Loading…";
   a failure (a pack missing or broken: `setup::load_match`, `load`,
   `load_replay`) returns to the menu with the reason (Review Focus 3).
@@ -48,6 +49,22 @@ cargo run --release -p rl-game -- --replay f.rlrp
   uploads the profiles screen's skin preview (`MenuData::preview_wanted`,
   `rl_ui::skin_preview::frames`) as egui textures (`MenuData::preview`,
   from the next frame), loading the skin once while it stays the same.
+- **Options** (`video.rs`, plan 7 task 4): `Video::change` asks the
+  window requests for a size or mode only when the preset or fullscreen
+  changed (fullscreen keeps its size for later) and returns the rest to
+  apply at once (`Live`: UI scale; VSync or uncapped, `Gpu::set_uncapped`
+  re-configuring the surface when the present mode changes; the filter,
+  `renderer.settings`); interpolation is the shell's
+  (`Shell::interpolation`, new games and the one playing). The window opens
+  at the saved preset and mode (`Video::opening`, physical pixels; the
+  desktop's size from the first monitor), so no resize follows its
+  creation. `--fullscreen`, `--uncapped`, `--filter`, `--no-interp` given
+  on the command line win for the run (`video::Overrides`, applied before
+  the `UiState` is made, so the options show them); `Shell::set_overrides`
+  keeps the file's values for them until the player changes them in the
+  options. Volumes: `master * sfx` to the menus' or the game's
+  `Audio::set_volume` at once (`Shell::volume`). While the options capture
+  a key, the app feeds `MenuData::capture` every window and gilrs event.
 - **Single thread** (spec §8.6): the device is created and used only on
   the main (event-loop) thread; under WSL's d3d12 GL driver a thread that
   used the device crashes when it exits. kira runs its own audio thread.
@@ -115,7 +132,7 @@ cargo run --release -p rl-game -- --replay f.rlrp
 - **Window** (`window.rs`, the user's ruling after the plan 6 playtest):
   not resizable, no maximise button; `--fullscreen` is borderless. Size
   and mode changes come only from the game (`size`, `fullscreen` script
-  commands, the M7 options menu) through `window::Requests`: the latest
+  commands, the options menu: `video.rs`) through `window::Requests`: the latest
   wins, applied at the start of a frame before `acquire`, at most once
   every `MIN_CHANGE_INTERVAL` (250 ms, creating the window counts as a
   change: `Requests::opened`); a fixed window's min and max move
@@ -170,4 +187,6 @@ Test: `cargo nextest run -p rl-game` (the pure parts; `setup`, `session`,
 budget, a recording replayed through a replay session), `tests/menu.rs`
 (starts with missing or broken content, rapid menu actions) and
 `tests/profiles.rs` (the preview's textures; a menu match wears the
-profile's look) play the imported levels when `RL_CONTENT_DIR` is set).
+profile's look), `tests/options.rs` (video through the paced requests,
+volumes live, the saved window with the flags on top) play the imported
+levels when `RL_CONTENT_DIR` is set).

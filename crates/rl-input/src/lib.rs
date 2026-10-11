@@ -16,6 +16,7 @@
 
 pub use bindings::{Action, Bindings, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD, is_browser_reserved};
 pub use latch::TickLatch;
+pub use rebind::{Binding, Capture, Device, RebindError, Resolve, key_name};
 pub use state::{InputState, PadEvent};
 
 /// Re-exported for building [`Bindings`].
@@ -24,4 +25,5 @@ pub use winit::keyboard::KeyCode;
 
 mod bindings;
 mod latch;
+mod rebind;
 mod state;

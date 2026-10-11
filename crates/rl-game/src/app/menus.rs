@@ -28,21 +28,25 @@ impl App {
         }
     }
 
-    /// The menus' video options: the UI scale now, the window's size and
-    /// mode through the paced requests when they changed.
+    /// The menus' video options (`video.rs`): the window's size and mode
+    /// through the paced requests when they changed, the rest at once
+    /// (interpolation is the shell's).
     fn apply_video(&mut self, v: rl_ui::VideoSettings) {
-        rl_ui::theme::apply(&self.egui, v.ui_scale);
-        let old = self.video.replace(v.clone());
-        if old.as_ref().is_some_and(|o| (o.window, o.fullscreen) == (v.window, v.fullscreen)) {
-            return;
+        let monitor = self.win.as_ref().and_then(|w| w.window.current_monitor());
+        let desktop = monitor.map(|m| (m.size().width, m.size().height));
+        let live = self.video.change(v, desktop, &mut self.requests);
+        rl_ui::theme::apply(&self.egui, live.ui_scale);
+        if let Some(f) = live.filter {
+            self.cfg.render.filter = f;
+            if let Some(w) = &mut self.win {
+                w.gpu.renderer.settings.filter = f;
+            }
         }
-        if v.fullscreen {
-            self.requests.fullscreen(true);
-        } else {
-            let desktop = self.win.as_ref().and_then(|w| w.window.current_monitor()).map(|m| m.size());
-            let (w, h) = v.window.size(desktop.map(|s| (s.width, s.height)));
-            self.requests.fullscreen(false);
-            self.requests.size(w, h);
+        if let Some(u) = live.uncapped {
+            self.cfg.uncapped = u;
+            if let Some(w) = &mut self.win {
+                w.gpu.set_uncapped(u);
+            }
         }
     }
 }

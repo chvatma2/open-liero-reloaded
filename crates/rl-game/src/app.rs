@@ -29,6 +29,7 @@ use crate::overlay::{Overlay, ScreenMap, Stats};
 use crate::script::{Command, Step};
 use crate::shell::Shell;
 use crate::stats::Meter;
+use crate::video::Video;
 use crate::window::{self, Requests};
 
 mod handler;
@@ -102,8 +103,8 @@ pub struct App {
     paused: bool,
     /// Window size and mode changes asked for and not yet applied.
     requests: Requests,
-    /// The video options last applied (the menus' window preset).
-    video: Option<rl_ui::VideoSettings>,
+    /// The video options the window shows (the menus').
+    video: Video,
     /// When the settings were last written (`Shell::flush`, once a second).
     flushed: Option<Instant>,
     /// What stopped the game, if something went wrong.
@@ -123,6 +124,7 @@ impl App {
         let audio = if silent { "audio: silent (no output device)" } else { "audio: opened" };
         let stats = Stats { audio: audio.to_string(), ..Stats::default() };
         let egui = egui::Context::default();
+        let video = Video::new(shell.ui.settings().video.clone());
         let mut input = InputState::default();
         if cfg.menus {
             rl_ui::theme::apply(&egui, shell.ui.settings().video.ui_scale);
@@ -151,7 +153,7 @@ impl App {
             dropped_warned: false,
             paused: false,
             requests: Requests::default(),
-            video: None,
+            video,
             flushed: None,
             error: None,
         }
@@ -225,7 +227,16 @@ impl App {
     }
 
     fn open(&mut self, el: &ActiveEventLoop) -> anyhow::Result<()> {
-        let attrs = window::attributes(window::DEFAULT_SIZE, self.cfg.fullscreen);
+        let attrs = if self.cfg.menus {
+            // The options' window (the command line's flags on top), made
+            // at its size and mode: no change follows the creation.
+            let monitor = el.primary_monitor().or_else(|| el.available_monitors().next());
+            let desktop = monitor.map(|m| (m.size().width, m.size().height));
+            let o = Video::opening(&self.shell.ui.settings().video, desktop);
+            window::attributes(o.size, true, o.fullscreen)
+        } else {
+            window::attributes(window::DEFAULT_SIZE, false, self.cfg.fullscreen)
+        };
         let window = Arc::new(el.create_window(attrs)?);
         let gpu = Gpu::new(
             window.clone(),

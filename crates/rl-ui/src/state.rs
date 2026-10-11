@@ -269,7 +269,8 @@ impl UiState {
                 self.settings.audio = a.clone();
                 vec![AppCommand::ApplyAudio(a), self.save_settings()]
             }
-            UiAction::SetBindings(b) => {
+            UiAction::SetBindings(mut b) => {
+                b.repair();
                 if b == self.settings.input {
                     return Vec::new();
                 }

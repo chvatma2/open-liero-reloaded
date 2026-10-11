@@ -62,6 +62,8 @@ pub struct Audio<B: Backend = DefaultBackend> {
     sounds: Vec<Option<StaticSoundData>>,
     voices: Voices<StaticSoundHandle>,
     volume: f32,
+    /// Where the listener was last (the view centre of the last tick).
+    listener: Vec2,
     warnings: Vec<String>,
 }
 
@@ -107,6 +109,7 @@ impl<B: Backend> Audio<B> {
             sounds: Vec::new(),
             voices: Voices::new(GLOBAL_VOICES),
             volume: DEFAULT_VOLUME,
+            listener: Vec2::ZERO,
             warnings: Vec::new(),
         }
     }
@@ -127,8 +130,13 @@ impl<B: Backend> Audio<B> {
         self.volume
     }
 
+    /// Sets the master volume (0 to 1; not a number: the default). The
+    /// voices playing follow at once, as OLX's `SetSoundVolume` sets the
+    /// listener's gain (the options apply it live, even while no tick runs).
+    /// OLX: src/sound/Sounds.cpp:164-174, src/sound/sfxdriver_openal.cpp:88-93.
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = if volume.is_finite() { volume.clamp(0.0, 1.0) } else { DEFAULT_VOLUME };
+        self.voices.follow(self.listener, self.volume);
     }
 
     /// How many voices play (for the debug overlay).
@@ -192,6 +200,7 @@ impl<B: Backend> Audio<B> {
     /// [`Audio::play_events`] for any events.
     pub fn play(&mut self, events: &[Event], listener: Vec2) {
         let Some(manager) = &mut self.manager else { return };
+        self.listener = listener;
         self.voices.prune();
         self.voices.follow(listener, self.volume);
         for e in events {

@@ -16,6 +16,17 @@ Keyboard and gamepad input for one player, turned into the simulation's 8
   inputs may share an action. Serde for M7's options.
   `browser_conflicts()` / `is_browser_reserved` flag bound keys that form
   a shortcut browsers keep (Ctrl+W, ...); the defaults have none.
+  `#[serde(default)]`: a file without `keys` or `pad` takes OLX's.
+- **Rebinding** (`rebind.rs`, plan 7 Review Focus 2): `Binding` (a key or
+  a `PadInput`) of a `Device`; `of(action, device)`, `actions_of(input)`,
+  `unreachable()`; `bind(action, input, Resolve::{Share, Move})` and
+  `unbind` refuse (`RebindError::Unreachable`, nothing changed) any step
+  that leaves an action without a key or without a gamepad input;
+  `repair()` gives a file's unreachable actions OLX's defaults back (one
+  warning each). `Capture::new(device)` is the options' "press a key" box:
+  fed window and gilrs events, it keeps the first press (modifiers too; a
+  trigger or stick past its threshold). `key_name` and `Binding`'s
+  `Display` are the names the options show; `Action::name()` OLX's.
 - **Thresholds:** a trigger from 75 % of its travel, a stick from 60 %
   (OLX's `CInput`). Only gilrs's `ButtonChanged` (sent for every button)
   and `AxisChanged` are read; `Disconnected` releases that pad.

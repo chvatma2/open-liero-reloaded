@@ -3,19 +3,25 @@
 //! [`UiState::update`] and carries out the commands. No GPU handle: level
 //! thumbnails are egui textures the app's renderer uploads like egui's own.
 //!
-//! Keys: Esc is Back on every screen (in game it toggles the pause menu),
-//! F5 restarts the game in place.
+//! Keys: Esc is Back on every screen (in game it toggles the pause menu;
+//! in the options it first closes an open dialog), F5 restarts the game in
+//! place.
 
+mod keys;
 mod local_play;
 mod main;
+mod options;
 mod profiles;
 mod replays;
+
+pub use keys::GAME_KEYS;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use egui::{Align2, Color32, Key, RichText, TextureHandle, TextureOptions, Ui};
 use rl_content::Catalog;
+use rl_input::Capture;
 
 use crate::replays::ReplayFile;
 use crate::skin_preview::{PreviewKey, PreviewTextures};
@@ -36,8 +42,13 @@ pub struct MenuData {
     pub preview_wanted: Option<PreviewKey>,
     /// The app's preview textures (plan 7 ruling Q2: the app uploads them).
     pub preview: Option<PreviewTextures>,
+    /// The options' "press a key" box while it is open: the app feeds it
+    /// every key press and gamepad event (`Capture::on_window_event`,
+    /// `on_gamepad`); the options read the input from it.
+    pub capture: Option<Capture>,
     thumbs: BTreeMap<String, TextureHandle>,
     profiles: profiles::View,
+    options: options::View,
     /// The screen shown last frame (a screen reads its files on entry).
     shown: Option<Screen>,
 }
@@ -51,8 +62,10 @@ impl MenuData {
             replay_path: String::new(),
             preview_wanted: None,
             preview: None,
+            capture: None,
             thumbs: BTreeMap::new(),
             profiles: profiles::View::default(),
+            options: options::View::default(),
             shown: None,
         }
     }
@@ -93,9 +106,15 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
         match screen {
             Screen::Replays => data.refresh_replays(),
             Screen::Profiles => data.profiles = profiles::View::new(state.profiles().selected),
+            Screen::Options => data.options = options::View::default(),
             _ => {}
         }
     }
+    if screen != Screen::Options {
+        data.capture = None;
+    }
+    // A dialog of the options is open: Esc closes it, and stays.
+    let dialog = screen == Screen::Options && data.options.keys.busy(data.capture.is_some());
     match screen {
         Screen::InGame | Screen::WeaponSelect | Screen::Results => in_game(ui, state, &mut out),
         _ => {
@@ -105,12 +124,13 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
                 Screen::LocalPlay => local_play::show(ui, state, data, &mut out),
                 Screen::Profiles => profiles::show(ui, state, data, &mut out),
                 Screen::Replays => replays::show(ui, state, data, &mut out),
+                Screen::Options => options::show(ui, state, data, &mut out),
                 _ => placeholder(ui, screen, &mut out),
             });
         }
     }
     let (esc, f5) = ui.input(|i| (i.key_pressed(Key::Escape), i.key_pressed(Key::F5)));
-    if esc {
+    if esc && !dialog {
         out.push(UiAction::Back);
     }
     if f5 {
@@ -138,10 +158,9 @@ fn message(ui: &mut Ui, state: &UiState) {
     }
 }
 
-/// The screens later milestones fill (options, import, about).
+/// The screens later milestones fill (import, about).
 fn placeholder(ui: &mut Ui, screen: Screen, out: &mut Vec<UiAction>) {
     let title = match screen {
-        Screen::Options => "Options",
         Screen::Import => "Import",
         Screen::About => "About",
         _ => "",

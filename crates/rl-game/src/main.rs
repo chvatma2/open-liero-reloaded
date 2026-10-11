@@ -13,6 +13,7 @@ use rl_game::script::{self, Command, Step};
 use rl_game::session::Session;
 use rl_game::setup::{self, DeathmatchOptions, Game, SandboxOptions};
 use rl_game::shell::{Shell, ShellConfig};
+use rl_game::video::{self, Overrides};
 use rl_game::window::{self, WindowSystem};
 use rl_game::wsl;
 use rl_render::{RenderSettings, UpscaleFilter};
@@ -59,7 +60,8 @@ enum Filter {
 /// (`--replay`). Arrows move and aim, Ctrl fires, Alt jumps, X throws the
 /// rope, Shift with the arrows changes weapon; Tab scores, F2 debug, F5
 /// restart (a Deathmatch's rematch), H health bars, Esc pauses (the menus)
-/// or quits.
+/// or quits. With the menus, --fullscreen, --uncapped, --filter and
+/// --no-interp win over the options for the run (they are not saved).
 #[derive(clap::Parser)]
 #[command(name = "rl-game")]
 struct Args {
@@ -224,10 +226,26 @@ fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig) -> anyhow::Resu
     Ok(Shell::playing(cfg, assets, session))
 }
 
-/// The menus, with the settings and profiles of the data directory.
-fn menus(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig) -> Shell {
+/// The video flags given on the command line (they win over the saved
+/// options for the run).
+fn video_flags(m: &ArgMatches, args: &Args) -> Overrides {
+    let given = |id: &str| m.value_source(id) == Some(ValueSource::CommandLine);
+    Overrides {
+        fullscreen: given("fullscreen").then_some(true),
+        frame_rate: given("uncapped").then_some(rl_ui::FrameRate::Uncapped),
+        filter: given("filter").then_some(match args.filter {
+            Filter::Nearest => rl_ui::UpscaleFilter::Nearest,
+            Filter::Sharp => rl_ui::UpscaleFilter::Sharp,
+        }),
+        interpolation: given("no_interp").then_some(false),
+    }
+}
+
+/// The menus, with the settings and profiles of the data directory; the
+/// video `flags` on top of the saved options (not saved).
+fn menus(args: &Args, audio: rl_audio::Audio, mut cfg: ShellConfig, flags: Overrides) -> Shell {
     let (mut store, warning) = rl_ui::Store::platform();
-    let settings = store.load_settings();
+    let mut settings = store.load_settings();
     let profiles = store.load_profiles();
     for w in warning.into_iter().chain(settings.warnings).chain(profiles.warnings) {
         eprintln!("warning: {w}");
@@ -239,11 +257,16 @@ fn menus(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig) -> Shell {
         .map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32);
     let data = store.dir().map_or("none (nothing is saved)".to_string(), |d| d.display().to_string());
     println!("rl-game: menus; content {}, data {data}", args.content.display());
+    let file = settings.value.video.clone();
+    flags.apply(&mut settings.value.video);
+    cfg.interpolation = video::interpolation(settings.value.video.interpolation);
     let ui = rl_ui::UiState::new(settings.value, profiles.value, seed);
-    Shell::new(cfg, ui, store, audio)
+    let mut shell = Shell::new(cfg, ui, store, audio);
+    shell.set_overrides(file, flags);
+    shell
 }
 
-fn run(args: Args, play_now: bool) -> anyhow::Result<()> {
+fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
     let var = std::env::var(window::WINDOW_SYSTEM_VAR).ok();
     let ws = window::window_system(args.window_system, var.as_deref()).map_err(anyhow::Error::msg)?;
     let mut steps: Vec<Step> = match (&args.script, args.demo) {
@@ -272,19 +295,29 @@ fn run(args: Args, play_now: bool) -> anyhow::Result<()> {
     let interpolation = if args.no_interp { Interpolation::Latest } else { Interpolation::Linear };
     let viewport = rl_scene::Viewport::from_aspect(16.0 / 9.0, rl_game::app::MAX_ASPECT);
     let shell_cfg = ShellConfig { content: args.content.clone(), interpolation, viewport };
-    let shell = if play_now { direct(&args, audio, shell_cfg)? } else { menus(&args, audio, shell_cfg) };
+    let shell =
+        if play_now { direct(&args, audio, shell_cfg)? } else { menus(&args, audio, shell_cfg, flags) };
     println!("rl-game: audio {}", if silent { "silent" } else { "opened" });
     let osrelease = wsl::osrelease();
     let backend = std::env::var("WGPU_BACKEND").ok();
-    let filter = match args.filter {
+    let mut filter = match args.filter {
         Filter::Nearest => UpscaleFilter::IntegerNearest,
         Filter::Sharp => UpscaleFilter::SharpBilinear,
     };
+    let (mut fullscreen, mut uncapped, mut interpolation) = (args.fullscreen, args.uncapped, interpolation);
+    if !play_now {
+        // The options as this run shows them (the flags on top).
+        let v = &shell.ui.settings().video;
+        filter = video::filter(v.filter);
+        fullscreen = v.fullscreen;
+        uncapped = v.frame_rate == rl_ui::FrameRate::Uncapped;
+        interpolation = video::interpolation(v.interpolation);
+    }
     let cfg = Config {
         backends: wsl::backends(wsl::is_wsl(&osrelease), backend.as_deref()),
         render: RenderSettings { filter },
-        fullscreen: args.fullscreen,
-        uncapped: args.uncapped,
+        fullscreen,
+        uncapped,
         interpolation,
         autoquit_after: args.autoquit_after,
         script: steps,
@@ -370,7 +403,8 @@ fn main() -> ExitCode {
     if let Some(code) = relaunch() {
         return code;
     }
-    match run(args, plays_directly(&matches)) {
+    let flags = video_flags(&matches, &args);
+    match run(args, plays_directly(&matches), flags) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e:#}");

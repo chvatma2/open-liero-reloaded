@@ -5,8 +5,8 @@
 //! after the plan 6 playtest): under WSLg, dragging the window's edge
 //! crashed the compositor (Weston), which ended the game with a broken
 //! pipe. The size comes from the command line and changes only when the
-//! game asks (the `size` and `fullscreen` script commands, later the
-//! options menu, M7). Those requests are coalesced in [`Requests`]: the
+//! game asks (the `size` and `fullscreen` script commands, the options
+//! menu: `video.rs`). Those requests are coalesced in [`Requests`]: the
 //! latest wins, applied at the start of a frame before its surface texture
 //! is acquired (so the frame is drawn at the new size), and at most once
 //! every [`MIN_CHANGE_INTERVAL`], counting the window's creation as one.
@@ -30,12 +30,16 @@ pub const DEFAULT_SIZE: (u32, u32) = (1280, 720);
 /// The least time between two applied size or mode changes.
 pub const MIN_CHANGE_INTERVAL: Duration = Duration::from_millis(250);
 
-/// The window as created: `size` logical pixels, borderless fullscreen when
-/// asked, neither resizable nor maximisable (the size is the game's).
-pub fn attributes(size: (u32, u32), fullscreen: bool) -> WindowAttributes {
+/// The window as created: `size` logical pixels (`physical`: physical
+/// pixels, an options preset), borderless fullscreen when asked, neither
+/// resizable nor maximisable (the size is the game's).
+pub fn attributes(size: (u32, u32), physical: bool, fullscreen: bool) -> WindowAttributes {
+    let (w, h) = (size.0.max(1), size.1.max(1));
+    let size: winit::dpi::Size =
+        if physical { PhysicalSize::new(w, h).into() } else { winit::dpi::LogicalSize::new(w, h).into() };
     Window::default_attributes()
         .with_title("rust-liero")
-        .with_inner_size(winit::dpi::LogicalSize::new(size.0.max(1), size.1.max(1)))
+        .with_inner_size(size)
         .with_resizable(false)
         .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE)
         .with_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)))
@@ -166,16 +170,19 @@ mod tests {
 
     #[test]
     fn the_window_is_fixed_size_and_cannot_be_maximised() {
-        let a = attributes(DEFAULT_SIZE, false);
+        let a = attributes(DEFAULT_SIZE, false, false);
         assert!(!a.resizable);
         assert!(!a.enabled_buttons.contains(WindowButtons::MAXIMIZE));
         assert!(a.enabled_buttons.contains(WindowButtons::CLOSE | WindowButtons::MINIMIZE));
         assert_eq!(a.fullscreen, None);
         assert_eq!(a.inner_size, Some(winit::dpi::LogicalSize::new(1280u32, 720).into()));
-        let a = attributes((800, 0), true);
+        let a = attributes((800, 0), false, true);
         assert!(!a.resizable);
         assert_eq!(a.fullscreen, Some(Fullscreen::Borderless(None)));
         assert_eq!(a.inner_size, Some(winit::dpi::LogicalSize::new(800u32, 1).into()));
+        // An options preset is physical pixels.
+        let a = attributes((1600, 900), true, false);
+        assert_eq!(a.inner_size, Some(PhysicalSize::new(1600u32, 900).into()));
     }
 
     #[test]

@@ -76,7 +76,11 @@ pub const STICK_THRESHOLD: f32 = 0.6;
 /// the same place on any layout) and gamepad inputs, each bound to an
 /// action. Several inputs may share an action; the action is held while
 /// any of them is. Serialisable for the options (M7).
+///
+/// A file may leave either list out: it takes OLX's (`#[serde(default)]`);
+/// [`Bindings::repair`] restores what leaves an action unreachable.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Bindings {
     pub keys: Vec<(Action, KeyCode)>,
     pub pad: Vec<(Action, PadInput)>,

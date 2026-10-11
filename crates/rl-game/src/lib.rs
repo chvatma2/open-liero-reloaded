@@ -23,5 +23,6 @@ pub mod setup;
 pub mod shell;
 pub mod stats;
 pub mod surface;
+pub mod video;
 pub mod window;
 pub mod wsl;

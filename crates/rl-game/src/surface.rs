@@ -53,6 +53,12 @@ impl SurfaceState {
         self.size
     }
 
+    /// The surface's settings changed (its present mode): it is configured
+    /// again before the next frame, at the same size.
+    pub fn reconfigure(&mut self) {
+        self.configured = None;
+    }
+
     /// The window is hidden (minimised, covered) or shown again.
     pub fn set_occluded(&mut self, occluded: bool) {
         self.occluded = occluded;

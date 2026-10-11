@@ -28,12 +28,14 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   the next seed). The
   `Set*` actions sanitize, then apply (`ApplyVideo`, `ApplyAudio`,
   `ApplyBindings`) and save (`SaveSettings`, `SaveProfiles`) only what
-  changed. `bindings()` is the selected profile's, else the options'.
+  changed (`SetBindings` repairs: `Bindings::repair`). `bindings()` is the
+  selected profile's, else the options'.
 - **Settings** (`settings.rs`): video (`WindowPreset`, fullscreen,
   `FrameRate`, `UpscaleFilter`, interpolation, `ui_scale` in
   `UI_SCALE_RANGE` 0.5-3), audio volumes 0-1, `Bindings`, gameplay
-  (`HudStyle`, `MatchPrefs`). `sanitize()` fixes out-of-range values with
-  one warning each.
+  (`HudStyle`, `MatchPrefs`). `sanitize()` fixes out-of-range values and
+  keys that leave an action unreachable (OLX's back), one warning each.
+  The master volume defaults to OLX's 70 %; the game plays `master * sfx`.
 - **Match preferences** (`match_prefs.rs`): mod, level, `bots` (1 to
   `MAX_BOTS`), one `difficulty` or `per_bot` levels, `personality`
   (`BotPersonality`), `loadout`, `rules` (`RulePrefs`), `bonuses`,
@@ -59,9 +61,18 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   (`profiles.rs`: list, New, Delete confirmed, "Play as this", name with
   its error, colour sliders, searchable skins, the preview; it opens on
   the profile playing), replays (`replays.rs`, each file's header problem
-  shown), a pause menu over the game and a Leave button on the results;
-  Options, Import and About are placeholders until their tasks. Esc is
-  `Back` and F5 `Restart` on every screen.
+  shown), options (`options.rs`: Video, Audio, Keys, Gameplay tabs; the UI
+  scale applies when its slider is released; Gameplay reuses local play's
+  rules and bots widgets for the default match; `keys.rs`: per action its
+  keys and gamepad inputs, each removable but the last of its device, "+"
+  opens a capture (`MenuData::capture`, an `rl_input::Capture` the app
+  feeds), a key other actions have opens a dialog (move, refused when it
+  would leave one without; share; cancel), `GAME_KEYS` refused, browser
+  shortcuts pointed out, Reset to OLX's keys; a profile with its own keys
+  is rebound there), a pause menu over the game and a Leave button on the
+  results; Import and About are placeholders until their tasks. Esc is
+  `Back` and F5 `Restart` on every screen; in the options Esc first closes
+  an open dialog.
 - **Replays** (`replays.rs`): `list(dir)` (the `.rlrp` files, automatic
   saves newest first, each with `header_problem`: 6 bytes read),
   `auto_save(dir, bytes)` (`match-NNNNNN.rlrp`, the last
@@ -99,4 +110,5 @@ Test: `cargo nextest run -p rl-ui` (`tests/store.rs`, `tests/state.rs`,
 `tests/flows.rs`: kittest flows by label and the local play's match,
 `tests/profiles.rs`: profiles through the widgets, names, the preview; its
 last part compares with `rl_scene::SceneAssets` when `RL_CONTENT_DIR` is
-set).
+set; `tests/options.rs`: rebinding never leaves an action unreachable, the
+rebinding flow and the other sections through the widgets).

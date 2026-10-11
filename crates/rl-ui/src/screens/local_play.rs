@@ -161,7 +161,8 @@ fn level_grid(ui: &mut Ui, data: &mut MenuData, p: &mut MatchPrefs) {
     });
 }
 
-fn rules(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) {
+/// OLX's Deathmatch settings (also the options' default match).
+pub(super) fn rules(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) {
     ui.label(RichText::new("Deathmatch").strong());
     let r = &mut p.rules;
     egui::Grid::new("rules").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
@@ -233,7 +234,8 @@ fn level_combo(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, level: &
     });
 }
 
-fn bots(ui: &mut Ui, p: &mut MatchPrefs) {
+/// The bots (also the options' default match).
+pub(super) fn bots(ui: &mut Ui, p: &mut MatchPrefs) {
     ui.label(RichText::new("Bots").strong());
     let mut n = p.bots;
     if ui.add(Slider::new(&mut n, 1..=MAX_BOTS).text("bots")).changed() {

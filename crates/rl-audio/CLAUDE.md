@@ -25,7 +25,9 @@ OpenAL driver does (spec §8.4, §19 E1/E12; presentation note §8).
   &CorePack)` decodes the mod's sounds when content loads (by
   `SimMod::sounds()` index; `olx:` names fall back to the core pack); an
   undecodable sound is a warning and plays nothing. `play_events` once per
-  tick with the view centre; `stop_all` on a restart.
+  tick with the view centre; `stop_all` on a restart. `set_volume`
+  re-mixes the voices playing at once (OLX's `SetSoundVolume`), so the
+  options apply it live.
 - Beams fire silently: the data model gives beam weapons no sound and the
   simulation emits none for their shots.
 - **WSL:** sound needs `libasound2-plugins` and `~/.asoundrc` with

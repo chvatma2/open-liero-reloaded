@@ -979,3 +979,31 @@ Made precise while implementing the profiles (plan 7 task 3):
   replaced by the first listed; the replays list shows a file's header
   problem (not a replay, another format version) when it opens
   (`Replay::check_header` reads 6 bytes).
+
+Made precise while implementing the options (plan 7 task 4):
+
+- **Options screen** (OLX's options menu, laid out anew): Video (window
+  preset, fullscreen, VSync or uncapped, upscale filter, interpolation, UI
+  scale), Audio (OLX's sound volume, default 70 %, times an effects
+  volume), Keys, Gameplay (HUD style; the match local play starts with,
+  with a reset to OLX's settings). Every change applies at once and is
+  saved (the file at most once a second).
+- **Window changes** go only through `rl-game`'s paced requests, and only
+  when the preset or fullscreen changed (`rl_game::video::Video`): toggling
+  interpolation, the filter, VSync or the UI scale spends no window change.
+  The saved window opens at its size and mode when the window is created
+  (no resize follows); `--fullscreen`, `--uncapped`, `--filter` and
+  `--no-interp` win over the saved options for the run, which the options
+  show, and the file keeps its values until the player changes them there.
+- **Key bindings** (Review Focus 2): every action keeps at least one key
+  and one gamepad input. A captured input another action has is moved
+  (refused when that action would have none of that device left) or shared,
+  on the player's choice; the last input of a device cannot be removed;
+  the game's keys (Esc, F2, F5, Tab, H) are refused; bound keys that make
+  a browser shortcut are pointed out. Bindings from a file (`settings.ron`,
+  a profile's own keys; either list may be missing) get OLX's defaults back
+  for an action left unreachable, with a warning, and the rest of the file
+  is kept. The capture is `rl_input::Capture`, which the app feeds the
+  window's key presses and the gamepads' events (egui sees neither
+  modifier keys alone nor gamepads). A profile with its own keys is
+  rebound there.

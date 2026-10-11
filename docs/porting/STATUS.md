@@ -371,6 +371,22 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   wears the profile's skin and colour and every other worm OLX's default
   skin (OLX's bot profiles, `ProfileSystem.cpp:59`); until now every worm
   wore the player's skin.
+- **Options** (`rl-ui`, `rl-input`, `rl-game`, plan 7 task 4): OLX's
+  options menu (`Menu_Options.cpp`) laid out anew in four sections. Video
+  offers window-size presets (1280 × 720, 1600 × 900, 1920 × 1080, the
+  desktop's), fullscreen, VSync or uncapped, the upscale filter,
+  interpolation and the UI scale, where OLX sets a fixed 640 × 480 mode and
+  its scaling; size changes are paced (at most one every 250 ms). Audio has
+  OLX's sound volume (default 70) and an effects volume, multiplied. Keys:
+  OLX's controls tab has one keyboard and one gamepad slot per control and
+  lets one key do several controls silently; here an action holds any
+  number of keys and gamepad inputs, a key another action has is moved or
+  shared only on the player's choice, an action never loses its last key
+  or last gamepad input (a hand-edited file that leaves one without gets
+  OLX's default back, with a warning), and the game's own keys (Esc, F2,
+  F5, Tab, H) cannot be bound. Capture is OLX's "Input for:" box (Esc
+  cancels). Gameplay holds the HUD style and the match local play starts
+  with.
 - **Renderer** (`rl-render`, plan 5 task 5): OLX blits each sprite with SDL
   onto a 2× screen; the renderer draws the same texels at art scale (at
   least 2×) and then upscales (E3). With interpolation (E2), a sprite's
