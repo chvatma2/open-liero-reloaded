@@ -123,6 +123,13 @@ pub enum Game {
     Replay(Box<Replay>),
 }
 
+/// The human's name and colour (the menus' profile), for worm 0.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlayerLook {
+    pub name: String,
+    pub colour: [u8; 3],
+}
+
 /// Everything a session draws and plays, loaded once: a restart (F5)
 /// builds a new world from it without decoding any image or sound again.
 pub struct Assets {
@@ -137,6 +144,8 @@ pub struct Assets {
     pub level_id: String,
     /// Every warning of the loading, to log once.
     pub warnings: Vec<String>,
+    /// The human's look (a profile's); `None`: "You" in the default colour.
+    pub player: Option<PlayerLook>,
 }
 
 /// The packs `mod_id`, `level_id` (with its theme) and skin `skin` (a
@@ -156,13 +165,13 @@ fn open(
     let skin = content.skin_or_default(&skin_id);
     let mut warnings = content.warnings().to_vec();
     warnings.extend(m.warnings.iter().chain(&theme.warnings).chain(&skin.warnings).cloned());
-    Ok(Assets { content, m, level: lvl, theme, skin, game, mod_id, level_id, warnings })
+    Ok(Assets { content, m, level: lvl, theme, skin, game, mod_id, level_id, warnings, player: None })
 }
 
 /// The mod and level `--mod` and `--level` name in `content`.
 fn resolve(content: &Content, mod_name: &str, level: &str) -> anyhow::Result<(String, String)> {
-    let mod_id = resolve_id(mod_name, "olx-", &content.ids(PackKind::Mod)).context("--mod")?;
-    let level_id = resolve_id(level, "olx-level-", &content.ids(PackKind::Level)).context("--level")?;
+    let mod_id = resolve_id(mod_name, "olx-", &content.ids(PackKind::Mod)).context("mod")?;
+    let level_id = resolve_id(level, "olx-level-", &content.ids(PackKind::Level)).context("level")?;
     Ok((mod_id, level_id))
 }
 
@@ -194,6 +203,15 @@ pub fn load_deathmatch(
     let packs = content.replay_packs(&mod_id, &level_id)?;
     let options = Box::new(match_options(o, &mod_id, &level_id));
     open(content, mod_id, level_id, skin, Game::Deathmatch { options, packs })
+}
+
+/// The Deathmatch `o` describes (the menus' local play), its packs by id.
+/// A missing or broken pack is an error naming it.
+pub fn load_match(root: &Path, o: &MatchOptions, skin: &str) -> anyhow::Result<Assets> {
+    let content = Content::open(root)?;
+    let packs = content.replay_packs(&o.mod_id, &o.level_id)?;
+    let options = Box::new(o.clone());
+    open(content, o.mod_id.clone(), o.level_id.clone(), skin, Game::Deathmatch { options, packs })
 }
 
 /// The replay in file `file`, on the packs it names (refused when they

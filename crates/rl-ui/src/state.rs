@@ -3,20 +3,25 @@
 //! [`UiAction`]s in (from the widgets, and its own reports such as a match
 //! having started) and carries out the [`AppCommand`]s that come back.
 //!
-//! - **Menus:** Main opens LocalPlay, Profiles, Options, Import and About;
-//!   Back (Esc) returns to Main.
+//! - **Menus:** Main opens LocalPlay, Profiles, Options, Replays, Import
+//!   and About; Back (Esc) returns to Main.
 //! - **Matches:** Start emits one `StartMatch` with the next seed; until
 //!   the app reports `MatchStarted` or `MatchFailed`, starting again and
 //!   Back do nothing (no double matches). In game, Back toggles the pause
 //!   menu, which can leave the match; the end shows the results, whose
 //!   Start is a rematch on the next seed (the match over ends first).
+//!   Restart (F5) plays the game again in place: a Deathmatch's rematch,
+//!   the sandbox or a replay from the start.
 //! - **Options** apply and save only what changed.
+
+use std::path::PathBuf;
 
 use rl_content::MatchOptions;
 use rl_input::Bindings;
 
+use crate::match_prefs::MatchPrefs;
 use crate::profiles::Profiles;
-use crate::settings::{AudioSettings, HudStyle, MatchPrefs, Settings, VideoSettings};
+use crate::settings::{AudioSettings, HudStyle, Settings, VideoSettings};
 
 /// A screen (§21 G1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -31,6 +36,8 @@ pub enum Screen {
     /// The match with its HUD, and the pause menu.
     InGame,
     Results,
+    /// The replays saved in the data directory (and any file).
+    Replays,
     /// Content import.
     Import,
     /// Credits and licenses (§21 G9).
@@ -39,8 +46,14 @@ pub enum Screen {
 
 impl Screen {
     /// The screens the main menu opens.
-    pub const MENUS: [Screen; 5] =
-        [Screen::LocalPlay, Screen::Profiles, Screen::Options, Screen::Import, Screen::About];
+    pub const MENUS: [Screen; 6] = [
+        Screen::LocalPlay,
+        Screen::Profiles,
+        Screen::Options,
+        Screen::Replays,
+        Screen::Import,
+        Screen::About,
+    ];
 }
 
 /// What the player did, or what the app reports.
@@ -54,6 +67,10 @@ pub enum UiAction {
     StartMatch,
     /// The main menu's sandbox (the player and idle targets).
     StartSandbox,
+    /// The replays screen: play this file.
+    PlayReplay(PathBuf),
+    /// F5: the game again from the start (a Deathmatch's rematch).
+    Restart,
     /// The pause menu's Resume.
     Resume,
     /// The pause menu's or the results' Leave.
@@ -82,6 +99,10 @@ pub enum AppCommand {
     StartMatch(MatchOptions),
     /// Start the sandbox, then report as for `StartMatch`.
     StartSandbox,
+    /// Play this replay, then report as for `StartMatch`.
+    PlayReplay(PathBuf),
+    /// Play the running game again from the start, in place.
+    Restart,
     /// Stop the match or sandbox playing.
     EndMatch,
     /// Pause or resume the match (the pause menu).
@@ -99,6 +120,14 @@ pub enum AppCommand {
     Quit,
 }
 
+/// What plays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Game {
+    Match,
+    Sandbox,
+    Replay,
+}
+
 /// What is running behind the menus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Play {
@@ -106,9 +135,11 @@ enum Play {
     None,
     /// Asked for; the app has not answered yet. `from` is the screen to
     /// return to if it fails.
-    Starting { from: Screen },
-    /// A match or the sandbox.
-    Running,
+    Starting {
+        from: Screen,
+        game: Game,
+    },
+    Running(Game),
 }
 
 /// The menus' state.
@@ -162,6 +193,14 @@ impl UiState {
         matches!(self.play, Play::Starting { .. })
     }
 
+    /// What plays (or is starting), if anything.
+    pub fn game(&self) -> Option<Game> {
+        match self.play {
+            Play::None => None,
+            Play::Starting { game, .. } | Play::Running(game) => Some(game),
+        }
+    }
+
     /// The pause menu is up.
     pub fn is_paused(&self) -> bool {
         self.paused
@@ -188,8 +227,28 @@ impl UiState {
                     return Vec::new();
                 }
                 self.message = None;
-                self.play = Play::Starting { from: Screen::Main };
+                self.play = Play::Starting { from: Screen::Main, game: Game::Sandbox };
                 vec![AppCommand::StartSandbox]
+            }
+            UiAction::PlayReplay(path) => {
+                if self.screen != Screen::Replays || self.play != Play::None {
+                    return Vec::new();
+                }
+                self.message = None;
+                self.play = Play::Starting { from: Screen::Replays, game: Game::Replay };
+                vec![AppCommand::PlayReplay(path)]
+            }
+            UiAction::Restart => {
+                let can = match self.screen {
+                    Screen::InGame => !self.paused,
+                    Screen::Results => true,
+                    _ => false,
+                };
+                if !can || !matches!(self.play, Play::Running(_)) {
+                    return Vec::new();
+                }
+                self.go(Screen::InGame);
+                vec![AppCommand::Restart]
             }
             UiAction::Resume => self.set_paused(false),
             UiAction::LeaveMatch => self.leave(),
@@ -247,15 +306,15 @@ impl UiState {
                 out
             }
             UiAction::MatchStarted => {
-                if self.is_starting() {
-                    self.play = Play::Running;
+                if let Play::Starting { game, .. } = self.play {
+                    self.play = Play::Running(game);
                     self.paused = false;
                     self.go(Screen::InGame);
                 }
                 Vec::new()
             }
             UiAction::MatchFailed(why) => {
-                if let Play::Starting { from } = self.play {
+                if let Play::Starting { from, .. } = self.play {
                     self.play = Play::None;
                     self.go(from);
                     self.message = Some(why);
@@ -263,7 +322,7 @@ impl UiState {
                 Vec::new()
             }
             UiAction::MatchOver => {
-                if self.screen != Screen::InGame || self.play != Play::Running {
+                if self.screen != Screen::InGame || !matches!(self.play, Play::Running(_)) {
                     return Vec::new();
                 }
                 self.go(Screen::Results);
@@ -309,7 +368,7 @@ impl UiState {
             Screen::WeaponSelect | Screen::Results => true,
             _ => false,
         };
-        if !can || self.play != Play::Running {
+        if !can || !matches!(self.play, Play::Running(_)) {
             return Vec::new();
         }
         self.play = Play::None;
@@ -322,13 +381,13 @@ impl UiState {
         let mut out = match (self.screen, self.play) {
             (Screen::LocalPlay, Play::None) => Vec::new(),
             // A rematch: the match over ends first.
-            (Screen::Results, Play::Running) => vec![AppCommand::EndMatch],
+            (Screen::Results, Play::Running(Game::Match)) => vec![AppCommand::EndMatch],
             _ => return Vec::new(),
         };
         let seed = self.seed;
         self.seed = self.seed.wrapping_add(1);
         self.message = None;
-        self.play = Play::Starting { from: Screen::LocalPlay };
+        self.play = Play::Starting { from: Screen::LocalPlay, game: Game::Match };
         out.push(AppCommand::StartMatch(self.settings.gameplay.match_prefs.options(seed)));
         out
     }

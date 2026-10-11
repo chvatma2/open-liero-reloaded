@@ -1,6 +1,8 @@
 //! The winit application (spec §8.6): one thread, the event loop drives
 //! the 100 Hz tick accumulator, then an interpolated frame. A Deathmatch's
-//! bots think inside `Session::tick`, on this thread.
+//! bots think inside `Session::tick`, on this thread. What plays, and the
+//! menus when the game started without a game on the command line, are
+//! the [`Shell`]'s (`shell.rs`).
 //!
 //! Per tick: the script's steps, `input.latch_tick()`, `Session::tick`
 //! (world, entities with the colour terrain, sound, scene), then the
@@ -14,11 +16,10 @@ use std::time::{Duration, Instant};
 
 use rl_input::{Action, InputState, KeyCode};
 use rl_scene::{DrawList, Interpolation, Viewport};
-use winit::application::ApplicationHandler;
-use winit::event::{ElementState, KeyEvent, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow};
+use winit::event::{ElementState, KeyEvent};
+use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::PhysicalKey;
-use winit::window::{Window, WindowId};
+use winit::window::Window;
 
 use crate::clock::TickClock;
 use crate::gpu::{Gpu, OverlayPaint};
@@ -26,10 +27,15 @@ use crate::hud::ScoreKey;
 use crate::latency::Latency;
 use crate::overlay::{Overlay, ScreenMap, Stats};
 use crate::script::{Command, Step};
-use crate::session::Session;
-use crate::setup::Assets;
+use crate::shell::Shell;
 use crate::stats::Meter;
 use crate::window::{self, Requests};
+
+mod handler;
+mod menus;
+
+/// How often changed settings are written (`Shell::flush`).
+const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 /// The widest view (spec §19 E4: 16:9).
 pub const MAX_ASPECT: f32 = 16.0 / 9.0;
@@ -54,6 +60,9 @@ pub struct Config {
     /// Where a Deathmatch's replay is saved (rematches next to it,
     /// `drive::record_path`).
     pub record: Option<PathBuf>,
+    /// The menus run the game (no game on the command line): Esc and F5
+    /// go to them, games start and end from them.
+    pub menus: bool,
 }
 
 /// What exists once the window does.
@@ -65,8 +74,8 @@ struct Shown {
 
 pub struct App {
     cfg: Config,
-    assets: Assets,
-    session: Session,
+    /// The menus and what plays.
+    shell: Shell,
     input: InputState,
     gilrs: Option<gilrs::Gilrs>,
     clock: TickClock,
@@ -93,31 +102,41 @@ pub struct App {
     paused: bool,
     /// Window size and mode changes asked for and not yet applied.
     requests: Requests,
+    /// The video options last applied (the menus' window preset).
+    video: Option<rl_ui::VideoSettings>,
+    /// When the settings were last written (`Shell::flush`, once a second).
+    flushed: Option<Instant>,
     /// What stopped the game, if something went wrong.
     pub error: Option<anyhow::Error>,
 }
 
 /// The viewport for a window of `size` pixels.
-fn viewport(size: (u32, u32)) -> Viewport {
+pub(crate) fn viewport(size: (u32, u32)) -> Viewport {
     let aspect = if size.1 == 0 { MAX_ASPECT } else { size.0 as f32 / size.1 as f32 };
     Viewport::from_aspect(aspect, MAX_ASPECT)
 }
 
 impl App {
-    pub fn new(cfg: Config, assets: Assets, session: Session, gilrs: Option<gilrs::Gilrs>) -> App {
-        let audio =
-            if session.audio.is_silent() { "audio: silent (no output device)" } else { "audio: opened" };
+    /// The game `shell` plays (or its menus, with `cfg.menus`); `silent`:
+    /// no sound output device.
+    pub fn new(cfg: Config, shell: Shell, silent: bool, gilrs: Option<gilrs::Gilrs>) -> App {
+        let audio = if silent { "audio: silent (no output device)" } else { "audio: opened" };
         let stats = Stats { audio: audio.to_string(), ..Stats::default() };
+        let egui = egui::Context::default();
+        let mut input = InputState::default();
+        if cfg.menus {
+            rl_ui::theme::apply(&egui, shell.ui.settings().video.ui_scale);
+            input.set_bindings(shell.ui.bindings().clone());
+        }
         App {
             latency: Latency::new(cfg.latency_probe),
             cfg,
-            assets,
-            session,
-            input: InputState::default(),
+            shell,
+            input,
             gilrs,
             clock: TickClock::new(),
             list: DrawList::new(),
-            egui: egui::Context::default(),
+            egui,
             win: None,
             debug: false,
             scores: ScoreKey::default(),
@@ -132,26 +151,28 @@ impl App {
             dropped_warned: false,
             paused: false,
             requests: Requests::default(),
+            video: None,
+            flushed: None,
             error: None,
         }
     }
 
     /// The whole run, for the exit summary.
     pub fn summary(&self) -> String {
+        let (deaths, spawns) = self.shell.session().map_or((0, 0), |s| (s.player_deaths, s.player_spawns));
         format!(
-            "{}; {} catch-up ticks dropped; player died {} times, spawned {} times",
+            "{}; {} catch-up ticks dropped; player died {deaths} times, spawned {spawns} times",
             self.meter.summary(),
             self.clock.dropped(),
-            self.session.player_deaths,
-            self.session.player_spawns
         )
     }
 
     /// A Deathmatch's bots and kills over the run, for the exit summary
     /// (`None` for another game).
     pub fn match_summary(&self) -> Option<String> {
-        let crate::session::Driver::Match(d) = &self.session.driver else { return None };
-        let t = &self.session.tally;
+        let s = self.shell.session()?;
+        let crate::session::Driver::Match(d) = &s.driver else { return None };
+        let t = &s.tally;
         Some(format!(
             "{} bots think per tick p50 {:.3} ms p99 {:.3} ms max {:.3} ms, units max {} of budget {}, {} over budget; \
              match time {:.1} s ({} ended, {} rematches): bot kills {} ({:.2}/min), player kills {}, suicides {}",
@@ -164,7 +185,7 @@ impl App {
             d.over_budget,
             t.match_ticks as f64 / 100.0,
             t.matches_ended,
-            self.session.rematches,
+            s.rematches,
             t.bot_kills,
             t.bot_kills_per_minute(),
             t.player_kills,
@@ -172,9 +193,12 @@ impl App {
         ))
     }
 
-    /// Saves the playing match's replay (`--record`), at the end of the run.
+    /// At the end of the run: the playing match's replay saved (`--record`;
+    /// with the menus, in the data directory), the settings written.
     pub fn save_recording(&mut self) {
-        if let Some(r) = self.session.take_replay() {
+        if self.cfg.menus {
+            self.shell.finish();
+        } else if let Some(r) = self.shell.session_mut().and_then(|s| s.take_replay()) {
             self.save_replay(&r);
         }
     }
@@ -211,9 +235,11 @@ impl App {
             self.cfg.uncapped,
         )?;
         // A new renderer: the next frame uploads the atlas and the terrain.
-        self.session.present.invalidate_gpu();
+        if let Some(s) = self.shell.session_mut() {
+            s.present.invalidate_gpu();
+        }
         let size = window.inner_size();
-        self.session.set_viewport(viewport((size.width, size.height)));
+        self.shell.set_viewport(viewport((size.width, size.height)));
         let max_side = gpu.renderer.device().limits().max_texture_dimension_2d as usize;
         let scale = Some(window.scale_factor() as f32);
         let egui = egui_winit::State::new(
@@ -235,8 +261,14 @@ impl App {
 
     /// F5 (a Deathmatch's rematch; its replay is saved): the next frame
     /// uploads the new colour map.
-    fn restart(&mut self) -> anyhow::Result<()> {
-        if let Some(r) = self.session.restart(&self.assets)? {
+    fn restart(&mut self, el: &ActiveEventLoop) -> anyhow::Result<()> {
+        if self.cfg.menus {
+            let out = self.shell.act(rl_ui::UiAction::Restart);
+            self.outcomes(el, out);
+            return Ok(());
+        }
+        let Some(p) = &mut self.shell.play else { return Ok(()) };
+        if let Some(r) = p.session.restart(&p.assets)? {
             self.save_replay(&r);
         }
         Ok(())
@@ -247,7 +279,7 @@ impl App {
         if let Some(w) = &mut self.win {
             w.gpu.resize(size);
         }
-        self.session.set_viewport(viewport(size));
+        self.shell.set_viewport(viewport(size));
     }
 
     /// The window size and mode changes asked for, at most once a frame
@@ -266,7 +298,8 @@ impl App {
         self.input.bindings().keys.iter().find(|(a, _)| *a == action).map(|&(_, k)| k)
     }
 
-    /// One tick: the script's steps for it, then the game.
+    /// One tick: the script's steps for it, then the game (none in the
+    /// menus or the pause menu; the script's clock runs on).
     fn tick(&mut self, el: &ActiveEventLoop) -> anyhow::Result<()> {
         while let Some(step) = self.cfg.script.get(self.script_at).filter(|s| s.tick <= self.ticks).copied() {
             self.script_at += 1;
@@ -277,7 +310,7 @@ impl App {
                     }
                 }
                 Command::Shot => self.shot_due = true,
-                Command::Restart => self.restart()?,
+                Command::Restart => self.restart(el)?,
                 Command::Debug => self.debug = !self.debug,
                 Command::Scores(on) => self.scores.set(on),
                 Command::Quit => el.exit(),
@@ -288,11 +321,13 @@ impl App {
         }
         let keys = self.input.latch_tick();
         self.latency.latched();
-        let t0 = Instant::now();
-        self.session.tick(keys);
-        self.meter.tick(t0.elapsed().as_secs_f64());
         self.ticks += 1;
-        if self.session.events.gameplay_dropped() > 0 && !self.dropped_warned {
+        let paused = self.shell.paused();
+        let Some(s) = self.shell.session_mut().filter(|_| !paused) else { return Ok(()) };
+        let t0 = Instant::now();
+        s.tick(keys);
+        self.meter.tick(t0.elapsed().as_secs_f64());
+        if s.events.gameplay_dropped() > 0 && !self.dropped_warned {
             eprintln!("warning: a tick dropped gameplay events; its terrain area was rebuilt");
             self.dropped_warned = true;
         }
@@ -301,7 +336,9 @@ impl App {
 
     /// One drawn frame: the surface texture first (any wait for VSync
     /// comes before the input is read, not between reading and drawing
-    /// it), the ticks due, then the picture.
+    /// it), the ticks due, then the picture: the game and its overlay, or
+    /// the menus. A game the menus asked for in an earlier frame is loaded
+    /// after this one is shown (its "Loading…" with it).
     fn frame(&mut self, el: &ActiveEventLoop) -> anyhow::Result<()> {
         let begin = Instant::now();
         self.apply_requests();
@@ -314,35 +351,27 @@ impl App {
         for _ in 0..self.clock.advance(elapsed) {
             self.tick(el)?;
         }
+        if self.cfg.menus {
+            let out = self.shell.after_ticks();
+            self.outcomes(el, out);
+        }
         if self.cfg.autoquit_after.is_some_and(|s| (now - start).as_secs_f64() >= s) {
             el.exit();
         }
-        let s = &mut self.session;
-        let alpha = if s.present.scene.options.interpolation == Interpolation::Latest {
-            1.0
-        } else {
-            self.clock.alpha()
-        };
-        s.build(alpha, &mut self.list);
-        self.meter.peak_entities = self.meter.peak_entities.max(s.present.fx.len());
-        self.meter.peak_projectiles = self.meter.peak_projectiles.max(s.world.projectiles().count());
+        let interpolate = self.clock.alpha();
+        let mut alpha = 1.0;
+        if let Some(s) = self.shell.session_mut() {
+            if s.present.scene.options.interpolation != Interpolation::Latest {
+                alpha = interpolate;
+            }
+            s.build(alpha, &mut self.list);
+            self.meter.peak_entities = self.meter.peak_entities.max(s.present.fx.len());
+            self.meter.peak_projectiles = self.meter.peak_projectiles.max(s.world.projectiles().count());
+        }
         if self.meter.frame(elapsed, &mut self.stats) {
             self.stats.dropped = self.clock.dropped();
             if self.cfg.print_stats {
-                let st = &self.stats;
-                println!(
-                    "stats: {:.0} fps, frame {:.2} ms (max {:.2}), busy {:.2} ms, tick {:.3} ms (max {:.3}), {} ticks/s, entities {}, projectiles {}, voices {}",
-                    st.fps,
-                    st.frame_ms,
-                    st.frame_ms_max,
-                    st.busy_ms,
-                    st.tick_ms,
-                    st.tick_ms_max,
-                    st.ticks_per_second,
-                    s.present.fx.len(),
-                    s.world.projectiles().count(),
-                    s.audio.playing()
-                );
+                crate::stats::print(&self.stats, self.shell.session());
             }
         }
         let Some(w) = &mut self.win else { return Ok(()) };
@@ -355,25 +384,39 @@ impl App {
         let dest = rl_render::dest_rect(w.gpu.renderer.settings.filter, src, size);
         let map = ScreenMap { view: self.list.view, dest, pixels_per_point: ppp };
         let input = w.egui.take_egui_input(&w.window);
-        let overlay = Overlay {
-            session: &self.session,
+        let overlay = self.shell.play.as_ref().map(|p| Overlay {
+            session: &p.session,
             alpha,
             map,
             debug: self.debug,
             show_scores: self.scores.shown(),
             stats: &self.stats,
-        };
-        let mut out = self.egui.run_ui(input, |ui| crate::overlay::paint(ui, &overlay));
+            menus: self.cfg.menus,
+        });
+        let (ui_state, data) = (&self.shell.ui, &mut self.shell.data);
+        let menus = self.cfg.menus;
+        let mut actions = Vec::new();
+        let mut out = self.egui.run_ui(input, |ui| {
+            if let Some(o) = &overlay {
+                crate::overlay::paint(ui, o);
+            }
+            if menus {
+                actions = rl_ui::screens::show(ui, ui_state, data);
+            }
+        });
         w.egui.handle_platform_output(&w.window, out.platform_output);
         let jobs = self.egui.tessellate(out.shapes, out.pixels_per_point);
         let paint = OverlayPaint { jobs: &jobs, pixels_per_point: out.pixels_per_point };
         // The images and terrain the ticks since the last frame changed
         // (the colour map merges their dirty rectangles), then the frame.
-        self.session.present.upload(&mut w.gpu.renderer);
+        let world = self.shell.play.as_mut().map(|p| {
+            p.session.present.upload(&mut w.gpu.renderer);
+            &self.list
+        });
         for warning in w.gpu.renderer.warnings().drain(..) {
             eprintln!("warning: {warning}");
         }
-        let timing = w.gpu.present(frame, &self.list, &paint, &mut out.textures_delta);
+        let timing = w.gpu.present(frame, world, &paint, &mut out.textures_delta);
         if let Some(t) = timing {
             self.latency.presented(Instant::now(), t);
         }
@@ -382,9 +425,23 @@ impl App {
         if std::mem::take(&mut self.shot_due) {
             let path = self.cfg.shot_dir.join(format!("shot-{:05}.png", self.ticks));
             // A screenshot that cannot be written is not worth the game.
-            match w.gpu.screenshot(&self.list, &paint, &path) {
+            match w.gpu.screenshot(world, &paint, &path) {
                 Ok(()) => println!("rl-game: wrote {} (tick {})", path.display(), self.ticks),
                 Err(e) => eprintln!("warning: screenshot {}: {e:#}", path.display()),
+            }
+        }
+        if menus {
+            // The game asked for in an earlier frame (this one showed its
+            // "Loading…"), then this frame's actions.
+            let out = self.shell.poll();
+            self.outcomes(el, out);
+            for a in actions {
+                let out = self.shell.act(a);
+                self.outcomes(el, out);
+            }
+            if self.flushed.is_none_or(|t| now.saturating_duration_since(t) >= FLUSH_INTERVAL) {
+                self.flushed = Some(now);
+                self.shell.flush();
             }
         }
         Ok(())
@@ -401,83 +458,19 @@ impl App {
         }
         self.latency.press(Instant::now());
         match ev.physical_key {
-            PhysicalKey::Code(KeyCode::Escape) => el.exit(),
+            // With the menus, Esc and F5 are theirs (`rl_ui::screens::show`).
+            PhysicalKey::Code(KeyCode::Escape) if !self.cfg.menus => el.exit(),
+            PhysicalKey::Code(KeyCode::F5) if !self.cfg.menus => self.restart(el)?,
             PhysicalKey::Code(KeyCode::F2) => self.debug = !self.debug,
-            PhysicalKey::Code(KeyCode::F5) => self.restart()?,
             // OLX's Game.ShowWormHealth toggle.
             PhysicalKey::Code(KeyCode::KeyH) => {
-                let o = &mut self.session.present.scene.options;
-                o.show_health_bars = !o.show_health_bars;
+                if let Some(s) = self.shell.session_mut() {
+                    let o = &mut s.present.scene.options;
+                    o.show_health_bars = !o.show_health_bars;
+                }
             }
             _ => {}
         }
         Ok(())
-    }
-}
-
-impl ApplicationHandler for App {
-    fn resumed(&mut self, el: &ActiveEventLoop) {
-        el.set_control_flow(ControlFlow::Poll);
-        if self.win.is_none()
-            && let Err(e) = self.open(el)
-        {
-            self.fail(el, e);
-        }
-    }
-
-    fn window_event(&mut self, el: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        if let Some(w) = &mut self.win {
-            let _ = w.egui.on_window_event(&w.window, &event);
-        }
-        self.input.on_window_event(&event);
-        let result = match &event {
-            WindowEvent::CloseRequested => {
-                el.exit();
-                Ok(())
-            }
-            WindowEvent::Resized(size) => {
-                self.resized((size.width, size.height));
-                Ok(())
-            }
-            WindowEvent::Occluded(occluded) => {
-                if let Some(w) = &mut self.win {
-                    w.gpu.set_occluded(*occluded);
-                }
-                Ok(())
-            }
-            WindowEvent::Focused(focused) => {
-                self.scores.focus(*focused);
-                Ok(())
-            }
-            WindowEvent::KeyboardInput { event, .. } => self.on_key(el, event),
-            WindowEvent::RedrawRequested => self.frame(el),
-            _ => Ok(()),
-        };
-        if let Err(e) = result {
-            self.fail(el, e);
-        }
-    }
-
-    /// Draws continuously while the window can show frames. Minimised,
-    /// covered or of no size, it stops asking for frames and sleeps until a
-    /// window event (`Resized`, `Occluded`) changes that: the sandbox pauses
-    /// (no ticks run, and the time hidden is not caught up afterwards).
-    fn about_to_wait(&mut self, el: &ActiveEventLoop) {
-        if let Some(g) = &mut self.gilrs {
-            while let Some(ev) = g.next_event() {
-                self.input.on_gamepad(&ev);
-            }
-        }
-        let Some(w) = &self.win else { return };
-        if w.gpu.drawable() {
-            if std::mem::take(&mut self.paused) {
-                self.last = None;
-            }
-            el.set_control_flow(ControlFlow::Poll);
-            w.window.request_redraw();
-        } else {
-            self.paused = true;
-            el.set_control_flow(ControlFlow::Wait);
-        }
     }
 }

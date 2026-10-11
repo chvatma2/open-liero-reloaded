@@ -1,0 +1,337 @@
+//! The menus driving the game (spec §21 G1-G2), without a window: the
+//! `rl_ui::UiState`, its widgets' data, the settings and profiles files,
+//! and the game playing. `app.rs` feeds it the widgets' actions and does
+//! what comes back ([`Outcome`]); everything else happens here, so it is
+//! tested headless (`tests/menu.rs`).
+//!
+//! A start (local play's Start, the sandbox, a replay) is loaded by
+//! [`Shell::poll`] after the frame that asked for it, so the menus show
+//! "Loading…" meanwhile; until then `UiState` ignores another start, Back
+//! and the menu buttons (plan 7 Review Focus 4). A start that fails (a
+//! pack missing or broken, a file that is no replay) returns to the
+//! screen it came from with the reason (Review Focus 3). Every
+//! Deathmatch's replay is saved in the data directory's `replays/` when it
+//! ends, is restarted or the game quits (`rl_ui::replays::auto_save`).
+
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+
+use rl_audio::Audio;
+use rl_content::{Content, MatchOptions};
+use rl_input::Bindings;
+use rl_scene::{Interpolation, Viewport};
+use rl_ui::screens::MenuData;
+use rl_ui::{AppCommand, AudioSettings, Profiles, Settings, Store, UiAction, UiState, VideoSettings};
+
+use crate::session::Session;
+use crate::setup::{self, Assets, PlayerLook, SandboxOptions};
+
+/// What the shell needs besides the menus' state.
+#[derive(Clone, Debug)]
+pub struct ShellConfig {
+    /// The content directory (`--content`).
+    pub content: PathBuf,
+    pub interpolation: Interpolation,
+    /// The window's view (`app::viewport`).
+    pub viewport: Viewport,
+}
+
+/// A game playing: what it was loaded from, and its session.
+pub struct Playing {
+    pub assets: Assets,
+    pub session: Session,
+}
+
+/// What the window must do.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Outcome {
+    Quit,
+    /// The video options changed (window size, fullscreen, UI scale).
+    Video(VideoSettings),
+    /// The player's keys changed.
+    Bindings(Bindings),
+    /// A new game plays: its images go to the renderer, the clock starts
+    /// afresh (the loading time is not caught up).
+    Started,
+}
+
+/// What to load.
+enum Launch {
+    Match(Box<MatchOptions>),
+    Sandbox,
+    Replay(PathBuf),
+}
+
+/// The sandbox's idle targets when started from the menu.
+pub const SANDBOX_TARGETS: usize = 3;
+
+pub struct Shell {
+    pub ui: UiState,
+    pub data: MenuData,
+    /// The game playing, if any.
+    pub play: Option<Playing>,
+    cfg: ShellConfig,
+    store: Store,
+    /// The sound output while no session holds it.
+    audio: Option<Audio>,
+    pending: Option<Launch>,
+    paused: bool,
+    /// `MatchOver` was reported for the game playing.
+    over_reported: bool,
+    launches: u32,
+    unsaved_settings: Option<Settings>,
+    unsaved_profiles: Option<Profiles>,
+    /// Warnings logged once.
+    logged: BTreeSet<String>,
+}
+
+impl Shell {
+    /// The main menu over content directory `cfg.content` (listed for the
+    /// menus now), with `audio` for every game.
+    pub fn new(cfg: ShellConfig, ui: UiState, store: Store, audio: Audio) -> Shell {
+        let mut logged = BTreeSet::new();
+        let catalog = match Content::open(&cfg.content) {
+            Ok(c) => c.catalog(),
+            Err(e) => {
+                eprintln!("warning: {e:#}: no mods or levels to play");
+                Default::default()
+            }
+        };
+        for w in &catalog.warnings {
+            if logged.insert(w.clone()) {
+                eprintln!("warning: {w}");
+            }
+        }
+        let data = MenuData::new(catalog, store.replays_dir());
+        let mut shell = Shell {
+            ui,
+            data,
+            play: None,
+            cfg,
+            store,
+            audio: Some(audio),
+            pending: None,
+            paused: false,
+            over_reported: false,
+            launches: 0,
+            unsaved_settings: None,
+            unsaved_profiles: None,
+            logged,
+        };
+        let audio = shell.ui.settings().audio.clone();
+        shell.set_volume(&audio);
+        shell
+    }
+
+    /// A game started without the menus (the command line's): `play`
+    /// plays; nothing is saved.
+    pub fn playing(cfg: ShellConfig, assets: Assets, session: Session) -> Shell {
+        let ui = UiState::new(Settings::default(), Profiles::default(), 0);
+        let data = MenuData::new(Default::default(), None);
+        Shell {
+            ui,
+            data,
+            play: Some(Playing { assets, session }),
+            cfg,
+            store: Store::in_memory(),
+            audio: None,
+            pending: None,
+            paused: false,
+            over_reported: false,
+            launches: 1,
+            unsaved_settings: None,
+            unsaved_profiles: None,
+            logged: BTreeSet::new(),
+        }
+    }
+
+    /// Games loaded so far (started or failed).
+    pub fn launches(&self) -> u32 {
+        self.launches
+    }
+
+    /// The pause menu holds the game.
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    pub fn session(&self) -> Option<&Session> {
+        self.play.as_ref().map(|p| &p.session)
+    }
+
+    pub fn session_mut(&mut self) -> Option<&mut Session> {
+        self.play.as_mut().map(|p| &mut p.session)
+    }
+
+    /// The window's view changed.
+    pub fn set_viewport(&mut self, viewport: Viewport) {
+        self.cfg.viewport = viewport;
+        if let Some(s) = self.session_mut() {
+            s.set_viewport(viewport);
+        }
+    }
+
+    /// The player did `a` (or the app reports it): the menus' commands
+    /// carried out; what the window must do.
+    pub fn act(&mut self, a: UiAction) -> Vec<Outcome> {
+        let mut out = Vec::new();
+        for c in self.ui.update(a) {
+            self.carry(c, &mut out);
+        }
+        out
+    }
+
+    fn carry(&mut self, c: AppCommand, out: &mut Vec<Outcome>) {
+        match c {
+            AppCommand::StartMatch(o) => self.pending = Some(Launch::Match(Box::new(o))),
+            AppCommand::StartSandbox => self.pending = Some(Launch::Sandbox),
+            AppCommand::PlayReplay(path) => self.pending = Some(Launch::Replay(path)),
+            AppCommand::EndMatch => self.end(),
+            AppCommand::SetPaused(on) => self.paused = on,
+            AppCommand::Restart => self.restart(),
+            AppCommand::ApplyVideo(v) => out.push(Outcome::Video(v)),
+            AppCommand::ApplyAudio(a) => self.set_volume(&a),
+            AppCommand::ApplyBindings(b) => out.push(Outcome::Bindings(b)),
+            AppCommand::SaveSettings(s) => self.unsaved_settings = Some(s),
+            AppCommand::SaveProfiles(p) => self.unsaved_profiles = Some(p),
+            AppCommand::Quit => out.push(Outcome::Quit),
+        }
+    }
+
+    /// Loads the game asked for in an earlier frame, if any, and reports
+    /// to the menus whether it started.
+    pub fn poll(&mut self) -> Vec<Outcome> {
+        let Some(launch) = self.pending.take() else { return Vec::new() };
+        match self.launch(launch) {
+            Ok(()) => {
+                let mut out = self.act(UiAction::MatchStarted);
+                out.push(Outcome::Started);
+                out
+            }
+            Err(e) => {
+                let why = format!("{e:#}");
+                eprintln!("warning: could not start: {why}");
+                self.act(UiAction::MatchFailed(why))
+            }
+        }
+    }
+
+    fn log(&mut self, warnings: impl IntoIterator<Item = String>) {
+        for w in warnings {
+            if self.logged.insert(w.clone()) {
+                eprintln!("warning: {w}");
+            }
+        }
+    }
+
+    fn launch(&mut self, launch: Launch) -> anyhow::Result<()> {
+        self.launches += 1;
+        let profile = self.ui.profiles().selected().cloned().unwrap_or_default();
+        let root = self.cfg.content.clone();
+        let mut assets = match launch {
+            Launch::Match(o) => setup::load_match(&root, &o, &profile.skin_id)?,
+            Launch::Sandbox => {
+                let m = &self.ui.settings().gameplay.match_prefs;
+                let o = SandboxOptions {
+                    mod_id: String::new(),
+                    level_id: String::new(),
+                    seed: 1,
+                    targets: SANDBOX_TARGETS,
+                    bonuses: m.bonuses,
+                };
+                setup::load(&root, &m.mod_id, &m.level_id, &profile.skin_id, o)?
+            }
+            Launch::Replay(path) => setup::load_replay(&root, &path, &profile.skin_id)?,
+        };
+        assets.player = Some(PlayerLook { name: profile.name, colour: profile.colour });
+        self.log(std::mem::take(&mut assets.warnings));
+        let mut session = Session::new(&assets, self.cfg.viewport, self.cfg.interpolation, Audio::silent())?;
+        let mut audio = self.audio.take().unwrap_or_else(Audio::silent);
+        audio.stop_all();
+        audio.load(&assets.m, assets.content.core());
+        self.log(audio.take_warnings());
+        session.audio = audio;
+        self.play = Some(Playing { assets, session });
+        self.paused = false;
+        self.over_reported = false;
+        Ok(())
+    }
+
+    /// The game ends: its replay saved, the sound output kept.
+    fn end(&mut self) {
+        if let Some(mut p) = self.play.take() {
+            if let Some(r) = p.session.take_replay() {
+                self.save_replay(&r);
+            }
+            let mut audio = std::mem::replace(&mut p.session.audio, Audio::silent());
+            audio.stop_all();
+            self.audio = Some(audio);
+        }
+        self.paused = false;
+        self.over_reported = false;
+    }
+
+    /// F5: the game again in place (a Deathmatch's rematch, its replay saved).
+    fn restart(&mut self) {
+        let Some(p) = &mut self.play else { return };
+        match p.session.restart(&p.assets) {
+            Ok(Some(r)) => self.save_replay(&r),
+            Ok(None) => {}
+            Err(e) => eprintln!("warning: restarting: {e:#}"),
+        }
+        self.over_reported = false;
+    }
+
+    /// Saves `r` with the automatic replays (one of no tick is not kept).
+    fn save_replay(&mut self, r: &rl_replay::Replay) {
+        let Some(dir) = self.store.replays_dir().filter(|_| r.ticks() > 0) else { return };
+        match rl_ui::replays::auto_save(&dir, &r.encode()) {
+            Ok(path) => println!("rl-game: saved replay {} ({} ticks)", path.display(), r.ticks()),
+            Err(e) => eprintln!("warning: saving the replay in {}: {e}", dir.display()),
+        }
+    }
+
+    /// The sound volume: master times effects (music has none yet).
+    fn set_volume(&mut self, a: &AudioSettings) {
+        let v = a.master * a.sfx;
+        if let Some(audio) = &mut self.audio {
+            audio.set_volume(v);
+        }
+        if let Some(s) = self.session_mut() {
+            s.audio.set_volume(v);
+        }
+    }
+
+    /// After the ticks of a frame: tells the menus once when the results
+    /// show (`Session::results_shown`).
+    pub fn after_ticks(&mut self) -> Vec<Outcome> {
+        let shown = self.session().is_some_and(Session::results_shown);
+        if !shown || self.over_reported {
+            return Vec::new();
+        }
+        self.over_reported = true;
+        self.act(UiAction::MatchOver)
+    }
+
+    /// Writes the settings and profiles changed since the last call (the
+    /// app calls it about once a second, so a dragged slider is not saved
+    /// every frame); a failure is a warning.
+    pub fn flush(&mut self) {
+        if let Some(s) = self.unsaved_settings.take()
+            && let Err(e) = self.store.save_settings(&s)
+        {
+            eprintln!("warning: saving the settings: {e:#}");
+        }
+        if let Some(p) = self.unsaved_profiles.take()
+            && let Err(e) = self.store.save_profiles(&p)
+        {
+            eprintln!("warning: saving the profiles: {e:#}");
+        }
+    }
+
+    /// At exit: the playing game's replay saved, the settings written.
+    pub fn finish(&mut self) {
+        self.end();
+        self.flush();
+    }
+}

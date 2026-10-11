@@ -12,6 +12,7 @@ rl-sim.workspace = true
 rl-modes.workspace = true
 rl-bots.workspace = true
 rl-content.workspace = true
+rl-data.workspace = true
 rl-input.workspace = true
 serde = { workspace = true, features = ["std"] }
 ron.workspace = true
@@ -21,6 +22,7 @@ anyhow.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+egui_kittest.workspace = true
 
 [lints]
 workspace = true

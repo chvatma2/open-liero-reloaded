@@ -20,6 +20,7 @@ pub mod panels;
 pub mod script;
 pub mod session;
 pub mod setup;
+pub mod shell;
 pub mod stats;
 pub mod surface;
 pub mod window;

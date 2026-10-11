@@ -1,15 +1,18 @@
-//! `rl-game`: the sandbox (spec §19 E11), a Deathmatch against bots (M6)
-//! and replays. Run `rl-game --help`.
+//! `rl-game`: the menus (M7), or straight into the sandbox (spec §19 E11),
+//! a Deathmatch against bots (M6) or a replay when the command line names
+//! one. Run `rl-game --help`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::Context as _;
-use clap::Parser;
+use clap::parser::ValueSource;
+use clap::{ArgMatches, CommandFactory, FromArgMatches};
 use rl_game::app::{App, Config};
 use rl_game::script::{self, Command, Step};
 use rl_game::session::Session;
 use rl_game::setup::{self, DeathmatchOptions, Game, SandboxOptions};
+use rl_game::shell::{Shell, ShellConfig};
 use rl_game::window::{self, WindowSystem};
 use rl_game::wsl;
 use rl_render::{RenderSettings, UpscaleFilter};
@@ -50,17 +53,19 @@ enum Filter {
     Sharp,
 }
 
-/// rust-liero: the sandbox (you and idle targets on a level, with a mod's
+/// rust-liero: the menus; or, when a flag below chooses a game, straight
+/// into the sandbox (you and idle targets on a level, with a mod's
 /// weapons), a Deathmatch against bots (`--mode deathmatch`) or a replay
 /// (`--replay`). Arrows move and aim, Ctrl fires, Alt jumps, X throws the
 /// rope, Shift with the arrows changes weapon; Tab scores, F2 debug, F5
-/// restart (a Deathmatch's rematch), H health bars, Esc quits.
-#[derive(Parser)]
+/// restart (a Deathmatch's rematch), H health bars, Esc pauses (the menus)
+/// or quits.
+#[derive(clap::Parser)]
 #[command(name = "rl-game")]
 struct Args {
-    /// What to play.
-    #[arg(long, value_enum, default_value = "sandbox")]
-    mode: Mode,
+    /// What to play (the sandbox when another flag chooses a game).
+    #[arg(long, value_enum)]
+    mode: Option<Mode>,
     /// Deathmatch: bots against you (1 to 31).
     #[arg(long, default_value_t = 3)]
     bots: usize,
@@ -145,27 +150,42 @@ struct Args {
     latency_probe: Option<u64>,
 }
 
-fn run(args: Args) -> anyhow::Result<()> {
-    let var = std::env::var(window::WINDOW_SYSTEM_VAR).ok();
-    let ws = window::window_system(args.window_system, var.as_deref()).map_err(anyhow::Error::msg)?;
-    let mut steps: Vec<Step> = match (&args.script, args.demo) {
-        (Some(path), _) => {
-            let text = std::fs::read_to_string(path).with_context(|| format!("{}", path.display()))?;
-            script::parse(&text).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?
-        }
-        (None, true) => script::parse(script::DEMO).map_err(anyhow::Error::msg)?,
-        (None, false) => Vec::new(),
-    };
-    steps.extend(args.shots.iter().map(|&tick| Step { tick, command: Command::Shot }));
-    steps.sort_by_key(|s| s.tick);
+/// The flags that choose a game: with any of them on the command line the
+/// game plays it at once (scripted runs and tests); without, the menus.
+const GAME_FLAGS: [&str; 16] = [
+    "mode",
+    "bots",
+    "difficulty",
+    "lives",
+    "kill_limit",
+    "time_limit",
+    "record",
+    "replay",
+    "level",
+    "mod_name",
+    "skin",
+    "targets",
+    "seed",
+    "bonuses",
+    "script",
+    "demo",
+];
 
+/// Whether the command line chose a game.
+fn plays_directly(m: &ArgMatches) -> bool {
+    GAME_FLAGS.iter().any(|id| m.value_source(id) == Some(ValueSource::CommandLine))
+}
+
+/// The game the command line chose, loaded, and its session.
+fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig) -> anyhow::Result<Shell> {
+    let mode = args.mode.unwrap_or(Mode::Sandbox);
     anyhow::ensure!(
-        args.record.is_none() || args.mode == Mode::Deathmatch,
+        args.record.is_none() || mode == Mode::Deathmatch,
         "--record records a Deathmatch (--mode deathmatch)"
     );
     let assets = if let Some(file) = &args.replay {
         setup::load_replay(&args.content, file, &args.skin)?
-    } else if args.mode == Mode::Deathmatch {
+    } else if mode == Mode::Deathmatch {
         let o = DeathmatchOptions {
             seed: args.seed,
             bots: args.bots,
@@ -189,12 +209,56 @@ fn run(args: Args) -> anyhow::Result<()> {
     for w in &assets.warnings {
         eprintln!("warning: {w}");
     }
-    let mut audio = rl_audio::Audio::new();
-    let opened = !audio.is_silent();
+    let mut audio = audio;
+    audio.load(&assets.m, assets.content.core());
     for w in audio.take_warnings() {
         eprintln!("warning: {w}");
     }
-    audio.load(&assets.m, assets.content.core());
+    let session = Session::new(&assets, cfg.viewport, cfg.interpolation, audio)?;
+    let what = match &assets.game {
+        Game::Sandbox(_) => "sandbox".to_string(),
+        Game::Deathmatch { options, .. } => format!("Deathmatch seed {}", options.seed),
+        Game::Replay(r) => format!("replay of {:.1} s", f64::from(r.ticks()) / 100.0),
+    };
+    println!("rl-game: {what}: {} on {}, {} worms", assets.mod_id, assets.level_id, assets.worms());
+    Ok(Shell::playing(cfg, assets, session))
+}
+
+/// The menus, with the settings and profiles of the data directory.
+fn menus(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig) -> Shell {
+    let (mut store, warning) = rl_ui::Store::platform();
+    let settings = store.load_settings();
+    let profiles = store.load_profiles();
+    for w in warning.into_iter().chain(settings.warnings).chain(profiles.warnings) {
+        eprintln!("warning: {w}");
+    }
+    // Matches get seeds from here on (each one is in its replay); `--seed`
+    // would choose a game, so the clock picks the first.
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32);
+    let data = store.dir().map_or("none (nothing is saved)".to_string(), |d| d.display().to_string());
+    println!("rl-game: menus; content {}, data {data}", args.content.display());
+    let ui = rl_ui::UiState::new(settings.value, profiles.value, seed);
+    Shell::new(cfg, ui, store, audio)
+}
+
+fn run(args: Args, play_now: bool) -> anyhow::Result<()> {
+    let var = std::env::var(window::WINDOW_SYSTEM_VAR).ok();
+    let ws = window::window_system(args.window_system, var.as_deref()).map_err(anyhow::Error::msg)?;
+    let mut steps: Vec<Step> = match (&args.script, args.demo) {
+        (Some(path), _) => {
+            let text = std::fs::read_to_string(path).with_context(|| format!("{}", path.display()))?;
+            script::parse(&text).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?
+        }
+        (None, true) => script::parse(script::DEMO).map_err(anyhow::Error::msg)?,
+        (None, false) => Vec::new(),
+    };
+    steps.extend(args.shots.iter().map(|&tick| Step { tick, command: Command::Shot }));
+    steps.sort_by_key(|s| s.tick);
+
+    let mut audio = rl_audio::Audio::new();
+    let silent = audio.is_silent();
     for w in audio.take_warnings() {
         eprintln!("warning: {w}");
     }
@@ -207,7 +271,9 @@ fn run(args: Args) -> anyhow::Result<()> {
     };
     let interpolation = if args.no_interp { Interpolation::Latest } else { Interpolation::Linear };
     let viewport = rl_scene::Viewport::from_aspect(16.0 / 9.0, rl_game::app::MAX_ASPECT);
-    let session = Session::new(&assets, viewport, interpolation, audio)?;
+    let shell_cfg = ShellConfig { content: args.content.clone(), interpolation, viewport };
+    let shell = if play_now { direct(&args, audio, shell_cfg)? } else { menus(&args, audio, shell_cfg) };
+    println!("rl-game: audio {}", if silent { "silent" } else { "opened" });
     let osrelease = wsl::osrelease();
     let backend = std::env::var("WGPU_BACKEND").ok();
     let filter = match args.filter {
@@ -226,29 +292,18 @@ fn run(args: Args) -> anyhow::Result<()> {
         print_stats: args.stats,
         latency_probe: args.latency_probe.filter(|&ms| ms > 0).map(std::time::Duration::from_millis),
         record: args.record.clone(),
+        menus: !play_now,
     };
-    let what = match &assets.game {
-        Game::Sandbox(_) => "sandbox".to_string(),
-        Game::Deathmatch { options, .. } => format!("Deathmatch seed {}", options.seed),
-        Game::Replay(r) => format!("replay of {:.1} s", f64::from(r.ticks()) / 100.0),
-    };
-    println!(
-        "rl-game: {what}: {} on {}, {} worms, audio {}",
-        assets.mod_id,
-        assets.level_id,
-        assets.worms(),
-        if opened { "opened" } else { "silent" }
-    );
     let event_loop = event_loop(ws)?;
     let wayland = is_wayland(&event_loop);
-    let mut app = App::new(cfg, assets, session, gilrs);
+    let mut app = App::new(cfg, shell, silent, gilrs);
     let ran = event_loop.run_app(&mut app);
-    app.save_recording();
     println!("rl-game: {}", app.summary());
     if let Some(m) = app.match_summary() {
         println!("rl-game: {m}");
     }
     println!("rl-game: {}", app.latency_summary());
+    app.save_recording();
     match ran {
         // The game never sets a failing exit code; winit does, most often
         // when the display server closed the connection (a compositor crash).
@@ -310,11 +365,12 @@ fn relaunch() -> Option<ExitCode> {
 }
 
 fn main() -> ExitCode {
-    let args = Args::parse();
+    let matches = Args::command().get_matches();
+    let args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     if let Some(code) = relaunch() {
         return code;
     }
-    match run(args) {
+    match run(args, plays_directly(&matches)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e:#}");

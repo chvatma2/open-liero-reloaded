@@ -205,14 +205,14 @@ impl Gpu {
         Some(Acquired { frame, wait: t0.elapsed() })
     }
 
-    /// Draws `list` and the overlay into `frame` and presents it, applying
+    /// Draws `list` (none: black, as behind the menus) and the overlay into `frame` and presents it, applying
     /// the overlay's texture changes (`textures`, left empty) whether or
     /// not there is a frame. Returns how long the swap chain made the frame
     /// wait, or `None` when there was no frame.
     pub fn present(
         &mut self,
         frame: Option<Acquired>,
-        list: &DrawList,
+        list: Option<&DrawList>,
         overlay: &OverlayPaint,
         textures: &mut egui::TexturesDelta,
     ) -> Option<PresentTiming> {
@@ -223,7 +223,7 @@ impl Gpu {
     fn present_frame(
         &mut self,
         acquired: Acquired,
-        list: &DrawList,
+        list: Option<&DrawList>,
         overlay: &OverlayPaint,
     ) -> PresentTiming {
         let frame = acquired.frame;
@@ -236,9 +236,18 @@ impl Gpu {
         PresentTiming { acquire: acquired.wait, present: t1.elapsed() }
     }
 
-    /// The world, then the overlay over it, into `view`.
-    fn draw(&mut self, list: &DrawList, overlay: &OverlayPaint, view: &wgpu::TextureView, size: (u32, u32)) {
-        self.renderer.render(list, view, size);
+    /// The world (none: black), then the overlay over it, into `view`.
+    fn draw(
+        &mut self,
+        list: Option<&DrawList>,
+        overlay: &OverlayPaint,
+        view: &wgpu::TextureView,
+        size: (u32, u32),
+    ) {
+        if let Some(list) = list {
+            self.renderer.render(list, view, size);
+        }
+        let load = if list.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color::BLACK) };
         let (device, queue) = (self.renderer.device().clone(), self.renderer.queue().clone());
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [size.0, size.1],
@@ -255,7 +264,7 @@ impl Gpu {
                         view,
                         resolve_target: None,
                         depth_slice: None,
-                        ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                        ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
                     })],
                     ..Default::default()
                 })
@@ -269,7 +278,12 @@ impl Gpu {
     /// size and writes it to `path` as a PNG.
     /// Call it after [`Gpu::present`], which applies the overlay's texture
     /// changes.
-    pub fn screenshot(&mut self, list: &DrawList, overlay: &OverlayPaint, path: &Path) -> anyhow::Result<()> {
+    pub fn screenshot(
+        &mut self,
+        list: Option<&DrawList>,
+        overlay: &OverlayPaint,
+        path: &Path,
+    ) -> anyhow::Result<()> {
         let size = clamp_size(self.state.size(), self.max_side());
         let texture = self.renderer.device().create_texture(&wgpu::TextureDescriptor {
             label: Some("rl-game screenshot"),

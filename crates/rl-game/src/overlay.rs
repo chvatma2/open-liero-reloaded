@@ -76,6 +76,9 @@ pub struct Overlay<'a> {
     /// Tab held: the scoreboard.
     pub show_scores: bool,
     pub stats: &'a Stats,
+    /// Started from the menus: Esc pauses (the pause menu leaves), it
+    /// does not quit.
+    pub menus: bool,
 }
 
 fn shadowed(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, colour: Color32) {
@@ -112,7 +115,7 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
         );
     }
     let p = ui.painter();
-    hud(p, ui.max_rect(), s);
+    hud(p, ui.max_rect(), s, o.menus);
     crate::panels::top(p, ui.max_rect(), s, o.debug);
     if o.debug {
         debug(p, ui.max_rect(), o);
@@ -122,9 +125,8 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
         // OLX shows "Game Over" for `GAMEOVER_WAIT`, then the results.
         // A replay that ends sooner (its recording stops 3 s after the end)
         // shows them at its end.
-        let replay_done = matches!(&s.driver, Driver::Replay(d) if d.is_done());
-        if replay_done || s.since_end().is_some_and(|t| t > crate::panels::RESULTS_AFTER) {
-            crate::panels::results(ui.ctx(), r, replay);
+        if s.results_shown() {
+            crate::panels::results(ui.ctx(), r, replay, o.menus);
         } else {
             crate::panels::game_over(p, ui.max_rect());
         }
@@ -135,7 +137,7 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
 
 /// The HUD: the player's (a replay: the followed worm's) health, weapon,
 /// lives and score, and the keys.
-fn hud(p: &Painter, rect: egui::Rect, s: &Session) {
+fn hud(p: &Painter, rect: egui::Rect, s: &Session, menus: bool) {
     let font = FontId::monospace(14.0);
     let Some(me) = s.world.worms().first() else { return };
     let line = if me.alive {
@@ -178,8 +180,9 @@ fn hud(p: &Painter, rect: egui::Rect, s: &Session) {
             }
             Driver::Replay(_) => "Tab scores  F2 debug  F5 from the start  Esc quit",
         };
+        let keys = if menus { keys.replace("Esc quit", "Esc pause") } else { keys.to_string() };
         let at = rect.right_bottom() + egui::vec2(-10.0, -10.0);
-        shadowed(p, at, Align2::RIGHT_BOTTOM, keys, FontId::proportional(12.0), Color32::from_gray(190));
+        shadowed(p, at, Align2::RIGHT_BOTTOM, &keys, FontId::proportional(12.0), Color32::from_gray(190));
     }
 }
 

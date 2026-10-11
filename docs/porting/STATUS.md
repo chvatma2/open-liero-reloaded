@@ -348,6 +348,15 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   name no weapon (`rl-sim` does not record the injuring weapon; OLX drops
   `" with <weapon>"` when it is unknown); "Game Over", then after
   `GAMEOVER_WAIT` (3 s) the results, as OLX. F5's rematch plays the next seed.
+- **Menus** (`rl-ui`, `rl-game`, plan 7 task 2): the main menu and local
+  play are laid out anew in egui, not OLX's `DeprecatedGUI` screens. Local
+  play sets OLX's local game options (mod, level, `Lives`, `KillLimit`,
+  `TimeLimit`, `LoadingTime`, `Bonuses`, `WeaponRestrictionsFile`; the
+  sliders' ranges from `FeatureList.cpp:31-35`) and the bots as a count with
+  one difficulty or each its own, where OLX adds bot profiles to a player
+  list one by one. Esc pauses a match (a pause menu) instead of OLX's
+  in-game menu; every Deathmatch played from the menus is saved as a
+  replay (`replays/`, the last 20), which OLX does not do.
 - **Renderer** (`rl-render`, plan 5 task 5): OLX blits each sprite with SDL
   onto a 2× screen; the renderer draws the same texels at art scale (at
   least 2×) and then upscales (E3). With interpolation (E2), a sprite's

@@ -103,6 +103,8 @@ pub struct Session {
     /// with this skin).
     shown: usize,
     skin: LoadedSkin,
+    /// The player's colour (a profile's), else `default_colour(0)`.
+    colour: Option<rl_data::image::Rgba>,
 }
 
 /// The world and driver `a` starts with, rematch `n`.
@@ -127,7 +129,7 @@ fn start(a: &Assets, n: u32) -> anyhow::Result<(World, Driver)> {
 fn names(a: &Assets, worms: usize) -> Names {
     let name = |i: usize| match a.game {
         Game::Replay(_) => format!("Worm {}", i + 1),
-        _ if i == 0 => "You".into(),
+        _ if i == 0 => a.player.as_ref().map_or_else(|| "You".into(), |p| p.name.clone()),
         Game::Sandbox(_) => format!("Target {i}"),
         Game::Deathmatch { .. } => format!("Bot {i}"),
     };
@@ -182,6 +184,10 @@ impl Session {
             ended_at: None,
             shown: 0,
             skin: a.skin.clone(),
+            colour: a
+                .player
+                .as_ref()
+                .map(|p| rl_data::image::Rgba::rgb(p.colour[0], p.colour[1], p.colour[2])),
         };
         s.show_new_worms();
         s.time_left_ms = s.mode_time_left();
@@ -195,7 +201,8 @@ impl Session {
         let human = !matches!(self.driver, Driver::Replay(_));
         while self.shown < self.world.worms().len() {
             let i = self.shown;
-            self.present.add_worm(&self.skin, default_colour(i), i == 0, i == 0 && human);
+            let colour = self.colour.filter(|_| i == 0 && human).unwrap_or_else(|| default_colour(i));
+            self.present.add_worm(&self.skin, colour, i == 0, i == 0 && human);
             self.shown += 1;
         }
         if self.keys.len() < self.shown {
@@ -250,6 +257,14 @@ impl Session {
     /// Ticks since the match (re)started.
     pub fn ticks(&self) -> u64 {
         self.ticks
+    }
+
+    /// The results show: `RESULTS_AFTER` ticks after the end (OLX's
+    /// `GAMEOVER_WAIT`; "Game Over" until then), or a replay's at its end.
+    pub fn results_shown(&self) -> bool {
+        let replay_done = matches!(&self.driver, Driver::Replay(d) if d.is_done());
+        self.results.is_some()
+            && (replay_done || self.since_end().is_some_and(|t| t > crate::panels::RESULTS_AFTER))
     }
 
     /// Ticks since the match ended, once it has.

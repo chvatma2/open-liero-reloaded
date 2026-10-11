@@ -27,6 +27,7 @@ rl-render.workspace = true
 rl-present.workspace = true
 rl-audio.workspace = true
 rl-input.workspace = true
+rl-ui.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 wgpu.workspace = true

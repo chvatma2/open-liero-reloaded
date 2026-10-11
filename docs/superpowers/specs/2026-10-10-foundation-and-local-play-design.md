@@ -920,3 +920,38 @@ Made precise while implementing `rl-ui`'s foundation (plan 7 task 1):
 - **The default profile** is OLX's first local player ("OpenLieroXor",
   green, the default skin); names are at most 20 characters (OLX's
   player menu).
+
+Made precise while implementing the main menu and local play (plan 7
+task 2):
+
+- **Menus first.** `rl-game` without a flag that chooses a game opens the
+  main menu (Local Play, Sandbox, Profiles, Options, Replays, Import,
+  About, Quit); the flags of plans 5-6 (`--mode`, `--replay`, `--level`,
+  ...) still play their game at once, for scripted runs and tests. The
+  first match's seed comes from the clock; each match takes the next, and
+  every seed is in its replay.
+- **Screens are `rl-ui`'s.** `rl_ui::screens::show(ui, &UiState, &mut
+  MenuData) -> Vec<UiAction>` draws them with egui (no GPU handle: level
+  thumbnails are egui textures); `rl-game`'s `Shell` carries out the
+  commands without a window, so starts with missing content and rapid
+  actions are tested headless. Esc is Back everywhere (in game it pauses);
+  F5 restarts in place.
+- **Replays screen** (not in G1's list): the `.rlrp` files in the data
+  directory's `replays/` and any file by path, played with the game's
+  replay session. Every Deathmatch played from the menus is saved there
+  when it ends, restarts or the game quits (`match-NNNNNN.rlrp`, the last
+  20; a player's own files are never removed).
+- **Local play** sets the mod, the level (a grid of thumbnails; a level
+  without `thumb.png` shows its name and size), OLX's `Lives`,
+  `KillLimit`, `TimeLimit`, `LoadingTime` (the menu ranges of
+  `FeatureList.cpp`), `Bonuses` and `WeaponRestrictionsFile` (the mod's
+  presets), 1 to 31 bots at one difficulty or each its own, their
+  personality (OLX's bot or chaos) and loadout, and the player's profile
+  (its name and colour play worm 0). Start loads after the frame that
+  shows "Loading…"; until then another Start, Esc and the menu buttons do
+  nothing. A start that fails (a pack missing or broken, a file that is no
+  replay) returns to its screen with the reason.
+- **Menus list packs without loading them:** `rl_content::Content::catalog`
+  reads each mod's manifest and preset names and each level's `level.ron`
+  and `thumb.png` (at most 512 × 512 and 4 MiB; else not shown, with a
+  warning).

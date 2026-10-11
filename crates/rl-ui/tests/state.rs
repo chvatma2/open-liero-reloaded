@@ -20,7 +20,7 @@ fn state_machine_navigates_and_emits_commands() {
     let mut ui = state();
     assert_eq!(ui.screen(), Screen::Main);
     // Main's buttons open the menu screens; Back returns to Main.
-    for s in [Screen::LocalPlay, Screen::Profiles, Screen::Options, Screen::Import, Screen::About] {
+    for s in Screen::MENUS {
         assert!(ui.update(UiAction::Open(s)).is_empty());
         assert_eq!(ui.screen(), s);
         assert!(ui.update(UiAction::Back).is_empty());
@@ -95,6 +95,31 @@ fn state_machine_navigates_and_emits_commands() {
     assert!(!ui.is_paused());
     assert_eq!(ui.update(UiAction::Back), [AppCommand::EndMatch]);
     assert_eq!(ui.screen(), Screen::Main);
+
+    // Replays play from the replays screen; one that fails returns there.
+    ui.update(UiAction::Open(Screen::Replays));
+    let file = std::path::PathBuf::from("a.rlrp");
+    assert_eq!(ui.update(UiAction::PlayReplay(file.clone())), [AppCommand::PlayReplay(file.clone())]);
+    assert!(ui.update(UiAction::PlayReplay(file.clone())).is_empty());
+    ui.update(UiAction::MatchFailed("no".into()));
+    assert_eq!((ui.screen(), ui.message()), (Screen::Replays, Some("no")));
+    ui.update(UiAction::PlayReplay(file));
+    ui.update(UiAction::MatchStarted);
+    assert_eq!(ui.game(), Some(rl_ui::Game::Replay));
+    // F5 plays it again in place, not while paused; the results' Start
+    // is no rematch for a replay.
+    assert_eq!(ui.update(UiAction::Restart), [AppCommand::Restart]);
+    ui.update(UiAction::Back);
+    assert!(ui.update(UiAction::Restart).is_empty());
+    ui.update(UiAction::Back);
+    ui.update(UiAction::MatchOver);
+    assert!(ui.update(UiAction::StartMatch).is_empty());
+    assert_eq!(ui.update(UiAction::Restart), [AppCommand::Restart]);
+    assert_eq!(ui.screen(), Screen::InGame);
+    ui.update(UiAction::Back);
+    ui.update(UiAction::LeaveMatch);
+    assert_eq!(ui.game(), None);
+    assert!(ui.update(UiAction::Restart).is_empty());
 
     // The sandbox starts from the main menu.
     assert_eq!(ui.update(UiAction::StartSandbox), [AppCommand::StartSandbox]);

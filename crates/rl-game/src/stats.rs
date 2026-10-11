@@ -2,6 +2,18 @@
 //! and the whole run's summary printed on exit.
 
 use crate::overlay::Stats;
+use crate::session::Session;
+
+/// `--stats`: the last second's counters on one line (the game's counts
+/// when one plays).
+pub fn print(st: &Stats, s: Option<&Session>) {
+    let (entities, projectiles, voices) =
+        s.map_or((0, 0, 0), |s| (s.present.fx.len(), s.world.projectiles().count(), s.audio.playing()));
+    println!(
+        "stats: {:.0} fps, frame {:.2} ms (max {:.2}), busy {:.2} ms, tick {:.3} ms (max {:.3}), {} ticks/s, entities {entities}, projectiles {projectiles}, voices {voices}",
+        st.fps, st.frame_ms, st.frame_ms_max, st.busy_ms, st.tick_ms, st.tick_ms_max, st.ticks_per_second,
+    );
+}
 
 /// Frame times kept for the summary's percentiles (about 30 minutes at
 /// 144 FPS); later frames count in the means only.

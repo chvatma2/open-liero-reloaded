@@ -1,23 +1,47 @@
 # rl-game
 
-The game binary (spec §8.6, §19 E10-E12): a winit window, the 100 Hz
+The game binary (spec §8.6, §19 E10-E12, §21): a winit window, the 100 Hz
 fixed-tick loop, interpolated wgpu rendering with cosmetic entities, sound,
-input and an egui overlay. It plays the M5 sandbox (E11: the player and N
-idle targets on a level with a mod's first five weapons), a Deathmatch
-against bots (M6) and replays.
+input, an egui overlay and the menus (`rl-ui`). It plays the M5 sandbox
+(E11: the player and N idle targets on a level with a mod's first five
+weapons), a Deathmatch against bots (M6) and replays.
 
 ```
+cargo run --release -p rl-game                      # the menus
 cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --targets 3
 cargo run --release -p rl-game -- --mode deathmatch --bots 4 --difficulty medium \
     [--lives L] [--kill-limit K] [--time-limit M] [--seed S] [--record f.rlrp]
 cargo run --release -p rl-game -- --replay f.rlrp
 ```
 
-- **Layer 6.** Uses `rl-content`, `rl-present`, `rl-scene`, `rl-fx`, `rl-render`,
+- **Layer 6.** Uses `rl-ui`, `rl-content`, `rl-present`, `rl-scene`, `rl-fx`, `rl-render`,
   `rl-audio`, `rl-input`, `rl-sim`, `rl-modes`, `rl-bots`, `rl-replay`,
   `rl-terrain`, `rl-pack`, plus winit,
   wgpu, gilrs and egui / egui-wgpu / egui-winit 0.36.2 (exact pins). Logs
   are `eprintln!("warning: ...")`, each once.
+- **Menus first** (`main.rs`, `shell.rs`, plan 7 task 2): without a flag
+  that chooses a game (`GAME_FLAGS`: `--mode`, `--replay`, `--level`,
+  `--mod`, `--targets`, `--seed`, `--script`, `--demo`, ...) the game opens
+  the main menu, with `settings.ron`/`profiles.ron` from the data directory
+  (`rl_ui::Store::platform`; warnings logged) and the first match seed
+  from the clock (each seed is in its replay). With such a flag it plays
+  that game at once as before (scripted runs and tests: Esc quits, F5
+  restarts, `--record`). `--shot`, `--autoquit-after` and `--stats` work
+  in both. `Shell` holds the `UiState`, the menus' data, the store and the
+  game playing (`Playing { assets, session }`); `app.rs` draws
+  `rl_ui::screens::show` over the overlay, feeds the actions to
+  `Shell::act` and does the `Outcome`s (`app/menus.rs`: quit, bindings,
+  video through the paced window requests, a started game's upload). A
+  start is loaded by `Shell::poll` after the frame that showed "Loading…";
+  a failure (a pack missing or broken: `setup::load_match`, `load`,
+  `load_replay`) returns to the menu with the reason (Review Focus 3).
+  Esc and F5 are the menus' there: Esc pauses (ticks stop; the pause menu
+  resumes or leaves), F5 restarts in place. Results show → `MatchOver`
+  (`Session::results_shown`). Every Deathmatch's replay is saved in the
+  data directory's `replays/` when it ends, restarts or the game quits
+  (`rl_ui::replays::auto_save`, none of no tick); the Replays screen plays
+  them. Settings are written at most once a second (`Shell::flush`) and
+  at exit. The human's profile names and colours worm 0 (`PlayerLook`).
 - **Single thread** (spec §8.6): the device is created and used only on
   the main (event-loop) thread; under WSL's d3d12 GL driver a thread that
   used the device crashes when it exits. kira runs its own audio thread.
@@ -135,7 +159,8 @@ cargo run --release -p rl-game -- --replay f.rlrp
   10th tick (main thread only) and a kira mock device for sound, and bounds
   the counters; it needs `RL_GPU_TESTS`, content and an adapter, else skips.
 
-Test: `cargo nextest run -p rl-game` (the pure parts; `setup`, `session`
-and `tests/deathmatch.rs` (a Deathmatch to its results, the bots' think
-budget, a recording replayed through a replay session) play the imported
-levels when `RL_CONTENT_DIR` is set).
+Test: `cargo nextest run -p rl-game` (the pure parts; `setup`, `session`,
+`tests/deathmatch.rs` (a Deathmatch to its results, the bots' think
+budget, a recording replayed through a replay session) and `tests/menu.rs`
+(starts with missing or broken content, rapid menu actions) play the
+imported levels when `RL_CONTENT_DIR` is set).

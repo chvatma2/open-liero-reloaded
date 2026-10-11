@@ -39,7 +39,7 @@ pub fn top(p: &Painter, rect: egui::Rect, s: &Session, debug: bool) {
     if let Driver::Replay(d) = &s.driver {
         let (t, n) = (d.cursor.tick(), d.replay.ticks());
         let line = if d.is_done() {
-            format!("Replay finished ({:.1} s): F5 plays it again, Esc quits", f64::from(n) / 100.0)
+            format!("Replay finished ({:.1} s): F5 plays it again", f64::from(n) / 100.0)
         } else {
             format!("Replay {:.1} s / {:.1} s", f64::from(t) / 100.0, f64::from(n) / 100.0)
         };
@@ -131,7 +131,7 @@ pub fn scoreboard(ctx: &egui::Context, s: &Session) {
 
 /// The results of a finished match: the winner, why it ended, every
 /// worm's row, and the keys.
-pub fn results(ctx: &egui::Context, r: &Results, replay: bool) {
+pub fn results(ctx: &egui::Context, r: &Results, replay: bool, menus: bool) {
     panel(ctx, "results", |ui| {
         ui.label(RichText::new("Game over").size(24.0).color(Color32::from_rgb(255, 200, 80)));
         let winner = r.winner.as_deref().unwrap_or("noone");
@@ -140,7 +140,8 @@ pub fn results(ctx: &egui::Context, r: &Results, replay: bool) {
         ui.add_space(8.0);
         table(ui, &r.rows);
         ui.add_space(8.0);
-        let keys = if replay { "F5 watch again    Esc quit" } else { "F5 rematch    Esc quit" };
+        let esc = if menus { "Esc leave" } else { "Esc quit" };
+        let keys = if replay { format!("F5 watch again    {esc}") } else { format!("F5 rematch    {esc}") };
         ui.label(RichText::new(keys).color(Color32::from_gray(200)));
     });
 }
