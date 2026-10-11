@@ -31,7 +31,7 @@ use anyhow::Context as _;
 use rl_data::manifest::PackKind;
 use rl_vfs::DirFs;
 
-pub use catalog::{Catalog, LevelInfo, MAX_THUMB_BYTES, MAX_THUMB_SIDE, ModInfo};
+pub use catalog::{Catalog, LevelInfo, MAX_THUMB_BYTES, MAX_THUMB_SIDE, ModInfo, ThumbRef};
 pub use color::{apply_edits, color_edit, lost_area};
 pub use core_assets::{CORE_PACK_ID, CORE_SPRITES, CorePack};
 pub use maps::{LoadedLevel, LoadedSkin, LoadedTheme, MAX_ART_SCALE, MAX_COLOR_MAP_BYTES};
@@ -148,6 +148,11 @@ impl Content {
     /// Pack `id`'s name (its manifest's), if there is such a pack.
     pub fn pack_name(&self, id: &str) -> Option<&str> {
         self.names.get(id).map(String::as_str)
+    }
+
+    /// Pack `id`'s directory, if there is such a pack.
+    pub fn pack_dir(&self, id: &str) -> Option<&Path> {
+        self.packs.get(id).map(|(_, dir)| dir.as_path())
     }
 
     /// The pack `id`, which must be of `kind`.

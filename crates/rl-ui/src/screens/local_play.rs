@@ -12,8 +12,9 @@ use crate::match_prefs::{
 };
 use crate::state::{UiAction, UiState};
 
-/// A level card's picture, in points, and the space between cards.
-const THUMB: Vec2 = Vec2::new(176.0, 88.0);
+/// A level card's picture, in points (the imported thumbnails' 160 × 96,
+/// `rl_pack::THUMB_SIZE`), and the space between cards.
+const THUMB: Vec2 = Vec2::new(160.0, 96.0);
 const GAP: f32 = 10.0;
 
 /// What a rule is set to when it is switched on (OLX's defaults,
@@ -123,15 +124,17 @@ fn level_grid(ui: &mut Ui, data: &mut MenuData, p: &mut MatchPrefs) {
     egui::Grid::new("levels").spacing([GAP, GAP]).show(ui, |ui| {
         for (n, (id, name, size)) in levels.into_iter().enumerate() {
             let selected = id == p.level_id;
-            let thumb = data.thumb(ui.ctx(), &id);
             ui.vertical(|ui| {
                 ui.set_width(THUMB.x);
                 let (rect, resp) = ui.allocate_exact_size(THUMB, Sense::click());
+                // Decoded only once its card is in view.
+                let thumb = if ui.is_rect_visible(rect) { data.thumb(ui.ctx(), &id) } else { None };
                 let painter = ui.painter_at(rect);
                 match &thumb {
                     Some(t) => {
+                        painter.rect_filled(rect, 4.0, Color32::from_rgb(24, 22, 20));
                         let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                        painter.image(t.id(), rect, uv, Color32::WHITE);
+                        painter.image(t.id(), fit(t.size_vec2(), rect), uv, Color32::WHITE);
                     }
                     // No thumbnail yet: the name and size (plan 7 ruling Q1).
                     None => {
@@ -159,6 +162,16 @@ fn level_grid(ui: &mut Ui, data: &mut MenuData, p: &mut MatchPrefs) {
             }
         }
     });
+}
+
+/// The largest rectangle of `size`'s aspect centred in `rect`: a
+/// thumbnail of any shape keeps it (letterboxed).
+pub(crate) fn fit(size: Vec2, rect: egui::Rect) -> egui::Rect {
+    if !(size.x > 0.0 && size.y > 0.0) {
+        return rect;
+    }
+    let k = (rect.width() / size.x).min(rect.height() / size.y);
+    egui::Rect::from_center_size(rect.center(), size * k)
 }
 
 /// OLX's Deathmatch settings (also the options' default match).

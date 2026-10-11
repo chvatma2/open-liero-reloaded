@@ -79,8 +79,19 @@ fn catalog_lists_mods_and_levels_without_loading_them() {
     let plain = c.level("lvl-plain").unwrap();
     assert_eq!((plain.name.as_str(), plain.width, plain.height), ("Plain", 3, 2));
     assert!(plain.thumb.is_none());
+    // Listed by its header only; decoded on demand.
     let thumb = c.level("lvl-thumb").unwrap().thumb.as_ref().unwrap();
-    assert_eq!((thumb.width(), thumb.height()), (4, 2));
+    assert_eq!((thumb.width, thumb.height), (4, 2));
+    let img = thumb.load().unwrap();
+    assert_eq!((img.width(), img.height()), (4, 2));
+    // Changed on disk after the listing: refused before decoding, never a panic.
+    let big = rl_pack::image_io::encode_rgba(&RgbaImage::new(MAX_THUMB_SIDE + 1, 2));
+    write(&mut thumbed, rl_pack::THUMB_FILE, &big);
+    assert!(thumb.load().unwrap_err().contains("no longer"));
+    write(&mut thumbed, rl_pack::THUMB_FILE, &vec![0u8; rl_content::MAX_THUMB_BYTES + 10]);
+    assert!(thumb.load().is_err());
+    std::fs::remove_file(root.join("lvl-thumb").join(rl_pack::THUMB_FILE)).unwrap();
+    assert!(thumb.load().is_err());
     assert!(c.level("lvl-huge").unwrap().thumb.is_none());
     assert!(c.level("lvl-junk").unwrap().thumb.is_none());
     for bad in ["lvl-broken", "lvl-huge", "lvl-junk"] {
@@ -105,6 +116,12 @@ fn catalog_lists_mods_and_levels_without_loading_them() {
     assert!(classic.presets.iter().any(|p| p == DEFAULT_PRESET), "{:?}", classic.presets);
     let factory = c.level("olx-level-liero-factory").unwrap();
     assert_eq!((factory.name.as_str(), factory.width, factory.height), ("Liero Factory", 1200, 480));
+    // Every imported level has its thumbnail (plan 7 G6), decodable.
+    for l in &c.levels {
+        let t = l.thumb.as_ref().unwrap_or_else(|| panic!("{}: no thumbnail", l.id));
+        assert_eq!((t.width, t.height), rl_pack::THUMB_SIZE, "{}", l.id);
+        t.load().unwrap();
+    }
     assert_eq!(c.skin("default").map(|s| s.id.as_str()), Some("olx-skin-default"));
     assert!(c.skins.len() > 100, "{} skins", c.skins.len());
 }

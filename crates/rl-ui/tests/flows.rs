@@ -4,13 +4,22 @@
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use rl_bots::{Difficulty, Personality};
-use rl_content::{Catalog, LevelInfo, ModInfo, Player};
+use rl_content::{Catalog, LevelInfo, ModInfo, Player, ThumbRef};
 use rl_data::image::RgbaImage;
 use rl_ui::screens::{self, MenuData};
 use rl_ui::{
     AppCommand, BotLevel, BotPersonality, MAX_BOTS, MatchPrefs, Profile, Profiles, Screen, Settings,
     UiAction, UiState,
 };
+
+/// A `w` × `h` thumbnail written to a directory kept for the test run.
+fn thumb_file(name: &str, w: u32, h: u32) -> ThumbRef {
+    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let dir = DIR.get_or_init(|| tempfile::tempdir().unwrap());
+    let path = dir.path().join(format!("{name}.png"));
+    std::fs::write(&path, rl_pack::image_io::encode_rgba(&RgbaImage::new(w, h))).unwrap();
+    ThumbRef::probe(&path).unwrap().unwrap()
+}
 
 fn catalog() -> Catalog {
     let presets = |p: &[&str]| p.iter().map(|s| s.to_string()).collect();
@@ -33,7 +42,7 @@ fn catalog() -> Catalog {
                 name: "Dirt Level".into(),
                 width: 504,
                 height: 350,
-                thumb: Some(RgbaImage::new(50, 35)),
+                thumb: Some(thumb_file("dirt", 50, 35)),
             },
             LevelInfo {
                 id: "olx-level-liero-factory".into(),
@@ -239,4 +248,54 @@ fn local_play_replaces_a_saved_selection_no_longer_imported() {
         h.state().commands.iter().any(|c| matches!(c, AppCommand::SaveSettings(_))),
         "the repaired choice is saved"
     );
+}
+
+/// A long level list decodes only the thumbnails in view, at most
+/// `THUMB_DECODES_PER_FRAME` a frame, each once; an unreadable one keeps its
+/// placeholder and is reported once.
+#[test]
+fn thumbnails_decode_lazily_and_bounded() {
+    let mut c = catalog();
+    c.levels = (0..60)
+        .map(|i| LevelInfo {
+            id: format!("lvl-{i:02}"),
+            name: format!("Level {i}"),
+            width: 640,
+            height: 480,
+            thumb: Some(thumb_file(&format!("lvl-{i:02}"), 160, 96)),
+        })
+        .collect();
+    // The first one breaks after it was listed.
+    let broken = c.levels[0].thumb.clone().unwrap();
+    std::fs::write(&broken.path, b"not a png any more").unwrap();
+    let mut ui = UiState::new(Settings::default(), Profiles::default(), 7);
+    ui.update(UiAction::Open(Screen::LocalPlay));
+    let app = App { ui, data: MenuData::new(c, None), commands: Vec::new() };
+    let mut h = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
+        |ui, app: &mut App| {
+            for a in screens::show(ui, &app.ui, &mut app.data) {
+                let c = app.ui.update(a);
+                app.commands.extend(c);
+            }
+        },
+        app,
+    );
+    // The harness drew a few frames when built; from here, frame by frame.
+    for _ in 0..60 {
+        let before = h.state().data.thumbs_decoded();
+        h.step();
+        let after = h.state().data.thumbs_decoded();
+        assert!(after - before <= screens::THUMB_DECODES_PER_FRAME, "{before} then {after}");
+    }
+    let decoded = h.state().data.thumbs_decoded();
+    assert!(decoded > screens::THUMB_DECODES_PER_FRAME, "{decoded}");
+    assert!(decoded < 60, "only the cards in view: {decoded}");
+    let warnings = h.state_mut().data.take_warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("lvl-00"), "{warnings:?}");
+    for _ in 0..5 {
+        h.step();
+    }
+    assert!(h.state_mut().data.take_warnings().is_empty(), "tried once");
+    assert_eq!(h.state().data.thumbs_decoded(), decoded, "kept, not decoded again");
 }

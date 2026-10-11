@@ -443,6 +443,7 @@ impl App {
         if menus {
             // The profiles' skin preview this frame asked for, from the next.
             self.shell.update_preview(&self.egui);
+            self.shell.log_menu_warnings();
         }
         w.egui.handle_platform_output(&w.window, out.platform_output);
         let jobs = self.egui.tessellate(out.shapes, out.pixels_per_point);

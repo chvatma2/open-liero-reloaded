@@ -61,7 +61,10 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   Vec<UiAction>` draws the current screen; the caller feeds the actions to
   `update`. `MenuData` holds the `rl_content::Catalog`, the replays
   directory and its files (read when the screen opens), the level
-  thumbnails as egui textures and the skin preview (`preview_wanted`, set
+  thumbnails as egui textures (decoded only when their card is in view, at
+  most `THUMB_DECODES_PER_FRAME` a frame, each once, shown letterboxed;
+  an unreadable one keeps its placeholder and is reported once through
+  `take_warnings`, which the app logs) and the skin preview (`preview_wanted`, set
   by the profiles screen each frame; `preview`, the app's textures). Main
   (`main.rs`), local play (`local_play.rs`: mod, level grid with
   thumbnails or a name-and-size placeholder, Deathmatch settings, bots, the
@@ -150,6 +153,7 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
 
 Test: `cargo nextest run -p rl-ui` (`tests/store.rs`, `tests/state.rs`,
 `tests/flows.rs`: kittest flows by label and the local play's match,
+`thumbnails_decode_lazily_and_bounded`,
 `tests/profiles.rs`: profiles through the widgets, names, the preview; its
 last part compares with `rl_scene::SceneAssets` when `RL_CONTENT_DIR` is
 set; `tests/options.rs`: rebinding never leaves an action unreachable, the

@@ -322,6 +322,13 @@ impl Shell {
         }
     }
 
+    /// Logs, once each, what the menus found wrong this frame (an
+    /// unreadable level thumbnail).
+    pub fn log_menu_warnings(&mut self) {
+        let w = self.data.take_warnings();
+        self.log(w);
+    }
+
     fn log(&mut self, warnings: impl IntoIterator<Item = String>) {
         for w in warnings {
             if self.logged.insert(w.clone()) {

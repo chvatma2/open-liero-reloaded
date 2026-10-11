@@ -1,11 +1,15 @@
 //! What a menu lists (spec §21 G1, G6): the mods with their weapon
 //! restriction presets and the levels with their size and thumbnail, read
-//! without loading any mod or level.
+//! without loading any mod or level. A thumbnail is only located and its
+//! PNG header checked here; the menu decodes it when it shows it
+//! ([`ThumbRef::load`]), so a long list never decodes every picture.
+
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use rl_data::image::RgbaImage;
 use rl_data::manifest::PackKind;
-use rl_vfs::ContentSource;
 
 use crate::{Content, SkinInfo};
 
@@ -33,8 +37,56 @@ pub struct LevelInfo {
     /// The size in world pixels.
     pub width: u32,
     pub height: u32,
-    /// `thumb.png` (§21 G6), when the pack has a readable one.
-    pub thumb: Option<RgbaImage>,
+    /// `thumb.png` (§21 G6), when the pack has one whose header is within
+    /// the bounds; not decoded yet.
+    pub thumb: Option<ThumbRef>,
+}
+
+/// A level's `thumb.png`, located and its PNG header checked against
+/// [`MAX_THUMB_SIDE`] and [`MAX_THUMB_BYTES`], not decoded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThumbRef {
+    pub path: PathBuf,
+    /// The size its header gives.
+    pub width: u32,
+    pub height: u32,
+}
+
+impl ThumbRef {
+    /// Checks `path`'s length and PNG header: `Ok(None)` when there is no
+    /// such file, an error when it is not a PNG or out of bounds. Reads 24
+    /// bytes at most.
+    pub fn probe(path: &Path) -> Result<Option<ThumbRef>, String> {
+        let file = match std::fs::File::open(path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.to_string()),
+        };
+        let len = file.metadata().map_err(|e| e.to_string())?.len();
+        if len > MAX_THUMB_BYTES as u64 {
+            return Err(format!("{len} bytes, above {MAX_THUMB_BYTES}"));
+        }
+        let mut header = Vec::with_capacity(24);
+        file.take(24).read_to_end(&mut header).map_err(|e| e.to_string())?;
+        let (width, height) = rl_pack::image_io::png_size(&header).ok_or("not a PNG")?;
+        if width == 0 || height == 0 || width > MAX_THUMB_SIDE || height > MAX_THUMB_SIDE {
+            return Err(format!("{width}x{height}, not within {MAX_THUMB_SIDE}x{MAX_THUMB_SIDE}"));
+        }
+        Ok(Some(ThumbRef { path: path.to_path_buf(), width, height }))
+    }
+
+    /// Reads and decodes the thumbnail, bounded again (the file may have
+    /// changed since it was listed: at most [`MAX_THUMB_BYTES`] are read,
+    /// and the header must still give the listed size before decoding).
+    pub fn load(&self) -> Result<RgbaImage, String> {
+        let file = std::fs::File::open(&self.path).map_err(|e| e.to_string())?;
+        let mut bytes = Vec::new();
+        file.take(MAX_THUMB_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+        if rl_pack::image_io::png_size(&bytes) != Some((self.width, self.height)) {
+            return Err(format!("no longer the {}x{} PNG listed", self.width, self.height));
+        }
+        rl_pack::decode_thumb(&bytes).map_err(|e| e.to_string())
+    }
 }
 
 /// Every mod, level and skin of a content directory, by id; the packs
@@ -66,12 +118,6 @@ impl Catalog {
     }
 }
 
-/// The level pack's thumbnail: `Ok(None)` when it has none, `Err` when it
-/// is unreadable or too large.
-fn read_thumb(src: &dyn ContentSource) -> Result<Option<RgbaImage>, String> {
-    rl_pack::read_level_thumb(src).map_err(|e| e.to_string())
-}
-
 impl Content {
     /// Mod pack `id`'s name and presets, reading no weapon or image.
     pub fn mod_info(&self, id: &str) -> anyhow::Result<ModInfo> {
@@ -81,12 +127,14 @@ impl Content {
         Ok(ModInfo { id: id.into(), name: m.name, presets })
     }
 
-    /// Level pack `id`'s name, size and thumbnail, decoding no level image.
-    /// An unreadable or oversized thumbnail is left out with a warning.
+    /// Level pack `id`'s name, size and thumbnail ([`ThumbRef::probe`]),
+    /// decoding no image. An unreadable or oversized thumbnail is left out
+    /// with a warning.
     pub fn level_info(&self, id: &str) -> anyhow::Result<(LevelInfo, Option<String>)> {
         let src = self.pack(id, PackKind::Level)?;
         let (_, def) = rl_pack::read_level_def(&src).with_context(|| format!("level pack {id}"))?;
-        let (thumb, warning) = match read_thumb(&src) {
+        let dir = self.pack_dir(id).context("level pack directory")?;
+        let (thumb, warning) = match ThumbRef::probe(&dir.join(rl_pack::THUMB_FILE)) {
             Ok(t) => (t, None),
             Err(e) => (None, Some(format!("level pack {id}: {}: {e}, not shown", rl_pack::THUMB_FILE))),
         };

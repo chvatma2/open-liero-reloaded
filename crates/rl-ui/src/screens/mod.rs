@@ -1,7 +1,9 @@
 //! The menus' egui widgets (spec §8.3, §21 G1). Each screen draws from
 //! the [`UiState`] and returns [`UiAction`]s; the caller feeds them to
 //! [`UiState::update`] and carries out the commands. No GPU handle: level
-//! thumbnails are egui textures the app's renderer uploads like egui's own.
+//! thumbnails are egui textures the app's renderer uploads like egui's own,
+//! decoded only when their card shows, at most
+//! [`THUMB_DECODES_PER_FRAME`] a frame, and kept.
 //!
 //! Keys: Esc is Back on every screen (in game it toggles the pause menu;
 //! in the options it first closes an open dialog), F5 restarts the game in
@@ -34,6 +36,10 @@ use crate::skin_preview::{PreviewKey, PreviewTextures};
 use crate::state::{Screen, UiAction, UiState};
 use crate::weapon_select::{WeaponMenu, WeaponSelect};
 
+/// The most level thumbnails decoded in one frame; the rest show their
+/// placeholder until a later frame (a long list never stalls a frame).
+pub const THUMB_DECODES_PER_FRAME: usize = 2;
+
 /// What the menus show besides the state: the content's mods, levels and
 /// skins, the saved replays, the skin preview, and the widgets' own state.
 pub struct MenuData {
@@ -63,7 +69,13 @@ pub struct MenuData {
     pub results: Option<Results>,
     /// The weapon selection in progress.
     select: Option<WeaponSelect>,
-    thumbs: BTreeMap<String, TextureHandle>,
+    /// The thumbnails decoded so far by level id (`None`: unreadable, its
+    /// placeholder stays; tried once).
+    thumbs: BTreeMap<String, Option<TextureHandle>>,
+    /// Decodes left this frame ([`THUMB_DECODES_PER_FRAME`]).
+    decodes_left: usize,
+    /// Problems for the app to log (`take_warnings`).
+    warnings: Vec<String>,
     profiles: profiles::View,
     options: options::View,
     /// The screen shown last frame (a screen reads its files on entry).
@@ -85,6 +97,8 @@ impl MenuData {
             results: None,
             select: None,
             thumbs: BTreeMap::new(),
+            decodes_left: THUMB_DECODES_PER_FRAME,
+            warnings: Vec::new(),
             profiles: profiles::View::default(),
             options: options::View::default(),
             shown: None,
@@ -108,17 +122,44 @@ impl MenuData {
         self.replays = self.replays_dir.as_deref().map(crate::replays::list).unwrap_or_default();
     }
 
-    /// Level `id`'s thumbnail as an egui texture, made on first use.
+    /// Level `id`'s thumbnail as an egui texture, decoded on first use
+    /// (the caller asks only for cards in view): `None` while it has
+    /// none, cannot be read, or this frame's decodes are spent (then
+    /// another frame is asked for).
     fn thumb(&mut self, ctx: &egui::Context, id: &str) -> Option<TextureHandle> {
         if let Some(t) = self.thumbs.get(id) {
-            return Some(t.clone());
+            return t.clone();
         }
-        let img = self.catalog.level(id)?.thumb.as_ref()?;
-        let size = [img.width() as usize, img.height() as usize];
-        let image = egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw());
-        let t = ctx.load_texture(format!("thumb {id}"), image, TextureOptions::NEAREST);
+        let r = self.catalog.level(id)?.thumb.clone()?;
+        if self.decodes_left == 0 {
+            ctx.request_repaint();
+            return None;
+        }
+        self.decodes_left -= 1;
+        let t = match r.load() {
+            Ok(img) => {
+                let size = [img.width() as usize, img.height() as usize];
+                let image = egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw());
+                Some(ctx.load_texture(format!("thumb {id}"), image, TextureOptions::LINEAR))
+            }
+            Err(e) => {
+                self.warnings.push(format!("level pack {id}: {}: {e}, not shown", r.path.display()));
+                None
+            }
+        };
         self.thumbs.insert(id.to_string(), t.clone());
-        Some(t)
+        t
+    }
+
+    /// How many thumbnails have been decoded (or found unreadable) so far.
+    pub fn thumbs_decoded(&self) -> usize {
+        self.thumbs.len()
+    }
+
+    /// The problems found since the last call (unreadable thumbnails), for
+    /// the app to log once.
+    pub fn take_warnings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.warnings)
     }
 }
 
@@ -128,6 +169,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
     let mut out = Vec::new();
     let screen = state.screen();
     data.preview_wanted = None;
+    data.decodes_left = THUMB_DECODES_PER_FRAME;
     if data.shown != Some(screen) {
         data.shown = Some(screen);
         match screen {

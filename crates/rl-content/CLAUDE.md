@@ -76,10 +76,13 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   its packs once.
 - **Catalog** (`catalog.rs`, plan 7 G1/G6): `Content::catalog()` lists every
   mod (`ModInfo`: name, restriction presets) and level (`LevelInfo`: name,
-  size, `thumb.png` when it has a readable one) without loading them, for
-  the menus; `mod_info`/`level_info` for one. An unreadable pack is left out
-  and a thumbnail above `MAX_THUMB_SIDE` (512) or `MAX_THUMB_BYTES` (4 MiB),
-  or not a PNG, is not shown, each with a warning (`Catalog::warnings`).
+  size, `thumb.png` as a `ThumbRef`) without loading them, for the menus;
+  `mod_info`/`level_info` for one. A thumbnail is not decoded here:
+  `ThumbRef::probe` reads its length and PNG header (24 bytes), and one
+  above `MAX_THUMB_SIDE` (512) or `MAX_THUMB_BYTES` (1 MiB), or not a PNG,
+  is left out with a warning (`Catalog::warnings`), like an unreadable
+  pack; `ThumbRef::load` decodes it when a menu shows it, refusing a file
+  that changed since (bounded read, header checked again before decoding).
 - **Skins** (`skins.rs`, plan 7 task 3): OLX's frame layout
   (`FRAME_WIDTH`, `SKIN_WIDTH`, ..., `SHEET_FRAMES`), `skin_source(f,
   face)` (a frame's rectangle; facing left OLX shows the columns one to the

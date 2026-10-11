@@ -3116,6 +3116,7 @@ dependencies = [
  "rl-data",
  "rl-input",
  "rl-modes",
+ "rl-pack",
  "rl-replay",
  "rl-scene",
  "rl-sim",
