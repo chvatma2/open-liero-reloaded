@@ -2,7 +2,7 @@
 //! minimap's texture, and the [`HudView`] a session shows this frame; the
 //! HUD itself is `rl_ui::hud` (layout and painting, Modern style).
 
-use egui::{Color32, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
+use egui::{Color32, Pos2, TextureHandle, TextureOptions, pos2, vec2};
 use rl_scene::Blend;
 use rl_ui::hud::{Dot, HudView, MinimapView, Notice, WormHud, minimap};
 
@@ -86,8 +86,6 @@ impl MinimapTexture {
 /// What a frame adds to the session for the HUD.
 #[derive(Clone, Debug, Default)]
 pub struct Frame<'a> {
-    /// The camera's view in world pixels (the minimap's rectangle).
-    pub view: Option<Rect>,
     /// Tab held: the scoreboard.
     pub scores: bool,
     /// The minimap's texture.
@@ -126,7 +124,7 @@ pub fn worms_on_screen(s: &Session, map: &ScreenMap, alpha: f32) -> Vec<(usize, 
 /// while `scores`, the minimap ("Game Over" until the results show) and
 /// the keys.
 pub fn view(s: &Session, f: &Frame) -> HudView {
-    let Frame { view, scores, minimap, time, menus, speed, .. } = *f;
+    let Frame { scores, minimap, time, menus, speed, .. } = *f;
     let mut worm = WormHud::of(&s.world, 0, &s.names, s.human());
     if let Some(w) = worm.as_mut().filter(|_| f.selecting) {
         w.slots.clear();
@@ -153,7 +151,6 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
     let minimap = minimap.map(|texture| MinimapView {
         texture,
         map,
-        view,
         dots: s
             .world
             .worms()
@@ -192,11 +189,6 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
         hint: Some(hint),
         arrangement: f.arrangement,
     }
-}
-
-/// The camera's view as a world rectangle.
-pub fn view_rect(v: rl_scene::View) -> Rect {
-    Rect::from_min_size(pos2(v.x, v.y), vec2(v.w, v.h))
 }
 
 #[cfg(test)]

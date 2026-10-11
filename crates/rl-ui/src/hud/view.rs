@@ -1,7 +1,7 @@
 //! What the HUD shows this frame: plain data the app fills from the
 //! world (and tests by hand).
 
-use egui::{Color32, Pos2, Rect, TextureId, Vec2};
+use egui::{Color32, Pos2, TextureId, Vec2};
 use rl_sim::World;
 
 use super::model::{LogLine, Names, Row};
@@ -119,8 +119,6 @@ pub struct MinimapView {
     pub texture: TextureId,
     /// The level's size in world pixels.
     pub map: Vec2,
-    /// The camera's view in world pixels (drawn as a rectangle).
-    pub view: Option<Rect>,
     /// The alive worms.
     pub dots: Vec<Dot>,
     /// OLX's blink sawtooth, 0 to 0.5 s.

@@ -176,7 +176,7 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   frame, bar, playfield and minimap unchanged. The user's rulings after
   the v0.1 playtest: Review Focus 5, `hud_layout_holds_at_all_scales`),
   `minimap.rs` (`image`: the colour terrain box-filtered to
-  `TEXTURE_SIZE`; OLX's dot rectangles and blink; the view rectangle;
+  `TEXTURE_SIZE`; OLX's dot rectangles and blink, no view rectangle (the user's ruling);
   `minimap_scale`),
   `paint.rs` (`show(ui, &view)`: the bar (and the side columns, opaque),
   then its parts, the log's newest line at the bottom, a long one

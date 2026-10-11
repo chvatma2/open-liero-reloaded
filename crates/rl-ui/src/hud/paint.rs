@@ -2,10 +2,10 @@
 //! (`docs/porting/olx-notes/presentation.md` §9) in an opaque bar along
 //! the bottom, text with a one-pixel shadow.
 
-use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, RichText, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, RichText, Stroke, Ui, pos2, vec2};
 
 use super::layout::HudLayout;
-use super::minimap::{ALPHA, dot_colour, dot_rect, view_rect};
+use super::minimap::{ALPHA, dot_colour, dot_rect};
 use super::model::{LineKind, LogLine, Row, clock, lives_text};
 use super::view::{Bar, HudView, MinimapView, WormHud};
 
@@ -214,7 +214,8 @@ fn top(p: &Painter, l: &HudLayout, v: &HudView) {
     }
 }
 
-/// The level at half opacity, the view, and a blinking dot per worm.
+/// The level at half opacity and a blinking dot per worm (no view
+/// rectangle: the player's bigger dot is enough, the user's ruling).
 fn minimap(p: &Painter, l: &HudLayout, m: &MinimapView) {
     let r = l.minimap;
     if r.width() <= 0.0 {
@@ -223,12 +224,6 @@ fn minimap(p: &Painter, l: &HudLayout, m: &MinimapView) {
     p.rect_filled(r, 0.0, Color32::from_black_alpha(ALPHA));
     let uv = Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0));
     p.image(m.texture, r, uv, Color32::from_white_alpha(ALPHA));
-    if let Some(v) = m.view {
-        let v = view_rect(v, m.map, r);
-        if v.width() > 0.0 && v.height() > 0.0 {
-            p.rect_stroke(v, 0.0, Stroke::new(1.0, Color32::from_white_alpha(150)), StrokeKind::Inside);
-        }
-    }
     for d in &m.dots {
         p.rect_filled(dot_rect(d.pos, m.map, r, d.big), 0.0, dot_colour(d.colour, m.blink));
     }

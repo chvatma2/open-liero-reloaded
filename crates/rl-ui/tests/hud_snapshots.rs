@@ -86,7 +86,6 @@ fn view(texture: egui::TextureId, scores: bool, arrangement: HudArrangement) -> 
         minimap: Some(MinimapView {
             texture,
             map: vec2(504.0, 350.0),
-            view: Some(Rect::from_min_size(pos2(120.0, 90.0), vec2(320.0, 180.0))),
             dots: vec![
                 Dot { pos: pos2(250.0, 180.0), colour: Color32::from_rgb(0, 177, 0), big: true },
                 Dot { pos: pos2(60.0, 300.0), colour: Color32::from_rgb(255, 0, 0), big: false },

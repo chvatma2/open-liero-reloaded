@@ -29,3 +29,7 @@
   fixtures/ui/hud-1080p.png
   fixtures/ui/hud-1440p.png
   fixtures/ui/hud-3440x1440-sides.png
+2026-10-11 bless-render: the minimap has no view rectangle (user's ruling after the v0.1 playtest)
+  fixtures/ui/hud-1080p.png
+  fixtures/ui/hud-1440p.png
+  fixtures/ui/hud-3440x1440-sides.png

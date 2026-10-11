@@ -149,7 +149,6 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
         );
     }
     let frame = crate::hud::Frame {
-        view: Some(crate::hud::view_rect(o.map.view)),
         scores: o.show_scores,
         minimap: o.minimap,
         time: o.time,

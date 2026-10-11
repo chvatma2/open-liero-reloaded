@@ -531,7 +531,6 @@ fn hud_paints_at_every_scale() {
         minimap: Some(MinimapView {
             texture: egui::TextureId::default(),
             map: vec2(504.0, 350.0),
-            view: Some(Rect::from_min_size(Pos2::new(-50.0, 0.0), vec2(9999.0, 240.0))),
             dots: vec![Dot { pos: Pos2::new(1e9, -5.0), colour: egui::Color32::RED, big: true }],
             blink: 0.3,
         }),

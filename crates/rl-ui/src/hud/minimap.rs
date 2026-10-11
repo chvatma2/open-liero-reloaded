@@ -3,7 +3,7 @@
 //! opacity, and a dot per alive worm that brightens toward white over
 //! OLX's half-second blink.
 
-use egui::{Color32, ColorImage, Pos2, Rect, Vec2, pos2, vec2};
+use egui::{Color32, ColorImage, Pos2, Rect, Vec2, vec2};
 
 /// The minimap texture's size: OLX's 119 × 94 twice over, so it stays
 /// sharp at the HUD's usual scales.
@@ -84,17 +84,10 @@ pub fn dot_rect(pos: Pos2, map: Vec2, rect: Rect, big: bool) -> Rect {
     Rect::from_min_size(rect.min + vec2(x, y) * k, vec2(n, m) * k)
 }
 
-/// The world rectangle `view` (world pixels) on a minimap drawn in `rect`.
-pub fn view_rect(view: Rect, map: Vec2, rect: Rect) -> Rect {
-    let sx = if map.x > 0.0 { rect.width() / map.x } else { 0.0 };
-    let sy = if map.y > 0.0 { rect.height() / map.y } else { 0.0 };
-    let at = |p: Pos2| pos2(rect.min.x + p.x * sx, rect.min.y + p.y * sy);
-    Rect::from_min_max(at(view.min), at(view.max)).intersect(rect)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::pos2;
 
     #[test]
     fn the_picture_is_box_filtered_to_the_minimap() {
@@ -138,7 +131,5 @@ mod tests {
             Rect::from_min_size(pos2(0.0, 184.0), vec2(4.0, 4.0))
         );
         assert_eq!(dot_rect(pos2(f32::NAN, 0.0), vec2(0.0, 0.0), rect, false).min, Pos2::ZERO);
-        let v = view_rect(Rect::from_min_size(pos2(100.0, 0.0), vec2(320.0, 240.0)), map, rect);
-        assert_eq!(v, Rect::from_min_size(pos2(10.0, 0.0), vec2(32.0, 24.0)));
     }
 }
