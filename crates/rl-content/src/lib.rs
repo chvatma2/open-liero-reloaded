@@ -128,7 +128,8 @@ impl Content {
                 })
                 .partition(|p| !p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('.')));
             dirs.sort();
-            aside.sort();
+            // The newest of an id's, as the next import puts back.
+            import::newest_aside_first(&mut aside);
             for dir in dirs {
                 match rl_pack::read_manifest(&DirFs::new(&dir)) {
                     Ok(m) => match (packs.get(&m.id), layer_of.get(&m.id)) {

@@ -428,3 +428,36 @@ fn a_replay_survives_reimporting_the_same_content() {
     let e = format!("{:#}", c.check_replay_packs(&replay.setup).unwrap_err());
     assert!(e.contains("content hash") && e.contains("olx-tiny-mod"), "{e}");
 }
+
+/// Two packs moved aside for one id (`.replaced-<id>` stuck, so a later
+/// import used `.replaced-<id>~2`; or the reverse, `~2` stuck and the
+/// first slot used again later): the newest is the one listed and put
+/// back, whatever the order of their names, and the older goes.
+#[test]
+fn the_newest_replaced_pack_is_restored() {
+    let d = import::discover(&olx_mini()).unwrap();
+    let level = ImportPlan { levels: vec!["levels/Tiny Level.lxl".into()], ..ImportPlan::default() };
+    let theme = ImportPlan { themes: vec!["data/themes/Dirt".into()], ..ImportPlan::default() };
+    let id = "olx-level-tiny-level";
+    let hour = std::time::Duration::from_secs(3600);
+    for newest_first_slot in [false, true] {
+        let out = tempfile::tempdir().unwrap();
+        import::import(&d.gamedir, &level, out.path(), &local(), &mut |_| true).unwrap();
+        let home = out.path().join(id);
+        let (first, second) = (format!(".replaced-{id}"), format!(".replaced-{id}~2"));
+        let (newer, older) = if newest_first_slot { (&first, &second) } else { (&second, &first) };
+        for (aside, which, age) in [(older, "older", hour), (newer, "newer", hour / 60)] {
+            let to = out.path().join(aside);
+            copy_dir(&home, &to);
+            std::fs::write(to.join("which"), which).unwrap();
+            let manifest = std::fs::File::options().write(true).open(to.join("pack.ron")).unwrap();
+            manifest.set_modified(std::time::SystemTime::now() - age).unwrap();
+        }
+        std::fs::remove_dir_all(&home).unwrap();
+        let c = Content::open(out.path()).unwrap();
+        assert_eq!(c.pack_dir(id), Some(out.path().join(newer).as_path()), "the newest is listed");
+        import::import(&d.gamedir, &theme, out.path(), &local(), &mut |_| true).unwrap();
+        assert_eq!(std::fs::read_to_string(home.join("which")).unwrap(), "newer", "{newer} put back");
+        assert!(!out.path().join(&first).exists() && !out.path().join(&second).exists());
+    }
+}

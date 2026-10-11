@@ -111,7 +111,9 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   (`.import-<id>`) and renames it into place (the old one renamed aside
   to `.replaced-<id>`, then removed: a failure is that item's warning; a
   `.replaced-<id>` without its `<id>`, from an import killed between the
-  renames, is listed by `open_layers` and put back by the next import;
+  renames, is listed by `open_layers` and put back by the next import,
+  the newest of an id's (`.replaced-<id>~k` too: `newest_aside_first`, by
+  the manifest's time, then the highest `k`);
   other leftovers removed, or `ImportReport::notes`), symlinked mod,
   level, skin, data and theme directories followed one level, ids
   colliding in a run get `-2`, ..., and writes `import-report.ron`
