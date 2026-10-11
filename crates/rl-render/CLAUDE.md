@@ -51,7 +51,9 @@ on screen or offscreen.
 - **Bench only (plan 8)**, off by default so goldens cannot move:
   `enable_gpu_timing` (true when the device has timestamps) and
   `gpu_times` (`timing.rs`: slot 0 at the world pass's start, 1 at the
-  upscale pass's end, 2 and 3 around the probe; only the slots a frame
+  upscale pass's end, 2 and 3 around the probe: the first pass's start
+  and the last's end, the passes between asking for none, which wgpu refuses
+  when empty; only the slots a frame
   wrote are resolved, the probe's only when it ran, since Vulkan resolves
   with a wait; reading waits for the frame, so offscreen only; each frame
   is read once). `set_probe(Some(Probe { passes, taps }))` (`probe.rs`,

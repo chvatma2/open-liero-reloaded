@@ -245,14 +245,18 @@ fn gpu_timing_reports_when_the_device_has_timestamps() {
         Some(t) => assert!(has && t.frame_ms.is_finite() && t.frame_ms >= 0.0 && t.probe_ms == 0.0, "{t:?}"),
         None => assert!(!has, "timestamps were asked for and offered"),
     }
-    r.set_probe(Some(Probe { passes: 2, taps: 4 }));
-    let _ = gpu.render_to_image(&mut r, &l, (256, 144));
-    match r.gpu_times() {
-        Some(t) => {
-            eprintln!("{t:?}");
-            assert!(has && t.frame_ms.is_finite() && t.frame_ms >= 0.0 && t.probe_ms >= 0.0, "{t:?}");
+    // One pass holds both probe slots; with three or more, a middle pass
+    // writes none (and must ask for no timestamps: wgpu refuses an empty set).
+    for passes in [2, 1, 5] {
+        r.set_probe(Some(Probe { passes, taps: 4 }));
+        let _ = gpu.render_to_image(&mut r, &l, (256, 144));
+        match r.gpu_times() {
+            Some(t) => {
+                eprintln!("{passes} passes: {t:?}");
+                assert!(has && t.frame_ms.is_finite() && t.frame_ms >= 0.0 && t.probe_ms >= 0.0, "{t:?}");
+            }
+            None => assert!(!has, "timestamps were asked for and offered"),
         }
-        None => assert!(!has, "timestamps were asked for and offered"),
     }
     assert_eq!(r.gpu_times(), None, "each frame is read once");
 }

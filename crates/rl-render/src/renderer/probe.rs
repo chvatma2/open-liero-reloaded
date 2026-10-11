@@ -134,11 +134,14 @@ impl ProbeState {
         );
         let t = self.targets.as_ref().expect("ensured above");
         for i in 0..n {
-            let timestamps = timer.map(|tm| wgpu::RenderPassTimestampWrites {
-                query_set: &tm.set,
-                beginning_of_pass_write_index: (i == 0).then_some(2),
-                end_of_pass_write_index: (i + 1 == n).then_some(3),
-            });
+            // Only the first pass and the last write a slot; a middle pass
+            // asks for none (wgpu refuses timestamp writes with neither).
+            let timestamps =
+                timer.filter(|_| i == 0 || i + 1 == n).map(|tm| wgpu::RenderPassTimestampWrites {
+                    query_set: &tm.set,
+                    beginning_of_pass_write_index: (i == 0).then_some(2),
+                    end_of_pass_write_index: (i + 1 == n).then_some(3),
+                });
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rl-render probe"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
