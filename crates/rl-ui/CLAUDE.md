@@ -48,7 +48,8 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   offered in the same "Display" list; v0.1.0's `window: Desktop` loads as
   fullscreen through `VideoFile`;
   `FrameRate`, `UpscaleFilter`, interpolation, `ui_scale` in
-  `UI_SCALE_RANGE` 0.5-3), audio volumes 0-1, `Bindings`, gameplay
+  `UI_SCALE_RANGE` 0.5-3 (on top of the height's scale), `hud_layout`:
+  `HudArrangement::{Auto, Bar, Sides}`, Auto when an old file lacks it), audio volumes 0-1, `Bindings`, gameplay
   (`MatchPrefs`: local play's last setup; the HUD has one style: an old file's `hud:` is ignored),
   `import` (`ImportSettings::last_path`, default empty).
   `sanitize()` fixes out-of-range values and
@@ -101,7 +102,8 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   (`profiles.rs`: Players, Look and Skin panels; the list, New, Delete confirmed, "Play as this", name with
   its error, colour sliders, searchable skins, the preview; it opens on
   the profile playing), replays (`replays.rs`, each file's header problem
-  shown), options (`options.rs`, 720 wide: Video, Audio, Keys tabs,
+  shown), options (`options.rs`, 720 wide: Video (with the HUD layout),
+  Audio, Keys tabs,
   centred; the match is set up in local play only, which remembers it in
   `settings.gameplay`; the UI
   scale applies when its slider is released; `keys.rs`: per action its
@@ -158,25 +160,31 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   `clock`, scoreboard `rows`, `Results`), `view.rs`
   (`HudView`, the frame's data; `WormHud::of(world, i, names, ..)`: health,
   lives, kills, slots with OLX's bar states), `layout.rs`
-  (`HudLayout::new(screen)`: an opaque `bar` along the bottom, `BAR_FULL`
-  150 points high (the UI scale is egui's zoom), its parts within a
-  centred 1600 points: health and weapons left, the minimap centred at
-  OLX's 119 × 94 proportions (OLX 0.58's local game; the user's ruling
-  after the v0.1 playtest), the `log` right (whole lines, at most 560
-  wide); the `playfield` above it, where the game draws (`bar_height`,
-  which `rl-game` leaves under its picture), the clock top centre and the
-  keys top right over it; under 640 × 360 points all shrinks to half size,
-  the minimap before the log: Review Focus 5,
-  `hud_layout_holds_at_all_scales`),
+  (`HudLayout::new(screen, arrangement)`: the game is designed for 16:9:
+  `frame(screen)` is the largest 16:9 rectangle centred in the window;
+  its bottom fifth (`BAR_SHARE`, OLX 0.58's 98 of 480) the opaque `bar`
+  (health and weapons left, the minimap centred and as tall as the bar
+  at OLX's 119 × 94 proportions, the `log` right), the rest the
+  `playfield` (`playfield(screen)`, 16 : 7.2, where `rl-game` draws
+  `rl_scene::Viewport::GAME`), the clock top centre and the keys top
+  right over it; every size is given for a frame `REFERENCE_HEIGHT`
+  (720) high and scaled by `unit`, so the HUD looks the same on every
+  window and at every UI scale. The side layout (`sides`: `Auto` or
+  `Sides` and a quarter of the frame's height free on each side,
+  `SIDE_SHARE`; 21:9 and wider): the health and weapons, larger, in the
+  column left of the frame, the log, taller, in the one right of it; the
+  frame, bar, playfield and minimap unchanged. The user's rulings after
+  the v0.1 playtest: Review Focus 5, `hud_layout_holds_at_all_scales`),
   `minimap.rs` (`image`: the colour terrain box-filtered to
   `TEXTURE_SIZE`; OLX's dot rectangles and blink; the view rectangle;
-  its scale at most `MAX_MINIMAP` 1.5),
-  `paint.rs` (`show(ui, &view)`: the bar, then its parts, the log's newest
-  line at the bottom; nothing fades; a worm without slots shows no weapon
+  `minimap_scale`),
+  `paint.rs` (`show(ui, &view)`: the bar (and the side columns, opaque),
+  then its parts, the log's newest line at the bottom, a long one
+  wrapped; nothing fades; a worm without slots shows no weapon
   rows; the scoreboard centred over the playfield; `table`). The weapon
   selection, the pause menu and the results centre over the playfield
-  (`screens::playfield`). Image snapshots at 1080p and
-  1440p (`tests/hud_snapshots.rs` against `fixtures/ui/`, in the GPU tier
+  (`screens::playfield`). Image snapshots at 1080p, 1440p and the side
+  layout at 3440 × 1440 (`tests/hud_snapshots.rs` against `fixtures/ui/`, in the GPU tier
   with `RL_GPU_TESTS`; `cargo xtask bless-render --reason` re-records them, logged).
 - **Weapon selection** (`weapon_select.rs`, §21 G4): `WeaponMenu` (names,
   enabled, `findEnabledWeapon`'s fallback, seed; `needs_choice`),
@@ -216,9 +224,13 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   there; `notices()` says so, and the main menu shows it
   (`MenuData::notices`, set by the app). Files over 1 MiB are bad. Warnings are
   returned, never printed: the caller logs each once.
-- **Theme** (`theme.rs`): `apply(ctx, ui_scale)`: dark, larger text, the
-  scale as egui's zoom factor (on top of the DPI scale; it takes effect at
-  the end of the pass); `BACKGROUND`, `ACCENT` (section titles),
+- **Theme** (`theme.rs`): `apply(ctx)`: dark, larger text. The scale
+  follows the height, not the display's DPI (the user's ruling after the
+  v0.1 playtest): `pixels_per_point(height, ui_scale)` is `height / 720 ×
+  ui_scale` (the window's height in the menus, its 16:9 frame's in game:
+  the app's choice), `set_scale(ctx, native, height, ui_scale)` sets
+  egui's zoom to it on a display of `native` pixels per point (every
+  frame; it takes effect at the end of the pass); `BACKGROUND`, `ACCENT` (section titles),
   `PRIMARY` (the primary action's fill), `section_frame()`.
 
 Test: `cargo nextest run -p rl-ui` (`tests/store.rs`, `tests/state.rs`,

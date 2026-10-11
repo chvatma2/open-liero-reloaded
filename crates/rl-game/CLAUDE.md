@@ -84,7 +84,8 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   (`Shell::interpolation`, new games and the one playing). The window opens
   at the saved preset and mode (`Video::opening`, physical pixels;
   fullscreen keeps the preset for when it ends), so no resize follows its
-  creation. `--fullscreen`, `--uncapped`, `--filter`, `--no-interp` given
+  creation. `--fullscreen`, `--uncapped`, `--filter`, `--no-interp`,
+  `--hud-layout` given
   on the command line win for the run (`video::Overrides`, applied before
   the `UiState` is made, so the options show them); `Shell::set_overrides`
   keeps the file's values for them until the player changes them in the
@@ -105,18 +106,20 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   otherwise takes the first adapter Windows lists, often the CPU's
   integrated GPU. WSLg presents through GL at the
   compositor's 60 Hz with FIFO only.
-- **Playfield** (`app.rs`, the HUD bar after the v0.1 playtest): the
-  game is drawn above the HUD's opaque bar, never under it.
-  `bar_pixels(size, ppp)` is `rl_ui::hud::bar_height` in pixels at the
-  display's scale times the UI scale (egui's zoom), worked out every
-  frame; `playfield(size, bar)` is the window above it. The view
-  (`viewport`, spec §19 E4: 240 world pixels high, at most 16:9) is the
-  playfield's, set again when the bar's height changes (a UI scale, a
-  resize); `Gpu::bar` makes `Gpu::draw` render the world into the
-  playfield (`Renderer::render` with the playfield's size: the upscale
-  pass places the picture there, black around it), the egui overlay
-  paints the bar over the rest; the names' `ScreenMap` uses the same
-  rectangle. `rl-render` is unchanged (its goldens too).
+- **Playfield and scale** (`app.rs`, the user's rulings after the v0.1
+  playtest): the game is designed for 16:9. `playfield(size)` is the
+  window's centred 16:9 frame above the HUD bar (`rl_ui::hud::playfield`,
+  whole pixels); `Gpu::draw` renders the world there
+  (`Renderer::render_in`, black around it) and the egui overlay paints
+  the bar (and the side layout's columns) over the rest; the names'
+  `ScreenMap` uses the same rectangle (`rl_render::dest_rect_in`). The
+  view is `rl_scene::Viewport::GAME` (427 × 192 world pixels) for every
+  window and HUD layout (spec §19 E4 amended): resizes do not touch it.
+  The UI's scale: every frame `rl_ui::theme::set_scale` with the
+  display's scale factor, `scale_height(size, in_game)` (the frame's
+  height in game, the window's in the menus) and the options' UI scale
+  (`App::ui_scale`; 1 for the command line's games).
+  `rl-render`'s goldens do not change.
 - **Loop** (`app.rs`): each frame first acquires the surface texture
   (`Gpu::acquire`), so a VSync wait comes before the input is read, not
   between reading and drawing it. Then `TickClock` (`clock.rs`) runs the
@@ -183,7 +186,8 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   design). The recording ends `RECORD_AFTER_END` (3 s) after the game over
   or at `MAX_TICKS`; `--record f` saves it at exit and on each rematch
   (`f`, `f-2`, ... : `drive::record_path`).
-- **Match HUD** (`rl_ui::hud`, an opaque bar along the bottom;
+- **Match HUD** (`rl_ui::hud`, an opaque bar along the bottom, or the
+  side layout: `Frame::arrangement`, the options' `hud_layout`;
   `hud::view(session, &Frame)` builds its `HudView` from
   the session and the frame; no weapon rows
   while the selection is open, `Shell::selecting`, the world's being a

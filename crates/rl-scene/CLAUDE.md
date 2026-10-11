@@ -15,7 +15,9 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   camera, and the tick's `Marks` (muzzle flashes, green crosshairs, laser
   sights, beams) replace the last. `build(&world, alpha, &assets, &mut list)`
   per drawn frame: `Camera::process` (hard lock, shake, clamp), then the
-  layers. The caller appends `rl-fx`'s entities to `Layer::Entities`.
+  layers. The game's view is `Viewport::GAME`, 427 × 192 world pixels for
+  every window (spec §19 E4 as amended after the v0.1 playtest);
+  `Viewport::from_aspect` (240 high) stays for tools and the goldens. The caller appends `rl-fx`'s entities to `Layer::Entities`.
 - **`DrawList`** (`draw_list.rs`): the view rectangle and five layers in
   OLX's order (`Layer::ALL`): entities, beams (laser sights, then worm
   beams, as `DrawEntities` draws them), projectiles, bonuses, worms (rope,

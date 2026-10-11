@@ -49,6 +49,13 @@ impl Level {
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
+enum HudLayoutFlag {
+    Auto,
+    Bar,
+    Sides,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
 enum Filter {
     /// Whole multiples of the art, centred, black bars around.
     Nearest,
@@ -138,6 +145,11 @@ struct Args {
     /// The upscale filter.
     #[arg(long, value_enum, default_value = "sharp")]
     filter: Filter,
+    /// Where the HUD goes on a window wider than 16:9: the bar, side
+    /// panels beside the 16:9 frame when there is room, or auto (side
+    /// panels on 21:9 and wider).
+    #[arg(long, value_enum, default_value = "auto")]
+    hud_layout: HudLayoutFlag,
     /// Quit after this many seconds.
     #[arg(long)]
     autoquit_after: Option<f64>,
@@ -208,7 +220,7 @@ fn plays_directly(m: &ArgMatches) -> bool {
 }
 
 /// The game the command line chose, loaded, and its session.
-fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig) -> anyhow::Result<Shell> {
+fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig, flags: &Overrides) -> anyhow::Result<Shell> {
     let mode = args.mode.unwrap_or(if args.spectate { Mode::Deathmatch } else { Mode::Sandbox });
     anyhow::ensure!(
         args.record.is_none() || mode == Mode::Deathmatch,
@@ -261,7 +273,13 @@ fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig) -> anyhow::Resu
         Game::Replay(r) => format!("replay of {:.1} s", f64::from(r.ticks()) / 100.0),
     };
     println!("rl-game: {what}: {} on {}, {} worms", assets.mod_id, assets.level_id, assets.worms());
-    Ok(Shell::playing(cfg, assets, session))
+    let mut shell = Shell::playing(cfg, assets, session);
+    // The HUD's layout flag (no file: the other video flags are the
+    // config's).
+    let mut v = shell.ui.settings().video.clone();
+    flags.apply(&mut v);
+    shell.ui.update(rl_ui::UiAction::SetVideo(v));
+    Ok(shell)
 }
 
 /// The video flags given on the command line (they win over the saved
@@ -276,6 +294,11 @@ fn video_flags(m: &ArgMatches, args: &Args) -> Overrides {
             Filter::Sharp => rl_ui::UpscaleFilter::Sharp,
         }),
         interpolation: given("no_interp").then_some(false),
+        hud_layout: given("hud_layout").then_some(match args.hud_layout {
+            HudLayoutFlag::Auto => rl_ui::HudArrangement::Auto,
+            HudLayoutFlag::Bar => rl_ui::HudArrangement::Bar,
+            HudLayoutFlag::Sides => rl_ui::HudArrangement::Sides,
+        }),
     }
 }
 
@@ -340,8 +363,11 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
     let interpolation = if args.no_interp { Interpolation::Latest } else { Interpolation::Linear };
     let viewport = rl_scene::Viewport::GAME;
     let shell_cfg = ShellConfig { content: args.content.clone(), interpolation, viewport };
-    let shell =
-        if play_now { direct(&args, audio, shell_cfg)? } else { menus(&args, audio, shell_cfg, flags) };
+    let shell = if play_now {
+        direct(&args, audio, shell_cfg, &flags)?
+    } else {
+        menus(&args, audio, shell_cfg, flags)
+    };
     println!("rl-game: audio {}", if silent { "silent" } else { "opened" });
     let osrelease = wsl::osrelease();
     let backend = std::env::var("WGPU_BACKEND").ok();

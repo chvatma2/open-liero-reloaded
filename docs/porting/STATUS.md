@@ -61,7 +61,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Options (§21 G3): window presets and fullscreen through the paced path, VSync, filter, interpolation, UI scale; volumes live; key and gamepad rebinding with explicit conflicts, never leaving an action unreachable (the match is set up in local play only) | `src/client/DeprecatedGUI/Menu_Options.cpp`, `src/client/Options.cpp:45-73` (laid out anew) | `rl-ui::screens::{options, keys}`, `rl-input::Capture`, `rl-game::{video, window}` | done (plan 7 task 4) | `rebinding_never_leaves_an_action_unreachable`, `options_rebind_a_key`, `options_set_video_and_audio`, `video_changes_go_through_the_paced_path`, `volume_changes_apply_live`, `the_saved_window_opens_with_the_flags_on_top_unsaved`; e2e (`fixtures/autoplay/menus.ron`: quick window-size changes) |
 | Window changes on Wayland (v0.1 playtest; no OLX equivalent): a size or mode change makes the window again at its new shape on the same device, so WSLg leaves no stale frame; X11 changes it in place | — | `rl-game::{window, gpu, app}` (`Plan`, `Shape`, `Gpu::rebind`, `App::recreate`) | done | `a_shape_says_when_the_window_shows_a_change`, `wayland_makes_the_window_again`, `a_window_made_again_keeps_the_game_ticking`; real-screen captures under WSLg (1280 × 720 → 1920 × 1080 → back; the desktop's size → fullscreen → back) and the options' autoplay on Wayland |
 | Weapon selection (§21 G4): the profile's slots by name, `findEnabledWeapon`, left/right over the enabled weapons (×6 with Select weapon), Random, Done on Fire's release, skipped with one weapon or none; the choice in `MatchOptions` and the replay | `src/common/CWormHuman.cpp:702-1000`, `src/common/CWorm.cpp:788-844` | `rl-ui::{weapon_select, screens::weapon_select}`, `rl-content::Player::HumanWith`, `rl-game::shell` | done (plan 7 task 5) | `weapon_selection_respects_restrictions`, `a_refused_choice_leaves_the_match_playable` |
-| HUD and minimap (§21 G5, Modern only): an opaque bar along the bottom (OLX 0.58's status bar; deviation below) with health, five weapon slots with OLX's bar states, the minimap in the centre (OLX's proportions, colours and dots, plus the view rectangle) and the event log; clock and kill limit over the playfield, Tab's scoreboard; the game drawn above the bar | `src/client/CClient_Draw.cpp` (HUD, `:137-138` the local game's minimap, `:483-515` the bar (commented out at `d1ad953f`), `drawOnMiniMap`), `docs/porting/olx-notes/presentation.md` §2.4, §9 | `rl-ui::hud`, `rl-game::{hud, app, gpu}` | done (plan 7 task 5; the bar after the v0.1 playtest) | `hud_layout_holds_at_all_scales`, `hud_paints_at_every_scale`, `log_keeps_the_last_lines_oldest_first`, `the_playfield_is_the_window_above_the_bar`, `hud_hides_the_weapons_during_the_selection`, `names_stay_inside_the_view`, `hud_snapshot_1080p`, `hud_snapshot_1440p_with_scores` (GPU tier) |
+| HUD and minimap (§21 G5, Modern only): an opaque bar along the bottom fifth of the window's 16:9 frame (OLX 0.58's status bar; deviation below) with health, five weapon slots with OLX's bar states, the minimap in the centre (OLX's proportions, colours and dots, plus the view rectangle) and the event log; clock and kill limit over the playfield, Tab's scoreboard; the game drawn above the bar | `src/client/CClient_Draw.cpp` (HUD, `:137-138` the local game's minimap, `:483-515` the bar (commented out at `d1ad953f`), `drawOnMiniMap`), `docs/porting/olx-notes/presentation.md` §2.4, §9 | `rl-ui::{hud, theme}`, `rl-game::{hud, app, gpu}`, `rl_scene::Viewport::GAME`, `rl_render::Renderer::render_in` | done (plan 7 task 5; the bar, the 16:9 frame and the side layout after the v0.1 playtest) | `hud_layout_holds_at_all_scales` (both layouts), `the_scale_follows_the_height`, `the_game_view_is_fixed`, `the_playfield_is_the_frame_above_the_bar`, `hud_paints_at_every_scale`, `log_keeps_the_last_lines_oldest_first`, `hud_hides_the_weapons_during_the_selection`, `names_stay_inside_the_view`, `hud_snapshot_1080p`, `hud_snapshot_1440p_with_scores`, `hud_snapshot_3440x1440_side_panels` (GPU tier) |
 | Pause and results: Esc's pause menu (no tick while paused), the results after `GAMEOVER_WAIT` with OLX's columns plus score, deaths and suicides; Rematch, Save replay, Back to menu | `src/client/CClient_Draw.cpp:1840-1897` | `rl-ui::screens::{ingame, results}`, `rl-game::shell` | done (plan 7 task 5) | `pause_stops_ticks_and_replays_stay_valid`, `pause_menu_holds_the_game_and_opens_the_options`, `results_match_world_scores`, `results_show_the_columns_and_their_buttons`, `save_replay_once_per_match` |
 | Level thumbnails (§21 G6, narrowed): `thumb.png` per level pack (160 × 96, box-filtered, letterboxed), pack format 4, left out of the content hash; decoded lazily and bounded in the menus | `src/game/Level.cpp:33-44` (`minimapForLevel`) | `rl-import-gfx`, `rl-pack`, `rl-ui::screens::local_play` | done (plan 7 task 6) | `thumbnails_are_imported_for_every_level`, `thumbnails_are_letterboxed_to_a_fixed_size`, `thumbnails_average_the_art`, `thumbnails_decode_lazily_and_bounded` |
 | About (§21 G9): credits (Liero, Liero Xtreme, the OpenLieroX team), licenses, each pack's recorded origin | `src/client/DeprecatedGUI/Menu_Main.cpp:276-283` | `rl-ui::screens::about` | done (plan 7 task 6) | `about_credits_the_authors_and_the_licenses` |
@@ -431,15 +431,28 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   the newest that fit shown; OLX's local chat showed 6 for 3 s over the
   playfield; built as a log of typed lines so a multiplayer chat can join
   it), in OLX's colours (health `(64,255,64)`, weapon bar states,
-  lives/kills, weapon label `#02bff6`). The bar is 150 points high (it
-  follows the UI scale), its parts within a centred 1600 points; on a
-  screen under 640 × 360 points everything shrinks to half size, the
-  minimap before the log. The game is drawn in the playfield above the
-  bar, never under it (`rl-game`: `app::bar_pixels`, `playfield`); the
-  view keeps E4's 240 world pixels of height and 16:9 at most, so a
-  playfield wider than 16:9 (a 16:9 window less the bar) shows the
-  picture centred with black at its sides, where OLX 0.58's 640 × 382
-  viewport showed 191 world pixels of height. The clock and kill limit
+  lives/kills, weapon label `#02bff6`). *The 16:9 frame and the fixed
+  view* (the user's second ruling after the v0.1 playtest, for a
+  competitive multiplayer game): the game is designed for 16:9, the
+  largest 16:9 frame centred in the window (a 16:9 window has no black
+  strips; a narrower one black above and below, a wider one at the
+  sides). Its bottom fifth is the bar, as OLX 0.58 (98 of 480 pixels;
+  its minimap 128 × 96, a fifth of the height); the minimap fills the
+  bar's height less a little (OLX's 119 × 94 proportions). The playfield
+  above it (16 : 7.2) shows `rl_scene::Viewport::GAME`, 427 × 192 world
+  pixels, for every window and layout (spec §19 E4 amended: 16:9's width
+  at 240, 80 % of the height, as OLX 0.58 showed 320 × 191 above its
+  bar, `CClient.cpp:1712`; the fork's full-height 240 is gone). The UI's
+  scale follows the height: pixels per point are the frame's height (in
+  game; the window's in the menus) over 720 times the UI scale, so the
+  HUD and menus fill the same share of the screen on every display; the
+  HUD scales with the frame alone. *Side layout* (Options > Video > HUD
+  layout: Auto, Bottom bar, Side panels; `--hud-layout`): on a window
+  with a quarter of the frame's height free on each side (21:9 and
+  wider), the health and weapons go, larger, in a column left of the
+  frame and the event log, taller and wrapped, in one right of it; the
+  bar keeps the minimap. The frame and the view do not change, so no
+  layout shows more. The clock and kill limit
   stay top centre over the playfield, the keys top right; the weapon
   selection, the pause menu and the results are centred over the
   playfield. Nothing fades (the overlay HUD faded where a worm was under
@@ -449,8 +462,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   results.
   *Minimap:* OLX's 119 × 94 proportions and half opacity, box-filtered
   from the colour terrain at twice OLX's resolution, refreshed every 10
-  ticks (OLX updates edited areas at once), scaled up to 1.5 × (as tall
-  as the bar allows); worm dots as `drawOnMiniMap` (2 × 2, the human 3 × 3, OLX's
+  ticks (OLX updates edited areas at once), as tall as the bar allows; worm dots as `drawOnMiniMap` (2 × 2, the human 3 × 3, OLX's
   blink), plus the camera's view as a rectangle, which OLX does not draw.
   *Pause:* Resume, Options (the match stays paused) and Quit to menu; no
   tick runs while paused or during the weapon selection, so replays hold

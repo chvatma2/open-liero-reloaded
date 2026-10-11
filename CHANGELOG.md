@@ -17,14 +17,27 @@ All notable changes to rust-liero are recorded here. The format follows
   before each game (it remembers the last one), and the tab edited the
   same settings.
 - The in-game HUD is an opaque bar along the bottom, as OLX 0.58's local
-  game had: health and weapons on the left, the minimap in the centre, a
-  log of kills, deaths and the match's messages on the right. The game is
-  drawn above the bar, never under it, and nothing fades any more. The
-  clock stays top centre, the keys top right.
+  game had: health and weapons on the left, the minimap in the centre,
+  as tall as the bar, a log of kills, deaths and the match's messages on
+  the right. The game is drawn above the bar, never under it, and nothing
+  fades any more. The clock stays top centre, the keys top right.
+- The game is laid out for 16:9 and shows every player the same area of
+  the level (427 × 192 world pixels, OLX 0.58's height above its bar):
+  a 16:9 window has no black strips, a narrower one black above and
+  below, a wider one at the sides. The bar is a fifth of the height.
+- The menus and the HUD fill the same share of the screen's height on
+  every display (1280 × 720 looks as before; 1440 lines are twice the
+  size); the UI scale is on top of that.
 - The options' Video section has one Display list: a 1280 × 720,
   1600 × 900 or 1920 × 1080 window, or borderless fullscreen. The
   desktop-sized window is gone (its bottom sat under the taskbar); a saved
   "Desktop size" opens fullscreen.
+
+### Added
+
+- On a window 21:9 or wider the health, weapons and log can sit beside
+  the 16:9 picture instead of in the bar: Options → Video → HUD layout
+  (Auto, Bottom bar, Side panels), or `--hud-layout`.
 
 ### Fixed
 

@@ -10,7 +10,7 @@
 //! else (the UI scale, VSync, the filter, interpolation) applies at once.
 
 use rl_scene::Interpolation;
-use rl_ui::{FrameRate, UpscaleFilter, VideoSettings};
+use rl_ui::{FrameRate, HudArrangement, UpscaleFilter, VideoSettings};
 
 use crate::window::Requests;
 
@@ -92,6 +92,7 @@ pub struct Overrides {
     pub frame_rate: Option<FrameRate>,
     pub filter: Option<UpscaleFilter>,
     pub interpolation: Option<bool>,
+    pub hud_layout: Option<HudArrangement>,
 }
 
 impl Overrides {
@@ -109,6 +110,9 @@ impl Overrides {
         if let Some(x) = self.interpolation {
             v.interpolation = x;
         }
+        if let Some(x) = self.hud_layout {
+            v.hud_layout = x;
+        }
     }
 
     /// The options now say `v`: an option set differently from its flag is
@@ -123,6 +127,7 @@ impl Overrides {
         keep(&mut self.frame_rate, &v.frame_rate);
         keep(&mut self.filter, &v.filter);
         keep(&mut self.interpolation, &v.interpolation);
+        keep(&mut self.hud_layout, &v.hud_layout);
     }
 
     /// `v` as the file keeps it: each option a flag still sets has the
@@ -139,6 +144,9 @@ impl Overrides {
         }
         if self.interpolation.is_some() {
             v.interpolation = file.interpolation;
+        }
+        if self.hud_layout.is_some() {
+            v.hud_layout = file.hud_layout;
         }
     }
 }

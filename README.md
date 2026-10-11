@@ -70,6 +70,7 @@ Useful flags (`rl-game --help` lists them all):
 | `--fullscreen` | borderless fullscreen for this run (not saved; the options also have it) |
 | `--window-system x11` | X11 instead of Wayland (also `RL_WINDOW_SYSTEM=x11`); try it if the Wayland compositor drops the game |
 | `--uncapped`, `--filter nearest\|sharp`, `--no-interp` | no VSync; the upscale filter; OLX's whole-pixel drawing of the latest tick (for this run) |
+| `--hud-layout auto\|bar\|sides` | where the HUD goes on a window wider than 16:9 (for this run) |
 | `--spectate --bots N` | a Deathmatch of 2 to 32 bots alone, watched (no menus) |
 | `--speed 1\|2\|4\|8\|16\|max` | how fast a watched game runs: a replay or `--spectate` (PageUp/PageDown change it); a game you play is always 1× |
 | `--replay f.rlrp` | watch a replay |
@@ -89,14 +90,20 @@ Useful flags (`rl-game --help` lists them all):
   Left/Right the weapon, with Shift six at a time), **Random**, **Done**;
   the mouse works too. After the match (15 kills or 6 minutes by
   default), "Game Over", then the **results** (kills, deaths, suicides,
-  score): Rematch, Save replay, Back to menu. In game, a bar along the
-  bottom shows your health and weapons (left), the minimap (centre) and
-  the log of kills and deaths (right); the game is drawn above it.
+  score): Rematch, Save replay, Back to menu. The game is laid out for
+  16:9 and shows everyone the same area of the level, whatever the
+  window: a bar along the bottom shows your health and weapons (left),
+  the minimap (centre) and the log of kills and deaths (right), and the
+  game is drawn above it. On a 21:9 or wider window the health, weapons
+  and log can move into the space beside the picture (Options → Video →
+  HUD layout).
 - **Sandbox:** you and idle targets on a level, to try weapons.
 - **Profiles:** your name, colour and skin (all imported skins, searchable,
   with an animated preview); the one marked plays.
 - **Options:** Video (display: a 1280 × 720, 1600 × 900 or 1920 × 1080
-  window, or borderless fullscreen; VSync or uncapped, upscale filter, interpolation, UI scale), Audio (master and effects volume), Keys
+  window, or borderless fullscreen; VSync or uncapped, upscale filter, interpolation, HUD
+  layout: Auto, Bottom bar or Side panels; UI scale: the menus and HUD
+  always fill the same share of the screen's height, the scale on top), Audio (master and effects volume), Keys
   (any number of keys and gamepad inputs per action; Reset to OLX's keys).
   The match is set up in Local Play, which remembers the last one.
 - **Replays:** every Deathmatch played from the menus (the last 20) and the
