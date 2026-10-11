@@ -11,6 +11,7 @@ mod layers;
 mod oracle;
 mod oracle_gen;
 mod tidy;
+mod winbuild;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -113,6 +114,9 @@ enum Command {
         #[arg(long)]
         from: Option<PathBuf>,
     },
+    /// Build rl-cli and rl-game for Windows (x86_64-pc-windows-gnu), stage them with the
+    /// content in Windows' temp directory and list the adapters each backend sees (plan 8).
+    Windows,
 }
 
 /// The workspace root (the parent of this crate's directory).
@@ -142,6 +146,7 @@ fn main() -> ExitCode {
         Command::OracleGenWeapons => oracle_gen::run(),
         Command::BlessRender { reason } => bless::run(&reason),
         Command::BlessRegression { reason, from } => bless_regression::run(&reason, from.as_deref()),
+        Command::Windows => winbuild::command(),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

@@ -2,7 +2,7 @@
 
 Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `oracle-record`, `tidy`, `bless-render`, `bless-regression`, `fetch-olx-content`,
-`e2e`, `bench`, `stress`.
+`e2e`, `bench`, `stress`, `windows`.
 
 - `fetch-olx-content` (`fetch.rs`) imports the manifest into the
   committed `content/packs`; `check`'s `olx-content` step (`fetch::verify`,
@@ -56,6 +56,28 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   ending in `pass`, every screenshot the script names, and no `warning:`,
   `error:` or panic line on stderr (`bad_lines`). Skipped without Xvfb or
   content; killed after 240 s. About 15 s.
+- `windows` (`winbuild.rs`, plan 8): the native Windows build run from
+  WSL, for `envelope --gpu windows`. `missing()` says why it cannot run
+  here (no `cmd.exe` or `WSLInterop`/`WSLInterop-late` not enabled, the
+  rustup target `x86_64-pc-windows-gnu` absent, no mingw-w64 linker or
+  objdump), a notice, not a failure, for `envelope`. `build()` runs `cargo
+  build --release --target x86_64-pc-windows-gnu -p rl-cli -p rl-game`
+  with `CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc`
+  (about 1 min from cold here; no `crt-static` needed). `stage()` copies
+  the exes, any `MINGW_DLLS` an exe imports (`objdump -p`: today none,
+  the toolchain links mingw's runtime statically; only system DLLs) and
+  the content (re-copied only when `content.stamp`, its file count and
+  bytes, changes) to `%TEMP%\rust-liero-envelope` (`windows_temp()`:
+  `cmd.exe /c echo %TEMP%`, started in `/mnt/c`), the given files into
+  its `replays/`. `run()` starts an exe there (the stage as its working
+  directory, so arguments use relative paths) and forwards its `env`
+  through `WSLENV` (`wslenv`; interop passes nothing else). The command
+  builds, stages and lists `gpu-bench --list-adapters` for `dx12` and
+  `vulkan`. On the user's machine: DX12 and Vulkan both see the RTX 5070
+  Ti (and the AMD iGPU; DX12 also Microsoft's Basic Render Driver, a
+  `Cpu` adapter), with timestamps on both; `rl-game.exe --demo` writes
+  its shots under the stage's `target/`. Nothing is left running; the
+  stage stays for the next run.
 - `bless-render --reason <why>` re-draws `fixtures/render/` (the render
   goldens) and `fixtures/ui/` (the HUD snapshots, `rl-ui`'s
   `hud_snapshots`) with `RL_BLESS_RENDER=1`; the GPU ones need an adapter.

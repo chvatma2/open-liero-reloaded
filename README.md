@@ -263,6 +263,11 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
   The game runs under Wayland by default; `--window-system x11` (or
   `RL_WINDOW_SYSTEM=x11`) runs it under X11 instead, which needs
   `libxkbcommon-x11-0` and draws without VSync on WSLg.
+- **The Windows build:** `cargo xtask windows` builds `rl-cli` and `rl-game`
+  for Windows with mingw-w64 (`rustup target add x86_64-pc-windows-gnu`
+  once) and runs them through interop; nothing is installed on Windows.
+  They are staged with the content in `%TEMP%\rust-liero-envelope`, and
+  the command lists the adapters DX12 and Vulkan see.
 
 - **Disk:** WSL's virtual disk lives on the Windows drive, and a full debug
   `target/` plus Docker images can fill it. The dev profile keeps only line
