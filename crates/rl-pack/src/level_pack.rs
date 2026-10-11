@@ -1,12 +1,13 @@
 //! Level packs: `level.ron`, `material.png` (8-bit palette PNG whose indices are
-//! [`Material`] values), and `front.png` / `back.png` at `art_scale`.
+//! [`Material`] values), `front.png` / `back.png` at `art_scale`, and the
+//! optional menu thumbnail `thumb.png`.
 
 use rl_data::image::RgbaImage;
 use rl_data::level::{Level, LevelDef, Material, MaterialGrid};
 use rl_data::manifest::{PackKind, PackManifest};
 use rl_vfs::{ContentSink, ContentSource, VPath};
 
-use crate::image_io::{decode_indexed, decode_rgba, encode_indexed, encode_rgba};
+use crate::image_io::{decode_indexed, decode_rgba, encode_indexed, encode_rgba, png_size};
 use crate::ron_io::{read_ron, write_ron};
 use crate::{MANIFEST, PackError, read_manifest, write_manifest};
 
@@ -15,8 +16,19 @@ pub const MATERIAL_FILE: &str = "material.png";
 pub const FRONT_FILE: &str = "front.png";
 pub const BACK_FILE: &str = "back.png";
 /// The level's thumbnail for the menus (spec §21 G6), optional: made from
-/// the art at import.
+/// the art at import. Presentation only: [`crate::content_hash`] leaves it
+/// out (plan 7 ruling Q4), so adding or changing it keeps replays valid.
 pub const THUMB_FILE: &str = "thumb.png";
+
+/// The size importers make thumbnails at: the level letterboxed into it.
+pub const THUMB_SIZE: (u32, u32) = (160, 96);
+
+/// The widest and tallest `thumb.png` read; a larger one is refused before
+/// it is decoded (a pack must not make the menus decode a huge image).
+pub const MAX_THUMB_SIDE: u32 = 512;
+
+/// The largest `thumb.png` read, in bytes.
+pub const MAX_THUMB_BYTES: usize = 1 << 20;
 
 /// Palette for `material.png`, indexed by `Material as u8`: rock is gray,
 /// background black, dirt brown, so the file is readable in any image viewer.
@@ -26,6 +38,9 @@ const MATERIAL_PALETTE: [u8; 9] = [128, 128, 128, 0, 0, 0, 139, 90, 43];
 pub struct LevelPack {
     pub manifest: PackManifest,
     pub level: Level,
+    /// `thumb.png`, if the pack has a readable one (at most
+    /// [`MAX_THUMB_SIDE`] square).
+    pub thumb: Option<RgbaImage>,
 }
 
 fn check_dims(level: &Level) -> Result<(), PackError> {
@@ -60,7 +75,45 @@ pub fn write_level(sink: &mut dyn ContentSink, pack: &LevelPack) -> Result<(), P
     sink.write(&VPath::new(MATERIAL_FILE)?, &mat_png)?;
     sink.write(&VPath::new(FRONT_FILE)?, &encode_rgba(&l.front))?;
     sink.write(&VPath::new(BACK_FILE)?, &encode_rgba(&l.back))?;
+    if let Some(t) = &pack.thumb {
+        check_thumb_size(t.width(), t.height())?;
+        sink.write(&VPath::new(THUMB_FILE)?, &encode_rgba(t))?;
+    }
     Ok(())
+}
+
+fn check_thumb_size(w: u32, h: u32) -> Result<(), PackError> {
+    if w == 0 || h == 0 || w > MAX_THUMB_SIDE || h > MAX_THUMB_SIDE {
+        return Err(PackError::invalid(
+            THUMB_FILE,
+            format!("{w}x{h}, not within 1x1 to {MAX_THUMB_SIDE}x{MAX_THUMB_SIDE}"),
+        ));
+    }
+    Ok(())
+}
+
+/// The level pack's `thumb.png`: `Ok(None)` when it has none, an error
+/// when it is not a PNG or above [`MAX_THUMB_BYTES`] or [`MAX_THUMB_SIDE`]
+/// (both checked before decoding).
+pub fn read_level_thumb(src: &dyn ContentSource) -> Result<Option<RgbaImage>, PackError> {
+    let path = VPath::new(THUMB_FILE)?;
+    if !src.exists(&path) {
+        return Ok(None);
+    }
+    decode_thumb(&src.read(&path)?).map(Some)
+}
+
+/// Decodes `thumb.png`'s bytes after checking their length and the size the
+/// PNG header gives, so an untrusted pack never makes the caller decode an
+/// unbounded image.
+pub fn decode_thumb(bytes: &[u8]) -> Result<RgbaImage, PackError> {
+    let invalid = |message: String| PackError::invalid(THUMB_FILE, message);
+    if bytes.len() > MAX_THUMB_BYTES {
+        return Err(invalid(format!("{} bytes, above {MAX_THUMB_BYTES}", bytes.len())));
+    }
+    let (w, h) = png_size(bytes).ok_or_else(|| invalid("not a PNG".into()))?;
+    check_thumb_size(w, h)?;
+    decode_rgba(bytes).map_err(|message| PackError::Image { file: THUMB_FILE.into(), message })
 }
 
 fn read_png(src: &dyn ContentSource, file: &str) -> Result<RgbaImage, PackError> {
@@ -78,6 +131,9 @@ pub fn read_level_def(src: &dyn ContentSource) -> Result<(PackManifest, LevelDef
     Ok((manifest, read_ron(src, LEVEL_FILE)?))
 }
 
+/// Reads a level pack. Its thumbnail is presentation only: one that cannot
+/// be read is left out (`thumb: None`; [`crate::validate`] warns), never
+/// an error that would keep the level from being played.
 pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
     let manifest = read_manifest(src)?;
     if manifest.kind != PackKind::Level {
@@ -100,7 +156,8 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
     let material = MaterialGrid::from_cells(w, h, cells).expect("decoder returns w*h indices");
     let level = Level { def, material, front: read_png(src, FRONT_FILE)?, back: read_png(src, BACK_FILE)? };
     check_dims(&level)?;
-    Ok(LevelPack { manifest, level })
+    let thumb = read_level_thumb(src).ok().flatten();
+    Ok(LevelPack { manifest, level, thumb })
 }
 
 #[cfg(test)]
@@ -129,6 +186,7 @@ pub(crate) mod tests {
                 front,
                 back: RgbaImage::new(4, 4),
             },
+            thumb: None,
         }
     }
 
@@ -138,6 +196,28 @@ pub(crate) mod tests {
         let mut fs = MemFs::new();
         write_level(&mut fs, &pack).unwrap();
         assert_eq!(read_level(&fs).unwrap(), pack);
+    }
+
+    #[test]
+    fn thumbnail_roundtrips_and_a_bad_one_is_left_out() {
+        let mut pack = sample_level();
+        let mut thumb = RgbaImage::new(THUMB_SIZE.0, THUMB_SIZE.1);
+        thumb.set(5, 7, Rgba::rgb(9, 8, 7));
+        pack.thumb = Some(thumb);
+        let mut fs = MemFs::new();
+        write_level(&mut fs, &pack).unwrap();
+        assert_eq!(read_level(&fs).unwrap(), pack);
+        // Not a PNG, or too large by its header: the level still reads.
+        for bad in [b"not a png".to_vec(), encode_rgba(&RgbaImage::new(MAX_THUMB_SIDE + 1, 1))] {
+            let fs = fs.clone().with(THUMB_FILE, bad.clone());
+            assert!(read_level(&fs).unwrap().thumb.is_none());
+            assert!(read_level_thumb(&fs).is_err());
+        }
+        let huge = vec![0u8; MAX_THUMB_BYTES + 1];
+        assert!(decode_thumb(&huge).unwrap_err().to_string().contains("bytes"));
+        // The writer refuses what the reader would.
+        pack.thumb = Some(RgbaImage::new(0, 3));
+        assert!(write_level(&mut MemFs::new(), &pack).is_err());
     }
 
     #[test]

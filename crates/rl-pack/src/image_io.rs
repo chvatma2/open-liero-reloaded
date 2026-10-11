@@ -15,6 +15,17 @@ pub fn encode_rgba(img: &RgbaImage) -> Vec<u8> {
     out
 }
 
+/// The width and height a PNG's header (`IHDR`) gives, if `bytes` starts
+/// like a PNG: read without decoding, so a caller can refuse a huge image.
+pub fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    if bytes.len() < 24 || bytes[..8] != SIGNATURE || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    let be = |i: usize| u32::from_be_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
+    Some((be(16), be(20)))
+}
+
 /// Decodes any PNG (palette, gray, RGB, RGBA, 1–16 bit) to RGBA8.
 pub fn decode_rgba(bytes: &[u8]) -> Result<RgbaImage, String> {
     let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
@@ -74,6 +85,14 @@ pub fn decode_indexed(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
 mod tests {
     use super::*;
     use rl_data::image::Rgba;
+
+    #[test]
+    fn png_size_reads_the_header() {
+        let png = encode_rgba(&RgbaImage::new(7, 3));
+        assert_eq!(png_size(&png), Some((7, 3)));
+        assert_eq!(png_size(b"GIF89a"), None);
+        assert_eq!(png_size(&png[..20]), None);
+    }
 
     #[test]
     fn rgba_roundtrip() {

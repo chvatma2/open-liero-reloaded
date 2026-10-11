@@ -107,7 +107,7 @@ fn level_pack(rock: bool) -> rl_pack::LevelPack {
         front: filled(w, h, Rgba::rgb(128, 128, 128)),
         back: filled(w, h, Rgba::BLACK),
     };
-    rl_pack::LevelPack { manifest: manifest("pit-level", PackKind::Level), level }
+    rl_pack::LevelPack { manifest: manifest("pit-level", PackKind::Level), level, thumb: None }
 }
 
 fn theme_pack() -> rl_pack::ThemePack {
@@ -182,6 +182,14 @@ fn replay_refuses_mismatched_content() {
     bad_call.setup.calls.push(SetupCall::SetHealth { worm: 9, health: 1.0 });
     let err = c.world_for_replay(&bad_call).unwrap_err();
     assert!(matches!(err.downcast_ref::<ReplayError>(), Some(ReplayError::NoWorm { worm: 9, .. })), "{err}");
+
+    // Plan 7 ruling Q4: a thumbnail is presentation only; adding one to
+    // the level (as an import of format 4 does) keeps the replay valid.
+    let mut thumbed = level_pack(false);
+    thumbed.thumb = Some(filled(rl_pack::THUMB_SIZE.0, rl_pack::THUMB_SIZE.1, Rgba::rgb(1, 2, 3)));
+    rl_pack::write_level(&mut DirFs::new(tmp.path().join("pit-level")), &thumbed).unwrap();
+    let with_thumb = Content::open(tmp.path()).unwrap();
+    assert_eq!(with_thumb.play_replay(&replay).unwrap().checked, 4);
 
     let mut other = replay.clone();
     other.setup.packs.mod_pack.hash = "0".repeat(64);

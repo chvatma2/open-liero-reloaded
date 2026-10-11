@@ -39,6 +39,7 @@ fn level(dir: &Path, id: &str, name: &str) -> DirFs {
             front: RgbaImage::new(3, 2),
             back: RgbaImage::new(3, 2),
         },
+        thumb: None,
     };
     rl_pack::write_level(&mut fs, &pack).unwrap();
     fs

@@ -123,7 +123,7 @@ fn room_level() -> rl_pack::LevelPack {
         front: filled(100, 100, Rgba::rgb(128, 128, 128)),
         back: filled(100, 100, Rgba::BLACK),
     };
-    rl_pack::LevelPack { manifest: manifest("test-level", PackKind::Level), level }
+    rl_pack::LevelPack { manifest: manifest("test-level", PackKind::Level), level, thumb: None }
 }
 
 fn theme() -> rl_pack::ThemePack {
@@ -409,6 +409,7 @@ fn scaled_level(id: &str, size: u32, art_scale: u32) -> rl_pack::LevelPack {
     rl_pack::LevelPack {
         manifest: manifest(id, PackKind::Level),
         level: Level { def, material, front: art.clone(), back: art },
+        thumb: None,
     }
 }
 

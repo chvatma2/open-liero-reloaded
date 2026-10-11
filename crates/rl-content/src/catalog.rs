@@ -5,16 +5,13 @@
 use anyhow::Context as _;
 use rl_data::image::RgbaImage;
 use rl_data::manifest::PackKind;
-use rl_vfs::{ContentSource, VPath};
+use rl_vfs::ContentSource;
 
 use crate::{Content, SkinInfo};
 
 /// The widest and tallest thumbnail shown; a larger `thumb.png` is skipped
 /// with a warning (a pack must not make the menu decode a huge image).
-pub const MAX_THUMB_SIDE: u32 = 512;
-
-/// The largest `thumb.png` read, in bytes.
-pub const MAX_THUMB_BYTES: usize = 4 << 20;
+pub use rl_pack::{MAX_THUMB_BYTES, MAX_THUMB_SIDE};
 
 /// A mod as the menus list it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,32 +66,10 @@ impl Catalog {
     }
 }
 
-/// The width and height a PNG's header gives, if `bytes` starts like one.
-fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
-    const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-    if bytes.len() < 24 || bytes[..8] != SIGNATURE || &bytes[12..16] != b"IHDR" {
-        return None;
-    }
-    let be = |i: usize| u32::from_be_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
-    Some((be(16), be(20)))
-}
-
 /// The level pack's thumbnail: `Ok(None)` when it has none, `Err` when it
 /// is unreadable or too large.
 fn read_thumb(src: &dyn ContentSource) -> Result<Option<RgbaImage>, String> {
-    let path = VPath::new(rl_pack::THUMB_FILE).map_err(|e| e.to_string())?;
-    if !src.exists(&path) {
-        return Ok(None);
-    }
-    let bytes = src.read(&path).map_err(|e| e.to_string())?;
-    if bytes.len() > MAX_THUMB_BYTES {
-        return Err(format!("{} bytes, above {MAX_THUMB_BYTES}", bytes.len()));
-    }
-    let (w, h) = png_size(&bytes).ok_or("not a PNG")?;
-    if w == 0 || h == 0 || w > MAX_THUMB_SIDE || h > MAX_THUMB_SIDE {
-        return Err(format!("{w}x{h}, not within {MAX_THUMB_SIDE}x{MAX_THUMB_SIDE}"));
-    }
-    rl_pack::image_io::decode_rgba(&bytes).map(Some)
+    rl_pack::read_level_thumb(src).map_err(|e| e.to_string())
 }
 
 impl Content {
@@ -140,18 +115,5 @@ impl Content {
         }
         c.skins = self.skins();
         c
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn png_size_reads_the_header() {
-        let png = rl_pack::image_io::encode_rgba(&RgbaImage::new(7, 3));
-        assert_eq!(png_size(&png), Some((7, 3)));
-        assert_eq!(png_size(b"GIF89a"), None);
-        assert_eq!(png_size(&png[..20]), None);
     }
 }

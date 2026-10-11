@@ -7,7 +7,9 @@ use rl_data::manifest::PackKind;
 use rl_data::mod_def::ModDef;
 use rl_vfs::{ContentSource, VPath};
 
-use crate::{ModPack, PackError, read_core, read_level, read_manifest, read_mod, read_skin, read_theme};
+use crate::{
+    ModPack, PackError, THUMB_FILE, read_core, read_level, read_manifest, read_mod, read_skin, read_theme,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
@@ -85,7 +87,12 @@ pub fn validate(src: &dyn ContentSource) -> Vec<Diagnostic> {
     }
     let result = match manifest.kind {
         PackKind::Mod => read_mod(src).map(|p| out.extend(check_mod(&p))),
-        PackKind::Level => read_level(src).map(|_| ()),
+        PackKind::Level => read_level(src).map(|_| {
+            // Presentation only: the level plays without it.
+            if let Err(e) = crate::read_level_thumb(src) {
+                out.push(Diagnostic::new(Severity::Warning, THUMB_FILE, format!("{e}: not shown")));
+            }
+        }),
         PackKind::Skin => read_skin(src).map(|_| ()),
         PackKind::Theme => read_theme(src).map(|_| ()),
         PackKind::Core => read_core(src).map(|_| ()),
