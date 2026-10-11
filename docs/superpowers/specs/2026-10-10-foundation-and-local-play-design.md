@@ -55,6 +55,46 @@ The importers are generic, so adding more OLX content later is a one-line change
 3. The fast test tier (`cargo xtask check`) runs in under about 60 s and covers unit, corpus, oracle and short bot-match tests.
 4. The simulation crates build for `wasm32-unknown-unknown` in CI.
 
+Status at v0.1 (plan 7 task 9, 2026-10-11):
+
+- [x] **1. Met.**
+  - All 8 combinations (4 levels × 2 mods) were played from the main menu
+    in a real window: Local Play, the mod and the level chosen by their
+    widgets, 4 Medium bots, weapon selection, 60 s of play, results. The
+    runs and their timings are in `docs/porting/acceptance-v0.1.md`.
+  - Gated by `cargo xtask e2e` (the menus end to end on Xvfb, in `full`).
+  - Gated by `rl-game`'s `tests/menu.rs`, `tests/ingame.rs` and
+    `tests/deathmatch.rs` (`deathmatch_session_ends_with_results`).
+  - Gated by the bot grid (`rl-cli` `tests/grid.rs`: both mods × 4 levels
+    × 3 seeds).
+  - The user's own playtest of v0.1 is still to come.
+- [x] **2. Met, with one documented exception (§18 D9).**
+  - Movement and rope: every movement and rope scenario matches OLX bit
+    for bit (`fall`, `walk`, `jump`, `dig`, `aim`, `tap`, `rope`,
+    `castle-shoot-rope`).
+  - Weapons: 109 of the 112 recorded scenarios match in every field for
+    the whole trace (`rl-scenario/tests/oracle.rs`, in `check`). Those
+    include 85 of the 88 weapon scenarios of both mods; the other 3 match
+    up to a respawn.
+  - No float tolerance is used anywhere.
+  - The exception: the 3 scenarios where a worm dies at exactly 0 health
+    (`weapons/mw-1-0/{assassin-s-shot,flak,plasma-launcher}`). OLX then
+    spawns Gusanos death particles, out of scope (§1.4), whose random draws
+    move the next respawn spot. Those 3 are pinned to their first
+    divergence from the respawn frame on (D9, `docs/porting/STATUS.md`).
+- [x] **3. Met.**
+  - `cargo xtask check` took 30.5 s wall on the development machine
+    (warm build, plan 7 task 9).
+  - It runs format, clippy, layering, the wasm build, the content check
+    and the tests: unit tests; the corpus snapshot (`rl-cli`
+    `tests/corpus.rs`); the oracle (`rl-scenario` `tests/oracle.rs`); short
+    bot matches (`rl-scenario` `tests/smoke.rs`, and the golden matches in
+    `rl-cli` `tests/golden.rs`).
+- [x] **4. Met, with "in CI" amended by §15 A6.**
+  - There is no hosted CI (the user's decision, A6).
+  - The `wasm` step of `cargo xtask check`, the gate before every commit,
+    builds the simulation crates for `wasm32-unknown-unknown`.
+
 ### 1.4 Non-goals for this spec
 
 - Networking. Only constraints are recorded (§12.2).
