@@ -219,20 +219,12 @@ impl AudioSettings {
     }
 }
 
-/// The HUD's look (§21 G5).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum HudStyle {
-    /// egui panels.
-    #[default]
-    Modern,
-    /// OLX's bitmap fonts and layout.
-    Classic,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GameplaySettings {
-    pub hud: HudStyle,
+    // The HUD has one style (plan 7 task 6, the user's call: G5's Classic
+    // style was dropped); a file written with `hud: Classic` still loads,
+    // the field ignored.
     /// The match local play starts, as last set up.
     pub match_prefs: MatchPrefs,
 }

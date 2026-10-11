@@ -40,7 +40,8 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
 - **Settings** (`settings.rs`): video (`WindowPreset`, fullscreen,
   `FrameRate`, `UpscaleFilter`, interpolation, `ui_scale` in
   `UI_SCALE_RANGE` 0.5-3), audio volumes 0-1, `Bindings`, gameplay
-  (`HudStyle`, `MatchPrefs`). `sanitize()` fixes out-of-range values and
+  (`MatchPrefs`; the HUD has one style: an old file's `hud:` is ignored).
+  `sanitize()` fixes out-of-range values and
   keys (`sanitize_bindings`: the `GAME_KEYS` Esc, F5, F2, Tab and H are
   dropped, then an action left unreachable gets OLX's back), one warning
   each.
@@ -92,7 +93,9 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   "Saved"); Back to menu; `MenuData::results`; "Loading…" while a rematch
   starts; the table and the weapon slots scroll so the buttons stay on a
   small screen);
-  Import and About are placeholders until their tasks. Esc is `Back` and
+  About (`about.rs`, §21 G9: `CREDITS`, `LICENSES`, each mod's and
+  level's recorded origin, `origin_text`); Import is a placeholder until
+  its task. Esc is `Back` and
   F5 `Restart` on every screen, a held key's repeats ignored
   (`pressed_once`); in the options Esc first closes an open dialog.
 - **Replays** (`replays.rs`): `list(dir)` (the `.rlrp` files, automatic
@@ -100,7 +103,7 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   `auto_save(dir, bytes)` (`match-NNNNNN.rlrp`, the last
   `MAX_AUTO_REPLAYS` kept; a player's own files are never removed),
   `save_kept(dir, bytes)` (the results' Save replay: `replay-NNN.rlrp`).
-- **HUD** (`hud/`, §21 G5, Modern style): `model.rs` (names, OLX's kill
+- **HUD** (`hud/`, §21 G5; one style, the Classic one was dropped): `model.rs` (names, OLX's kill
   feed texts, `clock`, scoreboard `rows`, `Results`), `view.rs`
   (`HudView`, the frame's data; `WormHud::of(world, i, names, ..)`: health,
   lives, kills, slots with OLX's bar states), `layout.rs`
@@ -153,7 +156,7 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
 
 Test: `cargo nextest run -p rl-ui` (`tests/store.rs`, `tests/state.rs`,
 `tests/flows.rs`: kittest flows by label and the local play's match,
-`thumbnails_decode_lazily_and_bounded`,
+`thumbnails_decode_lazily_and_bounded`, `about_credits_the_authors_and_the_licenses`,
 `tests/profiles.rs`: profiles through the widgets, names, the preview; its
 last part compares with `rl_scene::SceneAssets` when `RL_CONTENT_DIR` is
 set; `tests/options.rs`: rebinding never leaves an action unreachable, the

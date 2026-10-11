@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use rl_data::image::RgbaImage;
-use rl_data::manifest::PackKind;
+use rl_data::manifest::{Origin, PackKind};
 
 use crate::{Content, SkinInfo};
 
@@ -26,6 +26,8 @@ pub struct ModInfo {
     /// Its weapon restriction presets (OLX's `WeaponRestrictionsFile`
     /// choices), sorted.
     pub presets: Vec<String>,
+    /// Where it was imported from (its manifest's), for the credits.
+    pub origin: Option<Origin>,
 }
 
 /// A level as the menus list it.
@@ -40,6 +42,8 @@ pub struct LevelInfo {
     /// `thumb.png` (§21 G6), when the pack has one whose header is within
     /// the bounds; not decoded yet.
     pub thumb: Option<ThumbRef>,
+    /// Where it was imported from (its manifest's), for the credits.
+    pub origin: Option<Origin>,
 }
 
 /// A level's `thumb.png`, located and its PNG header checked against
@@ -124,7 +128,7 @@ impl Content {
         let src = self.pack(id, PackKind::Mod)?;
         let m = rl_pack::read_manifest(&src).with_context(|| format!("mod pack {id}"))?;
         let presets = rl_pack::read_preset_names(&src).with_context(|| format!("mod pack {id}"))?;
-        Ok(ModInfo { id: id.into(), name: m.name, presets })
+        Ok(ModInfo { id: id.into(), name: m.name, presets, origin: m.origin })
     }
 
     /// Level pack `id`'s name, size and thumbnail ([`ThumbRef::probe`]),
@@ -132,13 +136,20 @@ impl Content {
     /// with a warning.
     pub fn level_info(&self, id: &str) -> anyhow::Result<(LevelInfo, Option<String>)> {
         let src = self.pack(id, PackKind::Level)?;
-        let (_, def) = rl_pack::read_level_def(&src).with_context(|| format!("level pack {id}"))?;
+        let (m, def) = rl_pack::read_level_def(&src).with_context(|| format!("level pack {id}"))?;
         let dir = self.pack_dir(id).context("level pack directory")?;
         let (thumb, warning) = match ThumbRef::probe(&dir.join(rl_pack::THUMB_FILE)) {
             Ok(t) => (t, None),
             Err(e) => (None, Some(format!("level pack {id}: {}: {e}, not shown", rl_pack::THUMB_FILE))),
         };
-        let info = LevelInfo { id: id.into(), name: def.name, width: def.width, height: def.height, thumb };
+        let info = LevelInfo {
+            id: id.into(),
+            name: def.name,
+            width: def.width,
+            height: def.height,
+            thumb,
+            origin: m.origin,
+        };
         Ok((info, warning))
     }
 

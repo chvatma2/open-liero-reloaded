@@ -1007,3 +1007,23 @@ Made precise while implementing the options (plan 7 task 4):
   window's key presses and the gamepads' events (egui sees neither
   modifier keys alone nor gamepads). A profile with its own keys is
   rebound there.
+
+Made precise while implementing thumbnails and the credits (plan 7 task 6):
+
+- **G5 and G6 narrowed (the user's call):** the Classic HUD style was
+  dropped. Drawing OLX's small bitmap fonts and HUD images cleanly at any
+  DPI, UI scale (0.5-3) and window size, and keeping a second HUD in step
+  with the first, costs more than it gives. The HUD has one style (Modern);
+  OLX's `font.png`/`out_font.png` and HUD images are not imported, and the
+  settings hold no HUD style (an old `hud:` value is ignored). §8.3's
+  "classic" style is withdrawn.
+- **Thumbnails:** each level pack's `thumb.png` (format 4) is its front
+  art box-filtered and letterboxed into 160 × 96 at import. It is
+  presentation only: `rl_pack::content_hash` leaves it out (ruling Q4).
+  The menus list a thumbnail by its PNG header (bounded size and length)
+  and decode it only when its card is in view, at most two a frame, once.
+- **About** (G9): the credits from the main menu: Joosa Riekkinen (Liero),
+  Jason Boettcher (Liero Xtreme, credited and its name not used, as its
+  license asks), the OpenLieroX team as OLX's main menu names it; the
+  licenses (GPL-3.0-or-later; OLX's LGPL code; LX's zlib-style code); and
+  each bundled mod's and level's recorded origin.

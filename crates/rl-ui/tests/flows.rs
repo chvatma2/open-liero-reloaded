@@ -29,11 +29,17 @@ fn catalog() -> Catalog {
                 id: "olx-classic".into(),
                 name: "Liero v1.0".into(),
                 presets: presets(&["All weapons", "Standard 100lt"]),
+                origin: Some(rl_data::manifest::Origin {
+                    source: "OpenLieroX".into(),
+                    path: "share/gamedir/Classic".into(),
+                    revision: "d1ad953f4f20610f2648cce26c9739e7c088409d".into(),
+                }),
             },
             ModInfo {
                 id: "olx-mw-1-0".into(),
                 name: "Modern Warfare1.0".into(),
                 presets: presets(&["Mortars"]),
+                origin: None,
             },
         ],
         levels: vec![
@@ -43,6 +49,7 @@ fn catalog() -> Catalog {
                 width: 504,
                 height: 350,
                 thumb: Some(thumb_file("dirt", 50, 35)),
+                origin: None,
             },
             LevelInfo {
                 id: "olx-level-liero-factory".into(),
@@ -50,6 +57,7 @@ fn catalog() -> Catalog {
                 width: 1200,
                 height: 480,
                 thumb: None,
+                origin: None,
             },
         ],
         skins: vec![],
@@ -263,6 +271,7 @@ fn thumbnails_decode_lazily_and_bounded() {
             width: 640,
             height: 480,
             thumb: Some(thumb_file(&format!("lvl-{i:02}"), 160, 96)),
+            origin: None,
         })
         .collect();
     // The first one breaks after it was listed.
@@ -298,4 +307,32 @@ fn thumbnails_decode_lazily_and_bounded() {
     }
     assert!(h.state_mut().data.take_warnings().is_empty(), "tried once");
     assert_eq!(h.state().data.thumbs_decoded(), decoded, "kept, not decoded again");
+}
+
+/// Plan 7 G9: the main menu's About shows the credits (Jason Boettcher's
+/// Liero Xtreme, the OpenLieroX team, Joosa Riekkinen's Liero), the
+/// licenses and the bundled content's origin; Back returns.
+#[test]
+fn about_credits_the_authors_and_the_licenses() {
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 7));
+    h.get_by_label("About").click();
+    h.run();
+    assert_eq!(h.state().ui.screen(), Screen::About);
+    for text in [
+        "Joosa Riekkinen",
+        "Jason Boettcher, Liero Xtreme",
+        "The OpenLieroX team",
+        "GPL-3.0-or-later",
+        "Lesser General Public License",
+        "zlib-style",
+    ] {
+        h.get_by_label_contains(text);
+    }
+    // The content's origin as its pack records it.
+    h.get_by_label("Mod Liero v1.0");
+    h.get_by_label("OpenLieroX share/gamedir/Classic (d1ad953f)");
+    h.get_by_label("Level Dirt Level");
+    h.get_by_label("Back").click();
+    h.run();
+    assert_eq!(h.state().ui.screen(), Screen::Main);
 }

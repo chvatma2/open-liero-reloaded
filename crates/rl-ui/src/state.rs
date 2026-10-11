@@ -26,7 +26,7 @@ use rl_sim::MAX_SLOTS;
 
 use crate::match_prefs::MatchPrefs;
 use crate::profiles::Profiles;
-use crate::settings::{AudioSettings, HudStyle, Settings, VideoSettings};
+use crate::settings::{AudioSettings, Settings, VideoSettings};
 
 /// A screen (§21 G1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -97,7 +97,6 @@ pub enum UiAction {
     /// The options' key bindings.
     SetBindings(Bindings),
     SetMatch(MatchPrefs),
-    SetHud(HudStyle),
     SetProfiles(Profiles),
     /// The app: the match or sandbox asked for is ready.
     MatchStarted,
@@ -348,13 +347,6 @@ impl UiState {
                     return Vec::new();
                 }
                 self.settings.gameplay.match_prefs = m;
-                vec![self.save_settings()]
-            }
-            UiAction::SetHud(h) => {
-                if h == self.settings.gameplay.hud {
-                    return Vec::new();
-                }
-                self.settings.gameplay.hud = h;
                 vec![self.save_settings()]
             }
             UiAction::SetProfiles(mut p) => {

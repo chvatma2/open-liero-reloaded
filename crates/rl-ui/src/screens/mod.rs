@@ -10,6 +10,7 @@
 //! place; a held key's repeats do neither. While the options capture a
 //! key, egui hears no key at all: the capture has it alone.
 
+pub mod about;
 mod ingame;
 mod keys;
 mod local_play;
@@ -208,6 +209,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
                 Screen::Profiles => profiles::show(ui, state, data, &mut out),
                 Screen::Replays => replays::show(ui, state, data, &mut out),
                 Screen::Options => options::show(ui, state, data, &mut out),
+                Screen::About => about::show(ui, data, &mut out),
                 _ => placeholder(ui, screen, &mut out),
             });
         }
@@ -241,11 +243,10 @@ fn message(ui: &mut Ui, state: &UiState) {
     }
 }
 
-/// The screens later milestones fill (import, about).
+/// The screens later tasks fill (import).
 fn placeholder(ui: &mut Ui, screen: Screen, out: &mut Vec<UiAction>) {
     let title = match screen {
         Screen::Import => "Import",
-        Screen::About => "About",
         _ => "",
     };
     header(ui, title, out);

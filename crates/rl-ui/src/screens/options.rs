@@ -16,7 +16,7 @@ use egui::{ComboBox, RichText, Slider, Ui};
 
 use super::{MenuData, header, keys, local_play};
 use crate::match_prefs::MatchPrefs;
-use crate::settings::{FrameRate, HudStyle, UI_SCALE_RANGE, UpscaleFilter, WindowPreset};
+use crate::settings::{FrameRate, UI_SCALE_RANGE, UpscaleFilter, WindowPreset};
 use crate::state::{UiAction, UiState};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -145,17 +145,6 @@ fn audio(ui: &mut Ui, state: &UiState, out: &mut Vec<UiAction>) {
 }
 
 fn gameplay(ui: &mut Ui, state: &UiState, data: &MenuData, out: &mut Vec<UiAction>) {
-    let mut hud = state.settings().gameplay.hud;
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("HUD").strong());
-        ui.radio_value(&mut hud, HudStyle::Modern, "Modern");
-        ui.radio_value(&mut hud, HudStyle::Classic, "Classic")
-            .on_hover_text("OLX's bitmap fonts and layout.");
-    });
-    if hud != state.settings().gameplay.hud {
-        out.push(UiAction::SetHud(hud));
-    }
-    ui.add_space(10.0);
     ui.label(RichText::new("The match local play starts with (it changes them too):").weak());
     let before = &state.settings().gameplay.match_prefs;
     let mut p = before.clone();

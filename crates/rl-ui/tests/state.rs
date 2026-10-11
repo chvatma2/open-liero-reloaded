@@ -3,8 +3,7 @@
 use rl_content::Player;
 use rl_input::{Action, Bindings, KeyCode};
 use rl_ui::{
-    AppCommand, AudioSettings, BotLevel, HudStyle, Profile, Profiles, Screen, Settings, UiAction, UiState,
-    WindowPreset,
+    AppCommand, AudioSettings, BotLevel, Profile, Profiles, Screen, Settings, UiAction, UiState, WindowPreset,
 };
 
 fn state() -> UiState {
@@ -156,7 +155,6 @@ fn state_machine_navigates_and_emits_commands() {
     keys.keys.push((Action::Jump, KeyCode::Space));
     let c = ui.update(UiAction::SetBindings(keys.clone()));
     assert_eq!(c[0], AppCommand::ApplyBindings(keys.clone()));
-    assert!(saves_settings(&ui.update(UiAction::SetHud(HudStyle::Classic))));
 
     // Profiles: selecting one with its own bindings applies them.
     ui.update(UiAction::Back);

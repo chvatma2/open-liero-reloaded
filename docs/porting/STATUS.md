@@ -385,8 +385,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   or last gamepad input (a hand-edited file that leaves one without gets
   OLX's default back, with a warning), and the game's own keys (Esc, F2,
   F5, Tab, H) cannot be bound. Capture is OLX's "Input for:" box (Esc
-  cancels). Gameplay holds the HUD style and the match local play starts
-  with.
+  cancels). Gameplay holds the match local play starts with.
 - **In game** (`rl-ui`, `rl-game`, plan 7 task 5). *Weapon selection:*
   OLX's dialog (`CWormHuman.cpp:702-1000`: the profile's slots by name, an
   unenabled one replaced by `findEnabledWeapon`, left/right over the enabled
@@ -426,6 +425,17 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   `thumb.png`: the front art box-filtered into 160 × 96 and letterboxed
   (transparent bars), so wide and tall levels keep their shape. It is
   presentation only and left out of the pack's content hash (ruling Q4).
+- **No Classic HUD** (plan 7 task 6, the user's call; a deviation from
+  plan 7 G5 and G6): the in-game HUD is egui only. OLX's bitmap fonts
+  (`CFont`, `data/gfx/font.png`, `out_font.png`) and HUD images
+  (`healthbar1.png`, `weaponbar1.png`, `clock.png`, `infinite.png`) are not
+  imported or drawn: making the low-resolution art look right at every DPI,
+  UI scale and window size, and keeping a second HUD in step, cost more
+  than it gave. OLX's colours and information stay in the Modern HUD.
+- **About** (`rl-ui`, plan 7 task 6): OLX shows its credits in the corner
+  of the main menu (`Menu_Main.cpp:276-283`); the remake has an About
+  screen from the main menu with the credits, the licenses and each
+  bundled pack's origin.
 - **Renderer** (`rl-render`, plan 5 task 5): OLX blits each sprite with SDL
   onto a 2× screen; the renderer draws the same texels at art scale (at
   least 2×) and then upscales (E3). With interpolation (E2), a sprite's

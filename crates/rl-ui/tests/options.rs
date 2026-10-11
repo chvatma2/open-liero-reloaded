@@ -10,8 +10,8 @@ use rl_input::{
 };
 use rl_ui::screens::{self, MenuData};
 use rl_ui::{
-    AppCommand, AudioSettings, FrameRate, HudStyle, Profile, Profiles, Screen, Settings, Store, UiAction,
-    UiState, UpscaleFilter, VideoSettings, WindowPreset,
+    AppCommand, AudioSettings, FrameRate, Profile, Profiles, Screen, Settings, Store, UiAction, UiState,
+    UpscaleFilter, VideoSettings, WindowPreset,
 };
 
 const KB: Device = Device::Keyboard;
@@ -325,9 +325,6 @@ fn options_set_video_audio_and_gameplay() {
 
     h.get_by_label("Gameplay").click();
     h.run();
-    h.get_by_label("Classic").click();
-    h.run();
-    assert_eq!(saved(&h).gameplay.hud, HudStyle::Classic);
     h.get_by_label("Lives").click();
     h.run();
     assert!(saved(&h).gameplay.match_prefs.rules.lives >= 0);

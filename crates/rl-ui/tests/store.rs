@@ -8,7 +8,7 @@ use std::path::Path;
 
 use rl_input::{Action, Bindings, KeyCode};
 use rl_ui::{
-    BotLevel, FrameRate, HudStyle, PROFILES_VERSION, Profile, Profiles, SETTINGS_VERSION, Settings, Store,
+    BotLevel, FrameRate, PROFILES_VERSION, Profile, Profiles, SETTINGS_VERSION, Settings, Store,
     UpscaleFilter, WindowPreset,
 };
 
@@ -24,7 +24,6 @@ fn changed_settings() -> Settings {
     s.audio.sfx = 0.75;
     s.audio.music = 0.1;
     s.input.keys.push((Action::Jump, KeyCode::Space));
-    s.gameplay.hud = HudStyle::Classic;
     s.gameplay.match_prefs.bots = 7;
     s.gameplay.match_prefs.difficulty = BotLevel::Xtreme;
     s.gameplay.match_prefs.rules.kill_limit = 30;
@@ -89,6 +88,19 @@ fn settings_round_trip_and_version() {
     assert!(partial.value.video.fullscreen);
     assert_eq!(partial.value.audio, Settings::default().audio);
     assert!(partial.warnings.is_empty(), "{:?}", partial.warnings);
+
+    // A file from before the Classic HUD was dropped (plan 7 task 6)
+    // still loads: its `hud` is ignored, the rest kept, no backup made.
+    let old = format!(
+        "(version: {SETTINGS_VERSION}, settings: (video: (fullscreen: true), \
+         gameplay: (hud: Classic, match_prefs: (bots: 5))))"
+    );
+    fs::write(&path, old).unwrap();
+    let loaded = store.load_settings();
+    assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+    assert!(loaded.value.video.fullscreen);
+    assert_eq!(loaded.value.gameplay.match_prefs.bots, 5);
+    assert!(!dir.path().join("data/settings.ron.bak").exists());
 }
 
 #[test]
