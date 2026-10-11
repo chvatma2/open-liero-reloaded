@@ -40,6 +40,7 @@ fn changed_profiles() -> Profiles {
         skin_id: "olx-skin-zombie".into(),
         colour: [20, 90, 255],
         bindings: Some(Bindings::olx()),
+        weapons: vec!["Bazooka".into(), "Laser".into()],
     });
     p.selected = 1;
     p

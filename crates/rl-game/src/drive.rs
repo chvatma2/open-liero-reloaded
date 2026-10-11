@@ -106,6 +106,13 @@ impl MatchDriver {
         }
     }
 
+    /// The match's replay, finished at `world` if it was still recording,
+    /// left in place.
+    pub fn replay(&mut self, world: &World) -> Option<&Replay> {
+        self.finish(world);
+        self.replay.as_ref()
+    }
+
     /// The match's replay, finished at `world` if it was still recording.
     pub fn take_replay(&mut self, world: &World) -> Option<Replay> {
         self.finish(world);

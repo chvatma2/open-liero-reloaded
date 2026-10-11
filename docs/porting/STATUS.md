@@ -340,9 +340,9 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   own size changes are applied at most every 250 ms, because WSLg's Weston
   crashes on quick resizes of a decorated Wayland window.
 - **Deathmatch in the game** (`rl-game`, plan 6 task 8; full menus are M7):
-  the human gets random weapons the restrictions enable (OLX's weapon
-  dialog's "Random"; `CWormHumanInputHandler::initWeaponSelection` loads the
-  profile's slots instead) until the weapon menu exists. The HUD is egui,
+  a command-line Deathmatch (`--mode deathmatch`) gives the human random
+  weapons the restrictions enable (OLX's weapon dialog's "Random"); menu
+  matches have OLX's weapon selection (plan 7 task 5, below). The HUD is egui,
   not OLX's: the time-limit clock is frozen at the end in the HUD
   (`Deathmatch::time_left_ms` keeps counting, harmlessly), kill-feed lines
   name no weapon (`rl-sim` does not record the injuring weapon; OLX drops
@@ -387,6 +387,37 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   F5, Tab, H) cannot be bound. Capture is OLX's "Input for:" box (Esc
   cancels). Gameplay holds the HUD style and the match local play starts
   with.
+- **In game** (`rl-ui`, `rl-game`, plan 7 task 5). *Weapon selection:*
+  OLX's dialog (`CWormHuman.cpp:702-1000`: the profile's slots by name, an
+  unenabled one replaced by `findEnabledWeapon`, left/right over the enabled
+  weapons, six at a time with Select weapon, Random, Done on Fire's
+  release, skipped with one enabled weapon or none) shown over the level
+  before the match, driven by the game's keys or the mouse; the world waits
+  untouched until Done, then is built with the choice (`Player::HumanWith`
+  in `MatchOptions`, so the replay's setup holds it). OLX's stick
+  auto-repeat (0.4 s, then 0.12 s) applies to held keys too. A rematch from
+  the results chooses again (OLX's selection at each game); F5's in-place
+  rematch keeps the weapons. *HUD (Modern):* laid out anew for wide screens
+  (health and five weapon rows bottom left, clock and kill limit top
+  centre, kill feed top left, minimap top right) in OLX's colours (health
+  `(64,255,64)`, weapon bar states, lives/kills, weapon label `#02bff6`);
+  it shrinks to half size on small screens rather than overlap.
+  *Minimap:* OLX's 119 × 94 proportions and half opacity, box-filtered
+  from the colour terrain at twice OLX's resolution, refreshed every 10
+  ticks (OLX updates edited areas at once), scaled up to 2.5 × on large
+  screens; worm dots as `drawOnMiniMap` (2 × 2, the human 3 × 3, OLX's
+  blink), plus the camera's view as a rectangle, which OLX does not draw.
+  *Pause:* Resume, Options (the match stays paused) and Quit to menu; no
+  tick runs while paused or during the weapon selection, so replays hold
+  only played ticks. *Results:* OLX's columns plus score, deaths and
+  suicides; Rematch, Save replay (`replays/replay-NNN.rlrp`, never pruned)
+  and Back to menu. *Bot colours:* OLX's seven `cpuColours`
+  (`ProfileSystem.cpp:47-59`) in turn, skipping those within 120 (RGB
+  distance) of the human's colour; OLX gives each bot profile its colour
+  regardless. Cosmetic: replays draw every worm in the default colours.
+  *Keys:* Esc and F5 ignore key repeat; a settings or profiles file that
+  binds a game key (Esc, F5, F2, Tab, H) loses it with a warning; while the
+  options capture a key, egui hears no key at all.
 - **Renderer** (`rl-render`, plan 5 task 5): OLX blits each sprite with SDL
   onto a 2× screen; the renderer draws the same texels at art scale (at
   least 2×) and then upscales (E3). With interpolation (E2), a sprite's

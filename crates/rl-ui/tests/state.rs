@@ -53,13 +53,17 @@ fn state_machine_navigates_and_emits_commands() {
     assert!(ui.is_starting());
     assert!(ui.update(UiAction::StartMatch).is_empty());
     assert!(ui.update(UiAction::Back).is_empty(), "the start is in flight");
-    // The app reports the match ready: in game.
+    // The app reports the match ready: the weapon selection, then in game.
     ui.update(UiAction::MatchStarted);
-    assert_eq!(ui.screen(), Screen::InGame);
+    assert_eq!(ui.screen(), Screen::WeaponSelect);
     assert!(!ui.is_starting());
     // A stale report changes nothing.
     ui.update(UiAction::MatchStarted);
+    assert_eq!(ui.screen(), Screen::WeaponSelect);
+    let c = ui.update(UiAction::ChooseWeapons { weapons: [3; 5], names: vec![] });
+    assert_eq!(c, [AppCommand::ArmPlayer([3; 5])], "no names: the profile is kept");
     assert_eq!(ui.screen(), Screen::InGame);
+    assert!(ui.update(UiAction::ChooseWeapons { weapons: [1; 5], names: vec![] }).is_empty(), "once");
 
     // Esc pauses and resumes; the pause menu leaves the match.
     assert_eq!(ui.update(UiAction::Back), [AppCommand::SetPaused(true)]);
@@ -81,14 +85,18 @@ fn state_machine_navigates_and_emits_commands() {
 
     // The end of a match shows the results; a rematch starts the same
     // match on the next seed; Back leaves for the main menu.
+    let armed = UiAction::ChooseWeapons { weapons: [0; 5], names: vec![] };
     ui.update(UiAction::StartMatch);
     assert_eq!(ui.message(), None);
     ui.update(UiAction::MatchStarted);
+    assert!(ui.update(UiAction::MatchOver).is_empty(), "no end during the weapon selection");
+    ui.update(armed.clone());
     ui.update(UiAction::MatchOver);
     assert_eq!(ui.screen(), Screen::Results);
     let c = ui.update(UiAction::StartMatch);
     assert!(matches!(&c[..], [AppCommand::EndMatch, AppCommand::StartMatch(o)] if o.seed == 44), "{c:?}");
     ui.update(UiAction::MatchStarted);
+    ui.update(armed);
     // The match ends while paused: the app is told to resume.
     ui.update(UiAction::Back);
     assert_eq!(ui.update(UiAction::MatchOver), [AppCommand::SetPaused(false)]);

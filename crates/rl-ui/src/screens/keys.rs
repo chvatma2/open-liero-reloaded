@@ -14,17 +14,8 @@
 use egui::{Button, Color32, Grid, Id, Key, Modal, RichText, Ui, WidgetInfo, WidgetType};
 use rl_input::{Action, Binding, Bindings, Capture, Device, KeyCode, Resolve, key_name};
 
+pub use crate::settings::GAME_KEYS;
 use crate::state::{UiAction, UiState};
-
-/// The keys the game keeps for itself (`rl-game`'s `on_key` and the
-/// menus): never bound to an action. Esc cancels the capture.
-pub const GAME_KEYS: [(KeyCode, &str); 5] = [
-    (KeyCode::Escape, "the menus"),
-    (KeyCode::F5, "restart"),
-    (KeyCode::F2, "the debug panel"),
-    (KeyCode::Tab, "the scores"),
-    (KeyCode::KeyH, "the health bars"),
-];
 
 /// The section's own state.
 #[derive(Clone, Debug, Default)]
@@ -182,7 +173,7 @@ fn capture_dialog(ui: &mut Ui, capture: &mut Option<Capture>, v: &mut View) {
         })
         .inner
     });
-    let esc = ui.input(|i| i.key_pressed(Key::Escape));
+    let esc = super::pressed_once(ui, Key::Escape);
     if r.inner || r.should_close() || esc {
         *capture = None;
         v.action = None;
@@ -216,7 +207,7 @@ fn conflict_dialog(ui: &mut Ui, b: &mut Bindings, v: &mut View) {
         })
         .inner
     });
-    let esc = ui.input(|i| i.key_pressed(Key::Escape));
+    let esc = super::pressed_once(ui, Key::Escape);
     if let Some(how) = choice {
         // A refused move changes nothing (its button is disabled anyway).
         let _ = b.bind(action, input, how);

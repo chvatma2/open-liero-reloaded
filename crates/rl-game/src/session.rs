@@ -13,8 +13,9 @@ use rl_replay::Replay;
 use rl_scene::{DrawList, Interpolation, SceneOptions, Viewport};
 use rl_sim::{EventKind, Keys, TickEvents, World};
 
+use rl_ui::hud::{Feed, Names, Results, message_text};
+
 use crate::drive::{MatchDriver, ReplayDriver};
-use crate::hud::{Feed, Names, Results, message_text};
 use crate::setup::{Assets, Game};
 
 /// How often (ticks) debug builds check that the colour terrain's material
@@ -106,6 +107,8 @@ pub struct Session {
     bot_skin: LoadedSkin,
     /// The player's colour (a profile's), else `default_colour(0)`.
     colour: Option<rl_data::image::Rgba>,
+    /// Every worm's colour, as `add_worm` got it (the minimap's dots).
+    colours: Vec<[u8; 3]>,
 }
 
 /// The world and driver `a` starts with, rematch `n`.
@@ -190,6 +193,7 @@ impl Session {
                 .player
                 .as_ref()
                 .map(|p| rl_data::image::Rgba::rgb(p.colour[0], p.colour[1], p.colour[2])),
+            colours: Vec::new(),
         };
         s.show_new_worms();
         s.time_left_ms = s.mode_time_left();
@@ -201,12 +205,24 @@ impl Session {
     /// for upload).
     fn show_new_worms(&mut self) {
         let human = !matches!(self.driver, Driver::Replay(_));
+        let mine = self.colour.unwrap_or_else(|| default_colour(0));
         while self.shown < self.world.worms().len() {
             let i = self.shown;
             let player = i == 0 && human;
-            let colour = self.colour.filter(|_| player).unwrap_or_else(|| default_colour(i));
+            // The others in OLX's bot colours, none close to the player's
+            // (a replay's worms in the default colours: their looks are not
+            // recorded). Cosmetic: the world never sees them.
+            let colour = if player {
+                mine
+            } else if human {
+                let [r, g, b] = rl_ui::bot_colours([mine.r, mine.g, mine.b], i)[i - 1];
+                rl_data::image::Rgba::rgb(r, g, b)
+            } else {
+                default_colour(i)
+            };
             let skin = if player { &self.skin } else { &self.bot_skin };
             self.present.add_worm(skin, colour, i == 0, player);
+            self.colours.push([colour.r, colour.g, colour.b]);
             self.shown += 1;
         }
         if self.keys.len() < self.shown {
@@ -223,12 +239,35 @@ impl Session {
         self.world.mode_state().as_any().downcast_ref::<Deathmatch>()?.time_left_ms()
     }
 
+    /// The Deathmatch's kill limit, if on.
+    pub fn kill_limit(&self) -> Option<i32> {
+        let k = self.world.mode_state().as_any().downcast_ref::<Deathmatch>()?.settings().kill_limit;
+        (k > 0).then_some(k)
+    }
+
+    /// Worm `i`'s colour (black for one not shown yet).
+    pub fn colour(&self, i: usize) -> [u8; 3] {
+        self.colours.get(i).copied().unwrap_or([0; 3])
+    }
+
     /// F5: the sandbox or replay from the start, or a Deathmatch's rematch
     /// (the next seed), from the assets loaded once. The worms are the
     /// same, so the atlas stays; the next upload sends the new colour map.
     /// Gives the replay of the match that was playing (a Deathmatch's).
     pub fn restart(&mut self, a: &Assets) -> anyhow::Result<Option<Replay>> {
         let n = if matches!(a.game, Game::Deathmatch { .. }) { self.rematches + 1 } else { 0 };
+        self.reset(a, n)
+    }
+
+    /// The same match from its start again, built from `a` as it is now:
+    /// after the weapon selection changed its options (no tick played yet,
+    /// so nothing is lost; the recording starts again with the weapons).
+    pub fn rebuild(&mut self, a: &Assets) -> anyhow::Result<()> {
+        self.reset(a, self.rematches).map(drop)
+    }
+
+    /// The world of `a`'s game, rematch `n`, from its start.
+    fn reset(&mut self, a: &Assets, n: u32) -> anyhow::Result<Option<Replay>> {
         let (world, driver) = start(a, n)?;
         anyhow::ensure!(world.worms().len() == self.shown, "the restarted match has other worms");
         let old = self.take_replay();
@@ -258,6 +297,15 @@ impl Session {
         }
     }
 
+    /// The replay of the match playing (a Deathmatch's), finished now if
+    /// it was still recording; it stays to be taken (`take_replay`).
+    pub fn replay(&mut self) -> Option<&Replay> {
+        match &mut self.driver {
+            Driver::Match(d) => d.replay(&self.world),
+            _ => None,
+        }
+    }
+
     /// Ticks since the match (re)started.
     pub fn ticks(&self) -> u64 {
         self.ticks
@@ -268,7 +316,7 @@ impl Session {
     pub fn results_shown(&self) -> bool {
         let replay_done = matches!(&self.driver, Driver::Replay(d) if d.is_done());
         self.results.is_some()
-            && (replay_done || self.since_end().is_some_and(|t| t > crate::panels::RESULTS_AFTER))
+            && (replay_done || self.since_end().is_some_and(|t| t > crate::hud::RESULTS_AFTER))
     }
 
     /// Ticks since the match ended, once it has.

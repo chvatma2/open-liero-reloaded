@@ -16,7 +16,6 @@ pub mod gpu;
 pub mod hud;
 pub mod latency;
 pub mod overlay;
-pub mod panels;
 pub mod script;
 pub mod session;
 pub mod setup;

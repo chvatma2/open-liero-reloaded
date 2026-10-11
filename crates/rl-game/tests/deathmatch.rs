@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use rl_audio::Audio;
 use rl_bots::Difficulty;
 use rl_game::drive::percentile_ms;
-use rl_game::hud::clock;
 use rl_game::session::{Driver, Session};
 use rl_game::setup::{self, DeathmatchOptions};
 use rl_scene::{DrawList, Interpolation, Viewport};
 use rl_sim::{EndReason, Keys};
+use rl_ui::hud::clock;
 
 fn content() -> Option<PathBuf> {
     let dir = std::env::var_os("RL_CONTENT_DIR").map(PathBuf::from).filter(|d| d.is_dir());

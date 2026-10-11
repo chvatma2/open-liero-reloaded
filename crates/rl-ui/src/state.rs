@@ -7,17 +7,22 @@
 //!   and About; Back (Esc) returns to Main.
 //! - **Matches:** Start emits one `StartMatch` with the next seed; until
 //!   the app reports `MatchStarted` or `MatchFailed`, starting again and
-//!   Back do nothing (no double matches). In game, Back toggles the pause
-//!   menu, which can leave the match; the end shows the results, whose
-//!   Start is a rematch on the next seed (the match over ends first).
-//!   Restart (F5) plays the game again in place: a Deathmatch's rematch,
-//!   the sandbox or a replay from the start.
+//!   Back do nothing (no double matches). A Deathmatch starts with OLX's
+//!   weapon selection (§21 G4): its Done arms the player (`ArmPlayer`,
+//!   into the match's options) and the match plays. In game, Back toggles
+//!   the pause menu, which opens the options (Back returns to it) or
+//!   leaves the match; the end shows the results, whose Start is a
+//!   rematch on the next seed (the match over ends first, and the weapons
+//!   are chosen again) and whose Save replay keeps the match's replay.
+//!   Restart (F5) plays the game again in place: a Deathmatch's rematch
+//!   (same weapons), the sandbox or a replay from the start.
 //! - **Options** apply and save only what changed.
 
 use std::path::PathBuf;
 
 use rl_content::MatchOptions;
 use rl_input::Bindings;
+use rl_sim::MAX_SLOTS;
 
 use crate::match_prefs::MatchPrefs;
 use crate::profiles::Profiles;
@@ -73,8 +78,19 @@ pub enum UiAction {
     Restart,
     /// The pause menu's Resume.
     Resume,
-    /// The pause menu's or the results' Leave.
+    /// The pause menu's Quit to menu, or the results' Back to menu.
     LeaveMatch,
+    /// The weapon selection's Done: the weapons by mod id, slot by slot,
+    /// and their names (remembered in the profile; none: nothing to
+    /// remember, as when there was no choice).
+    ChooseWeapons {
+        weapons: [i32; MAX_SLOTS],
+        names: Vec<String>,
+    },
+    /// The results' Save replay.
+    SaveReplay,
+    /// The app: the replay was saved as this file, or why not.
+    ReplaySaved(Result<String, String>),
     Quit,
     SetVideo(VideoSettings),
     SetAudio(AudioSettings),
@@ -107,6 +123,13 @@ pub enum AppCommand {
     EndMatch,
     /// Pause or resume the match (the pause menu).
     SetPaused(bool),
+    /// The weapon selection's choice: the human (worm 0) starts the match
+    /// with these weapons (`rl_content::Player::HumanWith` in its options,
+    /// so the replay holds them).
+    ArmPlayer([i32; MAX_SLOTS]),
+    /// Keep the finished match's replay as a file of its own (then report
+    /// [`UiAction::ReplaySaved`]).
+    SaveReplay,
     /// Window size, fullscreen, pacing, filter, interpolation and UI scale,
     /// through `rl-game`'s paced window changes.
     ApplyVideo(VideoSettings),
@@ -150,9 +173,11 @@ pub struct UiState {
     profiles: Profiles,
     play: Play,
     paused: bool,
+    /// The options were opened from the pause menu: Back returns there.
+    options_in_game: bool,
     /// The seed of the next match.
     seed: u32,
-    /// Shown on the menu: why the last start failed.
+    /// Shown on the screen: why the last start failed, or a replay saved.
     message: Option<String>,
 }
 
@@ -166,6 +191,7 @@ impl UiState {
             profiles,
             play: Play::None,
             paused: false,
+            options_in_game: false,
             seed,
             message: None,
         }
@@ -206,7 +232,8 @@ impl UiState {
         self.paused
     }
 
-    /// Why the last start failed, until the next screen change or start.
+    /// Why the last start failed, or where the replay was saved, until
+    /// the next screen change or start.
     pub fn message(&self) -> Option<&str> {
         self.message.as_deref()
     }
@@ -216,6 +243,9 @@ impl UiState {
         match action {
             UiAction::Open(s) => {
                 if self.screen == Screen::Main && Screen::MENUS.contains(&s) && !self.is_starting() {
+                    self.go(s);
+                } else if self.screen == Screen::InGame && self.paused && s == Screen::Options {
+                    self.options_in_game = true;
                     self.go(s);
                 }
                 Vec::new()
@@ -252,6 +282,24 @@ impl UiState {
             }
             UiAction::Resume => self.set_paused(false),
             UiAction::LeaveMatch => self.leave(),
+            UiAction::ChooseWeapons { weapons, names } => self.choose_weapons(weapons, names),
+            UiAction::SaveReplay => {
+                if self.screen == Screen::Results && self.play == Play::Running(Game::Match) {
+                    self.message = None;
+                    vec![AppCommand::SaveReplay]
+                } else {
+                    Vec::new()
+                }
+            }
+            UiAction::ReplaySaved(r) => {
+                if self.screen == Screen::Results {
+                    self.message = Some(match r {
+                        Ok(name) => format!("Saved as {name}"),
+                        Err(e) => format!("Not saved: {e}"),
+                    });
+                }
+                Vec::new()
+            }
             UiAction::Quit => vec![AppCommand::Quit],
             UiAction::SetVideo(mut v) => {
                 v.sanitize();
@@ -270,7 +318,7 @@ impl UiState {
                 vec![AppCommand::ApplyAudio(a), self.save_settings()]
             }
             UiAction::SetBindings(mut b) => {
-                b.repair();
+                crate::settings::sanitize_bindings(&mut b);
                 if b == self.settings.input {
                     return Vec::new();
                 }
@@ -310,7 +358,8 @@ impl UiState {
                 if let Play::Starting { game, .. } = self.play {
                     self.play = Play::Running(game);
                     self.paused = false;
-                    self.go(Screen::InGame);
+                    // OLX's weapon selection before a Deathmatch (§21 G4).
+                    self.go(if game == Game::Match { Screen::WeaponSelect } else { Screen::InGame });
                 }
                 Vec::new()
             }
@@ -336,6 +385,7 @@ impl UiState {
     fn go(&mut self, s: Screen) {
         self.screen = s;
         self.message = None;
+        self.options_in_game &= s == Screen::Options;
     }
 
     fn back(&mut self) -> Vec<AppCommand> {
@@ -345,6 +395,11 @@ impl UiState {
         match self.screen {
             Screen::Main => Vec::new(),
             Screen::InGame => self.set_paused(!self.paused),
+            Screen::Options if self.options_in_game => {
+                self.options_in_game = false;
+                self.go(Screen::InGame);
+                Vec::new()
+            }
             Screen::WeaponSelect | Screen::Results => self.leave(),
             _ => {
                 self.go(Screen::Main);
@@ -376,6 +431,28 @@ impl UiState {
         self.paused = false;
         self.go(Screen::Main);
         vec![AppCommand::EndMatch]
+    }
+
+    /// The weapon selection's Done: the player armed, the match on; the
+    /// names (if any) remembered in the profile playing, as OLX's profile
+    /// keeps its weapon slots (`CWormHuman.cpp:925-937`).
+    fn choose_weapons(&mut self, weapons: [i32; MAX_SLOTS], names: Vec<String>) -> Vec<AppCommand> {
+        if self.screen != Screen::WeaponSelect || self.play != Play::Running(Game::Match) {
+            return Vec::new();
+        }
+        self.go(Screen::InGame);
+        let mut out = vec![AppCommand::ArmPlayer(weapons)];
+        // The profile `Profiles::selected` gives.
+        let selected =
+            if self.profiles.selected < self.profiles.list.len() { self.profiles.selected } else { 0 };
+        if let Some(p) = self.profiles.list.get_mut(selected)
+            && !names.is_empty()
+            && p.weapons != names
+        {
+            p.weapons = names;
+            out.push(AppCommand::SaveProfiles(self.profiles.clone()));
+        }
+        out
     }
 
     fn start_match(&mut self) -> Vec<AppCommand> {

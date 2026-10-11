@@ -19,6 +19,10 @@ pub const MAX_LISTED: usize = 500;
 
 const AUTO_PREFIX: &str = "match-";
 
+/// Replays the player kept (the results' Save replay): `replay-NNN.rlrp`,
+/// never removed automatically.
+const KEPT_PREFIX: &str = "replay-";
+
 /// A replay file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReplayFile {
@@ -101,9 +105,39 @@ pub fn auto_save(dir: &Path, bytes: &[u8]) -> std::io::Result<PathBuf> {
     Ok(path)
 }
 
+/// Saves `bytes` as a replay the player keeps in `dir` (created if
+/// missing): `replay-001.rlrp`, then the first number free. The automatic
+/// saves' cap never removes it.
+pub fn save_kept(dir: &Path, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let free = (1..=1_000_000u32)
+        .map(|n| dir.join(format!("{KEPT_PREFIX}{n:03}.{EXTENSION}")))
+        .find(|p| !p.exists())
+        .ok_or_else(|| std::io::Error::other("a million replays kept already"))?;
+    let tmp = free.with_extension("tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, &free)?;
+    Ok(free)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kept_replays_take_the_next_free_name_and_survive_the_cap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("replays");
+        let a = save_kept(&dir, b"a").unwrap();
+        let b = save_kept(&dir, b"b").unwrap();
+        assert_eq!(a.file_name().unwrap(), "replay-001.rlrp");
+        assert_eq!(b.file_name().unwrap(), "replay-002.rlrp");
+        for _ in 0..MAX_AUTO_REPLAYS + 3 {
+            auto_save(&dir, b"m").unwrap();
+        }
+        assert_eq!(std::fs::read(&a).unwrap(), b"a");
+        assert!(b.exists());
+    }
 
     #[test]
     fn auto_saves_are_numbered_listed_newest_first_and_capped() {

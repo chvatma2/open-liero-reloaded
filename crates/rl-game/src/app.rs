@@ -23,7 +23,7 @@ use winit::window::Window;
 
 use crate::clock::TickClock;
 use crate::gpu::{Gpu, OverlayPaint};
-use crate::hud::ScoreKey;
+use crate::hud::{MinimapTexture, ScoreKey};
 use crate::latency::Latency;
 use crate::overlay::{Overlay, ScreenMap, Stats};
 use crate::script::{Command, Step};
@@ -86,6 +86,8 @@ pub struct App {
     debug: bool,
     /// Tab held: the scoreboard shows.
     scores: ScoreKey,
+    /// The HUD's minimap picture.
+    minimap: MinimapTexture,
     /// Replays saved (`--record`).
     saved: u32,
     /// Ticks since the start, across restarts (the script's clock).
@@ -109,6 +111,14 @@ pub struct App {
     flushed: Option<Instant>,
     /// What stopped the game, if something went wrong.
     pub error: Option<anyhow::Error>,
+}
+
+/// Whether egui hears window event `event`: not a key while the options
+/// capture one (`capturing`), so the captured key is the capture's alone
+/// (Space would also press the focused button, Tab move the focus).
+pub fn egui_hears(event: &winit::event::WindowEvent, capturing: bool) -> bool {
+    use winit::event::WindowEvent as E;
+    !(capturing && matches!(event, E::KeyboardInput { .. } | E::Ime(_)))
 }
 
 /// The viewport for a window of `size` pixels.
@@ -142,6 +152,7 @@ impl App {
             win: None,
             debug: false,
             scores: ScoreKey::default(),
+            minimap: MinimapTexture::default(),
             saved: 0,
             ticks: 0,
             script_at: 0,
@@ -333,11 +344,13 @@ impl App {
         let keys = self.input.latch_tick();
         self.latency.latched();
         self.ticks += 1;
-        let paused = self.shell.paused();
-        let Some(s) = self.shell.session_mut().filter(|_| !paused) else { return Ok(()) };
         let t0 = Instant::now();
-        s.tick(keys);
+        // Not while the pause menu or the weapon selection holds the game.
+        if !self.shell.tick(keys) {
+            return Ok(());
+        }
         self.meter.tick(t0.elapsed().as_secs_f64());
+        let Some(s) = self.shell.session() else { return Ok(()) };
         if s.events.gameplay_dropped() > 0 && !self.dropped_warned {
             eprintln!("warning: a tick dropped gameplay events; its terrain area was rebuilt");
             self.dropped_warned = true;
@@ -395,6 +408,16 @@ impl App {
         let dest = rl_render::dest_rect(w.gpu.renderer.settings.filter, src, size);
         let map = ScreenMap { view: self.list.view, dest, pixels_per_point: ppp };
         let input = w.egui.take_egui_input(&w.window);
+        let minimap = match self.shell.session() {
+            Some(s) => Some(self.minimap.update(&self.egui, s)),
+            None => {
+                self.minimap.clear();
+                None
+            }
+        };
+        let time = (now - start).as_secs_f64();
+        // The weapon selection reads the game's keys, keyboard or gamepad.
+        self.shell.data.held = self.input.held();
         let overlay = self.shell.play.as_ref().map(|p| Overlay {
             session: &p.session,
             alpha,
@@ -403,6 +426,8 @@ impl App {
             show_scores: self.scores.shown(),
             stats: &self.stats,
             menus: self.cfg.menus,
+            minimap,
+            time,
         });
         let (ui_state, data) = (&self.shell.ui, &mut self.shell.data);
         let menus = self.cfg.menus;
@@ -487,5 +512,20 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use winit::event::{Ime, WindowEvent};
+
+    /// While the options capture a key, egui hears no key or text: the
+    /// capture has it alone. Other events still reach egui.
+    #[test]
+    fn egui_hears_no_key_while_capturing() {
+        let text = WindowEvent::Ime(Ime::Commit(" ".into()));
+        assert!(super::egui_hears(&text, false));
+        assert!(!super::egui_hears(&text, true));
+        assert!(super::egui_hears(&WindowEvent::Focused(true), true));
     }
 }

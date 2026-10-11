@@ -5,27 +5,34 @@
 //!
 //! Keys: Esc is Back on every screen (in game it toggles the pause menu;
 //! in the options it first closes an open dialog), F5 restarts the game in
-//! place.
+//! place; a held key's repeats do neither. While the options capture a
+//! key, egui hears no key at all: the capture has it alone.
 
+mod ingame;
 mod keys;
 mod local_play;
 mod main;
 mod options;
 mod profiles;
 mod replays;
+pub mod results;
+mod weapon_select;
 
 pub use keys::GAME_KEYS;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use egui::{Align2, Color32, Key, RichText, TextureHandle, TextureOptions, Ui};
+use egui::{Color32, Event, Key, RichText, TextureHandle, TextureOptions, Ui};
 use rl_content::Catalog;
 use rl_input::Capture;
+use rl_sim::{Keys, MAX_SLOTS};
 
+use crate::hud::Results;
 use crate::replays::ReplayFile;
 use crate::skin_preview::{PreviewKey, PreviewTextures};
 use crate::state::{Screen, UiAction, UiState};
+use crate::weapon_select::{WeaponMenu, WeaponSelect};
 
 /// What the menus show besides the state: the content's mods, levels and
 /// skins, the saved replays, the skin preview, and the widgets' own state.
@@ -46,6 +53,16 @@ pub struct MenuData {
     /// every key press and gamepad event (`Capture::on_window_event`,
     /// `on_gamepad`); the options read the input from it.
     pub capture: Option<Capture>,
+    /// The match's weapons for the weapon selection (the app sets them
+    /// when a Deathmatch starts).
+    pub weapons: Option<WeaponMenu>,
+    /// The game's keys the player holds now (the app feeds them every
+    /// frame): the weapon selection reads them, keyboard or gamepad.
+    pub held: Keys,
+    /// The finished match's results (the app sets them when they show).
+    pub results: Option<Results>,
+    /// The weapon selection in progress.
+    select: Option<WeaponSelect>,
     thumbs: BTreeMap<String, TextureHandle>,
     profiles: profiles::View,
     options: options::View,
@@ -63,6 +80,10 @@ impl MenuData {
             preview_wanted: None,
             preview: None,
             capture: None,
+            weapons: None,
+            held: Keys(0),
+            results: None,
+            select: None,
             thumbs: BTreeMap::new(),
             profiles: profiles::View::default(),
             options: options::View::default(),
@@ -74,6 +95,12 @@ impl MenuData {
     pub fn set_catalog(&mut self, catalog: Catalog) {
         self.catalog = catalog;
         self.thumbs.clear();
+    }
+
+    /// The weapons the selection shows now, by mod id (`None` when no
+    /// selection is open).
+    pub fn weapon_choice(&self) -> Option<[i32; MAX_SLOTS]> {
+        self.select.as_ref().map(WeaponSelect::slots)
     }
 
     /// Reads the replays directory again.
@@ -107,16 +134,30 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
             Screen::Replays => data.refresh_replays(),
             Screen::Profiles => data.profiles = profiles::View::new(state.profiles().selected),
             Screen::Options => data.options = options::View::default(),
+            Screen::WeaponSelect => {
+                let remembered = state.profiles().selected().map(|p| p.weapons.as_slice()).unwrap_or(&[]);
+                data.select = data.weapons.as_ref().map(|m| WeaponSelect::new(m, remembered));
+            }
             _ => {}
         }
     }
     if screen != Screen::Options {
         data.capture = None;
     }
+    if screen != Screen::WeaponSelect {
+        data.select = None;
+    }
+    // The capture takes the key: egui must not also act on it (Space
+    // pressing the focused button, Tab moving the focus, Esc leaving).
+    if data.capture.is_some() {
+        ui.ctx().input_mut(|i| i.events.retain(|e| !matches!(e, Event::Key { .. } | Event::Text(_))));
+    }
     // A dialog of the options is open: Esc closes it, and stays.
     let dialog = screen == Screen::Options && data.options.keys.busy(data.capture.is_some());
     match screen {
-        Screen::InGame | Screen::WeaponSelect | Screen::Results => in_game(ui, state, &mut out),
+        Screen::InGame => ingame::show(ui, state, &mut out),
+        Screen::WeaponSelect => weapon_select::show(ui, data, &mut out),
+        Screen::Results => results::show(ui, state, data, &mut out),
         _ => {
             let frame = egui::Frame::central_panel(ui.style()).fill(Color32::from_rgb(16, 16, 20));
             egui::CentralPanel::default().frame(frame).show(ui, |ui| match screen {
@@ -129,7 +170,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
             });
         }
     }
-    let (esc, f5) = ui.input(|i| (i.key_pressed(Key::Escape), i.key_pressed(Key::F5)));
+    let (esc, f5) = (pressed_once(ui, Key::Escape), pressed_once(ui, Key::F5));
     if esc && !dialog {
         out.push(UiAction::Back);
     }
@@ -169,40 +210,12 @@ fn placeholder(ui: &mut Ui, screen: Screen, out: &mut Vec<UiAction>) {
     ui.label(RichText::new("Not available yet.").weak());
 }
 
-/// Over the match: the pause menu, and on the results a way back.
-fn in_game(ui: &mut Ui, state: &UiState, out: &mut Vec<UiAction>) {
-    let (body, results): (&str, bool) = match state.screen() {
-        Screen::InGame if state.is_paused() => ("Paused", false),
-        Screen::Results => ("", true),
-        _ => return,
-    };
-    let area = egui::Area::new(egui::Id::new("pause menu"));
-    let area = if results {
-        area.anchor(Align2::CENTER_BOTTOM, egui::vec2(0.0, -48.0))
-    } else {
-        area.anchor(Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-    };
-    area.show(ui.ctx(), |ui| {
-        egui::Frame::new().fill(Color32::from_black_alpha(210)).corner_radius(6.0).inner_margin(16.0).show(
-            ui,
-            |ui| {
-                ui.vertical_centered(|ui| {
-                    if results {
-                        if ui.button("Leave").clicked() {
-                            out.push(UiAction::LeaveMatch);
-                        }
-                        return;
-                    }
-                    ui.heading(body);
-                    ui.add_space(8.0);
-                    if ui.add_sized([200.0, 32.0], egui::Button::new("Resume")).clicked() {
-                        out.push(UiAction::Resume);
-                    }
-                    if ui.add_sized([200.0, 32.0], egui::Button::new("Leave match")).clicked() {
-                        out.push(UiAction::LeaveMatch);
-                    }
-                });
-            },
-        );
-    });
+/// `key` went down this frame: a press, not a held key's repeat (egui's
+/// `key_pressed` counts repeats, which made a held Esc flicker the pause).
+pub(crate) fn pressed_once(ui: &Ui, key: Key) -> bool {
+    ui.input(|i| {
+        i.events
+            .iter()
+            .any(|e| matches!(e, Event::Key { key: k, pressed: true, repeat: false, .. } if *k == key))
+    })
 }

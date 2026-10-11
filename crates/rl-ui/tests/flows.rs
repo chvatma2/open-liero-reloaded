@@ -117,8 +117,12 @@ fn main_to_local_play_to_match() {
     assert_eq!(s.len(), 1, "{:?}", h.state().commands);
     assert_eq!((s[0].seed, s[0].level_id.as_str()), (7, "olx-level-dirt-level"));
 
-    // The app reports it ready: in game; Esc pauses and the pause menu leaves.
+    // The app reports it ready: OLX's weapon selection, then in game; Esc
+    // pauses and the pause menu leaves.
     h.state_mut().ui.update(UiAction::MatchStarted);
+    h.run();
+    assert_eq!(h.state().ui.screen(), Screen::WeaponSelect);
+    h.state_mut().ui.update(UiAction::ChooseWeapons { weapons: [0; 5], names: vec![] });
     h.run();
     assert_eq!(h.state().ui.screen(), Screen::InGame);
     h.key_press(egui::Key::Escape);
@@ -129,7 +133,7 @@ fn main_to_local_play_to_match() {
     assert!(!h.state().ui.is_paused());
     h.key_press(egui::Key::Escape);
     h.run();
-    h.get_by_label("Leave match").click();
+    h.get_by_label("Quit to menu").click();
     h.run();
     assert_eq!(h.state().ui.screen(), Screen::Main);
     assert_eq!(h.state().commands.last(), Some(&AppCommand::EndMatch));
@@ -183,7 +187,7 @@ fn local_play_builds_match_options() {
         .iter()
         .map(|p| match p {
             Player::Bot(b) => (b.difficulty, b.personality),
-            Player::Human => panic!("one human"),
+            Player::Human | Player::HumanWith(_) => panic!("one human"),
         })
         .collect();
     use Difficulty::{Easy, Hard};

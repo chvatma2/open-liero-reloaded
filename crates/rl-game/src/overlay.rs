@@ -1,16 +1,13 @@
 //! The egui overlay at the display's resolution (spec §19 E10): worm
-//! names, damage popups, the HUD, the match panels (`panels.rs`: clock,
-//! kill feed, scoreboard, results) and the F2 debug panel. It only paints;
-//! it takes no input from the game.
+//! names, damage popups, the HUD (`rl_ui::hud`, from `hud::view`), the
+//! command line's results and the F2 debug panel. It only paints; it takes
+//! no input from the game.
 
 use egui::{Align2, Color32, FontId, Painter, Pos2};
 use rl_math::Vec2;
 use rl_scene::{Blend, View};
 
 use crate::session::{Driver, POPUP_TICKS, Session};
-
-/// OLX's `WRM_OUT`: no lives left.
-const OUT: i32 = -1;
 
 /// Maps world pixels to the overlay's points: the view rectangle is drawn
 /// into `dest` (output pixels, `rl_render::dest_rect`).
@@ -77,8 +74,12 @@ pub struct Overlay<'a> {
     pub show_scores: bool,
     pub stats: &'a Stats,
     /// Started from the menus: Esc pauses (the pause menu leaves), it
-    /// does not quit.
+    /// does not quit; the results are the menus' screen.
     pub menus: bool,
+    /// The minimap's texture (`hud::MinimapTexture`).
+    pub minimap: Option<egui::TextureId>,
+    /// Seconds since the start (the minimap's blink).
+    pub time: f64,
 }
 
 fn shadowed(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, colour: Color32) {
@@ -114,75 +115,31 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
             Color32::from_rgba_unmultiplied(255, 80, 60, fade),
         );
     }
-    let p = ui.painter();
-    hud(p, ui.max_rect(), s, o.menus);
-    crate::panels::top(p, ui.max_rect(), s, o.debug);
+    let hud = crate::hud::view(
+        s,
+        Some(crate::hud::view_rect(o.map.view)),
+        o.show_scores,
+        o.minimap,
+        o.time,
+        o.menus,
+        o.debug,
+    );
+    rl_ui::hud::show(ui, &hud);
     if o.debug {
-        debug(p, ui.max_rect(), o);
+        debug(ui.painter(), ui.max_rect(), o);
     }
-    let replay = matches!(s.driver, Driver::Replay(_));
-    if let Some(r) = &s.results {
-        // OLX shows "Game Over" for `GAMEOVER_WAIT`, then the results.
-        // A replay that ends sooner (its recording stops 3 s after the end)
-        // shows them at its end.
-        if s.results_shown() {
-            crate::panels::results(ui.ctx(), r, replay, o.menus);
+    // With the menus, the results are their screen (buttons); without,
+    // OLX's keys under them. OLX shows "Game Over" for `GAMEOVER_WAIT`
+    // first; a replay that ends sooner shows them at its end.
+    if let Some(r) = s.results.as_ref().filter(|_| s.results_shown() && !o.menus) {
+        let keys = if matches!(s.driver, Driver::Replay(_)) {
+            "F5 watch again    Esc quit"
         } else {
-            crate::panels::game_over(p, ui.max_rect());
-        }
-    } else if o.show_scores {
-        crate::panels::scoreboard(ui.ctx(), s);
-    }
-}
-
-/// The HUD: the player's (a replay: the followed worm's) health, weapon,
-/// lives and score, and the keys.
-fn hud(p: &Painter, rect: egui::Rect, s: &Session, menus: bool) {
-    let font = FontId::monospace(14.0);
-    let Some(me) = s.world.worms().first() else { return };
-    let line = if me.alive {
-        let slot = usize::try_from(me.current_weapon).ok().and_then(|i| me.slots.get(i));
-        let weapon = slot.and_then(|sl| s.world.sim_mod().weapon(sl.weapon));
-        let (name, state) = match (weapon, slot) {
-            (Some(w), Some(sl)) if sl.reloading => {
-                (w.name.as_str(), format!("reloading {:>3.0}%", sl.charge * 100.0))
-            }
-            (Some(w), Some(sl)) => (w.name.as_str(), format!("{:>3.0}%", sl.charge * 100.0)),
-            _ => ("-", String::new()),
+            "F5 rematch    Esc quit"
         };
-        format!(
-            "Health {:>3.0}   {} {}   kills {} deaths {} suicides {}",
-            me.health.max(0.0),
-            name,
-            state,
-            me.kills,
-            me.deaths,
-            me.suicides
-        )
-    } else if me.lives == OUT {
-        format!("Out of the game   kills {} deaths {} suicides {}", me.kills, me.deaths, me.suicides)
-    } else if matches!(s.driver, Driver::Replay(_)) {
-        format!("Dead   kills {} deaths {} suicides {}", me.kills, me.deaths, me.suicides)
-    } else {
-        format!("Dead: Jump to respawn   kills {} deaths {} suicides {}", me.kills, me.deaths, me.suicides)
-    };
-    let line = if me.lives >= 0 { format!("Lives {}   {line}", me.lives) } else { line };
-    let at = rect.left_bottom() + egui::vec2(10.0, -10.0);
-    shadowed(p, at, Align2::LEFT_BOTTOM, &line, font.clone(), Color32::WHITE);
-    // The keys, where there is room beside the HUD line.
-    if rect.width() >= 1100.0 {
-        let keys = match s.driver {
-            Driver::Sandbox => {
-                "arrows move/aim  Ctrl fire  Alt jump  X rope  Shift+arrows weapon  F2 debug  F5 restart  Esc quit"
-            }
-            Driver::Match(_) => {
-                "arrows move/aim  Ctrl fire  Alt jump  X rope  Shift+arrows weapon  Tab scores  F2 debug  F5 rematch  Esc quit"
-            }
-            Driver::Replay(_) => "Tab scores  F2 debug  F5 from the start  Esc quit",
-        };
-        let keys = if menus { keys.replace("Esc quit", "Esc pause") } else { keys.to_string() };
-        let at = rect.right_bottom() + egui::vec2(-10.0, -10.0);
-        shadowed(p, at, Align2::RIGHT_BOTTOM, &keys, FontId::proportional(12.0), Color32::from_gray(190));
+        rl_ui::screens::results::panel(ui.ctx(), r, |ui| {
+            ui.label(egui::RichText::new(keys).color(Color32::from_gray(200)));
+        });
     }
 }
 

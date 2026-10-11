@@ -218,8 +218,8 @@ fn options_rebind_a_key() {
     assert_eq!(*h.state().ui.bindings(), before);
     h.get_by_label("Add key for Up").click();
     h.run();
-    h.key_press(egui::Key::Escape);
-    h.run();
+    // The app feeds the capture every key and egui none (it swallows them).
+    press(&mut h, KeyCode::Escape);
     assert!(h.state().data.capture.is_none());
     assert_eq!(h.state().ui.screen(), Screen::Options);
     assert_eq!(*h.state().ui.bindings(), before);
@@ -334,4 +334,64 @@ fn options_set_video_audio_and_gameplay() {
     h.get_by_label("Reset the match to OLX's settings").click();
     h.run();
     assert_eq!(saved(&h).gameplay.match_prefs, Default::default());
+}
+
+/// The game's own keys (`GAME_KEYS`: Esc, F5, F2, Tab, H) are never bound,
+/// even from a file edited by hand: they are dropped, and an action left
+/// without a key gets OLX's back (Review Focus 2).
+#[test]
+fn game_keys_are_never_bound_from_a_file() {
+    use rl_ui::screens::GAME_KEYS;
+    let game = |b: &Bindings| b.keys.iter().any(|(_, k)| GAME_KEYS.iter().any(|(g, _)| g == k));
+    let mut s = Settings::default();
+    s.input.keys.push((Action::Shoot, KeyCode::Tab));
+    s.input.keys.retain(|(a, _)| *a != Action::Jump);
+    s.input.keys.push((Action::Jump, KeyCode::Escape));
+    s.input.keys.push((Action::Rope, KeyCode::KeyH));
+    let w = s.sanitize();
+    assert!(!game(&s.input), "{:?}", s.input.keys);
+    assert!(controllable(&s.input));
+    assert_eq!(s.input.of(Action::Shoot, KB), [Binding::Key(KeyCode::ControlLeft)]);
+    assert_eq!(s.input.of(Action::Jump, KB), [Binding::Key(KeyCode::AltLeft)], "OLX's back");
+    for k in ["Tab", "Esc", "H"] {
+        assert!(w.iter().any(|w| w.contains(k)), "{k}: {w:?}");
+    }
+    assert!(s.sanitize().is_empty(), "fixed once");
+
+    // Through the options' state, and a profile's own keys.
+    let mut ui = UiState::new(Settings::default(), Profiles::default(), 1);
+    let mut b = Bindings::olx();
+    b.keys.push((Action::Up, KeyCode::F5));
+    ui.update(UiAction::SetBindings(b));
+    assert!(!game(ui.bindings()));
+    let mut own = Bindings::olx();
+    own.keys = vec![(Action::Up, KeyCode::F2)];
+    let mut p = Profiles { list: vec![Profile { bindings: Some(own), ..Profile::default() }], selected: 0 };
+    p.sanitize();
+    let own = p.list[0].bindings.as_ref().unwrap();
+    assert!(!game(own) && controllable(own), "{:?}", own.keys);
+}
+
+/// The key the capture takes is the capture's alone: egui does not also
+/// act on it (Space would press the focused button, Esc leave the screen).
+#[test]
+fn capture_swallows_the_captured_key() {
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
+    open_keys(&mut h);
+    h.get_by_label("Add key for Jump").click();
+    h.run();
+    // Keys egui hears while the box is open do nothing.
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.state().data.capture.is_some(), "Esc reaches the capture, not egui");
+    assert_eq!(h.state().ui.screen(), Screen::Options);
+    // The captured key, also seen by egui in the same frame, binds once.
+    h.state_mut().data.capture.as_mut().unwrap().on_key(KeyCode::Space, true);
+    h.key_press(egui::Key::Space);
+    h.key_press(egui::Key::Enter);
+    h.run();
+    h.run();
+    assert!(h.state().data.capture.is_none(), "no second capture opened");
+    assert_eq!(keys(&h, Action::Jump), [Binding::Key(KeyCode::AltLeft), Binding::Key(KeyCode::Space)]);
+    assert_eq!(h.state().ui.screen(), Screen::Options);
 }

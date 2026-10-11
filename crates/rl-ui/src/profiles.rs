@@ -6,6 +6,7 @@
 use std::fmt;
 
 use rl_input::Bindings;
+use rl_sim::MAX_SLOTS;
 use serde::{Deserialize, Serialize};
 
 /// The version `profiles.ron` is written with; any other is refused.
@@ -22,6 +23,38 @@ pub const MAX_PROFILES: usize = 64;
 /// the first's green: white, strong blue, yellow, then green again).
 /// OLX: src/client/ProfileSystem.cpp:69-75 (`DefaultLocalProfiles`)
 pub const NEW_COLOURS: [[u8; 3]; 4] = [[255, 255, 255], [20, 90, 255], [255, 220, 0], [0, 177, 0]];
+
+/// The longest weapon name a profile remembers, in bytes (OLX's
+/// `profiles.dat` keeps 64: `ProfileSystem.cpp:289`).
+pub const MAX_WEAPON_NAME: usize = 64;
+
+/// OLX's weapon slots of a new profile (`ProfileSystem.cpp:374-380`), by
+/// name: the weapon selection starts from them where the mod has them.
+pub const DEFAULT_WEAPONS: [&str; MAX_SLOTS] =
+    ["minigun", "super shotgun", "blaster", "gauss gun", "big nuke"];
+
+/// OLX's bot profiles' colours, CPU 1 to CPU 7 (`AddDefaultBotPlayers`).
+/// OLX: src/client/ProfileSystem.cpp:47-59.
+pub const CPU_COLOURS: [[u8; 3]; 7] =
+    [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 0, 255], [0, 255, 255], [128, 128, 128], [128, 255, 0]];
+
+/// Colours closer than this (RGB distance) to the human's are not given
+/// to a bot, so the player's worm stands out.
+pub const BOT_COLOUR_DISTANCE: f32 = 120.0;
+
+/// The colours of `n` bots playing against a human of colour `human`:
+/// OLX's [`CPU_COLOURS`] in turn, without those close to the human's
+/// (all of them if every one is), again from the first after the last.
+/// Cosmetic: no simulation state.
+pub fn bot_colours(human: [u8; 3], n: usize) -> Vec<[u8; 3]> {
+    let dist = |c: [u8; 3]| {
+        let d = |i: usize| f32::from(c[i]) - f32::from(human[i]);
+        (d(0) * d(0) + d(1) * d(1) + d(2) * d(2)).sqrt()
+    };
+    let far: Vec<[u8; 3]> = CPU_COLOURS.into_iter().filter(|&c| dist(c) >= BOT_COLOUR_DISTANCE).collect();
+    let pool = if far.is_empty() { CPU_COLOURS.to_vec() } else { far };
+    (0..n).map(|i| pool[i % pool.len()]).collect()
+}
 
 /// Why a profile name is refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +91,9 @@ pub struct Profile {
     pub colour: [u8; 3],
     /// The player's own keys; `None` uses the options' bindings.
     pub bindings: Option<Bindings>,
+    /// The weapons chosen last, by name, slot by slot (OLX's
+    /// `sWeaponSlots`): the weapon selection starts from them.
+    pub weapons: Vec<String>,
 }
 
 impl Default for Profile {
@@ -69,6 +105,7 @@ impl Default for Profile {
             skin_id: "default".into(),
             colour: [0, 177, 0],
             bindings: None,
+            weapons: DEFAULT_WEAPONS.map(String::from).to_vec(),
         }
     }
 }
@@ -167,8 +204,9 @@ impl Profiles {
     /// Makes the list usable: at least one profile and at most
     /// [`MAX_PROFILES`], names without control characters, trimmed, not
     /// empty and at most [`MAX_NAME_CHARS`] long, a skin named, own keys
-    /// that reach every action (`Bindings::repair`), `selected` in range.
-    /// One warning per fix.
+    /// that reach every action and leave the game's keys alone
+    /// ([`crate::settings::sanitize_bindings`]), at most five remembered
+    /// weapons of sane names, `selected` in range. One warning per fix.
     pub fn sanitize(&mut self) -> Vec<String> {
         let mut w = Vec::new();
         if self.list.len() > MAX_PROFILES {
@@ -194,7 +232,14 @@ impl Profiles {
                 p.skin_id = Profile::default().skin_id;
             }
             if let Some(b) = &mut p.bindings {
-                w.extend(b.repair().into_iter().map(|x| format!("profile {}: {x}", i + 1)));
+                let fixed = crate::settings::sanitize_bindings(b);
+                w.extend(fixed.into_iter().map(|x| format!("profile {}: {x}", i + 1)));
+            }
+            let sane = |n: &String| n.len() <= MAX_WEAPON_NAME && !n.chars().any(char::is_control);
+            if p.weapons.len() > MAX_SLOTS || !p.weapons.iter().all(sane) {
+                w.push(format!("profile {}: odd remembered weapons: forgotten", i + 1));
+                p.weapons.truncate(MAX_SLOTS);
+                p.weapons.retain(sane);
             }
         }
         if self.selected >= self.list.len() {
@@ -202,5 +247,32 @@ impl Profiles {
             self.selected = 0;
         }
         w
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// OLX's seven bot colours in turn; none close to the human's.
+    #[test]
+    fn bot_colours_follow_olx_and_skip_the_humans() {
+        // The default human green (0, 177, 0): OLX's green bot is skipped.
+        let c = bot_colours(Profile::default().colour, 8);
+        assert!(!c.contains(&[0, 255, 0]), "{c:?}");
+        assert_eq!(
+            c[..6],
+            [[255, 0, 0], [0, 0, 255], [255, 0, 255], [0, 255, 255], [128, 128, 128], [128, 255, 0]]
+        );
+        assert_eq!(c[6], [255, 0, 0], "then again from the first");
+        // A red human: no red bot; seven bots differ from each other while
+        // there are colours enough.
+        let c = bot_colours([250, 10, 10], 6);
+        assert!(!c.contains(&[255, 0, 0]));
+        let mut d = c.clone();
+        d.dedup();
+        assert_eq!(d.len(), 6);
+        assert_eq!(bot_colours([1, 2, 3], 7), CPU_COLOURS);
+        assert!(bot_colours([0, 0, 0], 0).is_empty());
     }
 }

@@ -82,21 +82,27 @@ fn a_menu_match_plays_the_selected_profile_look() {
         skin_id: "olx-skin-angryworm".into(),
         colour: [20, 90, 255],
         bindings: None,
+        weapons: Vec::new(),
     };
     let profiles = Profiles { list: vec![Profile::default(), mine], selected: 1 };
     let mut sh = shell(&dir, profiles);
     sh.act(UiAction::Open(Screen::LocalPlay));
     sh.act(UiAction::StartMatch);
     sh.poll();
-    assert_eq!(sh.ui.screen(), Screen::InGame, "{:?}", sh.ui.message());
+    assert_eq!(sh.ui.screen(), Screen::WeaponSelect, "{:?}", sh.ui.message());
     let content = rl_content::Content::open(&dir).unwrap();
     let assets = sh.session().unwrap().present.assets();
     let skin = |i| &assets.image(assets.worm(i).skin).image;
     // The human: the profile's skin in its colour; the bots: OLX's default
-    // skin in their default colours.
+    // skin in OLX's bot colours, none close to the human's blue.
     let human = content.load_skin("olx-skin-angryworm").unwrap();
     assert_eq!(skin(0), &human.colorized(Rgba::rgb(20, 90, 255)));
     let default = content.load_skin("olx-skin-default").unwrap();
-    assert_eq!(skin(1), &default.colorized(rl_present::default_colour(1)));
+    let [r, g, b] = rl_ui::bot_colours([20, 90, 255], 1)[0];
+    assert_eq!([r, g, b], [255, 0, 0], "OLX's first bot colour");
+    assert_eq!(skin(1), &default.colorized(Rgba::rgb(r, g, b)));
+    let [r, g, b] = rl_ui::bot_colours([20, 90, 255], 2)[1];
+    assert_eq!([r, g, b], [0, 255, 0], "OLX's blue is too close: skipped");
+    assert_eq!(skin(2), &default.colorized(Rgba::rgb(r, g, b)));
     assert_eq!(sh.session().unwrap().names.0[0], "Mine");
 }

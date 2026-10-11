@@ -9,7 +9,8 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   `Player`, `Catalog`, skins), `rl-data` (images), `rl-modes`, `rl-bots`,
   `rl-sim`, `rl-replay` (a replay's header), `rl-input` (same layer:
   `Bindings`), egui 0.36.2, serde, ron, `directories` 6.0.0 and anyhow;
-  `egui_kittest` 0.36.2 and `rl-scene` (the game's skin frames) for tests.
+  `egui_kittest` 0.36.2 (with `wgpu` and `snapshot` for the HUD's image
+  snapshots) and `rl-scene` (the game's skin frames) for tests.
   **No GPU handle and no window:** everything is tested headless, the
   widgets by label with `egui_kittest` (`tests/flows.rs`).
 - **State** (`state.rs`): `UiState::new(settings, profiles, seed)`, then
@@ -20,21 +21,29 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   `PlayReplay(path)`; until it answers, Start, Back and the menu buttons
   do nothing (no double matches); a failure returns to the screen it came
   from (local play, Main, Replays) with the reason. `game()` says what
-  plays (`Game::{Match, Sandbox, Replay}`). In game, Back toggles the pause
-  menu (`SetPaused`; a match ending while paused emits `SetPaused(false)`),
+  plays (`Game::{Match, Sandbox, Replay}`). A match starts on
+  `WeaponSelect`: `ChooseWeapons { weapons, names }` (Done) emits
+  `ArmPlayer(weapons)`, remembers the names in the selected profile
+  (`SaveProfiles`) and goes in game. In game, Back toggles the pause
+  menu (`SetPaused`; a match ending while paused emits `SetPaused(false)`);
+  paused, `Open(Options)` opens the options and their Back returns;
   `LeaveMatch` ends the match (`EndMatch`); `Restart` (F5, in game when
   not paused or on the results) plays it again in place (`Restart`);
   a match's results' Start is a rematch (`EndMatch` then `StartMatch`,
-  the next seed). The
+  the next seed, the weapons chosen again); `SaveReplay` asks the app
+  (`AppCommand::SaveReplay`, answered by `ReplaySaved`, shown as the
+  message). The
   `Set*` actions sanitize, then apply (`ApplyVideo`, `ApplyAudio`,
   `ApplyBindings`) and save (`SaveSettings`, `SaveProfiles`) only what
-  changed (`SetBindings` repairs: `Bindings::repair`). `bindings()` is the
+  changed (`SetBindings`: `sanitize_bindings`). `bindings()` is the
   selected profile's, else the options'.
 - **Settings** (`settings.rs`): video (`WindowPreset`, fullscreen,
   `FrameRate`, `UpscaleFilter`, interpolation, `ui_scale` in
   `UI_SCALE_RANGE` 0.5-3), audio volumes 0-1, `Bindings`, gameplay
   (`HudStyle`, `MatchPrefs`). `sanitize()` fixes out-of-range values and
-  keys that leave an action unreachable (OLX's back), one warning each.
+  keys (`sanitize_bindings`: the `GAME_KEYS` Esc, F5, F2, Tab and H are
+  dropped, then an action left unreachable gets OLX's back), one warning
+  each.
   The master volume defaults to OLX's 70 %; the game plays `master * sfx`.
 - **Match preferences** (`match_prefs.rs`): mod, level, `bots` (1 to
   `MAX_BOTS`), one `difficulty` or `per_bot` levels, `personality`
@@ -69,16 +78,46 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   feeds), a key other actions have opens a dialog (move, refused when it
   would leave one without; share; cancel), `GAME_KEYS` refused, browser
   shortcuts pointed out, Reset to OLX's keys; a profile with its own keys
-  is rebound there), a pause menu over the game and a Leave button on the
-  results; Import and About are placeholders until their tasks. Esc is
-  `Back` and F5 `Restart` on every screen; in the options Esc first closes
-  an open dialog.
+  is rebound there; while a capture is open egui hears no key: the
+  capture has it alone), the pause menu (`ingame.rs`: Resume, Options,
+  Quit to menu), the weapon selection (`weapon_select.rs`, over the level:
+  the slots with ◀ ▶, Random, Done; driven by `MenuData::held`, the game's
+  keys the app feeds, or the mouse; `MenuData::weapons` is the app's
+  `WeaponMenu`) and the results (`results.rs`: `panel(ctx, results,
+  footer)` also serves the command line's games; Rematch or, for a
+  replay, Watch again; Save replay; Back to menu; `MenuData::results`);
+  Import and About are placeholders until their tasks. Esc is `Back` and
+  F5 `Restart` on every screen, a held key's repeats ignored
+  (`pressed_once`); in the options Esc first closes an open dialog.
 - **Replays** (`replays.rs`): `list(dir)` (the `.rlrp` files, automatic
   saves newest first, each with `header_problem`: 6 bytes read),
   `auto_save(dir, bytes)` (`match-NNNNNN.rlrp`, the last
-  `MAX_AUTO_REPLAYS` kept; a player's own files are never removed).
-- **Profiles** (`profiles.rs`): `Profile { name, skin_id, colour, bindings }`
-  (OLX's "OpenLieroXor" by default), `Profiles { list, selected }`;
+  `MAX_AUTO_REPLAYS` kept; a player's own files are never removed),
+  `save_kept(dir, bytes)` (the results' Save replay: `replay-NNN.rlrp`).
+- **HUD** (`hud/`, §21 G5, Modern style): `model.rs` (names, OLX's kill
+  feed texts, `clock`, scoreboard `rows`, `Results`), `view.rs`
+  (`HudView`, the frame's data; `WormHud::of(world, i, names, ..)`: health,
+  lives, kills, slots with OLX's bar states), `layout.rs`
+  (`HudLayout::new(screen)`: health and weapons bottom left, clock top
+  centre, feed top left, minimap top right at OLX's 119 × 94 proportions,
+  keys bottom right; it shrinks to half size and never covers the health
+  or weapons: Review Focus 5, `hud_layout_holds_at_all_scales`),
+  `minimap.rs` (`image`: the colour terrain box-filtered to
+  `TEXTURE_SIZE`; OLX's dot rectangles and blink; the view rectangle),
+  `paint.rs` (`show(ui, &view)`, `table`). Image snapshots at 1080p and
+  1440p (`tests/hud_snapshots.rs` against `fixtures/ui/`, in the GPU tier
+  with `RL_GPU_TESTS`; `UPDATE_SNAPSHOTS=1` re-records).
+- **Weapon selection** (`weapon_select.rs`, §21 G4): `WeaponMenu` (names,
+  enabled, `findEnabledWeapon`'s fallback, seed; `needs_choice`),
+  `WeaponSelect::new(menu, remembered)` (the profile's names), `change`
+  (OLX's loop over the enabled weapons), `random` (`get_random_weapons`),
+  `on_keys(menu, held, now)` (edges, auto-repeat, × 6 with Select weapon,
+  Done on Fire's release).
+- **Profiles** (`profiles.rs`): `Profile { name, skin_id, colour, bindings,
+  weapons }` (OLX's "OpenLieroXor" by default; `weapons`: the last
+  selection by name, OLX's `DEFAULT_WEAPONS` at first), `Profiles { list,
+  selected }`; `bot_colours(human, n)` (OLX's `CPU_COLOURS` in turn,
+  skipping those near the human's);
   `check_name(name, except)` (trimmed, not empty, at most 20 characters,
   no control character, no other profile's name ignoring case:
   `NameError`), `rename`, `add` ("Player N", `NEW_COLOURS` in turn),
@@ -111,4 +150,7 @@ Test: `cargo nextest run -p rl-ui` (`tests/store.rs`, `tests/state.rs`,
 `tests/profiles.rs`: profiles through the widgets, names, the preview; its
 last part compares with `rl_scene::SceneAssets` when `RL_CONTENT_DIR` is
 set; `tests/options.rs`: rebinding never leaves an action unreachable, the
-rebinding flow and the other sections through the widgets).
+rebinding flow and the other sections through the widgets, game keys never
+bound, the capture swallowing its key; `tests/ingame.rs`: the HUD layout,
+the weapon selection, the pause menu, Esc/F5 repeats, the results;
+`tests/hud_snapshots.rs` with `RL_GPU_TESTS`).

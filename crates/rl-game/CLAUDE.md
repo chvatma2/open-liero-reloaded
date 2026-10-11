@@ -37,15 +37,25 @@ cargo run --release -p rl-game -- --replay f.rlrp
   a failure (a pack missing or broken: `setup::load_match`, `load`,
   `load_replay`) returns to the menu with the reason (Review Focus 3).
   Esc and F5 are the menus' there: Esc pauses (ticks stop; the pause menu
-  resumes or leaves), F5 restarts in place. Results show → `MatchOver`
-  (`Session::results_shown`). Every Deathmatch's replay is saved in the
+  resumes, opens the options or leaves), F5 restarts in place. A
+  Deathmatch starts on the weapon selection (`shell::weapon_menu` gives
+  `MenuData::weapons`; skipped when there is no choice): no tick until
+  Done, whose `ArmPlayer` puts `Player::HumanWith` in the assets' options
+  and rebuilds the world (`Session::rebuild`). `Shell::tick(keys)` ticks
+  only when neither the pause nor the selection holds the game (the loop
+  calls it; replays record ticks only). The app feeds the game's keys
+  held (`MenuData::held`) every frame. Results show → `MatchOver`
+  (`Session::results_shown`; `MenuData::results` set); Save replay keeps
+  `Session::replay` with `rl_ui::replays::save_kept`. Every Deathmatch's replay is saved in the
   data directory's `replays/` when it ends, restarts or the game quits
   (`rl_ui::replays::auto_save`, none of no tick); the Replays screen plays
   them. Settings are written at most once a second (`Shell::flush`) and
   at exit. The human's profile names and colours worm 0 (`PlayerLook`)
   and its skin is worm 0's (`Assets::skin`); every other worm, and every
   worm of a replay, wears OLX's default skin (`Assets::bot_skin`, as OLX's
-  bot profiles). `Shell::update_preview(ctx)`, after the menus are drawn,
+  bot profiles) in OLX's bot colours away from the player's
+  (`rl_ui::bot_colours`; a replay's worms in the default colours).
+  `Shell::update_preview(ctx)`, after the menus are drawn,
   uploads the profiles screen's skin preview (`MenuData::preview_wanted`,
   `rl_ui::skin_preview::frames`) as egui textures (`MenuData::preview`,
   from the next frame), loading the skin once while it stays the same.
@@ -64,7 +74,8 @@ cargo run --release -p rl-game -- --replay f.rlrp
   keeps the file's values for them until the player changes them in the
   options. Volumes: `master * sfx` to the menus' or the game's
   `Audio::set_volume` at once (`Shell::volume`). While the options capture
-  a key, the app feeds `MenuData::capture` every window and gilrs event.
+  a key, the app feeds `MenuData::capture` every window and gilrs event,
+  and egui hears no key (`app::egui_hears`).
 - **Single thread** (spec §8.6): the device is created and used only on
   the main (event-loop) thread; under WSL's d3d12 GL driver a thread that
   used the device crashes when it exits. kira runs its own audio thread.
@@ -109,25 +120,27 @@ cargo run --release -p rl-game -- --replay f.rlrp
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the default
   restrictions) feeds `rl_content::build_match`, the same assembly as
   `rl-cli match` (loadouts, the Deathmatch and its respawn loadout, the
-  shared area cache, the recorder). Until M7's weapon menu the human gets
-  random enabled weapons (`rl_content::Player::Human`). The bots think on
+  shared area cache, the recorder). The command line's human gets random
+  enabled weapons (`rl_content::Player::Human`). The bots think on
   the main thread inside `Session::tick`, in worm order, before the world
   ticks; `MatchDriver` times each tick's thinking (`think_ns`, the F2 panel
   and the exit summary's p50/p99) and counts thinks over budget (none, by
   design). The recording ends `RECORD_AFTER_END` (3 s) after the game over
   or at `MAX_TICKS`; `--record f` saves it at exit and on each rematch
   (`f`, `f-2`, ... : `drive::record_path`).
-- **Match HUD** (`hud.rs` pure, `panels.rs` paints): names ("You", "Bot
-  N"; a replay's "Worm N"), the kill feed from `Message` events (OLX's
-  texts, the last 6 lines for 3 s; kills show no weapon: `rl-sim` does not
-  record the injuring weapon, and OLX drops `" with <weapon>"` then), the
-  time-limit clock (red in the last 10 s; it stops at the end, as
-  `Deathmatch::time_left_ms` does), Tab's scoreboard
+- **Match HUD** (`rl_ui::hud`, Modern; `hud.rs` builds its `HudView` from
+  the session): names ("You", "Bot N"; a replay's "Worm N"), the kill feed
+  from `Message` events (OLX's texts, the last 6 lines for 3 s; kills show
+  no weapon: `rl-sim` does not record the injuring weapon, and OLX drops
+  `" with <weapon>"` then), the time-limit clock (red in the last 10 s; it
+  stops at the end, as `Deathmatch::time_left_ms` does) and kill limit,
+  the minimap (`hud::MinimapTexture`: the colour terrain as an egui
+  texture, made again every `MINIMAP_TICKS`), Tab's scoreboard
   (`World::scores`, the mode's order; `hud::ScoreKey` hides it when the
-  window loses focus, which never delivers Tab's release), and on `GameOver` "Game Over",
-  then after OLX's `GAMEOVER_WAIT` (3 s) the results (winner or "noone",
-  reason, lives, score, kills, deaths, suicides, damage; F5 rematch, Esc
-  quit). `Session::tally` counts kills by bots,
+  window loses focus, which never delivers Tab's release), and on
+  `GameOver` "Game Over", then after OLX's `GAMEOVER_WAIT` (3 s) the
+  results (the menus' screen; the command line's:
+  `rl_ui::screens::results::panel` with F5 rematch, Esc quit). `Session::tally` counts kills by bots,
   the player and suicides (Kill events) over the run's match time.
 - **Window** (`window.rs`, the user's ruling after the plan 6 playtest):
   not resizable, no maximise button; `--fullscreen` is borderless. Size
@@ -187,6 +200,8 @@ Test: `cargo nextest run -p rl-game` (the pure parts; `setup`, `session`,
 budget, a recording replayed through a replay session), `tests/menu.rs`
 (starts with missing or broken content, rapid menu actions) and
 `tests/profiles.rs` (the preview's textures; a menu match wears the
-profile's look), `tests/options.rs` (video through the paced requests,
+profile's look), `tests/ingame.rs` (the weapon selection, the pause and a
+valid replay, the results against the world's scores), `tests/options.rs`
+(video through the paced requests,
 volumes live, the saved window with the flags on top) play the imported
 levels when `RL_CONTENT_DIR` is set).

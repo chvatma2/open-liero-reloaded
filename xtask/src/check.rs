@@ -36,8 +36,8 @@ pub fn run(offline: bool) -> anyhow::Result<bool> {
 }
 
 /// `cargo xtask full`: `check`, then the bot-match grid ([`FULL_TESTS`]),
-/// then the GPU tier (the renderer's GPU tests
-/// and the render goldens, with `RL_GPU_TESTS` set), skipped with a notice
+/// then the GPU tier (the renderer's GPU tests,
+/// the render goldens and the HUD snapshots, with `RL_GPU_TESTS` set), skipped with a notice
 /// when no graphics adapter opens, and the audio device check (OLX sounds
 /// on the default output), skipped with a notice when no device opens.
 pub fn full(offline: bool) -> anyhow::Result<bool> {
@@ -52,7 +52,7 @@ pub const FULL_TESTS: &[(&str, &str)] = &[("rl-cli", "grid")];
 
 /// The test targets of the GPU tier as `(package, test target)`.
 pub const GPU_TESTS: &[(&str, &str)] =
-    &[("rl-render", "gpu"), ("rl-cli", "render_golden"), ("rl-game", "soak")];
+    &[("rl-render", "gpu"), ("rl-cli", "render_golden"), ("rl-game", "soak"), ("rl-ui", "hud_snapshots")];
 
 /// Whether `rl-render`'s `adapter` example opens a graphics adapter:
 /// `Ok(Ok(adapter))` when it does, `Ok(Err(notice))` when none opens, `Err`

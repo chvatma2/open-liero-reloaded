@@ -1,8 +1,8 @@
-//! What the match HUD shows, without painting it (spec §8.3; OLX's HUD:
+//! What the match HUD says (spec §8.3; OLX's HUD:
 //! `docs/porting/olx-notes/presentation.md` §9, its results screen:
 //! `bots-and-deathmatch.md` §3.4): the worms' names, the kill feed from
-//! the mode's `Message` events, the time-limit clock (frozen at the end),
-//! the scoreboard rows and the results of a finished match.
+//! the mode's `Message` events, the time-limit clock, the scoreboard rows
+//! and the results of a finished match.
 
 use rl_modes::text;
 use rl_sim::{EndReason, Message, Score, World};
@@ -17,35 +17,6 @@ pub const FEED_TICKS: u64 = 300;
 /// OLX's `WRM_UNLIM` and `WRM_OUT` lives.
 const UNLIMITED: i32 = -2;
 const OUT: i32 = -1;
-
-/// OLX's `ShowScore`: the scoreboard shows while Tab is held. A window
-/// that loses focus with Tab held never gets the release, so losing focus
-/// hides it, as `rl-input` releases the game's keys then.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ScoreKey {
-    shown: bool,
-}
-
-impl ScoreKey {
-    /// Tab went down (`true`) or up.
-    pub fn key(&mut self, pressed: bool) {
-        self.shown = pressed;
-    }
-
-    /// The window gained or lost the keyboard focus.
-    pub fn focus(&mut self, focused: bool) {
-        self.shown &= focused;
-    }
-
-    /// A script's `scores on|off`.
-    pub fn set(&mut self, on: bool) {
-        self.shown = on;
-    }
-
-    pub fn shown(self) -> bool {
-        self.shown
-    }
-}
 
 /// Who plays each worm, for its name.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -192,25 +163,6 @@ impl Results {
 mod tests {
     use super::*;
 
-    /// Tab shows the scoreboard while held; a window that loses focus
-    /// with Tab held never gets the release, so it hides the scoreboard.
-    #[test]
-    fn scoreboard_hides_when_the_window_loses_focus() {
-        let mut k = ScoreKey::default();
-        assert!(!k.shown());
-        k.key(true);
-        assert!(k.shown());
-        k.focus(false);
-        assert!(!k.shown(), "focus lost with Tab held");
-        k.focus(true);
-        assert!(!k.shown(), "focus back: Tab must be pressed again");
-        k.key(true);
-        k.key(false);
-        assert!(!k.shown());
-        k.set(true);
-        k.focus(true);
-        assert!(k.shown(), "a script's `scores on` stays while focused");
-    }
     use rl_sim::TextId;
 
     fn names() -> Names {

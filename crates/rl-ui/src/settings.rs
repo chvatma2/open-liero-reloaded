@@ -11,7 +11,7 @@
 
 use std::ops::RangeInclusive;
 
-use rl_input::Bindings;
+use rl_input::{Bindings, KeyCode, key_name};
 use serde::{Deserialize, Serialize};
 
 use crate::match_prefs::MatchPrefs;
@@ -39,11 +39,39 @@ impl Settings {
     pub fn sanitize(&mut self) -> Vec<String> {
         let mut w = self.video.sanitize();
         w.extend(self.audio.sanitize());
-        // Keys that leave an action unreachable get OLX's back (Review Focus 2).
-        w.extend(self.input.repair().into_iter().map(|x| format!("input: {x}")));
+        // The game's keys are dropped; keys that leave an action
+        // unreachable get OLX's back (Review Focus 2).
+        w.extend(sanitize_bindings(&mut self.input).into_iter().map(|x| format!("input: {x}")));
         w.extend(self.gameplay.match_prefs.sanitize());
         w
     }
+}
+
+/// The keys the game keeps for itself (`rl-game`'s `on_key` and the
+/// menus), with what they do: never bound to an action.
+pub const GAME_KEYS: [(KeyCode, &str); 5] = [
+    (KeyCode::Escape, "the menus"),
+    (KeyCode::F5, "restart"),
+    (KeyCode::F2, "the debug panel"),
+    (KeyCode::Tab, "the scores"),
+    (KeyCode::KeyH, "the health bars"),
+];
+
+/// Makes bindings from a file or a widget usable: the [`GAME_KEYS`] are
+/// dropped (a hand-edited file may bind them), then every action left
+/// without a key or pad input gets OLX's back (`Bindings::repair`). One
+/// warning per fix.
+pub fn sanitize_bindings(b: &mut Bindings) -> Vec<String> {
+    let mut w = Vec::new();
+    b.keys.retain(|&(a, k)| match GAME_KEYS.iter().find(|(g, _)| *g == k) {
+        Some((_, what)) => {
+            w.push(format!("{} is the game's ({what}): unbound from {}", key_name(k), a.name()));
+            false
+        }
+        None => true,
+    });
+    w.extend(b.repair());
+    w
 }
 
 /// The window, presentation and menu scale (spec §8.2, §8.6; §21 G3).

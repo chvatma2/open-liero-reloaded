@@ -9,24 +9,33 @@
 //! "Loading…" meanwhile; until then `UiState` ignores another start, Back
 //! and the menu buttons (plan 7 Review Focus 4). A start that fails (a
 //! pack missing or broken, a file that is no replay) returns to the
-//! screen it came from with the reason (Review Focus 3). Every
+//! screen it came from with the reason (Review Focus 3). A Deathmatch
+//! starts with OLX's weapon selection over its level: the world waits (no
+//! tick) until Done arms the player (`Player::HumanWith` in the match's
+//! options, the world built again with them, so the replay holds them).
+//! The pause menu and the selection stop the ticks ([`Shell::tick`]):
+//! replays record ticks only, so a pause never shows in one. Every
 //! Deathmatch's replay is saved in the data directory's `replays/` when it
-//! ends, is restarted or the game quits (`rl_ui::replays::auto_save`).
+//! ends, is restarted or the game quits (`rl_ui::replays::auto_save`); the
+//! results' Save replay keeps it under a name of its own
+//! (`rl_ui::replays::save_kept`).
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
 use rl_audio::Audio;
-use rl_content::{Content, LoadedSkin, MatchOptions};
+use rl_content::{Content, LoadedSkin, MatchOptions, Player};
 use rl_input::Bindings;
 use rl_scene::{Interpolation, Viewport};
+use rl_sim::{Keys, MAX_SLOTS};
 use rl_ui::screens::MenuData;
 use rl_ui::skin_preview::{self, PreviewKey, PreviewTextures};
-use rl_ui::{AppCommand, AudioSettings, Profiles, Settings, Store, UiAction, UiState, VideoSettings};
+use rl_ui::weapon_select::{WeaponMenu, WeaponSelect};
+use rl_ui::{AppCommand, AudioSettings, Profiles, Screen, Settings, Store, UiAction, UiState, VideoSettings};
 
 use crate::session::Session;
-use crate::setup::{self, Assets, PlayerLook, SandboxOptions};
+use crate::setup::{self, Assets, Game, PlayerLook, SandboxOptions};
 use crate::video::{self, Overrides};
 
 /// What the shell needs besides the menus' state.
@@ -260,6 +269,13 @@ impl Shell {
             AppCommand::PlayReplay(path) => self.pending = Some(Launch::Replay(path)),
             AppCommand::EndMatch => self.end(),
             AppCommand::SetPaused(on) => self.paused = on,
+            AppCommand::ArmPlayer(weapons) => self.arm(weapons),
+            AppCommand::SaveReplay => {
+                let saved = self.keep_replay();
+                for c in self.ui.update(UiAction::ReplaySaved(saved)) {
+                    self.carry(c, out);
+                }
+            }
             AppCommand::Restart => self.restart(),
             AppCommand::ApplyVideo(v) => {
                 if let Some((_, o)) = &mut self.overrides {
@@ -288,6 +304,13 @@ impl Shell {
         match self.launch(launch) {
             Ok(()) => {
                 let mut out = self.act(UiAction::MatchStarted);
+                // OLX skips the selection when there is no choice to make.
+                if self.ui.screen() == Screen::WeaponSelect
+                    && let Some(menu) = self.data.weapons.as_ref().filter(|m| !m.needs_choice())
+                {
+                    let weapons = WeaponSelect::new(menu, &[]).slots();
+                    out.extend(self.act(UiAction::ChooseWeapons { weapons, names: Vec::new() }));
+                }
                 out.push(Outcome::Started);
                 out
             }
@@ -334,10 +357,53 @@ impl Shell {
         audio.load(&assets.m, assets.content.core());
         self.log(audio.take_warnings());
         session.audio = audio;
+        self.data.weapons = weapon_menu(&assets);
+        self.data.results = None;
         self.play = Some(Playing { assets, session });
         self.paused = false;
         self.over_reported = false;
         Ok(())
+    }
+
+    /// The weapon selection's choice: the human starts with `weapons`
+    /// (none enabled: -1s, the random loadout stays). The world is built
+    /// again from the options with them; no tick has played.
+    fn arm(&mut self, weapons: [i32; MAX_SLOTS]) {
+        let Some(p) = &mut self.play else { return };
+        let Game::Deathmatch { options, .. } = &mut p.assets.game else { return };
+        if weapons.iter().any(|&w| w < 0) {
+            return;
+        }
+        if let Some(first) = options.players.first_mut() {
+            *first = Player::HumanWith(weapons);
+        }
+        if let Err(e) = p.session.rebuild(&p.assets) {
+            eprintln!("warning: arming the player: {e:#}");
+        }
+    }
+
+    /// The results' Save replay: the match's replay as a file of its own
+    /// in the data directory's `replays/` (never removed automatically).
+    fn keep_replay(&mut self) -> Result<String, String> {
+        let dir = self.store.replays_dir().ok_or("there is no data directory")?;
+        let r = self.play.as_mut().and_then(|p| p.session.replay()).ok_or("there is no replay")?;
+        let path = rl_ui::replays::save_kept(&dir, &r.encode()).map_err(|e| e.to_string())?;
+        println!("rl-game: kept replay {}", path.display());
+        Ok(path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned()))
+    }
+
+    /// One tick of the game playing, with the player holding `keys`,
+    /// unless the pause menu or the weapon selection holds it (the
+    /// replay records ticks only: a pause is not in it). Whether it ticked.
+    pub fn tick(&mut self, keys: Keys) -> bool {
+        let held = self.paused || self.ui.screen() == Screen::WeaponSelect;
+        match self.session_mut().filter(|_| !held) {
+            Some(s) => {
+                s.tick(keys);
+                true
+            }
+            None => false,
+        }
     }
 
     /// The game ends: its replay saved, the sound output kept.
@@ -350,6 +416,8 @@ impl Shell {
             audio.stop_all();
             self.audio = Some(audio);
         }
+        self.data.weapons = None;
+        self.data.results = None;
         self.paused = false;
         self.over_reported = false;
     }
@@ -422,6 +490,7 @@ impl Shell {
             return Vec::new();
         }
         self.over_reported = true;
+        self.data.results = self.session().and_then(|s| s.results.clone());
         self.act(UiAction::MatchOver)
     }
 
@@ -446,4 +515,14 @@ impl Shell {
         self.end();
         self.flush();
     }
+}
+
+/// The weapon selection's menu for `a`'s game: a Deathmatch's mod weapons
+/// with its restrictions (`None` for another game).
+pub fn weapon_menu(a: &Assets) -> Option<WeaponMenu> {
+    let Game::Deathmatch { options, .. } = &a.game else { return None };
+    let rules = a.m.weapon_rules(&options.restrictions);
+    let names: Vec<String> = a.m.sim.weapons().iter().map(|w| w.name.clone()).collect();
+    let enabled = names.iter().map(|n| rules.is_enabled(n)).collect();
+    Some(WeaponMenu { names, enabled, fallback: rules.find_enabled_weapon(), seed: options.seed })
 }

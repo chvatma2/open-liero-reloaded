@@ -1,1 +1,5 @@
 /target
+# egui_kittest's snapshot by-products (the accepted images are committed)
+/fixtures/ui/*.new.png
+/fixtures/ui/*.diff.png
+/fixtures/ui/*.old.png

@@ -18,7 +18,10 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        if let Some(w) = &mut self.win {
+        let capturing = self.shell.data.capture.is_some();
+        if let Some(w) = &mut self.win
+            && super::egui_hears(&event, capturing)
+        {
             let _ = w.egui.on_window_event(&w.window, &event);
         }
         self.input.on_window_event(&event);

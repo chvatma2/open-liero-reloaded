@@ -111,7 +111,7 @@ fn starting_with_missing_content_returns_to_menu() {
         std::os::unix::fs::symlink(content.join(level), &broken).unwrap();
         sh.act(UiAction::StartMatch);
         sh.poll();
-        assert_eq!(sh.ui.screen(), Screen::InGame);
+        assert_eq!(sh.ui.screen(), Screen::WeaponSelect);
         assert!(sh.play.is_some());
     }
 }
@@ -146,9 +146,18 @@ fn menu_actions_are_idempotent() {
         sh.act(a);
     }
     sh.poll();
-    assert_eq!((sh.launches(), sh.ui.screen(), sh.ui.is_paused()), (1, Screen::InGame, false));
+    assert_eq!((sh.launches(), sh.ui.screen(), sh.ui.is_paused()), (1, Screen::WeaponSelect, false));
     let seed = |sh: &Shell| sh.play.as_ref().unwrap().session.world.clone();
     let first = seed(&sh);
+    // Done pressed twice arms the player once.
+    let weapons = sh
+        .data
+        .weapon_choice()
+        .unwrap_or(rl_ui::weapon_select::WeaponSelect::new(sh.data.weapons.as_ref().unwrap(), &[]).slots());
+    for _ in 0..2 {
+        sh.act(UiAction::ChooseWeapons { weapons, names: vec![] });
+    }
+    assert_eq!(sh.ui.screen(), Screen::InGame);
     // Leave only from the pause menu; Esc twice is pause and resume.
     sh.act(UiAction::LeaveMatch);
     assert!(sh.play.is_some());
