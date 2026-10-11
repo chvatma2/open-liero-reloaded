@@ -232,6 +232,8 @@ impl Session {
         self.ended_at = None;
         self.time_left_ms = self.mode_time_left();
         self.keys.fill(Keys(0));
+        // The rematch's bots think first: the last match's events are not theirs.
+        self.events = TickEvents::new();
         self.ticks = 0;
         Ok(old)
     }

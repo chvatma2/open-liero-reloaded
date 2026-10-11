@@ -100,6 +100,26 @@ fn deathmatch_session_ends_with_results() {
     assert!(s.world.result().is_none());
 }
 
+/// A rematch (F5) in the middle of a match starts with no events: the
+/// rematch's bots think first on the new world, and must not see the last
+/// match's spawns, shots or kills.
+#[test]
+fn rematch_starts_without_the_last_ticks_events() {
+    let Some(dir) = content() else { return };
+    let o = DeathmatchOptions { seed: 2, bots: 3, ..DeathmatchOptions::default() };
+    let (a, mut s) = session(&dir, "Classic", "Dirt Level", &o);
+    let mut t = 0;
+    while (t < 100 || s.events.is_empty()) && t < 3000 {
+        s.tick(player_keys(t));
+        t += 1;
+    }
+    assert!(!s.events.is_empty(), "the match made events");
+    s.restart(&a).unwrap();
+    assert!(s.events.is_empty(), "the rematch's first think sees none of the last tick's events");
+    s.tick(Keys(0));
+    assert_eq!(s.ticks(), 1);
+}
+
 /// Eight bots on a big level think on the main thread within their work
 /// budget every tick, and well within a 60 Hz frame (16.7 ms) together.
 #[test]

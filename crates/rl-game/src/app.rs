@@ -22,6 +22,7 @@ use winit::window::{Window, WindowId};
 
 use crate::clock::TickClock;
 use crate::gpu::{Gpu, OverlayPaint};
+use crate::hud::ScoreKey;
 use crate::latency::Latency;
 use crate::overlay::{Overlay, ScreenMap, Stats};
 use crate::script::{Command, Step};
@@ -74,7 +75,7 @@ pub struct App {
     win: Option<Shown>,
     debug: bool,
     /// Tab held: the scoreboard shows.
-    show_scores: bool,
+    scores: ScoreKey,
     /// Replays saved (`--record`).
     saved: u32,
     /// Ticks since the start, across restarts (the script's clock).
@@ -119,7 +120,7 @@ impl App {
             egui: egui::Context::default(),
             win: None,
             debug: false,
-            show_scores: false,
+            scores: ScoreKey::default(),
             saved: 0,
             ticks: 0,
             script_at: 0,
@@ -278,7 +279,7 @@ impl App {
                 Command::Shot => self.shot_due = true,
                 Command::Restart => self.restart()?,
                 Command::Debug => self.debug = !self.debug,
-                Command::Scores(on) => self.show_scores = on,
+                Command::Scores(on) => self.scores.set(on),
                 Command::Quit => el.exit(),
                 // Applied at the start of the next frame (`apply_requests`).
                 Command::Size(w, h) => self.requests.size(w, h),
@@ -359,7 +360,7 @@ impl App {
             alpha,
             map,
             debug: self.debug,
-            show_scores: self.show_scores,
+            show_scores: self.scores.shown(),
             stats: &self.stats,
         };
         let mut out = self.egui.run_ui(input, |ui| crate::overlay::paint(ui, &overlay));
@@ -392,7 +393,7 @@ impl App {
     fn on_key(&mut self, el: &ActiveEventLoop, ev: &KeyEvent) -> anyhow::Result<()> {
         // OLX's ShowScore: the scoreboard while Tab is held.
         if ev.physical_key == PhysicalKey::Code(KeyCode::Tab) {
-            self.show_scores = ev.state == ElementState::Pressed;
+            self.scores.key(ev.state == ElementState::Pressed);
             return Ok(());
         }
         if ev.state != ElementState::Pressed || ev.repeat {
@@ -442,6 +443,10 @@ impl ApplicationHandler for App {
                 if let Some(w) = &mut self.win {
                     w.gpu.set_occluded(*occluded);
                 }
+                Ok(())
+            }
+            WindowEvent::Focused(focused) => {
+                self.scores.focus(*focused);
                 Ok(())
             }
             WindowEvent::KeyboardInput { event, .. } => self.on_key(el, event),
