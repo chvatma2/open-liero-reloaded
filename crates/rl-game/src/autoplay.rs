@@ -260,10 +260,16 @@ pub fn widgets(tree: &TreeUpdate) -> Vec<Widget> {
 }
 
 /// Where to click the widget labelled `label`: the centre of the first
-/// enabled one that takes clicks (else of any with bounds).
+/// enabled one that takes clicks, a widget before a label (else of any
+/// with bounds).
 pub fn click_point(widgets: &[Widget], label: &str) -> Option<Pos2> {
     let named = || widgets.iter().filter(|w| w.name == label && !w.disabled && w.bounds.is_some());
-    let w = named().find(|w| w.clickable).or_else(|| named().next())?;
+    // A label that names a widget takes clicks too (selectable text): the
+    // widget it names comes first.
+    let w = named()
+        .find(|w| w.clickable && w.role != Role::Label)
+        .or_else(|| named().find(|w| w.clickable))
+        .or_else(|| named().next())?;
     let [x0, y0, x1, y1] = w.bounds?;
     Some(Pos2::new(((x0 + x1) / 2.0) as f32, ((y0 + y1) / 2.0) as f32))
 }
@@ -669,6 +675,15 @@ mod tests {
         assert_eq!(click_point(&w, "Start"), Some(Pos2::new(60.0, 20.0)), "the enabled one");
         assert_eq!(click_point(&w, "Window size"), Some(Pos2::new(60.0, 60.0)), "the combo, not its label");
         assert_eq!(click_point(&w, "Quit"), None);
+
+        // A label above its combo, both taking clicks (egui's labels are
+        // selectable text): the combo, which is what a person means.
+        let mut label = node(Role::Label, None, Some("Mod"), (10.0, 10.0));
+        label.add_action(accesskit::Action::Click);
+        let mut combo = node(Role::ComboBox, None, Some("Liero v1.0"), (10.0, 40.0));
+        combo.set_labelled_by(vec![NodeId(1)]);
+        let w = widgets(&tree(vec![(1, label), (2, combo)]));
+        assert_eq!(click_point(&w, "Mod"), Some(Pos2::new(60.0, 50.0)), "the combo below its label");
     }
 
     fn seen(frame: u64, screen: Option<Screen>, tree: Option<&TreeUpdate>) -> Seen<'_> {
