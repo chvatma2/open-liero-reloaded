@@ -289,7 +289,7 @@ impl Gpu {
     }
 
     /// Draws the frame the window shows into a texture of the window's
-    /// size and writes it to `path` as a PNG.
+    /// size and writes it to `path` as a PNG; gives the picture.
     /// Call it after [`Gpu::present`], which applies the overlay's texture
     /// changes.
     pub fn screenshot(
@@ -297,7 +297,7 @@ impl Gpu {
         list: Option<&DrawList>,
         overlay: &OverlayPaint,
         path: &Path,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<RgbaImage> {
         let size = clamp_size(self.state.size(), self.max_side());
         let texture = self.renderer.device().create_texture(&wgpu::TextureDescriptor {
             label: Some("rl-game screenshot"),
@@ -317,7 +317,8 @@ impl Gpu {
             std::fs::create_dir_all(dir)?;
         }
         std::fs::write(path, rl_pack::image_io::encode_rgba(&img))
-            .with_context(|| format!("{}", path.display()))
+            .with_context(|| format!("{}", path.display()))?;
+        Ok(img)
     }
 
     /// Reads a texture of the surface format back as RGBA.

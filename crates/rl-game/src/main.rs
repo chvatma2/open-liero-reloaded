@@ -9,6 +9,7 @@ use anyhow::Context as _;
 use clap::parser::ValueSource;
 use clap::{ArgMatches, CommandFactory, FromArgMatches};
 use rl_game::app::{App, Config};
+use rl_game::autoplay::Autoplay;
 use rl_game::script::{self, Command, Step};
 use rl_game::session::Session;
 use rl_game::setup::{self, DeathmatchOptions, Game, SandboxOptions};
@@ -159,6 +160,22 @@ struct Args {
     /// presses no key); the exit summary prints the numbers.
     #[arg(long)]
     latency_probe: Option<u64>,
+    /// Drive the game from a script of clicks by label, keys, waits,
+    /// screenshots and checks (see `rl-game/src/autoplay.rs`; logged to
+    /// `<shot dir>/autoplay.jsonl`). A failing step ends the game with an error.
+    #[arg(long)]
+    autoplay: Option<PathBuf>,
+    /// Every frame is 20 ms of time and runs two ticks, whatever the clock
+    /// says (deterministic scripted runs; the first menu match's seed is 1).
+    #[arg(long)]
+    fake_clock: bool,
+    /// The data directory (settings, profiles, replays, imported packs)
+    /// instead of the platform's.
+    #[arg(long)]
+    data_dir: Option<PathBuf>,
+    /// No sound output (no audio device is opened).
+    #[arg(long)]
+    no_sound: bool,
 }
 
 /// The flags that choose a game: with any of them on the command line the
@@ -263,7 +280,10 @@ fn video_flags(m: &ArgMatches, args: &Args) -> Overrides {
 /// The menus, with the settings and profiles of the data directory; the
 /// video `flags` on top of the saved options (not saved).
 fn menus(args: &Args, audio: rl_audio::Audio, mut cfg: ShellConfig, flags: Overrides) -> Shell {
-    let (mut store, warning) = rl_ui::Store::platform();
+    let (mut store, warning) = match &args.data_dir {
+        Some(dir) => (rl_ui::Store::open(dir), None),
+        None => rl_ui::Store::platform(),
+    };
     let mut settings = store.load_settings();
     let profiles = store.load_profiles();
     for w in warning.into_iter().chain(settings.warnings).chain(profiles.warnings) {
@@ -271,9 +291,13 @@ fn menus(args: &Args, audio: rl_audio::Audio, mut cfg: ShellConfig, flags: Overr
     }
     // Matches get seeds from here on (each one is in its replay); `--seed`
     // would choose a game, so the clock picks the first.
-    let seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32);
+    let seed = if args.fake_clock {
+        1
+    } else {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32)
+    };
     let data = store.dir().map_or("none (nothing is saved)".to_string(), |d| d.display().to_string());
     println!("rl-game: menus; content {}, data {data}", args.content.display());
     let file = settings.value.video.clone();
@@ -299,7 +323,7 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
     steps.extend(args.shots.iter().map(|&tick| Step { tick, command: Command::Shot }));
     steps.sort_by_key(|s| s.tick);
 
-    let mut audio = rl_audio::Audio::new();
+    let mut audio = if args.no_sound { rl_audio::Audio::silent() } else { rl_audio::Audio::new() };
     let silent = audio.is_silent();
     for w in audio.take_warnings() {
         eprintln!("warning: {w}");
@@ -346,10 +370,15 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
         record: args.record.clone(),
         menus: !play_now,
         speed: args.speed.unwrap_or_default(),
+        fake_clock: args.fake_clock,
+    };
+    let autoplay = match &args.autoplay {
+        Some(script) => Some(Autoplay::load(script, &args.shot_dir.join("autoplay.jsonl"))?),
+        None => None,
     };
     let event_loop = event_loop(ws)?;
     let wayland = is_wayland(&event_loop);
-    let mut app = App::new(cfg, shell, silent, gilrs);
+    let mut app = App::new(cfg, shell, silent, gilrs, autoplay);
     let ran = event_loop.run_app(&mut app);
     println!("rl-game: {}", app.summary());
     if let Some(m) = app.match_summary() {
@@ -357,6 +386,7 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
     }
     println!("rl-game: {}", app.latency_summary());
     app.save_recording();
+    let autoplay = app.autoplay_result();
     match ran {
         // The game never sets a failing exit code; winit does, most often
         // when the display server closed the connection (a compositor crash).
@@ -365,7 +395,15 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
         }
         ran => {
             ran.context("the event loop")?;
-            app.error.take().map_or(Ok(()), Err)
+            if let Some(e) = app.error.take() {
+                return Err(e);
+            }
+            match autoplay {
+                Some(Ok(())) => println!("rl-game: autoplay passed"),
+                Some(Err(why)) => anyhow::bail!(why),
+                None => {}
+            }
+            Ok(())
         }
     }
 }

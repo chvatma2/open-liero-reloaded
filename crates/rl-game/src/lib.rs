@@ -10,6 +10,7 @@
 //! checked by running the game (`--autoquit-after`, `--demo`, `--shot`).
 
 pub mod app;
+pub mod autoplay;
 pub mod clock;
 pub mod drive;
 pub mod gpu;

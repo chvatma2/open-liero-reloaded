@@ -21,6 +21,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::PhysicalKey;
 use winit::window::Window;
 
+use crate::autoplay::{self, Autoplay, Effect, Seen};
 use crate::clock::TickClock;
 use crate::gpu::{Gpu, OverlayPaint};
 use crate::hud::{MinimapTexture, ScoreKey};
@@ -68,6 +69,9 @@ pub struct Config {
     /// How fast a watched game (a replay, bots alone) starts (`--speed`);
     /// a game a person plays always runs at 1×.
     pub speed: Speed,
+    /// `--fake-clock`: every frame is `autoplay::FAKE_FRAME` of time and
+    /// runs `FAKE_TICKS_PER_FRAME` ticks, whatever the wall clock says.
+    pub fake_clock: bool,
 }
 
 /// What exists once the window does.
@@ -115,6 +119,14 @@ pub struct App {
     flushed: Option<Instant>,
     /// How fast a watched game runs (PageUp, PageDown; `speed.rs`).
     speed: Speed,
+    /// `--autoplay`'s script, while it plays.
+    autoplay: Option<Autoplay>,
+    /// Frames drawn (the autoplay's and the fake clock's count).
+    frames: u64,
+    /// `--fake-clock`'s start: the time is this plus a frame's for each frame.
+    fake_start: Option<Instant>,
+    /// The autoplay's name for the screenshot due.
+    shot_name: Option<String>,
     /// What stopped the game, if something went wrong.
     pub error: Option<anyhow::Error>,
 }
@@ -136,10 +148,20 @@ pub(crate) fn viewport(size: (u32, u32)) -> Viewport {
 impl App {
     /// The game `shell` plays (or its menus, with `cfg.menus`); `silent`:
     /// no sound output device.
-    pub fn new(cfg: Config, shell: Shell, silent: bool, gilrs: Option<gilrs::Gilrs>) -> App {
+    pub fn new(
+        cfg: Config,
+        shell: Shell,
+        silent: bool,
+        gilrs: Option<gilrs::Gilrs>,
+        autoplay: Option<Autoplay>,
+    ) -> App {
         let audio = if silent { "audio: silent (no output device)" } else { "audio: opened" };
         let stats = Stats { audio: audio.to_string(), ..Stats::default() };
         let egui = egui::Context::default();
+        if autoplay.is_some() {
+            // The autoplay finds widgets by label in the AccessKit tree.
+            egui.enable_accesskit();
+        }
         let video = Video::new(shell.ui.settings().video.clone());
         let mut input = InputState::default();
         if cfg.menus {
@@ -148,6 +170,10 @@ impl App {
         }
         App {
             speed: cfg.speed,
+            autoplay,
+            frames: 0,
+            fake_start: cfg.fake_clock.then(Instant::now),
+            shot_name: None,
             latency: Latency::new(cfg.latency_probe),
             cfg,
             shell,
@@ -234,6 +260,24 @@ impl App {
         }
     }
 
+    /// The autoplay's outcome at the end of the run (`None` without one):
+    /// a script the game ended before it finished failed.
+    pub fn autoplay_result(&mut self) -> Option<Result<(), String>> {
+        let frames = self.frames;
+        self.autoplay.as_mut().map(|a| a.finish(frames))
+    }
+
+    /// The time the game's logic sees: the wall clock, or under
+    /// `--fake-clock` the start plus a frame's time for each frame drawn.
+    fn now(&self) -> Instant {
+        match self.fake_start {
+            Some(t) => {
+                t + autoplay::FAKE_FRAME.saturating_mul(u32::try_from(self.frames).unwrap_or(u32::MAX))
+            }
+            None => Instant::now(),
+        }
+    }
+
     /// Input latency and swap-chain waits over the run (`latency.rs`).
     pub fn latency_summary(&self) -> String {
         self.latency.summary()
@@ -284,7 +328,7 @@ impl App {
         self.win = Some(Shown { window, gpu, egui });
         // Creating the window counts as a change: a scripted `size` right
         // away waits out the interval (`window::MIN_CHANGE_INTERVAL`).
-        self.requests.opened(Instant::now());
+        self.requests.opened(self.now());
         Ok(())
     }
 
@@ -315,7 +359,7 @@ impl App {
     /// (and once every `window::MIN_CHANGE_INTERVAL`), before the frame's
     /// surface texture is acquired.
     fn apply_requests(&mut self) {
-        let Some(change) = self.requests.due(Instant::now()) else { return };
+        let Some(change) = self.requests.due(self.now()) else { return };
         // Wayland applies the size at once and sends no `Resized`.
         if let Some(size) = self.win.as_ref().and_then(|w| window::apply(&w.window, change)) {
             self.resized((size.width, size.height));
@@ -338,7 +382,9 @@ impl App {
     fn run_ticks(&mut self, el: &ActiveEventLoop, due: u32) -> anyhow::Result<()> {
         let speed = self.speed();
         let start = Instant::now();
-        let spent = |_| start.elapsed() >= speed::MAX_BUDGET;
+        let fake = self.fake_start.is_some();
+        // Under the fake clock max runs a fixed number of ticks a frame.
+        let spent = |n| if fake { n >= speed::FAKE_MAX_TICKS } else { start.elapsed() >= speed::MAX_BUDGET };
         speed::run_frame(speed, due, spent, |sound| {
             self.set_sound(sound);
             self.tick(el)
@@ -401,12 +447,16 @@ impl App {
         let begin = Instant::now();
         self.apply_requests();
         let frame = self.win.as_mut().and_then(|w| w.gpu.acquire());
-        let now = Instant::now();
-        self.latency.frame_start(now);
+        self.latency.frame_start(Instant::now());
+        let now = self.now();
         let start = *self.start.get_or_insert(now);
         let elapsed = self.last.map_or(0.0, |l| (now - l).as_secs_f64());
         self.last = Some(now);
-        let due = self.clock.advance(elapsed);
+        let due = if self.fake_start.is_some() {
+            autoplay::FAKE_TICKS_PER_FRAME
+        } else {
+            self.clock.advance(elapsed)
+        };
         self.run_ticks(el, due)?;
         if self.cfg.menus {
             let out = self.shell.after_ticks();
@@ -441,7 +491,14 @@ impl App {
         );
         let dest = rl_render::dest_rect(w.gpu.renderer.settings.filter, src, size);
         let map = ScreenMap { view: self.list.view, dest, pixels_per_point: ppp };
-        let input = w.egui.take_egui_input(&w.window);
+        let mut input = w.egui.take_egui_input(&w.window);
+        if self.fake_start.is_some() {
+            input.time = Some((now - start).as_secs_f64());
+            input.predicted_dt = autoplay::FAKE_FRAME.as_secs_f32();
+        }
+        if let Some(a) = &mut self.autoplay {
+            a.input(&mut input);
+        }
         let minimap = match self.shell.session() {
             Some(s) => Some(self.minimap.update(&self.egui, s)),
             None => {
@@ -480,7 +537,29 @@ impl App {
             self.shell.update_preview(&self.egui);
             self.shell.log_menu_warnings();
         }
+        let tree = out.platform_output.accesskit_update.take();
         w.egui.handle_platform_output(&w.window, out.platform_output);
+        // The autoplay's steps, on what this frame shows.
+        let mut effects = Vec::new();
+        if let Some(a) = &mut self.autoplay {
+            let seen = Seen {
+                frame: self.frames,
+                tree: tree.as_ref(),
+                screen: menus.then(|| self.shell.ui.screen()),
+                window: w.gpu.size(),
+                speed,
+                ticks: self.shell.session().map(crate::session::Session::ticks),
+            };
+            for e in a.step(&seen) {
+                match e {
+                    Effect::Shot(name) => {
+                        self.shot_due = true;
+                        self.shot_name = Some(name);
+                    }
+                    e => effects.push(e),
+                }
+            }
+        }
         let jobs = self.egui.tessellate(out.shapes, out.pixels_per_point);
         let paint = OverlayPaint { jobs: &jobs, pixels_per_point: out.pixels_per_point };
         // The images and terrain the ticks since the last frame changed
@@ -499,11 +578,20 @@ impl App {
         let wait = timing.map_or(Duration::ZERO, |t| t.acquire + t.present);
         self.meter.busy(begin.elapsed().saturating_sub(wait).as_secs_f64());
         if std::mem::take(&mut self.shot_due) {
-            let path = self.cfg.shot_dir.join(format!("shot-{:05}.png", self.ticks));
-            // A screenshot that cannot be written is not worth the game.
-            match w.gpu.screenshot(world, &paint, &path) {
-                Ok(()) => println!("rl-game: wrote {} (tick {})", path.display(), self.ticks),
+            let name = self.shot_name.take();
+            let file =
+                name.as_ref().map_or_else(|| format!("shot-{:05}.png", self.ticks), |n| format!("{n}.png"));
+            let path = self.cfg.shot_dir.join(file);
+            // A screenshot that cannot be written is not worth the game
+            // (an autoplay's is: it checks what the picture shows).
+            let shot = w.gpu.screenshot(world, &paint, &path);
+            match &shot {
+                Ok(_) => println!("rl-game: wrote {} (tick {})", path.display(), self.ticks),
                 Err(e) => eprintln!("warning: screenshot {}: {e:#}", path.display()),
+            }
+            if let (Some(name), Some(a)) = (&name, &mut self.autoplay) {
+                let check = shot.map_err(|e| format!("{e:#}")).and_then(|img| autoplay::sanity(&img));
+                effects.extend(a.shot_taken(self.frames, name, check));
             }
         }
         if menus {
@@ -520,6 +608,10 @@ impl App {
                 self.shell.flush();
             }
         }
+        for e in effects {
+            self.autoplay_effect(el, e)?;
+        }
+        self.frames += 1;
         Ok(())
     }
 
@@ -534,37 +626,70 @@ impl App {
     }
 
     fn on_key(&mut self, el: &ActiveEventLoop, ev: &KeyEvent) -> anyhow::Result<()> {
+        let PhysicalKey::Code(code) = ev.physical_key else { return Ok(()) };
+        self.key(el, code, ev.state == ElementState::Pressed, ev.repeat)
+    }
+
+    /// The game's own keys (the window's, or the autoplay's taps).
+    fn key(
+        &mut self,
+        el: &ActiveEventLoop,
+        code: KeyCode,
+        pressed: bool,
+        repeat: bool,
+    ) -> anyhow::Result<()> {
         // The options capture this key: it is theirs alone (no scores,
         // debug panel or health bars toggling under the dialog).
         if self.shell.data.capture.is_some() {
             return Ok(());
         }
         // OLX's ShowScore: the scoreboard while Tab is held.
-        if ev.physical_key == PhysicalKey::Code(KeyCode::Tab) {
-            self.scores.key(ev.state == ElementState::Pressed);
+        if code == KeyCode::Tab {
+            self.scores.key(pressed);
             return Ok(());
         }
-        if ev.state != ElementState::Pressed || ev.repeat {
+        if !pressed || repeat {
             return Ok(());
         }
         self.latency.press(Instant::now());
-        match ev.physical_key {
+        match code {
             // With the menus, Esc and F5 are theirs (`rl_ui::screens::show`).
-            PhysicalKey::Code(KeyCode::Escape) if !self.cfg.menus => el.exit(),
-            PhysicalKey::Code(KeyCode::F5) if !self.cfg.menus => self.restart(el)?,
-            PhysicalKey::Code(KeyCode::F2) => self.debug = !self.debug,
+            KeyCode::Escape if !self.cfg.menus => el.exit(),
+            KeyCode::F5 if !self.cfg.menus => self.restart(el)?,
+            KeyCode::F2 => self.debug = !self.debug,
             // Fast-forward, for a watched game only (`speed.rs`).
-            PhysicalKey::Code(k @ (KeyCode::PageUp | KeyCode::PageDown)) => {
-                self.change_speed(k == KeyCode::PageUp)
-            }
+            KeyCode::PageUp | KeyCode::PageDown => self.change_speed(code == KeyCode::PageUp),
             // OLX's Game.ShowWormHealth toggle.
-            PhysicalKey::Code(KeyCode::KeyH) => {
+            KeyCode::KeyH => {
                 if let Some(s) = self.shell.session_mut() {
                     let o = &mut s.present.scene.options;
                     o.show_health_bars = !o.show_health_bars;
                 }
             }
             _ => {}
+        }
+        Ok(())
+    }
+
+    /// Does what the autoplay asked (a screenshot was taken already).
+    fn autoplay_effect(&mut self, el: &ActiveEventLoop, e: Effect) -> anyhow::Result<()> {
+        match e {
+            Effect::Shot(_) => {}
+            // As the window delivers a key: the input path, then the game's keys.
+            Effect::Key(code, pressed) => {
+                self.input.on_key(code, pressed);
+                self.key(el, code, pressed, false)?;
+            }
+            Effect::Action(a, pressed) => {
+                if let Some(k) = self.key_of(a) {
+                    self.input.on_key(k, pressed);
+                }
+            }
+            Effect::Quit => {
+                println!("rl-game: autoplay passed ({} frames)", self.frames);
+                el.exit();
+            }
+            Effect::Fail(why) => self.fail(el, anyhow::anyhow!(why)),
         }
         Ok(())
     }

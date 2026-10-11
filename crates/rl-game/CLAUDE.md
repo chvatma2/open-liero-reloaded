@@ -221,6 +221,26 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   each second) and the exit summary let an agent run the game in a real
   window and read the PNGs (plan 5 ruling R3).
 
+- **Autoplay** (`autoplay.rs`, spec §21 G7, plan 7 task 8): `--autoplay
+  script.ron` drives the real app from a RON script of steps (`at_frame`,
+  `ui`, `within`): `Click(label)` (the widget found by label in egui's
+  AccessKit tree, enabled for the run: `widgets`, `click_point`; a pointer
+  press and release injected into the next two frames' `RawInput`),
+  `Key(name)` (egui and `App::key`, as the window delivers a key),
+  `Press`/`Release(action)` (the input path), `WaitFor(screen)`,
+  `Wait(frames)`, `Screenshot(name)` (`<shot dir>/<name>.png`, checked not
+  blank: `sanity`), `Assert(Screen | Label | WindowSize | Speed | Playing
+  | TicksAtLeast)`, `Quit`, `WaitForExit` (the menus' Quit). A step that
+  waits fails the run after `within` frames (`DEFAULT_WITHIN`); the game
+  then exits with the error. Each step is a JSON line in `<shot
+  dir>/autoplay.jsonl`, the last `pass` or `fail`. `--fake-clock`: every
+  frame is `FAKE_FRAME` (20 ms) and runs `FAKE_TICKS_PER_FRAME` (2) ticks
+  (max speed `FAKE_MAX_TICKS`), egui's time and the window pacing follow
+  it (`App::now`), the first menu seed is 1: a run gives the same frames,
+  replay and screenshots every time. `--data-dir` (a data directory
+  instead of the platform's) and `--no-sound` (no device) keep a run
+  away from the user's files and speakers. `fixtures/autoplay/menus.ron`
+  (with `settings.ron`) is `cargo xtask e2e`'s script, on Xvfb in `full`.
 - **Soak** (`tests/soak.rs`, `cargo xtask full`): `soak_sandbox_10_minutes_headless`
   plays 60 000 ticks of `Session` with chaos keys, an offscreen render every
   10th tick (main thread only) and a kira mock device for sound, and bounds
