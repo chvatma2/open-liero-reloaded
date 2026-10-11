@@ -385,7 +385,9 @@ fn relaunch() -> Option<ExitCode> {
     let wsl = wsl::is_wsl(&wsl::osrelease());
     let backend = std::env::var("WGPU_BACKEND").ok();
     let gallium = std::env::var("GALLIUM_DRIVER").ok();
-    let env = wsl::relaunch_env(wsl, backend.as_deref(), gallium.as_deref())?;
+    let adapter = std::env::var(wsl::ADAPTER_VAR).ok();
+    let discrete = wsl::discrete_adapter(std::path::Path::new(wsl::WSL_LIB));
+    let env = wsl::relaunch_env(wsl, backend.as_deref(), gallium.as_deref(), adapter.as_deref(), discrete)?;
     let exe = std::env::current_exe().ok()?;
     let status = std::process::Command::new(exe).args(std::env::args_os().skip(1)).envs(env).status();
     match status {

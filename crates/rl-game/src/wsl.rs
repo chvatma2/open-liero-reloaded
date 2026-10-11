@@ -20,15 +20,39 @@ pub fn backends(wsl: bool, wgpu_backend: Option<&str>) -> wgpu::Backends {
     }
 }
 
+/// Mesa's d3d12 driver: the adapter whose name contains this is used.
+pub const ADAPTER_VAR: &str = "MESA_D3D12_DEFAULT_ADAPTER_NAME";
+
+/// Where WSL mounts the Windows GPU drivers' Linux libraries.
+pub const WSL_LIB: &str = "/usr/lib/wsl/lib";
+
+/// The discrete GPU to ask Mesa's d3d12 driver for, judged from the Windows
+/// drivers WSL mounts at `wsl_lib`: NVIDIA's ships `libcuda`. Without a
+/// name, Mesa takes the first adapter Windows lists, which on a PC with
+/// integrated graphics is often the integrated GPU.
+pub fn discrete_adapter(wsl_lib: &std::path::Path) -> Option<&'static str> {
+    ["libcuda.so.1", "nvidia-smi"].iter().any(|f| wsl_lib.join(f).exists()).then_some("NVIDIA")
+}
+
 /// The environment to start the game again with, if it must: on WSL when
-/// the user set neither `WGPU_BACKEND` nor `GALLIUM_DRIVER`.
+/// the user set neither `WGPU_BACKEND` nor `GALLIUM_DRIVER`. It names the
+/// `discrete` adapter for Mesa unless the user chose one (`adapter`, the
+/// inherited [`ADAPTER_VAR`]).
 pub fn relaunch_env(
     wsl: bool,
     wgpu_backend: Option<&str>,
     gallium: Option<&str>,
-) -> Option<[(&'static str, &'static str); 2]> {
-    (wsl && wgpu_backend.is_none() && gallium.is_none())
-        .then_some([("GALLIUM_DRIVER", "d3d12"), ("WGPU_BACKEND", "gl")])
+    adapter: Option<&str>,
+    discrete: Option<&'static str>,
+) -> Option<Vec<(&'static str, &'static str)>> {
+    if !wsl || wgpu_backend.is_some() || gallium.is_some() {
+        return None;
+    }
+    let mut env = vec![("GALLIUM_DRIVER", "d3d12"), ("WGPU_BACKEND", "gl")];
+    if let (None, Some(name)) = (adapter, discrete) {
+        env.push((ADAPTER_VAR, name));
+    }
+    Some(env)
 }
 
 /// Reads the kernel's release string; empty off Linux.
@@ -47,9 +71,35 @@ mod tests {
         assert_eq!(backends(true, None), wgpu::Backends::GL);
         assert_eq!(backends(false, None), wgpu::Backends::all());
         assert_eq!(backends(true, Some("vulkan")), wgpu::Backends::VULKAN);
-        assert_eq!(relaunch_env(true, None, None).unwrap()[0], ("GALLIUM_DRIVER", "d3d12"));
-        assert_eq!(relaunch_env(true, Some("gl"), None), None);
-        assert_eq!(relaunch_env(true, None, Some("llvmpipe")), None);
-        assert_eq!(relaunch_env(false, None, None), None);
+        assert_eq!(relaunch_env(true, None, None, None, None).unwrap()[0], ("GALLIUM_DRIVER", "d3d12"));
+        assert_eq!(relaunch_env(true, Some("gl"), None, None, None), None);
+        assert_eq!(relaunch_env(true, None, Some("llvmpipe"), None, None), None);
+        assert_eq!(relaunch_env(false, None, None, None, None), None);
+    }
+
+    /// A PC with an integrated and a discrete GPU: Mesa's d3d12 driver takes
+    /// the first adapter Windows lists (often the integrated one) unless
+    /// told; the game asks for the discrete one, and the user's choice wins.
+    #[test]
+    fn wsl_prefers_the_discrete_gpu_unless_the_user_chose() {
+        let adapter =
+            |env: Vec<(&str, &str)>| env.iter().find(|(k, _)| *k == ADAPTER_VAR).map(|(_, v)| v.to_string());
+        let env = relaunch_env(true, None, None, None, Some("NVIDIA")).unwrap();
+        assert_eq!(adapter(env), Some("NVIDIA".to_string()));
+        let env = relaunch_env(true, None, None, Some("AMD"), Some("NVIDIA")).unwrap();
+        assert_eq!(adapter(env), None, "the user's own choice is inherited, not overridden");
+        let env = relaunch_env(true, None, None, None, None).unwrap();
+        assert_eq!(adapter(env), None);
+    }
+
+    #[test]
+    fn nvidia_is_found_from_wsl_driver_files() {
+        let dir = std::env::temp_dir().join(format!("rl-wsl-lib-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(discrete_adapter(&dir), None);
+        std::fs::write(dir.join("libcuda.so.1"), b"").unwrap();
+        assert_eq!(discrete_adapter(&dir), Some("NVIDIA"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

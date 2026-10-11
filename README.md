@@ -103,7 +103,10 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
 
 - **GPU:** on WSL the game picks the GL backend through Mesa's d3d12 driver by
   itself (`WGPU_BACKEND=gl GALLIUM_DRIVER=d3d12`), unless you set either
-  variable. Software rendering works too: `WGPU_BACKEND=vulkan` uses lavapipe.
+  variable. On a PC with integrated graphics and an NVIDIA card it asks for
+  the NVIDIA card; to choose another adapter, set
+  `MESA_D3D12_DEFAULT_ADAPTER_NAME` to part of its name (the startup line
+  `rl-game: GPU …` shows the one in use). Software rendering works too: `WGPU_BACKEND=vulkan` uses lavapipe.
 - **Sound** needs the ALSA PulseAudio plugin: `sudo apt install
   libasound2-plugins`, and an `~/.asoundrc` with
 

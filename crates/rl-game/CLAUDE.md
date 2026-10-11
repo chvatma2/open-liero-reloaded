@@ -93,7 +93,11 @@ cargo run --release -p rl-game -- --replay f.rlrp
 - **WSL** (`wsl.rs`): on a WSL kernel, unless the user set `WGPU_BACKEND`
   or `GALLIUM_DRIVER`, the game starts itself again with
   `GALLIUM_DRIVER=d3d12 WGPU_BACKEND=gl` (Mesa reads the variable when the
-  driver loads, and `set_var` is unsafe). WSLg presents through GL at the
+  driver loads, and `set_var` is unsafe). With NVIDIA's WSL driver present
+  (`/usr/lib/wsl/lib/libcuda.so.1`) it also sets
+  `MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA`, unless the user set it: Mesa
+  otherwise takes the first adapter Windows lists, often the CPU's
+  integrated GPU. WSLg presents through GL at the
   compositor's 60 Hz with FIFO only.
 - **Loop** (`app.rs`): each frame first acquires the surface texture
   (`Gpu::acquire`), so a VSync wait comes before the input is read, not
