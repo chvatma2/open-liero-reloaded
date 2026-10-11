@@ -22,6 +22,17 @@ pub struct Viewport {
 }
 
 impl Viewport {
+    /// The game's view, the same for every window and HUD layout so no
+    /// player sees more than another (the user's ruling after the v0.1
+    /// playtest; spec §19 E4's amendment): 16:9's width at [`FOV_HEIGHT`]
+    /// (427 world pixels) by the 80 % of that height above the HUD bar (192),
+    /// the window's 16:9 frame less its bar (16 : 7.2).
+    ///
+    /// OLX: src/client/CClient.cpp:1712 (OLX 0.58's local viewports end at
+    /// screen row 382 above the bar: 191 world pixels; the fork we port
+    /// makes them 480 high at 1714-1718).
+    pub const GAME: Viewport = Viewport { width: 427, height: FOV_HEIGHT * 4 / 5 };
+
     /// The single-player viewport for a window of aspect ratio `aspect`
     /// (width / height), clamped to `max_aspect` (spec §19 E4, 16:9 by
     /// default): OLX's screen width `round_even(480 · aspect)`, at least

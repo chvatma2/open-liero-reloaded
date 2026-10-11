@@ -85,6 +85,17 @@ fn camera_locks_clamps_and_shakes_like_olx() {
     assert_eq!(vp(f32::NAN), Viewport { width: 320, height: 240 });
 }
 
+/// The game shows every player the same world area, whatever the window
+/// (the user's ruling after the v0.1 playtest): 16:9's width at
+/// `FOV_HEIGHT`, and the 80 % of that height above the HUD bar, as OLX
+/// 0.58's local game showed 191 world pixels above its 98-pixel bar.
+#[test]
+fn the_game_view_is_fixed() {
+    let wide = Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
+    assert_eq!(Viewport::GAME, Viewport { width: wide.width, height: 192 });
+    assert_eq!(Viewport::GAME.height, rl_scene::FOV_HEIGHT * 4 / 5);
+}
+
 /// A restarted world's clock starts over (`SANDBOX_START`): a shake started
 /// in the old world must not run on until the new clock reaches it.
 #[test]
