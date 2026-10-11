@@ -1,4 +1,5 @@
-//! Image snapshots of the HUD bar (plan 7 task 5) at 1080p and 1440p,
+//! Image snapshots of the HUD (plan 7 task 5) at 1080p and 1440p, and the
+//! side layout at 3440 × 1440,
 //! rendered by egui's wgpu renderer (`egui_kittest`, its software adapter
 //! preferred) and compared with `fixtures/ui/hud-*.png`. They need a
 //! graphics adapter: the GPU tier (`cargo xtask full`, `RL_GPU_TESTS`)
@@ -7,6 +8,7 @@
 
 use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
 use egui_kittest::{Harness, SnapshotOptions};
+use rl_ui::HudArrangement;
 use rl_ui::hud::{self, Bar, Dot, HudView, LogLine, MinimapView, Notice, Row, SlotHud, WormHud, minimap};
 
 /// The accepted snapshots, from the crate's directory.
@@ -45,7 +47,7 @@ fn row(worm: i32, name: &str, kills: i32, deaths: i32, damage: i32) -> Row {
     Row { worm, name: name.into(), score: kills, lives: "∞".into(), kills, deaths, suicides: 0, damage }
 }
 
-fn view(texture: egui::TextureId, scores: bool) -> HudView {
+fn view(texture: egui::TextureId, scores: bool, arrangement: HudArrangement) -> HudView {
     let slot = |name: &str, charge, bar| SlotHud { name: name.into(), charge, bar };
     HudView {
         worm: Some(WormHud {
@@ -94,10 +96,11 @@ fn view(texture: egui::TextureId, scores: bool) -> HudView {
         }),
         game_over: false,
         hint: Some("Tab scores   F2 debug   F5 rematch   Esc pause".into()),
+        arrangement,
     }
 }
 
-fn snapshot(size: (f32, f32), name: &str, scores: bool) {
+fn snapshot(size: (f32, f32), name: &str, scores: bool, arrangement: HudArrangement) {
     let mut h =
         Harness::builder().with_size(vec2(size.0, size.1)).with_pixels_per_point(1.0).wgpu().build_ui_state(
             move |ui, tex: &mut Option<TextureHandle>| {
@@ -112,7 +115,7 @@ fn snapshot(size: (f32, f32), name: &str, scores: bool) {
                     0.0,
                     Color32::from_rgb(70, 50, 30),
                 );
-                hud::show(ui, &view(t.id(), scores));
+                hud::show(ui, &view(t.id(), scores, arrangement));
             },
             None,
         );
@@ -132,7 +135,7 @@ fn hud_snapshot_1080p() {
     if !gpu_tests() {
         return;
     }
-    snapshot((1920.0, 1080.0), "hud-1080p", false);
+    snapshot((1920.0, 1080.0), "hud-1080p", false, HudArrangement::Auto);
 }
 
 #[test]
@@ -140,5 +143,15 @@ fn hud_snapshot_1440p_with_scores() {
     if !gpu_tests() {
         return;
     }
-    snapshot((2560.0, 1440.0), "hud-1440p", true);
+    snapshot((2560.0, 1440.0), "hud-1440p", true, HudArrangement::Auto);
+}
+
+/// An ultrawide window's side layout: the health and weapons left of the
+/// 16:9 frame, the log right of it, the minimap alone in the bar.
+#[test]
+fn hud_snapshot_3440x1440_side_panels() {
+    if !gpu_tests() {
+        return;
+    }
+    snapshot((3440.0, 1440.0), "hud-3440x1440-sides", false, HudArrangement::Sides);
 }

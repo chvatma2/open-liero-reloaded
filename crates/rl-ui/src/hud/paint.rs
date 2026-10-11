@@ -38,11 +38,18 @@ fn shadowed(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, co
 /// (opaque: the game draws above it), the clock, notices and keys over the
 /// playfield.
 pub fn show(ui: &Ui, view: &HudView) {
-    let l = HudLayout::new(ui.max_rect());
+    let l = HudLayout::new(ui.max_rect(), view.arrangement);
     let p = ui.painter();
     p.rect_filled(l.bar, 0.0, BAR_FILL);
-    let edge = [l.bar.left_top(), l.bar.right_top()];
-    p.line_segment(edge, Stroke::new(1.0, BAR_EDGE));
+    let edge = Stroke::new(1.0, BAR_EDGE);
+    p.line_segment([l.bar.left_top(), l.bar.right_top()], edge);
+    if let Some([left, right]) = l.sides {
+        // The side layout's columns: opaque as the bar, an edge at the frame.
+        p.rect_filled(left, 0.0, BAR_FILL);
+        p.rect_filled(right, 0.0, BAR_FILL);
+        p.line_segment([left.right_top(), left.right_bottom()], edge);
+        p.line_segment([right.left_top(), right.left_bottom()], edge);
+    }
     if let Some(w) = &view.worm {
         health(p, &l, w);
         if !w.slots.is_empty() {
@@ -69,24 +76,36 @@ pub fn show(ui: &Ui, view: &HudView) {
     }
 }
 
-/// The event log, the newest line at the bottom; older ones go up and
-/// off the top.
+/// The event log, the newest line at the bottom, a long one wrapped;
+/// older ones go up and off the top.
 fn log(p: &Painter, l: &HudLayout, lines: &[LogLine]) {
     let r = l.log;
     if r.width() <= 0.0 || r.height() <= 0.0 {
         return;
     }
-    p.rect_filled(r.expand(2.0 * l.unit), 4.0 * l.unit, LOG_FILL);
+    if l.sides.is_none() {
+        // In the bar, an inset; beside the frame the column is the log's.
+        p.rect_filled(r.expand(2.0 * l.unit), 4.0 * l.unit, LOG_FILL);
+    }
     let clip = p.with_clip_rect(r);
-    let font = FontId::proportional(l.text);
-    let shown = l.log_lines().min(lines.len());
-    for (i, line) in lines[lines.len() - shown..].iter().rev().enumerate() {
-        let at = pos2(r.left() + 4.0 * l.unit, r.bottom() - l.line * (i as f32 + 0.5));
+    let font = FontId::proportional(l.log_text);
+    let pad = 4.0 * l.unit;
+    let mut bottom = r.bottom();
+    for line in lines.iter().rev() {
+        if bottom <= r.top() {
+            break;
+        }
         let colour = match line.kind {
             LineKind::Event => Color32::from_gray(225),
             LineKind::Chat => Color32::from_rgb(255, 230, 140),
         };
-        clip.text(at, Align2::LEFT_CENTER, &line.text, font.clone(), colour);
+        let galley = p.layout(line.text.clone(), font.clone(), colour, (r.width() - 2.0 * pad).max(1.0));
+        // Each wrapped row a line high, centred in it.
+        let rows = galley.rows.len().max(1) as f32;
+        let top = bottom - l.line * rows;
+        let y = top + (l.line * rows - galley.size().y) / 2.0;
+        clip.galley(pos2(r.left() + pad, y), galley, colour);
+        bottom = top;
     }
 }
 
@@ -94,7 +113,7 @@ fn log(p: &Painter, l: &HudLayout, lines: &[LogLine]) {
 fn health(p: &Painter, l: &HudLayout, w: &WormHud) {
     let r = l.health;
     p.rect_filled(r.expand(2.0 * l.unit), 4.0 * l.unit, PANEL);
-    let font = FontId::proportional(l.text);
+    let font = FontId::proportional(l.panel_text);
     let row = r.height() / 2.0;
     let mut at = r.left_top() + vec2(4.0 * l.unit, row / 2.0);
     let lives = match w.lives {
@@ -127,7 +146,7 @@ fn weapons(p: &Painter, l: &HudLayout, w: &WormHud) {
     p.rect_filled(r.expand(2.0 * l.unit), 4.0 * l.unit, PANEL);
     let n = rl_sim::MAX_SLOTS as f32;
     let h = (r.height() - 4.0 * l.unit) / n;
-    let font = FontId::proportional(l.text * 0.9);
+    let font = FontId::proportional(l.panel_text * 0.95);
     for (i, s) in w.slots.iter().enumerate().take(rl_sim::MAX_SLOTS) {
         let row =
             Rect::from_min_size(pos2(r.left(), r.top() + 2.0 * l.unit + h * i as f32), vec2(r.width(), h));

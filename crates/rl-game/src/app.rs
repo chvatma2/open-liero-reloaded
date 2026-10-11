@@ -627,6 +627,7 @@ impl App {
             speed: speed_shown,
             selecting: self.shell.selecting(),
             names: !self.cfg.menus || self.shell.names_shown(),
+            arrangement: self.shell.ui.settings().video.hud_layout,
         });
         let (ui_state, data) = (&self.shell.ui, &mut self.shell.data);
         let menus = self.cfg.menus;

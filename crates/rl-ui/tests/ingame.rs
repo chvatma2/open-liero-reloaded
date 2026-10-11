@@ -7,6 +7,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use rl_content::Catalog;
 use rl_sim::{Keys, MAX_SLOTS};
+use rl_ui::HudArrangement::{self, Auto, Bar, Sides};
 use rl_ui::hud::{HudLayout, Results, Row};
 use rl_ui::screens::{self, MenuData};
 use rl_ui::weapon_select::{WeaponMenu, WeaponSelect};
@@ -44,14 +45,16 @@ fn hud_layout_holds_at_all_scales() {
         (1024.0, 768.0),
         (1280.0, 1024.0),
     ];
-    let reference = HudLayout::new(Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 720.0)));
+    let reference = HudLayout::new(Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 720.0)), Bar);
     for &(w, h) in &sizes {
         for ppp in [0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0] {
             let (w, h) = (w / ppp, h / ppp);
             let screen = Rect::from_min_size(Pos2::ZERO, vec2(w, h));
-            let l = HudLayout::new(screen);
+            let l = HudLayout::new(screen, Bar);
+            sides_hold(screen, &l);
             let at = format!("{w}x{h} points: {l:?}");
             let f = l.frame;
+            assert!(l.sides.is_none(), "{at}");
             // The 16:9 frame: centred, as large as fits.
             assert!(((f.width() / f.height()) - 16.0 / 9.0).abs() < 1e-3, "{at}");
             assert!((f.center() - screen.center()).length() < 1e-3, "{at}");
@@ -112,7 +115,48 @@ fn hud_layout_holds_at_all_scales() {
     }
     // No size panics: a window of no size (minimised), or not a number.
     for (w, h) in [(0.0, 0.0), (1.0, 1.0), (f32::NAN, 100.0), (f32::INFINITY, 1080.0)] {
-        let _ = HudLayout::new(Rect::from_min_size(Pos2::ZERO, vec2(w, h)));
+        for a in HudArrangement::ALL {
+            let _ = HudLayout::new(Rect::from_min_size(Pos2::ZERO, vec2(w, h)), a);
+        }
+    }
+}
+
+/// The side layout (the user's ruling after the v0.1 playtest): on a
+/// window wide enough for a column of a quarter of the frame's height on
+/// each side of the 16:9 frame (21:9 and wider), the health and weapons
+/// go left of the frame and the event log right of it; the bar keeps the
+/// minimap. The frame, the bar and the playfield are the bar layout's
+/// (`bar`): the same view for everyone. "Side panels" falls back to the
+/// bar without that room; "Bottom bar" never uses the sides.
+fn sides_hold(screen: Rect, bar: &HudLayout) {
+    let at = format!("{screen:?}");
+    let room = (bar.frame.left() - screen.left()) >= 0.25 * bar.frame.height() - 1e-3;
+    assert!(bar.sides.is_none(), "the bar layout keeps the sides black at {at}");
+    for a in [Auto, Sides] {
+        let l = HudLayout::new(screen, a);
+        assert_eq!(
+            (l.frame, l.bar, l.playfield, l.minimap),
+            (bar.frame, bar.bar, bar.playfield, bar.minimap),
+            "{at}"
+        );
+        let Some([left, right]) = l.sides else {
+            assert!(!room, "{a:?}: room for the sides but none at {at}");
+            assert_eq!(l, *bar, "{a:?}: the bar layout without room at {at}");
+            continue;
+        };
+        assert!(room, "{a:?}: sides without room at {at}");
+        assert_eq!((left.right(), right.left()), (l.frame.left(), l.frame.right()), "{at}");
+        assert_eq!((left.left(), right.right()), (screen.left(), screen.right()), "{at}");
+        for (name, r, col) in
+            [("health", l.health, left), ("weapons", l.weapons, left), ("log", l.log, right)]
+        {
+            assert!(col.contains_rect(r), "{name} leaves its column at {at}");
+            let wide = (col.width() - 40.0 * l.unit).min(340.0 * l.unit);
+            assert!(r.width() >= wide, "{name} uses its column at {at}");
+        }
+        assert!(!overlap(l.health, l.weapons), "{at}");
+        assert!(l.weapons.height() > bar.weapons.height(), "bigger rows beside the frame at {at}");
+        assert!(l.log_lines() > 2 * bar.log_lines(), "a taller log at {at}");
     }
 }
 

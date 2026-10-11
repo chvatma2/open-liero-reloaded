@@ -93,8 +93,41 @@ pub struct VideoSettings {
     /// Interpolated drawing between ticks (off: the latest tick at whole
     /// pixels, like OLX).
     pub interpolation: bool,
-    /// The menus' and HUD's scale ([`UI_SCALE_RANGE`]).
+    /// The menus' and the game's panels' scale ([`UI_SCALE_RANGE`]), on
+    /// top of the height's (`theme::pixels_per_point`).
     pub ui_scale: f32,
+    /// Where the HUD goes on a window wider than 16:9.
+    pub hud_layout: HudArrangement,
+}
+
+/// Where the HUD goes (the user's ruling after the v0.1 playtest). The
+/// game's 16:9 frame and its view are the same in every layout; only the
+/// space beside the frame on a window wider than 16:9 differs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HudArrangement {
+    /// Side panels when the window has room for them (21:9 and wider),
+    /// else the bar.
+    #[default]
+    Auto,
+    /// Everything in the bar under the playfield; black beside the frame.
+    Bar,
+    /// The health and weapons in a panel left of the frame, the event log
+    /// right of it, the minimap in the bar; the bar alone when there is no
+    /// room beside the frame.
+    Sides,
+}
+
+impl HudArrangement {
+    pub const ALL: [HudArrangement; 3] = [HudArrangement::Auto, HudArrangement::Bar, HudArrangement::Sides];
+
+    /// The options' name for it.
+    pub fn label(self) -> &'static str {
+        match self {
+            HudArrangement::Auto => "Auto",
+            HudArrangement::Bar => "Bottom bar",
+            HudArrangement::Sides => "Side panels",
+        }
+    }
 }
 
 impl Default for VideoSettings {
@@ -106,6 +139,7 @@ impl Default for VideoSettings {
             filter: UpscaleFilter::default(),
             interpolation: true,
             ui_scale: 1.0,
+            hud_layout: HudArrangement::Auto,
         }
     }
 }
@@ -122,6 +156,7 @@ struct VideoFile {
     filter: UpscaleFilter,
     interpolation: bool,
     ui_scale: f32,
+    hud_layout: HudArrangement,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -142,6 +177,7 @@ impl Default for VideoFile {
             filter: v.filter,
             interpolation: v.interpolation,
             ui_scale: v.ui_scale,
+            hud_layout: v.hud_layout,
         }
     }
 }
@@ -161,6 +197,7 @@ impl From<VideoFile> for VideoSettings {
             filter: f.filter,
             interpolation: f.interpolation,
             ui_scale: f.ui_scale,
+            hud_layout: f.hud_layout,
         }
     }
 }

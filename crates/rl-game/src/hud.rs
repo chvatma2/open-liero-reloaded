@@ -102,6 +102,8 @@ pub struct Frame<'a> {
     /// The weapon selection is open: the world's weapons are a
     /// placeholder until Done, so the HUD shows none.
     pub selecting: bool,
+    /// Where the HUD goes on a window wider than 16:9 (the options').
+    pub arrangement: rl_ui::HudArrangement,
 }
 
 /// The alive worms of `s` on screen (`map`), each with its index, drawn
@@ -188,6 +190,7 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
         minimap,
         game_over: s.results.is_some() && !s.results_shown(),
         hint: Some(hint),
+        arrangement: f.arrangement,
     }
 }
 

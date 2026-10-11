@@ -87,6 +87,8 @@ pub struct Overlay<'a> {
     pub selecting: bool,
     /// Worm names show: not through the menus' panels (`Shell::names_shown`).
     pub names: bool,
+    /// Where the HUD goes on a window wider than 16:9 (the options').
+    pub arrangement: rl_ui::HudArrangement,
 }
 
 /// Where a name label of `size` goes for a worm at `at` (points): centred
@@ -154,6 +156,7 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
         menus: o.menus,
         speed: o.speed.as_deref(),
         selecting: o.selecting,
+        arrangement: o.arrangement,
     };
     let hud = crate::hud::view(s, &frame);
     rl_ui::hud::show(ui, &hud);

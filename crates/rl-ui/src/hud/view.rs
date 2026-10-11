@@ -5,6 +5,7 @@ use egui::{Color32, Pos2, Rect, TextureId, Vec2};
 use rl_sim::World;
 
 use super::model::{LogLine, Names, Row};
+use crate::settings::HudArrangement;
 
 /// OLX's `WRM_OUT`: no lives left.
 const OUT: i32 = -1;
@@ -153,4 +154,6 @@ pub struct HudView {
     pub game_over: bool,
     /// The keys, top right over the playfield, where there is room.
     pub hint: Option<String>,
+    /// Where the HUD goes on a window wider than 16:9 (the options').
+    pub arrangement: HudArrangement,
 }

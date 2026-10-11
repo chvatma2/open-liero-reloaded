@@ -3,7 +3,7 @@
 //!
 //! - **Video:** the display, one list of the window's size presets (the
 //!   window is never resized by dragging) and borderless fullscreen, VSync or uncapped, the upscale filter,
-//!   interpolation and the UI scale. Each change is applied at once by the
+//!   interpolation, the HUD's layout and the UI scale. Each change is applied at once by the
 //!   app, the window's size and mode through its paced requests (at most
 //!   one change every 250 ms, however fast the player clicks).
 //! - **Audio:** the master volume (OLX's sound volume) and the effects'.
@@ -17,7 +17,7 @@
 use egui::{Button, ComboBox, RichText, Slider, Ui, vec2};
 
 use super::{MenuData, form_row, keys, page, section};
-use crate::settings::{FrameRate, UI_SCALE_RANGE, UpscaleFilter, WindowPreset};
+use crate::settings::{FrameRate, HudArrangement, UI_SCALE_RANGE, UpscaleFilter, WindowPreset};
 use crate::state::{UiAction, UiState};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -129,6 +129,19 @@ fn video(ui: &mut Ui, state: &UiState, view: &mut View, out: &mut Vec<UiAction>)
         ui.checkbox(&mut v.interpolation, "Smooth motion").on_hover_text(
             "Draws between the 100 Hz ticks; off draws the latest tick at whole pixels, like OLX.",
         );
+    });
+    form_row(ui, "HUD layout", |ui, label| {
+        ComboBox::from_id_salt("hud layout")
+            .selected_text(v.hud_layout.label())
+            .width(200.0)
+            .show_ui(ui, |ui| {
+                for a in HudArrangement::ALL {
+                    ui.selectable_value(&mut v.hud_layout, a, a.label());
+                }
+            })
+            .response
+            .labelled_by(label)
+            .on_hover_text("On a window wider than 16:9, side panels can hold the health, weapons and log.");
     });
     form_row(ui, "UI scale", |ui, label| {
         let mut scale = view.scale.unwrap_or(v.ui_scale);

@@ -10,8 +10,8 @@ use rl_input::{
 };
 use rl_ui::screens::{self, MenuData};
 use rl_ui::{
-    AppCommand, AudioSettings, FrameRate, Profile, Profiles, Screen, Settings, Store, UiAction, UiState,
-    UpscaleFilter, VideoSettings, WindowPreset,
+    AppCommand, AudioSettings, FrameRate, HudArrangement, Profile, Profiles, Screen, Settings, Store,
+    UiAction, UiState, UpscaleFilter, VideoSettings, WindowPreset,
 };
 
 const KB: Device = Device::Keyboard;
@@ -332,6 +332,33 @@ fn options_set_video_and_audio() {
     h.get_by_role_and_label(Role::Slider, "Effects volume");
     // OLX's default volume (Audio.Volume 70).
     assert_eq!(AudioSettings::default().master, 0.7);
+
+    // The HUD's layout: the bar, or side panels on an ultrawide window.
+    assert_eq!(v.hud_layout, HudArrangement::Auto, "Auto by default");
+    h.get_by_label("Video").click();
+    h.run();
+    h.get_by_label("HUD layout").click();
+    h.run();
+    h.get_by_label("Side panels").click();
+    h.run();
+    assert_eq!(video(&h).last().map(|v| v.hud_layout), Some(HudArrangement::Sides));
+    assert_eq!(saved(&h).video.hud_layout, HudArrangement::Sides);
+    h.get_by_label("HUD layout").click();
+    h.run();
+    h.get_by_label("Bottom bar").click();
+    h.run();
+    assert_eq!(saved(&h).video.hud_layout, HudArrangement::Bar);
+    // A file from before the setting loads with Auto; the setting is kept.
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("settings.ron"), "(version: 1, settings: (video: (ui_scale: 1.5)))")
+        .unwrap();
+    let got = Store::open(tmp.path()).load_settings();
+    assert_eq!((got.value.video.hud_layout, got.value.video.ui_scale), (HudArrangement::Auto, 1.5));
+    assert!(got.warnings.is_empty(), "{:?}", got.warnings);
+    let mut s = Settings::default();
+    s.video.hud_layout = HudArrangement::Sides;
+    Store::open(tmp.path()).save_settings(&s).unwrap();
+    assert_eq!(Store::open(tmp.path()).load_settings().value.video.hud_layout, HudArrangement::Sides);
 
     // The match is local play's, set up before each game: no tab here.
     assert!(h.query_by_label("Gameplay").is_none());
