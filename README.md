@@ -47,7 +47,8 @@ packs. Either:
 
 - `cargo xtask fetch-olx-content`: sparse-clones OpenLieroX at the commit
   pinned in `content/olx-manifest.ron` (network and `git` needed) and
-  imports the 4 levels, Classic and MW 1.0, the Dirt theme, 409 skins and
+  imports the 4 levels, Classic and MW 1.0, the Dirt theme, 718 skins (409 from the repository, 309 more from
+  OpenLieroX 0.58 rc5's release, committed in `content/olx-0.58-rc5/`) and
   the core sprites and sounds into `target/content` (the default
   `--content`, so run the game from the repository root); or
 - **Import** in the main menu: type the path of an OLX game directory (its

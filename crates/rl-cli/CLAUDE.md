@@ -3,7 +3,7 @@
 The headless command-line tool. Its commands:
 
 - `rl-cli import --olx <share/gamedir> --out <dir> [--mod D]... [--level F]... [--theme D]... [--skins]
-  [--core F]...` writes one pack per item to `<out>/<pack id>/`, plus `import-report.ron`;
+  [--core F]... [--extra-skins DIR --extra-skins-source S --extra-skins-revision R]` writes one pack per item to `<out>/<pack id>/`, plus `import-report.ron`;
   the `--core` files (shared sprites, game sounds, `colours.cfg`) make one pack, `olx-core`.
   It exits with status 1 if any item failed, and still imports the rest.
   The pipeline is `rl_content::import` (shared with the game's Import

@@ -22,6 +22,18 @@ struct Manifest {
     skins: bool,
     /// Files of the core pack `olx-core`.
     core: Vec<String>,
+    /// Skins from outside the checkout, committed in the repository.
+    #[serde(default)]
+    extra_skins: Option<ExtraSkins>,
+}
+
+/// A committed directory of OLX skin PNGs with its origin.
+#[derive(Deserialize)]
+struct ExtraSkins {
+    /// Relative to the repository root.
+    dir: String,
+    source: String,
+    revision: String,
 }
 
 pub struct Paths {
@@ -121,6 +133,10 @@ pub fn run(import: bool) -> anyhow::Result<Paths> {
     }
     for x in &m.core {
         cmd.args(["--core", x]);
+    }
+    if let Some(e) = &m.extra_skins {
+        cmd.arg("--extra-skins").arg(root.join(&e.dir));
+        cmd.args(["--extra-skins-source", &e.source, "--extra-skins-revision", &e.revision]);
     }
     let out = cmd.output().context("running rl-cli import")?;
     if !out.status.success() {

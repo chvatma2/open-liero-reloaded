@@ -21,4 +21,4 @@ mod olx-mw-1-0: "Modern Warfare1.0", 50 weapons, 302 projectiles, 129 assets, ro
   preset "Mortar Only": 50 entries, 1 enabled, 1 in bonuses
   preset "Standard 100lt": 276 entries, 15 enabled, 15 in bonuses
 theme olx-theme-dirt: 5 holes, 8 stones, 8 misc, green ball 8x9
-skins: 409
+skins: 718

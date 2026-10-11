@@ -39,6 +39,12 @@ All notable changes to rust-liero are recorded here. The format follows
   the 16:9 picture instead of in the bar: Options → Video → HUD layout
   (Auto, Bottom bar, Side panels), or `--hud-layout`.
 
+### Added
+
+- 309 more worm skins (Hotrod among them): the ones OpenLieroX 0.58 rc5's
+  release ships that its repository lacks, bundled from
+  `content/olx-0.58-rc5/skins/` (718 skins in all).
+
 ### Fixed
 
 - Import reads OLX images that are Windows bitmaps under a `.png` name, as

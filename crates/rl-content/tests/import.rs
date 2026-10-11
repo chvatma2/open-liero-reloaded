@@ -461,3 +461,47 @@ fn the_newest_replaced_pack_is_restored() {
         assert!(!out.path().join(&first).exists() && !out.path().join(&second).exists());
     }
 }
+
+/// Skins from a second directory (`ImportPlan::extra_skins`: OLX 0.58's
+/// release has skins its repository lacks) come in the same run, each pack
+/// with its own origin, and a pruning run keeps them.
+#[test]
+fn extra_skins_come_from_their_own_source() {
+    let extra = tempfile::tempdir().unwrap();
+    std::fs::copy(olx_mini().join("skins/default.png"), extra.path().join("Hotrod.png")).unwrap();
+    std::fs::write(extra.path().join("notes.txt"), "not a skin").unwrap();
+    let plan = ImportPlan {
+        skins: true,
+        extra_skins: vec![import::SkinSource {
+            dir: extra.path().to_path_buf(),
+            source: "OpenLieroX 0.58 rc5".into(),
+            revision: "0.58_rc5".into(),
+        }],
+        ..ImportPlan::default()
+    };
+    let out = tempfile::tempdir().unwrap();
+    let pruning = ImportOptions { revision: "abc".into(), prune: true };
+    for _ in 0..2 {
+        let r = import::import(&olx_mini(), &plan, out.path(), &pruning, &mut |_| true).unwrap();
+        assert_eq!(r.failed(), 0, "{:?}", r.entries);
+        assert_eq!(r.imported(), 2, "{:?}", r.entries);
+    }
+    let c = Content::open(out.path()).unwrap();
+    let origin = c.pack_origin("olx-skin-hotrod").expect("the extra skin");
+    assert_eq!(
+        (origin.source.as_str(), origin.path.as_str(), origin.revision.as_str()),
+        ("OpenLieroX 0.58 rc5", "skins/Hotrod.png", "0.58_rc5")
+    );
+    let main = c.pack_origin("olx-skin-default").expect("the game directory's skin");
+    assert_eq!((main.source.as_str(), main.revision.as_str()), ("OpenLieroX", "abc"));
+
+    // A missing directory is the import's error, as a missing skins/ is.
+    let gone = ImportPlan {
+        extra_skins: vec![import::SkinSource {
+            dir: extra.path().join("nope"),
+            ..plan.extra_skins[0].clone()
+        }],
+        ..ImportPlan::default()
+    };
+    assert!(import::import(&olx_mini(), &gone, out.path(), &local(), &mut |_| true).is_err());
+}

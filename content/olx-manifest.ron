@@ -15,6 +15,15 @@
     ],
     themes: ["data/themes/Dirt"],
     skins: true,
+    // Skins OpenLieroX 0.58 rc5's Windows release ships that the repository
+    // lacks (309, Hotrod among them), committed as received in
+    // `content/olx-0.58-rc5/skins/` (its README). Delete a file, or this
+    // entry, to stop bundling it.
+    extra_skins: Some((
+        dir: "content/olx-0.58-rc5/skins",
+        source: "OpenLieroX 0.58 rc5 (Windows release)",
+        revision: "0.58_rc5",
+    )),
     // The core pack `olx-core` (spec §19 E9): shared game sprites, the game
     // sounds and the frontend colours. Mod packs keep their own sounds.
     core: [

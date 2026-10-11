@@ -6,7 +6,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 |---|---|---|---|---|
 | Gamescript v7 loader | `src/common/CGameScript.cpp:582-1152` | `rl-import-lgs` | ported | unit and property tests; Classic and MW 1.0 import exactly |
 | `.lxl` image levels | `src/common/MapLoader_LieroX.cpp` | `rl-import-lxl` | ported | unit tests; 4 levels in scope, dirt counts match |
-| Skin colorization | `src/client/CGameSkin.cpp:720-790` | `rl-data::skin`, `rl-import-gfx` | ported | unit tests; all 409 skins import |
+| Skin colorization | `src/client/CGameSkin.cpp:720-790` | `rl-data::skin`, `rl-import-gfx` | ported | unit tests; all 409 repository skins and 0.58 rc5's 309 more (`content/olx-0.58-rc5/`) import |
 | Theme loading | `src/common/CMap.cpp:308-370` | `rl-import-gfx` | ported | Dirt theme imports |
 | Gamescript v8 | `CGameScript.cpp` (v8 branches) | — | not started | no content in scope |
 | Pixmap `.lxl` | `MapLoader_LieroX.cpp:440+` | — | not started | no content in scope |

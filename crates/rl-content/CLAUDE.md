@@ -118,7 +118,10 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   level, skin, data and theme directories followed one level, ids
   colliding in a run get `-2`, ..., and writes `import-report.ron`
   (`ImportEntry`: source, pack, error, warnings; byte-identical to the
-  CLI's before the move). `prune` (the CLI's) removes packs of earlier
+  CLI's before the move). `ImportPlan::extra_skins` (`SkinSource`: a
+  directory of skin PNGs with its own origin source and revision) adds
+  skins from outside the game directory in the same run (the manifest's
+  `extra_skins`: OLX 0.58 rc5's release skins). `prune` (the CLI's) removes packs of earlier
   runs. Every file is read at most `MAX_SOURCE_BYTES`, every image
   decoded within `rl_pack::image_io`'s bounds. A failed item is in
   the report; a failed write (permission, full disk) is the import's

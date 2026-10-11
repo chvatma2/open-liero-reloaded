@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use rl_content::import::{ImportOptions, ImportPlan, Progress};
+use rl_content::import::{ImportOptions, ImportPlan, Progress, SkinSource};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -33,6 +33,17 @@ pub struct Args {
     /// (shared sprites, game sounds, `data/frontend/colours.cfg`).
     #[arg(long = "core")]
     core: Vec<String>,
+    /// A directory of more skin PNGs from outside the game directory,
+    /// imported with their own origin (`--extra-skins-source`,
+    /// `--extra-skins-revision`).
+    #[arg(long, requires_all = ["extra_skins_source", "extra_skins_revision"])]
+    extra_skins: Option<PathBuf>,
+    /// The origin source recorded for `--extra-skins`, such as "OpenLieroX 0.58 rc5".
+    #[arg(long, requires = "extra_skins")]
+    extra_skins_source: Option<String>,
+    /// The origin revision recorded for `--extra-skins`.
+    #[arg(long, requires = "extra_skins")]
+    extra_skins_revision: Option<String>,
 }
 
 /// Returns `Ok(false)` if any item failed; the report lists every item either way.
@@ -43,6 +54,15 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         themes: args.themes.clone(),
         skins: args.skins,
         core: args.core.clone(),
+        extra_skins: args
+            .extra_skins
+            .iter()
+            .map(|dir| SkinSource {
+                dir: dir.clone(),
+                source: args.extra_skins_source.clone().unwrap_or_default(),
+                revision: args.extra_skins_revision.clone().unwrap_or_default(),
+            })
+            .collect(),
     };
     let options = ImportOptions { revision: args.revision.clone(), prune: true };
     let report = rl_content::import::import(&args.olx, &plan, &args.out, &options, &mut |p| {

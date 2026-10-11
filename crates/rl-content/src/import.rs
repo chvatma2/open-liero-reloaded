@@ -85,6 +85,21 @@ pub struct ImportPlan {
     pub skins: bool,
     /// The core pack's files (none: no core pack).
     pub core: Vec<String>,
+    /// More skins from other directories, each with its own origin
+    /// (`rl-cli import --extra-skins`: OLX 0.58's release has skins its
+    /// repository lacks).
+    pub extra_skins: Vec<SkinSource>,
+}
+
+/// A directory of OLX skin PNGs from outside the game directory.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkinSource {
+    /// The directory holding the PNGs (OLX's `skins/` itself).
+    pub dir: PathBuf,
+    /// Recorded as each pack's origin source, such as `OpenLieroX 0.58 rc5`.
+    pub source: String,
+    /// Recorded as each pack's origin revision.
+    pub revision: String,
 }
 
 impl ImportPlan {
@@ -95,6 +110,7 @@ impl ImportPlan {
             && self.themes.is_empty()
             && !self.skins
             && self.core.is_empty()
+            && self.extra_skins.is_empty()
     }
 }
 
@@ -271,6 +287,11 @@ enum Job {
     Level(String),
     Theme(String),
     Skin(VPath),
+    /// A skin of `ImportPlan::extra_skins[source]`, by its file name.
+    ExtraSkin {
+        source: usize,
+        name: VPath,
+    },
     /// The core pack's files.
     Core(Vec<String>),
 }
@@ -280,30 +301,49 @@ impl Job {
         match self {
             Job::Mod(s) | Job::Level(s) | Job::Theme(s) => s.clone(),
             Job::Skin(p) => p.to_string(),
+            Job::ExtraSkin { name, .. } => format!("skins/{name}"),
             Job::Core(_) => "data".to_string(),
         }
     }
 
-    fn run(&self, olx: &dyn ContentSource, revision: &str) -> anyhow::Result<Imported> {
-        let source = self.source();
-        let origin = Origin {
-            source: "OpenLieroX".to_string(),
-            path: format!("share/gamedir/{source}"),
-            revision: revision.to_string(),
+    /// Imports the item: from `olx` (the game directory), or from its own
+    /// directory in `extras` (`ImportPlan::extra_skins`, read alike).
+    fn run(
+        &self,
+        olx: &dyn ContentSource,
+        revision: &str,
+        extras: &[(Bounded, &SkinSource)],
+    ) -> anyhow::Result<Imported> {
+        let path = self.source();
+        let (src, origin): (&dyn ContentSource, Origin) = match self {
+            Job::ExtraSkin { source, .. } => {
+                let (dir, from) = extras.get(*source).context("no such skin source")?;
+                (dir, Origin { source: from.source.clone(), path, revision: from.revision.clone() })
+            }
+            _ => (
+                olx,
+                Origin {
+                    source: "OpenLieroX".to_string(),
+                    path: format!("share/gamedir/{path}"),
+                    revision: revision.to_string(),
+                },
+            ),
         };
         Ok(match self {
-            Job::Mod(m) => Imported::Mod(rl_import_lgs::import_mod(olx, &VPath::new(m)?, origin)?),
+            Job::Mod(m) => Imported::Mod(rl_import_lgs::import_mod(src, &VPath::new(m)?, origin)?),
             Job::Level(l) => {
-                let mut level = rl_import_lxl::import_lxl(olx, &VPath::new(l)?, origin)?;
+                let mut level = rl_import_lxl::import_lxl(src, &VPath::new(l)?, origin)?;
                 // The menus' thumbnail (plan 7 G6), from the art.
                 level.pack.thumb = Some(rl_import_gfx::level_thumbnail(&level.pack.level));
                 Imported::Level(level)
             }
-            Job::Theme(t) => Imported::Theme(rl_import_gfx::import_theme(olx, &VPath::new(t)?, origin)?),
-            Job::Skin(p) => Imported::Skin(rl_import_gfx::import_skin(olx, p, origin)?),
+            Job::Theme(t) => Imported::Theme(rl_import_gfx::import_theme(src, &VPath::new(t)?, origin)?),
+            Job::Skin(p) | Job::ExtraSkin { name: p, .. } => {
+                Imported::Skin(rl_import_gfx::import_skin(src, p, origin)?)
+            }
             Job::Core(files) => {
                 let files = files.iter().map(|f| VPath::new(f)).collect::<Result<Vec<_>, _>>()?;
-                Imported::Core(rl_import_gfx::import_core(olx, &files, origin)?)
+                Imported::Core(rl_import_gfx::import_core(src, &files, origin)?)
             }
         })
     }
@@ -360,7 +400,11 @@ impl ContentSource for Bounded {
 
 /// The jobs `plan` asks for, in the report's order: mods, levels, themes,
 /// the core pack, then the skins.
-fn jobs(olx: &dyn ContentSource, plan: &ImportPlan) -> anyhow::Result<Vec<Job>> {
+fn jobs(
+    olx: &dyn ContentSource,
+    plan: &ImportPlan,
+    extras: &[(Bounded, &SkinSource)],
+) -> anyhow::Result<Vec<Job>> {
     let mut jobs: Vec<Job> = Vec::new();
     jobs.extend(plan.mods.iter().cloned().map(Job::Mod));
     jobs.extend(plan.levels.iter().cloned().map(Job::Level));
@@ -373,6 +417,15 @@ fn jobs(olx: &dyn ContentSource, plan: &ImportPlan) -> anyhow::Result<Vec<Job>> 
         for name in olx.list(&skins).context("listing skins/")? {
             if name.to_ascii_lowercase().ends_with(".png") {
                 jobs.push(Job::Skin(skins.join(&name)?));
+            }
+        }
+    }
+    for (source, extra) in extras.iter().enumerate() {
+        let names =
+            extra.0.list(&VPath::root()).with_context(|| format!("listing {}", extra.1.dir.display()))?;
+        for name in names {
+            if name.to_ascii_lowercase().ends_with(".png") {
+                jobs.push(Job::ExtraSkin { source, name: VPath::new(&name)? });
             }
         }
     }
@@ -393,7 +446,9 @@ pub fn import(
     progress: &mut dyn FnMut(Progress<'_>) -> bool,
 ) -> anyhow::Result<ImportReport> {
     let src = Bounded(DirFs::new(olx));
-    let jobs = jobs(&src, plan)?;
+    let extras: Vec<(Bounded, &SkinSource)> =
+        plan.extra_skins.iter().map(|e| (Bounded(DirFs::new(&e.dir)), e)).collect();
+    let jobs = jobs(&src, plan, &extras)?;
     std::fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
     let notes = restore_leftovers(out)?;
     let total = jobs.len();
@@ -405,7 +460,7 @@ pub fn import(
             report.cancelled = true;
             break;
         }
-        let entry = match job.run(&src, &options.revision) {
+        let entry = match job.run(&src, &options.revision, &extras) {
             Ok(mut item) => {
                 let base = item.id().to_string();
                 let id = (1..)
