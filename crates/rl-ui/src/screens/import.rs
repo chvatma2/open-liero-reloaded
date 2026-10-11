@@ -6,57 +6,70 @@
 
 use egui::{Button, Color32, ProgressBar, RichText, ScrollArea, TextEdit, Ui};
 
-use super::{MenuData, header, message};
+use super::{MenuData, footer, form_line, message, page, primary, section};
 use crate::import::ImportResult;
 use crate::state::{UiAction, UiState};
 
 const ERROR: Color32 = Color32::from_rgb(255, 110, 90);
 const WARNING: Color32 = Color32::from_rgb(240, 200, 90);
 
+/// The page's column.
+const WIDTH: f32 = 900.0;
+
 pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut Vec<UiAction>) {
-    header(ui, "Import OLX content", out);
-    ui.label(
-        "Imports the mods, levels, themes and skins of an OpenLieroX game directory \
-         (its share/gamedir, or the folder OpenLieroX is installed in).",
-    );
-    match &data.packs_dir {
-        Some(dir) => ui.label(
-            RichText::new(format!(
-                "They go to {} and take the place of bundled packs of the same name.",
-                dir.display()
-            ))
-            .weak(),
-        ),
-        None => ui.label(RichText::new("There is no data directory: nothing can be imported.").color(ERROR)),
-    };
-    ui.add_space(8.0);
+    let mut ui = page(ui, "Import OLX content", WIDTH, out);
+    let ui = &mut ui;
     let importing = state.is_importing();
-    let p = &data.import;
-    ui.horizontal(|ui| {
-        let label = ui.label("Directory");
-        let field =
-            TextEdit::singleline(&mut data.import_path).desired_width(460.0).hint_text("/path/to/OpenLieroX");
-        ui.add_enabled(!importing, field).labelled_by(label.id);
-        let path = crate::import::clean_typed_path(&data.import_path);
+    let path = crate::import::clean_typed_path(&data.import_path).to_string();
+    // Import, Cancel while it runs, and why it was refused.
+    let mut ui = footer(ui, "import", |ui| {
         let can = !importing && !path.is_empty() && data.packs_dir.is_some();
-        if ui.add_enabled(can, Button::new("Import")).clicked() {
-            out.push(UiAction::StartImport(path.to_string()));
+        if primary(ui, "Import", can).clicked() {
+            out.push(UiAction::StartImport(path.clone()));
         }
         if importing {
+            let p = &data.import;
             let label = if p.cancelling { "Cancelling…" } else { "Cancel" };
             if ui.add_enabled(!p.cancelling, Button::new(label)).clicked() {
                 out.push(UiAction::CancelImport);
             }
         }
+        message(ui, state);
     });
-    // A relative path is the game's working directory's: say which.
-    let typed = crate::import::clean_typed_path(&data.import_path);
-    if !typed.is_empty() && !typed.starts_with('~') && std::path::Path::new(typed).is_relative() {
-        let cwd = std::env::current_dir().map_or_else(|_| "?".into(), |d| d.display().to_string());
-        ui.label(RichText::new(format!("Relative to {cwd}")).weak());
-    }
-    message(ui, state);
-    ui.add_space(8.0);
+    let ui = &mut ui;
+    section(ui, "OpenLieroX game directory", |ui, _| {
+        ui.label(
+            "Imports the mods, levels, themes and skins of an OpenLieroX game directory \
+             (its share/gamedir, or the folder OpenLieroX is installed in).",
+        );
+        match &data.packs_dir {
+            Some(dir) => ui.label(
+                RichText::new(format!(
+                    "They go to {} and take the place of bundled packs of the same name.",
+                    dir.display()
+                ))
+                .weak(),
+            ),
+            None => {
+                ui.label(RichText::new("There is no data directory: nothing can be imported.").color(ERROR))
+            }
+        };
+        ui.add_space(6.0);
+        form_line(ui, |ui| {
+            let label = ui.label("Directory");
+            let field = TextEdit::singleline(&mut data.import_path)
+                .desired_width(ui.available_width())
+                .hint_text("/path/to/OpenLieroX");
+            ui.add_enabled(!importing, field).labelled_by(label.id);
+        });
+        // A relative path is the game's working directory's: say which.
+        if !path.is_empty() && !path.starts_with('~') && std::path::Path::new(&path).is_relative() {
+            let cwd = std::env::current_dir().map_or_else(|_| "?".into(), |d| d.display().to_string());
+            ui.label(RichText::new(format!("Relative to {cwd}")).weak());
+        }
+    });
+    ui.add_space(10.0);
+    let p = &data.import;
     if importing {
         // The import reports from its thread: show each report.
         ui.ctx().request_repaint();
@@ -64,7 +77,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
             (Some(source), total) if total > 0 => format!("{} of {total}: {source}", p.entries.len()),
             _ => "Looking for content…".to_string(),
         };
-        ui.add(ProgressBar::new(p.fraction()).text(text).desired_width(640.0));
+        ui.add(ProgressBar::new(p.fraction()).text(text));
     }
     match &p.result {
         Some(ImportResult::Done { imported, failed, warnings, tried, total, cancelled }) => {

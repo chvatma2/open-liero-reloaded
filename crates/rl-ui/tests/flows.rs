@@ -250,6 +250,27 @@ fn local_play_builds_match_options() {
     let prefs = &h.state().ui.settings().gameplay.match_prefs;
     assert_eq!(prefs.per_bot.as_ref().map(Vec::len), Some(usize::from(prefs.bots)));
     h.get_by_label("Bot 3");
+
+    // The match panel's reset: OLX's match, the mod and level kept, and
+    // remembered (moved here from the options' Gameplay tab).
+    h.get_by_label("Lives").click();
+    h.run();
+    h.get_by_label("Dirt Level").click();
+    h.run();
+    let prefs = &h.state().ui.settings().gameplay.match_prefs;
+    assert!(prefs.rules.lives >= 0 && prefs.per_bot.is_some());
+    h.get_by_label("Reset the match to OLX's settings").click();
+    h.run();
+    let olx = MatchPrefs {
+        mod_id: "olx-classic".into(),
+        level_id: "olx-level-dirt-level".into(),
+        ..MatchPrefs::default()
+    };
+    assert_eq!(h.state().ui.settings().gameplay.match_prefs, olx);
+    assert!(
+        matches!(h.state().commands.last(), Some(AppCommand::SaveSettings(s)) if s.gameplay.match_prefs == olx),
+        "saved"
+    );
 }
 
 /// Every picker in local play is found by its label (as a screen reader

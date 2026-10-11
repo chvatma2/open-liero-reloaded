@@ -9,11 +9,11 @@
 
 use std::collections::BTreeMap;
 
-use egui::{Color32, RichText, ScrollArea, Ui};
+use egui::{RichText, ScrollArea, Ui};
 use rl_content::PackSource;
 use rl_data::manifest::{Origin, PackKind};
 
-use super::{MenuData, header};
+use super::{MenuData, page, section};
 use crate::state::UiAction;
 
 /// The credits, as `(heading, lines)`.
@@ -87,34 +87,47 @@ pub fn sources(packs: &[PackSource]) -> Vec<(String, String)> {
     rows
 }
 
+/// The page's column.
+const WIDTH: f32 = 860.0;
+
 pub(super) fn show(ui: &mut Ui, data: &MenuData, out: &mut Vec<UiAction>) {
-    header(ui, "About", out);
-    ScrollArea::vertical().id_salt("about").show(ui, |ui| {
-        ui.label(RichText::new(format!("rust-liero {}", env!("CARGO_PKG_VERSION"))).size(22.0).strong());
-        ui.label("A remake of OpenLieroX in Rust: its levels, mods and skins, played as it plays them.");
-        ui.add_space(12.0);
-        for (heading, lines) in CREDITS {
-            ui.label(RichText::new(*heading).strong().color(Color32::from_rgb(255, 200, 80)));
-            for line in *lines {
-                ui.label(*line);
-            }
-            ui.add_space(8.0);
-        }
-        ui.label(RichText::new("Licenses").strong().color(Color32::from_rgb(255, 200, 80)));
-        for line in LICENSES {
-            ui.label(*line);
-        }
-        ui.add_space(4.0);
-        let c = &data.catalog;
-        egui::Grid::new("about content").num_columns(2).spacing([16.0, 2.0]).striped(true).show(ui, |ui| {
-            for (label, origin) in sources(&c.sources) {
-                ui.label(label);
-                ui.label(RichText::new(origin).weak());
-                ui.end_row();
+    let mut ui = page(ui, "About", WIDTH, out);
+    ScrollArea::vertical().id_salt("about").show(&mut ui, |ui| {
+        ui.vertical_centered(|ui| {
+            let version = format!("rust-liero {}", env!("CARGO_PKG_VERSION"));
+            ui.label(RichText::new(version).size(22.0).strong());
+            ui.label("A remake of OpenLieroX in Rust: its levels, mods and skins, played as it plays them.");
+        });
+        ui.add_space(10.0);
+        section(ui, "Credits", |ui, _| {
+            for (heading, lines) in CREDITS {
+                ui.label(RichText::new(*heading).strong());
+                for line in *lines {
+                    ui.label(*line);
+                }
+                ui.add_space(6.0);
             }
         });
-        if c.sources.is_empty() {
-            ui.label(RichText::new("No content imported.").weak());
-        }
+        ui.add_space(10.0);
+        section(ui, "Licenses", |ui, _| {
+            for line in LICENSES {
+                ui.label(*line);
+            }
+            ui.add_space(4.0);
+            let c = &data.catalog;
+            egui::Grid::new("about content").num_columns(2).spacing([16.0, 2.0]).striped(true).show(
+                ui,
+                |ui| {
+                    for (label, origin) in sources(&c.sources) {
+                        ui.label(label);
+                        ui.label(RichText::new(origin).weak());
+                        ui.end_row();
+                    }
+                },
+            );
+            if c.sources.is_empty() {
+                ui.label(RichText::new("No content imported.").weak());
+            }
+        });
     });
 }

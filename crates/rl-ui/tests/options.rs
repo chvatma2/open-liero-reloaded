@@ -1,6 +1,6 @@
 //! Options (plan 7 task 4): key bindings that always keep the game
 //! controllable (Review Focus 2), rebinding through the widgets with the
-//! "press a key" capture, and the video, audio and gameplay sections.
+//! "press a key" capture, and the video and audio sections.
 
 use egui::accesskit::Role;
 use egui_kittest::Harness;
@@ -292,7 +292,7 @@ fn video(h: &Harness<'static, App>) -> Vec<VideoSettings> {
 }
 
 #[test]
-fn options_set_video_audio_and_gameplay() {
+fn options_set_video_and_audio() {
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
     h.get_by_label("Options").click();
     h.run();
@@ -333,14 +333,9 @@ fn options_set_video_audio_and_gameplay() {
     // OLX's default volume (Audio.Volume 70).
     assert_eq!(AudioSettings::default().master, 0.7);
 
-    h.get_by_label("Gameplay").click();
-    h.run();
-    h.get_by_label("Lives").click();
-    h.run();
-    assert!(saved(&h).gameplay.match_prefs.rules.lives >= 0);
-    h.get_by_label("Reset the match to OLX's settings").click();
-    h.run();
-    assert_eq!(saved(&h).gameplay.match_prefs, Default::default());
+    // The match is local play's, set up before each game: no tab here.
+    assert!(h.query_by_label("Gameplay").is_none());
+    assert!(h.query_by_label("Lives").is_none());
 }
 
 /// The game's own keys (`GAME_KEYS`: Esc, F5, F2, Tab, H, and PageUp and

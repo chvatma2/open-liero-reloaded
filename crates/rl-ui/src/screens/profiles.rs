@@ -10,10 +10,13 @@ use rl_sim::Dir;
 
 use rl_content::Catalog;
 
-use super::{MenuData, header};
+use super::{MenuData, columns, page, tall_section};
 use crate::profiles::{NameError, Profiles};
 use crate::skin_preview::{PreviewAnim, PreviewKey, PreviewTextures};
 use crate::state::{UiAction, UiState};
+
+/// The page's column: three panels side by side.
+const WIDTH: f32 = 1000.0;
 
 /// The preview's scale: a 20 × 18 sprite drawn 4 points a pixel.
 const PREVIEW_SCALE: f32 = 4.0;
@@ -49,7 +52,8 @@ impl View {
 }
 
 pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut Vec<UiAction>) {
-    header(ui, "Profiles", out);
+    let mut ui = page(ui, "Profiles", WIDTH, out);
+    let ui = &mut ui;
     let before = state.profiles();
     let mut p = before.clone();
     let mut v = std::mem::take(&mut data.profiles);
@@ -61,11 +65,13 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     if !v.still {
         v.anim.step(ui.input(|inp| inp.stable_dt));
     }
-    ui.columns(3, |c| {
-        list(&mut c[0], &mut p, &mut v);
-        editor(&mut c[1], &mut p, &mut v, data.preview.as_ref());
+    columns(ui, 3, |c| {
+        tall_section(&mut c[0], "Players", |ui, _| list(ui, &mut p, &mut v));
+        tall_section(&mut c[1], "Look", |ui, _| editor(ui, &mut p, &mut v, data.preview.as_ref()));
         let mut search = std::mem::take(&mut v.search);
-        skins(&mut c[2], &mut p, v.editing, &mut search, &data.catalog);
+        tall_section(&mut c[2], "Skin", |ui, title| {
+            skins(ui, &mut p, v.editing, &mut search, &data.catalog, title)
+        });
         v.search = search;
     });
     let edited = &p.list[v.editing];
@@ -127,7 +133,8 @@ fn editor(ui: &mut Ui, p: &mut Profiles, v: &mut View, preview: Option<&PreviewT
         v.error = None;
     }
     let label = ui.label(RichText::new("Name").strong());
-    let field = TextEdit::singleline(&mut v.name).char_limit(crate::MAX_NAME_CHARS).desired_width(220.0);
+    let field =
+        TextEdit::singleline(&mut v.name).char_limit(crate::MAX_NAME_CHARS).desired_width(f32::INFINITY);
     if ui.add(field).labelled_by(label.id).changed() {
         v.error = p.rename(i, &v.name).err();
     }
@@ -171,10 +178,9 @@ fn editor(ui: &mut Ui, p: &mut Profiles, v: &mut View, preview: Option<&PreviewT
 }
 
 /// Every imported skin, searchable; a click gives the edited profile it.
-fn skins(ui: &mut Ui, p: &mut Profiles, i: usize, search: &mut String, catalog: &Catalog) {
-    let label = ui.label(RichText::new("Skin").strong());
-    let field = TextEdit::singleline(search).hint_text("Search skins").desired_width(220.0);
-    ui.add(field).labelled_by(label.id);
+fn skins(ui: &mut Ui, p: &mut Profiles, i: usize, search: &mut String, catalog: &Catalog, label: egui::Id) {
+    let field = TextEdit::singleline(search).hint_text("Search skins").desired_width(f32::INFINITY);
+    ui.add(field).labelled_by(label);
     let current = catalog.skin(&p.list[i].skin_id);
     if let Some(s) = current {
         ui.label(format!("Current: {}", s.name));
@@ -189,7 +195,7 @@ fn skins(ui: &mut Ui, p: &mut Profiles, i: usize, search: &mut String, catalog: 
         .filter(|s| needle.is_empty() || s.name.to_lowercase().contains(&needle) || s.id.contains(&needle))
         .collect();
     ui.label(RichText::new(format!("{} of {} skins", shown.len(), catalog.skins.len())).small().weak());
-    ScrollArea::vertical().id_salt("skins").max_height(420.0).show(ui, |ui| {
+    ScrollArea::vertical().id_salt("skins").auto_shrink([false, false]).show(ui, |ui| {
         for s in shown {
             let on = current.is_some_and(|c| c.id == s.id);
             if ui.selectable_label(on, &s.name).clicked() && !on {

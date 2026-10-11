@@ -49,7 +49,7 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   fullscreen through `VideoFile`;
   `FrameRate`, `UpscaleFilter`, interpolation, `ui_scale` in
   `UI_SCALE_RANGE` 0.5-3), audio volumes 0-1, `Bindings`, gameplay
-  (`MatchPrefs`; the HUD has one style: an old file's `hud:` is ignored),
+  (`MatchPrefs`: local play's last setup; the HUD has one style: an old file's `hud:` is ignored),
   `import` (`ImportSettings::last_path`, default empty).
   `sanitize()` fixes out-of-range values and
   keys (`sanitize_bindings`: the `GAME_KEYS` Esc, F5, F2, Tab, H and
@@ -76,17 +76,35 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   most `THUMB_DECODES_PER_FRAME` a frame, each once, shown letterboxed;
   an unreadable one keeps its placeholder and is reported once through
   `take_warnings`, which the app logs) and the skin preview (`preview_wanted`, set
-  by the profiles screen each frame; `preview`, the app's textures). Main
-  (`main.rs`), local play (`local_play.rs`: mod, level grid with
-  thumbnails or a name-and-size placeholder, Deathmatch settings, bots, the
-  player's profile, Start with "Loading…" and the failure message; a saved
+  by the profiles screen each frame; `preview`, the app's textures).
+  **The page frame** (`mod.rs`, every screen the main menu opens):
+  `page(ui, title, width, out)` returns a column at most `width` points
+  wide centred in the window (the window less `PAGE_MARGIN` each side
+  when narrower), the title centred on top, Back at its left edge;
+  `footer` puts the primary action (`primary`: a large button; Start,
+  Import) and its status centred at the column's bottom and returns the
+  rest; `columns` splits that rest (egui's own `columns` would reach
+  under the footer); `section`/`tall_section` group widgets in
+  `theme::section_frame` panels under a title (the title's id may label a
+  picker); `form_row`/`form_check_row` put a name right-aligned in a
+  `FORM_LABEL`-wide column so a form's controls start on one line. A new
+  screen uses them: `tests/layout.rs` checks every sub-screen is centred
+  at 1280 × 720 and 3440 × 1440. Main
+  (`main.rs`, centred on its own), local play (`local_play.rs`, 1100
+  wide: the Map panel (mod, level grid with
+  thumbnails or a name-and-size placeholder), the Match panel
+  (Deathmatch rules, loading time, weapons, bonuses, "Reset the match to
+  OLX's settings": rules, bots and weapons, the mod and level kept), the
+  Players panel (the player's profile, the bots), Start with "Loading…"
+  and the failure message; a saved
   mod or level no longer imported becomes the first listed), profiles
-  (`profiles.rs`: list, New, Delete confirmed, "Play as this", name with
+  (`profiles.rs`: Players, Look and Skin panels; the list, New, Delete confirmed, "Play as this", name with
   its error, colour sliders, searchable skins, the preview; it opens on
   the profile playing), replays (`replays.rs`, each file's header problem
-  shown), options (`options.rs`: Video, Audio, Keys, Gameplay tabs; the UI
-  scale applies when its slider is released; Gameplay reuses local play's
-  rules and bots widgets for the default match; `keys.rs`: per action its
+  shown), options (`options.rs`, 720 wide: Video, Audio, Keys tabs,
+  centred; the match is set up in local play only, which remembers it in
+  `settings.gameplay`; the UI
+  scale applies when its slider is released; `keys.rs`: per action its
   keys and gamepad inputs, each removable but the last of its device, "+"
   opens a capture (`MenuData::capture`, an `rl_input::Capture` the app
   feeds), a key other actions have opens a dialog (move, refused when it
@@ -194,10 +212,13 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   returned, never printed: the caller logs each once.
 - **Theme** (`theme.rs`): `apply(ctx, ui_scale)`: dark, larger text, the
   scale as egui's zoom factor (on top of the DPI scale; it takes effect at
-  the end of the pass).
+  the end of the pass); `BACKGROUND`, `ACCENT` (section titles),
+  `PRIMARY` (the primary action's fill), `section_frame()`.
 
 Test: `cargo nextest run -p rl-ui` (`tests/store.rs`, `tests/state.rs`,
 `tests/flows.rs`: kittest flows by label and the local play's match,
+`tests/layout.rs`: every sub-screen a centred column, the primary action
+centred below,
 `thumbnails_decode_lazily_and_bounded`, `about_credits_the_authors_and_the_licenses`,
 `tests/profiles.rs`: profiles through the widgets, names, the preview; its
 last part compares with `rl_scene::SceneAssets` when `RL_CONTENT_DIR` is

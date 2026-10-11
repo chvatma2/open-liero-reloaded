@@ -3,9 +3,28 @@
 //! display's DPI scale (which egui-winit sets as the native pixels per
 //! point).
 
-use egui::{Context, FontId, TextStyle, Theme};
+use egui::{Color32, Context, FontId, Frame, Stroke, TextStyle, Theme};
 
 use crate::settings::clamp_scale;
+
+/// The menus' background.
+pub const BACKGROUND: Color32 = Color32::from_rgb(16, 16, 20);
+
+/// A section's title colour (OLX's menu yellow).
+pub const ACCENT: Color32 = Color32::from_rgb(255, 200, 80);
+
+/// A page's primary action's fill (Start, Import): egui's selection blue.
+pub const PRIMARY: Color32 = Color32::from_rgb(0, 92, 128);
+
+/// The frame a menu groups a section's widgets in: a panel a shade
+/// lighter than the background, with a thin border.
+pub fn section_frame() -> Frame {
+    Frame::new()
+        .fill(Color32::from_rgb(25, 25, 31))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(52, 52, 62)))
+        .corner_radius(6)
+        .inner_margin(12)
+}
 
 /// Applies the theme to `ctx` with `ui_scale` (clamped to
 /// [`crate::UI_SCALE_RANGE`], 1 when NaN) as egui's zoom factor. Call it

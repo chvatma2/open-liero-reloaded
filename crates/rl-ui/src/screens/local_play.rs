@@ -1,11 +1,16 @@
 //! Local play's setup (OLX's local game menu,
 //! `src/client/DeprecatedGUI/Menu_Local.cpp`, and its game settings
 //! dialog): the mod, the level grid with thumbnails and sizes, the
-//! Deathmatch settings, the bots, the human's profile, and Start.
+//! Deathmatch settings, the bots, the human's profile, and Start. Laid
+//! out anew in the page frame: the map on the left, the match and the
+//! players (the human's profile, the bots) in panels on the right, Start
+//! centred below.
 
-use egui::{Button, Color32, ComboBox, RichText, ScrollArea, Sense, Slider, Ui, Vec2};
+use egui::{Color32, ComboBox, RichText, ScrollArea, Sense, Slider, Ui, Vec2};
 
-use super::{MenuData, header, message};
+use super::{
+    MenuData, columns, footer, form_check_row, form_row, message, page, primary, section, tall_section,
+};
 use crate::match_prefs::{
     BotLevel, BotLoadout, BotPersonality, KILL_LIMIT_RANGE, LIVES_RANGE, LOADING_TIME_RANGE, MAX_BOTS,
     MatchPrefs, TIME_LIMIT_RANGE,
@@ -16,6 +21,15 @@ use crate::state::{UiAction, UiState};
 /// `rl_pack::THUMB_SIZE`), and the space between cards.
 const THUMB: Vec2 = Vec2::new(160.0, 96.0);
 const GAP: f32 = 10.0;
+
+/// The page's column (two panels side by side).
+const WIDTH: f32 = 1100.0;
+
+/// The space between the panels of a column.
+const SECTION_GAP: f32 = 8.0;
+
+/// The pickers' width.
+const COMBO_W: f32 = 200.0;
 
 /// What a rule is set to when it is switched on (OLX's defaults,
 /// `src/common/FeatureList.cpp:31-33`; lives as OLX's menu starts them).
@@ -39,51 +53,58 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     }
     let mut profiles = state.profiles().clone();
     let mut start = false;
-    header(ui, "Local Play", out);
+    let mut ui = page(ui, "Local Play", WIDTH, out);
+    let ui = &mut ui;
     // Start, and why the last start failed, always in view.
-    egui::Panel::bottom("local play start").show(ui, |ui| {
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            let (starting, importing) = (state.is_starting(), state.is_importing());
-            let button = Button::new(RichText::new("Start").size(20.0)).min_size(Vec2::new(180.0, 40.0));
-            if ui.add_enabled(!starting && !importing, button).clicked() {
-                start = true;
-            }
-            if starting {
-                ui.label("Loading…");
-            } else if importing {
-                // Its packs are being written (plan 7 task 7).
-                ui.label("Importing content…");
-            }
-            message(ui, state);
-        });
-        ui.add_space(6.0);
+    let mut ui = footer(ui, "local play", |ui| {
+        let (starting, importing) = (state.is_starting(), state.is_importing());
+        if primary(ui, "Start", !starting && !importing).clicked() {
+            start = true;
+        }
+        if starting {
+            ui.label("Loading…");
+        } else if importing {
+            // Its packs are being written (plan 7 task 7).
+            ui.label("Importing content…");
+        }
+        message(ui, state);
     });
-    ui.columns(2, |c| {
-        ScrollArea::vertical().id_salt("local play levels").show(&mut c[0], |ui| {
+    let ui = &mut ui;
+    columns(ui, 2, |c| {
+        tall_section(&mut c[0], "Map", |ui, _| {
             mod_picker(ui, data, &mut p);
             ui.add_space(8.0);
-            level_grid(ui, data, &mut p);
+            ScrollArea::vertical().id_salt("local play levels").auto_shrink([false, false]).show(ui, |ui| {
+                level_grid(ui, data, &mut p);
+            });
         });
         ScrollArea::vertical().id_salt("local play setup").show(&mut c[1], |ui| {
-            rules(ui, data, &mut p);
-            ui.add_space(8.0);
-            bots(ui, &mut p);
-            ui.add_space(8.0);
-            let label = ui.label(RichText::new("Player").strong());
-            let names: Vec<&str> = profiles.list.iter().map(|p| p.name.as_str()).collect();
-            let shown = names.get(profiles.selected).copied().unwrap_or("-").to_string();
-            let mut selected = profiles.selected;
-            ComboBox::from_id_salt("profile")
-                .selected_text(shown)
-                .show_ui(ui, |ui| {
-                    for (i, n) in names.iter().enumerate() {
-                        ui.selectable_value(&mut selected, i, *n);
-                    }
-                })
-                .response
-                .labelled_by(label.id);
-            profiles.selected = selected;
+            section(ui, "Match (Deathmatch)", |ui, _| {
+                if rules(ui, data, &mut p) {
+                    p = olx_match(data, &p);
+                }
+            });
+            ui.add_space(SECTION_GAP);
+            // The human, then the bots.
+            section(ui, "Players", |ui, _| {
+                form_row(ui, "Player", |ui, label| {
+                    let names: Vec<&str> = profiles.list.iter().map(|p| p.name.as_str()).collect();
+                    let shown = names.get(profiles.selected).copied().unwrap_or("-").to_string();
+                    let mut selected = profiles.selected;
+                    ComboBox::from_id_salt("profile")
+                        .selected_text(shown)
+                        .width(COMBO_W)
+                        .show_ui(ui, |ui| {
+                            for (i, n) in names.iter().enumerate() {
+                                ui.selectable_value(&mut selected, i, *n);
+                            }
+                        })
+                        .response
+                        .labelled_by(label);
+                    profiles.selected = selected;
+                });
+                bots(ui, &mut p);
+            });
         });
     });
     // The changes first, so a Start in the same frame starts them.
@@ -99,23 +120,25 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
 }
 
 fn mod_picker(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) {
-    let label = ui.label(RichText::new("Mod").strong());
     let name = data
         .catalog
         .mod_info(&p.mod_id)
         .map_or_else(|| format!("{} (missing)", p.mod_id), |m| m.name.clone());
-    ComboBox::from_id_salt("mod")
-        .selected_text(name)
-        .width(260.0)
-        .show_ui(ui, |ui| {
-            for m in &data.catalog.mods {
-                if ui.selectable_label(m.id == p.mod_id, &m.name).clicked() {
-                    p.set_mod(m);
+    ui.horizontal(|ui| {
+        let label = ui.label(RichText::new("Mod").strong());
+        ComboBox::from_id_salt("mod")
+            .selected_text(name)
+            .width(260.0)
+            .show_ui(ui, |ui| {
+                for m in &data.catalog.mods {
+                    if ui.selectable_label(m.id == p.mod_id, &m.name).clicked() {
+                        p.set_mod(m);
+                    }
                 }
-            }
-        })
-        .response
-        .labelled_by(label.id);
+            })
+            .response
+            .labelled_by(label.id);
+    });
     if data.catalog.mods.is_empty() {
         ui.label(RichText::new("No mods: import OLX's content first.").weak());
     }
@@ -186,49 +209,59 @@ pub(crate) fn fit(size: Vec2, rect: egui::Rect) -> egui::Rect {
     egui::Rect::from_center_size(rect.center(), size * k)
 }
 
-/// OLX's Deathmatch settings (also the options' default match).
-pub(super) fn rules(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) {
-    ui.label(RichText::new("Deathmatch").strong());
+/// The match OLX starts with: its rules, bots and weapons, the mod and
+/// level kept (the mod's presets decide the weapons).
+fn olx_match(data: &MenuData, p: &MatchPrefs) -> MatchPrefs {
+    let mut d =
+        MatchPrefs { mod_id: p.mod_id.clone(), level_id: p.level_id.clone(), ..MatchPrefs::default() };
+    if let Some(m) = data.catalog.mod_info(&d.mod_id) {
+        d.set_mod(m);
+    }
+    d
+}
+
+/// OLX's Deathmatch settings: a rule switched off says so in place of
+/// its slider. True when the player asked for OLX's match back.
+fn rules(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) -> bool {
     let r = &mut p.rules;
-    egui::Grid::new("rules").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-        let mut on = r.lives >= 0;
-        if ui.checkbox(&mut on, "Lives").changed() {
+    form_check_row(ui, r.lives >= 0, "Lives", |ui, on, changed| {
+        if changed {
             r.lives = if on { LIVES_ON } else { -2 };
         }
         if on {
             ui.add(Slider::new(&mut r.lives, LIVES_RANGE));
         } else {
-            ui.label("unlimited");
+            ui.label(RichText::new("unlimited").weak());
         }
-        ui.end_row();
-        let mut on = r.kill_limit > 0;
-        if ui.checkbox(&mut on, "Kill limit").changed() {
+    });
+    form_check_row(ui, r.kill_limit > 0, "Kill limit", |ui, on, changed| {
+        if changed {
             r.kill_limit = if on { KILL_LIMIT_ON } else { -1 };
         }
         if on {
             ui.add(Slider::new(&mut r.kill_limit, KILL_LIMIT_RANGE));
         } else {
-            ui.label("off");
+            ui.label(RichText::new("off").weak());
         }
-        ui.end_row();
-        let mut on = r.time_limit > 0.0;
-        if ui.checkbox(&mut on, "Time limit").changed() {
+    });
+    form_check_row(ui, r.time_limit > 0.0, "Time limit", |ui, on, changed| {
+        if changed {
             r.time_limit = if on { TIME_LIMIT_ON } else { -1.0 };
         }
         if on {
             ui.add(Slider::new(&mut r.time_limit, TIME_LIMIT_RANGE).step_by(0.5).suffix(" min"));
         } else {
-            ui.label("off");
+            ui.label(RichText::new("off").weak());
         }
-        ui.end_row();
-        ui.label("Loading time");
+    });
+    form_row(ui, "Loading time", |ui, _| {
         ui.add(Slider::new(&mut p.loading_time, LOADING_TIME_RANGE).suffix(" %"));
-        ui.end_row();
-        let label = ui.label("Weapons");
+    });
+    form_row(ui, "Weapons", |ui, label| {
         let presets = data.catalog.mod_info(&p.mod_id).map(|m| m.presets.clone()).unwrap_or_default();
         ComboBox::from_id_salt("restrictions")
             .selected_text(p.restrictions.clone())
-            .width(200.0)
+            .width(COMBO_W)
             .show_ui(ui, |ui| {
                 for name in presets {
                     let checked = name == p.restrictions;
@@ -238,10 +271,15 @@ pub(super) fn rules(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) {
                 }
             })
             .response
-            .labelled_by(label.id);
-        ui.end_row();
+            .labelled_by(label);
     });
-    ui.checkbox(&mut p.bonuses, "Bonuses");
+    form_row(ui, "", |ui, _| {
+        ui.checkbox(&mut p.bonuses, "Bonuses");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.button("Reset the match to OLX's settings").clicked()
+        })
+        .inner
+    })
 }
 
 fn level_name(l: BotLevel) -> &'static str {
@@ -262,6 +300,7 @@ fn level_combo(
 ) {
     ComboBox::from_id_salt(id)
         .selected_text(level_name(*level))
+        .width(COMBO_W)
         .show_ui(ui, |ui| {
             for l in BotLevel::ALL {
                 ui.selectable_value(level, l, level_name(l));
@@ -271,61 +310,61 @@ fn level_combo(
         .labelled_by(label);
 }
 
-/// The bots (also the options' default match).
-pub(super) fn bots(ui: &mut Ui, p: &mut MatchPrefs) {
-    ui.label(RichText::new("Bots").strong());
-    let mut n = p.bots;
-    if ui.add(Slider::new(&mut n, 1..=MAX_BOTS).text("bots")).changed() {
-        p.set_bots(n);
-    }
-    let mut each = p.per_bot.is_some();
-    if ui.checkbox(&mut each, "Each bot its own difficulty").changed() {
-        p.set_per_bot(each);
-    }
-    egui::Grid::new("bots").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
-        match &mut p.per_bot {
-            None => {
-                let label = ui.label("Difficulty");
-                level_combo(ui, label.id, "difficulty", &mut p.difficulty);
-                ui.end_row();
-            }
-            Some(levels) => {
-                for (i, l) in levels.iter_mut().enumerate() {
-                    let label = ui.label(format!("Bot {}", i + 1));
-                    level_combo(ui, label.id, ("bot", i), l);
-                    ui.end_row();
-                }
+/// The bots: how many, their difficulty (one for all or each its own),
+/// personality and loadout.
+fn bots(ui: &mut Ui, p: &mut MatchPrefs) {
+    form_row(ui, "Bots", |ui, label| {
+        let mut n = p.bots;
+        if ui.add(Slider::new(&mut n, 1..=MAX_BOTS)).labelled_by(label).changed() {
+            p.set_bots(n);
+        }
+    });
+    form_row(ui, "", |ui, _| {
+        let mut each = p.per_bot.is_some();
+        if ui.checkbox(&mut each, "Each bot its own difficulty").changed() {
+            p.set_per_bot(each);
+        }
+    });
+    match &mut p.per_bot {
+        None => {
+            form_row(ui, "Difficulty", |ui, label| level_combo(ui, label, "difficulty", &mut p.difficulty))
+        }
+        Some(levels) => {
+            for (i, l) in levels.iter_mut().enumerate() {
+                form_row(ui, &format!("Bot {}", i + 1), |ui, label| level_combo(ui, label, ("bot", i), l));
             }
         }
-        let label = ui.label("Personality");
+    }
+    form_row(ui, "Personality", |ui, label| {
         let name = |b: BotPersonality| match b {
             BotPersonality::Olx => "OLX bot",
             BotPersonality::Chaos => "Chaos (fires everything)",
         };
         ComboBox::from_id_salt("personality")
             .selected_text(name(p.personality))
+            .width(COMBO_W)
             .show_ui(ui, |ui| {
                 for b in BotPersonality::ALL {
                     ui.selectable_value(&mut p.personality, b, name(b));
                 }
             })
             .response
-            .labelled_by(label.id);
-        ui.end_row();
-        let label = ui.label("Loadout");
+            .labelled_by(label);
+    });
+    form_row(ui, "Loadout", |ui, label| {
         let name = |b: BotLoadout| match b {
             BotLoadout::OlxPreset => "OLX's choice",
             BotLoadout::Random => "Random",
         };
         ComboBox::from_id_salt("loadout")
             .selected_text(name(p.loadout))
+            .width(COMBO_W)
             .show_ui(ui, |ui| {
                 for b in [BotLoadout::OlxPreset, BotLoadout::Random] {
                     ui.selectable_value(&mut p.loadout, b, name(b));
                 }
             })
             .response
-            .labelled_by(label.id);
-        ui.end_row();
+            .labelled_by(label);
     });
 }
