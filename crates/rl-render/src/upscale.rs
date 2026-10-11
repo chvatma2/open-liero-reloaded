@@ -44,6 +44,14 @@ pub fn dest_rect(filter: UpscaleFilter, src: (f32, f32), out: (u32, u32)) -> [f3
     [centre(ow, w), centre(oh, h), w, h]
 }
 
+/// [`dest_rect`] into the part `area` (`[x, y, w, h]` output pixels) of
+/// the output: the game's playfield, a window's 16:9 frame less its HUD
+/// bar.
+pub fn dest_rect_in(filter: UpscaleFilter, src: (f32, f32), area: [u32; 4]) -> [f32; 4] {
+    let [x, y, w, h] = dest_rect(filter, src, (area[2], area[3]));
+    [x + area[0] as f32, y + area[1] as f32, w, h]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,6 +72,17 @@ mod tests {
             dest_rect(UpscaleFilter::IntegerNearest, (640.0, 480.0), (320, 240)),
             [-160.0, -120.0, 640.0, 480.0]
         );
+    }
+
+    /// A part of the output (the game's playfield above its HUD bar, in a
+    /// letterboxed frame): the same rectangle, moved to the part.
+    #[test]
+    fn a_part_of_the_output_is_its_own_output_moved() {
+        for f in UpscaleFilter::ALL {
+            let [x, y, w, h] = dest_rect(f, (854.0, 384.0), (1920, 864));
+            assert_eq!(dest_rect_in(f, (854.0, 384.0), [0, 108, 1920, 864]), [x, y + 108.0, w, h], "{f:?}");
+            assert_eq!(dest_rect_in(f, (854.0, 384.0), [0, 0, 1920, 864]), [x, y, w, h], "{f:?}");
+        }
     }
 
     #[test]

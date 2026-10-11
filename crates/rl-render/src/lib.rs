@@ -28,4 +28,4 @@ pub use diff::{ImageDiff, perceptual_diff};
 pub use frame::{Instance, MARGIN, MAX_VIEW, MISSING, WorldFrame, push_instances, terrain_instance};
 pub use offscreen::{NoAdapter, OUTPUT_FORMAT, Offscreen};
 pub use renderer::{MIN_SCALE, RenderSettings, Renderer, WORLD_FORMAT};
-pub use upscale::{UpscaleFilter, dest_rect};
+pub use upscale::{UpscaleFilter, dest_rect, dest_rect_in};

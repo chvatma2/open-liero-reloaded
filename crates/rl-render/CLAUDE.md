@@ -12,8 +12,9 @@ on screen or offscreen.
   registered (scene, worms, `rl-fx`); `upload_terrain(&ColorMap)` for a new
   or restarted level, then `update_terrain(&mut ColorMap)` after each tick
   (only `take_dirty()`'s rectangles); `render(&DrawList, &view, size)` per
-  drawn frame (`rl_present::Presentation::upload` does the uploads in this
-  order). **An image registered after `upload_atlas`** (a worm added
+  drawn frame (`render_in(.., area)`: the picture in a part of the target,
+  `dest_rect_in`; the game's playfield above its HUD bar; `rl_present::Presentation::upload`
+  does the uploads in this order). **An image registered after `upload_atlas`** (a worm added
   later) draws as a magenta square until `upload_atlas` runs again.
 - **World pass** (`frame.rs`, `world.wgsl`): a target covering the view
   plus `MARGIN` world pixels, at `scale()` texels per world pixel

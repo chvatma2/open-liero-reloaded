@@ -4,7 +4,7 @@ use rl_scene::DrawList;
 
 use super::{Renderer, Target, WORLD_FORMAT, texture, upscale_uniform};
 use crate::frame::{WorldFrame, push_instances, terrain_instance};
-use crate::upscale::dest_rect;
+use crate::upscale::dest_rect_in;
 
 impl Renderer {
     /// Draws `list` into `target` (`size` pixels, of the renderer's
@@ -13,6 +13,13 @@ impl Renderer {
     /// upscaled with [`super::RenderSettings::filter`]. Black where there
     /// is no map, and around the picture when the aspects differ.
     pub fn render(&mut self, list: &DrawList, target: &wgpu::TextureView, size: (u32, u32)) {
+        self.render_in(list, target, [0, 0, size.0, size.1]);
+    }
+
+    /// [`Renderer::render`] with the picture placed in the part `area`
+    /// (`[x, y, w, h]` pixels) of `target` (the game's playfield above its
+    /// HUD bar: [`crate::dest_rect_in`]); the rest of `target` is black.
+    pub fn render_in(&mut self, list: &DrawList, target: &wgpu::TextureView, area: [u32; 4]) {
         let frame = WorldFrame::new(list.view, self.scale());
         self.ensure_target(&frame);
         self.instances.clear();
@@ -39,7 +46,7 @@ impl Renderer {
         let (tw, th) = self.target.as_ref().expect("ensured above").size;
         self.queue.write_buffer(&self.globals, 0, bytemuck::cast_slice(&[tw as f32, th as f32, 0.0, 0.0]));
         let src = frame.source_rect(list.view);
-        let dst = dest_rect(self.settings.filter, (src[2], src[3]), size);
+        let dst = dest_rect_in(self.settings.filter, (src[2], src[3]), area);
         let uniform = upscale_uniform(src, dst, (tw, th), self.settings.filter, self.srgb);
         self.queue.write_buffer(&self.upscale_uniform, 0, bytemuck::cast_slice(&uniform));
 
