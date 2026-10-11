@@ -1025,8 +1025,8 @@ Made precise while implementing the options (plan 7 task 4):
 - **Options screen** (OLX's options menu, laid out anew): Video (window
   preset, fullscreen, VSync or uncapped, upscale filter, interpolation, UI
   scale), Audio (OLX's sound volume, default 70 %, times an effects
-  volume), Keys, Gameplay (HUD style; the match local play starts with,
-  with a reset to OLX's settings). Every change applies at once and is
+  volume), Keys, Gameplay (the match local play starts with, with a reset
+  to OLX's settings; the HUD has one style, see below). Every change applies at once and is
   saved (the file at most once a second).
 - **Window changes** go only through `rl-game`'s paced requests, and only
   when the preset or fullscreen changed (`rl_game::video::Video`): toggling
@@ -1039,7 +1039,7 @@ Made precise while implementing the options (plan 7 task 4):
   and one gamepad input. A captured input another action has is moved
   (refused when that action would have none of that device left) or shared,
   on the player's choice; the last input of a device cannot be removed;
-  the game's keys (Esc, F2, F5, Tab, H) are refused; bound keys that make
+  the game's keys (Esc, F2, F5, Tab, H, PageUp and PageDown) are refused; bound keys that make
   a browser shortcut are pointed out. Bindings from a file (`settings.ron`,
   a profile's own keys; either list may be missing) get OLX's defaults back
   for an action left unreachable, with a warning, and the rest of the file
@@ -1067,3 +1067,18 @@ Made precise while implementing thumbnails and the credits (plan 7 task 6):
   license asks), the OpenLieroX team as OLX's main menu names it; the
   licenses (GPL-3.0-or-later; OLX's LGPL code; LX's zlib-style code); and
   each bundled mod's and level's recorded origin.
+
+Made precise in the final review of plan 7 (2026-10-11):
+
+- **Importer fuzz targets were never built.** §10 M1's "importers have
+  fuzz targets" and §7's `cargo-fuzz` targets for every importer and the
+  pack reader were deferred by §15 A5 (stable-Rust `proptest` "never
+  panics" tests on corrupted input stand in) and no later plan built them.
+- **The HUD over the playfield:** OLX draws its HUD outside the playfield;
+  ours lies over it, so the minimap and the health and weapons panel fade
+  to 25 % (150 ms, eased) while a worm, with a margin of its size, is
+  under them, and the minimap is at most 1.5 × OLX's size.
+- **G2, a newer game's file:** a `settings.ron` or `profiles.ron` of a
+  version above this game's is left in place, untouched; the session uses
+  defaults, saves nothing to it, and the main menu says so. Other
+  unreadable files are set aside as before.

@@ -40,7 +40,7 @@ traces bit for bit.
   - explosions, carving, dirt, damage, death and respawn, and bonuses;
   - glibc-exact `sinf`, `cosf` and `atan2f`.
 
-  103 of the 106 recorded oracle scenarios match OLX bit for bit in every
+  109 of the 112 recorded oracle scenarios match OLX bit for bit in every
   field. The other 3 are pinned to their first divergence (see Deviations).
 - **Presentation (M5).**
   - `rl-scene` holds OLX's camera, skins, sprites, beams and layer order.
@@ -62,7 +62,9 @@ traces bit for bit.
     and 3 seeds in `cargo xtask full`.
 - **Menus, HUD and v0.1 (M7).**
   - **`rl-ui`:** the menus' logic and egui screens, with settings and
-    profiles saved as versioned RON in the platform data directory.
+    profiles saved as versioned RON in the platform data directory. A
+    broken file is set aside as `.bak`; one from a newer version is left
+    untouched, and the main menu says so.
   - **Main menu:** Local Play, Sandbox, Profiles, Options, Replays, Import,
     About, Quit.
   - **Local Play:**
@@ -86,7 +88,9 @@ traces bit for bit.
     - health and five weapon slots with reload bars;
     - kill feed, clock and kill limit;
     - a minimap in OLX's colours;
-    - Tab's scoreboard.
+    - Tab's scoreboard;
+    - the minimap and the health and weapons panel fade while a worm is
+      under them.
   - **Pause menu:** Esc gives Resume, Options and Quit to menu. No tick
     runs while paused.
   - **Results:** OLX's columns plus score, deaths and suicides, with
@@ -139,6 +143,9 @@ The full list, with reasons, is in `docs/porting/STATUS.md`.
   - The menus are laid out anew rather than copied from OLX's 640 × 480
     screens.
   - The minimap adds the camera's view rectangle.
+  - The HUD lies over the playfield, where OLX keeps it outside: the
+    minimap and the health and weapons panel fade to 25 % in 150 ms while
+    a worm is under them, and the minimap is at most 1.5 × OLX's size.
 - **Things OLX does not have:**
   - replays, fast-forward, `--spectate` and the engine stress test;
   - level thumbnails made at import;
@@ -165,11 +172,7 @@ The full list, with reasons, is in `docs/porting/STATUS.md`.
 - **No Classic HUD:** OLX's bitmap fonts and HUD images are not imported
   (the user's call).
 - **No level editor or map making yet.**
-- **HUD rough edges** (seen in the acceptance runs,
-  `docs/porting/acceptance-v0.1.md`):
-  - the minimap and the health and weapons panel cover the playfield's
-    corners, so a worm at a level's edge can stand under them;
-  - worm names draw over the HUD and the dialogs;
-  - during the weapon selection the HUD lists the placeholder loadout.
+- **`--autoplay` in a real window** sometimes loses a click (3 of 14 in
+  the acceptance runs, none on Xvfb); it is tooling only.
 - Developed and tested on Linux (WSL2 with WSLg); other platforms are
   untested.
