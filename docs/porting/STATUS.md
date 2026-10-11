@@ -55,6 +55,21 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Replays (spec §20 F8; no OLX equivalent): the setup, pack ids and content hashes, every worm's keys per tick, checksums at tick 0, every 100 ticks and the end; the `RLRP` format, version refused when unknown | — | `rl-replay::{Recorder, Replay, Player, Cursor}`, `rl-content::{replay_packs, world_for_replay, play_replay}` | done (plan 6 task 6) | `record_then_replay_gives_identical_checksums`, `replay_reports_the_first_mismatching_tick`, `replay_reports_a_different_setup_at_tick_0`, `replay_refuses_unknown_format_versions`, `replay_refuses_mismatched_content`, `bot_match_replays_from_content`, `replay_size_is_reasonable`, `decode_never_panics_on_junk`, `a_failing_tick_is_recorded_without_a_checksum` |
 | Headless match runner (spec §7.1, §7.3; no OLX equivalent): `rl-cli match` and `replay`, one match builder shared with `rl-game` (plan 6 ruling R5), invariants every tick, tick-time percentiles, determinism and replay round trip, coverage (weapons, projectile actions, bonuses, rope), failure capture to `target/failures/`, golden checksum streams | — | `rl-cli::{spec, runner, verify, coverage, failure, golden, invariants}`, `rl-content::build_match`, `xtask bless-regression` | done (plan 6 task 7) | `classic_deathmatch_bots_are_deterministic_and_replay`, `mw_chaos_bots_are_deterministic_and_replay`, `failure_writes_replay`, `golden_match_checksums` (`fixtures/matches/`); in `cargo xtask full`: `coverage_report_lists_every_weapon` (both mods × 4 levels × 3 seeds: every weapon of both mods and every projectile action kind) and `long_bot_match_bounded` (30 minutes, review focus 5) |
 | Deathmatch against bots in the game: `--mode deathmatch`, the bots thinking on the main thread before each tick, the HUD (names, kill feed, time-limit clock, Tab's scoreboard), "Game Over" then the results after `GAMEOVER_WAIT`, F5's rematch, `--record` and `--replay` | `src/client/CClient_Draw.cpp:893-905`, `1840-1897`, `2211-2236` | `rl-game::{setup, session, drive, hud, panels}` | done (plan 6 task 8) | `deathmatch_session_ends_with_results`, `rematch_starts_without_the_last_ticks_events`, `bots_think_within_frame_budget`, `replay_session_matches_recorded_checksums`, `scoreboard_hides_when_the_window_loses_focus`; the user's playtest |
+| Settings and profiles files (spec §9.4, §21 G2): versioned RON in the platform data directory, atomic writes, bad or newer files set aside as `.bak` with defaults and a warning | OLX's `cfg/options.cfg` (`src/client/Options.cpp`) and `cfg/players.dat` (`src/client/ProfileSystem.cpp`), laid out anew | `rl-ui::{store, settings, profiles, match_prefs}` | done (plan 7 task 1) | `bad_user_files_fall_back_to_defaults_and_keep_a_backup`, `settings_round_trip_and_version` |
+| Menus (§21 G1): main menu, local play (mod, level grid with thumbnails, OLX's Deathmatch options and their ranges, bots, the profile), the replays list, the screen state machine; starts that fail return to the menu | `src/client/DeprecatedGUI/Menu_Main.cpp`, `Menu_Local.cpp`, `src/common/FeatureList.cpp:31-35` (laid out anew) | `rl-ui::{state, screens::{main, local_play, replays}, replays}`, `rl-game::shell` | done (plan 7 task 2) | `state_machine_navigates_and_emits_commands`, `main_to_local_play_to_match`, `local_play_builds_match_options`, `local_play_pickers_are_found_by_their_label`, `local_play_replaces_a_saved_selection_no_longer_imported`, `starting_with_missing_content_returns_to_menu`, `menu_actions_are_idempotent`, `replay_list_shows_header_problems`; the v0.1 acceptance runs (`docs/porting/acceptance-v0.1.md`) |
+| Profiles and the skin preview: create, edit, delete, select; name, colour, searchable skins; OLX's menu animation from the game's own colorization and frame cut; the human plays the profile's look, bots OLX's default skin in OLX's `cpuColours` | `src/client/DeprecatedGUI/Menu_Player.cpp:746`, `src/client/ProfileSystem.cpp:47-60`, `src/client/CGameSkin.cpp` | `rl-ui::{profiles, skin_preview, screens::profiles}`, `rl-content::skin_sprite`, `rl-game::shell` | done (plan 7 task 3; bot colours task 5) | `profile_edits_persist`, `profile_names_are_validated`, `skin_preview_uses_colorization_like_the_game`, `the_profiles_screen_gets_its_preview_textures`, `a_menu_match_plays_the_selected_profile_look` |
+| Options (§21 G3): window presets and fullscreen through the paced path, VSync, filter, interpolation, UI scale; volumes live; key and gamepad rebinding with explicit conflicts, never leaving an action unreachable; the default match | `src/client/DeprecatedGUI/Menu_Options.cpp`, `src/client/Options.cpp:45-73` (laid out anew) | `rl-ui::screens::{options, keys}`, `rl-input::Capture`, `rl-game::{video, window}` | done (plan 7 task 4) | `rebinding_never_leaves_an_action_unreachable`, `options_rebind_a_key`, `options_set_video_audio_and_gameplay`, `video_changes_go_through_the_paced_path`, `volume_changes_apply_live`, `the_saved_window_opens_with_the_flags_on_top_unsaved`; e2e (`fixtures/autoplay/menus.ron`: quick window-size changes) |
+| Weapon selection (§21 G4): the profile's slots by name, `findEnabledWeapon`, left/right over the enabled weapons (×6 with Select weapon), Random, Done on Fire's release, skipped with one weapon or none; the choice in `MatchOptions` and the replay | `src/common/CWormHuman.cpp:702-1000`, `src/common/CWorm.cpp:788-844` | `rl-ui::{weapon_select, screens::weapon_select}`, `rl-content::Player::HumanWith`, `rl-game::shell` | done (plan 7 task 5) | `weapon_selection_respects_restrictions`, `a_refused_choice_leaves_the_match_playable` |
+| HUD and minimap (§21 G5, Modern only): health, five weapon slots with OLX's bar states, kill feed, clock and kill limit, Tab's scoreboard, minimap (OLX's proportions, colours and dots, plus the view rectangle) | `src/client/CClient_Draw.cpp` (HUD, `drawOnMiniMap`), `docs/porting/olx-notes/presentation.md` §2.4, §9 | `rl-ui::hud`, `rl-game::hud` | done (plan 7 task 5) | `hud_layout_holds_at_all_scales`, `hud_paints_at_every_scale`, `hud_snapshot_1080p`, `hud_snapshot_1440p_with_scores` (GPU tier) |
+| Pause and results: Esc's pause menu (no tick while paused), the results after `GAMEOVER_WAIT` with OLX's columns plus score, deaths and suicides; Rematch, Save replay, Back to menu | `src/client/CClient_Draw.cpp:1840-1897` | `rl-ui::screens::{ingame, results}`, `rl-game::shell` | done (plan 7 task 5) | `pause_stops_ticks_and_replays_stay_valid`, `pause_menu_holds_the_game_and_opens_the_options`, `results_match_world_scores`, `results_show_the_columns_and_their_buttons`, `save_replay_once_per_match` |
+| Level thumbnails (§21 G6, narrowed): `thumb.png` per level pack (160 × 96, box-filtered, letterboxed), pack format 4, left out of the content hash; decoded lazily and bounded in the menus | `src/game/Level.cpp:33-44` (`minimapForLevel`) | `rl-import-gfx`, `rl-pack`, `rl-ui::screens::local_play` | done (plan 7 task 6) | `thumbnails_are_imported_for_every_level`, `thumbnails_are_letterboxed_to_a_fixed_size`, `thumbnails_average_the_art`, `thumbnails_decode_lazily_and_bounded` |
+| About (§21 G9): credits (Liero, Liero Xtreme, the OpenLieroX team), licenses, each pack's recorded origin | `src/client/DeprecatedGUI/Menu_Main.cpp:276-283` | `rl-ui::screens::about` | done (plan 7 task 6) | `about_credits_the_authors_and_the_licenses` |
+| Import screen: an OLX game directory imported on a background thread into the data directory's `packs/`, layered over the bundled packs; progress, report, cancel; bounded reads and image decodes | `Menu_Local_FillModList`, `checkLXBinMod`, OLX's level list, `src/main.cpp:1003-1021` | `rl-content::import`, `rl-ui::{import, screens::import}`, `rl-pack::image_io`, `rl-game::shell` | done (plan 7 task 7) | `import_runs_off_the_ui_thread_and_reports`, `import_screen_flow`, `import_reports_every_item_and_writes_whole_packs`, `imported_packs_override_bundled`, `import_refreshes_the_menus_and_overrides_bundled`, `quitting_mid_import_leaves_whole_packs`, `a_decompression_bomb_is_refused_on_import_and_load`, `huge_images_are_refused_before_decoding` |
+| Fast-forward (the user's request; no OLX equivalent): replays and `--spectate` at 1×–16× or max, a played game always 1×, sound thinned | — | `rl-game::speed` | done (plan 7 task 8) | `fast_forward_never_changes_the_simulation`, `a_played_game_never_runs_fast`, `speeds_step_parse_and_thin_sound`, `the_fake_clock_needs_an_autoplay` |
+| Autoplay and end to end (§21 G7): `--autoplay` clicks widgets by label, holds the game's keys, takes checked screenshots and logs JSON lines; `--fake-clock` makes a run deterministic | — | `rl-game::autoplay`, `xtask e2e` | done (plan 7 task 8) | `scripts_parse_and_name_what_exists`, `steps_click_wait_and_fail_in_time`, `widgets_are_found_by_their_label`, `blank_pictures_fail_the_sanity_check`; `cargo xtask e2e` (in `full`, Xvfb) |
+| Benchmarks (§21 G8): a full 3000-projectile pool tick, 32 worms, 8 bots thinking, the draw list, an offscreen frame at 1080p and 1440p; machine-local baselines, more than 10 % slower fails | — | `rl-sim/benches/tick.rs`, `rl-cli/benches/game.rs`, `rl-render/benches/frame.rs`, `xtask bench` | done (plan 7 task 8) | `fixtures/bench/baselines.ron`; `regressions_need_more_than_the_tolerance`, `baselines_from_another_machine_only_notice` |
+| Engine stress test (the user's request): 32 chaos bots on Castle Strike, both mods, OLX's pool and 20 000; tick, think, pool, entities, events, render and memory; invariants every tick, determinism over two runs | — | `rl-cli stress`, `xtask stress` | done (plan 7 task 8) | `stress_run_is_bounded_and_deterministic`; `fixtures/bench/stress.ron` (in `full`) |
+| v0.1 acceptance (spec §1.3): each of the 4 levels × 2 mods from the menus against 4 Medium bots for 60 s in a real window, timings and screenshots | — | — | done (plan 7 task 9) | `docs/porting/acceptance-v0.1.md`; `cargo xtask check` and `full` |
 
 ## Deliberate deviations
 
@@ -384,7 +399,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   shared only on the player's choice, an action never loses its last key
   or last gamepad input (a hand-edited file that leaves one without gets
   OLX's default back, with a warning), and the game's own keys (Esc, F2,
-  F5, Tab, H) cannot be bound. Capture is OLX's "Input for:" box (Esc
+  F5, Tab, H; PageUp and PageDown since task 8) cannot be bound. Capture is OLX's "Input for:" box (Esc
   cancels). Gameplay holds the match local play starts with.
 - **In game** (`rl-ui`, `rl-game`, plan 7 task 5). *Weapon selection:*
   OLX's dialog (`CWormHuman.cpp:702-1000`: the profile's slots by name, an
@@ -565,6 +580,40 @@ perfect aim's hands feel like instakills. The aim-error floor is the first
 step. The redesign (difficulty scaling by reaction time, target choice,
 reloading ahead of a fight, positioning) is a later milestone, measured
 against OLX with the baseline harness (`bot-baseline-2026-10-11.md`).
+
+## Spec §21 decisions (plan 7, M7, v0.1)
+
+Each decision is in spec §21; the bullets under "Deliberate deviations"
+give the details. OLX's menus are a 640 × 480 `DeprecatedGUI`; the remake
+keeps their options and ranges and lays the screens out anew.
+
+- **G1, `rl-ui`:** menu logic (`UiState::update`) apart from the egui
+  widgets, so flows are tested headless by label. A Replays screen was
+  added to G1's list.
+- **G2, files:** `settings.ron`, `profiles.ron`, `replays/` and `packs/`
+  in the platform data directory, versioned; a bad file is kept as `.bak`
+  and defaults are used. OLX's `options.cfg` and `players.dat` are not
+  read.
+- **G3, window:** presets and fullscreen only, paced at 250 ms (the user's
+  ruling after WSLg's compositor crashes); no drag-resize or maximise.
+- **G4, weapon selection:** OLX's dialog before each menu match, with its
+  keys and mouse; a command-line Deathmatch still gets random weapons.
+- **G5, HUD:** one Modern (egui) style in OLX's colours. The Classic
+  bitmap style was dropped (the user's call, plan 7 task 6).
+- **G6, assets:** level thumbnails are imported (pack format 4); OLX's
+  fonts and HUD images are not (G5).
+- **G7, autoplay:** `--autoplay` and `--fake-clock`, run on Xvfb by `xtask
+  e2e` in `full`.
+- **G8, benchmarks:** divan medians against machine-local baselines in
+  `fixtures/bench/` (a baseline from another host only gives a notice),
+  plus the engine stress test (the user's request).
+- **G9, About:** credits and licenses as spec §11 asks.
+- **Additions by the user's request:** fast-forward for games nobody
+  plays (replays, `--spectate`), never for a played game; the engine
+  stress test past OLX's limits.
+- **Deferred:** replay seeking; spectating from the menus; recording the
+  human's skin and colour in replays (they are drawn with the default
+  look); the bot-skill redesign and a tournament command.
 
 ## Kept OLX quirks
 
