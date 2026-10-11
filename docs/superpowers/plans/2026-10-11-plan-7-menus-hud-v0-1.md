@@ -218,10 +218,25 @@ v0.1 is done. The next steps are separate brainstorms: bot skill (strategy-drive
 - Produces:
   - **Autoplay scripts:** sequences of `{ at_frame, ui: click(label) | key(...) | wait_for(screen) | screenshot(name) | assert(...) }`. The scripted path covers menu → Local Play → weapon select → match (scripted keys) → results → menu → quit, plus options window size changes (pacing). It runs on Xvfb with `--fake-clock`, so it is deterministic, and it asserts a clean log (no warnings or errors) and screenshot sanity.
   - **Benchmarks (G8)** with stored baselines; `xtask full` compares medians and fails over 10%. `cargo xtask bench --bless --reason` updates the baselines and logs to `blessings.log`.
+  - **Engine stress test** (user request: future 32-player matches with settable loading time).
+    - **Setup:** a headless, seeded match on the largest level (Castle Strike), once for each mod (MW 1.0 is the heavier):
+      - `MAX_WORMS` (32) worms, all bots with the chaos personality, firing every weapon continuously;
+      - the minimum `LoadingTime`, so reloads are near-instant;
+      - bonuses on;
+      - several minutes of ticks.
+    - **Pool variant:** run once at OLX's projectile pool (3000) and once with a raised `pool_capacity` (e.g. 20 000) to push past OLX's limits.
+    - **Measurements:**
+      - sim tick time (p50/p99/max), and bot think time and units;
+      - projectile pool occupancy (peak and time at cap), cosmetic entities (fx cap 1024), events per tick, dropped events;
+      - an offscreen render frame time at 1440p every N ticks (rl-present + rl-render);
+      - peak memory.
+    - **`cargo xtask stress`** runs it and prints a report for optimization work.
+    - **In `xtask full`,** a shorter stress run compares against a stored baseline (`fixtures/bench/stress.ron`, noise-guarded medians, fail over 10%), blessed with `cargo xtask bench --bless --reason`.
+    - **Invariants** (no panic, bounded memory, determinism over two runs) are asserted every tick.
 - Consumes: Tasks 1–7.
 
 **Steps:**
-- [ ] **Step 1: RED.** Write the e2e script and the bench harness, and watch them fail before the implementation. Run `cargo xtask full`: FAIL.
+- [ ] **Step 1: RED.** Write the e2e script, the bench harness and the stress test, and watch them fail before the implementation. Run `cargo xtask full`: FAIL.
 - [ ] **Step 2: GREEN.**
 - [ ] **Step 3: Commit.** Commit (`End-to-end autoplay on Xvfb, benchmarks`).
 
