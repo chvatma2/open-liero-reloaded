@@ -73,6 +73,17 @@ A gamepad works too (left stick walks, right stick aims; see `crates/rl-input`).
   `RL_WINDOW_SYSTEM=x11`) runs it under X11 instead, which needs
   `libxkbcommon-x11-0` and draws without VSync on WSLg.
 
+- **Disk:** WSL's virtual disk lives on the Windows drive, and a full debug
+  `target/` plus Docker images can fill it. The dev profile keeps only line
+  tables for the workspace and dependencies (`debug = "line-tables-only"`;
+  backtraces still show file:line, only debugger variable info is dropped). `cargo xtask
+  oracle-record` removes superseded `rl-olx-oracle:*` images (it keeps the
+  current one and `:dev`) and bounds the Docker build cache. `cargo xtask
+  tidy` removes `target/*/incremental` and prunes the images (never
+  `target/content` or `target/olx`); `check` warns when `target/` passes 25 GB.
+  (WSL's disk file does not shrink by itself; `wsl --manage <distro>
+  --set-sparse true` after `wsl --shutdown` helps.)
+
 ## Checks
 
 - `cargo xtask check` (about a minute) is the gate before every commit. It needs

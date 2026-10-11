@@ -106,6 +106,7 @@ fn audio_step(envs: &[(&str, PathBuf)]) -> StepResult {
 }
 
 fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
+    crate::tidy::warn_if_large();
     let rules = layers::load_rules()?;
     let mut failed = Vec::new();
     let mut step = |name: &str, f: &mut dyn FnMut() -> StepResult| {

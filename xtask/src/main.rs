@@ -7,6 +7,7 @@ mod fetch;
 mod layers;
 mod oracle;
 mod oracle_gen;
+mod tidy;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -45,6 +46,8 @@ enum Command {
         #[arg(long)]
         no_import: bool,
     },
+    /// Reclaim disk: remove target incremental caches and superseded oracle Docker images.
+    Tidy,
     /// Install a git pre-push hook that runs `cargo xtask check`.
     InstallHooks,
     /// Record OLX reference traces for fixtures/oracle/**/*.ron (needs Docker).
@@ -84,6 +87,7 @@ fn main() -> ExitCode {
             }
             true
         }),
+        Command::Tidy => tidy::run(),
         Command::InstallHooks => install_hooks().map(|()| true),
         Command::OracleRecord { check, names } => oracle::run(&names, check),
         Command::OracleGenWeapons => oracle_gen::run(),
