@@ -1,7 +1,15 @@
 # xtask
 
 Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
-`oracle-record`, `tidy`, `bless-render`, `fetch-olx-content`.
+`oracle-record`, `tidy`, `bless-render`, `bless-regression`, `fetch-olx-content`.
+
+- `full` runs `check`, then `bot-grid` (`check::FULL_TESTS`: `rl-cli`'s
+  `tests/grid.rs` with `RL_FULL_TESTS=1`), then the GPU and audio steps.
+- `bless-regression --reason <why> [--from target/failures/<name>.ron]`
+  re-records `fixtures/matches/*.ron` (runs `rl-cli --test golden` with
+  `RL_BLESS_REGRESSION=1`); `--from` first copies a failure record in as a
+  new golden. Like `bless-render`, it appends the date, the reason and the
+  changed files to `fixtures/blessings.log` (`bless::log_blessing`).
 
 ## Disk use
 

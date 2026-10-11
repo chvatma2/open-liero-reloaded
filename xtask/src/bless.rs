@@ -22,7 +22,7 @@ const GOLDEN_DIR: &str = "fixtures/render";
 const LOG: &str = "fixtures/blessings.log";
 
 /// The files in `dir` by name, with their bytes.
-fn snapshot(dir: &Path) -> anyhow::Result<BTreeMap<String, Vec<u8>>> {
+pub fn snapshot(dir: &Path) -> anyhow::Result<BTreeMap<String, Vec<u8>>> {
     let mut out = BTreeMap::new();
     let Ok(entries) = std::fs::read_dir(dir) else { return Ok(out) };
     for e in entries {
@@ -49,18 +49,44 @@ pub fn date(secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
+/// Appends `what: reason` with today's date and the `changed` files to
+/// `fixtures/blessings.log` (shared by `bless-render` and `bless-regression`).
+pub fn log_blessing(what: &str, reason: &str, changed: &[String]) -> anyhow::Result<()> {
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let entry = log_entry(&date(secs), what, reason, changed);
+    let mut log = std::fs::OpenOptions::new().create(true).append(true).open(root().join(LOG))?;
+    log.write_all(entry.as_bytes())?;
+    print!("blessed, recorded in {LOG}:\n{entry}");
+    Ok(())
+}
+
+/// One entry of the log: the date, the command and the reason on one
+/// line, then each changed file indented.
+pub fn log_entry(date: &str, what: &str, reason: &str, changed: &[String]) -> String {
+    let mut entry = format!("{date} {what}: {}\n", reason.trim().replace('\n', " "));
+    for f in changed {
+        entry.push_str(&format!("  {f}\n"));
+    }
+    entry
+}
+
 /// The golden tests to run: all of them with an adapter, else only the CPU ones.
 fn tests_to_run(adapter: bool) -> Vec<(&'static str, &'static str)> {
     GOLDEN_TESTS.iter().filter(|(_, _, gpu)| adapter || !gpu).map(|&(p, t, _)| (p, t)).collect()
 }
 
-/// The golden files that differ between two snapshots, as repository paths.
-fn changed_files(before: &BTreeMap<String, Vec<u8>>, after: &BTreeMap<String, Vec<u8>>) -> Vec<String> {
+/// The files that differ between two snapshots of `dir` (a repository path),
+/// as repository paths.
+pub fn changed_files(
+    dir: &str,
+    before: &BTreeMap<String, Vec<u8>>,
+    after: &BTreeMap<String, Vec<u8>>,
+) -> Vec<String> {
     before
         .keys()
         .chain(after.keys())
         .filter(|f| before.get(*f) != after.get(*f))
-        .map(|f| format!("{GOLDEN_DIR}/{f}"))
+        .map(|f| format!("{dir}/{f}"))
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect()
@@ -105,7 +131,7 @@ pub fn run(reason: &str) -> anyhow::Result<bool> {
         }
     }
     let after = snapshot(&dir)?;
-    let changed = changed_files(&before, &after);
+    let changed = changed_files(GOLDEN_DIR, &before, &after);
     if changed.is_empty() {
         if let Some(f) = failure {
             bail!(f);
@@ -113,14 +139,7 @@ pub fn run(reason: &str) -> anyhow::Result<bool> {
         println!("the render goldens are unchanged: nothing to bless");
         return Ok(true);
     }
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let mut entry = format!("{} bless-render: {}\n", date(secs), reason.replace('\n', " "));
-    for f in &changed {
-        entry.push_str(&format!("  {f}\n"));
-    }
-    let mut log = std::fs::OpenOptions::new().create(true).append(true).open(root.join(LOG))?;
-    log.write_all(entry.as_bytes())?;
-    print!("blessed, recorded in {LOG}:\n{entry}");
+    log_blessing("bless-render", reason, &changed)?;
     if !adapter {
         println!("the GPU goldens were not re-drawn (no adapter): bless them on a machine with one");
     }
@@ -148,9 +167,15 @@ mod tests {
         let before = snap(&[("a.png", "1"), ("b.png", "1"), ("c.png", "1")]);
         let after = snap(&[("a.png", "1"), ("b.png", "2"), ("d.png", "1")]);
         assert_eq!(
-            super::changed_files(&before, &after),
+            super::changed_files("fixtures/render", &before, &after),
             ["fixtures/render/b.png", "fixtures/render/c.png", "fixtures/render/d.png"]
         );
+    }
+
+    #[test]
+    fn log_entries_put_the_reason_on_one_line() {
+        let e = super::log_entry("2026-10-11", "bless-regression", " bots aim\nbetter ", &["a.ron".into()]);
+        assert_eq!(e, "2026-10-11 bless-regression: bots aim better\n  a.ron\n");
     }
 
     #[test]

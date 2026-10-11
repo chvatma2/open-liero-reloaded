@@ -2,6 +2,7 @@
 
 mod api;
 mod bless;
+mod bless_regression;
 mod check;
 mod fetch;
 mod layers;
@@ -29,8 +30,9 @@ enum Command {
         #[arg(long)]
         offline: bool,
     },
-    /// `check`, then the GPU tier: the renderer's GPU tests and the render goldens
-    /// (skipped with a notice when no graphics adapter opens).
+    /// `check`, then the bot-match grid and the 30-minute match, then the GPU tier:
+    /// the renderer's GPU tests and the render goldens (skipped with a notice when
+    /// no graphics adapter opens).
     Full {
         /// Do not download OLX content; tests that need it are skipped.
         #[arg(long)]
@@ -67,6 +69,16 @@ enum Command {
         #[arg(long)]
         reason: String,
     },
+    /// Re-record the golden match checksums in fixtures/matches/ and record why in
+    /// fixtures/blessings.log.
+    BlessRegression {
+        /// Why the matches play differently (recorded with the date and the changed files).
+        #[arg(long)]
+        reason: String,
+        /// A failure record (target/failures/<name>.ron) to add as a new golden match.
+        #[arg(long)]
+        from: Option<PathBuf>,
+    },
 }
 
 /// The workspace root (the parent of this crate's directory).
@@ -92,6 +104,7 @@ fn main() -> ExitCode {
         Command::OracleRecord { check, names } => oracle::run(&names, check),
         Command::OracleGenWeapons => oracle_gen::run(),
         Command::BlessRender { reason } => bless::run(&reason),
+        Command::BlessRegression { reason, from } => bless_regression::run(&reason, from.as_deref()),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

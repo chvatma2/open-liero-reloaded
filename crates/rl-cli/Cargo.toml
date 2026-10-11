@@ -1,11 +1,14 @@
 [package]
 name = "rl-cli"
-description = "Headless command-line tool: import OLX content, validate packs, replay and render oracle scenarios."
+description = "Headless command-line tool: import OLX content, validate packs, replay and render oracle scenarios, play headless bot matches and replays."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
 
 [[bin]]
 name = "rl-cli"
@@ -26,6 +29,10 @@ rl-scene.workspace = true
 rl-fx.workspace = true
 rl-render.workspace = true
 rl-present.workspace = true
+rl-sim.workspace = true
+rl-modes.workspace = true
+rl-bots.workspace = true
+rl-replay.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 clap.workspace = true
@@ -34,6 +41,7 @@ ron.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+allocation-counter.workspace = true
 insta.workspace = true
 
 [lints]

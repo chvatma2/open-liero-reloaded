@@ -35,13 +35,20 @@ pub fn run(offline: bool) -> anyhow::Result<bool> {
     run_with(offline, false)
 }
 
-/// `cargo xtask full`: `check`, then the GPU tier (the renderer's GPU tests
+/// `cargo xtask full`: `check`, then the bot-match grid ([`FULL_TESTS`]),
+/// then the GPU tier (the renderer's GPU tests
 /// and the render goldens, with `RL_GPU_TESTS` set), skipped with a notice
 /// when no graphics adapter opens, and the audio device check (OLX sounds
 /// on the default output), skipped with a notice when no device opens.
 pub fn full(offline: bool) -> anyhow::Result<bool> {
     run_with(offline, true)
 }
+
+/// The full tier's long CPU tests as `(package, test target)`, run with
+/// `RL_FULL_TESTS` set: the headless bot-match grid (both mods × 4 levels ×
+/// 3 seeds, chaos and Deathmatch bots, with its coverage) and the
+/// 30-minute bounded match (spec §7.1, plan 6 Review Focus 5).
+pub const FULL_TESTS: &[(&str, &str)] = &[("rl-cli", "grid")];
 
 /// The test targets of the GPU tier as `(package, test target)`.
 pub const GPU_TESTS: &[(&str, &str)] =
@@ -82,6 +89,21 @@ fn gpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
     }
     let mut envs = envs.to_vec();
     envs.push(("RL_GPU_TESTS", PathBuf::from("1")));
+    cargo(&args, &envs)
+}
+
+/// The full tier's long CPU tests ([`FULL_TESTS`]).
+fn full_cpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
+    let mut args =
+        vec!["nextest", "run", "--no-fail-fast", "--status-level", "fail", "--final-status-level", "fail"];
+    if !has_nextest() {
+        args = vec!["test", "--quiet"];
+    }
+    for (package, test) in FULL_TESTS {
+        args.extend(["-p", package, "--test", test]);
+    }
+    let mut envs = envs.to_vec();
+    envs.push(("RL_FULL_TESTS", PathBuf::from("1")));
     cargo(&args, &envs)
 }
 
@@ -166,6 +188,7 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
     });
 
     if gpu {
+        step("bot-grid", &mut || full_cpu_step(&envs));
         step("gpu", &mut || gpu_step(&envs));
         step("audio", &mut || audio_step(&envs));
     }

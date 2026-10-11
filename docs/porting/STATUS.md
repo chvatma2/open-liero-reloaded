@@ -370,6 +370,10 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 
 ## Kept OLX quirks
 
+- **Healing passes 100 health:** `CGameObject::injure` subtracts negative
+  damage (MW 1.0's healing weapons) with no cap, unlike a health bonus. The
+  headless matches' invariants (`rl-cli::invariants`) only require health to
+  be a number of at least 0.
 - **The physics step is 11 ms** (`1000 / 84`, integer division), not 1/84 s.
 - **The lossy per-frame Gusanos speed round trip** (`GusSpeedScope`) on worm and
   rope velocities, from `gusLogicFrame()` (`docs/porting/timing.md`).

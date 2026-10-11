@@ -5,3 +5,7 @@
   fixtures/render/frame-castle.png
   fixtures/render/frame-dig.png
   fixtures/render/frame-rope.png
+2026-10-11 bless-regression: Add the first golden bot matches: Classic Deathmatch bots, MW chaos bots, a Classic match ended by the kill limit (plan 6 task 7)
+  fixtures/matches/classic-dirt-level-8dm.ron
+  fixtures/matches/classic-fossilfacility-4xtreme-kill-limit.ron
+  fixtures/matches/mw-castlestrike-8chaos.ron
