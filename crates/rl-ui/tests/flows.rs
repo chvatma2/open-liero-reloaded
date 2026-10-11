@@ -252,6 +252,36 @@ fn local_play_builds_match_options() {
     h.get_by_label("Bot 3");
 }
 
+/// Every picker in local play is found by its label (as a screen reader
+/// and `--autoplay` find widgets), so a script can choose the mod.
+#[test]
+fn local_play_pickers_are_found_by_their_label() {
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 7));
+    h.get_by_label("Local Play").click();
+    h.run();
+    for label in ["Mod", "Weapons", "Difficulty", "Personality", "Loadout", "Player"] {
+        h.get_by_label(label);
+    }
+    h.get_by_label("Mod").click();
+    h.run();
+    h.get_by_label("Modern Warfare1.0").click();
+    h.run();
+    assert_eq!(h.state().ui.settings().gameplay.match_prefs.mod_id, "olx-mw-1-0");
+    h.get_by_label("Difficulty").click();
+    h.run();
+    h.get_by_label("Hard").click();
+    h.run();
+    assert_eq!(h.state().ui.settings().gameplay.match_prefs.difficulty, BotLevel::Hard);
+    h.get_by_label("Each bot its own difficulty").click();
+    h.run();
+    h.get_by_label("Bot 2").click();
+    h.run();
+    h.get_by_label("Easy").click();
+    h.run();
+    let per_bot = h.state().ui.settings().gameplay.match_prefs.per_bot.clone().unwrap();
+    assert_eq!(per_bot[1], BotLevel::Easy, "{per_bot:?}");
+}
+
 #[test]
 fn local_play_replaces_a_saved_selection_no_longer_imported() {
     let mut settings = Settings::default();

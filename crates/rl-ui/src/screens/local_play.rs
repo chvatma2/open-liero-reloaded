@@ -70,15 +70,19 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
             ui.add_space(8.0);
             bots(ui, &mut p);
             ui.add_space(8.0);
-            ui.label(RichText::new("Player").strong());
+            let label = ui.label(RichText::new("Player").strong());
             let names: Vec<&str> = profiles.list.iter().map(|p| p.name.as_str()).collect();
             let shown = names.get(profiles.selected).copied().unwrap_or("-").to_string();
             let mut selected = profiles.selected;
-            ComboBox::from_id_salt("profile").selected_text(shown).show_ui(ui, |ui| {
-                for (i, n) in names.iter().enumerate() {
-                    ui.selectable_value(&mut selected, i, *n);
-                }
-            });
+            ComboBox::from_id_salt("profile")
+                .selected_text(shown)
+                .show_ui(ui, |ui| {
+                    for (i, n) in names.iter().enumerate() {
+                        ui.selectable_value(&mut selected, i, *n);
+                    }
+                })
+                .response
+                .labelled_by(label.id);
             profiles.selected = selected;
         });
     });
@@ -95,18 +99,23 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
 }
 
 fn mod_picker(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) {
-    ui.label(RichText::new("Mod").strong());
+    let label = ui.label(RichText::new("Mod").strong());
     let name = data
         .catalog
         .mod_info(&p.mod_id)
         .map_or_else(|| format!("{} (missing)", p.mod_id), |m| m.name.clone());
-    ComboBox::from_id_salt("mod").selected_text(name).width(260.0).show_ui(ui, |ui| {
-        for m in &data.catalog.mods {
-            if ui.selectable_label(m.id == p.mod_id, &m.name).clicked() {
-                p.set_mod(m);
+    ComboBox::from_id_salt("mod")
+        .selected_text(name)
+        .width(260.0)
+        .show_ui(ui, |ui| {
+            for m in &data.catalog.mods {
+                if ui.selectable_label(m.id == p.mod_id, &m.name).clicked() {
+                    p.set_mod(m);
+                }
             }
-        }
-    });
+        })
+        .response
+        .labelled_by(label.id);
     if data.catalog.mods.is_empty() {
         ui.label(RichText::new("No mods: import OLX's content first.").weak());
     }
@@ -215,19 +224,21 @@ pub(super) fn rules(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) {
         ui.label("Loading time");
         ui.add(Slider::new(&mut p.loading_time, LOADING_TIME_RANGE).suffix(" %"));
         ui.end_row();
-        ui.label("Weapons");
+        let label = ui.label("Weapons");
         let presets = data.catalog.mod_info(&p.mod_id).map(|m| m.presets.clone()).unwrap_or_default();
-        ComboBox::from_id_salt("restrictions").selected_text(p.restrictions.clone()).width(200.0).show_ui(
-            ui,
-            |ui| {
+        ComboBox::from_id_salt("restrictions")
+            .selected_text(p.restrictions.clone())
+            .width(200.0)
+            .show_ui(ui, |ui| {
                 for name in presets {
                     let checked = name == p.restrictions;
                     if ui.selectable_label(checked, &name).clicked() {
                         p.restrictions = name;
                     }
                 }
-            },
-        );
+            })
+            .response
+            .labelled_by(label.id);
         ui.end_row();
     });
     ui.checkbox(&mut p.bonuses, "Bonuses");
@@ -242,12 +253,22 @@ fn level_name(l: BotLevel) -> &'static str {
     }
 }
 
-fn level_combo(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, level: &mut BotLevel) {
-    ComboBox::from_id_salt(id).selected_text(level_name(*level)).show_ui(ui, |ui| {
-        for l in BotLevel::ALL {
-            ui.selectable_value(level, l, level_name(l));
-        }
-    });
+/// A difficulty picker, labelled by `label` (found by its name).
+fn level_combo(
+    ui: &mut Ui,
+    label: egui::Id,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    level: &mut BotLevel,
+) {
+    ComboBox::from_id_salt(id)
+        .selected_text(level_name(*level))
+        .show_ui(ui, |ui| {
+            for l in BotLevel::ALL {
+                ui.selectable_value(level, l, level_name(l));
+            }
+        })
+        .response
+        .labelled_by(label);
 }
 
 /// The bots (also the options' default match).
@@ -264,39 +285,47 @@ pub(super) fn bots(ui: &mut Ui, p: &mut MatchPrefs) {
     egui::Grid::new("bots").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
         match &mut p.per_bot {
             None => {
-                ui.label("Difficulty");
-                level_combo(ui, "difficulty", &mut p.difficulty);
+                let label = ui.label("Difficulty");
+                level_combo(ui, label.id, "difficulty", &mut p.difficulty);
                 ui.end_row();
             }
             Some(levels) => {
                 for (i, l) in levels.iter_mut().enumerate() {
-                    ui.label(format!("Bot {}", i + 1));
-                    level_combo(ui, ("bot", i), l);
+                    let label = ui.label(format!("Bot {}", i + 1));
+                    level_combo(ui, label.id, ("bot", i), l);
                     ui.end_row();
                 }
             }
         }
-        ui.label("Personality");
+        let label = ui.label("Personality");
         let name = |b: BotPersonality| match b {
             BotPersonality::Olx => "OLX bot",
             BotPersonality::Chaos => "Chaos (fires everything)",
         };
-        ComboBox::from_id_salt("personality").selected_text(name(p.personality)).show_ui(ui, |ui| {
-            for b in BotPersonality::ALL {
-                ui.selectable_value(&mut p.personality, b, name(b));
-            }
-        });
+        ComboBox::from_id_salt("personality")
+            .selected_text(name(p.personality))
+            .show_ui(ui, |ui| {
+                for b in BotPersonality::ALL {
+                    ui.selectable_value(&mut p.personality, b, name(b));
+                }
+            })
+            .response
+            .labelled_by(label.id);
         ui.end_row();
-        ui.label("Loadout");
+        let label = ui.label("Loadout");
         let name = |b: BotLoadout| match b {
             BotLoadout::OlxPreset => "OLX's choice",
             BotLoadout::Random => "Random",
         };
-        ComboBox::from_id_salt("loadout").selected_text(name(p.loadout)).show_ui(ui, |ui| {
-            for b in [BotLoadout::OlxPreset, BotLoadout::Random] {
-                ui.selectable_value(&mut p.loadout, b, name(b));
-            }
-        });
+        ComboBox::from_id_salt("loadout")
+            .selected_text(name(p.loadout))
+            .show_ui(ui, |ui| {
+                for b in [BotLoadout::OlxPreset, BotLoadout::Random] {
+                    ui.selectable_value(&mut p.loadout, b, name(b));
+                }
+            })
+            .response
+            .labelled_by(label.id);
         ui.end_row();
     });
 }
