@@ -1,11 +1,17 @@
-//! The sandbox (spec §19 E11): which packs to load, the world to build, and
-//! the assets loaded once for every restart.
+//! What the game plays (the sandbox, spec §19 E11; a Deathmatch against
+//! bots; a replay): which packs to load, the match to build, and the
+//! assets loaded once for every restart.
 
 use std::path::Path;
 
 use anyhow::Context as _;
-use rl_content::{Content, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme, SandboxSetup, SpawnSpec};
+use rl_bots::{BotConfig, Difficulty};
+use rl_content::{
+    Content, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme, MatchOptions, Player, SandboxSetup, SpawnSpec,
+};
 use rl_data::manifest::PackKind;
+use rl_modes::DeathmatchSettings;
+use rl_replay::{Packs, Replay};
 use rl_sim::{MAX_WORMS, SimSettings};
 
 /// What the command line chose.
@@ -36,6 +42,63 @@ pub fn sandbox_setup(o: &SandboxOptions) -> SandboxSetup {
     }
 }
 
+/// What the command line chose for a Deathmatch against bots.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeathmatchOptions {
+    pub seed: u32,
+    /// Bots besides the player (1 to `MAX_WORMS - 1`).
+    pub bots: usize,
+    pub difficulty: Difficulty,
+    /// `Lives`: below 0 unlimited.
+    pub lives: i32,
+    /// `KillLimit`: 0 or less is off.
+    pub kill_limit: i32,
+    /// `TimeLimit` in minutes: 0 or less is off.
+    pub time_limit: f32,
+    /// OLX's `Bonuses` option.
+    pub bonuses: bool,
+}
+
+impl Default for DeathmatchOptions {
+    /// OLX's Deathmatch defaults against 3 Medium bots.
+    fn default() -> Self {
+        let d = DeathmatchSettings::default();
+        DeathmatchOptions {
+            seed: 1,
+            bots: 3,
+            difficulty: Difficulty::Medium,
+            lives: d.lives,
+            kill_limit: d.kill_limit,
+            time_limit: d.time_limit,
+            bonuses: false,
+        }
+    }
+}
+
+/// The match [`DeathmatchOptions`] describe on packs `mod_id` and
+/// `level_id`: the human is worm 0, then the bots (OLX's bots at one
+/// difficulty), under OLX's LX56 settings, the default restrictions
+/// ([`rl_content::DEFAULT_PRESET`]) and the Deathmatch rules given.
+/// The bots are capped so the worms fit `MAX_WORMS`.
+pub fn match_options(o: &DeathmatchOptions, mod_id: &str, level_id: &str) -> MatchOptions {
+    let bot = BotConfig { difficulty: o.difficulty, ..BotConfig::default() };
+    let bots = o.bots.clamp(1, MAX_WORMS - 1);
+    MatchOptions {
+        mod_id: mod_id.into(),
+        level_id: level_id.into(),
+        seed: o.seed,
+        settings: SimSettings { bonuses: o.bonuses, ..SimSettings::lx56() },
+        players: std::iter::once(Player::Human).chain((0..bots).map(|_| Player::Bot(bot))).collect(),
+        deathmatch: DeathmatchSettings {
+            lives: o.lives,
+            kill_limit: o.kill_limit,
+            time_limit: o.time_limit,
+            ..DeathmatchSettings::default()
+        },
+        restrictions: rl_content::DEFAULT_PRESET.into(),
+    }
+}
+
 /// The pack id `given` means among `ids`: itself, or an OLX import's id
 /// (`prefix` and the slug of `given`, so `--level "Liero Factory"` and
 /// `--mod MW 1.0` work).
@@ -49,7 +112,18 @@ pub fn resolve_id(given: &str, prefix: &str, ids: &[String]) -> anyhow::Result<S
         .with_context(|| format!("no pack {given:?}; there are: {}", ids.join(", ")))
 }
 
-/// Everything a sandbox draws and plays, loaded once: a restart (F5)
+/// What the game plays.
+pub enum Game {
+    /// The sandbox (spec §19 E11).
+    Sandbox(SandboxSetup),
+    /// A Deathmatch, the human (worm 0) against bots; `packs` are its mod,
+    /// level and theme for the replay.
+    Deathmatch { options: Box<MatchOptions>, packs: Packs },
+    /// A replay, played with the normal renderer.
+    Replay(Box<Replay>),
+}
+
+/// Everything a session draws and plays, loaded once: a restart (F5)
 /// builds a new world from it without decoding any image or sound again.
 pub struct Assets {
     pub content: Content,
@@ -57,22 +131,23 @@ pub struct Assets {
     pub level: LoadedLevel,
     pub theme: LoadedTheme,
     pub skin: LoadedSkin,
-    pub setup: SandboxSetup,
+    pub game: Game,
+    /// The mod and level pack ids.
+    pub mod_id: String,
+    pub level_id: String,
     /// Every warning of the loading, to log once.
     pub warnings: Vec<String>,
 }
 
-/// The packs `--mod`, `--level` and `--skin` name in content directory `root`.
-pub fn load(
-    root: &Path,
-    mod_name: &str,
-    level: &str,
+/// The packs `mod_id`, `level_id` (with its theme) and skin `skin` (a
+/// name or id; the default skin when missing), resolved and loaded.
+fn open(
+    content: Content,
+    mod_id: String,
+    level_id: String,
     skin: &str,
-    o: SandboxOptions,
+    game: Game,
 ) -> anyhow::Result<Assets> {
-    let content = Content::open(root)?;
-    let mod_id = resolve_id(mod_name, "olx-", &content.ids(PackKind::Mod)).context("--mod")?;
-    let level_id = resolve_id(level, "olx-level-", &content.ids(PackKind::Level)).context("--level")?;
     let skin_id =
         resolve_id(skin, "olx-skin-", &content.ids(PackKind::Skin)).unwrap_or_else(|_| skin.to_string());
     let m = content.load_mod(&mod_id)?;
@@ -81,14 +156,79 @@ pub fn load(
     let skin = content.skin_or_default(&skin_id);
     let mut warnings = content.warnings().to_vec();
     warnings.extend(m.warnings.iter().chain(&theme.warnings).chain(&skin.warnings).cloned());
-    let setup = sandbox_setup(&SandboxOptions { mod_id, level_id, ..o });
-    Ok(Assets { content, m, level: lvl, theme, skin, setup, warnings })
+    Ok(Assets { content, m, level: lvl, theme, skin, game, mod_id, level_id, warnings })
+}
+
+/// The mod and level `--mod` and `--level` name in `content`.
+fn resolve(content: &Content, mod_name: &str, level: &str) -> anyhow::Result<(String, String)> {
+    let mod_id = resolve_id(mod_name, "olx-", &content.ids(PackKind::Mod)).context("--mod")?;
+    let level_id = resolve_id(level, "olx-level-", &content.ids(PackKind::Level)).context("--level")?;
+    Ok((mod_id, level_id))
+}
+
+/// The sandbox on the packs `--mod`, `--level` and `--skin` name in
+/// content directory `root`.
+pub fn load(
+    root: &Path,
+    mod_name: &str,
+    level: &str,
+    skin: &str,
+    o: SandboxOptions,
+) -> anyhow::Result<Assets> {
+    let content = Content::open(root)?;
+    let (mod_id, level_id) = resolve(&content, mod_name, level)?;
+    let setup = sandbox_setup(&SandboxOptions { mod_id: mod_id.clone(), level_id: level_id.clone(), ..o });
+    open(content, mod_id, level_id, skin, Game::Sandbox(setup))
+}
+
+/// A Deathmatch against bots on the packs `--mod` and `--level` name.
+pub fn load_deathmatch(
+    root: &Path,
+    mod_name: &str,
+    level: &str,
+    skin: &str,
+    o: &DeathmatchOptions,
+) -> anyhow::Result<Assets> {
+    let content = Content::open(root)?;
+    let (mod_id, level_id) = resolve(&content, mod_name, level)?;
+    let packs = content.replay_packs(&mod_id, &level_id)?;
+    let options = Box::new(match_options(o, &mod_id, &level_id));
+    open(content, mod_id, level_id, skin, Game::Deathmatch { options, packs })
+}
+
+/// The replay in file `file`, on the packs it names (refused when they
+/// are missing or differ from the recorded ones).
+pub fn load_replay(root: &Path, file: &Path, skin: &str) -> anyhow::Result<Assets> {
+    let bytes = std::fs::read(file).with_context(|| format!("{}", file.display()))?;
+    let replay = Replay::decode(&bytes).with_context(|| format!("{}", file.display()))?;
+    let content = Content::open(root)?;
+    content.check_replay_packs(&replay.setup).with_context(|| format!("{}", file.display()))?;
+    let p = &replay.setup.packs;
+    let (mod_id, level_id) = (p.mod_pack.id.clone(), p.level.id.clone());
+    anyhow::ensure!(
+        content.load_level(&level_id)?.theme == p.theme.id,
+        "{}: level {level_id} has another theme than the recorded {}",
+        file.display(),
+        p.theme.id
+    );
+    open(content, mod_id, level_id, skin, Game::Replay(Box::new(replay)))
 }
 
 impl Assets {
-    /// A new world of the sandbox, from the assets loaded.
+    /// A new world of the sandbox, from the assets loaded (an error for
+    /// another game).
     pub fn new_world(&self) -> anyhow::Result<rl_sim::World> {
-        rl_content::new_world_from(&self.m, &self.level, &self.theme, &self.setup)
+        let Game::Sandbox(setup) = &self.game else { anyhow::bail!("not a sandbox") };
+        rl_content::new_world_from(&self.m, &self.level, &self.theme, setup)
+    }
+
+    /// How many worms the game starts with.
+    pub fn worms(&self) -> usize {
+        match &self.game {
+            Game::Sandbox(s) => s.worms.len(),
+            Game::Deathmatch { options, .. } => options.players.len(),
+            Game::Replay(r) => r.setup.worms.len(),
+        }
     }
 }
 
@@ -139,6 +279,28 @@ mod tests {
                 assert_eq!(a.new_world().unwrap(), world, "a restart is the same world");
             }
         }
+    }
+
+    #[test]
+    fn deathmatch_options_put_the_human_first() {
+        let o = DeathmatchOptions {
+            bots: 4,
+            difficulty: Difficulty::Hard,
+            time_limit: 1.5,
+            ..Default::default()
+        };
+        let m = match_options(&o, "olx-classic", "olx-level-dirt-level");
+        assert_eq!(m.players.len(), 5);
+        assert_eq!(m.players[0], Player::Human);
+        assert!(
+            m.players[1..].iter().all(|p| matches!(p, Player::Bot(c) if c.difficulty == Difficulty::Hard))
+        );
+        assert_eq!((m.deathmatch.kill_limit, m.deathmatch.time_limit, m.deathmatch.lives), (15, 1.5, -2));
+        assert_eq!(m.restrictions, rl_content::DEFAULT_PRESET);
+        let many = match_options(&DeathmatchOptions { bots: 100, ..Default::default() }, "m", "l");
+        assert_eq!(many.players.len(), MAX_WORMS);
+        let none = match_options(&DeathmatchOptions { bots: 0, ..Default::default() }, "m", "l");
+        assert_eq!(none.players.len(), 2, "a Deathmatch needs two worms (F5)");
     }
 
     #[test]

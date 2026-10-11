@@ -1,15 +1,21 @@
-//! One sandbox match without a window: the world, its presentation
-//! (`rl_present::Presentation`: scene, cosmetic entities, colour terrain,
-//! atlas images), sound and the damage popups. The window and GPU
-//! (`app.rs`, `gpu.rs`) drive it.
+//! One match without a window: the world and who plays it (`drive.rs`:
+//! the sandbox's player, a Deathmatch's player and bots, a replay), its
+//! presentation (`rl_present::Presentation`: scene, cosmetic entities,
+//! colour terrain, atlas images), sound, the damage popups and the match
+//! HUD's state (`hud.rs`). The window and GPU (`app.rs`, `gpu.rs`) drive it.
 
 use rl_audio::Audio;
+use rl_content::{LoadedSkin, MatchAssets};
 use rl_math::Vec2;
+use rl_modes::Deathmatch;
 use rl_present::{PresentSetup, Presentation, default_colour};
+use rl_replay::Replay;
 use rl_scene::{DrawList, Interpolation, SceneOptions, Viewport};
 use rl_sim::{EventKind, Keys, TickEvents, World};
 
-use crate::setup::Assets;
+use crate::drive::{MatchDriver, ReplayDriver};
+use crate::hud::{Feed, Names, Results, message_text};
+use crate::setup::{Assets, Game};
 
 /// How often (ticks) debug builds check that the colour terrain's material
 /// is the world's (`Presentation::terrain_drift`): a terrain change
@@ -33,24 +39,103 @@ pub struct Popup {
     pub age: u32,
 }
 
-/// The sandbox's match: worm 0 is the player, the others idle targets.
+/// Who presses the worms' keys.
+pub enum Driver {
+    /// The player (worm 0) and idle targets.
+    Sandbox,
+    /// The player (worm 0) and bots.
+    Match(Box<MatchDriver>),
+    /// A replay's keys.
+    Replay(ReplayDriver),
+}
+
+/// Kills and time over the whole run (rematches included), for the exit
+/// summary.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Tally {
+    /// Kills of another worm by a bot, by the player (worm 0 when it is
+    /// not a bot), and suicides.
+    pub bot_kills: u64,
+    pub player_kills: u64,
+    pub suicides: u64,
+    /// Ticks played before a match ended.
+    pub match_ticks: u64,
+    pub matches_ended: u32,
+}
+
+impl Tally {
+    /// Bot kills per minute of match time.
+    pub fn bot_kills_per_minute(&self) -> f64 {
+        if self.match_ticks == 0 { 0.0 } else { self.bot_kills as f64 * 6000.0 / self.match_ticks as f64 }
+    }
+}
+
+/// A match: worm 0 is the player (or, in a replay, the worm the camera
+/// follows).
 pub struct Session {
     pub world: World,
     pub present: Presentation,
     pub events: TickEvents,
     pub audio: Audio,
     pub popups: Vec<Popup>,
+    pub driver: Driver,
+    pub names: Names,
+    /// The kill feed (the mode's messages).
+    pub feed: Feed,
+    /// The time-limit clock: the time left, frozen when the match ends
+    /// (Deathmatch's own keeps counting; the HUD shows the end's).
+    pub time_left_ms: Option<u64>,
+    /// The results, once the match ended.
+    pub results: Option<Results>,
+    pub tally: Tally,
     /// The player's deaths and spawns this run (restarts included), for
     /// the exit summary.
     pub player_deaths: u32,
     pub player_spawns: u32,
+    /// Rematches so far (the seed of rematch `n` is the match's plus `n`).
+    pub rematches: u32,
     keys: Vec<Keys>,
     /// Ticks since the match (re)started.
     ticks: u64,
+    /// The tick the match ended in.
+    ended_at: Option<u64>,
+    /// Worms the presentation knows (a worm spawned mid-match is added,
+    /// with this skin).
+    shown: usize,
+    skin: LoadedSkin,
+}
+
+/// The world and driver `a` starts with, rematch `n`.
+fn start(a: &Assets, n: u32) -> anyhow::Result<(World, Driver)> {
+    Ok(match &a.game {
+        Game::Sandbox(_) => (a.new_world()?, Driver::Sandbox),
+        Game::Deathmatch { options, packs } => {
+            let o = rl_content::MatchOptions { seed: options.seed.wrapping_add(n), ..(**options).clone() };
+            let assets = MatchAssets { m: &a.m, level: &a.level, theme: &a.theme, packs };
+            let (world, d) = MatchDriver::new(rl_content::build_match(assets, &o)?);
+            (world, Driver::Match(Box::new(d)))
+        }
+        Game::Replay(r) => {
+            let world = r.world(rl_content::replay_assets_from(&a.m, &a.level, &a.theme))?;
+            (world, Driver::Replay(ReplayDriver::new(r.clone())))
+        }
+    })
+}
+
+/// The worms' names: the player is "You", the others are numbered from 1
+/// (a replay's worms all, from 1).
+fn names(a: &Assets, worms: usize) -> Names {
+    let name = |i: usize| match a.game {
+        Game::Replay(_) => format!("Worm {}", i + 1),
+        _ if i == 0 => "You".into(),
+        Game::Sandbox(_) => format!("Target {i}"),
+        Game::Deathmatch { .. } => format!("Bot {i}"),
+    };
+    Names((0..worms).map(name).collect())
 }
 
 impl Session {
-    /// A new match of `a`'s sandbox seen through `viewport`, with its sound
+    /// A new match of `a`'s game seen through `viewport`, with its sound
     /// output `audio` (already loaded with the mod's sounds). Registers every
     /// image (scene, each worm's skin and gibs, entities); the caller's
     /// `Presentation::upload` sends them to the renderer.
@@ -60,7 +145,12 @@ impl Session {
         interpolation: Interpolation,
         audio: Audio,
     ) -> anyhow::Result<Session> {
-        let world = a.new_world()?;
+        let (world, driver) = start(a, 0)?;
+        let seed = match &a.game {
+            Game::Sandbox(s) => s.seed,
+            Game::Deathmatch { options, .. } => options.seed,
+            Game::Replay(r) => r.setup.seed,
+        };
         let setup = PresentSetup {
             core: a.content.core(),
             m: &a.m,
@@ -68,38 +158,101 @@ impl Session {
             theme: &a.theme,
             viewport,
             options: SceneOptions { interpolation, show_health_bars: false },
-            seed: a.setup.seed,
+            seed,
         };
-        let mut present = Presentation::new(&setup, &world);
-        for i in 0..world.worms().len() {
-            present.add_worm(&a.skin, default_colour(i), i == 0, i == 0);
-        }
+        let present = Presentation::new(&setup, &world);
         let n = world.worms().len();
-        Ok(Session {
+        let mut s = Session {
+            names: names(a, n.max(a.worms())),
             world,
             present,
             events: TickEvents::new(),
             audio,
             popups: Vec::with_capacity(64),
+            driver,
+            feed: Feed::default(),
+            time_left_ms: None,
+            results: None,
+            tally: Tally::default(),
             player_deaths: 0,
             player_spawns: 0,
+            rematches: 0,
             keys: vec![Keys(0); n],
             ticks: 0,
-        })
+            ended_at: None,
+            shown: 0,
+            skin: a.skin.clone(),
+        };
+        s.show_new_worms();
+        s.time_left_ms = s.mode_time_left();
+        Ok(s)
     }
 
-    /// F5: the same sandbox from the start, from the assets loaded once.
-    /// The worms are the same, so the atlas stays; the next upload sends
-    /// the new colour map.
-    pub fn restart(&mut self, a: &Assets) -> anyhow::Result<()> {
-        let world = a.new_world()?;
-        anyhow::ensure!(world.worms().len() == self.keys.len(), "the restarted sandbox has other worms");
+    /// Registers the worms the presentation does not know yet (all at the
+    /// start; a worm a mode spawns mid-match later, which marks the atlas
+    /// for upload).
+    fn show_new_worms(&mut self) {
+        let human = !matches!(self.driver, Driver::Replay(_));
+        while self.shown < self.world.worms().len() {
+            let i = self.shown;
+            self.present.add_worm(&self.skin, default_colour(i), i == 0, i == 0 && human);
+            self.shown += 1;
+        }
+        if self.keys.len() < self.shown {
+            self.keys.resize(self.shown, Keys(0));
+        }
+        while self.names.0.len() < self.shown {
+            let i = self.names.0.len();
+            self.names.0.push(format!("Worm {}", i + 1));
+        }
+    }
+
+    /// The Deathmatch's time left, if the world plays one with a limit.
+    fn mode_time_left(&self) -> Option<u64> {
+        self.world.mode_state().as_any().downcast_ref::<Deathmatch>()?.time_left_ms()
+    }
+
+    /// F5: the sandbox or replay from the start, or a Deathmatch's rematch
+    /// (the next seed), from the assets loaded once. The worms are the
+    /// same, so the atlas stays; the next upload sends the new colour map.
+    /// Gives the replay of the match that was playing (a Deathmatch's).
+    pub fn restart(&mut self, a: &Assets) -> anyhow::Result<Option<Replay>> {
+        let n = if matches!(a.game, Game::Deathmatch { .. }) { self.rematches + 1 } else { 0 };
+        let (world, driver) = start(a, n)?;
+        anyhow::ensure!(world.worms().len() == self.shown, "the restarted match has other worms");
+        let old = self.take_replay();
+        self.rematches = n;
         self.world = world;
+        self.driver = driver;
         self.present.restart(&self.world, &a.level, &a.theme);
         self.audio.stop_all();
         self.popups.clear();
+        self.feed.clear();
+        self.results = None;
+        self.ended_at = None;
+        self.time_left_ms = self.mode_time_left();
+        self.keys.fill(Keys(0));
         self.ticks = 0;
-        Ok(())
+        Ok(old)
+    }
+
+    /// The replay of the match playing (a Deathmatch's), finished now if
+    /// it was still recording; `None` once taken, or for another game.
+    pub fn take_replay(&mut self) -> Option<Replay> {
+        match &mut self.driver {
+            Driver::Match(d) => d.take_replay(&self.world),
+            _ => None,
+        }
+    }
+
+    /// Ticks since the match (re)started.
+    pub fn ticks(&self) -> u64 {
+        self.ticks
+    }
+
+    /// Ticks since the match ended, once it has.
+    pub fn since_end(&self) -> Option<u64> {
+        self.ended_at.map(|t| self.ticks - t)
     }
 
     /// A window of another shape: the camera's viewport follows.
@@ -107,15 +260,34 @@ impl Session {
         self.present.set_viewport(viewport);
     }
 
-    /// One 100 Hz tick with the player holding `player` (the targets hold
-    /// nothing): the simulation, then the cosmetic entities (which replay
-    /// the tick's terrain edits on the colour map and rebuild any area the
-    /// tick lost), the sounds at the view centre, the scene's history and
-    /// marks, and the damage popups. Debug builds check every
+    /// One 100 Hz tick with the player holding `player` (the sandbox's
+    /// targets hold nothing; a Deathmatch's bots think first; a replay
+    /// plays its keys and ignores `player`, and stops at its end): the
+    /// simulation, then the cosmetic entities (which replay the tick's
+    /// terrain edits on the colour map and rebuild any area the tick
+    /// lost), the sounds at the view centre, the scene's history and
+    /// marks, the damage popups and the HUD. Debug builds check every
     /// [`DRIFT_CHECK_TICKS`] that the colour terrain has not drifted.
     pub fn tick(&mut self, player: Keys) {
-        self.keys[0] = player;
-        self.world.tick(&self.keys, &mut self.events);
+        let ended = self.since_end();
+        match &mut self.driver {
+            Driver::Sandbox => {
+                self.keys[0] = player;
+                self.world.tick(&self.keys, &mut self.events);
+            }
+            Driver::Match(d) => {
+                self.keys[0] = player;
+                d.think(&self.world, &self.events, &mut self.keys, ended);
+                self.world.tick(&self.keys, &mut self.events);
+                d.record(&self.keys, &self.world);
+            }
+            Driver::Replay(d) => {
+                if !d.step(&mut self.world, &mut self.events) {
+                    return;
+                }
+            }
+        }
+        self.show_new_worms();
         self.audio.play_events(&self.events, self.present.scene.camera.listener());
         self.present.on_tick(&self.world, &self.events);
         self.ticks += 1;
@@ -130,10 +302,44 @@ impl Session {
             p.age += 1;
             p.age < POPUP_TICKS
         });
+        self.after_tick();
+    }
+
+    /// The tick's events: popups, the kill feed, the tally, the end.
+    fn after_tick(&mut self) {
+        if self.results.is_none() {
+            self.time_left_ms = self.mode_time_left();
+            self.tally.match_ticks += 1;
+        }
+        let bot = |w: i32| match &self.driver {
+            Driver::Match(d) => d.bots.iter().any(|b| b.worm() as i32 == w),
+            _ => false,
+        };
         for e in self.events.iter() {
             match e.kind {
-                EventKind::Kill { victim: 0, .. } => self.player_deaths += 1,
+                EventKind::Kill { victim, killer } => {
+                    if victim == 0 {
+                        self.player_deaths += 1;
+                    }
+                    if killer == victim {
+                        self.tally.suicides += 1;
+                    } else if bot(killer) {
+                        self.tally.bot_kills += 1;
+                    } else if killer == 0 {
+                        self.tally.player_kills += 1;
+                    }
+                }
                 EventKind::Spawned { worm: 0 } => self.player_spawns += 1,
+                EventKind::Message(m) => {
+                    if let Some(line) = message_text(&m, &self.names) {
+                        self.feed.push(self.ticks, line);
+                    }
+                }
+                EventKind::GameOver(_) => {
+                    self.ended_at = Some(self.ticks);
+                    self.tally.matches_ended += 1;
+                    self.results = Results::of(&self.world, &self.names, self.time_left_ms);
+                }
                 _ => {}
             }
             let EventKind::Damage { worm, dealt, .. } = e.kind else { continue };

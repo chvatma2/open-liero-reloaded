@@ -1,5 +1,6 @@
 //! The winit application (spec §8.6): one thread, the event loop drives
-//! the 100 Hz tick accumulator, then an interpolated frame.
+//! the 100 Hz tick accumulator, then an interpolated frame. A Deathmatch's
+//! bots think inside `Session::tick`, on this thread.
 //!
 //! Per tick: the script's steps, `input.latch_tick()`, `Session::tick`
 //! (world, entities with the colour terrain, sound, scene), then the
@@ -49,6 +50,9 @@ pub struct Config {
     pub print_stats: bool,
     /// Latency probes (`latency.rs`) this often.
     pub latency_probe: Option<Duration>,
+    /// Where a Deathmatch's replay is saved (rematches next to it,
+    /// `drive::record_path`).
+    pub record: Option<PathBuf>,
 }
 
 /// What exists once the window does.
@@ -69,6 +73,10 @@ pub struct App {
     egui: egui::Context,
     win: Option<Shown>,
     debug: bool,
+    /// Tab held: the scoreboard shows.
+    show_scores: bool,
+    /// Replays saved (`--record`).
+    saved: u32,
     /// Ticks since the start, across restarts (the script's clock).
     ticks: u64,
     script_at: usize,
@@ -111,6 +119,8 @@ impl App {
             egui: egui::Context::default(),
             win: None,
             debug: false,
+            show_scores: false,
+            saved: 0,
             ticks: 0,
             script_at: 0,
             shot_due: false,
@@ -134,6 +144,49 @@ impl App {
             self.session.player_deaths,
             self.session.player_spawns
         )
+    }
+
+    /// A Deathmatch's bots and kills over the run, for the exit summary
+    /// (`None` for another game).
+    pub fn match_summary(&self) -> Option<String> {
+        let crate::session::Driver::Match(d) = &self.session.driver else { return None };
+        let t = &self.session.tally;
+        Some(format!(
+            "{} bots think per tick p50 {:.3} ms p99 {:.3} ms max {:.3} ms, units max {} of budget {}, {} over budget; \
+             match time {:.1} s ({} ended, {} rematches): bot kills {} ({:.2}/min), player kills {}, suicides {}",
+            d.bots.len(),
+            d.think_ms(0.5),
+            d.think_ms(0.99),
+            f64::from(d.think_ns_max) / 1e6,
+            d.units_max,
+            d.budget_min,
+            d.over_budget,
+            t.match_ticks as f64 / 100.0,
+            t.matches_ended,
+            self.session.rematches,
+            t.bot_kills,
+            t.bot_kills_per_minute(),
+            t.player_kills,
+            t.suicides,
+        ))
+    }
+
+    /// Saves the playing match's replay (`--record`), at the end of the run.
+    pub fn save_recording(&mut self) {
+        if let Some(r) = self.session.take_replay() {
+            self.save_replay(&r);
+        }
+    }
+
+    /// Writes `r` to the next `--record` path; a failure is a warning.
+    fn save_replay(&mut self, r: &rl_replay::Replay) {
+        let Some(base) = &self.cfg.record else { return };
+        let path = crate::drive::record_path(base, self.saved);
+        self.saved += 1;
+        match std::fs::write(&path, r.encode()) {
+            Ok(()) => println!("rl-game: recorded {} ({} ticks)", path.display(), r.ticks()),
+            Err(e) => eprintln!("warning: recording {}: {e}", path.display()),
+        }
     }
 
     /// Input latency and swap-chain waits over the run (`latency.rs`).
@@ -179,9 +232,13 @@ impl App {
         Ok(())
     }
 
-    /// F5: the next frame uploads the new colour map.
+    /// F5 (a Deathmatch's rematch; its replay is saved): the next frame
+    /// uploads the new colour map.
     fn restart(&mut self) -> anyhow::Result<()> {
-        self.session.restart(&self.assets)
+        if let Some(r) = self.session.restart(&self.assets)? {
+            self.save_replay(&r);
+        }
+        Ok(())
     }
 
     /// The window is now `size` pixels: the surface and the view follow.
@@ -221,6 +278,7 @@ impl App {
                 Command::Shot => self.shot_due = true,
                 Command::Restart => self.restart()?,
                 Command::Debug => self.debug = !self.debug,
+                Command::Scores(on) => self.show_scores = on,
                 Command::Quit => el.exit(),
                 // Applied at the start of the next frame (`apply_requests`).
                 Command::Size(w, h) => self.requests.size(w, h),
@@ -296,7 +354,14 @@ impl App {
         let dest = rl_render::dest_rect(w.gpu.renderer.settings.filter, src, size);
         let map = ScreenMap { view: self.list.view, dest, pixels_per_point: ppp };
         let input = w.egui.take_egui_input(&w.window);
-        let overlay = Overlay { session: &self.session, alpha, map, debug: self.debug, stats: &self.stats };
+        let overlay = Overlay {
+            session: &self.session,
+            alpha,
+            map,
+            debug: self.debug,
+            show_scores: self.show_scores,
+            stats: &self.stats,
+        };
         let mut out = self.egui.run_ui(input, |ui| crate::overlay::paint(ui, &overlay));
         w.egui.handle_platform_output(&w.window, out.platform_output);
         let jobs = self.egui.tessellate(out.shapes, out.pixels_per_point);
@@ -325,6 +390,11 @@ impl App {
     }
 
     fn on_key(&mut self, el: &ActiveEventLoop, ev: &KeyEvent) -> anyhow::Result<()> {
+        // OLX's ShowScore: the scoreboard while Tab is held.
+        if ev.physical_key == PhysicalKey::Code(KeyCode::Tab) {
+            self.show_scores = ev.state == ElementState::Pressed;
+            return Ok(());
+        }
         if ev.state != ElementState::Pressed || ev.repeat {
             return Ok(());
         }

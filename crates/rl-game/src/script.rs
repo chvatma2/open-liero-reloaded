@@ -7,8 +7,9 @@
 //! - `+<action>` / `-<action>` presses or releases the key bound to an
 //!   action (`up`, `down`, `left`, `right`, `shoot`, `jump`, `rope`,
 //!   `select`), through the same input path as the keyboard;
-//! - `shot` saves a screenshot after that tick, `restart` is F5, `debug`
-//!   F2, `quit` Esc;
+//! - `shot` saves a screenshot after that tick, `restart` is F5 (a
+//!   Deathmatch's rematch), `debug` F2, `quit` Esc, `scores on` / `scores
+//!   off` holds or releases Tab (the scoreboard);
 //! - `size <w> <h>` asks for a window of `w` × `h` physical pixels,
 //!   `fullscreen on` / `fullscreen off` for borderless fullscreen or a
 //!   window (both apply at the start of the next frame, the latest wins).
@@ -23,6 +24,8 @@ pub enum Command {
     Shot,
     Restart,
     Debug,
+    /// The scoreboard shown (Tab held) or not.
+    Scores(bool),
     Quit,
     Size(u32, u32),
     Fullscreen(bool),
@@ -69,6 +72,8 @@ pub fn parse(text: &str) -> Result<Vec<Step>, String> {
             "quit" => Command::Quit,
             "fullscreen on" => Command::Fullscreen(true),
             "fullscreen off" => Command::Fullscreen(false),
+            "scores on" => Command::Scores(true),
+            "scores off" => Command::Scores(false),
             _ if cmd.starts_with("size ") => {
                 let mut wh = cmd["size ".len()..].split_whitespace().map(str::parse::<u32>);
                 match (wh.next(), wh.next(), wh.next()) {
@@ -242,7 +247,7 @@ mod tests {
     #[test]
     fn scripts_parse_in_tick_order() {
         let s = parse(
-            "# a comment\n10 +right\n5 shot  # trailing\n\n10 -right\n7 restart\n9 quit\n8 size 640 480\n8 debug\n9 fullscreen on\n",
+            "# a comment\n10 +right\n5 shot  # trailing\n\n10 -right\n7 restart\n9 quit\n8 size 640 480\n8 debug\n9 fullscreen on\n11 scores on\n",
         )
         .unwrap();
         let c: Vec<_> = s.iter().map(|s| (s.tick, s.command)).collect();
@@ -257,6 +262,7 @@ mod tests {
                 (9, Command::Fullscreen(true)),
                 (10, Command::Press(Action::Right)),
                 (10, Command::Release(Action::Right)),
+                (11, Command::Scores(true)),
             ]
         );
         for bad in [
@@ -270,6 +276,7 @@ mod tests {
             "10 size 1 2 3",
             "10 fullscreen",
             "10 fullscreen yes",
+            "10 scores",
         ] {
             assert!(parse(bad).unwrap_err().contains("line 1"), "{bad}");
         }

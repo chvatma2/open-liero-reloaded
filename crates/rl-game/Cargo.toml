@@ -18,6 +18,9 @@ rl-terrain.workspace = true
 rl-pack.workspace = true
 rl-sim.workspace = true
 rl-content.workspace = true
+rl-modes.workspace = true
+rl-bots.workspace = true
+rl-replay.workspace = true
 rl-scene.workspace = true
 rl-fx.workspace = true
 rl-render.workspace = true
@@ -33,6 +36,9 @@ gilrs.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
 egui-winit.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

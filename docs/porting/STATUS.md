@@ -335,6 +335,15 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   (later the options menu, M7) and `--fullscreen` (borderless). The game's
   own size changes are applied at most every 250 ms, because WSLg's Weston
   crashes on quick resizes of a decorated Wayland window.
+- **Deathmatch in the game** (`rl-game`, plan 6 task 8; full menus are M7):
+  the human gets random weapons the restrictions enable (OLX's weapon
+  dialog's "Random"; `CWormHumanInputHandler::initWeaponSelection` loads the
+  profile's slots instead) until the weapon menu exists. The HUD is egui,
+  not OLX's: the time-limit clock is frozen at the end in the HUD
+  (`Deathmatch::time_left_ms` keeps counting, harmlessly), kill-feed lines
+  name no weapon (`rl-sim` does not record the injuring weapon; OLX drops
+  `" with <weapon>"` when it is unknown); "Game Over", then after
+  `GAMEOVER_WAIT` (3 s) the results, as OLX. F5's rematch plays the next seed.
 - **Renderer** (`rl-render`, plan 5 task 5): OLX blits each sprite with SDL
   onto a 2× screen; the renderer draws the same texels at art scale (at
   least 2×) and then upscales (E3). With interpolation (E2), a sprite's

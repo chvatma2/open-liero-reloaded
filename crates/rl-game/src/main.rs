@@ -1,4 +1,5 @@
-//! `rl-game`: the sandbox (spec §19 E11). Run `rl-game --help`.
+//! `rl-game`: the sandbox (spec §19 E11), a Deathmatch against bots (M6)
+//! and replays. Run `rl-game --help`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -8,11 +9,38 @@ use clap::Parser;
 use rl_game::app::{App, Config};
 use rl_game::script::{self, Command, Step};
 use rl_game::session::Session;
-use rl_game::setup::{self, SandboxOptions};
+use rl_game::setup::{self, DeathmatchOptions, Game, SandboxOptions};
 use rl_game::window::{self, WindowSystem};
 use rl_game::wsl;
 use rl_render::{RenderSettings, UpscaleFilter};
 use rl_scene::Interpolation;
+
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum Mode {
+    /// You and idle targets.
+    Sandbox,
+    /// You against bots (OLX's Deathmatch).
+    Deathmatch,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Level {
+    Easy,
+    Medium,
+    Hard,
+    Xtreme,
+}
+
+impl Level {
+    fn difficulty(self) -> rl_bots::Difficulty {
+        match self {
+            Level::Easy => rl_bots::Difficulty::Easy,
+            Level::Medium => rl_bots::Difficulty::Medium,
+            Level::Hard => rl_bots::Difficulty::Hard,
+            Level::Xtreme => rl_bots::Difficulty::Xtreme,
+        }
+    }
+}
 
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum Filter {
@@ -22,13 +50,39 @@ enum Filter {
     Sharp,
 }
 
-/// rust-liero's sandbox: you and idle targets on a level, with a mod's
-/// weapons. Arrows move and aim, Ctrl fires, Alt jumps, X throws the rope,
-/// Shift with the arrows changes weapon; F2 debug, F5 restart, H health
-/// bars, Esc quits.
+/// rust-liero: the sandbox (you and idle targets on a level, with a mod's
+/// weapons), a Deathmatch against bots (`--mode deathmatch`) or a replay
+/// (`--replay`). Arrows move and aim, Ctrl fires, Alt jumps, X throws the
+/// rope, Shift with the arrows changes weapon; Tab scores, F2 debug, F5
+/// restart (a Deathmatch's rematch), H health bars, Esc quits.
 #[derive(Parser)]
 #[command(name = "rl-game")]
 struct Args {
+    /// What to play.
+    #[arg(long, value_enum, default_value = "sandbox")]
+    mode: Mode,
+    /// Deathmatch: bots against you (1 to 31).
+    #[arg(long, default_value_t = 3)]
+    bots: usize,
+    /// Deathmatch: the bots' difficulty.
+    #[arg(long, value_enum, default_value = "medium")]
+    difficulty: Level,
+    /// Deathmatch: lives (below 0 unlimited; OLX's default -2).
+    #[arg(long, default_value_t = -2, allow_negative_numbers = true)]
+    lives: i32,
+    /// Deathmatch: the match ends when a score reaches this (0 or less: off).
+    #[arg(long, default_value_t = 15, allow_negative_numbers = true)]
+    kill_limit: i32,
+    /// Deathmatch: the time limit in minutes (0: off).
+    #[arg(long, default_value_t = 6.0)]
+    time_limit: f32,
+    /// Deathmatch: save the match's replay here (rematches next to it,
+    /// `<stem>-2.<ext>`, ...).
+    #[arg(long)]
+    record: Option<PathBuf>,
+    /// Play this replay (its mod and level come from it).
+    #[arg(long, conflicts_with_all = ["mode", "record"])]
+    replay: Option<PathBuf>,
     /// The level: a pack id or an OLX level name ("Liero Factory", "CastleStrike", ...).
     #[arg(long, default_value = "Liero Factory")]
     level: String,
@@ -38,7 +92,7 @@ struct Args {
     /// The player's skin: a pack id or an OLX skin name.
     #[arg(long, default_value = "default")]
     skin: String,
-    /// Idle target worms.
+    /// Sandbox: idle target worms.
     #[arg(long, default_value_t = 3)]
     targets: usize,
     /// The match seed.
@@ -105,14 +159,33 @@ fn run(args: Args) -> anyhow::Result<()> {
     steps.extend(args.shots.iter().map(|&tick| Step { tick, command: Command::Shot }));
     steps.sort_by_key(|s| s.tick);
 
-    let options = SandboxOptions {
-        mod_id: String::new(),
-        level_id: String::new(),
-        seed: args.seed,
-        targets: args.targets,
-        bonuses: args.bonuses,
+    anyhow::ensure!(
+        args.record.is_none() || args.mode == Mode::Deathmatch,
+        "--record records a Deathmatch (--mode deathmatch)"
+    );
+    let assets = if let Some(file) = &args.replay {
+        setup::load_replay(&args.content, file, &args.skin)?
+    } else if args.mode == Mode::Deathmatch {
+        let o = DeathmatchOptions {
+            seed: args.seed,
+            bots: args.bots,
+            difficulty: args.difficulty.difficulty(),
+            lives: args.lives,
+            kill_limit: args.kill_limit,
+            time_limit: args.time_limit,
+            bonuses: args.bonuses,
+        };
+        setup::load_deathmatch(&args.content, &args.mod_name, &args.level, &args.skin, &o)?
+    } else {
+        let options = SandboxOptions {
+            mod_id: String::new(),
+            level_id: String::new(),
+            seed: args.seed,
+            targets: args.targets,
+            bonuses: args.bonuses,
+        };
+        setup::load(&args.content, &args.mod_name, &args.level, &args.skin, options)?
     };
-    let assets = setup::load(&args.content, &args.mod_name, &args.level, &args.skin, options)?;
     for w in &assets.warnings {
         eprintln!("warning: {w}");
     }
@@ -152,19 +225,29 @@ fn run(args: Args) -> anyhow::Result<()> {
         shot_dir: args.shot_dir.clone(),
         print_stats: args.stats,
         latency_probe: args.latency_probe.filter(|&ms| ms > 0).map(std::time::Duration::from_millis),
+        record: args.record.clone(),
+    };
+    let what = match &assets.game {
+        Game::Sandbox(_) => "sandbox".to_string(),
+        Game::Deathmatch { options, .. } => format!("Deathmatch seed {}", options.seed),
+        Game::Replay(r) => format!("replay of {:.1} s", f64::from(r.ticks()) / 100.0),
     };
     println!(
-        "rl-game: {} on {}, {} worms, audio {}",
-        assets.setup.mod_id,
-        assets.setup.level_id,
-        assets.setup.worms.len(),
+        "rl-game: {what}: {} on {}, {} worms, audio {}",
+        assets.mod_id,
+        assets.level_id,
+        assets.worms(),
         if opened { "opened" } else { "silent" }
     );
     let event_loop = event_loop(ws)?;
     let wayland = is_wayland(&event_loop);
     let mut app = App::new(cfg, assets, session, gilrs);
     let ran = event_loop.run_app(&mut app);
+    app.save_recording();
     println!("rl-game: {}", app.summary());
+    if let Some(m) = app.match_summary() {
+        println!("rl-game: {m}");
+    }
     println!("rl-game: {}", app.latency_summary());
     match ran {
         // The game never sets a failing exit code; winit does, most often

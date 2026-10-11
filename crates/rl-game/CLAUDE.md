@@ -2,15 +2,20 @@
 
 The game binary (spec §8.6, §19 E10-E12): a winit window, the 100 Hz
 fixed-tick loop, interpolated wgpu rendering with cosmetic entities, sound,
-input and an egui overlay. For now the M5 sandbox (E11): the player and N
-idle targets on a level with a mod's first five weapons.
+input and an egui overlay. It plays the M5 sandbox (E11: the player and N
+idle targets on a level with a mod's first five weapons), a Deathmatch
+against bots (M6) and replays.
 
 ```
 cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --targets 3
+cargo run --release -p rl-game -- --mode deathmatch --bots 4 --difficulty medium \
+    [--lives L] [--kill-limit K] [--time-limit M] [--seed S] [--record f.rlrp]
+cargo run --release -p rl-game -- --replay f.rlrp
 ```
 
 - **Layer 6.** Uses `rl-content`, `rl-present`, `rl-scene`, `rl-fx`, `rl-render`,
-  `rl-audio`, `rl-input`, `rl-sim`, `rl-terrain`, `rl-pack`, plus winit,
+  `rl-audio`, `rl-input`, `rl-sim`, `rl-modes`, `rl-bots`, `rl-replay`,
+  `rl-terrain`, `rl-pack`, plus winit,
   wgpu, gilrs and egui / egui-wgpu / egui-winit 0.36.2 (exact pins). Logs
   are `eprintln!("warning: ...")`, each once.
 - **Single thread** (spec §8.6): the device is created and used only on
@@ -39,12 +44,42 @@ cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --target
   wgpu's GL backend ignores it). Under WSLg the 60 Hz pacing is Wayland's
   frame callback, before a frame starts: acquire takes ~0.01 ms.
 - **Session** (`session.rs`): the match without a window, so it is tested
-  headless; its presentation is one `rl_present::Presentation`. `restart`
-  (F5) builds the world from the assets loaded once (`setup::Assets`,
-  `rl_content::new_world_from`); the worms are the same, so the atlas
-  stays and only the terrain is uploaded again. Debug builds assert every
-  `DRIFT_CHECK_TICKS` (100) that the colour terrain's material is the
-  world's (`session_catches_terrain_drift`).
+  headless; its presentation is one `rl_present::Presentation` (a worm a
+  mode spawns mid-match gets `add_worm`, which marks the atlas for upload).
+  What it plays is `setup::Game` (`Sandbox`, `Deathmatch`, `Replay`), loaded
+  once into `setup::Assets`; who presses the keys is `session::Driver`
+  (`drive.rs`): the player alone, the player and `MatchDriver`'s bots, or
+  `ReplayDriver` (a `rl_replay::Cursor` checking every checksum; a
+  divergence is shown and logged once, the replay stops at its end).
+  `restart` (F5) builds the world from the assets loaded once: the
+  sandbox again, a Deathmatch's rematch (seed + rematch number; the
+  previous match's replay is handed back to save), a replay from the
+  start; the worms are the same, so the atlas stays and only the terrain is
+  uploaded again. Debug builds assert every `DRIFT_CHECK_TICKS` (100) that
+  the colour terrain's material is the world's (`session_catches_terrain_drift`).
+- **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
+  worm 0, then the bots at one difficulty, OLX's LX56 settings, the default
+  restrictions) feeds `rl_content::build_match`, the same assembly as
+  `rl-cli match` (loadouts, the Deathmatch and its respawn loadout, the
+  shared area cache, the recorder). Until M7's weapon menu the human gets
+  random enabled weapons (`rl_content::Player::Human`). The bots think on
+  the main thread inside `Session::tick`, in worm order, before the world
+  ticks; `MatchDriver` times each tick's thinking (`think_ns`, the F2 panel
+  and the exit summary's p50/p99) and counts thinks over budget (none, by
+  design). The recording ends `RECORD_AFTER_END` (3 s) after the game over
+  or at `MAX_TICKS`; `--record f` saves it at exit and on each rematch
+  (`f`, `f-2`, ... : `drive::record_path`).
+- **Match HUD** (`hud.rs` pure, `panels.rs` paints): names ("You", "Bot
+  N"; a replay's "Worm N"), the kill feed from `Message` events (OLX's
+  texts, the last 6 lines for 3 s; kills show no weapon: `rl-sim` does not
+  record the injuring weapon, and OLX drops `" with <weapon>"` then), the
+  time-limit clock (red in the last 10 s; **frozen in the HUD** at the
+  end, since `Deathmatch::time_left_ms` keeps counting), Tab's scoreboard
+  (`World::scores`, the mode's order), and on `GameOver` "Game Over",
+  then after OLX's `GAMEOVER_WAIT` (3 s) the results (winner or "noone",
+  reason, lives, score, kills, deaths, suicides, damage; F5 rematch, Esc
+  quit). `Session::tally` counts kills by bots,
+  the player and suicides (Kill events) over the run's match time.
 - **Window** (`window.rs`, the user's ruling after the plan 6 playtest):
   not resizable, no maximise button; `--fullscreen` is borderless. Size
   and mode changes come only from the game (`size`, `fullscreen` script
@@ -85,7 +120,7 @@ cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --target
   voices. egui allocates per frame; the world path does not.
 - **Scripts** (`script.rs`): `--script <file>` or `--demo` press keys
   through the input path at given ticks, plus `shot`, `restart`, `quit`,
-  `size <w> <h>`, `fullscreen on|off` (window changes wait out
+  `scores on|off` (Tab), `size <w> <h>`, `fullscreen on|off` (window changes wait out
   `MIN_CHANGE_INTERVAL`, so a `shot` within 250 ms may show the old
   size); `--shot <tick>`, `--autoquit-after <s>`, `--stats` (counters
   each second) and the exit summary let an agent run the game in a real
@@ -96,5 +131,7 @@ cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --target
   10th tick (main thread only) and a kira mock device for sound, and bounds
   the counters; it needs `RL_GPU_TESTS`, content and an adapter, else skips.
 
-Test: `cargo nextest run -p rl-game` (the pure parts; `setup` and
-`session` play the imported levels when `RL_CONTENT_DIR` is set).
+Test: `cargo nextest run -p rl-game` (the pure parts; `setup`, `session`
+and `tests/deathmatch.rs` (a Deathmatch to its results, the bots' think
+budget, a recording replayed through a replay session) play the imported
+levels when `RL_CONTENT_DIR` is set).
