@@ -87,6 +87,13 @@ impl Presentation {
         }
     }
 
+    /// A cosmetic-entity pool of `capacity` instead of OLX's 1024 (bench
+    /// only: the performance envelope's effects sweep, plan 8). Call it
+    /// before the first [`Presentation::on_tick`]: the entities so far go.
+    pub fn set_fx_capacity(&mut self, capacity: usize) {
+        self.fx = Fx::with_capacity(self.seed.wrapping_add(2), capacity);
+    }
+
     /// Registers the next worm's look (its index in `World::worms`): the
     /// colorized skin and gibs. Returns the index. The atlas is uploaded
     /// again with the next [`Presentation::upload`].

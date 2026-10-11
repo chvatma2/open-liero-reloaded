@@ -37,6 +37,18 @@ pub struct Args {
     /// Do not play it again nor replay it.
     #[arg(long)]
     no_verify: bool,
+    /// The cosmetic entities' pool (OLX's 1024; the envelope raises it).
+    #[arg(long, default_value_t = rl_fx::MAX_ENTITIES)]
+    fx_cap: usize,
+    /// Build the draw list every this many ticks, timed (0: only for rendered frames).
+    #[arg(long, default_value_t = 0)]
+    build_every: u32,
+    /// Fail when peak memory passes this many MiB.
+    #[arg(long, default_value_t = stress::MEMORY_CEILING_MIB)]
+    memory_ceiling_mib: f64,
+    /// Write the match's replay here.
+    #[arg(long)]
+    record: Option<PathBuf>,
     /// Imported content (packs written by `rl-cli import`).
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
@@ -49,10 +61,14 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     let content = rl_content::Content::open(&args.content)?;
     let spec = stress::spec(&args.mod_id, &args.level_id, args.worms, args.pool, args.seconds, args.seed);
     let cfg = Config {
-        spec,
         render_every: args.render_every,
         render_size: (args.render_width.max(1), args.render_height.max(1)),
         verify: !args.no_verify,
+        fx_capacity: args.fx_cap.max(1),
+        build_every: args.build_every,
+        memory_ceiling_mib: args.memory_ceiling_mib,
+        record: args.record.clone(),
+        ..Config::new(spec)
     };
     let report = stress::run(&content, &cfg, &mut |line| eprintln!("  {line}"))?;
     print!("{}", report.text());

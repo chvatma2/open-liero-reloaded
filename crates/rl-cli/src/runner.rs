@@ -250,6 +250,11 @@ impl Match {
         self.bots.first().map_or(0, |b| b.cache().len())
     }
 
+    /// The bots' shared area cache's capacity (0 without bots).
+    pub fn cache_capacity(&self) -> usize {
+        self.bots.first().map_or(0, |b| b.cache().capacity())
+    }
+
     /// The 99th-percentile tick time from tick `from` on, in µs.
     pub fn p99_us_since(&self, from: usize) -> f64 {
         self.stats.percentile_us(from, 0.99)

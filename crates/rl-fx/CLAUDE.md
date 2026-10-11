@@ -13,6 +13,8 @@ is `docs/porting/olx-notes/presentation.md` §7 (and §2.2 for stains).
   slot first, new entities dropped when full, iteration in slot order, and
   a freed slot keeps its contents. Laser sights take a slot for two passes
   like OLX's, but `rl-scene` draws them (and the beams, which take none).
+  Its size is `MAX_ENTITIES` (OLX's) everywhere; `Fx::with_capacity` is
+  the performance envelope's knob (plan 8), never used by a game.
 - **Physics** (`entity.rs`): one `SimulateEntities` pass per sub-step,
   motion with the sub-step `dt` (`LX56PhysicsDT`, 11 ms), animation with
   OLX's fixed 10 ms frame, all in `f32` like OLX (the sums drift; tests pin

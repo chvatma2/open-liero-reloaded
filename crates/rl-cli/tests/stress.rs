@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use rl_cli::stress::{self, Config};
+use rl_cli::stress::{self, Config, Spread};
 
 fn content() -> Option<rl_content::Content> {
     let dir = std::env::var_os("RL_CONTENT_DIR").map(PathBuf::from).filter(|d| d.is_dir());
@@ -21,7 +21,7 @@ fn content() -> Option<rl_content::Content> {
 fn stress_run_is_bounded_and_deterministic() {
     let Some(content) = content() else { return };
     let spec = stress::spec("olx-mw-1-0", "olx-level-dirt-level", 32, 200, 4.0, 3);
-    let cfg = Config { spec, render_every: 0, render_size: (64, 36), verify: true };
+    let cfg = Config { render_size: (64, 36), ..Config::new(spec) };
     let mut lines = Vec::new();
     let r = stress::run(&content, &cfg, &mut |l| lines.push(l)).unwrap();
     assert_eq!(r.ticks, 400);
@@ -36,4 +36,39 @@ fn stress_run_is_bounded_and_deterministic() {
     }
     assert!(r.text().contains("projectiles: peak 200 of 200"), "{}", r.text());
     assert!(lines.iter().any(|l| l.contains("playing it again")));
+}
+
+/// The envelope's knobs (plan 8) measure more without touching the match:
+/// the same shots, kills and projectiles with a larger effects pool and a
+/// draw list built every tick; the recorded replay is the match.
+#[test]
+fn the_bench_knobs_measure_without_changing_the_match() {
+    let Some(content) = content() else { return };
+    let spec = stress::spec("olx-mw-1-0", "olx-level-dirt-level", 32, 3000, 8.0, 3);
+    let plain =
+        stress::run(&content, &Config { verify: false, ..Config::new(spec.clone()) }, &mut |_| {}).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("stress.rlrp");
+    let cfg = Config {
+        verify: false,
+        fx_capacity: 16_384,
+        build_every: 1,
+        record: Some(file.clone()),
+        ..Config::new(spec)
+    };
+    let r = stress::run(&content, &cfg, &mut |_| {}).unwrap();
+    assert_eq!(
+        (r.shots, r.kills, r.projectiles_peak, r.ticks),
+        (plain.shots, plain.kills, plain.projectiles_peak, plain.ticks),
+        "the knobs never touch the simulation"
+    );
+    assert_eq!((r.fx_capacity, plain.fx_capacity), (16_384, rl_fx::MAX_ENTITIES));
+    assert!(r.fx_peak > rl_fx::MAX_ENTITIES, "32 chaos bots overflow OLX's 1024 entities: {}", r.fx_peak);
+    assert!(r.build_us.p50 > 0.0 && r.present_us.p50 > 0.0, "{r:?}");
+    assert_eq!(plain.build_us, Spread::default(), "no draw list without --build-every");
+    assert!(r.area_cache.1 > 0 && r.area_cache.0 <= r.area_cache.1);
+    assert!(r.level.0 > 0 && r.level.1 > 0 && r.level.2 >= 1);
+    assert!(r.caps.is_empty(), "{:?}", r.caps);
+    let replay = rl_replay::Replay::decode(&std::fs::read(&file).unwrap()).unwrap();
+    assert_eq!(replay.ticks(), r.ticks);
 }

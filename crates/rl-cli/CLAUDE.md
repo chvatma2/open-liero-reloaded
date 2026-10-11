@@ -37,20 +37,29 @@ The headless command-line tool. Its commands:
   checking every checksum; `--dump` prints the world (before tick N) as JSON.
 - `rl-cli stress [--mod M] [--level L] [--worms 32] [--pool 3000] [--seconds
   180] [--seed S] [--render-every 100] [--render-width W --render-height H]
-  [--no-verify] [--out report.ron]`: the engine stress test (plan 7 task 8,
-  `stress.rs`): `stress::spec` (32 chaos bots, mixed difficulties,
+  [--no-verify] [--fx-cap 1024] [--build-every 0] [--memory-ceiling-mib
+  4096] [--record f.rlrp] [--out report.ron]`: the engine stress test (plan
+  7 task 8, `stress.rs`; `stress::Config::new(spec)` gives the defaults): `stress::spec` (32 chaos bots, mixed difficulties,
   `LoadingTime` 0, bonuses every `BONUS_FREQUENCY` s, no limits, the pool
   at `--pool`) played by the runner (invariants every tick), its
   presentation's entities stepped every tick and a frame rendered
   offscreen (lavapipe/llvmpipe) every `--render-every` ticks; asserts
-  bounded buffers (pool, `rl_fx::MAX_ENTITIES`, `TickEvents::CAPACITY`:
+  bounded buffers (pool, the entity pool, `TickEvents::CAPACITY`:
   fixed capacities today, so cheap asserts against a future change) every
-  tick and memory under `MEMORY_CEILING_MIB` (`VmHWM`, read every 1000
-  ticks; an absolute stop, `xtask bench` gates the peak against its
-  baseline), then `verify` (determinism and the replay). `Report`
+  tick and memory under `--memory-ceiling-mib` (`MEMORY_CEILING_MIB`;
+  `VmHWM`, read every 1000 ticks; an absolute stop, `xtask bench` gates the
+  peak against its baseline), then `verify` (determinism and the replay).
+  The performance envelope's knobs (plan 8) never touch the match:
+  `--fx-cap` sizes the entity pool (`Presentation::set_fx_capacity`; OLX's
+  `rl_fx::MAX_ENTITIES` by default), `--build-every N` builds and times the
+  draw list every N ticks, `--record` writes the match's replay. `Report`
   (RON with `--out`): tick, sim and think µs (p50/p99/max; `Stats::think_ns`
-  splits the bots' share), units, pool peak/mean/ticks at the cap, entity
-  peak/ticks at the cap, events a tick, drops, the frame ms, peak MiB. A
+  splits the bots' share), `present_us` (`on_tick`), `build_us` (the draw
+  list), units, pool peak/mean/ticks at the cap, entity peak/ticks at the
+  cap and `fx_capacity`, events a tick, drops, the frame ms, peak MiB,
+  `area_cache` (held, capacity), `level` (width, height, art scale) and
+  `caps` (hard limits reached, such as a full area cache); the new fields
+  are `#[serde(default)]`, so older reports still read. A
   failed match writes its replay to `target/failures/`. `cargo xtask
   stress` runs both mods × pool 3000/20 000 on Castle Strike.
 
@@ -74,7 +83,8 @@ pack when `RL_CONTENT_DIR` is set. To accept a reviewed snapshot change, run
 `MatchSpec`'s `--loading-time` and `--pool-capacity` (serialized only when
 given, so goldens and failure records keep their form) are the stress
 test's; without them a match is OLX's (`LoadingTime` 100, pool 3000).
-`tests/stress.rs` (check) plays a 4 s stress run on a 200-slot pool.
+`tests/stress.rs` (check) plays a 4 s stress run on a 200-slot pool, and an
+8 s one with and without the envelope's knobs (same match, more measured).
 `benches/game.rs` (divan, `cargo xtask bench`): 8 bots' think + tick and a
 draw-list build on a warm Classic match (needs `RL_CONTENT_DIR`).
 `tests/render_golden.rs` (the GPU frame goldens) runs in `cargo xtask full`

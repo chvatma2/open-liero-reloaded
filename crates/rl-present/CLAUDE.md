@@ -15,6 +15,8 @@ wired in the frame loop's order **once**, so each mode that draws a world
     colour, local, human)` per worm in `World::worms` order (skin and gibs
     in one call, so the scene's and the entities' lists stay parallel).
     `default_colour(i)` is OLX's red, blue, green, yellow.
+  - `set_fx_capacity(n)` before the first tick: a bench-only entity pool
+    (plan 8).
   - `on_tick(&world, &events)` after every `World::tick`: `Fx::step_tick`
     (the only place the tick's terrain edits reach the colour map; never
     also call `rl_content::apply_edits`), then `Scene::after_tick`.

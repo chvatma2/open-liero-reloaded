@@ -13,6 +13,7 @@
 //! short run against `fixtures/bench/stress.ron`. Nothing here changes a
 //! default: the pool and loading time are this match's options only.
 
+use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{Context as _, bail};
@@ -63,6 +64,34 @@ pub struct Config {
     pub render_size: (u32, u32),
     /// Play it again and replay its recording (determinism).
     pub verify: bool,
+    /// The cosmetic entities' pool (OLX's [`MAX_ENTITIES`] unless the
+    /// envelope's effects sweep raises it).
+    pub fx_capacity: usize,
+    /// Build the draw list every this many ticks, timed as
+    /// [`Report::build_us`] (0: only for the rendered frames).
+    pub build_every: u32,
+    /// Peak memory above this fails the run (the envelope raises it so
+    /// points past the 2 GiB budget are still measured).
+    pub memory_ceiling_mib: f64,
+    /// Write the match's replay here (the GPU scenes play it).
+    pub record: Option<PathBuf>,
+}
+
+impl Config {
+    /// `spec` with today's defaults: no frames, verified, OLX's entity
+    /// pool, no draw list, [`MEMORY_CEILING_MIB`], no recording.
+    pub fn new(spec: MatchSpec) -> Config {
+        Config {
+            spec,
+            render_every: 0,
+            render_size: (2560, 1440),
+            verify: true,
+            fx_capacity: MAX_ENTITIES,
+            build_every: 0,
+            memory_ceiling_mib: MEMORY_CEILING_MIB,
+            record: None,
+        }
+    }
 }
 
 /// Percentiles of a measurement.
@@ -109,6 +138,14 @@ pub struct Report {
     pub sim_us: Spread,
     /// The bots' thinking alone (all of them, a tick).
     pub think_us: Spread,
+    /// The presentation's tick (`Presentation::on_tick`: the entities,
+    /// which replay the tick's colour-terrain edits, then the scene), µs.
+    #[serde(default)]
+    pub present_us: Spread,
+    /// The draw list's build (`Presentation::build`) every
+    /// `Config::build_every` ticks, µs.
+    #[serde(default)]
+    pub build_us: Spread,
     /// The most work units one think spent, the mean, the smallest budget.
     pub units_max: u32,
     pub units_mean: u64,
@@ -118,9 +155,22 @@ pub struct Report {
     pub projectiles_mean: f64,
     /// Ticks that ended with the pool full.
     pub ticks_at_pool_cap: u32,
-    /// Cosmetic entities (`rl-fx`, at most `MAX_ENTITIES`).
+    /// Cosmetic entities (`rl-fx`, at most [`Report::fx_capacity`]).
     pub fx_peak: usize,
     pub ticks_at_fx_cap: u32,
+    /// The entity pool's size.
+    #[serde(default)]
+    pub fx_capacity: usize,
+    /// The bots' shared area cache: areas held, and how many it can hold.
+    #[serde(default)]
+    pub area_cache: (usize, usize),
+    /// The level: width and height in world pixels, art scale.
+    #[serde(default)]
+    pub level: (u32, u32, u32),
+    /// Hard limits the run reached (the bots' area cache full, a level the
+    /// content loader would refuse): each breaks an envelope point.
+    #[serde(default)]
+    pub caps: Vec<String>,
     pub events_mean: f64,
     pub events_max: usize,
     /// Events the buffer dropped (counted, never lost silently).
@@ -142,7 +192,7 @@ impl Report {
         let mut t = format!(
             "{} ({} ticks, {})\n  tick (bots + sim) µs: {}\n  sim µs:              {}\n  bots think µs:       {}\n  \
              think units: max {} of budget {}, mean {}\n  projectiles: peak {} of {}, mean {:.0}, {} ticks at the cap\n  \
-             cosmetic entities: peak {} of {MAX_ENTITIES}, {} ticks at the cap\n  \
+             cosmetic entities: peak {} of {}, {} ticks at the cap\n  \
              events a tick: mean {:.0}, max {}; dropped: {} cosmetic, {} gameplay\n  shots {}, kills {}\n",
             self.name,
             self.ticks,
@@ -158,6 +208,7 @@ impl Report {
             self.projectiles_mean,
             self.ticks_at_pool_cap,
             self.fx_peak,
+            self.fx_capacity,
             self.ticks_at_fx_cap,
             self.events_mean,
             self.events_max,
@@ -166,6 +217,18 @@ impl Report {
             self.shots,
             self.kills,
         );
+        let s3 = |x: Spread| format!("p50 {:.0} p99 {:.0} max {:.0}", x.p50, x.p99, x.max);
+        t.push_str(&format!("  presentation µs:     {}\n", s3(self.present_us)));
+        if self.build_us != Spread::default() {
+            t.push_str(&format!("  draw-list build µs:  {}\n", s3(self.build_us)));
+        }
+        t.push_str(&format!(
+            "  level {}x{} at art scale {}; area cache {} of {}\n",
+            self.level.0, self.level.1, self.level.2, self.area_cache.0, self.area_cache.1
+        ));
+        for c in &self.caps {
+            t.push_str(&format!("  cap reached: {c}\n"));
+        }
         match &self.render {
             Some(r) => t.push_str(&format!(
                 "  render {}x{} ms ({} frames, {}): {}\n",
@@ -212,8 +275,8 @@ struct Gpu {
 
 /// Plays `cfg`; `progress` hears a line every [`CHECK_TICKS`] ticks. A
 /// failed match (a panic, an invariant), memory over
-/// [`MEMORY_CEILING_MIB`] (an absolute stop; `cargo xtask bench` gates the
-/// peak against its baseline) or a second run that differs is an error.
+/// [`Config::memory_ceiling_mib`] (an absolute stop; `cargo xtask bench`
+/// gates the peak against its baseline) or a second run that differs is an error.
 /// The buffer bounds (pool, entities, events) are cheap asserts that hold
 /// by construction today (each is a fixed-capacity buffer); they guard a
 /// future change that makes one grow.
@@ -234,6 +297,7 @@ pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) ->
         seed: spec.seed,
     };
     let mut present = Presentation::new(&setup, m.world());
+    present.set_fx_capacity(cfg.fx_capacity);
     let mut shown = 0;
     let mut gpu = if cfg.render_every > 0 { Offscreen::new().ok() } else { None }.map(|gpu| {
         let renderer = gpu.renderer(RenderSettings::default());
@@ -256,6 +320,8 @@ pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) ->
     let mut r =
         Report { name: format!("{}-pool{pool}", spec.stem()), pool_capacity: pool, ..Report::default() };
     let (mut proj_sum, mut events_sum) = (0u64, 0u64);
+    let (mut present_us, mut build_us) = (Vec::new(), Vec::new());
+    let mut built = DrawList::new();
     let started = Instant::now();
     loop {
         let before = m.ticks();
@@ -266,13 +332,16 @@ pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) ->
                 present.add_worm(&skin, default_colour(shown), shown == 0, false);
                 shown += 1;
             }
+            let p0 = Instant::now();
             present.on_tick(w, ev);
+            present_us.push(p0.elapsed().as_secs_f64() * 1e6);
             let t = m.ticks();
             let projectiles = w.projectiles().count();
-            if projectiles > pool || present.fx.len() > MAX_ENTITIES || ev.len() > TickEvents::CAPACITY {
+            if projectiles > pool || present.fx.len() > cfg.fx_capacity || ev.len() > TickEvents::CAPACITY {
                 bail!(
-                    "tick {t}: unbounded: {projectiles} projectiles of {pool}, {} entities of {MAX_ENTITIES}, {} events",
+                    "tick {t}: unbounded: {projectiles} projectiles of {pool}, {} entities of {}, {} events",
                     present.fx.len(),
+                    cfg.fx_capacity,
                     ev.len()
                 );
             }
@@ -280,7 +349,7 @@ pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) ->
             proj_sum += projectiles as u64;
             r.ticks_at_pool_cap += u32::from(projectiles == pool);
             r.fx_peak = r.fx_peak.max(present.fx.len());
-            r.ticks_at_fx_cap += u32::from(present.fx.len() >= MAX_ENTITIES);
+            r.ticks_at_fx_cap += u32::from(present.fx.len() >= cfg.fx_capacity);
             r.events_max = r.events_max.max(ev.len());
             events_sum += ev.len() as u64;
             r.cosmetic_dropped += u64::from(ev.cosmetic_dropped());
@@ -293,12 +362,17 @@ pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) ->
                 g.gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
                 g.ms.push(t0.elapsed().as_secs_f64() * 1000.0);
             }
+            if cfg.build_every > 0 && t.is_multiple_of(cfg.build_every) {
+                let b0 = Instant::now();
+                present.build(w, 1.0, &mut built);
+                build_us.push(b0.elapsed().as_secs_f64() * 1e6);
+            }
             if t.is_multiple_of(CHECK_TICKS) {
                 let mem = memory_mib();
                 if let Some((peak, _)) = mem
-                    && peak > MEMORY_CEILING_MIB
+                    && peak > cfg.memory_ceiling_mib
                 {
-                    bail!("tick {t}: {peak:.0} MiB resident, over {MEMORY_CEILING_MIB} MiB");
+                    bail!("tick {t}: {peak:.0} MiB resident, over {} MiB", cfg.memory_ceiling_mib);
                 }
                 let wall = started.elapsed().as_secs_f64();
                 progress(format!(
@@ -314,12 +388,16 @@ pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) ->
             break;
         }
     }
+    let area_cache = (m.cache_len(), m.cache_capacity());
     let run = m.finish();
     if let Some(f) = run.failure() {
         let record = crate::failure::write(std::path::Path::new("target/failures"), spec, f, &run.replay);
         let saved =
             record.map_or_else(|e| format!("(not saved: {e:#})"), |p| format!("(saved {})", p.display()));
         bail!("{}: {f} {saved}", r.name);
+    }
+    if let Some(path) = &cfg.record {
+        std::fs::write(path, run.replay.encode()).with_context(|| format!("writing {}", path.display()))?;
     }
     let st = &run.stats;
     let us = |ns: &[u32]| ns.iter().map(|&n| f64::from(n) / 1000.0).collect::<Vec<_>>();
@@ -329,6 +407,14 @@ pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) ->
     r.tick_us = Spread::of(&us(&st.tick_ns));
     r.sim_us = Spread::of(&us(&sim));
     r.think_us = Spread::of(&us(&st.think_ns));
+    r.present_us = Spread::of(&present_us);
+    r.build_us = Spread::of(&build_us);
+    r.fx_capacity = cfg.fx_capacity;
+    r.area_cache = area_cache;
+    r.level = (level.material.width(), level.material.height(), level.art_scale);
+    if area_cache.1 > 0 && area_cache.0 >= area_cache.1 {
+        r.caps.push(format!("the bots' area cache is full ({} areas)", area_cache.1));
+    }
     r.units_max = st.units_max;
     r.units_mean = st.units_total.checked_div(st.thinks).unwrap_or(0);
     r.budget_min = st.budget_min;

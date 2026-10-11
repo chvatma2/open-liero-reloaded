@@ -5,7 +5,7 @@ mod common;
 
 use common::{DEFAULT_DIRT, DIRT, ROCK, SKY, Setup, art, cosmetic, dt};
 use rl_data::image::Rgba;
-use rl_fx::{Kind, MAX_ENTITIES};
+use rl_fx::{Fx, Kind, MAX_ENTITIES};
 use rl_math::Vec2;
 use rl_scene::Rect;
 use rl_sim::CosmeticKind;
@@ -228,6 +228,20 @@ fn entity_cap_drops_new_ones() {
     assert!(s.fx.is_empty());
     s.tick(&[smoke], 0);
     assert_eq!(s.kinds(), [(0, Kind::Smoke)]);
+}
+
+/// The pool's size is a bench-only knob (plan 8): a larger pool keeps
+/// entities OLX's 1024 would drop; the default stays OLX's.
+#[test]
+fn a_larger_bench_pool_keeps_more_entities() {
+    let mut s = Setup::new();
+    s.fx = Fx::with_capacity(7, 4 * MAX_ENTITIES);
+    let smoke = cosmetic(0, CosmeticKind::Smoke, (20.0, 20.0), (0.0, 0.0));
+    s.tick(&vec![smoke; MAX_ENTITIES + 6], 0);
+    assert_eq!(s.fx.len(), MAX_ENTITIES + 6);
+    assert_eq!(s.fx.capacity(), 4 * MAX_ENTITIES);
+    assert_eq!(Fx::new(7).capacity(), MAX_ENTITIES);
+    assert_eq!(Fx::with_capacity(7, 0).capacity(), 1, "never an empty pool");
 }
 
 #[test]

@@ -25,6 +25,8 @@ mod entity;
 mod pool;
 
 /// `MAX_ENTITIES` (`include/Entity.h:30`): new entities are dropped beyond it.
+/// The pool's size everywhere but the performance envelope's effects sweep
+/// ([`Fx::with_capacity`]).
 pub const MAX_ENTITIES: usize = 1024;
 
 /// What one [`World::tick`] reported, as [`Fx::step_tick`] replays it.
@@ -64,9 +66,22 @@ pub struct Fx {
 }
 
 impl Fx {
-    /// No entities; `seed` seeds the entities' own `rand()`.
+    /// No entities, OLX's pool of [`MAX_ENTITIES`]; `seed` seeds the
+    /// entities' own `rand()`.
     pub fn new(seed: u32) -> Fx {
         Fx { pool: Pool::new(), rand: GlibcRand::new(seed) }
+    }
+
+    /// [`Fx::new`] with a pool of `capacity` entities (at least 1): a
+    /// bench-only knob (`rl-cli stress --fx-cap`, plan 8). Every game keeps
+    /// OLX's [`MAX_ENTITIES`].
+    pub fn with_capacity(seed: u32, capacity: usize) -> Fx {
+        Fx { pool: Pool::with_capacity(capacity), rand: GlibcRand::new(seed) }
+    }
+
+    /// The pool's size.
+    pub fn capacity(&self) -> usize {
+        self.pool.capacity()
     }
 
     /// Removes every entity (`ClearEntities`), for a new or restarted match.
