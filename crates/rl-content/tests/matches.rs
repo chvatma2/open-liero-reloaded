@@ -58,3 +58,37 @@ fn match_builder_seats_humans_and_bots() {
     let one = MatchOptions { players: vec![Player::Human], ..o };
     assert!(c.build_match(&one).is_err());
 }
+
+/// The weapon selection's choice (spec §21 G4): the human starts with
+/// exactly those weapons, in that order, and it is in the recording's
+/// setup; a weapon the restrictions do not enable is refused.
+#[test]
+fn chosen_weapons_are_the_humans_and_recorded() {
+    let Some(c) = content() else { return };
+    let rules = c.weapon_rules("olx-classic", DEFAULT_PRESET).unwrap();
+    let enabled = rules.enabled_weapons();
+    let chosen = [enabled[3], enabled[0], enabled[0], enabled[7], enabled[1]];
+    let o = MatchOptions {
+        mod_id: "olx-classic".into(),
+        level_id: "olx-level-liero-factory".into(),
+        seed: 5,
+        settings: SimSettings::lx56(),
+        players: vec![Player::HumanWith(chosen), Player::Bot(BotConfig::default())],
+        deathmatch: DeathmatchSettings::default(),
+        restrictions: DEFAULT_PRESET.into(),
+    };
+    let m = c.build_match(&o).unwrap();
+    let human: Vec<i32> = m.setup.worms[0].loadout.slots.iter().map(|s| s.weapon).collect();
+    assert_eq!(human, chosen);
+    assert_eq!(m.bot_worms().collect::<Vec<_>>(), [1]);
+    let replay = m.recorder.clone().finish(&m.world).unwrap();
+    let recorded: Vec<i32> = replay.setup.worms[0].loadout.slots.iter().map(|s| s.weapon).collect();
+    assert_eq!(recorded, chosen, "the replay holds the choice");
+    let banned = (0..rules.weapon_count() as i32).find(|w| !enabled.contains(w)).expect("a banned weapon");
+    let mut bad = chosen;
+    bad[2] = banned;
+    let refused =
+        MatchOptions { players: vec![Player::HumanWith(bad), Player::Bot(BotConfig::default())], ..o };
+    let e = c.build_match(&refused).err().expect("refused").to_string();
+    assert!(e.contains("worm 0"), "{e}");
+}

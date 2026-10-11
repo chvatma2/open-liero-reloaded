@@ -62,8 +62,10 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
 - **Matches** (`matches.rs`, plan 6 ruling R5): `build_match(MatchAssets,
   &MatchOptions) -> BuiltMatch` (or `Content::build_match`) is the one
   assembly of a Deathmatch, used by `rl-cli match` and `rl-game --mode
-  deathmatch`: `players[i]` is `Player::Human` (random enabled weapons
-  until M7's weapon menu) or `Player::Bot(BotConfig)` (`choose_loadout`
+  deathmatch`: `players[i]` is `Player::Human` (random enabled weapons:
+  the command line's games), `Player::HumanWith(weapons)` (the weapon
+  selection's choice, refused unless the restrictions enable each; the
+  recording's setup holds it) or `Player::Bot(BotConfig)` (`choose_loadout`
   from `BotRng::new(seed, i, personality)`); chaos bots get the
   `ChaosCycle` respawn loadout; a bot whose `BotConfig::validate` fails is
   refused; `Deathmatch::prepare`, `World::new`, a

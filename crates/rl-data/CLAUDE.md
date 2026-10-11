@@ -14,6 +14,7 @@ skins with colorization masks, themes, and pack manifests.
   mod's `.wps` presets (name to `WeaponState`, as OLX's `CWpnRest` map holds
   them); `WeaponRules` is OLX's list for a match (`loadList`'s file-name rule,
   `updateList`, `findWeapon`'s trimmed case-insensitive lookup), with the
-  enabled ids (bots) and the not-banned ids (natural bonuses).
+  enabled ids (bots), the not-banned ids (natural bonuses) and
+  `find_enabled_weapon` (the weapon selection's fallback).
 
 Test: `cargo nextest run -p rl-data`. Build for the web: `cargo build -p rl-data --target wasm32-unknown-unknown`.

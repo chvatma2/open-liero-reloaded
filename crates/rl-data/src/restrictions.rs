@@ -184,6 +184,21 @@ impl WeaponRules {
         self.weapons.iter().position(|w| w.eq_ignore_ascii_case(name)).map_or(-1, |i| i as i32)
     }
 
+    /// `CWpnRest::findEnabledWeapon` with the mod's weapon list
+    /// (`CWpnRest.cpp:241-260`): the id of the first enabled weapon of the
+    /// list in its map order (`stringcasecmp`: bytes compared ignoring ASCII
+    /// case) that the mod has; -1 if none. The weapon selection gives it to
+    /// a slot whose remembered weapon is not enabled
+    /// (`CWormHumanInputHandler::initWeaponSelection`, `CWormHuman.cpp:722-730`).
+    pub fn find_enabled_weapon(&self) -> i32 {
+        let mut enabled: Vec<&str> =
+            self.list.iter().filter(|(_, s)| *s == WeaponState::Enabled).map(|(k, _)| k.as_str()).collect();
+        enabled.sort_by(|a, b| {
+            a.bytes().map(|c| c.to_ascii_lowercase()).cmp(b.bytes().map(|c| c.to_ascii_lowercase()))
+        });
+        enabled.iter().map(|n| self.find_weapon_id(n)).find(|&id| id >= 0).unwrap_or(-1)
+    }
+
     /// The mod's name (OLX's `ModInfo::name`, the script's name, such as
     /// `Liero v1.0`).
     pub fn mod_name(&self) -> &str {
@@ -273,5 +288,17 @@ mod tests {
         assert_eq!(r.bonus_weapons(), vec![0, 1]);
         assert_eq!(r.weapon_count(), 2);
         assert_eq!(r.mod_name(), "m");
+    }
+
+    /// `findEnabledWeapon`: the first enabled name in the map's
+    /// case-insensitive order that the mod has, not the first by id.
+    #[test]
+    fn the_first_enabled_weapon_is_by_name() {
+        let p = presets(&[("Preset", &[("cannon", Banned), ("Zimm", Enabled), ("blaster", Enabled)])]);
+        let r = WeaponRules::from_parts("m", ["Cannon", "Shotgun", "Blaster"], &p, "Preset");
+        // "blaster" < "Shotgun" < "Zimm" ignoring case; "Zimm" is not the mod's.
+        assert_eq!(r.find_enabled_weapon(), 2);
+        let none = presets(&[("Preset", &[("A", Banned)])]);
+        assert_eq!(WeaponRules::from_parts("m", ["A"], &none, "Preset").find_enabled_weapon(), -1);
     }
 }

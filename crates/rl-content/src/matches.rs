@@ -10,18 +10,22 @@ use anyhow::{Context as _, anyhow, ensure};
 use rl_bots::{AreaCache, Bot, BotConfig, BotRng, LoadoutPolicy, Personality, choose_loadout};
 use rl_modes::{ChaosCycle, Deathmatch, DeathmatchSettings, RespawnLoadout};
 use rl_replay::{ModeSpec, Packs, Recorder};
-use rl_sim::{MAX_WORMS, MatchSetup, SimSettings, World};
+use rl_sim::{Loadout, MAX_SLOTS, MAX_WORMS, MatchSetup, SimSettings, Slot, World};
 
 use crate::{Content, LoadedLevel, LoadedMod, LoadedTheme, SandboxSetup, SpawnSpec, match_setup};
 
 /// Who plays a worm.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Player {
-    /// A person at the keyboard. Until the weapon selection menu (M7) the
-    /// human gets random weapons the restrictions enable, as OLX's
-    /// weapon dialog's "Random" button gives (`CWorm::GetRandomWeapons`,
-    /// then the empty slots filled), drawn from the worm's own `BotRng`.
+    /// A person at the keyboard with random weapons the restrictions
+    /// enable, as OLX's weapon dialog's "Random" button gives
+    /// (`CWorm::GetRandomWeapons`, then the empty slots filled), drawn from
+    /// the worm's own `BotRng`: the command line's games.
     Human,
+    /// A person at the keyboard with the weapons chosen in the weapon
+    /// selection (spec §21 G4), by mod weapon id, slot by slot; each must be
+    /// one the restrictions enable.
+    HumanWith([i32; MAX_SLOTS]),
     /// A bot.
     Bot(BotConfig),
 }
@@ -82,7 +86,8 @@ impl BuiltMatch {
 /// The match `o` describes, made of `a`:
 /// - each bot's loadout is `choose_loadout` from its own `BotRng`
 ///   (OLX's presets for a Deathmatch bot, random for a chaos bot), each
-///   human's random weapons ([`Player::Human`]);
+///   human's random weapons ([`Player::Human`]) or chosen ones
+///   ([`Player::HumanWith`], refused unless the restrictions enable them);
 /// - chaos bots' loadouts rotate on every spawn (spec §20 F10);
 /// - natural bonuses and the bots' choices follow `o.restrictions`.
 pub fn build_match(a: MatchAssets<'_>, o: &MatchOptions) -> anyhow::Result<BuiltMatch> {
@@ -107,6 +112,18 @@ pub fn build_match(a: MatchAssets<'_>, o: &MatchOptions) -> anyhow::Result<Built
         let cfg = match p {
             Player::Bot(cfg) => *cfg,
             Player::Human => BotConfig { loadout: LoadoutPolicy::Random, ..BotConfig::default() },
+            Player::HumanWith(ids) => {
+                let enabled = rules.enabled_weapons();
+                if let Some(bad) = ids.iter().find(|id| !enabled.contains(id)) {
+                    anyhow::bail!(
+                        "worm {i}: weapon {bad} is not one {:?} enables in {}",
+                        o.restrictions,
+                        o.mod_id
+                    );
+                }
+                w.loadout = Loadout::new(ids.iter().map(|&id| Slot::ready(id)).collect(), &o.settings);
+                continue;
+            }
         };
         let mut rng = BotRng::new(o.seed, i, cfg.personality);
         w.loadout = choose_loadout(&cfg, &rules, &o.settings, &mut rng);
@@ -129,7 +146,7 @@ pub fn build_match(a: MatchAssets<'_>, o: &MatchOptions) -> anyhow::Result<Built
     let bots = (0..n)
         .filter_map(|i| match o.players[i] {
             Player::Bot(cfg) => Some(Bot::with_cache(i, cfg, o.seed, &world, Arc::clone(&cache))),
-            Player::Human => None,
+            Player::Human | Player::HumanWith(_) => None,
         })
         .collect();
     Ok(BuiltMatch { setup, mode, world, bots, recorder })
