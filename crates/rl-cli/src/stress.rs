@@ -1,6 +1,7 @@
 //! The engine stress test (plan 7 task 8, the user's request: 32-player
 //! matches with a settable loading time): a headless, seeded Deathmatch of
-//! up to `MAX_WORMS` chaos bots (every weapon, fired continuously) with
+//! up to `MAX_WORMS` chaos bots (every weapon, fired continuously; or
+//! OLX's Deathmatch bots, `Config::personality`) with
 //! reloads near-instant (`LoadingTime` 0), bonuses on, and OLX's projectile
 //! pool or a larger one, played through the match runner (invariants after
 //! every tick), with the presentation's cosmetic entities stepped every
@@ -75,11 +76,17 @@ pub struct Config {
     pub memory_ceiling_mib: f64,
     /// Write the match's replay here (the GPU scenes play it).
     pub record: Option<PathBuf>,
+    /// How every bot plays; it replaces `spec`'s. Chaos fires everything;
+    /// Deathmatch bots (OLX's, their loadouts and respawns as `rl-cli
+    /// match` plays them) route through the shared area cache, so the
+    /// envelope's map-size and art-scale sweeps measure route finding.
+    pub personality: Personality,
 }
 
 impl Config {
     /// `spec` with today's defaults: no frames, verified, OLX's entity
-    /// pool, no draw list, [`MEMORY_CEILING_MIB`], no recording.
+    /// pool, no draw list, [`MEMORY_CEILING_MIB`], no recording, chaos
+    /// bots.
     pub fn new(spec: MatchSpec) -> Config {
         Config {
             spec,
@@ -90,6 +97,7 @@ impl Config {
             build_every: 0,
             memory_ceiling_mib: MEMORY_CEILING_MIB,
             record: None,
+            personality: Personality::Chaos,
         }
     }
 }
@@ -113,6 +121,11 @@ impl Spread {
         let at = |q: f64| v[((v.len() as f64 * q).ceil() as usize).clamp(1, v.len()) - 1];
         Spread { p50: at(0.5), p99: at(0.99), max: at(1.0) }
     }
+}
+
+/// The stress runner's personality before it was settable.
+fn chaos() -> Personality {
+    Personality::Chaos
 }
 
 /// The offscreen frames.
@@ -161,6 +174,9 @@ pub struct Report {
     /// The entity pool's size.
     #[serde(default)]
     pub fx_capacity: usize,
+    /// How the bots played (reports before it was settable: chaos).
+    #[serde(default = "chaos")]
+    pub personality: Personality,
     /// The bots' shared area cache: areas held, and how many it can hold.
     #[serde(default)]
     pub area_cache: (usize, usize),
@@ -217,13 +233,16 @@ impl Report {
             self.shots,
             self.kills,
         );
-        let s3 = |x: Spread| format!("p50 {:.0} p99 {:.0} max {:.0}", x.p50, x.p99, x.max);
-        t.push_str(&format!("  presentation µs:     {}\n", s3(self.present_us)));
+        t.push_str(&format!("  presentation µs:     {}\n", s(self.present_us)));
         if self.build_us != Spread::default() {
-            t.push_str(&format!("  draw-list build µs:  {}\n", s3(self.build_us)));
+            t.push_str(&format!("  draw-list build µs:  {}\n", s(self.build_us)));
         }
+        let bots = match self.personality {
+            Personality::Chaos => "chaos",
+            Personality::Deathmatch => "deathmatch",
+        };
         t.push_str(&format!(
-            "  level {}x{} at art scale {}; area cache {} of {}\n",
+            "  {bots} bots; level {}x{} at art scale {}; area cache {} of {}\n",
             self.level.0, self.level.1, self.level.2, self.area_cache.0, self.area_cache.1
         ));
         for c in &self.caps {
@@ -281,7 +300,7 @@ struct Gpu {
 /// by construction today (each is a fixed-capacity buffer); they guard a
 /// future change that makes one grow.
 pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) -> anyhow::Result<Report> {
-    let spec = &cfg.spec;
+    let spec = &MatchSpec { personality: cfg.personality, ..cfg.spec.clone() };
     let mut m = Match::new(content, spec, &Options::default())?;
     let mo = content.load_mod(&spec.mod_id)?;
     let level = content.load_level(&spec.level_id)?;
@@ -298,6 +317,8 @@ pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) ->
     };
     let mut present = Presentation::new(&setup, m.world());
     present.set_fx_capacity(cfg.fx_capacity);
+    // The pool as built (at least 1): the bound, the cap and the report.
+    let fx_cap = present.fx.capacity();
     let mut shown = 0;
     let mut gpu = if cfg.render_every > 0 { Offscreen::new().ok() } else { None }.map(|gpu| {
         let renderer = gpu.renderer(RenderSettings::default());
@@ -337,11 +358,11 @@ pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) ->
             present_us.push(p0.elapsed().as_secs_f64() * 1e6);
             let t = m.ticks();
             let projectiles = w.projectiles().count();
-            if projectiles > pool || present.fx.len() > cfg.fx_capacity || ev.len() > TickEvents::CAPACITY {
+            if projectiles > pool || present.fx.len() > fx_cap || ev.len() > TickEvents::CAPACITY {
                 bail!(
                     "tick {t}: unbounded: {projectiles} projectiles of {pool}, {} entities of {}, {} events",
                     present.fx.len(),
-                    cfg.fx_capacity,
+                    fx_cap,
                     ev.len()
                 );
             }
@@ -349,7 +370,7 @@ pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) ->
             proj_sum += projectiles as u64;
             r.ticks_at_pool_cap += u32::from(projectiles == pool);
             r.fx_peak = r.fx_peak.max(present.fx.len());
-            r.ticks_at_fx_cap += u32::from(present.fx.len() >= cfg.fx_capacity);
+            r.ticks_at_fx_cap += u32::from(present.fx.len() >= fx_cap);
             r.events_max = r.events_max.max(ev.len());
             events_sum += ev.len() as u64;
             r.cosmetic_dropped += u64::from(ev.cosmetic_dropped());
@@ -409,7 +430,8 @@ pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) ->
     r.think_us = Spread::of(&us(&st.think_ns));
     r.present_us = Spread::of(&present_us);
     r.build_us = Spread::of(&build_us);
-    r.fx_capacity = cfg.fx_capacity;
+    r.fx_capacity = fx_cap;
+    r.personality = cfg.personality;
     r.area_cache = area_cache;
     r.level = (level.material.width(), level.material.height(), level.art_scale);
     if area_cache.1 > 0 && area_cache.0 >= area_cache.1 {

@@ -38,30 +38,35 @@ The headless command-line tool. Its commands:
 - `rl-cli stress [--mod M] [--level L] [--worms 32] [--pool 3000] [--seconds
   180] [--seed S] [--render-every 100] [--render-width W --render-height H]
   [--no-verify] [--fx-cap 1024] [--build-every 0] [--memory-ceiling-mib
-  4096] [--record f.rlrp] [--out report.ron]`: the engine stress test (plan
-  7 task 8, `stress.rs`; `stress::Config::new(spec)` gives the defaults): `stress::spec` (32 chaos bots, mixed difficulties,
-  `LoadingTime` 0, bonuses every `BONUS_FREQUENCY` s, no limits, the pool
-  at `--pool`) played by the runner (invariants every tick), its
-  presentation's entities stepped every tick and a frame rendered
+  4096] [--record f.rlrp] [--personality chaos|dm] [--out report.ron]`: the
+  engine stress test (plan 7 task 8, `stress.rs`;
+  `stress::Config::new(spec)` gives the defaults): `stress::spec` (32 bots,
+  mixed difficulties, `LoadingTime` 0, bonuses every `BONUS_FREQUENCY` s, no
+  limits, the pool at `--pool`) played by the runner (invariants every
+  tick), its presentation's entities stepped every tick and a frame rendered
   offscreen (lavapipe/llvmpipe) every `--render-every` ticks; asserts
-  bounded buffers (pool, the entity pool, `TickEvents::CAPACITY`:
-  fixed capacities today, so cheap asserts against a future change) every
-  tick and memory under `--memory-ceiling-mib` (`MEMORY_CEILING_MIB`;
-  `VmHWM`, read every 1000 ticks; an absolute stop, `xtask bench` gates the
-  peak against its baseline), then `verify` (determinism and the replay).
-  The performance envelope's knobs (plan 8) never touch the match:
-  `--fx-cap` sizes the entity pool (`Presentation::set_fx_capacity`; OLX's
+  bounded buffers (pool, the entity pool, `TickEvents::CAPACITY`: fixed
+  capacities today, so cheap asserts against a future change) every tick and
+  memory under `--memory-ceiling-mib` (`MEMORY_CEILING_MIB`; `VmHWM`, read
+  every 1000 ticks; an absolute stop, `xtask bench` gates the peak against
+  its baseline), then `verify` (determinism and the replay). The bots are
+  chaos bots (they fire everything) unless `--personality dm`
+  (`Config::personality`, which replaces the spec's) plays OLX's Deathmatch
+  bots, whose routes go through the shared area cache (chaos bots never
+  touch it): the envelope's map-size and art-scale sweeps use them. The
+  performance envelope's knobs (plan 8) never touch the match: `--fx-cap`
+  sizes the entity pool (`Presentation::set_fx_capacity`; OLX's
   `rl_fx::MAX_ENTITIES` by default), `--build-every N` builds and times the
   draw list every N ticks, `--record` writes the match's replay. `Report`
   (RON with `--out`): tick, sim and think µs (p50/p99/max; `Stats::think_ns`
   splits the bots' share), `present_us` (`on_tick`), `build_us` (the draw
   list), units, pool peak/mean/ticks at the cap, entity peak/ticks at the
-  cap and `fx_capacity`, events a tick, drops, the frame ms, peak MiB,
-  `area_cache` (held, capacity), `level` (width, height, art scale) and
-  `caps` (hard limits reached, such as a full area cache); the new fields
-  are `#[serde(default)]`, so older reports still read. A
-  failed match writes its replay to `target/failures/`. `cargo xtask
-  stress` runs both mods × pool 3000/20 000 on Castle Strike.
+  cap and `fx_capacity` (the pool as built), events a tick, drops, the frame
+  ms, peak MiB, `personality`, `area_cache` (held, capacity), `level`
+  (width, height, art scale) and `caps` (hard limits reached, such as a full
+  area cache); the new fields are `#[serde(default)]`, so older reports
+  still read. A failed match writes its replay to `target/failures/`. `cargo
+  xtask stress` runs both mods × pool 3000/20 000 on Castle Strike.
 
 **The library** (`src/lib.rs`) holds the match runner for the commands and
 the tests: `spec::MatchSpec` (the options, serialized in failures and
@@ -83,8 +88,9 @@ pack when `RL_CONTENT_DIR` is set. To accept a reviewed snapshot change, run
 `MatchSpec`'s `--loading-time` and `--pool-capacity` (serialized only when
 given, so goldens and failure records keep their form) are the stress
 test's; without them a match is OLX's (`LoadingTime` 100, pool 3000).
-`tests/stress.rs` (check) plays a 4 s stress run on a 200-slot pool, and an
-8 s one with and without the envelope's knobs (same match, more measured).
+`tests/stress.rs` (check) plays a 4 s stress run on a 200-slot pool, an
+8 s one with and without the envelope's knobs (same match, more measured)
+and a 4 s Deathmatch-bot one that fills some of the area cache.
 `benches/game.rs` (divan, `cargo xtask bench`): 8 bots' think + tick and a
 draw-list build on a warm Classic match (needs `RL_CONTENT_DIR`).
 `tests/render_golden.rs` (the GPU frame goldens) runs in `cargo xtask full`

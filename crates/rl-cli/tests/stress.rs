@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+use rl_cli::spec::Personality;
 use rl_cli::stress::{self, Config, Spread};
 
 fn content() -> Option<rl_content::Content> {
@@ -63,6 +64,7 @@ fn the_bench_knobs_measure_without_changing_the_match() {
         "the knobs never touch the simulation"
     );
     assert_eq!((r.fx_capacity, plain.fx_capacity), (16_384, rl_fx::MAX_ENTITIES));
+    assert_eq!(plain.personality, Personality::Chaos, "the stress bots stay chaos by default");
     assert!(r.fx_peak > rl_fx::MAX_ENTITIES, "32 chaos bots overflow OLX's 1024 entities: {}", r.fx_peak);
     assert!(r.build_us.p50 > 0.0 && r.present_us.p50 > 0.0, "{r:?}");
     assert_eq!(plain.build_us, Spread::default(), "no draw list without --build-every");
@@ -71,4 +73,21 @@ fn the_bench_knobs_measure_without_changing_the_match() {
     assert!(r.caps.is_empty(), "{:?}", r.caps);
     let replay = rl_replay::Replay::decode(&std::fs::read(&file).unwrap()).unwrap();
     assert_eq!(replay.ticks(), r.ticks);
+}
+
+/// Deathmatch bots (plan 8 ruling T1-A) route through the shared area
+/// cache, which chaos bots never touch: the envelope's map-size and
+/// art-scale sweeps measure it. Their stress match keeps its bounds, plays
+/// the same again and its replay reproduces it.
+#[test]
+fn deathmatch_bots_fill_the_area_cache() {
+    let Some(content) = content() else { return };
+    let spec = stress::spec("olx-classic", "olx-level-dirt-level", 6, 3000, 4.0, 3);
+    let cfg = Config { personality: Personality::Deathmatch, ..Config::new(spec) };
+    let r = stress::run(&content, &cfg, &mut |_| {}).unwrap();
+    assert_eq!((r.ticks, r.personality), (400, Personality::Deathmatch));
+    assert!(r.name.contains("-6dm-"), "{}", r.name);
+    assert!(r.area_cache.0 > 0 && r.area_cache.0 <= r.area_cache.1, "{:?}", r.area_cache);
+    assert_eq!(r.deterministic, Some(true));
+    assert!(r.text().contains("deathmatch bots;"), "{}", r.text());
 }

@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 
+use rl_cli::spec::Personality;
 use rl_cli::stress::{self, Config};
 
 /// Plays the stress match and prints its report.
@@ -49,6 +50,10 @@ pub struct Args {
     /// Write the match's replay here.
     #[arg(long)]
     record: Option<PathBuf>,
+    /// How every bot plays: `chaos` fires everything, `dm` (OLX's bot)
+    /// finds routes through the area cache.
+    #[arg(long, value_enum, default_value_t = Personality::Chaos)]
+    personality: Personality,
     /// Imported content (packs written by `rl-cli import`).
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
@@ -68,6 +73,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         build_every: args.build_every,
         memory_ceiling_mib: args.memory_ceiling_mib,
         record: args.record.clone(),
+        personality: args.personality,
         ..Config::new(spec)
     };
     let report = stress::run(&content, &cfg, &mut |line| eprintln!("  {line}"))?;
