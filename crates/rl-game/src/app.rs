@@ -533,6 +533,8 @@ impl App {
             minimap,
             time,
             speed: speed_shown,
+            selecting: self.shell.selecting(),
+            names: !self.cfg.menus || self.shell.names_shown(),
         });
         let (ui_state, data) = (&self.shell.ui, &mut self.shell.data);
         let menus = self.cfg.menus;

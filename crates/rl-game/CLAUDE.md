@@ -166,8 +166,11 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   design). The recording ends `RECORD_AFTER_END` (3 s) after the game over
   or at `MAX_TICKS`; `--record f` saves it at exit and on each rematch
   (`f`, `f-2`, ... : `drive::record_path`).
-- **Match HUD** (`rl_ui::hud`, Modern; `hud.rs` builds its `HudView` from
-  the session): names ("You", "Bot N"; a replay's "Worm N"), the kill feed
+- **Match HUD** (`rl_ui::hud`, Modern; `hud::view(session, &Frame)` builds its `HudView` from
+  the session and the frame: the worms on screen, `worms_on_screen`, at
+  `WORM_SIZE`, which the minimap and the panel fade over; no weapon rows
+  while the selection is open, `Shell::selecting`, the world's being a
+  placeholder until Done): names ("You", "Bot N"; a replay's "Worm N"), the kill feed
   from `Message` events (OLX's texts, the last 6 lines for 3 s; kills show
   no weapon: `rl-sim` does not record the injuring weapon, and OLX drops
   `" with <weapon>"` then), the time-limit clock (red in the last 10 s; it
@@ -215,7 +218,9 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   a frame is drawn; egui hands each change out once (a lost font-atlas
   delta makes egui-wgpu panic on the next patch) and debug builds assert
   every delta was handled.
-- **Overlay** (`overlay.rs`): names over worms, summed damage popups
+- **Overlay** (`overlay.rs`): names over worms (inside the picture at
+  its edges: `name_rect`; only in game and not paused, `Shell::names_shown`,
+  never through the selection, the pause menu or the results), summed damage popups
   (`Damage.dealt`), the HUD (OLX's kills, deaths and suicides, which a
   zero score does not count), and F2's counters: FPS, frame and *busy* ms
   (the frame without the VSync wait), tick ms, entities, projectiles,

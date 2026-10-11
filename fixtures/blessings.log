@@ -19,3 +19,6 @@
 2026-10-11 bench: review fixes: baselines store their host; stress peak memory gated at +25 %
   fixtures/bench/baselines.ron
   fixtures/bench/stress.ron
+2026-10-11 bless-render: final review fix: minimap scale capped at 1.5 (MAX_MINIMAP), HUD fades over worms
+  fixtures/ui/hud-1080p.png
+  fixtures/ui/hud-1440p.png

@@ -2,9 +2,11 @@
 //! minimap's texture, and the [`HudView`] a session shows this frame; the
 //! HUD itself is `rl_ui::hud` (layout and painting, Modern style).
 
-use egui::{Color32, Rect, TextureHandle, TextureOptions, pos2, vec2};
+use egui::{Color32, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
+use rl_scene::Blend;
 use rl_ui::hud::{Dot, HudView, MinimapView, Notice, WormHud, minimap};
 
+use crate::overlay::ScreenMap;
 use crate::session::{Driver, Session};
 
 /// The results show this many ticks after the end (`GAMEOVER_WAIT`, 3 s,
@@ -84,24 +86,60 @@ impl MinimapTexture {
     }
 }
 
-/// What the HUD shows of `s`: the followed worm (0), the feed, the clock
-/// and kill limit, a replay's progress, the fast-forward `speed` of a
-/// watched game (a replay, bots alone; `speed::shown`), the scoreboard while
-/// `scores`, the minimap (texture `minimap`; the camera's view `view` in
-/// world pixels; `time` in seconds for OLX's blink), "Game Over" until the
-/// results show, and the keys (`menus`: Esc pauses rather than quits).
-#[allow(clippy::too_many_arguments)]
-pub fn view(
-    s: &Session,
-    view: Option<Rect>,
-    scores: bool,
-    minimap: Option<egui::TextureId>,
-    time: f64,
-    menus: bool,
-    debug: bool,
-    speed: Option<&str>,
-) -> HudView {
-    let worm = WormHud::of(&s.world, 0, &s.names, s.human());
+/// What a frame adds to the session for the HUD.
+#[derive(Clone, Debug, Default)]
+pub struct Frame<'a> {
+    /// The camera's view in world pixels (the minimap's rectangle).
+    pub view: Option<Rect>,
+    /// Tab held: the scoreboard.
+    pub scores: bool,
+    /// The minimap's texture.
+    pub minimap: Option<egui::TextureId>,
+    /// Seconds since the start (OLX's blink).
+    pub time: f64,
+    /// Started from the menus: Esc pauses rather than quits.
+    pub menus: bool,
+    /// F2's panel shows: the feed starts below it.
+    pub debug: bool,
+    /// The fast-forward of a watched game (a replay, bots alone;
+    /// `speed::shown`).
+    pub speed: Option<&'a str>,
+    /// The weapon selection is open: the world's weapons are a
+    /// placeholder until Done, so the HUD shows none.
+    pub selecting: bool,
+    /// The alive worms' centres on screen and a worm's size there, in
+    /// points: the minimap and the panel fade over them (`worms_on_screen`).
+    pub worms: Vec<Pos2>,
+    pub worm_size: f32,
+}
+
+/// A worm's size in world pixels (OLX's skin frame is 20 × 18).
+pub const WORM_SIZE: f32 = rl_content::SKIN_WIDTH as f32;
+
+/// The alive worms of `s` on screen (`map`), each with its index, drawn
+/// at `alpha` between the last two ticks (where the scene draws them).
+pub fn worms_on_screen(s: &Session, map: &ScreenMap, alpha: f32) -> Vec<(usize, Pos2)> {
+    let blend = Blend::new(s.present.scene.prev(), alpha, s.present.scene.options.interpolation);
+    s.world
+        .worms()
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| w.alive)
+        .map(|(i, w)| (i, map.to_points(blend.worm(i, w))))
+        .collect()
+}
+
+/// What the HUD shows of `s` with frame `f`: the followed worm (0; no
+/// weapons during the selection), the feed, the clock and kill limit, a
+/// replay's progress, the fast-forward speed, the scoreboard while
+/// `scores`, the minimap ("Game Over" until the results show), the keys
+/// and the worms the HUD fades over.
+pub fn view(s: &Session, f: &Frame) -> HudView {
+    let Frame { view, scores, minimap, time, menus, debug, speed, .. } = *f;
+    let mut worm = WormHud::of(&s.world, 0, &s.names, s.human());
+    if let Some(w) = worm.as_mut().filter(|_| f.selecting) {
+        w.slots.clear();
+    }
     let mut notices = Vec::new();
     if let Some(speed) = speed.filter(|_| !s.human()) {
         notices.push(Notice { text: format!("Fast-forward {speed}"), warn: false });
@@ -162,6 +200,8 @@ pub fn view(
         game_over: s.results.is_some() && !s.results_shown(),
         hint: Some(hint),
         top_left_reserved: if debug { DEBUG_PANEL } else { 0.0 },
+        worms: f.worms.clone(),
+        worm_size: f.worm_size,
     }
 }
 

@@ -4,6 +4,7 @@
 
 use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, RichText, Stroke, StrokeKind, Ui, pos2, vec2};
 
+use super::fade::HudFade;
 use super::layout::HudLayout;
 use super::minimap::{ALPHA, dot_colour, dot_rect, view_rect};
 use super::model::{Row, clock, lives_text};
@@ -30,17 +31,34 @@ fn shadowed(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, co
     p.text(pos, anchor, text, font, colour)
 }
 
-/// Paints `view` over `ui`'s whole area.
+/// Paints `view` over `ui`'s whole area; the minimap and the bottom-left
+/// panel fade while a worm is under them (`HudFade`, kept in egui's memory).
 pub fn show(ui: &Ui, view: &HudView) {
     let l = HudLayout::new(ui.max_rect());
     let p = ui.painter();
+    let now = ui.input(|i| i.time);
+    let id = egui::Id::new("rl-ui hud fade");
+    let covered = l.covered(&view.worms, view.worm_size);
+    let (opacity, moving) = ui.ctx().data_mut(|d| {
+        let fade = d.get_temp_mut_or_default::<HudFade>(id);
+        (fade.update(covered, now), fade.moving(now))
+    });
+    if moving {
+        ui.ctx().request_repaint();
+    }
     if let Some(w) = &view.worm {
-        health(p, &l, w);
-        weapons(p, &l, w);
+        let mut p = p.clone();
+        p.multiply_opacity(opacity.panel);
+        health(&p, &l, w);
+        if !w.slots.is_empty() {
+            weapons(&p, &l, w);
+        }
     }
     top(p, &l, view);
     if let Some(m) = &view.minimap {
-        minimap(p, &l, m);
+        let mut p = p.clone();
+        p.multiply_opacity(opacity.minimap);
+        minimap(&p, &l, m);
     }
     if let (Some(hint), Some(rect)) = (&view.hint, l.hint) {
         let p = p.with_clip_rect(rect);

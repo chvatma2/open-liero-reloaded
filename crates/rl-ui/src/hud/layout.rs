@@ -22,8 +22,9 @@ const FULL: Vec2 = vec2(640.0, 360.0);
 /// The smallest HUD size factor.
 const MIN_UNIT: f32 = 0.5;
 
-/// The largest minimap scale (OLX pixels to points).
-const MAX_MINIMAP: f32 = 2.5;
+/// The largest minimap scale (OLX pixels to points): 178 × 141 points,
+/// so it takes little of a small window (it lies over the playfield).
+pub const MAX_MINIMAP: f32 = 1.5;
 
 // Sizes at full size, in points.
 const MARGIN: f32 = 8.0;

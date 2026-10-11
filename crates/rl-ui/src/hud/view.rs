@@ -155,4 +155,9 @@ pub struct HudView {
     /// Space left at the top-left for another panel (the F2 counters), in
     /// points: the feed starts below it.
     pub top_left_reserved: f32,
+    /// The alive worms' centres on screen, in points: the minimap and the
+    /// bottom-left panel fade while one is under them (`fade.rs`).
+    pub worms: Vec<Pos2>,
+    /// A worm's size on screen, in points (the margin around each too).
+    pub worm_size: f32,
 }

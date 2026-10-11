@@ -87,6 +87,8 @@ fn view(texture: egui::TextureId, scores: bool) -> HudView {
         game_over: false,
         hint: Some("Tab scores   F2 debug   F5 rematch   Esc pause".into()),
         top_left_reserved: 0.0,
+        worms: Vec::new(),
+        worm_size: 0.0,
     }
 }
 

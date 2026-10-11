@@ -199,3 +199,28 @@ fn a_refused_choice_leaves_the_match_playable() {
     sh.act(UiAction::Restart);
     assert_eq!(sh.session().unwrap().rematches, 1, "F5 still builds the rematch");
 }
+
+/// The HUD shows no weapons while the selection is open (the world's are
+/// a placeholder then), and the chosen ones after Done; worm names show
+/// only in game, not through the selection or the pause menu.
+#[test]
+fn hud_hides_the_weapons_during_the_selection() {
+    use rl_game::hud::{Frame, view};
+    let Some(dir) = content() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let mut sh = shell(&dir, Store::open(tmp.path()), Settings::default());
+    start(&mut sh);
+    assert!(sh.selecting() && !sh.names_shown());
+    let frame = |sh: &Shell| Frame { selecting: sh.selecting(), ..Frame::default() };
+    let hud = view(sh.session().unwrap(), &frame(&sh));
+    assert!(hud.worm.as_ref().unwrap().slots.is_empty(), "no placeholder loadout");
+    let weapons = choose(&mut sh);
+    assert!(!sh.selecting() && sh.names_shown());
+    let hud = view(sh.session().unwrap(), &frame(&sh));
+    let menu = sh.data.weapons.clone().unwrap();
+    let names: Vec<String> = hud.worm.unwrap().slots.iter().map(|s| s.name.clone()).collect();
+    let chosen: Vec<String> = weapons.iter().map(|&w| menu.names[w as usize].replace('.', "")).collect();
+    assert_eq!(names, chosen);
+    sh.act(UiAction::Back);
+    assert!(sh.paused() && !sh.names_shown(), "no names over the pause menu");
+}

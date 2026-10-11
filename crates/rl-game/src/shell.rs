@@ -312,6 +312,18 @@ impl Shell {
         self.paused
     }
 
+    /// The weapon selection is open: the player's weapons are not chosen
+    /// yet (the HUD shows none).
+    pub fn selecting(&self) -> bool {
+        self.play.is_some() && self.ui.screen() == Screen::WeaponSelect
+    }
+
+    /// Worm names show over the game: in game and not paused, so never
+    /// through the weapon selection, the pause menu or the results.
+    pub fn names_shown(&self) -> bool {
+        self.play.is_some() && self.ui.screen() == Screen::InGame && !self.paused
+    }
+
     pub fn session(&self) -> Option<&Session> {
         self.play.as_ref().map(|p| &p.session)
     }

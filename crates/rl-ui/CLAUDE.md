@@ -140,8 +140,15 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   keys bottom right; it shrinks to half size and never covers the health
   or weapons: Review Focus 5, `hud_layout_holds_at_all_scales`),
   `minimap.rs` (`image`: the colour terrain box-filtered to
-  `TEXTURE_SIZE`; OLX's dot rectangles and blink; the view rectangle),
-  `paint.rs` (`show(ui, &view)`, `table`). Image snapshots at 1080p and
+  `TEXTURE_SIZE`; OLX's dot rectangles and blink; the view rectangle;
+  its scale at most `MAX_MINIMAP` 1.5), `fade.rs` (OLX keeps its HUD off
+  the playfield, ours lies over it: `HudLayout::covered(worms, size)`
+  says whether a worm, with a margin of its size, is under the minimap or
+  the bottom-left `panel()`; `HudFade` eases that part to `FADED` (25 %)
+  over `FADE_SECONDS` (150 ms) and back; `HudView::worms`/`worm_size`
+  are the app's; `hud_fades_over_a_worm`),
+  `paint.rs` (`show(ui, &view)`, the fade kept in egui's memory on
+  egui's time; a worm without slots shows no weapon rows; `table`). Image snapshots at 1080p and
   1440p (`tests/hud_snapshots.rs` against `fixtures/ui/`, in the GPU tier
   with `RL_GPU_TESTS`; `cargo xtask bless-render --reason` re-records them, logged).
 - **Weapon selection** (`weapon_select.rs`, §21 G4): `WeaponMenu` (names,

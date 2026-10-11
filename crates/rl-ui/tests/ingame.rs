@@ -522,3 +522,54 @@ fn rematch_shows_loading() {
     h.get_by_label("Loading…");
     assert!(h.query_by_label("Back to menu").is_none(), "nothing to press while it loads");
 }
+
+/// The HUD never hides a worm for long (the final review's Important 1):
+/// a worm under the minimap or the bottom-left panel, or within a worm's
+/// size of it, fades that part to `FADED` over `FADE_SECONDS`, eased, and
+/// back when it leaves; with no worm near, everything is opaque. The
+/// minimap's scale is capped at `MAX_MINIMAP`, so it takes less of a
+/// small window.
+#[test]
+fn hud_fades_over_a_worm() {
+    use rl_ui::hud::{Covered, FADE_SECONDS, FADED, HudFade, MAX_MINIMAP};
+    for (w, h) in [(1280.0, 720.0), (1920.0, 1080.0), (2560.0, 1440.0), (640.0, 360.0)] {
+        let l = HudLayout::new(Rect::from_min_size(Pos2::ZERO, vec2(w, h)));
+        assert!(l.minimap_scale() <= MAX_MINIMAP + 1e-4, "{w}x{h}: {}", l.minimap_scale());
+    }
+    const { assert!(MAX_MINIMAP <= 1.5) };
+    let l = HudLayout::new(Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 720.0)));
+    let size = 20.0;
+    assert_eq!(l.covered(&[], size), Covered::default(), "no worm");
+    assert_eq!(l.covered(&[l.screen.center()], size), Covered::default(), "a worm mid-screen");
+    let under = l.covered(&[l.minimap.center()], size);
+    assert_eq!(under, Covered { minimap: true, panel: false });
+    let near = l.covered(&[Pos2::new(l.minimap.left() - size, l.minimap.center().y)], size);
+    assert!(near.minimap, "within a worm's size of the minimap");
+    let off = l.covered(&[Pos2::new(l.minimap.left() - 3.0 * size, l.minimap.center().y)], size);
+    assert!(!off.minimap, "well clear of it");
+    assert_eq!(l.covered(&[l.weapons.center()], size), Covered { minimap: false, panel: true });
+    assert_eq!(l.covered(&[l.health.left_top()], size), Covered { minimap: false, panel: true });
+
+    let mut fade = HudFade::default();
+    let o = fade.update(Covered::default(), 0.0);
+    assert_eq!((o.minimap, o.panel), (1.0, 1.0), "no worm: full opacity");
+    let o = fade.update(under, 1.0);
+    assert_eq!(o.minimap, 1.0, "the fade starts now");
+    let half = fade.update(under, 1.0 + FADE_SECONDS / 2.0).minimap;
+    assert!(FADED < half && half < 1.0, "half way: {half}");
+    let quarter = fade.update(under, 1.0 + FADE_SECONDS / 4.0).minimap;
+    assert!(half < quarter, "eased, monotonic");
+    let o = fade.update(under, 1.0 + FADE_SECONDS);
+    assert_eq!((o.minimap, o.panel), (FADED, 1.0), "the minimap faded, the panel not");
+    assert_eq!(fade.update(under, 5.0).minimap, FADED, "stays faded while the worm is under it");
+    // The worm leaves half way back: the fade turns from where it is.
+    fade.update(Covered::default(), 6.0);
+    let back = fade.update(Covered::default(), 6.0 + FADE_SECONDS / 2.0).minimap;
+    assert!(FADED < back && back < 1.0, "{back}");
+    let turned = fade.update(under, 6.0 + FADE_SECONDS / 2.0).minimap;
+    assert_eq!(turned, back, "no jump when it turns");
+    fade.update(Covered::default(), 9.0);
+    assert!(fade.moving(9.0 + FADE_SECONDS / 2.0));
+    assert_eq!(fade.update(Covered::default(), 20.0).minimap, 1.0, "opaque again");
+    assert!(!fade.moving(20.0));
+}

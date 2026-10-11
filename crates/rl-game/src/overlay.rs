@@ -5,7 +5,7 @@
 
 use egui::{Align2, Color32, FontId, Painter, Pos2};
 use rl_math::Vec2;
-use rl_scene::{Blend, View};
+use rl_scene::View;
 
 use crate::session::{Driver, POPUP_TICKS, Session};
 
@@ -83,6 +83,24 @@ pub struct Overlay<'a> {
     /// A watched game running fast: its speed as the HUD shows it
     /// (`speed::shown`); `None` at 1×.
     pub speed: Option<String>,
+    /// The weapon selection is open (`Shell::selecting`).
+    pub selecting: bool,
+    /// Worm names show: not through the menus' panels (`Shell::names_shown`).
+    pub names: bool,
+}
+
+/// Where a name label of `size` goes for a worm at `at` (points): centred
+/// above it, its bottom at `at`, moved inside `bounds` (the picture) when
+/// it would leave them; one wider or taller than `bounds` starts at their
+/// left or top.
+pub fn name_rect(at: Pos2, size: egui::Vec2, bounds: egui::Rect) -> egui::Rect {
+    let fit = |v: f32, lo: f32, hi: f32, len: f32| {
+        let v = if v.is_finite() { v } else { lo };
+        if !(lo.is_finite() && hi.is_finite()) || hi - len < lo { lo } else { v.clamp(lo, hi - len) }
+    };
+    let x = fit(at.x - size.x / 2.0, bounds.left(), bounds.right(), size.x);
+    let y = fit(at.y - size.y, bounds.top(), bounds.bottom(), size.y);
+    egui::Rect::from_min_size(Pos2::new(x, y), size)
 }
 
 fn shadowed(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, colour: Color32) {
@@ -98,11 +116,21 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
     let s = o.session;
     let world = &s.world;
     let small = FontId::proportional(13.0);
-    let blend = Blend::new(s.present.scene.prev(), o.alpha, s.present.scene.options.interpolation);
     let k = o.map.scale();
-    for (i, w) in world.worms().iter().enumerate().filter(|(_, w)| w.alive) {
-        let at = o.map.to_points(blend.worm(i, w)) - egui::vec2(0.0, 12.0 * k);
-        shadowed(p, at, Align2::CENTER_BOTTOM, &s.names.of(w.id), small.clone(), Color32::from_gray(230));
+    let worms = crate::hud::worms_on_screen(s, &o.map, o.alpha);
+    if o.names {
+        let bounds = o.map.points_rect().intersect(ui.max_rect());
+        for &(i, at) in &worms {
+            let name = s.names.of(world.worms()[i].id);
+            let galley = p.layout_no_wrap(name, small.clone(), Color32::from_gray(230));
+            let r = name_rect(at - egui::vec2(0.0, 12.0 * k), galley.size(), bounds);
+            p.galley_with_override_text_color(
+                r.min + egui::vec2(1.0, 1.0),
+                galley.clone(),
+                Color32::from_black_alpha(200),
+            );
+            p.galley(r.min, galley, Color32::from_gray(230));
+        }
     }
     for pop in &s.popups {
         let t = pop.age as f32 / POPUP_TICKS as f32;
@@ -118,16 +146,19 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
             Color32::from_rgba_unmultiplied(255, 80, 60, fade),
         );
     }
-    let hud = crate::hud::view(
-        s,
-        Some(crate::hud::view_rect(o.map.view)),
-        o.show_scores,
-        o.minimap,
-        o.time,
-        o.menus,
-        o.debug,
-        o.speed.as_deref(),
-    );
+    let frame = crate::hud::Frame {
+        view: Some(crate::hud::view_rect(o.map.view)),
+        scores: o.show_scores,
+        minimap: o.minimap,
+        time: o.time,
+        menus: o.menus,
+        debug: o.debug,
+        speed: o.speed.as_deref(),
+        selecting: o.selecting,
+        worms: worms.iter().map(|&(_, at)| at).collect(),
+        worm_size: crate::hud::WORM_SIZE * k,
+    };
+    let hud = crate::hud::view(s, &frame);
     rl_ui::hud::show(ui, &hud);
     if o.debug {
         debug(ui.painter(), ui.max_rect(), o);
@@ -200,6 +231,35 @@ fn debug(p: &Painter, rect: egui::Rect, o: &Overlay) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A worm's name sits centred above it, moved inside the view when
+    /// the worm is at its edge (never clipped there).
+    #[test]
+    fn names_stay_inside_the_view() {
+        let view = egui::Rect::from_min_size(Pos2::new(20.0, 0.0), egui::vec2(600.0, 360.0));
+        let size = egui::vec2(80.0, 14.0);
+        let mid = name_rect(Pos2::new(300.0, 200.0), size, view);
+        assert_eq!(mid, egui::Rect::from_min_size(Pos2::new(260.0, 186.0), size), "centred above");
+        for at in [
+            Pos2::new(21.0, 200.0),
+            Pos2::new(619.0, 200.0),
+            Pos2::new(300.0, 2.0),
+            Pos2::new(-500.0, -40.0),
+            Pos2::new(5000.0, 9000.0),
+        ] {
+            let r = name_rect(at, size, view);
+            assert!(view.contains_rect(r), "{at:?}: {r:?}");
+            assert_eq!(r.size(), size);
+        }
+        assert_eq!(name_rect(Pos2::new(21.0, 200.0), size, view).left(), 20.0);
+        assert_eq!(name_rect(Pos2::new(619.0, 200.0), size, view).right(), 620.0);
+        assert_eq!(name_rect(Pos2::new(300.0, 2.0), size, view).top(), 0.0);
+        // Wider than the view: from its left edge.
+        let wide = name_rect(Pos2::new(300.0, 200.0), egui::vec2(900.0, 14.0), view);
+        assert_eq!(wide.left(), 20.0);
+        // No size or not a number: no panic.
+        let _ = name_rect(Pos2::new(f32::NAN, 1.0), size, egui::Rect::NOTHING);
+    }
 
     #[test]
     fn world_pixels_map_to_points() {
