@@ -365,6 +365,29 @@ fn harness_sized(ui: UiState, data: MenuData, size: egui::Vec2) -> Harness<'stat
     )
 }
 
+/// On a large screen the results panel is as wide as its table: every
+/// column shows, none hidden behind a horizontal scroll (seen at 1080p in
+/// the v0.1 acceptance runs: Suicides cut, Damage gone).
+#[test]
+fn results_show_every_column_on_a_large_screen() {
+    for size in [vec2(1920.0, 1080.0), vec2(1280.0, 720.0)] {
+        let mut ui = state_in_weapon_select(Profiles::default());
+        ui.update(UiAction::ChooseWeapons { weapons: [0; MAX_SLOTS], names: vec![] });
+        ui.update(UiAction::MatchOver);
+        let mut data = MenuData::new(Catalog::default(), None);
+        data.results = Some(results());
+        let mut h = harness_sized(ui, data, size);
+        h.run();
+        let panel = h.ctx.memory(|m| m.area_rect(egui::Id::new("results"))).expect("the results panel");
+        for label in ["Suicides", "Damage", "512"] {
+            let r = h.get_by_label(label).rect();
+            assert!(panel.contains_rect(r), "{label} at {r:?} outside the panel {panel:?} at {size:?}");
+        }
+        // Not wider than its table needs.
+        assert!(panel.width() < 700.0, "{panel:?} at {size:?}");
+    }
+}
+
 /// A 1280 × 720 window at UI scale 3 is 427 × 240 points: the results
 /// of a full match and the weapon selection keep their buttons on screen
 /// (the table and the slots scroll).

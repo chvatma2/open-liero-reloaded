@@ -34,9 +34,14 @@ pub fn panel(ctx: &egui::Context, r: &Results, footer: impl FnOnce(&mut Ui)) {
                     ui.label(RichText::new(format!("Winner: {winner}")).size(18.0).color(Color32::WHITE));
                     ui.label(RichText::new(format!("by {}", r.reason)).color(Color32::from_gray(190)));
                     ui.add_space(6.0);
+                    // As wide as the table up to the screen's width (an
+                    // area's first width is too narrow for it): it
+                    // scrolls only on a small screen.
+                    let width = (screen.width() - 40.0).max(80.0);
                     egui::ScrollArea::both()
                         .max_height((screen.height() - AROUND_TABLE).max(24.0))
-                        .max_width((screen.width() - 40.0).max(80.0))
+                        .max_width(width)
+                        .min_scrolled_width(width)
                         .show(ui, |ui| table(ui, &r.rows));
                     ui.add_space(8.0);
                     footer(ui);
