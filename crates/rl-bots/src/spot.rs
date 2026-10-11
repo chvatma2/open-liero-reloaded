@@ -139,9 +139,10 @@ impl Bot {
                 let x = if right { x + 5.0 } else { x - 5.0 };
                 let p = Vec2::new(x, trg.y);
                 let Some(clear) = worm_line_clear(c.t, b, p, trg) else { return Try::Later };
-                // One step back. OLX's left search steps the wrong way
-                // (`x -= 5` again, `CWormBot.cpp:4026`), which leaves the
-                // map at its left edge; this steps back right (notes §1.12).
+                // One step back, towards the target. OLX's left search
+                // steps a further 5 px left (`x -= 5` again,
+                // `CWormBot.cpp:4026`): 10 px off by every wall, outside the
+                // map at its left edge (notes §1.12).
                 let back = if right { x - 5.0 } else { x + 5.0 };
                 job.phase = if right { Phase::Right(i + 1, x) } else { Phase::Left(i + 1, x) };
                 if !clear {

@@ -19,7 +19,8 @@ port of the bare `CGameMode` (`src/server/CGameMode.cpp`) at commit
   `DeathmatchSettings::respawn_loadout` is `Keep` (OLX) or `ChaosCycle`:
   `on_spawn` gives chaos bot `i` of `n` the weapons `(i·5 + r·5·n + j) mod
   W` on its life `r` with `give_weapon` (the mode counts each worm's
-  spawns, the first being life 0).
+  spawns, the first being life 0). `ChaosCycle::worms` and `weapon_count`
+  give back what it was made from, for replays.
 - **Rules** (`rules.rs`) are pure: `compare` (`CompareWormsScore`, with
   `olx_round`), `highest`, `winner`, and the results order (a stable
   insertion sort, so ties keep the id order).

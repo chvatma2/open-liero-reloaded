@@ -31,8 +31,9 @@ loadouts, §4 the recommendations this crate follows).
   `weapons.rs`: what the bot knows of each weapon (`Arsenal`), the game
   type from the loadout, `AI_GetBestWeapon` (buckets, change delay, 100lt,
   rifle and mortar tactics), reloading, clearing weapons. `moving.rs`:
-  `AI_MoveToTarget`, `AI_SimpleMove`, `AI_Jump`, stuck handling, and the
-  dig-on deviation. `rope.rs`: rope timers and `AI_GetBestRopeSpot`;
+  `AI_MoveToTarget` (the shooting spot is searched after the node advance
+  and its jump check), `AI_SimpleMove`, `AI_Jump`, stuck handling, and the
+  dig-on deviation (through dirt only). `rope.rs`: rope timers and `AI_GetBestRopeSpot`;
   `spot.rs`: `AI_FindShootingSpot` (both spread over ticks under the
   budget). `probe.rs`: the budgeted terrain probes (`traceLine`,
   `traceWeaponLine`, `AI_GetRockBetween`, area checks).

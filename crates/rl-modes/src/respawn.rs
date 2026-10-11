@@ -48,6 +48,17 @@ impl ChaosCycle {
         ChaosCycle { index, count, weapons: u32::try_from(weapons).unwrap_or(u32::MAX) }
     }
 
+    /// The chaos bots' worm ids in their chaos order (what [`ChaosCycle::new`]
+    /// was given, without duplicates or ids from [`MAX_WORMS`] on).
+    pub fn worms(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.count).filter_map(|i| self.index.iter().position(|x| *x == Some(i)))
+    }
+
+    /// The mod's weapon count (`W`).
+    pub fn weapon_count(&self) -> usize {
+        usize::try_from(self.weapons).unwrap_or(usize::MAX)
+    }
+
     /// The weapons worm `worm` gets on its life `life`, or `None` when it is
     /// no chaos bot or the mod has no weapons.
     pub fn weapons_for(&self, worm: i32, life: u32) -> Option<[i32; MAX_SLOTS]> {

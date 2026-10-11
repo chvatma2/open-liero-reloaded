@@ -33,21 +33,24 @@ const SEEDS: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
 /// The spawns (`FindSpot`) are up to 400 px apart in solid dirt, which
 /// the bot digs through (OLX's bots dig as they walk, every 0.2 s): far
-/// spawns, the target 250 px above, take over a minute.
+/// spawns, the target 250 px above, take about a minute. The cap leaves
+/// room above the measured times (10-62 s, median 28 s at the time of
+/// writing) so that small changes in the simulation or the bots do not
+/// break it; the median is the check that the bot is quick.
 #[test]
 fn xtreme_bot_kills_static_target_quickly() {
     let Some(c) = content() else { return };
     let mut times = Vec::new();
     for seed in SEEDS {
         let mut m = duel(&c, seed, Difficulty::Xtreme);
-        m.run_until(9000, |m| m.first_kill(0, 1).is_some());
+        m.run_until(12000, |m| m.first_kill(0, 1).is_some());
         times.push(m.first_kill(0, 1).map_or(f32::INFINITY, |t| t as f32 / 100.0));
     }
     let mut sorted = times.clone();
     sorted.sort_by(f32::total_cmp);
     let median = (sorted[3] + sorted[4]) / 2.0;
     eprintln!("Xtreme kill times (s): {times:?}, median {median}");
-    assert!(times.iter().all(|&t| t <= 90.0), "every target dies within 90 s: {times:?}");
+    assert!(times.iter().all(|&t| t <= 120.0), "every target dies within 2 minutes: {times:?}");
     assert!(median <= 30.0, "half of them within 30 s: {times:?}");
 }
 

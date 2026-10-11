@@ -21,6 +21,11 @@ fn chaos_cycle_gives_the_rotation_on_every_spawn() {
     assert_eq!(cycle.weapons_for(1, 0), None, "worm 1 is no chaos bot");
     assert_eq!(cycle.weapons_for(40, 0), None);
     assert_eq!(ChaosCycle::new(&[0], 0).weapons_for(0, 3), None, "a mod without weapons");
+    // A replay or the CLI rebuilds the rotation from its parts.
+    let odd = ChaosCycle::new(&[5, 2, 5, 40, 9], 38);
+    assert_eq!(odd.worms().collect::<Vec<_>>(), [5, 2, 9]);
+    assert_eq!(odd.weapon_count(), 38);
+    assert_eq!(ChaosCycle::new(&odd.worms().collect::<Vec<_>>(), odd.weapon_count()), odd);
     let huge = ChaosCycle::new(&[0, 1], 7).weapons_for(1, u32::MAX).unwrap();
     assert!(huge.iter().all(|w| (0..7).contains(w)));
 

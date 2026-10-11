@@ -5,7 +5,7 @@
 
 use rl_math::Vec2;
 use rl_sim::Dir;
-use rl_terrain::{PX_DIRT, PX_EMPTY};
+use rl_terrain::{PX_DIRT, PX_EMPTY, PX_ROCK};
 
 use crate::bot::{Act, Bot, Ctx};
 use crate::brain::{State, Target, since};
@@ -36,19 +36,14 @@ impl Bot {
         act.shoot = false;
         act.jump = false;
         self.rope_timers(me, act);
-        self.mind.pos_target = self.path_target(c, b);
         let can_shoot = self.goal.is_none();
         let since_shoot = since(c.now, self.mind.last_shoot);
         let mortars = can_shoot && self.game_type == GameType::Mortars;
         if mortars {
             // Get away from where the last mortar went (0.2-1 s after it).
-            let away = self.mind.last_shoot_target.x - me.pos.x;
-            if libm::copysignf(1.0, me.vel.x) == libm::copysignf(1.0, away)
-                && (200..=1000).contains(&since_shoot)
-            {
-                if me.rope.attached
-                    && libm::copysignf(1.0, me.rope.force(me.pos, c.s).x) == libm::copysignf(1.0, away)
-                {
+            let away = sign(self.mind.last_shoot_target.x - me.pos.x);
+            if sign(me.vel.x) == away && (200..=1000).contains(&since_shoot) {
+                if me.rope.attached && sign(me.rope.force(me.pos, c.s).x) == away {
                     act.rope_release = true;
                 }
                 self.aim.set_face(if me.pos.x < self.mind.last_shoot_target.x {
@@ -100,6 +95,12 @@ impl Bot {
         let step = self.follow.advance(me.pos, c.t, b, c.now, c.s);
         let Some(node) = step.node else { return };
         self.mind.jump_check = Some((c.now, node, step.jump_loses_node));
+        // `cPosTarget`: OLX finds it first; the shooting spot's search
+        // comes after the node advance and its jump check, with half of
+        // what is left, so it can never starve them.
+        let mut part = b.split(b.left() / 2);
+        self.mind.pos_target = self.path_target(c, &mut part);
+        b.absorb(part);
         if me.rope.attached {
             // Let go when the rope pulls away from the node.
             let pull = me.rope.force(me.pos, c.s).normalize();
@@ -142,19 +143,25 @@ impl Bot {
         act.mv = if can_shoot { libm::fabsf(me.pos.x - node.x) > 3.0 } else { true };
     }
 
-    /// At the path's end with the target worm out of sight, head for the
-    /// worm itself: the path ends at a shooting spot, which on a level of
-    /// dirt (where `AI_FindShootingSpot` finds no spot in the air) is as
-    /// deep in the dirt as the worm, so OLX's bot stands there unable to
-    /// shoot. Digging on (paths ignore dirt) opens the line of fire. A
-    /// deviation (`docs/porting/STATUS.md`).
-    fn dig_on(&mut self, c: &Ctx, b: &mut Budget, node: Vec2) {
+    /// At the path's end with the target worm behind dirt (and no rock),
+    /// head for the worm itself: the path ends at a shooting spot, which on
+    /// a level of dirt (where `AI_FindShootingSpot` finds no spot in the
+    /// air) is as deep in the dirt as the worm, so OLX's bot stands there
+    /// unable to shoot. Digging on (paths ignore dirt) opens the line of
+    /// fire. A deviation (`docs/porting/STATUS.md`); behind rock the bot
+    /// stays as OLX's does.
+    pub(crate) fn dig_on(&mut self, c: &Ctx, b: &mut Budget, node: Vec2) {
         let me = c.me;
         if self.goal.is_some() || self.follow.nodes_left() > 0 || (node - me.pos).length2() > 100.0 {
             return;
         }
         let Some(w) = self.target_worm(c) else { return };
-        if (w.pos - node).length2() > 25.0 && !self.sees(c, b, w.pos) {
+        if (w.pos - node).length2() <= 25.0 {
+            return;
+        }
+        let (first, divs) = self.weapon_line_steps(c);
+        let blocked = trace_weapon_line(c.t, b, me.pos, w.pos, first, divs).map(|(_, ty)| ty);
+        if blocked.is_some_and(|ty| ty & PX_DIRT != 0 && ty & PX_ROCK == 0) {
             self.follow.push(w.pos);
         }
     }
@@ -387,3 +394,18 @@ impl Bot {
         worm_line_clear(c.t, b, target, me.pos + Vec2::new(dx, 0.0)) == Some(false)
     }
 }
+
+/// OLX's `SIGN` (`include/MathLib.h:60`): 1, -1, or 0 for 0 (and NaN).
+pub(crate) fn sign(x: f32) -> i32 {
+    if x > 0.0 {
+        1
+    } else if x < 0.0 {
+        -1
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+#[path = "moving_tests.rs"]
+mod tests;

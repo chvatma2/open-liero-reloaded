@@ -141,10 +141,16 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   one in sight only within 50 squared px); the 100lt Cannon tests
   `isAttached` where OLX tests `isReleased`; the rope spot's angle term takes
   the hit's direction from the worm (OLX normalises its absolute position);
-  `AI_FindShootingSpot`'s left fallback steps back right (OLX's leaves the
-  map at its left edge); at the end of its path, with the target worm out of
-  sight, the bot heads for the worm itself and digs on (OLX's stands at the
-  shooting spot, which on a dirt level is as deep in the dirt as the worm);
+  `AI_FindShootingSpot`'s left fallback steps back right, towards the
+  target, whenever a worm line is blocked (OLX's steps a further 5 px left,
+  `CWormBot.cpp:4026`, so its spots by a wall on the target's left lie 10 px
+  farther off, and at the map's left edge outside the map); at the end of
+  its path, with the target worm behind dirt (the first pixel that blocks
+  the weapon line is dirt, not rock), the bot heads for the worm itself and
+  digs on (OLX's stands at the shooting spot, which on a dirt level is as
+  deep in the dirt as the worm); the shooting spot is searched after the
+  node advance and its jump check, with half of what is left (OLX finds it
+  first);
   the old path is dropped on respawn; the client-only lag guard and the
   unused `iRandomSpread` draws are left out; there are no teams. With the
   ballistic aim (F2) `weaponCanHit`'s gravity and speed noise bend the aim
