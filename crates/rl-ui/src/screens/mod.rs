@@ -252,22 +252,24 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
 /// window is narrower than the column.
 const PAGE_MARGIN: f32 = 24.0;
 
+/// The tallest a page's column grows: on a tall window it is centred,
+/// not stretched from the top to the bottom.
+const PAGE_HEIGHT: f32 = 900.0;
+
 /// Back's size in a page's title row.
 const BACK: Vec2 = Vec2::new(96.0, 34.0);
 
 /// Starts a page, the frame every screen of the main menu shares: a
-/// column at most `width` points wide centred in `ui` (the window less a
-/// margin on each side when narrower), its title centred on top with Back
+/// column at most `width` points wide and [`PAGE_HEIGHT`] high centred in
+/// `ui` (the window less a margin on each side when narrower), its title centred on top with Back
 /// at the column's left edge (Esc is Back too: `show`). Returns the
 /// column to draw the page into: its primary action first (`footer`),
 /// then its body, the sections (`section`).
 fn page(ui: &mut Ui, title: &str, width: f32, out: &mut Vec<UiAction>) -> Ui {
     let full = ui.max_rect();
     let w = width.min(full.width() - 2.0 * PAGE_MARGIN).max(0.0);
-    let column = Rect::from_min_max(
-        pos2(full.center().x - w / 2.0, full.top()),
-        pos2(full.center().x + w / 2.0, full.bottom()),
-    );
+    let h = full.height().clamp(0.0, PAGE_HEIGHT);
+    let column = Rect::from_center_size(full.center(), vec2(w, h));
     let mut col = ui.new_child(
         UiBuilder::new().id_salt(("page", title)).max_rect(column).layout(Layout::top_down(Align::Min)),
     );

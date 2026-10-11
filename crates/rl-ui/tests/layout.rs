@@ -149,7 +149,7 @@ fn title_of(screen: Screen) -> &'static str {
 }
 
 /// Every page's primary action is one large button centred under the
-/// column.
+/// column, below everything else.
 #[test]
 fn the_primary_action_is_centred_below() {
     for (w, h) in [(1280.0, 720.0), (3440.0, 1440.0)] {
@@ -163,7 +163,11 @@ fn the_primary_action_is_centred_below() {
             let at = format!("{screen:?} at {w}x{h}");
             let cx = (b.x0 + b.x1) as f32 / 2.0;
             assert!((cx - w / 2.0).abs() <= 4.0, "{at}: {label} is centred at {cx}");
-            assert!(b.y1 as f32 > h * 0.8, "{at}: {label} is at the bottom, not at {}", b.y1);
+            assert!(b.y1 as f32 > h * 0.6, "{at}: {label} is low, not at {}", b.y1);
+            // Below everything else on the page.
+            let others = widgets(&harness).into_iter().filter(|(n, _)| n != label);
+            let lowest = others.map(|(_, r)| r.bottom()).fold(0.0, f32::max);
+            assert!(b.y0 as f32 >= lowest - 0.5, "{at}: {label} at {} is above a widget at {lowest}", b.y0);
             assert!(b.height() >= 36.0 && b.width() >= 160.0, "{at}: {label} is large: {b:?}");
         }
     }

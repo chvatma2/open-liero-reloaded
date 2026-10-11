@@ -79,7 +79,7 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   by the profiles screen each frame; `preview`, the app's textures).
   **The page frame** (`mod.rs`, every screen the main menu opens):
   `page(ui, title, width, out)` returns a column at most `width` points
-  wide centred in the window (the window less `PAGE_MARGIN` each side
+  wide and `PAGE_HEIGHT` (900) high centred in the window (the window less `PAGE_MARGIN` each side
   when narrower), the title centred on top, Back at its left edge;
   `footer` puts the primary action (`primary`: a large button; Start,
   Import) and its status centred at the column's bottom and returns the
