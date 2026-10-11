@@ -4,6 +4,7 @@ mod api;
 mod bless;
 mod bless_regression;
 mod check;
+mod e2e;
 mod fetch;
 mod layers;
 mod oracle;
@@ -55,6 +56,13 @@ enum Command {
         #[arg(long)]
         docker_cache: bool,
     },
+    /// Play fixtures/autoplay/menus.ron in the game on Xvfb (software
+    /// rendering, a fake clock) and check its log and screenshots.
+    E2e {
+        /// Do not download OLX content (the run is skipped without it).
+        #[arg(long)]
+        offline: bool,
+    },
     /// Install a git pre-push hook that runs `cargo xtask check`.
     InstallHooks,
     /// Record OLX reference traces for fixtures/oracle/**/*.ron (needs Docker).
@@ -105,6 +113,7 @@ fn main() -> ExitCode {
             true
         }),
         Command::Tidy { docker_cache } => tidy::run(docker_cache),
+        Command::E2e { offline } => e2e_command(offline),
         Command::InstallHooks => install_hooks().map(|()| true),
         Command::OracleRecord { check, names } => oracle::run(&names, check),
         Command::OracleGenWeapons => oracle_gen::run(),
@@ -117,6 +126,18 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("error: {e:#}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+/// `cargo xtask e2e`: the content first (as `check` fetches it), then the run.
+fn e2e_command(offline: bool) -> anyhow::Result<bool> {
+    let content = if offline { None } else { Some(fetch::run(true)?.content) };
+    match e2e::run(content.as_deref()) {
+        Ok(()) => Ok(true),
+        Err(why) => {
+            println!("FAIL e2e\n{why}");
+            Ok(false)
         }
     }
 }

@@ -38,8 +38,9 @@ pub fn run(offline: bool) -> anyhow::Result<bool> {
 /// `cargo xtask full`: `check`, then the bot-match grid ([`FULL_TESTS`]),
 /// then the GPU tier (the renderer's GPU tests,
 /// the render goldens and the HUD snapshots, with `RL_GPU_TESTS` set), skipped with a notice
-/// when no graphics adapter opens, and the audio device check (OLX sounds
-/// on the default output), skipped with a notice when no device opens.
+/// when no graphics adapter opens, the audio device check (OLX sounds
+/// on the default output), skipped with a notice when no device opens,
+/// and the end-to-end autoplay on Xvfb (`e2e.rs`; skipped without Xvfb).
 pub fn full(offline: bool) -> anyhow::Result<bool> {
     run_with(offline, true)
 }
@@ -191,6 +192,8 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
         step("bot-grid", &mut || full_cpu_step(&envs));
         step("gpu", &mut || gpu_step(&envs));
         step("audio", &mut || audio_step(&envs));
+        let content = envs.iter().find(|(k, _)| *k == "RL_CONTENT_DIR").map(|(_, v)| v.clone());
+        step("e2e", &mut || crate::e2e::run(content.as_deref()));
     }
     let what = if gpu { "full" } else { "check" };
     if failed.is_empty() {
