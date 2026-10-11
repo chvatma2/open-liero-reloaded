@@ -14,6 +14,9 @@ pub const LEVEL_FILE: &str = "level.ron";
 pub const MATERIAL_FILE: &str = "material.png";
 pub const FRONT_FILE: &str = "front.png";
 pub const BACK_FILE: &str = "back.png";
+/// The level's thumbnail for the menus (spec §21 G6), optional: made from
+/// the art at import.
+pub const THUMB_FILE: &str = "thumb.png";
 
 /// Palette for `material.png`, indexed by `Material as u8`: rock is gray,
 /// background black, dirt brown, so the file is readable in any image viewer.
@@ -63,6 +66,16 @@ pub fn write_level(sink: &mut dyn ContentSink, pack: &LevelPack) -> Result<(), P
 fn read_png(src: &dyn ContentSource, file: &str) -> Result<RgbaImage, PackError> {
     let bytes = src.read(&VPath::new(file)?)?;
     decode_rgba(&bytes).map_err(|message| PackError::Image { file: file.into(), message })
+}
+
+/// The manifest and `level.ron` alone, decoding no image: what a menu
+/// lists (name, size) without loading the level.
+pub fn read_level_def(src: &dyn ContentSource) -> Result<(PackManifest, LevelDef), PackError> {
+    let manifest = read_manifest(src)?;
+    if manifest.kind != PackKind::Level {
+        return Err(PackError::invalid(MANIFEST, "manifest kind is not Level"));
+    }
+    Ok((manifest, read_ron(src, LEVEL_FILE)?))
 }
 
 pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
@@ -125,6 +138,17 @@ pub(crate) mod tests {
         let mut fs = MemFs::new();
         write_level(&mut fs, &pack).unwrap();
         assert_eq!(read_level(&fs).unwrap(), pack);
+    }
+
+    #[test]
+    fn level_def_reads_without_images() {
+        let pack = sample_level();
+        let mut fs = MemFs::new();
+        write_level(&mut fs, &pack).unwrap();
+        let fs = fs.with(FRONT_FILE, b"not a png".to_vec());
+        assert_eq!(read_level_def(&fs).unwrap(), (pack.manifest, pack.level.def));
+        let fs = fs.with(LEVEL_FILE, b"(".to_vec());
+        assert!(read_level_def(&fs).is_err());
     }
 
     #[test]

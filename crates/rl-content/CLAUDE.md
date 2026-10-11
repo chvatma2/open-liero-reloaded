@@ -72,8 +72,15 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
 - **Replays' content:** `check_replay_packs` (ids and content hashes) and
   `replay_assets_from(m, level, theme)` let a game that draws a replay load
   its packs once.
+- **Catalog** (`catalog.rs`, plan 7 G1/G6): `Content::catalog()` lists every
+  mod (`ModInfo`: name, restriction presets) and level (`LevelInfo`: name,
+  size, `thumb.png` when it has a readable one) without loading them, for
+  the menus; `mod_info`/`level_info` for one. An unreadable pack is left out
+  and a thumbnail above `MAX_THUMB_SIDE` (512) or `MAX_THUMB_BYTES` (4 MiB),
+  or not a PNG, is not shown, each with a warning (`Catalog::warnings`).
 - Pack ids of OLX imports: `olx_mod_id("MW 1.0")`, `olx_level_id("CastleStrike.lxl")`.
 
 Test: `cargo nextest run -p rl-content` (`loads_every_manifest_item` and the
 real-level part of `new_world_spawns_worms_on_free_spots`, `tests/color.rs`'s
-matches and `tests/matches.rs` need `RL_CONTENT_DIR`).
+matches, `tests/matches.rs` and the imported part of `tests/catalog.rs` need
+`RL_CONTENT_DIR`).

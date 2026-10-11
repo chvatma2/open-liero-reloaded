@@ -117,6 +117,21 @@ pub fn read_mod(src: &dyn ContentSource) -> Result<ModPack, PackError> {
     Ok(ModPack { manifest, def, assets })
 }
 
+/// The names of the mod's weapon restriction presets
+/// ([`RESTRICTIONS_FILE`]), sorted; none when the pack has no presets. Reads
+/// only the manifest and that file (a menu's list).
+pub fn read_preset_names(src: &dyn ContentSource) -> Result<Vec<String>, PackError> {
+    let manifest = read_manifest(src)?;
+    if manifest.kind != PackKind::Mod {
+        return Err(PackError::invalid(MANIFEST, "manifest kind is not Mod"));
+    }
+    if !src.exists(&VPath::new(RESTRICTIONS_FILE)?) {
+        return Ok(Vec::new());
+    }
+    let presets: BTreeMap<String, rl_data::restrictions::Preset> = read_ron(src, RESTRICTIONS_FILE)?;
+    Ok(presets.into_keys().collect())
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -266,6 +281,19 @@ pub(crate) mod tests {
         write_mod(&mut fs, &pack).unwrap();
         assert!(fs.files().all(|(p, _)| p.as_str() != RESTRICTIONS_FILE));
         assert_eq!(read_mod(&fs).unwrap(), pack);
+        assert!(read_preset_names(&fs).unwrap().is_empty());
+    }
+
+    #[test]
+    fn preset_names_read_alone() {
+        let pack = sample_mod();
+        let mut fs = MemFs::new();
+        write_mod(&mut fs, &pack).unwrap();
+        let names: Vec<String> = pack.def.restrictions.keys().cloned().collect();
+        assert!(!names.is_empty());
+        assert_eq!(read_preset_names(&fs).unwrap(), names);
+        let fs = fs.with(RESTRICTIONS_FILE, b"[".to_vec());
+        assert!(read_preset_names(&fs).is_err());
     }
 
     #[test]

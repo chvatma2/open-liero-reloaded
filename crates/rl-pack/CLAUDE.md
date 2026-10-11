@@ -9,12 +9,15 @@ mod, level, skin, theme and core packs; PNG helpers; content hashing; validation
 - **Layouts:**
   - mod: `mod.ron`, `weapons/<id>.ron`, `projectiles/<name>.ron`, `restrictions.ron`
     (the `.wps` presets, written only when the mod has any), assets (`gfx/`, `sfx/`)
-  - level: `level.ron`, `material.png` (8-bit palette; index = `Material`), `front.png`, `back.png`
+  - level: `level.ron`, `material.png` (8-bit palette; index = `Material`), `front.png`, `back.png`,
+    optional `thumb.png` (`THUMB_FILE`, the menus' thumbnail; plan 7 G6 writes it at import)
   - skin: `skin.ron`, `skin.png`, `mask.png` (palette: 0 keep, 1 colorize, 2 transparent)
   - theme: `theme.ron`, `holes/N.png`, `stones/N.png`, `misc/N.png`, `front_tile.png`, `back_tile.png`,
     optional `green_ball.png`
   - core (OLX's shared game assets, spec §19 E9): `core.ron` (sprite and sound
     lists, `colours.cfg` values), `gfx/<sprite>.png`, `sounds/<file>` (raw Ogg bytes)
+- Menus list packs without loading them: `read_level_def` (manifest and
+  `level.ron`, no image) and `read_preset_names` (a mod's restriction presets).
 - `read_core` is strict (what `validate` reports); `read_core_tolerant`
   leaves out each undecodable sprite or missing sound file and returns its
   error, for loaders that put a placeholder in its place.
