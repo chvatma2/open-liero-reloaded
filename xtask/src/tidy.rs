@@ -1,5 +1,5 @@
 //! `cargo xtask tidy`: removes rebuildable bloat from `target/` and old Docker
-//! oracle images. Never touches `target/content` or `target/olx` (imported
+//! oracle images (and, with `--docker-cache`, bounds Docker's build cache). Never touches `target/content` or `target/olx` (imported
 //! content, slow to fetch), nor compiled artifacts other than incremental caches.
 
 use std::path::{Path, PathBuf};
@@ -76,7 +76,9 @@ pub fn incremental_dirs(target: &Path) -> Vec<PathBuf> {
     out
 }
 
-pub fn run() -> anyhow::Result<bool> {
+/// With `docker_cache`, also bounds Docker's build cache (the machine's,
+/// not only this project's: opt-in).
+pub fn run(docker_cache: bool) -> anyhow::Result<bool> {
     let target = root().join("target");
     let before = dir_size(&target, Duration::from_secs(60));
     for dir in incremental_dirs(&target) {
@@ -85,7 +87,7 @@ pub fn run() -> anyhow::Result<bool> {
             Err(e) => eprintln!("warning: cannot remove {}: {e}", dir.display()),
         }
     }
-    oracle::prune_all();
+    oracle::prune_all(docker_cache);
     let after = dir_size(&target, Duration::from_secs(60));
     if let (Some(b), Some(a)) = (before, after) {
         println!("target/: {:.1} GB -> {:.1} GB", b as f64 / 1e9, a as f64 / 1e9);

@@ -23,10 +23,13 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   needed, set `debug = true` for that crate locally (do not commit it).
 - `oracle-record` prunes after building a new `rl-olx-oracle:<hash>` image:
   it removes every other `rl-olx-oracle:*` image except the current tag and
-  `:dev`, then runs `docker builder prune -f --keep-storage 2GB`. Pruning
-  failures only warn. `images_to_prune` (unit-tested) picks the tags.
+  `:dev`. Pruning failures only warn. `images_to_prune` and `prune_commands`
+  (unit-tested) pick the tags and the commands.
 - `tidy` deletes `target/*/incremental` (and `target/<triple>/*/incremental`)
-  and prunes oracle images as above. It never touches `target/content` or
+  and prunes oracle images as above; `tidy --docker-cache` also runs
+  `docker builder prune -f --keep-storage 2GB`. That cache is the whole
+  machine's (Docker cannot select one project's layers), so pruning it is
+  opt-in and nothing else does it. It never touches `target/content` or
   `target/olx`. `check` prints a `warn` line (not a failure) when `target/`
   exceeds 25 GB (`tidy::WARN_BYTES`); the size walk gives up after 1 s.
 - WSL footnote: the Windows drive hosts the virtual disk; `wsl --shutdown`

@@ -57,7 +57,7 @@ fn ensure_image(root: &Path) -> anyhow::Result<String> {
             bail!("docker build failed:\n{}", tail(&String::from_utf8_lossy(&out.stderr), 40));
         }
     }
-    prune_old(&tag);
+    prune_old(&tag, false);
     Ok(tag)
 }
 
@@ -73,41 +73,57 @@ pub fn images_to_prune<'a>(images: &[&'a str], current: &str) -> Vec<&'a str> {
         .collect()
 }
 
-/// Removes superseded oracle images and bounds the builder cache. Failures
-/// are warnings: pruning is housekeeping and must not fail a recording.
+/// The `docker` commands that prune after building `current`, given the
+/// `images` (`repo:tag` lines): remove each superseded oracle image
+/// ([`images_to_prune`]), then, with `build_cache` only, bound Docker's
+/// build cache. That cache is the whole machine's (Docker cannot select
+/// one project's layers), so it is opt-in: `cargo xtask tidy --docker-cache`.
+pub fn prune_commands(images: &[&str], current: &str, build_cache: bool) -> Vec<Vec<String>> {
+    let mut out: Vec<Vec<String>> = images_to_prune(images, current)
+        .into_iter()
+        .map(|i| vec!["image".into(), "rm".into(), i.into()])
+        .collect();
+    if build_cache {
+        out.push(["builder", "prune", "-f", "--keep-storage", "2GB"].map(String::from).to_vec());
+    }
+    out
+}
+
 /// `tidy`: like [`prune_old`] for the current image tag, whatever it is.
-pub fn prune_all() {
+pub fn prune_all(build_cache: bool) {
     let tag = TOOL_FILES
         .iter()
         .map(|f| std::fs::read(root().join(TOOL_DIR).join(f)).map(|d| (*f, d)))
         .collect::<Result<Vec<_>, _>>()
         .map(|files| image_tag(&files.iter().map(|(n, d)| (*n, d.as_slice())).collect::<Vec<_>>()));
     match tag {
-        Ok(tag) => prune_old(&tag),
+        Ok(tag) => prune_old(&tag, build_cache),
         Err(e) => eprintln!("warning: cannot compute oracle image tag: {e}"),
     }
 }
 
-fn prune_old(current: &str) {
+/// Runs [`prune_commands`]. Failures are warnings: pruning is
+/// housekeeping and must not fail a recording.
+fn prune_old(current: &str, build_cache: bool) {
     let list = Command::new("docker")
         .args(["image", "ls", "rl-olx-oracle", "--format", "{{.Repository}}:{{.Tag}}"])
         .output();
-    match list {
-        Ok(o) if o.status.success() => {
-            let text = String::from_utf8_lossy(&o.stdout).into_owned();
-            let images: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-            for old in images_to_prune(&images, current) {
-                match Command::new("docker").args(["image", "rm", old]).output() {
-                    Ok(o) if o.status.success() => println!("removed superseded image {old}"),
-                    _ => eprintln!("warning: could not remove image {old}"),
-                }
-            }
+    let text = match list {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        _ => {
+            eprintln!("warning: could not list oracle images to prune");
+            String::new()
         }
-        _ => eprintln!("warning: could not list oracle images to prune"),
-    }
-    match Command::new("docker").args(["builder", "prune", "-f", "--keep-storage", "2GB"]).output() {
-        Ok(o) if o.status.success() => {}
-        _ => eprintln!("warning: `docker builder prune` failed"),
+    };
+    let images: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    for args in prune_commands(&images, current, build_cache) {
+        match Command::new("docker").args(&args).output() {
+            Ok(o) if o.status.success() && args[0] == "image" => {
+                println!("removed superseded image {}", args[2])
+            }
+            Ok(o) if o.status.success() => {}
+            _ => eprintln!("warning: `docker {}` failed", args.join(" ")),
+        }
     }
 }
 
@@ -270,6 +286,20 @@ mod tests {
             ["rl-olx-oracle:bbb", "rl-olx-oracle:<none>x"]
         );
         assert!(images_to_prune(&[], "rl-olx-oracle:aaa").is_empty());
+    }
+
+    /// Plan 6's final review: Docker's build cache is the machine's, not
+    /// this project's, so only `cargo xtask tidy --docker-cache` prunes it;
+    /// `oracle-record` and a plain `tidy` remove only superseded oracle images.
+    #[test]
+    fn build_cache_is_pruned_only_when_asked() {
+        let images = ["rl-olx-oracle:aaa", "rl-olx-oracle:bbb", "ubuntu:22.04"];
+        let plain = prune_commands(&images, "rl-olx-oracle:aaa", false);
+        assert_eq!(plain, [vec!["image", "rm", "rl-olx-oracle:bbb"]]);
+        let asked = prune_commands(&images, "rl-olx-oracle:aaa", true);
+        assert_eq!(asked[..1], plain[..]);
+        assert_eq!(asked[1], ["builder", "prune", "-f", "--keep-storage", "2GB"]);
+        assert_eq!(asked.len(), 2);
     }
 
     #[test]

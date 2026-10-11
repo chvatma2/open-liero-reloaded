@@ -49,7 +49,12 @@ enum Command {
         no_import: bool,
     },
     /// Reclaim disk: remove target incremental caches and superseded oracle Docker images.
-    Tidy,
+    Tidy {
+        /// Also bound Docker's build cache to 2 GB (`docker builder prune`): the
+        /// cache is the whole machine's, so this prunes other projects' layers too.
+        #[arg(long)]
+        docker_cache: bool,
+    },
     /// Install a git pre-push hook that runs `cargo xtask check`.
     InstallHooks,
     /// Record OLX reference traces for fixtures/oracle/**/*.ron (needs Docker).
@@ -99,7 +104,7 @@ fn main() -> ExitCode {
             }
             true
         }),
-        Command::Tidy => tidy::run(),
+        Command::Tidy { docker_cache } => tidy::run(docker_cache),
         Command::InstallHooks => install_hooks().map(|()| true),
         Command::OracleRecord { check, names } => oracle::run(&names, check),
         Command::OracleGenWeapons => oracle_gen::run(),
