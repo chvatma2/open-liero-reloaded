@@ -138,3 +138,40 @@ fn think_never_panics_on_odd_worlds() {
         }
     }
 }
+
+/// Task 4 review: a search toward a target that keeps moving must still
+/// finish (`AI_CreatePath` restarts a pending search only after 5 s, or
+/// when no worm line joins the old and new start or target).
+#[test]
+fn a_search_toward_a_moving_target_finishes() {
+    let mut w = world(course(), &[(40, 160), (360, 150)], 8);
+    let cfg = BotConfig { budget: 1200, ..BotConfig::default() };
+    let mut bot = Bot::new(0, cfg, 8, &w);
+    let mut out = TickEvents::new();
+    let mut found = None;
+    for t in 0..800 {
+        let k = bot.think(&w, &out);
+        // Worm 1 walks to and fro under the bot's nose.
+        let side = if (t / 60) % 2 == 0 { Keys::LEFT } else { Keys::RIGHT };
+        w.tick(&[k, Keys(side)], &mut out);
+        if !bot.path().is_empty() {
+            found = Some(t);
+            break;
+        }
+    }
+    assert!(found.is_some(), "a path was found while the target moved");
+}
+
+/// Task 4 review: a cache from another level of the same size is not
+/// shared: the cache knows its level's rock.
+#[test]
+fn with_cache_keeps_only_a_cache_of_the_same_level() {
+    let w = world(course(), &[(40, 160), (60, 160)], 1);
+    let other = world(arena(), &[(40, 140), (60, 140)], 1);
+    let cache = AreaCache::new(w.terrain());
+    let same = Bot::with_cache(0, BotConfig::default(), 1, &w, Arc::clone(&cache));
+    assert!(Arc::ptr_eq(same.cache(), &cache));
+    let moved = Bot::with_cache(0, BotConfig::default(), 1, &other, Arc::clone(&cache));
+    assert!(!Arc::ptr_eq(moved.cache(), &cache), "same size, other rock: a cache of its own");
+    assert!(cache.fits(w.terrain()) && !cache.fits(other.terrain()));
+}

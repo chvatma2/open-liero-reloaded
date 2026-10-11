@@ -213,7 +213,7 @@ impl Search {
 
     /// Searches on until done or until `b` is spent.
     pub fn step(&mut self, t: &Terrain, b: &mut Budget) -> SearchStatus {
-        if !self.cache.fits(t) && !matches!(self.phase, Phase::Idle) {
+        if !self.cache.same_size(t) && !matches!(self.phase, Phase::Idle) {
             self.phase = Phase::Failed(SearchError::WrongLevel);
         }
         loop {

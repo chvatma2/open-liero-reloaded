@@ -48,7 +48,7 @@ pub(crate) fn simple_trace_line(t: &Terrain, start: (i32, i32), dist: (i32, i32)
 }
 
 /// The most pixels [`fast_trace_line`] reads from `start` to `target`.
-fn fast_worst(target: Vec2, start: Vec2) -> u64 {
+pub(crate) fn fast_worst(target: Vec2, start: Vec2) -> u64 {
     let d = target - start;
     let m = libm::fabsf(d.x).max(libm::fabsf(d.y));
     if m.is_finite() { m as u64 + 2 } else { u64::MAX / 4 }
@@ -104,6 +104,11 @@ pub(crate) fn fast_trace_line(
     }
 }
 
+/// The most units [`worm_line_clear`] spends from `start` to `target`.
+pub(crate) fn worm_line_worst(target: Vec2, start: Vec2) -> u64 {
+    fast_worst(target, start).saturating_mul(3)
+}
+
 /// `traceWormLine(target, start)` (`src/common/CWormBot.cpp:2834-2853`):
 /// three rock-only traces 1 px apart, across the line. Unlike OLX, it stops
 /// after the first blocked trace (same result, fewer units).
@@ -112,7 +117,7 @@ pub(crate) fn fast_trace_line(
 /// again next tick); a line longer than a whole budget is blocked.
 pub fn worm_line_clear(t: &Terrain, b: &mut Budget, target: Vec2, start: Vec2) -> Option<bool> {
     let one = fast_worst(target, start);
-    match b.afford(one.saturating_mul(3)) {
+    match b.afford(worm_line_worst(target, start)) {
         Afford::Yes => {}
         Afford::Later => return None,
         Afford::Never => return Some(false),

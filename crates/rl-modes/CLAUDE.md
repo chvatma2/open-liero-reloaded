@@ -15,6 +15,11 @@ port of the bare `CGameMode` (`src/server/CGameMode.cpp`) at commit
   on it). `is_over` is `CheckGameOver`, every frame (OLX's `recheckGame`
   stays set during a match): kill limit, then time limit
   (`serverFrame · 10 > TimeLimit`), then fewer than two worms not out.
+- **Respawn loadouts** (`respawn.rs`, spec §20 F10):
+  `DeathmatchSettings::respawn_loadout` is `Keep` (OLX) or `ChaosCycle`:
+  `on_spawn` gives chaos bot `i` of `n` the weapons `(i·5 + r·5·n + j) mod
+  W` on its life `r` with `give_weapon` (the mode counts each worm's
+  spawns, the first being life 0).
 - **Rules** (`rules.rs`) are pure: `compare` (`CompareWormsScore`, with
   `olx_round`), `highest`, `winner`, and the results order (a stable
   insertion sort, so ties keep the id order).
@@ -27,4 +32,5 @@ port of the bare `CGameMode` (`src/server/CGameMode.cpp`) at commit
   `checksum` hashes every field, the settings included.
 
 Test: `cargo nextest run -p rl-modes` (unit tests on hand-made worms, and
-`tests/deathmatch.rs` in a small arena with killing beams and a bomb).
+`tests/deathmatch.rs` and `tests/chaos.rs` in a small arena with killing
+beams and a bomb).

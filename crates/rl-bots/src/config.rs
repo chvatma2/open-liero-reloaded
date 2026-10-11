@@ -38,7 +38,8 @@ impl Difficulty {
     /// The numbers OLX derives from the level (notes §1.9). Most are
     /// `x · (AI_XTREME - level) / AI_XTREME`.
     /// OLX: `src/common/CWormBot.cpp:1682-1706` (aim offset and tolerance),
-    /// `1836-1850` (target noise), `2342-2348` (weapon change), `3650` (rifles).
+    /// `1836-1850` (`weaponCanHit`'s noise), `2342-2348` (weapon change),
+    /// `3650` (rifles).
     pub fn params(self) -> DifficultyParams {
         let level = self.level();
         let f = (3 - level) as f32 / 3.0;
@@ -46,6 +47,8 @@ impl Difficulty {
             aim_offset_max_deg: f * 50.0,
             fire_tolerance_deg: 3.0 + 20.0 * f,
             target_noise_px: f * 50.0,
+            gravity_noise: f * 5.0,
+            speed_noise: f * 20.0,
             noise_refresh: TimeDiff(500),
             weapon_change_delay: TimeDiff([500, 300, 200, 120][level as usize]),
             rifle_reload_before_engage: level >= 2,
@@ -64,7 +67,13 @@ pub struct DifficultyParams {
     pub fire_tolerance_deg: f32,
     /// The noise `weaponCanHit` adds to the target, per axis.
     pub target_noise_px: f32,
-    /// How often the aim offset and target noise are drawn again.
+    /// The noise `weaponCanHit` adds to the projectile's gravity (px/s²);
+    /// here it also bends the ballistic aim (spec §20 F2).
+    pub gravity_noise: f32,
+    /// The noise `weaponCanHit` adds to the projectile's speed (px/s); here
+    /// it also bends the ballistic aim.
+    pub speed_noise: f32,
+    /// How often the aim offset and `weaponCanHit`'s noise are drawn again.
     pub noise_refresh: TimeDiff,
     /// The least time between weapon changes (`AI_GetBestWeapon`).
     pub weapon_change_delay: TimeDiff,
@@ -129,5 +138,21 @@ impl BotConfig {
     /// The numbers the bot plays with.
     pub fn params(&self) -> DifficultyParams {
         self.params.unwrap_or_else(|| self.difficulty.params())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn weapon_can_hit_noise_scales_with_the_level() {
+        // `CWormBot.cpp:1844-1847`: gravity ±5f, speed ±20f, target ±50f.
+        let p = Difficulty::Easy.params();
+        assert_eq!((p.gravity_noise, p.speed_noise, p.target_noise_px), (5.0, 20.0, 50.0));
+        let p = Difficulty::Hard.params();
+        assert!((p.gravity_noise - 5.0 / 3.0).abs() < 1e-6 && (p.speed_noise - 20.0 / 3.0).abs() < 1e-5);
+        let p = Difficulty::Xtreme.params();
+        assert_eq!((p.gravity_noise, p.speed_noise, p.target_noise_px), (0.0, 0.0, 0.0));
     }
 }

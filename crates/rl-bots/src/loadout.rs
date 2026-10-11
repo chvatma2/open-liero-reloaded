@@ -107,7 +107,7 @@ pub fn olx_bot_weapons(rules: &WeaponRules, loading_time: i32, rng: &mut BotRng)
 }
 
 /// The 100lt loadout, slot by slot.
-const LT100: [&str; MAX_SLOTS] = ["Super Shotgun", "Napalm", "Cannon", "Doomsday", "Chaingun"];
+pub(crate) const LT100: [&str; MAX_SLOTS] = ["Super Shotgun", "Napalm", "Cannon", "Doomsday", "Chaingun"];
 
 /// The end of `initWeaponSelection`: a slot without a weapon of the mod
 /// (`weapon() == NULL`) gets `getRandomEnabledWpn`.

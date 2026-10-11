@@ -50,6 +50,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Weapon restrictions (spec §20 F4): `.wps` presets imported into mod packs (`cfg/presets/<mod dir>/`, then `cfg/presets/`), `CWpnRest` (`loadList`'s parsing and path rule, `updateList`, `findWeapon`, `isEnabled`, `getWeaponState`), natural bonuses from the weapons not banned (`goodWpns`) | `src/common/CWpnRest.cpp:59-277`, `include/CWpnRest.h:28-32`, `src/game/Game_loadWeaponRestrictions.cpp:16-28`, `src/server/CServer_Game.cpp:292-297`, `src/game/Game.cpp:1405-1420`, `src/common/CGameScript.cpp:1211-1231` | `rl-import-lgs::{parse_wps, import_presets}`, `rl-data::restrictions`, `rl-pack` (`restrictions.ron`, format 3), `rl-content` (`LoadedMod::weapon_rules`, `SandboxSetup::restrictions`), `rl-scenario` (the header's `WeaponRestrictionsFile`) | done (plan 6 task 3) | `wps_presets_enable_what_olx_enables` (every bundled Classic and MW 1.0 preset), `parses_like_load_list`, `lookups_follow_cwpnrest`, `natural_bonuses_hold_what_the_restrictions_allow`; the oracle scenarios `bonus-natural` (`Bonus only`) and `bonus-natural-default` (`Standard 100lt`, `natural_bonuses_use_default_restrictions`) match OLX bit for bit |
 | Bot loadouts (spec §20 F1): `initWeaponSelection`'s presets (rifles, 100lt, mortars by mod name, `LoadingTime` and restrictions), `GetRandomWeapons`, `getRandomEnabledWpn`; the bot's own `rand()` stream | `src/common/CWormBot.cpp:4129-4192`, `src/common/CWorm.cpp:788-844`, `src/game/Game.cpp:1405-1420`, `src/common/MathLib.cpp:71-81`, `include/Utils.h:38-43` | `rl-bots::{loadout, BotRng}` | done (plan 6 task 3) | `bot_presets_match_olx`, `random_weapons_follow_restrictions` |
 | Bot navigation, motor and aim (spec §20 F2, F3, F7): `getMaxFreeArea`, `searchpath_base` (checklist, passage rule, costs, worm-line goal test, `buildPath`, `simplifyPath`, `splitUpNodes`), `traceWormLine`/`fastTraceLine`/`simpleTraceLine`, the node advance of `AI_MoveToTarget`, `AI_SetAim`, `AI_GetAimingAngle`, `AI_Carve`/`AI_Jump` timers, `isJumpingGivingDisadvantage`; the difficulty numbers | `src/common/CWormBot.cpp:110-878`, `1022-1122`, `1651-1713`, `1896-1960`, `2834-2853`, `3304-3366`, `3578-3627`, `src/level/FastTraceLine.h:24-104`, `include/MathLib.h:140-153`, `include/CVec.h:157-185` | `rl-bots::{nav, motor, aim, Bot, Budget}` | done (plan 6 task 4; the brain is task 5) | `areas_grow_like_olx`, `search_finds_paths_and_resumes_across_ticks`, `motor_reaches_target_angle_like_olx_turning`, `motor_switches_weapons_in_two_ticks_per_slot`, `ballistic_hits_static_target`, `think_stays_within_budget`, `bots_are_deterministic`, `think_does_not_allocate`, `think_never_panics_on_odd_worlds` |
+| Bot brain, weapons, rope and chaos (spec §20 F2, F10): `getInput` (THINK ↔ MOVINGTOTARGET, re-thinking every 3 s, every 0.5 s while a search runs and at once on the target's death, the 0.4 s spawn pause, `AI_Carve`), `AI_Think` (critical health, weapon bonus, nearest enemy, health, a random high spot), `AI_CreatePath` (restart after 5 s or when worm lines break, path extension, 0.5 s between searches), `AI_Shoot` (`traceWeaponLine`, clearing weapons through dirt above, lead, feasibility, aim by distance, `weaponCanHit`, bad-aim jumps), `AI_GetBestWeapon` (buckets, change delay; 100lt, rifle and mortar tactics), `AI_ReloadWeapons`, `AI_FindClearingWeapon`, `AI_MoveToTarget` (rope timers, best rope spot, re-throws, pulling away, overshoot, dirt above, dirt ahead, jetpack, rifle reloading, mortar retreat, worms within 50 px, stuck handling), `AI_SimpleMove`, `AI_FindShootingSpot`, `isMoveGivingDisadvantage`; the chaos personality and Deathmatch's chaos rotation | `src/common/CWormBot.cpp:993-1122`, `1180-1644`, `1719-1893`, `1963-2809`, `2869-2983`, `3200-3366`, `3370-4034`, `4120-4126` | `rl-bots::{brain, moving, shoot, weapons, rope, spot, chaos, probe}`, `rl-modes::{RespawnLoadout, ChaosCycle}` | done (plan 6 task 5) | `xtreme_bot_kills_static_target_quickly`, `easy_bot_hits_less`, `bots_use_the_rope_to_climb`, `stuck_bots_stay_within_budget_and_match_ends`, `bots_survive_odd_loadouts`, `chaos_fires_every_weapon_over_a_match_grid`, `chaos_cycle_gives_the_rotation_on_every_spawn`, `bot_matches_are_deterministic_and_allocation_free`, `olx_direct_aim_still_fights`, `a_search_toward_a_moving_target_finishes`, `the_jump_check_is_never_starved`, `a_scan_cut_short_does_not_go_back` |
 
 ## Deliberate deviations
 
@@ -135,6 +136,33 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   walking. The aim offset of a difficulty is drawn per bot from its own
   generator (OLX shares one per difficulty between all bots), and the aim is
   good only when the worm also faces the target's side.
+- **The bots' brain** (`rl-bots`, spec §5.9: parity not required):
+  `findTarget` takes the nearest enemy without its line traces (OLX prefers
+  one in sight only within 50 squared px); the 100lt Cannon tests
+  `isAttached` where OLX tests `isReleased`; the rope spot's angle term takes
+  the hit's direction from the worm (OLX normalises its absolute position);
+  `AI_FindShootingSpot`'s left fallback steps back right (OLX's leaves the
+  map at its left edge); at the end of its path, with the target worm out of
+  sight, the bot heads for the worm itself and digs on (OLX's stands at the
+  shooting spot, which on a dirt level is as deep in the dirt as the worm);
+  the old path is dropped on respawn; the client-only lag guard and the
+  unused `iRandomSpread` draws are left out; there are no teams. With the
+  ballistic aim (F2) `weaponCanHit`'s gravity and speed noise bend the aim
+  (dead in OLX), the solver uses the projectile's own gravity, its mean
+  speed (`SpeedVar` is symmetric; OLX's decisions add `SpeedVar·100`, kept)
+  and the velocity it carries (`AddParentVel` with `ProjRelativeVel`), and
+  the trajectory check flies the real arc (centre pixel, 2 px steps); OLX's
+  parabola, kept for `AimModel::OlxDirect`, also reads only the centre pixel
+  (not `CheckCollision`'s box). A probe that does not fit the budget waits
+  a tick: the rope spot's 20 rays and the shooting spot's circle are spread
+  over ticks and kept 50 ms and 100 ms; shooting gets at most a quarter of a
+  think, moving the rest of half, and the search (OLX's thread) the rest.
+- **The chaos personality** (spec §20 F10) is no OLX bot: Deathmatch gives
+  chaos bot `i` of `n` the weapons `(i·5 + r·5·n + j) mod W` on its `r`-th
+  life (`rl_modes::RespawnLoadout::ChaosCycle`, by `give_weapon`), and the
+  bot fires whatever is ready (at the nearest enemy in sight, else at a
+  random angle), prefers a slot it has not fired, and walks, jumps, ropes
+  and digs at random.
 - **The bonus spawn timer starts at the world's start** (`T0 + K`), as the
   oracle resets it when a recording starts; OLX sets it in `PrepareGame`.
 - `World::place_bonus` refuses a weapon id outside the mod (the oracle

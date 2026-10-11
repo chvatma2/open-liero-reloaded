@@ -10,8 +10,9 @@ mod path;
 pub mod search;
 mod trace;
 
-pub use areas::{AreaCache, Grower, Rect, WORM_SIZE};
-pub use follow::{Follower, LOOKAHEAD, jump_loses_node, jump_rise};
+pub use areas::{AreaCache, Grower, Rect, WORM_SIZE, rock_hash};
+pub use follow::{Follower, LOOKAHEAD, Step, jump_loses_node, jump_rise};
 pub use path::SPLIT_DIST;
 pub use search::{MAX_PATH_NODES, MAX_SEARCH_AREAS, Search, SearchError, SearchStatus};
+pub(crate) use trace::{fast_trace_line, fast_worst};
 pub use trace::{trace_worm_line, worm_line_clear};

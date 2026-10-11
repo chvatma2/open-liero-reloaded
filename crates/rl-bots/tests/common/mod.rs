@@ -1,6 +1,8 @@
 //! Synthetic levels and a small mod for the bots' tests.
 #![allow(dead_code)]
 
+pub mod olx;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -57,6 +59,11 @@ fn beam(id: &str) -> WeaponDef {
 
 /// Weapon 0 lobs a 4 × 4 shell; weapons 1 to 4 are short beams.
 pub fn sim_mod() -> Arc<SimMod> {
+    Arc::new(SimMod::compile(&sim_mod_def(), &BTreeMap::new()).unwrap())
+}
+
+/// [`sim_mod`]'s definition.
+pub fn sim_mod_def() -> ModDef {
     let shell = ProjectileDef {
         gfx: ProjectileGfx::Pixel { colours: vec![Rgba::rgb(255, 255, 255)] },
         gravity: None,
@@ -88,7 +95,7 @@ pub fn sim_mod() -> Arc<SimMod> {
             },
         },
     };
-    let def = ModDef {
+    ModDef {
         name: "bots".into(),
         worm: WormParams {
             angle_speed: 150.0,
@@ -103,8 +110,7 @@ pub fn sim_mod() -> Arc<SimMod> {
         weapons: vec![lob, beam("b1"), beam("b2"), beam("b3"), beam("b4")],
         projectiles: [("shell".to_string(), shell)].into_iter().collect(),
         restrictions: Default::default(),
-    };
-    Arc::new(SimMod::compile(&def, &BTreeMap::new()).unwrap())
+    }
 }
 
 fn holes() -> Vec<Stamp> {
@@ -152,4 +158,44 @@ pub fn idle(w: &mut World, out: &mut TickEvents, n: u32) {
 /// Ticks with `keys` for worm 0.
 pub fn press(w: &mut World, out: &mut TickEvents, k: Keys) {
     w.tick(&[k], out);
+}
+
+/// A Deathmatch world on `terrain` with mod `m`: worm `i` spawns at
+/// `worms[i].0` holding the weapon ids `worms[i].1` (-1 for an empty slot).
+pub fn dm_world(
+    terrain: Terrain,
+    m: Arc<SimMod>,
+    worms: &[((i32, i32), Vec<i32>)],
+    dm: rl_modes::DeathmatchSettings,
+    seed: u32,
+) -> World {
+    let settings = SimSettings::lx56();
+    let worms = worms
+        .iter()
+        .map(|(p, ids)| WormSetup {
+            team: 0,
+            loadout: Loadout::new(ids.iter().map(|&id| Slot::ready(id)).collect(), &settings),
+            spawn: Some(*p),
+        })
+        .collect();
+    let mut setup = MatchSetup { holes: holes(), seed, worms, ..MatchSetup::new(settings, m, terrain) };
+    let mode = rl_modes::Deathmatch::prepare(dm, &mut setup).unwrap();
+    World::new(setup, Box::new(mode)).unwrap()
+}
+
+/// A mod whose only weapon is a jetpack (a special weapon).
+pub fn jetpack_mod() -> Arc<SimMod> {
+    let jetpack = WeaponDef {
+        id: "jetpack".into(),
+        name: "Jetpack".into(),
+        recharge: 1.0,
+        drain: 1.0,
+        rof: 0.0,
+        laser_sight: false,
+        kind: WeaponKind::Special { special: SpecialKind::Jetpack, thrust: 50 },
+    };
+    let mut def = sim_mod_def();
+    def.weapons = vec![jetpack];
+    def.projectiles.clear();
+    Arc::new(SimMod::compile(&def, &BTreeMap::new()).unwrap())
 }

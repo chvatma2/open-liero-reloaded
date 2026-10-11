@@ -806,3 +806,23 @@ Made precise while implementing the bots' navigation, motor and aim (plan 6 task
   px, or at 7 px when a checkpoint (every 5 px along the area's edge) lies
   on the row just outside it; 6 px never.
 
+
+Made precise while implementing the bots' brain, weapons, rope and chaos (plan 6 task 5):
+
+- **The brain is OLX's `getInput`** for a Deathmatch bot (`Personality::
+  Deathmatch`); `Bot::set_goal(Some(p))` makes it race to `p` (OLX's race:
+  no shooting, no bonuses). Shooting gets at most a quarter of a think's
+  budget, moving the rest of half, and the pathfinding search the rest;
+  probes that do not fit wait a tick.
+- **The chaos rotation is a Deathmatch setting fixed at the setup:**
+  `DeathmatchSettings::respawn_loadout` is `RespawnLoadout::Keep` (OLX) or
+  `ChaosCycle(ChaosCycle::new(chaos worm ids, weapon count))`, applied in
+  `on_spawn` (the first spawn is life 0) with `give_weapon`, so bots only
+  press keys and replays stay keys only. A chaos bot prefers the slots it
+  has not fired; `Bot::fired_weapons` lists what it fired.
+- **Aim inputs** (F2): `ballistic_from(from, to, &Launch, settings)`, where
+  `Launch` is the projectile's speed, gravity, spawn distance and carried
+  velocity; `DifficultyParams` gains `weaponCanHit`'s `gravity_noise` (5·f)
+  and `speed_noise` (20·f), drawn with the target noise every 0.5 s.
+- **An `AreaCache` knows its level's rock** (`rock_hash`): `Bot::with_cache`
+  replaces a cache of another level even of the same size.

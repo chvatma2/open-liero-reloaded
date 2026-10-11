@@ -12,6 +12,7 @@ use rl_sim::{
     SimSettings, TextId, World, Worm, olx_kill_credit, olx_score,
 };
 
+use crate::respawn::RespawnLoadout;
 use crate::rules::{self, WRM_OUT, WRM_UNLIM};
 use crate::text;
 
@@ -43,6 +44,8 @@ pub struct DeathmatchSettings {
     /// `Game.DyingSpreeThreshold1..5` (3, 5, 7, 9, 10): deaths in a row
     /// for [`text::DYING_SPREE`]`[i]`.
     pub dying_sprees: [i32; 5],
+    /// What a worm holds when it spawns ([`RespawnLoadout::Keep`]: OLX).
+    pub respawn_loadout: RespawnLoadout,
 }
 
 impl Default for DeathmatchSettings {
@@ -56,6 +59,7 @@ impl Default for DeathmatchSettings {
             suicide_decreases_score: false,
             sprees: [3, 5, 7, 9, 10],
             dying_sprees: [3, 5, 7, 9, 10],
+            respawn_loadout: RespawnLoadout::Keep,
         }
     }
 }
@@ -152,6 +156,9 @@ pub struct Deathmatch {
     kills_in_row: [i32; MAX_WORMS],
     /// `iDeathsInRow`, by worm id.
     deaths_in_row: [i32; MAX_WORMS],
+    /// How many times each worm has spawned, by worm id (the chaos
+    /// rotation's lives).
+    spawns: [u32; MAX_WORMS],
     /// `game.serverFrame` as of the last `on_tick` (the frames played).
     frame: u64,
     /// How the match ended, once this mode announced it.
@@ -178,6 +185,7 @@ impl Deathmatch {
             first_blood: true,
             kills_in_row: [0; MAX_WORMS],
             deaths_in_row: [0; MAX_WORMS],
+            spawns: [0; MAX_WORMS],
             frame: 0,
             over: None,
             board: Vec::with_capacity(MAX_WORMS),
@@ -319,7 +327,8 @@ impl GameMode for Deathmatch {
     }
 
     fn checksum(&self, h: &mut Fnv) {
-        let Deathmatch { settings, first_blood, kills_in_row, deaths_in_row, frame, over, board } = self;
+        let Deathmatch { settings, first_blood, kills_in_row, deaths_in_row, spawns, frame, over, board } =
+            self;
         let DeathmatchSettings {
             lives,
             kill_limit,
@@ -329,6 +338,7 @@ impl GameMode for Deathmatch {
             suicide_decreases_score,
             sprees,
             dying_sprees,
+            respawn_loadout,
         } = settings;
         h.i32(*lives);
         h.i32(*kill_limit);
@@ -337,6 +347,8 @@ impl GameMode for Deathmatch {
         h.f32(*death_decreases_score);
         h.bool(*suicide_decreases_score);
         sprees.iter().chain(dying_sprees).chain(kills_in_row).chain(deaths_in_row).for_each(|&n| h.i32(n));
+        respawn_loadout.hash(h);
+        spawns.iter().for_each(|&n| h.u32(n));
         h.bool(*first_blood);
         h.u64(*frame);
         match over {
@@ -361,7 +373,21 @@ impl GameMode for Deathmatch {
         }
     }
 
-    fn on_spawn(&mut self, _worm: i32, ctx: &mut ModeCtx) {
+    /// Refreshes the scoreboard; with [`RespawnLoadout::ChaosCycle`] a
+    /// chaos bot gets its life's weapons (`give_weapon`, applied after this
+    /// tick's `on_tick`, or at the end of the setup for the first spawn).
+    fn on_spawn(&mut self, worm: i32, ctx: &mut ModeCtx) {
+        if let Some(n) = usize::try_from(worm).ok().and_then(|i| self.spawns.get_mut(i)) {
+            if let RespawnLoadout::ChaosCycle(cycle) = self.settings.respawn_loadout
+                && let Some(weapons) = cycle.weapons_for(worm, *n)
+            {
+                for (slot, weapon) in weapons.into_iter().enumerate() {
+                    // A full command queue keeps the old weapon, never fails.
+                    let _ = ctx.give_weapon(worm, slot, weapon);
+                }
+            }
+            *n = n.wrapping_add(1);
+        }
         self.refresh(ctx.worms(), ctx.settings());
     }
 

@@ -16,6 +16,8 @@ libm.workspace = true
 
 [dev-dependencies]
 allocation-counter.workspace = true
+rl-content.workspace = true
+rl-modes.workspace = true
 
 [lints]
 workspace = true

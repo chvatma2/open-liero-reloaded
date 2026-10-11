@@ -131,8 +131,9 @@ AI_Think():
   else fLastShoot = 0
   if health < 80 and AI_FindHealth(): return
   if cPosTarget.y < 75 and state == MOVINGTOTARGET:             // already high up
-      if health < 100: AI_FindHealth()
-      return
+      if health < 100: AI_FindHealth()                           // (never true: AI_Think runs
+      return                                                     //  in THINK and only the returns
+                                                                 //  above set MOVINGTOTARGET)
   if findRandomSpot(highSpot=true): AI_CreatePath()             // "high ground is safer"
 ```
 
@@ -172,11 +173,15 @@ AI_Think():
          and traceLine(p, target) >= 40: return p
   fallback: walk right from the target in 5 px steps (up to 10) until traceWormLine
             is blocked; step back; return if >= 15 px away
-            same to the left (bug: steps back the wrong way, `x -= 5` at 4026)
+            same to the left (bug: steps back the wrong way, `x -= 5` at 4026;
+            at the map's left edge it returns a point outside the map)
   return the last tried position (target.x - 50)
   ```
   The `traceLine(...) >= 40` test truncates a float length of about 40 to an
   int. It may fail often, which would make the fallback the usual case (open question 6).
+  On a dirt level `AI_IsInAir` (no rock or dirt in 15×15 px) fails anyway, so the
+  spot is the fallback's, as deep in the dirt as the target (`rl-bots` digs on to
+  the worm from there: `STATUS.md`).
 
 ### 1.4 Pathfinding (`searchpath_base`, `CWormBot.cpp:110-878`)
 

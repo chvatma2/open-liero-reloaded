@@ -19,17 +19,38 @@ loadouts, §4 the recommendations this crate follows).
 - **A bot** (`bot.rs`): `Bot::new(worm, cfg, seed, &World)` (or
   `with_cache` to share an `AreaCache`), then `think(&World, &TickEvents)
   -> Keys` once per tick, before `World::tick`. Clocks are `World::time()`
-  (every OLX `currentTime`/`GetTime()`). The brain is a placeholder that
-  walks to `set_goal`'s point; plan 6 task 5 replaces it.
+  (every OLX `currentTime`/`GetTime()`); timers count 10 ms a tick. Methods
+  of `Bot` live in the module of their OLX function, on a `Ctx` (the world
+  and the worm before the tick) and an `Act` (OLX's `worm_state_t`, aim and
+  rope), which `think` turns into an `Intent` for the motor.
+- **The brain** (`brain.rs`, notes §1.2-1.3): `getInput` (THINK ↔
+  MOVINGTOTARGET, re-thinks, spawn pause, carve), `AI_Think` (targets,
+  bonuses, high spots), `AI_CreatePath`, `AI_SetAim`; `set_goal` races to
+  a point (no shooting). `shoot.rs`: `AI_Shoot` and `weaponCanHit` (the
+  real arc for the ballistic aim, OLX's parabola for `OlxDirect`).
+  `weapons.rs`: what the bot knows of each weapon (`Arsenal`), the game
+  type from the loadout, `AI_GetBestWeapon` (buckets, change delay, 100lt,
+  rifle and mortar tactics), reloading, clearing weapons. `moving.rs`:
+  `AI_MoveToTarget`, `AI_SimpleMove`, `AI_Jump`, stuck handling, and the
+  dig-on deviation. `rope.rs`: rope timers and `AI_GetBestRopeSpot`;
+  `spot.rs`: `AI_FindShootingSpot` (both spread over ticks under the
+  budget). `probe.rs`: the budgeted terrain probes (`traceLine`,
+  `traceWeaponLine`, `AI_GetRockBetween`, area checks).
+- **Chaos** (`chaos.rs`, F10, notes §4.6): fires whatever is ready,
+  prefers weapons it has not fired, moves at random, records what it fired
+  (`Bot::fired_weapons`); its loadout rotates by the mode
+  (`rl_modes::RespawnLoadout::ChaosCycle`).
 - **Work budget** (`budget.rs`, F7): one unit per terrain pixel read. Every
   primitive checks its worst case first (`Budget::afford`), so `think`
   never spends more than `Bot::budget()` (`units_used()` is the test hook);
   a line longer than a whole budget counts as blocked; `min_budget` raises
-  the budget to what the level's longest line needs. Following a path gets
-  at most half a `think`, the search the rest.
+  the budget to what the level's longest line needs. Shooting gets at
+  most a quarter of a `think`, moving the rest of half (the node advance
+  keeps room for the jump check), the search the rest.
 - **Navigation** (`nav/`, notes §1.4-1.5): `areas.rs` grows OLX's rock-free
   rectangles (`Grower`, resumable per pixel) into an `AreaCache` (atomics,
-  `Arc`, append-only, fixed capacity; rock never changes in LX56);
+  `Arc`, append-only, fixed capacity, keyed by the level's `rock_hash`;
+  rock never changes in LX56);
   `search.rs` is `searchpath_base` as a resumable state machine (checklist,
   7-trace passage rule, costs, worm-line goal test, `simplifyPath`);
   `path.rs` the 50 px splitting; `follow.rs` the node advance (8 nodes
@@ -40,8 +61,10 @@ loadouts, §4 the recommendations this crate follows).
   rope press edges, CHANGE+arrow weapon switching, carve combo).
 - **Aim** (`aim.rs`, F2): `olx_direct` (`AI_SetAim`'s angle),
   `olx_aiming_angle` (OLX's solver, quirks kept), `ballistic` and
-  `ballistic_from` (the low root, from the muzzle), `AimState::set_aim`
-  (0.3 s face cooldown, the difficulty's offset from the bot's own RNG).
+  `ballistic_from` (the low root, from the muzzle, with the velocity a
+  `Launch` carries), `AimState::set_aim` (0.3 s face cooldown, the
+  difficulty's offset from the bot's own RNG), `ShotNoise`
+  (`weaponCanHit`'s gravity, speed and target noise).
 - **Loadouts** (`loadout.rs`, F1): `olx_bot_weapons` is `initWeaponSelection`
   (rifles, 100lt and mortars by mod name, `LoadingTime` and restrictions,
   else random; empty slots filled by `getRandomEnabledWpn`),
@@ -53,5 +76,7 @@ loadouts, §4 the recommendations this crate follows).
 - **Port, don't improve** where OLX's choices define how its bots feel; cite
   the OLX source on each function.
 
-Test: `cargo nextest run -p rl-bots`. Build for the web:
+Test: `cargo nextest run -p rl-bots` (`brain.rs`, `rope.rs`, `chaos.rs`
+and `matches.rs` play OLX's content from `RL_CONTENT_DIR` and skip without
+it). Build for the web:
 `cargo build -p rl-bots --target wasm32-unknown-unknown`.

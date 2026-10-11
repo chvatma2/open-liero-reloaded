@@ -174,6 +174,8 @@ impl Grower {
 pub struct AreaCache {
     width: u32,
     height: u32,
+    /// [`rock_hash`] of the level.
+    rock: u64,
     rects: Vec<AtomicU64>,
     len: AtomicUsize,
 }
@@ -192,13 +194,21 @@ impl AreaCache {
         Arc::new(AreaCache {
             width: terrain.width(),
             height: terrain.height(),
+            rock: rock_hash(terrain),
             rects,
             len: AtomicUsize::new(0),
         })
     }
 
-    /// Whether this cache is for a level of `terrain`'s size.
+    /// Whether this cache is for `terrain`'s level: the same size and the
+    /// same rock ([`rock_hash`], which reads every pixel: a setup check).
     pub fn fits(&self, terrain: &Terrain) -> bool {
+        self.same_size(terrain) && self.rock == rock_hash(terrain)
+    }
+
+    /// Whether this cache is for a level of `terrain`'s size (the check a
+    /// search makes on every step).
+    pub fn same_size(&self, terrain: &Terrain) -> bool {
         (self.width, self.height) == (terrain.width(), terrain.height())
     }
 
@@ -253,6 +263,19 @@ impl AreaCache {
         self.rects[i].store(packed, Ordering::Release);
         Some(i)
     }
+}
+
+/// FNV-1a 64 over whether each pixel is rock, row by row: what areas are
+/// made of. Rock never changes in LX56, so it is the level's identity for
+/// the cache all match, while the dirt is carved.
+pub fn rock_hash(terrain: &Terrain) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325_u64;
+    for y in 0..i64::from(terrain.height()) {
+        for x in 0..i64::from(terrain.width()) {
+            h = (h ^ u64::from(terrain.flags(x, y) & PX_ROCK != 0)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    h
 }
 
 /// Four `u16`s; an area's `x1` is at least 7, so no area packs to 0 (an

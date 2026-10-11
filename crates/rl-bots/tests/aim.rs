@@ -5,7 +5,8 @@
 mod common;
 
 use common::*;
-use rl_bots::{Intent, Motor, ballistic_from, olx_direct};
+use rl_bots::{Intent, Launch, Motor, ballistic_from, olx_direct};
+use rl_math::Vec2;
 use rl_sim::{Dir, EventKind, Keys, TickEvents, World};
 
 /// Worm 0 turns to `aim` through the motor, fires the lob once, and waits
@@ -53,8 +54,13 @@ fn ballistic_hits_static_target() {
         let (me, target) = (w.worms()[0].pos, w.worms()[1].pos);
         let s = w.settings().clone();
         let g = 100.0 * s.proj_gravity_factor;
-        let aim =
-            ballistic_from(me, target, LOB_SPEED as f32, g, s.shoot_spawn_distance, &s).expect("in reach");
+        let launch = Launch {
+            speed: LOB_SPEED as f32,
+            gravity: g,
+            spawn_distance: s.shoot_spawn_distance,
+            carried: Vec2::ZERO,
+        };
+        let aim = ballistic_from(me, target, &launch, &s).expect("in reach");
         assert!(aim.0 == Dir::Right && aim.1 < -10.0, "a lob: {aim:?}");
         assert!(shoot(&mut w, aim), "the solver's shot hits at {at:?}");
         // OLX aims straight at the target and lobs short.

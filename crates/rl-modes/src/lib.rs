@@ -7,8 +7,10 @@
 extern crate alloc;
 
 mod deathmatch;
+mod respawn;
 mod rules;
 pub mod text;
 
 pub use deathmatch::{Deathmatch, DeathmatchError, DeathmatchSettings};
+pub use respawn::{ChaosCycle, RespawnLoadout};
 pub use rules::{compare, olx_round};
