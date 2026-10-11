@@ -39,7 +39,12 @@ you rarely need to touch these files.
   line to that file: the frame's wall time (`steady_clock`, from the end of
   `beforeFrame()` to the start of `afterFrame()`, so neither the key and
   bonus schedule nor the trace line is timed), the client's used
-  projectiles and `rand()` calls since the seed. With `ORACLE_HEADER_ONLY`
+  projectiles and `rand()` calls since the seed. Shot-list delivery and
+  message parsing run in `betweenFrames()`, after `afterFrame()`, so they
+  fall outside OLX's timed span, while `rl-sim` does the equivalent inside
+  `World::tick`: the comparison slightly flatters OLX. `rl-sim`'s span
+  (`rl-cli scenario --time`) also includes a scenario's bonus placement
+  (none in the timed scenarios). With `ORACLE_HEADER_ONLY`
   the trace keeps only the header and frame −1 (what `rl-cli scenario
   --time` needs to build the same world). Unset, nothing changes: the
   traces are byte-identical, which `cargo xtask oracle-record --check`

@@ -126,9 +126,17 @@ impl Olx {
         Ok(frames)
     }
 
-    /// How OLX was built: the image's CMake build type and compiler.
+    /// How OLX was built: the image's release compiler flags and compiler,
+    /// such as `CMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG; c++ (Ubuntu
+    /// 11.4.0-1ubuntu1~22.04.3) 11.4.0`.
+    ///
+    /// The build is Release (ruling T6-A): the Dockerfile passes `-DDEBUG=No`,
+    /// so `CMakeOlxCommon.cmake:43-47` sets `CMAKE_BUILD_TYPE Release` as a
+    /// plain variable, and line 369 (338 on MinGW) adds `-O3`. The cache's
+    /// `CMAKE_BUILD_TYPE` entry stays empty, so it is never read here: an
+    /// empty value must not be reported as the build type.
     pub fn build_info(&self) -> String {
-        let script = "grep -m1 '^CMAKE_BUILD_TYPE' /olx/CMakeCache.txt; c++ --version | head -1";
+        let script = "grep -m1 '^CMAKE_CXX_FLAGS_RELEASE:' /olx/CMakeCache.txt; c++ --version | head -1";
         std::process::Command::new("docker")
             .args(["run", "--rm", &self.image, "sh", "-c", script])
             .output()

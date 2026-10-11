@@ -101,10 +101,13 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   (`tools/olx-oracle/CLAUDE.md`) in `target/envelope/olx-work/<name>`,
   parses the `frame ns projectiles rc` lines (`parse_timing`) and can
   write the header-only trace (gzipped) for `rl-cli scenario --time`;
-  `build_info` names the image's CMake build type and compiler. The
+  `build_info` names the image's release flags and compiler (the build is
+  Release, `-O3`, from `CMakeOlxCommon.cmake:43-47`; the cache's
+  `CMAKE_BUILD_TYPE` is empty and never reported, ruling T6-A). The
   scenarios: `TIMED`, the six busiest oracle fixtures, and `HEAVY`, eight
-  worms filling OLX's 3000 projectiles for 8 s (Spikeballs on Castle
-  Strike, Napalm on Liero Factory), in `fixtures/perf/olx/` (`PERF_DIR`;
+  worms holding fire for 8 s: Spikeballs on Castle Strike, which reaches
+  OLX's 3000-projectile cap, and Napalm on Liero Factory, a mid-load point
+  peaking at about 830 projectiles; in `fixtures/perf/olx/` (`PERF_DIR`;
   not oracle fixtures, no committed trace). `docker_missing()` says why
   Docker cannot be used (not installed, or the daemon not running:
   `docker info` fails), for `envelope` to turn into a notice (ruling PF5);

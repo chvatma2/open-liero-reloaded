@@ -104,10 +104,10 @@ index 5f73e25..c12907c 100644
  void	DrawEntities(SDL_Surface * bmpDest, CViewport *v);
 diff --git a/include/OracleHooks.h b/include/OracleHooks.h
 new file mode 100644
-index 0000000..0288288
+index 0000000..67859eb
 --- /dev/null
 +++ b/include/OracleHooks.h
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,73 @@
 +/*
 +	OpenLieroX
 +
@@ -150,7 +150,9 @@ index 0000000..0288288
 +	// recorded frame's wall time (from the end of beforeFrame() to the start of
 +	// afterFrame()), projectile count and rand() calls go to that file as
 +	// "frame ns projectiles rc" lines; with ORACLE_HEADER_ONLY set, the trace keeps only
-+	// the header and frame -1. Without them nothing changes.
++	// the header and frame -1. Without them nothing changes. Shot-list delivery and
++	// message parsing run in betweenFrames(), after afterFrame(), so they fall outside
++	// the timed span (rust-liero's World::tick does the equivalent inside its tick).
 +	bool record(const std::string& file, std::string& err);
 +	// True while a recording is armed: the clock is pinned, and shots and the local
 +	// connection's reliable messages are delivered by betweenFrames() instead of
