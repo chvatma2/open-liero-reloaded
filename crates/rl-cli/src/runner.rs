@@ -5,21 +5,17 @@
 
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Context as _, anyhow, ensure};
-use rl_bots::{AreaCache, Bot, BotRng, choose_loadout};
-use rl_content::{Content, DEFAULT_PRESET, SandboxSetup, SpawnSpec, match_setup};
-use rl_modes::{ChaosCycle, Deathmatch, DeathmatchSettings, RespawnLoadout};
+use anyhow::{Context as _, ensure};
+use rl_bots::Bot;
+use rl_content::{BuiltMatch, Content};
 use rl_replay::{MAX_TICKS, ModeSpec, Recorder, Replay};
-use rl_sim::{
-    EndReason, EventKind, Keys, MAX_WORMS, MatchResult, MatchSetup, SimSettings, TickEvents, World,
-};
+use rl_sim::{EndReason, EventKind, Keys, MAX_WORMS, MatchResult, MatchSetup, TickEvents, World};
 
 use crate::coverage::Coverage;
 use crate::invariants;
-use crate::spec::{MatchSpec, Personality};
+use crate::spec::MatchSpec;
 
 /// Test hooks.
 #[derive(Clone, Copy, Debug, Default)]
@@ -197,57 +193,15 @@ pub struct Match {
 }
 
 impl Match {
-    /// The match `spec` describes on `content`'s packs: bots with OLX's
+    /// The match `spec` describes on `content`'s packs, assembled by
+    /// `rl_content::build_match` (as `rl-game` does): bots with OLX's
     /// loadouts (a chaos bot's random, rotating on each spawn), one shared
     /// area cache, thinking in worm order.
     pub fn new(content: &Content, spec: &MatchSpec, opts: &Options) -> anyhow::Result<Match> {
         ensure!(spec.ticks <= MAX_TICKS, "at most {MAX_TICKS} ticks");
         ensure!((2..=MAX_WORMS).contains(&spec.bots), "a Deathmatch of 2 to {MAX_WORMS} bots");
-        let m = content.load_mod(&spec.mod_id)?;
-        let level = content.load_level(&spec.level_id)?;
-        let theme = content.load_theme(&level.theme)?;
-        let mut settings = SimSettings::lx56();
-        if let Some(f) = spec.bonus_frequency {
-            (settings.bonuses, settings.bonus_frequency) = (true, f);
-        }
-        let sandbox = SandboxSetup {
-            mod_id: spec.mod_id.clone(),
-            level_id: spec.level_id.clone(),
-            seed: spec.seed,
-            settings: settings.clone(),
-            worms: vec![SpawnSpec::default(); spec.bots],
-            restrictions: DEFAULT_PRESET.into(),
-        };
-        let mut setup = match_setup(&m, &level, &theme, &sandbox)?;
-        let rules = m.weapon_rules(DEFAULT_PRESET);
-        for (i, w) in setup.worms.iter_mut().enumerate() {
-            let cfg = spec.bot_config(i);
-            w.loadout =
-                choose_loadout(&cfg, &rules, &settings, &mut BotRng::new(spec.seed, i, cfg.personality));
-        }
-        let chaos: Vec<usize> =
-            if spec.personality == Personality::Chaos { (0..spec.bots).collect() } else { Vec::new() };
-        let respawn_loadout = if chaos.is_empty() {
-            RespawnLoadout::Keep
-        } else {
-            RespawnLoadout::ChaosCycle(ChaosCycle::new(&chaos, m.sim.weapons().len()))
-        };
-        let dm = DeathmatchSettings {
-            kill_limit: spec.kill_limit,
-            time_limit: spec.time_limit,
-            respawn_loadout,
-            ..DeathmatchSettings::default()
-        };
-        let mode = ModeSpec::Deathmatch(dm.clone());
-        let game = Deathmatch::prepare(dm, &mut setup).map_err(|e| anyhow!("{e}"))?;
-        let world = World::new(setup.clone(), Box::new(game)).map_err(|e| anyhow!("{e}"))?;
-        let packs = content.replay_packs(&spec.mod_id, &spec.level_id)?;
-        let mut rec = Recorder::new(packs, &setup, &mode);
-        rec.start(&world).map_err(|e| anyhow!("{e}"))?;
-        let cache = AreaCache::new(world.terrain());
-        let bots: Vec<Bot> = (0..spec.bots)
-            .map(|i| Bot::with_cache(i, spec.bot_config(i), spec.seed, &world, Arc::clone(&cache)))
-            .collect();
+        let built = content.build_match(&spec.match_options())?;
+        let BuiltMatch { setup, mode, world, bots, recorder: rec } = built;
         let stats = Stats {
             tick_ns: Vec::with_capacity(spec.ticks as usize),
             budget_min: bots.iter().map(Bot::budget).min().unwrap_or(0),

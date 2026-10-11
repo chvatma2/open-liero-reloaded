@@ -2,6 +2,9 @@
 //! a failure's record and a golden match's header.
 
 use rl_bots::BotConfig;
+use rl_content::{DEFAULT_PRESET, MatchOptions, Player};
+use rl_modes::DeathmatchSettings;
+use rl_sim::SimSettings;
 use serde::{Deserialize, Serialize};
 
 /// The game mode (`--mode`). Only Deathmatch exists so far.
@@ -118,6 +121,29 @@ impl MatchSpec {
             Personality::Chaos => rl_bots::Personality::Chaos,
         };
         BotConfig { personality, difficulty, ..BotConfig::default() }
+    }
+
+    /// What `rl_content::build_match` assembles: every worm a bot
+    /// ([`MatchSpec::bot_config`]), OLX's LX56 settings with the bonus
+    /// option, the Deathmatch limits and the default restrictions.
+    pub fn match_options(&self) -> MatchOptions {
+        let mut settings = SimSettings::lx56();
+        if let Some(f) = self.bonus_frequency {
+            (settings.bonuses, settings.bonus_frequency) = (true, f);
+        }
+        MatchOptions {
+            mod_id: self.mod_id.clone(),
+            level_id: self.level_id.clone(),
+            seed: self.seed,
+            settings,
+            players: (0..self.bots).map(|i| Player::Bot(self.bot_config(i))).collect(),
+            deathmatch: DeathmatchSettings {
+                kill_limit: self.kill_limit,
+                time_limit: self.time_limit,
+                ..DeathmatchSettings::default()
+            },
+            restrictions: DEFAULT_PRESET.into(),
+        }
     }
 
     /// A file name for this match: mod, level, bots, personality,

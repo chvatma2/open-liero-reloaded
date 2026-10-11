@@ -15,6 +15,7 @@
 mod color;
 mod core_assets;
 mod maps;
+mod matches;
 mod mods;
 mod placeholder;
 mod replay;
@@ -31,8 +32,10 @@ use rl_vfs::DirFs;
 pub use color::{apply_edits, color_edit, lost_area};
 pub use core_assets::{CORE_PACK_ID, CORE_SPRITES, CorePack};
 pub use maps::{LoadedLevel, LoadedSkin, LoadedTheme, MAX_ART_SCALE, MAX_COLOR_MAP_BYTES};
+pub use matches::{BuiltMatch, MatchAssets, MatchOptions, Player, build_match};
 pub use mods::{LoadedMod, check_frames};
 pub use placeholder::{PLACEHOLDER, placeholder_image};
+pub use replay::replay_assets_from;
 pub use sandbox::{SANDBOX_START, SandboxSetup, SpawnSpec, match_setup, new_world_from};
 pub use sounds::{MAX_SOUND_BYTES, MAX_SOUND_SECONDS, check_sound};
 

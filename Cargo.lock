@@ -2515,8 +2515,10 @@ name = "rl-content"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "rl-bots",
  "rl-data",
  "rl-math",
+ "rl-modes",
  "rl-pack",
  "rl-replay",
  "rl-sim",

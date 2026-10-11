@@ -87,7 +87,7 @@ impl Replay {
 
     /// A player that steps through the replay one tick at a time.
     pub fn player(&self) -> Player<'_> {
-        Player { replay: self, tick: 0, next: 0 }
+        Player { replay: self, cursor: Cursor::default() }
     }
 }
 
@@ -95,25 +95,23 @@ impl Replay {
 #[derive(Clone, Debug)]
 pub struct Player<'r> {
     replay: &'r Replay,
-    tick: u32,
-    /// The next recorded checksum to check.
-    next: usize,
+    cursor: Cursor,
 }
 
 impl Player<'_> {
     /// How many ticks were played.
     pub fn tick(&self) -> u32 {
-        self.tick
+        self.cursor.tick()
     }
 
     /// Whether every tick was played.
     pub fn is_done(&self) -> bool {
-        self.tick >= self.replay.ticks()
+        self.cursor.is_done(self.replay)
     }
 
     /// How many recorded checksums were checked.
     pub fn checked(&self) -> usize {
-        self.next
+        self.cursor.checked()
     }
 
     /// Plays the next tick on `world` (the replay's world, played by this
@@ -121,21 +119,58 @@ impl Player<'_> {
     /// a tick was played (false at the end). A [`Mismatch`] is reported
     /// once; stepping on is allowed.
     pub fn step(&mut self, world: &mut World, out: &mut TickEvents) -> Result<bool, Mismatch> {
+        self.cursor.step(self.replay, world, out)
+    }
+}
+
+/// How far a replay was played: a [`Player`] without the borrow, for a
+/// caller that owns the replay next to it (a game drawing the replay).
+/// Every call must pass the same replay.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Cursor {
+    tick: u32,
+    /// The next recorded checksum to check.
+    next: usize,
+}
+
+impl Cursor {
+    /// How many ticks were played.
+    pub fn tick(&self) -> u32 {
+        self.tick
+    }
+
+    /// Whether every tick of `replay` was played.
+    pub fn is_done(&self, replay: &Replay) -> bool {
+        self.tick >= replay.ticks()
+    }
+
+    /// How many recorded checksums were checked.
+    pub fn checked(&self) -> usize {
+        self.next
+    }
+
+    /// [`Player::step`] on `replay`.
+    pub fn step(
+        &mut self,
+        replay: &Replay,
+        world: &mut World,
+        out: &mut TickEvents,
+    ) -> Result<bool, Mismatch> {
         if self.tick == 0 {
-            self.verify(world)?;
+            self.verify(replay, world)?;
         }
-        if self.is_done() {
+        if self.is_done(replay) {
             return Ok(false);
         }
-        world.tick(self.replay.row(self.tick), out);
+        world.tick(replay.row(self.tick), out);
         self.tick += 1;
-        self.verify(world)?;
+        self.verify(replay, world)?;
         Ok(true)
     }
 
     /// Checks the checksums recorded up to the current tick.
-    fn verify(&mut self, world: &World) -> Result<(), Mismatch> {
-        while let Some(&(t, expected)) = self.replay.checksums.get(self.next)
+    fn verify(&mut self, replay: &Replay, world: &World) -> Result<(), Mismatch> {
+        while let Some(&(t, expected)) = replay.checksums.get(self.next)
             && t <= self.tick
         {
             self.next += 1;

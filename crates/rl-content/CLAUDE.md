@@ -8,8 +8,9 @@ sounds from the core pack), `load_level`, `load_theme` (holes, green ball,
 tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
 (sprites by name, game sounds, `colours.cfg`) and `new_world(&SandboxSetup)`.
 
-- **Layer 4, uses `std`.** Depends on `rl-sim`, `rl-replay`, `rl-pack`, `rl-terrain`,
-  `rl-data`, `rl-vfs`, `anyhow`. `rl-scenario` (same layer) uses it.
+- **Layer 4, uses `std`.** Depends on `rl-sim`, `rl-modes`, `rl-bots`,
+  `rl-replay`, `rl-pack`, `rl-terrain`, `rl-data`, `rl-vfs`, `anyhow`.
+  `rl-scenario` (same layer) uses it.
 - **Never panic on content** (spec §19, Review Focus 3): a missing or odd
   asset gets a placeholder (`PLACEHOLDER` colour; core sprites at their
   `CORE_SPRITES` size, so frame arithmetic still works; a 672 × 18 skin;
@@ -58,8 +59,20 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   `replay_assets`, `world_for_replay` and `play_replay` refuse a replay whose
   packs are missing or hash differently (Review Focus 3), then rebuild its
   world as `match_setup` does (the mod from `load_mod`).
+- **Matches** (`matches.rs`, plan 6 ruling R5): `build_match(MatchAssets,
+  &MatchOptions) -> BuiltMatch` (or `Content::build_match`) is the one
+  assembly of a Deathmatch, used by `rl-cli match` and `rl-game --mode
+  deathmatch`: `players[i]` is `Player::Human` (random enabled weapons
+  until M7's weapon menu) or `Player::Bot(BotConfig)` (`choose_loadout`
+  from `BotRng::new(seed, i, personality)`); chaos bots get the
+  `ChaosCycle` respawn loadout; `Deathmatch::prepare`, `World::new`, a
+  started `Recorder` and the bots on one shared `AreaCache` (think in
+  `bots` order). `rl-cli`'s golden checksum streams pin it.
+- **Replays' content:** `check_replay_packs` (ids and content hashes) and
+  `replay_assets_from(m, level, theme)` let a game that draws a replay load
+  its packs once.
 - Pack ids of OLX imports: `olx_mod_id("MW 1.0")`, `olx_level_id("CastleStrike.lxl")`.
 
 Test: `cargo nextest run -p rl-content` (`loads_every_manifest_item` and the
-real-level part of `new_world_spawns_worms_on_free_spots` and `tests/color.rs`'s matches
-need `RL_CONTENT_DIR`).
+real-level part of `new_world_spawns_worms_on_free_spots`, `tests/color.rs`'s
+matches and `tests/matches.rs` need `RL_CONTENT_DIR`).

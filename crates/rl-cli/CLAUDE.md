@@ -34,7 +34,8 @@ The headless command-line tool. Its commands:
 
 **The library** (`src/lib.rs`) holds the match runner for the commands and
 the tests: `spec::MatchSpec` (the options, serialized in failures and
-goldens), `runner` (`Match` stepwise: `advance` = bots think + tick, no
+goldens; `match_options` gives what `rl_content::build_match` assembles,
+the same builder as `rl-game`'s Deathmatch), `runner` (`Match` stepwise: `advance` = bots think + tick, no
 allocation; `settle` = record, invariants, coverage; `step` catches a panic,
 and a panic inside `World::tick` rebuilds the world from the logged keys so
 `Recorder::finish_failed` saves a replay that plays into the failure;

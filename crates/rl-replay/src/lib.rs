@@ -27,7 +27,7 @@ use rl_modes::{Deathmatch, DeathmatchSettings};
 use rl_sim::{BonusItem, GameMode, Keys, MatchSetup, OracleMode, SimSettings, WormSetup};
 
 pub use error::{DecodeError, Mismatch, RecordError, ReplayError};
-pub use play::{Assets, Player, ReplayRun};
+pub use play::{Assets, Cursor, Player, ReplayRun};
 pub use record::Recorder;
 
 /// The format version [`Replay::encode`] writes and the only one

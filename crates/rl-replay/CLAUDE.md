@@ -31,7 +31,9 @@ ticks and at the end.
 - **Replaying** (`play.rs`): `Replay::world(Assets)` rebuilds the world
   (`rl-content`'s `Content::world_for_replay` resolves the packs and refuses
   other content hashes); `Replay::play(world)` or a `Player` stepping a tick
-  at a time checks each checksum and reports the first `Mismatch`.
+  at a time checks each checksum and reports the first `Mismatch`; a
+  `Cursor` is a `Player` without the borrow (`rl-game` owns the replay next
+  to it).
   `rl-content` returns `Mismatch` and `ReplayError` inside `anyhow::Error`
   typed: `downcast_ref::<Mismatch>()` gives the tick.
 - **Format** (`wire.rs`, `mirror.rs`): `RLRP`, `FORMAT_VERSION` (u16 LE),

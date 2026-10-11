@@ -7,7 +7,7 @@ use rl_data::manifest::PackKind;
 use rl_replay::{Assets, PackRef, Packs, Replay, ReplayRun, ReplaySetup};
 use rl_sim::World;
 
-use crate::Content;
+use crate::{Content, LoadedLevel, LoadedMod, LoadedTheme};
 
 impl Content {
     /// The content hash of pack `id` of `kind` (`rl_pack::content_hash`).
@@ -30,10 +30,10 @@ impl Content {
         })
     }
 
-    /// What `setup`'s packs resolve to. A missing pack, or one whose
-    /// content hash is not the recorded one, is an error: the replay would
-    /// diverge.
-    pub fn replay_assets(&self, setup: &ReplaySetup) -> anyhow::Result<Assets> {
+    /// Checks that `setup`'s packs are here with the recorded content
+    /// hashes. A missing pack, or one whose content hash is not the
+    /// recorded one, is an error: the replay would diverge.
+    pub fn check_replay_packs(&self, setup: &ReplaySetup) -> anyhow::Result<()> {
         let p = &setup.packs;
         for (r, kind) in
             [(&p.mod_pack, PackKind::Mod), (&p.level, PackKind::Level), (&p.theme, PackKind::Theme)]
@@ -47,15 +47,18 @@ impl Content {
                 r.hash
             );
         }
+        Ok(())
+    }
+
+    /// What `setup`'s packs resolve to, once checked
+    /// ([`Content::check_replay_packs`]).
+    pub fn replay_assets(&self, setup: &ReplaySetup) -> anyhow::Result<Assets> {
+        self.check_replay_packs(setup)?;
+        let p = &setup.packs;
         let m = self.load_mod(&p.mod_pack.id)?;
         let level = self.load_level(&p.level.id)?;
         let theme = self.load_theme(&p.theme.id)?;
-        Ok(Assets {
-            sim_mod: m.sim,
-            terrain: rl_terrain::Terrain::from_grid(&level.material),
-            holes: theme.stamps(),
-            green_mask: theme.green_mask(),
-        })
+        Ok(replay_assets_from(&m, &level, &theme))
     }
 
     /// The world `replay` starts from, made of this content (refused when
@@ -73,5 +76,18 @@ impl Content {
     pub fn play_replay(&self, replay: &Replay) -> anyhow::Result<ReplayRun> {
         let world = self.world_for_replay(replay)?;
         replay.play(world).map_err(anyhow::Error::new)
+    }
+}
+
+/// A replay's [`Assets`] from a mod (as [`Content::load_mod`]), level and
+/// theme already loaded (a game that draws the replay loads them once), as
+/// [`crate::match_setup`] uses them. The caller checks the packs first
+/// ([`Content::check_replay_packs`]).
+pub fn replay_assets_from(m: &LoadedMod, level: &LoadedLevel, theme: &LoadedTheme) -> Assets {
+    Assets {
+        sim_mod: m.sim.clone(),
+        terrain: rl_terrain::Terrain::from_grid(&level.material),
+        holes: theme.stamps(),
+        green_mask: theme.green_mask(),
     }
 }
