@@ -1,13 +1,12 @@
-//! Paints a [`HudView`] where a [`HudLayout`] says (the Modern style):
-//! OLX's colours (`docs/porting/olx-notes/presentation.md` §9) on
-//! translucent panels, text with a one-pixel shadow.
+//! Paints a [`HudView`] where a [`HudLayout`] says: OLX's colours
+//! (`docs/porting/olx-notes/presentation.md` §9) in an opaque bar along
+//! the bottom, text with a one-pixel shadow.
 
 use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, RichText, Stroke, StrokeKind, Ui, pos2, vec2};
 
-use super::fade::HudFade;
 use super::layout::HudLayout;
 use super::minimap::{ALPHA, dot_colour, dot_rect, view_rect};
-use super::model::{Row, clock, lives_text};
+use super::model::{LineKind, LogLine, Row, clock, lives_text};
 use super::view::{Bar, HudView, MinimapView, WormHud};
 
 /// OLX's clock turns `(255, 50, 50)` in the last 10 s (`CClient_Draw.cpp:762-787`).
@@ -24,54 +23,70 @@ const COOLDOWN: Color32 = Color32::from_rgb(255, 161, 66);
 const WEAPON_LABEL: Color32 = Color32::from_rgb(0x02, 0xbf, 0xf6);
 const LIVES: Color32 = Color32::from_rgb(0x00, 0xde, 0x00);
 const KILLS: Color32 = Color32::from_rgb(0xde, 0x00, 0x00);
-const PANEL: Color32 = Color32::from_black_alpha(140);
+/// The bar (opaque), its top edge, and its parts' panels.
+const BAR_FILL: Color32 = Color32::from_rgb(18, 18, 23);
+const BAR_EDGE: Color32 = Color32::from_rgb(62, 62, 74);
+const PANEL: Color32 = Color32::from_rgb(30, 30, 38);
+const LOG_FILL: Color32 = Color32::from_rgb(11, 11, 15);
 
 fn shadowed(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, colour: Color32) -> Rect {
     p.text(pos + vec2(1.0, 1.0), anchor, text, font.clone(), Color32::from_black_alpha(200));
     p.text(pos, anchor, text, font, colour)
 }
 
-/// Paints `view` over `ui`'s whole area; the minimap and the bottom-left
-/// panel fade while a worm is under them (`HudFade`, kept in egui's memory).
+/// Paints `view` over `ui`'s whole area: the bar along the bottom
+/// (opaque: the game draws above it), the clock, notices and keys over the
+/// playfield.
 pub fn show(ui: &Ui, view: &HudView) {
     let l = HudLayout::new(ui.max_rect());
     let p = ui.painter();
-    let now = ui.input(|i| i.time);
-    let id = egui::Id::new("rl-ui hud fade");
-    let covered = l.covered(&view.worms, view.worm_size);
-    let (opacity, moving) = ui.ctx().data_mut(|d| {
-        let fade = d.get_temp_mut_or_default::<HudFade>(id);
-        (fade.update(covered, now), fade.moving(now))
-    });
-    if moving {
-        ui.ctx().request_repaint();
-    }
+    p.rect_filled(l.bar, 0.0, BAR_FILL);
+    let edge = [l.bar.left_top(), l.bar.right_top()];
+    p.line_segment(edge, Stroke::new(1.0, BAR_EDGE));
     if let Some(w) = &view.worm {
-        let mut p = p.clone();
-        p.multiply_opacity(opacity.panel);
-        health(&p, &l, w);
+        health(p, &l, w);
         if !w.slots.is_empty() {
-            weapons(&p, &l, w);
+            weapons(p, &l, w);
         }
     }
-    top(p, &l, view);
     if let Some(m) = &view.minimap {
-        let mut p = p.clone();
-        p.multiply_opacity(opacity.minimap);
-        minimap(&p, &l, m);
+        minimap(p, &l, m);
     }
+    log(p, &l, &view.log);
+    top(p, &l, view);
     if let (Some(hint), Some(rect)) = (&view.hint, l.hint) {
         let p = p.with_clip_rect(rect);
         let font = FontId::proportional(l.text * 0.85);
-        shadowed(&p, rect.right_bottom(), Align2::RIGHT_BOTTOM, hint, font, Color32::from_gray(190));
+        shadowed(&p, rect.right_top(), Align2::RIGHT_TOP, hint, font, Color32::from_gray(190));
     }
     if view.game_over {
-        let at = l.screen.center() - vec2(0.0, 60.0 * l.unit);
+        let at = l.playfield.center() - vec2(0.0, 40.0 * l.unit);
         let font = FontId::proportional(40.0 * l.unit);
         shadowed(p, at, Align2::CENTER_CENTER, "Game Over", font, Color32::from_rgb(255, 200, 80));
     }
     if let Some(rows) = view.scoreboard.as_ref().filter(|r| !r.is_empty()) {
-        scoreboard(ui, rows);
+        scoreboard(ui, rows, l.playfield.center() - l.screen.center());
+    }
+}
+
+/// The event log, the newest line at the bottom; older ones go up and
+/// off the top.
+fn log(p: &Painter, l: &HudLayout, lines: &[LogLine]) {
+    let r = l.log;
+    if r.width() <= 0.0 || r.height() <= 0.0 {
+        return;
+    }
+    p.rect_filled(r.expand(2.0 * l.unit), 4.0 * l.unit, LOG_FILL);
+    let clip = p.with_clip_rect(r);
+    let font = FontId::proportional(l.text);
+    let shown = l.log_lines().min(lines.len());
+    for (i, line) in lines[lines.len() - shown..].iter().rev().enumerate() {
+        let at = pos2(r.left() + 4.0 * l.unit, r.bottom() - l.line * (i as f32 + 0.5));
+        let colour = match line.kind {
+            LineKind::Event => Color32::from_gray(225),
+            LineKind::Chat => Color32::from_rgb(255, 230, 140),
+        };
+        clip.text(at, Align2::LEFT_CENTER, &line.text, font.clone(), colour);
     }
 }
 
@@ -137,7 +152,7 @@ fn weapons(p: &Painter, l: &HudLayout, w: &WormHud) {
     }
 }
 
-/// The clock and kill limit, the notices under them, and the kill feed.
+/// The clock and kill limit, and the notices under them.
 fn top(p: &Painter, l: &HudLayout, v: &HudView) {
     let c = l.clock;
     let big = FontId::monospace(20.0 * l.unit);
@@ -178,16 +193,6 @@ fn top(p: &Painter, l: &HudLayout, v: &HudView) {
         shadowed(p, pos2(c.center().x, y), Align2::CENTER_TOP, &n.text, small.clone(), colour);
         y += l.line;
     }
-    let f = l.feed;
-    let top = f.top().max(l.screen.top() + v.top_left_reserved);
-    let room = ((f.bottom() - top) / l.line).floor().max(0.0) as usize;
-    let skip = v.feed.len().saturating_sub(room);
-    let fp = p.with_clip_rect(Rect::from_min_max(pos2(f.left(), top), f.max));
-    let font = FontId::proportional(l.text);
-    for (i, line) in v.feed.iter().skip(skip).enumerate() {
-        let at = pos2(f.left(), top + l.line * i as f32);
-        shadowed(&fp, at, Align2::LEFT_TOP, line, font.clone(), Color32::from_gray(235));
-    }
 }
 
 /// The level at half opacity, the view, and a blinking dot per worm.
@@ -210,10 +215,11 @@ fn minimap(p: &Painter, l: &HudLayout, m: &MinimapView) {
     }
 }
 
-/// The scoreboard (OLX's `ShowScore`, Tab held), centred.
-fn scoreboard(ui: &Ui, rows: &[Row]) {
+/// The scoreboard (OLX's `ShowScore`, Tab held), centred over the
+/// playfield (`offset` from the window's centre).
+fn scoreboard(ui: &Ui, rows: &[Row], offset: egui::Vec2) {
     egui::Area::new(egui::Id::new("scoreboard"))
-        .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
+        .anchor(Align2::CENTER_CENTER, offset)
         .interactable(false)
         .show(ui.ctx(), |ui| {
             egui::Frame::new()

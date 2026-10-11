@@ -152,24 +152,30 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   `auto_save(dir, bytes)` (`match-NNNNNN.rlrp`, the last
   `MAX_AUTO_REPLAYS` kept; a player's own files are never removed),
   `save_kept(dir, bytes)` (the results' Save replay: `replay-NNN.rlrp`).
-- **HUD** (`hud/`, §21 G5; one style, the Classic one was dropped): `model.rs` (names, OLX's kill
-  feed texts, `clock`, scoreboard `rows`, `Results`), `view.rs`
+- **HUD** (`hud/`, §21 G5; one style, the Classic one was dropped): `model.rs` (names, OLX's
+  message texts, `Log` of `LogLine { text, kind: LineKind::{Event, Chat} }`
+  (the last `LOG_KEEP` 64; `Chat` is for a multiplayer chat later),
+  `clock`, scoreboard `rows`, `Results`), `view.rs`
   (`HudView`, the frame's data; `WormHud::of(world, i, names, ..)`: health,
   lives, kills, slots with OLX's bar states), `layout.rs`
-  (`HudLayout::new(screen)`: health and weapons bottom left, clock top
-  centre, feed top left, minimap top right at OLX's 119 × 94 proportions,
-  keys bottom right; it shrinks to half size and never covers the health
-  or weapons: Review Focus 5, `hud_layout_holds_at_all_scales`),
+  (`HudLayout::new(screen)`: an opaque `bar` along the bottom, `BAR_FULL`
+  150 points high (the UI scale is egui's zoom), its parts within a
+  centred 1600 points: health and weapons left, the minimap centred at
+  OLX's 119 × 94 proportions (OLX 0.58's local game; the user's ruling
+  after the v0.1 playtest), the `log` right (whole lines, at most 560
+  wide); the `playfield` above it, where the game draws (`bar_height`,
+  which `rl-game` leaves under its picture), the clock top centre and the
+  keys top right over it; under 640 × 360 points all shrinks to half size,
+  the minimap before the log: Review Focus 5,
+  `hud_layout_holds_at_all_scales`),
   `minimap.rs` (`image`: the colour terrain box-filtered to
   `TEXTURE_SIZE`; OLX's dot rectangles and blink; the view rectangle;
-  its scale at most `MAX_MINIMAP` 1.5), `fade.rs` (OLX keeps its HUD off
-  the playfield, ours lies over it: `HudLayout::covered(worms, size)`
-  says whether a worm, with a margin of its size, is under the minimap or
-  the bottom-left `panel()`; `HudFade` eases that part to `FADED` (25 %)
-  over `FADE_SECONDS` (150 ms) and back; `HudView::worms`/`worm_size`
-  are the app's; `hud_fades_over_a_worm`),
-  `paint.rs` (`show(ui, &view)`, the fade kept in egui's memory on
-  egui's time; a worm without slots shows no weapon rows; `table`). Image snapshots at 1080p and
+  its scale at most `MAX_MINIMAP` 1.5),
+  `paint.rs` (`show(ui, &view)`: the bar, then its parts, the log's newest
+  line at the bottom; nothing fades; a worm without slots shows no weapon
+  rows; the scoreboard centred over the playfield; `table`). The weapon
+  selection, the pause menu and the results centre over the playfield
+  (`screens::playfield`). Image snapshots at 1080p and
   1440p (`tests/hud_snapshots.rs` against `fixtures/ui/`, in the GPU tier
   with `RL_GPU_TESTS`; `cargo xtask bless-render --reason` re-records them, logged).
 - **Weapon selection** (`weapon_select.rs`, §21 G4): `WeaponMenu` (names,

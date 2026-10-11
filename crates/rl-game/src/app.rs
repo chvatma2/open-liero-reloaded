@@ -96,6 +96,9 @@ pub struct App {
     scores: ScoreKey,
     /// The HUD's minimap picture.
     minimap: MinimapTexture,
+    /// The HUD bar's height in pixels (`bar_pixels`): the playfield is the
+    /// window above it.
+    bar: u32,
     /// Replays saved (`--record`).
     saved: u32,
     /// Ticks since the start, across restarts (the script's clock).
@@ -156,7 +159,26 @@ fn is_wayland(el: &ActiveEventLoop) -> bool {
     }
 }
 
-/// The viewport for a window of `size` pixels.
+/// The HUD bar's height in pixels on a window of `size` pixels at
+/// `pixels_per_point` (the display's scale times the UI scale): what
+/// `rl_ui::hud::bar_height` says in points, whole pixels, the window's
+/// top row always left to the game.
+pub fn bar_pixels(size: (u32, u32), pixels_per_point: f32) -> u32 {
+    let ppp = if pixels_per_point.is_finite() && pixels_per_point > 0.0 { pixels_per_point } else { 1.0 };
+    let points = egui::vec2(size.0 as f32 / ppp, size.1 as f32 / ppp);
+    let bar = (rl_ui::hud::bar_height(points) * ppp).ceil();
+    if bar.is_finite() { (bar as u32).min(size.1.saturating_sub(1)) } else { 0 }
+}
+
+/// The playfield of a window of `size` pixels whose bottom `bar` pixels
+/// are the HUD's: the window above the bar (at least a pixel high).
+pub fn playfield(size: (u32, u32), bar: u32) -> (u32, u32) {
+    (size.0, size.1.saturating_sub(bar).max(1))
+}
+
+/// The viewport for a playfield of `size` pixels (spec §19 E4: 240 world
+/// pixels high, at most 16:9; a wider playfield shows the picture
+/// centred, black at its sides).
 pub fn viewport(size: (u32, u32)) -> Viewport {
     let aspect = if size.1 == 0 { MAX_ASPECT } else { size.0 as f32 / size.1 as f32 };
     Viewport::from_aspect(aspect, MAX_ASPECT)
@@ -207,6 +229,7 @@ impl App {
             debug: false,
             scores: ScoreKey::default(),
             minimap: MinimapTexture::default(),
+            bar: 0,
             saved: 0,
             ticks: 0,
             script_at: 0,
@@ -334,7 +357,7 @@ impl App {
             s.present.invalidate_gpu();
         }
         let size = window.inner_size();
-        self.shell.set_viewport(viewport((size.width, size.height)));
+        self.shell.set_viewport(viewport(playfield((size.width, size.height), self.bar)));
         let egui = self.egui_state(&window, &gpu);
         println!("rl-game: GPU {}", gpu.info);
         self.stats.gpu = gpu.info.clone();
@@ -385,7 +408,7 @@ impl App {
         let size = gpu.size();
         self.win = Some(Shown { window, gpu, egui });
         drop((old_egui, old_window));
-        self.shell.set_viewport(viewport(size));
+        self.shell.set_viewport(viewport(playfield(size, self.bar)));
         self.input.release_keys();
         self.scores.focus(false);
         // The interval runs from the new window (`window::MIN_CHANGE_INTERVAL`).
@@ -412,7 +435,7 @@ impl App {
         if let Some(w) = &mut self.win {
             w.gpu.resize(size);
         }
-        self.shell.set_viewport(viewport(size));
+        self.shell.set_viewport(viewport(playfield(size, self.bar)));
     }
 
     /// The window size and mode changes asked for, at most once a frame
@@ -565,11 +588,19 @@ impl App {
         let Some(w) = &mut self.win else { return Ok(()) };
         let size = w.gpu.size();
         let ppp = w.window.scale_factor() as f32;
+        // The HUD's bar at the bottom (its height follows the UI scale):
+        // the game is drawn above it, its view the playfield's shape.
+        let bar = bar_pixels(size, ppp * self.egui.zoom_factor());
+        w.gpu.bar = bar;
+        if bar != self.bar {
+            self.bar = bar;
+            self.shell.set_viewport(viewport(playfield(size, bar)));
+        }
         let src = (
             self.list.view.w * w.gpu.renderer.scale() as f32,
             self.list.view.h * w.gpu.renderer.scale() as f32,
         );
-        let dest = rl_render::dest_rect(w.gpu.renderer.settings.filter, src, size);
+        let dest = rl_render::dest_rect(w.gpu.renderer.settings.filter, src, playfield(size, bar));
         let map = ScreenMap { view: self.list.view, dest, pixels_per_point: ppp };
         let mut input = w.egui.take_egui_input(&w.window);
         if self.fake_start.is_some() {
@@ -790,5 +821,24 @@ mod tests {
         assert!(super::egui_hears(&text, false));
         assert!(!super::egui_hears(&text, true));
         assert!(super::egui_hears(&WindowEvent::Focused(true), true));
+    }
+
+    /// The game is drawn above the HUD's bar: the bar's pixels follow the
+    /// display's and the UI's scale, the playfield is the rest, and the
+    /// view keeps OLX's 240 world pixels of height.
+    #[test]
+    fn the_playfield_is_the_window_above_the_bar() {
+        use super::{bar_pixels, playfield, viewport};
+        let bar = rl_ui::hud::BAR_FULL;
+        assert_eq!(bar_pixels((1280, 720), 1.0), bar as u32);
+        assert_eq!(bar_pixels((2560, 1440), 2.0), (bar * 2.0) as u32, "a 2x display: twice the pixels");
+        assert_eq!(bar_pixels((3440, 1440), 1.5), (bar * 1.5).ceil() as u32, "UI scale 1.5");
+        assert_eq!(playfield((1280, 720), 150), (1280, 570));
+        assert_eq!(playfield((10, 10), 50), (10, 1), "never no playfield");
+        for (size, ppp) in [((0, 0), 1.0), ((1, 1), f32::NAN), ((640, 2), 0.0), ((800, 600), f32::INFINITY)] {
+            assert!(bar_pixels(size, ppp) <= size.1.saturating_sub(1), "{size:?} {ppp}");
+        }
+        let v = viewport(playfield((1920, 1080), bar_pixels((1920, 1080), 1.0)));
+        assert_eq!(v.height, rl_scene::FOV_HEIGHT, "the view's height stays OLX's");
     }
 }

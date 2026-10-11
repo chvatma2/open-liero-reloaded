@@ -54,14 +54,14 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Bot aim error floor (the user's direction, plan 6 ruling R6): every difficulty's aim errors (offset, target, gravity and speed noise) scale with at least 1/6, so Xtreme keeps half of Hard's error; the fire tolerance stays OLX's | `src/common/CWormBot.cpp:1682-1706`, `1836-1850` (OLX's Xtreme has none) | `rl-bots::{Difficulty::params, AIM_ERROR_FLOOR}` | done (plan 6 task 9; a deviation, below) | `no_difficulty_aims_perfectly`, `weapon_can_hit_noise_scales_with_the_level`; kill rates measured before and after (below); goldens re-blessed (`fixtures/blessings.log`) |
 | Replays (spec §20 F8; no OLX equivalent): the setup, pack ids and content hashes, every worm's keys per tick, checksums at tick 0, every 100 ticks and the end; the `RLRP` format, version refused when unknown | — | `rl-replay::{Recorder, Replay, Player, Cursor}`, `rl-content::{replay_packs, world_for_replay, play_replay}` | done (plan 6 task 6) | `record_then_replay_gives_identical_checksums`, `replay_reports_the_first_mismatching_tick`, `replay_reports_a_different_setup_at_tick_0`, `replay_refuses_unknown_format_versions`, `replay_refuses_mismatched_content`, `bot_match_replays_from_content`, `replay_size_is_reasonable`, `decode_never_panics_on_junk`, `a_failing_tick_is_recorded_without_a_checksum` |
 | Headless match runner (spec §7.1, §7.3; no OLX equivalent): `rl-cli match` and `replay`, one match builder shared with `rl-game` (plan 6 ruling R5), invariants every tick, tick-time percentiles, determinism and replay round trip, coverage (weapons, projectile actions, bonuses, rope), failure capture to `target/failures/`, golden checksum streams | — | `rl-cli::{spec, runner, verify, coverage, failure, golden, invariants}`, `rl-content::build_match`, `xtask bless-regression` | done (plan 6 task 7) | `classic_deathmatch_bots_are_deterministic_and_replay`, `mw_chaos_bots_are_deterministic_and_replay`, `failure_writes_replay`, `golden_match_checksums` (`fixtures/matches/`); in `cargo xtask full`: `coverage_report_lists_every_weapon` (both mods × 4 levels × 3 seeds: every weapon of both mods and every projectile action kind) and `long_bot_match_bounded` (30 minutes, review focus 5) |
-| Deathmatch against bots in the game: `--mode deathmatch`, the bots thinking on the main thread before each tick, the HUD (names, kill feed, time-limit clock, Tab's scoreboard), "Game Over" then the results after `GAMEOVER_WAIT`, F5's rematch, `--record` and `--replay` | `src/client/CClient_Draw.cpp:893-905`, `1840-1897`, `2211-2236` | `rl-game::{setup, session, drive, hud, panels}` | done (plan 6 task 8) | `deathmatch_session_ends_with_results`, `rematch_starts_without_the_last_ticks_events`, `bots_think_within_frame_budget`, `replay_session_matches_recorded_checksums`, `scoreboard_hides_when_the_window_loses_focus`; the user's playtest |
+| Deathmatch against bots in the game: `--mode deathmatch`, the bots thinking on the main thread before each tick, the HUD (names, event log, time-limit clock, Tab's scoreboard), "Game Over" then the results after `GAMEOVER_WAIT`, F5's rematch, `--record` and `--replay` | `src/client/CClient_Draw.cpp:893-905`, `1840-1897`, `2211-2236` | `rl-game::{setup, session, drive, hud, panels}` | done (plan 6 task 8) | `deathmatch_session_ends_with_results`, `rematch_starts_without_the_last_ticks_events`, `bots_think_within_frame_budget`, `replay_session_matches_recorded_checksums`, `scoreboard_hides_when_the_window_loses_focus`; the user's playtest |
 | Settings and profiles files (spec §9.4, §21 G2): versioned RON in the platform data directory, atomic writes, bad or newer files set aside as `.bak` with defaults and a warning | OLX's `cfg/options.cfg` (`src/client/Options.cpp`) and `cfg/players.dat` (`src/client/ProfileSystem.cpp`), laid out anew | `rl-ui::{store, settings, profiles, match_prefs}` | done (plan 7 task 1) | `bad_user_files_fall_back_to_defaults_and_keep_a_backup`, `settings_round_trip_and_version` |
 | Menus (§21 G1): main menu, local play (mod, level grid with thumbnails, OLX's Deathmatch options and their ranges, bots, the profile), the replays list, the screen state machine; starts that fail return to the menu | `src/client/DeprecatedGUI/Menu_Main.cpp`, `Menu_Local.cpp`, `src/common/FeatureList.cpp:31-35` (laid out anew) | `rl-ui::{state, screens::{main, local_play, replays}, replays}`, `rl-game::shell` | done (plan 7 task 2) | `state_machine_navigates_and_emits_commands`, `main_to_local_play_to_match`, `local_play_builds_match_options`, `local_play_pickers_are_found_by_their_label`, `local_play_replaces_a_saved_selection_no_longer_imported`, `starting_with_missing_content_returns_to_menu`, `menu_actions_are_idempotent`, `replay_list_shows_header_problems`; the v0.1 acceptance runs (`docs/porting/acceptance-v0.1.md`) |
 | Profiles and the skin preview: create, edit, delete, select; name, colour, searchable skins; OLX's menu animation from the game's own colorization and frame cut; the human plays the profile's look, bots OLX's default skin in OLX's `cpuColours` | `src/client/DeprecatedGUI/Menu_Player.cpp:746`, `src/client/ProfileSystem.cpp:47-60`, `src/client/CGameSkin.cpp` | `rl-ui::{profiles, skin_preview, screens::profiles}`, `rl-content::skin_sprite`, `rl-game::shell` | done (plan 7 task 3; bot colours task 5) | `profile_edits_persist`, `profile_names_are_validated`, `skin_preview_uses_colorization_like_the_game`, `the_profiles_screen_gets_its_preview_textures`, `a_menu_match_plays_the_selected_profile_look` |
-| Options (§21 G3): window presets and fullscreen through the paced path, VSync, filter, interpolation, UI scale; volumes live; key and gamepad rebinding with explicit conflicts, never leaving an action unreachable; the default match | `src/client/DeprecatedGUI/Menu_Options.cpp`, `src/client/Options.cpp:45-73` (laid out anew) | `rl-ui::screens::{options, keys}`, `rl-input::Capture`, `rl-game::{video, window}` | done (plan 7 task 4) | `rebinding_never_leaves_an_action_unreachable`, `options_rebind_a_key`, `options_set_video_audio_and_gameplay`, `video_changes_go_through_the_paced_path`, `volume_changes_apply_live`, `the_saved_window_opens_with_the_flags_on_top_unsaved`; e2e (`fixtures/autoplay/menus.ron`: quick window-size changes) |
+| Options (§21 G3): window presets and fullscreen through the paced path, VSync, filter, interpolation, UI scale; volumes live; key and gamepad rebinding with explicit conflicts, never leaving an action unreachable (the match is set up in local play only) | `src/client/DeprecatedGUI/Menu_Options.cpp`, `src/client/Options.cpp:45-73` (laid out anew) | `rl-ui::screens::{options, keys}`, `rl-input::Capture`, `rl-game::{video, window}` | done (plan 7 task 4) | `rebinding_never_leaves_an_action_unreachable`, `options_rebind_a_key`, `options_set_video_and_audio`, `video_changes_go_through_the_paced_path`, `volume_changes_apply_live`, `the_saved_window_opens_with_the_flags_on_top_unsaved`; e2e (`fixtures/autoplay/menus.ron`: quick window-size changes) |
 | Window changes on Wayland (v0.1 playtest; no OLX equivalent): a size or mode change makes the window again at its new shape on the same device, so WSLg leaves no stale frame; X11 changes it in place | — | `rl-game::{window, gpu, app}` (`Plan`, `Shape`, `Gpu::rebind`, `App::recreate`) | done | `a_shape_says_when_the_window_shows_a_change`, `wayland_makes_the_window_again`, `a_window_made_again_keeps_the_game_ticking`; real-screen captures under WSLg (1280 × 720 → 1920 × 1080 → back; the desktop's size → fullscreen → back) and the options' autoplay on Wayland |
 | Weapon selection (§21 G4): the profile's slots by name, `findEnabledWeapon`, left/right over the enabled weapons (×6 with Select weapon), Random, Done on Fire's release, skipped with one weapon or none; the choice in `MatchOptions` and the replay | `src/common/CWormHuman.cpp:702-1000`, `src/common/CWorm.cpp:788-844` | `rl-ui::{weapon_select, screens::weapon_select}`, `rl-content::Player::HumanWith`, `rl-game::shell` | done (plan 7 task 5) | `weapon_selection_respects_restrictions`, `a_refused_choice_leaves_the_match_playable` |
-| HUD and minimap (§21 G5, Modern only): health, five weapon slots with OLX's bar states, kill feed, clock and kill limit, Tab's scoreboard, minimap (OLX's proportions, colours and dots, plus the view rectangle) | `src/client/CClient_Draw.cpp` (HUD, `drawOnMiniMap`), `docs/porting/olx-notes/presentation.md` §2.4, §9 | `rl-ui::hud`, `rl-game::hud` | done (plan 7 task 5) | `hud_layout_holds_at_all_scales`, `hud_paints_at_every_scale`, `hud_fades_over_a_worm`, `hud_hides_the_weapons_during_the_selection`, `names_stay_inside_the_view`, `hud_snapshot_1080p`, `hud_snapshot_1440p_with_scores` (GPU tier) |
+| HUD and minimap (§21 G5, Modern only): an opaque bar along the bottom (OLX 0.58's status bar; deviation below) with health, five weapon slots with OLX's bar states, the minimap in the centre (OLX's proportions, colours and dots, plus the view rectangle) and the event log; clock and kill limit over the playfield, Tab's scoreboard; the game drawn above the bar | `src/client/CClient_Draw.cpp` (HUD, `:137-138` the local game's minimap, `:483-515` the bar (commented out at `d1ad953f`), `drawOnMiniMap`), `docs/porting/olx-notes/presentation.md` §2.4, §9 | `rl-ui::hud`, `rl-game::{hud, app, gpu}` | done (plan 7 task 5; the bar after the v0.1 playtest) | `hud_layout_holds_at_all_scales`, `hud_paints_at_every_scale`, `log_keeps_the_last_lines_oldest_first`, `the_playfield_is_the_window_above_the_bar`, `hud_hides_the_weapons_during_the_selection`, `names_stay_inside_the_view`, `hud_snapshot_1080p`, `hud_snapshot_1440p_with_scores` (GPU tier) |
 | Pause and results: Esc's pause menu (no tick while paused), the results after `GAMEOVER_WAIT` with OLX's columns plus score, deaths and suicides; Rematch, Save replay, Back to menu | `src/client/CClient_Draw.cpp:1840-1897` | `rl-ui::screens::{ingame, results}`, `rl-game::shell` | done (plan 7 task 5) | `pause_stops_ticks_and_replays_stay_valid`, `pause_menu_holds_the_game_and_opens_the_options`, `results_match_world_scores`, `results_show_the_columns_and_their_buttons`, `save_replay_once_per_match` |
 | Level thumbnails (§21 G6, narrowed): `thumb.png` per level pack (160 × 96, box-filtered, letterboxed), pack format 4, left out of the content hash; decoded lazily and bounded in the menus | `src/game/Level.cpp:33-44` (`minimapForLevel`) | `rl-import-gfx`, `rl-pack`, `rl-ui::screens::local_play` | done (plan 7 task 6) | `thumbnails_are_imported_for_every_level`, `thumbnails_are_letterboxed_to_a_fixed_size`, `thumbnails_average_the_art`, `thumbnails_decode_lazily_and_bounded` |
 | About (§21 G9): credits (Liero, Liero Xtreme, the OpenLieroX team), licenses, each pack's recorded origin | `src/client/DeprecatedGUI/Menu_Main.cpp:276-283` | `rl-ui::screens::about` | done (plan 7 task 6) | `about_credits_the_authors_and_the_licenses` |
@@ -405,7 +405,9 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   or last gamepad input (a hand-edited file that leaves one without gets
   OLX's default back, with a warning), and the game's own keys (Esc, F2,
   F5, Tab, H; PageUp and PageDown since task 8) cannot be bound. Capture is OLX's "Input for:" box (Esc
-  cancels). Gameplay holds the match local play starts with.
+  cancels). The match is set up in local play only, before each game (it
+  remembers the last); the options have no Gameplay tab (removed after the
+  v0.1 playtest: it edited the same settings).
 - **In game** (`rl-ui`, `rl-game`, plan 7 task 5). *Weapon selection:*
   OLX's dialog (`CWormHuman.cpp:702-1000`: the profile's slots by name, an
   unenabled one replaced by `findEnabledWeapon`, left/right over the enabled
@@ -416,21 +418,39 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   in `MatchOptions`, so the replay's setup holds it). OLX's stick
   auto-repeat (0.4 s, then 0.12 s) applies to held keys too. A rematch from
   the results chooses again (OLX's selection at each game); F5's in-place
-  rematch keeps the weapons. *HUD (Modern):* laid out anew for wide screens
-  (health and five weapon rows bottom left, clock and kill limit top
-  centre, kill feed top left, minimap top right) in OLX's colours (health
-  `(64,255,64)`, weapon bar states, lives/kills, weapon label `#02bff6`);
-  it shrinks to half size on small screens rather than overlap. OLX keeps
-  its HUD outside the playfield; ours lies over it, so the minimap and the
-  health and weapons panel fade to 25 % (150 ms, eased) while a worm, with
-  a margin of its size, is under them (final review of plan 7). No weapon
+  rematch keeps the weapons. *HUD bar* (the user's ruling after the v0.1
+  playtest, replacing the overlay HUD of plan 7 task 5): an opaque status
+  bar along the bottom of the window, as OLX 0.58's local game drew one
+  under its viewports (`CClient_Draw.cpp:483-515`, its background
+  `DrawRectFill(0, 382, 640, 480)`, kept there commented out;
+  `:137-138` the minimap at 255, 382 of 640 × 480: centred, in the bar).
+  The commit we port, `d1ad953f`, instead puts a single player's minimap
+  top right over a full-height viewport (`CClient_Draw.cpp:610-650`): a
+  deliberate deviation. Left the health and five weapon rows, centre the
+  minimap, right the event log (OLX's kill messages, the last 64 kept,
+  the newest that fit shown; OLX's local chat showed 6 for 3 s over the
+  playfield; built as a log of typed lines so a multiplayer chat can join
+  it), in OLX's colours (health `(64,255,64)`, weapon bar states,
+  lives/kills, weapon label `#02bff6`). The bar is 150 points high (it
+  follows the UI scale), its parts within a centred 1600 points; on a
+  screen under 640 × 360 points everything shrinks to half size, the
+  minimap before the log. The game is drawn in the playfield above the
+  bar, never under it (`rl-game`: `app::bar_pixels`, `playfield`); the
+  view keeps E4's 240 world pixels of height and 16:9 at most, so a
+  playfield wider than 16:9 (a 16:9 window less the bar) shows the
+  picture centred with black at its sides, where OLX 0.58's 640 × 382
+  viewport showed 191 world pixels of height. The clock and kill limit
+  stay top centre over the playfield, the keys top right; the weapon
+  selection, the pause menu and the results are centred over the
+  playfield. Nothing fades (the overlay HUD faded where a worm was under
+  it; the bar covers no playfield). No weapon
   rows show during the weapon selection; worm names stay inside the
   picture and are not drawn through the selection, the pause menu or the
   results.
   *Minimap:* OLX's 119 × 94 proportions and half opacity, box-filtered
   from the colour terrain at twice OLX's resolution, refreshed every 10
-  ticks (OLX updates edited areas at once), scaled up to 1.5 × (it lies
-  over the playfield); worm dots as `drawOnMiniMap` (2 × 2, the human 3 × 3, OLX's
+  ticks (OLX updates edited areas at once), scaled up to 1.5 × (as tall
+  as the bar allows); worm dots as `drawOnMiniMap` (2 × 2, the human 3 × 3, OLX's
   blink), plus the camera's view as a rectangle, which OLX does not draw.
   *Pause:* Resume, Options (the match stays paused) and Quit to menu; no
   tick runs while paused or during the weapon selection, so replays hold

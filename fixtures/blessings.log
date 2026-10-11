@@ -22,3 +22,6 @@
 2026-10-11 bless-render: final review fix: minimap scale capped at 1.5 (MAX_MINIMAP), HUD fades over worms
   fixtures/ui/hud-1080p.png
   fixtures/ui/hud-1440p.png
+2026-10-11 bless-render: HUD bar: an opaque status bar along the bottom (health and weapons, the minimap centred, the event log), the user's ruling after the v0.1 playtest
+  fixtures/ui/hud-1080p.png
+  fixtures/ui/hud-1440p.png

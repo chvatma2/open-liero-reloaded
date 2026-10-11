@@ -105,6 +105,18 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   otherwise takes the first adapter Windows lists, often the CPU's
   integrated GPU. WSLg presents through GL at the
   compositor's 60 Hz with FIFO only.
+- **Playfield** (`app.rs`, the HUD bar after the v0.1 playtest): the
+  game is drawn above the HUD's opaque bar, never under it.
+  `bar_pixels(size, ppp)` is `rl_ui::hud::bar_height` in pixels at the
+  display's scale times the UI scale (egui's zoom), worked out every
+  frame; `playfield(size, bar)` is the window above it. The view
+  (`viewport`, spec §19 E4: 240 world pixels high, at most 16:9) is the
+  playfield's, set again when the bar's height changes (a UI scale, a
+  resize); `Gpu::bar` makes `Gpu::draw` render the world into the
+  playfield (`Renderer::render` with the playfield's size: the upscale
+  pass places the picture there, black around it), the egui overlay
+  paints the bar over the rest; the names' `ScreenMap` uses the same
+  rectangle. `rl-render` is unchanged (its goldens too).
 - **Loop** (`app.rs`): each frame first acquires the surface texture
   (`Gpu::acquire`), so a VSync wait comes before the input is read, not
   between reading and drawing it. Then `TickClock` (`clock.rs`) runs the
@@ -171,12 +183,14 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   design). The recording ends `RECORD_AFTER_END` (3 s) after the game over
   or at `MAX_TICKS`; `--record f` saves it at exit and on each rematch
   (`f`, `f-2`, ... : `drive::record_path`).
-- **Match HUD** (`rl_ui::hud`, Modern; `hud::view(session, &Frame)` builds its `HudView` from
-  the session and the frame: the worms on screen, `worms_on_screen`, at
-  `WORM_SIZE`, which the minimap and the panel fade over; no weapon rows
+- **Match HUD** (`rl_ui::hud`, an opaque bar along the bottom;
+  `hud::view(session, &Frame)` builds its `HudView` from
+  the session and the frame; no weapon rows
   while the selection is open, `Shell::selecting`, the world's being a
-  placeholder until Done): names ("You", "Bot N"; a replay's "Worm N"), the kill feed
-  from `Message` events (OLX's texts, the last 6 lines for 3 s; kills show
+  placeholder until Done): names ("You", "Bot N"; a replay's "Worm N",
+  over the worms on screen: `worms_on_screen`), the event log
+  (`Session::log`, an `rl_ui::hud::Log`) from `Message` events (OLX's
+  texts, the last 64 lines; kills show
   no weapon: `rl-sim` does not record the injuring weapon, and OLX drops
   `" with <weapon>"` then), the time-limit clock (red in the last 10 s; it
   stops at the end, as `Deathmatch::time_left_ms` does) and kill limit,

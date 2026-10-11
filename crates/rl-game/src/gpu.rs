@@ -79,6 +79,9 @@ pub struct Gpu {
     uncapped: bool,
     state: SurfaceState,
     pub renderer: Renderer,
+    /// The pixels at the bottom the HUD's bar takes (`app::bar_pixels`):
+    /// the world is drawn above them, never under the opaque bar.
+    pub bar: u32,
     egui: egui_wgpu::Renderer,
     /// The adapter, backend and present mode, for logs and the debug panel.
     pub info: String,
@@ -172,6 +175,7 @@ impl Gpu {
             uncapped,
             state,
             renderer,
+            bar: 0,
             egui,
             info,
         })
@@ -298,7 +302,8 @@ impl Gpu {
         PresentTiming { acquire: acquired.wait, present: t1.elapsed() }
     }
 
-    /// The world (none: black), then the overlay over it, into `view`.
+    /// The world (none: black) above the HUD's bar, then the overlay over
+    /// it, into `view`.
     fn draw(
         &mut self,
         list: Option<&DrawList>,
@@ -307,7 +312,8 @@ impl Gpu {
         size: (u32, u32),
     ) {
         if let Some(list) = list {
-            self.renderer.render(list, view, size);
+            // The playfield: the window above the HUD's bar.
+            self.renderer.render(list, view, crate::app::playfield(size, self.bar));
         }
         let load = if list.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color::BLACK) };
         let (device, queue) = (self.renderer.device().clone(), self.renderer.queue().clone());

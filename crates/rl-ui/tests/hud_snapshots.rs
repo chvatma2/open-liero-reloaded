@@ -1,4 +1,4 @@
-//! Image snapshots of the Modern HUD (plan 7 task 5) at 1080p and 1440p,
+//! Image snapshots of the HUD bar (plan 7 task 5) at 1080p and 1440p,
 //! rendered by egui's wgpu renderer (`egui_kittest`, its software adapter
 //! preferred) and compared with `fixtures/ui/hud-*.png`. They need a
 //! graphics adapter: the GPU tier (`cargo xtask full`, `RL_GPU_TESTS`)
@@ -7,7 +7,7 @@
 
 use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
 use egui_kittest::{Harness, SnapshotOptions};
-use rl_ui::hud::{self, Bar, Dot, HudView, MinimapView, Notice, Row, SlotHud, WormHud, minimap};
+use rl_ui::hud::{self, Bar, Dot, HudView, LogLine, MinimapView, Notice, Row, SlotHud, WormHud, minimap};
 
 /// The accepted snapshots, from the crate's directory.
 const DIR: &str = "../../fixtures/ui";
@@ -66,7 +66,15 @@ fn view(texture: egui::TextureId, scores: bool) -> HudView {
             current: 1,
             status: None,
         }),
-        feed: vec!["Bot 1 killed OpenLieroXor".into(), "OpenLieroXor drew first blood".into()],
+        log: [
+            "Bot 2 killed Bot 1",
+            "OpenLieroXor drew first blood",
+            "Bot 1 killed OpenLieroXor",
+            "Bot 2 is on a killing spree!",
+        ]
+        .into_iter()
+        .map(LogLine::event)
+        .collect(),
         time_left_ms: Some(83_000),
         kill_limit: Some(15),
         notices: vec![Notice { text: "Replay 12.0 s / 90.0 s".into(), warn: false }],
@@ -86,9 +94,6 @@ fn view(texture: egui::TextureId, scores: bool) -> HudView {
         }),
         game_over: false,
         hint: Some("Tab scores   F2 debug   F5 rematch   Esc pause".into()),
-        top_left_reserved: 0.0,
-        worms: Vec::new(),
-        worm_size: 0.0,
     }
 }
 

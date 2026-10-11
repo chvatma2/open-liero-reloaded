@@ -8,6 +8,19 @@ All notable changes to rust-liero are recorded here. The format follows
 
 ### Changed
 
+- The menus are centred: every screen the main menu opens is one column in
+  the middle of the window, its title on top, its sections in panels and
+  its main button (Start, Import) large and centred at the bottom. Local
+  Play shows the map on the left and the match and players on the right,
+  with "Reset the match to OLX's settings".
+- The options have no Gameplay tab: the match is set up in Local Play
+  before each game (it remembers the last one), and the tab edited the
+  same settings.
+- The in-game HUD is an opaque bar along the bottom, as OLX 0.58's local
+  game had: health and weapons on the left, the minimap in the centre, a
+  log of kills, deaths and the match's messages on the right. The game is
+  drawn above the bar, never under it, and nothing fades any more. The
+  clock stays top centre, the keys top right.
 - The options' Video section has one Display list: a 1280 × 720,
   1600 × 900 or 1920 × 1080 window, or borderless fullscreen. The
   desktop-sized window is gone (its bottom sat under the taskbar); a saved

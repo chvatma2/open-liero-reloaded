@@ -152,11 +152,8 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
         minimap: o.minimap,
         time: o.time,
         menus: o.menus,
-        debug: o.debug,
         speed: o.speed.as_deref(),
         selecting: o.selecting,
-        worms: worms.iter().map(|&(_, at)| at).collect(),
-        worm_size: crate::hud::WORM_SIZE * k,
     };
     let hud = crate::hud::view(s, &frame);
     rl_ui::hud::show(ui, &hud);

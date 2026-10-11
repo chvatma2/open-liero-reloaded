@@ -1,4 +1,4 @@
-//! In game (plan 7 task 5): the HUD's layout at every UI scale (Review
+//! In game (plan 7 task 5): the HUD bar's layout at every UI scale (Review
 //! Focus 5), OLX's weapon selection, the pause menu with the options, the
 //! results' buttons, and Esc and F5 that ignore key repeat.
 
@@ -18,6 +18,12 @@ fn overlap(a: Rect, b: Rect) -> bool {
     i.width() > 0.0 && i.height() > 0.0
 }
 
+/// The HUD is a bar along the bottom (OLX 0.58's status bar, the user's
+/// ruling after the v0.1 playtest): the health and weapons on its left,
+/// the minimap in its centre, the event log on its right; the playfield
+/// is the window above it, with the clock top centre and the keys top
+/// right. Nothing overlaps and each part fits, at every window size and UI
+/// scale (Review Focus 5).
 #[test]
 fn hud_layout_holds_at_all_scales() {
     // 16:9, 21:9 and 32:9 windows from the smallest preset up, at every
@@ -43,31 +49,45 @@ fn hud_layout_holds_at_all_scales() {
         let screen = Rect::from_min_size(Pos2::ZERO, vec2(w, h));
         let l = HudLayout::new(screen);
         let at = format!("{w}x{h} points: {l:?}");
-        for (name, r) in
-            [("health", l.health), ("weapons", l.weapons), ("minimap", l.minimap), ("clock", l.clock)]
-        {
-            assert!(screen.contains_rect(r), "{name} leaves the screen at {at}");
+        // The bar spans the bottom; the playfield is the rest, above it.
+        assert_eq!((l.bar.left(), l.bar.right(), l.bar.bottom()), (0.0, w, h), "{at}");
+        assert_eq!(l.playfield, Rect::from_min_max(Pos2::ZERO, Pos2::new(w, l.bar.top())), "{at}");
+        assert!(l.playfield.height() >= h * 0.35, "the playfield keeps most of the window at {at}");
+        if h >= 600.0 {
+            assert!(l.bar.height() <= h * 0.25, "the bar is no taller than a quarter at {at}");
+        }
+        let parts = [("health", l.health), ("weapons", l.weapons), ("minimap", l.minimap), ("log", l.log)];
+        for (name, r) in parts {
+            assert!(l.bar.contains_rect(r), "{name} leaves the bar at {at}");
             assert!(r.width() >= 16.0 && r.height() >= 8.0, "{name} too small at {at}");
         }
+        for (i, (a, ra)) in parts.iter().enumerate() {
+            for (b, rb) in &parts[i + 1..] {
+                assert!(!overlap(*ra, *rb), "{a} over {b} at {at}");
+            }
+        }
+        assert!(!overlap(l.panel(), l.minimap) && !overlap(l.panel(), l.log), "{at}");
         assert!(l.weapons.height() >= MAX_SLOTS as f32 * 8.0, "weapon rows at {at}");
-        // Nothing hides the health or the weapons.
-        for (name, r) in [("minimap", l.minimap), ("clock", l.clock), ("feed", l.feed)] {
-            assert!(!overlap(l.health, r), "{name} over the health at {at}");
-            assert!(!overlap(l.weapons, r), "{name} over the weapons at {at}");
+        assert!(l.log.height() >= l.line, "the log shows a line at {at}");
+        assert!(l.log.width() >= 48.0, "the log has room at {at}");
+        // The minimap keeps OLX's proportions and sits in the centre when
+        // there is room.
+        let aspect = l.minimap.width() / l.minimap.height();
+        assert!((aspect - 119.0 / 94.0).abs() < 0.01, "{aspect} at {at}");
+        if w >= 1000.0 {
+            assert!((l.minimap.center().x - w / 2.0).abs() < 0.5, "the minimap is centred at {at}");
         }
-        assert!(!overlap(l.health, l.weapons), "health over weapons at {at}");
+        assert!(l.minimap_scale() <= rl_ui::hud::MAX_MINIMAP + 1e-4, "{at}");
+        // Over the playfield: the clock top centre, the keys top right.
+        assert!(l.playfield.contains_rect(l.clock), "the clock leaves the playfield at {at}");
+        assert!(l.clock.width() >= 16.0, "{at}");
         if let Some(hint) = l.hint {
-            assert!(screen.contains_rect(hint));
-            assert!(
-                !overlap(hint, l.health) && !overlap(hint, l.weapons) && !overlap(hint, l.minimap),
-                "{at}"
-            );
+            assert!(l.playfield.contains_rect(hint) && !overlap(hint, l.clock), "{at}");
         }
-        assert!(
-            !overlap(l.minimap, l.clock) && !overlap(l.feed, l.minimap) && !overlap(l.feed, l.clock),
-            "{at}"
-        );
-        assert!(l.feed.height() <= 0.0 || screen.contains_rect(l.feed), "feed leaves the screen at {at}");
+        if w >= 1000.0 {
+            assert!(l.hint.is_some(), "the keys show on a big screen at {at}");
+            assert!((l.clock.center().x - w / 2.0).abs() < 0.5, "the clock is centred at {at}");
+        }
         assert!(l.text > 0.0 && l.text.is_finite(), "{at}");
     }
     // No size panics: a window of no size (minimised), or not a number.
@@ -425,7 +445,7 @@ fn buttons_stay_on_a_small_screen() {
 /// (Review Focus 5; the image snapshots run in the GPU tier only).
 #[test]
 fn hud_paints_at_every_scale() {
-    use rl_ui::hud::{Bar, Dot, HudView, MinimapView, SlotHud, WormHud};
+    use rl_ui::hud::{Bar, Dot, HudView, LogLine, MinimapView, SlotHud, WormHud};
     let slot = SlotHud { name: "Super Shotgun".into(), charge: 0.4, bar: Bar::Reloading };
     let view = HudView {
         worm: Some(WormHud {
@@ -440,7 +460,7 @@ fn hud_paints_at_every_scale() {
             current: 9,
             status: Some("Dead: Jump to respawn".into()),
         }),
-        feed: vec!["A killed B".into(); 8],
+        log: vec![LogLine::event("A killed B"); 80],
         time_left_ms: Some(9_000),
         kill_limit: Some(15),
         scoreboard: Some(results().rows),
@@ -453,7 +473,6 @@ fn hud_paints_at_every_scale() {
         }),
         game_over: true,
         hint: Some("Tab scores   F2 debug   F5 rematch   Esc pause".into()),
-        top_left_reserved: 130.0,
         ..HudView::default()
     };
     for (w, h) in [(1280.0, 720.0), (1920.0, 1080.0), (2560.0, 1440.0), (3440.0, 1440.0)] {
@@ -521,55 +540,4 @@ fn rematch_shows_loading() {
     h.run();
     h.get_by_label("Loading…");
     assert!(h.query_by_label("Back to menu").is_none(), "nothing to press while it loads");
-}
-
-/// The HUD never hides a worm for long (the final review's Important 1):
-/// a worm under the minimap or the bottom-left panel, or within a worm's
-/// size of it, fades that part to `FADED` over `FADE_SECONDS`, eased, and
-/// back when it leaves; with no worm near, everything is opaque. The
-/// minimap's scale is capped at `MAX_MINIMAP`, so it takes less of a
-/// small window.
-#[test]
-fn hud_fades_over_a_worm() {
-    use rl_ui::hud::{Covered, FADE_SECONDS, FADED, HudFade, MAX_MINIMAP};
-    for (w, h) in [(1280.0, 720.0), (1920.0, 1080.0), (2560.0, 1440.0), (640.0, 360.0)] {
-        let l = HudLayout::new(Rect::from_min_size(Pos2::ZERO, vec2(w, h)));
-        assert!(l.minimap_scale() <= MAX_MINIMAP + 1e-4, "{w}x{h}: {}", l.minimap_scale());
-    }
-    const { assert!(MAX_MINIMAP <= 1.5) };
-    let l = HudLayout::new(Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 720.0)));
-    let size = 20.0;
-    assert_eq!(l.covered(&[], size), Covered::default(), "no worm");
-    assert_eq!(l.covered(&[l.screen.center()], size), Covered::default(), "a worm mid-screen");
-    let under = l.covered(&[l.minimap.center()], size);
-    assert_eq!(under, Covered { minimap: true, panel: false });
-    let near = l.covered(&[Pos2::new(l.minimap.left() - size, l.minimap.center().y)], size);
-    assert!(near.minimap, "within a worm's size of the minimap");
-    let off = l.covered(&[Pos2::new(l.minimap.left() - 3.0 * size, l.minimap.center().y)], size);
-    assert!(!off.minimap, "well clear of it");
-    assert_eq!(l.covered(&[l.weapons.center()], size), Covered { minimap: false, panel: true });
-    assert_eq!(l.covered(&[l.health.left_top()], size), Covered { minimap: false, panel: true });
-
-    let mut fade = HudFade::default();
-    let o = fade.update(Covered::default(), 0.0);
-    assert_eq!((o.minimap, o.panel), (1.0, 1.0), "no worm: full opacity");
-    let o = fade.update(under, 1.0);
-    assert_eq!(o.minimap, 1.0, "the fade starts now");
-    let half = fade.update(under, 1.0 + FADE_SECONDS / 2.0).minimap;
-    assert!(FADED < half && half < 1.0, "half way: {half}");
-    let quarter = fade.update(under, 1.0 + FADE_SECONDS / 4.0).minimap;
-    assert!(half < quarter, "eased, monotonic");
-    let o = fade.update(under, 1.0 + FADE_SECONDS);
-    assert_eq!((o.minimap, o.panel), (FADED, 1.0), "the minimap faded, the panel not");
-    assert_eq!(fade.update(under, 5.0).minimap, FADED, "stays faded while the worm is under it");
-    // The worm leaves half way back: the fade turns from where it is.
-    fade.update(Covered::default(), 6.0);
-    let back = fade.update(Covered::default(), 6.0 + FADE_SECONDS / 2.0).minimap;
-    assert!(FADED < back && back < 1.0, "{back}");
-    let turned = fade.update(under, 6.0 + FADE_SECONDS / 2.0).minimap;
-    assert_eq!(turned, back, "no jump when it turns");
-    fade.update(Covered::default(), 9.0);
-    assert!(fade.moving(9.0 + FADE_SECONDS / 2.0));
-    assert_eq!(fade.update(Covered::default(), 20.0).minimap, 1.0, "opaque again");
-    assert!(!fade.moving(20.0));
 }

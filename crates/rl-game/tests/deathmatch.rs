@@ -75,9 +75,9 @@ fn deathmatch_session_ends_with_results() {
     assert_eq!(r.time_left_ms, Some(0));
     assert_eq!(clock(s.time_left_ms.unwrap()), "0:00");
     assert!(
-        s.feed.all().any(|l| l == "Timelimit has been reached"),
+        s.log.texts().any(|l| l == "Timelimit has been reached"),
         "{:?}",
-        s.feed.all().collect::<Vec<_>>()
+        s.log.texts().collect::<Vec<_>>()
     );
     assert_eq!(s.tally.matches_ended, 1);
     // The world plays on (the physics stops 3 s later); the end stays.
@@ -94,7 +94,7 @@ fn deathmatch_session_ends_with_results() {
     assert_eq!(played.ticks() as u64, t + rl_game::drive::RECORD_AFTER_END);
     assert_eq!((s.rematches, s.ticks(), s.results.as_ref()), (1, 0, None));
     assert_eq!(s.time_left_ms, Some(15_000));
-    assert_eq!(s.feed.all().count(), 0);
+    assert_eq!(s.log.texts().count(), 0);
     assert_ne!(s.world.worms()[0].pos, first.worms()[0].pos, "another seed, other spawns");
     s.tick(Keys(0));
     assert!(s.world.result().is_none());

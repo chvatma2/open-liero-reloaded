@@ -1,14 +1,21 @@
 //! Where the HUD's parts go on a screen of any size and UI scale (Review
-//! Focus 5): the health and the weapons bottom left, the minimap top right
-//! (OLX's single-player corner, `CClient_Draw.cpp:611-617`), the clock top
-//! centre, the kill feed top left (OLX's `LocalChatX/Y`), the keys bottom
-//! right. Nothing ever covers the health or the weapons: on a small screen
-//! the parts shrink (down to half size), the minimap first, then the feed
-//! loses lines and the keys go.
+//! Focus 5). The HUD is an opaque bar along the bottom of the window, as
+//! OLX 0.58's local game drew its status bar under the viewports
+//! (`CClient_Draw.cpp:483-515` its background, commented out at
+//! `d1ad953f`; `:137-138` the minimap at
+//! 255, 382 of 640 × 480: centred, in the bar); the user's ruling after the
+//! v0.1 playtest. In the bar: the health and the weapons on the left, the
+//! minimap in the centre, the event log (kills, deaths, the mode's
+//! messages; a multiplayer chat later) at the right edge. The playfield is the
+//! window above the bar: the game draws its picture there, never under the
+//! bar. Over the playfield: the clock top centre, the keys top right.
+//!
+//! The bar is [`BAR_FULL`] points high (the UI scale is egui's zoom, so it
+//! grows with the scale). On a screen smaller than 640 × 360 points the
+//! whole HUD shrinks, down to half size; on a narrow one the minimap
+//! shrinks before the log gets narrower than its least.
 
 use egui::{Pos2, Rect, Vec2, pos2, vec2};
-
-use super::model::FEED_LINES;
 
 /// OLX's local-game minimap, in its pixels (`MinimapW`/`MinimapH` of
 /// `data/frontend/frontend.cfg` `[LocalGameInterface]`,
@@ -22,8 +29,7 @@ const FULL: Vec2 = vec2(640.0, 360.0);
 /// The smallest HUD size factor.
 const MIN_UNIT: f32 = 0.5;
 
-/// The largest minimap scale (OLX pixels to points): 178 × 141 points,
-/// so it takes little of a small window (it lies over the playfield).
+/// The largest minimap scale (OLX pixels to points): 178 × 141 points.
 pub const MAX_MINIMAP: f32 = 1.5;
 
 // Sizes at full size, in points.
@@ -35,10 +41,22 @@ const BAR_H: f32 = 18.0;
 const ROW_H: f32 = 18.0;
 const CLOCK_W: f32 = 200.0;
 const CLOCK_H: f32 = 26.0;
-const FEED_W: f32 = 460.0;
 const LINE_H: f32 = 17.0;
-const HINT_MIN_W: f32 = 360.0;
+const HINT_MIN_W: f32 = 300.0;
 const TEXT: f32 = 14.0;
+/// The log's least width (the minimap shrinks first) and its most (on a
+/// wide screen it keeps to the right edge).
+const LOG_MIN_W: f32 = 100.0;
+const LOG_MAX_W: f32 = 560.0;
+/// The bar's parts keep within this width, centred: on a wide screen they
+/// stay near the picture rather than in the window's corners.
+const CONTENT_MAX_W: f32 = 1600.0;
+
+/// The bar's contents' height at full size: the health and the weapons.
+const CONTENT_H: f32 = STATS_H + BAR_H + GAP + ROW_H * rl_sim::MAX_SLOTS as f32 + GAP;
+
+/// The bar's height at full size, in points (150).
+pub const BAR_FULL: f32 = CONTENT_H + 2.0 * MARGIN;
 
 /// The HUD's rectangles on one screen, in points.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -48,18 +66,22 @@ pub struct HudLayout {
     pub unit: f32,
     /// The body text size, in points.
     pub text: f32,
-    /// The kill feed's line height.
+    /// The log's line height.
     pub line: f32,
+    /// The bar along the bottom, the full width.
+    pub bar: Rect,
+    /// The window above the bar, where the game draws.
+    pub playfield: Rect,
     /// Lives and kills above the health bar.
     pub health: Rect,
     /// One row per weapon slot.
     pub weapons: Rect,
     pub minimap: Rect,
-    /// The time left and the kill limit.
+    /// The event log, whole lines.
+    pub log: Rect,
+    /// The time left and the kill limit, top centre over the playfield.
     pub clock: Rect,
-    /// The kill feed (no height: no room for a line).
-    pub feed: Rect,
-    /// The keys, when there is room.
+    /// The keys, top right over the playfield, when there is room.
     pub hint: Option<Rect>,
 }
 
@@ -76,64 +98,93 @@ impl HudLayout {
         let screen = Rect::from_min_size(origin, vec2(w, h));
         let k = (w / FULL.x).min(h / FULL.y).clamp(MIN_UNIT, 1.0);
         let (m, gap) = (MARGIN * k, GAP * k);
-        let at = |x: f32, y: f32| origin + vec2(x, y);
 
-        // Bottom left: the weapons, the health above them.
-        let panel_w = (PANEL_W * k).min((w - 2.0 * m).max(0.0));
+        let bar = Rect::from_min_max(pos2(origin.x, origin.y + h - BAR_FULL * k), screen.max);
+        let bar = bar.intersect(screen);
+        let playfield = Rect::from_min_max(origin, pos2(origin.x + w, bar.top()));
+        let inner = bar.shrink(m);
+        let inner_w = inner.width().min(CONTENT_MAX_W * k).max(0.0);
+        let inner = Rect::from_center_size(inner.center(), vec2(inner_w, inner.height().max(0.0)));
+
+        // Left: the weapons at the bottom, the health above them.
+        let panel_w = (PANEL_W * k).min(inner.width().max(0.0));
         let weapons_h = ROW_H * k * rl_sim::MAX_SLOTS as f32 + gap;
-        let weapons = Rect::from_min_size(at(m, h - m - weapons_h), vec2(panel_w, weapons_h));
+        let weapons =
+            Rect::from_min_size(pos2(inner.left(), inner.bottom() - weapons_h), vec2(panel_w, weapons_h));
         let health_h = (STATS_H + BAR_H) * k;
         let health = Rect::from_min_size(
             pos2(weapons.left(), weapons.top() - gap - health_h),
             vec2(panel_w, health_h),
         );
 
-        // Top right: the minimap at OLX's proportions, as large as fits
-        // beside the panel or above it.
-        let mut s = (w * 0.2 / MINIMAP_OLX.x).min(h * 0.26 / MINIMAP_OLX.y).min(MAX_MINIMAP);
-        let beside = (w - m - (health.right() - origin.x) - 2.0 * m) / MINIMAP_OLX.x;
-        if s > beside {
-            let above = (health.top() - origin.y - 2.0 * m) / MINIMAP_OLX.y;
-            s = s.min(beside.max(above));
-        }
-        let s = s.max(0.0);
+        // Centre: the minimap at OLX's proportions, as tall as the bar
+        // allows, narrower when the log would have less than its least.
+        let left = health.right() + 2.0 * m;
+        let log_min = LOG_MIN_W * k;
+        let room = (inner.right() - 2.0 * m - log_min - left).max(0.0);
+        let s = (inner.height() / MINIMAP_OLX.y).min(MAX_MINIMAP).min(room / MINIMAP_OLX.x).max(0.0);
         let mini = MINIMAP_OLX * s;
-        let minimap = Rect::from_min_size(at(w - m - mini.x, m), mini);
+        let x = (origin.x + w / 2.0 - mini.x / 2.0).clamp(left, (left + room - mini.x).max(left));
+        let minimap = Rect::from_min_size(pos2(x, inner.center().y - mini.y / 2.0), mini);
 
-        // Top centre: the clock, left of the minimap if it reaches it.
-        let clock_w = (CLOCK_W * k).min((minimap.left() - origin.x - 2.0 * m).max(0.0));
-        let clock_h = CLOCK_H * k;
-        let cx = (origin.x + w / 2.0).min(minimap.left() - m - clock_w / 2.0);
-        let clock = Rect::from_min_size(pos2(cx - clock_w / 2.0, origin.y + m), vec2(clock_w, clock_h));
-
-        // Top left: the feed, beside the clock, or below it when narrow,
-        // never down to the health.
+        // Right: the log, whole lines, bottom-aligned, at the right edge.
         let line = LINE_H * k;
-        let beside_w = clock.left() - origin.x - 2.0 * m;
-        let (top, width) = if beside_w >= 120.0 * k {
-            (origin.y + m, beside_w.min(FEED_W * k))
-        } else {
-            let top = clock.bottom() + m;
-            let right = if minimap.bottom() + m > top { minimap.left() - m } else { origin.x + w - m };
-            (top, (right - origin.x - m).min(FEED_W * k))
-        };
-        let room = (health.top() - m - top).max(0.0);
-        let lines = ((room / line).floor() as usize).min(FEED_LINES);
-        let feed = Rect::from_min_size(pos2(origin.x + m, top), vec2(width.max(0.0), line * lines as f32));
-
-        // Bottom right: the keys, beside the panel and below the minimap.
-        let hint_left = health.right() + 2.0 * m;
-        let hint = Rect::from_min_max(
-            pos2(hint_left, origin.y + h - m - line),
-            pos2(origin.x + w - m, origin.y + h - m),
+        let lines = (inner.height() / line).floor().max(0.0);
+        let log_left = (minimap.right() + 2.0 * m).max(inner.right() - LOG_MAX_W * k);
+        let log = Rect::from_min_max(
+            pos2(log_left, inner.bottom() - lines * line),
+            pos2(inner.right(), inner.bottom()),
         );
-        let hint = (hint.width() >= HINT_MIN_W * k && hint.top() > minimap.bottom() + m).then_some(hint);
 
-        HudLayout { screen, unit: k, text: TEXT * k, line, health, weapons, minimap, clock, feed, hint }
+        // Top centre of the playfield: the clock; top right (no further
+        // than the bar's parts): the keys.
+        let clock_w = (CLOCK_W * k).min((w - 2.0 * m).max(0.0));
+        let clock_h = (CLOCK_H * k).min(playfield.height());
+        let clock = Rect::from_min_size(
+            pos2(origin.x + w / 2.0 - clock_w / 2.0, origin.y + m.min(playfield.height() - clock_h)),
+            vec2(clock_w, clock_h),
+        );
+        let hint = Rect::from_min_max(
+            pos2(clock.right() + 2.0 * m, origin.y + m),
+            pos2((origin.x + w - m).min(inner.right()), origin.y + m + line),
+        );
+        let hint = (hint.width() >= HINT_MIN_W * k && playfield.contains_rect(hint)).then_some(hint);
+
+        HudLayout {
+            screen,
+            unit: k,
+            text: TEXT * k,
+            line,
+            bar,
+            playfield,
+            health,
+            weapons,
+            minimap,
+            log,
+            clock,
+            hint,
+        }
     }
 
     /// The minimap's scale: points per OLX minimap pixel.
     pub fn minimap_scale(&self) -> f32 {
         self.minimap.width() / MINIMAP_OLX.x
     }
+
+    /// The bottom-left panel as painted: the health and the weapons with
+    /// their frames.
+    pub fn panel(&self) -> Rect {
+        self.health.union(self.weapons).expand(2.0 * self.unit)
+    }
+
+    /// How many of the log's lines show.
+    pub fn log_lines(&self) -> usize {
+        if self.line > 0.0 { (self.log.height() / self.line).round() as usize } else { 0 }
+    }
+}
+
+/// The bar's height in points on a screen of `size` points (what the game
+/// leaves under its picture): [`HudLayout::new`]'s.
+pub fn bar_height(size: Vec2) -> f32 {
+    HudLayout::new(Rect::from_min_size(Pos2::ZERO, size)).bar.height()
 }

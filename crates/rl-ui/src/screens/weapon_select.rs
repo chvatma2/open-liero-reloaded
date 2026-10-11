@@ -30,11 +30,12 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
     let mut done = sel.on_keys(&menu, data.held, now);
     let moved = sel.row() != row_before;
     // The slots scroll on a small screen: Random and Done stay on it.
-    let room = (ui.ctx().content_rect().height() - AROUND_SLOTS).max(40.0);
+    let (field, offset) = super::playfield(ui.ctx());
+    let room = (field.height() - AROUND_SLOTS).max(40.0);
     let frame = egui::Frame::new().fill(Color32::from_black_alpha(215)).corner_radius(6.0).inner_margin(18.0);
-    egui::Area::new(egui::Id::new("weapon selection"))
-        .anchor(Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-        .show(ui.ctx(), |ui| {
+    egui::Area::new(egui::Id::new("weapon selection")).anchor(Align2::CENTER_CENTER, offset).show(
+        ui.ctx(),
+        |ui| {
             frame.show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     egui::ScrollArea::vertical().max_height(room).show(ui, |ui| {
@@ -84,7 +85,8 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
                     }
                 });
             });
-        });
+        },
+    );
     if done {
         let weapons = sel.slots();
         let names = weapons.iter().map(|&w| menu.name(w).to_string()).collect();

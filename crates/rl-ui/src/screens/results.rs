@@ -16,44 +16,40 @@ use crate::state::{Game, UiAction, UiState};
 /// title, winner, reason, buttons and message.
 const AROUND_TABLE: f32 = 190.0;
 
-/// The results panel, centred, with `footer` under the table (the menus'
+/// The results panel, centred over the playfield, with `footer` under the table (the menus'
 /// buttons, or the command line's keys).
 pub fn panel(ctx: &egui::Context, r: &Results, footer: impl FnOnce(&mut Ui)) {
-    let screen = ctx.content_rect();
-    egui::Area::new(egui::Id::new("results")).anchor(Align2::CENTER_CENTER, egui::vec2(0.0, 0.0)).show(
-        ctx,
-        |ui| {
-            egui::Frame::new()
-                .fill(Color32::from_black_alpha(200))
-                .corner_radius(6.0)
-                .inner_margin(12.0)
-                .show(ui, |ui| {
-                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                    ui.label(RichText::new("Game over").size(24.0).color(Color32::from_rgb(255, 200, 80)));
-                    let winner = r.winner.as_deref().unwrap_or("noone");
-                    ui.label(RichText::new(format!("Winner: {winner}")).size(18.0).color(Color32::WHITE));
-                    ui.label(RichText::new(format!("by {}", r.reason)).color(Color32::from_gray(190)));
-                    ui.add_space(6.0);
-                    // As wide as the table up to the screen's width (an
-                    // area's first width is too narrow for it): it
-                    // scrolls only on a small screen.
-                    let width = (screen.width() - 40.0).max(80.0);
-                    egui::ScrollArea::both()
-                        .max_height((screen.height() - AROUND_TABLE).max(24.0))
-                        .max_width(width)
-                        .min_scrolled_width(width)
-                        .show(ui, |ui| table(ui, &r.rows));
-                    ui.add_space(8.0);
-                    footer(ui);
-                });
-        },
-    );
+    let (screen, offset) = super::playfield(ctx);
+    egui::Area::new(egui::Id::new("results")).anchor(Align2::CENTER_CENTER, offset).show(ctx, |ui| {
+        egui::Frame::new().fill(Color32::from_black_alpha(200)).corner_radius(6.0).inner_margin(12.0).show(
+            ui,
+            |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                ui.label(RichText::new("Game over").size(24.0).color(Color32::from_rgb(255, 200, 80)));
+                let winner = r.winner.as_deref().unwrap_or("noone");
+                ui.label(RichText::new(format!("Winner: {winner}")).size(18.0).color(Color32::WHITE));
+                ui.label(RichText::new(format!("by {}", r.reason)).color(Color32::from_gray(190)));
+                ui.add_space(6.0);
+                // As wide as the table up to the screen's width (an
+                // area's first width is too narrow for it): it
+                // scrolls only on a small screen.
+                let width = (screen.width() - 40.0).max(80.0);
+                egui::ScrollArea::both()
+                    .max_height((screen.height() - AROUND_TABLE).max(24.0))
+                    .max_width(width)
+                    .min_scrolled_width(width)
+                    .show(ui, |ui| table(ui, &r.rows));
+                ui.add_space(8.0);
+                footer(ui);
+            },
+        );
+    });
 }
 
 pub(super) fn show(ui: &mut Ui, state: &UiState, data: &MenuData, out: &mut Vec<UiAction>) {
     let centred = |ui: &mut Ui, body: &mut dyn FnMut(&mut Ui)| {
         egui::Area::new(egui::Id::new("results"))
-            .anchor(Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .anchor(Align2::CENTER_CENTER, super::playfield(ui.ctx()).1)
             .show(ui.ctx(), |ui| body(ui));
     };
     if state.is_starting() {

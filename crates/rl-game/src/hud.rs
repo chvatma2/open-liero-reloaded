@@ -18,9 +18,6 @@ pub const RESULTS_AFTER: u64 = 300;
 /// good to the eye).
 pub const MINIMAP_TICKS: u64 = 10;
 
-/// The F2 panel's height: the kill feed starts below it.
-const DEBUG_PANEL: f32 = 130.0;
-
 /// OLX's `ShowScore`: the scoreboard shows while Tab is held. A window
 /// that loses focus with Tab held never gets the release, so losing focus
 /// hides it, as `rl-input` releases the game's keys then.
@@ -99,25 +96,17 @@ pub struct Frame<'a> {
     pub time: f64,
     /// Started from the menus: Esc pauses rather than quits.
     pub menus: bool,
-    /// F2's panel shows: the feed starts below it.
-    pub debug: bool,
     /// The fast-forward of a watched game (a replay, bots alone;
     /// `speed::shown`).
     pub speed: Option<&'a str>,
     /// The weapon selection is open: the world's weapons are a
     /// placeholder until Done, so the HUD shows none.
     pub selecting: bool,
-    /// The alive worms' centres on screen and a worm's size there, in
-    /// points: the minimap and the panel fade over them (`worms_on_screen`).
-    pub worms: Vec<Pos2>,
-    pub worm_size: f32,
 }
 
-/// A worm's size in world pixels (OLX's skin frame is 20 × 18).
-pub const WORM_SIZE: f32 = rl_content::SKIN_WIDTH as f32;
-
 /// The alive worms of `s` on screen (`map`), each with its index, drawn
-/// at `alpha` between the last two ticks (where the scene draws them).
+/// at `alpha` between the last two ticks (where the scene draws them):
+/// their names go there.
 pub fn worms_on_screen(s: &Session, map: &ScreenMap, alpha: f32) -> Vec<(usize, Pos2)> {
     let blend = Blend::new(s.present.scene.prev(), alpha, s.present.scene.options.interpolation);
     s.world
@@ -130,12 +119,12 @@ pub fn worms_on_screen(s: &Session, map: &ScreenMap, alpha: f32) -> Vec<(usize, 
 }
 
 /// What the HUD shows of `s` with frame `f`: the followed worm (0; no
-/// weapons during the selection), the feed, the clock and kill limit, a
-/// replay's progress, the fast-forward speed, the scoreboard while
-/// `scores`, the minimap ("Game Over" until the results show), the keys
-/// and the worms the HUD fades over.
+/// weapons during the selection), the event log, the clock and kill
+/// limit, a replay's progress, the fast-forward speed, the scoreboard
+/// while `scores`, the minimap ("Game Over" until the results show) and
+/// the keys.
 pub fn view(s: &Session, f: &Frame) -> HudView {
-    let Frame { view, scores, minimap, time, menus, debug, speed, .. } = *f;
+    let Frame { view, scores, minimap, time, menus, speed, .. } = *f;
     let mut worm = WormHud::of(&s.world, 0, &s.names, s.human());
     if let Some(w) = worm.as_mut().filter(|_| f.selecting) {
         w.slots.clear();
@@ -191,7 +180,7 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
     let hint = if menus { hint.replace("Esc quit", "Esc pause") } else { hint.to_string() };
     HudView {
         worm,
-        feed: s.feed.visible(s.ticks()).map(str::to_string).collect(),
+        log: s.log.lines().cloned().collect(),
         time_left_ms: s.time_left_ms,
         kill_limit: s.kill_limit(),
         notices,
@@ -199,9 +188,6 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
         minimap,
         game_over: s.results.is_some() && !s.results_shown(),
         hint: Some(hint),
-        top_left_reserved: if debug { DEBUG_PANEL } else { 0.0 },
-        worms: f.worms.clone(),
-        worm_size: f.worm_size,
     }
 }
 

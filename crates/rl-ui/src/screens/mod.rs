@@ -416,6 +416,15 @@ fn message(ui: &mut Ui, state: &UiState) {
     }
 }
 
+/// The playfield in game (the window above the HUD bar), and the offset
+/// of its centre from the window's: the in-game panels (weapons, pause,
+/// results) anchor there, centred over the picture.
+pub(crate) fn playfield(ctx: &egui::Context) -> (Rect, Vec2) {
+    let screen = ctx.content_rect();
+    let field = crate::hud::HudLayout::new(screen).playfield;
+    (field, field.center() - screen.center())
+}
+
 /// `key` went down this frame: a press, not a held key's repeat (egui's
 /// `key_pressed` counts repeats, which made a held Esc flicker the pause).
 pub(crate) fn pressed_once(ui: &Ui, key: Key) -> bool {

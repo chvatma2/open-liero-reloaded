@@ -89,14 +89,16 @@ Useful flags (`rl-game --help` lists them all):
   Left/Right the weapon, with Shift six at a time), **Random**, **Done**;
   the mouse works too. After the match (15 kills or 6 minutes by
   default), "Game Over", then the **results** (kills, deaths, suicides,
-  score): Rematch, Save replay, Back to menu.
+  score): Rematch, Save replay, Back to menu. In game, a bar along the
+  bottom shows your health and weapons (left), the minimap (centre) and
+  the log of kills and deaths (right); the game is drawn above it.
 - **Sandbox:** you and idle targets on a level, to try weapons.
 - **Profiles:** your name, colour and skin (all imported skins, searchable,
   with an animated preview); the one marked plays.
 - **Options:** Video (display: a 1280 × 720, 1600 × 900 or 1920 × 1080
   window, or borderless fullscreen; VSync or uncapped, upscale filter, interpolation, UI scale), Audio (master and effects volume), Keys
-  (any number of keys and gamepad inputs per action; Reset to OLX's keys),
-  Gameplay (the match local play starts with).
+  (any number of keys and gamepad inputs per action; Reset to OLX's keys).
+  The match is set up in Local Play, which remembers the last one.
 - **Replays:** every Deathmatch played from the menus (the last 20) and the
   ones you saved; click one to watch it.
 - **Import** (above) and **About** (credits, licenses, each pack's origin).

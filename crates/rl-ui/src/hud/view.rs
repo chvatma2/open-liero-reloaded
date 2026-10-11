@@ -4,7 +4,7 @@
 use egui::{Color32, Pos2, Rect, TextureId, Vec2};
 use rl_sim::World;
 
-use super::model::{Names, Row};
+use super::model::{LogLine, Names, Row};
 
 /// OLX's `WRM_OUT`: no lives left.
 const OUT: i32 = -1;
@@ -138,8 +138,9 @@ pub struct Notice {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct HudView {
     pub worm: Option<WormHud>,
-    /// The kill feed's visible lines, oldest first.
-    pub feed: Vec<String>,
+    /// The event log's lines, oldest first: the bar shows the newest
+    /// that fit.
+    pub log: Vec<LogLine>,
     /// The time-limit clock, if the match has a limit.
     pub time_left_ms: Option<u64>,
     /// The kill limit, if on.
@@ -150,14 +151,6 @@ pub struct HudView {
     pub minimap: Option<MinimapView>,
     /// The match ended and its results do not show yet.
     pub game_over: bool,
-    /// The keys, bottom right, where there is room.
+    /// The keys, top right over the playfield, where there is room.
     pub hint: Option<String>,
-    /// Space left at the top-left for another panel (the F2 counters), in
-    /// points: the feed starts below it.
-    pub top_left_reserved: f32,
-    /// The alive worms' centres on screen, in points: the minimap and the
-    /// bottom-left panel fade while one is under them (`fade.rs`).
-    pub worms: Vec<Pos2>,
-    /// A worm's size on screen, in points (the margin around each too).
-    pub worm_size: f32,
 }

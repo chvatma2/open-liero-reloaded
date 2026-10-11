@@ -1,18 +1,19 @@
 //! What the match HUD says (spec §8.3; OLX's HUD:
 //! `docs/porting/olx-notes/presentation.md` §9, its results screen:
-//! `bots-and-deathmatch.md` §3.4): the worms' names, the kill feed from
+//! `bots-and-deathmatch.md` §3.4): the worms' names, the event log from
 //! the mode's `Message` events, the time-limit clock, the scoreboard rows
 //! and the results of a finished match.
+
+use std::collections::VecDeque;
 
 use rl_modes::text;
 use rl_sim::{EndReason, Message, Score, World};
 
-/// OLX's local chat shows the last 6 lines (`DrawLocalChat`,
-/// `CClient_Draw.cpp:2211-2236`).
-pub const FEED_LINES: usize = 6;
-
-/// ... each for 3 s (300 ticks).
-pub const FEED_TICKS: u64 = 300;
+/// The event log keeps this many lines; the bar shows the newest that
+/// fit (OLX's local chat showed 6 for 3 s over the playfield,
+/// `DrawLocalChat`, `CClient_Draw.cpp:2211-2236`; the bar has room for
+/// more, and keeps them).
+pub const LOG_KEEP: usize = 64;
 
 /// OLX's `WRM_UNLIM` and `WRM_OUT` lives.
 const UNLIMITED: i32 = -2;
@@ -48,30 +49,53 @@ pub fn message_text(m: &Message, names: &Names) -> Option<String> {
     Some(s)
 }
 
-/// The kill feed: the lines of the last [`FEED_TICKS`], at most
-/// [`FEED_LINES`], oldest first.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Feed {
-    lines: Vec<(u64, String)>,
+/// What a log line is, for its colour.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LineKind {
+    /// The game's: kills, deaths, the mode's messages.
+    #[default]
+    Event,
+    /// A player's words (a multiplayer chat, later).
+    Chat,
 }
 
-impl Feed {
-    /// A line said at tick `tick`.
-    pub fn push(&mut self, tick: u64, line: String) {
-        self.lines.push((tick, line));
-        if self.lines.len() > FEED_LINES {
-            self.lines.remove(0);
+/// One line of the event log.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LogLine {
+    pub text: String,
+    pub kind: LineKind,
+}
+
+impl LogLine {
+    /// A game event's line.
+    pub fn event(text: impl Into<String>) -> LogLine {
+        LogLine { text: text.into(), kind: LineKind::Event }
+    }
+}
+
+/// The event log: the last [`LOG_KEEP`] lines, oldest first.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Log {
+    lines: VecDeque<LogLine>,
+}
+
+impl Log {
+    /// Adds a line; the oldest goes past [`LOG_KEEP`].
+    pub fn push(&mut self, line: LogLine) {
+        self.lines.push_back(line);
+        if self.lines.len() > LOG_KEEP {
+            self.lines.pop_front();
         }
     }
 
-    /// The lines still shown at tick `now`.
-    pub fn visible(&self, now: u64) -> impl Iterator<Item = &str> {
-        self.lines.iter().filter(move |(t, _)| now < t + FEED_TICKS).map(|(_, l)| l.as_str())
+    /// The lines kept, oldest first.
+    pub fn lines(&self) -> impl Iterator<Item = &LogLine> {
+        self.lines.iter()
     }
 
-    /// Every line kept, shown or not (tests).
-    pub fn all(&self) -> impl Iterator<Item = &str> {
-        self.lines.iter().map(|(_, l)| l.as_str())
+    /// The lines' texts, oldest first.
+    pub fn texts(&self) -> impl Iterator<Item = &str> {
+        self.lines.iter().map(|l| l.text.as_str())
     }
 
     pub fn clear(&mut self) {
@@ -184,18 +208,18 @@ mod tests {
     }
 
     #[test]
-    fn feed_keeps_six_lines_for_three_seconds() {
-        let mut f = Feed::default();
-        for i in 0..8 {
-            f.push(i * 10, format!("line {i}"));
+    fn log_keeps_the_last_lines_oldest_first() {
+        let mut log = Log::default();
+        for i in 0..LOG_KEEP + 5 {
+            log.push(LogLine::event(format!("line {i}")));
         }
-        assert_eq!(f.all().count(), FEED_LINES);
-        assert_eq!(f.visible(70).next(), Some("line 2"));
-        // Line 2 (tick 20) is gone at tick 320; line 7 (tick 70) at 370.
-        assert_eq!(f.visible(320).next(), Some("line 3"));
-        assert_eq!(f.visible(370).count(), 0);
-        f.clear();
-        assert_eq!(f.all().count(), 0);
+        assert_eq!(log.lines().count(), LOG_KEEP);
+        assert_eq!(log.texts().next(), Some("line 5"), "the oldest went");
+        assert_eq!(log.texts().last(), Some(format!("line {}", LOG_KEEP + 4).as_str()));
+        log.push(LogLine { text: "hi".into(), kind: LineKind::Chat });
+        assert_eq!(log.lines().last().map(|l| l.kind), Some(LineKind::Chat));
+        log.clear();
+        assert_eq!(log.lines().count(), 0);
     }
 
     #[test]

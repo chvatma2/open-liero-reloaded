@@ -13,7 +13,7 @@ use rl_replay::Replay;
 use rl_scene::{DrawList, Interpolation, SceneOptions, Viewport};
 use rl_sim::{EventKind, Keys, TickEvents, World};
 
-use rl_ui::hud::{Feed, Names, Results, message_text};
+use rl_ui::hud::{Log, LogLine, Names, Results, message_text};
 
 use crate::drive::{MatchDriver, ReplayDriver};
 use crate::setup::{Assets, Game};
@@ -81,8 +81,8 @@ pub struct Session {
     pub popups: Vec<Popup>,
     pub driver: Driver,
     pub names: Names,
-    /// The kill feed (the mode's messages).
-    pub feed: Feed,
+    /// The event log (the mode's messages: kills, deaths, the end).
+    pub log: Log,
     /// The time-limit clock: the time left, frozen when the match ends
     /// (Deathmatch's own keeps counting; the HUD shows the end's).
     pub time_left_ms: Option<u64>,
@@ -185,7 +185,7 @@ impl Session {
             audio,
             popups: Vec::with_capacity(64),
             driver,
-            feed: Feed::default(),
+            log: Log::default(),
             time_left_ms: None,
             results: None,
             tally: Tally::default(),
@@ -290,7 +290,7 @@ impl Session {
         self.present.restart(&self.world, &a.level, &a.theme);
         self.audio.stop_all();
         self.popups.clear();
-        self.feed.clear();
+        self.log.clear();
         self.results = None;
         self.ended_at = None;
         self.time_left_ms = self.mode_time_left();
@@ -400,7 +400,7 @@ impl Session {
         true
     }
 
-    /// The tick's events: popups, the kill feed, the tally, the end.
+    /// The tick's events: popups, the event log, the tally, the end.
     fn after_tick(&mut self) {
         // The mode's clock stops at the game over (`Deathmatch::time_left_ms`).
         self.time_left_ms = self.mode_time_left();
@@ -428,7 +428,7 @@ impl Session {
                 EventKind::Spawned { worm: 0 } if self.human => self.player_spawns += 1,
                 EventKind::Message(m) => {
                     if let Some(line) = message_text(&m, &self.names) {
-                        self.feed.push(self.ticks, line);
+                        self.log.push(LogLine::event(line));
                     }
                 }
                 EventKind::GameOver(_) => {
