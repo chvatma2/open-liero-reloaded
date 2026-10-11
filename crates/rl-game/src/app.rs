@@ -488,6 +488,11 @@ impl App {
     }
 
     fn on_key(&mut self, el: &ActiveEventLoop, ev: &KeyEvent) -> anyhow::Result<()> {
+        // The options capture this key: it is theirs alone (no scores,
+        // debug panel or health bars toggling under the dialog).
+        if self.shell.data.capture.is_some() {
+            return Ok(());
+        }
         // OLX's ShowScore: the scoreboard while Tab is held.
         if ev.physical_key == PhysicalKey::Code(KeyCode::Tab) {
             self.scores.key(ev.state == ElementState::Pressed);

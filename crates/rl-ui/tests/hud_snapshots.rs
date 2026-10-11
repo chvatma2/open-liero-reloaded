@@ -2,11 +2,15 @@
 //! rendered by egui's wgpu renderer (`egui_kittest`, its software adapter
 //! preferred) and compared with `fixtures/ui/hud-*.png`. They need a
 //! graphics adapter: the GPU tier (`cargo xtask full`, `RL_GPU_TESTS`)
-//! runs them; elsewhere they skip. `UPDATE_SNAPSHOTS=1` re-records them.
+//! runs them; elsewhere they skip. `cargo xtask bless-render --reason
+//! <why>` re-records them (with `RL_BLESS_RENDER`) and logs why.
 
 use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
 use egui_kittest::{Harness, SnapshotOptions};
 use rl_ui::hud::{self, Bar, Dot, HudView, MinimapView, Notice, Row, SlotHud, WormHud, minimap};
+
+/// The accepted snapshots, from the crate's directory.
+const DIR: &str = "../../fixtures/ui";
 
 fn gpu_tests() -> bool {
     let on = std::env::var_os("RL_GPU_TESTS").is_some();
@@ -106,7 +110,14 @@ fn snapshot(size: (f32, f32), name: &str, scores: bool) {
             None,
         );
     h.run();
-    h.snapshot_options(name, &SnapshotOptions::new().output_path("../../fixtures/ui"));
+    if std::env::var_os("RL_BLESS_RENDER").is_some() {
+        // `cargo xtask bless-render --reason <why>`: logged in
+        // `fixtures/blessings.log`.
+        let img = h.render().expect("a rendered HUD");
+        img.save(format!("{DIR}/{name}.png")).expect("the snapshot written");
+        return;
+    }
+    h.snapshot_options(name, &SnapshotOptions::new().output_path(DIR));
 }
 
 #[test]

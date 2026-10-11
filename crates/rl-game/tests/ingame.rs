@@ -160,6 +160,9 @@ fn results_match_world_scores() {
     sh.act(UiAction::SaveReplay);
     let m = sh.ui.message().unwrap_or_default().to_string();
     assert!(m.contains("replay-001.rlrp"), "{m}");
+    sh.act(UiAction::SaveReplay);
+    assert!(!tmp.path().join(rl_ui::REPLAYS_DIR).join("replay-002.rlrp").exists(), "kept once");
+    assert!(sh.ui.replay_saved());
     let kept = tmp.path().join(rl_ui::REPLAYS_DIR).join("replay-001.rlrp");
     let replay = rl_replay::Replay::decode(&std::fs::read(&kept).unwrap()).unwrap();
     assert_eq!(replay.ticks() as u64, ended + rl_game::drive::RECORD_AFTER_END, "the match and its end");
@@ -172,4 +175,27 @@ fn results_match_world_scores() {
     assert!(sh.data.results.is_none());
     sh.act(UiAction::LeaveMatch);
     assert_eq!(sh.ui.screen(), Screen::Main);
+}
+
+/// Weapons the restrictions refuse (the state passes any on): the world
+/// cannot be built with them, so the match keeps its options as they
+/// were, and F5's rematch still builds.
+#[test]
+fn a_refused_choice_leaves_the_match_playable() {
+    let Some(dir) = content() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let mut sh = shell(&dir, Store::open(tmp.path()), Settings::default());
+    start(&mut sh);
+    let menu = sh.data.weapons.clone().unwrap();
+    let banned = (0..menu.names.len() as i32).find(|&w| !menu.enabled[w as usize]).expect("a banned weapon");
+    sh.act(UiAction::ChooseWeapons { weapons: [banned; MAX_SLOTS], names: vec![] });
+    assert_eq!(sh.ui.screen(), Screen::InGame);
+    let p = sh.play.as_ref().unwrap();
+    let rl_game::setup::Game::Deathmatch { options, .. } = &p.assets.game else { panic!("a Deathmatch") };
+    assert_eq!(options.players[0], rl_content::Player::Human, "the previous player is back");
+    for t in 0..10 {
+        assert!(sh.tick(player_keys(t)));
+    }
+    sh.act(UiAction::Restart);
+    assert_eq!(sh.session().unwrap().rematches, 1, "F5 still builds the rematch");
 }

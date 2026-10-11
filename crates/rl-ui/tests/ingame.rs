@@ -205,7 +205,8 @@ fn weapon_selection_respects_restrictions() {
     });
     assert!(armed.unwrap().iter().all(|w| ENABLED.contains(w)));
 
-    // A weapon the restrictions do not enable is refused by the state too.
+    // The state passes any weapons on: refusing one the restrictions do not
+    // enable is `build_match`'s (the app keeps the match's options then).
     let mut ui = state_in_weapon_select(Profiles::default());
     ui.update(UiAction::ChooseWeapons { weapons: [1; MAX_SLOTS], names: vec![] });
     assert_eq!(ui.screen(), Screen::InGame, "the app's build_match refuses it, not the menu");
@@ -349,4 +350,152 @@ fn results_show_the_columns_and_their_buttons() {
     h.run();
     assert_eq!(h.state().commands.last(), Some(&AppCommand::Restart));
     assert_eq!(h.state().ui.screen(), Screen::InGame);
+}
+
+fn harness_sized(ui: UiState, data: MenuData, size: egui::Vec2) -> Harness<'static, App> {
+    let app = App { ui, data, commands: Vec::new() };
+    Harness::builder().with_size(size).build_ui_state(
+        |ui, app: &mut App| {
+            for a in screens::show(ui, &app.ui, &mut app.data) {
+                let c = app.ui.update(a);
+                app.commands.extend(c);
+            }
+        },
+        app,
+    )
+}
+
+/// A 1280 × 720 window at UI scale 3 is 427 × 240 points: the results
+/// of a full match and the weapon selection keep their buttons on screen
+/// (the table and the slots scroll).
+#[test]
+fn buttons_stay_on_a_small_screen() {
+    let screen = Rect::from_min_size(Pos2::ZERO, vec2(1280.0 / 3.0, 720.0 / 3.0));
+    let mut ui = state_in_weapon_select(Profiles::default());
+    let mut data = MenuData::new(Catalog::default(), None);
+    data.weapons = Some(menu());
+    let mut h = harness_sized(ui.clone(), data, screen.size());
+    for label in ["Random", "Done"] {
+        let r = h.get_by_label(label).rect();
+        assert!(screen.contains_rect(r), "{label} at {r:?}");
+    }
+    h.get_by_label("Done").click();
+    h.run();
+    assert_eq!(h.state().ui.screen(), Screen::InGame);
+
+    ui.update(UiAction::ChooseWeapons { weapons: [0; MAX_SLOTS], names: vec![] });
+    ui.update(UiAction::MatchOver);
+    let mut data = MenuData::new(Catalog::default(), None);
+    let mut r = results();
+    for i in 3..32 {
+        r.rows.push(Row { worm: i, name: format!("Bot {i}"), ..r.rows[2].clone() });
+    }
+    data.results = Some(r);
+    let h = harness_sized(ui, data, screen.size());
+    for label in ["Rematch", "Save replay", "Back to menu"] {
+        let r = h.get_by_label(label).rect();
+        assert!(screen.contains_rect(r), "{label} at {r:?}");
+    }
+}
+
+/// The HUD paints without a panic at every UI scale on every window size
+/// (Review Focus 5; the image snapshots run in the GPU tier only).
+#[test]
+fn hud_paints_at_every_scale() {
+    use rl_ui::hud::{Bar, Dot, HudView, MinimapView, SlotHud, WormHud};
+    let slot = SlotHud { name: "Super Shotgun".into(), charge: 0.4, bar: Bar::Reloading };
+    let view = HudView {
+        worm: Some(WormHud {
+            name: "OpenLieroXor".into(),
+            health: 55.0,
+            alive: false,
+            lives: 2,
+            kills: 3,
+            deaths: 1,
+            suicides: 0,
+            slots: vec![slot; MAX_SLOTS],
+            current: 9,
+            status: Some("Dead: Jump to respawn".into()),
+        }),
+        feed: vec!["A killed B".into(); 8],
+        time_left_ms: Some(9_000),
+        kill_limit: Some(15),
+        scoreboard: Some(results().rows),
+        minimap: Some(MinimapView {
+            texture: egui::TextureId::default(),
+            map: vec2(504.0, 350.0),
+            view: Some(Rect::from_min_size(Pos2::new(-50.0, 0.0), vec2(9999.0, 240.0))),
+            dots: vec![Dot { pos: Pos2::new(1e9, -5.0), colour: egui::Color32::RED, big: true }],
+            blink: 0.3,
+        }),
+        game_over: true,
+        hint: Some("Tab scores   F2 debug   F5 rematch   Esc pause".into()),
+        top_left_reserved: 130.0,
+        ..HudView::default()
+    };
+    for (w, h) in [(1280.0, 720.0), (1920.0, 1080.0), (2560.0, 1440.0), (3440.0, 1440.0)] {
+        for scale in [0.5, 1.0, 1.5, 2.0, 3.0] {
+            let v = view.clone();
+            let mut harness = Harness::builder()
+                .with_size(vec2(w / scale, h / scale))
+                .with_pixels_per_point(scale)
+                .build_ui(move |ui| rl_ui::hud::show(ui, &v));
+            harness.run();
+        }
+    }
+}
+
+/// Save replay keeps one file per match: once saved, the button says so
+/// and asks no more.
+#[test]
+fn save_replay_once_per_match() {
+    let mut ui = state_in_weapon_select(Profiles::default());
+    ui.update(UiAction::ChooseWeapons { weapons: [0; MAX_SLOTS], names: vec![] });
+    ui.update(UiAction::MatchOver);
+    let mut data = MenuData::new(Catalog::default(), None);
+    data.results = Some(results());
+    let mut h = harness(ui, data);
+    h.get_by_label("Save replay").click();
+    h.run();
+    h.state_mut().ui.update(UiAction::ReplaySaved(Ok("replay-001.rlrp".into())));
+    h.run();
+    assert!(h.query_by_label("Save replay").is_none());
+    h.get_by_label("Saved").click();
+    h.run();
+    assert!(h.state_mut().ui.update(UiAction::SaveReplay).is_empty(), "saved already");
+    let saves = h.state().commands.iter().filter(|c| **c == AppCommand::SaveReplay).count();
+    assert_eq!(saves, 1);
+    // A failed save may be tried again.
+    let mut ui = state_in_weapon_select(Profiles::default());
+    ui.update(UiAction::ChooseWeapons { weapons: [0; MAX_SLOTS], names: vec![] });
+    ui.update(UiAction::MatchOver);
+    assert_eq!(ui.update(UiAction::SaveReplay), [AppCommand::SaveReplay]);
+    ui.update(UiAction::ReplaySaved(Err("disk full".into())));
+    assert_eq!(ui.update(UiAction::SaveReplay), [AppCommand::SaveReplay]);
+    // The next match saves anew.
+    ui.update(UiAction::ReplaySaved(Ok("replay-001.rlrp".into())));
+    ui.update(UiAction::StartMatch);
+    ui.update(UiAction::MatchStarted);
+    ui.update(UiAction::ChooseWeapons { weapons: [0; MAX_SLOTS], names: vec![] });
+    ui.update(UiAction::MatchOver);
+    assert_eq!(ui.update(UiAction::SaveReplay), [AppCommand::SaveReplay]);
+}
+
+/// The results' Rematch: the app ends the match (its results go) while
+/// the next one loads; the screen says so.
+#[test]
+fn rematch_shows_loading() {
+    let mut ui = state_in_weapon_select(Profiles::default());
+    ui.update(UiAction::ChooseWeapons { weapons: [0; MAX_SLOTS], names: vec![] });
+    ui.update(UiAction::MatchOver);
+    let mut data = MenuData::new(Catalog::default(), None);
+    data.results = Some(results());
+    let mut h = harness(ui, data);
+    h.get_by_label("Rematch").click();
+    h.run();
+    assert!(h.state().ui.is_starting());
+    h.state_mut().data.results = None; // `Shell::end`
+    h.run();
+    h.get_by_label("Loading…");
+    assert!(h.query_by_label("Back to menu").is_none(), "nothing to press while it loads");
 }

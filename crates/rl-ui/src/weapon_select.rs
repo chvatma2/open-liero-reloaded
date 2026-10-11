@@ -15,12 +15,12 @@ use rl_bots::{BotRng, get_random_weapons};
 use rl_sim::{Keys, MAX_SLOTS};
 
 /// OLX's auto-repeat of a held direction (the stick's, `WeaponSelStickAxis`,
-/// `CWormHuman.cpp:752-785`; keys repeat at the system's rate): the first
+/// `CWormHuman.cpp:756-785`; keys repeat at the system's rate): the first
 /// repeat after 0.4 s, then every 0.12 s.
 pub const REPEAT_DELAY: f64 = 0.4;
 pub const REPEAT_EVERY: f64 = 0.12;
 
-/// `cSelWeapon` held multiplies a change (`CWormHuman.cpp:880`).
+/// `cSelWeapon` held multiplies a change (`CWormHuman.cpp:885`).
 pub const FAST_STEP: i32 = 6;
 
 /// The weapons a match offers.
@@ -39,7 +39,7 @@ pub struct WeaponMenu {
 
 impl WeaponMenu {
     /// Whether there is a choice: OLX skips the dialog when the
-    /// restrictions enable one weapon or none (`CWormHuman.cpp:740-747`).
+    /// restrictions enable one weapon or none (`CWormHuman.cpp:742-747`).
     pub fn needs_choice(&self) -> bool {
         self.enabled.iter().filter(|&&e| e).count() > 1
     }
@@ -76,7 +76,7 @@ impl WeaponSelect {
     /// (ignoring ASCII case, as `FindWeaponId`); a slot whose weapon the
     /// mod lacks or the restrictions do not enable gets `menu.fallback`.
     ///
-    /// OLX: src/common/CWormHuman.cpp:722-730.
+    /// OLX: src/common/CWormHuman.cpp:724-731.
     pub fn new(menu: &WeaponMenu, remembered: &[String]) -> WeaponSelect {
         let slots = std::array::from_fn(|i| {
             let name = remembered.get(i).map_or("", String::as_str);
@@ -114,7 +114,7 @@ impl WeaponSelect {
     /// Random and Done): OLX's loop, which stops when it comes back to
     /// where it started.
     ///
-    /// OLX: src/common/CWormHuman.cpp:872-896.
+    /// OLX: src/common/CWormHuman.cpp:885-904.
     pub fn change(&mut self, menu: &WeaponMenu, by: i32) {
         if self.row < MAX_SLOTS {
             self.change_slot(menu, self.row, by);

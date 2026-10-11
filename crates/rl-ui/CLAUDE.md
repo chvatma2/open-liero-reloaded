@@ -85,7 +85,10 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   keys the app feeds, or the mouse; `MenuData::weapons` is the app's
   `WeaponMenu`) and the results (`results.rs`: `panel(ctx, results,
   footer)` also serves the command line's games; Rematch or, for a
-  replay, Watch again; Save replay; Back to menu; `MenuData::results`);
+  replay, Watch again; Save replay, once a match (`replay_saved`: then
+  "Saved"); Back to menu; `MenuData::results`; "Loading…" while a rematch
+  starts; the table and the weapon slots scroll so the buttons stay on a
+  small screen);
   Import and About are placeholders until their tasks. Esc is `Back` and
   F5 `Restart` on every screen, a held key's repeats ignored
   (`pressed_once`); in the options Esc first closes an open dialog.
@@ -106,7 +109,7 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   `TEXTURE_SIZE`; OLX's dot rectangles and blink; the view rectangle),
   `paint.rs` (`show(ui, &view)`, `table`). Image snapshots at 1080p and
   1440p (`tests/hud_snapshots.rs` against `fixtures/ui/`, in the GPU tier
-  with `RL_GPU_TESTS`; `UPDATE_SNAPSHOTS=1` re-records).
+  with `RL_GPU_TESTS`; `cargo xtask bless-render --reason` re-records them, logged).
 - **Weapon selection** (`weapon_select.rs`, §21 G4): `WeaponMenu` (names,
   enabled, `findEnabledWeapon`'s fallback, seed; `needs_choice`),
   `WeaponSelect::new(menu, remembered)` (the profile's names), `change`

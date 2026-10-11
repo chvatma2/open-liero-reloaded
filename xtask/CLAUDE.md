@@ -5,6 +5,9 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 
 - `full` runs `check`, then `bot-grid` (`check::FULL_TESTS`: `rl-cli`'s
   `tests/grid.rs` with `RL_FULL_TESTS=1`), then the GPU and audio steps.
+- `bless-render --reason <why>` re-draws `fixtures/render/` (the render
+  goldens) and `fixtures/ui/` (the HUD snapshots, `rl-ui`'s
+  `hud_snapshots`) with `RL_BLESS_RENDER=1`; the GPU ones need an adapter.
 - `bless-regression --reason <why> [--from target/failures/<name>.ron]`
   re-records `fixtures/matches/*.ron` (runs `rl-cli --test golden` with
   `RL_BLESS_REGRESSION=1`); `--from` first copies a failure record in as a

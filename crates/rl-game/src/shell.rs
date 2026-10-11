@@ -367,18 +367,25 @@ impl Shell {
 
     /// The weapon selection's choice: the human starts with `weapons`
     /// (none enabled: -1s, the random loadout stays). The world is built
-    /// again from the options with them; no tick has played.
+    /// again from the options with them; no tick has played. Weapons the
+    /// match cannot be built with leave its options as they were.
     fn arm(&mut self, weapons: [i32; MAX_SLOTS]) {
         let Some(p) = &mut self.play else { return };
         let Game::Deathmatch { options, .. } = &mut p.assets.game else { return };
         if weapons.iter().any(|&w| w < 0) {
             return;
         }
-        if let Some(first) = options.players.first_mut() {
-            *first = Player::HumanWith(weapons);
-        }
+        let Some(first) = options.players.first_mut() else { return };
+        let before = std::mem::replace(first, Player::HumanWith(weapons));
         if let Err(e) = p.session.rebuild(&p.assets) {
+            // Options `build_match` refuses would fail every rematch too:
+            // the match keeps the ones it was built with.
             eprintln!("warning: arming the player: {e:#}");
+            if let Game::Deathmatch { options, .. } = &mut p.assets.game
+                && let Some(first) = options.players.first_mut()
+            {
+                *first = before;
+            }
         }
     }
 

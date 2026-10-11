@@ -1,8 +1,9 @@
 //! `cargo xtask bless-render --reason <text>`: re-generates the committed
-//! render goldens in `fixtures/render/` and records why in
-//! `fixtures/blessings.log` (spec §7.2), with the date and the files that
-//! changed. Each golden test writes its PNGs when `RL_BLESS_RENDER` is set;
-//! the GPU goldens (`rl-cli render` frames) need a graphics adapter.
+//! render goldens in `fixtures/render/` and the HUD snapshots in
+//! `fixtures/ui/`, and records why in `fixtures/blessings.log` (spec §7.2),
+//! with the date and the files that changed. Each golden test writes its
+//! PNGs when `RL_BLESS_RENDER` is set; the GPU goldens (`rl-cli render`
+//! frames, `rl-ui`'s HUD snapshots) need a graphics adapter.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -15,19 +16,30 @@ use anyhow::{Context, bail, ensure};
 use crate::root;
 
 /// The golden tests as `(package, test target, needs a graphics adapter)`:
-/// the colour terrain (CPU) and `rl-cli render`'s frames (GPU).
-const GOLDEN_TESTS: &[(&str, &str, bool)] =
-    &[("rl-scenario", "render_golden", false), ("rl-cli", "render_golden", true)];
-const GOLDEN_DIR: &str = "fixtures/render";
+/// the colour terrain (CPU), `rl-cli render`'s frames and the HUD's image
+/// snapshots (GPU).
+const GOLDEN_TESTS: &[(&str, &str, bool)] = &[
+    ("rl-scenario", "render_golden", false),
+    ("rl-cli", "render_golden", true),
+    ("rl-ui", "hud_snapshots", true),
+];
+/// Where they write.
+const GOLDEN_DIRS: &[&str] = &["fixtures/render", "fixtures/ui"];
 const LOG: &str = "fixtures/blessings.log";
 
-/// The files in `dir` by name, with their bytes.
+/// Files a golden test leaves beside the goldens and git ignores
+/// (`egui_kittest`'s last image, diff and backup).
+fn by_product(name: &str) -> bool {
+    [".new.png", ".diff.png", ".old.png"].iter().any(|s| name.ends_with(s))
+}
+
+/// The files in `dir` by name, with their bytes (by-products left out).
 pub fn snapshot(dir: &Path) -> anyhow::Result<BTreeMap<String, Vec<u8>>> {
     let mut out = BTreeMap::new();
     let Ok(entries) = std::fs::read_dir(dir) else { return Ok(out) };
     for e in entries {
         let e = e?;
-        if e.file_type()?.is_file() {
+        if e.file_type()?.is_file() && !by_product(&e.file_name().to_string_lossy()) {
             out.insert(e.file_name().to_string_lossy().into_owned(), std::fs::read(e.path())?);
         }
     }
@@ -100,8 +112,10 @@ pub fn run(reason: &str) -> anyhow::Result<bool> {
     if !content.is_dir() {
         bail!("{} not found: run `cargo xtask fetch-olx-content` first", content.display());
     }
-    let dir = root.join(GOLDEN_DIR);
-    let before = snapshot(&dir)?;
+    let snap_all = || -> anyhow::Result<Vec<BTreeMap<String, Vec<u8>>>> {
+        GOLDEN_DIRS.iter().map(|d| snapshot(&root.join(d))).collect()
+    };
+    let before = snap_all()?;
     let adapter = match crate::check::probe_adapter().map_err(anyhow::Error::msg)? {
         Ok(said) => {
             println!("gpu adapter: {said}");
@@ -130,8 +144,12 @@ pub fn run(reason: &str) -> anyhow::Result<bool> {
             break;
         }
     }
-    let after = snapshot(&dir)?;
-    let changed = changed_files(GOLDEN_DIR, &before, &after);
+    let after = snap_all()?;
+    let changed: Vec<String> = GOLDEN_DIRS
+        .iter()
+        .zip(before.iter().zip(&after))
+        .flat_map(|(d, (b, a))| changed_files(d, b, a))
+        .collect();
     if changed.is_empty() {
         if let Some(f) = failure {
             bail!(f);
@@ -156,7 +174,13 @@ mod tests {
     #[test]
     fn without_an_adapter_only_the_cpu_goldens_run() {
         assert_eq!(super::tests_to_run(false), [("rl-scenario", "render_golden")]);
-        assert_eq!(super::tests_to_run(true).len(), 2);
+        assert_eq!(super::tests_to_run(true).len(), 3);
+    }
+
+    #[test]
+    fn snapshot_by_products_are_no_goldens() {
+        assert!(super::by_product("hud-1080p.new.png") && super::by_product("hud-1080p.diff.png"));
+        assert!(!super::by_product("hud-1080p.png"));
     }
 
     #[test]

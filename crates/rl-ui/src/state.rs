@@ -175,6 +175,8 @@ pub struct UiState {
     paused: bool,
     /// The options were opened from the pause menu: Back returns there.
     options_in_game: bool,
+    /// The match playing has had its replay kept (Save replay, once).
+    replay_saved: bool,
     /// The seed of the next match.
     seed: u32,
     /// Shown on the screen: why the last start failed, or a replay saved.
@@ -192,6 +194,7 @@ impl UiState {
             play: Play::None,
             paused: false,
             options_in_game: false,
+            replay_saved: false,
             seed,
             message: None,
         }
@@ -230,6 +233,11 @@ impl UiState {
     /// The pause menu is up.
     pub fn is_paused(&self) -> bool {
         self.paused
+    }
+
+    /// The results' Save replay has kept this match's replay.
+    pub fn replay_saved(&self) -> bool {
+        self.replay_saved
     }
 
     /// Why the last start failed, or where the replay was saved, until
@@ -278,13 +286,18 @@ impl UiState {
                     return Vec::new();
                 }
                 self.go(Screen::InGame);
+                // A rematch in place is another match to save.
+                self.replay_saved = false;
                 vec![AppCommand::Restart]
             }
             UiAction::Resume => self.set_paused(false),
             UiAction::LeaveMatch => self.leave(),
             UiAction::ChooseWeapons { weapons, names } => self.choose_weapons(weapons, names),
             UiAction::SaveReplay => {
-                if self.screen == Screen::Results && self.play == Play::Running(Game::Match) {
+                if self.screen == Screen::Results
+                    && self.play == Play::Running(Game::Match)
+                    && !self.replay_saved
+                {
                     self.message = None;
                     vec![AppCommand::SaveReplay]
                 } else {
@@ -293,6 +306,7 @@ impl UiState {
             }
             UiAction::ReplaySaved(r) => {
                 if self.screen == Screen::Results {
+                    self.replay_saved = r.is_ok();
                     self.message = Some(match r {
                         Ok(name) => format!("Saved as {name}"),
                         Err(e) => format!("Not saved: {e}"),
@@ -358,6 +372,7 @@ impl UiState {
                 if let Play::Starting { game, .. } = self.play {
                     self.play = Play::Running(game);
                     self.paused = false;
+                    self.replay_saved = false;
                     // OLX's weapon selection before a Deathmatch (§21 G4).
                     self.go(if game == Game::Match { Screen::WeaponSelect } else { Screen::InGame });
                 }
@@ -435,7 +450,7 @@ impl UiState {
 
     /// The weapon selection's Done: the player armed, the match on; the
     /// names (if any) remembered in the profile playing, as OLX's profile
-    /// keeps its weapon slots (`CWormHuman.cpp:925-937`).
+    /// keeps its weapon slots (`CWormHuman.cpp:924-926`, saved on Done: `:939`, `:948`).
     fn choose_weapons(&mut self, weapons: [i32; MAX_SLOTS], names: Vec<String>) -> Vec<AppCommand> {
         if self.screen != Screen::WeaponSelect || self.play != Play::Running(Game::Match) {
             return Vec::new();

@@ -43,9 +43,10 @@ traces recorded from a patched OLX (`tools/olx-oracle/`).
 
 ## Render goldens
 
-`fixtures/render/*.png` are committed render goldens. When a rendering change
-is intended, `cargo xtask bless-render --reason "<why>"` re-generates them and
-logs the reason in `fixtures/blessings.log`.
+`fixtures/render/*.png` are committed render goldens, and `fixtures/ui/*.png`
+the HUD's image snapshots. When a rendering or HUD change is intended,
+`cargo xtask bless-render --reason "<why>"` re-generates both and logs the
+reason in `fixtures/blessings.log`.
 
 ## Match goldens
 
