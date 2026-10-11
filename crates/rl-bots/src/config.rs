@@ -153,6 +153,39 @@ impl BotConfig {
     pub fn params(&self) -> DifficultyParams {
         self.params.unwrap_or_else(|| self.difficulty.params())
     }
+
+    /// Checks the numbers of [`BotConfig::params`] (a configuration may
+    /// come from a file or a menu): every error and tolerance is a finite
+    /// number of at least 0. The first that is not is the error.
+    pub fn validate(&self) -> Result<(), BotConfigError> {
+        let p = self.params();
+        let fields = [
+            ("aim_offset_max_deg", p.aim_offset_max_deg),
+            ("fire_tolerance_deg", p.fire_tolerance_deg),
+            ("target_noise_px", p.target_noise_px),
+            ("gravity_noise", p.gravity_noise),
+            ("speed_noise", p.speed_noise),
+        ];
+        match fields.into_iter().find(|&(_, v)| !(v.is_finite() && v >= 0.0)) {
+            Some((field, value)) => Err(BotConfigError { field, value }),
+            None => Ok(()),
+        }
+    }
+}
+
+/// A [`DifficultyParams`] number that is NaN, infinite or negative
+/// ([`BotConfig::validate`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BotConfigError {
+    /// The field's name, such as `aim_offset_max_deg`.
+    pub field: &'static str,
+    pub value: f32,
+}
+
+impl core::fmt::Display for BotConfigError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "bot parameter {} is {}, not a number of at least 0", self.field, self.value)
+    }
 }
 
 #[cfg(test)]
@@ -190,5 +223,28 @@ mod tests {
             assert!(x < h, "Xtreme's error {x} is not below Hard's {h}");
         }
         assert_eq!(Xtreme.params().fire_tolerance_deg, 3.0);
+    }
+    /// Plan 6's final review: a configuration from a file or a menu is
+    /// checked before a match: numbers that are NaN, infinite or negative
+    /// are refused, naming the field.
+    #[test]
+    fn validate_refuses_params_that_are_not_numbers() {
+        assert_eq!(BotConfig::default().validate(), Ok(()));
+        for d in [Difficulty::Easy, Difficulty::Medium, Difficulty::Hard, Difficulty::Xtreme] {
+            let cfg = BotConfig { difficulty: d, params: Some(d.params()), ..BotConfig::default() };
+            assert_eq!(cfg.validate(), Ok(()), "{d:?}");
+        }
+        let p = Difficulty::Hard.params();
+        let bad = [
+            (DifficultyParams { aim_offset_max_deg: f32::NAN, ..p }, "aim_offset_max_deg"),
+            (DifficultyParams { fire_tolerance_deg: f32::INFINITY, ..p }, "fire_tolerance_deg"),
+            (DifficultyParams { target_noise_px: -1.0, ..p }, "target_noise_px"),
+            (DifficultyParams { gravity_noise: f32::NEG_INFINITY, ..p }, "gravity_noise"),
+            (DifficultyParams { speed_noise: f32::NAN, ..p }, "speed_noise"),
+        ];
+        for (params, field) in bad {
+            let err = BotConfig { params: Some(params), ..BotConfig::default() }.validate().unwrap_err();
+            assert_eq!(err.field, field);
+        }
     }
 }

@@ -18,7 +18,10 @@ loadouts, §4 the recommendations this crate follows).
   (`DifficultyParams`, notes §1.9), except that the aim errors scale with at
   least `AIM_ERROR_FLOOR` (1/6): no difficulty aims perfectly, Xtreme
   included (a deviation, `docs/porting/STATUS.md`);
-  `AimModel::{Ballistic, OlxDirect}` (F2).
+  `AimModel::{Ballistic, OlxDirect}` (F2). `BotConfig::validate` refuses
+  params that are NaN, infinite or negative (`BotConfigError` names the
+  field); `rl_content::build_match` checks every bot with it. No serde here:
+  `rl-ui` persists its own mirror of the menu's choices (plan 7 task 1).
 - **A bot** (`bot.rs`): `Bot::new(worm, cfg, seed, &World)` (or
   `with_cache` to share an `AreaCache`), then `think(&World, &TickEvents)
   -> Keys` once per tick, before `World::tick`. Clocks are `World::time()`

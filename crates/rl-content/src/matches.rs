@@ -88,6 +88,11 @@ impl BuiltMatch {
 pub fn build_match(a: MatchAssets<'_>, o: &MatchOptions) -> anyhow::Result<BuiltMatch> {
     let n = o.players.len();
     ensure!((2..=MAX_WORMS).contains(&n), "a Deathmatch of 2 to {MAX_WORMS} worms, not {n}");
+    for (i, p) in o.players.iter().enumerate() {
+        if let Player::Bot(cfg) = p {
+            cfg.validate().map_err(|e| anyhow!("worm {i}: {e}"))?;
+        }
+    }
     let sandbox = SandboxSetup {
         mod_id: o.mod_id.clone(),
         level_id: o.level_id.clone(),

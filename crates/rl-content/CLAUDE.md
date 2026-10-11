@@ -65,7 +65,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   deathmatch`: `players[i]` is `Player::Human` (random enabled weapons
   until M7's weapon menu) or `Player::Bot(BotConfig)` (`choose_loadout`
   from `BotRng::new(seed, i, personality)`); chaos bots get the
-  `ChaosCycle` respawn loadout; `Deathmatch::prepare`, `World::new`, a
+  `ChaosCycle` respawn loadout; a bot whose `BotConfig::validate` fails is
+  refused; `Deathmatch::prepare`, `World::new`, a
   started `Recorder` and the bots on one shared `AreaCache` (think in
   `bots` order). `rl-cli`'s golden checksum streams pin it.
 - **Replays' content:** `check_replay_packs` (ids and content hashes) and

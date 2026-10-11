@@ -34,8 +34,8 @@ pub use aim::{Aim, AimState, Launch, ShotNoise, ballistic, ballistic_from, olx_d
 pub use bot::{Bot, min_budget};
 pub use budget::Budget;
 pub use config::{
-    AIM_ERROR_FLOOR, AimModel, BotConfig, DEFAULT_BUDGET, Difficulty, DifficultyParams, LoadoutPolicy,
-    Personality,
+    AIM_ERROR_FLOOR, AimModel, BotConfig, BotConfigError, DEFAULT_BUDGET, Difficulty, DifficultyParams,
+    LoadoutPolicy, Personality,
 };
 pub use loadout::{
     BotWeapons, GameType, choose_loadout, get_random_weapons, olx_bot_weapons, random_enabled_weapon,
