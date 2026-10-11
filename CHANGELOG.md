@@ -41,6 +41,9 @@ All notable changes to rust-liero are recorded here. The format follows
 
 ### Fixed
 
+- Import reads OLX images that are Windows bitmaps under a `.png` name, as
+  OLX did: OLX 0.58's release has two such skins (Teletubbie, capworm).
+
 - On Wayland (WSLg), changing the window's size or fullscreen no longer
   leaves pieces of the old window frame on the screen: the window is made
   again at its new size.

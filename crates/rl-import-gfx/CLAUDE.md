@@ -19,6 +19,11 @@ thumbnails.
   sound kept as bytes, and `colours.cfg` the `[Colours]` values (`StrToCol`'s
   `#rrggbb` and `r,g,b` forms). A missing or broken file is a warning.
 
+- **Image files** (`lib.rs` `decode`, `bmp.rs`): read by their bytes, as
+  OLX's `IMG_Load`: a `.png` that is really a Windows bitmap (OLX 0.58's
+  release ships two such skins) is decoded as one (uncompressed 1/4/8/24/32
+  bits; compressed is an error), within `rl_pack::image_io::IMAGES`.
+
 - **Level thumbnails** (`thumb.rs`, plan 7 G6): `level_thumbnail(&Level)`
   box-filters the level's `front` art (at most 8 × 8 samples a pixel) into
   `rl_pack::THUMB_SIZE` (160 × 96), `letterbox`ed with transparent bars so

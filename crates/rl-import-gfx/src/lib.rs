@@ -1,5 +1,6 @@
 //! OpenLieroX skin, theme and core pack importers, and level thumbnails.
 
+mod bmp;
 mod core_pack;
 mod skin;
 mod theme;
@@ -27,8 +28,13 @@ pub(crate) fn decode(
     path: &rl_vfs::VPath,
 ) -> Result<rl_data::image::RgbaImage, GfxError> {
     let bytes = src.read(path)?;
-    rl_pack::image_io::decode_rgba(&bytes)
-        .map_err(|message| GfxError::Image { file: path.to_string(), message })
+    // OLX reads images by their bytes (`bmp.rs`): a `.png` may be a BMP.
+    if bmp::is_bmp(&bytes) {
+        bmp::decode(&bytes, rl_pack::image_io::IMAGES)
+    } else {
+        rl_pack::image_io::decode_rgba(&bytes)
+    }
+    .map_err(|message| GfxError::Image { file: path.to_string(), message })
 }
 
 pub(crate) fn manifest(
