@@ -184,7 +184,10 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   oldest goes and the rest move down); one that decodes but needs values
   fixed is copied there and the fixed values are saved in its place (its
   other values survive). A file that cannot be backed up is never
-  overwritten. Files over 1 MiB are bad. Warnings are
+  overwritten. A newer game's file (version above ours) stays in place,
+  untouched: defaults, and the session saves nothing to it while it is
+  there; `notices()` says so, and the main menu shows it
+  (`MenuData::notices`, set by the app). Files over 1 MiB are bad. Warnings are
   returned, never printed: the caller logs each once.
 - **Theme** (`theme.rs`): `apply(ctx, ui_scale)`: dark, larger text, the
   scale as egui's zoom factor (on top of the DPI scale; it takes effect at

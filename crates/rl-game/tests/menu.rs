@@ -193,3 +193,33 @@ fn menu_actions_are_idempotent() {
     assert_eq!(sh.launches(), 2);
     assert_ne!(seed(&sh), first);
 }
+
+/// A settings or profiles file from a newer version of the game survives
+/// a session that changes the settings and saves them (`Shell::flush`),
+/// and the menus say so.
+#[test]
+fn a_newer_settings_file_survives_a_flush() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    std::fs::create_dir(&data).unwrap();
+    let file = data.join("settings.ron");
+    let future = format!("(version: {}, settings: ())", rl_ui::SETTINGS_VERSION + 1);
+    std::fs::write(&file, &future).unwrap();
+    let mut store = Store::open(&data);
+    let settings = store.load_settings().value;
+    let cfg = ShellConfig {
+        content: tmp.path().join("content"),
+        interpolation: Interpolation::Linear,
+        viewport: Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0),
+    };
+    let ui = UiState::new(settings.clone(), Profiles::default(), 1);
+    let mut sh = Shell::new(cfg, ui, store, Audio::silent());
+    assert_eq!(sh.data.notices.len(), 1, "{:?}", sh.data.notices);
+    assert!(sh.data.notices[0].contains("settings.ron"));
+    let mut audio = settings.audio;
+    audio.master = 0.25;
+    sh.act(UiAction::SetAudio(audio));
+    sh.flush();
+    sh.finish();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), future);
+}

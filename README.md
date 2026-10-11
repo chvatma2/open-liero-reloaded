@@ -140,8 +140,10 @@ The data directory is `~/.local/share/rust-liero/` on Linux (another with
   and `replay-NNN.rlrp` (saved from the results, never removed);
 - `packs/`: content imported from the menu.
 
-A broken or newer settings or profiles file is set aside as `<name>.bak`
-and the game starts with defaults (and says so).
+A broken settings or profiles file is set aside as `<name>.bak` and the
+game starts with defaults (and says so in its log). One from a newer
+version of the game is left where it is, untouched: the game uses
+defaults, saves nothing to it that session, and says so on the main menu.
 
 ### Known notes for WSL
 

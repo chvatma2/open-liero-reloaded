@@ -24,7 +24,8 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   that chooses a game (`GAME_FLAGS`: `--mode`, `--replay`, `--level`,
   `--mod`, `--targets`, `--seed`, `--script`, `--demo`, ...) the game opens
   the main menu, with `settings.ron`/`profiles.ron` from the data directory
-  (`rl_ui::Store::platform`; warnings logged) and the first match seed
+  (`rl_ui::Store::platform`; warnings logged; `Store::notices`, a newer
+  game's file left untouched, on the main menu) and the first match seed
   from the clock (each seed is in its replay). With such a flag it plays
   that game at once as before (scripted runs and tests: Esc quits, F5
   restarts, `--record`). `--shot`, `--autoquit-after` and `--stats` work

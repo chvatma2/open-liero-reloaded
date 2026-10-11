@@ -129,6 +129,7 @@ impl Shell {
     pub fn new(cfg: ShellConfig, ui: UiState, store: Store, audio: Audio) -> Shell {
         let mut data = MenuData::new(Default::default(), store.replays_dir());
         data.packs_dir = store.packs_dir();
+        data.notices = store.notices();
         let mut shell = Shell {
             ui,
             data,

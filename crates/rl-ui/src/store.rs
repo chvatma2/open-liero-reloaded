@@ -16,6 +16,10 @@
 //!   in its place, so its other values survive the next start. A file
 //!   that cannot be backed up is kept as it is and never overwritten by
 //!   this store.
+//! - **A newer game's file** (a version above this game's) is left where
+//!   it is, untouched: the session uses defaults and saves nothing to it
+//!   (unless it is removed meanwhile), and [`Store::notices`] says so for
+//!   the main menu, so going back to the newer game finds it intact.
 //! - **No data directory** (no home): [`Store::in_memory`] loads defaults
 //!   and saves nothing.
 
@@ -57,6 +61,8 @@ pub struct Store {
     dir: Option<PathBuf>,
     /// Bad files that could not be moved aside: never overwritten.
     kept: Vec<PathBuf>,
+    /// Files of a newer game: left untouched, nothing saved to them.
+    newer: Vec<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -79,7 +85,7 @@ struct ProfilesFile {
 impl Store {
     /// The files in `dir`, which is made when the first file is saved.
     pub fn open(dir: impl Into<PathBuf>) -> Store {
-        Store { dir: Some(dir.into()), kept: Vec::new() }
+        Store { dir: Some(dir.into()), kept: Vec::new(), newer: Vec::new() }
     }
 
     /// The platform data directory (`directories`' `ProjectDirs` for
@@ -113,6 +119,21 @@ impl Store {
     /// data directory.
     pub fn packs_dir(&self) -> Option<PathBuf> {
         self.dir.as_ref().map(|d| d.join(PACKS_DIR))
+    }
+
+    /// What the player should know of the files, one line each, for the
+    /// main menu: a newer game's file left untouched.
+    pub fn notices(&self) -> Vec<String> {
+        self.newer
+            .iter()
+            .map(|p| {
+                let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                format!(
+                    "{name} is from a newer version; using defaults and leaving it untouched \
+                     (changes are not saved)"
+                )
+            })
+            .collect()
     }
 
     /// `settings.ron`: defaults when there is none (no warning) or it is bad.
@@ -160,6 +181,7 @@ impl Store {
         let Some(path) = self.dir.as_ref().map(|d| d.join(name)) else {
             return Loaded { value: T::default(), warnings: Vec::new() };
         };
+        self.newer.retain(|p| *p != path);
         let bytes = match read_capped(&path) {
             Ok(b) => b,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -184,7 +206,19 @@ impl Store {
                 let saved = self.rewrite(&path, &v, save);
                 (v, fixes, saved)
             }
-            Err(why) => (T::default(), vec![format!("{why}; using defaults")], self.move_aside(&path)),
+            Err(Bad::Newer(why)) => {
+                // Left for the newer game: never moved, never overwritten.
+                self.newer.push(path.clone());
+                let w = format!(
+                    "{}: {why}; using defaults (the file is left untouched and this session saves \
+                     nothing to it)",
+                    path.display()
+                );
+                return Loaded { value: T::default(), warnings: vec![w] };
+            }
+            Err(Bad::Other(why)) => {
+                (T::default(), vec![format!("{why}; using defaults")], self.move_aside(&path))
+            }
         };
         let warnings = problems.into_iter().map(|p| format!("{}: {p} ({saved})", path.display())).collect();
         Loaded { value, warnings }
@@ -233,6 +267,13 @@ impl Store {
     fn save<T: Serialize>(&mut self, name: &str, file: &T) -> anyhow::Result<()> {
         let Some(dir) = &self.dir else { return Ok(()) };
         let path = dir.join(name);
+        if self.newer.contains(&path) {
+            if path.exists() {
+                return Ok(());
+            }
+            // Gone: nothing of the newer game's to keep.
+            self.newer.retain(|p| *p != path);
+        }
         if self.kept.contains(&path) {
             if path.exists() {
                 bail!("{} could not be read or backed up: move it away to save", path.display());
@@ -275,22 +316,37 @@ fn backup_slot(path: &Path) -> io::Result<PathBuf> {
     Ok(backup_path(path, MAX_BACKUPS - 1))
 }
 
+/// Why a file is not read.
+enum Bad {
+    /// A newer game's: left as it is.
+    Newer(String),
+    Other(String),
+}
+
 /// The file's value, or why it is bad.
 fn decode<T>(
     bytes: &[u8],
     version: u32,
     parse: impl FnOnce(&str) -> Result<T, ron::error::SpannedError>,
-) -> Result<T, String> {
+) -> Result<T, Bad> {
     if bytes.len() > MAX_FILE_BYTES {
-        return Err(format!("larger than {MAX_FILE_BYTES} bytes"));
+        return Err(Bad::Other(format!("larger than {MAX_FILE_BYTES} bytes")));
     }
-    let text = std::str::from_utf8(bytes).map_err(|e| format!("not UTF-8 text ({e})"))?;
-    let header: Header = ron::from_str(text).map_err(|e| format!("unreadable ({e})"))?;
+    let text = std::str::from_utf8(bytes).map_err(|e| Bad::Other(format!("not UTF-8 text ({e})")))?;
+    let header: Header = ron::from_str(text).map_err(|e| Bad::Other(format!("unreadable ({e})")))?;
+    if header.version > version {
+        return Err(Bad::Newer(format!(
+            "version {} is a newer game's; this game reads version {version}",
+            header.version
+        )));
+    }
     if header.version != version {
-        let whose = if header.version > version { "a newer game's" } else { "an older game's" };
-        return Err(format!("version {} is {whose}; this game reads version {version}", header.version));
+        return Err(Bad::Other(format!(
+            "version {} is an older game's; this game reads version {version}",
+            header.version
+        )));
     }
-    parse(text).map_err(|e| format!("unreadable ({e})"))
+    parse(text).map_err(|e| Bad::Other(format!("unreadable ({e})")))
 }
 
 /// Writes `bytes` to a temporary file next to `path`, syncs it and renames

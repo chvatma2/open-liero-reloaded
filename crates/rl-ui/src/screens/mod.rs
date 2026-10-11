@@ -53,6 +53,9 @@ pub struct MenuData {
     pub replays: Vec<ReplayFile>,
     /// The replays screen's path field.
     pub replay_path: String,
+    /// What the player should know of their files (`Store::notices`: a
+    /// newer game's settings left untouched), shown on the main menu.
+    pub notices: Vec<String>,
     /// The skin preview the profiles screen showed this frame (`None` on
     /// other screens): the app makes it and puts it in `preview`.
     pub preview_wanted: Option<PreviewKey>,
@@ -99,6 +102,7 @@ impl MenuData {
             replays_dir,
             replays: Vec::new(),
             replay_path: String::new(),
+            notices: Vec::new(),
             preview_wanted: None,
             preview: None,
             capture: None,
@@ -219,7 +223,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
         _ => {
             let frame = egui::Frame::central_panel(ui.style()).fill(Color32::from_rgb(16, 16, 20));
             egui::CentralPanel::default().frame(frame).show(ui, |ui| match screen {
-                Screen::Main => main::show(ui, state, &mut out),
+                Screen::Main => main::show(ui, state, &data.notices, &mut out),
                 Screen::LocalPlay => local_play::show(ui, state, data, &mut out),
                 Screen::Profiles => profiles::show(ui, state, data, &mut out),
                 Screen::Replays => replays::show(ui, state, data, &mut out),

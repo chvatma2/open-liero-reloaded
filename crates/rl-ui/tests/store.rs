@@ -1,7 +1,8 @@
 //! Settings and profiles on disk (spec §9.4, §21 G2; plan 7 Review Focus 1):
-//! versioned RON written atomically; a corrupt, future-version or
-//! out-of-range file gives defaults (or the values fixed) and a warning,
-//! and the bad file is kept as `.bak`, never lost and never a panic.
+//! versioned RON written atomically; a corrupt or out-of-range file gives
+//! defaults (or the values fixed) and a warning, and the bad file is kept
+//! as `.bak`, never lost and never a panic; a newer game's file is left in
+//! place, untouched.
 
 use std::fs;
 use std::path::Path;
@@ -125,15 +126,16 @@ fn bad_user_files_fall_back_to_defaults_and_keep_a_backup() {
     store.save_settings(&Settings::default()).unwrap();
     assert_eq!(read(&bak), garbage);
 
-    // A newer game's file: defaults, a warning naming the version, and a
-    // second backup (the first is kept).
+    // A newer game's file: defaults and a warning naming the version; it
+    // stays where it is, untouched (`a_newer_file_is_never_overwritten`).
     let future = format!("(version: {}, settings: (), hologram: true)", SETTINGS_VERSION + 1);
     fs::write(&path, &future).unwrap();
     let got = store.load_settings();
     assert_eq!(got.value, Settings::default());
     assert!(got.warnings[0].contains(&format!("version {}", SETTINGS_VERSION + 1)), "{:?}", got.warnings);
     assert_eq!(read(&bak), garbage);
-    assert_eq!(read(&data.join("settings.ron.1.bak")), future);
+    assert_eq!(read(&path), future);
+    assert!(!data.join("settings.ron.1.bak").exists());
 
     // Not UTF-8, empty, no version, too large: all defaults with a backup.
     let huge = vec![b' '; rl_ui::store::MAX_FILE_BYTES + 1];
@@ -255,4 +257,61 @@ fn backups_rotate_past_the_limit() {
     assert_eq!(fs::read_dir(data).unwrap().count(), MAX_BACKUPS);
     store.save_settings(&Settings::default()).unwrap();
     assert_eq!(store.load_settings().value, Settings::default());
+}
+
+/// A file from a newer version of the game stays where it is and is never
+/// overwritten, even after the settings change and are saved: this
+/// session uses defaults and saves nothing to it, and says so (a notice
+/// the main menu shows). Read again later (the newer game gone, the file
+/// replaced), the store saves as usual.
+#[test]
+fn a_newer_file_is_never_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path();
+    let settings = data.join("settings.ron");
+    let profiles = data.join("profiles.ron");
+    let future_s = format!("(version: {}, settings: (video: (holo: 3)))", SETTINGS_VERSION + 1);
+    let future_p = format!("(version: {}, profiles: (list: [], selected: 0))", PROFILES_VERSION + 7);
+    fs::write(&settings, &future_s).unwrap();
+    fs::write(&profiles, &future_p).unwrap();
+    let mut store = Store::open(data);
+    assert!(store.notices().is_empty());
+    let got = store.load_settings();
+    assert_eq!(got.value, Settings::default());
+    assert_eq!(got.warnings.len(), 1, "{:?}", got.warnings);
+    assert!(got.warnings[0].contains("newer"), "{}", got.warnings[0]);
+    let gotp = store.load_profiles();
+    assert_eq!(gotp.value, Profiles::default());
+    assert_eq!(
+        store.notices(),
+        vec![
+            "settings.ron is from a newer version; using defaults and leaving it untouched \
+             (changes are not saved)"
+                .to_string(),
+            "profiles.ron is from a newer version; using defaults and leaving it untouched \
+             (changes are not saved)"
+                .to_string(),
+        ]
+    );
+    // Changed and saved, again and again: nothing is written over them.
+    for _ in 0..2 {
+        store.save_settings(&changed_settings()).unwrap();
+        store.save_profiles(&changed_profiles()).unwrap();
+    }
+    assert_eq!(read(&settings), future_s);
+    assert_eq!(read(&profiles), future_p);
+    let names: Vec<String> =
+        fs::read_dir(data).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    assert_eq!(names.len(), 2, "no backup, no temporary file: {names:?}");
+    // A later session finds them as they were.
+    let mut next = Store::open(data);
+    assert_eq!(next.load_settings().value, Settings::default());
+    assert_eq!(next.notices().len(), 1);
+    // The file replaced by a readable one: read and saved as usual.
+    fs::remove_file(&settings).unwrap();
+    store.save_settings(&changed_settings()).unwrap();
+    assert_eq!(store.load_settings().value, changed_settings());
+    store.save_settings(&Settings::default()).unwrap();
+    assert_eq!(store.load_settings().value, Settings::default());
+    assert_eq!(store.notices().len(), 1, "profiles.ron is still the newer one");
 }

@@ -383,3 +383,15 @@ fn about_credits_the_authors_and_the_licenses() {
     h.run();
     assert_eq!(h.state().ui.screen(), Screen::Main);
 }
+
+/// The store's notices (a newer game's settings file) show on the main
+/// menu, not only in the log.
+#[test]
+fn main_menu_shows_the_store_notices() {
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 7));
+    let text = "settings.ron is from a newer version; using defaults and leaving it untouched";
+    assert!(h.query_by_label_contains(text).is_none());
+    h.state_mut().data.notices = vec![text.to_string()];
+    h.run();
+    h.get_by_label_contains(text);
+}
