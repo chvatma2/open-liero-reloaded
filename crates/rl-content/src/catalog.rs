@@ -4,12 +4,12 @@
 //! PNG header checked here; the menu decodes it when it shows it
 //! ([`ThumbRef::load`]), so a long list never decodes every picture.
 
-use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use rl_data::image::RgbaImage;
 use rl_data::manifest::{Origin, PackKind};
+use rl_vfs::{ContentSource as _, DirFs, VPath};
 
 use crate::{Content, SkinInfo};
 
@@ -26,8 +26,6 @@ pub struct ModInfo {
     /// Its weapon restriction presets (OLX's `WeaponRestrictionsFile`
     /// choices), sorted.
     pub presets: Vec<String>,
-    /// Where it was imported from (its manifest's), for the credits.
-    pub origin: Option<Origin>,
 }
 
 /// A level as the menus list it.
@@ -42,50 +40,64 @@ pub struct LevelInfo {
     /// `thumb.png` (§21 G6), when the pack has one whose header is within
     /// the bounds; not decoded yet.
     pub thumb: Option<ThumbRef>,
-    /// Where it was imported from (its manifest's), for the credits.
+}
+
+/// A pack of any kind and where it was imported from (its manifest's),
+/// for the credits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackSource {
+    pub id: String,
+    pub kind: PackKind,
+    pub name: String,
     pub origin: Option<Origin>,
 }
 
 /// A level's `thumb.png`, located and its PNG header checked against
-/// [`MAX_THUMB_SIDE`] and [`MAX_THUMB_BYTES`], not decoded.
+/// [`MAX_THUMB_SIDE`] and [`MAX_THUMB_BYTES`], not decoded. Read through
+/// the pack's `ContentSource` (`DirFs`: regular files only, bounded).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ThumbRef {
-    pub path: PathBuf,
+    /// The level pack's directory.
+    pub dir: PathBuf,
     /// The size its header gives.
     pub width: u32,
     pub height: u32,
 }
 
 impl ThumbRef {
-    /// Checks `path`'s length and PNG header: `Ok(None)` when there is no
-    /// such file, an error when it is not a PNG or out of bounds. Reads 24
-    /// bytes at most.
-    pub fn probe(path: &Path) -> Result<Option<ThumbRef>, String> {
-        let file = match std::fs::File::open(path) {
-            Ok(f) => f,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(e.to_string()),
-        };
-        let len = file.metadata().map_err(|e| e.to_string())?.len();
+    /// Checks the length and PNG header of the `thumb.png` in pack
+    /// directory `dir`: `Ok(None)` when there is none, an error when it is
+    /// not a PNG or out of bounds. Reads 24 bytes.
+    pub fn probe(dir: &Path) -> Result<Option<ThumbRef>, String> {
+        let src = DirFs::new(dir);
+        let path = VPath::new(rl_pack::THUMB_FILE).map_err(|e| e.to_string())?;
+        if !src.exists(&path) {
+            return Ok(None);
+        }
+        let len = src.file_len(&path).map_err(|e| e.to_string())?;
         if len > MAX_THUMB_BYTES as u64 {
             return Err(format!("{len} bytes, above {MAX_THUMB_BYTES}"));
         }
-        let mut header = Vec::with_capacity(24);
-        file.take(24).read_to_end(&mut header).map_err(|e| e.to_string())?;
+        let header = src.read_prefix(&path, 24).map_err(|e| e.to_string())?;
         let (width, height) = rl_pack::image_io::png_size(&header).ok_or("not a PNG")?;
         if width == 0 || height == 0 || width > MAX_THUMB_SIDE || height > MAX_THUMB_SIDE {
             return Err(format!("{width}x{height}, not within {MAX_THUMB_SIDE}x{MAX_THUMB_SIDE}"));
         }
-        Ok(Some(ThumbRef { path: path.to_path_buf(), width, height }))
+        Ok(Some(ThumbRef { dir: dir.to_path_buf(), width, height }))
+    }
+
+    /// Where it is, for messages.
+    pub fn path(&self) -> PathBuf {
+        self.dir.join(rl_pack::THUMB_FILE)
     }
 
     /// Reads and decodes the thumbnail, bounded again (the file may have
     /// changed since it was listed: at most [`MAX_THUMB_BYTES`] are read,
     /// and the header must still give the listed size before decoding).
     pub fn load(&self) -> Result<RgbaImage, String> {
-        let file = std::fs::File::open(&self.path).map_err(|e| e.to_string())?;
-        let mut bytes = Vec::new();
-        file.take(MAX_THUMB_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+        let path = VPath::new(rl_pack::THUMB_FILE).map_err(|e| e.to_string())?;
+        let bytes =
+            DirFs::new(&self.dir).read_max(&path, MAX_THUMB_BYTES as u64).map_err(|e| e.to_string())?;
         if rl_pack::image_io::png_size(&bytes) != Some((self.width, self.height)) {
             return Err(format!("no longer the {}x{} PNG listed", self.width, self.height));
         }
@@ -101,6 +113,8 @@ pub struct Catalog {
     pub levels: Vec<LevelInfo>,
     /// The skins (by name only: nothing is decoded).
     pub skins: Vec<SkinInfo>,
+    /// Every pack read (any kind) with its origin, in id order.
+    pub sources: Vec<PackSource>,
     pub warnings: Vec<String>,
 }
 
@@ -128,7 +142,7 @@ impl Content {
         let src = self.pack(id, PackKind::Mod)?;
         let m = rl_pack::read_manifest(&src).with_context(|| format!("mod pack {id}"))?;
         let presets = rl_pack::read_preset_names(&src).with_context(|| format!("mod pack {id}"))?;
-        Ok(ModInfo { id: id.into(), name: m.name, presets, origin: m.origin })
+        Ok(ModInfo { id: id.into(), name: m.name, presets })
     }
 
     /// Level pack `id`'s name, size and thumbnail ([`ThumbRef::probe`]),
@@ -136,20 +150,13 @@ impl Content {
     /// with a warning.
     pub fn level_info(&self, id: &str) -> anyhow::Result<(LevelInfo, Option<String>)> {
         let src = self.pack(id, PackKind::Level)?;
-        let (m, def) = rl_pack::read_level_def(&src).with_context(|| format!("level pack {id}"))?;
+        let (_, def) = rl_pack::read_level_def(&src).with_context(|| format!("level pack {id}"))?;
         let dir = self.pack_dir(id).context("level pack directory")?;
-        let (thumb, warning) = match ThumbRef::probe(&dir.join(rl_pack::THUMB_FILE)) {
+        let (thumb, warning) = match ThumbRef::probe(dir) {
             Ok(t) => (t, None),
             Err(e) => (None, Some(format!("level pack {id}: {}: {e}, not shown", rl_pack::THUMB_FILE))),
         };
-        let info = LevelInfo {
-            id: id.into(),
-            name: def.name,
-            width: def.width,
-            height: def.height,
-            thumb,
-            origin: m.origin,
-        };
+        let info = LevelInfo { id: id.into(), name: def.name, width: def.width, height: def.height, thumb };
         Ok((info, warning))
     }
 
@@ -173,6 +180,16 @@ impl Content {
             }
         }
         c.skins = self.skins();
+        c.sources = self
+            .packs
+            .iter()
+            .map(|(id, (kind, _))| PackSource {
+                id: id.clone(),
+                kind: *kind,
+                name: self.pack_name(id).unwrap_or_default().to_string(),
+                origin: self.pack_origin(id).cloned(),
+            })
+            .collect();
         c
     }
 }

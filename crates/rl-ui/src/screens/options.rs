@@ -8,7 +8,7 @@
 //!   one change every 250 ms, however fast the player clicks).
 //! - **Audio:** the master volume (OLX's sound volume) and the effects'.
 //! - **Keys** (`keys.rs`).
-//! - **Gameplay:** the HUD style and the match local play starts with.
+//! - **Gameplay:** the match local play starts with.
 //!
 //! Every change is saved (the app writes the file at most once a second).
 

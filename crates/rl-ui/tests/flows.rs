@@ -4,8 +4,9 @@
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use rl_bots::{Difficulty, Personality};
-use rl_content::{Catalog, LevelInfo, ModInfo, Player, ThumbRef};
+use rl_content::{Catalog, LevelInfo, ModInfo, PackSource, Player, ThumbRef};
 use rl_data::image::RgbaImage;
+use rl_data::manifest::{Origin, PackKind};
 use rl_ui::screens::{self, MenuData};
 use rl_ui::{
     AppCommand, BotLevel, BotPersonality, MAX_BOTS, MatchPrefs, Profile, Profiles, Screen, Settings,
@@ -16,9 +17,11 @@ use rl_ui::{
 fn thumb_file(name: &str, w: u32, h: u32) -> ThumbRef {
     static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
     let dir = DIR.get_or_init(|| tempfile::tempdir().unwrap());
-    let path = dir.path().join(format!("{name}.png"));
-    std::fs::write(&path, rl_pack::image_io::encode_rgba(&RgbaImage::new(w, h))).unwrap();
-    ThumbRef::probe(&path).unwrap().unwrap()
+    let pack = dir.path().join(name);
+    std::fs::create_dir_all(&pack).unwrap();
+    let png = rl_pack::image_io::encode_rgba(&RgbaImage::new(w, h));
+    std::fs::write(pack.join(rl_pack::THUMB_FILE), png).unwrap();
+    ThumbRef::probe(&pack).unwrap().unwrap()
 }
 
 fn catalog() -> Catalog {
@@ -29,17 +32,11 @@ fn catalog() -> Catalog {
                 id: "olx-classic".into(),
                 name: "Liero v1.0".into(),
                 presets: presets(&["All weapons", "Standard 100lt"]),
-                origin: Some(rl_data::manifest::Origin {
-                    source: "OpenLieroX".into(),
-                    path: "share/gamedir/Classic".into(),
-                    revision: "d1ad953f4f20610f2648cce26c9739e7c088409d".into(),
-                }),
             },
             ModInfo {
                 id: "olx-mw-1-0".into(),
                 name: "Modern Warfare1.0".into(),
                 presets: presets(&["Mortars"]),
-                origin: None,
             },
         ],
         levels: vec![
@@ -49,7 +46,6 @@ fn catalog() -> Catalog {
                 width: 504,
                 height: 350,
                 thumb: Some(thumb_file("dirt", 50, 35)),
-                origin: None,
             },
             LevelInfo {
                 id: "olx-level-liero-factory".into(),
@@ -57,12 +53,28 @@ fn catalog() -> Catalog {
                 width: 1200,
                 height: 480,
                 thumb: None,
-                origin: None,
             },
         ],
         skins: vec![],
+        sources: vec![
+            source("olx-classic", PackKind::Mod, "Liero v1.0", "Classic"),
+            source("olx-level-dirt-level", PackKind::Level, "Dirt Level", "levels/Dirt Level.lxl"),
+            source("olx-theme-dirt", PackKind::Theme, "Dirt", "data/themes/Dirt"),
+            source("olx-core", PackKind::Core, "OpenLieroX core", "data"),
+            source("olx-skin-ant", PackKind::Skin, "ant", "skins/ant.png"),
+            source("olx-skin-bat", PackKind::Skin, "bat", "skins/bat.png"),
+        ],
         warnings: vec![],
     }
+}
+
+fn source(id: &str, kind: PackKind, name: &str, path: &str) -> PackSource {
+    let origin = Origin {
+        source: "OpenLieroX".into(),
+        path: format!("share/gamedir/{path}"),
+        revision: "d1ad953f4f20610f2648cce26c9739e7c088409d".into(),
+    };
+    PackSource { id: id.into(), kind, name: name.into(), origin: Some(origin) }
 }
 
 /// The menus and what they asked the app to do.
@@ -271,12 +283,11 @@ fn thumbnails_decode_lazily_and_bounded() {
             width: 640,
             height: 480,
             thumb: Some(thumb_file(&format!("lvl-{i:02}"), 160, 96)),
-            origin: None,
         })
         .collect();
     // The first one breaks after it was listed.
     let broken = c.levels[0].thumb.clone().unwrap();
-    std::fs::write(&broken.path, b"not a png any more").unwrap();
+    std::fs::write(broken.path(), b"not a png any more").unwrap();
     let mut ui = UiState::new(Settings::default(), Profiles::default(), 7);
     ui.update(UiAction::Open(Screen::LocalPlay));
     let app = App { ui, data: MenuData::new(c, None), commands: Vec::new() };
@@ -311,7 +322,7 @@ fn thumbnails_decode_lazily_and_bounded() {
 
 /// Plan 7 G9: the main menu's About shows the credits (Jason Boettcher's
 /// Liero Xtreme, the OpenLieroX team, Joosa Riekkinen's Liero), the
-/// licenses and the bundled content's origin; Back returns.
+/// licenses and the imported content's origin; Back returns.
 #[test]
 fn about_credits_the_authors_and_the_licenses() {
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 7));
@@ -332,6 +343,12 @@ fn about_credits_the_authors_and_the_licenses() {
     h.get_by_label("Mod Liero v1.0");
     h.get_by_label("OpenLieroX share/gamedir/Classic (d1ad953f)");
     h.get_by_label("Level Dirt Level");
+    h.get_by_label("Theme Dirt");
+    h.get_by_label("OpenLieroX share/gamedir/data/themes/Dirt (d1ad953f)");
+    h.get_by_label("Core OpenLieroX core");
+    h.get_by_label("2 skins");
+    h.get_by_label("OpenLieroX share/gamedir/skins (d1ad953f)");
+    h.get_by_label_contains("imported from OpenLieroX");
     h.get_by_label("Back").click();
     h.run();
     assert_eq!(h.state().ui.screen(), Screen::Main);

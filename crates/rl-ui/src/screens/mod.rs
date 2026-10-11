@@ -144,7 +144,7 @@ impl MenuData {
                 Some(ctx.load_texture(format!("thumb {id}"), image, TextureOptions::LINEAR))
             }
             Err(e) => {
-                self.warnings.push(format!("level pack {id}: {}: {e}, not shown", r.path.display()));
+                self.warnings.push(format!("level pack {id}: {}: {e}, not shown", r.path().display()));
                 None
             }
         };

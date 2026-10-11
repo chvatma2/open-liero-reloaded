@@ -75,10 +75,12 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   `replay_assets_from(m, level, theme)` let a game that draws a replay load
   its packs once.
 - **Catalog** (`catalog.rs`, plan 7 G1/G6): `Content::catalog()` lists every
-  mod (`ModInfo`: name, restriction presets, origin) and level
-  (`LevelInfo`: name, size, `thumb.png` as a `ThumbRef`, origin) without loading them, for the menus;
-  `mod_info`/`level_info` for one. A thumbnail is not decoded here:
-  `ThumbRef::probe` reads its length and PNG header (24 bytes), and one
+  mod (`ModInfo`: name, restriction presets) and level (`LevelInfo`: name,
+  size, `thumb.png` as a `ThumbRef`) without loading them, for the menus,
+  and every pack's recorded origin (`Catalog::sources`, `PackSource`; the
+  About screen's credits); `mod_info`/`level_info` for one. A thumbnail is not decoded here:
+  `ThumbRef::probe` reads its length and PNG header (24 bytes) through the
+  pack's `DirFs` (regular files only: a FIFO is never opened), and one
   above `MAX_THUMB_SIDE` (512) or `MAX_THUMB_BYTES` (1 MiB), or not a PNG,
   is left out with a warning (`Catalog::warnings`), like an unreadable
   pack; `ThumbRef::load` decodes it when a menu shows it, refusing a file
@@ -92,7 +94,7 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   them by manifest name; `resolve_id(given, prefix, ids)` (an id, or an
   OLX name's import id such as `default.png` → `olx-skin-default`),
   `Content::skin_id`, `Catalog::skin`.
-- `Content::pack_dir(id)`: a pack's directory.
+- `Content::pack_dir(id)`, `pack_kind(id)`, `pack_origin(id)`.
 - Pack ids of OLX imports: `olx_mod_id("MW 1.0")`, `olx_level_id("CastleStrike.lxl")`.
 
 Test: `cargo nextest run -p rl-content` (`loads_every_manifest_item` and the

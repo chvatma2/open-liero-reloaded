@@ -73,9 +73,22 @@ fn catalog_lists_mods_and_levels_without_loading_them() {
     let mut s = DirFs::new(root.join("olx-skin-ant"));
     rl_pack::write_manifest(&mut s, &manifest("olx-skin-ant", "ant", PackKind::Skin)).unwrap();
 
+    // A FIFO named thumb.png (or pack.ron) is never opened: it would block.
+    let fifo = level(root, "lvl-fifo", "Fifo");
+    let made = std::process::Command::new("mkfifo").arg(fifo.root().join(rl_pack::THUMB_FILE)).status();
+    let fifo_made = made.is_ok_and(|s| s.success());
+    std::fs::create_dir_all(root.join("fifo-pack")).unwrap();
+    let _ = std::process::Command::new("mkfifo").arg(root.join("fifo-pack").join(rl_pack::MANIFEST)).status();
+
     let c = Content::open(root).unwrap().catalog();
     let ids: Vec<&str> = c.levels.iter().map(|l| l.id.as_str()).collect();
-    assert_eq!(ids, ["lvl-huge", "lvl-junk", "lvl-plain", "lvl-thumb"]);
+    assert_eq!(ids, ["lvl-fifo", "lvl-huge", "lvl-junk", "lvl-plain", "lvl-thumb"]);
+    if fifo_made {
+        assert!(c.level("lvl-fifo").unwrap().thumb.is_none());
+    }
+    // Every pack with its recorded origin, for the credits.
+    let kinds: Vec<_> = c.sources.iter().map(|s| (s.id.as_str(), s.kind)).collect();
+    assert!(kinds.contains(&("mod-a", PackKind::Mod)) && kinds.contains(&("olx-skin-ant", PackKind::Skin)));
     let plain = c.level("lvl-plain").unwrap();
     assert_eq!((plain.name.as_str(), plain.width, plain.height), ("Plain", 3, 2));
     assert!(plain.thumb.is_none());

@@ -93,8 +93,9 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   "Saved"); Back to menu; `MenuData::results`; "Loading…" while a rematch
   starts; the table and the weapon slots scroll so the buttons stay on a
   small screen);
-  About (`about.rs`, §21 G9: `CREDITS`, `LICENSES`, each mod's and
-  level's recorded origin, `origin_text`); Import is a placeholder until
+  About (`about.rs`, §21 G9: `CREDITS`, `LICENSES`, every imported
+  pack's recorded origin, `sources`: skins grouped by directory,
+  `origin_text`); Import is a placeholder until
   its task. Esc is `Back` and
   F5 `Restart` on every screen, a held key's repeats ignored
   (`pressed_once`); in the options Esc first closes an open dialog.

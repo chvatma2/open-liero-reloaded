@@ -31,7 +31,7 @@ use anyhow::Context as _;
 use rl_data::manifest::PackKind;
 use rl_vfs::DirFs;
 
-pub use catalog::{Catalog, LevelInfo, MAX_THUMB_BYTES, MAX_THUMB_SIDE, ModInfo, ThumbRef};
+pub use catalog::{Catalog, LevelInfo, MAX_THUMB_BYTES, MAX_THUMB_SIDE, ModInfo, PackSource, ThumbRef};
 pub use color::{apply_edits, color_edit, lost_area};
 pub use core_assets::{CORE_PACK_ID, CORE_SPRITES, CorePack};
 pub use maps::{LoadedLevel, LoadedSkin, LoadedTheme, MAX_ART_SCALE, MAX_COLOR_MAP_BYTES};
@@ -70,6 +70,8 @@ pub struct Content {
     packs: BTreeMap<String, (PackKind, PathBuf)>,
     /// Each pack's name (its manifest's), by id.
     names: BTreeMap<String, String>,
+    /// Each pack's origin (its manifest's), by id.
+    origins: BTreeMap<String, Option<rl_data::manifest::Origin>>,
     core: CorePack,
     warnings: Vec<String>,
 }
@@ -88,6 +90,7 @@ impl Content {
         dirs.sort();
         let mut packs = BTreeMap::new();
         let mut names = BTreeMap::new();
+        let mut origins = BTreeMap::new();
         let mut warnings = Vec::new();
         for dir in dirs {
             match rl_pack::read_manifest(&DirFs::new(&dir)) {
@@ -102,6 +105,7 @@ impl Content {
                         ));
                     } else {
                         names.insert(m.id.clone(), m.name);
+                        origins.insert(m.id.clone(), m.origin);
                         packs.insert(m.id, (m.kind, dir));
                     }
                 }
@@ -126,7 +130,7 @@ impl Content {
                 CorePack::empty()
             }
         };
-        Ok(Content { packs, names, core, warnings })
+        Ok(Content { packs, names, origins, core, warnings })
     }
 
     /// Problems found when opening: unreadable packs, duplicate ids, and the
@@ -148,6 +152,17 @@ impl Content {
     /// Pack `id`'s name (its manifest's), if there is such a pack.
     pub fn pack_name(&self, id: &str) -> Option<&str> {
         self.names.get(id).map(String::as_str)
+    }
+
+    /// Pack `id`'s origin (its manifest's), if there is such a pack and it
+    /// records one.
+    pub fn pack_origin(&self, id: &str) -> Option<&rl_data::manifest::Origin> {
+        self.origins.get(id)?.as_ref()
+    }
+
+    /// Pack `id`'s kind, if there is such a pack.
+    pub fn pack_kind(&self, id: &str) -> Option<PackKind> {
+        self.packs.get(id).map(|(k, _)| *k)
     }
 
     /// Pack `id`'s directory, if there is such a pack.
