@@ -32,7 +32,7 @@ use crate::shell::Shell;
 use crate::speed::{self, Speed};
 use crate::stats::Meter;
 use crate::video::Video;
-use crate::window::{self, Requests};
+use crate::window::{self, Plan, Requests, Shape};
 
 mod handler;
 mod menus;
@@ -113,6 +113,10 @@ pub struct App {
     paused: bool,
     /// Window size and mode changes asked for and not yet applied.
     requests: Requests,
+    /// The window's size and mode, as last made or changed.
+    shape: Shape,
+    /// How changes reach the window (made again on Wayland).
+    plan: Plan,
     /// The video options the window shows (the menus').
     video: Video,
     /// When the settings were last written (`Shell::flush`, once a second).
@@ -141,8 +145,19 @@ pub fn egui_hears(event: &winit::event::WindowEvent, capturing: bool) -> bool {
     !(capturing && matches!(event, E::KeyboardInput { .. } | E::Ime(_)))
 }
 
+/// Whether the event loop runs on Wayland.
+fn is_wayland(el: &ActiveEventLoop) -> bool {
+    #[cfg(target_os = "linux")]
+    return winit::platform::wayland::ActiveEventLoopExtWayland::is_wayland(el);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = el;
+        false
+    }
+}
+
 /// The viewport for a window of `size` pixels.
-pub(crate) fn viewport(size: (u32, u32)) -> Viewport {
+pub fn viewport(size: (u32, u32)) -> Viewport {
     let aspect = if size.1 == 0 { MAX_ASPECT } else { size.0 as f32 / size.1 as f32 };
     Viewport::from_aspect(aspect, MAX_ASPECT)
 }
@@ -203,6 +218,8 @@ impl App {
             dropped_warned: false,
             paused: false,
             requests: Requests::default(),
+            shape: Shape { size: window::DEFAULT_SIZE, physical: false, fullscreen: false },
+            plan: Plan::InPlace,
             video,
             flushed: None,
             error: None,
@@ -295,17 +312,18 @@ impl App {
     }
 
     fn open(&mut self, el: &ActiveEventLoop) -> anyhow::Result<()> {
-        let attrs = if self.cfg.menus {
+        self.shape = if self.cfg.menus {
             // The options' window (the command line's flags on top), made
             // at its size and mode: no change follows the creation.
             let monitor = el.primary_monitor().or_else(|| el.available_monitors().next());
             let desktop = monitor.map(|m| (m.size().width, m.size().height));
             let o = Video::opening(&self.shell.ui.settings().video, desktop);
-            window::attributes(o.size, true, o.fullscreen)
+            Shape { size: o.size, physical: true, fullscreen: o.fullscreen }
         } else {
-            window::attributes(window::DEFAULT_SIZE, false, self.cfg.fullscreen)
+            Shape { size: window::DEFAULT_SIZE, physical: false, fullscreen: self.cfg.fullscreen }
         };
-        let window = Arc::new(el.create_window(attrs)?);
+        self.plan = window::plan(is_wayland(el));
+        let window = Arc::new(el.create_window(self.shape.attributes())?);
         let gpu = Gpu::new(
             window.clone(),
             el.owned_display_handle(),
@@ -319,16 +337,7 @@ impl App {
         }
         let size = window.inner_size();
         self.shell.set_viewport(viewport((size.width, size.height)));
-        let max_side = gpu.renderer.device().limits().max_texture_dimension_2d as usize;
-        let scale = Some(window.scale_factor() as f32);
-        let egui = egui_winit::State::new(
-            self.egui.clone(),
-            egui::ViewportId::ROOT,
-            &window,
-            scale,
-            None,
-            Some(max_side),
-        );
+        let egui = self.egui_state(&window, &gpu);
         println!("rl-game: GPU {}", gpu.info);
         self.stats.gpu = gpu.info.clone();
         self.win = Some(Shown { window, gpu, egui });
@@ -336,6 +345,53 @@ impl App {
         // away waits out the interval (`window::MIN_CHANGE_INTERVAL`).
         self.requests.opened(self.now());
         Ok(())
+    }
+
+    /// egui's window state for `window`, on the one egui context (its
+    /// textures, fonts and the menus' memory stay with the context).
+    fn egui_state(&self, window: &Window, gpu: &Gpu) -> egui_winit::State {
+        let max_side = gpu.renderer.device().limits().max_texture_dimension_2d as usize;
+        let scale = Some(window.scale_factor() as f32);
+        egui_winit::State::new(self.egui.clone(), egui::ViewportId::ROOT, window, scale, None, Some(max_side))
+    }
+
+    /// Makes the window again at [`App::shape`] (`window::Plan::Recreate`):
+    /// a new winit window, its wgpu surface (`Gpu::rebind`: the device and
+    /// every GPU resource stay) and egui's window state on the same
+    /// context; the game, the menus, the sound and the clock never notice.
+    /// Keys held are released (the old window's releases never come). The
+    /// old window is closed as soon as the new one exists, its surface
+    /// first (in `Gpu::rebind`); if the new one cannot be made, the old one
+    /// stays and takes the change in place.
+    fn recreate(&mut self, el: &ActiveEventLoop, change: window::Change) {
+        let Some(old) = self.win.take() else { return };
+        let Shown { window: old_window, mut gpu, egui: old_egui } = old;
+        let made = el
+            .create_window(self.shape.attributes())
+            .map_err(anyhow::Error::from)
+            .map(Arc::new)
+            .and_then(|w| gpu.rebind(w.clone()).map(|()| w));
+        let window = match made {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("warning: making the window again: {e:#}; changing it in place");
+                let size = window::apply(&old_window, change);
+                self.win = Some(Shown { window: old_window, gpu, egui: old_egui });
+                if let Some(size) = size {
+                    self.resized((size.width, size.height));
+                }
+                return;
+            }
+        };
+        let egui = self.egui_state(&window, &gpu);
+        let size = gpu.size();
+        self.win = Some(Shown { window, gpu, egui });
+        drop((old_egui, old_window));
+        self.shell.set_viewport(viewport(size));
+        self.input.release_keys();
+        self.scores.focus(false);
+        // The interval runs from the new window (`window::MIN_CHANGE_INTERVAL`).
+        self.requests.opened(self.now());
     }
 
     /// F5 (a Deathmatch's rematch; its replay is saved): the next frame
@@ -364,12 +420,25 @@ impl App {
     /// The window size and mode changes asked for, at most once a frame
     /// (and once every `window::MIN_CHANGE_INTERVAL`), before the frame's
     /// surface texture is acquired.
-    fn apply_requests(&mut self) {
+    fn apply_requests(&mut self, el: &ActiveEventLoop) {
         let Some(change) = self.requests.due(self.now()) else { return };
-        // Wayland applies the size at once and sends no `Resized`.
-        if let Some(size) = self.win.as_ref().and_then(|w| window::apply(&w.window, change)) {
-            self.resized((size.width, size.height));
+        let shown = self.shape.apply(change);
+        match self.plan {
+            Plan::Recreate if shown => self.recreate(el, change),
+            Plan::Recreate => {}
+            Plan::InPlace => {
+                // Wayland applies the size at once and sends no `Resized`.
+                if let Some(size) = self.win.as_ref().and_then(|w| window::apply(&w.window, change)) {
+                    self.resized((size.width, size.height));
+                }
+            }
         }
+    }
+
+    /// Whether window event of window `id` is the game's: not one of a
+    /// window made again and closed (its last `Resized` or `Focused`).
+    fn current(&self, id: winit::window::WindowId) -> bool {
+        self.win.as_ref().is_none_or(|w| w.window.id() == id)
     }
 
     /// The key bound to `action` (the script presses keys as a player would).
@@ -457,7 +526,7 @@ impl App {
     /// after this one is shown (its "Loading…" with it).
     fn frame(&mut self, el: &ActiveEventLoop) -> anyhow::Result<()> {
         let begin = Instant::now();
-        self.apply_requests();
+        self.apply_requests(el);
         let frame = self.win.as_mut().and_then(|w| w.gpu.acquire());
         self.latency.frame_start(Instant::now());
         let now = self.now();

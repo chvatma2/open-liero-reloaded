@@ -18,6 +18,40 @@
 //! after such a resize. Resizing every 50 ms crashed it in 8 of 8 runs,
 //! every 250 ms or slower in none of 33 (hotfix report, plan 6). Under X11
 //! (XWayland) the compositor draws the frame and nothing crashed.
+//!
+//! Why Wayland makes the window again ([`Plan::Recreate`], v0.1 playtest):
+//! under WSLg (Weston's RDP-RAIL shell) a live window that changed size or
+//! mode left pieces of its old frame on the Windows desktop: a line at the
+//! old right border after 1280 × 720 → 1920 × 1080, and after the desktop's
+//! size → fullscreen the old title bar and 1280 × 720 outline over the
+//! game, the window at -22,-22 and the taskbar still shown. winit and
+//! sctk-adwaita did it right (a `WAYLAND_DEBUG` trace: `set_fullscreen`,
+//! `configure(3440,1440)`, the window geometry set and the 5 frame
+//! subsurfaces unmapped, all put back afterwards), so the stale pieces are
+//! the compositor's or RDP's, left by moved or unmapped subsurfaces; WSLg's
+//! Weston offers no `zxdg_decoration_manager_v1`, so no server-side frame.
+//! A window made at its size and mode never showed any of it (`--fullscreen`
+//! at 0,0 3440 × 1440, the taskbar hidden), so on Wayland each change
+//! closes the window and opens a new one at the new [`Shape`]; the
+//! device, the game, the sound and the menus stay (`app.rs`: `recreate`,
+//! `gpu.rs`: `Gpu::rebind`). It also never grows a live frame's `wl_shm`
+//! pool. The pacing stays: it costs nothing, and it bounds how often a
+//! window is made. X11 and other platforms change the window in place
+//! ([`apply`]): their frame is the window manager's.
+//!
+//! The compositor places the new window as it likes: WSLg puts it near the
+//! middle of the monitor (1920 × 1080 at 1125,324 and 1280 × 720 at
+//! 1021,485 of 3440 × 1440), the desktop's size at 0,35 (below its title
+//! bar), fullscreen at exactly 0,0 with the taskbar hidden. The old window
+//! closes before the new one shows its first frame, so the change may
+//! blink (making the window takes ~15 ms), and the new window
+//! draws its second frame only after the compositor's first frame callback:
+//! 0.15 s at most on WSLg, but 0.3 to 25 s while the Windows session was
+//! locked, during which the game does not tick (the time is dropped as
+//! any stall's: `MAX_CATCHUP_TICKS`). The windowed desktop's size is taller
+//! than the work area once the title bar is added (its bottom is under the
+//! taskbar); winit cannot tell the work area, so it stays as chosen.
+//! Fullscreen is the way to fill the screen.
 
 use std::time::{Duration, Instant};
 
@@ -52,6 +86,60 @@ pub struct Change {
     pub size: Option<(u32, u32)>,
     /// Borderless fullscreen on or off.
     pub fullscreen: Option<bool>,
+}
+
+/// What the window is, or is to be: the arguments of [`attributes`], so a
+/// window can be made again as it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shape {
+    /// The windowed inner size; kept while fullscreen, for when it ends.
+    pub size: (u32, u32),
+    /// `size` is in physical pixels (an options preset, a change), else
+    /// logical (the command line's default).
+    pub physical: bool,
+    /// Borderless fullscreen.
+    pub fullscreen: bool,
+}
+
+impl Shape {
+    /// The window's attributes for this shape ([`attributes`]).
+    pub fn attributes(&self) -> WindowAttributes {
+        attributes(self.size, self.physical, self.fullscreen)
+    }
+
+    /// Applies `change`; returns whether what the window shows changed: the
+    /// mode, or the size of a window (a fullscreen window only keeps a new
+    /// size for later).
+    pub fn apply(&mut self, change: Change) -> bool {
+        let before = *self;
+        if let Some(on) = change.fullscreen {
+            self.fullscreen = on;
+        }
+        if let Some((w, h)) = change.size {
+            self.size = (w.max(1), h.max(1));
+            self.physical = true;
+        }
+        self.fullscreen != before.fullscreen || (!self.fullscreen && *self != before)
+    }
+}
+
+/// How a size or mode change reaches the window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Plan {
+    /// Changed on the live window (`set_fullscreen`, `request_inner_size`:
+    /// [`apply`]).
+    InPlace,
+    /// The window made again at its new shape; the device, the game and the
+    /// menus stay (module docs: WSLg leaves a moved window's old frame on
+    /// the screen).
+    Recreate,
+}
+
+/// How changes reach the window on this window system: made again on
+/// Wayland (its client-side frame is what WSLg leaves behind), in place
+/// elsewhere (X11's frame is the window manager's: nothing is left).
+pub fn plan(wayland: bool) -> Plan {
+    if wayland { Plan::Recreate } else { Plan::InPlace }
 }
 
 /// The changes the game asked for and not yet applied; the latest of each
@@ -183,6 +271,37 @@ mod tests {
         // An options preset is physical pixels.
         let a = attributes((1600, 900), true, false);
         assert_eq!(a.inner_size, Some(PhysicalSize::new(1600u32, 900).into()));
+    }
+
+    #[test]
+    fn a_shape_says_when_the_window_shows_a_change() {
+        let mut s = Shape { size: DEFAULT_SIZE, physical: false, fullscreen: false };
+        assert_eq!(s.attributes().inner_size, attributes(DEFAULT_SIZE, false, false).inner_size);
+        // The same size, now physical: a new window (the scale may differ).
+        assert!(s.apply(Change { size: Some((1280, 720)), fullscreen: None }));
+        assert_eq!(s, Shape { size: (1280, 720), physical: true, fullscreen: false });
+        // Nothing new: nothing to do.
+        assert!(!s.apply(Change::default()));
+        assert!(!s.apply(Change { size: Some((1280, 720)), fullscreen: Some(false) }));
+        // Fullscreen keeps the windowed size; a size meanwhile is kept for later.
+        assert!(s.apply(Change { size: None, fullscreen: Some(true) }));
+        assert!(!s.apply(Change { size: Some((1920, 1080)), fullscreen: None }));
+        assert!(!s.apply(Change { size: None, fullscreen: Some(true) }));
+        assert_eq!(s, Shape { size: (1920, 1080), physical: true, fullscreen: true });
+        let a = s.attributes();
+        assert_eq!(a.fullscreen, Some(Fullscreen::Borderless(None)));
+        assert!(!a.resizable && !a.enabled_buttons.contains(WindowButtons::MAXIMIZE));
+        // Out of fullscreen: the kept size.
+        assert!(s.apply(Change { size: None, fullscreen: Some(false) }));
+        assert_eq!(s.attributes().inner_size, Some(PhysicalSize::new(1920u32, 1080).into()));
+        assert!(s.apply(Change { size: Some((0, 600)), fullscreen: None }));
+        assert_eq!(s.size, (1, 600));
+    }
+
+    #[test]
+    fn wayland_makes_the_window_again() {
+        assert_eq!(plan(true), Plan::Recreate);
+        assert_eq!(plan(false), Plan::InPlace);
     }
 
     #[test]

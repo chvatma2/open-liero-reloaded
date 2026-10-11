@@ -75,6 +75,8 @@ pub struct Gpu {
     config: wgpu::SurfaceConfiguration,
     /// The present modes the surface offers.
     present_modes: Vec<wgpu::PresentMode>,
+    /// No VSync wanted (`--uncapped`, the options' frame rate).
+    uncapped: bool,
     state: SurfaceState,
     pub renderer: Renderer,
     egui: egui_wgpu::Renderer,
@@ -160,7 +162,52 @@ impl Gpu {
         let zero = inner.width == 0 || inner.height == 0;
         let state = SurfaceState::new(if zero { (inner.width, inner.height) } else { first });
         let present_modes = caps.present_modes;
-        Ok(Gpu { window, instance, surface, adapter, config, present_modes, state, renderer, egui, info })
+        Ok(Gpu {
+            window,
+            instance,
+            surface,
+            adapter,
+            config,
+            present_modes,
+            uncapped,
+            state,
+            renderer,
+            egui,
+            info,
+        })
+    }
+
+    /// Draws to `window` from now on, a window made again (`app.rs`,
+    /// `window::Plan::Recreate`): a new surface on the same instance,
+    /// adapter and device, so the renderer, its textures and egui's stay.
+    /// The surface keeps its format (the pipelines were made for it) and
+    /// picks its present mode as [`Gpu::new`] did. On an error nothing
+    /// changed: the old window's surface is still the one drawn to.
+    ///
+    /// The old surface is dropped here, while the caller still holds the
+    /// old window, so it never outlives its window; all on the main
+    /// thread (module docs).
+    pub fn rebind(&mut self, window: Arc<Window>) -> anyhow::Result<()> {
+        let surface = self.instance.create_surface(window.clone()).context("creating the window surface")?;
+        anyhow::ensure!(
+            self.adapter.is_surface_supported(&surface),
+            "the adapter cannot draw to the new window"
+        );
+        let caps = surface.get_capabilities(&self.adapter);
+        anyhow::ensure!(
+            caps.formats.contains(&self.config.format),
+            "the new window's surface has no {:?}",
+            self.config.format
+        );
+        self.config.present_mode = pick_present_mode(&caps.present_modes, self.uncapped);
+        self.present_modes = caps.present_modes;
+        self.surface = surface;
+        self.window = window;
+        let inner = self.window.inner_size();
+        let zero = inner.width == 0 || inner.height == 0;
+        let size = (inner.width, inner.height);
+        self.state = SurfaceState::new(if zero { size } else { clamp_size(size, self.max_side()) });
+        Ok(())
     }
 
     /// The window is now `size` pixels (0 when minimised).
@@ -174,6 +221,7 @@ impl Gpu {
     /// configured again before the next frame when its present mode
     /// changes (never under WSLg, which offers FIFO only).
     pub fn set_uncapped(&mut self, uncapped: bool) {
+        self.uncapped = uncapped;
         let mode = pick_present_mode(&self.present_modes, uncapped);
         if mode != self.config.present_mode {
             self.config.present_mode = mode;

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use rl_audio::Audio;
 use rl_game::shell::{Outcome, Shell, ShellConfig};
 use rl_game::video::{Opening, Overrides, Video};
-use rl_game::window::{Change, MIN_CHANGE_INTERVAL, Requests};
+use rl_game::window::{self, MIN_CHANGE_INTERVAL, Plan, Requests, Shape};
 use rl_scene::{Interpolation, Viewport};
 use rl_ui::{
     AudioSettings, FrameRate, Profiles, Screen, Settings, Store, UiAction, UiState, UpscaleFilter,
@@ -36,22 +36,9 @@ fn content_dir() -> Option<PathBuf> {
 const DESKTOP: (u32, u32) = (2560, 1440);
 const FRAME: Duration = Duration::from_millis(16);
 
-/// The window as the requests leave it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Window {
-    size: (u32, u32),
-    fullscreen: bool,
-}
-
-impl Window {
-    fn apply(&mut self, c: Change) {
-        if let Some(on) = c.fullscreen {
-            self.fullscreen = on;
-        }
-        if let Some(s) = c.size {
-            self.size = s;
-        }
-    }
+/// A windowed shape of `size` physical pixels, or fullscreen.
+fn shape(size: (u32, u32), fullscreen: bool) -> Shape {
+    Shape { size, physical: true, fullscreen }
 }
 
 /// The app's part: the menus' video outcomes to the window requests.
@@ -59,10 +46,12 @@ struct Game {
     sh: Shell,
     video: Video,
     requests: Requests,
-    window: Window,
+    window: Shape,
     now: Instant,
     /// When each change was applied.
     applied: Vec<Instant>,
+    /// Windows made again for them (Wayland's plan).
+    recreated: usize,
     live: Vec<rl_game::video::Live>,
 }
 
@@ -82,7 +71,9 @@ impl Game {
     fn frame(&mut self) {
         self.now += FRAME;
         if let Some(c) = self.requests.due(self.now) {
-            self.window.apply(c);
+            if self.window.apply(c) && window::plan(true) == Plan::Recreate {
+                self.recreated += 1;
+            }
             self.applied.push(self.now);
         }
     }
@@ -102,9 +93,17 @@ fn video_changes_go_through_the_paced_path() {
     let now = Instant::now();
     let mut requests = Requests::default();
     requests.opened(now);
-    let window = Window { size: (1280, 720), fullscreen: false };
-    let mut g =
-        Game { sh, video: Video::new(v), requests, window, now, applied: Vec::new(), live: Vec::new() };
+    let window = shape((1280, 720), false);
+    let mut g = Game {
+        sh,
+        video: Video::new(v),
+        requests,
+        window,
+        now,
+        applied: Vec::new(),
+        recreated: 0,
+        live: Vec::new(),
+    };
     g.act(UiAction::Open(Screen::Options));
 
     // Interpolation, the filter, the frame rate and the UI scale apply at
@@ -146,7 +145,8 @@ fn video_changes_go_through_the_paced_path() {
     let gaps: Vec<Duration> = g.applied.windows(2).map(|w| w[1] - w[0]).collect();
     assert!(gaps.iter().all(|d| *d >= MIN_CHANGE_INTERVAL), "{gaps:?}");
     assert!(g.applied.len() <= 3000 / 250 + 2, "{} changes", g.applied.len());
-    assert_eq!(g.window, Window { size: (1600, 900), fullscreen: false });
+    assert_eq!(g.window, shape((1600, 900), false));
+    assert!(g.recreated <= g.applied.len(), "at most one window made per change");
     // Nothing more is pending.
     let n = g.applied.len();
     for _ in 0..60 {
@@ -159,13 +159,82 @@ fn video_changes_go_through_the_paced_path() {
     for _ in 0..20 {
         g.frame();
     }
-    assert_eq!(g.window, Window { size: DESKTOP, fullscreen: false });
+    assert_eq!(g.window, shape(DESKTOP, false));
     g.set(|v| v.fullscreen = true);
     for _ in 0..20 {
         g.frame();
     }
-    assert_eq!(g.window, Window { size: DESKTOP, fullscreen: true });
+    assert_eq!(g.window, shape(DESKTOP, true));
     assert_eq!(g.applied.len(), n + 2);
+    // On Wayland each made the window again, once.
+    let made = g.recreated;
+    g.set(|v| v.fullscreen = false);
+    for _ in 0..20 {
+        g.frame();
+    }
+    assert_eq!(g.window, shape(DESKTOP, false));
+    assert_eq!(g.recreated, made + 1);
+}
+
+/// A window made again for each size or mode change (Wayland's plan) never
+/// touches the game: the same ticks run and the world ends as one that
+/// never changed its window (the app's part: the viewport follows the new
+/// window).
+#[test]
+fn a_window_made_again_keeps_the_game_ticking() {
+    let Some(content) = content_dir() else { return };
+    let start = || {
+        let mut sh = shell(&content, Settings::default(), Store::in_memory());
+        sh.act(UiAction::StartSandbox);
+        sh.poll();
+        assert_eq!(sh.ui.screen(), Screen::InGame);
+        sh
+    };
+    let (mut changed, mut still) = (start(), start());
+    let mut requests = Requests::default();
+    let mut window = shape((1280, 720), false);
+    let mut now = Instant::now();
+    requests.opened(now);
+    // At frame N: a size, or fullscreen on or off.
+    let script = [
+        (10, Some((1920, 1080)), None),
+        (40, Some((3440, 1440)), None),
+        (70, None, Some(true)),
+        (100, None, Some(false)),
+    ];
+    let (mut recreated, mut ticked) = (0, 0u64);
+    let keys = rl_sim::Keys(0b0101);
+    for frame in 0..160u32 {
+        now += FRAME;
+        for &(at, size, fullscreen) in &script {
+            if at == frame {
+                if let Some((w, h)) = size {
+                    requests.size(w, h);
+                }
+                if let Some(on) = fullscreen {
+                    requests.fullscreen(on);
+                }
+            }
+        }
+        if let Some(c) = requests.due(now)
+            && window.apply(c)
+            && window::plan(true) == Plan::Recreate
+        {
+            recreated += 1;
+            let size = if window.fullscreen { DESKTOP } else { window.size };
+            changed.set_viewport(rl_game::app::viewport(size));
+        }
+        for _ in 0..2 {
+            assert!(changed.tick(keys) && still.tick(keys));
+            ticked += 1;
+        }
+    }
+    assert_eq!(recreated, 4);
+    assert_eq!(window, shape((3440, 1440), false));
+    let (a, b) = (changed.session().unwrap(), still.session().unwrap());
+    assert_eq!(a.ticks(), ticked, "no tick lost or doubled");
+    assert_eq!(a.ticks(), b.ticks());
+    assert_eq!(a.world.checksum(), b.world.checksum(), "the same world");
 }
 
 #[test]
