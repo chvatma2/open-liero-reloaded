@@ -93,6 +93,22 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   Microsoft's Basic Render Driver, a `Cpu` adapter), with timestamps on
   both; `rl-game.exe --demo` writes its shots under the stage's `target/`. Nothing is left running; the
   stage stays for the next run.
+- `olx_timing.rs` (plan 8; its caller is `envelope`, task 7): OLX's
+  per-frame physics times. `Olx::open` builds or finds the oracle image
+  (`oracle::ensure_image`); `Olx::time` plays a scenario through
+  `oracle::record_once_with` (`record_once` with extra `docker -e`
+  variables) with `ORACLE_TIMING` and `ORACLE_HEADER_ONLY`
+  (`tools/olx-oracle/CLAUDE.md`) in `target/envelope/olx-work/<name>`,
+  parses the `frame ns projectiles rc` lines (`parse_timing`) and can
+  write the header-only trace (gzipped) for `rl-cli scenario --time`;
+  `build_info` names the image's CMake build type and compiler. The
+  scenarios: `TIMED`, the six busiest oracle fixtures, and `HEAVY`, eight
+  worms filling OLX's 3000 projectiles for 8 s (Spikeballs on Castle
+  Strike, Napalm on Liero Factory), in `fixtures/perf/olx/` (`PERF_DIR`;
+  not oracle fixtures, no committed trace). `docker_missing()` says why
+  Docker cannot be used (not installed, or the daemon not running:
+  `docker info` fails), for `envelope` to turn into a notice (ruling PF5);
+  `Olx::open` fails with that reason before building anything.
 - `bless-render --reason <why>` re-draws `fixtures/render/` (the render
   goldens) and `fixtures/ui/` (the HUD snapshots, `rl-ui`'s
   `hud_snapshots`) with `RL_BLESS_RENDER=1`; the GPU ones need an adapter.

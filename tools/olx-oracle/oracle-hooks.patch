@@ -104,10 +104,10 @@ index 5f73e25..c12907c 100644
  void	DrawEntities(SDL_Surface * bmpDest, CViewport *v);
 diff --git a/include/OracleHooks.h b/include/OracleHooks.h
 new file mode 100644
-index 0000000..be83c1e
+index 0000000..0288288
 --- /dev/null
 +++ b/include/OracleHooks.h
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,71 @@
 +/*
 +	OpenLieroX
 +
@@ -146,6 +146,11 @@ index 0000000..be83c1e
 +	bool loadInputs(const std::string& file, std::string& err);
 +	// Starts writing one JSON line per simulated frame to file ("off" stops).
 +	// "off" also reports a failure that happened during the recording.
++	// Bench only (rust-liero plan 8): with ORACLE_TIMING=<file> in the environment, each
++	// recorded frame's wall time (from the end of beforeFrame() to the start of
++	// afterFrame()), projectile count and rand() calls go to that file as
++	// "frame ns projectiles rc" lines; with ORACLE_HEADER_ONLY set, the trace keeps only
++	// the header and frame -1. Without them nothing changes.
 +	bool record(const std::string& file, std::string& err);
 +	// True while a recording is armed: the clock is pinned, and shots and the local
 +	// connection's reliable messages are delivered by betweenFrames() instead of
@@ -370,10 +375,10 @@ index feb1223..5fa508d 100644
  	caller->writeMsg("GameState: " + Game::StateAsStr(game.state), CNC_DEV);
 diff --git a/src/common/OracleHooks.cpp b/src/common/OracleHooks.cpp
 new file mode 100644
-index 0000000..64f7d0e
+index 0000000..e552e46
 --- /dev/null
 +++ b/src/common/OracleHooks.cpp
-@@ -0,0 +1,649 @@
+@@ -0,0 +1,671 @@
 +/*
 +	OpenLieroX
 +
@@ -384,6 +389,7 @@ index 0000000..64f7d0e
 +
 +#include <algorithm>
 +#include <cctype>
++#include <chrono>
 +#include <cmath>
 +#include <cstdio>
 +#include <cstdlib>
@@ -444,6 +450,9 @@ index 0000000..64f7d0e
 +static std::map<long, std::vector<BonusEvent> > g_bonusPlan; // frame -> bonuses to place
 +static long g_base = -1;                                 // serverFrame before frame 0
 +static FILE* g_rec = NULL;
++static FILE* g_timing = NULL;          // ORACLE_TIMING: "frame ns projectiles rc" lines (rust-liero plan 8)
++static bool g_headerOnly = false;      // ORACLE_HEADER_ONLY: the trace keeps the header and frame -1
++static std::chrono::steady_clock::time_point g_frameStart;
 +static unsigned int g_seed = 0;
 +static Uint64 g_t0 = 0;                // simulationTime (ms) at frame -1; trace times are relative to it
 +static long g_shotListFrame = -1;      // frame in which the pending shot list was started
@@ -582,11 +591,19 @@ index 0000000..64f7d0e
 +bool record(const std::string& file, std::string& err) {
 +	if(g_rec) {
 +		fclose(g_rec); g_rec = NULL;
++		if(g_timing) { fclose(g_timing); g_timing = NULL; }
 +		if(!g_failure.empty()) { err = "the recording failed: " + g_failure; return false; }
 +	}
 +	if(file == "off") return true;
 +	g_rec = fopen(file.c_str(), "w");
 +	if(!g_rec) { err = "cannot write " + file; return false; }
++	// Bench only (rust-liero plan 8): frame times to a file of their own, so
++	// the trace is untouched; a header-only trace for the timed runs.
++	if(const char* path = getenv("ORACLE_TIMING")) {
++		g_timing = fopen(path, "w");
++		if(!g_timing) { err = std::string("cannot write ") + path; return false; }
++	}
++	g_headerOnly = getenv("ORACLE_HEADER_ONLY") != NULL;
 +	if(g_base < 0) g_base = (long)game.serverFrame;
 +	g_t0 = game.simulationAbsTime().milliseconds();
 +	notes << "OracleHooks: recording from simulationTime " << g_t0 << " ms, serverFrame " << game.serverFrame << endl;
@@ -704,10 +721,20 @@ index 0000000..64f7d0e
 +			if(!placeBonus(b.x, b.y, b.kind, b.weapon, err))
 +				fail("frame " + itoa((int)frame) + ": " + err);
 +		}
++	if(g_timing) g_frameStart = std::chrono::steady_clock::now();
 +}
 +
 +void afterFrame() {
-+	if(g_rec) writeState(frameIndex());
++	if(g_timing) {
++		const long long ns = (long long)std::chrono::duration_cast<std::chrono::nanoseconds>(
++			std::chrono::steady_clock::now() - g_frameStart).count();
++		auto& ps = cClient->getProjectiles();
++		int projectiles = 0;
++		for(int i = 0; i <= ps.lastUsed(); i++)
++			if(ps.isUsed(i)) projectiles++;
++		fprintf(g_timing, "%ld %lld %d %llu\n", frameIndex(), ns, projectiles, g_randCalls);
++	}
++	if(g_rec && !g_headerOnly) writeState(frameIndex());
 +	if(g_pinned) {
 +		tLX->currentTime = g_wallTime;
 +		g_pinned = false;

@@ -22,6 +22,10 @@ pub struct Args {
     /// `checked+projectiles+proj_hidden+clocks` (`checked` is `rl_scenario::CHECKED`).
     #[arg(long)]
     fields: Option<String>,
+    /// Time every frame in rl-sim and write the times as RON here (plan 8;
+    /// a fixture with a header-only trace is timed without comparing).
+    #[arg(long, conflicts_with_all = ["dump", "all", "fields"])]
+    time: Option<PathBuf>,
 }
 
 /// Parses `--fields`.
@@ -62,6 +66,27 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         (None, false) => rl_scenario::CHECKED,
     };
     let content = rl_content::Content::open(&args.content)?;
+    if let Some(out) = &args.time {
+        let mut report = rl_cli::timing::TimingReport::default();
+        let mut ok = true;
+        for name in &names {
+            let (sc, expected) = rl_scenario::load_fixture(&args.fixtures, name)?;
+            let t = rl_cli::timing::time_scenario(&content, name, &sc, &expected)?;
+            // Nearest rank, as every percentile in plan 8 (ruling PF8).
+            let us: Vec<f64> = t.tick_ns.iter().map(|&ns| ns as f64 / 1000.0).collect();
+            println!(
+                "time {name}: {} frames, tick p50 {:.1} µs, peak {} projectiles, matches OLX: {:?}",
+                us.len(),
+                rl_cli::stress::Spread::of(&us).p50,
+                t.projectiles.iter().max().copied().unwrap_or(0),
+                t.matches_olx
+            );
+            ok &= t.matches_olx != Some(false);
+            report.scenarios.push(t);
+        }
+        std::fs::write(out, ron::ser::to_string_pretty(&report, ron::ser::PrettyConfig::default())? + "\n")?;
+        return Ok(ok);
+    }
     let mut ok = true;
     for name in names {
         let (sc, expected) = rl_scenario::load_fixture(&args.fixtures, &name)?;

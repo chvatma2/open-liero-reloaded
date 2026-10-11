@@ -10,8 +10,17 @@ The headless command-line tool. Its commands:
   screen, plan 7 ruling Q3), with `prune`: `<out>` is this import's.
 - `rl-cli validate <pack-or-parent-dir>...` prints diagnostics and exits with
   status 1 on any error.
-- `rl-cli scenario [name...] [--dump F] [--all | --fields a+b]` replays oracle
-  scenarios in `rl-sim` and prints the first divergence of each.
+- `rl-cli scenario [name...] [--dump F] [--all | --fields a+b] [--time F.ron]` replays oracle
+  scenarios in `rl-sim` and prints the first divergence of each. `--time`
+  (plan 8, `timing.rs`: `time_scenario`, `TimingReport`) instead times each
+  frame's tick (a scenario bonus placed before it included; the trace
+  record made outside the span) and records its projectiles and `rand()`
+  calls, to set beside OLX's `ORACLE_TIMING` lines of the same scenario
+  (`cargo xtask envelope`); it prints one line each (tick p50, nearest
+  rank) and writes the RON. A trace with frame −1 only (OLX's
+  `ORACLE_HEADER_ONLY`) is timed without comparing (`matches_olx: None`);
+  a full trace is also replayed and compared on `rl_scenario::CHECKED`,
+  and a divergence exits 1.
 - `rl-cli render <scenario> --frame N --out f.png [--scale S] [--filter F]
   [--alpha A]` replays the scenario with an `rl-present` presentation (`rl-scene` and `rl-fx`)
   (camera on worm 0, OLX's default skin and colours, a 4:3 view of 320 ×
@@ -107,7 +116,7 @@ and a panic inside `World::tick` rebuilds the world from the logged keys so
 `Recorder::finish_failed` saves a replay that plays into the failure;
 `play`), `verify` (determinism and replay round trip), `stress` (the
 stress test's runner and `Report`), `gpu_bench` (the GPU bench's runner
-and `GpuReport`), `coverage` (required
+and `GpuReport`), `timing` (`scenario --time`), `coverage` (required
 weapons and action kinds derived from the mod: `rl_sim::projectile_actions`
 and `World::actions_triggered`), `failure`, `golden`, `assets`,
 `genlevel`.

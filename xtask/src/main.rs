@@ -8,6 +8,10 @@ mod check;
 mod e2e;
 mod fetch;
 mod layers;
+// Task 7's `cargo xtask envelope` is its caller; `expect` (not `allow`)
+// so this goes as soon as it is used.
+#[expect(dead_code, reason = "plan 8: used by `cargo xtask envelope` (task 7)")]
+mod olx_timing;
 mod oracle;
 mod oracle_gen;
 mod tidy;

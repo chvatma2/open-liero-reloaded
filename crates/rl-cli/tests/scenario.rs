@@ -52,3 +52,20 @@ fn reports_a_divergence_with_status_1() {
     assert!(!out.status.success());
     assert!(text.contains("DIFF fall: frame 49: w[0].vy expected 0.5"), "{text}");
 }
+
+/// `rl-cli scenario --time` (plan 8): every frame timed, with the work
+/// done (projectiles, rand() calls) and whether it matched OLX.
+#[test]
+fn scenarios_are_timed_frame_by_frame() {
+    let Some(dir) = content_dir() else { return };
+    let content = rl_content::Content::open(std::path::Path::new(&dir)).unwrap();
+    let (sc, trace) = rl_scenario::load_fixture(&fixtures(), "two-worms-fire").unwrap();
+    let t = rl_cli::timing::time_scenario(&content, "two-worms-fire", &sc, &trace).unwrap();
+    assert_eq!(t.tick_ns.len(), sc.frames as usize);
+    assert_eq!((t.projectiles.len(), t.rand_calls.len()), (t.tick_ns.len(), t.tick_ns.len()));
+    assert_eq!(t.matches_olx, Some(true));
+    assert!(t.projectiles.iter().any(|&n| n > 10) && t.tick_ns.iter().all(|&ns| ns > 0));
+    let mut header_only = trace.clone();
+    header_only.frames.truncate(1);
+    assert_eq!(rl_cli::timing::time_scenario(&content, "x", &sc, &header_only).unwrap().matches_olx, None);
+}

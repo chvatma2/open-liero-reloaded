@@ -37,7 +37,7 @@ fn tail(text: &str, n: usize) -> String {
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
-fn ensure_image(root: &Path) -> anyhow::Result<String> {
+pub(crate) fn ensure_image(root: &Path) -> anyhow::Result<String> {
     let mut files = Vec::new();
     for f in TOOL_FILES {
         let path = root.join(TOOL_DIR).join(f);
@@ -136,7 +136,7 @@ fn run_docker(commands: Vec<Vec<String>>) {
     }
 }
 
-fn id(flag: &str) -> anyhow::Result<String> {
+pub(crate) fn id(flag: &str) -> anyhow::Result<String> {
     let out = Command::new("id").arg(flag).output().context("running id")?;
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
@@ -150,15 +150,32 @@ fn olx_command_errors(log: &str) -> Vec<&str> {
 
 /// Plays `sc` once in OLX and returns the trace text.
 fn record_once(image: &str, user: &str, work: &Path, sc: &Scenario) -> anyhow::Result<String> {
+    record_once_with(image, user, work, sc, &[])
+}
+
+/// [`record_once`] with `env` set for OLX (`ORACLE_TIMING`,
+/// `ORACLE_HEADER_ONLY`: the envelope's timed runs, plan 8).
+pub(crate) fn record_once_with(
+    image: &str,
+    user: &str,
+    work: &Path,
+    sc: &Scenario,
+    env: &[(&str, &str)],
+) -> anyhow::Result<String> {
     if work.exists() {
         std::fs::remove_dir_all(work)?;
     }
     std::fs::create_dir_all(work.join("home"))?;
     std::fs::write(work.join("scenario.json"), sc.control_json("/work/trace.jsonl"))?;
-    let out = Command::new("docker")
-        .args(["run", "--rm", "--init", "-u", user, "-v"])
-        .arg(format!("{}:/work", work.display()))
-        .args(["-e", "HOME=/work/home", "-e", "ORACLE_SCENARIO=/work/scenario.json", image])
+    let mut c = Command::new("docker");
+    c.args(["run", "--rm", "--init", "-u", user, "-v"]);
+    c.arg(format!("{}:/work", work.display()));
+    c.args(["-e", "HOME=/work/home", "-e", "ORACLE_SCENARIO=/work/scenario.json"]);
+    for (k, v) in env {
+        c.arg("-e").arg(format!("{k}={v}"));
+    }
+    let out = c
+        .arg(image)
         .args(["timeout", "-s", "KILL", &RUN_TIMEOUT_SECS.to_string(), "/olx/bin/openlierox"])
         .args(["-dedicated", "-disablestdincli", "-script", "/olx/oracle_control.py"])
         .output()

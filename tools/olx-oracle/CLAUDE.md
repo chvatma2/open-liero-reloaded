@@ -9,7 +9,7 @@ you rarely need to touch these files.
 - `Dockerfile`: OLX at commit `d1ad953f` from GitHub, plus the patch, built as a
   headless dedicated server (Ubuntu 22.04, as OLX's own Docker image).
   The image tag is a hash of the three files here, so any edit rebuilds it.
-- `oracle-hooks.patch`: the test hooks, 18 OLX files and about 830 added lines.
+- `oracle-hooks.patch`: the test hooks, 18 OLX files and about 860 added lines.
 - `oracle_control.py`: drives one recording over OLX's dedicated-control pipe.
 
 ## What the patch adds
@@ -33,6 +33,17 @@ you rarely need to touch these files.
   - Starting a recording clears the entity pool and resets the server's bonus timer.
   - `off` reports any failure during the recording (such as a bonus that found
     no free slot) as a command error.
+- **`ORACLE_TIMING=<file>` and `ORACLE_HEADER_ONLY`** (environment; bench
+  only, plan 8's performance envelope, `xtask/src/olx_timing.rs`): with
+  `ORACLE_TIMING`, each recorded frame writes a `frame ns projectiles rc`
+  line to that file: the frame's wall time (`steady_clock`, from the end of
+  `beforeFrame()` to the start of `afterFrame()`, so neither the key and
+  bonus schedule nor the trace line is timed), the client's used
+  projectiles and `rand()` calls since the seed. With `ORACLE_HEADER_ONLY`
+  the trace keeps only the header and frame −1 (what `rl-cli scenario
+  --time` needs to build the same world). Unset, nothing changes: the
+  traces are byte-identical, which `cargo xtask oracle-record --check`
+  proved when they were added.
 - **`simSetSeed <n>`** also reseeds the three `FindSpot` MT19937 streams
   (`rnd`, `rndgen`, `midrnd`) and restarts the `rc` and `mt` counters (D6).
 - **`simSetWeapons <id> "<name0>,...,cur=<k>"`:** one OLX weapon name per slot
