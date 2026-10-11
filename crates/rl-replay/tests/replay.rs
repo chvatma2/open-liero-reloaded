@@ -301,3 +301,43 @@ mod corrupt {
         }
     }
 }
+
+/// A match whose tick failed (a panic inside `World::tick` leaves the world
+/// broken) is saved with the failing tick's keys and no checksum after
+/// them: the replay checks every tick before and then plays the failing
+/// one, so it reproduces the failure (spec §7.3).
+#[test]
+fn a_failing_tick_is_recorded_without_a_checksum() {
+    let (setup, mode) = deathmatch(4, 9);
+    let mut world = World::new(setup.clone(), mode.game_mode()).unwrap();
+    let mut rec = Recorder::new(packs(), &setup, &mode);
+    rec.start(&world).unwrap();
+    let mut keys = KeyGen::new(9, 4, 12);
+    let mut out = TickEvents::new();
+    for _ in 0..250 {
+        let row = keys.row();
+        world.tick(&row, &mut out);
+        rec.push(&row, &world).unwrap();
+    }
+    let failing = [Keys(Keys::FIRE), Keys(Keys::LEFT)];
+    let replay = rec.clone().finish_failed(&world, &failing).unwrap();
+    assert_eq!(replay.ticks(), 251);
+    assert_eq!(replay.row(250), [Keys(Keys::FIRE), Keys(Keys::LEFT), Keys(0), Keys(0)]);
+    assert_eq!(replay.checksums.last().unwrap(), &(250, world.checksum()), "none after the failing tick");
+    let decoded = Replay::decode(&replay.encode()).unwrap();
+    assert_eq!(decoded, replay);
+    let run = decoded.play(decoded.world(assets()).unwrap()).unwrap();
+    assert_eq!((run.ticks, run.checked), (251, 4));
+    let mut after = world.clone();
+    after.tick(&failing, &mut out);
+    assert_eq!(run.world, after);
+
+    // Failing before any tick: rows as wide as the failing keys.
+    let mut world = World::new(setup.clone(), mode.game_mode()).unwrap();
+    let mut rec = Recorder::new(packs(), &setup, &mode);
+    rec.start(&world).unwrap();
+    let replay = rec.finish_failed(&world, &failing).unwrap();
+    assert_eq!((replay.ticks(), replay.width()), (1, 2));
+    world.tick(&failing, &mut out);
+    assert_eq!(replay.play(replay.world(assets()).unwrap()).unwrap().world, world);
+}

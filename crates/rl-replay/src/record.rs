@@ -129,4 +129,30 @@ impl Recorder {
         }
         Ok(Replay { setup, mode, checksums, ticks, width, keys })
     }
+
+    /// The replay of a match whose next tick failed (spec §7.3): `world` is
+    /// the one after the last [`Recorder::push`] (a panic inside
+    /// `World::tick` leaves the world broken: rebuild it by replaying the
+    /// recorded ticks), `failing` the keys of the tick that failed. That
+    /// tick is recorded with no checksum after it, so playing the replay
+    /// checks every tick before it and then plays it: the failure again.
+    pub fn finish_failed(self, world: &World, failing: &[Keys]) -> Result<Replay, RecordError> {
+        if self.ticks >= MAX_TICKS {
+            return Err(RecordError::Full);
+        }
+        let mut r = self.finish(world)?;
+        let failing = &failing[..failing.len().min(MAX_WORMS)];
+        if failing.len() > r.width {
+            let wide = failing.len();
+            let mut keys = Vec::with_capacity((r.ticks as usize + 1) * wide);
+            for t in 0..r.ticks {
+                keys.extend_from_slice(r.row(t));
+                keys.extend(core::iter::repeat_n(Keys(0), wide - r.width));
+            }
+            (r.keys, r.width) = (keys, wide);
+        }
+        r.keys.extend((0..r.width).map(|i| failing.get(i).copied().unwrap_or(Keys(0))));
+        r.ticks += 1;
+        Ok(r)
+    }
 }
