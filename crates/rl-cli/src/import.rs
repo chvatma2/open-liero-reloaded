@@ -126,7 +126,12 @@ impl Job {
         };
         Ok(match self {
             Job::Mod(m) => Imported::Mod(rl_import_lgs::import_mod(olx, &VPath::new(m)?, origin)?),
-            Job::Level(l) => Imported::Level(rl_import_lxl::import_lxl(olx, &VPath::new(l)?, origin)?),
+            Job::Level(l) => {
+                let mut level = rl_import_lxl::import_lxl(olx, &VPath::new(l)?, origin)?;
+                // The menus' thumbnail (plan 7 G6), from the art.
+                level.pack.thumb = Some(rl_import_gfx::level_thumbnail(&level.pack.level));
+                Imported::Level(level)
+            }
             Job::Theme(t) => Imported::Theme(rl_import_gfx::import_theme(olx, &VPath::new(t)?, origin)?),
             Job::Skin(p) => Imported::Skin(rl_import_gfx::import_skin(olx, p, origin)?),
             Job::Core(files) => {

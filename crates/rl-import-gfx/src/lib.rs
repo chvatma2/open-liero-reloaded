@@ -1,12 +1,14 @@
-//! OpenLieroX skin, theme and core pack importers.
+//! OpenLieroX skin, theme and core pack importers, and level thumbnails.
 
 mod core_pack;
 mod skin;
 mod theme;
+mod thumb;
 
 pub use core_pack::{CORE_PACK_ID, ImportedCore, import_core};
 pub use skin::{ImportedSkin, import_skin};
 pub use theme::{ImportedTheme, import_theme};
+pub use thumb::{letterbox, level_thumbnail};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GfxError {

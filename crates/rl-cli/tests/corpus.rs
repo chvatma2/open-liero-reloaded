@@ -74,7 +74,7 @@ fn imported_content() {
                 let l = &p.level;
                 writeln!(
                     summary,
-                    "level {}: {:?} {}x{} art x{}, dirt {}, rock {}, theme {}",
+                    "level {}: {:?} {}x{} art x{}, dirt {}, rock {}, theme {}, thumb {}",
                     p.manifest.id,
                     l.def.name,
                     l.def.width,
@@ -82,7 +82,8 @@ fn imported_content() {
                     l.def.art_scale,
                     l.material.count(Material::Dirt),
                     l.material.count(Material::Rock),
-                    l.def.theme
+                    l.def.theme,
+                    p.thumb.as_ref().map_or("none".to_string(), |t| format!("{}x{}", t.width(), t.height()))
                 )
                 .unwrap();
             }

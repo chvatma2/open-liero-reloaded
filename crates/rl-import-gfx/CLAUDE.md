@@ -1,6 +1,7 @@
 # rl-import-gfx
 
-Imports OLX worm skins, level themes and the core pack.
+Imports OLX worm skins, level themes and the core pack, and makes level
+thumbnails.
 
 - **Layer 2.**
 - **Skins** follow `CGameSkin::Colorize_Execute` (OLX `src/client/CGameSkin.cpp:720-790`):
@@ -18,4 +19,12 @@ Imports OLX worm skins, level themes and the core pack.
   sound kept as bytes, and `colours.cfg` the `[Colours]` values (`StrToCol`'s
   `#rrggbb` and `r,g,b` forms). A missing or broken file is a warning.
 
-Test: `cargo nextest run -p rl-import-gfx` (all 409 skins when `RL_OLX_GAMEDIR` is set).
+- **Level thumbnails** (`thumb.rs`, plan 7 G6): `level_thumbnail(&Level)`
+  box-filters the level's `front` art (at most 8 × 8 samples a pixel) into
+  `rl_pack::THUMB_SIZE` (160 × 96), `letterbox`ed with transparent bars so
+  it keeps its aspect. OLX's menu preview is the minimap stretched into
+  128 × 96 (`minimapForLevel`, `src/game/Level.cpp:33-44`): a deviation in
+  `docs/porting/STATUS.md`. `rl-cli import` sets it on every level pack.
+
+Test: `cargo nextest run -p rl-import-gfx` (all 409 skins when `RL_OLX_GAMEDIR` is set;
+`thumbnails_are_imported_for_every_level` when `RL_CONTENT_DIR` is).

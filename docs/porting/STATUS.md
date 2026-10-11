@@ -418,6 +418,14 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   *Keys:* Esc and F5 ignore key repeat; a settings or profiles file that
   binds a game key (Esc, F5, F2, Tab, H) loses it with a warning; while the
   options capture a key, egui hears no key at all.
+- **Level thumbnails** (`rl-import-gfx`, `rl-pack`, plan 7 task 6): OLX's
+  level list previews a level by its minimap, the drawn image resampled and
+  stretched into 128 × 96 (`minimapForLevel`, `src/game/Level.cpp:33-44`;
+  `gusUpdateMinimap`, `src/gusanos/level.cpp:486-527`), made each time the
+  list selects it. The remake makes it once at import as the level pack's
+  `thumb.png`: the front art box-filtered into 160 × 96 and letterboxed
+  (transparent bars), so wide and tall levels keep their shape. It is
+  presentation only and left out of the pack's content hash (ruling Q4).
 - **Renderer** (`rl-render`, plan 5 task 5): OLX blits each sprite with SDL
   onto a 2× screen; the renderer draws the same texels at art scale (at
   least 2×) and then upscales (E3). With interpolation (E2), a sprite's

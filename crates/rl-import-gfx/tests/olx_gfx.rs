@@ -1,4 +1,5 @@
-//! Imports every OLX skin and the Dirt theme when `RL_OLX_GAMEDIR` is set.
+//! Imports every OLX skin and the Dirt theme when `RL_OLX_GAMEDIR` is set,
+//! and checks the imported levels' thumbnails when `RL_CONTENT_DIR` is.
 
 use rl_data::manifest::Origin;
 use rl_vfs::{ContentSource, DirFs, MemFs, VPath};
@@ -35,4 +36,30 @@ fn all_skins_and_dirt_theme() {
     let mut out = MemFs::new();
     rl_pack::write_theme(&mut out, &t.pack).unwrap();
     assert_eq!(rl_pack::validate(&out), vec![]);
+}
+
+/// Plan 7 G6: every imported level pack in `RL_CONTENT_DIR` has its
+/// thumbnail, made from its art at `THUMB_SIZE`, letterboxed.
+#[test]
+fn thumbnails_are_imported_for_every_level() {
+    let Some(dir) = std::env::var_os("RL_CONTENT_DIR").filter(|d| std::path::Path::new(d).is_dir()) else {
+        eprintln!("RL_CONTENT_DIR not set; skipping the imported thumbnails");
+        return;
+    };
+    let mut levels = 0;
+    let mut dirs: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).collect();
+    dirs.sort();
+    for path in dirs.iter().filter(|p| p.join(rl_pack::MANIFEST).is_file()) {
+        let src = DirFs::new(path);
+        if rl_pack::read_manifest(&src).unwrap().kind != rl_data::manifest::PackKind::Level {
+            continue;
+        }
+        let pack = rl_pack::read_level(&src).unwrap();
+        let thumb = rl_pack::read_level_thumb(&src).unwrap();
+        let thumb = thumb.unwrap_or_else(|| panic!("{}: no thumb.png", path.display()));
+        assert_eq!((thumb.width(), thumb.height()), rl_pack::THUMB_SIZE, "{}", path.display());
+        assert_eq!(thumb, rl_import_gfx::level_thumbnail(&pack.level), "{}", path.display());
+        levels += 1;
+    }
+    assert!(levels >= 4, "the manifest's four levels at least, found {levels}");
 }
