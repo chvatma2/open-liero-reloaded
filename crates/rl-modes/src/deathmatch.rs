@@ -75,6 +75,16 @@ impl DeathmatchSettings {
         s.suicide_decreases_score = self.suicide_decreases_score;
     }
 
+    /// Whether `s` holds these rules (what [`DeathmatchSettings::apply`]
+    /// writes), bit for bit: a NaN agrees with nothing.
+    pub fn agrees_with(&self, s: &SimSettings) -> bool {
+        s.lives == self.lives
+            && s.kill_limit == self.kill_limit
+            && s.allow_negative_score == self.allow_negative_score
+            && s.death_decreases_score == self.death_decreases_score
+            && s.suicide_decreases_score == self.suicide_decreases_score
+    }
+
     /// `CGameMode::TimeLimit()` (`CGameMode.cpp:31-33`, minutes · 60 in
     /// `float`) as `TimeDiff(float)` milliseconds (`(Uint64)(s · 1000)`),
     /// or `None` when it is off (`TimeLimit() > 0` fails).
@@ -91,6 +101,8 @@ pub enum DeathmatchError {
     TooFewWorms(usize),
     /// The time limit is NaN or infinite.
     TimeLimit(f32),
+    /// The match's settings do not hold these rules ([`Deathmatch::resume`]).
+    Disagrees,
 }
 
 impl fmt::Display for DeathmatchError {
@@ -98,6 +110,9 @@ impl fmt::Display for DeathmatchError {
         match self {
             DeathmatchError::TooFewWorms(n) => write!(f, "a Deathmatch needs 2 worms, not {n}"),
             DeathmatchError::TimeLimit(t) => write!(f, "time limit {t} is not a number of minutes"),
+            DeathmatchError::Disagrees => {
+                write!(f, "the match's settings disagree with the Deathmatch's rules")
+            }
         }
     }
 }
@@ -163,6 +178,10 @@ pub struct Deathmatch {
     frame: u64,
     /// How the match ended, once this mode announced it.
     over: Option<MatchResult>,
+    /// `frame` when `over` was set: the clock [`Deathmatch::time_left_ms`]
+    /// stops at. Not in the checksum (it would change every recorded
+    /// replay's): it is fixed together with `over`, which is.
+    ended_at: u64,
     /// The scoreboard; its capacity is `MAX_WORMS`, so it never grows.
     board: Vec<Score>,
 }
@@ -177,9 +196,10 @@ impl Clone for Deathmatch {
 
 impl Deathmatch {
     /// A Deathmatch with `settings` (`CGameMode::PrepareGame`,
-    /// `CGameMode.cpp:41-51`). The match's `SimSettings` must agree with
-    /// it: [`Deathmatch::prepare`] sees to that.
-    pub fn new(settings: DeathmatchSettings) -> Self {
+    /// `CGameMode.cpp:41-51`). Private: the match's `SimSettings` must
+    /// agree with it, which [`Deathmatch::prepare`] and
+    /// [`Deathmatch::resume`] see to (one source of rules).
+    pub(crate) fn new(settings: DeathmatchSettings) -> Self {
         Self {
             settings,
             first_blood: true,
@@ -188,6 +208,7 @@ impl Deathmatch {
             spawns: [0; MAX_WORMS],
             frame: 0,
             over: None,
+            ended_at: 0,
             board: Vec::with_capacity(MAX_WORMS),
         }
     }
@@ -211,6 +232,23 @@ impl Deathmatch {
         Ok(Self::new(settings))
     }
 
+    /// A Deathmatch for a match whose settings already hold its rules: a
+    /// replay's setup (recorded after [`Deathmatch::prepare`]) or an
+    /// oracle trace's (whose worms carry the lives they had). Refuses a
+    /// time limit that is not a number and `settings` that disagree with
+    /// the rules ([`DeathmatchSettings::agrees_with`]), so the mode and
+    /// the simulation never play by two sets of rules. The worms' lives
+    /// are left as they are.
+    pub fn resume(settings: DeathmatchSettings, sim: &SimSettings) -> Result<Self, DeathmatchError> {
+        if !settings.time_limit.is_finite() {
+            return Err(DeathmatchError::TimeLimit(settings.time_limit));
+        }
+        if !settings.agrees_with(sim) {
+            return Err(DeathmatchError::Disagrees);
+        }
+        Ok(Self::new(settings))
+    }
+
     pub fn settings(&self) -> &DeathmatchSettings {
         &self.settings
     }
@@ -221,10 +259,11 @@ impl Deathmatch {
     }
 
     /// The time left before the time limit, in ms (0 once it passed), or
-    /// `None` without one.
+    /// `None` without one. It stops at the frame the match ended in.
     pub fn time_left_ms(&self) -> Option<u64> {
         let limit = self.settings.time_limit_ms()?;
-        Some(limit.saturating_sub(self.frame.saturating_mul(10)))
+        let frame = if self.over.is_some() { self.ended_at } else { self.frame };
+        Some(limit.saturating_sub(frame.saturating_mul(10)))
     }
 
     /// `CGameMode::CompareWormsScore` with this match's lives and kill
@@ -327,8 +366,18 @@ impl GameMode for Deathmatch {
     }
 
     fn checksum(&self, h: &mut Fnv) {
-        let Deathmatch { settings, first_blood, kills_in_row, deaths_in_row, spawns, frame, over, board } =
-            self;
+        // `ended_at` is left out: it is set with `over`, which is hashed.
+        let Deathmatch {
+            settings,
+            first_blood,
+            kills_in_row,
+            deaths_in_row,
+            spawns,
+            frame,
+            over,
+            ended_at: _,
+            board,
+        } = self;
         let DeathmatchSettings {
             lives,
             kill_limit,
@@ -413,6 +462,7 @@ impl GameMode for Deathmatch {
             && let Some(end) = self.check(ctx.worms(), ctx.settings(), self.frame)
         {
             self.over = Some(end.result);
+            self.ended_at = self.frame;
             let _ = match end.result.reason {
                 EndReason::KillLimit => ctx.message(Message {
                     text: text::KILL_LIMIT,

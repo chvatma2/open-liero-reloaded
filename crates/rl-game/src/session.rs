@@ -309,8 +309,9 @@ impl Session {
 
     /// The tick's events: popups, the kill feed, the tally, the end.
     fn after_tick(&mut self) {
+        // The mode's clock stops at the game over (`Deathmatch::time_left_ms`).
+        self.time_left_ms = self.mode_time_left();
         if self.results.is_none() {
-            self.time_left_ms = self.mode_time_left();
             self.tally.match_ticks += 1;
         }
         let bot = |w: i32| match &self.driver {

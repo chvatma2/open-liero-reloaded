@@ -262,3 +262,45 @@ fn deathmatch_is_deterministic_and_allocation_free() {
     assert_eq!(mode.result(), r.w.result());
     assert_eq!(mode.time_left_ms(), Some(0));
 }
+
+/// Plan 6's final review: the clock stops at the end. `time_left_ms` is
+/// the time left in the game-over frame from then on, so a HUD or a
+/// results screen reads one number however long the end is shown.
+#[test]
+fn time_left_freezes_at_the_game_over_frame() {
+    let four = [(50, LASER), (200, LASER), (80, LASER), (230, LASER)];
+    let mut r = settled(DeathmatchSettings { kill_limit: 1, time_limit: 1.0, ..dm() }, &four);
+    r.fire(&[0], 10);
+    assert_eq!(r.game_overs().len(), 1, "the kill limit ended the match");
+    let left = |r: &Run| r.w.mode_state().as_any().downcast_ref::<Deathmatch>().unwrap().time_left_ms();
+    let at_end = left(&r).unwrap();
+    let end_frame = r.w.server_frame();
+    assert!(at_end > 0 && at_end < 60_000, "{at_end} ms left at the end");
+    r.idle(500);
+    assert!(r.w.server_frame() > end_frame);
+    assert_eq!(left(&r), Some(at_end), "the clock stopped at the game over");
+}
+
+/// Plan 6's final review: one source of rules. A Deathmatch is made by
+/// `prepare` (which writes its rules into the match's settings) or, for a
+/// setup made that way before (a replay, an oracle trace), by `resume`,
+/// which refuses settings that disagree with the rules.
+#[test]
+fn resume_refuses_rules_that_disagree_with_the_settings() {
+    let mut s = setup(&[(50, LASER), (100, LASER)]);
+    let rules = DeathmatchSettings { lives: 4, kill_limit: 7, death_decreases_score: 0.5, ..dm() };
+    Deathmatch::prepare(rules.clone(), &mut s).unwrap();
+    let again = Deathmatch::resume(rules.clone(), &s.settings).unwrap();
+    assert_eq!(again.settings(), &rules);
+    for other in [
+        DeathmatchSettings { lives: 3, ..rules.clone() },
+        DeathmatchSettings { kill_limit: 8, ..rules.clone() },
+        DeathmatchSettings { allow_negative_score: true, ..rules.clone() },
+        DeathmatchSettings { death_decreases_score: 0.25, ..rules.clone() },
+        DeathmatchSettings { suicide_decreases_score: true, ..rules.clone() },
+    ] {
+        assert_eq!(Deathmatch::resume(other, &s.settings).err(), Some(DeathmatchError::Disagrees));
+    }
+    let nan = DeathmatchSettings { time_limit: f32::NAN, ..rules };
+    assert!(matches!(Deathmatch::resume(nan, &s.settings), Err(DeathmatchError::TimeLimit(_))));
+}

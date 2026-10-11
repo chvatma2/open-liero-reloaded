@@ -15,7 +15,7 @@ use crate::{
 /// [`CHECKSUM_EVERY`] ticks and after the last.
 ///
 /// ```text
-/// let mut world = World::new(setup.clone(), mode.game_mode())?;
+/// let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings)?)?;
 /// let mut rec = Recorder::new(packs, &setup, &mode);
 /// rec.apply(&mut world, SetupCall::AlignPhysicsClock)?;   // instead of world.align_physics_clock()
 /// rec.start(&world)?;                                    // after the last setup call
@@ -35,7 +35,7 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    /// A recorder for the match `World::new(setup.clone(), mode.game_mode())`
+    /// A recorder for the match `World::new(setup.clone(), mode.game_mode(&setup.settings)?)`
     /// starts, `setup` being made of `packs` (`rl_content::Content::replay_packs`
     /// gives them with their hashes). For a Deathmatch, `setup` is the one
     /// `Deathmatch::prepare` changed.

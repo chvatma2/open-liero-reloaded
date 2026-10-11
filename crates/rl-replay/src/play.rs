@@ -68,8 +68,11 @@ impl Replay {
             }
         }
         self.mode.validate(&self.setup.settings).map_err(ReplayError::Mode)?;
-        let mut world =
-            World::new(self.setup.match_setup(assets), self.mode.game_mode()).map_err(ReplayError::Setup)?;
+        let mode = self
+            .mode
+            .game_mode(&self.setup.settings)
+            .map_err(|e| ReplayError::Mode(alloc::format!("{e}")))?;
+        let mut world = World::new(self.setup.match_setup(assets), mode).map_err(ReplayError::Setup)?;
         for (i, &call) in self.setup.calls.iter().enumerate() {
             apply_call(&mut world, i, call)?;
         }

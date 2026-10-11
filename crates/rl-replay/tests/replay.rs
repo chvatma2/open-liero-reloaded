@@ -16,7 +16,7 @@ use rl_sim::{BonusItem, Keys, TickEvents, World};
 /// world as it was before the first tick and the world at the end.
 fn record(ticks: u32, seed: u32) -> (Replay, World, World) {
     let (setup, mode) = deathmatch(4, seed);
-    let mut world = World::new(setup.clone(), mode.game_mode()).unwrap();
+    let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
     let mut rec = Recorder::new(packs(), &setup, &mode);
     rec.apply(&mut world, SetupCall::AlignPhysicsClock).unwrap();
     rec.apply(&mut world, SetupCall::SetHealth { worm: 1, health: 30.0 }).unwrap();
@@ -105,7 +105,7 @@ fn replay_refuses_unknown_format_versions() {
 #[test]
 fn bad_setup_calls_are_errors() {
     let (setup, mode) = deathmatch(2, 1);
-    let mut world = World::new(setup.clone(), mode.game_mode()).unwrap();
+    let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
     let mut rec = Recorder::new(packs(), &setup, &mode);
     assert!(rec.apply(&mut world, SetupCall::SetHealth { worm: 2, health: 1.0 }).is_err());
     assert!(rec.apply(&mut world, SetupCall::PlaceBonus { x: 1, y: 1, item: BonusItem::Weapon(9) }).is_err());
@@ -129,8 +129,12 @@ fn bad_setup_calls_are_errors() {
 #[test]
 fn recorder_refuses_ticks_it_did_not_see() {
     let (setup, mode) = deathmatch(2, 1);
-    let new =
-        || (World::new(setup.clone(), mode.game_mode()).unwrap(), Recorder::new(packs(), &setup, &mode));
+    let new = || {
+        (
+            World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap(),
+            Recorder::new(packs(), &setup, &mode),
+        )
+    };
     let mut out = TickEvents::new();
 
     let (mut world, mut rec) = new();
@@ -176,7 +180,7 @@ fn replay_reports_a_different_setup_at_tick_0() {
 
     // A setup call made on the world directly, not through the recorder.
     let (setup, mode) = deathmatch(2, 1);
-    let mut world = World::new(setup.clone(), mode.game_mode()).unwrap();
+    let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
     let mut rec = Recorder::new(packs(), &setup, &mode);
     world.set_health(1, 40.0);
     rec.start(&world).unwrap();
@@ -200,7 +204,7 @@ fn replay_reports_a_different_setup_at_tick_0() {
 fn replay_size_is_reasonable() {
     let size = |hold: u32| {
         let (setup, mode) = deathmatch(8, 2);
-        let mut world = World::new(setup.clone(), mode.game_mode()).unwrap();
+        let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
         let mut rec = Recorder::new(packs(), &setup, &mode);
         rec.start(&world).unwrap();
         let mut keys = KeyGen::new(9, 8, hold);
@@ -309,7 +313,7 @@ mod corrupt {
 #[test]
 fn a_failing_tick_is_recorded_without_a_checksum() {
     let (setup, mode) = deathmatch(4, 9);
-    let mut world = World::new(setup.clone(), mode.game_mode()).unwrap();
+    let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
     let mut rec = Recorder::new(packs(), &setup, &mode);
     rec.start(&world).unwrap();
     let mut keys = KeyGen::new(9, 4, 12);
@@ -333,7 +337,7 @@ fn a_failing_tick_is_recorded_without_a_checksum() {
     assert_eq!(run.world, after);
 
     // Failing before any tick: rows as wide as the failing keys.
-    let mut world = World::new(setup.clone(), mode.game_mode()).unwrap();
+    let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
     let mut rec = Recorder::new(packs(), &setup, &mode);
     rec.start(&world).unwrap();
     let replay = rec.finish_failed(&world, &failing).unwrap();

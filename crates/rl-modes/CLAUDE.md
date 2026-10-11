@@ -10,7 +10,11 @@ port of the bare `CGameMode` (`src/server/CGameMode.cpp`) at commit
 - **`Deathmatch`** (`deathmatch.rs`): `Deathmatch::prepare(settings, &mut
   MatchSetup)` checks two worms (F5) and copies the rules the simulation
   applies (lives, kill limit, scoring) into the match's `SimSettings` and
-  the worms' lives; `Deathmatch::new` skips that. Kills are credited by
+  the worms' lives. `Deathmatch::resume(settings, &SimSettings)` is for a
+  setup made that way before (a replay, an oracle trace): it refuses
+  settings that disagree with the rules (`DeathmatchError::Disagrees`).
+  These are the only constructors (one source of rules; `new` is private).
+  `time_left_ms` stops at the game-over frame. Kills are credited by
   `rl_sim::olx_kill_credit`, exactly as `OracleMode` does (the oracle relies
   on it). `is_over` is `CheckGameOver`, every frame (OLX's `recheckGame`
   stays set during a match): kill limit, then time limit

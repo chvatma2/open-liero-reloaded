@@ -189,7 +189,7 @@ fn game_mode(
                 suicide_decreases_score: s.suicide_decreases_score,
                 ..DeathmatchSettings::default()
             };
-            Box::new(Deathmatch::new(rules))
+            Box::new(Deathmatch::resume(rules, s).map_err(|e| anyhow::anyhow!("{e}"))?)
         }
     })
 }

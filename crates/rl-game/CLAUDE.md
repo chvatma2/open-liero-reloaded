@@ -74,8 +74,8 @@ cargo run --release -p rl-game -- --replay f.rlrp
   N"; a replay's "Worm N"), the kill feed from `Message` events (OLX's
   texts, the last 6 lines for 3 s; kills show no weapon: `rl-sim` does not
   record the injuring weapon, and OLX drops `" with <weapon>"` then), the
-  time-limit clock (red in the last 10 s; **frozen in the HUD** at the
-  end, since `Deathmatch::time_left_ms` keeps counting), Tab's scoreboard
+  time-limit clock (red in the last 10 s; it stops at the end, as
+  `Deathmatch::time_left_ms` does), Tab's scoreboard
   (`World::scores`, the mode's order; `hud::ScoreKey` hides it when the
   window loses focus, which never delivers Tab's release), and on `GameOver` "Game Over",
   then after OLX's `GAMEOVER_WAIT` (3 s) the results (winner or "noone",
@@ -89,7 +89,9 @@ cargo run --release -p rl-game -- --replay f.rlrp
   wins, applied at the start of a frame before `acquire`, at most once
   every `MIN_CHANGE_INTERVAL` (250 ms, creating the window counts as a
   change: `Requests::opened`); a fixed window's min and max move
-  with it (`window::apply`). Why: WSLg's Weston 9 segfaults when winit's
+  with it (`window::apply`). While the window is hidden (minimised or
+  occluded: no frames) pending changes wait; they apply, still paced, when
+  frames resume. Why: WSLg's Weston 9 segfaults when winit's
   client-side decorations are resized quickly (their `wl_shm` pool grows
   while the compositor still reads it): resizes 50 ms apart crashed it
   every run, 250 ms apart never. `--window-system auto|wayland|x11` (or

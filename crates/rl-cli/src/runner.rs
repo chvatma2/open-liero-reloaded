@@ -337,7 +337,11 @@ impl Match {
     /// The replay up to the last recorded tick, then (with `failing`) the
     /// tick being played, on a world rebuilt by replaying the recorded keys.
     fn rebuilt_replay(&self, failing: bool) -> Replay {
-        let mut w = World::new(self.setup.clone(), self.mode.game_mode()).expect("the match's setup");
+        let mut w = World::new(
+            self.setup.clone(),
+            self.mode.game_mode(&self.setup.settings).expect("the match's mode"),
+        )
+        .expect("the match's setup");
         let mut out = TickEvents::new();
         for row in self.log.chunks(self.keys.len().max(1)) {
             w.tick(row, &mut out);

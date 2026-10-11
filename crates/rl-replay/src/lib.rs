@@ -23,7 +23,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use rl_math::AbsTime;
-use rl_modes::{Deathmatch, DeathmatchSettings};
+use rl_modes::{Deathmatch, DeathmatchError, DeathmatchSettings};
 use rl_sim::{BonusItem, GameMode, Keys, MatchSetup, OracleMode, SimSettings, WormSetup};
 
 pub use error::{DecodeError, Mismatch, RecordError, ReplayError};
@@ -148,18 +148,20 @@ impl ReplaySetup {
 pub enum ModeSpec {
     /// [`OracleMode`]: OLX's crediting with no end (the sandbox).
     Oracle,
-    /// [`Deathmatch::new`] with these settings (the setup is recorded after
-    /// `Deathmatch::prepare` applied them).
+    /// [`Deathmatch::resume`] with these settings (the setup is recorded
+    /// after `Deathmatch::prepare` applied them).
     Deathmatch(DeathmatchSettings),
 }
 
 impl ModeSpec {
-    /// A new game mode as the match started with.
-    pub fn game_mode(&self) -> Box<dyn GameMode> {
-        match self {
+    /// A new game mode as the match started with, for a match played with
+    /// `settings` (the setup's): a Deathmatch refuses settings that do not
+    /// hold its rules ([`Deathmatch::resume`]).
+    pub fn game_mode(&self, settings: &SimSettings) -> Result<Box<dyn GameMode>, DeathmatchError> {
+        Ok(match self {
             ModeSpec::Oracle => Box::new(OracleMode),
-            ModeSpec::Deathmatch(s) => Box::new(Deathmatch::new(s.clone())),
-        }
+            ModeSpec::Deathmatch(s) => Box::new(Deathmatch::resume(s.clone(), settings)?),
+        })
     }
 
     /// Checks the mode's numbers as `Deathmatch::prepare` and

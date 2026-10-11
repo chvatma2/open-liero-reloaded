@@ -14,8 +14,10 @@ ticks and at the end.
   settings, start, seed, worms, pool size and bonus weapons; its mod,
   terrain, holes and green mask are named by `Packs`, ids and content
   hashes, never stored; the setup calls), `ModeSpec` (`Oracle` or
-  `Deathmatch(DeathmatchSettings)`, made with `Deathmatch::new`: the setup is
-  recorded after `prepare`), checksums, and the keys row by row.
+  `Deathmatch(DeathmatchSettings)`; `ModeSpec::game_mode(&settings)` makes
+  it with `Deathmatch::resume`, which refuses settings that disagree with
+  its rules: the setup is recorded after `prepare`), checksums, and the
+  keys row by row.
 - **Recording** (`record.rs`): `Recorder::new(packs, &setup, &mode)`;
   every change to the world before its first tick goes through
   `Recorder::apply(&mut world, SetupCall)` (`set_health`, `place_bonus`,
