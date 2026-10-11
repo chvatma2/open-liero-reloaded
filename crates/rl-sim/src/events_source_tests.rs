@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 
 use rl_data::image::{Rgba, RgbaImage};
 use rl_data::level::{Material, MaterialGrid};
-use rl_data::mod_def::{ActionDef, ActionKind, WeaponDef, WeaponKind};
+use rl_data::mod_def::{ActionDef, ActionKind, TimerDef, WeaponDef, WeaponKind};
 use rl_math::{AbsTime, GlibcRand, Mt19937, Vec2};
 use rl_terrain::{PX_DIRT, Stamp, Terrain};
 
@@ -259,4 +259,43 @@ fn laser_sights_name_their_worm() {
         }
     }
     assert!(seen[0] > 10 && seen[0] == seen[1], "{seen:?}");
+}
+
+/// Coverage reports (spec §7.1) count the projectile actions a match
+/// triggered: a tally that is not state, so it changes neither the
+/// checksum nor a world's equality.
+#[test]
+fn projectile_actions_are_tallied_but_not_state() {
+    let hit = ActionDef { damage: 5, ..ActionDef::olx_default(ActionKind::Explode) };
+    let mut w = world(gun_mod(hit, false), SimSettings::lx56(), 60);
+    let untouched = w.clone();
+    assert_eq!(w.actions_triggered().count(ActionKind::Explode), 0);
+    play(&mut w, 60, |f| if f < 2 { Keys::FIRE } else { 0 });
+    assert_eq!(w.actions_triggered().count(ActionKind::Explode), 1, "one pellet hit the wall");
+    assert_eq!(w.actions_triggered().count(ActionKind::Bounce), 0);
+    let fired: Vec<_> = w.actions_triggered().iter().filter(|&(_, n)| n > 0).collect();
+    assert_eq!(fired, [(ActionKind::Explode, 1)]);
+    // The same world without the tally: equal, with the same checksum.
+    let mut again = untouched.clone();
+    play(&mut again, 60, |f| if f < 2 { Keys::FIRE } else { 0 });
+    let mut reset = w.clone();
+    reset.draws.actions = crate::ActionTally::default();
+    assert!(reset == w && again == w);
+    assert_eq!(reset.checksum(), w.checksum());
+}
+
+#[test]
+fn projectile_actions_lists_what_do_frame_applies() {
+    let mut p = pixel_projectile(None);
+    p.hit = ActionDef::olx_default(ActionKind::Bounce);
+    p.player_hit = ActionDef::olx_default(ActionKind::Injure);
+    p.timer =
+        TimerDef { time: 0.0, time_var: 0.0, action: Some(ActionDef::olx_default(ActionKind::Explode)) };
+    // A timer of time 0 never fires (`Proj_LX56Timer::hasAction`).
+    assert_eq!(crate::projectile_actions(&p).collect::<Vec<_>>(), [ActionKind::Bounce, ActionKind::Injure]);
+    p.timer.time = 1.0;
+    assert_eq!(
+        crate::projectile_actions(&p).collect::<Vec<_>>(),
+        [ActionKind::Explode, ActionKind::Bounce, ActionKind::Injure]
+    );
 }

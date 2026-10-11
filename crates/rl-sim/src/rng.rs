@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use rl_math::{GlibcRand, Mt19937, Vec2};
 
 use crate::events::{CosmeticKind, TickEvents};
+use crate::tally::ActionTally;
 
 /// The dedicated server's entity pool size (`tEntities`, `FastVector<entity_t, 1024>`,
 /// `src/client/Entity.cpp:31-32`).
@@ -31,6 +32,8 @@ pub(crate) struct Draws {
     /// OLX keeps in the loaded mod and `CProjectile::Draw` reads.
     pub rot_bumped: Vec<bool>,
     pub spawn_work: WorkCounter,
+    /// The projectile actions applied, for coverage reports (not state).
+    pub actions: ActionTally,
 }
 
 /// Spawned children `Proj_SpawnInfo::apply` computed in full (aim, speed,
@@ -55,6 +58,7 @@ impl Draws {
             events: TickEvents::pending(),
             rot_bumped: vec![false; projectile_types],
             spawn_work: WorkCounter(0),
+            actions: ActionTally::default(),
         }
     }
 

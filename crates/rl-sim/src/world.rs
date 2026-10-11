@@ -27,6 +27,7 @@ use crate::respawn::{SPAWN_HOLE, Spawner, find_spot, simulate_respawns};
 use crate::rng::Draws;
 use crate::setup::Spare;
 use crate::shots::{MAX_SHOOTINGS, ShootList, Shot, ShotCtx, encode_decode, process_shot, spawn_time};
+use crate::tally::ActionTally;
 use crate::worm::Worm;
 
 /// OLX `MAX_WORMS` (`include/Consts.h:34`).
@@ -210,6 +211,13 @@ impl World {
     /// across games; here it lasts as long as the world. False for unknown types.
     pub fn rot_bumped(&self, proj: usize) -> bool {
         self.draws.rot_bumped.get(proj).copied().unwrap_or(false)
+    }
+
+    /// The projectile actions applied since the world was made, by kind,
+    /// for coverage reports (spec §7.1). Not state: two worlds that differ
+    /// only here are equal and hash alike.
+    pub fn actions_triggered(&self) -> &ActionTally {
+        &self.draws.actions
     }
 
     /// `CMap::FindSpot` (`src/common/CMap.cpp:2381-2396`) with the world's

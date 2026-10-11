@@ -100,6 +100,7 @@ pub(crate) fn apply_to(
     info: &mut DoActionInfo,
     ctx: &mut ProjCtx,
 ) {
+    ctx.draws.actions.record(a.kind);
     let mut push_worm = true;
     let mut spawn = a.spawns_projectiles;
     match a.kind {

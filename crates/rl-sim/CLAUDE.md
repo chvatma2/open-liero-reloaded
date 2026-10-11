@@ -51,7 +51,10 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `Amount` is at most `MAX_AMOUNT`, and once the pool is full a spawn skips
   its children's work but makes their draws (`skip_children`);
   `Draws::spawn_work` counts the children computed in full, for tests (not
-  state: `WorkCounter` is always equal). `Draws::rot_bumped` keeps OLX's
+  state: `WorkCounter` is always equal); `Draws::actions` (`tally.rs`,
+  `World::actions_triggered`) counts the projectile actions applied by
+  kind for coverage reports, not state either (`projectile_actions(def)`
+  lists what a projectile can apply). `Draws::rot_bumped` keeps OLX's
   `RotIncrement` 0→1 mutation per projectile type (`World::rot_bumped`), and
   each projectile gets a spawn serial (`Projectile::serial`), each rope
   throw a count (`NinjaRope::throws`), so the renderer never blends across
