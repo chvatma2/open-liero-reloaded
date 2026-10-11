@@ -826,3 +826,23 @@ Made precise while implementing the bots' brain, weapons, rope and chaos (plan 6
   and `speed_noise` (20·f), drawn with the target noise every 0.5 s.
 - **An `AreaCache` knows its level's rock** (`rock_hash`): `Bot::with_cache`
   replaces a cache of another level even of the same size.
+
+Made precise while implementing replays (plan 6 task 6):
+
+- **`rl-replay` (L3) holds the format, the `Recorder` and the verifying
+  player; `rl-content` resolves the packs** (`Content::replay_packs`,
+  `world_for_replay`, `play_replay`: the plan's `Replay::play(&Content)`).
+  A replay names the mod, the level and its theme by pack id and
+  `rl_pack::content_hash`, and refuses content that hashes differently.
+- **The setup is the `MatchSetup` as `World::new` gets it** (after
+  `Deathmatch::prepare`; the mode is rebuilt with `Deathmatch::new`) plus the
+  setup calls made before the first tick (`set_health`, `place_bonus`,
+  `find_spot`, `align_physics_clock`), which go through `Recorder::apply`.
+- **Keys are recorded as `World::tick` got them** (rows may be short or grow
+  with worms spawned mid-match; missing keys are none pressed), checksums
+  after every 100th tick and after the last; `Recorder::finish` takes the
+  final world for that last checksum. A mismatch reports the checksum's
+  tick: the divergence is in the 100 ticks before it.
+- **Format:** `RLRP`, a `u16` version (1), postcard; keys stored by worm and
+  deflated. One minute of 8 worms is at most 50 000 bytes whatever the keys
+  (8 bots on Classic: about 12.6 KB). Other versions are refused.

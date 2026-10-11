@@ -8,7 +8,7 @@ sounds from the core pack), `load_level`, `load_theme` (holes, green ball,
 tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
 (sprites by name, game sounds, `colours.cfg`) and `new_world(&SandboxSetup)`.
 
-- **Layer 4, uses `std`.** Depends on `rl-sim`, `rl-pack`, `rl-terrain`,
+- **Layer 4, uses `std`.** Depends on `rl-sim`, `rl-replay`, `rl-pack`, `rl-terrain`,
   `rl-data`, `rl-vfs`, `anyhow`. `rl-scenario` (same layer) uses it.
 - **Never panic on content** (spec §19, Review Focus 3): a missing or odd
   asset gets a placeholder (`PLACEHOLDER` colour; core sprites at their
@@ -53,6 +53,11 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   `lost_area` (for callers without `rl-fx`, whose `Fx::step_tick` replays
   them itself between its entity passes: never both). `tests/color.rs` plays 3000-tick matches and checks every
   pixel's colour against the material (Review Focus 2).
+- **Replays** (`replay.rs`, spec §20 F8): `replay_packs(mod, level)` names
+  a match's packs (the level's theme too) with their `rl_pack::content_hash`;
+  `replay_assets`, `world_for_replay` and `play_replay` refuse a replay whose
+  packs are missing or hash differently (Review Focus 3), then rebuild its
+  world as `match_setup` does (the mod from `load_mod`).
 - Pack ids of OLX imports: `olx_mod_id("MW 1.0")`, `olx_level_id("CastleStrike.lxl")`.
 
 Test: `cargo nextest run -p rl-content` (`loads_every_manifest_item` and the

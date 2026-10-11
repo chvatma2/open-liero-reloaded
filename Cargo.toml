@@ -16,6 +16,7 @@ rl-terrain = { path = "crates/rl-terrain" }
 rl-sim = { path = "crates/rl-sim" }
 rl-modes = { path = "crates/rl-modes" }
 rl-bots = { path = "crates/rl-bots" }
+rl-replay = { path = "crates/rl-replay" }
 rl-scenario = { path = "crates/rl-scenario" }
 rl-content = { path = "crates/rl-content" }
 rl-scene = { path = "crates/rl-scene" }
@@ -32,6 +33,9 @@ rl-import-gfx = { path = "crates/rl-import-gfx" }
 rl-oracle = { path = "crates/rl-oracle" }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "alloc"] }
 ron = "0.12.2"
+# Replays (plan 6): exact pins, the encoding is the replay format.
+postcard = { version = "=1.1.3", default-features = false, features = ["alloc"] }
+miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
 libm = "0.2.16"
 serde_json = "1.0.151"
 png = "0.18.1"

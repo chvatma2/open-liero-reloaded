@@ -12,6 +12,7 @@ rl-math.workspace = true
 rl-data.workspace = true
 rl-terrain.workspace = true
 rl-sim.workspace = true
+rl-replay.workspace = true
 rl-pack.workspace = true
 rl-vfs.workspace = true
 anyhow.workspace = true

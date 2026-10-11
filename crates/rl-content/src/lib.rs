@@ -17,6 +17,7 @@ mod core_assets;
 mod maps;
 mod mods;
 mod placeholder;
+mod replay;
 mod sandbox;
 mod sounds;
 
