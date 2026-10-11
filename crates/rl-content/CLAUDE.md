@@ -2,14 +2,20 @@
 
 Loads the packs in a content directory (`target/content`, written by
 `rl-cli import`) into ready-to-run inputs: `Content::open(root)` lists the
-packs and loads the core pack `olx-core` once; then `load_mod` (`SimMod` +
+packs (a directory named `.…` is skipped: an import's pack being written)
+and loads the core pack `olx-core` once (`Content::open_layers(&[user
+packs, bundled])`: layered, spec §9.4: an id in a higher layer hides the
+same id below it, the core pack too; an unreadable higher pack hides
+nothing; a missing root is skipped); then `load_mod` (`SimMod` +
 decoded images + sound bytes keyed by `SimMod::sounds()` names, `olx:` game
 sounds from the core pack), `load_level`, `load_theme` (holes, green ball,
 tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
 (sprites by name, game sounds, `colours.cfg`) and `new_world(&SandboxSetup)`.
 
 - **Layer 4, uses `std`.** Depends on `rl-sim`, `rl-modes`, `rl-bots`,
-  `rl-replay`, `rl-pack`, `rl-terrain`, `rl-data`, `rl-vfs`, `anyhow`.
+  `rl-replay`, `rl-pack`, `rl-terrain`, `rl-data`, `rl-vfs`, the
+  importers (`rl-import-lgs`, `rl-import-lxl`, `rl-import-gfx`), `anyhow`,
+  `serde` and `ron`.
   `rl-scenario` (same layer) uses it.
 - **Never panic on content** (spec §19, Review Focus 3): a missing or odd
   asset gets a placeholder (`PLACEHOLDER` colour; core sprites at their
@@ -94,10 +100,31 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   them by manifest name; `resolve_id(given, prefix, ids)` (an id, or an
   OLX name's import id such as `default.png` → `olx-skin-default`),
   `Content::skin_id`, `Catalog::skin`.
+- **Import** (`import.rs`, plan 7 ruling Q3): the one OLX import
+  pipeline, `rl-cli import`'s and the game's Import screen's.
+  `import(olx, &ImportPlan, out, &ImportOptions, progress)` imports the
+  plan's mods, levels (with their thumbnail), themes, core files and
+  skins one by one (`Progress::Item`/`Done`; the callback returning
+  `false` cancels between items), writes each pack hidden
+  (`.import-<id>`) and renames it into place (the old one renamed aside,
+  then removed; leftovers of a killed import removed by the next), ids
+  colliding in a run get `-2`, ..., and writes `import-report.ron`
+  (`ImportEntry`: source, pack, error, warnings; byte-identical to the
+  CLI's before the move). `prune` (the CLI's) removes packs of earlier
+  runs. Every file is read at most `MAX_SOURCE_BYTES`. A failed item is in
+  the report; a failed write (permission, full disk) is the import's
+  error. `discover(path)` lists what an OLX game directory (or its
+  `share/gamedir`) holds where OLX's menus look (directories with a
+  `script.lgs`, `levels/*.lxl`, `data/themes/*`, `skins/`; the core pack
+  only when all of `OLX_CORE_FILES` are there), case-insensitively, with
+  `notes` for what it skips; not an OLX directory is an error.
+  `tests/import.rs` runs on `fixtures/olx-mini` (made by
+  `fixtures/olx-mini.py`).
 - `Content::pack_dir(id)`, `pack_kind(id)`, `pack_origin(id)`.
 - Pack ids of OLX imports: `olx_mod_id("MW 1.0")`, `olx_level_id("CastleStrike.lxl")`.
 
 Test: `cargo nextest run -p rl-content` (`loads_every_manifest_item` and the
 real-level part of `new_world_spawns_worms_on_free_spots`, `tests/color.rs`'s
 matches, `tests/matches.rs` and the imported part of `tests/catalog.rs` need
-`RL_CONTENT_DIR`).
+`RL_CONTENT_DIR`; `tests/import.rs` uses `fixtures/olx-mini` and
+`imported_packs_override_bundled` the layers).

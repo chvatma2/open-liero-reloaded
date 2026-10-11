@@ -6,6 +6,8 @@ The headless command-line tool. Its commands:
   [--core F]...` writes one pack per item to `<out>/<pack id>/`, plus `import-report.ron`;
   the `--core` files (shared sprites, game sounds, `colours.cfg`) make one pack, `olx-core`.
   It exits with status 1 if any item failed, and still imports the rest.
+  The pipeline is `rl_content::import` (shared with the game's Import
+  screen, plan 7 ruling Q3), with `prune`: `<out>` is this import's.
 - `rl-cli validate <pack-or-parent-dir>...` prints diagnostics and exits with
   status 1 on any error.
 - `rl-cli scenario [name...] [--dump F] [--all | --fields a+b]` replays oracle

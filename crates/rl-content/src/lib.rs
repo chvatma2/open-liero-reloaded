@@ -15,6 +15,7 @@
 mod catalog;
 mod color;
 mod core_assets;
+pub mod import;
 mod maps;
 mod matches;
 mod mods;
@@ -77,40 +78,80 @@ pub struct Content {
 }
 
 impl Content {
-    /// Lists the packs in `root`'s subdirectories (each with a `pack.ron`)
-    /// and loads the core pack [`CORE_PACK_ID`]. A pack this build cannot
-    /// read, a second pack with the same id or a missing core pack is a
-    /// warning; only an unreadable `root` is an error.
+    /// Lists the packs in `root`'s subdirectories (each with a `pack.ron`;
+    /// a name starting with `.` is skipped: an import's pack being
+    /// written) and loads the core pack [`CORE_PACK_ID`]. A pack this
+    /// build cannot read, a second pack with the same id or a missing core
+    /// pack is a warning; only an unreadable `root` is an error.
     pub fn open(root: &Path) -> anyhow::Result<Content> {
-        let mut dirs: Vec<PathBuf> = std::fs::read_dir(root)
-            .with_context(|| format!("content directory {}", root.display()))?
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.join(rl_pack::MANIFEST).is_file())
-            .collect();
-        dirs.sort();
-        let mut packs = BTreeMap::new();
+        std::fs::read_dir(root).with_context(|| format!("content directory {}", root.display()))?;
+        Content::open_layers(&[root])
+    }
+
+    /// The packs of several content directories, layered (spec §9.4):
+    /// `roots` from the highest priority down, such as the user data's
+    /// `packs/` (the game's imports) before the bundled content. A pack id
+    /// found in a higher layer hides the same id below it, whatever its
+    /// kind, so an imported pack replaces the bundled one (the core pack
+    /// too); a pack of a higher layer that cannot be read hides nothing
+    /// (a warning). Within one layer a second pack with an id is a warning,
+    /// as in [`Content::open`]. A root that does not exist is skipped (no
+    /// imports yet), one that cannot be read is a warning; an error only
+    /// when no root can be read.
+    pub fn open_layers(roots: &[&Path]) -> anyhow::Result<Content> {
+        let mut packs: BTreeMap<String, (PackKind, PathBuf)> = BTreeMap::new();
+        let mut layer_of: BTreeMap<String, usize> = BTreeMap::new();
         let mut names = BTreeMap::new();
         let mut origins = BTreeMap::new();
         let mut warnings = Vec::new();
-        for dir in dirs {
-            match rl_pack::read_manifest(&DirFs::new(&dir)) {
-                Ok(m) => {
-                    if let Some((_, first)) = packs.get(&m.id) {
-                        let first: &PathBuf = first;
-                        warnings.push(format!(
+        let mut unreadable = Vec::new();
+        let mut read_any = false;
+        for (layer, root) in roots.iter().enumerate() {
+            let entries = match std::fs::read_dir(root) {
+                Ok(e) => e,
+                Err(e) => {
+                    let why = format!("content directory {}: {e}", root.display());
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        warnings.push(format!("{why}: skipped"));
+                    }
+                    unreadable.push(why);
+                    continue;
+                }
+            };
+            read_any = true;
+            let mut dirs: Vec<PathBuf> = entries
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| !p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('.')))
+                .filter(|p| p.join(rl_pack::MANIFEST).is_file())
+                .collect();
+            dirs.sort();
+            for dir in dirs {
+                match rl_pack::read_manifest(&DirFs::new(&dir)) {
+                    Ok(m) => match (packs.get(&m.id), layer_of.get(&m.id)) {
+                        (Some((_, first)), Some(&l)) if l == layer => warnings.push(format!(
                             "{}: pack {} is also {}, skipped",
                             dir.display(),
                             m.id,
                             first.display()
-                        ));
-                    } else {
-                        names.insert(m.id.clone(), m.name);
-                        origins.insert(m.id.clone(), m.origin);
-                        packs.insert(m.id, (m.kind, dir));
-                    }
+                        )),
+                        // Hidden by a higher layer's pack.
+                        (Some(_), _) => {}
+                        _ => {
+                            names.insert(m.id.clone(), m.name);
+                            origins.insert(m.id.clone(), m.origin);
+                            layer_of.insert(m.id.clone(), layer);
+                            packs.insert(m.id, (m.kind, dir));
+                        }
+                    },
+                    Err(e) => warnings.push(format!("{}: {e}, skipped", dir.display())),
                 }
-                Err(e) => warnings.push(format!("{}: {e}, skipped", dir.display())),
             }
+        }
+        if !read_any {
+            anyhow::bail!(
+                "{}",
+                if unreadable.is_empty() { "no content directory".into() } else { unreadable.join("; ") }
+            );
         }
         let core = match packs.get(CORE_PACK_ID) {
             Some((PackKind::Core, dir)) => match rl_pack::read_core_tolerant(&DirFs::new(dir)) {

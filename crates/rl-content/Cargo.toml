@@ -17,12 +17,15 @@ rl-bots.workspace = true
 rl-replay.workspace = true
 rl-pack.workspace = true
 rl-vfs.workspace = true
+rl-import-lgs.workspace = true
+rl-import-lxl.workspace = true
+rl-import-gfx.workspace = true
 anyhow.workspace = true
+serde = { workspace = true, features = ["std"] }
+ron.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-ron.workspace = true
-serde = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true

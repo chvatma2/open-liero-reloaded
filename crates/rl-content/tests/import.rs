@@ -1,0 +1,234 @@
+//! The OLX import pipeline (`rl_content::import`, plan 7 ruling Q3) on the
+//! committed tiny OLX game directory `fixtures/olx-mini` (made by
+//! `fixtures/olx-mini.py`), and the layered content directories it feeds
+//! (spec §9.4: user packs over the bundled ones).
+
+use std::path::{Path, PathBuf};
+
+use rl_content::Content;
+use rl_content::import::{self, ImportOptions, ImportPlan, OLX_CORE_FILES, Progress, REPORT_FILE};
+use rl_data::image::RgbaImage;
+use rl_data::level::{Level, LevelDef, Material, MaterialGrid};
+use rl_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
+use rl_pack::LevelPack;
+use rl_vfs::DirFs;
+
+fn olx_mini() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/olx-mini")
+}
+
+fn local() -> ImportOptions {
+    ImportOptions { revision: "local".into(), prune: false }
+}
+
+/// A level pack `id` named `name` in `dir/<sub>`.
+fn level(dir: &Path, sub: &str, id: &str, name: &str) {
+    let manifest = PackManifest {
+        format_version: PACK_FORMAT_VERSION,
+        id: id.into(),
+        name: name.into(),
+        version: "1".into(),
+        kind: PackKind::Level,
+        authors: vec![],
+        origin: None,
+        license: None,
+    };
+    let def = LevelDef {
+        name: name.into(),
+        width: 3,
+        height: 2,
+        art_scale: 1,
+        theme: "olx-theme-dirt".into(),
+        spawns: vec![],
+    };
+    let level = Level {
+        def,
+        material: MaterialGrid::new(3, 2, Material::Dirt),
+        front: RgbaImage::new(3, 2),
+        back: RgbaImage::new(3, 2),
+    };
+    let pack = LevelPack { manifest, level, thumb: None };
+    rl_pack::write_level(&mut DirFs::new(dir.join(sub)), &pack).unwrap();
+}
+
+/// The core pack's files are the manifest's (`cargo xtask
+/// fetch-olx-content` imports those; the game's import looks for them).
+#[test]
+fn olx_core_files_are_the_manifests() {
+    #[derive(serde::Deserialize)]
+    struct Manifest {
+        core: Vec<String>,
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/olx-manifest.ron");
+    let text = std::fs::read_to_string(path).unwrap();
+    let m: Manifest = ron::from_str(&text).unwrap();
+    assert_eq!(m.core, OLX_CORE_FILES.map(String::from).to_vec());
+}
+
+/// Discovery finds what OLX's menus list: mods with a `script.lgs`, the
+/// `.lxl` levels, the themes and the skins; a partial core is left out
+/// with a note, a Liero `.lev` level too.
+#[test]
+fn discover_finds_what_olx_lists() {
+    let d = import::discover(&olx_mini()).unwrap();
+    assert_eq!(d.plan.mods, ["Broken", "Tiny Mod"]);
+    assert_eq!(d.plan.levels, ["levels/Bad.lxl", "levels/Tiny Level.lxl"]);
+    assert_eq!(d.plan.themes, ["data/themes/Dirt"]);
+    assert!(d.plan.skins);
+    assert!(d.plan.core.is_empty(), "one core file of 18 is no core pack");
+    assert!(d.notes.iter().any(|n| n.contains("1 of OLX's 18 core files")), "{:?}", d.notes);
+    assert!(d.notes.iter().any(|n| n.contains("not LieroX .lxl")), "{:?}", d.notes);
+
+    // An OpenLieroX checkout's root finds its share/gamedir.
+    let tmp = tempfile::tempdir().unwrap();
+    let nested = tmp.path().join("share/gamedir/levels");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::copy(olx_mini().join("levels/Tiny Level.lxl"), nested.join("Tiny Level.lxl")).unwrap();
+    let d = import::discover(tmp.path()).unwrap();
+    assert_eq!(d.gamedir, tmp.path().join("share/gamedir"));
+    assert_eq!(d.plan.levels, ["levels/Tiny Level.lxl"]);
+
+    // What is not an OLX directory is an error saying so, never a panic.
+    let empty = tempfile::tempdir().unwrap();
+    std::fs::write(empty.path().join("notes.txt"), "hi").unwrap();
+    let e = format!("{:#}", import::discover(empty.path()).unwrap_err());
+    assert!(e.contains("not an OpenLieroX game directory"), "{e}");
+    let e = format!("{:#}", import::discover(&empty.path().join("missing")).unwrap_err());
+    assert!(e.contains("missing"), "{e}");
+    let e = format!("{:#}", import::discover(&empty.path().join("notes.txt")).unwrap_err());
+    assert!(e.contains("not a directory"), "{e}");
+}
+
+/// Every item is reported (a broken mod or level fails alone, with its
+/// error; warnings kept), the packs load, and a cancel stops between
+/// items leaving only whole packs, none hidden.
+#[test]
+fn import_reports_every_item_and_writes_whole_packs() {
+    let d = import::discover(&olx_mini()).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let mut seen = Vec::new();
+    let r = import::import(&d.gamedir, &d.plan, out.path(), &local(), &mut |p| {
+        if let Progress::Item { index, total, source } = p {
+            seen.push((index, total, source.to_string()));
+        }
+        true
+    })
+    .unwrap();
+    assert_eq!(r.total, 6);
+    assert_eq!(seen.len(), 6);
+    assert_eq!(seen[0], (0, 6, "Broken".to_string()));
+    assert!(!r.cancelled);
+    assert_eq!((r.imported(), r.failed()), (4, 2));
+    let broken = r.entries.iter().find(|e| e.source == "Broken").unwrap();
+    assert!(broken.error.as_deref().is_some_and(|e| e.contains("header")), "{broken:?}");
+    let tiny = r.entries.iter().find(|e| e.source == "Tiny Mod").unwrap();
+    assert_eq!(tiny.pack.as_deref(), Some("olx-tiny-mod"));
+    assert!(tiny.warnings.iter().any(|w| w.contains("boom.wav")), "{tiny:?}");
+    assert!(out.path().join(REPORT_FILE).is_file());
+
+    let c = Content::open(out.path()).unwrap();
+    let catalog = c.catalog();
+    assert_eq!(catalog.mod_info("olx-tiny-mod").unwrap().name, "Tiny Mod");
+    let lvl = catalog.level("olx-level-tiny-level").unwrap();
+    assert_eq!((lvl.width, lvl.height), (64, 48));
+    assert!(lvl.thumb.is_some(), "a thumbnail is made at import");
+    assert_eq!(c.pack_origin("olx-tiny-mod").unwrap().revision, "local");
+    c.load_mod("olx-tiny-mod").unwrap();
+    c.load_level("olx-level-tiny-level").unwrap();
+
+    // Cancelled after the second item: two tried, the rest not; nothing
+    // hidden left behind; a re-import replaces packs in place.
+    let again = tempfile::tempdir().unwrap();
+    let r = import::import(&d.gamedir, &d.plan, again.path(), &local(), &mut |p| {
+        !matches!(p, Progress::Done { index: 1, .. })
+    })
+    .unwrap();
+    assert!(r.cancelled);
+    assert_eq!(r.entries.len(), 2);
+    let names: Vec<String> = std::fs::read_dir(again.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(names.iter().all(|n| !n.starts_with('.')), "{names:?}");
+    let r = import::import(&d.gamedir, &d.plan, again.path(), &local(), &mut |_| true).unwrap();
+    assert_eq!(r.imported(), 4);
+    assert!(Content::open(again.path()).unwrap().warnings().iter().all(|w| !w.contains("also")));
+
+    // A pack an import was killed in the middle of writing is hidden
+    // (`.import-<id>`), never listed, and the next import removes it.
+    let hidden = again.path().join(".import-olx-level-x");
+    level(again.path(), ".import-olx-level-x", "olx-level-x", "Half");
+    assert!(Content::open(again.path()).unwrap().pack_dir("olx-level-x").is_none());
+    let one = ImportPlan { levels: vec!["levels/Tiny Level.lxl".into()], ..ImportPlan::default() };
+    import::import(&d.gamedir, &one, again.path(), &local(), &mut |_| true).unwrap();
+    assert!(!hidden.exists());
+    // Without `prune`, the packs of earlier imports stay.
+    assert!(again.path().join("olx-tiny-mod").is_dir());
+}
+
+/// A write that fails (no permission; a full disk alike) is an error,
+/// not a panic, and leaves no hidden pack.
+#[cfg(unix)]
+#[test]
+fn a_failed_write_is_an_error() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let d = import::discover(&olx_mini()).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(out.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+    if std::fs::write(out.path().join("probe"), b"").is_ok() {
+        eprintln!("running as root: permissions do not stop writes; skipping");
+        return;
+    }
+    let e = import::import(&d.gamedir, &d.plan, out.path(), &local(), &mut |_| true).unwrap_err();
+    assert!(format!("{e:#}").contains("ermission"), "{e:#}");
+    std::fs::set_permissions(out.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(std::fs::read_dir(out.path()).unwrap().count(), 0);
+}
+
+/// Imported packs (the user data's `packs/`) override the bundled ones
+/// (spec §9.4): the same id is the imported pack's, whatever the bundled
+/// one; new ids add to the bundled ones; an unreadable imported pack
+/// hides nothing; a pack being written (hidden) is never listed.
+#[test]
+fn imported_packs_override_bundled() {
+    let bundled = tempfile::tempdir().unwrap();
+    let user = tempfile::tempdir().unwrap();
+    level(bundled.path(), "a", "lvl-a", "Bundled A");
+    level(bundled.path(), "b", "lvl-b", "Bundled B");
+    level(bundled.path(), "d", "lvl-d", "Bundled D");
+    level(user.path(), "a", "lvl-a", "Imported A");
+    level(user.path(), "c", "lvl-c", "Imported C");
+    level(user.path(), ".import-lvl-d", "lvl-d", "Half-written D");
+    // Of a format this build cannot read.
+    level(user.path(), "b", "lvl-b", "Future B");
+    let manifest = user.path().join("b/pack.ron");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(
+        &manifest,
+        text.replace(&format!("format_version: {PACK_FORMAT_VERSION}"), "format_version: 999"),
+    )
+    .unwrap();
+
+    let c = Content::open_layers(&[user.path(), bundled.path()]).unwrap();
+    let catalog = c.catalog();
+    let name = |id: &str| catalog.level(id).map(|l| l.name.clone());
+    assert_eq!(name("lvl-a").as_deref(), Some("Imported A"));
+    assert_eq!(c.pack_dir("lvl-a"), Some(user.path().join("a").as_path()));
+    assert_eq!(name("lvl-b").as_deref(), Some("Bundled B"), "an unreadable import hides nothing");
+    assert!(c.warnings().iter().any(|w| w.contains("999") || w.contains("format")), "{:?}", c.warnings());
+    assert_eq!(name("lvl-c").as_deref(), Some("Imported C"));
+    assert_eq!(name("lvl-d").as_deref(), Some("Bundled D"), "a hidden pack is never listed");
+    assert!(
+        !c.warnings().iter().any(|w| w.contains("is also")),
+        "overriding is no duplicate: {:?}",
+        c.warnings()
+    );
+
+    // No imports yet (no `packs/`): the bundled content alone; neither
+    // directory: an error.
+    let none = user.path().join("missing");
+    let c = Content::open_layers(&[none.as_path(), bundled.path()]).unwrap();
+    assert_eq!(c.catalog().level("lvl-a").unwrap().name, "Bundled A");
+    assert!(c.warnings().iter().all(|w| !w.contains("missing")), "{:?}", c.warnings());
+    assert!(Content::open_layers(&[none.as_path(), &none.join("x")]).is_err());
+}
