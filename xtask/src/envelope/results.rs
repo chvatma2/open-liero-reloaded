@@ -1,0 +1,859 @@
+//! The performance envelope's results (plan 8, spec §3 and §7): the RON
+//! `rl-cli stress`, `gpu-bench`, `scenario --time` and `rl-game
+//! --frame-log` write (read here as `*Out`), what `cargo xtask envelope`
+//! keeps of them (`Envelope`, the file `fixtures/bench/envelope/<host>.ron`)
+//! and the pure arithmetic: medians of runs, budgets, breaking points,
+//! noise, the comparison with the committed file, merging a bless.
+
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+
+use crate::bench::{Host, median};
+use crate::olx_timing::OlxFrame;
+
+/// Where the blessed results go.
+pub const DIR: &str = "fixtures/bench/envelope";
+/// Every run's results (not committed).
+pub const LATEST: &str = "target/envelope/latest.ron";
+/// The least noise an axis is given (run-to-run spread below it is luck).
+pub const NOISE_FLOOR: f64 = 0.05;
+
+/// Percentiles of a measurement.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Spread {
+    pub p50: f64,
+    pub p99: f64,
+    pub max: f64,
+}
+
+impl Spread {
+    /// Of `values` (any order), nearest rank: the value at rank
+    /// `ceil(n * q)` (at least 1). The one definition of every percentile
+    /// in plan 8 (ruling PF8): `rl_cli::stress::Spread::of` and `rl-game`'s
+    /// `stats::percentile` agree (`xtask` does not link `rl-cli`).
+    pub fn of(values: &[f64]) -> Spread {
+        if values.is_empty() {
+            return Spread::default();
+        }
+        let mut v = values.to_vec();
+        v.sort_by(f64::total_cmp);
+        let at = |q: f64| v[((v.len() as f64 * q).ceil() as usize).clamp(1, v.len()) - 1];
+        Spread { p50: at(0.5), p99: at(0.99), max: at(1.0) }
+    }
+
+    /// Each percentile's median over `runs`.
+    pub fn median_of(runs: &[Spread]) -> Spread {
+        let m = |f: fn(&Spread) -> f64| median(&runs.iter().map(f).collect::<Vec<_>>());
+        Spread { p50: m(|s| s.p50), p99: m(|s| s.p99), max: m(|s| s.max) }
+    }
+}
+
+/// Spec §3's budgets.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Budgets {
+    /// OLX's fixed 100 Hz frame (`FRAME_MS`).
+    pub tick_ms: f64,
+    pub frame_144_ms: f64,
+    pub frame_60_ms: f64,
+    pub memory_mib: f64,
+}
+
+impl Default for Budgets {
+    fn default() -> Budgets {
+        Budgets {
+            tick_ms: 10.0,
+            frame_144_ms: 1000.0 / 144.0,
+            frame_60_ms: 1000.0 / 60.0,
+            memory_mib: 2048.0,
+        }
+    }
+}
+
+// ---- What the tools write (only the fields read here; every field defaults).
+
+/// `rl-cli stress --out` (`rl_cli::stress::Report`).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct StressOut {
+    pub tick_us: Spread,
+    pub sim_us: Spread,
+    pub think_us: Spread,
+    pub present_us: Spread,
+    pub build_us: Spread,
+    pub pool_capacity: usize,
+    pub projectiles_peak: usize,
+    pub ticks_at_pool_cap: u32,
+    pub fx_peak: usize,
+    pub ticks_at_fx_cap: u32,
+    pub fx_capacity: usize,
+    pub events_max: usize,
+    pub peak_mib: Option<f64>,
+    pub area_cache: (usize, usize),
+    pub caps: Vec<String>,
+}
+
+/// `rl-cli gpu-bench --out` (`rl_cli::gpu_bench::GpuReport`).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct GpuReportOut {
+    pub adapter: String,
+    pub backend: String,
+    pub device_type: String,
+    pub timestamps: bool,
+    pub sizes: Vec<SizeOut>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct SizeOut {
+    pub size: (u32, u32),
+    pub tick_ms: Spread,
+    pub cpu_ms: Spread,
+    pub frame_ms: Spread,
+    pub total_ms: Spread,
+    pub gpu_ms: Option<Spread>,
+    pub probe: Vec<ProbeOut>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ProbeOut {
+    pub passes: u32,
+    pub ms: Spread,
+}
+
+/// `rl-game --frame-log` (`rl_game::stats::FrameLog`).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct FrameLogOut {
+    pub size: (u32, u32),
+    pub gpu: String,
+    pub frames: usize,
+    pub fps: f64,
+    pub frame_ms: Spread,
+    pub busy_ms: Spread,
+}
+
+/// `rl-cli scenario --time` (`rl_cli::timing`).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ScenarioTimingOut {
+    pub name: String,
+    pub tick_ns: Vec<u64>,
+    pub projectiles: Vec<u32>,
+    pub rand_calls: Vec<u64>,
+    pub matches_olx: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct TimingReportOut {
+    pub scenarios: Vec<ScenarioTimingOut>,
+}
+
+// ---- What is kept.
+
+/// A frame measured for a sweep point (its level drawn, plan 8 ruling P4).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FrameCheck {
+    pub path: String,
+    pub size: (u32, u32),
+    pub total_ms: Spread,
+    pub gpu_ms: Option<Spread>,
+}
+
+/// One value of an axis: the medians of its runs.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Point {
+    pub value: String,
+    /// The value as a number (for the fit).
+    pub n: f64,
+    pub runs: usize,
+    pub tick_us: Spread,
+    pub sim_us: Spread,
+    pub think_us: Spread,
+    pub present_us: Spread,
+    pub build_us: Spread,
+    pub projectiles_peak: usize,
+    pub fx_peak: usize,
+    pub events_max: usize,
+    pub peak_mib: f64,
+    pub area_cache: (usize, usize),
+    /// Hard limits reached (each breaks the point, ruling P7).
+    pub caps: Vec<String>,
+    /// The pool or effects cap full at its own size (shown, not a break).
+    pub saturated: Vec<String>,
+    pub load_avg: f64,
+    /// The runs' tick p99 spread: (max − min) / median.
+    pub spread: f64,
+    /// Tick p99 over the tick budget.
+    pub budget_share: f64,
+    pub frame: Option<FrameCheck>,
+}
+
+/// The first value that does not hold, and why.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Breaking {
+    pub value: String,
+    pub causes: Vec<String>,
+}
+
+/// Tick time against the axis's value, least squares over measured points.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Fit {
+    pub per_unit_us_p50: f64,
+    pub per_unit_us_p99: f64,
+    pub intercept_us_p99: f64,
+    /// The value where the tick p99 would reach the budget.
+    pub limit: f64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Sweep {
+    pub axis: String,
+    pub mod_id: String,
+    pub level: String,
+    /// What varies and what stays the reference.
+    pub what: String,
+    /// The largest point spread (at least [`NOISE_FLOOR`]): the comparison's tolerance.
+    pub noise: f64,
+    pub points: Vec<Point>,
+    /// With the 144 Hz frame budget (ruling P4).
+    pub breaking_144: Option<Breaking>,
+    pub breaking_60: Option<Breaking>,
+    pub fit: Option<Fit>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProbeRow {
+    pub passes: u32,
+    pub ms_p50: f64,
+}
+
+/// One resolution of a GPU path.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GpuSize {
+    pub size: (u32, u32),
+    pub tick_ms: Spread,
+    pub cpu_ms: Spread,
+    pub frame_ms: Spread,
+    pub total_ms: Spread,
+    pub gpu_ms: Option<Spread>,
+    pub spread: f64,
+    pub probe: Vec<ProbeRow>,
+    /// GPU ms one full-screen probe pass costs (slope through the origin).
+    pub ms_per_pass: f64,
+    /// Passes that fit beside the frame (its GPU p99, else its frame p99).
+    pub passes_144: u32,
+    pub passes_60: u32,
+}
+
+/// A windowed, uncapped `rl-game` run (one run, ruling P5).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Windowed {
+    pub requested: (u32, u32),
+    pub size: (u32, u32),
+    /// The window got the requested size (else the monitor is smaller).
+    pub reached: bool,
+    /// The adapter, backend and present mode (`Fifo`: the run was not uncapped).
+    pub gpu: String,
+    pub frames: usize,
+    pub fps: f64,
+    pub frame_ms: Spread,
+    pub busy_ms: Spread,
+}
+
+/// A sweep point's level drawn.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GpuLevel {
+    pub axis: String,
+    pub value: String,
+    pub size: (u32, u32),
+    pub total_ms: Spread,
+    pub gpu_ms: Option<Spread>,
+}
+
+/// One GPU path: `wsl-gl`, `windows-dx12`, `windows-vulkan`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GpuPath {
+    pub adapter: String,
+    pub backend: String,
+    pub device_type: String,
+    /// GPU times are timestamps; else CPU-side frame times only.
+    pub timestamps: bool,
+    pub noise: f64,
+    pub sizes: Vec<GpuSize>,
+    pub windowed: Vec<Windowed>,
+    pub levels: Vec<GpuLevel>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OlxRow {
+    pub name: String,
+    pub frames: usize,
+    pub projectiles_peak: u32,
+    pub olx_us: Spread,
+    pub rl_us: Spread,
+    /// rl-sim's p50 over OLX's.
+    pub ratio_p50: f64,
+    /// The same projectiles and `rand()` calls every frame.
+    pub same_work: bool,
+    pub matches_olx: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OlxComparison {
+    pub image: String,
+    pub build: String,
+    pub rows: Vec<OlxRow>,
+}
+
+/// The results file.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Envelope {
+    pub note: String,
+    pub host: Host,
+    pub date: String,
+    pub quick: bool,
+    pub runs: usize,
+    pub seconds: f32,
+    pub budgets: Budgets,
+    pub sweeps: BTreeMap<String, Sweep>,
+    pub gpu: BTreeMap<String, GpuPath>,
+    pub olx: Option<OlxComparison>,
+    /// Parts a bless did not measure, kept from the file before.
+    pub kept: Vec<String>,
+}
+
+fn relative_spread(v: &[f64]) -> f64 {
+    let m = median(v);
+    let (lo, hi) = v.iter().fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+    if m > 0.0 && v.len() > 1 { (hi - lo) / m } else { 0.0 }
+}
+
+/// A point from its runs: each figure's median.
+pub fn point(value: &str, n: f64, runs: &[StressOut], load_avg: f64) -> Point {
+    let sp = |f: fn(&StressOut) -> Spread| Spread::median_of(&runs.iter().map(f).collect::<Vec<_>>());
+    let m = |f: fn(&StressOut) -> f64| median(&runs.iter().map(f).collect::<Vec<_>>());
+    let first = runs.first().cloned().unwrap_or_default();
+    let tick_us = sp(|r| r.tick_us);
+    let mut saturated = Vec::new();
+    if first.ticks_at_pool_cap > 0 {
+        saturated.push(format!("pool full ({}) for {} ticks", first.pool_capacity, first.ticks_at_pool_cap));
+    }
+    if first.ticks_at_fx_cap > 0 {
+        saturated.push(format!("effects full ({}) for {} ticks", first.fx_capacity, first.ticks_at_fx_cap));
+    }
+    Point {
+        value: value.into(),
+        n,
+        runs: runs.len(),
+        tick_us,
+        sim_us: sp(|r| r.sim_us),
+        think_us: sp(|r| r.think_us),
+        present_us: sp(|r| r.present_us),
+        build_us: sp(|r| r.build_us),
+        projectiles_peak: first.projectiles_peak,
+        fx_peak: first.fx_peak,
+        events_max: first.events_max,
+        peak_mib: m(|r| r.peak_mib.unwrap_or(0.0)),
+        area_cache: first.area_cache,
+        caps: first.caps.clone(),
+        saturated,
+        load_avg,
+        spread: relative_spread(&runs.iter().map(|r| r.tick_us.p99).collect::<Vec<_>>()),
+        budget_share: tick_us.p99 / 1000.0 / Budgets::default().tick_ms,
+        frame: None,
+    }
+}
+
+/// A point whose run failed (a crash, the memory ceiling): the failure is its cap.
+pub fn failed_point(value: &str, n: f64, why: &str, load_avg: f64) -> Point {
+    let first_line = why.lines().rfind(|l| !l.trim().is_empty()).unwrap_or(why);
+    Point {
+        value: value.into(),
+        n,
+        caps: vec![format!("failed: {}", first_line.trim())],
+        load_avg,
+        ..Point::default()
+    }
+}
+
+/// Why `p` does not hold (empty: it holds), with the frame budget `frame_budget_ms`.
+pub fn causes(p: &Point, b: &Budgets, frame_budget_ms: f64) -> Vec<String> {
+    let mut c = Vec::new();
+    if p.runs > 0 && p.tick_us.p99 / 1000.0 > b.tick_ms {
+        c.push(format!("tick p99 {:.2} ms > {} ms", p.tick_us.p99 / 1000.0, b.tick_ms));
+    }
+    if p.peak_mib > b.memory_mib {
+        c.push(format!("memory {:.0} MiB > {:.0} MiB", p.peak_mib, b.memory_mib));
+    }
+    if let Some(f) = &p.frame
+        && f.total_ms.p99 > frame_budget_ms
+    {
+        c.push(format!("frame p99 {:.2} ms > {:.1} ms", f.total_ms.p99, frame_budget_ms));
+    }
+    c.extend(p.caps.iter().map(|x| format!("cap: {x}")));
+    c
+}
+
+/// The first point that does not hold.
+pub fn breaking(points: &[Point], b: &Budgets, frame_budget_ms: f64) -> Option<Breaking> {
+    points.iter().find_map(|p| {
+        let c = causes(p, b, frame_budget_ms);
+        (!c.is_empty()).then(|| Breaking { value: p.value.clone(), causes: c })
+    })
+}
+
+/// Least squares of tick time against the value, over measured points (two at least).
+pub fn fit(points: &[Point], b: &Budgets) -> Option<Fit> {
+    let pts: Vec<&Point> = points.iter().filter(|p| p.runs > 0).collect();
+    if pts.len() < 2 {
+        return None;
+    }
+    let line = |y: fn(&Point) -> f64| {
+        let n = pts.len() as f64;
+        let (sx, sy) = (pts.iter().map(|p| p.n).sum::<f64>(), pts.iter().map(|&p| y(p)).sum::<f64>());
+        let sxx = pts.iter().map(|p| p.n * p.n).sum::<f64>();
+        let sxy = pts.iter().map(|&p| p.n * y(p)).sum::<f64>();
+        let slope = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+        (slope, (sy - slope * sx) / n)
+    };
+    let (p50, _) = line(|p| p.tick_us.p50);
+    let (p99, c99) = line(|p| p.tick_us.p99);
+    let limit = if p99 > 0.0 { (b.tick_ms * 1000.0 - c99) / p99 } else { f64::INFINITY };
+    Some(Fit { per_unit_us_p50: p50, per_unit_us_p99: p99, intercept_us_p99: c99, limit })
+}
+
+/// One resolution from its runs, with the probe's cost and what fits.
+pub fn gpu_size(runs: &[SizeOut], b: &Budgets) -> GpuSize {
+    let sp = |f: fn(&SizeOut) -> Spread| Spread::median_of(&runs.iter().map(f).collect::<Vec<_>>());
+    let gpu: Vec<Spread> = runs.iter().filter_map(|r| r.gpu_ms).collect();
+    let gpu_ms = (!gpu.is_empty()).then(|| Spread::median_of(&gpu));
+    let first = runs.first().cloned().unwrap_or_default();
+    let probe: Vec<ProbeRow> = first
+        .probe
+        .iter()
+        .enumerate()
+        .map(|(i, p)| ProbeRow {
+            passes: p.passes,
+            ms_p50: median(&runs.iter().filter_map(|r| r.probe.get(i)).map(|q| q.ms.p50).collect::<Vec<_>>()),
+        })
+        .collect();
+    let (kk, km) = probe.iter().fold((0.0, 0.0), |(kk, km), r| {
+        let k = f64::from(r.passes);
+        (kk + k * k, km + k * r.ms_p50)
+    });
+    let ms_per_pass = if kk > 0.0 { km / kk } else { 0.0 };
+    let frame_ms = sp(|r| r.frame_ms);
+    let base = gpu_ms.map_or(frame_ms.p99, |g| g.p99);
+    let fits = |budget: f64| {
+        if ms_per_pass <= 1e-6 {
+            9999
+        } else {
+            ((budget - base).max(0.0) / ms_per_pass).floor().min(9999.0) as u32
+        }
+    };
+    GpuSize {
+        size: first.size,
+        tick_ms: sp(|r| r.tick_ms),
+        cpu_ms: sp(|r| r.cpu_ms),
+        frame_ms,
+        total_ms: sp(|r| r.total_ms),
+        gpu_ms,
+        spread: relative_spread(&runs.iter().map(|r| r.total_ms.p99).collect::<Vec<_>>()),
+        probe,
+        ms_per_pass,
+        passes_144: fits(b.frame_144_ms),
+        passes_60: fits(b.frame_60_ms),
+    }
+}
+
+/// OLX's runs and rl-sim's of one scenario, in µs.
+pub fn olx_row(name: &str, olx: &[Vec<OlxFrame>], rl: &[ScenarioTimingOut]) -> OlxRow {
+    let us = |ns: &[u64]| Spread::of(&ns.iter().map(|&n| n as f64 / 1000.0).collect::<Vec<_>>());
+    let olx_us = Spread::median_of(
+        &olx.iter().map(|r| us(&r.iter().map(|f| f.ns).collect::<Vec<_>>())).collect::<Vec<_>>(),
+    );
+    let rl_us = Spread::median_of(&rl.iter().map(|r| us(&r.tick_ns)).collect::<Vec<_>>());
+    let (o, r) = (olx.first().cloned().unwrap_or_default(), rl.first().cloned().unwrap_or_default());
+    let same_work = o.len() == r.projectiles.len()
+        && o.iter().zip(&r.projectiles).all(|(f, &p)| f.projectiles == p)
+        && o.iter().zip(&r.rand_calls).all(|(f, &c)| f.rand_calls == c);
+    OlxRow {
+        name: name.into(),
+        frames: o.len(),
+        projectiles_peak: o.iter().map(|f| f.projectiles).max().unwrap_or(0),
+        olx_us,
+        rl_us,
+        ratio_p50: if olx_us.p50 > 0.0 { rl_us.p50 / olx_us.p50 } else { 0.0 },
+        same_work,
+        matches_olx: r.matches_olx,
+    }
+}
+
+/// Noise, frames from the GPU paths' levels (the WSL path first), fits and
+/// breaking points.
+pub fn finish(env: &mut Envelope) {
+    let b = env.budgets;
+    let levels: Vec<(String, GpuLevel)> = ["wsl-gl", "windows-dx12", "windows-vulkan"]
+        .iter()
+        .filter_map(|k| env.gpu.get(*k).map(|p| (k.to_string(), p.levels.clone())))
+        .flat_map(|(k, ls)| ls.into_iter().map(move |l| (k.clone(), l)))
+        .collect();
+    for sweep in env.sweeps.values_mut() {
+        for p in &mut sweep.points {
+            if let Some((path, l)) = levels.iter().find(|(_, l)| l.axis == sweep.axis && l.value == p.value) {
+                p.frame = Some(FrameCheck {
+                    path: path.clone(),
+                    size: l.size,
+                    total_ms: l.total_ms,
+                    gpu_ms: l.gpu_ms,
+                });
+            }
+        }
+        sweep.noise = sweep.points.iter().map(|p| p.spread).fold(NOISE_FLOOR, f64::max);
+        sweep.breaking_144 = breaking(&sweep.points, &b, b.frame_144_ms);
+        sweep.breaking_60 = breaking(&sweep.points, &b, b.frame_60_ms);
+        sweep.fit = if sweep.axis == "map" { None } else { fit(&sweep.points, &b) };
+    }
+    for path in env.gpu.values_mut() {
+        path.noise = path.sizes.iter().map(|s| s.spread).fold(NOISE_FLOOR, f64::max);
+    }
+}
+
+/// A measurement against the committed one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Flag {
+    pub name: String,
+    pub baseline: f64,
+    pub measured: f64,
+    pub noise: f64,
+}
+
+impl Flag {
+    /// Slower by more than the noise (an improvement never is).
+    pub fn flagged(&self) -> bool {
+        self.baseline > 0.0 && self.measured > self.baseline * (1.0 + self.noise)
+    }
+
+    pub fn line(&self) -> String {
+        let change = if self.baseline > 0.0 { (self.measured / self.baseline - 1.0) * 100.0 } else { 0.0 };
+        format!(
+            "{} {:<44} {:>10.3} (committed {:>10.3}) {:+6.1} % (noise {:.0} %)",
+            if self.flagged() { "!" } else { " " },
+            self.name,
+            self.measured,
+            self.baseline,
+            change,
+            self.noise * 100.0
+        )
+    }
+}
+
+/// Tick p99 (ms) of every sweep point and frame p99 and probe ms per pass
+/// of every GPU size measured in both, with the committed noise.
+pub fn compare(stored: &Envelope, now: &Envelope) -> Vec<Flag> {
+    let mut out = Vec::new();
+    for (axis, s) in &now.sweeps {
+        let Some(old) = stored.sweeps.get(axis) else { continue };
+        for p in &s.points {
+            if let Some(o) = old.points.iter().find(|o| o.value == p.value && o.runs > 0 && p.runs > 0) {
+                let name = format!("{axis} {} tick p99 ms", p.value);
+                out.push(Flag {
+                    name,
+                    baseline: o.tick_us.p99 / 1000.0,
+                    measured: p.tick_us.p99 / 1000.0,
+                    noise: old.noise,
+                });
+            }
+        }
+    }
+    for (key, g) in &now.gpu {
+        let Some(old) = stored.gpu.get(key) else { continue };
+        for s in &g.sizes {
+            if let Some(o) = old.sizes.iter().find(|o| o.size == s.size) {
+                let at = format!("{key} {}x{}", s.size.0, s.size.1);
+                out.push(Flag {
+                    name: format!("{at} frame p99 ms"),
+                    baseline: o.total_ms.p99,
+                    measured: s.total_ms.p99,
+                    noise: old.noise,
+                });
+                out.push(Flag {
+                    name: format!("{at} ms per pass"),
+                    baseline: o.ms_per_pass,
+                    measured: s.ms_per_pass,
+                    noise: old.noise,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// `new`, plus the sweeps, GPU paths and OLX table of `old` it did not measure (listed in `kept`).
+pub fn merged(old: Option<Envelope>, new: Envelope) -> Envelope {
+    let mut m = new;
+    m.kept.clear();
+    let Some(old) = old else { return m };
+    for (k, v) in old.sweeps {
+        if !m.sweeps.contains_key(&k) {
+            m.kept.push(format!("sweep {k}"));
+            m.sweeps.insert(k, v);
+        }
+    }
+    for (k, v) in old.gpu {
+        if !m.gpu.contains_key(&k) {
+            m.kept.push(format!("gpu {k}"));
+            m.gpu.insert(k, v);
+        }
+    }
+    if m.olx.is_none() && old.olx.is_some() {
+        m.kept.push("olx".into());
+        m.olx = old.olx;
+    }
+    m
+}
+
+/// The file name's host part: the CPU model's slug and the CPU count.
+pub fn host_key(host: &Host) -> String {
+    format!("{}-{}cpus", rl_data::slug::slug(&host.cpu), host.cpus)
+}
+
+/// `fixtures/bench/envelope/<host>.ron`.
+pub fn path_for(host: &Host) -> String {
+    format!("{DIR}/{}.ron", host_key(host))
+}
+
+/// The results at `path`, if there are any.
+pub fn load(path: &Path) -> Result<Option<Envelope>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => ron::from_str(&text).map(Some).map_err(|e| format!("{}: {e}", path.display())),
+        Err(_) => Ok(None),
+    }
+}
+
+pub fn write(path: &Path, env: &Envelope) -> anyhow::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let text = ron::ser::to_string_pretty(env, ron::ser::PrettyConfig::default())?;
+    std::fs::write(path, text + "\n")?;
+    Ok(())
+}
+
+/// The one-minute load average (`/proc/loadavg`).
+pub fn load_average() -> Option<f64> {
+    std::fs::read_to_string("/proc/loadavg").ok()?.split_whitespace().next()?.parse().ok()
+}
+
+impl Point {
+    /// One line for the console.
+    pub fn line(&self) -> String {
+        if self.runs == 0 {
+            return self.caps.join("; ");
+        }
+        format!(
+            "tick p50/p99 {:.2}/{:.2} ms ({:.0} % of the budget), present p99 {:.2} ms, build p99 {:.2} ms, \
+             {} projectiles, {} effects, {:.0} MiB{}",
+            self.tick_us.p50 / 1000.0,
+            self.tick_us.p99 / 1000.0,
+            self.budget_share * 100.0,
+            self.present_us.p99 / 1000.0,
+            self.build_us.p99 / 1000.0,
+            self.projectiles_peak,
+            self.fx_peak,
+            self.peak_mib,
+            if self.caps.is_empty() { String::new() } else { format!("; caps: {}", self.caps.join("; ")) }
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s(p50: f64, p99: f64) -> Spread {
+        Spread { p50, p99, max: p99 * 1.5 }
+    }
+
+    fn run(tick_p99_us: f64, mib: f64) -> StressOut {
+        StressOut {
+            tick_us: s(tick_p99_us / 2.0, tick_p99_us),
+            peak_mib: Some(mib),
+            area_cache: (10, 4096),
+            ..StressOut::default()
+        }
+    }
+
+    fn pt(value: &str, n: f64, tick_p99_us: f64) -> Point {
+        point(value, n, &[run(tick_p99_us, 100.0)], 0.1)
+    }
+
+    #[test]
+    fn points_take_the_median_of_their_runs() {
+        let p = point("16", 16.0, &[run(900.0, 100.0), run(1000.0, 300.0), run(5000.0, 200.0)], 0.2);
+        assert_eq!((p.tick_us.p99, p.peak_mib, p.runs), (1000.0, 200.0, 3));
+        assert!((p.spread - 4.1).abs() < 1e-9, "(5000 - 900) / 1000: {}", p.spread);
+        assert!((p.budget_share - 0.1).abs() < 1e-9, "1 ms of 10");
+        let pool = StressOut { ticks_at_pool_cap: 5, pool_capacity: 3000, ..run(100.0, 1.0) };
+        assert_eq!(
+            point("3000", 3000.0, &[pool], 0.0).saturated.len(),
+            1,
+            "a full pool is saturated, not a cap"
+        );
+    }
+
+    #[test]
+    fn breaking_point_is_the_first_value_that_does_not_hold() {
+        let b = Budgets::default();
+        let mut points = vec![pt("2", 2.0, 500.0), pt("4", 4.0, 12_000.0), pt("8", 8.0, 30_000.0)];
+        let br = breaking(&points, &b, b.frame_144_ms).unwrap();
+        assert_eq!(br.value, "4");
+        assert!(br.causes[0].starts_with("tick p99 12.00 ms"), "{:?}", br.causes);
+        points[1].tick_us.p99 = 900.0;
+        points[0].peak_mib = 4096.0;
+        assert!(causes(&points[0], &b, b.frame_144_ms)[0].starts_with("memory 4096 MiB"));
+        points[0].peak_mib = 1.0;
+        points[1].frame = Some(FrameCheck { total_ms: s(5.0, 9.0), ..FrameCheck::default() });
+        assert_eq!(breaking(&points, &b, b.frame_144_ms).unwrap().value, "4", "9 ms misses 144 Hz");
+        assert_eq!(breaking(&points, &b, b.frame_60_ms).unwrap().value, "8", "but holds 60 Hz");
+        points[0].caps.push("the bots' area cache is full (4096 areas)".into());
+        assert_eq!(breaking(&points, &b, b.frame_60_ms).unwrap().value, "2");
+    }
+
+    /// Review Focus 1.
+    #[test]
+    fn a_failed_point_is_a_breaking_cause() {
+        let b = Budgets::default();
+        let points = vec![
+            pt("1", 1.0, 100.0),
+            failed_point("8", 8.0, "rl-cli stress: 16400 MiB resident, over 16384", 0.0),
+        ];
+        let br = breaking(&points, &b, b.frame_144_ms).unwrap();
+        assert_eq!(br.value, "8");
+        assert!(br.causes[0].contains("failed: rl-cli stress: 16400 MiB"), "{:?}", br.causes);
+        assert!(fit(&points, &b).is_none(), "one measured point fits nothing");
+    }
+
+    #[test]
+    fn worm_cost_is_a_least_squares_slope() {
+        let b = Budgets::default();
+        let points: Vec<Point> =
+            [2.0, 4.0, 8.0].iter().map(|&n| pt(&n.to_string(), n, 100.0 + 50.0 * n)).collect();
+        let f = fit(&points, &b).unwrap();
+        assert!(
+            (f.per_unit_us_p99 - 50.0).abs() < 1e-6 && (f.intercept_us_p99 - 100.0).abs() < 1e-6,
+            "{f:?}"
+        );
+        assert!((f.limit - 198.0).abs() < 1e-6, "(10000 - 100) / 50: {}", f.limit);
+    }
+
+    #[test]
+    fn probe_passes_fit_the_budget() {
+        let b = Budgets::default();
+        let probe = |k: u32, ms: f64| ProbeOut { passes: k, ms: s(ms, ms) };
+        let size = SizeOut {
+            size: (3840, 2160),
+            frame_ms: s(2.0, 2.5),
+            total_ms: s(3.0, 3.5),
+            gpu_ms: Some(s(0.8, 0.94)),
+            probe: vec![probe(0, 0.0), probe(2, 0.5), probe(4, 1.0)],
+            ..SizeOut::default()
+        };
+        let g = gpu_size(&[size], &b);
+        assert!((g.ms_per_pass - 0.25).abs() < 1e-9, "{}", g.ms_per_pass);
+        assert_eq!((g.passes_144, g.passes_60), (24, 62), "(6.944 - 0.94) / 0.25, (16.667 - 0.94) / 0.25");
+    }
+
+    #[test]
+    fn olx_rows_compare_the_same_work() {
+        let olx = vec![
+            (0..4)
+                .map(|f| OlxFrame { frame: f, ns: 2000, projectiles: f as u32, rand_calls: 10 * f as u64 })
+                .collect(),
+        ];
+        let rl = ScenarioTimingOut {
+            name: "x".into(),
+            tick_ns: vec![1000; 4],
+            projectiles: vec![0, 1, 2, 3],
+            rand_calls: vec![0, 10, 20, 30],
+            matches_olx: Some(true),
+        };
+        let row = olx_row("x", &olx, std::slice::from_ref(&rl));
+        assert!(row.same_work && (row.ratio_p50 - 0.5).abs() < 1e-9 && row.projectiles_peak == 3, "{row:?}");
+        let other = ScenarioTimingOut { projectiles: vec![0, 1, 2, 4], ..rl };
+        assert!(!olx_row("x", &olx, &[other]).same_work);
+    }
+
+    /// Review Focus 4.
+    #[test]
+    fn regressions_beyond_noise_are_flagged_not_failed() {
+        let sweep = |p99: f64| Sweep {
+            axis: "worms".into(),
+            noise: 0.10,
+            points: vec![pt("16", 16.0, p99)],
+            ..Sweep::default()
+        };
+        let mut stored = Envelope::default();
+        stored.sweeps.insert("worms".into(), sweep(1000.0));
+        let flagged = |p99: f64| {
+            let mut now = Envelope::default();
+            now.sweeps.insert("worms".into(), sweep(p99));
+            compare(&stored, &now).into_iter().filter(Flag::flagged).count()
+        };
+        assert_eq!(flagged(1090.0), 0, "within the axis's 10 % noise");
+        assert_eq!(flagged(1200.0), 1, "beyond it");
+        assert_eq!(flagged(500.0), 0, "an improvement");
+    }
+
+    /// Review Focus 3.
+    #[test]
+    fn another_hosts_results_only_notice() {
+        let here = Host { cpus: 12, cpu: "X".into(), adapter: "llvmpipe".into() };
+        let stored = Envelope { host: Host { cpus: 8, ..here.clone() }, ..Envelope::default() };
+        assert!(crate::bench::host_notice(&stored.host, &here).unwrap().contains("another machine"));
+        assert_eq!(path_for(&here), "fixtures/bench/envelope/x-12cpus.ron");
+    }
+
+    /// Review Focus 3.
+    #[test]
+    fn old_results_parse_with_defaults() {
+        let old = "(host: (cpus: 12, cpu: \"X\"), sweeps: {\"worms\": (axis: \"worms\", points: [(value: \"2\")])})";
+        let e: Envelope = ron::from_str(old).unwrap();
+        assert_eq!(e.sweeps["worms"].points[0].value, "2");
+        assert!(e.gpu.is_empty() && e.olx.is_none());
+        assert_eq!(e.budgets, Budgets::default());
+    }
+
+    #[test]
+    fn a_bless_keeps_what_it_did_not_measure() {
+        let mut old = Envelope::default();
+        old.sweeps.insert("art".into(), Sweep::default());
+        old.gpu.insert("windows-dx12".into(), GpuPath::default());
+        let mut new = Envelope::default();
+        new.sweeps.insert("worms".into(), Sweep::default());
+        let m = merged(Some(old), new);
+        assert_eq!(m.sweeps.keys().collect::<Vec<_>>(), ["art", "worms"]);
+        assert_eq!(m.kept, ["sweep art", "gpu windows-dx12"]);
+    }
+}

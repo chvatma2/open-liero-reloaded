@@ -2,7 +2,7 @@
 
 Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `oracle-record`, `tidy`, `bless-render`, `bless-regression`, `fetch-olx-content`,
-`e2e`, `bench`, `stress`, `windows`.
+`e2e`, `bench`, `stress`, `windows`, `envelope`.
 
 - `fetch-olx-content` (`fetch.rs`) imports the manifest into the
   committed `content/packs`; `check`'s `olx-content` step (`fetch::verify`,
@@ -93,6 +93,49 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   Microsoft's Basic Render Driver, a `Cpu` adapter), with timestamps on
   both; `rl-game.exe --demo` writes its shots under the stage's `target/`. Nothing is left running; the
   stage stays for the next run.
+- `envelope` (`envelope/`, plan 8, spec
+  `docs/superpowers/specs/2026-10-11-performance-envelope-design.md`;
+  `cargo xtask envelope [--quick] [--only <part>]... [--gpu
+  wsl|windows|both|none] [--bless --reason "<why>"]`): how far each axis
+  goes on this machine before the tick (10 ms p99), frame (6.9 / 16.7 ms
+  p99) or memory (2 GiB) budget breaks. The parts (`Axis`, `--only`,
+  repeatable; all by default): the sweeps `worms`, `pool`, `fx`, `map`,
+  `art`, then `gpu` and `olx`. `--quick` (`Plan::new`) is one run per
+  point and fewer points (about 10 min; the full run, 3 runs a point,
+  about 45). Modules: `results.rs` (the RON the tools write, read as
+  `*Out` with only the fields used; the kept `Envelope`; the pure
+  arithmetic, unit-tested: medians of runs, `Spread::of` nearest rank as
+  `rl-cli`'s and `rl-game`'s (ruling PF8), breaking points per budget, the
+  least-squares cost per unit, probe passes that fit, `compare`,
+  `merged`); `sweeps.rs` (each point is `rl-cli stress` in release in its
+  own process, from the reference configuration: Classic on Castle
+  Strike, 16 bots of mixed difficulties, pool 3000, effects 1024, seed 1;
+  every run `--no-verify` (ruling P9: verifying art 8 would hold about
+  7 GiB) and `--memory-ceiling-mib 16384`; chaos bots, except Deathmatch
+  bots (`--personality dm`) on the map-size and art-scale axes, whose
+  cost includes the area cache (ruling T1-A); a failed run is a failed
+  point, its cause a breaking cap; the map and art points record replays
+  in `target/envelope/replays`); `gpu.rs` (the heavy replay, MW 1.0 with
+  32 chaos bots and a 20 000 pool, and the levels' replays through
+  `rl-cli gpu-bench --adapter hardware` offscreen, then `rl-game
+  --frame-log` windowed and uncapped at each size; on WSL with GL over
+  Mesa's d3d12 driver (`wsl_env`), on Windows through `winbuild` for
+  `dx12` and `vulkan`, each run bounded by `winbuild::RUN_TIMEOUT`);
+  `olx.rs` (`olx_timing` for OLX and `rl-cli scenario --time` for rl-sim,
+  the same work checked frame by frame; OLX's build named as Release,
+  `-O3`, ruling T6-A). `mod.rs` runs `steps`: a part whose prerequisite
+  is missing (`Prereqs`: `winbuild::missing`, `docker_missing`, a
+  display) or that fails, and a GPU path measured on a software-only
+  adapter (`adapter_problem`), is a `skip` notice and the run goes on
+  (ruling PF5; `execute` takes a `Machine`, which the tests fake). Every
+  run writes `target/envelope/latest.ron` and compares with
+  `fixtures/bench/envelope/<host>.ron` (`host_key`: the CPU model's slug
+  and CPU count; another machine's file is only a notice): a measurement
+  slower than its axis's or GPU path's `noise` (the largest run spread,
+  at least `NOISE_FLOOR`, 5 %) is flagged with `!`, never failed.
+  `--bless --reason` writes that file, keeping the parts it did not
+  measure (`kept`), and logs it in `fixtures/blessings.log`. Not part of
+  `full`.
 - `olx_timing.rs` (plan 8; its caller is `envelope`, task 7): OLX's
   per-frame physics times. `Olx::open` builds or finds the oracle image
   (`oracle::ensure_image`); `Olx::time` plays a scenario through

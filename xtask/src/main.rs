@@ -6,11 +6,9 @@ mod bless;
 mod bless_regression;
 mod check;
 mod e2e;
+mod envelope;
 mod fetch;
 mod layers;
-// Task 7's `cargo xtask envelope` is its caller; `expect` (not `allow`)
-// so this goes as soon as it is used.
-#[expect(dead_code, reason = "plan 8: used by `cargo xtask envelope` (task 7)")]
 mod olx_timing;
 mod oracle;
 mod oracle_gen;
@@ -89,6 +87,27 @@ enum Command {
         #[arg(long, default_value_t = 180.0)]
         seconds: f32,
     },
+    /// The performance envelope (plan 8): sweeps of worms, projectiles, effects, map
+    /// size and art scale, the GPU on WSL and native Windows with the shader probe,
+    /// and OLX's frame times; compared with fixtures/bench/envelope/<host>.ron
+    /// (flagged, never failed). About 45 minutes (--quick about 10). Not in `full`.
+    Envelope {
+        /// One run per point and fewer points.
+        #[arg(long)]
+        quick: bool,
+        /// Only these parts (repeatable): worms, pool, fx, map, art, gpu, olx.
+        #[arg(long, value_enum)]
+        only: Vec<envelope::Axis>,
+        /// Which GPU paths run.
+        #[arg(long, value_enum, default_value = "both")]
+        gpu: envelope::GpuPaths,
+        /// Write the results for this host, logged in fixtures/blessings.log.
+        #[arg(long, requires = "reason")]
+        bless: bool,
+        /// Why the results change (with --bless).
+        #[arg(long)]
+        reason: Option<String>,
+    },
     /// Install a git pre-push hook that runs `cargo xtask check`.
     InstallHooks,
     /// Record OLX reference traces for fixtures/oracle/**/*.ron (needs Docker).
@@ -145,6 +164,9 @@ fn main() -> ExitCode {
         Command::E2e { offline } => e2e_command(offline),
         Command::Bench { bless, reason, offline } => bench::run(reason.as_deref().filter(|_| bless), offline),
         Command::Stress { seconds } => bench::stress_command(seconds),
+        Command::Envelope { quick, only, gpu, bless, reason } => {
+            envelope::run(&envelope::Opts { quick, only, gpu, bless: reason.filter(|_| bless) })
+        }
         Command::InstallHooks => install_hooks().map(|()| true),
         Command::OracleRecord { check, names } => oracle::run(&names, check),
         Command::OracleGenWeapons => oracle_gen::run(),

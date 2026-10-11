@@ -123,6 +123,10 @@ impl Olx {
             frames.len(),
             sc.frames
         );
+        anyhow::ensure!(
+            frames.iter().zip(0..).all(|(f, n)| f.frame == n),
+            "{name}: OLX's timed frames are not 0, 1, 2, ... in order"
+        );
         Ok(frames)
     }
 
