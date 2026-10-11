@@ -8,6 +8,7 @@ pub mod golden;
 pub mod invariants;
 pub mod runner;
 pub mod spec;
+pub mod stress;
 pub mod verify;
 
 pub use verify::verify;

@@ -4,7 +4,7 @@
 use rl_bots::BotConfig;
 use rl_content::{DEFAULT_PRESET, MatchOptions, Player};
 use rl_modes::DeathmatchSettings;
-use rl_sim::SimSettings;
+use rl_sim::{MatchSetup, SimSettings};
 use serde::{Deserialize, Serialize};
 
 /// The game mode (`--mode`). Only Deathmatch exists so far.
@@ -85,6 +85,15 @@ pub struct MatchSpec {
     #[arg(long, default_value_t = time_limit_default())]
     #[serde(default = "time_limit_default")]
     pub time_limit: f32,
+    /// OLX's `LoadingTime` in percent (0: weapons reload at once); OLX's
+    /// LX56 100 without it.
+    #[arg(long)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loading_time: Option<i32>,
+    /// The projectile pool's size (1 to 65 536); OLX's 3000 without it.
+    #[arg(long)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_capacity: Option<usize>,
 }
 
 impl MatchSpec {
@@ -103,6 +112,8 @@ impl MatchSpec {
             bonus_frequency: None,
             kill_limit: kill_limit_default(),
             time_limit: time_limit_default(),
+            loading_time: None,
+            pool_capacity: None,
         }
     }
 
@@ -125,11 +136,15 @@ impl MatchSpec {
 
     /// What `rl_content::build_match` assembles: every worm a bot
     /// ([`MatchSpec::bot_config`]), OLX's LX56 settings with the bonus
-    /// option, the Deathmatch limits and the default restrictions.
+    /// and loading time options, the Deathmatch limits, the default
+    /// restrictions and the pool size (OLX's unless given).
     pub fn match_options(&self) -> MatchOptions {
         let mut settings = SimSettings::lx56();
         if let Some(f) = self.bonus_frequency {
             (settings.bonuses, settings.bonus_frequency) = (true, f);
+        }
+        if let Some(l) = self.loading_time {
+            settings.loading_time = l;
         }
         MatchOptions {
             mod_id: self.mod_id.clone(),
@@ -143,6 +158,7 @@ impl MatchSpec {
                 ..DeathmatchSettings::default()
             },
             restrictions: DEFAULT_PRESET.into(),
+            pool_capacity: self.pool_capacity.unwrap_or(MatchSetup::DEFAULT_POOL_CAPACITY),
         }
     }
 

@@ -35,6 +35,22 @@ The headless command-line tool. Its commands:
   the seed, and the tick) to `target/failures/` (spec §7.3) and exits 1.
 - `rl-cli replay <file> [--until N] [--dump]` plays a replay on its content,
   checking every checksum; `--dump` prints the world (before tick N) as JSON.
+- `rl-cli stress [--mod M] [--level L] [--worms 32] [--pool 3000] [--seconds
+  180] [--seed S] [--render-every 100] [--render-width W --render-height H]
+  [--no-verify] [--out report.ron]`: the engine stress test (plan 7 task 8,
+  `stress.rs`): `stress::spec` (32 chaos bots, mixed difficulties,
+  `LoadingTime` 0, bonuses every `BONUS_FREQUENCY` s, no limits, the pool
+  at `--pool`) played by the runner (invariants every tick), its
+  presentation's entities stepped every tick and a frame rendered
+  offscreen (lavapipe/llvmpipe) every `--render-every` ticks; asserts
+  bounded buffers (pool, `rl_fx::MAX_ENTITIES`, `TickEvents::CAPACITY`)
+  every tick and memory under `MEMORY_CEILING_MIB` (`VmHWM`, read every
+  1000 ticks), then `verify` (determinism and the replay). `Report`
+  (RON with `--out`): tick, sim and think µs (p50/p99/max; `Stats::think_ns`
+  splits the bots' share), units, pool peak/mean/ticks at the cap, entity
+  peak/ticks at the cap, events a tick, drops, the frame ms, peak MiB. A
+  failed match writes its replay to `target/failures/`. `cargo xtask
+  stress` runs both mods × pool 3000/20 000 on Castle Strike.
 
 **The library** (`src/lib.rs`) holds the match runner for the commands and
 the tests: `spec::MatchSpec` (the options, serialized in failures and
@@ -43,7 +59,8 @@ the same builder as `rl-game`'s Deathmatch), `runner` (`Match` stepwise: `advanc
 allocation; `settle` = record, invariants, coverage; `step` catches a panic,
 and a panic inside `World::tick` rebuilds the world from the logged keys so
 `Recorder::finish_failed` saves a replay that plays into the failure;
-`play`), `verify` (determinism and replay round trip), `coverage` (required
+`play`), `verify` (determinism and replay round trip), `stress` (the
+stress test's runner and `Report`), `coverage` (required
 weapons and action kinds derived from the mod: `rl_sim::projectile_actions`
 and `World::actions_triggered`), `failure`, `golden`.
 
@@ -52,6 +69,10 @@ and `World::actions_triggered`), `failure`, `golden`.
 Test: `cargo nextest run -p rl-cli`. `tests/corpus.rs` checks every imported
 pack when `RL_CONTENT_DIR` is set. To accept a reviewed snapshot change, run
 `INSTA_UPDATE=always cargo test -p rl-cli --test corpus`.
+`MatchSpec`'s `--loading-time` and `--pool-capacity` (serialized only when
+given, so goldens and failure records keep their form) are the stress
+test's; without them a match is OLX's (`LoadingTime` 100, pool 3000).
+`tests/stress.rs` (check) plays a 4 s stress run on a 200-slot pool.
 `tests/render_golden.rs` (the GPU frame goldens) runs in `cargo xtask full`
 (`RL_GPU_TESTS=1`). `tests/matches.rs` (two 8-bot matches, determinism and
 round trip; failure capture through the binary) and `tests/golden.rs` (the

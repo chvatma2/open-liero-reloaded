@@ -93,6 +93,8 @@ impl fmt::Display for End {
 pub struct Stats {
     /// Each tick's wall time (the bots' thinking and `World::tick`), in ns.
     pub tick_ns: Vec<u32>,
+    /// The bots' part of it, in ns (`tick_ns - think_ns` is the world's).
+    pub think_ns: Vec<u32>,
     /// The most units one `think` spent, all of them, and how many thinks.
     pub units_max: u32,
     pub units_total: u64,
@@ -204,6 +206,7 @@ impl Match {
         let BuiltMatch { setup, mode, world, bots, recorder: rec } = built;
         let stats = Stats {
             tick_ns: Vec::with_capacity(spec.ticks as usize),
+            think_ns: Vec::with_capacity(spec.ticks as usize),
             budget_min: bots.iter().map(Bot::budget).min().unwrap_or(0),
             ..Stats::default()
         };
@@ -230,6 +233,11 @@ impl Match {
 
     pub fn world(&self) -> &World {
         &self.world
+    }
+
+    /// Ticks played so far.
+    pub fn ticks(&self) -> u32 {
+        self.ticks
     }
 
     /// The last tick's events.
@@ -263,6 +271,8 @@ impl Match {
             }
         }
         self.phase = Phase::Sim;
+        let think = start.elapsed().as_nanos().min(u128::from(u32::MAX)) as u32;
+        self.stats.think_ns.push(think);
         if self.opts.fail_at == Some(self.ticks) {
             panic!("injected failure (--fail-at {})", self.ticks);
         }

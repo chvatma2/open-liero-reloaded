@@ -106,6 +106,7 @@ pub fn match_options(o: &DeathmatchOptions, mod_id: &str, level_id: &str) -> Mat
             ..DeathmatchSettings::default()
         },
         restrictions: rl_content::DEFAULT_PRESET.into(),
+        pool_capacity: rl_sim::MatchSetup::DEFAULT_POOL_CAPACITY,
     }
 }
 

@@ -72,7 +72,9 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   the command line's games), `Player::HumanWith(weapons)` (the weapon
   selection's choice, refused unless the restrictions enable each; the
   recording's setup holds it) or `Player::Bot(BotConfig)` (`choose_loadout`
-  from `BotRng::new(seed, i, personality)`); chaos bots get the
+  from `BotRng::new(seed, i, personality)`); `MatchOptions::pool_capacity`
+  sets the projectile pool (`MatchSetup::DEFAULT_POOL_CAPACITY`, OLX's
+  3000, everywhere but `rl-cli stress`; the replay records it); chaos bots get the
   `ChaosCycle` respawn loadout; a bot whose `BotConfig::validate` fails is
   refused; `Deathmatch::prepare`, `World::new`, a
   started `Recorder` and the bots on one shared `AreaCache` (think in

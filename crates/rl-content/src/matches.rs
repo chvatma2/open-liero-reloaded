@@ -49,6 +49,10 @@ pub struct MatchOptions {
     pub deathmatch: DeathmatchSettings,
     /// OLX's `WeaponRestrictionsFile`, such as [`crate::DEFAULT_PRESET`].
     pub restrictions: String,
+    /// The projectile pool's size: OLX's `MAX_PROJECTILES`
+    /// ([`MatchSetup::DEFAULT_POOL_CAPACITY`], 3000) for every game; the
+    /// engine stress test raises it (`rl-cli stress`). The replay records it.
+    pub pool_capacity: usize,
 }
 
 /// The assets a match is made of, loaded once (a rematch decodes nothing
@@ -107,6 +111,7 @@ pub fn build_match(a: MatchAssets<'_>, o: &MatchOptions) -> anyhow::Result<Built
         restrictions: o.restrictions.clone(),
     };
     let mut setup = match_setup(a.m, a.level, a.theme, &sandbox)?;
+    setup.pool_capacity = o.pool_capacity;
     let rules = a.m.weapon_rules(&o.restrictions);
     for (i, (w, p)) in setup.worms.iter_mut().zip(&o.players).enumerate() {
         let cfg = match p {

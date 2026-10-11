@@ -6,7 +6,7 @@ use rl_bots::{BotConfig, Difficulty, Personality};
 use rl_content::{Content, DEFAULT_PRESET, MatchOptions, Player};
 use rl_modes::{DeathmatchSettings, RespawnLoadout};
 use rl_replay::ModeSpec;
-use rl_sim::SimSettings;
+use rl_sim::{MatchSetup, SimSettings};
 
 fn content() -> Option<Content> {
     let dir = std::env::var("RL_CONTENT_DIR").ok().filter(|d| Path::new(d).is_dir());
@@ -37,6 +37,7 @@ fn match_builder_seats_humans_and_bots() {
         ],
         deathmatch: DeathmatchSettings { kill_limit: 5, ..DeathmatchSettings::default() },
         restrictions: DEFAULT_PRESET.into(),
+        pool_capacity: MatchSetup::DEFAULT_POOL_CAPACITY,
     };
     let m = c.build_match(&o).unwrap();
     assert_eq!(m.world.worms().len(), 3);
@@ -76,6 +77,7 @@ fn chosen_weapons_are_the_humans_and_recorded() {
         players: vec![Player::HumanWith(chosen), Player::Bot(BotConfig::default())],
         deathmatch: DeathmatchSettings::default(),
         restrictions: DEFAULT_PRESET.into(),
+        pool_capacity: MatchSetup::DEFAULT_POOL_CAPACITY,
     };
     let m = c.build_match(&o).unwrap();
     let human: Vec<i32> = m.setup.worms[0].loadout.slots.iter().map(|s| s.weapon).collect();

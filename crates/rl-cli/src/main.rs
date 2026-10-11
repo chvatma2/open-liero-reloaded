@@ -5,6 +5,7 @@ mod match_cmd;
 mod render;
 mod replay_cmd;
 mod scenario;
+mod stress_cmd;
 mod validate;
 
 use std::path::PathBuf;
@@ -33,6 +34,10 @@ enum Command {
     Match(match_cmd::Args),
     /// Play a recorded match, checking its checksums; exits with status 1 on a mismatch.
     Replay(replay_cmd::Args),
+    /// The engine stress test: up to 32 chaos bots, near-instant reloads, bonuses,
+    /// OLX's projectile pool or a larger one; prints tick, bot, pool, entity,
+    /// event, render and memory figures.
+    Stress(stress_cmd::Args),
     /// Validate packs; exits with status 1 if any pack has errors.
     Validate {
         /// Pack directories, or directories containing pack directories.
@@ -48,6 +53,7 @@ fn main() -> ExitCode {
         Command::Render(args) => render::run(&args),
         Command::Match(args) => match_cmd::run(&args),
         Command::Replay(args) => replay_cmd::run(&args),
+        Command::Stress(args) => stress_cmd::run(&args),
         Command::Validate { paths } => validate::run(&paths),
     };
     match result {

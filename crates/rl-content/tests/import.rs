@@ -405,6 +405,7 @@ fn a_replay_survives_reimporting_the_same_content() {
         players: vec![Player::Human, Player::Bot(BotConfig::default())],
         deathmatch: DeathmatchSettings::default(),
         restrictions: DEFAULT_PRESET.into(),
+        pool_capacity: rl_sim::MatchSetup::DEFAULT_POOL_CAPACITY,
     };
     let m = Content::open(bundled.path()).unwrap().build_match(&options).unwrap();
     let replay = m.recorder.clone().finish(&m.world).unwrap();
