@@ -39,6 +39,10 @@ pub const FORMAT_VERSION: u16 = 1;
 /// The first bytes of every replay file.
 pub const MAGIC: [u8; 4] = *b"RLRP";
 
+/// The header's size: [`MAGIC`] and the format version
+/// ([`Replay::check_header`]).
+pub const HEADER_BYTES: usize = 6;
+
 /// A checksum is recorded every this many ticks (and at the end).
 pub const CHECKSUM_EVERY: u32 = 100;
 

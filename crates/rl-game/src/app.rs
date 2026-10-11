@@ -404,6 +404,10 @@ impl App {
                 actions = rl_ui::screens::show(ui, ui_state, data);
             }
         });
+        if menus {
+            // The profiles' skin preview this frame asked for, from the next.
+            self.shell.update_preview(&self.egui);
+        }
         w.egui.handle_platform_output(&w.window, out.platform_output);
         let jobs = self.egui.tessellate(out.shapes, out.pixels_per_point);
         let paint = OverlayPaint { jobs: &jobs, pixels_per_point: out.pixels_per_point };

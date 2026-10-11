@@ -16,11 +16,13 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use egui::{ColorImage, TextureHandle, TextureOptions};
 use rl_audio::Audio;
-use rl_content::{Content, MatchOptions};
+use rl_content::{Content, LoadedSkin, MatchOptions};
 use rl_input::Bindings;
 use rl_scene::{Interpolation, Viewport};
 use rl_ui::screens::MenuData;
+use rl_ui::skin_preview::{self, PreviewKey, PreviewTextures};
 use rl_ui::{AppCommand, AudioSettings, Profiles, Settings, Store, UiAction, UiState, VideoSettings};
 
 use crate::session::Session;
@@ -83,6 +85,12 @@ pub struct Shell {
     unsaved_profiles: Option<Profiles>,
     /// Warnings logged once.
     logged: BTreeSet<String>,
+    /// The content the menus list (the skin preview loads its skins).
+    content: Option<Content>,
+    /// The skin preview: the skin loaded last (by the id asked for) and
+    /// the textures shown (dropping them frees them).
+    preview_skin: Option<(String, LoadedSkin)>,
+    preview_textures: Vec<TextureHandle>,
 }
 
 impl Shell {
@@ -90,13 +98,14 @@ impl Shell {
     /// menus now), with `audio` for every game.
     pub fn new(cfg: ShellConfig, ui: UiState, store: Store, audio: Audio) -> Shell {
         let mut logged = BTreeSet::new();
-        let catalog = match Content::open(&cfg.content) {
-            Ok(c) => c.catalog(),
+        let content = match Content::open(&cfg.content) {
+            Ok(c) => Some(c),
             Err(e) => {
                 eprintln!("warning: {e:#}: no mods or levels to play");
-                Default::default()
+                None
             }
         };
+        let catalog = content.as_ref().map(Content::catalog).unwrap_or_default();
         for w in &catalog.warnings {
             if logged.insert(w.clone()) {
                 eprintln!("warning: {w}");
@@ -117,6 +126,9 @@ impl Shell {
             unsaved_settings: None,
             unsaved_profiles: None,
             logged,
+            content,
+            preview_skin: None,
+            preview_textures: Vec::new(),
         };
         let audio = shell.ui.settings().audio.clone();
         shell.set_volume(&audio);
@@ -142,7 +154,61 @@ impl Shell {
             unsaved_settings: None,
             unsaved_profiles: None,
             logged: BTreeSet::new(),
+            content: None,
+            preview_skin: None,
+            preview_textures: Vec::new(),
         }
+    }
+
+    /// The profiles screen's skin preview (plan 7 ruling Q2: the menus
+    /// hold no GPU handle, the app uploads): after the menus were drawn,
+    /// the frames of the skin and colour they asked for
+    /// (`MenuData::preview_wanted`) as egui textures, shown from the next
+    /// frame; none while no screen asks.
+    pub fn update_preview(&mut self, ctx: &egui::Context) {
+        let wanted = self.data.preview_wanted.clone();
+        if wanted.as_ref() == self.data.preview.as_ref().map(|t| &t.key) {
+            return;
+        }
+        let Some(key) = wanted else {
+            self.data.preview = None;
+            self.preview_textures.clear();
+            return;
+        };
+        let skin = self.preview_skin(&key);
+        let frames = skin_preview::frames(&skin, key.colour);
+        let mut textures = Vec::with_capacity(frames.len() * 2);
+        let mut upload = |face, f: u32| {
+            let img = frames.get(f, face);
+            let size = [img.width() as usize, img.height() as usize];
+            let image = ColorImage::from_rgba_unmultiplied(size, img.as_raw());
+            let t = ctx.load_texture(format!("skin preview {f} {face:?}"), image, TextureOptions::NEAREST);
+            let id = t.id();
+            textures.push(t);
+            id
+        };
+        let n = frames.len() as u32;
+        let right = (0..n).map(|f| upload(rl_sim::Dir::Right, f)).collect();
+        let left = (0..n).map(|f| upload(rl_sim::Dir::Left, f)).collect();
+        self.preview_textures = textures;
+        self.data.preview = Some(PreviewTextures { key, right, left });
+    }
+
+    /// The skin `key` names (as a match would load it: else the default
+    /// skin, else a placeholder), loaded once while it stays the same.
+    fn preview_skin(&mut self, key: &PreviewKey) -> LoadedSkin {
+        if let Some((id, skin)) = &self.preview_skin
+            && *id == key.skin_id
+        {
+            return skin.clone();
+        }
+        let skin = match &self.content {
+            Some(c) => c.skin_or_default(&c.skin_id(&key.skin_id).unwrap_or_else(|| key.skin_id.clone())),
+            None => LoadedSkin::placeholder(),
+        };
+        self.log(skin.warnings.clone());
+        self.preview_skin = Some((key.skin_id.clone(), skin.clone()));
+        skin
     }
 
     /// Games loaded so far (started or failed).

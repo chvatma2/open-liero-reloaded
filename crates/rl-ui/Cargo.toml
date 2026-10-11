@@ -14,6 +14,7 @@ rl-bots.workspace = true
 rl-content.workspace = true
 rl-data.workspace = true
 rl-input.workspace = true
+rl-replay.workspace = true
 serde = { workspace = true, features = ["std"] }
 ron.workspace = true
 directories.workspace = true
@@ -23,6 +24,7 @@ anyhow.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 egui_kittest.workspace = true
+rl-scene.workspace = true
 
 [lints]
 workspace = true

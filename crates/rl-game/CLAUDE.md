@@ -41,7 +41,13 @@ cargo run --release -p rl-game -- --replay f.rlrp
   data directory's `replays/` when it ends, restarts or the game quits
   (`rl_ui::replays::auto_save`, none of no tick); the Replays screen plays
   them. Settings are written at most once a second (`Shell::flush`) and
-  at exit. The human's profile names and colours worm 0 (`PlayerLook`).
+  at exit. The human's profile names and colours worm 0 (`PlayerLook`)
+  and its skin is worm 0's (`Assets::skin`); every other worm, and every
+  worm of a replay, wears OLX's default skin (`Assets::bot_skin`, as OLX's
+  bot profiles). `Shell::update_preview(ctx)`, after the menus are drawn,
+  uploads the profiles screen's skin preview (`MenuData::preview_wanted`,
+  `rl_ui::skin_preview::frames`) as egui textures (`MenuData::preview`,
+  from the next frame), loading the skin once while it stays the same.
 - **Single thread** (spec §8.6): the device is created and used only on
   the main (event-loop) thread; under WSL's d3d12 GL driver a thread that
   used the device crashes when it exits. kira runs its own audio thread.
@@ -161,6 +167,7 @@ cargo run --release -p rl-game -- --replay f.rlrp
 
 Test: `cargo nextest run -p rl-game` (the pure parts; `setup`, `session`,
 `tests/deathmatch.rs` (a Deathmatch to its results, the bots' think
-budget, a recording replayed through a replay session) and `tests/menu.rs`
-(starts with missing or broken content, rapid menu actions) play the
-imported levels when `RL_CONTENT_DIR` is set).
+budget, a recording replayed through a replay session), `tests/menu.rs`
+(starts with missing or broken content, rapid menu actions) and
+`tests/profiles.rs` (the preview's textures; a menu match wears the
+profile's look) play the imported levels when `RL_CONTENT_DIR` is set).

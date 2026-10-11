@@ -955,3 +955,27 @@ task 2):
   reads each mod's manifest and preset names and each level's `level.ron`
   and `thumb.png` (at most 512 × 512 and 4 MiB; else not shown, with a
   warning).
+
+Made precise while implementing the profiles (plan 7 task 3):
+
+- **Profiles screen** (OLX's player menu): the list (the one playing
+  marked) with New ("Player N", OLX's local players' colours in turn),
+  Delete (confirmed; never the last) and "Play as this"; the edited
+  profile's name, OLX's red, green and blue sliders, and every imported
+  skin, searchable (`Catalog::skins`, names from the packs' manifests).
+  A name is trimmed, not empty, at most 20 characters, has no control
+  character and is no other profile's (ignoring case); a refused name is
+  shown with why and not applied.
+- **Skin preview, one source of truth:** `rl_content` holds OLX's frame
+  cut (`skin_source`, the left-facing column quirk) and
+  `LoadedSkin::colorized`; `rl-scene` draws worms and `rl_ui::skin_preview`
+  cuts the preview's frames from them, faced right and left, animated by
+  OLX's menu formula. `rl-ui` asks for a preview by skin and colour; the
+  app uploads the frames as egui textures and hands back their ids (no GPU
+  handle in `rl-ui`).
+- **In matches** the selected profile's skin and colour are the human's
+  (worm 0); bots and every worm of a replay wear OLX's default skin.
+- **Repairs:** a saved local-play mod or level no longer imported is
+  replaced by the first listed; the replays list shows a file's header
+  problem (not a replay, another format version) when it opens
+  (`Replay::check_header` reads 6 bytes).

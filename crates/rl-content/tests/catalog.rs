@@ -1,4 +1,4 @@
-//! The menus' lists of mods and levels (`Content::catalog`).
+//! The menus' lists of mods, levels and skins (`Content::catalog`).
 
 use std::path::Path;
 
@@ -68,6 +68,9 @@ fn catalog_lists_mods_and_levels_without_loading_them() {
     let mut m = DirFs::new(root.join("mod-a"));
     rl_pack::write_manifest(&mut m, &manifest("mod-a", "Mod A", PackKind::Mod)).unwrap();
     write(&mut m, rl_pack::RESTRICTIONS_FILE, b"{\"Standard 100lt\": {}, \"All\": {}}");
+    // A skin is listed by its manifest alone (nothing is decoded).
+    let mut s = DirFs::new(root.join("olx-skin-ant"));
+    rl_pack::write_manifest(&mut s, &manifest("olx-skin-ant", "ant", PackKind::Skin)).unwrap();
 
     let c = Content::open(root).unwrap().catalog();
     let ids: Vec<&str> = c.levels.iter().map(|l| l.id.as_str()).collect();
@@ -85,6 +88,10 @@ fn catalog_lists_mods_and_levels_without_loading_them() {
     let a = c.mod_info("mod-a").unwrap();
     assert_eq!(a.name, "Mod A");
     assert_eq!(a.presets, ["All", "Standard 100lt"]);
+    assert_eq!(c.skins, [rl_content::SkinInfo { id: "olx-skin-ant".into(), name: "ant".into() }]);
+    assert_eq!(c.skin("ant").map(|s| s.id.as_str()), Some("olx-skin-ant"), "an OLX name");
+    assert_eq!(c.skin("olx-skin-ant").map(|s| s.name.as_str()), Some("ant"));
+    assert!(c.skin("batman").is_none());
 
     // OLX's imported content, when there is some.
     let Some(dir) = std::env::var_os("RL_CONTENT_DIR").filter(|d| Path::new(d).is_dir()) else {
@@ -97,4 +104,6 @@ fn catalog_lists_mods_and_levels_without_loading_them() {
     assert!(classic.presets.iter().any(|p| p == DEFAULT_PRESET), "{:?}", classic.presets);
     let factory = c.level("olx-level-liero-factory").unwrap();
     assert_eq!((factory.name.as_str(), factory.width, factory.height), ("Liero Factory", 1200, 480));
+    assert_eq!(c.skin("default").map(|s| s.id.as_str()), Some("olx-skin-default"));
+    assert!(c.skins.len() > 100, "{} skins", c.skins.len());
 }

@@ -28,7 +28,8 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   (`tests/no_alloc.rs`).
 - **`SceneAssets`** (`assets.rs`): core sprites and mod projectile images
   (OLX's magenta keyed to transparent at load), and per worm a colorized
-  skin (`add_worm`). Unknown ids and missing images never panic.
+  skin (`add_worm`: `rl_content::LoadedSkin::colorized`; `skin_frame` cuts
+  with `rl_content::skin_source`, as the profiles' preview does). Unknown ids and missing images never panic.
 - **Interpolation** (`snapshot.rs`, Review Focus 1): `Interpolation::Linear`
   blends positions at sub-pixel precision, never across a projectile serial
   change (slot reuse), a death or a respawn (`worm_blends`: alive flag and

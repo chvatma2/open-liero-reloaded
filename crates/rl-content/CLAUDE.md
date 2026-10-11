@@ -78,6 +78,15 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   the menus; `mod_info`/`level_info` for one. An unreadable pack is left out
   and a thumbnail above `MAX_THUMB_SIDE` (512) or `MAX_THUMB_BYTES` (4 MiB),
   or not a PNG, is not shown, each with a warning (`Catalog::warnings`).
+- **Skins** (`skins.rs`, plan 7 task 3): OLX's frame layout
+  (`FRAME_WIDTH`, `SKIN_WIDTH`, ..., `SHEET_FRAMES`), `skin_source(f,
+  face)` (a frame's rectangle; facing left OLX shows the columns one to the
+  right, mirrored), `LoadedSkin::colorized(colour)` and `skin_sprite(sheet,
+  f, face)`: the one source the game (`rl-scene`) and the profiles' preview
+  (`rl-ui`) draw skins from. `Content::skins()` and `Catalog::skins` list
+  them by manifest name; `resolve_id(given, prefix, ids)` (an id, or an
+  OLX name's import id such as `default.png` → `olx-skin-default`),
+  `Content::skin_id`, `Catalog::skin`.
 - Pack ids of OLX imports: `olx_mod_id("MW 1.0")`, `olx_level_id("CastleStrike.lxl")`.
 
 Test: `cargo nextest run -p rl-content` (`loads_every_manifest_item` and the

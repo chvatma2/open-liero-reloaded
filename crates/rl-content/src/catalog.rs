@@ -7,7 +7,7 @@ use rl_data::image::RgbaImage;
 use rl_data::manifest::PackKind;
 use rl_vfs::{ContentSource, VPath};
 
-use crate::Content;
+use crate::{Content, SkinInfo};
 
 /// The widest and tallest thumbnail shown; a larger `thumb.png` is skipped
 /// with a warning (a pack must not make the menu decode a huge image).
@@ -40,12 +40,14 @@ pub struct LevelInfo {
     pub thumb: Option<RgbaImage>,
 }
 
-/// Every mod and level of a content directory, by id; the packs that
-/// could not be read are left out with a warning each.
+/// Every mod, level and skin of a content directory, by id; the packs
+/// that could not be read are left out with a warning each.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Catalog {
     pub mods: Vec<ModInfo>,
     pub levels: Vec<LevelInfo>,
+    /// The skins (by name only: nothing is decoded).
+    pub skins: Vec<SkinInfo>,
     pub warnings: Vec<String>,
 }
 
@@ -56,6 +58,14 @@ impl Catalog {
 
     pub fn mod_info(&self, id: &str) -> Option<&ModInfo> {
         self.mods.iter().find(|m| m.id == id)
+    }
+
+    /// The skin `given` names: its id, or an OLX skin name such as
+    /// `default` ([`crate::resolve_id`]).
+    pub fn skin(&self, given: &str) -> Option<&SkinInfo> {
+        let ids: Vec<String> = self.skins.iter().map(|s| s.id.clone()).collect();
+        let id = crate::resolve_id(given, crate::skins::SKIN_PREFIX, &ids)?;
+        self.skins.iter().find(|s| s.id == id)
     }
 }
 
@@ -109,8 +119,8 @@ impl Content {
         Ok((info, warning))
     }
 
-    /// Every mod and level ([`Content::mod_info`], [`Content::level_info`]),
-    /// in id order.
+    /// Every mod, level and skin ([`Content::mod_info`],
+    /// [`Content::level_info`], [`Content::skins`]), in id order.
     pub fn catalog(&self) -> Catalog {
         let mut c = Catalog::default();
         for id in self.ids(PackKind::Mod) {
@@ -128,6 +138,7 @@ impl Content {
                 Err(e) => c.warnings.push(format!("{e:#}: left out")),
             }
         }
+        c.skins = self.skins();
         c
     }
 }

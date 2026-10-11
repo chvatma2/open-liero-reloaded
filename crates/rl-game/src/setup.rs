@@ -103,14 +103,12 @@ pub fn match_options(o: &DeathmatchOptions, mod_id: &str, level_id: &str) -> Mat
 /// (`prefix` and the slug of `given`, so `--level "Liero Factory"` and
 /// `--mod MW 1.0` work).
 pub fn resolve_id(given: &str, prefix: &str, ids: &[String]) -> anyhow::Result<String> {
-    let stem = given.rsplit_once('.').map_or(given, |(s, _)| s);
-    let slug = |s: &str| format!("{prefix}{}", rl_data::slug::slug(s));
-    let candidates = [given.to_string(), slug(given), slug(stem)];
-    candidates
-        .into_iter()
-        .find(|c| ids.contains(c))
+    rl_content::resolve_id(given, prefix, ids)
         .with_context(|| format!("no pack {given:?}; there are: {}", ids.join(", ")))
 }
+
+/// OLX's default skin's pack id.
+pub const DEFAULT_SKIN: &str = "olx-skin-default";
 
 /// What the game plays.
 pub enum Game {
@@ -137,7 +135,11 @@ pub struct Assets {
     pub m: LoadedMod,
     pub level: LoadedLevel,
     pub theme: LoadedTheme,
+    /// The human's skin (worm 0's when a human plays it).
     pub skin: LoadedSkin,
+    /// Everyone else's: OLX's default skin, as OLX's bot profiles have
+    /// (`src/client/ProfileSystem.cpp:59`).
+    pub bot_skin: LoadedSkin,
     pub game: Game,
     /// The mod and level pack ids.
     pub mod_id: String,
@@ -157,15 +159,28 @@ fn open(
     skin: &str,
     game: Game,
 ) -> anyhow::Result<Assets> {
-    let skin_id =
-        resolve_id(skin, "olx-skin-", &content.ids(PackKind::Skin)).unwrap_or_else(|_| skin.to_string());
+    let skin_id = content.skin_id(skin).unwrap_or_else(|| skin.to_string());
     let m = content.load_mod(&mod_id)?;
     let lvl = content.load_level(&level_id)?;
     let theme = content.load_theme(&lvl.theme).with_context(|| format!("level {level_id}"))?;
     let skin = content.skin_or_default(&skin_id);
+    let bot_skin = if skin_id == DEFAULT_SKIN { skin.clone() } else { content.skin_or_default(DEFAULT_SKIN) };
     let mut warnings = content.warnings().to_vec();
-    warnings.extend(m.warnings.iter().chain(&theme.warnings).chain(&skin.warnings).cloned());
-    Ok(Assets { content, m, level: lvl, theme, skin, game, mod_id, level_id, warnings, player: None })
+    let loaded = m.warnings.iter().chain(&theme.warnings).chain(&skin.warnings).chain(&bot_skin.warnings);
+    warnings.extend(loaded.cloned());
+    Ok(Assets {
+        content,
+        m,
+        level: lvl,
+        theme,
+        skin,
+        bot_skin,
+        game,
+        mod_id,
+        level_id,
+        warnings,
+        player: None,
+    })
 }
 
 /// The mod and level `--mod` and `--level` name in `content`.

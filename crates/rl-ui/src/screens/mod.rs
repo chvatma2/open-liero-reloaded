@@ -8,6 +8,7 @@
 
 mod local_play;
 mod main;
+mod profiles;
 mod replays;
 
 use std::collections::BTreeMap;
@@ -17,10 +18,11 @@ use egui::{Align2, Color32, Key, RichText, TextureHandle, TextureOptions, Ui};
 use rl_content::Catalog;
 
 use crate::replays::ReplayFile;
+use crate::skin_preview::{PreviewKey, PreviewTextures};
 use crate::state::{Screen, UiAction, UiState};
 
-/// What the menus show besides the state: the content's mods and levels,
-/// the saved replays, and the widgets' own state.
+/// What the menus show besides the state: the content's mods, levels and
+/// skins, the saved replays, the skin preview, and the widgets' own state.
 pub struct MenuData {
     pub catalog: Catalog,
     /// The data directory's `replays/` (none without a data directory).
@@ -29,7 +31,13 @@ pub struct MenuData {
     pub replays: Vec<ReplayFile>,
     /// The replays screen's path field.
     pub replay_path: String,
+    /// The skin preview the profiles screen showed this frame (`None` on
+    /// other screens): the app makes it and puts it in `preview`.
+    pub preview_wanted: Option<PreviewKey>,
+    /// The app's preview textures (plan 7 ruling Q2: the app uploads them).
+    pub preview: Option<PreviewTextures>,
     thumbs: BTreeMap<String, TextureHandle>,
+    profiles: profiles::View,
     /// The screen shown last frame (a screen reads its files on entry).
     shown: Option<Screen>,
 }
@@ -41,7 +49,10 @@ impl MenuData {
             replays_dir,
             replays: Vec::new(),
             replay_path: String::new(),
+            preview_wanted: None,
+            preview: None,
             thumbs: BTreeMap::new(),
+            profiles: profiles::View::default(),
             shown: None,
         }
     }
@@ -76,10 +87,13 @@ impl MenuData {
 pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> {
     let mut out = Vec::new();
     let screen = state.screen();
+    data.preview_wanted = None;
     if data.shown != Some(screen) {
         data.shown = Some(screen);
-        if screen == Screen::Replays {
-            data.refresh_replays();
+        match screen {
+            Screen::Replays => data.refresh_replays(),
+            Screen::Profiles => data.profiles = profiles::View::new(state.profiles().selected),
+            _ => {}
         }
     }
     match screen {
@@ -89,6 +103,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
             egui::CentralPanel::default().frame(frame).show(ui, |ui| match screen {
                 Screen::Main => main::show(ui, state, &mut out),
                 Screen::LocalPlay => local_play::show(ui, state, data, &mut out),
+                Screen::Profiles => profiles::show(ui, state, data, &mut out),
                 Screen::Replays => replays::show(ui, state, data, &mut out),
                 _ => placeholder(ui, screen, &mut out),
             });
@@ -123,10 +138,9 @@ fn message(ui: &mut Ui, state: &UiState) {
     }
 }
 
-/// The screens later milestones fill (profiles, options, import, about).
+/// The screens later milestones fill (options, import, about).
 fn placeholder(ui: &mut Ui, screen: Screen, out: &mut Vec<UiAction>) {
     let title = match screen {
-        Screen::Profiles => "Profiles",
         Screen::Options => "Options",
         Screen::Import => "Import",
         Screen::About => "About",

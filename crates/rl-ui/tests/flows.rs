@@ -43,6 +43,7 @@ fn catalog() -> Catalog {
                 thumb: None,
             },
         ],
+        skins: vec![],
         warnings: vec![],
     }
 }
@@ -216,4 +217,22 @@ fn local_play_builds_match_options() {
     let prefs = &h.state().ui.settings().gameplay.match_prefs;
     assert_eq!(prefs.per_bot.as_ref().map(Vec::len), Some(usize::from(prefs.bots)));
     h.get_by_label("Bot 3");
+}
+
+#[test]
+fn local_play_replaces_a_saved_selection_no_longer_imported() {
+    let mut settings = Settings::default();
+    settings.gameplay.match_prefs.mod_id = "olx-gone".into();
+    settings.gameplay.match_prefs.level_id = "olx-level-gone".into();
+    let mut h = harness(UiState::new(settings, Profiles::default(), 7));
+    h.get_by_label("Local Play").click();
+    h.run();
+    let p = &h.state().ui.settings().gameplay.match_prefs;
+    assert_eq!((p.mod_id.as_str(), p.level_id.as_str()), ("olx-classic", "olx-level-dirt-level"));
+    assert_eq!(p.restrictions, "Standard 100lt", "the first mod's preset");
+    assert!(h.query_by_label_contains("(missing)").is_none());
+    assert!(
+        h.state().commands.iter().any(|c| matches!(c, AppCommand::SaveSettings(_))),
+        "the repaired choice is saved"
+    );
 }

@@ -357,6 +357,20 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   list one by one. Esc pauses a match (a pause menu) instead of OLX's
   in-game menu; every Deathmatch played from the menus is saved as a
   replay (`replays/`, the last 20), which OLX does not do.
+- **Profiles** (`rl-ui`, `rl-game`, plan 7 task 3): OLX's player menu
+  (`Menu_Player.cpp`) laid out anew: one screen creates, edits, deletes
+  (confirmed; never the last) and selects human profiles (bot profiles are
+  local play's bot choices). Names are trimmed, not empty and at most 20
+  characters as OLX's; unlike OLX they keep Unicode (`RemoveSpecialChars`
+  drops non-ASCII), refuse control characters and refuse another profile's
+  name (ignoring case), so a name picks one profile. The skin preview
+  animates OLX's menu formula (`Menu_Player.cpp:746`, 200° a second) and
+  shows the worm faced left too (OLX's menu faces it right only), drawn
+  from the game's colorized sheet and frame cut (`rl_content::skin_sprite`,
+  the left-facing column quirk included). In a match the human (worm 0)
+  wears the profile's skin and colour and every other worm OLX's default
+  skin (OLX's bot profiles, `ProfileSystem.cpp:59`); until now every worm
+  wore the player's skin.
 - **Renderer** (`rl-render`, plan 5 task 5): OLX blits each sprite with SDL
   onto a 2× screen; the renderer draws the same texels at art scale (at
   least 2×) and then upscales (E3). With interpolation (E2), a sprite's

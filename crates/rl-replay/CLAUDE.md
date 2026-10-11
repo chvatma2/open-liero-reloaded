@@ -49,7 +49,9 @@ ticks and at the end.
   exact size, inflated with a limit, settings and mode numbers in OLX's
   ranges: `SimSettings::validate`, `ModeSpec::validate`); `Replay::world`
   checks the mode again and refuses off-level spawns and bad setup calls;
-  `World::new` checks the settings.
+  `World::new` checks the settings. `Replay::check_header(bytes)` checks
+  only the first `HEADER_BYTES` (magic and format version), for a menu's
+  list of files; `decode` starts with it.
 
 Test: `cargo nextest run -p rl-replay` (`tests/content.rs` writes small packs
 to a temporary directory; its bot match needs `RL_CONTENT_DIR`).

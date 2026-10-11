@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use egui::{RichText, ScrollArea, Ui};
+use egui::{Color32, RichText, ScrollArea, Ui};
 
 use super::{MenuData, header, message};
 use crate::state::{UiAction, UiState};
@@ -38,12 +38,18 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
         }
         Some(_) => {
             ScrollArea::vertical().show(ui, |ui| {
-                egui::Grid::new("replays").num_columns(2).striped(true).spacing([24.0, 4.0]).show(ui, |ui| {
+                egui::Grid::new("replays").num_columns(3).striped(true).spacing([24.0, 4.0]).show(ui, |ui| {
                     for r in &data.replays {
-                        if ui.button(&r.name).clicked() {
+                        // A file whose header is wrong says why, up front.
+                        let button = egui::Button::new(&r.name);
+                        if ui.add_enabled(r.problem.is_none(), button).clicked() {
                             out.push(UiAction::PlayReplay(r.path.clone()));
                         }
                         ui.label(RichText::new(format!("{} KiB", r.bytes.div_ceil(1024))).weak());
+                        match &r.problem {
+                            Some(p) => ui.label(RichText::new(p).color(Color32::from_rgb(255, 110, 90))),
+                            None => ui.label(""),
+                        };
                         ui.end_row();
                     }
                 });

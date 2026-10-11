@@ -25,6 +25,17 @@ const TIME_LIMIT_ON: f32 = 6.0;
 pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut Vec<UiAction>) {
     let before = state.settings().gameplay.match_prefs.clone();
     let mut p = before.clone();
+    // A saved mod or level that is no longer imported: the first listed.
+    if data.catalog.mod_info(&p.mod_id).is_none()
+        && let Some(m) = data.catalog.mods.first()
+    {
+        p.set_mod(m);
+    }
+    if data.catalog.level(&p.level_id).is_none()
+        && let Some(l) = data.catalog.levels.first()
+    {
+        p.level_id = l.id.clone();
+    }
     let mut profiles = state.profiles().clone();
     let mut start = false;
     header(ui, "Local Play", out);

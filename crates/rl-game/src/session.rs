@@ -99,10 +99,11 @@ pub struct Session {
     ticks: u64,
     /// The tick the match ended in.
     ended_at: Option<u64>,
-    /// Worms the presentation knows (a worm spawned mid-match is added,
-    /// with this skin).
+    /// Worms the presentation knows (a worm spawned mid-match is added).
     shown: usize,
+    /// The human's skin (worm 0 when a human plays), and everyone else's.
     skin: LoadedSkin,
+    bot_skin: LoadedSkin,
     /// The player's colour (a profile's), else `default_colour(0)`.
     colour: Option<rl_data::image::Rgba>,
 }
@@ -184,6 +185,7 @@ impl Session {
             ended_at: None,
             shown: 0,
             skin: a.skin.clone(),
+            bot_skin: a.bot_skin.clone(),
             colour: a
                 .player
                 .as_ref()
@@ -201,8 +203,10 @@ impl Session {
         let human = !matches!(self.driver, Driver::Replay(_));
         while self.shown < self.world.worms().len() {
             let i = self.shown;
-            let colour = self.colour.filter(|_| i == 0 && human).unwrap_or_else(|| default_colour(i));
-            self.present.add_worm(&self.skin, colour, i == 0, i == 0 && human);
+            let player = i == 0 && human;
+            let colour = self.colour.filter(|_| player).unwrap_or_else(|| default_colour(i));
+            let skin = if player { &self.skin } else { &self.bot_skin };
+            self.present.add_worm(skin, colour, i == 0, player);
             self.shown += 1;
         }
         if self.keys.len() < self.shown {

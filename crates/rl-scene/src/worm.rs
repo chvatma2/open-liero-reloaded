@@ -9,11 +9,8 @@ use rl_sim::{Dir, World, Worm};
 use crate::assets::{SceneAssets, WormLook};
 use crate::draw_list::{AtlasId, DrawList, Layer, Rect, Sprite, View, perform_line};
 
-/// OLX's skin layout (`include/CGameSkin.h:36-41`).
-pub const FRAME_WIDTH: u32 = 32;
-pub const SKIN_WIDTH: u32 = 20;
-pub const SKIN_HEIGHT: u32 = 18;
-const FRAME_SPACING: u32 = 4;
+/// OLX's skin layout (`include/CGameSkin.h:36-41`), as `rl-content` has it.
+pub use rl_content::{FRAME_WIDTH, SKIN_HEIGHT, SKIN_WIDTH};
 
 /// `Options.CrosshairDistance`'s default, in screen pixels.
 pub const CROSSHAIR_DISTANCE: f32 = 32.0;
@@ -23,20 +20,16 @@ const LEFT_MUZZLE: [i32; 14] = [4, -12, -1, -12, -1, -9, -3, -8, -2, 0, -2, 4, 1
 
 /// The skin frame for a worm aiming at `angle` (degrees, −90 up) with walk
 /// frame `walk`, on a sheet of `frame_count` frames: the source rectangle,
-/// and whether it is drawn mirrored. Facing left, OLX blits from its
-/// mirrored sheet at `w − sx − 20 − 1`, which shows the source columns one
-/// to the right of the right-facing sprite.
+/// and whether it is drawn mirrored (`rl_content::skin_source`, which the
+/// profiles' preview draws from too).
 ///
 /// OLX: src/common/CWorm.cpp:1225-1244, src/client/CGameSkin.cpp:584-600
 pub fn skin_frame(angle: f32, face: Dir, walk: f32, frame_count: u32) -> (Rect, bool) {
     let ang = (((angle + 90.0) / 151.0 * 7.0) as i32).min(6);
     let f = (walk as i32).wrapping_mul(7).wrapping_add(ang);
     let f = f.clamp(0, frame_count.max(1) as i32 - 1) as u32;
-    let sx = f * FRAME_WIDTH + FRAME_SPACING;
-    match face {
-        Dir::Right => (Rect { x: sx, y: 0, w: SKIN_WIDTH, h: SKIN_HEIGHT }, false),
-        Dir::Left => (Rect { x: sx + 1, y: 0, w: SKIN_WIDTH, h: SKIN_HEIGHT }, true),
-    }
+    let s = rl_content::skin_source(f, face);
+    (Rect { x: s.x, y: s.y, w: s.w, h: s.h }, s.mirrored)
 }
 
 /// The muzzle flash for `angle` and `face`: its frame in `muzzle.png` and

@@ -83,8 +83,7 @@ impl SceneAssets {
         let mut sprite = |name: &str, px_per_world| add(name, keyed(core.sprite(name).clone()), px_per_world);
         let (crosshair, muzzle, hook) = (sprite("crosshair", 2), sprite("muzzle", 1), sprite("hook", 2));
         let (bonus, health) = (sprite("bonus", 2), sprite("health", 2));
-        let skin =
-            add("skin:placeholder", LoadedSkin::placeholder().skin.colorize(Rgba::rgb(255, 255, 255)), 2);
+        let skin = add("skin:placeholder", LoadedSkin::placeholder().colorized(Rgba::rgb(255, 255, 255)), 2);
         let mut by_file: BTreeMap<&str, AtlasId> = BTreeMap::new();
         let mut projectiles = Vec::with_capacity(m.sim.projectiles().len());
         for p in m.sim.projectiles() {
@@ -117,10 +116,11 @@ impl SceneAssets {
 
     /// Adds the next worm's look (worms are drawn by index in
     /// [`rl_sim::World::worms`]): `skin` colorized with `colour`
-    /// (`CGameSkin::Colorize`). Returns the worm's index.
+    /// (`LoadedSkin::colorized`, which the profiles' preview draws from
+    /// too). Returns the worm's index.
     pub fn add_worm(&mut self, skin: &LoadedSkin, colour: Rgba, local: bool, human: bool) -> usize {
         let i = self.worms.len();
-        let id = self.add_image(format!("skin:{i}"), skin.skin.colorize(colour), 2);
+        let id = self.add_image(format!("skin:{i}"), skin.colorized(colour), 2);
         self.worms.push(WormLook { skin: id, local, human });
         i
     }

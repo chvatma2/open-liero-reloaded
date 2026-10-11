@@ -3,7 +3,10 @@
 //! the last [`MAX_AUTO_REPLAYS`] kept). Files a player put there are
 //! listed too and never removed.
 
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
+
+use rl_replay::{HEADER_BYTES, Replay};
 
 /// A replay file's extension (`rl-replay`'s format).
 pub const EXTENSION: &str = "rlrp";
@@ -23,6 +26,20 @@ pub struct ReplayFile {
     /// The file name.
     pub name: String,
     pub bytes: u64,
+    /// Why it cannot be played, by its header (not a replay, another
+    /// format version, unreadable); `None` when the header is good.
+    pub problem: Option<String>,
+}
+
+/// What is wrong with the replay at `path` by its first bytes alone
+/// (`Replay::check_header`), so a list of files reads little.
+pub fn header_problem(path: &Path) -> Option<String> {
+    let mut head = Vec::with_capacity(HEADER_BYTES);
+    let read = std::fs::File::open(path).and_then(|f| f.take(HEADER_BYTES as u64).read_to_end(&mut head));
+    match read {
+        Err(e) => Some(e.to_string()),
+        Ok(_) => Replay::check_header(&head).err().map(|e| e.to_string()),
+    }
 }
 
 /// The number of an automatically saved replay's file name.
@@ -32,7 +49,8 @@ fn auto_number(name: &str) -> Option<u32> {
 }
 
 /// The `.rlrp` files in `dir`, newest automatic saves first, then the
-/// others by name; nothing when `dir` cannot be read.
+/// others by name, each with its header's problem; nothing when `dir`
+/// cannot be read.
 pub fn list(dir: &Path) -> Vec<ReplayFile> {
     let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
     let mut files: Vec<ReplayFile> = entries
@@ -42,6 +60,7 @@ pub fn list(dir: &Path) -> Vec<ReplayFile> {
             let meta = e.metadata().ok()?;
             let ext = Path::new(&name).extension().and_then(|x| x.to_str());
             (meta.is_file() && ext == Some(EXTENSION)).then(|| ReplayFile {
+                problem: header_problem(&e.path()),
                 path: e.path(),
                 name,
                 bytes: meta.len(),
@@ -105,5 +124,24 @@ mod tests {
         assert_eq!(l.last().unwrap().name, "mine.rlrp");
         assert_eq!(auto_number("match-000012.rlrp"), Some(12));
         assert_eq!(auto_number("match-12.rlrp"), None);
+    }
+
+    #[test]
+    fn replay_list_shows_header_problems() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let mut future = rl_replay::MAGIC.to_vec();
+        future.extend_from_slice(&(rl_replay::FORMAT_VERSION + 1).to_le_bytes());
+        let mut good = rl_replay::MAGIC.to_vec();
+        good.extend_from_slice(&rl_replay::FORMAT_VERSION.to_le_bytes());
+        std::fs::write(dir.join("a-future.rlrp"), &future).unwrap();
+        std::fs::write(dir.join("b-junk.rlrp"), b"junk").unwrap();
+        std::fs::write(dir.join("c-short.rlrp"), b"RLRP").unwrap();
+        std::fs::write(dir.join("d-good.rlrp"), &good).unwrap();
+        let l = list(dir);
+        let problems: Vec<_> = l.iter().map(|r| r.problem.clone()).collect();
+        assert!(problems[0].as_ref().is_some_and(|p| p.contains("version")), "{problems:?}");
+        assert!(problems[1].is_some() && problems[2].is_some(), "{problems:?}");
+        assert_eq!(problems[3], None, "a good header (the rest is read when it plays)");
     }
 }

@@ -13,7 +13,9 @@ use rl_sim::{Keys, MAX_SLOTS, MAX_WORMS};
 use serde::{Deserialize, Serialize};
 
 use crate::mirror::{CallW, ModeW, PacksW, RespawnW, SettingsW, WormW};
-use crate::{DecodeError, FORMAT_VERSION, MAGIC, MAX_SETUP_CALLS, MAX_TICKS, Replay, ReplaySetup};
+use crate::{
+    DecodeError, FORMAT_VERSION, HEADER_BYTES, MAGIC, MAX_SETUP_CALLS, MAX_TICKS, Replay, ReplaySetup,
+};
 
 #[derive(Serialize, Deserialize)]
 struct SetupW {
@@ -78,22 +80,30 @@ impl Replay {
         postcard::to_extend(&wire, out).expect("postcard encodes every replay")
     }
 
-    /// Reads a replay in the file format. Another format version, broken
-    /// bytes or values no recorder writes are errors; it never panics, and
-    /// it allocates at most what [`crate::MAX_TICKS`] ticks of
-    /// [`MAX_WORMS`] worms need beyond the input's size.
-    pub fn decode(bytes: &[u8]) -> Result<Replay, DecodeError> {
+    /// Whether `bytes` start as a replay this build reads: [`MAGIC`] and
+    /// [`FORMAT_VERSION`] (the first [`HEADER_BYTES`] bytes; the rest is not
+    /// read, so a menu can list files cheaply).
+    pub fn check_header(bytes: &[u8]) -> Result<(), DecodeError> {
         if bytes.get(..4) != Some(&MAGIC[..]) {
             return Err(DecodeError::Magic);
         }
-        let Some(&[a, b]) = bytes.get(4..6) else {
+        let Some(&[a, b]) = bytes.get(4..HEADER_BYTES) else {
             return Err(DecodeError::Malformed("no format version".into()));
         };
         let found = u16::from_le_bytes([a, b]);
         if found != FORMAT_VERSION {
             return Err(DecodeError::Version { found, supported: FORMAT_VERSION });
         }
-        let (wire, rest) = postcard::take_from_bytes::<Wire>(&bytes[6..])
+        Ok(())
+    }
+
+    /// Reads a replay in the file format. Another format version, broken
+    /// bytes or values no recorder writes are errors; it never panics, and
+    /// it allocates at most what [`crate::MAX_TICKS`] ticks of
+    /// [`MAX_WORMS`] worms need beyond the input's size.
+    pub fn decode(bytes: &[u8]) -> Result<Replay, DecodeError> {
+        Replay::check_header(bytes)?;
+        let (wire, rest) = postcard::take_from_bytes::<Wire>(&bytes[HEADER_BYTES..])
             .map_err(|e| DecodeError::Malformed(format!("{e}")))?;
         if !rest.is_empty() {
             return Err(DecodeError::Malformed(format!("{} trailing bytes", rest.len())));

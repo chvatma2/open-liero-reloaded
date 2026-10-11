@@ -2852,6 +2852,8 @@ dependencies = [
  "rl-data",
  "rl-input",
  "rl-modes",
+ "rl-replay",
+ "rl-scene",
  "rl-sim",
  "ron",
  "serde",

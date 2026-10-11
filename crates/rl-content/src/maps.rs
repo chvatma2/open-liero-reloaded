@@ -59,7 +59,7 @@ pub struct LoadedSkin {
 }
 
 /// OLX's skin sheet width (`CGameSkin`, 21 frames of 32 px).
-const SHEET_WIDTH: u32 = 672;
+const SHEET_WIDTH: u32 = crate::SHEET_FRAMES * crate::FRAME_WIDTH;
 
 impl LoadedSkin {
     /// A sheet of the placeholder colour, tinted with the player's colour.

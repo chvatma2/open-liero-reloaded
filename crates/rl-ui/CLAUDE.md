@@ -6,9 +6,10 @@ theme. The window, the GPU and the game live in `rl-game`, which draws
 these widgets and carries out their commands (`rl-game/src/shell.rs`).
 
 - **Layer 5, uses `std`.** Depends on `rl-content` (`MatchOptions`,
-  `Player`, `Catalog`), `rl-data` (images), `rl-modes`, `rl-bots`,
-  `rl-sim`, `rl-input` (same layer: `Bindings`), egui 0.36.2, serde, ron,
-  `directories` 6.0.0 and anyhow; `egui_kittest` 0.36.2 for tests.
+  `Player`, `Catalog`, skins), `rl-data` (images), `rl-modes`, `rl-bots`,
+  `rl-sim`, `rl-replay` (a replay's header), `rl-input` (same layer:
+  `Bindings`), egui 0.36.2, serde, ron, `directories` 6.0.0 and anyhow;
+  `egui_kittest` 0.36.2 and `rl-scene` (the game's skin frames) for tests.
   **No GPU handle and no window:** everything is tested headless, the
   widgets by label with `egui_kittest` (`tests/flows.rs`).
 - **State** (`state.rs`): `UiState::new(settings, profiles, seed)`, then
@@ -48,20 +49,36 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
 - **Screens** (`screens/`): `show(ui, &UiState, &mut MenuData) ->
   Vec<UiAction>` draws the current screen; the caller feeds the actions to
   `update`. `MenuData` holds the `rl_content::Catalog`, the replays
-  directory and its files (read when the screen opens) and the level
-  thumbnails as egui textures. Main (`main.rs`), local play
-  (`local_play.rs`: mod, level grid with thumbnails or a name-and-size
-  placeholder, Deathmatch settings, bots, the player's profile, Start with
-  "Loading…" and the failure message), replays (`replays.rs`), a pause
-  menu over the game and a Leave button on the results; Profiles, Options,
-  Import and About are placeholders until their tasks. Esc is `Back` and
-  F5 `Restart` on every screen.
+  directory and its files (read when the screen opens), the level
+  thumbnails as egui textures and the skin preview (`preview_wanted`, set
+  by the profiles screen each frame; `preview`, the app's textures). Main
+  (`main.rs`), local play (`local_play.rs`: mod, level grid with
+  thumbnails or a name-and-size placeholder, Deathmatch settings, bots, the
+  player's profile, Start with "Loading…" and the failure message; a saved
+  mod or level no longer imported becomes the first listed), profiles
+  (`profiles.rs`: list, New, Delete confirmed, "Play as this", name with
+  its error, colour sliders, searchable skins, the preview; it opens on
+  the profile playing), replays (`replays.rs`, each file's header problem
+  shown), a pause menu over the game and a Leave button on the results;
+  Options, Import and About are placeholders until their tasks. Esc is
+  `Back` and F5 `Restart` on every screen.
 - **Replays** (`replays.rs`): `list(dir)` (the `.rlrp` files, automatic
-  saves newest first), `auto_save(dir, bytes)` (`match-NNNNNN.rlrp`, the
-  last `MAX_AUTO_REPLAYS` kept; a player's own files are never removed).
+  saves newest first, each with `header_problem`: 6 bytes read),
+  `auto_save(dir, bytes)` (`match-NNNNNN.rlrp`, the last
+  `MAX_AUTO_REPLAYS` kept; a player's own files are never removed).
 - **Profiles** (`profiles.rs`): `Profile { name, skin_id, colour, bindings }`
-  (OLX's "OpenLieroXor" by default; names at most 20 characters),
-  `Profiles { list, selected }`; `sanitize()` keeps at least one.
+  (OLX's "OpenLieroXor" by default), `Profiles { list, selected }`;
+  `check_name(name, except)` (trimmed, not empty, at most 20 characters,
+  no control character, no other profile's name ignoring case:
+  `NameError`), `rename`, `add` ("Player N", `NEW_COLOURS` in turn),
+  `remove` (never the last; the one playing stays selected);
+  `sanitize()` keeps at least one.
+- **Skin preview** (`skin_preview.rs`, plan 7 ruling Q2): `frames(skin,
+  colour)` cuts every frame, faced right and left, from
+  `LoadedSkin::colorized` with `rl_content::skin_sprite`: the game's own
+  colorization and frame cut (`skin_preview_uses_colorization_like_the_game`
+  compares them with `rl_scene`'s). `PreviewAnim` is OLX's menu animation.
+  The app uploads the frames (`PreviewTextures`): no GPU handle here.
 - **Store** (`store.rs`, Review Focus 1): `Store::platform()` (the
   `ProjectDirs` data directory, else `in_memory` and a warning),
   `Store::open(dir)`, `load_*` (`Loaded { value, warnings }`) and
@@ -79,4 +96,7 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   the end of the pass).
 
 Test: `cargo nextest run -p rl-ui` (`tests/store.rs`, `tests/state.rs`,
-`tests/flows.rs`: kittest flows by label and the local play's match).
+`tests/flows.rs`: kittest flows by label and the local play's match,
+`tests/profiles.rs`: profiles through the widgets, names, the preview; its
+last part compares with `rl_scene::SceneAssets` when `RL_CONTENT_DIR` is
+set).

@@ -21,6 +21,7 @@ mod mods;
 mod placeholder;
 mod replay;
 mod sandbox;
+mod skins;
 mod sounds;
 
 use std::collections::BTreeMap;
@@ -39,6 +40,10 @@ pub use mods::{LoadedMod, check_frames};
 pub use placeholder::{PLACEHOLDER, placeholder_image};
 pub use replay::replay_assets_from;
 pub use sandbox::{SANDBOX_START, SandboxSetup, SpawnSpec, match_setup, new_world_from};
+pub use skins::{
+    FRAME_SPACING, FRAME_WIDTH, SHEET_FRAMES, SKIN_HEIGHT, SKIN_WIDTH, SkinInfo, SkinSource, resolve_id,
+    skin_source, skin_sprite,
+};
 pub use sounds::{MAX_SOUND_BYTES, MAX_SOUND_SECONDS, check_sound};
 
 #[doc(no_inline)]
@@ -63,6 +68,8 @@ pub fn olx_level_id(file: &str) -> String {
 /// core pack, loaded once.
 pub struct Content {
     packs: BTreeMap<String, (PackKind, PathBuf)>,
+    /// Each pack's name (its manifest's), by id.
+    names: BTreeMap<String, String>,
     core: CorePack,
     warnings: Vec<String>,
 }
@@ -80,6 +87,7 @@ impl Content {
             .collect();
         dirs.sort();
         let mut packs = BTreeMap::new();
+        let mut names = BTreeMap::new();
         let mut warnings = Vec::new();
         for dir in dirs {
             match rl_pack::read_manifest(&DirFs::new(&dir)) {
@@ -93,6 +101,7 @@ impl Content {
                             first.display()
                         ));
                     } else {
+                        names.insert(m.id.clone(), m.name);
                         packs.insert(m.id, (m.kind, dir));
                     }
                 }
@@ -117,7 +126,7 @@ impl Content {
                 CorePack::empty()
             }
         };
-        Ok(Content { packs, core, warnings })
+        Ok(Content { packs, names, core, warnings })
     }
 
     /// Problems found when opening: unreadable packs, duplicate ids, and the
@@ -134,6 +143,11 @@ impl Content {
     /// The ids of the packs of `kind`, sorted.
     pub fn ids(&self, kind: PackKind) -> Vec<String> {
         self.packs.iter().filter(|(_, (k, _))| *k == kind).map(|(id, _)| id.clone()).collect()
+    }
+
+    /// Pack `id`'s name (its manifest's), if there is such a pack.
+    pub fn pack_name(&self, id: &str) -> Option<&str> {
+        self.names.get(id).map(String::as_str)
     }
 
     /// The pack `id`, which must be of `kind`.
