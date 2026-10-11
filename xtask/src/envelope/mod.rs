@@ -339,6 +339,10 @@ pub fn execute(steps: &[Step], m: &mut dyn Machine, env: &mut Envelope) -> Vec<S
 pub fn run(o: &Opts) -> anyhow::Result<bool> {
     if let Some(reason) = &o.bless {
         anyhow::ensure!(!reason.trim().is_empty(), "--reason must say why the results change");
+        anyhow::ensure!(
+            !o.quick,
+            "--bless writes the baseline from a full run (3 runs a point); --quick results are never blessed"
+        );
     }
     let content = root().join("content/packs");
     anyhow::ensure!(
@@ -390,6 +394,9 @@ pub fn run(o: &Opts) -> anyhow::Result<bool> {
             "notice: {path} is from another machine ({} CPUs, {:?}, {:?}; here {:?}): not compared",
             s.host.cpus, s.host.cpu, s.host.adapter, host.adapter
         ),
+        Some(s) if results::incomparable(s, &env).is_some() => {
+            println!("notice: {path}: {}", results::incomparable(s, &env).unwrap_or_default());
+        }
         Some(s) => {
             let flags = results::compare(s, &env);
             for f in &flags {
@@ -403,7 +410,10 @@ pub fn run(o: &Opts) -> anyhow::Result<bool> {
         ),
     }
     if let Some(reason) = &o.bless {
-        let same_host = stored.filter(|s| crate::bench::host_notice(&s.host, &host).is_none());
+        // Only the same host's results of the same kind are kept.
+        let same_host = stored.filter(|s| {
+            crate::bench::host_notice(&s.host, &host).is_none() && results::incomparable(s, &env).is_none()
+        });
         let merged = results::merged(same_host, env);
         if !merged.kept.is_empty() {
             println!("kept from before (not measured now): {:?}", merged.kept);
@@ -544,6 +554,14 @@ mod tests {
         let e = gpu::wsl_env(true);
         assert!(e.contains(&("GALLIUM_DRIVER".into(), "d3d12".into())) && e.len() == 3);
         assert_eq!(gpu::wsl_env(false).len(), 2);
+    }
+
+    /// Ruling T7-A: a quick run is never the baseline.
+    #[test]
+    fn quick_results_are_never_blessed() {
+        let o = Opts { quick: true, only: vec![], gpu: GpuPaths::None, bless: Some("new machine".into()) };
+        let e = run(&o).unwrap_err().to_string();
+        assert!(e.contains("--quick results are never blessed"), "{e}");
     }
 
     #[test]

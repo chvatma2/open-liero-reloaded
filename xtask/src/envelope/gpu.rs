@@ -195,7 +195,7 @@ fn heavy_replay(cli: &Path, content: &Path, plan: &Plan) -> Result<PathBuf, Stri
         .arg(&file)
         .output()
         .map_err(|e| format!("cannot run rl-cli: {e}"))?;
-    if out.status.success() { Ok(file) } else { Err(String::from_utf8_lossy(&out.stderr).into_owned()) }
+    if out.status.success() { Ok(file) } else { Err(sweeps::failure("rl-cli stress --record", &out)) }
 }
 
 /// The scenes: the heavy replay, recorded now, and the map and art points'

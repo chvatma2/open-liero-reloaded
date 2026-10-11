@@ -114,7 +114,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   7 GiB) and `--memory-ceiling-mib 16384`; chaos bots, except Deathmatch
   bots (`--personality dm`) on the map-size and art-scale axes, whose
   cost includes the area cache (ruling T1-A); a failed run is a failed
-  point, its cause a breaking cap; the map and art points record replays
+  point, its cause a breaking cap naming the exit status and the last
+  output line (`failure`: a run the OOM killer stops says `signal: 9`); the map and art points record replays
   in `target/envelope/replays`); `gpu.rs` (the heavy replay, MW 1.0 with
   32 chaos bots and a 20 000 pool, and the levels' replays through
   `rl-cli gpu-bench --adapter hardware` offscreen, then `rl-game
@@ -122,7 +123,9 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   Mesa's d3d12 driver (`wsl_env`), on Windows through `winbuild` for
   `dx12` and `vulkan`, each run bounded by `winbuild::RUN_TIMEOUT`);
   `olx.rs` (`olx_timing` for OLX and `rl-cli scenario --time` for rl-sim,
-  the same work checked frame by frame; OLX's build named as Release,
+  the same work checked frame by frame, `projectiles` and `rand_calls`
+  the same length as OLX's frames; a scenario that fails is one of the
+  table's `notes` and the others go on; OLX's build named as Release,
   `-O3`, ruling T6-A). `mod.rs` runs `steps`: a part whose prerequisite
   is missing (`Prereqs`: `winbuild::missing`, `docker_missing`, a
   display) or that fails, and a GPU path measured on a software-only
@@ -132,9 +135,12 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `fixtures/bench/envelope/<host>.ron` (`host_key`: the CPU model's slug
   and CPU count; another machine's file is only a notice): a measurement
   slower than its axis's or GPU path's `noise` (the largest run spread,
-  at least `NOISE_FLOOR`, 5 %) is flagged with `!`, never failed.
-  `--bless --reason` writes that file, keeping the parts it did not
-  measure (`kept`), and logs it in `fixtures/blessings.log`. Not part of
+  at least `NOISE_FLOOR`, 5 %) is flagged with `!`, never failed; stored
+  results of another kind (`incomparable`: quick against full, or other
+  match lengths) are only a notice. `--bless --reason` (refused with
+  `--quick`) writes that file, keeping the parts it did not measure
+  from results of the same kind (`kept`), and logs it in
+  `fixtures/blessings.log`. Not part of
   `full`.
 - `olx_timing.rs` (plan 8; its caller is `envelope`, task 7): OLX's
   per-frame physics times. `Olx::open` builds or finds the oracle image

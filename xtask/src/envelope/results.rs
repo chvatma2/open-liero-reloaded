@@ -323,6 +323,8 @@ pub struct OlxComparison {
     pub image: String,
     pub build: String,
     pub rows: Vec<OlxRow>,
+    /// Scenarios that could not be timed, and why.
+    pub notes: Vec<String>,
 }
 
 /// The results file.
@@ -387,11 +389,11 @@ pub fn point(value: &str, n: f64, runs: &[StressOut], load_avg: f64) -> Point {
 
 /// A point whose run failed (a crash, the memory ceiling): the failure is its cap.
 pub fn failed_point(value: &str, n: f64, why: &str, load_avg: f64) -> Point {
-    let first_line = why.lines().rfind(|l| !l.trim().is_empty()).unwrap_or(why);
+    let last_line = why.lines().rfind(|l| !l.trim().is_empty()).unwrap_or(why);
     Point {
         value: value.into(),
         n,
-        caps: vec![format!("failed: {}", first_line.trim())],
+        caps: vec![format!("failed: {}", last_line.trim())],
         load_avg,
         ..Point::default()
     }
@@ -496,6 +498,7 @@ pub fn olx_row(name: &str, olx: &[Vec<OlxFrame>], rl: &[ScenarioTimingOut]) -> O
     let rl_us = Spread::median_of(&rl.iter().map(|r| us(&r.tick_ns)).collect::<Vec<_>>());
     let (o, r) = (olx.first().cloned().unwrap_or_default(), rl.first().cloned().unwrap_or_default());
     let same_work = o.len() == r.projectiles.len()
+        && o.len() == r.rand_calls.len()
         && o.iter().zip(&r.projectiles).all(|(f, &p)| f.projectiles == p)
         && o.iter().zip(&r.rand_calls).all(|(f, &c)| f.rand_calls == c);
     OlxRow {
@@ -632,6 +635,22 @@ pub fn merged(old: Option<Envelope>, new: Envelope) -> Envelope {
         m.olx = old.olx;
     }
     m
+}
+
+/// Why `stored` cannot be compared with `now` (or merged into by a
+/// bless): a quick run and a full one, or other match lengths, measure
+/// different things. `None`: they can.
+pub fn incomparable(stored: &Envelope, now: &Envelope) -> Option<String> {
+    let kind = |e: &Envelope| if e.quick { "quick" } else { "full" };
+    (stored.quick != now.quick || stored.seconds != now.seconds).then(|| {
+        format!(
+            "the stored results are a {} run of {} s points, this is a {} run of {} s points: not compared",
+            kind(stored),
+            stored.seconds,
+            kind(now),
+            now.seconds
+        )
+    })
 }
 
 /// The file name's host part: the CPU model's slug and the CPU count.
@@ -801,8 +820,13 @@ mod tests {
         };
         let row = olx_row("x", &olx, std::slice::from_ref(&rl));
         assert!(row.same_work && (row.ratio_p50 - 0.5).abs() < 1e-9 && row.projectiles_peak == 3, "{row:?}");
-        let other = ScenarioTimingOut { projectiles: vec![0, 1, 2, 4], ..rl };
+        let other = ScenarioTimingOut { projectiles: vec![0, 1, 2, 4], ..rl.clone() };
         assert!(!olx_row("x", &olx, &[other]).same_work);
+        let short = ScenarioTimingOut { rand_calls: vec![0, 10, 20], ..rl };
+        assert!(
+            !olx_row("x", &olx, &[short]).same_work,
+            "a missing frame's rand() calls are not the same work"
+        );
     }
 
     /// Review Focus 4.
@@ -843,6 +867,41 @@ mod tests {
         assert_eq!(e.sweeps["worms"].points[0].value, "2");
         assert!(e.gpu.is_empty() && e.olx.is_none());
         assert_eq!(e.budgets, Budgets::default());
+    }
+
+    /// Ruling T7-A: a quick run is never judged against a full one.
+    #[test]
+    fn quick_and_full_runs_are_not_compared() {
+        let full = Envelope { seconds: 20.0, ..Envelope::default() };
+        assert_eq!(incomparable(&full, &full.clone()), None);
+        let quick = Envelope { quick: true, seconds: 5.0, ..Envelope::default() };
+        let why = incomparable(&full, &quick).unwrap();
+        assert!(why.contains("a full run of 20 s") && why.contains("a quick run of 5 s"), "{why}");
+        assert!(incomparable(&full, &Envelope { seconds: 30.0, ..full.clone() }).is_some(), "other lengths");
+    }
+
+    /// Ruling T7-A: a killed run's cause names its status.
+    #[test]
+    fn a_killed_run_names_its_signal() {
+        use std::os::unix::process::ExitStatusExt as _;
+        let killed = std::process::Output {
+            status: std::process::ExitStatus::from_raw(9),
+            stdout: vec![],
+            stderr: vec![],
+        };
+        let p = failed_point("8", 8.0, &crate::envelope::sweeps::failure("rl-cli stress", &killed), 0.0);
+        assert!(
+            p.caps[0].starts_with("failed: rl-cli stress (signal: 9") && p.caps[0].ends_with("no output"),
+            "{:?}",
+            p.caps
+        );
+        let exited = std::process::Output {
+            status: std::process::ExitStatus::from_raw(1 << 8),
+            stdout: b"report\n".to_vec(),
+            stderr: b"error: 16400 MiB resident, over 16384\n\n".to_vec(),
+        };
+        let why = crate::envelope::sweeps::failure("rl-cli stress", &exited);
+        assert_eq!(why, "rl-cli stress (exit status: 1): error: 16400 MiB resident, over 16384");
     }
 
     #[test]

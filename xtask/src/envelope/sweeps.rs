@@ -132,10 +132,20 @@ fn stress(
     }
     let o = c.output().map_err(|e| format!("cannot run rl-cli: {e}"))?;
     if !o.status.success() {
-        return Err(format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)));
+        return Err(failure("rl-cli stress", &o));
     }
     let text = std::fs::read_to_string(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     ron::from_str(&text).map_err(|e| format!("{}: {e}", out.display()))
+}
+
+/// One line for a tool that failed: its exit status (a signal, such as
+/// the OOM killer's 9, has no output of its own) and its output's last line.
+pub fn failure(tool: &str, o: &std::process::Output) -> String {
+    let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+    match text.lines().rfind(|l| !l.trim().is_empty()) {
+        Some(last) => format!("{tool} ({}): {}", o.status, last.trim()),
+        None => format!("{tool} ({}), no output", o.status),
+    }
 }
 
 /// Every point of `axis`; a failed run makes a failed point (Review Focus
