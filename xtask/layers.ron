@@ -25,6 +25,7 @@
         "rl-present": 5,
         "rl-audio": 5,
         "rl-input": 5,
+        "rl-ui": 5,
         "rl-cli": 6,
         "rl-game": 6,
         "xtask": 6,
@@ -53,6 +54,8 @@
         ("rl-present", "rl-scene"),
         ("rl-present", "rl-fx"),
         ("rl-present", "rl-render"),
+        // The options menu edits the key bindings (plan 7 task 1).
+        ("rl-ui", "rl-input"),
     ],
     no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay"],
     wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],

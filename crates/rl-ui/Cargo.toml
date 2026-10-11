@@ -1,0 +1,26 @@
+[package]
+name = "rl-ui"
+description = "Menu and HUD logic: the screen state machine, view models, settings and profiles persisted in the platform data directory, and the egui theme."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rl-sim.workspace = true
+rl-modes.workspace = true
+rl-bots.workspace = true
+rl-content.workspace = true
+rl-input.workspace = true
+serde = { workspace = true, features = ["std"] }
+ron.workspace = true
+directories.workspace = true
+egui.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

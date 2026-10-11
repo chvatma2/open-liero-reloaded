@@ -861,3 +861,59 @@ playtest and the OLX bot baseline, `docs/porting/bot-baseline-2026-10-11.md`):
   difficulty is to grow from strategy, quick reactions and predictive
   reloading (teamwork with team modes), never from perfect aim: a later
   bot-skill milestone, measured against OLX with the baseline harness.
+
+## 21. Amendments made while writing plan 7 (2026-10-11)
+
+These decide how M7 (v0.1) turns the playable Deathmatch into a game
+started from menus. Where they conflict with earlier sections, they take
+precedence. Binding user decisions: the window is not drag-resizable or
+maximizable (sizes come only from options presets and startup flags,
+through the paced size-change path), and bots offer OLX's four
+difficulties, none aiming perfectly (§20).
+
+| # | Decision | Reason |
+|---|---|---|
+| G1 | **`rl-ui` (L5): screen logic and view models separate from egui widgets.** Screens: Main, LocalPlay, Profiles, Options, WeaponSelect, InGame (HUD + pause), Results, Import, About. | Spec §8.3; testable by `egui_kittest` and plain unit tests. |
+| G2 | **Persistence** through `directories` (`ProjectDirs` "rust-liero"): `settings.ron`, `profiles.ron`, `replays/` (auto-saved last matches, capped by count). Every format is versioned; an unknown version means defaults plus a warning. | Spec §9.4. |
+| G3 | **Window size** comes from options presets (e.g. 1280×720, 1600×900, 1920×1080, the native desktop size) plus a fullscreen toggle, applied at most every 250 ms through the existing window code, and remembered. | User decision; the WSLg compositor crash. |
+| G4 | **OLX's weapon selection before the match** (and when OLX allows re-selection): five slots, restricted by the preset, with a "random" button and keyboard/gamepad navigation. Bots keep their loadouts (F1). | OLX feel; replaces the random human loadout. |
+| G5 | **HUD:** health, the five weapon slots with charge and reload, a kill feed, a Tab scoreboard, a time and kill-limit readout, and a minimap (OLX's colours and scale from `presentation.md` §2.4). Two styles: **Modern** (egui, the default) and **Classic** (OLX's bitmap fonts and layout). | Spec §8.3. |
+| G6 | **Thumbnails and fonts are imported:** a level thumbnail (`thumb.png`) generated from the level art at import, and OLX's `font.png`/`out_font.png` in the core pack. Pack format bump per policy. | A5 deferred both to M7. |
+| G7 | **`--autoplay <script.ron> --fake-clock`** drives the real app through menus and a match with scripted input and a fake clock, taking screenshots at checkpoints. It runs on Xvfb in `xtask full` and asserts a clean structured log. | Spec §7. |
+| G8 | **Benchmarks** (`divan`): tick time with 3000 projectiles, an 8-bot tick, DrawList build and an offscreen render frame. Baselines are stored in `fixtures/bench/`; a regression over 10% fails `xtask full` (with a noise guard: medians over several runs). | Spec §7. |
+| G9 | **About/credits:** Jason Boettcher (Liero Xtreme), the OpenLieroX team, Joosa Riekkinen (Liero), and the licenses. | Spec §11. |
+
+Made precise while implementing `rl-ui`'s foundation (plan 7 task 1):
+
+- **`UiState::update(UiAction) -> Vec<AppCommand>`** is the whole menu
+  logic; `rl-game` feeds it the widgets' actions and its own reports
+  (`MatchStarted`, `MatchFailed(why)`, `MatchOver`) and carries out the
+  commands (`StartMatch(MatchOptions)`, `StartSandbox`, `EndMatch`,
+  `SetPaused`, `ApplyVideo`, `ApplyAudio`, `ApplyBindings`,
+  `SaveSettings`, `SaveProfiles`, `Quit`). A start emits one command and
+  ignores Start and Back until the app answers; a failed start returns to
+  local play with the reason; every match gets the next seed; a rematch
+  ends the match over first. Options apply and save only what changed.
+- **Files** are `(version: 1, settings: (...))` and `(version: 1,
+  profiles: (...))` in RON, every struct `#[serde(default)]` (a missing
+  field takes its default), written atomically (temporary file, sync,
+  rename). A bad file (not UTF-8, over 1 MiB, unreadable RON, another
+  version, values out of range) gives defaults or the values fixed, one
+  warning per problem, and is moved to `<name>.bak` (then `<name>.1.bak`,
+  ...: earlier backups stay). A file that cannot be moved aside is never
+  overwritten. Without a data directory nothing is read or saved.
+- **The match preferences mirror** `DeathmatchSettings` (without the
+  respawn loadout) and the bot choices (`BotLevel`, `BotLoadout`) in
+  `rl-ui` instead of giving `rl-modes` and `rl-bots` serde: the file holds
+  only what the menus edit (no budgets, aim models or chaos cycles), under
+  names `rl-ui` owns, and the `no_std` crates stay unchanged (as
+  `rl-replay`'s mirror, §20). `BotConfig::validate` refuses NaN, infinite
+  or negative params, and `rl_content::build_match` checks every bot.
+- **One source of rules** (plan 6's final review): `Deathmatch::new` is
+  private; `Deathmatch::prepare` makes a new match's mode and
+  `Deathmatch::resume(settings, &SimSettings)` a recorded one's (a replay,
+  an oracle trace), refusing settings that disagree with the rules.
+  `Deathmatch::time_left_ms` stops at the game-over frame.
+- **The default profile** is OLX's first local player ("OpenLieroXor",
+  green, the default skin); names are at most 20 characters (OLX's
+  player menu).
