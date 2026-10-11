@@ -45,8 +45,8 @@ struct Run {
 /// as the app does, drawing each frame.
 fn play(a: &setup::Assets, speed: Speed, ticks: u64) -> Run {
     let mut s = Session::new(a, viewport(), Interpolation::Linear, Audio::silent()).unwrap();
-    assert!(!s.human, "nobody plays");
-    let speed = speed.for_game(s.human);
+    assert!(!s.human(), "nobody plays");
+    let speed = speed.for_game(s.human());
     let mut list = DrawList::new();
     let (mut sounded, mut frames) = (0, 0);
     while s.ticks() < ticks {
@@ -99,7 +99,7 @@ fn fast_forward_never_changes_the_simulation() {
     std::fs::remove_file(&file).unwrap();
     let r = r.unwrap();
     let mut s = Session::new(&r, viewport(), Interpolation::Linear, Audio::silent()).unwrap();
-    assert!(!s.human);
+    assert!(!s.human());
     let mut frames = 0;
     while speed::run_frame::<()>(
         Speed::Max,
@@ -130,8 +130,8 @@ fn a_played_game_never_runs_fast() {
     let o = DeathmatchOptions { seed: 2, bots: 2, ..DeathmatchOptions::default() };
     let a = setup::load_deathmatch(&[dir.as_path()], "Classic", "Dirt Level", "default", &o).unwrap();
     let s = Session::new(&a, viewport(), Interpolation::Linear, Audio::silent()).unwrap();
-    assert!(a.human_plays() && s.human);
-    assert_eq!(Speed::Max.for_game(s.human), Speed::X1);
+    assert!(a.human_plays() && s.human());
+    assert_eq!(Speed::Max.for_game(s.human()), Speed::X1);
     let sandbox = setup::SandboxOptions {
         mod_id: String::new(),
         level_id: String::new(),
@@ -149,6 +149,36 @@ fn a_played_game_never_runs_fast() {
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(err.contains("--speed is for watching"), "{args:?}: {err}");
     }
+}
+
+/// Who plays is the game's as it is now: a restart after the options
+/// changed (the menus' bots alone becoming a match with a player) says so.
+#[test]
+fn a_restart_knows_who_plays() {
+    let Some(dir) = content() else { return };
+    let mut a =
+        setup::load_deathmatch(&[dir.as_path()], "Classic", "Dirt Level", "default", &watched()).unwrap();
+    let mut s = Session::new(&a, viewport(), Interpolation::Linear, Audio::silent()).unwrap();
+    assert!(!s.human());
+    let setup::Game::Deathmatch { options, .. } = &mut a.game else { panic!("a Deathmatch") };
+    options.players[0] = rl_content::Player::Human;
+    s.restart(&a).unwrap();
+    assert!(s.human(), "worm 0 is played now");
+    assert_eq!(Speed::Max.for_game(s.human()), Speed::X1);
+}
+
+/// `--fake-clock` runs a fixed number of ticks a frame: only for an
+/// autoplay, never for a person (it would speed a played game up).
+#[test]
+fn the_fake_clock_needs_an_autoplay() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_rl-game"))
+        .args(["--fake-clock", "--mode", "deathmatch"])
+        .env("WGPU_BACKEND", "vulkan")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("--autoplay"), "{err}");
 }
 
 /// The game binary with `args` on content `dir`, no relaunch (the

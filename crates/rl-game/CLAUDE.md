@@ -111,14 +111,21 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   added, terrain dirty rectangles), `Gpu::present`, then a screenshot if
   one is due (one that fails is a warning, never the end of the game).
 - **Fast-forward** (`speed.rs`, plan 7 task 8, the user's request): a
-  game nobody plays (`Session::human` false: a replay, or `--spectate`'s
+  game nobody plays (`Session::human()` false, worked out again at each
+  restart: a replay, or `--spectate`'s
   bots alone, `Assets::human_plays`) runs at `Speed` 1×, 2×, 4×, 8×,
   16× or max: `--speed`, PageUp/PageDown (`App::change_speed`; both in
-  `rl_ui::GAME_KEYS`), "Fast-forward N×" as a HUD notice. A game a person
+  `rl_ui::GAME_KEYS`), "Fast-forward N×" as a HUD notice, with the speed
+  reached when short of it ("16× (≈9×)"; always at max: `speed::Rate`
+  over the last `RATE_FRAMES`, `speed::shown`). A game a person
   plays runs at 1× (`Speed::for_game`; `--speed` refused at start, the
   keys ignored). `speed::run_frame` (the app's loop and `tests/speed.rs`'s)
-  runs the frame's `due` ticks times the factor, or at max until
-  `MAX_BUDGET` (12 ms; `MAX_TICKS_PER_FRAME`), and draws only the last;
+  runs exactly the `due` ticks at 1× (ticking or not: the script's clock
+  and the input latch keep real time in the menus and the pause); faster,
+  the `due` ticks times the factor, stopping at a tick that does not
+  happen and, once the real-time ticks ran, when the frame's `MAX_BUDGET`
+  (12 ms) is spent, so the window stays responsive; at max until that
+  budget (`MAX_TICKS_PER_FRAME`). It draws only the last;
   `Speed::sound` thins the sounds (`Session::sound`: every tick up to
   2×, the frame's last from 4×, none at max). The world never sees the
   speed: `tests/speed.rs` plays bots alone at 1×, 4×, 16× and max to the
@@ -233,7 +240,10 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   | TicksAtLeast)`, `Quit`, `WaitForExit` (the menus' Quit). A step that
   waits fails the run after `within` frames (`DEFAULT_WITHIN`); the game
   then exits with the error. Each step is a JSON line in `<shot
-  dir>/autoplay.jsonl`, the last `pass` or `fail`. `--fake-clock`: every
+  dir>/autoplay.jsonl`, the last `pass` or `fail`. `--fake-clock` (only
+  with `--autoplay`: clap requires it, and the app ignores it without
+  one, since a fixed tick count a frame would change a played game's
+  speed; `tests/speed.rs`): every
   frame is `FAKE_FRAME` (20 ms) and runs `FAKE_TICKS_PER_FRAME` (2) ticks
   (max speed `FAKE_MAX_TICKS`), egui's time and the window pacing follow
   it (`App::now`), the first menu seed is 1: a run gives the same frames,

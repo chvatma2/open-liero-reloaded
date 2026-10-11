@@ -119,6 +119,8 @@ pub struct App {
     flushed: Option<Instant>,
     /// How fast a watched game runs (PageUp, PageDown; `speed.rs`).
     speed: Speed,
+    /// The speed it reached lately (the HUD says when it is short).
+    rate: speed::Rate,
     /// `--autoplay`'s script, while it plays.
     autoplay: Option<Autoplay>,
     /// Frames drawn (the autoplay's and the fake clock's count).
@@ -158,6 +160,7 @@ impl App {
         let audio = if silent { "audio: silent (no output device)" } else { "audio: opened" };
         let stats = Stats { audio: audio.to_string(), ..Stats::default() };
         let egui = egui::Context::default();
+        let fake = cfg.fake_clock && autoplay.is_some();
         if autoplay.is_some() {
             // The autoplay finds widgets by label in the AccessKit tree.
             egui.enable_accesskit();
@@ -172,7 +175,10 @@ impl App {
             speed: cfg.speed,
             autoplay,
             frames: 0,
-            fake_start: cfg.fake_clock.then(Instant::now),
+            // The fake clock runs a fixed number of ticks a frame: only for
+            // an autoplay, never for a person (it would change the speed).
+            fake_start: fake.then(Instant::now),
+            rate: speed::Rate::default(),
             shot_name: None,
             latency: Latency::new(cfg.latency_probe),
             cfg,
@@ -374,7 +380,7 @@ impl App {
     /// How fast the game playing runs now: [`App::speed`] when it is
     /// watched (nobody plays it), else 1× (`Speed::for_game`).
     pub fn speed(&self) -> Speed {
-        self.speed.for_game(self.shell.session().is_none_or(|s| s.human))
+        self.speed.for_game(self.shell.session().is_none_or(|s| s.human()))
     }
 
     /// The ticks of one frame: the `due` ones at 1×, more when a watched
@@ -385,11 +391,16 @@ impl App {
         let fake = self.fake_start.is_some();
         // Under the fake clock max runs a fixed number of ticks a frame.
         let spent = |n| if fake { n >= speed::FAKE_MAX_TICKS } else { start.elapsed() >= speed::MAX_BUDGET };
-        speed::run_frame(speed, due, spent, |sound| {
+        let ran = speed::run_frame(speed, due, spent, |sound| {
             self.set_sound(sound);
             self.tick(el)
         })?;
         self.set_sound(true);
+        if speed == Speed::X1 {
+            self.rate.clear();
+        } else {
+            self.rate.push(ran, due);
+        }
         Ok(())
     }
 
@@ -400,8 +411,9 @@ impl App {
     }
 
     /// One tick: the script's steps for it, then the game (none in the
-    /// menus or the pause menu; the script's clock runs on). Whether the
-    /// world ticked.
+    /// menus, the pause or the weapon selection; the script's clock still
+    /// counts the tick, so at 1× it keeps real time: `speed::run_frame`).
+    /// Whether the world ticked.
     fn tick(&mut self, el: &ActiveEventLoop) -> anyhow::Result<bool> {
         while let Some(step) = self.cfg.script.get(self.script_at).filter(|s| s.tick <= self.ticks).copied() {
             self.script_at += 1;
@@ -482,6 +494,7 @@ impl App {
             }
         }
         let speed = self.speed();
+        let speed_shown = (speed != Speed::X1).then(|| speed::shown(speed, self.rate.effective()));
         let Some(w) = &mut self.win else { return Ok(()) };
         let size = w.gpu.size();
         let ppp = w.window.scale_factor() as f32;
@@ -519,7 +532,7 @@ impl App {
             menus: self.cfg.menus,
             minimap,
             time,
-            speed,
+            speed: speed_shown,
         });
         let (ui_state, data) = (&self.shell.ui, &mut self.shell.data);
         let menus = self.cfg.menus;
@@ -618,10 +631,11 @@ impl App {
     /// PageUp (`faster`) or PageDown: the watched game's next speed; a
     /// game a person plays stays at 1×.
     fn change_speed(&mut self, faster: bool) {
-        if self.shell.session().is_none_or(|s| s.human) {
+        if self.shell.session().is_none_or(|s| s.human()) {
             return;
         }
         self.speed = if faster { self.speed.faster() } else { self.speed.slower() };
+        self.rate.clear();
         println!("rl-game: speed {}", self.speed.label());
     }
 

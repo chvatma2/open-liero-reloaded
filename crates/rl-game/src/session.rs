@@ -95,9 +95,10 @@ pub struct Session {
     pub player_spawns: u32,
     /// Rematches so far (the seed of rematch `n` is the match's plus `n`).
     pub rematches: u32,
-    /// A person plays worm 0 (`Assets::human_plays`); otherwise the game
-    /// is watched (a replay, bots alone) and may run fast (`speed.rs`).
-    pub human: bool,
+    /// A person plays worm 0 (`Assets::human_plays`, again at each
+    /// restart); otherwise the game is watched (a replay, bots alone) and
+    /// may run fast (`speed.rs`).
+    human: bool,
     /// The ticks play their sounds (the app thins them out when the game
     /// runs fast: `Speed::sound`). The world never sees it.
     pub sound: bool,
@@ -282,6 +283,7 @@ impl Session {
         let (world, driver) = start(a, n)?;
         anyhow::ensure!(world.worms().len() == self.shown, "the restarted match has other worms");
         let old = self.take_replay();
+        self.human = a.human_plays();
         self.rematches = n;
         self.world = world;
         self.driver = driver;
@@ -315,6 +317,12 @@ impl Session {
             Driver::Match(d) => d.replay(&self.world),
             _ => None,
         }
+    }
+
+    /// Whether a person plays worm 0; a game nobody plays (a replay, bots
+    /// alone) may run fast (`speed.rs`).
+    pub fn human(&self) -> bool {
+        self.human
     }
 
     /// Ticks since the match (re)started.

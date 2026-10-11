@@ -24,6 +24,7 @@ impl App {
                     self.last = None;
                     // A watched game starts at `--speed`.
                     self.speed = self.cfg.speed;
+                    self.rate.clear();
                     self.input.release_keys();
                 }
             }

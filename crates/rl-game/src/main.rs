@@ -165,9 +165,11 @@ struct Args {
     /// `<shot dir>/autoplay.jsonl`). A failing step ends the game with an error.
     #[arg(long)]
     autoplay: Option<PathBuf>,
-    /// Every frame is 20 ms of time and runs two ticks, whatever the clock
-    /// says (deterministic scripted runs; the first menu match's seed is 1).
-    #[arg(long)]
+    /// With --autoplay: every frame is 20 ms of time and runs two ticks,
+    /// whatever the clock says (deterministic scripted runs; the first menu
+    /// match's seed is 1). Never for a person playing: it changes the
+    /// game's speed.
+    #[arg(long, requires = "autoplay")]
     fake_clock: bool,
     /// The data directory (settings, profiles, replays, imported packs)
     /// instead of the platform's.

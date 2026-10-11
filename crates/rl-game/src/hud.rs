@@ -6,7 +6,6 @@ use egui::{Color32, Rect, TextureHandle, TextureOptions, pos2, vec2};
 use rl_ui::hud::{Dot, HudView, MinimapView, Notice, WormHud, minimap};
 
 use crate::session::{Driver, Session};
-use crate::speed::Speed;
 
 /// The results show this many ticks after the end (`GAMEOVER_WAIT`, 3 s,
 /// `CClient_Draw.cpp:893-905`); "Game Over" shows until then.
@@ -87,7 +86,7 @@ impl MinimapTexture {
 
 /// What the HUD shows of `s`: the followed worm (0), the feed, the clock
 /// and kill limit, a replay's progress, the fast-forward `speed` of a
-/// watched game (a replay, bots alone) when not 1×, the scoreboard while
+/// watched game (a replay, bots alone; `speed::shown`), the scoreboard while
 /// `scores`, the minimap (texture `minimap`; the camera's view `view` in
 /// world pixels; `time` in seconds for OLX's blink), "Game Over" until the
 /// results show, and the keys (`menus`: Esc pauses rather than quits).
@@ -100,12 +99,12 @@ pub fn view(
     time: f64,
     menus: bool,
     debug: bool,
-    speed: Speed,
+    speed: Option<&str>,
 ) -> HudView {
-    let worm = WormHud::of(&s.world, 0, &s.names, s.human);
+    let worm = WormHud::of(&s.world, 0, &s.names, s.human());
     let mut notices = Vec::new();
-    if !s.human && speed != Speed::X1 {
-        notices.push(Notice { text: format!("Fast-forward {}", speed.label()), warn: false });
+    if let Some(speed) = speed.filter(|_| !s.human()) {
+        notices.push(Notice { text: format!("Fast-forward {speed}"), warn: false });
     }
     if let Driver::Replay(d) = &s.driver {
         let (t, n) = (d.cursor.tick(), d.replay.ticks());
@@ -137,7 +136,7 @@ pub fn view(
                 Dot {
                     pos: pos2(w.pos.x, w.pos.y),
                     colour: Color32::from_rgb(r, g, b),
-                    big: i == 0 && s.human,
+                    big: i == 0 && s.human(),
                 }
             })
             .collect(),
@@ -145,7 +144,9 @@ pub fn view(
     });
     let hint = match s.driver {
         Driver::Sandbox => "Shift+arrows weapon   F2 debug   F5 restart   Esc quit",
-        Driver::Match(_) if s.human => "Shift+arrows weapon   Tab scores   F2 debug   F5 rematch   Esc quit",
+        Driver::Match(_) if s.human() => {
+            "Shift+arrows weapon   Tab scores   F2 debug   F5 rematch   Esc quit"
+        }
         Driver::Match(_) => "PgUp/PgDn speed   Tab scores   F2 debug   F5 rematch   Esc quit",
         Driver::Replay(_) => "PgUp/PgDn speed   Tab scores   F2 debug   F5 from the start   Esc quit",
     };
