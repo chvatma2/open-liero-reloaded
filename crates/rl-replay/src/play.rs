@@ -67,6 +67,7 @@ impl Replay {
                 return Err(ReplayError::Spawn { worm, at });
             }
         }
+        self.mode.validate(&self.setup.settings).map_err(ReplayError::Mode)?;
         let mut world =
             World::new(self.setup.match_setup(assets), self.mode.game_mode()).map_err(ReplayError::Setup)?;
         for (i, &call) in self.setup.calls.iter().enumerate() {

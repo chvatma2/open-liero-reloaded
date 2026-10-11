@@ -10,22 +10,24 @@ use crate::{
     CHECKSUM_EVERY, MAX_SETUP_CALLS, MAX_TICKS, ModeSpec, Packs, RecordError, Replay, ReplaySetup, SetupCall,
 };
 
-/// Follows a match: its setup calls, then every tick's keys, and the
-/// world's checksum every [`CHECKSUM_EVERY`] ticks.
+/// Follows a match: its setup calls, the world's checksum before the first
+/// tick, then every tick's keys, and the world's checksum every
+/// [`CHECKSUM_EVERY`] ticks and after the last.
 ///
 /// ```text
 /// let mut world = World::new(setup.clone(), mode.game_mode())?;
 /// let mut rec = Recorder::new(packs, &setup, &mode);
 /// rec.apply(&mut world, SetupCall::AlignPhysicsClock)?;   // instead of world.align_physics_clock()
+/// rec.start(&world)?;                                    // after the last setup call
 /// loop { world.tick(&keys, &mut out); rec.push(&keys, &world)?; }
-/// let replay = rec.finish(&world);
+/// let replay = rec.finish(&world)?;
 /// ```
 #[derive(Clone, Debug)]
 pub struct Recorder {
     setup: ReplaySetup,
     mode: ModeSpec,
     ticks: u32,
-    /// The world's server frame before the first tick.
+    /// The world's server frame at [`Recorder::start`] (`None` before).
     base_frame: Option<u64>,
     /// Column `i` holds worm `i`'s keys, one per tick.
     columns: Vec<Vec<Keys>>,
@@ -52,7 +54,7 @@ impl Recorder {
     /// before its first tick goes through here, or the replay diverges.
     /// Gives `find_spot`'s position.
     pub fn apply(&mut self, world: &mut World, call: SetupCall) -> Result<Option<(i32, i32)>, RecordError> {
-        if self.ticks > 0 {
+        if self.base_frame.is_some() {
             return Err(RecordError::Started);
         }
         if self.setup.calls.len() >= MAX_SETUP_CALLS {
@@ -63,6 +65,19 @@ impl Recorder {
         Ok(at)
     }
 
+    /// Starts recording ticks: `world` is the match's world after its last
+    /// setup call, before its first tick. Its checksum is recorded as tick
+    /// 0's, so a replay whose setup or content differs is reported before
+    /// any tick is played.
+    pub fn start(&mut self, world: &World) -> Result<(), RecordError> {
+        if self.base_frame.is_some() {
+            return Err(RecordError::Started);
+        }
+        self.base_frame = Some(world.server_frame());
+        self.checksums.push((0, world.checksum()));
+        Ok(())
+    }
+
     /// Records a tick: `keys` (as `World::tick` got them; keys from
     /// [`MAX_WORMS`] on are ignored, as the world ignores them) and `world`
     /// after it.
@@ -70,8 +85,8 @@ impl Recorder {
         if self.ticks >= MAX_TICKS {
             return Err(RecordError::Full);
         }
+        let base = self.base_frame.ok_or(RecordError::NotStarted)?;
         let frame = world.server_frame();
-        let base = *self.base_frame.get_or_insert(frame.wrapping_sub(1));
         if frame.wrapping_sub(base) != u64::from(self.ticks) + 1 {
             return Err(RecordError::OutOfStep { recorded: self.ticks, frame });
         }
@@ -94,10 +109,15 @@ impl Recorder {
         self.ticks
     }
 
-    /// The replay, ending with `world`'s checksum (the world after the last
-    /// [`Recorder::push`]). A failing match can be saved from a clone of
-    /// the recorder.
-    pub fn finish(self, world: &World) -> Replay {
+    /// The replay, ending with `world`'s checksum: `world` is the one after
+    /// the last [`Recorder::push`] (a tick played since is an error). A
+    /// failing match can be saved from a clone of the recorder.
+    pub fn finish(self, world: &World) -> Result<Replay, RecordError> {
+        let base = self.base_frame.ok_or(RecordError::NotStarted)?;
+        let frame = world.server_frame();
+        if frame.wrapping_sub(base) != u64::from(self.ticks) {
+            return Err(RecordError::OutOfStep { recorded: self.ticks, frame });
+        }
         let Recorder { setup, mode, ticks, columns, mut checksums, .. } = self;
         if checksums.last().is_none_or(|c| c.0 != ticks) {
             checksums.push((ticks, world.checksum()));
@@ -107,6 +127,6 @@ impl Recorder {
         for t in 0..ticks as usize {
             keys.extend(columns.iter().map(|c| c[t]));
         }
-        Replay { setup, mode, checksums, ticks, width, keys }
+        Ok(Replay { setup, mode, checksums, ticks, width, keys })
     }
 }

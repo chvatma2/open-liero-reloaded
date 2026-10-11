@@ -5,7 +5,10 @@
 mod common;
 
 use common::*;
-use rl_replay::{CHECKSUM_EVERY, DecodeError, FORMAT_VERSION, Mismatch, Recorder, Replay, SetupCall};
+use rl_replay::{
+    CHECKSUM_EVERY, DecodeError, FORMAT_VERSION, Mismatch, ModeSpec, RecordError, Recorder, Replay,
+    ReplayError, SetupCall,
+};
 use rl_sim::{BonusItem, Keys, TickEvents, World};
 
 /// Records `ticks` ticks of a 4-worm Deathmatch (with setup calls made
@@ -19,6 +22,7 @@ fn record(ticks: u32, seed: u32) -> (Replay, World, World) {
     rec.apply(&mut world, SetupCall::SetHealth { worm: 1, health: 30.0 }).unwrap();
     rec.apply(&mut world, SetupCall::PlaceBonus { x: 160, y: 100, item: BonusItem::Weapon(1) }).unwrap();
     rec.apply(&mut world, SetupCall::FindSpot).unwrap();
+    rec.start(&world).unwrap();
     let start = world.clone();
     let mut keys = KeyGen::new(u64::from(seed), 4, 12);
     let mut out = TickEvents::new();
@@ -29,7 +33,7 @@ fn record(ticks: u32, seed: u32) -> (Replay, World, World) {
         world.tick(row, &mut out);
         rec.push(row, &world).unwrap();
     }
-    (rec.finish(&world), start, world)
+    (rec.finish(&world).unwrap(), start, world)
 }
 
 #[test]
@@ -37,16 +41,16 @@ fn record_then_replay_gives_identical_checksums() {
     let (replay, start, end) = record(1050, 7);
     assert_eq!(replay.ticks(), 1050);
     let ticks: Vec<u32> = replay.checksums.iter().map(|c| c.0).collect();
-    let mut expected: Vec<u32> = (1..=10).map(|i| i * CHECKSUM_EVERY).collect();
+    let mut expected: Vec<u32> = (0..=10).map(|i| i * CHECKSUM_EVERY).collect();
     expected.push(1050);
-    assert_eq!(ticks, expected, "every 100 ticks, and the end");
+    assert_eq!(ticks, expected, "before the first tick, every 100 ticks, and the end");
 
     let decoded = Replay::decode(&replay.encode()).unwrap();
     assert_eq!(decoded, replay, "encoding round-trips");
     let world = decoded.world(assets()).unwrap();
     assert_eq!(world, start, "the replay rebuilds the world, setup calls included");
     let run = decoded.play(world).unwrap();
-    assert_eq!((run.ticks, run.checked), (1050, 11));
+    assert_eq!((run.ticks, run.checked), (1050, 12));
     assert_eq!(run.world.checksum(), end.checksum());
     assert_eq!(run.world, end);
 }
@@ -56,10 +60,10 @@ fn replay_reports_the_first_mismatching_tick() {
     let (replay, _, _) = record(600, 3);
     // A wrong checksum is found where it is.
     let mut bad = replay.clone();
-    bad.checksums[2].1 ^= 1;
+    bad.checksums[3].1 ^= 1;
     let err = bad.play(bad.world(assets()).unwrap()).unwrap_err();
     assert_eq!(err.tick, 300);
-    assert_eq!(err, Mismatch { tick: 300, expected: bad.checksums[2].1, actual: replay.checksums[2].1 });
+    assert_eq!(err, Mismatch { tick: 300, expected: bad.checksums[3].1, actual: replay.checksums[3].1 });
     // A changed key shows at the next checksum.
     let mut bad = replay.clone();
     for t in 150..160 {
@@ -105,17 +109,88 @@ fn bad_setup_calls_are_errors() {
     let mut rec = Recorder::new(packs(), &setup, &mode);
     assert!(rec.apply(&mut world, SetupCall::SetHealth { worm: 2, health: 1.0 }).is_err());
     assert!(rec.apply(&mut world, SetupCall::PlaceBonus { x: 1, y: 1, item: BonusItem::Weapon(9) }).is_err());
+    rec.start(&world).unwrap();
+    assert_eq!(
+        rec.apply(&mut world, SetupCall::AlignPhysicsClock),
+        Err(RecordError::Started),
+        "after the start"
+    );
     let mut out = TickEvents::new();
     world.tick(&[], &mut out);
     rec.push(&[], &world).unwrap();
-    assert!(rec.apply(&mut world, SetupCall::AlignPhysicsClock).is_err(), "after the start");
-    // A tick the recorder missed.
-    world.tick(&[], &mut out);
-    world.tick(&[], &mut out);
-    assert!(rec.push(&[], &world).is_err(), "out of step");
-    let mut replay = rec.finish(&world);
+    let mut replay = rec.finish(&world).unwrap();
     replay.setup.calls.push(SetupCall::SetHealth { worm: 5, health: 1.0 });
-    assert!(replay.world(assets()).is_err());
+    assert!(matches!(replay.world(assets()), Err(ReplayError::NoWorm { index: 0, worm: 5 })));
+}
+
+/// The recorder sees every tick of the world it records: a tick played
+/// before the first push or after the last is an error, never a replay
+/// that silently diverges.
+#[test]
+fn recorder_refuses_ticks_it_did_not_see() {
+    let (setup, mode) = deathmatch(2, 1);
+    let new =
+        || (World::new(setup.clone(), mode.game_mode()).unwrap(), Recorder::new(packs(), &setup, &mode));
+    let mut out = TickEvents::new();
+
+    let (mut world, mut rec) = new();
+    world.tick(&[], &mut out);
+    assert_eq!(rec.push(&[], &world), Err(RecordError::NotStarted));
+    assert_eq!(rec.clone().finish(&world).unwrap_err(), RecordError::NotStarted);
+    rec.start(&world).unwrap();
+    assert_eq!(rec.start(&world), Err(RecordError::Started));
+
+    // Ticks played between the start and the first push.
+    let (mut world, mut rec) = new();
+    rec.start(&world).unwrap();
+    world.tick(&[], &mut out);
+    world.tick(&[], &mut out);
+    assert!(matches!(rec.push(&[], &world), Err(RecordError::OutOfStep { recorded: 0, .. })));
+
+    // A tick played after the last push.
+    let (mut world, mut rec) = new();
+    rec.start(&world).unwrap();
+    for _ in 0..3 {
+        world.tick(&[], &mut out);
+        rec.push(&[], &world).unwrap();
+    }
+    assert_eq!(rec.clone().finish(&world).unwrap().ticks(), 3);
+    world.tick(&[], &mut out);
+    assert!(matches!(rec.finish(&world), Err(RecordError::OutOfStep { recorded: 3, .. })));
+}
+
+/// A replay whose world differs before its first tick (a setup call
+/// missing, one made outside the recorder, another seed) is reported at
+/// tick 0, not as a divergence of the simulation.
+#[test]
+fn replay_reports_a_different_setup_at_tick_0() {
+    let (replay, _, _) = record(150, 4);
+    let mut missing = replay.clone();
+    missing.setup.calls.retain(|c| !matches!(c, SetupCall::SetHealth { .. }));
+    let err = missing.play(missing.world(assets()).unwrap()).unwrap_err();
+    assert_eq!(err.tick, 0);
+    assert!(err.to_string().contains("setup differs"), "{err}");
+    let mut seed = replay.clone();
+    seed.setup.seed ^= 1;
+    assert_eq!(seed.play(seed.world(assets()).unwrap()).unwrap_err().tick, 0);
+
+    // A setup call made on the world directly, not through the recorder.
+    let (setup, mode) = deathmatch(2, 1);
+    let mut world = World::new(setup.clone(), mode.game_mode()).unwrap();
+    let mut rec = Recorder::new(packs(), &setup, &mode);
+    world.set_health(1, 40.0);
+    rec.start(&world).unwrap();
+    let mut out = TickEvents::new();
+    for _ in 0..50 {
+        world.tick(&[], &mut out);
+        rec.push(&[], &world).unwrap();
+    }
+    let replay = rec.finish(&world).unwrap();
+    let err = replay.play(replay.world(assets()).unwrap()).unwrap_err();
+    assert_eq!(err.tick, 0);
+    let mut player = replay.player();
+    let mut world = replay.world(assets()).unwrap();
+    assert_eq!(player.step(&mut world, &mut out).unwrap_err().tick, 0, "the player checks tick 0 first");
 }
 
 /// One minute (6000 ticks) of 8 worms encodes in at most 50 000 bytes
@@ -127,6 +202,7 @@ fn replay_size_is_reasonable() {
         let (setup, mode) = deathmatch(8, 2);
         let mut world = World::new(setup.clone(), mode.game_mode()).unwrap();
         let mut rec = Recorder::new(packs(), &setup, &mode);
+        rec.start(&world).unwrap();
         let mut keys = KeyGen::new(9, 8, hold);
         let mut out = TickEvents::new();
         for _ in 0..6000 {
@@ -134,8 +210,8 @@ fn replay_size_is_reasonable() {
             world.tick(&row, &mut out);
             rec.push(&row, &world).unwrap();
         }
-        let replay = rec.finish(&world);
-        assert_eq!(replay.checksums.len(), 60);
+        let replay = rec.finish(&world).unwrap();
+        assert_eq!(replay.checksums.len(), 61);
         replay.encode().len()
     };
     let random = size(1);
@@ -148,6 +224,29 @@ fn replay_size_is_reasonable() {
 mod corrupt {
     use super::*;
     use proptest::prelude::*;
+
+    type Setter = fn(&mut Replay, f32);
+
+    fn dm(r: &mut Replay) -> &mut rl_modes::DeathmatchSettings {
+        match &mut r.mode {
+            ModeSpec::Deathmatch(d) => d,
+            ModeSpec::Oracle => unreachable!("the sample is a Deathmatch"),
+        }
+    }
+
+    /// Floats of the settings and of the mode.
+    const SETTERS: [Setter; 10] = [
+        |r, v| r.setup.settings.game_speed = v,
+        |r, v| r.setup.settings.worm_gravity = v,
+        |r, v| r.setup.settings.worm_jump_force = v,
+        |r, v| r.setup.settings.rope_strength = v,
+        |r, v| r.setup.settings.respawn_time = v,
+        |r, v| r.setup.settings.bonus_frequency = v,
+        |r, v| r.setup.settings.worm_damage_factor = v,
+        |r, v| r.setup.settings.death_decreases_score = v,
+        |r, v| dm(r).death_decreases_score = v,
+        |r, v| dm(r).time_limit = v,
+    ];
 
     fn sample() -> Vec<u8> {
         static BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
@@ -177,6 +276,19 @@ mod corrupt {
                 prop_assert!(r.ticks() <= rl_replay::MAX_TICKS);
                 let _ = r.world(assets());
             }
+        }
+
+        /// Settings that are not numbers are refused by decoding, and by
+        /// building a world from a replay made in code.
+        #[test]
+        fn non_finite_settings_are_refused(
+            field in 0..SETTERS.len(),
+            value in prop_oneof![Just(f32::NAN), Just(f32::INFINITY), Just(f32::NEG_INFINITY)],
+        ) {
+            let mut r = Replay::decode(&sample()).unwrap();
+            SETTERS[field](&mut r, value);
+            prop_assert!(matches!(Replay::decode(&r.encode()), Err(DecodeError::Invalid(_))));
+            prop_assert!(r.world(assets()).is_err());
         }
 
         /// Any bytes after a good header.

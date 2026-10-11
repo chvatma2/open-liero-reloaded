@@ -131,15 +131,11 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
     if calls.len() > MAX_SETUP_CALLS {
         return invalid(format!("{} setup calls, at most {MAX_SETUP_CALLS}", calls.len()));
     }
-    if let ModeW::Deathmatch(d) = &mode {
-        if !d.time_limit.is_finite() {
-            return invalid(format!("time limit {}", d.time_limit));
-        }
-        if let RespawnW::ChaosCycle { worms, .. } = &d.respawn_loadout
-            && worms.iter().any(|&w| usize::from(w) >= MAX_WORMS)
-        {
-            return invalid("chaos worm out of range".into());
-        }
+    if let ModeW::Deathmatch(d) = &mode
+        && let RespawnW::ChaosCycle { worms, .. } = &d.respawn_loadout
+        && worms.iter().any(|&w| usize::from(w) >= MAX_WORMS)
+    {
+        return invalid("chaos worm out of range".into());
     }
     let (width, size) = (usize::from(width), ticks as usize * usize::from(width));
     let columns = miniz_oxide::inflate::decompress_to_vec_with_limit(&keys, size)
@@ -163,7 +159,12 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
         bonus_weapons,
         calls: calls.into_iter().map(Into::into).collect(),
     };
-    Ok(Replay { setup, mode: mode.into(), checksums, ticks, width, keys })
+    // NaN, infinities and values outside OLX's ranges, before anything
+    // computes with them (`World::new` and `Replay::world` check them again).
+    setup.settings.validate().map_err(|e| DecodeError::Invalid(format!("settings: {}", e.0)))?;
+    let mode: crate::ModeSpec = mode.into();
+    mode.validate(&setup.settings).map_err(|e| DecodeError::Invalid(format!("mode: {e}")))?;
+    Ok(Replay { setup, mode, checksums, ticks, width, keys })
 }
 
 #[cfg(test)]

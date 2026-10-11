@@ -62,13 +62,16 @@ impl Content {
     /// it differs from the recorded content: [`Content::replay_assets`]).
     pub fn world_for_replay(&self, replay: &Replay) -> anyhow::Result<World> {
         let assets = self.replay_assets(&replay.setup)?;
-        replay.world(assets).map_err(|e| anyhow::anyhow!("{e}"))
+        replay.world(assets).map_err(anyhow::Error::new)
     }
 
     /// Plays `replay` on this content to its end, checking every recorded
-    /// checksum: the first that differs is the error.
+    /// checksum: the first that differs is the error, an
+    /// [`rl_replay::Mismatch`] (`downcast_ref` gives its tick). A world that
+    /// cannot be built is an [`rl_replay::ReplayError`], or a context error
+    /// for missing or different packs.
     pub fn play_replay(&self, replay: &Replay) -> anyhow::Result<ReplayRun> {
         let world = self.world_for_replay(replay)?;
-        replay.play(world).map_err(|e| anyhow::anyhow!("{e}"))
+        replay.play(world).map_err(anyhow::Error::new)
     }
 }

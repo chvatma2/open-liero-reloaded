@@ -14,7 +14,7 @@ use rl_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
 use rl_data::mod_def::*;
 use rl_data::theme::{Theme, ThemeDef};
 use rl_modes::{ChaosCycle, Deathmatch, DeathmatchSettings, RespawnLoadout};
-use rl_replay::{FORMAT_VERSION, ModeSpec, Recorder, Replay, SetupCall};
+use rl_replay::{FORMAT_VERSION, Mismatch, ModeSpec, Recorder, Replay, ReplayError, SetupCall};
 use rl_sim::{Keys, SimSettings, TickEvents, World};
 use rl_vfs::DirFs;
 
@@ -151,13 +151,14 @@ fn record(c: &Content) -> Replay {
     let mut world = World::new(setup.clone(), Box::new(game)).unwrap();
     let mut rec = Recorder::new(c.replay_packs(&sandbox.mod_id, &sandbox.level_id).unwrap(), &setup, &mode);
     rec.apply(&mut world, SetupCall::AlignPhysicsClock).unwrap();
+    rec.start(&world).unwrap();
     let mut out = TickEvents::new();
     for t in 0..300u32 {
         let k = [Keys(if t % 40 < 20 { Keys::LEFT | Keys::FIRE } else { Keys::RIGHT }), Keys(Keys::JUMP)];
         world.tick(&k, &mut out);
         rec.push(&k, &world).unwrap();
     }
-    rec.finish(&world)
+    rec.finish(&world).unwrap()
 }
 
 /// Review Focus 3: a replay against content with another hash, missing
@@ -170,7 +171,17 @@ fn replay_refuses_mismatched_content() {
     let replay = record(&c);
     assert_eq!(replay.setup.packs.theme.id, "pit-theme");
     let run = c.play_replay(&replay).unwrap();
-    assert_eq!(run.ticks, 300);
+    assert_eq!((run.ticks, run.checked), (300, 4));
+
+    // The errors stay typed, for `rl-cli replay` to read the tick.
+    let mut diverged = replay.clone();
+    diverged.checksums[2].1 ^= 1;
+    let err = c.play_replay(&diverged).unwrap_err();
+    assert_eq!(err.downcast_ref::<Mismatch>().map(|m| m.tick), Some(200), "{err}");
+    let mut bad_call = replay.clone();
+    bad_call.setup.calls.push(SetupCall::SetHealth { worm: 9, health: 1.0 });
+    let err = c.world_for_replay(&bad_call).unwrap_err();
+    assert!(matches!(err.downcast_ref::<ReplayError>(), Some(ReplayError::NoWorm { worm: 9, .. })), "{err}");
 
     let mut other = replay.clone();
     other.setup.packs.mod_pack.hash = "0".repeat(64);
@@ -239,6 +250,7 @@ fn bot_match_replays_from_content() {
     let game = Deathmatch::prepare(dm, &mut setup).unwrap();
     let mut world = World::new(setup.clone(), Box::new(game)).unwrap();
     let mut rec = Recorder::new(c.replay_packs(mod_id, level_id).unwrap(), &setup, &mode);
+    rec.start(&world).unwrap();
     let cache = AreaCache::new(world.terrain());
     let mut bots: Vec<Bot> =
         (0..n).map(|i| Bot::with_cache(i, cfg(i), seed, &world, Arc::clone(&cache))).collect();
@@ -251,12 +263,12 @@ fn bot_match_replays_from_content() {
         world.tick(&keys, &mut out);
         rec.push(&keys, &world).unwrap();
     }
-    let replay = rec.finish(&world);
+    let replay = rec.finish(&world).unwrap();
     let bytes = replay.encode();
     eprintln!("one minute of 8 bots on Classic: {} bytes", bytes.len());
     // About 12.6 KB (seed 21); the bound leaves room for changes to the bots.
     assert!(bytes.len() <= 20_000, "{} bytes", bytes.len());
     let run = c.play_replay(&Replay::decode(&bytes).unwrap()).unwrap();
-    assert_eq!((run.ticks, run.checked), (6000, 60));
+    assert_eq!((run.ticks, run.checked), (6000, 61));
     assert_eq!(run.world, world);
 }

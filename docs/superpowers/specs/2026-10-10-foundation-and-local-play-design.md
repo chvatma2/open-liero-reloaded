@@ -840,9 +840,11 @@ Made precise while implementing replays (plan 6 task 6):
   `find_spot`, `align_physics_clock`), which go through `Recorder::apply`.
 - **Keys are recorded as `World::tick` got them** (rows may be short or grow
   with worms spawned mid-match; missing keys are none pressed), checksums
-  after every 100th tick and after the last; `Recorder::finish` takes the
-  final world for that last checksum. A mismatch reports the checksum's
-  tick: the divergence is in the 100 ticks before it.
+  before the first tick (`Recorder::start`, after the setup calls), after
+  every 100th tick and after the last; `Recorder::finish` takes the final
+  world for that last checksum and checks it saw every tick. A mismatch at
+  tick 0 is a different setup or content; a later one reports the
+  checksum's tick: the divergence is in the 100 ticks before it.
 - **Format:** `RLRP`, a `u16` version (1), postcard; keys stored by worm and
   deflated. One minute of 8 worms is at most 50 000 bytes whatever the keys
   (8 bots on Classic: about 12.6 KB). Other versions are refused.

@@ -2,7 +2,8 @@
 
 Match replays (spec §20 F8): the setup a match started from, every worm's
 keys for every tick (bots included: bots are not replayed, their keys are),
-and the world's checksum every `CHECKSUM_EVERY` (100) ticks and at the end.
+and the world's checksum before the first tick, every `CHECKSUM_EVERY` (100)
+ticks and at the end.
 
 - **Layer 3, `#![no_std]` + `alloc`, wasm32.** Depends on `rl-sim` and
   `rl-modes` (same-layer pairs in `xtask/layers.ron`), `rl-math`,
@@ -19,12 +20,16 @@ and the world's checksum every `CHECKSUM_EVERY` (100) ticks and at the end.
   every change to the world before its first tick goes through
   `Recorder::apply(&mut world, SetupCall)` (`set_health`, `place_bonus`,
   `find_spot`, `align_physics_clock`), or the replay diverges; then
-  `push(&keys, &world)` after each `World::tick` (it refuses a world out of
-  step), and `finish(&world)`.
+  `start(&world)` (tick 0's checksum: a different setup or content is
+  reported at tick 0), `push(&keys, &world)` after each `World::tick`, and
+  `finish(&world)`. `push` and `finish` refuse a world whose server frame
+  is not `start`'s plus the ticks pushed (a tick played unrecorded).
 - **Replaying** (`play.rs`): `Replay::world(Assets)` rebuilds the world
   (`rl-content`'s `Content::world_for_replay` resolves the packs and refuses
   other content hashes); `Replay::play(world)` or a `Player` stepping a tick
   at a time checks each checksum and reports the first `Mismatch`.
+  `rl-content` returns `Mismatch` and `ReplayError` inside `anyhow::Error`
+  typed: `downcast_ref::<Mismatch>()` gives the tick.
 - **Format** (`wire.rs`, `mirror.rs`): `RLRP`, `FORMAT_VERSION` (u16 LE),
   then postcard; keys by worm, deflated. Other versions are refused, never
   migrated, while no replay is published. The format has its own copies of
@@ -33,8 +38,10 @@ and the world's checksum every `CHECKSUM_EVERY` (100) ticks and at the end.
   it is recorded and `FORMAT_VERSION` is bumped.
 - **Never panic on a replay:** `decode` checks every bound (`MAX_TICKS`,
   `MAX_WORMS`, `MAX_SLOTS`, `MAX_SETUP_CALLS`, ordered checksums, the keys'
-  exact size, inflated with a limit); `Replay::world` refuses off-level
-  spawns and bad setup calls; `World::new` checks the settings.
+  exact size, inflated with a limit, settings and mode numbers in OLX's
+  ranges: `SimSettings::validate`, `ModeSpec::validate`); `Replay::world`
+  checks the mode again and refuses off-level spawns and bad setup calls;
+  `World::new` checks the settings.
 
 Test: `cargo nextest run -p rl-replay` (`tests/content.rs` writes small packs
 to a temporary directory; its bot match needs `RL_CONTENT_DIR`).

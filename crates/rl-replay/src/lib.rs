@@ -161,6 +161,21 @@ impl ModeSpec {
             ModeSpec::Deathmatch(s) => Box::new(Deathmatch::new(s.clone())),
         }
     }
+
+    /// Checks the mode's numbers as `Deathmatch::prepare` and
+    /// `SimSettings::validate` would: a finite time limit, and lives, kill
+    /// limit and `death_decreases_score` in OLX's ranges (applied to
+    /// `settings`, the match's). Spree thresholds are only compared with
+    /// counts (`Deathmatch::kill`), so any value is harmless.
+    pub fn validate(&self, settings: &SimSettings) -> Result<(), String> {
+        let ModeSpec::Deathmatch(d) = self else { return Ok(()) };
+        if !d.time_limit.is_finite() {
+            return Err(alloc::format!("time limit {} is not a number of minutes", d.time_limit));
+        }
+        let mut s = settings.clone();
+        d.apply(&mut s);
+        s.validate().map_err(|e| e.0)
+    }
 }
 
 /// A recorded match.

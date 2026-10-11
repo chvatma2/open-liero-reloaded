@@ -34,23 +34,26 @@ impl fmt::Display for DecodeError {
 /// Why a [`crate::Recorder`] refused a call.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RecordError {
-    /// A setup call after the first tick.
+    /// A setup call, or [`crate::Recorder::start`], after `start`.
     Started,
+    /// [`crate::Recorder::push`] or `finish` before [`crate::Recorder::start`].
+    NotStarted,
     /// More than [`crate::MAX_SETUP_CALLS`] setup calls.
     TooManyCalls,
     /// The world refused the setup call.
     Call(ReplayError),
     /// [`crate::MAX_TICKS`] ticks are recorded already.
     Full,
-    /// The world's frame is not the one after the last recorded: a tick was
-    /// played without being recorded (or recorded twice).
+    /// The world's frame is not the one the recorded ticks lead to: a tick
+    /// was played without being recorded (or recorded twice).
     OutOfStep { recorded: u32, frame: u64 },
 }
 
 impl fmt::Display for RecordError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RecordError::Started => write!(f, "setup call after the first tick"),
+            RecordError::Started => write!(f, "the recording started already"),
+            RecordError::NotStarted => write!(f, "the recording has not started (Recorder::start)"),
             RecordError::TooManyCalls => write!(f, "more than {} setup calls", crate::MAX_SETUP_CALLS),
             RecordError::Call(e) => write!(f, "{e}"),
             RecordError::Full => write!(f, "the replay is full ({} ticks)", crate::MAX_TICKS),
@@ -74,6 +77,8 @@ pub enum ReplayError {
     Health { index: usize },
     /// Setup call `index`'s bonus was refused.
     Bonus { index: usize, error: PlaceBonusError },
+    /// The mode's settings are not numbers or outside OLX's ranges.
+    Mode(String),
 }
 
 impl fmt::Display for ReplayError {
@@ -88,6 +93,7 @@ impl fmt::Display for ReplayError {
             ReplayError::Bonus { index, error } => {
                 write!(f, "replay setup call {index}: bonus refused: {error}")
             }
+            ReplayError::Mode(m) => write!(f, "replay mode: {m}"),
         }
     }
 }
@@ -106,6 +112,13 @@ pub struct Mismatch {
 
 impl fmt::Display for Mismatch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.tick == 0 {
+            return write!(
+                f,
+                "replay setup differs: checksum {:016x} before the first tick, recorded {:016x}",
+                self.actual, self.expected
+            );
+        }
         write!(
             f,
             "replay diverged by tick {}: checksum {:016x}, recorded {:016x}",
