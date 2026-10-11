@@ -42,6 +42,23 @@ on screen or offscreen.
   llvmpipe on GL) so goldens are the same everywhere; `WGPU_BACKEND` and
   the other `WGPU_*` variables narrow the choice. `render_to_image`,
   `render_to_png`, `read_texture`. `NoAdapter` means skip, never panic.
+  `Offscreen::open(&OffscreenOptions)` chooses otherwise (`new()` is
+  `open` of the default, unchanged): `prefer: AdapterPreference::Hardware`
+  ranks a discrete GPU, then an integrated one, software last; `backends`
+  replaces what `WGPU_BACKEND` allows; `timestamps` asks for
+  `Features::TIMESTAMP_QUERY` when the adapter has it. `list_adapters`
+  lists every adapter found (`rl-cli gpu-bench --list-adapters`).
+- **Bench only (plan 8)**, off by default so goldens cannot move:
+  `enable_gpu_timing` (true when the device has timestamps) and
+  `gpu_times` (`timing.rs`: slot 0 at the world pass's start, 1 at the
+  upscale pass's end, 2 and 3 around the probe; only the slots a frame
+  wrote are resolved, the probe's only when it ran, since Vulkan resolves
+  with a wait; reading waits for the frame, so offscreen only; each frame
+  is read once). `set_probe(Some(Probe { passes, taps }))` (`probe.rs`,
+  `probe.wgsl`, clamped to `MAX_PROBE_PASSES`/`MAX_PROBE_TAPS`): after
+  each frame, `passes` ping-pong blur passes of `taps` taps at the
+  output's size into the probe's own two textures; the picture never
+  changes. `None`, the default, runs none.
 - **Goldens** (`rl-cli/tests/render_golden.rs`, `fixtures/render/frame-*.png`):
   `rl-cli render` of one oracle scenario per level (`dig` on Dirt Level,
   `rope` on Liero Factory, `weapons/classic/bazooka` on FossilFacility,

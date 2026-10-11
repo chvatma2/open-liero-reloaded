@@ -3,7 +3,7 @@
 
 use rl_data::image::{Rgba, RgbaImage};
 use rl_data::level::{Material, MaterialGrid};
-use rl_render::{Offscreen, RenderSettings, Renderer, UpscaleFilter};
+use rl_render::{Offscreen, OffscreenOptions, Probe, RenderSettings, Renderer, UpscaleFilter};
 use rl_scene::{AtlasId, AtlasImage, DrawList, Item, Layer, Line, Rect, Sprite, View};
 use rl_terrain::{ColorEdit, ColorMap, Stamp, Terrain, ThemeArt};
 
@@ -203,4 +203,56 @@ fn srgb_targets_show_the_same_colours() {
     let got = gpu.read_texture(&texture);
     let off = want.as_raw().iter().zip(got.as_raw()).map(|(a, b)| a.abs_diff(*b)).max();
     assert!(off <= Some(1), "an sRGB target stores the same bytes, give or take rounding: {off:?}");
+}
+
+/// The shader-headroom probe draws into textures of its own: the picture
+/// is the same with it as without.
+#[test]
+fn the_probe_never_changes_the_picture() {
+    let Some(gpu) = offscreen() else { return };
+    let l = list(View { x: 10.0, y: 10.0, w: 64.0, h: 36.0 });
+    let mut plain = gpu.renderer(RenderSettings::default());
+    plain.upload_terrain(&map());
+    let mut probed = gpu.renderer(RenderSettings::default());
+    probed.upload_terrain(&map());
+    probed.set_probe(Some(Probe { passes: 4, taps: 9 }));
+    let a = gpu.render_to_image(&mut plain, &l, (256, 144));
+    let b = gpu.render_to_image(&mut probed, &l, (256, 144));
+    assert_eq!(a.as_raw(), b.as_raw());
+}
+
+/// GPU timing reports a frame (and the probe) when the device has
+/// timestamps, and nothing otherwise; it never fails. The first frame runs
+/// no probe, so its slots are never written: only the frame's are resolved.
+#[test]
+fn gpu_timing_reports_when_the_device_has_timestamps() {
+    if std::env::var_os("RL_GPU_TESTS").is_none() {
+        return;
+    }
+    let Ok(gpu) =
+        rl_render::Offscreen::open(&OffscreenOptions { timestamps: true, ..OffscreenOptions::default() })
+    else {
+        return;
+    };
+    let has = gpu.device().features().contains(wgpu::Features::TIMESTAMP_QUERY);
+    eprintln!("adapter: {}; timestamps: {has}", gpu.adapter_info().name);
+    let mut r = gpu.renderer(RenderSettings::default());
+    r.upload_terrain(&map());
+    assert_eq!(r.enable_gpu_timing(), has);
+    let l = list(View { x: 10.0, y: 10.0, w: 64.0, h: 36.0 });
+    let _ = gpu.render_to_image(&mut r, &l, (256, 144));
+    match r.gpu_times() {
+        Some(t) => assert!(has && t.frame_ms.is_finite() && t.frame_ms >= 0.0 && t.probe_ms == 0.0, "{t:?}"),
+        None => assert!(!has, "timestamps were asked for and offered"),
+    }
+    r.set_probe(Some(Probe { passes: 2, taps: 4 }));
+    let _ = gpu.render_to_image(&mut r, &l, (256, 144));
+    match r.gpu_times() {
+        Some(t) => {
+            eprintln!("{t:?}");
+            assert!(has && t.frame_ms.is_finite() && t.frame_ms >= 0.0 && t.probe_ms >= 0.0, "{t:?}");
+        }
+        None => assert!(!has, "timestamps were asked for and offered"),
+    }
+    assert_eq!(r.gpu_times(), None, "each frame is read once");
 }

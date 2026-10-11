@@ -53,8 +53,15 @@ impl Renderer {
         let mut encoder =
             self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("rl-render") });
         let world = &self.target.as_ref().expect("ensured above");
+        let stamp = |begin: Option<u32>, end: Option<u32>| {
+            self.timer.as_ref().map(|t| wgpu::RenderPassTimestampWrites {
+                query_set: &t.set,
+                beginning_of_pass_write_index: begin,
+                end_of_pass_write_index: end,
+            })
+        };
         {
-            let mut pass = begin(&mut encoder, "rl-render world", &world.view);
+            let mut pass = begin(&mut encoder, "rl-render world", &world.view, stamp(Some(0), None));
             pass.set_pipeline(&self.world_pipeline);
             pass.set_bind_group(0, &self.globals_bind, &[]);
             pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
@@ -71,10 +78,17 @@ impl Renderer {
             }
         }
         {
-            let mut pass = begin(&mut encoder, "rl-render upscale", target);
+            let mut pass = begin(&mut encoder, "rl-render upscale", target, stamp(None, Some(1)));
             pass.set_pipeline(&self.upscale_pipeline);
             pass.set_bind_group(0, &world.bind, &[]);
             pass.draw(0..3, 0..1);
+        }
+        if let Some(p) = self.probe.as_mut() {
+            p.encode(&self.device, &self.queue, &mut encoder, (area[2], area[3]), self.timer.as_ref());
+        }
+        let probing = self.probe.as_ref().is_some_and(|p| p.probe.passes > 0);
+        if let Some(t) = self.timer.as_mut() {
+            t.resolve(&mut encoder, probing);
         }
         self.queue.submit([encoder.finish()]);
     }
@@ -105,11 +119,13 @@ impl Renderer {
     }
 }
 
-/// A render pass that clears `view` to black.
+/// A render pass that clears `view` to black, writing `timestamps` (GPU
+/// timing, bench only) when given.
 fn begin<'e>(
     encoder: &'e mut wgpu::CommandEncoder,
     label: &str,
     view: &wgpu::TextureView,
+    timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
 ) -> wgpu::RenderPass<'e> {
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
@@ -123,7 +139,7 @@ fn begin<'e>(
             },
         })],
         depth_stencil_attachment: None,
-        timestamp_writes: None,
+        timestamp_writes: timestamps,
         occlusion_query_set: None,
         multiview_mask: None,
     })

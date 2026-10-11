@@ -10,6 +10,11 @@ use crate::frame::Instance;
 use crate::upscale::UpscaleFilter;
 
 mod pass;
+mod probe;
+mod timing;
+
+pub use probe::{MAX_PROBE_PASSES, MAX_PROBE_TAPS, Probe};
+pub use timing::{GpuTimes, gpu_times};
 
 /// The world pass's and atlas's texel format (gamma-space RGBA, like OLX's
 /// surfaces: blending happens on the stored bytes).
@@ -66,6 +71,10 @@ pub struct Renderer {
     instance_buffer: wgpu::Buffer,
     dirty: Vec<rl_terrain::Rect>,
     warnings: Vec<String>,
+    /// GPU timestamps of every frame (bench only: [`Renderer::enable_gpu_timing`]).
+    timer: Option<timing::Timer>,
+    /// The shader-headroom probe (bench only: [`Renderer::set_probe`]).
+    probe: Option<probe::ProbeState>,
 }
 
 fn texture(
@@ -269,6 +278,8 @@ impl Renderer {
             instance_buffer,
             dirty: Vec::with_capacity(ColorMap::MAX_DIRTY + 1),
             warnings: Vec::new(),
+            timer: None,
+            probe: None,
         }
     }
 
@@ -309,6 +320,33 @@ impl Renderer {
     /// largest frame's next power of two; the soak test watches it).
     pub fn instance_buffer_bytes(&self) -> u64 {
         self.instance_buffer.size()
+    }
+
+    /// Bench only (plan 8): time every frame on the GPU from now on, when
+    /// the device has `Features::TIMESTAMP_QUERY` (an `Offscreen` opened
+    /// with `timestamps`). Returns whether it does.
+    pub fn enable_gpu_timing(&mut self) -> bool {
+        if !self.device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            return false;
+        }
+        if self.timer.is_none() {
+            self.timer = Some(timing::Timer::new(&self.device, &self.queue));
+        }
+        true
+    }
+
+    /// The last frame's GPU times (waits for it); `None` without timing,
+    /// or when no frame was drawn since the last call.
+    pub fn gpu_times(&mut self) -> Option<GpuTimes> {
+        let device = self.device.clone();
+        self.timer.as_mut()?.read(&device)
+    }
+
+    /// Bench only (the shader-headroom probe, plan 8): `Some` runs the
+    /// probe's passes after every frame, into textures of its own (the
+    /// picture is unchanged); `None`, the default, runs none.
+    pub fn set_probe(&mut self, probe: Option<Probe>) {
+        self.probe = probe.map(|p| probe::ProbeState::new(&self.device, p.clamped()));
     }
 
     /// The terrain texture (for tests and tools that read it back).

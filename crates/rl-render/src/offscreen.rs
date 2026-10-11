@@ -31,32 +31,93 @@ pub struct Offscreen {
     info: wgpu::AdapterInfo,
 }
 
-/// The adapter offscreen renders prefer: a software rasteriser (lavapipe
-/// through Vulkan, then llvmpipe through GL) draws the same pixels on every
-/// machine, so goldens compare tightly; any other adapter comes last.
-fn rank(info: &wgpu::AdapterInfo) -> u8 {
-    match (info.device_type, info.backend) {
-        (wgpu::DeviceType::Cpu, wgpu::Backend::Vulkan) => 0,
-        (wgpu::DeviceType::Cpu, _) => 1,
-        _ => 2,
+/// Which adapter an [`Offscreen`] prefers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AdapterPreference {
+    /// lavapipe, then llvmpipe, then the rest: goldens draw the same everywhere.
+    #[default]
+    Software,
+    /// A discrete GPU, then an integrated one, then the rest, software last
+    /// (the performance envelope, plan 8).
+    Hardware,
+}
+
+/// How an [`Offscreen`] opens; the default is [`Offscreen::new`]'s.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OffscreenOptions {
+    pub prefer: AdapterPreference,
+    /// Only these backends (else what `WGPU_BACKEND` allows).
+    pub backends: Option<wgpu::Backends>,
+    /// Ask for `Features::TIMESTAMP_QUERY` when the adapter has it (bench only).
+    pub timestamps: bool,
+}
+
+/// An adapter's place in `prefer`'s order (lowest first). Software: a
+/// software rasteriser (lavapipe through Vulkan, then llvmpipe through GL)
+/// draws the same pixels on every machine, so goldens compare tightly; any
+/// other adapter comes last.
+fn rank(info: &wgpu::AdapterInfo, prefer: AdapterPreference) -> u8 {
+    use wgpu::{Backend, DeviceType};
+    match prefer {
+        AdapterPreference::Software => match (info.device_type, info.backend) {
+            (DeviceType::Cpu, Backend::Vulkan) => 0,
+            (DeviceType::Cpu, _) => 1,
+            _ => 2,
+        },
+        AdapterPreference::Hardware => match info.device_type {
+            DeviceType::DiscreteGpu => 0,
+            DeviceType::IntegratedGpu => 1,
+            DeviceType::VirtualGpu | DeviceType::Other => 2,
+            DeviceType::Cpu => 3,
+        },
     }
 }
 
+/// A surfaceless instance: `backends`, else what the `WGPU_*` variables allow.
+fn instance(backends: Option<wgpu::Backends>) -> wgpu::Instance {
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    if let Some(b) = backends {
+        desc.backends = b;
+    }
+    wgpu::Instance::new(desc)
+}
+
+/// Every adapter wgpu finds (for `rl-cli gpu-bench --list-adapters`).
+pub fn list_adapters(backends: Option<wgpu::Backends>) -> Vec<wgpu::AdapterInfo> {
+    let i = instance(backends);
+    pollster::block_on(i.enumerate_adapters(backends.unwrap_or(wgpu::Backends::all())))
+        .iter()
+        .map(|a| a.get_info())
+        .collect()
+}
+
 impl Offscreen {
-    /// Opens the preferred adapter ([`rank`]); `WGPU_BACKEND` and the other
-    /// `WGPU_*` variables narrow the choice.
+    /// Opens the preferred software adapter ([`OffscreenOptions::default`]).
     pub fn new() -> Result<Offscreen, NoAdapter> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-        let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
-        adapters.sort_by_key(|a| rank(&a.get_info()));
+        Offscreen::open(&OffscreenOptions::default())
+    }
+
+    /// Opens an adapter as `o` says; `WGPU_BACKEND` and the other `WGPU_*`
+    /// variables narrow the choice unless `o.backends` is given.
+    pub fn open(o: &OffscreenOptions) -> Result<Offscreen, NoAdapter> {
+        let instance = instance(o.backends);
+        let mut adapters =
+            pollster::block_on(instance.enumerate_adapters(o.backends.unwrap_or(wgpu::Backends::all())));
+        adapters.sort_by_key(|a| rank(&a.get_info(), o.prefer));
         let adapter = match adapters.into_iter().next() {
             Some(a) => a,
             None => pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
                 .map_err(|e| NoAdapter(e.to_string()))?,
         };
         let info = adapter.get_info();
+        let required_features = if o.timestamps {
+            adapter.features() & wgpu::Features::TIMESTAMP_QUERY
+        } else {
+            wgpu::Features::empty()
+        };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("rl-render offscreen"),
+            required_features,
             required_limits: adapter.limits(),
             ..Default::default()
         }))

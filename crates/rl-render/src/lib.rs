@@ -26,6 +26,11 @@ mod upscale;
 pub use atlas::{AtlasLayout, PackedAtlas, TexRect, WHITE, pack};
 pub use diff::{ImageDiff, perceptual_diff};
 pub use frame::{Instance, MARGIN, MAX_VIEW, MISSING, WorldFrame, push_instances, terrain_instance};
-pub use offscreen::{NoAdapter, OUTPUT_FORMAT, Offscreen};
-pub use renderer::{MIN_SCALE, RenderSettings, Renderer, WORLD_FORMAT};
+pub use offscreen::{
+    AdapterPreference, NoAdapter, OUTPUT_FORMAT, Offscreen, OffscreenOptions, list_adapters,
+};
+pub use renderer::{
+    GpuTimes, MAX_PROBE_PASSES, MAX_PROBE_TAPS, MIN_SCALE, Probe, RenderSettings, Renderer, WORLD_FORMAT,
+    gpu_times,
+};
 pub use upscale::{UpscaleFilter, dest_rect, dest_rect_in};
