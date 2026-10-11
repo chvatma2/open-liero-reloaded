@@ -54,8 +54,13 @@ pub fn full(offline: bool) -> anyhow::Result<bool> {
 pub const FULL_TESTS: &[(&str, &str)] = &[("rl-cli", "grid")];
 
 /// The test targets of the GPU tier as `(package, test target)`.
-pub const GPU_TESTS: &[(&str, &str)] =
-    &[("rl-render", "gpu"), ("rl-cli", "render_golden"), ("rl-game", "soak"), ("rl-ui", "hud_snapshots")];
+pub const GPU_TESTS: &[(&str, &str)] = &[
+    ("rl-render", "gpu"),
+    ("rl-cli", "render_golden"),
+    ("rl-cli", "gpu_bench"),
+    ("rl-game", "soak"),
+    ("rl-ui", "hud_snapshots"),
+];
 
 /// Whether `rl-render`'s `adapter` example opens a graphics adapter:
 /// `Ok(Ok(adapter))` when it does, `Ok(Err(notice))` when none opens, `Err`

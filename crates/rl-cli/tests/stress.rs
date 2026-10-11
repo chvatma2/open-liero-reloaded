@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+use rl_cli::assets::LevelAssets;
 use rl_cli::spec::Personality;
 use rl_cli::stress::{self, Config, Spread};
 
@@ -112,4 +113,35 @@ fn a_generated_level_plays_and_replays() {
     let huge = stress::spec("olx-classic", "gen-4096x4096-a8-s1", 2, 3000, 0.05, 1);
     let e = stress::run(&content, &Config::new(huge), &mut |_| {}).unwrap_err();
     assert!(format!("{e:#}").contains("generated level"), "{e:#}");
+}
+
+/// A replay plays only on the assets it was recorded on (`LevelAssets::
+/// replay_world`), a pack level's as a generated one's: `gpu-bench` draws
+/// a replay on what its packs name, and other assets would make another
+/// match without a word.
+#[test]
+fn a_replay_plays_only_on_its_own_assets() {
+    let Some(content) = content() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    for (level, other) in
+        [("olx-level-dirt-level", "olx-level-castlestrike"), ("gen-256x256-a1-s1", "gen-256x256-a1-s2")]
+    {
+        let file = tmp.path().join(format!("{level}.rlrp"));
+        let spec = stress::spec("olx-classic", level, 2, 3000, 0.5, 1);
+        stress::run(
+            &content,
+            &Config { verify: false, record: Some(file.clone()), ..Config::new(spec) },
+            &mut |_| {},
+        )
+        .unwrap();
+        let replay = rl_replay::Replay::decode(&std::fs::read(&file).unwrap()).unwrap();
+        let own = LevelAssets::load(&content, "olx-classic", level).unwrap();
+        assert!(own.replay_world(&content, &replay).is_ok(), "{level}");
+        let wrong = LevelAssets::load(&content, "olx-classic", other).unwrap();
+        let e = wrong
+            .replay_world(&content, &replay)
+            .err()
+            .unwrap_or_else(|| panic!("{level} played on {other}"));
+        assert!(format!("{e:#}").contains("the replay was recorded on"), "{level}: {e:#}");
+    }
 }

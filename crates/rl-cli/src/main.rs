@@ -1,5 +1,6 @@
 //! `rl-cli`: headless tools for rust-liero. Run `rl-cli --help`.
 
+mod gpu_bench_cmd;
 mod import;
 mod match_cmd;
 mod render;
@@ -38,6 +39,9 @@ enum Command {
     /// OLX's projectile pool or a larger one; prints tick, bot, pool, entity,
     /// event, render and memory figures.
     Stress(stress_cmd::Args),
+    /// Draw a recorded match offscreen at several sizes on the GPU, timing the CPU
+    /// and (with timestamps) the GPU, plus the shader-headroom probe (plan 8).
+    GpuBench(gpu_bench_cmd::Args),
     /// Validate packs; exits with status 1 if any pack has errors.
     Validate {
         /// Pack directories, or directories containing pack directories.
@@ -54,6 +58,7 @@ fn main() -> ExitCode {
         Command::Match(args) => match_cmd::run(&args),
         Command::Replay(args) => replay_cmd::run(&args),
         Command::Stress(args) => stress_cmd::run(&args),
+        Command::GpuBench(args) => gpu_bench_cmd::run(&args),
         Command::Validate { paths } => validate::run(&paths),
     };
     match result {

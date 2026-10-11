@@ -135,6 +135,8 @@ pub struct App {
     shot_name: Option<String>,
     /// What stopped the game, if something went wrong.
     pub error: Option<anyhow::Error>,
+    /// The surface's size at the last frame drawn (`--frame-log`).
+    drawn_size: (u32, u32),
 }
 
 /// Whether egui hears window event `event`: not a key while the options
@@ -246,6 +248,7 @@ impl App {
             video,
             flushed: None,
             error: None,
+            drawn_size: (0, 0),
         }
     }
 
@@ -257,6 +260,11 @@ impl App {
             self.meter.summary(),
             self.clock.dropped(),
         )
+    }
+
+    /// `--frame-log`: the run's frames after `skip_s` seconds (plan 8).
+    pub fn frame_log(&self, skip_s: f64) -> crate::stats::FrameLog {
+        self.meter.frame_log(skip_s, self.drawn_size, &self.stats.gpu)
     }
 
     /// A Deathmatch's bots and kills over the run, for the exit summary
@@ -583,6 +591,7 @@ impl App {
         let speed_shown = (speed != Speed::X1).then(|| speed::shown(speed, self.rate.effective()));
         let Some(w) = &mut self.win else { return Ok(()) };
         let size = w.gpu.size();
+        self.drawn_size = size;
         let native = w.window.scale_factor() as f32;
         // The UI's scale follows the height (in game the 16:9 frame's), not
         // the display's DPI; a change shows from the next frame.

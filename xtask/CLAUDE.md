@@ -10,8 +10,11 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   fails listing the files (`differences`) if `content/packs` is stale.
   `--offline` skips it: the tests run on the committed packs.
 - `full` runs `check`, then `bot-grid` (`check::FULL_TESTS`: `rl-cli`'s
-  `tests/grid.rs` with `RL_FULL_TESTS=1`), then the GPU and audio steps,
-  then `e2e`, `bench` and `stress`.
+  `tests/grid.rs` with `RL_FULL_TESTS=1`), then the GPU step
+  (`check::GPU_TESTS` with `RL_GPU_TESTS=1`: `rl-render`'s `gpu`,
+  `rl-cli`'s `render_golden` and `gpu_bench` (plan 8's `gpu-bench` on the
+  software adapter), `rl-game`'s `soak`, `rl-ui`'s `hud_snapshots`) and the
+  audio step, then `e2e`, `bench` and `stress`.
 - `bench` (`bench.rs`, also `cargo xtask bench [--offline]`, spec §21 G8):
   the divan benchmarks (`BENCHES`: `rl-sim/benches/tick.rs`,
   `rl-render/benches/frame.rs`, `rl-cli/benches/game.rs`; bench profile)

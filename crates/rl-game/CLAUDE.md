@@ -264,7 +264,15 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   `MIN_CHANGE_INTERVAL`, so a `shot` within 250 ms may show the old
   size); `--shot <tick>`, `--autoquit-after <s>`, `--stats` (counters
   each second) and the exit summary let an agent run the game in a real
-  window and read the PNGs (plan 5 ruling R3).
+  window and read the PNGs (plan 5 ruling R3). `--frame-log F
+  [--frame-log-skip S]` (plan 8; S 3 s by default) writes `stats::FrameLog`
+  as RON at exit, for `cargo xtask envelope`: the frames after the first S
+  seconds (frame-to-frame and busy ms, `Pct`: p50, p99, max), the ticks
+  after S × 100, the frames per second, the surface's size at the last
+  frame (`App::drawn_size`: a `size` script command that did not take
+  shows here) and the GPU line (adapter, backend, present mode). Every
+  percentile is nearest rank (`stats::percentile`: rank `ceil(n × p)`,
+  plan 8 ruling PF8; the exit summary's too).
 
 - **Autoplay** (`autoplay.rs`, spec §21 G7, plan 7 task 8): `--autoplay
   script.ron` drives the real app from a RON script of steps (`at_frame`,

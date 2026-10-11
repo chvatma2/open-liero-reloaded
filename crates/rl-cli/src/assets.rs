@@ -59,25 +59,27 @@ impl LevelAssets {
     }
 
     /// The world `replay` (recorded on these assets) starts from. A pack
-    /// level's packs are checked as `Content::world_for_replay` does; a
-    /// generated level's must be these: the level's id, and the mod's and
-    /// theme's ids and content hashes.
+    /// level's packs are first checked against the content as
+    /// `Content::world_for_replay` does (which pack is missing or another
+    /// version); then, a pack level's as a generated one's, they must be
+    /// these: the mod's, level's and theme's ids and content hashes. Other
+    /// assets would make another match without a word.
     pub fn replay_world(&self, content: &Content, replay: &Replay) -> anyhow::Result<World> {
         let recorded = &replay.setup.packs;
-        match self.generated {
-            None => content.check_replay_packs(&replay.setup)?,
-            Some(_) => ensure!(
-                *recorded == self.packs,
-                "the replay was recorded on {} with {} and theme {}, not {} with {} and theme {} \
-                 (or a different version of a pack)",
-                recorded.level.id,
-                recorded.mod_pack.id,
-                recorded.theme.id,
-                self.packs.level.id,
-                self.packs.mod_pack.id,
-                self.packs.theme.id
-            ),
+        if self.generated.is_none() {
+            content.check_replay_packs(&replay.setup)?;
         }
+        ensure!(
+            *recorded == self.packs,
+            "the replay was recorded on {} with {} and theme {}, not {} with {} and theme {} \
+             (or a different version of a pack)",
+            recorded.level.id,
+            recorded.mod_pack.id,
+            recorded.theme.id,
+            self.packs.level.id,
+            self.packs.mod_pack.id,
+            self.packs.theme.id
+        );
         replay.world(replay_assets_from(&self.m, &self.level, &self.theme)).map_err(anyhow::Error::new)
     }
 }

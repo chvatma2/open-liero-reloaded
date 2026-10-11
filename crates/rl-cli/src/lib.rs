@@ -7,6 +7,7 @@ pub mod coverage;
 pub mod failure;
 pub mod genlevel;
 pub mod golden;
+pub mod gpu_bench;
 pub mod invariants;
 pub mod runner;
 pub mod spec;

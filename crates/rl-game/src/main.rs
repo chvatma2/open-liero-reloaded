@@ -153,6 +153,14 @@ struct Args {
     /// Quit after this many seconds.
     #[arg(long)]
     autoquit_after: Option<f64>,
+    /// Write the run's frame times (after --frame-log-skip seconds) here as
+    /// RON, for `cargo xtask envelope`.
+    #[arg(long)]
+    frame_log: Option<PathBuf>,
+    /// Seconds at the start the frame log leaves out (the window settling,
+    /// a size change).
+    #[arg(long, default_value_t = 3.0)]
+    frame_log_skip: f64,
     /// Play a script of timed keys and commands (see `rl-game/src/script.rs`).
     #[arg(long, conflicts_with = "demo")]
     script: Option<PathBuf>,
@@ -413,6 +421,11 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
         println!("rl-game: {m}");
     }
     println!("rl-game: {}", app.latency_summary());
+    if let Some(path) = &args.frame_log {
+        let log = app.frame_log(args.frame_log_skip);
+        let text = ron::ser::to_string_pretty(&log, ron::ser::PrettyConfig::default())?;
+        std::fs::write(path, text + "\n").with_context(|| format!("{}", path.display()))?;
+    }
     app.save_recording();
     let autoplay = app.autoplay_result();
     match ran {

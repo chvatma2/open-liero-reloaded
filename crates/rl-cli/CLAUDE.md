@@ -67,6 +67,34 @@ The headless command-line tool. Its commands:
   area cache); the new fields are `#[serde(default)]`, so older reports
   still read. A failed match writes its replay to `target/failures/`. `cargo
   xtask stress` runs both mods × pool 3000/20 000 on Castle Strike.
+- `rl-cli gpu-bench --replay F [--sizes 1920x1080,2560x1440,3440x1440,3840x2160]
+  [--start-tick 1000] [--frames 600] [--probe-passes 0,1,2,4,8,16,32]
+  [--probe-taps 9] [--probe-frames 120] [--adapter hardware|software]
+  [--backend auto|gl|vulkan|dx12] [--content DIR] [--out F.ron]
+  [--list-adapters]`: the GPU half of the performance envelope (plan 8,
+  `gpu_bench.rs`, the command in `gpu_bench_cmd.rs`). A recorded match
+  (`stress --record`) on the assets its packs name (`LevelAssets`, so a
+  generated level too) is played unrendered to `--start-tick`, then each
+  measured tick and its frame is drawn offscreen at each size on
+  `Offscreen::open` (the view, `Viewport::GAME`, over the whole target, no
+  HUD: ruling P11), the device waited for after each frame; then the
+  shader-headroom probe (`rl_render::Probe`, 0 passes first: the
+  baseline) for `--probe-frames` frames at each pass count. `GpuReport`
+  (RON with `--out`; `cargo xtask envelope` reads it): adapter, backend,
+  device type, `timestamps` (GPU times from timestamp queries, else CPU
+  wall times only), scene, start tick and a `SizeReport` per size:
+  `tick_ms` (the world's tick and `on_tick`), `cpu_ms` (draw list, uploads,
+  encoding and submit), `frame_ms` (the draw list to the device idle),
+  `total_ms` (tick and frame), `gpu_ms` (the world and upscale passes, with
+  timestamps) and `probe` (`ProbePoint`: the probe passes' GPU ms, or the
+  frame's wall ms over the baseline's median, `timed_on_gpu` saying
+  which). `check_adapter`: a hardware run that got a software rasteriser
+  (`DeviceType::Cpu`: llvmpipe, lavapipe) is an error naming WSL's
+  `GALLIUM_DRIVER=d3d12 WGPU_BACKEND=gl`; `--adapter software` allows it.
+  At the end it plays on to the next recorded checksum and compares, so
+  the scene drawn is the recorded match. All device work stays on the
+  main thread (WSL's d3d12 driver crashes when a thread that used the
+  device exits). Percentiles are nearest rank (`stress::Spread::of`).
 
 **The library** (`src/lib.rs`) holds the match runner for the commands and
 the tests: `spec::MatchSpec` (the options, serialized in failures and
@@ -76,7 +104,8 @@ allocation; `settle` = record, invariants, coverage; `step` catches a panic,
 and a panic inside `World::tick` rebuilds the world from the logged keys so
 `Recorder::finish_failed` saves a replay that plays into the failure;
 `play`), `verify` (determinism and replay round trip), `stress` (the
-stress test's runner and `Report`), `coverage` (required
+stress test's runner and `Report`), `gpu_bench` (the GPU bench's runner
+and `GpuReport`), `coverage` (required
 weapons and action kinds derived from the mod: `rl_sim::projectile_actions`
 and `World::actions_triggered`), `failure`, `golden`, `assets`,
 `genlevel`.
@@ -99,8 +128,10 @@ made: `content_cap` names the cap, which a stress `Report` lists in `caps`
 loads it (so goldens do not move), or a generated level with the theme's
 and mod's pack references and the hash `GENERATED_HASH`. An id starting
 `gen-` that does not parse is an error before anything is made.
-`replay_world` checks a replay's packs (a generated level's must equal the
-assets') and makes its start world.
+`replay_world` checks a replay's packs (a pack level's against the
+content first, as `Content::world_for_replay` does; then, for both kinds,
+they must equal the assets': a replay on other assets is an error, not
+another match) and makes its start world.
 
 **Layer 6.** `dump-state` comes later (spec §7.4).
 
@@ -114,7 +145,13 @@ test's; without them a match is OLX's (`LoadingTime` 100, pool 3000).
 8 s one with and without the envelope's knobs (same match, more measured),
 a 4 s Deathmatch-bot one that fills some of the area cache, and chaos and
 Deathmatch runs on a small generated level (`gen-256x256-a2-s1`; the large
-ones run only in the envelope, ruling PF3).
+ones run only in the envelope, ruling PF3), and a replay refused on
+assets other than its own, a pack level's and a generated one's.
+`tests/gpu_bench.rs` (the GPU tier, `cargo xtask full`, `RL_GPU_TESTS=1`)
+records a short stress match and runs `gpu_bench::run` on it on the
+software adapter at 320 × 180 with a 2-pass probe (GPU probe time above 0
+when the adapter has timestamps; lavapipe has them), and a tampered replay
+is refused at its checksum.
 `benches/game.rs` (divan, `cargo xtask bench`): 8 bots' think + tick and a
 draw-list build on a warm Classic match (needs `RL_CONTENT_DIR`).
 `tests/render_golden.rs` (the GPU frame goldens) runs in `cargo xtask full`

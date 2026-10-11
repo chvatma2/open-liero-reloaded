@@ -42,6 +42,8 @@ pub struct Meter {
     run_tick_max: f64,
     run_busy_sum: f64,
     frame_ms: Vec<f32>,
+    /// Each frame's busy time (`busy`), beside `frame_ms`.
+    busy_ms: Vec<f32>,
     tick_ms: Vec<f32>,
     pub peak_entities: usize,
     pub peak_projectiles: usize,
@@ -51,6 +53,7 @@ impl Meter {
     pub fn new() -> Meter {
         Meter {
             frame_ms: Vec::with_capacity(KEPT_FRAMES),
+            busy_ms: Vec::with_capacity(KEPT_FRAMES),
             tick_ms: Vec::with_capacity(KEPT_TICKS),
             ..Meter::default()
         }
@@ -73,6 +76,9 @@ impl Meter {
     pub fn busy(&mut self, seconds: f64) {
         self.busy_sum += seconds;
         self.run_busy_sum += seconds;
+        if self.busy_ms.len() < self.busy_ms.capacity() {
+            self.busy_ms.push((seconds * 1000.0) as f32);
+        }
     }
 
     /// A frame took `seconds` from the last one. Once a second has passed,
@@ -135,11 +141,87 @@ impl Meter {
             self.peak_projectiles,
         )
     }
+
+    /// The frames after the first `skip_s` seconds of the run (and the
+    /// ticks after as many ticks at 100 a second), for `--frame-log`.
+    pub fn frame_log(&self, skip_s: f64, size: (u32, u32), gpu: &str) -> FrameLog {
+        let mut elapsed = 0.0;
+        let first = self
+            .frame_ms
+            .iter()
+            .position(|ms| {
+                elapsed += f64::from(*ms) / 1000.0;
+                elapsed >= skip_s
+            })
+            .map_or(self.frame_ms.len(), |i| i + 1);
+        let frames = &self.frame_ms[first..];
+        let busy = self.busy_ms.get(first..).unwrap_or(&[]);
+        let skip_ticks = ((skip_s * 100.0).max(0.0) as usize).min(self.tick_ms.len());
+        let seconds: f64 = frames.iter().map(|&m| f64::from(m) / 1000.0).sum();
+        FrameLog {
+            size,
+            gpu: gpu.to_string(),
+            skipped_s: skip_s,
+            frames: frames.len(),
+            seconds,
+            fps: if seconds > 0.0 { frames.len() as f64 / seconds } else { 0.0 },
+            frame_ms: Pct::of(frames),
+            busy_ms: Pct::of(busy),
+            tick_ms: Pct::of(&self.tick_ms[skip_ticks..]),
+        }
+    }
 }
 
-/// The nearest-rank percentile `p` (0 to 1) of `sorted`; 0 when empty.
+/// Percentiles of a measurement (nearest rank, [`percentile`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Pct {
+    pub p50: f64,
+    pub p99: f64,
+    pub max: f64,
+}
+
+impl Pct {
+    fn of(values: &[f32]) -> Pct {
+        let mut v = values.to_vec();
+        v.sort_by(f32::total_cmp);
+        Pct {
+            p50: f64::from(percentile(&v, 0.5)),
+            p99: f64::from(percentile(&v, 0.99)),
+            max: f64::from(v.last().copied().unwrap_or(0.0)),
+        }
+    }
+}
+
+/// `--frame-log` (the performance envelope, plan 8): a windowed run's
+/// frames after the first `skipped_s` seconds (the window settling, a size
+/// change), as `cargo xtask envelope` reads it.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FrameLog {
+    /// The surface's size when the run ended.
+    pub size: (u32, u32),
+    /// The adapter, backend and present mode.
+    pub gpu: String,
+    pub skipped_s: f64,
+    pub frames: usize,
+    pub seconds: f64,
+    pub fps: f64,
+    /// From frame to frame (what the player sees).
+    pub frame_ms: Pct,
+    /// The frame without the swap chain's waits.
+    pub busy_ms: Pct,
+    pub tick_ms: Pct,
+}
+
+/// The nearest-rank percentile `p` (0 to 1) of `sorted`: the value at
+/// rank `ceil(n * p)` (at least 1); 0 when empty. Every percentile of the
+/// performance envelope has this one definition (plan 8 ruling PF8):
+/// `rl-cli`'s `stress::Spread::of`, `drive::percentile_ms` and `xtask`'s
+/// `Spread::of` agree.
 fn percentile(sorted: &[f32], p: f64) -> f32 {
-    sorted.get(((sorted.len() as f64 - 1.0) * p).round() as usize).copied().unwrap_or(0.0)
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    sorted[((sorted.len() as f64 * p).ceil() as usize).clamp(1, sorted.len()) - 1]
 }
 
 #[cfg(test)]
@@ -172,5 +254,33 @@ mod tests {
         m.frame(1.0, &mut s);
         let sum = m.summary();
         assert!(sum.contains("tick ms mean 1.080 p50 1.000 p99 5.000 max 5.000"), "{sum}");
+    }
+
+    /// Plan 8 ruling PF8: rank `ceil(n * p)`, as `rl-cli`'s `Spread::of`.
+    #[test]
+    fn percentiles_by_nearest_rank() {
+        let v: Vec<f32> = (1..=10).map(|i| i as f32).collect();
+        assert_eq!((percentile(&v, 0.5), percentile(&v, 0.99), percentile(&v, 1.0)), (5.0, 10.0, 10.0));
+        assert_eq!((percentile(&v, 0.0), percentile(&[], 0.5)), (1.0, 0.0));
+        assert_eq!(Pct::of(&[3.0, 1.0, 2.0]), Pct { p50: 2.0, p99: 3.0, max: 3.0 });
+    }
+
+    #[test]
+    fn frame_log_skips_the_first_seconds() {
+        let (mut m, mut s) = (Meter::new(), Stats::default());
+        for _ in 0..100 {
+            m.frame(0.020, &mut s);
+            m.busy(0.010);
+        }
+        for _ in 0..100 {
+            m.frame(0.005, &mut s);
+            m.busy(0.002);
+        }
+        let log = m.frame_log(1.999, (1920, 1080), "test gpu");
+        assert_eq!(log.frames, 100);
+        assert!((log.frame_ms.p50 - 5.0).abs() < 1e-3 && (log.busy_ms.p99 - 2.0).abs() < 1e-3, "{log:?}");
+        assert!((log.fps - 200.0).abs() < 1.0, "{log:?}");
+        assert_eq!((log.size, log.gpu.as_str()), ((1920, 1080), "test gpu"));
+        assert_eq!(m.frame_log(100.0, (1, 1), "").frames, 0, "a run shorter than the skip");
     }
 }
