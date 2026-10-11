@@ -16,3 +16,6 @@
 2026-10-11 bench: first baselines: divan benchmarks and the short stress run (plan 7 task 8)
   fixtures/bench/baselines.ron
   fixtures/bench/stress.ron
+2026-10-11 bench: review fixes: baselines store their host; stress peak memory gated at +25 %
+  fixtures/bench/baselines.ron
+  fixtures/bench/stress.ron

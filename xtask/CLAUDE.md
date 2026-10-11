@@ -14,16 +14,23 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `fixtures/bench/baselines.ron` (ns); then `stress`: the short stress run
   (`STRESS`: MW 1.0 and Classic × pool 3000 and 20 000 on Castle Strike,
   32 chaos bots, `STRESS_SECONDS` (20) each, `rl-cli stress` in release,
-  determinism checked on the first run) `RUNS` times, the median tick p50
-  and frame p50 against `fixtures/bench/stress.ron`. Noise guard: a
-  measurement fails only over `TOLERANCE` (+10 %), and then only if the
-  best of `RETRIES` (2) more runs is still over (a notice says it was
-  retried). A baseline not measured (no adapter, no content) or a
-  measurement without one is a notice. `full` prints one summary line
+  determinism checked on the first run) `RUNS` times, the median tick p50,
+  frame p50 and peak MiB against `fixtures/bench/stress.ron`. Noise guard:
+  a measurement fails only over `TOLERANCE` (+10 %; peak memory
+  `MEMORY_TOLERANCE`, +25 %), and then only if the best of `RETRIES` (2)
+  more runs is still over (a notice says it was retried). A baseline that
+  nothing measured fails, unless its target said it skipped (`skip ...`:
+  no adapter, no content; a stress run without frames or `/proc`): then a
+  notice; a measurement without a baseline is a notice. Both files store
+  the `Host` they were measured on (CPU count and model, the offscreen
+  adapter); on another host `full` prints a notice and does not gate (the
+  stress runs still check determinism). `full` prints one summary line
   each; the command prints every measurement. `bench --bless --reason
-  "<why>"` measures and writes both files (logged like `bless-render`).
-  Baselines are this machine's (WSL2, 12 cores, lavapipe); in repeated
-  runs here the medians stayed within ±6 %. About 35 s once built.
+  "<why>"` measures and writes both files (logged like `bless-render`);
+  baselines it could not measure are kept from the old file and listed in
+  `kept`, and offline the stress file stays as it was. In repeated runs
+  here (WSL2, 12 cores, lavapipe) the medians stayed within ±6 %. About
+  35 s once built.
 - `stress [--seconds 180]` (`bench::stress_command`): the long stress
   run, every `STRESS` configuration through `rl-cli stress` (progress and
   each report as it plays, determinism checked), then a summary table

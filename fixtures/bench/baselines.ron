@@ -1,11 +1,17 @@
 (
-    note: "Medians in ns (`cargo xtask bench --bless --reason`); this machine\'s: WSL2, 12 cores, lavapipe.",
+    note: "Medians in ns (`cargo xtask bench --bless --reason`); valid on `host` only.",
+    host: (
+        cpus: 12,
+        cpu: "AMD Ryzen 5 7600X 6-Core Processor",
+        adapter: "llvmpipe (LLVM 21.1.8, 256 bits) (Vulkan, Cpu)",
+    ),
     benches: {
-        "rl-cli/game/bots_8_tick": 23670.0,
-        "rl-cli/game/drawlist_build": 2870.0,
-        "rl-render/frame/frame_1080p": 5123000.0,
-        "rl-render/frame/frame_1440p": 6996000.0,
-        "rl-sim/tick/tick_32_worms": 7188.0,
-        "rl-sim/tick/tick_full_pool": 225000.0,
+        "rl-cli/game/bots_8_tick": 22050.0,
+        "rl-cli/game/drawlist_build": 2814.0,
+        "rl-render/frame/frame_1080p": 4914000.0,
+        "rl-render/frame/frame_1440p": 6948000.0,
+        "rl-sim/tick/tick_32_worms": 7182.0,
+        "rl-sim/tick/tick_full_pool": 226600.0,
     },
+    kept: [],
 )

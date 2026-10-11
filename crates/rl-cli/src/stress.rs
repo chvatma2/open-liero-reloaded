@@ -211,8 +211,12 @@ struct Gpu {
 }
 
 /// Plays `cfg`; `progress` hears a line every [`CHECK_TICKS`] ticks. A
-/// failed match (a panic, an invariant), an unbounded buffer, memory over
-/// [`MEMORY_CEILING_MIB`] or a second run that differs is an error.
+/// failed match (a panic, an invariant), memory over
+/// [`MEMORY_CEILING_MIB`] (an absolute stop; `cargo xtask bench` gates the
+/// peak against its baseline) or a second run that differs is an error.
+/// The buffer bounds (pool, entities, events) are cheap asserts that hold
+/// by construction today (each is a fixed-capacity buffer); they guard a
+/// future change that makes one grow.
 pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) -> anyhow::Result<Report> {
     let spec = &cfg.spec;
     let mut m = Match::new(content, spec, &Options::default())?;

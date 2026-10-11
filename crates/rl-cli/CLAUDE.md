@@ -43,9 +43,11 @@ The headless command-line tool. Its commands:
   at `--pool`) played by the runner (invariants every tick), its
   presentation's entities stepped every tick and a frame rendered
   offscreen (lavapipe/llvmpipe) every `--render-every` ticks; asserts
-  bounded buffers (pool, `rl_fx::MAX_ENTITIES`, `TickEvents::CAPACITY`)
-  every tick and memory under `MEMORY_CEILING_MIB` (`VmHWM`, read every
-  1000 ticks), then `verify` (determinism and the replay). `Report`
+  bounded buffers (pool, `rl_fx::MAX_ENTITIES`, `TickEvents::CAPACITY`:
+  fixed capacities today, so cheap asserts against a future change) every
+  tick and memory under `MEMORY_CEILING_MIB` (`VmHWM`, read every 1000
+  ticks; an absolute stop, `xtask bench` gates the peak against its
+  baseline), then `verify` (determinism and the replay). `Report`
   (RON with `--out`): tick, sim and think µs (p50/p99/max; `Stats::think_ns`
   splits the bots' share), units, pool peak/mean/ticks at the cap, entity
   peak/ticks at the cap, events a tick, drops, the frame ms, peak MiB. A
