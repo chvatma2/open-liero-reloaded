@@ -13,6 +13,7 @@ use rl_content::{BuiltMatch, Content};
 use rl_replay::{MAX_TICKS, ModeSpec, Recorder, Replay};
 use rl_sim::{EndReason, EventKind, Keys, MAX_WORMS, MatchResult, MatchSetup, TickEvents, World};
 
+use crate::assets::LevelAssets;
 use crate::coverage::Coverage;
 use crate::invariants;
 use crate::spec::MatchSpec;
@@ -195,14 +196,22 @@ pub struct Match {
 }
 
 impl Match {
-    /// The match `spec` describes on `content`'s packs, assembled by
+    /// The match `spec` describes on `content`'s packs (or a generated
+    /// level: [`LevelAssets::load`]), assembled by
     /// `rl_content::build_match` (as `rl-game` does): bots with OLX's
     /// loadouts (a chaos bot's random, rotating on each spawn), one shared
     /// area cache, thinking in worm order.
     pub fn new(content: &Content, spec: &MatchSpec, opts: &Options) -> anyhow::Result<Match> {
+        let assets = LevelAssets::load(content, &spec.mod_id, &spec.level_id)?;
+        Match::with_assets(&assets, spec, opts)
+    }
+
+    /// [`Match::new`] on assets already loaded (a stress run keeps them for
+    /// its presentation; a generated level is made once).
+    pub fn with_assets(assets: &LevelAssets, spec: &MatchSpec, opts: &Options) -> anyhow::Result<Match> {
         ensure!(spec.ticks <= MAX_TICKS, "at most {MAX_TICKS} ticks");
         ensure!((2..=MAX_WORMS).contains(&spec.bots), "a Deathmatch of 2 to {MAX_WORMS} bots");
-        let built = content.build_match(&spec.match_options())?;
+        let built = rl_content::build_match(assets.match_assets(), &spec.match_options())?;
         let BuiltMatch { setup, mode, world, bots, recorder: rec } = built;
         let stats = Stats {
             tick_ns: Vec::with_capacity(spec.ticks as usize),

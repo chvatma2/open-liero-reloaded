@@ -2,8 +2,10 @@
 //! `match` and `replay` commands and the tests (`tests/matches.rs`,
 //! `tests/golden.rs`, `tests/grid.rs`) play.
 
+pub mod assets;
 pub mod coverage;
 pub mod failure;
+pub mod genlevel;
 pub mod golden;
 pub mod invariants;
 pub mod runner;

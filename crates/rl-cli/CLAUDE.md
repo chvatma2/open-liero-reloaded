@@ -78,7 +78,29 @@ and a panic inside `World::tick` rebuilds the world from the logged keys so
 `play`), `verify` (determinism and replay round trip), `stress` (the
 stress test's runner and `Report`), `coverage` (required
 weapons and action kinds derived from the mod: `rl_sim::projectile_actions`
-and `World::actions_triggered`), `failure`, `golden`.
+and `World::actions_triggered`), `failure`, `golden`, `assets`,
+`genlevel`.
+
+**Generated levels** (`genlevel.rs`, plan 8; bench only, a game never
+loads one): `GenLevel` makes seeded noise caves in memory, no pack written,
+from its id alone: `gen-<width>x<height>-a<art scale>-s<seed>` (such as
+`gen-2048x2048-a1-s1`), which `--level` and a replay's level pack id hold.
+`GenLevel::parse` refuses anything else: sides `MIN_SIDE` 64 to `MAX_SIDE`
+4096, art scale 1 to `MAX_ART_SCALE`, side × art scale at most
+`MAX_ART_SIDE` 16 384, the canonical spelling only (ids are untrusted; plan
+8 ruling PF7). Its theme is Castle Strike's (`THEME_LEVEL`). A level whose
+colour image a pack loader would refuse (`MAX_COLOR_MAP_BYTES`) is still
+made: `content_cap` names the cap, which a stress `Report` lists in `caps`
+(reported, not enforced).
+
+**Assets** (`assets.rs`): `LevelAssets::load(content, mod, level)` is what
+`Match::new` (through `Match::with_assets`), `verify`, `stress` and
+`gpu-bench` load through: a pack level exactly as `Content::build_match`
+loads it (so goldens do not move), or a generated level with the theme's
+and mod's pack references and the hash `GENERATED_HASH`. An id starting
+`gen-` that does not parse is an error before anything is made.
+`replay_world` checks a replay's packs (a generated level's must equal the
+assets') and makes its start world.
 
 **Layer 6.** `dump-state` comes later (spec §7.4).
 
@@ -89,8 +111,10 @@ pack when `RL_CONTENT_DIR` is set. To accept a reviewed snapshot change, run
 given, so goldens and failure records keep their form) are the stress
 test's; without them a match is OLX's (`LoadingTime` 100, pool 3000).
 `tests/stress.rs` (check) plays a 4 s stress run on a 200-slot pool, an
-8 s one with and without the envelope's knobs (same match, more measured)
-and a 4 s Deathmatch-bot one that fills some of the area cache.
+8 s one with and without the envelope's knobs (same match, more measured),
+a 4 s Deathmatch-bot one that fills some of the area cache, and chaos and
+Deathmatch runs on a small generated level (`gen-256x256-a2-s1`; the large
+ones run only in the envelope, ruling PF3).
 `benches/game.rs` (divan, `cargo xtask bench`): 8 bots' think + tick and a
 draw-list build on a warm Classic match (needs `RL_CONTENT_DIR`).
 `tests/render_golden.rs` (the GPU frame goldens) runs in `cargo xtask full`

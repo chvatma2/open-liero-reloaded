@@ -34,7 +34,10 @@ pub fn verify(content: &Content, run: &MatchRun) -> anyhow::Result<Option<Failur
         Ok(_) => return fail(0, "the replay's encoding does not round-trip".into()),
         Err(e) => return fail(0, format!("the replay does not decode: {e}")),
     };
-    match content.play_replay(&decoded) {
+    let played = crate::assets::LevelAssets::load(content, &run.spec.mod_id, &run.spec.level_id)
+        .and_then(|a| a.replay_world(content, &decoded))
+        .and_then(|world| decoded.play(world).map_err(anyhow::Error::new));
+    match played {
         Ok(r) if r.ticks == run.ticks && r.checked == decoded.checksums.len() => Ok(None),
         Ok(r) => fail(r.ticks, format!("the replay played {} of {} ticks", r.ticks, run.ticks)),
         Err(e) => match e.downcast_ref::<Mismatch>() {

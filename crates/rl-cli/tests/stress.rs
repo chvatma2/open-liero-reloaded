@@ -91,3 +91,25 @@ fn deathmatch_bots_fill_the_area_cache() {
     assert_eq!(r.deterministic, Some(true));
     assert!(r.text().contains("deathmatch bots;"), "{}", r.text());
 }
+
+/// A generated level (plan 8) plays like a pack's: bounded, deterministic,
+/// and its replay reproduces it (made again from the id, not from a pack).
+/// Small (ruling PF3): the envelope plays the large ones. An id past the
+/// limits is an error before anything is made (ruling PF7).
+#[test]
+fn a_generated_level_plays_and_replays() {
+    let Some(content) = content() else { return };
+    let spec = stress::spec("olx-classic", "gen-256x256-a2-s1", 8, 3000, 3.0, 1);
+    let r = stress::run(&content, &Config::new(spec), &mut |_| {}).unwrap();
+    assert_eq!(r.level, (256, 256, 2));
+    assert_eq!(r.deterministic, Some(true));
+    assert!(r.caps.is_empty(), "{:?}", r.caps);
+    assert!(r.text().contains("level 256x256 at art scale 2"), "{}", r.text());
+    let spec = stress::spec("olx-classic", "gen-256x256-a2-s1", 4, 3000, 2.0, 1);
+    let cfg = Config { personality: Personality::Deathmatch, ..Config::new(spec) };
+    let r = stress::run(&content, &cfg, &mut |_| {}).unwrap();
+    assert_eq!((r.personality, r.deterministic), (Personality::Deathmatch, Some(true)));
+    let huge = stress::spec("olx-classic", "gen-4096x4096-a8-s1", 2, 3000, 0.05, 1);
+    let e = stress::run(&content, &Config::new(huge), &mut |_| {}).unwrap_err();
+    assert!(format!("{e:#}").contains("generated level"), "{e:#}");
+}

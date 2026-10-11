@@ -26,6 +26,8 @@ use rl_scene::{DrawList, Interpolation, SceneOptions, Viewport};
 use rl_sim::TickEvents;
 use serde::{Deserialize, Serialize};
 
+use crate::assets::LevelAssets;
+use crate::genlevel::GenLevel;
 use crate::runner::{Match, Options};
 use crate::spec::{Difficulty, MatchSpec, Personality};
 
@@ -270,6 +272,18 @@ impl Report {
     }
 }
 
+/// The hard limits a run reached ([`Report::caps`]): the bots' area cache
+/// full (`area_cache`: held, capacity), a generated level the content
+/// loader would refuse (`GenLevel::content_cap`: reported, not enforced).
+fn caps(area_cache: (usize, usize), generated: Option<GenLevel>) -> Vec<String> {
+    let mut caps = Vec::new();
+    if area_cache.1 > 0 && area_cache.0 >= area_cache.1 {
+        caps.push(format!("the bots' area cache is full ({} areas)", area_cache.1));
+    }
+    caps.extend(generated.and_then(|g| g.content_cap()));
+    caps
+}
+
 /// The process's peak and current resident memory in MiB (`VmHWM`,
 /// `VmRSS` in `/proc/self/status`; `None` elsewhere).
 pub fn memory_mib() -> Option<(f64, f64)> {
@@ -301,16 +315,15 @@ struct Gpu {
 /// future change that makes one grow.
 pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) -> anyhow::Result<Report> {
     let spec = &MatchSpec { personality: cfg.personality, ..cfg.spec.clone() };
-    let mut m = Match::new(content, spec, &Options::default())?;
-    let mo = content.load_mod(&spec.mod_id)?;
-    let level = content.load_level(&spec.level_id)?;
-    let theme = content.load_theme(&level.theme).with_context(|| format!("level {}", spec.level_id))?;
+    let assets = LevelAssets::load(content, &spec.mod_id, &spec.level_id)?;
+    let mut m = Match::with_assets(&assets, spec, &Options::default())?;
+    let (mo, level, theme) = (&assets.m, &assets.level, &assets.theme);
     let skin = content.skin_or_default("olx-skin-default");
     let setup = PresentSetup {
         core: content.core(),
-        m: &mo,
-        level: &level,
-        theme: &theme,
+        m: mo,
+        level,
+        theme,
         viewport: Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0),
         options: SceneOptions { interpolation: Interpolation::Latest, show_health_bars: false },
         seed: spec.seed,
@@ -434,9 +447,7 @@ pub fn run(content: &Content, cfg: &Config, progress: &mut dyn FnMut(String)) ->
     r.personality = cfg.personality;
     r.area_cache = area_cache;
     r.level = (level.material.width(), level.material.height(), level.art_scale);
-    if area_cache.1 > 0 && area_cache.0 >= area_cache.1 {
-        r.caps.push(format!("the bots' area cache is full ({} areas)", area_cache.1));
-    }
+    r.caps = caps(area_cache, assets.generated);
     r.units_max = st.units_max;
     r.units_mean = st.units_total.checked_div(st.thinks).unwrap_or(0);
     r.budget_min = st.budget_min;
@@ -479,5 +490,20 @@ mod tests {
         // Everything else keeps OLX's defaults.
         let plain = MatchSpec::new("olx-classic", "olx-level-dirt-level", 4, 1, 100).match_options();
         assert_eq!((plain.pool_capacity, plain.settings.loading_time), (3000, 100));
+    }
+
+    /// The caps a run reports: a full area cache, and a generated level
+    /// past the content loader's colour-map cap (checked here without
+    /// making one: ruling PF3 keeps the 2048² art-8 level in the envelope).
+    #[test]
+    fn caps_name_the_full_cache_and_the_content_cap() {
+        let gen_at = |art_scale| Some(GenLevel { width: 2048, height: 2048, art_scale, seed: 1 });
+        assert!(caps((10, 4096), None).is_empty());
+        assert!(caps((10, 4096), gen_at(4)).is_empty());
+        assert!(caps((0, 0), None).is_empty(), "no bots, no cache");
+        let full = caps((4096, 4096), gen_at(8));
+        assert_eq!(full.len(), 2, "{full:?}");
+        assert!(full[0].contains("area cache is full (4096 areas)"), "{full:?}");
+        assert!(full[1].contains("MAX_COLOR_MAP_BYTES"), "{full:?}");
     }
 }
