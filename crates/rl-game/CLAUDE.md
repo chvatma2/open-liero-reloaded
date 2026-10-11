@@ -194,8 +194,18 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   commands, the options menu: `video.rs`) through `window::Requests`: the latest
   wins, applied at the start of a frame before `acquire`, at most once
   every `MIN_CHANGE_INTERVAL` (250 ms, creating the window counts as a
-  change: `Requests::opened`); a fixed window's min and max move
-  with it (`window::apply`). While the window is hidden (minimised or
+  change: `Requests::opened`). How a change reaches the window is
+  `window::plan`: on Wayland the window is **made again** (`App::recreate`:
+  a new winit window at the new `window::Shape`, its surface on the same
+  device by `Gpu::rebind`, which keeps the format and every GPU resource,
+  egui's window state on the same context; keys held released; events of
+  the closed window ignored, `App::current`; if the new window cannot be
+  made, the old one takes the change in place), because WSLg left pieces of
+  a changed window's client-side frame on the screen and a window made at
+  its size never did (`window.rs` module docs: placement, the first frame
+  callback's wait, the windowed desktop's size under the taskbar). On X11 and elsewhere it
+  changes in place, and a fixed window's min and max move with it
+  (`window::apply`). While the window is hidden (minimised or
   occluded: no frames) pending changes wait; they apply, still paced, when
   frames resume. Why: WSLg's Weston 9 segfaults when winit's
   client-side decorations are resized quickly (their `wl_shm` pool grows
@@ -274,7 +284,7 @@ budget, a recording replayed through a replay session), `tests/menu.rs`
 profile's look), `tests/ingame.rs` (the weapon selection, the pause and a
 valid replay, the results against the world's scores), `tests/options.rs`
 (video through the paced requests,
-volumes live, the saved window with the flags on top) play the imported
+a window made again keeps the game ticking, volumes live, the saved window with the flags on top) play the imported
 levels when `RL_CONTENT_DIR` is set, as does `tests/speed.rs` (fast-forward
 never changes the simulation; a played game refuses it); `tests/import.rs` imports
 `fixtures/olx-mini` through the shell: the menus refreshed, the imported
