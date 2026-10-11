@@ -2,9 +2,8 @@
 
 use winit::event_loop::ActiveEventLoop;
 
-use super::{App, viewport};
+use super::App;
 use crate::shell::Outcome;
-use crate::window;
 
 impl App {
     /// Does what the menus asked of the window.
@@ -15,8 +14,6 @@ impl App {
                 Outcome::Bindings(b) => self.input.set_bindings(b),
                 Outcome::Video(v) => self.apply_video(v),
                 Outcome::Started => {
-                    let size = self.win.as_ref().map_or(window::DEFAULT_SIZE, |w| w.gpu.size());
-                    self.shell.set_viewport(viewport(size));
                     if let Some(s) = self.shell.session_mut() {
                         s.present.invalidate_gpu();
                     }
@@ -36,7 +33,7 @@ impl App {
     /// (interpolation is the shell's).
     fn apply_video(&mut self, v: rl_ui::VideoSettings) {
         let live = self.video.change(v, &mut self.requests);
-        rl_ui::theme::apply(&self.egui, live.ui_scale);
+        self.ui_scale = live.ui_scale;
         if let Some(f) = live.filter {
             self.cfg.render.filter = f;
             if let Some(w) = &mut self.win {

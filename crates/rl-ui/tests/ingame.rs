@@ -18,16 +18,18 @@ fn overlap(a: Rect, b: Rect) -> bool {
     i.width() > 0.0 && i.height() > 0.0
 }
 
-/// The HUD is a bar along the bottom (OLX 0.58's status bar, the user's
-/// ruling after the v0.1 playtest): the health and weapons on its left,
-/// the minimap in its centre, the event log on its right; the playfield
-/// is the window above it, with the clock top centre and the keys top
-/// right. Nothing overlaps and each part fits, at every window size and UI
-/// scale (Review Focus 5).
+/// The game is designed for a 16:9 frame, the largest centred in the
+/// window: no black strips on a 16:9 window, black above and below a
+/// narrower one, at the sides of a wider one. Its bottom fifth is the HUD
+/// bar (OLX 0.58's status bar, the user's ruling after the v0.1
+/// playtest): the health and weapons on its left, the minimap in its
+/// centre, the event log on its right; the playfield is the frame above
+/// it (16 : 7.2), with the clock top centre and the keys top right.
+/// Nothing overlaps and each part fits, at every window size and UI scale
+/// (Review Focus 5); the HUD scales with the frame, so it looks the same
+/// at every size.
 #[test]
 fn hud_layout_holds_at_all_scales() {
-    // 16:9, 21:9 and 32:9 windows from the smallest preset up, at every
-    // UI scale 0.5-3 (with a 2x display on top: up to 6 pixels a point).
     let sizes = [
         (1280.0, 720.0),
         (1600.0, 900.0),
@@ -36,59 +38,77 @@ fn hud_layout_holds_at_all_scales() {
         (3840.0, 2160.0),
         (2560.0, 1080.0),
         (3440.0, 1440.0),
-        (5120.0, 2160.0),
         (5120.0, 1440.0),
+        (2560.0, 1600.0),
+        (1920.0, 1200.0),
+        (1024.0, 768.0),
+        (1280.0, 1024.0),
     ];
-    let mut points = vec![];
+    let reference = HudLayout::new(Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 720.0)));
     for &(w, h) in &sizes {
-        for ppp in [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0] {
-            points.push((w / ppp, h / ppp));
-        }
-    }
-    for (w, h) in points {
-        let screen = Rect::from_min_size(Pos2::ZERO, vec2(w, h));
-        let l = HudLayout::new(screen);
-        let at = format!("{w}x{h} points: {l:?}");
-        // The bar spans the bottom; the playfield is the rest, above it.
-        assert_eq!((l.bar.left(), l.bar.right(), l.bar.bottom()), (0.0, w, h), "{at}");
-        assert_eq!(l.playfield, Rect::from_min_max(Pos2::ZERO, Pos2::new(w, l.bar.top())), "{at}");
-        assert!(l.playfield.height() >= h * 0.35, "the playfield keeps most of the window at {at}");
-        if h >= 600.0 {
-            assert!(l.bar.height() <= h * 0.25, "the bar is no taller than a quarter at {at}");
-        }
-        let parts = [("health", l.health), ("weapons", l.weapons), ("minimap", l.minimap), ("log", l.log)];
-        for (name, r) in parts {
-            assert!(l.bar.contains_rect(r), "{name} leaves the bar at {at}");
-            assert!(r.width() >= 16.0 && r.height() >= 8.0, "{name} too small at {at}");
-        }
-        for (i, (a, ra)) in parts.iter().enumerate() {
-            for (b, rb) in &parts[i + 1..] {
-                assert!(!overlap(*ra, *rb), "{a} over {b} at {at}");
+        for ppp in [0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0] {
+            let (w, h) = (w / ppp, h / ppp);
+            let screen = Rect::from_min_size(Pos2::ZERO, vec2(w, h));
+            let l = HudLayout::new(screen);
+            let at = format!("{w}x{h} points: {l:?}");
+            let f = l.frame;
+            // The 16:9 frame: centred, as large as fits.
+            assert!(((f.width() / f.height()) - 16.0 / 9.0).abs() < 1e-3, "{at}");
+            assert!((f.center() - screen.center()).length() < 1e-3, "{at}");
+            assert!(screen.expand(1e-3).contains_rect(f), "{at}");
+            assert!((f.width() - w).abs() < 1e-3 || (f.height() - h).abs() < 1e-3, "{at}");
+            if (w / h - 16.0 / 9.0).abs() < 1e-3 {
+                assert!(
+                    (f.width() - w).abs() < 1e-2 && (f.height() - h).abs() < 1e-2,
+                    "no strips on 16:9 at {at}"
+                );
+            }
+            // The bar is its bottom fifth, the playfield the rest (16 : 7.2).
+            assert_eq!(
+                (l.bar.left(), l.bar.right(), l.bar.bottom()),
+                (f.left(), f.right(), f.bottom()),
+                "{at}"
+            );
+            assert!((l.bar.height() - f.height() * 0.2).abs() < 1e-3, "{at}");
+            assert_eq!(l.playfield, Rect::from_min_max(f.min, Pos2::new(f.right(), l.bar.top())), "{at}");
+            assert!((l.playfield.width() / l.playfield.height() - 16.0 / 7.2).abs() < 1e-3, "{at}");
+            assert_eq!(l.playfield, rl_ui::hud::playfield(screen), "{at}");
+            // The bar's parts: inside it, apart, each large enough.
+            let parts =
+                [("health", l.health), ("weapons", l.weapons), ("minimap", l.minimap), ("log", l.log)];
+            for (name, r) in parts {
+                assert!(l.bar.contains_rect(r), "{name} leaves the bar at {at}");
+                assert!(r.width() >= 0.1 * l.bar.height(), "{name} too small at {at}");
+            }
+            for (i, (a, ra)) in parts.iter().enumerate() {
+                for (b, rb) in &parts[i + 1..] {
+                    assert!(!overlap(*ra, *rb), "{a} over {b} at {at}");
+                }
+            }
+            assert!(!overlap(l.panel(), l.minimap) && !overlap(l.panel(), l.log), "{at}");
+            assert!(l.log_lines() >= 6, "the log shows its lines at {at}");
+            // The minimap: OLX's proportions, centred, nearly the bar's height.
+            let aspect = l.minimap.width() / l.minimap.height();
+            assert!((aspect - 119.0 / 94.0).abs() < 1e-3, "{aspect} at {at}");
+            assert!((l.minimap.center().x - f.center().x).abs() < 1e-3, "{at}");
+            assert!(l.minimap.height() >= 0.9 * l.bar.height(), "{at}");
+            // Over the playfield: the clock top centre, the keys top right.
+            assert!(l.playfield.contains_rect(l.clock), "the clock leaves the playfield at {at}");
+            assert!((l.clock.center().x - f.center().x).abs() < 1e-3, "{at}");
+            let hint = l.hint.unwrap_or_else(|| panic!("no keys at {at}"));
+            assert!(l.playfield.contains_rect(hint) && !overlap(hint, l.clock), "{at}");
+            // The same picture at every size: the layout scaled with the frame.
+            let k = f.height() / 720.0;
+            assert!((l.unit - k).abs() < 1e-5 && (l.text - reference.text * k).abs() < 1e-3, "{at}");
+            let rel = |r: Rect| Rect::from_min_size(((r.min - f.min) / k).to_pos2(), r.size() / k);
+            let ref_rel = |r: Rect| Rect::from_min_size((r.min - reference.frame.min).to_pos2(), r.size());
+            for (a, b) in
+                [(l.minimap, reference.minimap), (l.log, reference.log), (l.weapons, reference.weapons)]
+            {
+                let (a, b) = (rel(a), ref_rel(b));
+                assert!((a.min - b.min).length() < 1e-2 && (a.size() - b.size()).length() < 1e-2, "{at}");
             }
         }
-        assert!(!overlap(l.panel(), l.minimap) && !overlap(l.panel(), l.log), "{at}");
-        assert!(l.weapons.height() >= MAX_SLOTS as f32 * 8.0, "weapon rows at {at}");
-        assert!(l.log.height() >= l.line, "the log shows a line at {at}");
-        assert!(l.log.width() >= 48.0, "the log has room at {at}");
-        // The minimap keeps OLX's proportions and sits in the centre when
-        // there is room.
-        let aspect = l.minimap.width() / l.minimap.height();
-        assert!((aspect - 119.0 / 94.0).abs() < 0.01, "{aspect} at {at}");
-        if w >= 1000.0 {
-            assert!((l.minimap.center().x - w / 2.0).abs() < 0.5, "the minimap is centred at {at}");
-        }
-        assert!(l.minimap_scale() <= rl_ui::hud::MAX_MINIMAP + 1e-4, "{at}");
-        // Over the playfield: the clock top centre, the keys top right.
-        assert!(l.playfield.contains_rect(l.clock), "the clock leaves the playfield at {at}");
-        assert!(l.clock.width() >= 16.0, "{at}");
-        if let Some(hint) = l.hint {
-            assert!(l.playfield.contains_rect(hint) && !overlap(hint, l.clock), "{at}");
-        }
-        if w >= 1000.0 {
-            assert!(l.hint.is_some(), "the keys show on a big screen at {at}");
-            assert!((l.clock.center().x - w / 2.0).abs() < 0.5, "the clock is centred at {at}");
-        }
-        assert!(l.text > 0.0 && l.text.is_finite(), "{at}");
     }
     // No size panics: a window of no size (minimised), or not a number.
     for (w, h) in [(0.0, 0.0), (1.0, 1.0), (f32::NAN, 100.0), (f32::INFINITY, 1080.0)] {

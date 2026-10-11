@@ -338,7 +338,7 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
         }
     };
     let interpolation = if args.no_interp { Interpolation::Latest } else { Interpolation::Linear };
-    let viewport = rl_scene::Viewport::from_aspect(16.0 / 9.0, rl_game::app::MAX_ASPECT);
+    let viewport = rl_scene::Viewport::GAME;
     let shell_cfg = ShellConfig { content: args.content.clone(), interpolation, viewport };
     let shell =
         if play_now { direct(&args, audio, shell_cfg)? } else { menus(&args, audio, shell_cfg, flags) };

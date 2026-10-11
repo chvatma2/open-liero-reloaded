@@ -33,8 +33,6 @@ fn content_dir() -> Option<PathBuf> {
     dir
 }
 
-/// The monitor's size, a fullscreen window's.
-const DESKTOP: (u32, u32) = (2560, 1440);
 const FRAME: Duration = Duration::from_millis(16);
 
 /// A windowed shape of `size` physical pixels, or fullscreen.
@@ -219,8 +217,7 @@ fn a_window_made_again_keeps_the_game_ticking() {
             && window::plan(true) == Plan::Recreate
         {
             recreated += 1;
-            let size = if window.fullscreen { DESKTOP } else { window.size };
-            changed.set_viewport(rl_game::app::viewport(size));
+            changed.set_viewport(rl_scene::Viewport::GAME);
         }
         for _ in 0..2 {
             assert!(changed.tick(keys) && still.tick(keys));

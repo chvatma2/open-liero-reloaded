@@ -14,7 +14,7 @@ mod model;
 mod paint;
 mod view;
 
-pub use layout::{BAR_FULL, HudLayout, MAX_MINIMAP, bar_height};
+pub use layout::{BAR_SHARE, HudLayout, REFERENCE_HEIGHT, frame, playfield};
 pub use model::{
     LOG_KEEP, LineKind, Log, LogLine, Names, Results, Row, clock, lives_text, message_text, rows,
 };

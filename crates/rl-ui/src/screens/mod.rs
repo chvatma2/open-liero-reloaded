@@ -423,7 +423,7 @@ fn message(ui: &mut Ui, state: &UiState) {
 /// results) anchor there, centred over the picture.
 pub(crate) fn playfield(ctx: &egui::Context) -> (Rect, Vec2) {
     let screen = ctx.content_rect();
-    let field = crate::hud::HudLayout::new(screen).playfield;
+    let field = crate::hud::playfield(screen);
     (field, field.center() - screen.center())
 }
 
