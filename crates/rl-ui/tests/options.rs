@@ -333,7 +333,8 @@ fn options_set_video_audio_and_gameplay() {
     assert_eq!(saved(&h).gameplay.match_prefs, Default::default());
 }
 
-/// The game's own keys (`GAME_KEYS`: Esc, F5, F2, Tab, H) are never bound,
+/// The game's own keys (`GAME_KEYS`: Esc, F5, F2, Tab, H, and PageUp and
+/// PageDown for a watched game's fast-forward) are never bound,
 /// even from a file edited by hand: they are dropped, and an action left
 /// without a key gets OLX's back (Review Focus 2).
 #[test]
@@ -345,12 +346,18 @@ fn game_keys_are_never_bound_from_a_file() {
     s.input.keys.retain(|(a, _)| *a != Action::Jump);
     s.input.keys.push((Action::Jump, KeyCode::Escape));
     s.input.keys.push((Action::Rope, KeyCode::KeyH));
+    // The fast-forward keys too, even as an action's only key.
+    s.input.keys.retain(|(a, _)| *a != Action::Down);
+    s.input.keys.push((Action::Down, KeyCode::PageDown));
+    s.input.keys.push((Action::Up, KeyCode::PageUp));
     let w = s.sanitize();
     assert!(!game(&s.input), "{:?}", s.input.keys);
     assert!(controllable(&s.input));
     assert_eq!(s.input.of(Action::Shoot, KB), [Binding::Key(KeyCode::ControlLeft)]);
     assert_eq!(s.input.of(Action::Jump, KB), [Binding::Key(KeyCode::AltLeft)], "OLX's back");
-    for k in ["Tab", "Esc", "H"] {
+    assert_eq!(s.input.of(Action::Down, KB), [Binding::Key(KeyCode::ArrowDown)], "OLX's back");
+    let names = [rl_input::key_name(KeyCode::PageUp), rl_input::key_name(KeyCode::PageDown)];
+    for k in ["Tab", "Esc", "H", &names[0], &names[1]] {
         assert!(w.iter().any(|w| w.contains(k)), "{k}: {w:?}");
     }
     assert!(s.sanitize().is_empty(), "fixed once");

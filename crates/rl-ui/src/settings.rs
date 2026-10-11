@@ -51,12 +51,14 @@ impl Settings {
 
 /// The keys the game keeps for itself (`rl-game`'s `on_key` and the
 /// menus), with what they do: never bound to an action.
-pub const GAME_KEYS: [(KeyCode, &str); 5] = [
+pub const GAME_KEYS: [(KeyCode, &str); 7] = [
     (KeyCode::Escape, "the menus"),
     (KeyCode::F5, "restart"),
     (KeyCode::F2, "the debug panel"),
     (KeyCode::Tab, "the scores"),
     (KeyCode::KeyH, "the health bars"),
+    (KeyCode::PageUp, "fast-forward"),
+    (KeyCode::PageDown, "slowing down"),
 ];
 
 /// Makes bindings from a file or a widget usable: the [`GAME_KEYS`] are

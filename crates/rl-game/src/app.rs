@@ -28,6 +28,7 @@ use crate::latency::Latency;
 use crate::overlay::{Overlay, ScreenMap, Stats};
 use crate::script::{Command, Step};
 use crate::shell::Shell;
+use crate::speed::{self, Speed};
 use crate::stats::Meter;
 use crate::video::Video;
 use crate::window::{self, Requests};
@@ -64,6 +65,9 @@ pub struct Config {
     /// The menus run the game (no game on the command line): Esc and F5
     /// go to them, games start and end from them.
     pub menus: bool,
+    /// How fast a watched game (a replay, bots alone) starts (`--speed`);
+    /// a game a person plays always runs at 1×.
+    pub speed: Speed,
 }
 
 /// What exists once the window does.
@@ -109,6 +113,8 @@ pub struct App {
     video: Video,
     /// When the settings were last written (`Shell::flush`, once a second).
     flushed: Option<Instant>,
+    /// How fast a watched game runs (PageUp, PageDown; `speed.rs`).
+    speed: Speed,
     /// What stopped the game, if something went wrong.
     pub error: Option<anyhow::Error>,
 }
@@ -141,6 +147,7 @@ impl App {
             input.set_bindings(shell.ui.bindings().clone());
         }
         App {
+            speed: cfg.speed,
             latency: Latency::new(cfg.latency_probe),
             cfg,
             shell,
@@ -320,9 +327,36 @@ impl App {
         self.input.bindings().keys.iter().find(|(a, _)| *a == action).map(|&(_, k)| k)
     }
 
+    /// How fast the game playing runs now: [`App::speed`] when it is
+    /// watched (nobody plays it), else 1× (`Speed::for_game`).
+    pub fn speed(&self) -> Speed {
+        self.speed.for_game(self.shell.session().is_none_or(|s| s.human))
+    }
+
+    /// The ticks of one frame: the `due` ones at 1×, more when a watched
+    /// game runs fast, their sounds thinned out (`speed::run_frame`).
+    fn run_ticks(&mut self, el: &ActiveEventLoop, due: u32) -> anyhow::Result<()> {
+        let speed = self.speed();
+        let start = Instant::now();
+        let spent = |_| start.elapsed() >= speed::MAX_BUDGET;
+        speed::run_frame(speed, due, spent, |sound| {
+            self.set_sound(sound);
+            self.tick(el)
+        })?;
+        self.set_sound(true);
+        Ok(())
+    }
+
+    fn set_sound(&mut self, on: bool) {
+        if let Some(s) = self.shell.session_mut() {
+            s.sound = on;
+        }
+    }
+
     /// One tick: the script's steps for it, then the game (none in the
-    /// menus or the pause menu; the script's clock runs on).
-    fn tick(&mut self, el: &ActiveEventLoop) -> anyhow::Result<()> {
+    /// menus or the pause menu; the script's clock runs on). Whether the
+    /// world ticked.
+    fn tick(&mut self, el: &ActiveEventLoop) -> anyhow::Result<bool> {
         while let Some(step) = self.cfg.script.get(self.script_at).filter(|s| s.tick <= self.ticks).copied() {
             self.script_at += 1;
             match step.command {
@@ -347,15 +381,15 @@ impl App {
         let t0 = Instant::now();
         // Not while the pause menu or the weapon selection holds the game.
         if !self.shell.tick(keys) {
-            return Ok(());
+            return Ok(false);
         }
         self.meter.tick(t0.elapsed().as_secs_f64());
-        let Some(s) = self.shell.session() else { return Ok(()) };
+        let Some(s) = self.shell.session() else { return Ok(true) };
         if s.events.gameplay_dropped() > 0 && !self.dropped_warned {
             eprintln!("warning: a tick dropped gameplay events; its terrain area was rebuilt");
             self.dropped_warned = true;
         }
-        Ok(())
+        Ok(true)
     }
 
     /// One drawn frame: the surface texture first (any wait for VSync
@@ -372,9 +406,8 @@ impl App {
         let start = *self.start.get_or_insert(now);
         let elapsed = self.last.map_or(0.0, |l| (now - l).as_secs_f64());
         self.last = Some(now);
-        for _ in 0..self.clock.advance(elapsed) {
-            self.tick(el)?;
-        }
+        let due = self.clock.advance(elapsed);
+        self.run_ticks(el, due)?;
         if self.cfg.menus {
             let out = self.shell.after_ticks();
             self.outcomes(el, out);
@@ -398,6 +431,7 @@ impl App {
                 crate::stats::print(&self.stats, self.shell.session());
             }
         }
+        let speed = self.speed();
         let Some(w) = &mut self.win else { return Ok(()) };
         let size = w.gpu.size();
         let ppp = w.window.scale_factor() as f32;
@@ -428,6 +462,7 @@ impl App {
             menus: self.cfg.menus,
             minimap,
             time,
+            speed,
         });
         let (ui_state, data) = (&self.shell.ui, &mut self.shell.data);
         let menus = self.cfg.menus;
@@ -488,6 +523,16 @@ impl App {
         Ok(())
     }
 
+    /// PageUp (`faster`) or PageDown: the watched game's next speed; a
+    /// game a person plays stays at 1×.
+    fn change_speed(&mut self, faster: bool) {
+        if self.shell.session().is_none_or(|s| s.human) {
+            return;
+        }
+        self.speed = if faster { self.speed.faster() } else { self.speed.slower() };
+        println!("rl-game: speed {}", self.speed.label());
+    }
+
     fn on_key(&mut self, el: &ActiveEventLoop, ev: &KeyEvent) -> anyhow::Result<()> {
         // The options capture this key: it is theirs alone (no scores,
         // debug panel or health bars toggling under the dialog).
@@ -508,6 +553,10 @@ impl App {
             PhysicalKey::Code(KeyCode::Escape) if !self.cfg.menus => el.exit(),
             PhysicalKey::Code(KeyCode::F5) if !self.cfg.menus => self.restart(el)?,
             PhysicalKey::Code(KeyCode::F2) => self.debug = !self.debug,
+            // Fast-forward, for a watched game only (`speed.rs`).
+            PhysicalKey::Code(k @ (KeyCode::PageUp | KeyCode::PageDown)) => {
+                self.change_speed(k == KeyCode::PageUp)
+            }
             // OLX's Game.ShowWormHealth toggle.
             PhysicalKey::Code(KeyCode::KeyH) => {
                 if let Some(s) = self.shell.session_mut() {

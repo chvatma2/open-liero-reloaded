@@ -49,9 +49,9 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   (`MatchPrefs`; the HUD has one style: an old file's `hud:` is ignored),
   `import` (`ImportSettings::last_path`, default empty).
   `sanitize()` fixes out-of-range values and
-  keys (`sanitize_bindings`: the `GAME_KEYS` Esc, F5, F2, Tab and H are
-  dropped, then an action left unreachable gets OLX's back), one warning
-  each.
+  keys (`sanitize_bindings`: the `GAME_KEYS` Esc, F5, F2, Tab, H and
+  PageUp/PageDown (a watched game's fast-forward) are dropped, then an
+  action left unreachable gets OLX's back), one warning each.
   The master volume defaults to OLX's 70 %; the game plays `master * sfx`.
 - **Match preferences** (`match_prefs.rs`): mod, level, `bots` (1 to
   `MAX_BOTS`), one `difficulty` or `per_bot` levels, `personality`

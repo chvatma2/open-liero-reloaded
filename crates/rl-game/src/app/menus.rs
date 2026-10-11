@@ -22,6 +22,8 @@ impl App {
                     }
                     // The loading time is not caught up.
                     self.last = None;
+                    // A watched game starts at `--speed`.
+                    self.speed = self.cfg.speed;
                     self.input.release_keys();
                 }
             }

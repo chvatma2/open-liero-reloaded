@@ -13,6 +13,7 @@ use rl_game::script::{self, Command, Step};
 use rl_game::session::Session;
 use rl_game::setup::{self, DeathmatchOptions, Game, SandboxOptions};
 use rl_game::shell::{Shell, ShellConfig};
+use rl_game::speed::Speed;
 use rl_game::video::{self, Overrides};
 use rl_game::window::{self, WindowSystem};
 use rl_game::wsl;
@@ -68,9 +69,17 @@ struct Args {
     /// What to play (the sandbox when another flag chooses a game).
     #[arg(long, value_enum)]
     mode: Option<Mode>,
-    /// Deathmatch: bots against you (1 to 31).
+    /// Deathmatch: bots against you (1 to 31; with --spectate, 2 to 32).
     #[arg(long, default_value_t = 3)]
     bots: usize,
+    /// Deathmatch: the bots play alone and you watch (fast-forward with
+    /// --speed, PageUp and PageDown).
+    #[arg(long, conflicts_with = "replay")]
+    spectate: bool,
+    /// How fast a watched game runs: 1, 2, 4, 8, 16 or max (a replay, or
+    /// --spectate; PageUp and PageDown change it). A game you play runs at 1×.
+    #[arg(long, value_parser = Speed::parse)]
+    speed: Option<Speed>,
     /// Deathmatch: the bots' difficulty.
     #[arg(long, value_enum, default_value = "medium")]
     difficulty: Level,
@@ -154,9 +163,10 @@ struct Args {
 
 /// The flags that choose a game: with any of them on the command line the
 /// game plays it at once (scripted runs and tests); without, the menus.
-const GAME_FLAGS: [&str; 16] = [
+const GAME_FLAGS: [&str; 17] = [
     "mode",
     "bots",
+    "spectate",
     "difficulty",
     "lives",
     "kill_limit",
@@ -180,11 +190,12 @@ fn plays_directly(m: &ArgMatches) -> bool {
 
 /// The game the command line chose, loaded, and its session.
 fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig) -> anyhow::Result<Shell> {
-    let mode = args.mode.unwrap_or(Mode::Sandbox);
+    let mode = args.mode.unwrap_or(if args.spectate { Mode::Deathmatch } else { Mode::Sandbox });
     anyhow::ensure!(
         args.record.is_none() || mode == Mode::Deathmatch,
         "--record records a Deathmatch (--mode deathmatch)"
     );
+    anyhow::ensure!(!args.spectate || mode == Mode::Deathmatch, "--spectate watches a Deathmatch of bots");
     let assets = if let Some(file) = &args.replay {
         setup::load_replay(&[args.content.as_path()], file, &args.skin)?
     } else if mode == Mode::Deathmatch {
@@ -196,6 +207,7 @@ fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig) -> anyhow::Resu
             kill_limit: args.kill_limit,
             time_limit: args.time_limit,
             bonuses: args.bonuses,
+            spectate: args.spectate,
         };
         setup::load_deathmatch(&[args.content.as_path()], &args.mod_name, &args.level, &args.skin, &o)?
     } else {
@@ -211,6 +223,10 @@ fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig) -> anyhow::Resu
     for w in &assets.warnings {
         eprintln!("warning: {w}");
     }
+    anyhow::ensure!(
+        args.speed.is_none_or(|s| s == Speed::X1) || !assets.human_plays(),
+        "--speed is for watching (--replay, --spectate): a game you play runs at 1×"
+    );
     let mut audio = audio;
     audio.load(&assets.m, assets.content.core());
     for w in audio.take_warnings() {
@@ -219,7 +235,10 @@ fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig) -> anyhow::Resu
     let session = Session::new(&assets, cfg.viewport, cfg.interpolation, audio)?;
     let what = match &assets.game {
         Game::Sandbox(_) => "sandbox".to_string(),
-        Game::Deathmatch { options, .. } => format!("Deathmatch seed {}", options.seed),
+        Game::Deathmatch { options, .. } if assets.human_plays() => {
+            format!("Deathmatch seed {}", options.seed)
+        }
+        Game::Deathmatch { options, .. } => format!("Deathmatch of bots (watched) seed {}", options.seed),
         Game::Replay(r) => format!("replay of {:.1} s", f64::from(r.ticks()) / 100.0),
     };
     println!("rl-game: {what}: {} on {}, {} worms", assets.mod_id, assets.level_id, assets.worms());
@@ -326,6 +345,7 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
         latency_probe: args.latency_probe.filter(|&ms| ms > 0).map(std::time::Duration::from_millis),
         record: args.record.clone(),
         menus: !play_now,
+        speed: args.speed.unwrap_or_default(),
     };
     let event_loop = event_loop(ws)?;
     let wayland = is_wayland(&event_loop);

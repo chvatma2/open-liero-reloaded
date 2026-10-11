@@ -95,6 +95,12 @@ pub struct Session {
     pub player_spawns: u32,
     /// Rematches so far (the seed of rematch `n` is the match's plus `n`).
     pub rematches: u32,
+    /// A person plays worm 0 (`Assets::human_plays`); otherwise the game
+    /// is watched (a replay, bots alone) and may run fast (`speed.rs`).
+    pub human: bool,
+    /// The ticks play their sounds (the app thins them out when the game
+    /// runs fast: `Speed::sound`). The world never sees it.
+    pub sound: bool,
     keys: Vec<Keys>,
     /// Ticks since the match (re)started.
     ticks: u64,
@@ -129,10 +135,12 @@ fn start(a: &Assets, n: u32) -> anyhow::Result<(World, Driver)> {
 }
 
 /// The worms' names: the player is "You", the others are numbered from 1
-/// (a replay's worms all, from 1).
+/// (a replay's worms all, from 1; bots alone all, from 1).
 fn names(a: &Assets, worms: usize) -> Names {
+    let human = a.human_plays();
     let name = |i: usize| match a.game {
         Game::Replay(_) => format!("Worm {}", i + 1),
+        Game::Deathmatch { .. } if !human => format!("Bot {}", i + 1),
         _ if i == 0 => a.player.as_ref().map_or_else(|| "You".into(), |p| p.name.clone()),
         Game::Sandbox(_) => format!("Target {i}"),
         Game::Deathmatch { .. } => format!("Bot {i}"),
@@ -183,6 +191,8 @@ impl Session {
             player_deaths: 0,
             player_spawns: 0,
             rematches: 0,
+            human: a.human_plays(),
+            sound: true,
             keys: vec![Keys(0); n],
             ticks: 0,
             ended_at: None,
@@ -204,14 +214,15 @@ impl Session {
     /// start; a worm a mode spawns mid-match later, which marks the atlas
     /// for upload).
     fn show_new_worms(&mut self) {
-        let human = !matches!(self.driver, Driver::Replay(_));
+        let human = self.human;
         let mine = self.colour.unwrap_or_else(|| default_colour(0));
         while self.shown < self.world.worms().len() {
             let i = self.shown;
             let player = i == 0 && human;
             // The others in OLX's bot colours, none close to the player's
-            // (a replay's worms in the default colours: their looks are not
-            // recorded). Cosmetic: the world never sees them.
+            // (a replay's worms, and bots alone, in the default colours: a
+            // replay's looks are not recorded). Cosmetic: the world never
+            // sees them.
             let colour = if player {
                 mine
             } else if human {
@@ -330,14 +341,16 @@ impl Session {
     }
 
     /// One 100 Hz tick with the player holding `player` (the sandbox's
-    /// targets hold nothing; a Deathmatch's bots think first; a replay
-    /// plays its keys and ignores `player`, and stops at its end): the
-    /// simulation, then the cosmetic entities (which replay the tick's
-    /// terrain edits on the colour map and rebuild any area the tick
-    /// lost), the sounds at the view centre, the scene's history and
-    /// marks, the damage popups and the HUD. Debug builds check every
-    /// [`DRIFT_CHECK_TICKS`] that the colour terrain has not drifted.
-    pub fn tick(&mut self, player: Keys) {
+    /// targets hold nothing; a Deathmatch's bots think first; bots alone
+    /// and a replay ignore `player`; a replay plays its keys and stops at
+    /// its end): the simulation, then the cosmetic entities (which replay
+    /// the tick's terrain edits on the colour map and rebuild any area the
+    /// tick lost), the sounds at the view centre (unless [`Session::sound`]
+    /// is off), the scene's history and marks, the damage popups and the
+    /// HUD. Debug builds check every [`DRIFT_CHECK_TICKS`] that the colour
+    /// terrain has not drifted. Whether the world ticked (not after a
+    /// replay's end).
+    pub fn tick(&mut self, player: Keys) -> bool {
         let ended = self.since_end();
         match &mut self.driver {
             Driver::Sandbox => {
@@ -345,19 +358,23 @@ impl Session {
                 self.world.tick(&self.keys, &mut self.events);
             }
             Driver::Match(d) => {
-                self.keys[0] = player;
+                if self.human {
+                    self.keys[0] = player;
+                }
                 d.think(&self.world, &self.events, &mut self.keys, ended);
                 self.world.tick(&self.keys, &mut self.events);
                 d.record(&self.keys, &self.world);
             }
             Driver::Replay(d) => {
                 if !d.step(&mut self.world, &mut self.events) {
-                    return;
+                    return false;
                 }
             }
         }
         self.show_new_worms();
-        self.audio.play_events(&self.events, self.present.scene.camera.listener());
+        if self.sound {
+            self.audio.play_events(&self.events, self.present.scene.camera.listener());
+        }
         self.present.on_tick(&self.world, &self.events);
         self.ticks += 1;
         if cfg!(any(debug_assertions, test)) && self.ticks.is_multiple_of(DRIFT_CHECK_TICKS) {
@@ -372,6 +389,7 @@ impl Session {
             p.age < POPUP_TICKS
         });
         self.after_tick();
+        true
     }
 
     /// The tick's events: popups, the kill feed, the tally, the end.
@@ -388,7 +406,7 @@ impl Session {
         for e in self.events.iter() {
             match e.kind {
                 EventKind::Kill { victim, killer } => {
-                    if victim == 0 {
+                    if victim == 0 && self.human {
                         self.player_deaths += 1;
                     }
                     if killer == victim {
@@ -399,7 +417,7 @@ impl Session {
                         self.tally.player_kills += 1;
                     }
                 }
-                EventKind::Spawned { worm: 0 } => self.player_spawns += 1,
+                EventKind::Spawned { worm: 0 } if self.human => self.player_spawns += 1,
                 EventKind::Message(m) => {
                     if let Some(line) = message_text(&m, &self.names) {
                         self.feed.push(self.ticks, line);

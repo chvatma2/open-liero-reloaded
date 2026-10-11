@@ -57,6 +57,9 @@ pub struct DeathmatchOptions {
     pub time_limit: f32,
     /// OLX's `Bonuses` option.
     pub bonuses: bool,
+    /// No human plays: `bots` bots (2 to `MAX_WORMS`) alone, watched
+    /// (`--spectate`; fast-forward allowed, `speed.rs`).
+    pub spectate: bool,
 }
 
 impl Default for DeathmatchOptions {
@@ -71,6 +74,7 @@ impl Default for DeathmatchOptions {
             kill_limit: d.kill_limit,
             time_limit: d.time_limit,
             bonuses: false,
+            spectate: false,
         }
     }
 }
@@ -79,16 +83,22 @@ impl Default for DeathmatchOptions {
 /// `level_id`: the human is worm 0, then the bots (OLX's bots at one
 /// difficulty), under OLX's LX56 settings, the default restrictions
 /// ([`rl_content::DEFAULT_PRESET`]) and the Deathmatch rules given.
-/// The bots are capped so the worms fit `MAX_WORMS`.
+/// The bots are capped so the worms fit `MAX_WORMS`. Spectating, the bots
+/// play alone (2 to `MAX_WORMS` of them).
 pub fn match_options(o: &DeathmatchOptions, mod_id: &str, level_id: &str) -> MatchOptions {
     let bot = BotConfig { difficulty: o.difficulty, ..BotConfig::default() };
-    let bots = o.bots.clamp(1, MAX_WORMS - 1);
+    let players: Vec<Player> = if o.spectate {
+        vec![Player::Bot(bot); o.bots.clamp(2, MAX_WORMS)]
+    } else {
+        let bots = o.bots.clamp(1, MAX_WORMS - 1);
+        std::iter::once(Player::Human).chain((0..bots).map(|_| Player::Bot(bot))).collect()
+    };
     MatchOptions {
         mod_id: mod_id.into(),
         level_id: level_id.into(),
         seed: o.seed,
         settings: SimSettings { bonuses: o.bonuses, ..SimSettings::lx56() },
-        players: std::iter::once(Player::Human).chain((0..bots).map(|_| Player::Bot(bot))).collect(),
+        players,
         deathmatch: DeathmatchSettings {
             lives: o.lives,
             kill_limit: o.kill_limit,
@@ -255,6 +265,17 @@ impl Assets {
         rl_content::new_world_from(&self.m, &self.level, &self.theme, setup)
     }
 
+    /// Whether a person plays the game (worm 0): the sandbox, a
+    /// Deathmatch with a human; not a replay, nor a match of bots alone.
+    /// Only a game nobody plays may run fast (`speed.rs`).
+    pub fn human_plays(&self) -> bool {
+        match &self.game {
+            Game::Sandbox(_) => true,
+            Game::Deathmatch { options, .. } => options.players.iter().any(|p| !matches!(p, Player::Bot(_))),
+            Game::Replay(_) => false,
+        }
+    }
+
     /// How many worms the game starts with.
     pub fn worms(&self) -> usize {
         match &self.game {
@@ -334,6 +355,13 @@ mod tests {
         assert_eq!(many.players.len(), MAX_WORMS);
         let none = match_options(&DeathmatchOptions { bots: 0, ..Default::default() }, "m", "l");
         assert_eq!(none.players.len(), 2, "a Deathmatch needs two worms (F5)");
+        // Spectating: bots alone, 2 to MAX_WORMS of them.
+        let watch =
+            |bots| match_options(&DeathmatchOptions { bots, spectate: true, ..Default::default() }, "m", "l");
+        assert!(watch(4).players.iter().all(|p| matches!(p, Player::Bot(_))));
+        assert_eq!(watch(4).players.len(), 4);
+        assert_eq!(watch(1).players.len(), 2);
+        assert_eq!(watch(100).players.len(), MAX_WORMS);
     }
 
     #[test]

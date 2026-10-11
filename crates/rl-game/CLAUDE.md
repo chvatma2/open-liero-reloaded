@@ -11,7 +11,8 @@ cargo run --release -p rl-game                      # the menus
 cargo run --release -p rl-game -- --level "CastleStrike" --mod "MW 1.0" --targets 3
 cargo run --release -p rl-game -- --mode deathmatch --bots 4 --difficulty medium \
     [--lives L] [--kill-limit K] [--time-limit M] [--seed S] [--record f.rlrp]
-cargo run --release -p rl-game -- --replay f.rlrp
+cargo run --release -p rl-game -- --replay f.rlrp [--speed 1|2|4|8|16|max]
+cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alone, watched
 ```
 
 - **Layer 6.** Uses `rl-ui`, `rl-content`, `rl-present`, `rl-scene`, `rl-fx`, `rl-render`,
@@ -109,6 +110,21 @@ cargo run --release -p rl-game -- --replay f.rlrp
   entities), the overlay, `Presentation::upload` (atlas if a worm was
   added, terrain dirty rectangles), `Gpu::present`, then a screenshot if
   one is due (one that fails is a warning, never the end of the game).
+- **Fast-forward** (`speed.rs`, plan 7 task 8, the user's request): a
+  game nobody plays (`Session::human` false: a replay, or `--spectate`'s
+  bots alone, `Assets::human_plays`) runs at `Speed` 1×, 2×, 4×, 8×,
+  16× or max: `--speed`, PageUp/PageDown (`App::change_speed`; both in
+  `rl_ui::GAME_KEYS`), "Fast-forward N×" as a HUD notice. A game a person
+  plays runs at 1× (`Speed::for_game`; `--speed` refused at start, the
+  keys ignored). `speed::run_frame` (the app's loop and `tests/speed.rs`'s)
+  runs the frame's `due` ticks times the factor, or at max until
+  `MAX_BUDGET` (12 ms; `MAX_TICKS_PER_FRAME`), and draws only the last;
+  `Speed::sound` thins the sounds (`Session::sound`: every tick up to
+  2×, the frame's last from 4×, none at max). The world never sees the
+  speed: `tests/speed.rs` plays bots alone at 1×, 4×, 16× and max to the
+  same world and replay bytes and replays them at max. A menu start
+  resets the speed to `--speed`. Spectating from the menus and replay
+  seeking are not there yet.
 - **Latency** (`latency.rs`): the exit summary's `input to present` is a
   key press to the present call of the first frame drawing a tick that
   read it; `--latency-probe <ms>` adds probes on a wall-clock grid (they
@@ -219,6 +235,7 @@ profile's look), `tests/ingame.rs` (the weapon selection, the pause and a
 valid replay, the results against the world's scores), `tests/options.rs`
 (video through the paced requests,
 volumes live, the saved window with the flags on top) play the imported
-levels when `RL_CONTENT_DIR` is set; `tests/import.rs` imports
+levels when `RL_CONTENT_DIR` is set, as does `tests/speed.rs` (fast-forward
+never changes the simulation; a played game refuses it); `tests/import.rs` imports
 `fixtures/olx-mini` through the shell: the menus refreshed, the imported
 pack over the bundled one, a quit mid-import).

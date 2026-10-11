@@ -80,6 +80,8 @@ pub struct Overlay<'a> {
     pub minimap: Option<egui::TextureId>,
     /// Seconds since the start (the minimap's blink).
     pub time: f64,
+    /// How fast the game runs (a watched one may run fast: `speed.rs`).
+    pub speed: crate::speed::Speed,
 }
 
 fn shadowed(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, colour: Color32) {
@@ -123,6 +125,7 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
         o.time,
         o.menus,
         o.debug,
+        o.speed,
     );
     rl_ui::hud::show(ui, &hud);
     if o.debug {

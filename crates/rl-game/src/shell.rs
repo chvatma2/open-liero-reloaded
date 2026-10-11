@@ -498,16 +498,11 @@ impl Shell {
 
     /// One tick of the game playing, with the player holding `keys`,
     /// unless the pause menu or the weapon selection holds it (the
-    /// replay records ticks only: a pause is not in it). Whether it ticked.
+    /// replay records ticks only: a pause is not in it). Whether the
+    /// world ticked (not held, nor a replay at its end).
     pub fn tick(&mut self, keys: Keys) -> bool {
         let held = self.paused || self.ui.screen() == Screen::WeaponSelect;
-        match self.session_mut().filter(|_| !held) {
-            Some(s) => {
-                s.tick(keys);
-                true
-            }
-            None => false,
-        }
+        self.session_mut().filter(|_| !held).is_some_and(|s| s.tick(keys))
     }
 
     /// The game ends: its replay saved, the sound output kept.

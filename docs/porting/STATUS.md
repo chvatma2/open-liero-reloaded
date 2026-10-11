@@ -415,7 +415,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   distance) of the human's colour; OLX gives each bot profile its colour
   regardless. Cosmetic: replays draw every worm in the default colours.
   *Keys:* Esc and F5 ignore key repeat; a settings or profiles file that
-  binds a game key (Esc, F5, F2, Tab, H) loses it with a warning; while the
+  binds a game key (Esc, F5, F2, Tab, H, PageUp, PageDown) loses it with a warning; while the
   options capture a key, egui hears no key at all.
 - **Level thumbnails** (`rl-import-gfx`, `rl-pack`, plan 7 task 6): OLX's
   level list previews a level by its minimap, the drawn image resampled and
@@ -455,6 +455,18 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   imported again (the content hash leaves `pack.ron` and `thumb.png`
   out); a different item under the same id makes them refuse with the
   content-hash error. No game starts while an import runs.
+- **Fast-forward and spectating** (`rl-game`, plan 7 task 8, the user's
+  request; OLX has neither): a game nobody plays, a replay or a
+  Deathmatch of bots alone (`--spectate`, 2 to 32 bots), runs at 1×, 2×,
+  4×, 8×, 16× or max (`--speed`, PageUp and PageDown; "Fast-forward N×"
+  in the HUD): a frame runs that many times the ticks owed and draws the
+  last; max runs ticks for 12 ms a frame. A game a person plays always runs
+  at 1× (`--speed` refused, the keys ignored). The simulation is the same
+  at any speed (`tests/speed.rs`: the same world and replay bytes at 1×,
+  4×, 16× and max). Sound is thinned: every tick's up to 2×, only each
+  frame's last tick's from 4× to 16×, none at max. The menus have no
+  spectating yet (the command line's `--spectate`), and replays have no
+  seeking (deferred).
 - **Renderer** (`rl-render`, plan 5 task 5): OLX blits each sprite with SDL
   onto a 2× screen; the renderer draws the same texels at art scale (at
   least 2×) and then upscales (E3). With interpolation (E2), a sprite's
