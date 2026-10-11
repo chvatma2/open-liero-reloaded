@@ -1,5 +1,5 @@
 //! The imported OLX content for the match tests (`RL_CONTENT_DIR`, which
-//! `.cargo/config.toml` defaults to `target/content`); tests skip with a
+//! `.cargo/config.toml` defaults to `content/packs`); tests skip with a
 //! notice without it.
 #![allow(dead_code)]
 

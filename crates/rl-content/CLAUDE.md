@@ -1,6 +1,6 @@
 # rl-content
 
-Loads the packs in a content directory (`target/content`, written by
+Loads the packs in a content directory (`content/packs`, written by
 `rl-cli import`) into ready-to-run inputs: `Content::open(root)` lists the
 packs (a directory named `.…` is skipped: an import's pack being written)
 and loads the core pack `olx-core` once (`Content::open_layers(&[user

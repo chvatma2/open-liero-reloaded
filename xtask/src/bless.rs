@@ -108,7 +108,7 @@ pub fn run(reason: &str) -> anyhow::Result<bool> {
     let reason = reason.trim();
     ensure!(!reason.is_empty(), "--reason must say why the goldens change");
     let root = root();
-    let content = std::env::var_os("RL_CONTENT_DIR").map_or_else(|| root.join("target/content"), Into::into);
+    let content = std::env::var_os("RL_CONTENT_DIR").map_or_else(|| root.join("content/packs"), Into::into);
     if !content.is_dir() {
         bail!("{} not found: run `cargo xtask fetch-olx-content` first", content.display());
     }

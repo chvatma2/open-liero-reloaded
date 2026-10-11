@@ -612,7 +612,7 @@ pub fn stress_step(content: Option<&Path>, verbose: bool) -> Result<(), String> 
 /// `cargo xtask stress`: every configuration for `seconds` of match time
 /// (determinism checked), each report as it comes, then a summary.
 pub fn stress_command(seconds: f32) -> anyhow::Result<bool> {
-    let paths = crate::fetch::run(true)?;
+    let paths = crate::fetch::verify()?;
     let cli = rl_cli().map_err(anyhow::Error::msg)?;
     let mut done = Vec::new();
     for &cfg in STRESS {
@@ -647,7 +647,7 @@ pub fn stress_command(seconds: f32) -> anyhow::Result<bool> {
 /// `cargo xtask bench`: both steps, or with `bless` the baselines written
 /// and logged.
 pub fn run(bless: Option<&str>, offline: bool) -> anyhow::Result<bool> {
-    let paths = if offline { None } else { Some(crate::fetch::run(true)?) };
+    let paths = if offline { None } else { Some(crate::fetch::verify()?) };
     let envs: Vec<(&str, PathBuf)> = paths.iter().map(|p| ("RL_CONTENT_DIR", p.content.clone())).collect();
     let content = paths.as_ref().map(|p| p.content.as_path());
     let Some(reason) = bless else {

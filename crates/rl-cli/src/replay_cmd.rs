@@ -13,7 +13,7 @@ pub struct Args {
     /// A replay (`rl-cli match --record`, or one in `target/failures/`).
     file: PathBuf,
     /// Imported content (packs written by `rl-cli import`).
-    #[arg(long, default_value = "target/content")]
+    #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Stop after this many ticks (the world before tick N, 0-based).
     #[arg(long)]

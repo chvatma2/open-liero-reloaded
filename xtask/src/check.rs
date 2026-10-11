@@ -164,7 +164,7 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
     if offline {
         println!("skip olx-content (--offline)");
     } else {
-        step("olx-content", &mut || match fetch::run(true) {
+        step("olx-content", &mut || match fetch::verify() {
             Ok(paths) => {
                 envs = vec![("RL_OLX_GAMEDIR", paths.gamedir), ("RL_CONTENT_DIR", paths.content)];
                 Ok(())

@@ -104,21 +104,103 @@ pub fn mods() -> anyhow::Result<Vec<String>> {
     Ok(manifest(&root())?.mods)
 }
 
-/// Fetches the pinned checkout and, if `import` is set, imports it with `rl-cli`.
+/// The committed, converted packs (`content/packs`, the default `--content`).
+pub const PACKS: &str = "content/packs";
+/// Where `verify` imports afresh to compare with [`PACKS`].
+const FRESH: &str = "target/content-fresh";
+
+/// Fetches the pinned checkout and, if `import` is set, imports it with
+/// `rl-cli` into [`PACKS`] (`cargo xtask fetch-olx-content`; commit the
+/// result).
 pub fn run(import: bool) -> anyhow::Result<Paths> {
     let root = root();
     let m = manifest(&root)?;
-    let src = root.join("target/olx").join(&m.commit);
-    checkout(&m, &src).context("fetching OpenLieroX content")?;
-    let gamedir = src.join("share/gamedir");
-    let content = root.join("target/content");
-    if !import {
-        return Ok(Paths { gamedir, content });
+    let gamedir = fetch(&root, &m)?;
+    let content = root.join(PACKS);
+    if import {
+        import_into(&root, &m, &gamedir, &content)?;
     }
+    Ok(Paths { gamedir, content })
+}
 
+/// Fetches the pinned checkout, imports it into a scratch directory and
+/// fails unless the committed [`PACKS`] are exactly that import (an
+/// importer or manifest change not re-imported and committed).
+pub fn verify() -> anyhow::Result<Paths> {
+    let root = root();
+    let m = manifest(&root)?;
+    let gamedir = fetch(&root, &m)?;
+    let fresh = root.join(FRESH);
+    import_into(&root, &m, &gamedir, &fresh)?;
+    let content = root.join(PACKS);
+    let stale = differences(&fresh, &content)?;
+    if !stale.is_empty() {
+        let shown: Vec<_> = stale.iter().take(10).map(|d| format!("  {d}")).collect();
+        let more = stale.len().saturating_sub(shown.len());
+        bail!(
+            "{PACKS} differs from a fresh import ({} files{}):\n{}\nrun `cargo xtask fetch-olx-content` and commit {PACKS}",
+            stale.len(),
+            if more > 0 { format!(", {more} more not shown") } else { String::new() },
+            shown.join("\n")
+        );
+    }
+    Ok(Paths { gamedir, content })
+}
+
+/// The pinned checkout's `share/gamedir`.
+fn fetch(root: &Path, m: &Manifest) -> anyhow::Result<PathBuf> {
+    let src = root.join("target/olx").join(&m.commit);
+    checkout(m, &src).context("fetching OpenLieroX content")?;
+    Ok(src.join("share/gamedir"))
+}
+
+/// Every file that differs between directories `a` (fresh) and `b`
+/// (committed), by relative path, sorted: `+` only in the fresh import,
+/// `-` only committed, `~` different bytes.
+pub fn differences(a: &Path, b: &Path) -> anyhow::Result<Vec<String>> {
+    let (fa, fb) = (files(a)?, files(b)?);
+    let mut out = Vec::new();
+    for (path, bytes) in &fa {
+        match fb.get(path) {
+            None => out.push(format!("+ {path}")),
+            Some(other) if other != bytes => out.push(format!("~ {path}")),
+            Some(_) => {}
+        }
+    }
+    out.extend(fb.keys().filter(|p| !fa.contains_key(*p)).map(|p| format!("- {p}")));
+    out.sort_by(|x, y| x[2..].cmp(&y[2..]));
+    Ok(out)
+}
+
+/// The files under `dir` by `/`-separated relative path (none if `dir` is missing).
+fn files(dir: &Path) -> anyhow::Result<std::collections::BTreeMap<String, Vec<u8>>> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        for e in entries {
+            let path = e?.path();
+            if path.is_dir() {
+                todo.push(path);
+            } else {
+                let rel = path
+                    .strip_prefix(dir)?
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>();
+                out.insert(rel.join("/"), std::fs::read(&path)?);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Imports the manifest's items from `gamedir` into `out` (pruned: `out` is
+/// this import's).
+fn import_into(root: &Path, m: &Manifest, gamedir: &Path, out: &Path) -> anyhow::Result<()> {
     let mut cmd = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
-    cmd.current_dir(&root).args(["run", "--quiet", "-p", "rl-cli", "--", "import", "--olx"]);
-    cmd.arg(&gamedir).arg("--out").arg(&content).args(["--revision", &m.commit]);
+    cmd.current_dir(root).args(["run", "--quiet", "-p", "rl-cli", "--", "import", "--olx"]);
+    cmd.arg(gamedir).arg("--out").arg(out).args(["--revision", &m.commit]);
     for x in &m.mods {
         cmd.args(["--mod", x]);
     }
@@ -135,7 +217,7 @@ pub fn run(import: bool) -> anyhow::Result<Paths> {
         cmd.args(["--core", x]);
     }
     if let Some(e) = &m.extra_skins {
-        cmd.arg("--extra-skins").arg(root.join(&e.dir));
+        cmd.arg("--extra-skins").arg(&e.dir);
         cmd.args(["--extra-skins-source", &e.source, "--extra-skins-revision", &e.revision]);
     }
     let out = cmd.output().context("running rl-cli import")?;
@@ -146,5 +228,31 @@ pub fn run(import: bool) -> anyhow::Result<Paths> {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    Ok(Paths { gamedir, content })
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn differences_name_every_stale_file() {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let write = |root: &Path, rel: &str, bytes: &[u8]| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, bytes).unwrap();
+        };
+        write(a.path(), "pack/same.ron", b"x");
+        write(b.path(), "pack/same.ron", b"x");
+        assert!(differences(a.path(), b.path()).unwrap().is_empty());
+        write(a.path(), "pack/changed.png", b"new");
+        write(b.path(), "pack/changed.png", b"old");
+        write(a.path(), "new/pack.ron", b"n");
+        write(b.path(), "gone/pack.ron", b"g");
+        assert_eq!(
+            differences(a.path(), b.path()).unwrap(),
+            ["- gone/pack.ron", "+ new/pack.ron", "~ pack/changed.png"]
+        );
+    }
 }

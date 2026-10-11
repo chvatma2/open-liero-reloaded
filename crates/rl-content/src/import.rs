@@ -121,7 +121,7 @@ pub struct ImportOptions {
     pub revision: String,
     /// The output directory is this import's alone: packs of earlier runs
     /// that this run did not produce are removed (`rl-cli import`, whose
-    /// `target/content` is the manifest's). Off for the game's user
+    /// `content/packs` is the manifest's). Off for the game's user
     /// `packs/`, which collects every import.
     pub prune: bool,
 }

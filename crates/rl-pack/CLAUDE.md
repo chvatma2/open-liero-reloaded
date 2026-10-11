@@ -45,7 +45,7 @@ header's size); content hashing; validation.
   Errors: unknown references, cycles, missing assets. Warnings: unused items.
 - Bump `PACK_FORMAT_VERSION` (in `rl-data`) when a layout changes. Packs of any other
   version are refused ("re-import the pack"; `cargo xtask check` re-imports); there
-  are no migrations while all packs are imports in `target/content` (until packs are
+  are no migrations while all packs are imports in `content/packs` (until packs are
   published). Version 2 added the theme's `green_ball.png`, which a version-1 import
   may lack although OLX has it; version 3 the mod's `restrictions.ron`; version 4 the
   level's `thumb.png` (plan 7 G6).

@@ -126,7 +126,7 @@ struct Args {
     #[arg(long)]
     bonuses: bool,
     /// Imported content (packs written by `rl-cli import`).
-    #[arg(long, default_value = "target/content")]
+    #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Borderless fullscreen.
     #[arg(long)]

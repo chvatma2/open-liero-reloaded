@@ -43,14 +43,16 @@ leaves out.
 ### Get the content
 
 The game plays OLX's own levels, mods, skins and sounds, converted into
-packs. Either:
+packs. They are committed in `content/packs` (the default `--content`, so
+run the game from the repository root): a clone plays as it is. To add
+more:
 
-- `cargo xtask fetch-olx-content`: sparse-clones OpenLieroX at the commit
-  pinned in `content/olx-manifest.ron` (network and `git` needed) and
-  imports the 4 levels, Classic and MW 1.0, the Dirt theme, 718 skins (409 from the repository, 309 more from
+- edit `content/olx-manifest.ron` and run `cargo xtask fetch-olx-content`:
+  it sparse-clones OpenLieroX at the pinned commit (network and `git`
+  needed) and imports into `content/packs` (commit the result). Today's
+  manifest gives the 4 levels, Classic and MW 1.0, the Dirt theme, 718 skins (409 from the repository, 309 more from
   OpenLieroX 0.58 rc5's release, committed in `content/olx-0.58-rc5/`) and
-  the core sprites and sounds into `target/content` (the default
-  `--content`, so run the game from the repository root); or
+  the core sprites and sounds; or
 - **Import** in the main menu: type the path of an OLX game directory (its
   `share/gamedir`, or an OpenLieroX directory holding one) and press
   Import. The packs go to the data directory's `packs/` (below) and are
@@ -77,7 +79,7 @@ Useful flags (`rl-game --help` lists them all):
 | `--replay f.rlrp` | watch a replay |
 | `--mode deathmatch ...`, `--record f.rlrp` | a command-line Deathmatch without the menus (below), saving its replay |
 | `--data-dir <dir>` | settings, profiles, replays and imported packs here instead of the platform's directory |
-| `--content <dir>` | the imported content (default `target/content`) |
+| `--content <dir>` | the imported content (default `content/packs`) |
 | `--no-sound` | open no audio device |
 
 ### The menus
@@ -268,7 +270,7 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
   backtraces still show file:line, only debugger variable info is dropped). `cargo xtask
   oracle-record` removes superseded `rl-olx-oracle:*` images (it keeps the
   current one and `:dev`). `cargo xtask tidy` removes `target/*/incremental`
-  and prunes the images (never `target/content` or `target/olx`); `cargo
+  and prunes the images (never `content/packs` or `target/olx`); `cargo
   xtask tidy --docker-cache` also bounds Docker's build cache to 2 GB, which
   is machine-wide (other projects' build layers too), so it is opt-in.
   `check` warns when `target/` passes 25 GB.

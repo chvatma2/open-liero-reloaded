@@ -1,7 +1,7 @@
 //! `cargo xtask oracle-gen-weapons`: writes one oracle scenario per weapon of
 //! every mod that `content/olx-manifest.ron` imports, to
 //! `fixtures/oracle/weapons/<mod slug>/<weapon id>.ron`. The weapon names come
-//! from the imported packs (`RL_CONTENT_DIR`, default `target/content`). Record
+//! from the imported packs (`RL_CONTENT_DIR`, default `content/packs`). Record
 //! the traces afterwards with `cargo xtask oracle-record`.
 //!
 //! Every scenario is the same apart from the weapon. On FossilFacility's dirt
@@ -79,9 +79,9 @@ pub fn scenario_text(mod_dir: &str, weapon: &str) -> String {
     )
 }
 
-/// The imported packs: `RL_CONTENT_DIR`, or `target/content`.
+/// The imported packs: `RL_CONTENT_DIR`, or `content/packs`.
 fn content_dir() -> PathBuf {
-    std::env::var_os("RL_CONTENT_DIR").map_or_else(|| root().join("target/content"), PathBuf::from)
+    std::env::var_os("RL_CONTENT_DIR").map_or_else(|| root().join("content/packs"), PathBuf::from)
 }
 
 /// Writes every mod's weapon scenarios and removes those of weapons that no

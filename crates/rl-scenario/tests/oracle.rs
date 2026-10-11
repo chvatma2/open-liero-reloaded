@@ -2,14 +2,14 @@
 //! the Rust simulation, matches OLX's recorded trace bit for bit in every field
 //! the trace records (`Fields::ALL`), except the three pinned D9 scenarios below.
 //! Needs the imported OLX content: `RL_CONTENT_DIR`, which `.cargo/config.toml`
-//! sets to `target/content` unless the environment already does.
+//! sets to `content/packs` unless the environment already does.
 
 use std::path::{Path, PathBuf};
 
 use rl_oracle::Fields;
 
 /// The imported content (`RL_CONTENT_DIR`, which `.cargo/config.toml` defaults
-/// to `target/content`), or `None` with a notice if it has not been imported.
+/// to `content/packs`), or `None` with a notice if it has not been imported.
 fn content_dir() -> Option<String> {
     let dir = std::env::var("RL_CONTENT_DIR").ok()?;
     if std::path::Path::new(&dir).is_dir() {

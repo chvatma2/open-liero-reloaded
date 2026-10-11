@@ -11,7 +11,7 @@ use rl_pack::Severity;
 use rl_vfs::{DirFs, MemFs};
 
 /// The imported content (`RL_CONTENT_DIR`, which `.cargo/config.toml` defaults
-/// to `target/content`), or `None` with a notice if it has not been imported.
+/// to `content/packs`), or `None` with a notice if it has not been imported.
 fn content_dir() -> Option<String> {
     let dir = std::env::var("RL_CONTENT_DIR").ok()?;
     if std::path::Path::new(&dir).is_dir() {

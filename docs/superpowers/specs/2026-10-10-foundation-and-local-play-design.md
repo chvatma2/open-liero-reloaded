@@ -374,7 +374,7 @@ There are two tiers:
 | Layer | Content | Tier |
 |---|---|---|
 | Unit | Per-crate tests: parsers, physics functions, stamps, colorization, input latching | check |
-| Corpus | Every item in the content manifest imports, validates and round-trips (native write → read → equal); `insta` snapshot summaries. `xtask check` runs `fetch-olx-content` automatically on first use, and the result is cached in `target/content/` | check |
+| Corpus | Every item in the content manifest imports, validates and round-trips (native write → read → equal); `insta` snapshot summaries. `xtask check` runs `fetch-olx-content` automatically on first use, and the result is cached in `content/packs/` | check |
 | Oracle | All recorded scenarios (§6) | check |
 | Property and fuzz | `proptest`: simulation invariants under random inputs (no worm inside rock, health within bounds, pools within capacity, no panics). `cargo-fuzz` targets for every importer and the pack reader | properties in check, fuzzing in full |
 | Bot matches | §7.1 | short matches in check, full grid in full |
@@ -526,7 +526,7 @@ Every pack has a `pack.ron` with these fields:
 ### 9.3 Bundled OLX content
 
 - `content/olx-manifest.ron` lists each item from §1.2 with its source path, the pinned commit and a SHA-256.
-- `cargo xtask fetch-olx-content` downloads exactly those files from GitHub at the pinned commit, verifies them and imports them into `target/content/`.
+- `cargo xtask fetch-olx-content` downloads exactly those files from GitHub at the pinned commit, verifies them and imports them into `content/packs/`.
   CI caches the result, and release packaging bundles it.
 - Converted assets are **not** committed.
 - Removing or adding an item is a one-line manifest change.

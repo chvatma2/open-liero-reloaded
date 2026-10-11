@@ -65,7 +65,7 @@ pub fn olx_level_id(file: &str) -> String {
     format!("olx-level-{}", rl_data::slug::slug(stem))
 }
 
-/// A content directory (such as `target/content`): its packs by id, and the
+/// A content directory (such as `content/packs`): its packs by id, and the
 /// core pack, loaded once.
 pub struct Content {
     packs: BTreeMap<String, (PackKind, PathBuf)>,

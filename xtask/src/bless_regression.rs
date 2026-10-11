@@ -37,7 +37,7 @@ pub fn add_failure(dir: &Path, from: &Path) -> anyhow::Result<PathBuf> {
 pub fn run(reason: &str, from: Option<&Path>) -> anyhow::Result<bool> {
     ensure!(!reason.trim().is_empty(), "--reason must say why the matches change");
     let root = root();
-    let content = std::env::var_os("RL_CONTENT_DIR").map_or_else(|| root.join("target/content"), Into::into);
+    let content = std::env::var_os("RL_CONTENT_DIR").map_or_else(|| root.join("content/packs"), Into::into);
     if !content.is_dir() {
         bail!("{} not found: run `cargo xtask fetch-olx-content` first", content.display());
     }

@@ -1,5 +1,5 @@
 //! `cargo xtask tidy`: removes rebuildable bloat from `target/` and old Docker
-//! oracle images (and, with `--docker-cache`, bounds Docker's build cache). Never touches `target/content` or `target/olx` (imported
+//! oracle images (and, with `--docker-cache`, bounds Docker's build cache). Never touches `content/packs` or `target/olx` (imported
 //! content, slow to fetch), nor compiled artifacts other than incremental caches
 //! and stale per-configuration executables in `deps/`.
 

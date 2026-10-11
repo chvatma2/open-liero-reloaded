@@ -784,7 +784,7 @@ for slot i in 0..slots:
 ### 2.5 What the bundled presets enable (computed against each mod's weapon list)
 
 `share/gamedir/cfg/presets/<mod>/*.wps`. Weapons in script order are
-`content/olx-manifest.ron` → `target/content/olx-*/mod.ron`. Nothing is
+`content/olx-manifest.ron` → `content/packs/olx-*/mod.ron`. Nothing is
 "bonus only" except in `Bonus only.wps` (MW's `Standard 100lt.wps` has 62
 bonus-only lines, all for other mods' weapons). Plan 6 task 3 checks these
 tables against the imported presets (`wps_presets_enable_what_olx_enables`).

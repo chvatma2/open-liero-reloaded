@@ -5,7 +5,7 @@
 //! tick's terrain edits are replayed on a shadow terrain, as a renderer
 //! replays them on its colour images, which must keep the world's material.
 //! Needs the imported OLX content: `RL_CONTENT_DIR`, which `.cargo/config.toml`
-//! sets to `target/content` unless the environment already does.
+//! sets to `content/packs` unless the environment already does.
 
 use std::path::Path;
 use std::sync::Arc;

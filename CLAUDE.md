@@ -63,9 +63,13 @@ re-records them and logs the reason in `fixtures/blessings.log`;
 
 ## Content
 
-`cargo xtask fetch-olx-content` sparse-clones OLX at the commit pinned in
-`content/olx-manifest.ron` into `target/olx/<commit>/`, then imports the
-listed items into `target/content/`. Converted assets are never committed.
+The converted packs are committed in `content/packs/` (the default
+`--content`), so a fresh clone plays and tests offline. `cargo xtask
+fetch-olx-content` sparse-clones OLX at the commit pinned in
+`content/olx-manifest.ron` into `target/olx/<commit>/` and imports the
+listed items into `content/packs/`: run it after changing the manifest or
+an importer, and commit the result. `check` imports afresh into
+`target/content-fresh` and fails if `content/packs` differs.
 The render goldens in `fixtures/render/` are drawn from them at test time
 (scenario, level and art scale from the packs); the goldens are accepted
 fixtures, changed only with `cargo xtask bless-render --reason "<why>"`.

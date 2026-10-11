@@ -41,7 +41,7 @@ pub struct Args {
     #[arg(long)]
     alpha: Option<f32>,
     /// Imported content (packs written by `rl-cli import`).
-    #[arg(long, default_value = "target/content")]
+    #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Directory with the scenarios and OLX's traces.
     #[arg(long, default_value = "fixtures/oracle")]

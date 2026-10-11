@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// Current native pack format. Bump it when the on-disk layout changes.
 /// `rl-pack` reads only this version and refuses any other ("re-import the
-/// pack"); packs are imports in `target/content` until packs are published,
+/// pack"); packs are imports in `content/packs` until packs are published,
 /// so there are no migrations.
 ///
 /// - 2: theme packs carry the optional `green_ball.png`.

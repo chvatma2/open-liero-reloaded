@@ -6,7 +6,7 @@ traces in `rl-oracle`'s format.
 
 - **Layer 4, uses `std`.** Depends on `rl-content` (same layer).
 - The scenario's world comes from the imported packs in a content directory
-  (`target/content`, written by `rl-cli import`, opened with
+  (`content/packs`, written by `rl-cli import`, opened with
   `rl_content::Content`) plus OLX's settings from the trace header. The mod
   pack becomes a `SimMod` with `Content::sim_mod` (strict: an image
   projectile without its image's frame count is an error); its weapon and

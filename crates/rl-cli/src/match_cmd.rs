@@ -15,7 +15,7 @@ pub struct Args {
     #[command(flatten)]
     spec: MatchSpec,
     /// Imported content (packs written by `rl-cli import`).
-    #[arg(long, default_value = "target/content")]
+    #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Write the match's replay here.
     #[arg(long)]

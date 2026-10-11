@@ -804,7 +804,7 @@ handled the special in the same sub-step (§3.2, §3.4):
   start reloading, `PlayerShoot` → `ShootSpecial` applies thrust and drains **again**
   (`< 0` rule).
 - **Scope:** Classic and MW 1.0 have no `WPN_SPECIAL` weapon (checked with
-  `target/content/olx-{classic,mw-1-0}/weapons/*.ron`). Only beams: Classic `Laser`; MW `Laser`
+  `content/packs/olx-{classic,mw-1-0}/weapons/*.ron`). Only beams: Classic `Laser`; MW `Laser`
   and others, with `Laser` banned in MW's "Standard 100lt". `Sunray Beamer` is a projectile
   weapon.
 
@@ -1134,7 +1134,7 @@ require every scenario to list every worm.
    respawn report should decide whether the hooks pin `tLX->currentTime` around the frame
    loop. That is risky: the time goes backwards against the real clock used by `CChannel` and
    ping code, but asserts are off in the Release build.
-5. **Answered (plan 4): weapon ids are `ModDef` order, and the trace header's names are checked against `SimMod` in every scenario.** **Weapon id order:** `target/content/olx-classic/mod.ron` lists weapons alphabetically. This
+5. **Answered (plan 4): weapon ids are `ModDef` order, and the trace header's names are checked against `SimMod` in every scenario.** **Weapon id order:** `content/packs/olx-classic/mod.ron` lists weapons alphabetically. This
    was not verified against OLX's gamescript load order. If `rl-import-lgs` preserves file
    order, the two agree. Recording weapon names in the header (§13.4) settles it.
 6. **Still open: the specials are covered by unit tests only (STATUS).** **Jetpack and other specials** cannot be checked against the oracle with Classic or MW 1.0,

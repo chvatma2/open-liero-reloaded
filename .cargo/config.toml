@@ -1,7 +1,7 @@
 [alias]
 xtask = "run --quiet --package xtask --"
 
-# Tests that need imported OLX content find it here (`cargo xtask fetch-olx-content`).
+# Tests that need imported OLX content find it here (the committed packs).
 # A value already in the environment wins.
 [env]
-RL_CONTENT_DIR = { value = "target/content", relative = true }
+RL_CONTENT_DIR = { value = "content/packs", relative = true }

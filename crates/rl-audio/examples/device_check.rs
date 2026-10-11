@@ -3,7 +3,7 @@
 //! device (spec §19 E12); exits 0 when the sounds played, 3 when no device
 //! opened (the game would run silently), 1 on any other problem.
 //!
-//! `RL_CONTENT_DIR=target/content cargo run -p rl-audio --example device_check`
+//! `RL_CONTENT_DIR=content/packs cargo run -p rl-audio --example device_check`
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -16,7 +16,7 @@ use rl_sim::{Event, EventKind, SoundId};
 
 fn main() -> ExitCode {
     let dir =
-        std::env::var_os("RL_CONTENT_DIR").map_or_else(|| PathBuf::from("target/content"), PathBuf::from);
+        std::env::var_os("RL_CONTENT_DIR").map_or_else(|| PathBuf::from("content/packs"), PathBuf::from);
     let content = match Content::open(&dir) {
         Ok(c) => c,
         Err(e) => {

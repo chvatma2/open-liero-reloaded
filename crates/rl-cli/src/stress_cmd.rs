@@ -38,7 +38,7 @@ pub struct Args {
     #[arg(long)]
     no_verify: bool,
     /// Imported content (packs written by `rl-cli import`).
-    #[arg(long, default_value = "target/content")]
+    #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Write the report here as RON.
     #[arg(long)]

@@ -44,7 +44,7 @@ enum Command {
     Layers,
     /// Write public API summaries to target/api/<crate>.txt.
     Api,
-    /// Download the pinned OLX content and import it into target/content.
+    /// Download the pinned OLX content and import it into content/packs.
     FetchOlxContent {
         /// Only download; print the game directory path and skip importing.
         #[arg(long)]
@@ -155,7 +155,7 @@ fn main() -> ExitCode {
 
 /// `cargo xtask e2e`: the content first (as `check` fetches it), then the run.
 fn e2e_command(offline: bool) -> anyhow::Result<bool> {
-    let content = if offline { None } else { Some(fetch::run(true)?.content) };
+    let content = if offline { None } else { Some(fetch::verify()?.content) };
     match e2e::run(content.as_deref()) {
         Ok(()) => Ok(true),
         Err(why) => {

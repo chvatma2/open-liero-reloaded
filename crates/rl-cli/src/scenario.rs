@@ -6,7 +6,7 @@ pub struct Args {
     /// Scenario names (`<fixtures>/<name>.ron`); all if none.
     names: Vec<String>,
     /// Imported content (packs written by `rl-cli import`).
-    #[arg(long, default_value = "target/content")]
+    #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Directory with the scenarios and OLX's traces.
     #[arg(long, default_value = "fixtures/oracle")]
