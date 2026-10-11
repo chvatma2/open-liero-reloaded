@@ -467,6 +467,12 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   frame's last tick's from 4× to 16×, none at max. The menus have no
   spectating yet (the command line's `--spectate`), and replays have no
   seeking (deferred).
+- **Engine stress test** (`rl-cli stress`, plan 7 task 8, the user's
+  request): its matches go past OLX's limits on purpose: 32 chaos bots,
+  `LoadingTime` 0 (in OLX's range, below any menu default) and, in one
+  configuration, a projectile pool of 20 000 (`MatchOptions::pool_capacity`;
+  OLX's `MAX_PROJECTILES` is 3000). Every other match keeps OLX's pool and
+  loading time; the oracle, match and render goldens are unchanged.
 - **Renderer** (`rl-render`, plan 5 task 5): OLX blits each sprite with SDL
   onto a 2× screen; the renderer draws the same texels at art scale (at
   least 2×) and then upscales (E3). With interpolation (E2), a sprite's
