@@ -40,21 +40,35 @@ impl Difficulty {
     /// OLX: `src/common/CWormBot.cpp:1682-1706` (aim offset and tolerance),
     /// `1836-1850` (`weaponCanHit`'s noise), `2342-2348` (weapon change),
     /// `3650` (rifles).
+    ///
+    /// Deviation (`docs/porting/STATUS.md`, "Bot aim error floor"): the aim
+    /// errors (offset, target, gravity and speed noise) scale with at least
+    /// [`AIM_ERROR_FLOOR`], so Xtreme, which OLX lets aim perfectly, keeps
+    /// half of Hard's error. The fire tolerance stays OLX's.
     pub fn params(self) -> DifficultyParams {
         let level = self.level();
         let f = (3 - level) as f32 / 3.0;
+        let e = f.max(AIM_ERROR_FLOOR);
         DifficultyParams {
-            aim_offset_max_deg: f * 50.0,
+            aim_offset_max_deg: e * 50.0,
             fire_tolerance_deg: 3.0 + 20.0 * f,
-            target_noise_px: f * 50.0,
-            gravity_noise: f * 5.0,
-            speed_noise: f * 20.0,
+            target_noise_px: e * 50.0,
+            gravity_noise: e * 5.0,
+            speed_noise: e * 20.0,
             noise_refresh: TimeDiff(500),
             weapon_change_delay: TimeDiff([500, 300, 200, 120][level as usize]),
             rifle_reload_before_engage: level >= 2,
         }
     }
 }
+
+/// The least scale of a difficulty's aim errors, against OLX's
+/// `(AI_XTREME - level) / AI_XTREME` (1 for Easy, 1/3 for Hard, 0 for
+/// Xtreme): no bot aims perfectly (the user's direction: bots get harder
+/// through strategy, reactions and reloading, never perfect aim). Measured
+/// with 4 Xtreme bots over 20 seeds of 3 minutes (`docs/porting/STATUS.md`):
+/// kills per minute drop 3-8 % from OLX's Xtreme and stay above Hard's.
+pub const AIM_ERROR_FLOOR: f32 = 1.0 / 6.0;
 
 /// A difficulty's numbers (notes §4.5), overridable through
 /// [`BotConfig::params`].
@@ -152,7 +166,29 @@ mod tests {
         assert_eq!((p.gravity_noise, p.speed_noise, p.target_noise_px), (5.0, 20.0, 50.0));
         let p = Difficulty::Hard.params();
         assert!((p.gravity_noise - 5.0 / 3.0).abs() < 1e-6 && (p.speed_noise - 20.0 / 3.0).abs() < 1e-5);
+        // Xtreme: OLX has none; here the aim-error floor (1/6).
         let p = Difficulty::Xtreme.params();
-        assert_eq!((p.gravity_noise, p.speed_noise, p.target_noise_px), (0.0, 0.0, 0.0));
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        assert!(close(p.gravity_noise, 5.0 / 6.0) && close(p.speed_noise, 20.0 / 6.0));
+        assert!(close(p.target_noise_px, 50.0 / 6.0) && close(p.aim_offset_max_deg, 50.0 / 6.0));
+    }
+
+    /// The user's direction (`docs/porting/STATUS.md`, "Bot aim error
+    /// floor"): no difficulty aims perfectly, Xtreme stays the most precise
+    /// and keeps OLX's 3° fire tolerance.
+    #[test]
+    fn no_difficulty_aims_perfectly() {
+        use Difficulty::*;
+        let errors = |d: Difficulty| {
+            let p = d.params();
+            [p.aim_offset_max_deg, p.target_noise_px, p.gravity_noise, p.speed_noise]
+        };
+        for d in [Easy, Medium, Hard, Xtreme] {
+            assert!(errors(d).iter().all(|&e| e > 0.0), "{d:?} aims perfectly: {:?}", errors(d));
+        }
+        for (x, h) in errors(Xtreme).into_iter().zip(errors(Hard)) {
+            assert!(x < h, "Xtreme's error {x} is not below Hard's {h}");
+        }
+        assert_eq!(Xtreme.params().fire_tolerance_deg, 3.0);
     }
 }

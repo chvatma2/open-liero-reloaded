@@ -34,9 +34,12 @@ const SEEDS: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 /// The spawns (`FindSpot`) are up to 400 px apart in solid dirt, which
 /// the bot digs through (OLX's bots dig as they walk, every 0.2 s): far
 /// spawns, the target 250 px above, take about a minute. The cap leaves
-/// room above the measured times (10-62 s, median 28 s at the time of
-/// writing) so that small changes in the simulation or the bots do not
-/// break it; the median is the check that the bot is quick.
+/// room above the measured times so that small changes in the simulation
+/// or the bots do not break it; the median is the check that the bot is
+/// quick. With the aim-error floor (`AIM_ERROR_FLOOR`) these 8 seeds take
+/// 17-86 s, median 57 s (OLX's perfect aim: 10-62 s, median 28 s); over
+/// seeds 1-32 the median is 35 s against 29 s with perfect aim, 52 s for
+/// Medium and 71 s for Hard.
 #[test]
 fn xtreme_bot_kills_static_target_quickly() {
     let Some(c) = content() else { return };
@@ -51,7 +54,7 @@ fn xtreme_bot_kills_static_target_quickly() {
     let median = (sorted[3] + sorted[4]) / 2.0;
     eprintln!("Xtreme kill times (s): {times:?}, median {median}");
     assert!(times.iter().all(|&t| t <= 120.0), "every target dies within 2 minutes: {times:?}");
-    assert!(median <= 30.0, "half of them within 30 s: {times:?}");
+    assert!(median <= 65.0, "half of them within 65 s: {times:?}");
 }
 
 #[test]

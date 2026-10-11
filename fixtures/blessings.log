@@ -9,3 +9,7 @@
   fixtures/matches/classic-dirt-level-8dm.ron
   fixtures/matches/classic-fossilfacility-4xtreme-kill-limit.ron
   fixtures/matches/mw-castlestrike-8chaos.ron
+2026-10-11 bless-regression: rl-bots: aim-error floor (1/6 of Easy's error) so Xtreme no longer aims perfectly; every Xtreme bot (fixed and Mixed) draws aim noise from its own RNG
+  fixtures/matches/classic-dirt-level-8dm.ron
+  fixtures/matches/classic-fossilfacility-4xtreme-kill-limit.ron
+  fixtures/matches/mw-castlestrike-8chaos.ron

@@ -165,8 +165,9 @@ fn flight_time(muzzle: Vec2, to: Vec2, v: Vec2, g: f32) -> Option<f32> {
 
 /// `weaponCanHit`'s noise (`src/common/CWormBot.cpp:1836-1850`): gravity,
 /// speed and target offsets drawn again every `noise_refresh` below
-/// Xtreme. OLX shares one set between all bots; here each bot draws its
-/// own from its generator (notes §4.2).
+/// Xtreme in OLX, at every difficulty here ([`crate::AIM_ERROR_FLOOR`]).
+/// OLX shares one set between all bots; here each bot draws its own from
+/// its generator (notes §4.2).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ShotNoise {
     pub gravity: f32,
