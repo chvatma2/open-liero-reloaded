@@ -186,7 +186,7 @@ fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig) -> anyhow::Resu
         "--record records a Deathmatch (--mode deathmatch)"
     );
     let assets = if let Some(file) = &args.replay {
-        setup::load_replay(&args.content, file, &args.skin)?
+        setup::load_replay(&[args.content.as_path()], file, &args.skin)?
     } else if mode == Mode::Deathmatch {
         let o = DeathmatchOptions {
             seed: args.seed,
@@ -197,7 +197,7 @@ fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig) -> anyhow::Resu
             time_limit: args.time_limit,
             bonuses: args.bonuses,
         };
-        setup::load_deathmatch(&args.content, &args.mod_name, &args.level, &args.skin, &o)?
+        setup::load_deathmatch(&[args.content.as_path()], &args.mod_name, &args.level, &args.skin, &o)?
     } else {
         let options = SandboxOptions {
             mod_id: String::new(),
@@ -206,7 +206,7 @@ fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig) -> anyhow::Resu
             targets: args.targets,
             bonuses: args.bonuses,
         };
-        setup::load(&args.content, &args.mod_name, &args.level, &args.skin, options)?
+        setup::load(&[args.content.as_path()], &args.mod_name, &args.level, &args.skin, options)?
     };
     for w in &assets.warnings {
         eprintln!("warning: {w}");

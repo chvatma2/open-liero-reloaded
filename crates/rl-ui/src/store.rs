@@ -35,6 +35,8 @@ pub const SETTINGS_FILE: &str = "settings.ron";
 pub const PROFILES_FILE: &str = "profiles.ron";
 /// Auto-saved replays of the last matches (§21 G2).
 pub const REPLAYS_DIR: &str = "replays";
+/// Imported packs (spec §9.4), layered over the bundled ones.
+pub const PACKS_DIR: &str = "packs";
 /// A settings or profiles file larger than this is bad (they are a few KB).
 pub const MAX_FILE_BYTES: usize = 1 << 20;
 /// Backups `<name>.bak`, `<name>.1.bak` .. `<name>.<MAX_BACKUPS - 1>.bak`.
@@ -105,6 +107,12 @@ impl Store {
     /// Where replays are saved (§21 G2), if there is a data directory.
     pub fn replays_dir(&self) -> Option<PathBuf> {
         self.dir.as_ref().map(|d| d.join(REPLAYS_DIR))
+    }
+
+    /// Where the Import screen writes packs (spec §9.4), if there is a
+    /// data directory.
+    pub fn packs_dir(&self) -> Option<PathBuf> {
+        self.dir.as_ref().map(|d| d.join(PACKS_DIR))
     }
 
     /// `settings.ron`: defaults when there is none (no warning) or it is bad.

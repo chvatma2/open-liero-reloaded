@@ -36,11 +36,18 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   `Set*` actions sanitize, then apply (`ApplyVideo`, `ApplyAudio`,
   `ApplyBindings`) and save (`SaveSettings`, `SaveProfiles`) only what
   changed (`SetBindings`: `sanitize_bindings`). `bindings()` is the
-  selected profile's, else the options'.
+  selected profile's, else the options'. Import: `StartImport(path)` on
+  the Import screen with no game playing emits `StartImport(PathBuf)`
+  (and saves the path as `settings.import.last_path`), once until the app
+  reports `ImportFinished` (`is_importing()`); `CancelImport` emits
+  `CancelImport`. While it runs every start (`StartMatch`, `StartSandbox`,
+  `PlayReplay`) is refused with a message; Back and the other screens
+  work (the import runs on).
 - **Settings** (`settings.rs`): video (`WindowPreset`, fullscreen,
   `FrameRate`, `UpscaleFilter`, interpolation, `ui_scale` in
   `UI_SCALE_RANGE` 0.5-3), audio volumes 0-1, `Bindings`, gameplay
-  (`MatchPrefs`; the HUD has one style: an old file's `hud:` is ignored).
+  (`MatchPrefs`; the HUD has one style: an old file's `hud:` is ignored),
+  `import` (`ImportSettings::last_path`, default empty).
   `sanitize()` fixes out-of-range values and
   keys (`sanitize_bindings`: the `GAME_KEYS` Esc, F5, F2, Tab and H are
   dropped, then an action left unreachable gets OLX's back), one warning
@@ -95,10 +102,25 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   small screen);
   About (`about.rs`, §21 G9: `CREDITS`, `LICENSES`, every imported
   pack's recorded origin, `sources`: skins grouped by directory,
-  `origin_text`); Import is a placeholder until
-  its task. Esc is `Back` and
+  `origin_text`); Import (`import.rs`, plan 7 task 7: the directory
+  field, `MenuData::import_path`, filled with the last path when the
+  screen first opens; Import, disabled while one runs or without
+  `MenuData::packs_dir`; Cancel; a progress bar from
+  `MenuData::import`, repainting while it runs; the result, the notes and
+  every item's pack or error and warnings; local play's Start is disabled
+  with "Importing content…"). Esc is `Back` and
   F5 `Restart` on every screen, a held key's repeats ignored
   (`pressed_once`); in the options Esc first closes an open dialog.
+- **Import job** (`import.rs`, plan 7 task 7): `ImportJob::spawn(path,
+  packs)` runs `rl_content::import::discover` and `import` (no prune,
+  revision `LOCAL_REVISION`) on a thread named `olx-import` and returns at
+  once; `poll(&mut ImportProgress)` drains its channel into the screen's
+  view (`true` once, when it ended: `ImportResult::Done { imported,
+  failed, warnings, tried, total, cancelled }` or `Failed(why)`; a thread
+  gone silent is a failure too); `cancel` stops it between items,
+  `stop(timeout)` cancels and waits (quitting), dropping the job cancels
+  it; a panic inside is caught and reported, never propagated. `worker()`
+  is the thread's id (tests).
 - **Replays** (`replays.rs`): `list(dir)` (the `.rlrp` files, automatic
   saves newest first, each with `header_problem`: 6 bytes read),
   `auto_save(dir, bytes)` (`match-NNNNNN.rlrp`, the last
@@ -140,7 +162,8 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   compares them with `rl_scene`'s). `PreviewAnim` is OLX's menu animation.
   The app uploads the frames (`PreviewTextures`): no GPU handle here.
 - **Store** (`store.rs`, Review Focus 1): `Store::platform()` (the
-  `ProjectDirs` data directory, else `in_memory` and a warning),
+  `ProjectDirs` data directory, else `in_memory` and a warning;
+  `replays_dir()`, `packs_dir()`: `packs/`, the imports),
   `Store::open(dir)`, `load_*` (`Loaded { value, warnings }`) and
   `save_*`. Versioned RON (`SETTINGS_VERSION`, `PROFILES_VERSION`), every
   struct `#[serde(default)]`, atomic writes (temporary file, sync,
@@ -164,4 +187,6 @@ set; `tests/options.rs`: rebinding never leaves an action unreachable, the
 rebinding flow and the other sections through the widgets, game keys never
 bound, the capture swallowing its key; `tests/ingame.rs`: the HUD layout,
 the weapon selection, the pause menu, Esc/F5 repeats, the results;
-`tests/hud_snapshots.rs` with `RL_GPU_TESTS`).
+`tests/import.rs`: `import_runs_off_the_ui_thread_and_reports` on
+`fixtures/olx-mini`, and the screen's flow; `tests/hud_snapshots.rs`
+with `RL_GPU_TESTS`).

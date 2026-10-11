@@ -456,7 +456,7 @@ mod tests {
             targets: 2,
             bonuses: true,
         };
-        let a = load(std::path::Path::new(&dir), "MW 1.0", "Dirt Level", "default", o).unwrap();
+        let a = load(&[std::path::Path::new(&dir)], "MW 1.0", "Dirt Level", "default", o).unwrap();
         let vp = Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
         let mut s = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
         let start = s.world.clone();
@@ -504,7 +504,7 @@ mod tests {
             targets: 1,
             bonuses: false,
         };
-        let a = load(std::path::Path::new(&dir), "Classic", "Liero Factory", "default", o).unwrap();
+        let a = load(&[std::path::Path::new(&dir)], "Classic", "Liero Factory", "default", o).unwrap();
         let vp = Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
         let mut s = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
         for _ in 0..DRIFT_CHECK_TICKS {

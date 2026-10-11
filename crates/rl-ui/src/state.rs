@@ -17,6 +17,11 @@
 //!   Restart (F5) plays the game again in place: a Deathmatch's rematch
 //!   (same weapons), the sandbox or a replay from the start.
 //! - **Options** apply and save only what changed.
+//! - **Import** (plan 7 task 7): the Import screen's Import starts one
+//!   import (`StartImport`; the path remembered in the settings) until
+//!   the app reports `ImportFinished`; another press does nothing. The
+//!   import runs on while the player leaves the screen, but no game
+//!   starts until it ends (the packs it writes are not loaded half-way).
 
 use std::path::PathBuf;
 
@@ -104,6 +109,12 @@ pub enum UiAction {
     MatchFailed(String),
     /// The app: the match is over and its results are ready.
     MatchOver,
+    /// The Import screen's Import: the OLX game directory typed.
+    StartImport(String),
+    /// The Import screen's Cancel.
+    CancelImport,
+    /// The app: the import has ended (its report is the screen's data).
+    ImportFinished,
 }
 
 /// What the app must do.
@@ -139,6 +150,11 @@ pub enum AppCommand {
     SaveSettings(Settings),
     /// Write `profiles.ron` (`Store::save_profiles`).
     SaveProfiles(Profiles),
+    /// Import the OLX game directory at this path into the user data's
+    /// packs off the UI thread, then report [`UiAction::ImportFinished`].
+    StartImport(PathBuf),
+    /// Stop the import after the item it is on.
+    CancelImport,
     Quit,
 }
 
@@ -180,6 +196,8 @@ pub struct UiState {
     seed: u32,
     /// Shown on the screen: why the last start failed, or a replay saved.
     message: Option<String>,
+    /// An import runs (`StartImport` until `ImportFinished`).
+    importing: bool,
 }
 
 impl UiState {
@@ -196,6 +214,7 @@ impl UiState {
             replay_saved: false,
             seed,
             message: None,
+            importing: false,
         }
     }
 
@@ -229,6 +248,11 @@ impl UiState {
         }
     }
 
+    /// An import runs: no game starts.
+    pub fn is_importing(&self) -> bool {
+        self.importing
+    }
+
     /// The pause menu is up.
     pub fn is_paused(&self) -> bool {
         self.paused
@@ -260,7 +284,7 @@ impl UiState {
             UiAction::Back => self.back(),
             UiAction::StartMatch => self.start_match(),
             UiAction::StartSandbox => {
-                if self.screen != Screen::Main || self.play != Play::None {
+                if self.screen != Screen::Main || self.play != Play::None || self.refused_while_importing() {
                     return Vec::new();
                 }
                 self.message = None;
@@ -268,7 +292,8 @@ impl UiState {
                 vec![AppCommand::StartSandbox]
             }
             UiAction::PlayReplay(path) => {
-                if self.screen != Screen::Replays || self.play != Play::None {
+                if self.screen != Screen::Replays || self.play != Play::None || self.refused_while_importing()
+                {
                     return Vec::new();
                 }
                 self.message = None;
@@ -386,7 +411,45 @@ impl UiState {
                 // The app's pause and this state never disagree.
                 if std::mem::take(&mut self.paused) { vec![AppCommand::SetPaused(false)] } else { Vec::new() }
             }
+            UiAction::StartImport(path) => self.start_import(path),
+            UiAction::CancelImport => {
+                if self.importing {
+                    vec![AppCommand::CancelImport]
+                } else {
+                    Vec::new()
+                }
+            }
+            UiAction::ImportFinished => {
+                self.importing = false;
+                Vec::new()
+            }
         }
+    }
+
+    /// Import's button: one import at a time, from the Import screen, with
+    /// no game playing; the path is remembered.
+    fn start_import(&mut self, path: String) -> Vec<AppCommand> {
+        let path = path.trim().to_string();
+        if self.screen != Screen::Import || self.importing || self.play != Play::None || path.is_empty() {
+            return Vec::new();
+        }
+        self.importing = true;
+        self.message = None;
+        let mut out = vec![AppCommand::StartImport(PathBuf::from(&path))];
+        if self.settings.import.last_path != path {
+            self.settings.import.last_path = path;
+            out.push(self.save_settings());
+        }
+        out
+    }
+
+    /// A start while an import runs is refused with a message (its packs
+    /// are being written).
+    fn refused_while_importing(&mut self) -> bool {
+        if self.importing {
+            self.message = Some("An import is running: start when it is done.".into());
+        }
+        self.importing
     }
 
     fn go(&mut self, s: Screen) {
@@ -463,6 +526,9 @@ impl UiState {
     }
 
     fn start_match(&mut self) -> Vec<AppCommand> {
+        if self.refused_while_importing() {
+            return Vec::new();
+        }
         let mut out = match (self.screen, self.play) {
             (Screen::LocalPlay, Play::None) => Vec::new(),
             // A rematch: the match over ends first.

@@ -84,7 +84,7 @@ fn soak_sandbox_10_minutes_headless() {
     };
     let options =
         SandboxOptions { mod_id: String::new(), level_id: String::new(), seed: 7, targets: 3, bonuses: true };
-    let a = load(Path::new(&dir), "MW 1.0", "Liero Factory", "default", options).unwrap();
+    let a = load(&[Path::new(&dir)], "MW 1.0", "Liero Factory", "default", options).unwrap();
     let viewport = Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
     let mut s = Session::new(&a, viewport, Interpolation::Linear, Audio::silent()).unwrap();
     // The session's own audio is silent; sound is driven on a mock device.

@@ -44,13 +44,16 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     egui::Panel::bottom("local play start").show(ui, |ui| {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            let starting = state.is_starting();
+            let (starting, importing) = (state.is_starting(), state.is_importing());
             let button = Button::new(RichText::new("Start").size(20.0)).min_size(Vec2::new(180.0, 40.0));
-            if ui.add_enabled(!starting, button).clicked() {
+            if ui.add_enabled(!starting && !importing, button).clicked() {
                 start = true;
             }
             if starting {
                 ui.label("Loading…");
+            } else if importing {
+                // Its packs are being written (plan 7 task 7).
+                ui.label("Importing content…");
             }
             message(ui, state);
         });

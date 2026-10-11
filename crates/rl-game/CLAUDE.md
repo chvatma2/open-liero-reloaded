@@ -55,6 +55,16 @@ cargo run --release -p rl-game -- --replay f.rlrp
   worm of a replay, wears OLX's default skin (`Assets::bot_skin`, as OLX's
   bot profiles) in OLX's bot colours away from the player's
   (`rl_ui::bot_colours`; a replay's worms in the default colours).
+  The menus list and play `--content` with the data directory's `packs/`
+  over it (`Content::open_layers`, spec §9.4; the command line's games
+  use `--content` alone). **Import** (plan 7 task 7): `StartImport`
+  spawns an `rl_ui::import::ImportJob` (one at a time; without a data
+  directory the screen says so), `Shell::poll` feeds its reports to
+  `MenuData::import` every frame, and when it ends lists the content again
+  (`list_content`: the catalog, `MenuData::set_catalog` so re-imported
+  thumbnails are made again, the skin preview reloaded) and reports
+  `ImportFinished`; no game starts meanwhile (`UiState`); `finish` (quit)
+  stops it, waiting at most `IMPORT_STOP_WAIT` (2 s).
   `Shell::update_preview(ctx)`, after the menus are drawn,
   uploads the profiles screen's skin preview (`MenuData::preview_wanted`,
   `rl_ui::skin_preview::frames`) as egui textures (`MenuData::preview`,
@@ -78,7 +88,8 @@ cargo run --release -p rl-game -- --replay f.rlrp
   and egui hears no key (`app::egui_hears`).
 - **Single thread** (spec §8.6): the device is created and used only on
   the main (event-loop) thread; under WSL's d3d12 GL driver a thread that
-  used the device crashes when it exits. kira runs its own audio thread.
+  used the device crashes when it exits. kira runs its own audio thread;
+  an import runs on its own (`olx-import`), which touches no device.
 - **WSL** (`wsl.rs`): on a WSL kernel, unless the user set `WGPU_BACKEND`
   or `GALLIUM_DRIVER`, the game starts itself again with
   `GALLIUM_DRIVER=d3d12 WGPU_BACKEND=gl` (Mesa reads the variable when the
@@ -204,4 +215,6 @@ profile's look), `tests/ingame.rs` (the weapon selection, the pause and a
 valid replay, the results against the world's scores), `tests/options.rs`
 (video through the paced requests,
 volumes live, the saved window with the flags on top) play the imported
-levels when `RL_CONTENT_DIR` is set).
+levels when `RL_CONTENT_DIR` is set; `tests/import.rs` imports
+`fixtures/olx-mini` through the shell: the menus refreshed, the imported
+pack over the bundled one, a quit mid-import).

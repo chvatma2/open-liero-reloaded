@@ -436,6 +436,25 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   of the main menu (`Menu_Main.cpp:276-283`); the remake has an About
   screen from the main menu with the credits, the licenses and each
   bundled pack's origin.
+- **Import screen** (`rl-content::import`, `rl-ui`, `rl-game`, plan 7
+  task 7): OLX reads its game directory as it is; the remake imports one
+  (a typed path: the `share/gamedir`, or an OpenLieroX root holding one)
+  into packs in the user data's `packs/`, on a background thread, and
+  layers them over the bundled packs (spec §9.4): a pack id in `packs/`
+  replaces the bundled pack of that id (an OLX item always imports to the
+  same id), and an imported pack this build cannot read hides nothing.
+  What is imported is found where OLX's menus look: the directories with a
+  `script.lgs` (`Menu_Local_FillModList`, `checkLXBinMod`), `levels/*.lxl`
+  (OLX's map list), `data/themes/*` and `skins/*.png`. Not imported: Liero
+  `.lev` and directory (Gusanos) levels, Gusanos mods, skins other than
+  PNG (OLX also lists `.bmp`, `.tga` and `.pcx`, `src/main.cpp:1003-1021`),
+  and the core pack unless all 18 of its files are there (a partial one
+  would replace the bundled sprites with placeholders). A mod whose
+  `script.lgs` is broken is listed as a failed item; OLX's list hides it.
+  Replays recorded on a bundled pack stay valid when the same OLX item is
+  imported again (the content hash leaves `pack.ron` and `thumb.png`
+  out); a different item under the same id makes them refuse with the
+  content-hash error. No game starts while an import runs.
 - **Renderer** (`rl-render`, plan 5 task 5): OLX blits each sprite with SDL
   onto a 2× screen; the renderer draws the same texels at art scale (at
   least 2×) and then upscales (E3). With interpolation (E2), a sprite's

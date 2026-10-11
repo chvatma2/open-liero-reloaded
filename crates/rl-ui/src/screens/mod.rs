@@ -11,6 +11,7 @@
 //! key, egui hears no key at all: the capture has it alone.
 
 pub mod about;
+mod import;
 mod ingame;
 mod keys;
 mod local_play;
@@ -32,6 +33,7 @@ use rl_input::Capture;
 use rl_sim::{Keys, MAX_SLOTS};
 
 use crate::hud::Results;
+use crate::import::ImportProgress;
 use crate::replays::ReplayFile;
 use crate::skin_preview::{PreviewKey, PreviewTextures};
 use crate::state::{Screen, UiAction, UiState};
@@ -68,6 +70,13 @@ pub struct MenuData {
     pub held: Keys,
     /// The finished match's results (the app sets them when they show).
     pub results: Option<Results>,
+    /// The Import screen's path field (the last path imported when it
+    /// first opens).
+    pub import_path: String,
+    /// Where imports go: the data directory's `packs/` (none: no import).
+    pub packs_dir: Option<PathBuf>,
+    /// The import running or done (the app updates it every frame).
+    pub import: ImportProgress,
     /// The weapon selection in progress.
     select: Option<WeaponSelect>,
     /// The thumbnails decoded so far by level id (`None`: unreadable, its
@@ -96,6 +105,9 @@ impl MenuData {
             weapons: None,
             held: Keys(0),
             results: None,
+            import_path: String::new(),
+            packs_dir: None,
+            import: ImportProgress::default(),
             select: None,
             thumbs: BTreeMap::new(),
             decodes_left: THUMB_DECODES_PER_FRAME,
@@ -177,6 +189,9 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
             Screen::Replays => data.refresh_replays(),
             Screen::Profiles => data.profiles = profiles::View::new(state.profiles().selected),
             Screen::Options => data.options = options::View::default(),
+            Screen::Import if data.import_path.is_empty() => {
+                data.import_path = state.settings().import.last_path.clone();
+            }
             Screen::WeaponSelect => {
                 let remembered = state.profiles().selected().map(|p| p.weapons.as_slice()).unwrap_or(&[]);
                 data.select = data.weapons.as_ref().map(|m| WeaponSelect::new(m, remembered));
@@ -210,7 +225,8 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
                 Screen::Replays => replays::show(ui, state, data, &mut out),
                 Screen::Options => options::show(ui, state, data, &mut out),
                 Screen::About => about::show(ui, data, &mut out),
-                _ => placeholder(ui, screen, &mut out),
+                Screen::Import => import::show(ui, state, data, &mut out),
+                _ => {}
             });
         }
     }
@@ -241,16 +257,6 @@ fn message(ui: &mut Ui, state: &UiState) {
     if let Some(m) = state.message() {
         ui.label(RichText::new(m).color(Color32::from_rgb(255, 110, 90)));
     }
-}
-
-/// The screens later tasks fill (import).
-fn placeholder(ui: &mut Ui, screen: Screen, out: &mut Vec<UiAction>) {
-    let title = match screen {
-        Screen::Import => "Import",
-        _ => "",
-    };
-    header(ui, title, out);
-    ui.label(RichText::new("Not available yet.").weak());
 }
 
 /// `key` went down this frame: a press, not a held key's repeat (egui's

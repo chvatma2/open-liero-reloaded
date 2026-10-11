@@ -19,9 +19,19 @@
 //! ends, is restarted or the game quits (`rl_ui::replays::auto_save`); the
 //! results' Save replay keeps it under a name of its own
 //! (`rl_ui::replays::save_kept`).
+//!
+//! The menus list and play the bundled content (`--content`) with the
+//! user data's `packs/` layered over it (spec §9.4: an imported pack
+//! replaces the bundled one of its id). The Import screen's import runs
+//! on its own thread (`rl_ui::import::ImportJob`), polled each frame by
+//! [`Shell::poll`]; when it ends the content is listed again, so new and
+//! re-imported packs show (their thumbnails made again) without a restart.
+//! No game starts while it runs (`UiState` refuses), and a game playing
+//! keeps the packs it loaded.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
 use rl_audio::Audio;
@@ -29,6 +39,7 @@ use rl_content::{Content, LoadedSkin, MatchOptions, Player};
 use rl_input::Bindings;
 use rl_scene::{Interpolation, Viewport};
 use rl_sim::{Keys, MAX_SLOTS};
+use rl_ui::import::{ImportJob, ImportProgress};
 use rl_ui::screens::MenuData;
 use rl_ui::skin_preview::{self, PreviewKey, PreviewTextures};
 use rl_ui::weapon_select::{WeaponMenu, WeaponSelect};
@@ -104,27 +115,20 @@ pub struct Shell {
     /// The command line's video flags over the saved options, and the
     /// options as loaded (`video::Overrides`).
     overrides: Option<(VideoSettings, Overrides)>,
+    /// The Import screen's import while it runs.
+    import: Option<ImportJob>,
 }
 
+/// How long quitting waits for an import to stop after its item.
+pub const IMPORT_STOP_WAIT: Duration = Duration::from_secs(2);
+
 impl Shell {
-    /// The main menu over content directory `cfg.content` (listed for the
-    /// menus now), with `audio` for every game.
+    /// The main menu over content directory `cfg.content` with the data
+    /// directory's imported packs over it (listed for the menus now), with
+    /// `audio` for every game.
     pub fn new(cfg: ShellConfig, ui: UiState, store: Store, audio: Audio) -> Shell {
-        let mut logged = BTreeSet::new();
-        let content = match Content::open(&cfg.content) {
-            Ok(c) => Some(c),
-            Err(e) => {
-                eprintln!("warning: {e:#}: no mods or levels to play");
-                None
-            }
-        };
-        let catalog = content.as_ref().map(Content::catalog).unwrap_or_default();
-        for w in &catalog.warnings {
-            if logged.insert(w.clone()) {
-                eprintln!("warning: {w}");
-            }
-        }
-        let data = MenuData::new(catalog, store.replays_dir());
+        let mut data = MenuData::new(Default::default(), store.replays_dir());
+        data.packs_dir = store.packs_dir();
         let mut shell = Shell {
             ui,
             data,
@@ -138,12 +142,14 @@ impl Shell {
             launches: 0,
             unsaved_settings: None,
             unsaved_profiles: None,
-            logged,
-            content,
+            logged: BTreeSet::new(),
+            content: None,
             preview_skin: None,
             preview_textures: Vec::new(),
             overrides: None,
+            import: None,
         };
+        shell.list_content();
         let audio = shell.ui.settings().audio.clone();
         shell.set_volume(&audio);
         shell
@@ -172,7 +178,76 @@ impl Shell {
             preview_skin: None,
             preview_textures: Vec::new(),
             overrides: None,
+            import: None,
         }
+    }
+
+    /// The content directories, highest priority first: the data
+    /// directory's imported packs, then the bundled content.
+    fn roots(&self) -> Vec<PathBuf> {
+        self.data.packs_dir.iter().cloned().chain([self.cfg.content.clone()]).collect()
+    }
+
+    /// Lists the content for the menus (again, after an import): the
+    /// catalog, its thumbnails made again (`MenuData::set_catalog`), the
+    /// skin preview loaded again.
+    fn list_content(&mut self) {
+        let roots = self.roots();
+        let roots: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
+        self.content = match Content::open_layers(&roots) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                eprintln!("warning: {e:#}: no mods or levels to play");
+                None
+            }
+        };
+        let catalog = self.content.as_ref().map(Content::catalog).unwrap_or_default();
+        self.log(self.content.as_ref().map(|c| c.warnings().to_vec()).unwrap_or_default());
+        self.log(catalog.warnings.clone());
+        self.data.set_catalog(catalog);
+        self.preview_skin = None;
+        self.data.preview = None;
+        self.preview_textures.clear();
+    }
+
+    /// The import running, if any.
+    pub fn importing(&self) -> bool {
+        self.import.is_some()
+    }
+
+    /// The Import screen's Import: the job started on its own thread
+    /// (one at a time; without a data directory, the reason shown).
+    fn start_import(&mut self, path: PathBuf, out: &mut Vec<Outcome>) {
+        if self.import.is_some() {
+            return;
+        }
+        let Some(packs) = self.data.packs_dir.clone() else {
+            self.data.import = ImportProgress::failed("there is no data directory to import into".into());
+            for c in self.ui.update(UiAction::ImportFinished) {
+                self.carry(c, out);
+            }
+            return;
+        };
+        println!("rl-game: importing {} into {}", path.display(), packs.display());
+        self.data.import = ImportProgress::started();
+        self.import = Some(ImportJob::spawn(path, packs));
+    }
+
+    /// The import's reports since the last frame; when it has ended, the
+    /// content listed again and the menus told.
+    fn poll_import(&mut self) -> Vec<Outcome> {
+        let Some(job) = &mut self.import else { return Vec::new() };
+        if !job.poll(&mut self.data.import) {
+            return Vec::new();
+        }
+        self.import = None;
+        match &self.data.import.result {
+            Some(rl_ui::import::ImportResult::Failed(why)) => eprintln!("warning: import: {why}"),
+            Some(r) => println!("rl-game: import done: {r:?}"),
+            None => {}
+        }
+        self.list_content();
+        self.act(UiAction::ImportFinished)
     }
 
     /// The profiles screen's skin preview (plan 7 ruling Q2: the menus
@@ -293,14 +368,27 @@ impl Shell {
                 self.unsaved_settings = Some(s);
             }
             AppCommand::SaveProfiles(p) => self.unsaved_profiles = Some(p),
+            AppCommand::StartImport(path) => self.start_import(path, out),
+            AppCommand::CancelImport => {
+                if let Some(job) = &self.import {
+                    job.cancel();
+                }
+            }
             AppCommand::Quit => out.push(Outcome::Quit),
         }
     }
 
-    /// Loads the game asked for in an earlier frame, if any, and reports
-    /// to the menus whether it started.
+    /// The import's progress (and, when it ends, the content listed
+    /// again); then loads the game asked for in an earlier frame, if any,
+    /// and reports to the menus whether it started.
     pub fn poll(&mut self) -> Vec<Outcome> {
-        let Some(launch) = self.pending.take() else { return Vec::new() };
+        let mut out = self.poll_import();
+        let Some(launch) = self.pending.take() else { return out };
+        out.extend(self.launch_reported(launch));
+        out
+    }
+
+    fn launch_reported(&mut self, launch: Launch) -> Vec<Outcome> {
         match self.launch(launch) {
             Ok(()) => {
                 let mut out = self.act(UiAction::MatchStarted);
@@ -340,7 +428,8 @@ impl Shell {
     fn launch(&mut self, launch: Launch) -> anyhow::Result<()> {
         self.launches += 1;
         let profile = self.ui.profiles().selected().cloned().unwrap_or_default();
-        let root = self.cfg.content.clone();
+        let roots = self.roots();
+        let root: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
         let mut assets = match launch {
             Launch::Match(o) => setup::load_match(&root, &o, &profile.skin_id)?,
             Launch::Sandbox => {
@@ -524,8 +613,15 @@ impl Shell {
         }
     }
 
-    /// At exit: the playing game's replay saved, the settings written.
+    /// At exit: the playing game's replay saved, the settings written, an
+    /// import stopped after its item (waited for at most
+    /// [`IMPORT_STOP_WAIT`]; a pack it was writing stays hidden).
     pub fn finish(&mut self) {
+        if let Some(mut job) = self.import.take()
+            && !job.stop(IMPORT_STOP_WAIT)
+        {
+            eprintln!("warning: quitting during an import: its last pack is not imported");
+        }
         self.end();
         self.flush();
     }

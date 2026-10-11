@@ -31,6 +31,8 @@ pub struct Settings {
     /// The keys when the selected profile has none of its own.
     pub input: Bindings,
     pub gameplay: GameplaySettings,
+    /// The Import screen's (plan 7 task 7).
+    pub import: ImportSettings,
 }
 
 impl Settings {
@@ -227,4 +229,12 @@ pub struct GameplaySettings {
     // the field ignored.
     /// The match local play starts, as last set up.
     pub match_prefs: MatchPrefs,
+}
+
+/// The Import screen's settings.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImportSettings {
+    /// The OLX game directory imported last, as typed (empty: none yet).
+    pub last_path: String,
 }

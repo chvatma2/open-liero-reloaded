@@ -191,15 +191,15 @@ fn resolve(content: &Content, mod_name: &str, level: &str) -> anyhow::Result<(St
 }
 
 /// The sandbox on the packs `--mod`, `--level` and `--skin` name in
-/// content directory `root`.
+/// content directories `roots` (layered: `Content::open_layers`).
 pub fn load(
-    root: &Path,
+    roots: &[&Path],
     mod_name: &str,
     level: &str,
     skin: &str,
     o: SandboxOptions,
 ) -> anyhow::Result<Assets> {
-    let content = Content::open(root)?;
+    let content = Content::open_layers(roots)?;
     let (mod_id, level_id) = resolve(&content, mod_name, level)?;
     let setup = sandbox_setup(&SandboxOptions { mod_id: mod_id.clone(), level_id: level_id.clone(), ..o });
     open(content, mod_id, level_id, skin, Game::Sandbox(setup))
@@ -207,13 +207,13 @@ pub fn load(
 
 /// A Deathmatch against bots on the packs `--mod` and `--level` name.
 pub fn load_deathmatch(
-    root: &Path,
+    roots: &[&Path],
     mod_name: &str,
     level: &str,
     skin: &str,
     o: &DeathmatchOptions,
 ) -> anyhow::Result<Assets> {
-    let content = Content::open(root)?;
+    let content = Content::open_layers(roots)?;
     let (mod_id, level_id) = resolve(&content, mod_name, level)?;
     let packs = content.replay_packs(&mod_id, &level_id)?;
     let options = Box::new(match_options(o, &mod_id, &level_id));
@@ -222,8 +222,8 @@ pub fn load_deathmatch(
 
 /// The Deathmatch `o` describes (the menus' local play), its packs by id.
 /// A missing or broken pack is an error naming it.
-pub fn load_match(root: &Path, o: &MatchOptions, skin: &str) -> anyhow::Result<Assets> {
-    let content = Content::open(root)?;
+pub fn load_match(roots: &[&Path], o: &MatchOptions, skin: &str) -> anyhow::Result<Assets> {
+    let content = Content::open_layers(roots)?;
     let packs = content.replay_packs(&o.mod_id, &o.level_id)?;
     let options = Box::new(o.clone());
     open(content, o.mod_id.clone(), o.level_id.clone(), skin, Game::Deathmatch { options, packs })
@@ -231,10 +231,10 @@ pub fn load_match(root: &Path, o: &MatchOptions, skin: &str) -> anyhow::Result<A
 
 /// The replay in file `file`, on the packs it names (refused when they
 /// are missing or differ from the recorded ones).
-pub fn load_replay(root: &Path, file: &Path, skin: &str) -> anyhow::Result<Assets> {
+pub fn load_replay(roots: &[&Path], file: &Path, skin: &str) -> anyhow::Result<Assets> {
     let bytes = std::fs::read(file).with_context(|| format!("{}", file.display()))?;
     let replay = Replay::decode(&bytes).with_context(|| format!("{}", file.display()))?;
-    let content = Content::open(root)?;
+    let content = Content::open_layers(roots)?;
     content.check_replay_packs(&replay.setup).with_context(|| format!("{}", file.display()))?;
     let p = &replay.setup.packs;
     let (mod_id, level_id) = (p.mod_pack.id.clone(), p.level.id.clone());
@@ -300,7 +300,7 @@ mod tests {
         };
         for m in ["Classic", "MW 1.0"] {
             for level in ["Liero Factory", "CastleStrike", "FossilFacility", "Dirt Level"] {
-                let a = load(Path::new(&dir), m, level, "default", options(3)).unwrap();
+                let a = load(&[Path::new(&dir)], m, level, "default", options(3)).unwrap();
                 let world = a.new_world().unwrap();
                 assert_eq!(world.worms().len(), 4, "{m} on {level}");
                 assert!(world.worms().iter().all(|w| w.alive && w.slots.len() == 5), "{m} on {level}");
