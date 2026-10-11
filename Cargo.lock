@@ -2861,6 +2861,7 @@ dependencies = [
  "ron",
  "serde",
  "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

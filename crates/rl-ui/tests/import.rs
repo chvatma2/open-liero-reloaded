@@ -243,3 +243,64 @@ fn import_screen_flow() {
     h.get_by_label_contains("no data directory");
     assert!(h.get_by_label("Import").accesskit_node().is_disabled());
 }
+
+/// A typed or pasted path: whitespace and surrounding quotes go, `~` is
+/// the home directory, a relative path is relative to the game's working
+/// directory (said on the screen); the state remembers it cleaned.
+#[test]
+fn typed_paths_are_cleaned_and_resolved() {
+    use rl_ui::import::{clean_typed_path, resolve_typed_path};
+    let (home, cwd) = (Path::new("/home/me"), Path::new("/work"));
+    let r = |t: &str| resolve_typed_path(t, Some(home), Some(cwd));
+    assert_eq!(r("  /games/OLX  "), PathBuf::from("/games/OLX"));
+    assert_eq!(r("\"/games/Open LieroX\""), PathBuf::from("/games/Open LieroX"));
+    assert_eq!(r(" '/games/OLX' "), PathBuf::from("/games/OLX"));
+    assert_eq!(r("~"), PathBuf::from("/home/me"));
+    assert_eq!(r("~/OpenLieroX"), PathBuf::from("/home/me/OpenLieroX"));
+    assert_eq!(r("OpenLieroX/share"), PathBuf::from("/work/OpenLieroX/share"));
+    assert_eq!(r("~other/x"), PathBuf::from("/work/~other/x"), "only the player's own home");
+    assert_eq!(resolve_typed_path("~/x", None, None), PathBuf::from("~/x"));
+    assert_eq!(clean_typed_path(" \"a b\" "), "a b");
+    assert_eq!(clean_typed_path("\"unbalanced"), "\"unbalanced");
+
+    let mut ui = UiState::new(Settings::default(), Profiles::default(), 1);
+    ui.update(UiAction::Open(Screen::Import));
+    let c = ui.update(UiAction::StartImport("  \"~/Open LieroX\" ".into()));
+    assert_eq!(c[0], AppCommand::StartImport(PathBuf::from("~/Open LieroX")));
+    assert_eq!(ui.settings().import.last_path, "~/Open LieroX");
+}
+
+/// A long report (a full OLX import is over 400 items) lays out only the
+/// rows in view.
+#[test]
+fn a_long_report_lays_out_the_rows_in_view() {
+    let mut h =
+        harness(UiState::new(Settings::default(), Profiles::default(), 1), Some("/data/packs".into()));
+    h.get_by_label("Import").click();
+    h.run();
+    let entries = (0..5000)
+        .map(|i| rl_content::import::ImportEntry {
+            source: format!("skins/skin{i}.png"),
+            pack: Some(format!("olx-skin-skin{i}")),
+            error: None,
+            warnings: if i % 7 == 0 { vec![format!("warning {i}")] } else { vec![] },
+        })
+        .collect();
+    h.state_mut().data.import = ImportProgress {
+        entries,
+        result: Some(ImportResult::Done {
+            imported: 5000,
+            failed: 0,
+            warnings: 715,
+            tried: 5000,
+            total: 5000,
+            cancelled: false,
+        }),
+        ..ImportProgress::default()
+    };
+    h.run();
+    h.get_by_label("skins/skin0.png");
+    h.get_by_label("warning 0");
+    assert!(h.query_by_label("skins/skin4999.png").is_none(), "rows out of view are not laid out");
+    assert!(h.query_by_label("skins/skin200.png").is_none());
+}

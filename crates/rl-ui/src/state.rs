@@ -150,8 +150,10 @@ pub enum AppCommand {
     SaveSettings(Settings),
     /// Write `profiles.ron` (`Store::save_profiles`).
     SaveProfiles(Profiles),
-    /// Import the OLX game directory at this path into the user data's
-    /// packs off the UI thread, then report [`UiAction::ImportFinished`].
+    /// Import the OLX game directory at this path (as typed, cleaned:
+    /// `~` and a relative path are the app's, `import::expand_typed_path`)
+    /// into the user data's packs off the UI thread, then report
+    /// [`UiAction::ImportFinished`].
     StartImport(PathBuf),
     /// Stop the import after the item it is on.
     CancelImport,
@@ -429,7 +431,7 @@ impl UiState {
     /// Import's button: one import at a time, from the Import screen, with
     /// no game playing; the path is remembered.
     fn start_import(&mut self, path: String) -> Vec<AppCommand> {
-        let path = path.trim().to_string();
+        let path = crate::import::clean_typed_path(&path).to_string();
         if self.screen != Screen::Import || self.importing || self.play != Play::None || path.is_empty() {
             return Vec::new();
         }

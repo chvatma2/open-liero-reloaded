@@ -106,8 +106,12 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   plan's mods, levels (with their thumbnail), themes, core files and
   skins one by one (`Progress::Item`/`Done`; the callback returning
   `false` cancels between items), writes each pack hidden
-  (`.import-<id>`) and renames it into place (the old one renamed aside,
-  then removed; leftovers of a killed import removed by the next), ids
+  (`.import-<id>`) and renames it into place (the old one renamed aside
+  to `.replaced-<id>`, then removed: a failure is that item's warning; a
+  `.replaced-<id>` without its `<id>`, from an import killed between the
+  renames, is listed by `open_layers` and put back by the next import;
+  other leftovers removed, or `ImportReport::notes`), symlinked mod,
+  level, skin, data and theme directories followed one level, ids
   colliding in a run get `-2`, ..., and writes `import-report.ron`
   (`ImportEntry`: source, pack, error, warnings; byte-identical to the
   CLI's before the move). `prune` (the CLI's) removes packs of earlier
@@ -118,7 +122,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   `share/gamedir`) holds where OLX's menus look (directories with a
   `script.lgs`, `levels/*.lxl`, `data/themes/*`, `skins/`; the core pack
   only when all of `OLX_CORE_FILES` are there), case-insensitively, with
-  `notes` for what it skips; not an OLX directory is an error.
+  `notes` for what it skips; not an OLX directory is an error;
+  `discover_until(path, stop)` stops with `Cancelled`.
   `tests/import.rs` runs on `fixtures/olx-mini` (made by
   `fixtures/olx-mini.py`).
 - `Content::pack_dir(id)`, `pack_kind(id)`, `pack_origin(id)`.

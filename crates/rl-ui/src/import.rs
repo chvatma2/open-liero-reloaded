@@ -74,11 +74,59 @@ impl ImportProgress {
     }
 }
 
+/// A typed or pasted path cleaned: surrounding whitespace, then one pair
+/// of matching surrounding quotes (`"…"` or `'…'`, as file managers
+/// copy paths), then whitespace again.
+pub fn clean_typed_path(typed: &str) -> &str {
+    let t = typed.trim();
+    for q in ['"', '\''] {
+        if t.len() >= 2 && t.starts_with(q) && t.ends_with(q) {
+            return t[1..t.len() - 1].trim();
+        }
+    }
+    t
+}
+
+/// The directory a typed path names ([`clean_typed_path`]): `~` or `~/…`
+/// in the player's `home`, a relative path in `cwd` (the game's working
+/// directory; the screen says so). Without them, the path as typed.
+pub fn resolve_typed_path(typed: &str, home: Option<&Path>, cwd: Option<&Path>) -> PathBuf {
+    let t = clean_typed_path(typed);
+    let expanded = match (t.strip_prefix('~'), home) {
+        (Some(""), Some(h)) => h.to_path_buf(),
+        (Some(rest), Some(h)) if rest.starts_with('/') || rest.starts_with(std::path::MAIN_SEPARATOR) => {
+            h.join(rest.trim_start_matches(['/', std::path::MAIN_SEPARATOR]))
+        }
+        _ => PathBuf::from(t),
+    };
+    match cwd {
+        Some(c) if expanded.is_relative() => c.join(expanded),
+        _ => expanded,
+    }
+}
+
+/// [`resolve_typed_path`] with the player's home directory and the
+/// game's working directory.
+pub fn expand_typed_path(typed: &str) -> PathBuf {
+    let home = directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf());
+    let cwd = std::env::current_dir().ok();
+    resolve_typed_path(typed, home.as_deref(), cwd.as_deref())
+}
+
 enum Msg {
     Worker(ThreadId),
-    Found { gamedir: PathBuf, notes: Vec<String> },
-    Item { index: usize, total: usize, source: String },
+    Found {
+        gamedir: PathBuf,
+        notes: Vec<String>,
+    },
+    Item {
+        index: usize,
+        total: usize,
+        source: String,
+    },
     Entry(ImportEntry),
+    /// Problems outside the items.
+    Notes(Vec<String>),
     Finished(ImportResult),
 }
 
@@ -132,6 +180,7 @@ impl ImportJob {
                     (view.index, view.total, view.current) = (index, total, Some(source));
                 }
                 Ok(Msg::Entry(e)) => view.entries.push(e),
+                Ok(Msg::Notes(n)) => view.notes.extend(n),
                 Ok(Msg::Finished(r)) => return self.end(view, r),
                 Err(TryRecvError::Empty) => return false,
                 // The thread is gone without a word (it cannot panic past
@@ -197,8 +246,19 @@ fn work(path: &Path, packs: &Path, stop: &AtomicBool, tx: &Sender<Msg>) {
 }
 
 fn run(path: &Path, packs: &Path, stop: &AtomicBool, tx: &Sender<Msg>) -> ImportResult {
-    let found = match import::discover(path) {
+    let found = match import::discover_until(path, &|| stop.load(Ordering::Relaxed)) {
         Ok(d) => d,
+        Err(e) if e.is::<import::Cancelled>() => {
+            // Cancelled while looking: nothing tried.
+            return ImportResult::Done {
+                imported: 0,
+                failed: 0,
+                warnings: 0,
+                tried: 0,
+                total: 0,
+                cancelled: true,
+            };
+        }
         Err(e) => return ImportResult::Failed(format!("{e:#}")),
     };
     let _ = tx.send(Msg::Found { gamedir: found.gamedir.clone(), notes: found.notes.clone() });
@@ -212,6 +272,11 @@ fn run(path: &Path, packs: &Path, stop: &AtomicBool, tx: &Sender<Msg>) -> Import
         };
         !stop.load(Ordering::Relaxed)
     });
+    if let Ok(r) = &report
+        && !r.notes.is_empty()
+    {
+        let _ = tx.send(Msg::Notes(r.notes.clone()));
+    }
     match report {
         Ok(r) => ImportResult::Done {
             imported: r.imported(),

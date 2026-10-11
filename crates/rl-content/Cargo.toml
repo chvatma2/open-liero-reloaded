@@ -21,6 +21,7 @@ rl-import-lgs.workspace = true
 rl-import-lxl.workspace = true
 rl-import-gfx.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
 serde = { workspace = true, features = ["std"] }
 ron.workspace = true
 

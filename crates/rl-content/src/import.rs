@@ -15,8 +15,16 @@
 //! - **No half-written pack is ever visible:** a pack is written to a
 //!   hidden directory (`.import-<id>`; [`Content::open`](crate::Content::open)
 //!   skips names starting with `.`) and renamed into place; the pack it
-//!   replaces is first renamed aside (`.replaced-<id>`) and then removed.
-//!   Leftovers of an import that was killed are removed by the next one.
+//!   replaces is first renamed aside (`.replaced-<id>`) and then removed
+//!   (one that cannot be is a warning: the new pack is in place). An
+//!   import killed between the two renames leaves only `.replaced-<id>`:
+//!   `Content::open` still lists it as the pack, and the next import puts
+//!   it back; every other leftover is removed by the next import (one
+//!   that cannot be is a note, `ImportReport::notes`).
+//! - **Linked directories:** a symbolic link to a mod, `levels`, `skins`,
+//!   `data`, `data/themes` or a theme directory is followed, one level
+//!   (nothing is walked, so a link loop cannot recur).
+//! - [`discover_until`] stops when asked ([`Cancelled`]).
 //! - **Bounded memory:** every file of the game directory is read at most
 //!   [`MAX_SOURCE_BYTES`] (no OLX file is near it), and only regular files
 //!   (`DirFs`); every image is decoded only after its header's size is
@@ -121,6 +129,9 @@ pub struct ImportReport {
     pub total: usize,
     /// The progress callback stopped it before every item was tried.
     pub cancelled: bool,
+    /// Problems outside any item (a hidden pack an earlier import left
+    /// that cannot be removed), to show once.
+    pub notes: Vec<String>,
 }
 
 impl ImportReport {
@@ -202,29 +213,49 @@ impl Imported {
     }
 
     /// Writes the pack as `<out>/<id>/`, replacing an older one: written
-    /// hidden, then renamed into place (module docs).
-    fn write(&self, out: &Path, id: &str) -> anyhow::Result<()> {
+    /// hidden, then renamed into place (module docs). The old pack that
+    /// cannot be removed once replaced is a warning (returned): the new
+    /// one is in place, and the next import tries again.
+    fn write(&self, out: &Path, id: &str) -> anyhow::Result<Vec<String>> {
         let tmp = out.join(format!("{TMP_PREFIX}{id}"));
-        let old = out.join(format!("{OLD_PREFIX}{id}"));
         let dir = out.join(id);
         remove_dir(&tmp)?;
         if let Err(e) = self.write_to(&tmp) {
             let _ = std::fs::remove_dir_all(&tmp);
             return Err(e.context(format!("writing {}", dir.display())));
         }
+        let mut old = None;
         if dir.exists() {
-            remove_dir(&old)?;
-            std::fs::rename(&dir, &old).with_context(|| format!("moving the old {} aside", dir.display()))?;
+            // `.replaced-<id>`, or `.replaced-<id>~2`, ... when an earlier
+            // one could not be removed.
+            let aside = (1..)
+                .map(|k| {
+                    out.join(if k == 1 {
+                        format!("{OLD_PREFIX}{id}")
+                    } else {
+                        format!("{OLD_PREFIX}{id}~{k}")
+                    })
+                })
+                .take(100)
+                .find(|p| remove_dir(p).is_ok())
+                .with_context(|| format!("no place to move the old {} aside", dir.display()))?;
+            std::fs::rename(&dir, &aside)
+                .with_context(|| format!("moving the old {} aside", dir.display()))?;
+            old = Some(aside);
         }
         std::fs::rename(&tmp, &dir).with_context(|| format!("moving {} into place", dir.display()))?;
-        remove_dir(&old)
+        Ok(match old.map(|o| remove_dir(&o)) {
+            Some(Err(e)) => vec![format!("{e:#}: the next import removes it")],
+            _ => Vec::new(),
+        })
     }
 }
 
 /// A pack being written.
 const TMP_PREFIX: &str = ".import-";
-/// A pack being replaced.
-const OLD_PREFIX: &str = ".replaced-";
+/// A pack being replaced (`Content::open_layers` lists one whose id has
+/// no other pack: an import killed between its two renames).
+pub(crate) const OLD_PREFIX: &str = ".replaced-";
 
 fn remove_dir(dir: &Path) -> anyhow::Result<()> {
     match std::fs::remove_dir_all(dir) {
@@ -281,13 +312,33 @@ impl Job {
 /// The game directory read with every file bounded by [`MAX_SOURCE_BYTES`].
 struct Bounded(DirFs);
 
+/// How deep `Bounded::list` follows a linked directory: in the root, in
+/// `data` and in `data/themes`.
+const FOLLOW_DEPTH: usize = 2;
+
 impl ContentSource for Bounded {
     fn read(&self, path: &VPath) -> Result<Vec<u8>, VfsError> {
         self.0.read_max(path, MAX_SOURCE_BYTES)
     }
 
+    /// A symbolic link to a directory is listed as a directory in the game
+    /// directory's top levels (mods, `levels`, `skins`, `data`,
+    /// `data/themes`, the themes): one level, nothing is walked, so a link
+    /// loop cannot recur.
     fn list(&self, dir: &VPath) -> Result<Vec<String>, VfsError> {
-        self.0.list(dir)
+        let mut names = self.0.list(dir)?;
+        if dir.components().count() <= FOLLOW_DEPTH {
+            let mut native = self.0.root().to_path_buf();
+            native.extend(dir.components());
+            for name in names.iter_mut().filter(|n| !n.ends_with('/')) {
+                let linked = std::fs::symlink_metadata(native.join(&**name)).is_ok_and(|m| m.is_symlink());
+                if linked && std::fs::metadata(native.join(&**name)).is_ok_and(|m| m.is_dir()) {
+                    name.push('/');
+                }
+            }
+            names.sort();
+        }
+        Ok(names)
     }
 
     fn exists(&self, path: &VPath) -> bool {
@@ -344,9 +395,9 @@ pub fn import(
     let src = Bounded(DirFs::new(olx));
     let jobs = jobs(&src, plan)?;
     std::fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
-    remove_leftovers(out)?;
+    let notes = restore_leftovers(out)?;
     let total = jobs.len();
-    let mut report = ImportReport { entries: Vec::new(), total, cancelled: false };
+    let mut report = ImportReport { entries: Vec::new(), total, cancelled: false, notes };
     let mut ids = BTreeSet::new();
     for (index, job) in jobs.iter().enumerate() {
         let source = job.source();
@@ -363,8 +414,9 @@ pub fn import(
                     .expect("unbounded");
                 item.set_id(id.clone());
                 ids.insert(id.clone());
-                item.write(out, &id)?;
-                ImportEntry { source, pack: Some(id), error: None, warnings: item.warnings() }
+                let left = item.write(out, &id)?;
+                let warnings = item.warnings().into_iter().chain(left).collect();
+                ImportEntry { source, pack: Some(id), error: None, warnings }
             }
             Err(e) => ImportEntry { source, pack: None, error: Some(format!("{e:#}")), warnings: vec![] },
         };
@@ -393,16 +445,36 @@ pub fn import(
     Ok(report)
 }
 
-/// Removes what an import killed mid-pack left behind (hidden packs).
-fn remove_leftovers(out: &Path) -> anyhow::Result<()> {
+/// Repairs what an import killed mid-pack left behind: a pack moved
+/// aside (`.replaced-<id>`) whose new one never came is put back; every
+/// other hidden pack (half-written, or replaced) is removed. One that
+/// cannot be removed is a note.
+fn restore_leftovers(out: &Path) -> anyhow::Result<Vec<String>> {
+    let mut notes = Vec::new();
+    let mut hidden: Vec<PathBuf> = Vec::new();
     for entry in std::fs::read_dir(out).with_context(|| format!("reading {}", out.display()))? {
         let path = entry?.path();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
         if (name.starts_with(TMP_PREFIX) || name.starts_with(OLD_PREFIX)) && path.is_dir() {
-            remove_dir(&path)?;
+            hidden.push(path);
         }
     }
-    Ok(())
+    hidden.sort();
+    for path in hidden {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        if let Some(rest) = name.strip_prefix(OLD_PREFIX) {
+            let id = rest.split('~').next().unwrap_or(rest);
+            let home = out.join(id);
+            if !id.is_empty() && !home.exists() && path.join(rl_pack::MANIFEST).is_file() {
+                std::fs::rename(&path, &home).with_context(|| format!("restoring {}", home.display()))?;
+                continue;
+            }
+        }
+        if let Err(e) = remove_dir(&path) {
+            notes.push(format!("{e:#}"));
+        }
+    }
+    Ok(notes)
 }
 
 /// What [`discover`] found.
@@ -431,10 +503,23 @@ pub struct Discovered {
 /// Names match case-insensitively, as OLX's file lookup does. A path that
 /// is missing, unreadable or holds none of these is an error saying so.
 ///
-/// OLX: src/client/DeprecatedGUI/Menu_Local.cpp:910-921,
-/// src/common/CGameScript.cpp:470-512, src/common/CMap.cpp:2458-2466,
-/// src/common/CMap.cpp:388-395, src/main.cpp:1003-1021
+/// OLX: src/client/DeprecatedGUI/Menu_Local.cpp:895-922 (`ModAdder`,
+/// `Menu_Local_FillModList`), src/common/CGameScript.cpp:472-514,561-577
+/// (`checkLXBinMod`, `CGameScript::CheckFile`), src/common/CMap.cpp:2458-2466
+/// (the map list), src/common/CMap.cpp:389-395 (`findRandomTheme`),
+/// src/main.cpp:1003-1021 (the skin list)
 pub fn discover(path: &Path) -> anyhow::Result<Discovered> {
+    discover_until(path, &|| false)
+}
+
+/// The error of a [`discover_until`] that was stopped.
+#[derive(Debug, thiserror::Error)]
+#[error("cancelled")]
+pub struct Cancelled;
+
+/// [`discover`], stopping with [`Cancelled`] as soon as `stop` says so
+/// (checked before each directory it reads).
+pub fn discover_until(path: &Path, stop: &dyn Fn() -> bool) -> anyhow::Result<Discovered> {
     let meta = std::fs::metadata(path).with_context(|| format!("{}", path.display()))?;
     anyhow::ensure!(meta.is_dir(), "{} is not a directory", path.display());
     let nested = path.join("share").join("gamedir");
@@ -442,7 +527,10 @@ pub fn discover(path: &Path) -> anyhow::Result<Discovered> {
         if !gamedir.is_dir() {
             continue;
         }
-        let found = discover_in(&gamedir).with_context(|| format!("{}", gamedir.display()))?;
+        let found = match discover_in(&gamedir, stop) {
+            Err(e) if e.is::<Cancelled>() => return Err(e),
+            r => r.with_context(|| format!("{}", gamedir.display()))?,
+        };
         if !found.plan.is_empty() {
             return Ok(found);
         }
@@ -454,8 +542,11 @@ pub fn discover(path: &Path) -> anyhow::Result<Discovered> {
     )
 }
 
-fn discover_in(gamedir: &Path) -> anyhow::Result<Discovered> {
-    let src = DirFs::new(gamedir);
+fn discover_in(gamedir: &Path, stop: &dyn Fn() -> bool) -> anyhow::Result<Discovered> {
+    let check = || if stop() { Err(Cancelled) } else { Ok(()) };
+    // As the import reads it: linked directories followed.
+    let src = Bounded(DirFs::new(gamedir));
+    check()?;
     let root = src.list(&VPath::root())?;
     let mut plan = ImportPlan::default();
     let mut notes = Vec::new();
@@ -472,12 +563,14 @@ fn discover_in(gamedir: &Path) -> anyhow::Result<Discovered> {
             .cloned()
     };
     for dir in dirs(&root) {
+        check()?;
         let script = VPath::new(&dir).and_then(|d| d.join("script.lgs"));
         if script.is_ok_and(|s| find_ci(&src, &s).is_some()) {
             plan.mods.push(dir);
         }
     }
     if let Some(levels) = dir_ci(&root, "levels") {
+        check()?;
         let mut other = 0;
         for name in src.list(&VPath::new(&levels)?)? {
             if name.ends_with('/') {
@@ -495,6 +588,7 @@ fn discover_in(gamedir: &Path) -> anyhow::Result<Discovered> {
         }
     }
     if let Some(data) = dir_ci(&root, "data") {
+        check()?;
         let list = src.list(&VPath::new(&data)?)?;
         if let Some(themes) = dir_ci(&list, "themes") {
             let at = format!("{data}/{themes}");
@@ -502,6 +596,7 @@ fn discover_in(gamedir: &Path) -> anyhow::Result<Discovered> {
         }
     }
     if let Some(skins) = dir_ci(&root, "skins") {
+        check()?;
         // `jobs` lists `skins/` as named; another case would not be found.
         let any = src.list(&VPath::new(&skins)?)?.iter().any(|n| n.to_ascii_lowercase().ends_with(".png"));
         if any && skins == "skins" {
@@ -510,6 +605,7 @@ fn discover_in(gamedir: &Path) -> anyhow::Result<Discovered> {
             notes.push(format!("{skins}/ is not named skins/: its skins are not imported"));
         }
     }
+    check()?;
     let core_found =
         OLX_CORE_FILES.iter().filter(|f| VPath::new(f).is_ok_and(|p| find_ci(&src, &p).is_some()));
     let core_found = core_found.count();

@@ -37,7 +37,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
         let field =
             TextEdit::singleline(&mut data.import_path).desired_width(460.0).hint_text("/path/to/OpenLieroX");
         ui.add_enabled(!importing, field).labelled_by(label.id);
-        let path = data.import_path.trim();
+        let path = crate::import::clean_typed_path(&data.import_path);
         let can = !importing && !path.is_empty() && data.packs_dir.is_some();
         if ui.add_enabled(can, Button::new("Import")).clicked() {
             out.push(UiAction::StartImport(path.to_string()));
@@ -49,6 +49,12 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
             }
         }
     });
+    // A relative path is the game's working directory's: say which.
+    let typed = crate::import::clean_typed_path(&data.import_path);
+    if !typed.is_empty() && !typed.starts_with('~') && std::path::Path::new(typed).is_relative() {
+        let cwd = std::env::current_dir().map_or_else(|_| "?".into(), |d| d.display().to_string());
+        ui.label(RichText::new(format!("Relative to {cwd}")).weak());
+    }
     message(ui, state);
     ui.add_space(8.0);
     if importing {
@@ -83,22 +89,40 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
         return;
     }
     ui.separator();
-    ScrollArea::vertical().id_salt("import report").show(ui, |ui| {
-        egui::Grid::new("import entries").num_columns(2).striped(true).spacing([24.0, 4.0]).show(ui, |ui| {
-            for e in &p.entries {
-                ui.label(&e.source);
-                ui.vertical(|ui| {
-                    match (&e.pack, &e.error) {
-                        (_, Some(err)) => ui.label(RichText::new(err).color(ERROR)),
-                        (Some(pack), None) => ui.label(RichText::new(pack).weak()),
-                        (None, None) => ui.label(""),
-                    };
-                    for w in &e.warnings {
-                        ui.label(RichText::new(w).color(WARNING));
-                    }
+    // One line a row (an item, then each of its warnings), laid out only
+    // in view: a full OLX import reports over 400 items.
+    let lines: Vec<(&str, &str, Color32)> = p
+        .entries
+        .iter()
+        .flat_map(|e| {
+            let (text, colour) = match (&e.pack, &e.error) {
+                (_, Some(err)) => (err.as_str(), ERROR),
+                (Some(pack), None) => (pack.as_str(), ui.visuals().weak_text_color()),
+                (None, None) => ("", ui.visuals().text_color()),
+            };
+            std::iter::once((e.source.as_str(), text, colour))
+                .chain(e.warnings.iter().map(|w| ("", w.as_str(), WARNING)))
+        })
+        .collect();
+    let row = ui.text_style_height(&egui::TextStyle::Body);
+    ScrollArea::vertical().id_salt("import report").auto_shrink([false, true]).show_rows(
+        ui,
+        row,
+        lines.len(),
+        |ui, range| {
+            for &(source, text, colour) in &lines[range] {
+                ui.horizontal(|ui| {
+                    let left = egui::Layout::left_to_right(egui::Align::Center);
+                    ui.allocate_ui_with_layout(egui::vec2(SOURCE_WIDTH, row), left, |ui| {
+                        ui.set_min_width(SOURCE_WIDTH);
+                        ui.add(egui::Label::new(source).truncate());
+                    });
+                    ui.label(RichText::new(text).color(colour));
                 });
-                ui.end_row();
             }
-        });
-    });
+        },
+    );
 }
+
+/// The report's source column.
+const SOURCE_WIDTH: f32 = 280.0;

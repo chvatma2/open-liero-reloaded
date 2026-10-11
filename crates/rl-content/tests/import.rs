@@ -263,3 +263,167 @@ fn a_decompression_bomb_is_refused_on_import_and_load() {
     let m = c.load_mod("olx-tiny-mod").unwrap();
     assert!(m.warnings.iter().any(|w| w.contains("bomb.png") && w.contains("above")), "{:?}", m.warnings);
 }
+
+/// Copies directory `from` to `to` (a pack).
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        if e.file_type().unwrap().is_dir() {
+            copy_dir(&e.path(), &to.join(e.file_name()));
+        } else {
+            std::fs::copy(e.path(), to.join(e.file_name())).unwrap();
+        }
+    }
+}
+
+/// An import killed between moving a pack aside and moving its new one
+/// into place leaves only `.replaced-<id>`: the content still lists that
+/// pack, and the next import puts it back (whatever it imports); a
+/// `.replaced-<id>` beside its `<id>` is the old one and goes.
+#[test]
+fn an_interrupted_replace_is_restored() {
+    let d = import::discover(&olx_mini()).unwrap();
+    let level = ImportPlan { levels: vec!["levels/Tiny Level.lxl".into()], ..ImportPlan::default() };
+    let theme = ImportPlan { themes: vec!["data/themes/Dirt".into()], ..ImportPlan::default() };
+    let out = tempfile::tempdir().unwrap();
+    import::import(&d.gamedir, &level, out.path(), &local(), &mut |_| true).unwrap();
+    let id = "olx-level-tiny-level";
+    std::fs::rename(out.path().join(id), out.path().join(format!(".replaced-{id}"))).unwrap();
+    let c = Content::open(out.path()).unwrap();
+    assert!(c.pack_dir(id).is_some(), "the moved-aside pack is still listed");
+    c.load_level(id).unwrap();
+    import::import(&d.gamedir, &theme, out.path(), &local(), &mut |_| true).unwrap();
+    assert!(out.path().join(id).join("pack.ron").is_file(), "restored");
+    assert!(!out.path().join(format!(".replaced-{id}")).exists());
+
+    // Killed after the new pack was in place: the old one goes.
+    copy_dir(&out.path().join(id), &out.path().join(format!(".replaced-{id}")));
+    let c = Content::open(out.path()).unwrap();
+    assert_eq!(c.pack_dir(id), Some(out.path().join(id).as_path()));
+    assert!(c.warnings().iter().all(|w| !w.contains("also")), "{:?}", c.warnings());
+    import::import(&d.gamedir, &theme, out.path(), &local(), &mut |_| true).unwrap();
+    assert!(!out.path().join(format!(".replaced-{id}")).exists());
+    assert!(out.path().join(id).join("pack.ron").is_file());
+}
+
+/// The replaced pack that cannot be removed (no permission) is a warning
+/// of that item: its new pack is in place and the import goes on.
+#[cfg(unix)]
+#[test]
+fn a_replaced_pack_left_behind_is_a_warning() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let d = import::discover(&olx_mini()).unwrap();
+    let plan = ImportPlan {
+        levels: vec!["levels/Tiny Level.lxl".into()],
+        themes: vec!["data/themes/Dirt".into()],
+        ..ImportPlan::default()
+    };
+    let out = tempfile::tempdir().unwrap();
+    import::import(&d.gamedir, &plan, out.path(), &local(), &mut |_| true).unwrap();
+    let locked = out.path().join("olx-level-tiny-level/locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::write(locked.join("f"), b"x").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500)).unwrap();
+    if std::fs::remove_file(locked.join("f")).is_ok() {
+        eprintln!("running as root: permissions do not stop removal; skipping");
+        return;
+    }
+    let r = import::import(&d.gamedir, &plan, out.path(), &local(), &mut |_| true).unwrap();
+    assert_eq!(r.imported(), 2);
+    let e = &r.entries[0];
+    assert!(e.warnings.iter().any(|w| w.contains(".replaced-olx-level-tiny-level")), "{e:?}");
+    assert!(out.path().join("olx-level-tiny-level/pack.ron").is_file());
+    // The next import cannot remove it either: a note, not a failure.
+    let r = import::import(&d.gamedir, &plan, out.path(), &local(), &mut |_| true).unwrap();
+    assert_eq!(r.imported(), 2);
+    assert!(r.notes.iter().any(|n| n.contains(".replaced-")), "{:?}", r.notes);
+    let old = out.path().join(".replaced-olx-level-tiny-level/locked");
+    std::fs::set_permissions(old, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+/// Finding the content stops when asked (a path such as `/` takes long).
+#[test]
+fn discovery_can_be_cancelled() {
+    let e = import::discover_until(&olx_mini(), &|| true).unwrap_err();
+    assert!(e.is::<import::Cancelled>(), "{e:#}");
+    assert!(import::discover_until(&olx_mini(), &|| false).is_ok());
+}
+
+/// Mod, level, theme and skin directories that are symbolic links (a
+/// common way to add content) are followed, one level: what they link
+/// to is imported.
+#[cfg(unix)]
+#[test]
+fn symlinked_directories_are_followed() {
+    use std::os::unix::fs::symlink;
+    let elsewhere = tempfile::tempdir().unwrap();
+    let mini = olx_mini().canonicalize().unwrap();
+    let olx = tempfile::tempdir().unwrap();
+    symlink(mini.join("Tiny Mod"), olx.path().join("Linked Mod")).unwrap();
+    symlink(mini.join("levels"), olx.path().join("levels")).unwrap();
+    std::fs::create_dir_all(olx.path().join("data/themes")).unwrap();
+    symlink(mini.join("data/themes/Dirt"), olx.path().join("data/themes/Dirt")).unwrap();
+    copy_dir(&mini.join("skins"), &elsewhere.path().join("skins"));
+    symlink(elsewhere.path().join("skins"), olx.path().join("skins")).unwrap();
+    let d = import::discover(olx.path()).unwrap();
+    assert_eq!(d.plan.mods, ["Linked Mod"]);
+    assert_eq!(d.plan.levels, ["levels/Bad.lxl", "levels/Tiny Level.lxl"]);
+    assert_eq!(d.plan.themes, ["data/themes/Dirt"]);
+    assert!(d.plan.skins);
+    let out = tempfile::tempdir().unwrap();
+    let r = import::import(&d.gamedir, &d.plan, out.path(), &local(), &mut |_| true).unwrap();
+    assert_eq!((r.imported(), r.failed()), (4, 1), "{:?}", r.entries);
+    assert!(out.path().join("olx-linked-mod/pack.ron").is_file());
+}
+
+/// `docs/porting/STATUS.md`'s claim: a replay recorded on a bundled pack
+/// plays on after the same OLX item is imported again (another origin
+/// revision, `local`), and is refused with the content-hash error when a
+/// different item is imported under the same id.
+#[test]
+fn a_replay_survives_reimporting_the_same_content() {
+    use rl_bots::BotConfig;
+    use rl_content::{DEFAULT_PRESET, MatchOptions, Player};
+    use rl_modes::DeathmatchSettings;
+    use rl_sim::SimSettings;
+    let d = import::discover(&olx_mini()).unwrap();
+    let plan = ImportPlan {
+        mods: vec!["Tiny Mod".into()],
+        levels: vec!["levels/Tiny Level.lxl".into()],
+        themes: vec!["data/themes/Dirt".into()],
+        ..ImportPlan::default()
+    };
+    let bundled = tempfile::tempdir().unwrap();
+    let o = ImportOptions { revision: "bundled".into(), prune: true };
+    import::import(&d.gamedir, &plan, bundled.path(), &o, &mut |_| true).unwrap();
+    let options = MatchOptions {
+        mod_id: "olx-tiny-mod".into(),
+        level_id: "olx-level-tiny-level".into(),
+        seed: 3,
+        settings: SimSettings::lx56(),
+        players: vec![Player::Human, Player::Bot(BotConfig::default())],
+        deathmatch: DeathmatchSettings::default(),
+        restrictions: DEFAULT_PRESET.into(),
+    };
+    let m = Content::open(bundled.path()).unwrap().build_match(&options).unwrap();
+    let replay = m.recorder.clone().finish(&m.world).unwrap();
+
+    let user = tempfile::tempdir().unwrap();
+    import::import(&d.gamedir, &plan, user.path(), &local(), &mut |_| true).unwrap();
+    let c = Content::open_layers(&[user.path(), bundled.path()]).unwrap();
+    assert_eq!(c.pack_origin("olx-tiny-mod").unwrap().revision, "local");
+    c.check_replay_packs(&replay.setup).unwrap();
+
+    // Another mod under the same directory name: the same id, other content.
+    let other = tempfile::tempdir().unwrap();
+    std::fs::create_dir(other.path().join("Tiny Mod")).unwrap();
+    let mut script = std::fs::read(olx_mini().join("Tiny Mod/script.lgs")).unwrap();
+    script[24 + 7] = b'e'; // "Tiny Mod" -> "Tiny Moe"
+    std::fs::write(other.path().join("Tiny Mod/script.lgs"), script).unwrap();
+    let mods = ImportPlan { mods: vec!["Tiny Mod".into()], ..ImportPlan::default() };
+    import::import(other.path(), &mods, user.path(), &local(), &mut |_| true).unwrap();
+    let c = Content::open_layers(&[user.path(), bundled.path()]).unwrap();
+    let e = format!("{:#}", c.check_replay_packs(&replay.setup).unwrap_err());
+    assert!(e.contains("content hash") && e.contains("olx-tiny-mod"), "{e}");
+}

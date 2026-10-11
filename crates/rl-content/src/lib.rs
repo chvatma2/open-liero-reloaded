@@ -119,12 +119,16 @@ impl Content {
                 }
             };
             read_any = true;
-            let mut dirs: Vec<PathBuf> = entries
+            let (mut dirs, mut aside): (Vec<PathBuf>, Vec<PathBuf>) = entries
                 .filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| !p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('.')))
                 .filter(|p| p.join(rl_pack::MANIFEST).is_file())
-                .collect();
+                .filter(|p| {
+                    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+                    !name.starts_with('.') || name.starts_with(import::OLD_PREFIX)
+                })
+                .partition(|p| !p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('.')));
             dirs.sort();
+            aside.sort();
             for dir in dirs {
                 match rl_pack::read_manifest(&DirFs::new(&dir)) {
                     Ok(m) => match (packs.get(&m.id), layer_of.get(&m.id)) {
@@ -144,6 +148,19 @@ impl Content {
                         }
                     },
                     Err(e) => warnings.push(format!("{}: {e}, skipped", dir.display())),
+                }
+            }
+            // A pack an import moved aside and was killed before its new
+            // one came (`import`'s `.replaced-<id>`): still the pack, until
+            // the next import puts it back.
+            for dir in aside {
+                if let Ok(m) = rl_pack::read_manifest(&DirFs::new(&dir))
+                    && !packs.contains_key(&m.id)
+                {
+                    names.insert(m.id.clone(), m.name);
+                    origins.insert(m.id.clone(), m.origin);
+                    layer_of.insert(m.id.clone(), layer);
+                    packs.insert(m.id, (m.kind, dir));
                 }
             }
         }

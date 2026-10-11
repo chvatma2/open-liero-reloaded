@@ -53,6 +53,9 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         }
         true
     })?;
+    for n in &report.notes {
+        eprintln!("warning: {n}");
+    }
     let failed = report.failed();
     println!(
         "imported {} packs, {failed} failed, {} warnings (see import-report.ron)",

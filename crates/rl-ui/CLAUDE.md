@@ -104,10 +104,11 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   pack's recorded origin, `sources`: skins grouped by directory,
   `origin_text`); Import (`import.rs`, plan 7 task 7: the directory
   field, `MenuData::import_path`, filled with the last path when the
-  screen first opens; Import, disabled while one runs or without
+  screen first opens; a relative path says what it is relative to; Import, disabled while one runs or without
   `MenuData::packs_dir`; Cancel; a progress bar from
   `MenuData::import`, repainting while it runs; the result, the notes and
-  every item's pack or error and warnings; local play's Start is disabled
+  every item's pack or error and warnings, one line a row laid out only
+  in view (`ScrollArea::show_rows`); local play's Start is disabled
   with "Importing content…"). Esc is `Back` and
   F5 `Restart` on every screen, a held key's repeats ignored
   (`pressed_once`); in the options Esc first closes an open dialog.
@@ -120,7 +121,11 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   gone silent is a failure too); `cancel` stops it between items,
   `stop(timeout)` cancels and waits (quitting), dropping the job cancels
   it; a panic inside is caught and reported, never propagated. `worker()`
-  is the thread's id (tests).
+  is the thread's id (tests). Discovery stops on a cancel too.
+  `clean_typed_path` (whitespace and one pair of surrounding quotes off;
+  `UiState` keeps the path cleaned), `resolve_typed_path(typed, home,
+  cwd)` / `expand_typed_path` (`~` the home directory, a relative path the
+  working directory's; the app expands before importing).
 - **Replays** (`replays.rs`): `list(dir)` (the `.rlrp` files, automatic
   saves newest first, each with `header_problem`: 6 bytes read),
   `auto_save(dir, bytes)` (`match-NNNNNN.rlrp`, the last

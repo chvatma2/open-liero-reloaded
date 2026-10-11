@@ -228,6 +228,7 @@ impl Shell {
             }
             return;
         };
+        let path = rl_ui::import::expand_typed_path(&path.to_string_lossy());
         println!("rl-game: importing {} into {}", path.display(), packs.display());
         self.data.import = ImportProgress::started();
         self.import = Some(ImportJob::spawn(path, packs));
