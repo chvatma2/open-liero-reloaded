@@ -58,9 +58,10 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   content; killed after 240 s. About 15 s.
 - `windows` (`winbuild.rs`, plan 8): the native Windows build run from
   WSL, for `envelope --gpu windows`. `missing()` says why it cannot run
-  here (no `cmd.exe` or `WSLInterop`/`WSLInterop-late` not enabled, the
-  rustup target `x86_64-pc-windows-gnu` absent, no mingw-w64 linker or
-  objdump), a notice, not a failure, for `envelope`. `build()` runs `cargo
+  here (no `cmd.exe` or `WSLInterop`/`WSLInterop-late` not enabled, no
+  Windows PowerShell, the rustup target `x86_64-pc-windows-gnu` absent,
+  no mingw-w64 linker or objdump), a notice, not a failure, for
+  `envelope`. `build()` runs `cargo
   build --release --target x86_64-pc-windows-gnu -p rl-cli -p rl-game`
   with `CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc`
   (about 1 min from cold here; no `crt-static` needed). `stage()` copies
@@ -76,18 +77,21 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   through `WSLENV` (`wslenv`; interop passes nothing else) and fails on
   an unsuccessful exit (interop keeps a Windows code's low 8 bits:
   0xC0000135 is 53) or past its `timeout` (`RUN_TIMEOUT`, 10 min, for
-  the command and envelope points): it kills the interop child, then
-  Windows PowerShell's `stop_script` force-stops every process whose
-  image path lies under the stage (by path prefix, never by image name;
-  refused for a path that is not a `rust-liero-envelope` directory), so
-  the user's own processes are never touched. The ignored test
+  the command and envelope points; the error says how many processes it
+  stopped): Windows PowerShell's `STOP_SCRIPT` force-stops every process
+  whose image path lies under the stage (by path prefix, never by image
+  name), then the interop child is killed. The stage's path reaches the
+  script in `RL_STAGE` through `WSLENV`, never in its source (PowerShell
+  also takes U+2018-U+201B as quotes), and `stop_target` refuses a path
+  that is not a `rust-liero-envelope` directory, so the user's own
+  processes are never touched. The ignored test
   `runs_fail_on_a_bad_exit_and_are_stopped_past_their_timeout` checks
   both on the real machine (`--run-ignored only`, after a stage). The
   command builds, stages and lists `gpu-bench --list-adapters` for `dx12`
   and `vulkan`, failing when either run fails. On the user's machine: DX12
-  and Vulkan both see the RTX 5070 Ti (and the AMD iGPU; DX12 also Microsoft's Basic Render Driver, a
-  `Cpu` adapter), with timestamps on both; `rl-game.exe --demo` writes
-  its shots under the stage's `target/`. Nothing is left running; the
+  and Vulkan both see the RTX 5070 Ti (and the AMD iGPU; DX12 also
+  Microsoft's Basic Render Driver, a `Cpu` adapter), with timestamps on
+  both; `rl-game.exe --demo` writes its shots under the stage's `target/`. Nothing is left running; the
   stage stays for the next run.
 - `bless-render --reason <why>` re-draws `fixtures/render/` (the render
   goldens) and `fixtures/ui/` (the HUD snapshots, `rl-ui`'s

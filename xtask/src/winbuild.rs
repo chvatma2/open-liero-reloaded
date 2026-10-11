@@ -21,6 +21,16 @@ pub const OBJDUMP: &str = "x86_64-w64-mingw32-objdump";
 pub const CMD: &str = "/mnt/c/Windows/System32/cmd.exe";
 /// Windows PowerShell (part of Windows), to stop a run's processes.
 pub const POWERSHELL: &str = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe";
+/// The variable that hands the stage's Windows path to `STOP_SCRIPT`.
+pub const STAGE_VAR: &str = "RL_STAGE";
+/// Force-stops every process whose image lies under `$env:RL_STAGE` and
+/// prints how many: matched by path prefix, never by image name, so the
+/// user's own processes are never touched. The path stays out of the
+/// script's source (PowerShell takes `'` and U+2018-U+201B as quotes).
+pub const STOP_SCRIPT: &str = "if (-not $env:RL_STAGE) { exit 2 }; \
+    $p = $env:RL_STAGE + '\\'; \
+    $s = @(Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($p, [StringComparison]::OrdinalIgnoreCase) }); \
+    $s | Stop-Process -Force; $s.Count";
 /// A generous bound for one run (an envelope point takes a minute or two):
 /// past it `run` stops the process and fails.
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -49,6 +59,9 @@ pub fn missing() -> Option<String> {
         return Some(
             "Windows interop is disabled (/proc/sys/fs/binfmt_misc/WSLInterop or WSLInterop-late)".into(),
         );
+    }
+    if !Path::new(POWERSHELL).exists() {
+        return Some(format!("no Windows PowerShell ({POWERSHELL} is missing)"));
     }
     let installed = Command::new("rustup")
         .current_dir(root())
@@ -198,7 +211,10 @@ pub fn stage(release: &Path, content: &Path, files: &[PathBuf]) -> Result<Stage,
     let dir = windows_temp()?.join(STAGE);
     std::fs::create_dir_all(dir.join("replays")).map_err(|e| format!("{}: {e}", dir.display()))?;
     // A run an interrupted xtask left behind would hold the exes.
-    stop_stage_processes(&dir)?;
+    let stopped = stop_stage_processes(&dir)?;
+    if stopped > 0 {
+        println!("  stopped {stopped} process(es) left running from {}", dir.display());
+    }
     for exe in EXES {
         let src = release.join(exe);
         copy(&src, &dir.join(exe))?;
@@ -248,41 +264,42 @@ pub fn to_windows_path(wsl: &Path) -> Option<String> {
     Some(format!("{}:\\{}", letter.to_ascii_uppercase(), rest.trim_end_matches('/').replace('/', "\\")))
 }
 
-/// The PowerShell that force-stops every process whose image lies under
-/// `stage_win` (a Windows path), and nothing else: matched by path prefix,
-/// never by image name, so the user's own processes are never touched.
-/// `None` unless the path names a stage directory (`STAGE`), so a wrong
-/// path can never stop a whole drive's processes.
-pub fn stop_script(stage_win: &str) -> Option<String> {
+/// The value `STOP_SCRIPT` gets in `STAGE_VAR` for the Windows path
+/// `stage_win`: `None` unless it names a stage directory (`STAGE`), so a
+/// wrong path can never stop a whole drive's processes.
+pub fn stop_target(stage_win: &str) -> Option<&str> {
     let dir = stage_win.trim_end_matches('\\');
-    if dir.rsplit('\\').next() != Some(STAGE) {
-        return None;
-    }
-    let prefix = format!("{dir}\\").replace('\'', "''");
-    Some(format!(
-        "Get-Process | Where-Object {{ $_.Path -and $_.Path.StartsWith('{prefix}', \
-         [StringComparison]::OrdinalIgnoreCase) }} | Stop-Process -Force"
-    ))
+    (dir.rsplit('\\').next() == Some(STAGE)).then_some(dir)
 }
 
-/// Stops whatever runs from the stage directory `dir` (`stop_script`).
-fn stop_stage_processes(dir: &Path) -> Result<(), String> {
+/// Stops whatever runs from the stage directory `dir` (`STOP_SCRIPT`);
+/// gives how many processes it stopped.
+fn stop_stage_processes(dir: &Path) -> Result<usize, String> {
     let win = to_windows_path(dir).ok_or_else(|| format!("{} is not on a Windows drive", dir.display()))?;
-    let script = stop_script(&win).ok_or_else(|| format!("{win} is not a {STAGE} directory"))?;
+    let target = stop_target(&win).ok_or_else(|| format!("{win} is not a {STAGE} directory"))?;
     let out = Command::new(POWERSHELL)
         .current_dir("/mnt/c")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .args(["-NoProfile", "-NonInteractive", "-Command", STOP_SCRIPT])
+        .env(STAGE_VAR, target)
+        .env("WSLENV", wslenv(std::env::var("WSLENV").ok().as_deref(), &[STAGE_VAR]))
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("cannot run {POWERSHELL}: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "stopping the processes under {win} failed ({}): {}",
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    match stdout.trim().parse() {
+        Ok(n) if out.status.success() => Ok(n),
+        _ => Err(format!(
+            "stopping the processes under {win} failed ({}): {}{}",
             out.status,
+            stdout.trim(),
             tail(&String::from_utf8_lossy(&out.stderr), 5)
-        ));
+        )),
     }
-    Ok(())
+}
+
+/// `d` as whole seconds, or milliseconds when it has a fraction.
+fn duration_text(d: Duration) -> String {
+    if d.subsec_nanos() == 0 { format!("{} s", d.as_secs()) } else { format!("{} ms", d.as_millis()) }
 }
 
 fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
@@ -327,15 +344,17 @@ pub fn run(
                 std::thread::sleep(Duration::from_millis(20));
                 continue;
             }
-            Ok(None) => format!("{exe} did not finish within {} s", timeout.as_secs()),
+            Ok(None) => format!("{exe} did not finish within {}", duration_text(timeout)),
             Err(e) => format!("waiting for {exe}: {e}"),
         };
-        // The pipes' readers are left behind: a Windows process that
-        // survived would keep them open.
+        // The Windows side first (killing the interop child also ends its
+        // Windows process, but not one it started), then the child. The
+        // pipes' readers are left behind: a survivor would keep them open.
+        let stopped = stop_stage_processes(&stage.dir);
         let _ = child.kill();
         let _ = child.wait();
-        return Err(match stop_stage_processes(&stage.dir) {
-            Ok(()) => format!("{why}; stopped it"),
+        return Err(match stopped {
+            Ok(n) => format!("{why}; stopped {n} process(es) under the stage"),
             Err(e) => format!("{why}; {e}"),
         });
     };
@@ -417,19 +436,30 @@ mod tests {
 
     #[test]
     fn the_stop_script_targets_only_the_stage() {
-        let script = stop_script("C:\\Users\\O'Neil\\Temp\\rust-liero-envelope").unwrap();
-        // Only processes whose image lies under the stage (quotes doubled for
-        // PowerShell), never by image name.
-        assert!(
-            script.contains("$_.Path.StartsWith('C:\\Users\\O''Neil\\Temp\\rust-liero-envelope\\'"),
-            "{script}"
-        );
-        assert!(script.contains("Stop-Process -Force"), "{script}");
-        assert!(!script.contains("rl-"), "{script}");
-        assert!(!script.contains("-Name"), "{script}");
+        // Only processes whose image lies under the stage, never by image name.
+        assert!(STOP_SCRIPT.contains("$_.Path.StartsWith($p, [StringComparison]::OrdinalIgnoreCase)"));
+        assert!(STOP_SCRIPT.contains("$p = $env:RL_STAGE + '\\'"));
+        assert!(STOP_SCRIPT.contains("Stop-Process -Force"));
+        assert!(!STOP_SCRIPT.contains("rl-") && !STOP_SCRIPT.contains("-Name"));
+        // Every quote PowerShell knows in the path: it goes through the
+        // variable, never into the script's source.
+        for q in ['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'] {
+            let path = format!("C:\\Users\\O{q}Neil{q}) }} | % {{ 1 }} #\\Temp\\rust-liero-envelope\\");
+            assert_eq!(stop_target(&path), Some(&path[..path.len() - 1]));
+            assert!(!STOP_SCRIPT.contains("Neil"), "{q}");
+        }
+        assert!(!STOP_SCRIPT.contains(['\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}']));
         // Never a drive or any directory that is not a stage.
-        assert_eq!(stop_script("C:\\"), None);
-        assert_eq!(stop_script("C:\\Users\\Martin\\AppData\\Local\\Temp"), None);
+        assert_eq!(stop_target("C:\\"), None);
+        assert_eq!(stop_target("C:\\Users\\Martin\\AppData\\Local\\Temp"), None);
+        assert_eq!(stop_target("C:\\x\\rust-liero-envelope-not"), None);
+    }
+
+    #[test]
+    fn timeouts_read_in_seconds_or_milliseconds() {
+        assert_eq!(duration_text(Duration::from_secs(600)), "600 s");
+        assert_eq!(duration_text(Duration::from_millis(250)), "250 ms");
+        assert_eq!(duration_text(Duration::from_millis(1500)), "1500 ms");
     }
 
     #[test]
@@ -457,16 +487,12 @@ mod tests {
 
         let game = ["--no-sound", "--content", "content", "--data-dir", "data"].map(String::from);
         let err = run(&stage, "rl-game.exe", &game, &[], Duration::from_secs(5)).unwrap_err();
-        assert!(err.ends_with("did not finish within 5 s; stopped it"), "{err}");
-        let win = to_windows_path(&stage.dir).unwrap();
-        let count =
-            format!("@(Get-Process | Where-Object {{ $_.Path -and $_.Path.StartsWith('{win}\\') }}).Count");
-        let out = Command::new(POWERSHELL)
-            .current_dir("/mnt/c")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &count])
-            .output()
-            .unwrap();
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0");
+        assert!(err.ends_with("did not finish within 5 s; stopped 1 process(es) under the stage"), "{err}");
+        // Nothing is left: another stop finds none.
+        assert_eq!(stop_stage_processes(&stage.dir), Ok(0));
+        // Quotes in the path reach PowerShell through the variable intact.
+        let quoted = stage.dir.join("O'N\u{2018}e\u{2019}i\u{201A}l\u{201B}").join(STAGE);
+        assert_eq!(stop_stage_processes(&quoted), Ok(0));
     }
 
     #[test]
