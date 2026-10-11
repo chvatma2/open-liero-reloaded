@@ -22,7 +22,9 @@ The headless command-line tool. Its commands:
   --seed S --ticks T [--bonus-frequency F] [--kill-limit K] [--time-limit M]
   [--record f] [--coverage] [--no-verify] [--failures DIR] [--p99-budget-ms B]`
   plays a headless Deathmatch of bots (spec §7.1): invariants every tick
-  (`invariants.rs`), the end, p50/p99/max tick time (bots + sim), the bots'
+  (`invariants.rs`; a worm's centre may sit in rock where OLX's collision
+  wedges it, but never with rock all over its collision cross:
+  `buried_in_rock`), the end, p50/p99/max tick time (bots + sim), the bots'
   work units; then plays it again (determinism) and replays its recording
   from the content (round trip). `--coverage` prints weapons fired, actions
   triggered, events, bonuses, rope attachments and kills by the killer's
