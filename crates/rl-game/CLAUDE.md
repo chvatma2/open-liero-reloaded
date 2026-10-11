@@ -55,7 +55,8 @@ cargo run --release -p rl-game -- --replay f.rlrp
   sandbox again, a Deathmatch's rematch (seed + rematch number; the
   previous match's replay is handed back to save), a replay from the
   start; the worms are the same, so the atlas stays and only the terrain is
-  uploaded again. Debug builds assert every `DRIFT_CHECK_TICKS` (100) that
+  uploaded again. It clears the last tick's events (the rematch's bots
+  think first, on the new world). Debug builds assert every `DRIFT_CHECK_TICKS` (100) that
   the colour terrain's material is the world's (`session_catches_terrain_drift`).
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the default
@@ -75,7 +76,8 @@ cargo run --release -p rl-game -- --replay f.rlrp
   record the injuring weapon, and OLX drops `" with <weapon>"` then), the
   time-limit clock (red in the last 10 s; **frozen in the HUD** at the
   end, since `Deathmatch::time_left_ms` keeps counting), Tab's scoreboard
-  (`World::scores`, the mode's order), and on `GameOver` "Game Over",
+  (`World::scores`, the mode's order; `hud::ScoreKey` hides it when the
+  window loses focus, which never delivers Tab's release), and on `GameOver` "Game Over",
   then after OLX's `GAMEOVER_WAIT` (3 s) the results (winner or "noone",
   reason, lives, score, kills, deaths, suicides, damage; F5 rematch, Esc
   quit). `Session::tally` counts kills by bots,

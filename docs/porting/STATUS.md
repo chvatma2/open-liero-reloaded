@@ -51,6 +51,10 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Bot loadouts (spec §20 F1): `initWeaponSelection`'s presets (rifles, 100lt, mortars by mod name, `LoadingTime` and restrictions), `GetRandomWeapons`, `getRandomEnabledWpn`; the bot's own `rand()` stream | `src/common/CWormBot.cpp:4129-4192`, `src/common/CWorm.cpp:788-844`, `src/game/Game.cpp:1405-1420`, `src/common/MathLib.cpp:71-81`, `include/Utils.h:38-43` | `rl-bots::{loadout, BotRng}` | done (plan 6 task 3) | `bot_presets_match_olx`, `random_weapons_follow_restrictions` |
 | Bot navigation, motor and aim (spec §20 F2, F3, F7): `getMaxFreeArea`, `searchpath_base` (checklist, passage rule, costs, worm-line goal test, `buildPath`, `simplifyPath`, `splitUpNodes`), `traceWormLine`/`fastTraceLine`/`simpleTraceLine`, the node advance of `AI_MoveToTarget`, `AI_SetAim`, `AI_GetAimingAngle`, `AI_Carve`/`AI_Jump` timers, `isJumpingGivingDisadvantage`; the difficulty numbers | `src/common/CWormBot.cpp:110-878`, `1022-1122`, `1651-1713`, `1896-1960`, `2834-2853`, `3304-3366`, `3578-3627`, `src/level/FastTraceLine.h:24-104`, `include/MathLib.h:140-153`, `include/CVec.h:157-185` | `rl-bots::{nav, motor, aim, Bot, Budget}` | done (plan 6 task 4; the brain is task 5) | `areas_grow_like_olx`, `search_finds_paths_and_resumes_across_ticks`, `motor_reaches_target_angle_like_olx_turning`, `motor_switches_weapons_in_two_ticks_per_slot`, `ballistic_hits_static_target`, `think_stays_within_budget`, `bots_are_deterministic`, `think_does_not_allocate`, `think_never_panics_on_odd_worlds` |
 | Bot brain, weapons, rope and chaos (spec §20 F2, F10): `getInput` (THINK ↔ MOVINGTOTARGET, re-thinking every 3 s, every 0.5 s while a search runs and at once on the target's death, the 0.4 s spawn pause, `AI_Carve`), `AI_Think` (critical health, weapon bonus, nearest enemy, health, a random high spot), `AI_CreatePath` (restart after 5 s or when worm lines break, path extension, 0.5 s between searches), `AI_Shoot` (`traceWeaponLine`, clearing weapons through dirt above, lead, feasibility, aim by distance, `weaponCanHit`, bad-aim jumps), `AI_GetBestWeapon` (buckets, change delay; 100lt, rifle and mortar tactics), `AI_ReloadWeapons`, `AI_FindClearingWeapon`, `AI_MoveToTarget` (rope timers, best rope spot, re-throws, pulling away, overshoot, dirt above, dirt ahead, jetpack, rifle reloading, mortar retreat, worms within 50 px, stuck handling), `AI_SimpleMove`, `AI_FindShootingSpot`, `isMoveGivingDisadvantage`; the chaos personality and Deathmatch's chaos rotation | `src/common/CWormBot.cpp:993-1122`, `1180-1644`, `1719-1893`, `1963-2809`, `2869-2983`, `3200-3366`, `3370-4034`, `4120-4126` | `rl-bots::{brain, moving, shoot, weapons, rope, spot, chaos, probe}`, `rl-modes::{RespawnLoadout, ChaosCycle}` | done (plan 6 task 5) | `xtreme_bot_kills_static_target_quickly`, `easy_bot_hits_less`, `bots_use_the_rope_to_climb`, `stuck_bots_stay_within_budget_and_match_ends`, `bots_survive_odd_loadouts`, `chaos_fires_every_weapon_over_a_match_grid`, `chaos_cycle_gives_the_rotation_on_every_spawn`, `bot_matches_are_deterministic_and_allocation_free`, `olx_direct_aim_still_fights`, `a_search_toward_a_moving_target_finishes`, `the_jump_check_is_never_starved`, `a_scan_cut_short_does_not_go_back` |
+| Bot aim error floor (the user's direction, plan 6 ruling R6): every difficulty's aim errors (offset, target, gravity and speed noise) scale with at least 1/6, so Xtreme keeps half of Hard's error; the fire tolerance stays OLX's | `src/common/CWormBot.cpp:1682-1706`, `1836-1850` (OLX's Xtreme has none) | `rl-bots::{Difficulty::params, AIM_ERROR_FLOOR}` | done (plan 6 task 9; a deviation, below) | `no_difficulty_aims_perfectly`, `weapon_can_hit_noise_scales_with_the_level`; kill rates measured before and after (below); goldens re-blessed (`fixtures/blessings.log`) |
+| Replays (spec §20 F8; no OLX equivalent): the setup, pack ids and content hashes, every worm's keys per tick, checksums at tick 0, every 100 ticks and the end; the `RLRP` format, version refused when unknown | — | `rl-replay::{Recorder, Replay, Player, Cursor}`, `rl-content::{replay_packs, world_for_replay, play_replay}` | done (plan 6 task 6) | `record_then_replay_gives_identical_checksums`, `replay_reports_the_first_mismatching_tick`, `replay_reports_a_different_setup_at_tick_0`, `replay_refuses_unknown_format_versions`, `replay_refuses_mismatched_content`, `bot_match_replays_from_content`, `replay_size_is_reasonable`, `decode_never_panics_on_junk`, `a_failing_tick_is_recorded_without_a_checksum` |
+| Headless match runner (spec §7.1, §7.3; no OLX equivalent): `rl-cli match` and `replay`, one match builder shared with `rl-game` (plan 6 ruling R5), invariants every tick, tick-time percentiles, determinism and replay round trip, coverage (weapons, projectile actions, bonuses, rope), failure capture to `target/failures/`, golden checksum streams | — | `rl-cli::{spec, runner, verify, coverage, failure, golden, invariants}`, `rl-content::build_match`, `xtask bless-regression` | done (plan 6 task 7) | `classic_deathmatch_bots_are_deterministic_and_replay`, `mw_chaos_bots_are_deterministic_and_replay`, `failure_writes_replay`, `golden_match_checksums` (`fixtures/matches/`); in `cargo xtask full`: `coverage_report_lists_every_weapon` (both mods × 4 levels × 3 seeds: every weapon of both mods and every projectile action kind) and `long_bot_match_bounded` (30 minutes, review focus 5) |
+| Deathmatch against bots in the game: `--mode deathmatch`, the bots thinking on the main thread before each tick, the HUD (names, kill feed, time-limit clock, Tab's scoreboard), "Game Over" then the results after `GAMEOVER_WAIT`, F5's rematch, `--record` and `--replay` | `src/client/CClient_Draw.cpp:893-905`, `1840-1897`, `2211-2236` | `rl-game::{setup, session, drive, hud, panels}` | done (plan 6 task 8) | `deathmatch_session_ends_with_results`, `rematch_starts_without_the_last_ticks_events`, `bots_think_within_frame_budget`, `replay_session_matches_recorded_checksums`, `scoreboard_hides_when_the_window_loses_focus`; the user's playtest |
 
 ## Deliberate deviations
 
@@ -377,12 +381,83 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 - **D9, exact-zero health** (see above): the death is ported, the Gusanos
   particles' `rnd()` use is not.
 
+## Spec §20 decisions that deviate from OLX (plan 6, M6)
+
+Each decision is in spec §20; the bullets above give the details.
+
+- **F1, bot loadouts:** OLX's presets by default, as OLX; a `Random` policy
+  (`GetRandomWeapons`) is ours. Bots draw from their own `rand()` stream.
+- **F2, ballistic aim:** bots aim with a gravity-aware solver (the low root,
+  the projectile's own gravity and carried velocity); OLX computes the
+  ballistic angle and then aims straight at the target. `weaponCanHit`'s
+  gravity and speed noise bend this aim (dead code in OLX).
+  `AimModel::OlxDirect` keeps OLX's aim for comparison.
+- **F3, bots press keys:** the 8 keys through a motor (aim turned at about
+  100°/s, two ticks a weapon slot); OLX's bots set the worm's angle and
+  weapon directly.
+- **F4, weapon restrictions:** `.wps` presets are imported into mod packs
+  (closing the plan-4 deviation); a `cfg/` path finds no preset.
+- **F5:** a Deathmatch needs two worms; the single-worm sandbox stays.
+- **F6, modes and commands:** OLX's `CGameMode` callbacks run where OLX runs
+  them; mode commands (spawn, give weapon, terrain stamp, message, end)
+  have no OLX equivalent and are applied after `CGameMode::Simulate`.
+- **F7, bots per tick on a work budget:** once per 100 Hz tick, not per
+  physics step; terrain pixels read, not wall-clock time; a resumable
+  search, not a thread; one shared area cache per match.
+- **F8, replays:** no OLX equivalent (keys, setup, content hashes,
+  checksums).
+- **F9, matches start at 100 000 ms** (`MatchSetup::T0`), as the oracle
+  does; OLX starts at the wall clock.
+- **F10, the chaos personality:** no OLX bot; its loadout rotates on every
+  spawn through Deathmatch's `give_weapon`.
+- **Bot aim error floor** (the user's direction, plan 6 ruling R6): OLX's
+  Xtreme bots aim with no offset and no `weaponCanHit` noise. Here every
+  difficulty's aim errors scale with at least `rl_bots::AIM_ERROR_FLOOR` =
+  1/6 of Easy's (Hard 1/3, Medium 2/3), so Xtreme keeps half of Hard's
+  error: an aim offset up to ±8.3°, target noise up to ±8.3 px per axis,
+  gravity ±0.83 and speed ±3.3. Its 3° fire tolerance is OLX's. Measured
+  with 4 bots, 20 seeds of 3 minutes each (all bots' kills per minute, and
+  damage dealt to other worms per shot):
+
+  | config | Xtreme, OLX (no error) | Xtreme, floor | Hard | Medium |
+  |---|---|---|---|---|
+  | Classic, Dirt Level | 5.37 (5.46/shot) | 4.90 (4.94) | 3.98 (2.70) | 3.97 (2.45) |
+  | Classic, Liero Factory | 3.70 (4.09) | 3.88 (4.25) | 3.55 (2.76) | 3.12 (2.19) |
+  | MW 1.0, Dirt Level | 6.38 (3.16) | 6.02 (2.81) | 4.37 (1.23) | 6.12 (1.45) |
+  | MW 1.0, Liero Factory | 4.72 (6.15) | 4.48 (5.62) | 4.13 (3.23) | 3.45 (2.12) |
+
+  Xtreme stays the strongest level (within noise of Medium on MW Dirt
+  Level, where our Medium already scores above OLX's: see
+  `bot-baseline-2026-10-11.md`) and deals 1.5-2.3× as much damage per shot as Hard.
+  Against a target standing still (`xtreme_bot_kills_static_target_quickly`,
+  seeds 1-32) the median kill takes 35 s, against 29 s with no error, 52 s
+  for Medium and 71 s for Hard.
+
+**Future: bot skill.** The user's direction for bot difficulty: harder bots
+come from strategy, quick reactions and predictive reloading (teamwork once
+team modes exist), never from perfect aim. Long-range fast weapons in a
+perfect aim's hands feel like instakills. The aim-error floor is the first
+step. The redesign (difficulty scaling by reaction time, target choice,
+reloading ahead of a fight, positioning) is a later milestone, measured
+against OLX with the baseline harness (`bot-baseline-2026-10-11.md`).
+
 ## Kept OLX quirks
 
-- **Healing passes 100 health:** `CGameObject::injure` subtracts negative
-  damage (MW 1.0's healing weapons) with no cap, unlike a health bonus. The
+- **Healing passes 100 health:** `CGameObject::injure`
+  (`src/common/CGameObject.cpp:35-44`) subtracts negative damage (MW 1.0's
+  healing weapons) with no cap, unlike a health bonus; `InjureWorm` caps a
+  heal only when the worm's `shieldFactor` is 0
+  (`src/client/CClient_Game.cpp:350-357`). The
   headless matches' invariants (`rl-cli::invariants`) only require health to
   be a number of at least 0.
+- **A worm can be wedged in a rock ceiling:** standing half in dirt under a
+  low rock ceiling, a jump makes `moveAndCheckWormCollision` take the dirt
+  at the worm's own row for the floor (`y = 0` counts as below) and lift it
+  5 px, into rows it no longer checks (`src/common/PhysicsLX56.cpp:216-238`);
+  its centre then sits in rock, stuck until it dies (seed 303 of the bot
+  grid, Classic on FossilFacility: 686 ticks). The headless invariants
+  allow a centre in rock but not a worm buried in it, with rock over its
+  whole collision cross (`rl_cli::invariants::buried_in_rock`).
 - **The physics step is 11 ms** (`1000 / 84`, integer division), not 1/84 s.
 - **The lossy per-frame Gusanos speed round trip** (`GusSpeedScope`) on worm and
   rope velocities, from `gusLogicFrame()` (`docs/porting/timing.md`).

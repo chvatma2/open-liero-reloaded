@@ -11,8 +11,11 @@ modernized for current displays.
 
 1. **Run `cargo xtask check` before every commit.** It prints only failures.
    Without network access, use `cargo xtask check --offline`. `cargo xtask
-   full` adds the device tier (renderer GPU tests, render goldens, the 10-minute soak, the audio
-   device check); run it before merging rendering or audio changes.
+   full` adds the bot-match grid (`bot-grid`: `rl-cli`'s `tests/grid.rs`, both
+   mods × 4 levels × 3 seeds, every weapon and action covered, a 30-minute
+   match bounded) and the device tier (renderer GPU tests, render goldens,
+   the 10-minute soak, the audio device check); run it before merging bot,
+   rendering or audio changes.
 2. **One crate per concern, under `crates/`.** Each crate has a `CLAUDE.md`:
    read it before editing the crate. Register every new crate in `xtask/layers.ron`.
    A crate may depend only on lower layers (`cargo xtask layers`).
@@ -43,6 +46,15 @@ traces recorded from a patched OLX (`tools/olx-oracle/`).
 `fixtures/render/*.png` are committed render goldens. When a rendering change
 is intended, `cargo xtask bless-render --reason "<why>"` re-generates them and
 logs the reason in `fixtures/blessings.log`.
+
+## Match goldens
+
+`fixtures/matches/*.ron` are golden bot matches: a `rl-cli match` spec and
+the world's checksum stream (`rl-cli`'s `tests/golden.rs`, in `check`). Any
+change to the simulation, the modes or the bots' decisions changes them.
+When the change is intended, `cargo xtask bless-regression --reason "<why>"`
+re-records them and logs the reason in `fixtures/blessings.log`;
+`--from target/failures/<name>.ron` adds a failing match as a new golden.
 
 ## Content
 

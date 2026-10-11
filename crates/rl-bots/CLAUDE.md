@@ -15,7 +15,10 @@ loadouts, §4 the recommendations this crate follows).
   `GetRandomLong` and `randomChoiceFrom` are ported on top of it.
 - **Configuration** (`config.rs`): `BotConfig { personality, difficulty,
   loadout, params, aim, budget }`; `Difficulty::params` gives OLX's numbers
-  (`DifficultyParams`, notes §1.9); `AimModel::{Ballistic, OlxDirect}` (F2).
+  (`DifficultyParams`, notes §1.9), except that the aim errors scale with at
+  least `AIM_ERROR_FLOOR` (1/6): no difficulty aims perfectly, Xtreme
+  included (a deviation, `docs/porting/STATUS.md`);
+  `AimModel::{Ballistic, OlxDirect}` (F2).
 - **A bot** (`bot.rs`): `Bot::new(worm, cfg, seed, &World)` (or
   `with_cache` to share an `AreaCache`), then `think(&World, &TickEvents)
   -> Keys` once per tick, before `World::tick`. Clocks are `World::time()`
@@ -76,6 +79,12 @@ loadouts, §4 the recommendations this crate follows).
   `LoadedMod::weapon_rules`).
 - **Port, don't improve** where OLX's choices define how its bots feel; cite
   the OLX source on each function.
+- **Future: bot skill** (the user's direction; `docs/porting/STATUS.md`,
+  "Spec §20 decisions"): difficulty should come from strategy, quick
+  reactions and predictive reloading (teamwork with team modes), never from
+  perfect aim. That redesign is a later milestone, measured against OLX with
+  the baseline harness (`docs/porting/bot-baseline-2026-10-11.md`); until
+  then keep OLX's brain and do not lower `AIM_ERROR_FLOOR` to zero.
 
 Test: `cargo nextest run -p rl-bots` (`brain.rs`, `rope.rs`, `chaos.rs`
 and `matches.rs` play OLX's content from `RL_CONTENT_DIR` and skip without

@@ -848,3 +848,16 @@ Made precise while implementing replays (plan 6 task 6):
 - **Format:** `RLRP`, a `u16` version (1), postcard; keys stored by worm and
   deflated. One minute of 8 worms is at most 50 000 bytes whatever the keys
   (8 bots on Classic: about 12.6 KB). Other versions are refused.
+
+Decided while closing plan 6 (task 9, the user's direction after the
+playtest and the OLX bot baseline, `docs/porting/bot-baseline-2026-10-11.md`):
+
+- **No difficulty aims perfectly** (amends F2's "OLX's per-difficulty noise
+  and tolerance"): the aim errors (`AI_SetAim`'s offset, `weaponCanHit`'s
+  target, gravity and speed noise) scale with at least
+  `rl_bots::AIM_ERROR_FLOOR` = 1/6 of Easy's, so Xtreme, error-free in OLX,
+  keeps half of Hard's error; the fire tolerance stays OLX's. Xtreme stays
+  the strongest level (measurements in `docs/porting/STATUS.md`). Bot
+  difficulty is to grow from strategy, quick reactions and predictive
+  reloading (teamwork with team modes), never from perfect aim: a later
+  bot-skill milestone, measured against OLX with the baseline harness.
