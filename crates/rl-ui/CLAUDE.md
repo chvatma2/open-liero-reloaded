@@ -15,7 +15,8 @@ and the window live in `rl-game`, which drives this crate.
   reports `MatchStarted` / `MatchFailed(why)` / `MatchOver` after a
   `StartMatch(MatchOptions)` or `StartSandbox`; until it answers, Start
   and Back do nothing (no double matches). In game, Back toggles the pause
-  menu (`SetPaused`), `LeaveMatch` ends the match (`EndMatch`); results'
+  menu (`SetPaused`; a match ending while paused emits `SetPaused(false)`),
+  `LeaveMatch` ends the match (`EndMatch`); results'
   Start is a rematch (`EndMatch` then `StartMatch`, the next seed). The
   `Set*` actions sanitize, then apply (`ApplyVideo`, `ApplyAudio`,
   `ApplyBindings`) and save (`SaveSettings`, `SaveProfiles`) only what
@@ -38,9 +39,12 @@ and the window live in `rl-game`, which drives this crate.
   `Store::open(dir)`, `load_*` (`Loaded { value, warnings }`) and
   `save_*`. Versioned RON (`SETTINGS_VERSION`, `PROFILES_VERSION`), every
   struct `#[serde(default)]`, atomic writes (temporary file, sync,
-  rename). A bad file gives defaults (or the values fixed) and a warning
-  and is moved to `<name>.bak`, `<name>.1.bak`, ...; one that cannot be
-  moved is never overwritten. Files over 1 MiB are bad. Warnings are
+  rename). An undecodable file gives defaults and a warning and is moved
+  to `<name>.bak`, `<name>.1.bak`, ... (at most `MAX_BACKUPS`; then the
+  oldest goes and the rest move down); one that decodes but needs values
+  fixed is copied there and the fixed values are saved in its place (its
+  other values survive). A file that cannot be backed up is never
+  overwritten. Files over 1 MiB are bad. Warnings are
   returned, never printed: the caller logs each once.
 - **Theme** (`theme.rs`): `apply(ctx, ui_scale)`: dark, larger text, the
   scale as egui's zoom factor (on top of the DPI scale; it takes effect at

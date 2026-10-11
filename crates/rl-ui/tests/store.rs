@@ -149,6 +149,11 @@ fn bad_user_files_fall_back_to_defaults_and_keep_a_backup() {
     assert_eq!(got.value.gameplay.match_prefs.rules.time_limit, 6.0);
     assert_eq!(got.value.gameplay.match_prefs.difficulty, BotLevel::Xtreme, "the rest is kept");
     assert!(fs::read_dir(&data).unwrap().any(|e| read(&e.unwrap().path()) == saved), "a backup");
+    // The fixed values are written back: the next start reads them, with
+    // every other setting kept and no warning (the file is never lost).
+    let next = Store::open(&data).load_settings();
+    assert!(next.warnings.is_empty(), "{:?}", next.warnings);
+    assert_eq!(next.value, got.value);
 
     // Profiles: corrupt gives the default profile; an empty list or a
     // selection past its end is fixed.
@@ -168,6 +173,10 @@ fn bad_user_files_fall_back_to_defaults_and_keep_a_backup() {
     store.save_profiles(&p).unwrap();
     let got = store.load_profiles();
     assert_eq!(got.value.list[1].name.chars().count(), rl_ui::MAX_NAME_CHARS);
+    let next = Store::open(&data).load_profiles();
+    assert!(next.warnings.is_empty(), "{:?}", next.warnings);
+    assert_eq!(next.value, got.value, "both profiles kept, the name shortened");
+    assert_eq!(next.value.list.len(), 2);
 
     // A data directory that cannot be made (a file is in the way): loads
     // give defaults with no panic, saves are errors, never panics.
@@ -205,4 +214,32 @@ fn a_bad_file_that_cannot_be_backed_up_is_never_overwritten() {
     fs::set_permissions(&data, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(store.save_settings(&Settings::default()).is_err());
     assert_eq!(read(&path), "corrupt");
+}
+
+/// The backups are bounded: with every slot taken, the oldest (`.bak`) is
+/// dropped and the others move down one, so a bad file is still moved
+/// aside and saves keep working.
+#[test]
+fn backups_rotate_past_the_limit() {
+    use rl_ui::store::MAX_BACKUPS;
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path();
+    let slot = |n: usize| {
+        if n == 0 { data.join("settings.ron.bak") } else { data.join(format!("settings.ron.{n}.bak")) }
+    };
+    for n in 0..MAX_BACKUPS {
+        fs::write(slot(n), format!("old {n}")).unwrap();
+    }
+    let path = data.join("settings.ron");
+    fs::write(&path, "corrupt").unwrap();
+    let mut store = Store::open(data);
+    let got = store.load_settings();
+    assert_eq!(got.value, Settings::default());
+    assert!(!path.exists(), "moved aside: {:?}", got.warnings);
+    assert_eq!(read(&slot(0)), "old 1", "the oldest is dropped");
+    assert_eq!(read(&slot(MAX_BACKUPS - 2)), format!("old {}", MAX_BACKUPS - 1));
+    assert_eq!(read(&slot(MAX_BACKUPS - 1)), "corrupt");
+    assert_eq!(fs::read_dir(data).unwrap().count(), MAX_BACKUPS);
+    store.save_settings(&Settings::default()).unwrap();
+    assert_eq!(store.load_settings().value, Settings::default());
 }

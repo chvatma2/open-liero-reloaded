@@ -89,7 +89,10 @@ fn state_machine_navigates_and_emits_commands() {
     let c = ui.update(UiAction::StartMatch);
     assert!(matches!(&c[..], [AppCommand::EndMatch, AppCommand::StartMatch(o)] if o.seed == 44), "{c:?}");
     ui.update(UiAction::MatchStarted);
-    ui.update(UiAction::MatchOver);
+    // The match ends while paused: the app is told to resume.
+    ui.update(UiAction::Back);
+    assert_eq!(ui.update(UiAction::MatchOver), [AppCommand::SetPaused(false)]);
+    assert!(!ui.is_paused());
     assert_eq!(ui.update(UiAction::Back), [AppCommand::EndMatch]);
     assert_eq!(ui.screen(), Screen::Main);
 

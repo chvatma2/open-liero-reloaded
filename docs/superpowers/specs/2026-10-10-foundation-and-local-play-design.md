@@ -899,9 +899,12 @@ Made precise while implementing `rl-ui`'s foundation (plan 7 task 1):
   field takes its default), written atomically (temporary file, sync,
   rename). A bad file (not UTF-8, over 1 MiB, unreadable RON, another
   version, values out of range) gives defaults or the values fixed, one
-  warning per problem, and is moved to `<name>.bak` (then `<name>.1.bak`,
-  ...: earlier backups stay). A file that cannot be moved aside is never
-  overwritten. Without a data directory nothing is read or saved.
+  warning per problem. An undecodable file is moved to `<name>.bak` (then
+  `<name>.1.bak`, ...: earlier backups stay, up to 100, then the oldest
+  goes); a decodable one with values fixed is copied there and the fixed
+  values are saved in its place, so its other values survive. A file
+  that cannot be backed up is never overwritten. Without a data
+  directory nothing is read or saved.
 - **The match preferences mirror** `DeathmatchSettings` (without the
   respawn loadout) and the bot choices (`BotLevel`, `BotLoadout`) in
   `rl-ui` instead of giving `rl-modes` and `rl-bots` serde: the file holds

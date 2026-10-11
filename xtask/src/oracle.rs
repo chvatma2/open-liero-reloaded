@@ -75,14 +75,14 @@ pub fn images_to_prune<'a>(images: &[&'a str], current: &str) -> Vec<&'a str> {
 
 /// The `docker` commands that prune after building `current`, given the
 /// `images` (`repo:tag` lines): remove each superseded oracle image
-/// ([`images_to_prune`]), then, with `build_cache` only, bound Docker's
-/// build cache. That cache is the whole machine's (Docker cannot select
-/// one project's layers), so it is opt-in: `cargo xtask tidy --docker-cache`.
-pub fn prune_commands(images: &[&str], current: &str, build_cache: bool) -> Vec<Vec<String>> {
-    let mut out: Vec<Vec<String>> = images_to_prune(images, current)
-        .into_iter()
-        .map(|i| vec!["image".into(), "rm".into(), i.into()])
-        .collect();
+/// ([`images_to_prune`]; none when the current tag is unknown), then, with
+/// `build_cache` only, bound Docker's build cache. That cache is the whole
+/// machine's (Docker cannot select one project's layers), so it is opt-in:
+/// `cargo xtask tidy --docker-cache`.
+pub fn prune_commands(images: &[&str], current: Option<&str>, build_cache: bool) -> Vec<Vec<String>> {
+    let old = current.map(|c| images_to_prune(images, c)).unwrap_or_default();
+    let mut out: Vec<Vec<String>> =
+        old.into_iter().map(|i| vec!["image".into(), "rm".into(), i.into()]).collect();
     if build_cache {
         out.push(["builder", "prune", "-f", "--keep-storage", "2GB"].map(String::from).to_vec());
     }
@@ -90,6 +90,8 @@ pub fn prune_commands(images: &[&str], current: &str, build_cache: bool) -> Vec<
 }
 
 /// `tidy`: like [`prune_old`] for the current image tag, whatever it is.
+/// When the tag cannot be computed no image is removed (which one is
+/// current is unknown), but an asked-for build-cache prune still runs.
 pub fn prune_all(build_cache: bool) {
     let tag = TOOL_FILES
         .iter()
@@ -98,12 +100,15 @@ pub fn prune_all(build_cache: bool) {
         .map(|files| image_tag(&files.iter().map(|(n, d)| (*n, d.as_slice())).collect::<Vec<_>>()));
     match tag {
         Ok(tag) => prune_old(&tag, build_cache),
-        Err(e) => eprintln!("warning: cannot compute oracle image tag: {e}"),
+        Err(e) => {
+            eprintln!("warning: cannot compute oracle image tag: {e}; no oracle image is removed");
+            run_docker(prune_commands(&[], None, build_cache));
+        }
     }
 }
 
-/// Runs [`prune_commands`]. Failures are warnings: pruning is
-/// housekeeping and must not fail a recording.
+/// Runs [`prune_commands`] for `current`. Failures are warnings: pruning
+/// is housekeeping and must not fail a recording.
 fn prune_old(current: &str, build_cache: bool) {
     let list = Command::new("docker")
         .args(["image", "ls", "rl-olx-oracle", "--format", "{{.Repository}}:{{.Tag}}"])
@@ -116,7 +121,11 @@ fn prune_old(current: &str, build_cache: bool) {
         }
     };
     let images: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-    for args in prune_commands(&images, current, build_cache) {
+    run_docker(prune_commands(&images, Some(current), build_cache));
+}
+
+fn run_docker(commands: Vec<Vec<String>>) {
+    for args in commands {
         match Command::new("docker").args(&args).output() {
             Ok(o) if o.status.success() && args[0] == "image" => {
                 println!("removed superseded image {}", args[2])
@@ -294,12 +303,16 @@ mod tests {
     #[test]
     fn build_cache_is_pruned_only_when_asked() {
         let images = ["rl-olx-oracle:aaa", "rl-olx-oracle:bbb", "ubuntu:22.04"];
-        let plain = prune_commands(&images, "rl-olx-oracle:aaa", false);
+        let plain = prune_commands(&images, Some("rl-olx-oracle:aaa"), false);
         assert_eq!(plain, [vec!["image", "rm", "rl-olx-oracle:bbb"]]);
-        let asked = prune_commands(&images, "rl-olx-oracle:aaa", true);
+        let asked = prune_commands(&images, Some("rl-olx-oracle:aaa"), true);
         assert_eq!(asked[..1], plain[..]);
         assert_eq!(asked[1], ["builder", "prune", "-f", "--keep-storage", "2GB"]);
         assert_eq!(asked.len(), 2);
+        // Without a current tag (it cannot be computed), the opt-in cache
+        // prune still runs and no image is removed.
+        let untagged = prune_commands(&images, None, true);
+        assert_eq!(untagged, [["builder", "prune", "-f", "--keep-storage", "2GB"]]);
     }
 
     #[test]

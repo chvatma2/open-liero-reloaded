@@ -8,10 +8,14 @@
 //!   new one, never half of either.
 //! - **A bad file never stops the game** (plan 7 Review Focus 1): one that
 //!   is not UTF-8, does not parse, has another version or holds values out
-//!   of range gives defaults (or the values fixed) and a warning, and is
-//!   moved aside to `<name>.bak` (then `<name>.1.bak`, ... : earlier
-//!   backups are kept). A file that cannot be moved aside is kept where it
-//!   is and never overwritten by this store.
+//!   of range gives defaults (or the values fixed) and a warning. A file
+//!   that cannot be decoded is moved aside to `<name>.bak` (then
+//!   `<name>.1.bak`, ... : earlier backups are kept, up to
+//!   [`MAX_BACKUPS`], after which the oldest goes). One that decodes but
+//!   needs values fixed is copied there and the fixed values are written
+//!   in its place, so its other values survive the next start. A file
+//!   that cannot be backed up is kept as it is and never overwritten by
+//!   this store.
 //! - **No data directory** (no home): [`Store::in_memory`] loads defaults
 //!   and saves nothing.
 
@@ -110,6 +114,7 @@ impl Store {
             SETTINGS_VERSION,
             |t| ron::from_str::<SettingsFile>(t).map(|f| f.settings),
             |s| s.sanitize(),
+            |store, s| store.save_settings(s),
         )
     }
 
@@ -120,6 +125,7 @@ impl Store {
             PROFILES_VERSION,
             |t| ron::from_str::<ProfilesFile>(t).map(|f| f.profiles),
             |p| p.sanitize(),
+            |store, p| store.save_profiles(p),
         )
     }
 
@@ -141,6 +147,7 @@ impl Store {
         version: u32,
         parse: impl FnOnce(&str) -> Result<T, ron::error::SpannedError>,
         sanitize: impl FnOnce(&mut T) -> Vec<String>,
+        save: impl FnOnce(&mut Self, &T) -> anyhow::Result<()>,
     ) -> Loaded<T> {
         let Some(path) = self.dir.as_ref().map(|d| d.join(name)) else {
             return Loaded { value: T::default(), warnings: Vec::new() };
@@ -157,33 +164,54 @@ impl Store {
                 return Loaded { value: T::default(), warnings: vec![w] };
             }
         };
-        let (value, problems) = match decode(&bytes, version, parse) {
+        let (value, problems, saved) = match decode(&bytes, version, parse) {
             Ok(mut v) => {
                 let fixes = sanitize(&mut v);
-                (v, fixes)
+                if fixes.is_empty() {
+                    return Loaded { value: v, warnings: fixes };
+                }
+                // Readable, with values fixed: the original is copied
+                // aside and the fixed values written in its place, so the
+                // rest of the file survives the next start.
+                let saved = self.rewrite(&path, &v, save);
+                (v, fixes, saved)
             }
-            Err(why) => (T::default(), vec![format!("{why}; using defaults")]),
+            Err(why) => (T::default(), vec![format!("{why}; using defaults")], self.move_aside(&path)),
         };
-        if problems.is_empty() {
-            return Loaded { value, warnings: problems };
-        }
-        let saved = self.back_up(&path);
         let warnings = problems.into_iter().map(|p| format!("{}: {p} ({saved})", path.display())).collect();
         Loaded { value, warnings }
     }
 
-    /// Moves a bad file aside; says where it went.
-    fn back_up(&mut self, path: &Path) -> String {
-        let free = (0..MAX_BACKUPS).map(|n| backup_path(path, n)).find(|p| !p.exists());
-        let moved = match free {
-            Some(bak) => fs::rename(path, &bak).map(|()| bak).map_err(|e| e.to_string()),
-            None => Err(format!("{MAX_BACKUPS} backups exist")),
-        };
-        match moved {
+    /// Moves a bad file to a backup; says where it went.
+    fn move_aside(&mut self, path: &Path) -> String {
+        match backup_slot(path).and_then(|bak| fs::rename(path, &bak).map(|()| bak)) {
             Ok(bak) => format!("the file was moved to {}", bak.display()),
             Err(e) => {
                 self.keep(path);
                 format!("the file is kept where it is and will not be overwritten: {e}")
+            }
+        }
+    }
+
+    /// Copies a file to a backup, then saves `value` over it; says what
+    /// happened. Without the copy, the file is kept and not overwritten.
+    fn rewrite<T>(
+        &mut self,
+        path: &Path,
+        value: &T,
+        save: impl FnOnce(&mut Self, &T) -> anyhow::Result<()>,
+    ) -> String {
+        let bak = match backup_slot(path).and_then(|bak| fs::copy(path, &bak).map(|_| bak)) {
+            Ok(bak) => bak,
+            Err(e) => {
+                self.keep(path);
+                return format!("the file is kept as it is and will not be overwritten: {e}");
+            }
+        };
+        match save(self, value) {
+            Ok(()) => format!("the original was copied to {} and the fixed values saved", bak.display()),
+            Err(e) => {
+                format!("the original was copied to {}; saving the fixed values failed: {e:#}", bak.display())
             }
         }
     }
@@ -223,6 +251,20 @@ fn backup_path(path: &Path, n: usize) -> PathBuf {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let bak = if n == 0 { format!("{name}.bak") } else { format!("{name}.{n}.bak") };
     path.with_file_name(bak)
+}
+
+/// The backup to write next: the first free of [`backup_path`]'s
+/// [`MAX_BACKUPS`] slots; when all are taken, the oldest (`.bak`) is
+/// removed and every other moves down one, freeing the last.
+fn backup_slot(path: &Path) -> io::Result<PathBuf> {
+    if let Some(free) = (0..MAX_BACKUPS).map(|n| backup_path(path, n)).find(|p| !p.exists()) {
+        return Ok(free);
+    }
+    fs::remove_file(backup_path(path, 0))?;
+    for n in 1..MAX_BACKUPS {
+        fs::rename(backup_path(path, n), backup_path(path, n - 1))?;
+    }
+    Ok(backup_path(path, MAX_BACKUPS - 1))
 }
 
 /// The file's value, or why it is bad.

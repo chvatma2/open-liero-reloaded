@@ -263,11 +263,12 @@ impl UiState {
                 Vec::new()
             }
             UiAction::MatchOver => {
-                if self.screen == Screen::InGame && self.play == Play::Running {
-                    self.paused = false;
-                    self.go(Screen::Results);
+                if self.screen != Screen::InGame || self.play != Play::Running {
+                    return Vec::new();
                 }
-                Vec::new()
+                self.go(Screen::Results);
+                // The app's pause and this state never disagree.
+                if std::mem::take(&mut self.paused) { vec![AppCommand::SetPaused(false)] } else { Vec::new() }
             }
         }
     }
