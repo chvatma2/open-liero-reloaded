@@ -80,12 +80,13 @@ pub fn sanitize_bindings(b: &mut Bindings) -> Vec<String> {
 
 /// The window, presentation and menu scale (spec §8.2, §8.6; §21 G3).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(from = "VideoFile")]
 pub struct VideoSettings {
     /// The window's size when not fullscreen. The window is not resizable:
     /// sizes come only from these presets (and startup flags).
     pub window: WindowPreset,
-    /// Borderless fullscreen.
+    /// Borderless fullscreen at the monitor's size (the options offer it
+    /// with the window sizes, in place of a desktop-sized window).
     pub fullscreen: bool,
     pub frame_rate: FrameRate,
     pub filter: UpscaleFilter,
@@ -109,6 +110,61 @@ impl Default for VideoSettings {
     }
 }
 
+/// [`VideoSettings`] as a file holds it: v0.1.0's files may say
+/// `window: Desktop`, which is fullscreen now (the user's ruling after the
+/// v0.1 playtest), not a reason to reset the file.
+#[derive(Deserialize)]
+#[serde(default)]
+struct VideoFile {
+    window: SavedPreset,
+    fullscreen: bool,
+    frame_rate: FrameRate,
+    filter: UpscaleFilter,
+    interpolation: bool,
+    ui_scale: f32,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+enum SavedPreset {
+    W1280x720,
+    W1600x900,
+    W1920x1080,
+    Desktop,
+}
+
+impl Default for VideoFile {
+    fn default() -> Self {
+        let v = VideoSettings::default();
+        VideoFile {
+            window: SavedPreset::W1280x720,
+            fullscreen: v.fullscreen,
+            frame_rate: v.frame_rate,
+            filter: v.filter,
+            interpolation: v.interpolation,
+            ui_scale: v.ui_scale,
+        }
+    }
+}
+
+impl From<VideoFile> for VideoSettings {
+    fn from(f: VideoFile) -> Self {
+        let (window, desktop) = match f.window {
+            SavedPreset::W1280x720 => (WindowPreset::W1280x720, false),
+            SavedPreset::W1600x900 => (WindowPreset::W1600x900, false),
+            SavedPreset::W1920x1080 => (WindowPreset::W1920x1080, false),
+            SavedPreset::Desktop => (WindowPreset::default(), true),
+        };
+        VideoSettings {
+            window,
+            fullscreen: f.fullscreen || desktop,
+            frame_rate: f.frame_rate,
+            filter: f.filter,
+            interpolation: f.interpolation,
+            ui_scale: f.ui_scale,
+        }
+    }
+}
+
 impl VideoSettings {
     /// Clamps the UI scale into [`UI_SCALE_RANGE`] (1 when it is NaN).
     pub fn sanitize(&mut self) -> Vec<String> {
@@ -127,29 +183,27 @@ pub fn clamp_scale(scale: f32) -> f32 {
     if scale.is_nan() { 1.0 } else { scale.clamp(*UI_SCALE_RANGE.start(), *UI_SCALE_RANGE.end()) }
 }
 
-/// The window sizes offered (§21 G3).
+/// The window sizes offered (§21 G3). The screen's size is fullscreen
+/// ([`VideoSettings::fullscreen`]): a window that size would put its
+/// title bar's height under the taskbar.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WindowPreset {
     #[default]
     W1280x720,
     W1600x900,
     W1920x1080,
-    /// The desktop's size (the monitor the window is on).
-    Desktop,
 }
 
 impl WindowPreset {
-    pub const ALL: [WindowPreset; 4] =
-        [WindowPreset::W1280x720, WindowPreset::W1600x900, WindowPreset::W1920x1080, WindowPreset::Desktop];
+    pub const ALL: [WindowPreset; 3] =
+        [WindowPreset::W1280x720, WindowPreset::W1600x900, WindowPreset::W1920x1080];
 
-    /// The window's inner size in physical pixels; `desktop` is the
-    /// monitor's size, when known (else 1280 × 720).
-    pub fn size(self, desktop: Option<(u32, u32)>) -> (u32, u32) {
+    /// The window's inner size in physical pixels.
+    pub fn size(self) -> (u32, u32) {
         match self {
             WindowPreset::W1280x720 => (1280, 720),
             WindowPreset::W1600x900 => (1600, 900),
             WindowPreset::W1920x1080 => (1920, 1080),
-            WindowPreset::Desktop => desktop.filter(|&(w, h)| w > 0 && h > 0).unwrap_or((1280, 720)),
         }
     }
 
@@ -158,7 +212,6 @@ impl WindowPreset {
             WindowPreset::W1280x720 => "1280 × 720",
             WindowPreset::W1600x900 => "1600 × 900",
             WindowPreset::W1920x1080 => "1920 × 1080",
-            WindowPreset::Desktop => "Desktop size",
         }
     }
 }

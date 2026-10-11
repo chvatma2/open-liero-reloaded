@@ -22,8 +22,8 @@
 //! Why Wayland makes the window again ([`Plan::Recreate`], v0.1 playtest):
 //! under WSLg (Weston's RDP-RAIL shell) a live window that changed size or
 //! mode left pieces of its old frame on the Windows desktop: a line at the
-//! old right border after 1280 × 720 → 1920 × 1080, and after the desktop's
-//! size → fullscreen the old title bar and 1280 × 720 outline over the
+//! old right border after 1280 × 720 → 1920 × 1080, and after a window
+//! of the desktop's size → fullscreen the old title bar and 1280 × 720 outline over the
 //! game, the window at -22,-22 and the taskbar still shown. winit and
 //! sctk-adwaita did it right (a `WAYLAND_DEBUG` trace: `set_fullscreen`,
 //! `configure(3440,1440)`, the window geometry set and the 5 frame
@@ -41,17 +41,16 @@
 //!
 //! The compositor places the new window as it likes: WSLg puts it near the
 //! middle of the monitor (1920 × 1080 at 1125,324 and 1280 × 720 at
-//! 1021,485 of 3440 × 1440), the desktop's size at 0,35 (below its title
-//! bar), fullscreen at exactly 0,0 with the taskbar hidden. The old window
+//! 1021,485 of 3440 × 1440), fullscreen at exactly 0,0 with the taskbar hidden. The old window
 //! closes before the new one shows its first frame, so the change may
 //! blink (making the window takes ~15 ms), and the new window
 //! draws its second frame only after the compositor's first frame callback:
 //! 0.15 s at most on WSLg, but 0.3 to 25 s while the Windows session was
 //! locked, during which the game does not tick (the time is dropped as
-//! any stall's: `MAX_CATCHUP_TICKS`). The windowed desktop's size is taller
-//! than the work area once the title bar is added (its bottom is under the
-//! taskbar); winit cannot tell the work area, so it stays as chosen.
-//! Fullscreen is the way to fill the screen.
+//! any stall's: `MAX_CATCHUP_TICKS`). The options offer no window of the
+//! desktop's size (`rl_ui::WindowPreset`): with its title bar it was taller
+//! than the work area, its bottom under the taskbar, and winit cannot tell
+//! the work area. Fullscreen fills the screen.
 
 use std::time::{Duration, Instant};
 

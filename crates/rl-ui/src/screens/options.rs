@@ -1,8 +1,8 @@
 //! The options (spec §8.3, §21 G3; OLX's options menu,
 //! `src/client/DeprecatedGUI/Menu_Options.cpp`), in four sections:
 //!
-//! - **Video:** the window's size preset (the window is never resized by
-//!   dragging), fullscreen, VSync or uncapped, the upscale filter,
+//! - **Video:** the display, one list of the window's size presets (the
+//!   window is never resized by dragging) and borderless fullscreen, VSync or uncapped, the upscale filter,
 //!   interpolation and the UI scale. Each change is applied at once by the
 //!   app, the window's size and mode through its paced requests (at most
 //!   one change every 250 ms, however fast the player clicks).
@@ -73,24 +73,33 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     data.options = v;
 }
 
+/// The display list's borderless fullscreen, at the monitor's size.
+const FULLSCREEN: &str = "Fullscreen";
+
 fn video(ui: &mut Ui, state: &UiState, view: &mut View, out: &mut Vec<UiAction>) {
     let before = &state.settings().video;
     let mut v = before.clone();
     egui::Grid::new("video").num_columns(2).spacing([16.0, 10.0]).show(ui, |ui| {
-        let label = ui.label("Window size");
-        ComboBox::from_id_salt("window size")
-            .selected_text(v.window.label())
+        // The window sizes and fullscreen in one list: fullscreen keeps the
+        // size to return to.
+        let label = ui.label("Display");
+        let shown = if v.fullscreen { FULLSCREEN } else { v.window.label() };
+        ComboBox::from_id_salt("display")
+            .selected_text(shown)
             .width(200.0)
             .show_ui(ui, |ui| {
                 for p in WindowPreset::ALL {
-                    ui.selectable_value(&mut v.window, p, p.label());
+                    if ui.selectable_label(!v.fullscreen && v.window == p, p.label()).clicked() {
+                        v.window = p;
+                        v.fullscreen = false;
+                    }
+                }
+                if ui.selectable_label(v.fullscreen, FULLSCREEN).clicked() {
+                    v.fullscreen = true;
                 }
             })
             .response
             .labelled_by(label.id);
-        ui.end_row();
-        ui.label("");
-        ui.checkbox(&mut v.fullscreen, "Fullscreen");
         ui.end_row();
         ui.label("Frame rate");
         ui.horizontal(|ui| {

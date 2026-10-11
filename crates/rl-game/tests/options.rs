@@ -33,6 +33,7 @@ fn content_dir() -> Option<PathBuf> {
     dir
 }
 
+/// The monitor's size, a fullscreen window's.
 const DESKTOP: (u32, u32) = (2560, 1440);
 const FRAME: Duration = Duration::from_millis(16);
 
@@ -61,7 +62,7 @@ impl Game {
         let n = out.len();
         for o in out {
             if let Outcome::Video(v) = o {
-                self.live.push(self.video.change(v, Some(DESKTOP), &mut self.requests));
+                self.live.push(self.video.change(v, &mut self.requests));
             }
         }
         n
@@ -154,26 +155,23 @@ fn video_changes_go_through_the_paced_path() {
     }
     assert_eq!(g.applied.len(), n);
 
-    // The desktop's size, then fullscreen and back: one change each.
-    g.set(|v| v.window = WindowPreset::Desktop);
-    for _ in 0..20 {
-        g.frame();
-    }
-    assert_eq!(g.window, shape(DESKTOP, false));
+    // Fullscreen and back: one change each, the window's size kept for
+    // after; on Wayland each made the window again, once.
+    let made = g.recreated;
     g.set(|v| v.fullscreen = true);
     for _ in 0..20 {
         g.frame();
     }
-    assert_eq!(g.window, shape(DESKTOP, true));
-    assert_eq!(g.applied.len(), n + 2);
-    // On Wayland each made the window again, once.
-    let made = g.recreated;
+    assert_eq!(g.window, shape((1600, 900), true));
+    assert_eq!(g.applied.len(), n + 1);
+    assert_eq!(g.recreated, made + 1);
     g.set(|v| v.fullscreen = false);
     for _ in 0..20 {
         g.frame();
     }
-    assert_eq!(g.window, shape(DESKTOP, false));
-    assert_eq!(g.recreated, made + 1);
+    assert_eq!(g.window, shape((1600, 900), false));
+    assert_eq!(g.applied.len(), n + 2);
+    assert_eq!(g.recreated, made + 2);
 }
 
 /// A window made again for each size or mode change (Wayland's plan) never
@@ -269,10 +267,9 @@ fn volume_changes_apply_live() {
 fn the_saved_window_opens_with_the_flags_on_top_unsaved() {
     // The window opens at the saved size and mode, at once (no resize).
     let file = VideoSettings { window: WindowPreset::W1600x900, ..VideoSettings::default() };
-    assert_eq!(Video::opening(&file, Some(DESKTOP)), Opening { size: (1600, 900), fullscreen: false });
-    let desk = VideoSettings { window: WindowPreset::Desktop, fullscreen: true, ..file.clone() };
-    assert_eq!(Video::opening(&desk, Some(DESKTOP)), Opening { size: DESKTOP, fullscreen: true });
-    assert_eq!(Video::opening(&desk, None).size, (1280, 720));
+    assert_eq!(Video::opening(&file), Opening { size: (1600, 900), fullscreen: false });
+    let full = VideoSettings { fullscreen: true, ..file.clone() };
+    assert_eq!(Video::opening(&full), Opening { size: (1600, 900), fullscreen: true });
 
     // `--fullscreen` and `--filter nearest` on the command line: this run
     // shows them, the options too, but the file keeps its own values until
@@ -282,7 +279,7 @@ fn the_saved_window_opens_with_the_flags_on_top_unsaved() {
     let mut run = file.clone();
     flags.apply(&mut run);
     assert!(run.fullscreen && run.filter == UpscaleFilter::Nearest && run.window == WindowPreset::W1600x900);
-    assert_eq!(Video::opening(&run, Some(DESKTOP)), Opening { size: (1600, 900), fullscreen: true });
+    assert_eq!(Video::opening(&run), Opening { size: (1600, 900), fullscreen: true });
 
     let tmp = tempfile::tempdir().unwrap();
     let settings = Settings { video: run.clone(), ..Settings::default() };

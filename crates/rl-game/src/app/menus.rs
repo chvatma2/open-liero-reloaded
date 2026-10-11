@@ -35,9 +35,7 @@ impl App {
     /// through the paced requests when they changed, the rest at once
     /// (interpolation is the shell's).
     fn apply_video(&mut self, v: rl_ui::VideoSettings) {
-        let monitor = self.win.as_ref().and_then(|w| w.window.current_monitor());
-        let desktop = monitor.map(|m| (m.size().width, m.size().height));
-        let live = self.video.change(v, desktop, &mut self.requests);
+        let live = self.video.change(v, &mut self.requests);
         rl_ui::theme::apply(&self.egui, live.ui_scale);
         if let Some(f) = live.filter {
             self.cfg.render.filter = f;

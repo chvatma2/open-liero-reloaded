@@ -297,13 +297,17 @@ fn options_set_video_audio_and_gameplay() {
     h.get_by_label("Options").click();
     h.run();
     // Video opens first.
-    h.get_by_label("Window size").click();
+    h.get_by_label("Display").click();
     h.run();
     h.get_by_label("1920 × 1080").click();
     h.run();
     assert_eq!(video(&h).last().map(|v| v.window), Some(WindowPreset::W1920x1080));
+    // Fullscreen is the list's last entry; it keeps the window's size.
+    h.get_by_label("Display").click();
+    h.run();
     h.get_by_label("Fullscreen").click();
     h.run();
+    assert_eq!(video(&h).last().map(|v| (v.window, v.fullscreen)), Some((WindowPreset::W1920x1080, true)));
     h.get_by_label("Uncapped").click();
     h.run();
     h.get_by_label("Nearest").click();
@@ -315,6 +319,12 @@ fn options_set_video_audio_and_gameplay() {
     assert_eq!((v.frame_rate, v.filter), (FrameRate::Uncapped, UpscaleFilter::Nearest));
     assert_eq!(video(&h).len(), 5, "one apply per change");
     assert_eq!(saved(&h).video, v);
+    // A window size picked while fullscreen ends it.
+    h.get_by_label("Display").click();
+    h.run();
+    h.get_by_label("1600 × 900").click();
+    h.run();
+    assert_eq!(video(&h).last().map(|v| (v.window, v.fullscreen)), Some((WindowPreset::W1600x900, false)));
 
     h.get_by_label("Audio").click();
     h.run();

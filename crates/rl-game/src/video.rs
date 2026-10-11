@@ -44,22 +44,21 @@ impl Video {
     }
 
     /// The window for `v`, made at that size and mode (creating the
-    /// window is no resize); `desktop` is the monitor's size, for
-    /// [`rl_ui::WindowPreset::Desktop`].
-    pub fn opening(v: &VideoSettings, desktop: Option<(u32, u32)>) -> Opening {
-        Opening { size: v.window.size(desktop), fullscreen: v.fullscreen }
+    /// window is no resize; fullscreen keeps the size for when it ends).
+    pub fn opening(v: &VideoSettings) -> Opening {
+        Opening { size: v.window.size(), fullscreen: v.fullscreen }
     }
 
     /// The options now say `v`: the window's size and mode asked of
     /// `requests` when they changed, the rest returned to apply at once.
-    pub fn change(&mut self, v: VideoSettings, desktop: Option<(u32, u32)>, requests: &mut Requests) -> Live {
+    pub fn change(&mut self, v: VideoSettings, requests: &mut Requests) -> Live {
         let old = std::mem::replace(&mut self.shown, v.clone());
         if v.fullscreen != old.fullscreen {
             requests.fullscreen(v.fullscreen);
         }
         // A window's size; fullscreen keeps it for when it ends.
         if !v.fullscreen && (v.window != old.window || old.fullscreen) {
-            let (w, h) = v.window.size(desktop);
+            let (w, h) = v.window.size();
             requests.size(w, h);
         }
         Live {
@@ -155,15 +154,15 @@ mod tests {
         let mut video = Video::new(base.clone());
         let mut r = Requests::default();
         let live =
-            video.change(VideoSettings { interpolation: false, ui_scale: 2.0, ..base.clone() }, None, &mut r);
+            video.change(VideoSettings { interpolation: false, ui_scale: 2.0, ..base.clone() }, &mut r);
         assert_eq!(live, Live { ui_scale: 2.0, uncapped: None, filter: None });
         assert_eq!(r.due(t), None);
         // Fullscreen on: the mode only; off again: the mode and the size.
         let full = VideoSettings { fullscreen: true, ..base.clone() };
-        video.change(full.clone(), None, &mut r);
+        video.change(full.clone(), &mut r);
         let c = r.due(t).unwrap();
         assert_eq!((c.fullscreen, c.size), (Some(true), None));
-        video.change(base.clone(), None, &mut r);
+        video.change(base.clone(), &mut r);
         let c = r.due(t + crate::window::MIN_CHANGE_INTERVAL).unwrap();
         assert_eq!((c.fullscreen, c.size), (Some(false), Some((1280, 720))));
     }

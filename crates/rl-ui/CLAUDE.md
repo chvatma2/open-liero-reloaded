@@ -43,7 +43,10 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   `CancelImport`. While it runs every start (`StartMatch`, `StartSandbox`,
   `PlayReplay`) is refused with a message; Back and the other screens
   work (the import runs on).
-- **Settings** (`settings.rs`): video (`WindowPreset`, fullscreen,
+- **Settings** (`settings.rs`): video (`WindowPreset`: 1280 × 720,
+  1600 × 900, 1920 × 1080; fullscreen, borderless at the monitor's size,
+  offered in the same "Display" list; v0.1.0's `window: Desktop` loads as
+  fullscreen through `VideoFile`;
   `FrameRate`, `UpscaleFilter`, interpolation, `ui_scale` in
   `UI_SCALE_RANGE` 0.5-3), audio volumes 0-1, `Bindings`, gameplay
   (`MatchPrefs`; the HUD has one style: an old file's `hud:` is ignored),

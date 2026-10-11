@@ -315,9 +315,7 @@ impl App {
         self.shape = if self.cfg.menus {
             // The options' window (the command line's flags on top), made
             // at its size and mode: no change follows the creation.
-            let monitor = el.primary_monitor().or_else(|| el.available_monitors().next());
-            let desktop = monitor.map(|m| (m.size().width, m.size().height));
-            let o = Video::opening(&self.shell.ui.settings().video, desktop);
+            let o = Video::opening(&self.shell.ui.settings().video);
             Shape { size: o.size, physical: true, fullscreen: o.fullscreen }
         } else {
             Shape { size: window::DEFAULT_SIZE, physical: false, fullscreen: self.cfg.fullscreen }

@@ -82,8 +82,8 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   re-configuring the surface when the present mode changes; the filter,
   `renderer.settings`); interpolation is the shell's
   (`Shell::interpolation`, new games and the one playing). The window opens
-  at the saved preset and mode (`Video::opening`, physical pixels; the
-  desktop's size from the first monitor), so no resize follows its
+  at the saved preset and mode (`Video::opening`, physical pixels;
+  fullscreen keeps the preset for when it ends), so no resize follows its
   creation. `--fullscreen`, `--uncapped`, `--filter`, `--no-interp` given
   on the command line win for the run (`video::Overrides`, applied before
   the `UiState` is made, so the options show them); `Shell::set_overrides`
@@ -203,7 +203,7 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   made, the old one takes the change in place), because WSLg left pieces of
   a changed window's client-side frame on the screen and a window made at
   its size never did (`window.rs` module docs: placement, the first frame
-  callback's wait, the windowed desktop's size under the taskbar). On X11 and elsewhere it
+  callback's wait, why no window has the desktop's size). On X11 and elsewhere it
   changes in place, and a fixed window's min and max move with it
   (`window::apply`). While the window is hidden (minimised or
   occluded: no frames) pending changes wait; they apply, still paced, when

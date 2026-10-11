@@ -102,6 +102,21 @@ fn settings_round_trip_and_version() {
     assert!(loaded.value.video.fullscreen);
     assert_eq!(loaded.value.gameplay.match_prefs.bots, 5);
     assert!(!dir.path().join("data/settings.ron.bak").exists());
+
+    // v0.1.0's window of the desktop's size is fullscreen now (the v0.1
+    // playtest): it loads as fullscreen over the default window size, the
+    // rest kept, no warning, no backup.
+    let old = format!(
+        "(version: {SETTINGS_VERSION}, settings: (video: (window: Desktop, ui_scale: 1.5), \
+         audio: (master: 0.25)))"
+    );
+    fs::write(&path, old).unwrap();
+    let loaded = store.load_settings();
+    assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+    let v = &loaded.value.video;
+    assert_eq!((v.window, v.fullscreen, v.ui_scale), (WindowPreset::W1280x720, true, 1.5));
+    assert_eq!(loaded.value.audio.master, 0.25);
+    assert!(!dir.path().join("data/settings.ron.bak").exists());
 }
 
 #[test]

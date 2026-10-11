@@ -93,9 +93,8 @@ Useful flags (`rl-game --help` lists them all):
 - **Sandbox:** you and idle targets on a level, to try weapons.
 - **Profiles:** your name, colour and skin (all imported skins, searchable,
   with an animated preview); the one marked plays.
-- **Options:** Video (window size presets 1280 × 720, 1600 × 900,
-  1920 × 1080 or the desktop's, fullscreen, VSync or uncapped, upscale
-  filter, interpolation, UI scale), Audio (master and effects volume), Keys
+- **Options:** Video (display: a 1280 × 720, 1600 × 900 or 1920 × 1080
+  window, or borderless fullscreen; VSync or uncapped, upscale filter, interpolation, UI scale), Audio (master and effects volume), Keys
   (any number of keys and gamepad inputs per action; Reset to OLX's keys),
   Gameplay (the match local play starts with).
 - **Replays:** every Deathmatch played from the menus (the last 20) and the

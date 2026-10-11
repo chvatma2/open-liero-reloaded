@@ -392,8 +392,9 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   wore the player's skin.
 - **Options** (`rl-ui`, `rl-input`, `rl-game`, plan 7 task 4): OLX's
   options menu (`Menu_Options.cpp`) laid out anew in four sections. Video
-  offers window-size presets (1280 × 720, 1600 × 900, 1920 × 1080, the
-  desktop's), fullscreen, VSync or uncapped, the upscale filter,
+  offers one display list (windows of 1280 × 720, 1600 × 900 and
+  1920 × 1080, or borderless fullscreen; a desktop-sized window was dropped
+  after the v0.1 playtest: its bottom was under the taskbar), VSync or uncapped, the upscale filter,
   interpolation and the UI scale, where OLX sets a fixed 640 × 480 mode and
   its scaling; size changes are paced (at most one every 250 ms). Audio has
   OLX's sound volume (default 70) and an effects volume, multiplied. Keys:

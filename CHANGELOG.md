@@ -6,6 +6,19 @@ All notable changes to rust-liero are recorded here. The format follows
 
 ## Unreleased
 
+### Changed
+
+- The options' Video section has one Display list: a 1280 × 720,
+  1600 × 900 or 1920 × 1080 window, or borderless fullscreen. The
+  desktop-sized window is gone (its bottom sat under the taskbar); a saved
+  "Desktop size" opens fullscreen.
+
+### Fixed
+
+- On Wayland (WSLg), changing the window's size or fullscreen no longer
+  leaves pieces of the old window frame on the screen: the window is made
+  again at its new size.
+
 ## 0.1.0 - 2026-10-11
 
 The first playable release: a local Deathmatch against OLX's bots, started
