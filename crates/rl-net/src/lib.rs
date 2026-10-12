@@ -4,6 +4,7 @@
 
 pub mod endpoint;
 mod impair;
+pub mod lan;
 pub mod limits;
 pub mod link;
 mod signal;

@@ -123,6 +123,20 @@ announcements.
   before `send_to`; each link's model forks from `impair_seed`. Each end
   impairs its own sending, so impairing both ends gives the profile's
   ping. SCTP retransmits what it loses.
+- **LAN announcements** (`lan.rs`): `Announcer::new(target)` +
+  `tick(now, &LanAnnounce)` sends one datagram at most every 2 s (send
+  errors ignored); `Listener::new(port)` (0 = free port, `local_port`) and
+  `poll(now)` (never blocks, at most 256 datagrams) return `LanGame`s
+  (source IP + announced port, info, seen) sorted by name then address,
+  dropping games unseen for 6 s. Receiving limits: undecodable datagrams
+  ignored; one entry per source address, at most 64 games; a source over
+  10 datagrams/s is ignored for 10 s. std cannot set `SO_REUSEADDR`
+  before `bind`, so two listeners on one machine conflict (the game opens
+  one). `broadcast_targets()` is `255.255.255.255:LAN_PORT` only: directed
+  per-interface broadcasts need interface enumeration (deferred). WSL2's
+  default NAT networking receives no LAN broadcasts (only
+  `networkingMode=mirrored`), and Windows Firewall may prompt on the
+  first bind: the Direct tab is the fallback; no workaround in code.
 - **Never panics on network input**: offers, answers and datagrams are
   fuzzed (`tests/fuzz.rs`, also strangers' datagrams, datagrams to a
   connecting link, empty sends); a forged datagram does not end an open
