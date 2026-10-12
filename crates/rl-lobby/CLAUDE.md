@@ -18,7 +18,10 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   `password_proof(nonce, password)` is `SHA-256(nonce ++ password)`.
 - The secret lives in `<data>/identity.ron` (rl-ui's `Store::load_identity`).
 - **Host** (`host.rs`, `LobbyHost`): transport events, messages and time in;
-  `outgoing()` (peer, `ToClient`) and `events()` (`HostEvent`) out.
+  `outgoing()` (peer, `ToClient`) and `events()` (`HostEvent`) out. State
+  changes are coalesced: `state()` is always current, and one `Lobby` per
+  `outgoing()` drain goes to every member (also flushed right before a
+  `Notice(Joined)`, so the others know the member it names).
   - Join: `connected(peer, ip, now, nonce)` sends `Challenge` (a banned IP:
     `Refused(Banned)`); `Hello` is checked for bans (`Banned`), a key
     already in the lobby or the host's (`Busy`), room (`Full`) and the
@@ -28,7 +31,8 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     all. Anything else before the proof, a second `Hello`, or no proof
     within `PROOF_TIMEOUT_US` (10 s): dropped. Every refusal and drop is
     `HostEvent::Kick` (close the transport); a member sending
-    `Hello`/`Prove` again is kicked.
+    `Hello`/`Prove` again is kicked. `Bye` (before or after the proof) is
+    `HostEvent::Close` (close the transport; a member also `Left`).
   - Seats: players take the lowest free slot below `max_players`; when
     full, spectators (members ≤ `max_players + max_spectators` ≤ 48). A
     joiner during a match is `Waiting` while a seat is free for the next
@@ -48,29 +52,41 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     the lobby's life (`banned`, `banned_ip` for the endpoint's gate).
     `Next`/`Settings` from an admin are `HostEvent::Admin`; non-admins get
     `NOT_ADMIN`.
-  - Start (ruling PF1): `can_start` (gathering, 2..=32 worms with bots,
-    every player ready) → `start(seed, rtts)` returns `MatchStartWire`
-    (players by slot, then `setup.bots` in order; `input_delay(rtt)` per
-    player, the host 0; `start_checksum: 0`) and sends nothing but a
+  - Start (ruling PF1): `can_start` (gathering, at least one player —
+    a member or the host's, `NoPlayers` — 2..=32 worms with bots, every
+    player ready; `StartRequested` when it turns `Ok`) → `start(seed,
+    rtts)` returns `MatchStartWire` (players by slot, then `setup.bots` in
+    order; `input_delay(rtt)` per player, the host 0, an unmeasured one
+    `MAX_INPUT_DELAY`; `start_checksum: 0`) and sends nothing but a
     `Notice::NotReady` on failure → the match layer fills the checksum →
-    `announce_start(wire)`: `Start` to everyone, `Phase::Starting` →
+    `announce_start(wire)` (`Stale` if anything a start depends on changed
+    since `start`: a generation counter; pings do not count): `Start` to
+    everyone, `Phase::Starting` →
     `playing(tick)`: `Phase::Playing`. `match_ended(end, now)`: `Ended` to
     all, `Phase::Results` for `RESULTS_US` (5 s, in `tick`), then gathering.
     Ids of the running match's members are not reused until it ends.
+    `force_start` (ruling T6-A, spec §7.2): players not ready (or lacking
+    content) watch this match as spectators and get seats back at the next
+    gathering; nobody moves when the ready players alone cannot start.
+  - `set_ping(peer, ms)`: the transport's round trip in `Member.ping_ms`
+    (a change is a `Lobby`: call it every few seconds).
   - Leaving (`Bye`, `disconnected`): removed, `Notice(Left)`,
     `HostEvent::Left`; during a match the slot stays in the match.
   - The state never breaks rl-proto's decoders (looks, names, chat, end
     reasons sanitized; setups validated: `LobbyError::InvalidSetup`).
-- **Client** (`client.rs`, `LobbyClient`): `connected()`, then on
-  `Challenge` sends `Hello` (with the password proof when asked) and
-  `Prove` at once; `ClientEvent`s for the welcome, refusals, lobby
+- **Client** (`client.rs`, `LobbyClient`): `new(.., expected_host)`: a
+  challenge naming another key is not answered (`WrongHost`);
+  `connected()`, then on `Challenge` sends `Hello` (with the password
+  proof when asked) and `Prove` at once; a `Welcome` or `Lobby` without
+  this member closes (`Closed`); `ClientEvent`s for the welcome, refusals, lobby
   changes, chat, notices, start, end, kicks and closing. Actions are sent
   only once joined; `leave()` sends `Bye`.
 - **Harness** (`harness.rs`, `Net`): the host and clients in one process,
-  messages tagged and encoded through rl-proto, a fixed one-way delay,
+  messages tagged and encoded through rl-proto, a fixed one-way delay
+  (what arrives at one instant is delivered before the drain: one poll),
   virtual time (`settle`, `run`), raw peers for forged messages
   (`join_raw`, `send_raw`), `disconnect`, and the match layer's `start`.
 
 Test: `cargo nextest run -p rl-lobby` (`tests/lobby.rs`: one test per rule
-and a proptest of random messages and host actions keeping every sent
-message decodable).
+and a proptest of random messages and host actions — a crowd of worst-case
+members included — keeping every sent message decodable).

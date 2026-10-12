@@ -4,8 +4,9 @@
 //! byte) through an ordered queue with a fixed one-way delay, in virtual
 //! time. For the lobby's tests and the match layer's.
 //!
-//! The host's `HostEvent::Kick` closes the peer's link after the messages
-//! already queued to it arrive; `disconnect` drops a link at once (what is
+//! Everything arriving at one instant is delivered before the sides are
+//! drained (one poll). The host's `HostEvent::Kick` and `HostEvent::Close`
+//! close the peer's link after the messages already queued to it arrive; `disconnect` drops a link at once (what is
 //! in flight is lost). A message that fails to decode is recorded in
 //! `errors` and dropped: the tests require none.
 
@@ -166,11 +167,8 @@ impl Net {
     pub fn settle(&mut self) {
         self.pump();
         for _ in 0..SETTLE_LIMIT {
-            let Some(f) = self.flights.pop_front() else { return };
-            self.now_us = self.now_us.max(f.at);
-            self.deliver(f.what);
-            self.host.tick(self.now_us);
-            self.pump();
+            let Some(at) = self.flights.front().map(|f| f.at) else { return };
+            self.arrive(at);
         }
         self.errors.push(format!("not settled after {SETTLE_LIMIT} deliveries"));
     }
@@ -179,14 +177,21 @@ impl Net {
     pub fn run(&mut self, us: u64) {
         self.pump();
         let end = self.now_us + us;
-        while self.flights.front().is_some_and(|f| f.at <= end) {
-            let Some(f) = self.flights.pop_front() else { break };
-            self.now_us = self.now_us.max(f.at);
-            self.deliver(f.what);
-            self.host.tick(self.now_us);
-            self.pump();
+        while let Some(at) = self.flights.front().map(|f| f.at).filter(|&at| at <= end) {
+            self.arrive(at);
         }
         self.now_us = end;
+        self.host.tick(self.now_us);
+        self.pump();
+    }
+
+    /// Delivers everything arriving at `at` (one poll of a real transport),
+    /// then lets the host tick and drains every side once.
+    fn arrive(&mut self, at: u64) {
+        self.now_us = self.now_us.max(at);
+        while let Some(f) = self.flights.pop_front_if(|f| f.at == at) {
+            self.deliver(f.what);
+        }
         self.host.tick(self.now_us);
         self.pump();
     }
@@ -257,7 +262,7 @@ impl Net {
             self.flights.push_back(Flight { at, what: What::ToClient(c, bytes) });
         }
         for e in self.host.events() {
-            if let HostEvent::Kick { peer, .. } = e
+            if let HostEvent::Kick { peer, .. } | HostEvent::Close { peer } = e
                 && let Some(c) = self.peers.iter().position(|p| p.peer == peer)
             {
                 self.flights.push_back(Flight { at, what: What::Close(c) });

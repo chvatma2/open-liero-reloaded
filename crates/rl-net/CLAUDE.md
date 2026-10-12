@@ -105,7 +105,8 @@ announcements.
   the unreliable channel, `max_reliable_bytes_per_s` (256 KiB) reliable
   bytes, each message costing `MESSAGE_COST` (64) more. Beyond either →
   `Disconnected { Limits }`; an unreliable message above
-  `rl_proto::MAX_DATAGRAM` or a reliable one above `MAX_CONTROL` →
+  `rl_proto::MAX_DATAGRAM` or a reliable one above `limits::MAX_RELIABLE`
+  (the larger of `MAX_CONTROL` and `MAX_LOBBY`, plus the tag byte) →
   `Malformed`. The link is closed. `allow_burst(peer, bytes)` exempts an
   expected state transfer from the byte limit (receiver side; the sender
   is not limited). Raw datagrams from the peer's address, whatever they

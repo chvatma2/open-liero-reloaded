@@ -212,12 +212,12 @@ fn floods_and_oversized_messages_drop_the_peer() {
     let (big, big_id) = net.join_and_wait(config());
     let (good, good_id) = net.join_and_wait(config());
 
-    // 2000 datagrams in 1 s from one client, a 60 KB reliable message from
-    // another (above rl_proto::MAX_CONTROL; Link refuses above 64 KiB), a
+    // 2000 datagrams in 1 s from one client, a 63 KB reliable message from
+    // another (above rl_net::limits::MAX_RELIABLE; Link refuses above 64 KiB), a
     // message every 10 ms from the third.
     let start = Instant::now();
     let (mut flooded, mut ticks) = (0u32, 0u32);
-    net.clients[big].0.send(HOST, Channel::Reliable, &vec![7; 60_000]);
+    net.clients[big].0.send(HOST, Channel::Reliable, &vec![7; 63_000]);
     net.run_until(Duration::from_secs(5), "both bad peers dropped", |n| {
         let due = (start.elapsed().as_micros() / 500).min(2000) as u32;
         while flooded < due {

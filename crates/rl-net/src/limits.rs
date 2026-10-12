@@ -3,9 +3,15 @@
 
 use std::time::Instant;
 
-use rl_proto::{MAX_CONTROL, MAX_DATAGRAM, MAX_SIGNAL, STATE_CHUNK};
+use rl_proto::{MAX_CONTROL, MAX_DATAGRAM, MAX_LOBBY, MAX_SIGNAL, STATE_CHUNK};
 
 use crate::endpoint::Why;
+
+/// The largest reliable message: a netcode `Control` or a lobby message,
+/// plus the tag byte in front (`rl_proto::tag`). Below `Link`'s
+/// `MAX_MESSAGE`.
+pub const MAX_RELIABLE: usize = if MAX_CONTROL > MAX_LOBBY { MAX_CONTROL } else { MAX_LOBBY } + 1;
+const _: () = assert!(MAX_RELIABLE <= crate::link::MAX_MESSAGE);
 
 /// What one peer may send us.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,7 +135,7 @@ impl PeerLimits {
             }
             return if self.datagrams.take(now, 1.0) { Ok(()) } else { Err(Why::Limits) };
         }
-        if len > MAX_CONTROL {
+        if len > MAX_RELIABLE {
             return Err(Why::Malformed);
         }
         let cost = len as u64 + MESSAGE_COST as u64;
@@ -179,8 +185,9 @@ mod tests {
         assert!(caught.is_some_and(|i| i < 900), "{caught:?}");
         let mut p = PeerLimits::new(&Limits::default(), t0);
         assert_eq!(p.on_message(t0, false, MAX_DATAGRAM + 1), Err(Why::Malformed));
-        assert_eq!(p.on_message(t0, true, MAX_CONTROL + 1), Err(Why::Malformed));
-        assert_eq!(p.on_message(t0, true, MAX_CONTROL), Ok(()));
+        assert_eq!(p.on_message(t0, true, MAX_RELIABLE + 1), Err(Why::Malformed));
+        assert_eq!(p.on_message(t0, true, MAX_RELIABLE), Ok(()));
+        assert_eq!(MAX_RELIABLE, rl_proto::MAX_LOBBY + 1, "a full lobby and its tag byte");
         // Tiny reliable messages count MESSAGE_COST each.
         let mut p = PeerLimits::new(&Limits::default(), t0);
         let n = (256 * 1024 / MESSAGE_COST as usize) + 1;

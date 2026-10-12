@@ -10,9 +10,9 @@ use core::net::IpAddr;
 
 use rl_netcode::{PeerId, input_delay};
 use rl_proto::{
-    AdminCommand, LobbyState, Look, MAX_PLAYERS, MAX_SPECTATORS, MatchEndWire, MatchSetupWire,
-    MatchStartWire, Member, Notice, Phase, PublicKey, Refusal, SeatWire, SlotWire, ToClient, ToHost,
-    valid_setup,
+    AdminCommand, LobbyState, Look, MAX_INPUT_DELAY, MAX_PLAYERS, MAX_SPECTATORS, MatchEndWire,
+    MatchSetupWire, MatchStartWire, Member, Notice, Phase, PublicKey, Refusal, SeatWire, SlotWire, ToClient,
+    ToHost, valid_setup,
 };
 
 use crate::identity::{Identity, challenge_message, password_proof, verify};
@@ -47,6 +47,8 @@ struct Rec {
     missing: Vec<String>,
     loadout: Option<[i32; 5]>,
     admin: bool,
+    /// The round trip the transport measured (`set_ping`).
+    ping_ms: Option<u16>,
     /// When its last chat lines were relayed (at most `CHAT_LINES`).
     chat: VecDeque<u64>,
 }
@@ -64,7 +66,7 @@ impl Rec {
             seat: self.seat,
             ready: self.ready(),
             missing: self.missing.clone(),
-            ping_ms: None,
+            ping_ms: self.ping_ms,
             admin: self.admin,
         }
     }
@@ -97,6 +99,13 @@ pub struct LobbyHost {
     in_match: BTreeSet<u8>,
     results_since: u64,
     startable: bool,
+    /// The state changed since the last `Lobby` went out: one goes out at
+    /// the next `outgoing()` (or before a `Joined` notice).
+    dirty: bool,
+    /// Counts the changes a start depends on; `announce_start` takes only
+    /// a start made at the current generation.
+    generation: u64,
+    started_at: Option<u64>,
     out: Vec<(PeerId, ToClient)>,
     events: Vec<HostEvent>,
 }
@@ -141,6 +150,9 @@ impl LobbyHost {
             in_match: BTreeSet::new(),
             results_since: 0,
             startable: false,
+            dirty: false,
+            generation: 0,
+            started_at: None,
             out: Vec::new(),
             events: Vec::new(),
         };
@@ -158,6 +170,7 @@ impl LobbyHost {
                 missing: Vec::new(),
                 loadout: None,
                 admin: true,
+                ping_ms: None,
                 chat: VecDeque::new(),
             });
             host.me = Some(id);
@@ -223,9 +236,25 @@ impl LobbyHost {
         }
     }
 
-    /// Drains the messages to send.
+    /// Drains the messages to send, ending with one `Lobby` to every
+    /// member if the state changed since the last one.
     pub fn outgoing(&mut self) -> Vec<(PeerId, ToClient)> {
+        self.flush();
         core::mem::take(&mut self.out)
+    }
+
+    /// The round trip the transport measured to `peer`, shown in the lobby
+    /// (call it every few seconds, not per packet: a change is a `Lobby`).
+    pub fn set_ping(&mut self, peer: PeerId, ms: u32) {
+        let Some(id) = self.member_of(peer) else { return };
+        let Some(i) = self.index(id) else { return };
+        let ping = Some(u16::try_from(ms).unwrap_or(u16::MAX));
+        if self.members[i].ping_ms != ping {
+            self.members[i].ping_ms = ping;
+            // Not a change a start depends on: no new generation.
+            self.refresh();
+            self.dirty = true;
+        }
     }
 
     /// Drains the events.
@@ -270,6 +299,7 @@ impl LobbyHost {
     pub fn set_my_loadout(&mut self, loadout: Option<[i32; 5]>) {
         if let Some(i) = self.me.and_then(|me| self.index(me)) {
             self.members[i].loadout = loadout;
+            self.generation += 1;
         }
     }
 
@@ -306,27 +336,60 @@ impl LobbyHost {
 
     // ---- the match ----
 
-    /// Whether a match can start: gathering, 2 to 32 worms (bots
-    /// included), every player ready with its content complete.
+    /// Whether a match can start: gathering, at least one player (a
+    /// member or the host's), 2 to 32 worms (bots included), every player
+    /// ready with its content complete.
     pub fn can_start(&self) -> Result<(), NotStartable> {
         if self.phase != Phase::Gathering {
             return Err(NotStartable::Phase);
         }
         let players = self.members.iter().filter(|m| matches!(m.seat, SeatWire::Player { .. }));
-        let worms = players.clone().count() + self.setup.bots.len();
-        if worms < 2 {
-            return Err(NotStartable::TooFewWorms);
-        }
-        if worms > MAX_PLAYERS {
-            return Err(NotStartable::TooManyWorms);
-        }
+        Self::worms(players.clone().count(), self.setup.bots.len())?;
         let not_ready: Vec<u8> = players.filter(|m| !m.ready()).map(|m| m.id).collect();
         if not_ready.is_empty() { Ok(()) } else { Err(NotStartable::NotReady(not_ready)) }
     }
 
+    fn worms(players: usize, bots: usize) -> Result<(), NotStartable> {
+        if players == 0 {
+            Err(NotStartable::NoPlayers)
+        } else if players + bots < 2 {
+            Err(NotStartable::TooFewWorms)
+        } else if players + bots > MAX_PLAYERS {
+            Err(NotStartable::TooManyWorms)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// A start forced by the host (spec §7.2): players who are not ready
+    /// (or lack content) watch this match as spectators, and get their seats
+    /// back at the next gathering; then `start`. Nobody moves when the
+    /// ready players alone cannot start (no player, under 2 or over 32 worms).
+    pub fn force_start(
+        &mut self,
+        seed: u32,
+        rtts_ms: &BTreeMap<PeerId, u32>,
+    ) -> Result<MatchStartWire, NotStartable> {
+        if self.phase != Phase::Gathering {
+            return Err(NotStartable::Phase);
+        }
+        let seated = |m: &Rec| matches!(m.seat, SeatWire::Player { .. });
+        let ready = self.members.iter().filter(|m| seated(m) && m.ready()).count();
+        Self::worms(ready, self.setup.bots.len())?;
+        let mut moved = false;
+        for m in self.members.iter_mut().filter(|m| seated(m) && !m.ready()) {
+            m.seat = SeatWire::Spectator;
+            moved = true;
+        }
+        if moved {
+            self.publish();
+        }
+        self.start(seed, rtts_ms)
+    }
+
     /// The match start: players by seat, then the setup's bots in order;
     /// each player's input delay from its round trip (`rtts_ms` by peer;
-    /// the host's 0, an unmeasured one 0). `start_checksum` is 0: the
+    /// the host's 0, an unmeasured one the largest, `MAX_INPUT_DELAY`). `start_checksum` is 0: the
     /// caller builds the world from this, fills it in and calls
     /// `announce_start`. Nothing is sent but, when players are not ready,
     /// `Notice::NotReady` to everyone.
@@ -359,16 +422,29 @@ impl LobbyHost {
         }));
         let delays = players
             .iter()
-            .map(|m| (m.id, m.peer.map_or(0, |p| input_delay(rtts_ms.get(&p).copied().unwrap_or(0)))))
+            .map(|m| {
+                let delay = match m.peer {
+                    None => 0,
+                    Some(p) => rtts_ms.get(&p).map_or(MAX_INPUT_DELAY, |&rtt| input_delay(rtt)),
+                };
+                (m.id, delay)
+            })
             .collect();
+        self.started_at = Some(self.generation);
         Ok(MatchStartWire { seed, setup: self.setup.clone(), slots, input_delay: delays, start_checksum: 0 })
     }
 
-    /// Sends `Start` to everyone and moves to `Phase::Starting`.
+    /// Sends `Start` to everyone and moves to `Phase::Starting`. Refused
+    /// when not gathering, or when the lobby changed since `start` made
+    /// `wire` (`Stale`: start again).
     pub fn announce_start(&mut self, wire: MatchStartWire) -> Result<(), NotStartable> {
         if self.phase != Phase::Gathering {
             return Err(NotStartable::Phase);
         }
+        if self.started_at != Some(self.generation) {
+            return Err(NotStartable::Stale);
+        }
+        self.started_at = None;
         self.phase = Phase::Starting;
         self.in_match = wire.slots.iter().filter_map(|s| s.member).collect();
         self.broadcast(&ToClient::Start(wire));
@@ -456,6 +532,7 @@ impl LobbyHost {
             }
             (ToHost::Bye, _) => {
                 self.links.remove(&peer);
+                self.events.push(HostEvent::Close { peer });
             }
             _ => self.refuse(peer, Refusal::Malformed),
         }
@@ -510,15 +587,14 @@ impl LobbyHost {
             missing: Vec::new(),
             loadout: None,
             admin: self.cfg.admins.contains(&key),
+            ping_ms: None,
             chat: VecDeque::new(),
         });
         self.set_look(id, look);
-        self.refresh();
+        self.publish();
         self.out.push((peer, ToClient::Welcome { you: id, lobby: self.state.clone() }));
-        let lobby = ToClient::Lobby(self.state.clone());
-        for p in self.member_peers().filter(|&p| p != peer).collect::<Vec<_>>() {
-            self.out.push((p, lobby.clone()));
-        }
+        // The others learn of the member before the notice naming it.
+        self.flush_except(Some(peer));
         self.broadcast(&ToClient::Notice(Notice::Joined(id)));
         self.events.push(HostEvent::Joined(id));
     }
@@ -571,7 +647,10 @@ impl LobbyHost {
                 self.reseat();
                 self.publish();
             }
-            ToHost::Loadout(loadout) => self.members[i].loadout = loadout,
+            ToHost::Loadout(loadout) => {
+                self.members[i].loadout = loadout;
+                self.generation += 1;
+            }
             ToHost::Chat(text) => {
                 let window = &mut self.members[i].chat;
                 while window.front().is_some_and(|&t| now_us.saturating_sub(t) >= CHAT_WINDOW_US) {
@@ -596,6 +675,7 @@ impl LobbyHost {
             ToHost::Bye => {
                 self.links.remove(&peer);
                 self.drop_member(id, Gone::Left);
+                self.events.push(HostEvent::Close { peer });
             }
         }
     }
@@ -742,9 +822,23 @@ impl LobbyHost {
         self.startable = startable;
     }
 
-    /// Rebuilds the state and sends it to every member.
+    /// Rebuilds the state; the next drain sends it to every member.
     fn publish(&mut self) {
+        self.generation += 1;
         self.refresh();
-        self.broadcast(&ToClient::Lobby(self.state.clone()));
+        self.dirty = true;
+    }
+
+    fn flush(&mut self) {
+        self.flush_except(None);
+    }
+
+    /// Sends the changed state to every member but `except`.
+    fn flush_except(&mut self, except: Option<PeerId>) {
+        if core::mem::take(&mut self.dirty) {
+            let lobby = ToClient::Lobby(self.state.clone());
+            let peers: Vec<PeerId> = self.member_peers().filter(|&p| Some(p) != except).collect();
+            self.out.extend(peers.into_iter().map(|p| (p, lobby.clone())));
+        }
     }
 }

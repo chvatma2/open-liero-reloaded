@@ -67,7 +67,7 @@ fn lobby() -> Net {
 
 /// A client with key `n` joins from `10.0.0.n` and the exchange settles.
 fn join(net: &mut Net, n: u8, name: &str) -> usize {
-    let c = net.join(LobbyClient::new(ident(n), look(name), None), ip(n));
+    let c = net.join(LobbyClient::new(ident(n), look(name), None, None), ip(n));
     net.settle();
     c
 }
@@ -212,9 +212,9 @@ fn a_forged_signature_is_refused() {
 #[test]
 fn a_wrong_password_is_refused() {
     let mut net = lobby_with(HostConfig { password: Some("secret".into()), ..cfg() }, 0);
-    let wrong = net.join(LobbyClient::new(ident(1), look("Ann"), Some("wrong".into())), ip(1));
-    let none = net.join(LobbyClient::new(ident(2), look("Bob"), None), ip(2));
-    let right = net.join(LobbyClient::new(ident(3), look("Cid"), Some("secret".into())), ip(3));
+    let wrong = net.join(LobbyClient::new(ident(1), look("Ann"), Some("wrong".into()), None), ip(1));
+    let none = net.join(LobbyClient::new(ident(2), look("Bob"), None, None), ip(2));
+    let right = net.join(LobbyClient::new(ident(3), look("Cid"), Some("secret".into()), None), ip(3));
     net.settle();
     for c in [wrong, none] {
         assert!(matches!(net.peers[c].received[0], ToClient::Challenge { needs_password: true, .. }));
@@ -244,11 +244,11 @@ fn banned_keys_and_ips_are_refused() {
     assert!(!net.host.banned(&key(2)) && !net.host.banned_ip(ip(2)));
 
     // The same key from another address.
-    let again = net.join(LobbyClient::new(ident(1), look("Ann"), None), ip(50));
+    let again = net.join(LobbyClient::new(ident(1), look("Ann"), None, None), ip(50));
     net.settle();
     assert!(got(&net, again, &ClientEvent::Refused(Refusal::Banned)));
     // Another key from the banned address: refused at once, no challenge.
-    let other = net.join(LobbyClient::new(ident(3), look("Cid"), None), ip(1));
+    let other = net.join(LobbyClient::new(ident(3), look("Cid"), None, None), ip(1));
     net.settle();
     assert_eq!(net.peers[other].received, vec![ToClient::Refused(Refusal::Banned)]);
     assert!(!net.peers[other].open);
@@ -531,6 +531,14 @@ fn leaving_at_every_stage() {
     let w = join(&mut net, 6, "Wes");
     let ids: Vec<u8> = [a, b, c, d].iter().map(|&x| id_of(&net, x)).collect();
 
+    // Before the proof, saying goodbye: the link closes.
+    let bye = net.join_raw(ip(8));
+    net.send_raw(bye, ToHost::Bye);
+    net.settle();
+    assert!(!net.peers[bye].open);
+    assert!(net.host_events.contains(&HostEvent::Close { peer: net.peers[bye].peer }));
+    net.host_events.clear();
+
     // Before the proof: nobody hears of it, and no timeout fires later.
     let r = net.join_raw(ip(9));
     net.settle();
@@ -540,10 +548,12 @@ fn leaving_at_every_stage() {
     assert!(!net.peers[w].events.iter().any(|e| matches!(e, ClientEvent::Notice(Notice::Left(_)))));
     assert!(!net.host_events.iter().any(|e| matches!(e, HostEvent::Kick { .. } | HostEvent::Left(_))));
 
-    // After the welcome, by saying goodbye.
+    // After the welcome, by saying goodbye: the host closes the link.
     net.client(a).leave();
     net.settle();
     left(&net, w, ids[0]);
+    assert!(!net.peers[a].open);
+    assert!(net.host_events.contains(&HostEvent::Close { peer: net.peers[a].peer }));
 
     // While starting, by losing the connection.
     for x in [b, c, d, w] {
@@ -622,7 +632,7 @@ fn unproven_peers_are_dropped() {
     assert_eq!(net.host.state().members.len(), 1);
     // A second connection with a member's key is refused.
     let b = join(&mut net, 5, "Bob");
-    let twin = net.join(LobbyClient::new(ident(5), look("Bob"), None), ip(6));
+    let twin = net.join(LobbyClient::new(ident(5), look("Bob"), None, None), ip(6));
     net.settle();
     assert!(got(&net, twin, &ClientEvent::Refused(Refusal::Busy)));
     assert!(net.peers[b].open);
@@ -646,7 +656,8 @@ fn the_start_message_assigns_slots_and_delays() {
     assert_eq!(seat(&net, c), SeatWire::Player { slot: 3 }, "slot 2 is free");
     let (host, a_id, c_id) = (host_id(&net), id_of(&net, a), id_of(&net, c));
 
-    let rtts = BTreeMap::from([(net.peers[a].peer, 50), (net.peers[c].peer, 500), (net.peers[s].peer, 10)]);
+    // Cid's round trip is not measured yet: the largest delay.
+    let rtts = BTreeMap::from([(net.peers[a].peer, 50), (net.peers[s].peer, 10)]);
     let wire = net.host.start(9, &rtts).unwrap();
     assert_eq!(wire.seed, 9);
     assert_eq!(wire.start_checksum, 0, "filled in by the match layer");
@@ -659,7 +670,7 @@ fn the_start_message_assigns_slots_and_delays() {
     assert_eq!(names, ["Host", "Ann", "Cid", "Bot 0", "Bot 1"]);
     assert_eq!(wire.slots[1].loadout, Some([1, 2, 3, 4, 5]));
     assert_eq!(wire.slots[2].loadout, None);
-    assert_eq!(wire.input_delay, vec![(host, 0), (a_id, 1), (c_id, 3)]);
+    assert_eq!(wire.input_delay, vec![(host, 0), (a_id, 1), (c_id, MAX_INPUT_DELAY)]);
     assert_eq!(net.host.state().phase, Phase::Gathering, "nothing is sent yet");
     net.settle();
     assert!(!net.peers[a].events.iter().any(|e| matches!(e, ClientEvent::Start(_))));
@@ -695,6 +706,176 @@ fn member_ids_of_the_match_are_not_reused() {
         net.settle();
     }
     consistent(&net);
+}
+
+#[test]
+fn a_start_made_before_a_change_is_not_announced() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    net.client(a).set_ready(true);
+    net.settle();
+    let rtts = net.rtts();
+    let wire = net.host.start(1, &rtts).unwrap();
+    net.client(a).set_loadout(Some([5, 4, 3, 2, 1]));
+    net.settle();
+    assert_eq!(net.host.announce_start(wire), Err(NotStartable::Stale));
+    let wire = net.host.start(1, &rtts).unwrap();
+    assert_eq!(wire.slots[1].loadout, Some([5, 4, 3, 2, 1]));
+    // A ping is not a change a start depends on.
+    net.host.set_ping(net.peers[a].peer, 33);
+    assert_eq!(net.host.announce_start(wire), Ok(()));
+    net.settle();
+    consistent(&net);
+}
+
+#[test]
+fn a_forced_start_seats_only_the_ready() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let c = join(&mut net, 3, "Cid");
+    net.client(a).set_ready(true);
+    net.client(c).have(vec!["olx-skin-x".into()]);
+    net.settle();
+    let (a_id, b_id, c_id) = (id_of(&net, a), id_of(&net, b), id_of(&net, c));
+    assert_eq!(net.host.can_start(), Err(NotStartable::NotReady(vec![b_id, c_id])));
+
+    let rtts = net.rtts();
+    let mut wire = net.host.force_start(4, &rtts).unwrap();
+    let members: Vec<Option<u8>> = wire.slots.iter().map(|x| x.member).collect();
+    assert_eq!(members, [Some(host_id(&net)), Some(a_id)]);
+    assert_eq!(seat(&net, b), SeatWire::Spectator);
+    assert_eq!(seat(&net, c), SeatWire::Spectator);
+    wire.start_checksum = 1;
+    net.host.announce_start(wire.clone()).unwrap();
+    net.settle();
+    assert!(got(&net, b, &ClientEvent::Start(wire)), "spectators watch");
+    consistent(&net);
+
+    // Back in their seats for the next match.
+    net.host.playing(0);
+    net.host.match_ended(MatchEndWire { reason: "time".into(), rows: vec![] }, net.now_us);
+    net.run(RESULTS_US + 1);
+    net.settle();
+    assert_eq!(seat(&net, b), SeatWire::Player { slot: 2 });
+    assert_eq!(seat(&net, c), SeatWire::Player { slot: 3 });
+    consistent(&net);
+}
+
+#[test]
+fn a_forced_start_needs_ready_worms() {
+    // A dedicated server whose only player is not ready.
+    let host = LobbyHost::new(cfg(), ident(HOST), None, setup(0)).unwrap();
+    let mut net = Net::new(host, DELAY_US);
+    let a = join(&mut net, 1, "Ann");
+    assert_eq!(net.host.force_start(1, &net.rtts()), Err(NotStartable::NoPlayers));
+    net.client(a).set_ready(true);
+    net.settle();
+    assert_eq!(net.host.force_start(1, &net.rtts()), Err(NotStartable::TooFewWorms));
+    assert_eq!(seat(&net, a), SeatWire::Player { slot: 0 }, "nobody moved");
+    net.host.set_setup(setup(1)).unwrap();
+    net.client(a).set_ready(true);
+    net.settle();
+    assert!(net.host.force_start(1, &net.rtts()).is_ok());
+}
+
+#[test]
+fn a_dedicated_server_with_bots_only_does_not_start() {
+    let host = LobbyHost::new(cfg(), ident(HOST), None, setup(4)).unwrap();
+    let mut net = Net::new(host, DELAY_US);
+    assert_eq!(net.host.can_start(), Err(NotStartable::NoPlayers));
+    let a = join(&mut net, 1, "Ann");
+    net.client(a).set_ready(true);
+    net.settle();
+    assert_eq!(net.host.can_start(), Ok(()));
+    assert_eq!(net.host_events.iter().filter(|e| **e == HostEvent::StartRequested).count(), 1);
+    net.client(a).leave();
+    net.settle();
+    assert_eq!(net.host.can_start(), Err(NotStartable::NoPlayers));
+    net.host.events();
+    assert_eq!(net.host_events.iter().filter(|e| **e == HostEvent::StartRequested).count(), 1);
+}
+
+#[test]
+fn pings_show_in_the_lobby() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    net.host.set_ping(net.peers[a].peer, 42);
+    net.host.set_ping(net.peers[b].peer, 1_000_000);
+    net.settle();
+    assert_eq!(member(&net, a).ping_ms, Some(42));
+    assert_eq!(member(&net, b).ping_ms, Some(u16::MAX));
+    assert_eq!(member_by_id(&net, host_id(&net)).ping_ms, None);
+    consistent(&net);
+}
+
+#[test]
+fn state_changes_are_coalesced() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let lobbies =
+        |net: &Net| net.peers[a].received.iter().filter(|m| matches!(m, ToClient::Lobby(_))).count();
+    let before = lobbies(&net);
+    // A burst arriving together is one Lobby to everyone.
+    for i in 0..5 {
+        net.client(b).set_look(look(&format!("Bob {i}")));
+    }
+    net.client(b).set_ready(true);
+    net.client(b).have(vec![]);
+    net.client(b).set_spectate(false);
+    net.settle();
+    assert_eq!(lobbies(&net), before + 1);
+    assert_eq!(member(&net, b).look.name, "Bob 4");
+    consistent(&net);
+}
+
+#[test]
+fn a_client_leaves_a_host_that_breaks_the_protocol() {
+    let lobby_state = |ids: &[u8]| LobbyState {
+        name: "Office".into(),
+        phase: Phase::Gathering,
+        setup: setup(0),
+        members: ids
+            .iter()
+            .map(|&id| Member {
+                id,
+                key: key(id + 1),
+                look: look("X"),
+                seat: SeatWire::Spectator,
+                ready: false,
+                missing: vec![],
+                ping_ms: None,
+                admin: false,
+            })
+            .collect(),
+    };
+    let challenge = ToClient::Challenge { nonce: [1; 32], host_key: key(HOST), needs_password: false };
+    let fresh = |expected| {
+        let mut c = LobbyClient::new(ident(1), look("Ann"), None, expected);
+        c.connected();
+        c
+    };
+    // A welcome naming a member that is not in its lobby.
+    let mut c = fresh(None);
+    c.receive(challenge.clone(), [0; 32]);
+    c.receive(ToClient::Welcome { you: 9, lobby: lobby_state(&[0, 1]) }, [0; 32]);
+    assert_eq!(c.events(), vec![ClientEvent::Closed]);
+    assert!(!c.joined());
+    // A lobby without this member, with no kick.
+    let mut c = fresh(Some(key(HOST)));
+    c.receive(challenge.clone(), [0; 32]);
+    assert_eq!(c.outgoing().len(), 2, "Hello and Prove to the expected host");
+    c.receive(ToClient::Welcome { you: 1, lobby: lobby_state(&[0, 1]) }, [0; 32]);
+    c.receive(ToClient::Lobby(lobby_state(&[0])), [0; 32]);
+    assert_eq!(c.events(), vec![ClientEvent::Welcome { you: 1 }, ClientEvent::Closed]);
+    assert!(!c.joined());
+    // A challenge from another host than expected is not answered.
+    let mut c = fresh(Some(key(7)));
+    c.receive(challenge, [0; 32]);
+    assert!(c.outgoing().is_empty());
+    assert_eq!(c.events(), vec![ClientEvent::WrongHost { key: key(HOST) }]);
 }
 
 #[test]
@@ -743,50 +924,86 @@ fn a_dedicated_server_has_no_player_but_a_key() {
 
 // ---- robustness: any sequence of messages and host actions ----
 
+/// Peers in the proptest: more than a full lobby.
+const PEERS: u8 = 56;
+
 #[derive(Clone, Debug)]
 enum Op {
-    Join(u8),
+    Join(u8, Look),
+    /// Every peer joins with the longest look and missing list.
+    Crowd,
     Connect(u8),
     Disconnect(u8),
     Send(u8, ToHost),
     Kick(u8, bool),
     Move(u8, bool),
-    Setup(usize),
-    Start,
+    Setup(usize, bool),
+    Start(bool),
     Playing(u32),
     Ended,
     Wait(u64),
 }
 
 fn to_host() -> impl Strategy<Value = ToHost> {
-    let name = prop_oneof![Just("Ann"), Just("ann"), Just("Bob"), Just("Host"), Just("abcdefghijklmnopqrst")];
-    let look = name.prop_map(look);
+    let long_name = "\u{1F600}".repeat(MAX_NAME);
+    let name = prop_oneof![
+        Just("Ann".to_string()),
+        Just("ann".to_string()),
+        Just("Host".to_string()),
+        Just(long_name),
+        "[a-zA-Z]{1,20}",
+    ];
+    let skin = prop_oneof![Just("olx-skin-afro".to_string()), "[a-z0-9-]{64}"];
+    let look = (name, skin).prop_map(|(name, skin)| Look { name, colour: [1, 2, 3], skin });
     prop_oneof![
-        (0u8..8, look.clone()).prop_map(|(k, l)| ToHost::Hello { key: key(k + 1), look: l, password: None }),
+        (0u8..PEERS, look.clone()).prop_map(|(k, l)| ToHost::Hello {
+            key: key(k + 1),
+            look: l,
+            password: None
+        }),
         any::<u8>().prop_map(|b| ToHost::Prove { signature: [b; 64] }),
         look.prop_map(ToHost::SetLook),
         any::<bool>().prop_map(ToHost::Ready),
         any::<bool>().prop_map(ToHost::Spectate),
         Just(ToHost::Loadout(Some([1, 2, 3, 4, 5]))),
         "[a-z ]{0,200}".prop_map(ToHost::Chat),
-        prop::collection::vec("[a-z]{1,8}", 0..=MAX_MISSING).prop_map(|missing| ToHost::Have { missing }),
-        (0u8..8).prop_map(|k| ToHost::Admin(AdminCommand::Kick(key(k + 1)))),
-        (0u8..8).prop_map(|k| ToHost::Admin(AdminCommand::Ban(key(k + 1)))),
+        prop::collection::vec("[a-z]{1,8}|[a-z0-9-]{64}", 0..=MAX_MISSING)
+            .prop_map(|missing| ToHost::Have { missing }),
+        (0u8..PEERS).prop_map(|k| ToHost::Admin(AdminCommand::Kick(key(k + 1)))),
+        (0u8..PEERS).prop_map(|k| ToHost::Admin(AdminCommand::Ban(key(k + 1)))),
         Just(ToHost::Admin(AdminCommand::Next)),
         Just(ToHost::Bye),
     ]
 }
 
+/// A look as long as the wire allows.
+fn long_look(p: u8) -> Look {
+    let mut skin = format!("skin-{p}-");
+    skin.extend(std::iter::repeat_n('x', MAX_ID - skin.len()));
+    Look { name: format!("{p}{}", "\u{1F600}".repeat(MAX_NAME - 2)), colour: [9, 9, 9], skin }
+}
+
+/// A setup as large as the wire allows.
+fn long_setup(bots: usize) -> MatchSetupWire {
+    let mut s = setup(0);
+    s.packs = (0..MAX_PACKS).map(|i| (format!("{i}{}", "p".repeat(MAX_ID - 1)), "ab".repeat(32))).collect();
+    s.restrictions = "r".repeat(MAX_RESTRICTIONS);
+    s.bots = (0..bots)
+        .map(|i| BotWire { difficulty: 3, personality: 2, loadout: 1, look: long_look(i as u8) })
+        .collect();
+    s
+}
+
 fn op() -> impl Strategy<Value = Op> {
     prop_oneof![
-        3 => (0u8..8).prop_map(Op::Join),
-        1 => (0u8..8).prop_map(Op::Connect),
-        1 => (0u8..8).prop_map(Op::Disconnect),
-        4 => ((0u8..8), to_host()).prop_map(|(p, m)| Op::Send(p, m)),
+        6 => (0u8..PEERS, prop::bool::ANY).prop_map(|(p, long)| Op::Join(p, if long { long_look(p) } else { look("Ann") })),
+        1 => (0u8..PEERS).prop_map(Op::Connect),
+        1 => (0u8..PEERS).prop_map(Op::Disconnect),
+        4 => ((0u8..PEERS), to_host()).prop_map(|(p, m)| Op::Send(p, m)),
         1 => (0u8..64, any::<bool>()).prop_map(|(m, b)| Op::Kick(m, b)),
         1 => (0u8..64, any::<bool>()).prop_map(|(m, b)| Op::Move(m, b)),
-        1 => (0usize..=MAX_BOTS).prop_map(Op::Setup),
-        1 => Just(Op::Start),
+        1 => (0usize..=MAX_BOTS, any::<bool>()).prop_map(|(b, long)| Op::Setup(b, long)),
+        1 => any::<bool>().prop_map(Op::Start),
         1 => any::<u32>().prop_map(Op::Playing),
         1 => Just(Op::Ended),
         1 => (0u64..12_000_000).prop_map(Op::Wait),
@@ -802,36 +1019,51 @@ proptest! {
     fn random_messages_keep_the_lobby_valid(
         max_players in 1u8..=40,
         max_spectators in 0u8..=20,
-        ops in prop::collection::vec(op(), 1..60),
+        ops in prop::collection::vec(op(), 1..120),
+        crowd_at in prop::option::of(0usize..120),
     ) {
         let cfg = HostConfig { max_players, max_spectators, admins: vec![key(1)], ..cfg() };
         let mut host = LobbyHost::new(cfg, ident(HOST), Some(look("Host")), setup(0)).unwrap();
         let mut now = 0u64;
         let mut nonces: BTreeMap<u16, [u8; 32]> = BTreeMap::new();
         let mut serial = 0u8;
-        for op in ops {
+        for (i, op) in ops.into_iter().enumerate() {
+            let op = if crowd_at == Some(i) { Op::Crowd } else { op };
             match op {
-                Op::Join(p) | Op::Connect(p) => {
+                Op::Join(p, _) | Op::Connect(p) => {
                     serial = serial.wrapping_add(1);
                     let nonce = [serial; 32];
                     let peer = u16::from(p);
                     host.connected(peer, ip(p), now, nonce);
                     nonces.insert(peer, nonce);
-                    if let Op::Join(p) = op {
+                    if let Op::Join(p, look) = op {
                         let me = ident(p + 1);
-                        host.receive(peer, ToHost::Hello { key: me.public(), look: look("Ann"), password: None }, now);
+                        host.receive(peer, ToHost::Hello { key: me.public(), look, password: None }, now);
                         let signature = me.sign(&challenge_message(&nonce, &key(HOST)), [0; 32]);
                         host.receive(peer, ToHost::Prove { signature }, now);
+                    }
+                }
+                Op::Crowd => {
+                    for p in 0..PEERS {
+                        serial = serial.wrapping_add(1);
+                        let (peer, nonce, me) = (u16::from(p), [serial; 32], ident(p + 1));
+                        host.connected(peer, ip(p), now, nonce);
+                        host.receive(peer, ToHost::Hello { key: me.public(), look: long_look(p), password: None }, now);
+                        let signature = me.sign(&challenge_message(&nonce, &key(HOST)), [0; 32]);
+                        host.receive(peer, ToHost::Prove { signature }, now);
+                        let missing = (0..MAX_MISSING).map(|i| format!("{i}{}", "m".repeat(MAX_ID - 1))).collect();
+                        host.receive(peer, ToHost::Have { missing }, now);
                     }
                 }
                 Op::Disconnect(p) => host.disconnected(u16::from(p)),
                 Op::Send(p, m) => host.receive(u16::from(p), m, now),
                 Op::Kick(m, b) => host.kick(m, b),
                 Op::Move(m, b) => host.move_seat(m, b),
-                Op::Setup(bots) => host.set_setup(setup(bots)).unwrap(),
-                Op::Start => {
+                Op::Setup(bots, long) => host.set_setup(if long { long_setup(bots) } else { setup(bots) }).unwrap(),
+                Op::Start(force) => {
                     let rtts = BTreeMap::from([(1u16, 900u32), (2, 0)]);
-                    if let Ok(mut w) = host.start(1, &rtts) {
+                    let started = if force { host.force_start(1, &rtts) } else { host.start(1, &rtts) };
+                    if let Ok(mut w) = started {
                         w.start_checksum = 5;
                         let wire = encode_to_client(&ToClient::Start(w.clone()));
                         prop_assert!(decode_to_client(&wire).is_ok());
@@ -845,9 +1077,13 @@ proptest! {
                     host.tick(now);
                 }
             }
+            // A broadcast is a run of one message to many peers: check it once.
+            let mut last = None;
             for (_, m) in host.outgoing() {
-                let bytes = encode_to_client(&m);
-                prop_assert_eq!(decode_to_client(&bytes), Ok(m));
+                if last.as_ref() != Some(&m) {
+                    prop_assert_eq!(decode_to_client(&encode_to_client(&m)), Ok(m.clone()));
+                    last = Some(m);
+                }
             }
             host.events();
             let state = host.state().clone();

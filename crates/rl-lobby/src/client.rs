@@ -30,6 +30,7 @@ pub struct LobbyClient {
     me: Identity,
     look: Look,
     password: Option<String>,
+    expected_host: Option<PublicKey>,
     stage: Stage,
     host_key: Option<PublicKey>,
     you: Option<u8>,
@@ -39,13 +40,21 @@ pub struct LobbyClient {
 }
 
 impl LobbyClient {
-    /// A client joining as `me` with `look` (sanitized), and the lobby's
-    /// password if it has one.
-    pub fn new(me: Identity, look: Look, password: Option<String>) -> LobbyClient {
+    /// A client joining as `me` with `look` (sanitized), the lobby's
+    /// password if it has one, and the host's key when known (an invite
+    /// carries it; a direct connection passes `None`): a challenge naming
+    /// another key is not answered.
+    pub fn new(
+        me: Identity,
+        look: Look,
+        password: Option<String>,
+        expected_host: Option<PublicKey>,
+    ) -> LobbyClient {
         LobbyClient {
             me,
             look: sanitize_look(&look),
             password,
+            expected_host,
             stage: Stage::Idle,
             host_key: None,
             you: None,
@@ -73,6 +82,12 @@ impl LobbyClient {
     /// `Prove` at once.
     pub fn receive(&mut self, msg: ToClient, aux: [u8; 32]) {
         match (self.stage, msg) {
+            (Stage::Connected, ToClient::Challenge { host_key, .. })
+                if self.expected_host.is_some_and(|k| k != host_key) =>
+            {
+                self.stage = Stage::Closed;
+                self.events.push(ClientEvent::WrongHost { key: host_key });
+            }
             (Stage::Connected, ToClient::Challenge { nonce, host_key, needs_password }) => {
                 let password = needs_password
                     .then(|| password_proof(&nonce, self.password.as_deref().unwrap_or_default()));
@@ -85,6 +100,11 @@ impl LobbyClient {
             (Stage::Connected | Stage::Proving, ToClient::Refused(why)) => {
                 self.events.push(ClientEvent::Refused(why));
                 self.stage = Stage::Closed;
+            }
+            (Stage::Proving, ToClient::Welcome { you, lobby })
+                if !lobby.members.iter().any(|m| m.id == you) =>
+            {
+                self.close();
             }
             (Stage::Proving, ToClient::Welcome { you, lobby }) => {
                 self.you = Some(you);
@@ -100,6 +120,9 @@ impl LobbyClient {
 
     fn receive_joined(&mut self, msg: ToClient) {
         let event = match msg {
+            ToClient::Lobby(state) if !state.members.iter().any(|m| Some(m.id) == self.you) => {
+                return self.close();
+            }
             ToClient::Lobby(state) => {
                 self.state = Some(state.clone());
                 ClientEvent::Lobby(state)

@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 use crate::signal::Refusal;
 use crate::{ProtoError, decode_exact};
 
-/// Largest accepted lobby message.
-pub const MAX_LOBBY: usize = 32 * 1024;
+/// Largest accepted lobby message: a full lobby at every bound fits
+/// (`worst_case_messages_fit`, about 40 KB).
+pub const MAX_LOBBY: usize = 60 * 1024;
 /// Longest name, in characters (rl-ui's profile limit).
 pub const MAX_NAME: usize = 20;
 /// Longest chat line, in characters.
@@ -697,6 +698,84 @@ mod tests {
         let mut l = lobby(1);
         l.name = " ".to_string();
         refused(ToClient::Lobby(l));
+    }
+
+    /// A look at every bound: 20 four-byte characters, a 64-byte skin id.
+    fn worst_look(i: usize) -> Look {
+        Look {
+            name: "\u{1F600}".repeat(MAX_NAME),
+            colour: [255; 3],
+            skin: alloc::format!("{i:02}{}", "s".repeat(MAX_ID - 2)),
+        }
+    }
+
+    fn worst_setup() -> MatchSetupWire {
+        let mut s = setup();
+        s.mod_id = "m".repeat(MAX_ID);
+        s.level_id = "l".repeat(MAX_ID);
+        s.packs = (0..MAX_PACKS)
+            .map(|i| (alloc::format!("{i}{}", "p".repeat(MAX_ID - 1)), "a".repeat(64)))
+            .collect();
+        s.restrictions = "r".repeat(MAX_RESTRICTIONS);
+        s.rules.lives = i32::MIN;
+        s.rules.kill_limit = i32::MIN;
+        s.rules.sprees = [i32::MIN; 5];
+        s.rules.dying_sprees = [i32::MIN; 5];
+        s.loading_time = i32::MIN;
+        s.bots = (0..MAX_BOTS)
+            .map(|i| BotWire { difficulty: 255, personality: 255, loadout: 255, look: worst_look(i) })
+            .collect();
+        s
+    }
+
+    #[test]
+    fn worst_case_messages_fit() {
+        let lobby = LobbyState {
+            name: "\u{1F600}".repeat(MAX_NAME),
+            phase: Phase::Playing { tick: u32::MAX },
+            setup: worst_setup(),
+            members: (0..MAX_MEMBERS)
+                .map(|i| Member {
+                    id: 200 + i as u8,
+                    key: [0xff; 32],
+                    look: worst_look(i),
+                    seat: if i < MAX_PLAYERS {
+                        SeatWire::Player { slot: 200 + i as u8 }
+                    } else {
+                        SeatWire::Spectator
+                    },
+                    ready: true,
+                    missing: (0..MAX_MISSING)
+                        .map(|j| alloc::format!("{j}{}", "x".repeat(MAX_ID - 1)))
+                        .collect(),
+                    ping_ms: Some(u16::MAX),
+                    admin: true,
+                })
+                .collect(),
+        };
+        let welcome = ToClient::Welcome { you: 255, lobby: lobby.clone() };
+        let bytes = encode_to_client(&welcome);
+        assert!(bytes.len() <= MAX_LOBBY, "{} bytes", bytes.len());
+        assert!(bytes.len() > 32 * 1024, "the old limit was too small: {} bytes", bytes.len());
+        to_client_round(welcome);
+        to_client_round(ToClient::Lobby(lobby));
+        let start = MatchStartWire {
+            seed: u32::MAX,
+            setup: worst_setup(),
+            slots: (0..MAX_PLAYERS)
+                .map(|i| SlotWire {
+                    member: Some(255),
+                    bot: Some(0),
+                    look: worst_look(i),
+                    loadout: Some([i32::MIN; 5]),
+                })
+                .collect(),
+            input_delay: (0..MAX_MEMBERS).map(|i| (200 + i as u8, MAX_INPUT_DELAY)).collect(),
+            start_checksum: u64::MAX,
+        };
+        assert!(encode_to_client(&ToClient::Start(start.clone())).len() <= MAX_LOBBY);
+        to_client_round(ToClient::Start(start));
+        to_host_round(ToHost::Admin(AdminCommand::Settings(worst_setup())));
     }
 
     #[test]

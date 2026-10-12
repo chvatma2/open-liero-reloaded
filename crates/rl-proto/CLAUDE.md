@@ -15,7 +15,8 @@ control messages, the frame delta codec and the simulation fingerprint.
   `MAX_SIGNAL`): `Signal::{Offer, Answer, Refused}`, `Refusal` (`Version`,
   `Full`, `Banned`, `Busy`, `Malformed`, `Password`: also the lobby's
   `ToClient::Refused`); sdp <= 8 KiB.
-- **Lobby** (`lobby.rs`, reliable channel, `MAX_LOBBY`): `ToHost`,
+- **Lobby** (`lobby.rs`, reliable channel, `MAX_LOBBY` = 60 KiB: a full
+  lobby at every bound is about 40 KB, `worst_case_messages_fit`): `ToHost`,
   `ToClient`, `LobbyState`, `MatchStartWire`, `MatchEndWire` and friends.
   **Tag byte** first on every reliable payload: `0` netcode `Control`,
   `1` `ToHost`, `2` `ToClient`; `tag()` splits it (`Tagged`), `None` for an

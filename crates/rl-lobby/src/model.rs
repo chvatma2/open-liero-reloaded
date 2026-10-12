@@ -52,6 +52,9 @@ pub enum HostEvent {
     /// violation or a kick (`ban` for a ban). A kicked member is gone from
     /// the lobby; no `Left` follows.
     Kick { peer: PeerId, ban: bool },
+    /// Close this peer's transport: it said `Bye` (a member also gets
+    /// `Left`).
+    Close { peer: PeerId },
     /// A chat line relayed to everyone, the host's own included.
     Chat { from: u8, text: String },
     /// The lobby became startable: every player is ready (a host that
@@ -82,7 +85,13 @@ pub enum ClientEvent {
     Kicked {
         banned: bool,
     },
-    /// The host said goodbye or the transport closed.
+    /// The challenge named another host key than the one expected
+    /// (nothing was sent; close the transport).
+    WrongHost {
+        key: rl_proto::PublicKey,
+    },
+    /// The host said goodbye, the transport closed, or the host broke the
+    /// protocol (a welcome or lobby without this member).
     Closed,
 }
 
@@ -91,12 +100,17 @@ pub enum ClientEvent {
 pub enum NotStartable {
     /// Not gathering (a match is starting, running or showing results).
     Phase,
+    /// No player: neither a member nor the host's own (a dedicated server
+    /// with bots only).
+    NoPlayers,
     /// Fewer than 2 worms, bots included.
     TooFewWorms,
     /// More than 32 worms, bots included.
     TooManyWorms,
     /// These players are not ready (or lack content).
     NotReady(Vec<u8>),
+    /// `announce_start` with a start made before a later change.
+    Stale,
 }
 
 /// A host-side input the wire could not carry.
