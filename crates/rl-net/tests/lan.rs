@@ -116,10 +116,15 @@ fn garbage_is_ignored() {
     assert_eq!(games[0].info.name, "Good");
 }
 
+fn sock(ip: [u8; 4]) -> UdpSocket {
+    UdpSocket::bind((std::net::Ipv4Addr::from(ip), 0)).unwrap()
+}
+
 #[test]
-fn at_most_64_games() {
+fn at_most_64_games_sorted_by_name() {
     let (mut l, target) = listener();
-    let socks: Vec<UdpSocket> = (0..65).map(|_| UdpSocket::bind("127.0.0.1:0").unwrap()).collect();
+    // Linux loopback accepts the whole 127/8: 65 distinct source IPs.
+    let socks: Vec<UdpSocket> = (0..65u8).map(|i| sock([127, 0, 1, i + 1])).collect();
     for (i, s) in socks.iter().enumerate() {
         s.send_to(&encode_lan(&announce(&format!("g{i:02}"), 1000 + i as u16)), target).unwrap();
     }
@@ -127,11 +132,58 @@ fn at_most_64_games() {
     let games = poll_until(&mut l, t0, |g| g.len() >= 64);
     assert_eq!(games.len(), 64);
     std::thread::sleep(Duration::from_millis(100));
-    assert_eq!(l.poll(t0).len(), 64);
+    let games = l.poll(t0).to_vec();
+    assert_eq!(games.len(), 64);
     let names: Vec<_> = games.iter().map(|g| g.info.name.clone()).collect();
     let mut sorted = names.clone();
     sorted.sort();
     assert_eq!(names, sorted, "sorted by name");
+}
+
+#[test]
+fn rotating_ports_from_one_ip_cannot_hide_a_real_host() {
+    let (mut l, target) = listener();
+    for i in 0..65u16 {
+        let s = sock([127, 0, 0, 1]);
+        s.send_to(&encode_lan(&announce(&format!("evil{i:02}"), 2000 + i)), target).unwrap();
+    }
+    let real = sock([127, 0, 0, 2]);
+    real.send_to(&encode_lan(&announce("Real", 23400)), target).unwrap();
+    let t0 = Instant::now();
+    let games = poll_until(&mut l, t0, |g| g.iter().any(|g| g.info.name == "Real"));
+    assert!(games.iter().any(|g| g.info.name == "Real"));
+    assert!(games.iter().filter(|g| g.addr.ip().is_loopback() && g.info.name != "Real").count() <= 4);
+}
+
+#[test]
+fn one_ip_holds_at_most_four_games() {
+    let (mut l, target) = listener();
+    for i in 0..8u16 {
+        let s = sock([127, 0, 0, 1]);
+        s.send_to(&encode_lan(&announce(&format!("g{i}"), 3000 + i)), target).unwrap();
+    }
+    let t0 = Instant::now();
+    poll_until(&mut l, t0, |g| g.len() >= 4);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(l.poll(t0).len(), 4);
+}
+
+#[test]
+fn ten_datagrams_in_a_second_are_admitted_the_eleventh_is_not() {
+    let (mut l, target) = listener();
+    let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
+    for _ in 0..9 {
+        raw.send_to(&[9], target).unwrap();
+    }
+    raw.send_to(&encode_lan(&announce("tenth", 1)), target).unwrap();
+    raw.send_to(&encode_lan(&announce("eleventh", 1)), target).unwrap();
+    let t0 = Instant::now();
+    let games = poll_until(&mut l, t0, |g| !g.is_empty());
+    std::thread::sleep(Duration::from_millis(100));
+    let games2 = l.poll(t0).to_vec();
+    assert_eq!(games.len(), 1);
+    assert_eq!(games2.len(), 1);
+    assert_eq!(games2[0].info.name, "tenth");
 }
 
 #[test]

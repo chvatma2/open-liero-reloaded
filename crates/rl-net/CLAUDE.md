@@ -129,8 +129,10 @@ announcements.
   `poll(now)` (never blocks, at most 256 datagrams) return `LanGame`s
   (source IP + announced port, info, seen) sorted by name then address,
   dropping games unseen for 6 s. Receiving limits: undecodable datagrams
-  ignored; one entry per source address, at most 64 games; a source over
-  10 datagrams/s is ignored for 10 s. std cannot set `SO_REUSEADDR`
+  ignored; one entry per source address, at most 4 per source IP and 64
+  in all (a full list evicts the oldest entry of the IP holding most
+  games, never rejects a newcomer); a source IP over 10 datagrams/s is
+  ignored for 10 s (rate table keyed by IP, oldest evicted when full). std cannot set `SO_REUSEADDR`
   before `bind`, so two listeners on one machine conflict (the game opens
   one). `broadcast_targets()` is `255.255.255.255:LAN_PORT` only: directed
   per-interface broadcasts need interface enumeration (deferred). WSL2's
