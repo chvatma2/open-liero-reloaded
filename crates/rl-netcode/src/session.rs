@@ -4,17 +4,18 @@
 //! inputs it lacks and rolls back when a final input differs, spectators
 //! simulate confirmed ticks only.
 
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 
 use rl_proto::{
-    ClientInputs, Datagram, HostInputs, MAX_DATAGRAM, MAX_FRAMES, MAX_KEYS, OVERHEAD, Stamp, decode_control,
-    decode_datagram, decode_frames, encode_datagram, encode_frames,
+    ClientInputs, Control, Datagram, HostInputs, MAX_DATAGRAM, MAX_FRAMES, MAX_KEYS, OVERHEAD, Stamp,
+    decode_control, decode_datagram, decode_frames, encode_control, encode_datagram, encode_frames,
 };
 use rl_sim::Keys;
 
+use crate::clock::{JUMP_TICKS, MARGIN_SAMPLES, MAX_ADJUST_PPM, Margins, Pace, TARGET_MARGIN};
 use crate::inputs::{InputLog, SetResult};
 use crate::{Channel, PeerId, Simulation};
 
@@ -22,8 +23,12 @@ use crate::{Channel, PeerId, Simulation};
 pub const TICK_US: u64 = 10_000;
 /// The host's fill deadline in ticks (spec §3.2's rollback window).
 pub const FILL_WINDOW: u32 = 12;
-/// A player peer predicts at most this many ticks past its frontier (decision N1).
-pub const MAX_PREDICTION: u32 = 20;
+/// A player peer predicts at most this many ticks past its frontier
+/// (decision N1, amended by ruling T7-A). A client's frontier also waits for
+/// the slowest client's inputs, up to the fill window, so 20 stalled under
+/// `bad` (10 seeds × 4 clients, stall events: 20 → 310, 22 → 68, 24 → 14,
+/// 26 → 3, 28 → 0).
+pub const MAX_PREDICTION: u32 = 28;
 /// Peers compare checksums every this many confirmed ticks (spec §3.5).
 pub const CHECKSUM_EVERY: u32 = 10;
 /// At most this many new ticks per [`Session::advance`].
@@ -32,6 +37,17 @@ pub const MAX_CATCHUP: u32 = 10;
 /// ignored: a bound on what a hostile peer can make the log hold. An honest
 /// peer is never more than a few hundred ticks ahead.
 const MAX_AHEAD: u32 = 6_000;
+/// A client whose inputs miss the fill window this long gets a warning
+/// ([`Event::PeerLate`], spec §3.2's "connection problem").
+pub const LATE_WARNING_US: u64 = 3_000_000;
+/// Nothing heard from a peer this long: [`Event::PeerTimedOut`].
+pub const SILENCE_TIMEOUT_US: u64 = 10_000_000;
+/// The pace's speed change per tick of margin error (0.2 %).
+const ADJUST_PPM_PER_TICK: i64 = 2_000;
+/// The integral term's growth per tick of margin error and host tick: a
+/// clock drift leaves no lasting margin error (critically damped with the
+/// proportional term, time constant about 10 s).
+const INTEGRAL_PPM_PER_TICK: i64 = 1;
 
 /// The input delay for a round trip (spec §3.2): `min(3, rtt_ms / 40)` ticks.
 pub fn input_delay(rtt_ms: u32) -> u8 {
@@ -113,6 +129,14 @@ pub enum Event {
     Malformed { peer: PeerId },
     /// The host sent a final input that differs from an earlier one.
     Inconsistent { peer: PeerId, tick: u32, slot: u8 },
+    /// Client: the host filled our input for `tick` (it arrived too late).
+    Late { tick: u32 },
+    /// Host: this peer's inputs missed the fill window for
+    /// [`LATE_WARNING_US`]. Pushed again only after it recovered.
+    PeerLate { peer: PeerId },
+    /// Nothing arrived from this peer for [`SILENCE_TIMEOUT_US`]. The driver
+    /// decides; the host's [`Session::peer_lost`] abandons the peer's slot.
+    PeerTimedOut { peer: PeerId },
 }
 
 #[derive(Clone, Debug)]
@@ -133,6 +157,14 @@ pub struct Stats {
     pub bytes_in: u64,
     pub datagrams_out: u64,
     pub bytes_out: u64,
+    /// Client: the last arrival margin the host reported, in ticks.
+    pub margin: Option<i16>,
+    /// Host: inputs filled by the lagging-player rule.
+    pub fills: u64,
+    /// Client: the pace's speed adjustment.
+    pub adjust_ppm: i64,
+    /// Client: the pace's jumps.
+    pub jumps: u64,
 }
 
 impl Default for Stats {
@@ -149,6 +181,10 @@ impl Default for Stats {
             bytes_in: 0,
             datagrams_out: 0,
             bytes_out: 0,
+            margin: None,
+            fills: 0,
+            adjust_ppm: 0,
+            jumps: 0,
         }
     }
 }
@@ -165,12 +201,57 @@ struct PeerState {
     first_sent_ms: Option<u32>,
     /// The round trip's moving average in eighths of a millisecond.
     rtt_x8: Option<i64>,
+    /// When anything last arrived from them (µs).
+    heard_us: u64,
+    /// [`Event::PeerTimedOut`] was pushed for the current silence.
+    timed_out: bool,
+    /// Abandoned ([`Session::peer_lost`]): nothing more is sent or taken.
+    lost: bool,
+    /// Host: the arrival margins of a player's inputs.
+    margins: Margins,
+    /// Host: the newest input tick sampled into `margins`.
+    sampled: Option<u32>,
+    /// Host: the player's filled ticks not yet answered by `Late`, from
+    /// `first_max` on.
+    filled: BTreeSet<u32>,
+    /// Host: the highest `first` of their datagrams; they send nothing below it again.
+    first_max: u32,
+    /// Host: consecutive host ticks at which their slot was filled.
+    late_run: u32,
+    /// Host: [`Event::PeerLate`] was pushed for the current run.
+    late_warned: bool,
 }
 
 impl PeerState {
-    fn new(seat: Seat) -> Self {
-        Self { seat, ack: 0, echo: None, first_sent_ms: None, rtt_x8: None }
+    fn new(seat: Seat, now_us: u64) -> Self {
+        Self {
+            seat,
+            ack: 0,
+            echo: None,
+            first_sent_ms: None,
+            rtt_x8: None,
+            heard_us: now_us,
+            timed_out: false,
+            lost: false,
+            margins: Margins::default(),
+            sampled: None,
+            filled: BTreeSet::new(),
+            first_max: 0,
+            late_run: 0,
+            late_warned: false,
+        }
     }
+}
+
+/// A client's time sync after a jump.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sync {
+    /// Margins are taken.
+    Free,
+    /// Jumped; the pace is still catching up.
+    Jumped,
+    /// Margins are stale until the host has our input for this tick (`your_ack`).
+    Until(u32),
 }
 
 pub struct Session<S: Simulation> {
@@ -190,10 +271,20 @@ pub struct Session<S: Simulation> {
     base: u32,
     /// The next tick to simulate.
     current: u32,
-    /// New ticks run by the pace (Task 7 replaces the pacing).
+    /// New ticks run (the pace's count).
     ticks_run: u32,
     rollback_from: Option<u32>,
-    start_us: u64,
+    pace: Pace,
+    /// The pace's tick of the last datagram: one per tick.
+    sent_at: Option<i64>,
+    /// Client: whether margins are taken (they are stale after a jump).
+    sync: Sync,
+    /// The last `advance` left due ticks unrun (a stall, or catching up).
+    behind: bool,
+    /// Client: the speed adjustment's integral term (ppm) and the host tick
+    /// it was last integrated at.
+    sync_i: i64,
+    sync_tick: Option<u32>,
     /// Per remote peer: the host keeps one per client, others one for the host.
     peers: BTreeMap<PeerId, PeerState>,
     out: Vec<(PeerId, Channel, Vec<u8>)>,
@@ -214,18 +305,18 @@ impl<S: Simulation> Session<S> {
                     if let Seat::Player(s) = seat {
                         assert!(s < slots, "peer {id} plays slot {s} of {slots}");
                     }
-                    peers.insert(id, PeerState::new(seat));
+                    peers.insert(id, PeerState::new(seat, now_us));
                 }
                 (0..slots).filter(|s| !list.iter().any(|&(_, seat)| seat == Seat::Player(*s))).collect()
             }
             Role::Client { host, slot } => {
                 assert!(*slot < slots, "the client plays slot {slot} of {slots}");
-                peers.insert(*host, PeerState::new(Seat::Spectator));
+                peers.insert(*host, PeerState::new(Seat::Spectator, now_us));
                 own = vec![0; cfg.input_delay as usize];
                 vec![*slot]
             }
             Role::Spectator { host } => {
-                peers.insert(*host, PeerState::new(Seat::Spectator));
+                peers.insert(*host, PeerState::new(Seat::Spectator, now_us));
                 Vec::new()
             }
         };
@@ -243,7 +334,12 @@ impl<S: Simulation> Session<S> {
             current: 0,
             ticks_run: 0,
             rollback_from: None,
-            start_us: now_us,
+            pace: Pace::new(now_us),
+            sent_at: None,
+            sync: Sync::Free,
+            behind: false,
+            sync_i: 0,
+            sync_tick: None,
             peers,
             out: Vec::new(),
             events: Vec::new(),
@@ -325,8 +421,9 @@ impl<S: Simulation> Session<S> {
         if let Some(from) = self.rollback_from.take() {
             self.resimulate(from, driver);
         }
-        let due = self.due_ticks(now_us);
+        let due = self.pace.due(now_us, self.ticks_run);
         let mut ran = 0;
+        let mut stalled = false;
         for _ in 0..due {
             let frontier = self.log.frontier();
             if self.is_spectator() {
@@ -336,26 +433,103 @@ impl<S: Simulation> Session<S> {
             } else if self.current.saturating_sub(frontier) >= self.cfg.max_prediction {
                 self.events.push(Event::Stalled { tick: self.current });
                 self.stats.stalls += 1;
+                stalled = true;
                 break;
             }
             self.new_tick(driver);
             ran += 1;
         }
         self.ticks_run += ran;
+        self.behind = self.pace.due(now_us, self.ticks_run) > 0;
+        if self.sync == Sync::Jumped && (!self.behind || stalled) {
+            // Caught up, or as far as the prediction limit lets it (else a
+            // stall-limited client would wait for ever): margins are fresh
+            // once the host has a median's worth of inputs made from now on.
+            // Samples from before and during the catch-up would trigger
+            // further jumps (an oscillation).
+            self.sync = Sync::Until((self.own.len() as u32).saturating_add(MARGIN_SAMPLES as u32));
+        }
         self.trim_snapshots();
-        // The host also sends while it stalls: a client waiting for frames
-        // the host already has would otherwise wait for ever.
-        if ran > 0 || due > 0 {
+        self.check_silence(now_us);
+        // At most one datagram per tick of the pace. A stalled peer sends
+        // too: a peer waiting for frames the other side already has would
+        // otherwise wait for ever.
+        let tick = self.pace.ticks(now_us);
+        if (ran > 0 || due > 0) && self.sent_at != Some(tick) {
+            self.sent_at = Some(tick);
             self.queue_datagrams(now_us);
         }
     }
 
-    /// The pace (Task 6): ticks elapsed since the start minus those run, at
-    /// most [`MAX_CATCHUP`].
-    fn due_ticks(&self, now_us: u64) -> u32 {
-        let elapsed = now_us.saturating_sub(self.start_us) / TICK_US;
-        let elapsed = u32::try_from(elapsed).unwrap_or(u32::MAX);
-        elapsed.saturating_sub(self.ticks_run).min(MAX_CATCHUP)
+    /// Pushes [`Event::PeerTimedOut`] once for every peer silent for
+    /// [`SILENCE_TIMEOUT_US`].
+    fn check_silence(&mut self, now_us: u64) {
+        for (&id, p) in self.peers.iter_mut() {
+            if !p.lost && !p.timed_out && now_us.saturating_sub(p.heard_us) >= SILENCE_TIMEOUT_US {
+                p.timed_out = true;
+                self.events.push(Event::PeerTimedOut { peer: id });
+            }
+        }
+    }
+
+    /// Abandons `peer` (decision N6): the host fills its slot with
+    /// `Keys(0)` at every new tick without waiting, and nothing more is sent
+    /// to it or taken from it.
+    pub fn peer_lost(&mut self, peer: PeerId) {
+        if let Some(p) = self.peers.get_mut(&peer) {
+            p.lost = true;
+            p.filled.clear();
+        }
+    }
+
+    /// The host's lagging-player rule (spec §3.2) before its new tick `t`: a
+    /// player's input still unknown `fill_window` ticks later becomes its
+    /// previous final value; an abandoned slot's becomes `Keys(0)` at once.
+    /// A run of fills of [`LATE_WARNING_US`] pushes [`Event::PeerLate`].
+    fn fill(&mut self, t: u32) {
+        let window = self.cfg.fill_window;
+        let warn_after = (LATE_WARNING_US / TICK_US) as u32;
+        let floor = t.saturating_sub(MAX_AHEAD);
+        let mut scratch = mem::take(&mut self.scratch);
+        scratch.clear();
+        for (&id, p) in self.peers.iter_mut() {
+            let Seat::Player(s) = p.seat else { continue };
+            if p.lost {
+                while self.log.known_upto(s) <= t {
+                    let k = self.log.known_upto(s);
+                    self.log.set(k, s, 0);
+                    scratch.push((k, s, 0));
+                }
+                continue;
+            }
+            let mut filled = false;
+            while self.log.known_upto(s).saturating_add(window) <= t {
+                let k = self.log.known_upto(s);
+                let v = k.checked_sub(1).and_then(|prev| self.log.get(prev, s)).unwrap_or(0);
+                self.log.set(k, s, v);
+                scratch.push((k, s, v));
+                p.filled.insert(k);
+                self.stats.fills += 1;
+                filled = true;
+            }
+            while p.filled.first().is_some_and(|&f| f < floor) {
+                p.filled.pop_first();
+            }
+            if filled {
+                p.late_run = p.late_run.saturating_add(1);
+                if p.late_run >= warn_after && !p.late_warned {
+                    p.late_warned = true;
+                    self.events.push(Event::PeerLate { peer: id });
+                }
+            } else {
+                p.late_run = 0;
+                p.late_warned = false;
+            }
+        }
+        for &(k, s, v) in &scratch {
+            self.on_final(k, s, v);
+        }
+        self.scratch = scratch;
     }
 
     /// The keys used for `slot` at `tick` (spec §3.3): the final value, a
@@ -401,6 +575,7 @@ impl<S: Simulation> Session<S> {
         driver.local_inputs(&self.sim, at, &self.local, &mut self.local_keys);
         match self.role {
             Role::Host { .. } => {
+                self.fill(t);
                 for (&s, k) in self.local.iter().zip(&self.local_keys) {
                     self.log.set(t, s, k.0);
                 }
@@ -437,11 +612,13 @@ impl<S: Simulation> Session<S> {
         self.events.push(Event::Rollback { from, to });
     }
 
-    /// Keeps the snapshots from the frontier on (at least one) and lets the
-    /// simulation forget older ones.
+    /// Keeps the snapshots from the frontier (or a pending rollback) on, at
+    /// least one, and lets the simulation forget older ones.
     fn trim_snapshots(&mut self) {
-        let frontier = self.log.frontier();
-        while self.base < frontier && self.snaps.len() > 1 {
+        // A rollback set in this advance (an abandoned slot's `Keys(0)`)
+        // still needs its snapshot, though the frontier has passed it.
+        let keep = self.log.frontier().min(self.rollback_from.unwrap_or(u32::MAX));
+        while self.base < keep && self.snaps.len() > 1 {
             self.snaps.pop_front();
             self.used.pop_front();
             self.base += 1;
@@ -466,7 +643,8 @@ impl<S: Simulation> Session<S> {
     }
 
     fn stamp(&mut self, peer: PeerId, now_us: u64) -> Stamp {
-        let sent_ms = (now_us / 1000) as u32;
+        // 0 on the wire means "no echo yet": a real time is at least 1.
+        let sent_ms = ((now_us / 1000) as u32).max(1);
         let Some(p) = self.peers.get_mut(&peer) else { return Stamp::default() };
         p.first_sent_ms.get_or_insert(sent_ms);
         match p.echo {
@@ -511,12 +689,13 @@ impl<S: Simulation> Session<S> {
         let slots = self.cfg.slots as usize;
         match self.role {
             Role::Host { .. } => {
-                let ids: Vec<PeerId> = self.peers.keys().copied().collect();
+                let ids: Vec<PeerId> =
+                    self.peers.iter().filter(|(_, p)| !p.lost).map(|(&id, _)| id).collect();
                 for id in ids {
                     let frontier = self.log.frontier();
-                    let (ack, seat) = {
+                    let (ack, seat, margin) = {
                         let p = &self.peers[&id];
-                        (p.ack, p.seat)
+                        (p.ack, p.seat, p.margins.median().unwrap_or(0))
                     };
                     let first = ack.min(frontier);
                     let your_ack = match seat {
@@ -533,7 +712,7 @@ impl<S: Simulation> Session<S> {
                             stamp,
                             tick: self.current,
                             your_ack,
-                            margin: 0,
+                            margin,
                             first,
                             frames,
                         });
@@ -547,8 +726,14 @@ impl<S: Simulation> Session<S> {
                 }
             }
             Role::Client { host, .. } | Role::Spectator { host } => {
-                let first = self.peers.get(&host).map_or(0, |p| p.ack);
-                let from = (first as usize).min(self.own.len());
+                let Some(p) = self.peers.get(&host) else { return };
+                if p.lost {
+                    return;
+                }
+                // From the host's `your_ack`, but always the newest input:
+                // a client the host filled past still shows how late it is.
+                let from = (p.ack as usize).min(self.own.len().saturating_sub(1));
+                let first = from as u32;
                 let keys: Vec<u8> = self.own[from..].iter().copied().take(MAX_KEYS).collect();
                 let stamp = self.stamp(host, now_us);
                 let d = Datagram::Client(ClientInputs {
@@ -573,17 +758,20 @@ impl<S: Simulation> Session<S> {
     pub fn receive(&mut self, from: PeerId, ch: Channel, bytes: &[u8], now_us: u64) {
         self.stats.datagrams_in += 1;
         self.stats.bytes_in += (bytes.len() + OVERHEAD) as u64;
-        if !self.peers.contains_key(&from) {
-            return;
+        match self.peers.get_mut(&from) {
+            Some(p) if !p.lost => {
+                p.heard_us = now_us;
+                p.timed_out = false;
+            }
+            _ => return,
         }
         match ch {
-            // Control messages (late inputs, checksums, states) come with
-            // Tasks 7 and 8; until then a valid one changes nothing.
-            Channel::Reliable => {
-                if decode_control(bytes).is_err() {
-                    self.malformed(from);
-                }
-            }
+            // Checksums and states come with Task 8; until then they change nothing.
+            Channel::Reliable => match decode_control(bytes) {
+                Err(_) => self.malformed(from),
+                Ok(Control::Late { tick }) if !self.is_host() => self.events.push(Event::Late { tick }),
+                Ok(_) => {}
+            },
             Channel::Unreliable => match decode_datagram(bytes, self.cfg.slots as usize) {
                 Ok(Datagram::Client(c)) if self.is_host() => self.on_client_inputs(from, c, now_us),
                 Ok(Datagram::Host(h)) if !self.is_host() => self.on_host_inputs(from, h, now_us),
@@ -592,13 +780,34 @@ impl<S: Simulation> Session<S> {
         }
     }
 
-    /// Host: a client's inputs become final in arrival order.
+    /// Host: a client's inputs become final in arrival order. A datagram
+    /// whose newest input is newer than all before is an arrival-margin
+    /// sample: that tick minus the host's current tick (positive: early).
+    /// A value for a filled tick is ignored and answered by one `Late`.
     fn on_client_inputs(&mut self, from: PeerId, c: ClientInputs, now_us: u64) {
         self.on_stamp(from, c.stamp, now_us);
+        let current = self.current;
+        let limit = current.saturating_add(MAX_AHEAD);
         let Some(p) = self.peers.get_mut(&from) else { return };
         p.ack = p.ack.max(c.ack);
         let Seat::Player(slot) = p.seat else { return };
-        let limit = self.current.saturating_add(MAX_AHEAD);
+        // Not pruned below the frontier: the lagging slot usually is the
+        // frontier, so no `Late` would ever be sent. Below the client's
+        // highest `first` it never sends again.
+        p.first_max = p.first_max.max(c.first);
+        while p.filled.first().is_some_and(|&f| f < p.first_max) {
+            p.filled.pop_first();
+        }
+        // The newest input, not only a `New` one: a client so far behind that
+        // its inputs land on filled ticks must still show how late it is.
+        let newest = c.keys.len().checked_sub(1).and_then(|n| c.first.checked_add(n as u32));
+        if let Some(t) = newest
+            && t < limit
+            && p.sampled.is_none_or(|s| t > s)
+        {
+            p.sampled = Some(t);
+            p.margins.push((t as i64 - current as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32);
+        }
         for (k, &v) in c.keys.iter().enumerate() {
             let Some(t) = c.first.checked_add(k as u32) else { break };
             if t >= limit {
@@ -606,11 +815,51 @@ impl<S: Simulation> Session<S> {
             }
             match self.log.set(t, slot, v) {
                 SetResult::New => self.on_final(t, slot, v),
-                // The first value stays final.
-                SetResult::Same | SetResult::Conflict => {}
+                // The first value stays final; a filled tick's owner is told.
+                SetResult::Same | SetResult::Conflict => {
+                    if self.peers.get_mut(&from).is_some_and(|p| p.filled.remove(&t)) {
+                        self.push_out(from, Channel::Reliable, encode_control(&Control::Late { tick: t }));
+                    }
+                }
                 SetResult::Gap => break,
             }
         }
+    }
+
+    /// Client: time sync (decision N7) from the host's reported margin. An
+    /// error beyond [`JUMP_TICKS`] shifts the pace, after which margins are
+    /// stale until the host holds [`MARGIN_SAMPLES`] of our inputs made
+    /// after the jump's catch-up; a smaller one sets the speed: proportional
+    /// to the error, plus its integral over the host's ticks (a drifting
+    /// clock). A client behind its own pace (stalled or catching up) is not
+    /// sped up: its inputs are late because it is behind, not because its
+    /// clock is wrong, and steering it ahead would only pile up a deficit.
+    fn sync(&mut self, h: &HostInputs) {
+        if !matches!(self.role, Role::Client { .. }) {
+            return;
+        }
+        self.stats.margin = Some(h.margin);
+        let error = TARGET_MARGIN - h.margin as i32;
+        match self.sync {
+            Sync::Jumped => return,
+            Sync::Until(t) if h.your_ack < t => return,
+            // Behind its own pace, a client's inputs are late because it is
+            // behind: speeding it up would only pile up a deficit it cannot run.
+            _ if self.behind && error > 0 => return,
+            _ => self.sync = Sync::Free,
+        }
+        if error.abs() > JUMP_TICKS {
+            self.pace.shift(error);
+            self.stats.jumps += 1;
+            self.sync = Sync::Jumped;
+        } else {
+            let dt = self.sync_tick.map_or(0, |t| h.tick.saturating_sub(t).min(100)) as i64;
+            self.sync_i = (self.sync_i + error as i64 * dt * INTEGRAL_PPM_PER_TICK)
+                .clamp(-MAX_ADJUST_PPM, MAX_ADJUST_PPM);
+            self.pace.set_adjust_ppm(error as i64 * ADJUST_PPM_PER_TICK + self.sync_i);
+            self.stats.adjust_ppm = self.pace.adjust_ppm();
+        }
+        self.sync_tick = Some(self.sync_tick.map_or(h.tick, |t| t.max(h.tick)));
     }
 
     /// Client or spectator: the host's final inputs.
@@ -644,5 +893,6 @@ impl<S: Simulation> Session<S> {
         if let Some(p) = self.peers.get_mut(&from) {
             p.ack = p.ack.max(h.your_ack);
         }
+        self.sync(&h);
     }
 }

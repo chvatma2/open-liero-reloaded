@@ -4,7 +4,7 @@
 //! simulated the same match.
 
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -35,6 +35,12 @@ pub struct PeerPlan {
     pub frame_us: u64,
     /// `None`: present from tick 0. Joining mid-match is not supported yet.
     pub join_tick: Option<u32>,
+    /// A suspended laptop: from the host's tick `.0` until its tick `.1` the
+    /// peer runs no frame, its clock stands still, and what arrives waits
+    /// for it in order. The clock stops (as a monotonic clock does in
+    /// suspend): with it running the pace would just catch up, and the jump
+    /// would go untested.
+    pub freeze: Option<(u32, u32)>,
 }
 
 /// Nothing passes between the host and `peer` from the host's tick
@@ -81,6 +87,8 @@ pub struct Report {
     /// What reached each peer.
     pub received: BTreeMap<PeerId, LinkStats>,
     pub duration_us: u64,
+    /// Peers the host dropped after [`Event::PeerTimedOut`]; the verdict skips them.
+    pub dropped: BTreeSet<PeerId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,6 +128,33 @@ struct Peer<S: Simulation> {
     frame_us: u64,
     /// The local time of its next frame.
     next_frame: u64,
+    /// The freeze still to come.
+    freeze: Option<(u32, u32)>,
+    /// The virtual time the current freeze began.
+    frozen_at: Option<u64>,
+    /// Virtual time spent frozen: the peer's clock lags by it.
+    paused_us: u64,
+    /// What arrived while frozen.
+    inbox: Vec<(PeerId, Channel, Vec<u8>)>,
+    /// Its last advance began with `ticks` confirmed (so it re-simulated
+    /// them on their final inputs) and ended at or past `ticks`. Ending on
+    /// "frontier ≥ ticks" alone could stop before a pending rollback ran.
+    done: bool,
+}
+
+impl<S: Simulation> Peer<S> {
+    /// Its clock at virtual time `now_us`.
+    fn local(&self, now_us: u64) -> u64 {
+        local_time(self.frozen_at.unwrap_or(now_us).saturating_sub(self.paused_us), self.ppm)
+    }
+
+    /// The virtual time of its next frame (`u64::MAX` while frozen).
+    fn next_frame_at(&self) -> u64 {
+        match self.frozen_at {
+            Some(_) => u64::MAX,
+            None => virtual_time(self.next_frame, self.ppm).saturating_add(self.paused_us),
+        }
+    }
 }
 
 /// The peer's clock at virtual time `now_us`.
@@ -163,9 +198,12 @@ fn check_scenario(sc: &Scenario) -> Result<(), Failure> {
 }
 
 /// Plays the scenario. Virtual time moves in 1 ms steps (skipping steps in
-/// which nothing is due): deliveries first, then every peer whose frame has
-/// come advances, transmits and reports its events. The run ends when the
-/// host's current tick reaches `ticks + settle_ticks`.
+/// which nothing is due): freezes begin or end, deliveries, then every peer
+/// whose frame has come advances, transmits and reports its events. The
+/// host drops a peer it reports timed out (`peer_lost`). The run ends when
+/// the host's current tick reaches `ticks + settle_ticks` and every peer
+/// not dropped had confirmed `ticks` ticks before its last advance (which
+/// re-simulated them on their final inputs) and simulated them.
 pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Report, Failure> {
     check_scenario(sc)?;
     let mut net = Network::new(sc.seed);
@@ -181,6 +219,11 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
         ppm: 0,
         frame_us: HOST_FRAME_US,
         next_frame: 0,
+        freeze: None,
+        frozen_at: None,
+        paused_us: 0,
+        inbox: Vec::new(),
+        done: false,
     });
     for p in &sc.peers {
         let (role, delay) = match p.seat {
@@ -194,6 +237,11 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
             ppm: p.clock_ppm,
             frame_us: p.frame_us,
             next_frame: 0,
+            freeze: p.freeze,
+            frozen_at: None,
+            paused_us: 0,
+            inbox: Vec::new(),
+            done: false,
         });
     }
     let index: BTreeMap<PeerId, usize> = peers.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
@@ -210,12 +258,31 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
         list.reverse(); // popped from the end
     }
     let mut installed: BTreeMap<PeerId, u64> = BTreeMap::new();
+    let mut dropped: BTreeSet<PeerId> = BTreeSet::new();
 
     let end = sc.ticks.saturating_add(sc.settle_ticks);
     let limit_us = (end as u64 * TICK_US).saturating_mul(4).saturating_add(60_000_000);
     let mut settled = false;
     let mut now = 0u64;
+    let mut host_tick = 0;
     loop {
+        for p in peers.iter_mut() {
+            match (p.freeze, p.frozen_at) {
+                (Some((from, until)), None) if host_tick >= from && host_tick < until => {
+                    p.frozen_at = Some(now)
+                }
+                (Some((_, until)), Some(at)) if host_tick >= until => {
+                    p.paused_us += now - at;
+                    p.frozen_at = None;
+                    p.freeze = None;
+                    let local = p.local(now);
+                    for (from, ch, bytes) in core::mem::take(&mut p.inbox) {
+                        p.session.receive(from, ch, &bytes, local);
+                    }
+                }
+                _ => {}
+            }
+        }
         for (&peer, list) in outages.iter_mut() {
             let free = installed.get(&peer).is_none_or(|&until| now >= until);
             if free && let Some((a, b)) = list.pop() {
@@ -226,38 +293,65 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
         net.deliver_due(now, &mut |from, to, ch, bytes| {
             if let Some(&i) = index.get(&to) {
                 let p = &mut peers[i];
-                p.session.receive(from, ch, &bytes, local_time(now, p.ppm));
+                if p.frozen_at.is_some() {
+                    p.inbox.push((from, ch, bytes));
+                } else {
+                    let local = p.local(now);
+                    p.session.receive(from, ch, &bytes, local);
+                }
             }
         });
         for p in peers.iter_mut() {
-            let local = local_time(now, p.ppm);
-            if local < p.next_frame {
+            let local = p.local(now);
+            if p.frozen_at.is_some() || local < p.next_frame {
                 continue;
             }
             p.next_frame += p.frame_us;
+            let confirmed = p.session.frontier() >= sc.ticks;
             p.session.advance(local, &mut p.driver);
+            p.done = confirmed && p.session.current_tick() >= sc.ticks;
             let id = p.id;
+            let new = p.session.drain_events();
+            if id == HOST {
+                for e in &new {
+                    if let Event::PeerTimedOut { peer } = *e {
+                        p.session.peer_lost(peer);
+                        dropped.insert(peer);
+                    }
+                }
+            }
             p.session.transmit(&mut |to, ch: Channel, bytes| net.send(now, id, to, ch, bytes));
-            events.entry(id).or_default().extend(p.session.drain_events());
+            events.entry(id).or_default().extend(new);
         }
-        let host_tick = peers[0].session.current_tick();
+        host_tick = peers[0].session.current_tick();
         if !settled && host_tick >= sc.ticks {
             for p in &sc.peers {
                 net.set_profile(HOST, p.id, Profile::LAN);
             }
             settled = true;
         }
-        if host_tick >= end {
+        let behind = peers.iter().find(|p| !p.done && !dropped.contains(&p.id));
+        if host_tick >= end && behind.is_none() {
             break;
         }
         if now >= limit_us {
-            return Err(fail(host_tick, format!("the host reached only tick {host_tick} of {end} in time")));
+            let what = match behind {
+                Some(p) if host_tick >= end => format!(
+                    "peer {} reached only tick {} (frontier {}) of {} in time",
+                    p.id,
+                    p.session.current_tick(),
+                    p.session.frontier(),
+                    sc.ticks
+                ),
+                _ => format!("the host reached only tick {host_tick} of {end} in time"),
+            };
+            return Err(fail(host_tick, what));
         }
         // The next step: the next delivery, frame or outage change, on a
         // millisecond boundary.
         let mut next = net.next_delivery().unwrap_or(u64::MAX);
         for p in &peers {
-            next = next.min(virtual_time(p.next_frame, p.ppm));
+            next = next.min(p.next_frame_at());
         }
         for (peer, &until) in &installed {
             if until > now && outages.get(peer).is_some_and(|l| !l.is_empty()) {
@@ -275,6 +369,7 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
         events,
         received: BTreeMap::new(),
         duration_us: now,
+        dropped,
     };
     for p in peers {
         let log = p.session.input_log();
@@ -297,10 +392,12 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
 
 /// Checks a run: every peer confirmed `ticks` ticks of the host's inputs,
 /// and its checksums match an offline replay of them; no stalls (when
-/// expected), malformed messages or inconsistent inputs.
+/// expected), malformed messages or inconsistent inputs. Dropped peers are
+/// skipped.
 pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>) -> Result<(), Failure> {
     let ticks = sc.ticks;
-    for (&peer, rows) in &r.logs {
+    let kept = |peer: &PeerId| !r.dropped.contains(peer);
+    for (&peer, rows) in r.logs.iter().filter(|(p, _)| kept(p)) {
         if rows.len() < ticks as usize {
             return Err(fail(
                 rows.len() as u32,
@@ -311,7 +408,7 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
     if r.host_log.len() < ticks as usize {
         return Err(fail(r.host_log.len() as u32, format!("the host confirmed {} ticks", r.host_log.len())));
     }
-    for (&peer, rows) in &r.logs {
+    for (&peer, rows) in r.logs.iter().filter(|(p, _)| kept(p)) {
         if let Some(t) = (0..ticks as usize).find(|&t| rows[t] != r.host_log[t]) {
             return Err(fail(t as u32, format!("peer {peer} confirmed other inputs than the host")));
         }
@@ -326,7 +423,7 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
             continue;
         }
         let want = sim.checksum();
-        for (&peer, sums) in &r.sims {
+        for (&peer, sums) in r.sims.iter().filter(|(p, _)| kept(p)) {
             match sums.get(&t) {
                 Some(&got) if got == want => {}
                 Some(&got) => {
@@ -339,7 +436,7 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
     let players: Vec<PeerId> = core::iter::once(HOST)
         .chain(sc.peers.iter().filter(|p| matches!(p.seat, Seat::Player(_))).map(|p| p.id))
         .collect();
-    for (&peer, events) in &r.events {
+    for (&peer, events) in r.events.iter().filter(|(p, _)| kept(p)) {
         for e in events {
             match *e {
                 Event::Stalled { tick } if sc.expect_no_stalls && players.contains(&peer) => {

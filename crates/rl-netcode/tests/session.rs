@@ -19,6 +19,7 @@ fn scenario(seed: u64, profile: Profile, clients: u8, spectators: u8) -> Scenari
             input_delay: input_delay(profile.ping_ms),
             frame_us: 6_944,
             join_tick: None,
+            freeze: None,
         });
     }
     for s in 0..spectators {
@@ -30,6 +31,7 @@ fn scenario(seed: u64, profile: Profile, clients: u8, spectators: u8) -> Scenari
             input_delay: 0,
             frame_us: 16_667,
             join_tick: None,
+            freeze: None,
         });
     }
     Scenario {

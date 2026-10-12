@@ -42,16 +42,40 @@ model that tests it in one process (spec §9.1).
     halved until ≤ `MAX_DATAGRAM`) with `your_ack`; a client sends its own
     inputs from `your_ack` (≤ `MAX_KEYS`) and its frontier as `ack`. Every
     datagram carries a `Stamp`; `rtt_ms` is a 1/8 moving average.
-  - Pace (`due_ticks`, replaced in Task 7): elapsed ticks minus ticks run,
-    at most `MAX_CATCHUP` per `advance`; a player peer stalls at
-    `MAX_PREDICTION` ticks past its frontier (`Event::Stalled`).
+  - Pace (`clock.rs`, `Pace`): local time to due ticks (minus ticks run,
+    at most `MAX_CATCHUP` per `advance`), adjustable by ±1 % (re-anchored,
+    so a change affects only later time) and shiftable by whole ticks (a
+    jump). A player peer stalls at `MAX_PREDICTION` ticks past its frontier
+    (`Event::Stalled`). Every peer sends at most one datagram per tick of
+    its pace, a stalled one too.
+  - Time sync (decision N7): a client datagram whose newest input is newer
+    than all before is a margin sample at the host (that tick minus the
+    host's current tick); `HostInputs.margin` is the median of the last 16
+    (`Margins`). The client steers to `TARGET_MARGIN`: an error beyond
+    `JUMP_TICKS` shifts the pace (margins are then stale until the host
+    holds 16 of its inputs made after the jump), a smaller one sets the
+    speed to `2000 ppm × error` plus an integral term (no lasting error
+    from a drifting clock). A client always sends its newest input, so a
+    client the host filled past still yields samples.
+  - Lagging-player rule (host): before its tick `t`, a player's input
+    unknown at `t − fill_window` becomes its previous final value
+    (`Stats::fills`); a value arriving later for a filled tick is ignored
+    and answered once by `Control::Late` (`Event::Late` at the client).
+    300 consecutive host ticks with a fill: `Event::PeerLate`. Silence for
+    `SILENCE_TIMEOUT_US`: `Event::PeerTimedOut` (host and client). The
+    driver decides; `peer_lost` abandons a peer: its slot is `Keys(0)` at
+    every new tick (decision N6), nothing more is sent to it or taken.
   - `receive` never panics: undecodable input is `Event::Malformed`.
 - **Harness** (`harness.rs`, `toy.rs`): `run` plays a `Scenario` — the host
   (`HOST` = 0) and its clients and spectators over `Network`, in virtual
   time (1 ms steps, idle steps skipped), clocks skewed by `clock_ppm`,
-  outages, LAN links for the last `settle_ticks` — and returns a `Report`
-  (confirmed logs, checksums of ticks `t % 10 == 9`, stats, events).
-  `verdict` checks every peer confirmed the host's inputs and matches an
-  offline replay of them. `ToyFactory` drives `ToySim` with seeded keys.
+  outages, freezes (a suspended laptop: no frames, the clock stands still,
+  arrivals wait), LAN links for the last `settle_ticks` — and returns a
+  `Report` (confirmed logs, checksums of ticks `t % 10 == 9`, stats,
+  events, `dropped`). The host drops a peer it reports timed out. The run
+  ends when the host is past `ticks + settle_ticks` and every other peer
+  re-simulated `ticks` confirmed ticks. `verdict` checks every peer not
+  dropped confirmed the host's inputs and matches an offline replay of
+  them. `ToyFactory` drives `ToySim` with seeded keys.
 
 Test: `cargo nextest run -p rl-netcode`.

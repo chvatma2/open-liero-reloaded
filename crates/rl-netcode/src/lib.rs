@@ -9,6 +9,7 @@
 
 extern crate alloc;
 
+mod clock;
 pub mod harness;
 mod inputs;
 pub mod netsim;
@@ -17,11 +18,12 @@ mod session;
 mod sim;
 pub mod toy;
 
+pub use clock::{JUMP_TICKS, MARGIN_SAMPLES, MAX_ADJUST_PPM, Margins, Pace, TARGET_MARGIN};
 pub use inputs::{InputLog, SetResult};
 pub use rng::Rng;
 pub use session::{
-    CHECKSUM_EVERY, Config, Driver, Event, FILL_WINDOW, MAX_CATCHUP, MAX_PREDICTION, Role, Seat, Session,
-    Stats, TICK_US, TickInfo, input_delay,
+    CHECKSUM_EVERY, Config, Driver, Event, FILL_WINDOW, LATE_WARNING_US, MAX_CATCHUP, MAX_PREDICTION, Role,
+    SILENCE_TIMEOUT_US, Seat, Session, Stats, TICK_US, TickInfo, input_delay,
 };
 pub use sim::{Simulation, StateRejected, ToySim};
 
