@@ -182,6 +182,18 @@ impl Terrain {
         j.edits.push_back(Edit { x0, y0, x1, y1, serial });
     }
 
+    /// Forgets the whole journal and counts one edit more, forgotten too, so
+    /// every mark taken so far is older than the base: a change that was
+    /// not recorded ([`Terrain::load_cells`]) cannot be undone across.
+    pub(crate) fn seal_journal(&mut self) {
+        let Some(j) = self.journal.as_mut() else { return };
+        j.base += j.edits.len() as u64 + 1;
+        j.edits.clear();
+        j.bytes.clear();
+        j.forgotten = j.next_serial;
+        j.next_serial += 1;
+    }
+
     /// Writes one cell, keeping the tracked hash.
     #[inline]
     pub(crate) fn set_cell(&mut self, i: usize, v: u8) {
@@ -299,6 +311,39 @@ mod tests {
         t.carve_hole(&square(4), 5, 5);
         assert_eq!(t.journal_bytes(), 0);
         assert_eq!(t.undo_to(JournalMark { pos: 0, last: 0 }), Err(JournalError::NotRecording));
+    }
+
+    #[test]
+    fn a_load_refuses_every_older_mark() {
+        let mut t = dirt(20, 20);
+        t.start_journal();
+        let m0 = t.journal_mark().unwrap();
+        t.carve_hole(&square(4), 5, 5);
+        let m1 = t.journal_mark().unwrap();
+        let mut other = dirt(20, 20);
+        other.carve_hole(&square(6), 12, 12);
+        assert!(!t.load_cells(&[9; 400]), "not a material");
+        assert!(!t.load_cells(&[1; 399]), "not this map's size");
+        assert_eq!(t.undo_to(m1), Ok(()), "a refused load changes nothing");
+        assert!(t.load_cells(other.cells()));
+        assert_eq!(t, other);
+        let mut fresh = other.clone();
+        fresh.start_journal();
+        assert_eq!(t.cell_hash(), fresh.cell_hash(), "the hash follows the load");
+        let loaded = t.clone();
+        // m1 is the newest mark before the load, with no edit after it.
+        assert_eq!(t.undo_to(m1), Err(JournalError::Forgotten));
+        assert_eq!(t.undo_to(m0), Err(JournalError::Forgotten));
+        assert_eq!(t, loaded);
+        let m2 = t.journal_mark().unwrap();
+        t.carve_hole(&square(4), 3, 3);
+        t.undo_to(m2).unwrap();
+        assert_eq!(t, loaded);
+        assert_eq!(t.cell_hash(), fresh.cell_hash());
+        // Without a journal a load is a plain copy.
+        let mut plain = dirt(20, 20);
+        assert!(plain.load_cells(other.cells()));
+        assert_eq!(plain, other);
     }
 
     #[test]

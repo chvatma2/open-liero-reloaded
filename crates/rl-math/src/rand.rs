@@ -12,7 +12,10 @@ use crate::{PI_F32, Vec2, cosf, sinf};
 pub const RAND_MAX: i32 = 2147483647;
 
 /// glibc 2.35 `rand()`/`srand()` on x86-64 (`stdlib/random_r.c`).
-#[derive(Clone, Debug, PartialEq)]
+///
+/// Serialised for world-state transfer; [`GlibcRand::is_valid`] tells
+/// whether a received one can draw.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GlibcRand {
     r: [i32; 31],
     fptr: usize,
@@ -90,6 +93,12 @@ impl GlibcRand {
         self.calls
     }
 
+    /// Whether both table pointers are in the table, as `new` and `next`
+    /// keep them: a deserialised generator must be checked before it draws.
+    pub fn is_valid(&self) -> bool {
+        self.fptr < self.r.len() && self.rptr < self.r.len()
+    }
+
     /// Feeds the whole generator state to `f`, one word at a time, for checksums.
     pub fn visit_state(&self, mut f: impl FnMut(u64)) {
         self.r.iter().for_each(|&w| f(w as u32 as u64));
@@ -157,7 +166,12 @@ pub fn get_fixed_random_num(i: u8) -> f32 {
 }
 
 /// boost `mt19937`.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// Serialised for world-state transfer as [`MtWire`] (serde has no impl for
+/// a 624-word array); [`Mt19937::is_valid`] tells whether a received one
+/// can draw.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(into = "MtWire", try_from = "MtWire")]
 pub struct Mt19937 {
     state: [u32; 624],
     index: usize,
@@ -201,11 +215,40 @@ impl Mt19937 {
         self.calls
     }
 
+    /// Whether the index is one `new` and `next_u32` reach (at most 624).
+    pub fn is_valid(&self) -> bool {
+        self.index <= self.state.len()
+    }
+
     /// Feeds the whole generator state to `f`, one word at a time, for checksums.
     pub fn visit_state(&self, mut f: impl FnMut(u64)) {
         self.state.iter().for_each(|&w| f(w as u64));
         f(self.index as u64);
         f(self.calls);
+    }
+}
+
+/// [`Mt19937`] on the wire: the state as a list, which must hold 624 words.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct MtWire {
+    state: alloc::vec::Vec<u32>,
+    index: u64,
+    calls: u64,
+}
+
+impl From<Mt19937> for MtWire {
+    fn from(m: Mt19937) -> Self {
+        MtWire { state: m.state.to_vec(), index: m.index as u64, calls: m.calls }
+    }
+}
+
+impl TryFrom<MtWire> for Mt19937 {
+    type Error = &'static str;
+
+    fn try_from(w: MtWire) -> Result<Self, Self::Error> {
+        let state = w.state.try_into().map_err(|_| "an mt19937 state has 624 words")?;
+        let index = usize::try_from(w.index).map_err(|_| "an mt19937 index fits a usize")?;
+        Ok(Mt19937 { state, index, calls: w.calls })
     }
 }
 
@@ -222,7 +265,7 @@ mod tests {
         b
     }
 
-    /// A tiny fixed buffer: the crate has no `alloc`.
+    /// A tiny fixed buffer.
     mod alloc_free {
         #[derive(Default)]
         pub struct Buf(pub [i32; 10], pub usize);
@@ -352,6 +395,28 @@ mod tests {
         }
         assert_eq!(last, 4123659995);
         assert_eq!(m.calls(), 10000);
+    }
+
+    #[test]
+    fn mt19937_crosses_the_wire_and_checks_its_index() {
+        let mut m = Mt19937::new(5489);
+        for _ in 0..700 {
+            m.next_u32();
+        }
+        let back = Mt19937::try_from(MtWire::from(m.clone())).unwrap();
+        assert_eq!(back, m);
+        assert!(back.is_valid() && Mt19937::new(1).is_valid(), "624 after seeding");
+        let short = MtWire { state: m.state[..623].to_vec(), index: 0, calls: 0 };
+        assert!(Mt19937::try_from(short).is_err());
+        let past = Mt19937::try_from(MtWire { index: 625, ..MtWire::from(m) }).unwrap();
+        assert!(!past.is_valid());
+        let mut r = GlibcRand::new(3);
+        for _ in 0..40 {
+            r.next();
+            assert!(r.is_valid());
+        }
+        r.rptr = 31;
+        assert!(!r.is_valid());
     }
 
     #[test]

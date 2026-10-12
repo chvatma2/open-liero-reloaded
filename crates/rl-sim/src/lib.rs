@@ -42,6 +42,7 @@ mod shot_codec;
 mod shots;
 mod snapshot;
 mod spawn;
+mod state;
 mod tally;
 mod weapons;
 mod world;
@@ -62,7 +63,7 @@ pub use mod_rt::{
 };
 pub use mode::{
     COMMAND_CAPACITY, CommandError, EndReason, GameMode, KillCredit, MatchResult, Message, ModeCtx,
-    OracleMode, Score, StampOp, TextId,
+    ModeStateError, OracleMode, Score, StampOp, TextId,
 };
 pub use projectile::{Projectile, ProjectilePool};
 pub use rope::NinjaRope;
@@ -70,6 +71,7 @@ pub use settings::{SettingsError, SimSettings};
 pub use setup::{MAX_SLOTS, MatchSetup, SetupError, WormSetup};
 pub use shots::{MAX_SHOOTINGS, RoundTrip, Shot, encode_decode, spawn_time};
 pub use snapshot::{RestoreError, Snapshot};
+pub use state::{StateError, WorldState};
 pub use tally::{ACTION_KINDS, ActionTally, projectile_actions};
 pub use world::{CLOCK_OFFSET_MS, MAX_WORMS, World};
 pub use worm::{Dir, Loadout, PosRecorder, Slot, Worm, WormState};

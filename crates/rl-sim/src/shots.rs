@@ -31,7 +31,7 @@ pub const MAX_SHOOTINGS: usize = 256;
 
 /// OLX `shoot_t` (`include/CShootList.h:53-66`), plus the spawn time it was
 /// delivered with.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Shot {
     /// `nWormID`.
     pub worm: i32,
@@ -56,7 +56,7 @@ pub struct Shot {
 }
 
 /// The server's list for the local client, with Model R's send rule.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ShootList {
     shots: Buf<Shot>,
     /// The list was started in an earlier frame, so the next delivery sends it.
@@ -200,6 +200,23 @@ pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], 
         rot_bumped: &mut ctx.draws.rot_bumped,
     };
     spawn_info_apply(info, SpawnParent::Shot(shot), spawn, &mut sctx);
+}
+
+impl ShootList {
+    /// Whether `s` (a received state) fits the list's capacity, with weapon
+    /// ids in the mod's `num_weapons`.
+    pub(crate) fn can_load(&self, s: &ShootList, num_weapons: i32) -> bool {
+        s.shots.len() <= MAX_SHOOTINGS.min(self.shots.capacity())
+            && s.shots.iter().all(|x| (0..num_weapons).contains(&x.weapon))
+    }
+
+    /// Takes `s`, which [`can_load`](Self::can_load) accepted, keeping the
+    /// capacity.
+    pub(crate) fn load(&mut self, s: ShootList) {
+        self.shots.clear();
+        self.shots.extend_from_slice(&s.shots);
+        self.started = s.started;
+    }
 }
 
 impl crate::checksum::Checksum for ShootList {

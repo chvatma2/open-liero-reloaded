@@ -23,7 +23,7 @@ impl Keys {
 }
 
 /// One key's latched state between two input reads.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct KeyLatch {
     down: bool,
     pressed: bool,
@@ -58,7 +58,7 @@ impl KeyLatch {
 }
 
 /// All keys of one worm.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Latches {
     pub up: KeyLatch,
     pub down: KeyLatch,

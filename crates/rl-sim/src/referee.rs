@@ -79,8 +79,7 @@ impl Referee {
     /// is `ms * 0.001f` (`include/olx-types.h:40`), so 3000 ms (3.0000002 s)
     /// is already past the wait: the physics stops 300 frames after the end.
     pub fn frozen(&self, server_frame: u64) -> bool {
-        let ms = server_frame.saturating_sub(self.over_frame).saturating_mul(FRAME_MS);
-        self.over.is_some() && server_frame > self.over_frame && ms as f32 * 0.001 > GAMEOVER_WAIT
+        frozen(self.over.is_some(), self.over_frame, server_frame)
     }
 
     pub fn hash(&self, h: &mut Fnv) {
@@ -106,6 +105,12 @@ impl Referee {
         h.u64(*over_frame);
         h.bool(*game_over_sent);
     }
+}
+
+/// [`Referee::frozen`] for a match that is `over` (or not) since `over_frame`.
+pub(crate) fn frozen(over: bool, over_frame: u64, server_frame: u64) -> bool {
+    let ms = server_frame.saturating_sub(over_frame).saturating_mul(FRAME_MS);
+    over && server_frame > over_frame && ms as f32 * 0.001 > GAMEOVER_WAIT
 }
 
 /// `CWorm::clearInput` (`src/common/CWorm.cpp:493-501`): the state, the

@@ -73,6 +73,10 @@ pub struct World {
     pub(crate) others: Scratch,
     /// Slot vectors for worms spawned mid-match.
     pub(crate) spare: Spare,
+    /// How many worms [`World::new`] left (the setup's, and any its
+    /// `on_spawn` commands spawned): setup only, which a received state
+    /// must agree with (`World::load_state`).
+    pub(crate) setup_worms: usize,
 }
 
 /// Buffers only: they hold no state, so they never make two worlds unequal.
@@ -307,6 +311,18 @@ impl World {
         frame
     }
 
+    /// How far the physics clock moves in one sub-step: the sub-step,
+    /// scaled by `1 / GameSpeed` unless `GameSpeedOnlyForProjs`, and at
+    /// least 1 ms.
+    pub(crate) fn step_clock(&self) -> TimeDiff {
+        let step = self.physics_dt();
+        if self.settings.game_speed_only_for_projs {
+            return step;
+        }
+        let scaled = step.scaled(1.0 / self.game_speed());
+        if scaled.0 == 0 { TimeDiff(1) } else { scaled }
+    }
+
     fn game_speed(&self) -> f32 {
         self.settings.game_speed.clamp(0.05, 10.0)
     }
@@ -348,13 +364,7 @@ impl World {
             latch.set(keys.get(i).copied().unwrap_or(Keys(0)));
         }
         let step = self.physics_dt();
-        let mut step_clock = step;
-        if !self.settings.game_speed_only_for_projs {
-            step_clock = step.scaled(1.0 / self.game_speed());
-            if step_clock.0 == 0 {
-                step_clock = TimeDiff(1);
-            }
-        }
+        let step_clock = self.step_clock();
         let frame = self.frame_dt();
         self.substeps = 0;
         if self.referee.over.is_some() {

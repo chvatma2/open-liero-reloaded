@@ -20,6 +20,7 @@
 //! (by `on_spawn` of the starting worms) are applied at the end of `World::new`.
 
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::fmt;
 
 use rl_math::AbsTime;
@@ -91,6 +92,34 @@ pub trait GameMode: fmt::Debug + Send + Sync {
         let _ = world;
         &[]
     }
+
+    /// Everything [`GameMode::load_state`] needs to make a mode built with
+    /// the same settings equal to this one (its checksum included), for a
+    /// world's state transfer (`World::state`). Empty by default.
+    fn save_state(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    /// Takes the state another mode's [`GameMode::save_state`] gave. The
+    /// bytes come from the network: refuse what does not decode
+    /// ([`ModeStateError::Decode`]) or what could index out of bounds or
+    /// grow a buffer ([`ModeStateError::Invalid`]), and change nothing then.
+    /// By default no state can be taken ([`ModeStateError::Unsupported`]).
+    fn load_state(&mut self, bytes: &[u8]) -> Result<(), ModeStateError> {
+        let _ = bytes;
+        Err(ModeStateError::Unsupported)
+    }
+}
+
+/// Why [`GameMode::load_state`] refused a state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModeStateError {
+    /// The mode does not transfer its state.
+    Unsupported,
+    /// The bytes are not a state of this mode.
+    Decode,
+    /// The state decodes but holds values this mode never reaches.
+    Invalid,
 }
 
 impl Clone for Box<dyn GameMode> {
@@ -112,7 +141,7 @@ pub struct KillCredit {
 }
 
 /// Why a match ended.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EndReason {
     /// A worm's score reached `KillLimit`.
     KillLimit,
@@ -125,14 +154,14 @@ pub enum EndReason {
 }
 
 /// How a match ended: the winner's id (-1 for none) and why.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MatchResult {
     pub winner: i32,
     pub reason: EndReason,
 }
 
 /// One row of a mode's scoreboard.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Score {
     pub worm: i32,
     pub score: i32,
@@ -344,6 +373,16 @@ impl GameMode for OracleMode {
 
     fn on_kill(&mut self, victim: i32, killer: i32, ctx: &mut ModeCtx) -> KillCredit {
         crate::damage::olx_kill_credit(ctx.worms(), ctx.settings(), victim, killer)
+    }
+
+    /// No state: empty bytes.
+    fn save_state(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    /// Takes only empty bytes.
+    fn load_state(&mut self, bytes: &[u8]) -> Result<(), ModeStateError> {
+        if bytes.is_empty() { Ok(()) } else { Err(ModeStateError::Invalid) }
     }
 }
 

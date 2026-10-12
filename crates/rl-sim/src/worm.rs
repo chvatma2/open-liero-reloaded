@@ -9,14 +9,14 @@ use crate::damage::WRM_UNLIM;
 use crate::rope::NinjaRope;
 
 /// OLX `DIR_TYPE`: left is 0, right is 1.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Dir {
     Left = 0,
     Right = 1,
 }
 
 /// OLX `worm_state_t`: what the worm does this sub-step, derived from input.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WormState {
     pub shoot: bool,
     pub carve: bool,
@@ -32,7 +32,7 @@ impl WormState {
 }
 
 /// OLX `wpnslot_t`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Slot {
     pub weapon: i32,
     pub charge: f32,
@@ -76,7 +76,10 @@ impl Loadout {
 /// `cur` is the next slot to write, so [`get(0)`](Self::get) is the
 /// *oldest* slot (100 pushes ago, or whatever an earlier life or the zeroed
 /// start left there), not the newest: OLX's quirk, kept (spec §18 D7).
-#[derive(Clone, Debug, PartialEq)]
+///
+/// Serialised as [`RecorderWire`] (serde has no impl for 100-element arrays).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(into = "RecorderWire", try_from = "RecorderWire")]
 pub struct PosRecorder {
     data: [Vec2; PosRecorder::FRAMES],
     cur: usize,
@@ -117,6 +120,12 @@ impl PosRecorder {
         self.data[(self.cur + Self::FRAMES - frames_back % Self::FRAMES) % Self::FRAMES]
     }
 
+    /// Whether the indices are ones `push` and `clear` reach, so `get`
+    /// stays in the buffer (for a received state).
+    pub(crate) fn is_valid(&self) -> bool {
+        self.cur < Self::FRAMES && self.count <= Self::FRAMES
+    }
+
     /// `getBest(millisecsPerFrame, millisecsBack)`.
     pub fn get_best(&self, ms_per_frame: u64, ms_back: u64) -> Vec2 {
         let frames_back = (ms_back / ms_per_frame.max(1)).min(usize::MAX as u64) as usize;
@@ -130,7 +139,32 @@ impl PosRecorder {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// [`PosRecorder`] on the wire: the entries as a list of exactly 100.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RecorderWire {
+    data: Vec<Vec2>,
+    cur: u64,
+    count: u64,
+}
+
+impl From<PosRecorder> for RecorderWire {
+    fn from(r: PosRecorder) -> Self {
+        RecorderWire { data: r.data.to_vec(), cur: r.cur as u64, count: r.count as u64 }
+    }
+}
+
+impl TryFrom<RecorderWire> for PosRecorder {
+    type Error = &'static str;
+
+    fn try_from(w: RecorderWire) -> Result<Self, Self::Error> {
+        let data = w.data.try_into().map_err(|_| "a position recorder has 100 entries")?;
+        let cur = usize::try_from(w.cur).map_err(|_| "a recorder index fits a usize")?;
+        let count = usize::try_from(w.count).map_err(|_| "a recorder count fits a usize")?;
+        Ok(PosRecorder { data, cur, count })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Worm {
     pub id: i32,
     /// Its team ([`crate::WormSetup::team`]); Deathmatch has none.

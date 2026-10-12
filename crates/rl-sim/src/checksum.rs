@@ -109,7 +109,7 @@ impl World {
     /// (barring a hash collision).
     ///
     /// Left out: what only setup sets (the settings, the mod, the theme's
-    /// holes and the green-dirt mask), events (output, not state: setup
+    /// holes, the green-dirt mask and the setup's worm count), events (output, not state: setup
     /// events waiting for the next tick too), the spawn work counter and
     /// scratch and spare buffers.
     pub fn checksum(&self) -> u64 {
@@ -146,6 +146,7 @@ impl World {
             referee,
             others: _,
             spare: _,
+            setup_worms: _,
         } = self;
         let mut h = Fnv::new();
         h.u32(terrain.width());

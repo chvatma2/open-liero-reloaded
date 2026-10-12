@@ -33,7 +33,7 @@ pub const MAX_BONUSES: usize = 32;
 const BONUS_LIFETIME: i32 = 60;
 
 /// A bonus's kind (`BNS_WEAPON` 0, `BNS_HEALTH` 1).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[repr(i32)]
 pub enum BonusKind {
     #[default]
@@ -42,14 +42,14 @@ pub enum BonusKind {
 }
 
 /// What [`crate::World::place_bonus`] places: health, or a weapon by id.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BonusItem {
     Health,
     Weapon(i32),
 }
 
 /// One slot of a bonus array (`CBonus`). An unused slot keeps its old values.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Bonus {
     pub used: bool,
     pub kind: BonusKind,
@@ -83,7 +83,7 @@ impl Bonus {
 }
 
 /// A message from the server to the local client, as its bytes carry it.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 enum ToClient {
     /// `S2C_SPAWNBONUS` (`CServer_Game.cpp:303-313`): the weapon's low byte
     /// (sent for weapon bonuses only), the slot, and the position truncated to
@@ -94,7 +94,7 @@ enum ToClient {
 }
 
 /// `C2S_GRABBONUS` (`CClientNetEngine::SendGrabBonus`, `src/client/CClient_Send.cpp:306-315`).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct Grab {
     id: u8,
     worm: u8,
@@ -103,7 +103,7 @@ struct Grab {
 }
 
 /// Both bonus arrays and the messages between them.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Bonuses {
     pub client: [Bonus; MAX_BONUSES],
     pub server: [Bonus; MAX_BONUSES],
@@ -472,6 +472,35 @@ fn simulate_bonus(b: &mut Bonus, t: &Terrain, dt: f32) {
                 return collide(b, y);
             }
         }
+    }
+}
+
+impl Bonuses {
+    /// Whether `s` (a received state) has this setup's bonus weapons, queues
+    /// within their capacity, and weapon ids in the mod's `num_weapons`
+    /// where they are read: the used weapon bonuses and the placements.
+    pub(crate) fn can_load(&self, s: &Bonuses, num_weapons: i32) -> bool {
+        let Bonuses { client, server, last_spawn: _, weapons, to_client, to_server, placements } = s;
+        let weapon = |w: i32| (0..num_weapons).contains(&w);
+        *weapons == self.weapons
+            && client.iter().chain(server).all(|b| !b.used || b.kind != BonusKind::Weapon || weapon(b.weapon))
+            && to_client.len() <= self.to_client.capacity()
+            && to_server.len() <= self.to_server.capacity()
+            && placements.len() <= self.placements.capacity()
+            && placements.iter().all(|&(_, _, item)| !matches!(item, BonusItem::Weapon(w) if !weapon(w)))
+    }
+
+    /// Takes `s`, which [`can_load`](Self::can_load) accepted, keeping the
+    /// queues' capacity.
+    pub(crate) fn load(&mut self, s: Bonuses) {
+        let Bonuses { client, server, last_spawn, weapons: _, to_client, to_server, placements } = s;
+        (self.client, self.server, self.last_spawn) = (client, server, last_spawn);
+        self.to_client.clear();
+        self.to_client.extend_from_slice(&to_client);
+        self.to_server.clear();
+        self.to_server.extend_from_slice(&to_server);
+        self.placements.clear();
+        self.placements.extend_from_slice(&placements);
     }
 }
 

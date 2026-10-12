@@ -9,7 +9,7 @@ use crate::rng::Draws;
 
 use crate::SimSettings;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NinjaRope {
     pub released: bool,
     pub shooting: bool,

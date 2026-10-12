@@ -32,6 +32,16 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `save`/`restore`/`forget_before`; `sync_checksum` is `checksum` with the
   terrain's cell hash. Snapshots carry no events; the caller re-runs ticks
   for them.
+- **State transfer** (`state.rs`, networking spec §3.5): `World::state`/`load_state`;
+  a new state field must be added to `WorldState` (the destructuring forces it)
+  and validated if it indexes anything. `WorldState` holds what `checksum`
+  hashes (postcard, then deflate; `MAX_INFLATED`), the mode as
+  `GameMode::save_state` bytes. The sender may be a stranger: `validate`
+  refuses (`StateError`, nothing changed) anything that could index out of
+  bounds, outgrow a `Buf`, overflow a clock or counter, or stall a tick
+  (projectile clocks, rope speed, aim); the proptest in `tests/state.rs`
+  fuzzes it. The receiving world must come from the same setup
+  (`setup_worms`, map size, pool size, bonus weapons are checked).
 - **Two clocks.** `tick` is one 100 Hz frame. Inside it, LX56 physics runs in
   `1000 / LX56PhysicsFPS` ms sub-steps (11 ms by default) while the physics
   clock is behind the frame clock, so some frames run no sub-step.

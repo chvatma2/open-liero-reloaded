@@ -3005,6 +3005,7 @@ name = "rl-math"
 version = "0.1.0"
 dependencies = [
  "libm",
+ "serde",
 ]
 
 [[package]]
@@ -3013,10 +3014,12 @@ version = "0.1.0"
 dependencies = [
  "allocation-counter",
  "libm",
+ "postcard",
  "rl-data",
  "rl-math",
  "rl-sim",
  "rl-terrain",
+ "serde",
 ]
 
 [[package]]
@@ -3131,9 +3134,13 @@ dependencies = [
  "allocation-counter",
  "divan",
  "libm",
+ "miniz_oxide 0.9.1",
+ "postcard",
+ "proptest",
  "rl-data",
  "rl-math",
  "rl-terrain",
+ "serde",
 ]
 
 [[package]]

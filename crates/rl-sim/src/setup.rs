@@ -149,7 +149,7 @@ impl fmt::Display for SetupError {
 pub(crate) struct Spare(Vec<Vec<Slot>>);
 
 impl Spare {
-    fn new(n: usize) -> Self {
+    pub(crate) fn new(n: usize) -> Self {
         let mut v = Vec::with_capacity(n);
         v.resize_with(n, || Vec::with_capacity(MAX_SLOTS));
         Spare(v)
@@ -226,6 +226,7 @@ impl World {
                 beam_parts: Buf::with_capacity(terrain_min as usize),
             },
             spare: Spare::new(MAX_WORMS.saturating_sub(worms.len())),
+            setup_worms: 0,
         };
         if let Some(ids) = bonus_weapons {
             world.set_bonus_weapons(&ids);
@@ -234,6 +235,7 @@ impl World {
             world.add_worm(w.team, w.loadout, w.spawn);
         }
         world.apply_commands();
+        world.setup_worms = world.worms.len();
         world
     }
 

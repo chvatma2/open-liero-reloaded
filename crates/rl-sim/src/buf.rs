@@ -6,7 +6,8 @@ use core::ops::{Deref, DerefMut};
 /// A `Vec` sized at setup that `tick` fills without allocating. Unlike a
 /// `Vec`, its clone keeps the capacity, so a cloned world (a snapshot)
 /// does not allocate when it ticks either.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub(crate) struct Buf<T>(pub Vec<T>);
 
 impl<T> Buf<T> {

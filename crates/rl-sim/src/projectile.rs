@@ -42,7 +42,7 @@ pub(crate) fn attr_set(dst: &mut Vec2, v: Vec2) {
 /// One projectile slot: OLX's `CProjectile` fields that matter to the
 /// simulation. A slot keeps its old values when it is freed and reused,
 /// as in OLX (`iColour` of an image projectile, `CollisionSide`).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Projectile {
     pub used: bool,
     /// `tProjInfo`, as an index into [`SimMod::projectiles`].
@@ -322,6 +322,61 @@ impl ProjectilePool {
     /// Slot `i`, used or not (spawning fills a slot [`get_new`](Self::get_new) returned).
     pub(crate) fn slot_mut(&mut self, i: usize) -> &mut Projectile {
         &mut self.slots[i]
+    }
+}
+
+/// The pool in a world's state (`World::state`): its size and the slots
+/// ever taken, used or freed (the slots above are untouched, still
+/// `Projectile::default()`), with the free-list indices.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct PoolState {
+    capacity: u64,
+    touched: Vec<Projectile>,
+    first_unused: i32,
+    last_used: i32,
+    next_serial: u32,
+}
+
+impl ProjectilePool {
+    pub(crate) fn state(&self) -> PoolState {
+        let ProjectilePool { slots, first_unused, last_used, touched, next_serial } = self;
+        PoolState {
+            capacity: slots.len() as u64,
+            touched: slots[..*touched].to_vec(),
+            first_unused: *first_unused,
+            last_used: *last_used,
+            next_serial: *next_serial,
+        }
+    }
+
+    /// Whether `s` is a state of a pool this size whose indices stay in it
+    /// as `get_new`, `set_unused` and `clear` keep them (every used slot at
+    /// most `last_used`, which is below the touched slots; `first_unused`
+    /// at most their count), and whose used projectiles all pass `valid`.
+    pub(crate) fn can_load(&self, s: &PoolState, valid: impl Fn(&Projectile) -> bool) -> bool {
+        let touched = s.touched.len();
+        s.capacity == self.slots.len() as u64
+            && touched <= self.slots.len()
+            && (0..=touched as i64).contains(&(s.first_unused as i64))
+            && (-1..touched as i64).contains(&(s.last_used as i64))
+            && s.touched
+                .iter()
+                .enumerate()
+                .all(|(i, p)| !p.used || (i as i64 <= s.last_used as i64 && valid(p)))
+    }
+
+    /// Takes `s`, which [`can_load`](Self::can_load) accepted.
+    pub(crate) fn load(&mut self, s: PoolState) {
+        let PoolState { capacity: _, touched, first_unused, last_used, next_serial } = s;
+        let n = touched.len().min(self.slots.len());
+        for p in &mut self.slots[n..self.touched.max(n)] {
+            *p = Projectile::default();
+        }
+        for (dst, src) in self.slots.iter_mut().zip(touched) {
+            *dst = src;
+        }
+        (self.first_unused, self.last_used, self.touched, self.next_serial) =
+            (first_unused, last_used, n, next_serial);
     }
 }
 

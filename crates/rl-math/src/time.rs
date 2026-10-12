@@ -4,11 +4,15 @@
 use core::ops::{Add, AddAssign, Sub};
 
 /// A point in simulation time, in milliseconds.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct AbsTime(pub u64);
 
 /// A duration, in milliseconds.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct TimeDiff(pub u64);
 
 impl TimeDiff {

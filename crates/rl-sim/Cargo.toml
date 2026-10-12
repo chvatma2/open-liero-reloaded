@@ -12,10 +12,14 @@ rl-math.workspace = true
 rl-data.workspace = true
 rl-terrain.workspace = true
 libm.workspace = true
+serde.workspace = true
+postcard.workspace = true
+miniz_oxide.workspace = true
 
 [dev-dependencies]
 allocation-counter.workspace = true
 divan.workspace = true
+proptest.workspace = true
 
 [[bench]]
 name = "tick"

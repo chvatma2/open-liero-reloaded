@@ -5,6 +5,8 @@
 //! crate, never through the platform's math library.
 #![no_std]
 
+extern crate alloc;
+
 mod atan;
 mod rand;
 mod time;

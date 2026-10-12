@@ -32,6 +32,9 @@ port of the bare `CGameMode` (`src/server/CGameMode.cpp`) at commit
   are queued in `on_kill`; the end's in the `on_tick` of the frame that
   ended (`is_over` cannot queue; `on_tick` checks again with the same
   worms and its own frame count, which equals `World::server_frame`).
+- Deathmatch transfers its dynamic fields (`save_state`/`load_state`):
+  every field but the settings, postcard; a board longer than `MAX_WORMS`
+  or naming a worm outside it is refused.
 - **Callbacks must not allocate** (`World::tick` runs them): the
   scoreboard has a capacity of `MAX_WORMS`, kept by the manual `Clone`.
   `checksum` hashes every field, the settings included.

@@ -112,6 +112,35 @@ impl Terrain {
         carved
     }
 
+    /// The material indices (`Material as u8`), row-major: what a world's
+    /// state transfer carries (networking spec §3.5).
+    pub fn cells(&self) -> &[u8] {
+        &self.cells
+    }
+
+    /// Whether `cells` could be [`load_cells`](Self::load_cells)ed: one
+    /// valid material index per cell of this map.
+    pub fn can_load(&self, cells: &[u8]) -> bool {
+        cells.len() == self.cells.len() && cells.iter().all(|&c| Material::from_index(c).is_some())
+    }
+
+    /// Replaces every cell with `cells` (a received state's), unless
+    /// [`can_load`](Self::can_load) refuses them: then it returns false and
+    /// changes nothing. The journal's cell hash follows the new cells, but
+    /// the load is not undoable: every mark taken before it is refused
+    /// afterwards ([`crate::JournalError::Forgotten`]), as if the load were
+    /// one edit already forgotten.
+    pub fn load_cells(&mut self, cells: &[u8]) -> bool {
+        if !self.can_load(cells) {
+            return false;
+        }
+        for (i, &c) in cells.iter().enumerate() {
+            self.set_cell(i, c);
+        }
+        self.seal_journal();
+        true
+    }
+
     /// FNV-1a 64 over the material indices, row by row: the oracle's `mh`.
     pub fn material_hash(&self) -> u64 {
         self.cells

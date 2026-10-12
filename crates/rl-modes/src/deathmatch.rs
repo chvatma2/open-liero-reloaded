@@ -8,9 +8,10 @@ use alloc::vec::Vec;
 use core::fmt;
 
 use rl_sim::{
-    EndReason, Fnv, GameMode, KillCredit, MAX_WORMS, MatchResult, MatchSetup, Message, ModeCtx, Score,
-    SimSettings, TextId, World, Worm, olx_kill_credit, olx_score,
+    EndReason, Fnv, GameMode, KillCredit, MAX_WORMS, MatchResult, MatchSetup, Message, ModeCtx,
+    ModeStateError, Score, SimSettings, TextId, World, Worm, olx_kill_credit, olx_score,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::respawn::RespawnLoadout;
 use crate::rules::{self, WRM_OUT, WRM_UNLIM};
@@ -183,6 +184,22 @@ pub struct Deathmatch {
     /// replay's): it is fixed together with `over`, which is.
     ended_at: u64,
     /// The scoreboard; its capacity is `MAX_WORMS`, so it never grows.
+    board: Vec<Score>,
+}
+
+/// What a Deathmatch transfers with its world (`GameMode::save_state`):
+/// every field but the settings, which the receiving mode was built with.
+/// The chaos rotation is settings only (each worm's life is `spawns`).
+#[derive(Serialize, Deserialize)]
+struct DeathmatchState {
+    first_blood: bool,
+    kills_in_row: [i32; MAX_WORMS],
+    deaths_in_row: [i32; MAX_WORMS],
+    spawns: [u32; MAX_WORMS],
+    frame: u64,
+    over: Option<MatchResult>,
+    ended_at: u64,
+    /// Last, so tests can append another board.
     board: Vec<Score>,
 }
 
@@ -480,6 +497,60 @@ impl GameMode for Deathmatch {
 
     fn scores(&self, _world: &World) -> &[Score] {
         &self.board
+    }
+
+    fn save_state(&self) -> Vec<u8> {
+        let Deathmatch {
+            settings: _,
+            first_blood,
+            kills_in_row,
+            deaths_in_row,
+            spawns,
+            frame,
+            over,
+            ended_at,
+            board,
+        } = self;
+        let s = DeathmatchState {
+            first_blood: *first_blood,
+            kills_in_row: *kills_in_row,
+            deaths_in_row: *deaths_in_row,
+            spawns: *spawns,
+            frame: *frame,
+            over: *over,
+            ended_at: *ended_at,
+            board: board.clone(),
+        };
+        postcard::to_allocvec(&s).expect("postcard encodes every Deathmatch state")
+    }
+
+    /// Refuses a board longer than [`MAX_WORMS`] (its capacity) or with a
+    /// worm id outside `0..MAX_WORMS`, and bytes left over.
+    fn load_state(&mut self, bytes: &[u8]) -> Result<(), ModeStateError> {
+        let s: DeathmatchState = match postcard::take_from_bytes(bytes) {
+            Ok((s, [])) => s,
+            _ => return Err(ModeStateError::Decode),
+        };
+        if s.board.len() > MAX_WORMS || !s.board.iter().all(|r| (0..MAX_WORMS as i32).contains(&r.worm)) {
+            return Err(ModeStateError::Invalid);
+        }
+        let DeathmatchState {
+            first_blood,
+            kills_in_row,
+            deaths_in_row,
+            spawns,
+            frame,
+            over,
+            ended_at,
+            board,
+        } = s;
+        (self.first_blood, self.kills_in_row, self.deaths_in_row, self.spawns) =
+            (first_blood, kills_in_row, deaths_in_row, spawns);
+        (self.frame, self.over, self.ended_at) = (frame, over, ended_at);
+        // `clear` + `extend` keeps the board's capacity: callbacks never allocate.
+        self.board.clear();
+        self.board.extend_from_slice(&board);
+        Ok(())
     }
 }
 
