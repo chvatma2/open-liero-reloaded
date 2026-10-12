@@ -85,7 +85,12 @@ model that tests it in one process (spec §9.1).
   after its last confirmed simulated tick: restore, encode, re-simulate
   unreported) as `StateBegin` and `STATE_CHUNK` chunks
   (`Event::StateSent`). One repair per peer at a time: the peer's
-  mismatches are ignored until a report after the state's tick matches.
+  mismatches are ignored until a report after the state's tick matches
+  (repaired) or one from `REPAIR_MARGIN` (300) ticks after the sending on
+  differs (refused, or diverged again: a new desync). After `MAX_REPAIRS`
+  (3) states, or with a state too large to send, `Event::RepairFailed`
+  and no more repairs. `add_spectator` for a player's peer is refused
+  (`Event::JoinRefused`).
   The receiver refuses a transfer with an index out of range, a repeated
   chunk or more bytes than announced (`StateRejected`, later chunks
   ignored); a whole one is `StateArrived` (the bytes), then
@@ -118,9 +123,10 @@ model that tests it in one process (spec §9.1).
   for the last `settle_ticks` — and returns a `Report` (confirmed logs,
   checksums of ticks `t % 10 == 9` recorded while simulating, the
   sessions' confirmed `checksums`, stats, events, `dropped`). The host
-  drops a peer it reports timed out. The run ends when the host is past
-  `ticks + settle_ticks` and every other peer re-simulated `ticks`
-  confirmed ticks. `verdict` checks every peer not
+  drops a peer it reports timed out or failed to repair (`RepairFailed`,
+  `Report::repair_failed`). The run ends when the host is past `ticks +
+  settle_ticks` and every other peer re-simulated `ticks` confirmed
+  ticks. `verdict` checks every peer not
   dropped confirmed the host's inputs and matches an offline replay of
   them (a joined spectator from its state, a corrupted peer from its last
   loaded state), with no desync but a corrupted peer's and no refused

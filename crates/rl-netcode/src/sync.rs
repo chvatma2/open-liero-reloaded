@@ -75,6 +75,14 @@ impl Checks {
     }
 }
 
+/// A sent state that has not repaired a peer by the host's tick at sending
+/// plus this many ticks (a round trip, a long transfer and the prediction
+/// window, with room) is taken to have failed: a later mismatch re-arms.
+pub(crate) const REPAIR_MARGIN: u32 = 300;
+/// States sent to repair one peer before the host gives up on it
+/// (`Event::RepairFailed`).
+pub(crate) const MAX_REPAIRS: u8 = 3;
+
 /// The host's repair of one peer (at most one in flight).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Repair {
@@ -82,9 +90,14 @@ pub(crate) enum Repair {
     Clean,
     /// A state is owed: sent at the end of the next advance that can.
     Owed,
-    /// The state after this tick was sent: the peer's reports differ until
-    /// it loads it, so mismatches are ignored until one matches after it.
-    Sent(u32),
+    /// The state after `tick` was sent: the peer's reports differ until it
+    /// loads it, so mismatches are ignored until one after `tick` matches
+    /// (repaired) or one for a tick from `until` on differs (the state was
+    /// refused, or the peer diverged again: a new desync).
+    Sent { tick: u32, until: u32 },
+    /// Given up ([`MAX_REPAIRS`], or a state too large to send): reports
+    /// are ignored.
+    Failed,
 }
 
 /// The host's view of a peer's checksums.
@@ -92,11 +105,13 @@ pub(crate) struct Remote {
     /// Reported for ticks the host has not confirmed yet.
     pub(crate) reported: BTreeMap<u32, u64>,
     pub(crate) repair: Repair,
+    /// States sent to repair it (a joining spectator's first is not one).
+    pub(crate) repairs: u8,
 }
 
 impl Default for Remote {
     fn default() -> Self {
-        Remote { reported: BTreeMap::new(), repair: Repair::Clean }
+        Remote { reported: BTreeMap::new(), repair: Repair::Clean, repairs: 0 }
     }
 }
 

@@ -5,8 +5,11 @@ use proptest::prelude::*;
 use rl_netcode::harness::{self, HOST, PeerPlan, Scenario};
 use rl_netcode::netsim::Profile;
 use rl_netcode::toy::ToyFactory;
-use rl_netcode::{Channel, Config, Event, Role, Seat, Session, Simulation, ToySim, input_delay};
-use rl_proto::{Control, STATE_CHUNK, encode_control};
+use rl_netcode::{
+    Channel, Config, Driver, Event, PeerId, Role, Seat, Session, Simulation, StateRejected, ToySim,
+    input_delay,
+};
+use rl_proto::{ClientInputs, Control, Datagram, STATE_CHUNK, Stamp, encode_control, encode_datagram};
 use rl_sim::Keys;
 
 fn plan(id: u16, seat: Seat, profile: Profile, join_tick: Option<u32>) -> PeerPlan {
@@ -145,18 +148,180 @@ fn the_confirmed_state_is_the_one_after_the_last_confirmed_tick() {
     assert_eq!(host.current_tick(), 50);
     assert!(host.frontier() < 45);
     let now = host.sim().checksum();
+    let sums = host.checksums().to_vec();
+    assert!(!sums.is_empty());
     let (tick, bytes) = host.encode_confirmed_state().unwrap();
     assert_eq!(tick + 1, host.frontier());
-    let mut replay = ToySim::new(3);
-    for t in 0..=tick {
-        let row = host.input_log().row(t).unwrap();
-        replay.tick(&[Keys(row[0]), Keys(row[1]), Keys(row[2])]);
-    }
-    assert_eq!(replay.encode_state(), bytes);
+    assert_eq!(replay(&host, tick).encode_state(), bytes);
     // Encoding re-simulated back to the present: the session goes on unchanged.
     assert_eq!(host.current_tick(), 50);
     assert_eq!(host.sim().checksum(), now);
+    assert_eq!(host.checksums(), &sums[..]);
     assert_eq!(host.stats().resim_ticks, 50 - host.frontier() as u64);
+    // A rollback after it still restores the right snapshots: the player's
+    // late inputs differ from the fills' prediction.
+    let first = host.input_log().known_upto(2);
+    let late = ClientInputs { stamp: Stamp::default(), tick: first, ack: 0, first, keys: vec![7; 5] };
+    host.receive(1, Channel::Unreliable, &encode_datagram(&Datagram::Client(late)), 500_000);
+    for ms in 501..=800u64 {
+        host.advance(ms * 1000, drv.as_mut());
+    }
+    let events = host.drain_events();
+    assert!(events.iter().any(|e| matches!(e, Event::Rollback { from, .. } if *from == first)));
+    let (tick, bytes) = host.encode_confirmed_state().unwrap();
+    assert_eq!(replay(&host, tick).encode_state(), bytes);
+    // Every confirmed checksum is the replay's.
+    for &(t, h) in host.checksums() {
+        assert_eq!(replay(&host, t).checksum(), h, "tick {t}");
+    }
+}
+
+/// The toy world after `tick`, replayed from the host's confirmed inputs.
+fn replay(host: &Session<ToySim>, tick: u32) -> ToySim {
+    let mut sim = ToySim::new(3);
+    for t in 0..=tick {
+        let row = host.input_log().row(t).unwrap();
+        sim.tick(&[Keys(row[0]), Keys(row[1]), Keys(row[2])]);
+    }
+    sim
+}
+
+/// What a faulty peer's simulation does with a state from the host.
+#[derive(Clone, Copy, PartialEq)]
+enum Fault {
+    None,
+    /// Refuses every state.
+    Refuse,
+    /// Loads it, then diverges again at the next tick (a bug that comes
+    /// back): saved in its snapshots, so a rollback repeats it.
+    Relapse,
+}
+
+#[derive(Clone)]
+struct Faulty {
+    toy: ToySim,
+    fault: Fault,
+    relapse: bool,
+}
+
+impl Simulation for Faulty {
+    type Snapshot = Faulty;
+    fn tick(&mut self, keys: &[Keys]) {
+        self.toy.tick(keys);
+        if std::mem::take(&mut self.relapse) {
+            self.toy.displace(0, 1);
+        }
+    }
+    fn save(&mut self) -> Faulty {
+        self.clone()
+    }
+    fn restore(&mut self, s: &Faulty) {
+        self.clone_from(s);
+    }
+    fn forget_before(&mut self, _: &Faulty) {}
+    fn checksum(&self) -> u64 {
+        self.toy.checksum()
+    }
+    fn encode_state(&self) -> Vec<u8> {
+        self.toy.encode_state()
+    }
+    fn decode_state(&mut self, bytes: &[u8]) -> Result<(), StateRejected> {
+        if self.fault == Fault::Refuse {
+            return Err(StateRejected);
+        }
+        self.toy.decode_state(bytes)?;
+        self.relapse = self.fault == Fault::Relapse;
+        Ok(())
+    }
+}
+
+/// The toy match where peer 1's simulation has `fault`.
+struct FaultyFactory {
+    toy: ToyFactory,
+    fault: Fault,
+}
+
+struct FaultyDriver(Box<dyn Driver<ToySim>>);
+
+impl Driver<Faulty> for FaultyDriver {
+    fn local_inputs(&mut self, sim: &Faulty, tick: u32, slots: &[u8], out: &mut [Keys]) {
+        self.0.local_inputs(&sim.toy, tick, slots, out);
+    }
+}
+
+impl harness::Factory<Faulty> for FaultyFactory {
+    fn sim(&mut self, peer: PeerId) -> Faulty {
+        let fault = if peer == 1 { self.fault } else { Fault::None };
+        Faulty { toy: ToySim::new(self.toy.slots as usize), fault, relapse: false }
+    }
+    fn driver(&mut self, peer: PeerId, seat: Option<Seat>) -> Box<dyn Driver<Faulty>> {
+        Box::new(FaultyDriver(self.toy.driver(peer, seat)))
+    }
+    fn corrupt(&mut self, sim: &mut Faulty, _index: usize) {
+        sim.toy.displace(0, 1);
+    }
+}
+
+/// Peer 1 desyncs at host tick 500 and its simulation has `fault`: every
+/// state fails, so the host re-arms after each and gives up after three.
+fn failing_repairs(fault: Fault) -> harness::Report {
+    let peers =
+        vec![plan(1, Seat::Player(2), Profile::GOOD, None), plan(2, Seat::Player(3), Profile::GOOD, None)];
+    let sc = Scenario {
+        seed: 11,
+        slots: 4,
+        peers,
+        ticks: 1_800,
+        settle_ticks: 200,
+        outages: vec![],
+        expect_no_stalls: true,
+        corrupt: vec![(1, 500)],
+    };
+    let mut f = FaultyFactory { toy: ToyFactory { slots: 4, seed: 11 }, fault };
+    let r = harness::run(&sc, &mut f).unwrap();
+    // The others play on and agree; peer 1 is dropped.
+    harness::verdict(&sc, &r, &mut f).unwrap();
+    let host = &r.events[&HOST];
+    let desyncs: Vec<u32> = host
+        .iter()
+        .filter_map(|e| match e {
+            Event::Desync { tick, peer: 1, .. } => Some(*tick),
+            _ => None,
+        })
+        .collect();
+    let sent: Vec<u32> = host
+        .iter()
+        .filter_map(|e| match e {
+            Event::StateSent { tick, peer: 1, .. } => Some(*tick),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(desyncs.len(), 4, "desyncs at {desyncs:?}");
+    assert_eq!(sent.len(), 3, "states at {sent:?}");
+    assert!((500..530).contains(&desyncs[0]));
+    // Each re-arm comes once the margin after the state has passed.
+    for (d, s) in desyncs[1..].iter().zip(&sent) {
+        assert!((s + 300..s + 340).contains(d), "desync at {d} after the state at {s}");
+    }
+    assert!(host.iter().any(|e| matches!(e, Event::RepairFailed { peer: 1 })));
+    assert!(r.repair_failed.contains(&1) && r.dropped.contains(&1));
+    assert_eq!(r.stats[&HOST].desyncs, 4);
+    assert!(r.events[&2].iter().all(|e| !matches!(e, Event::Desync { .. })));
+    r
+}
+
+#[test]
+fn a_peer_that_diverges_after_each_state_is_given_up() {
+    let r = failing_repairs(Fault::Relapse);
+    assert_eq!(r.stats[&1].states_loaded, 3);
+}
+
+#[test]
+fn a_peer_that_refuses_the_state_is_given_up() {
+    let r = failing_repairs(Fault::Refuse);
+    assert_eq!(r.stats[&1].states_loaded, 0);
+    let refused = r.events[&1].iter().filter(|e| matches!(e, Event::StateRejected { .. })).count();
+    assert_eq!(refused, 3);
 }
 
 fn client() -> Session<ToySim> {

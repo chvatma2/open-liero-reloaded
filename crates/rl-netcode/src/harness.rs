@@ -98,8 +98,11 @@ pub struct Report {
     /// What reached each peer.
     pub received: BTreeMap<PeerId, LinkStats>,
     pub duration_us: u64,
-    /// Peers the host dropped after [`Event::PeerTimedOut`]; the verdict skips them.
+    /// Peers the host dropped after [`Event::PeerTimedOut`] or
+    /// [`Event::RepairFailed`]; the verdict skips them.
     pub dropped: BTreeSet<PeerId>,
+    /// Peers the host dropped after [`Event::RepairFailed`].
+    pub repair_failed: BTreeSet<PeerId>,
     /// Every peer's confirmed sync checksums ([`Session::checksums`]).
     pub checksums: BTreeMap<PeerId, Vec<(u32, u64)>>,
 }
@@ -254,10 +257,11 @@ fn check_scenario(sc: &Scenario) -> Result<(), Failure> {
 /// Plays the scenario. Virtual time moves in 1 ms steps (skipping steps in
 /// which nothing is due): freezes begin or end, deliveries, then every peer
 /// whose frame has come advances, transmits and reports its events. The
-/// host drops a peer it reports timed out (`peer_lost`). The run ends when
-/// the host's current tick reaches `ticks + settle_ticks` and every peer
-/// not dropped had confirmed `ticks` ticks before its last advance (which
-/// re-simulated them on their final inputs) and simulated them.
+/// host drops a peer it reports timed out or failed to repair
+/// (`peer_lost`). The run ends when the host's current tick reaches
+/// `ticks + settle_ticks` and every peer not dropped had confirmed `ticks`
+/// ticks before its last advance (which re-simulated them on their final
+/// inputs) and simulated them.
 pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Report, Failure> {
     check_scenario(sc)?;
     let mut net = Network::new(sc.seed);
@@ -293,6 +297,7 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
     }
     let mut installed: BTreeMap<PeerId, u64> = BTreeMap::new();
     let mut dropped: BTreeSet<PeerId> = BTreeSet::new();
+    let mut repair_failed: BTreeSet<PeerId> = BTreeSet::new();
 
     let end = sc.ticks.saturating_add(sc.settle_ticks);
     let limit_us = (end as u64 * TICK_US).saturating_mul(4).saturating_add(60_000_000);
@@ -360,9 +365,17 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
             let new = p.session.drain_events();
             if id == HOST {
                 for e in &new {
-                    if let Event::PeerTimedOut { peer } = *e {
-                        p.session.peer_lost(peer);
-                        dropped.insert(peer);
+                    match *e {
+                        Event::PeerTimedOut { peer } => {
+                            p.session.peer_lost(peer);
+                            dropped.insert(peer);
+                        }
+                        Event::RepairFailed { peer } => {
+                            p.session.peer_lost(peer);
+                            dropped.insert(peer);
+                            repair_failed.insert(peer);
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -416,6 +429,7 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
         received: BTreeMap::new(),
         duration_us: now,
         dropped,
+        repair_failed,
         checksums: BTreeMap::new(),
     };
     for p in peers {
@@ -546,7 +560,7 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
                 }
                 Event::Desync { tick, peer: other, .. } => {
                     let faulty = if peer == HOST { other } else { peer };
-                    if !corrupted(faulty) {
+                    if !corrupted(faulty) && kept(&faulty) {
                         return Err(fail(tick, format!("peer {faulty} desynced at tick {tick}")));
                     }
                 }

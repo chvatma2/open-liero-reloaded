@@ -17,7 +17,9 @@ use rl_sim::Keys;
 
 use crate::clock::{JUMP_TICKS, MARGIN_SAMPLES, MAX_ADJUST_PPM, Margins, Pace, TARGET_MARGIN};
 use crate::inputs::{InputLog, SetResult};
-use crate::sync::{Checks, Incoming, REPORT_WINDOW, Remote, Repair, state_controls};
+use crate::sync::{
+    Checks, Incoming, MAX_REPAIRS, REPAIR_MARGIN, REPORT_WINDOW, Remote, Repair, state_controls,
+};
 use crate::{Channel, PeerId, Simulation};
 
 /// One tick lasts 10 ms (100 ticks per second, OLX's `FRAME_MS`).
@@ -166,6 +168,13 @@ pub enum Event {
     /// A state transfer was refused (its chunks, or the simulation refused
     /// the bytes); the old state stays.
     StateRejected { tick: u32 },
+    /// Host: `peer` still desyncs after `MAX_REPAIRS` (3) states, or our
+    /// state is too large to send it: no more repairs. The driver decides
+    /// (the harness drops the peer, as after `PeerTimedOut`).
+    RepairFailed { peer: PeerId },
+    /// Host: `add_spectator` for a peer that holds a player's slot: refused,
+    /// the peer stays a player.
+    JoinRefused { peer: PeerId },
 }
 
 #[derive(Clone, Debug)]
@@ -505,8 +514,14 @@ impl<S: Simulation> Session<S> {
     /// Host: a spectator arrives mid-match (spec §3.6). It gets frames from
     /// our frontier and, at the end of the next advance, the confirmed
     /// state ([`Session::encode_confirmed_state`]); its input log begins
-    /// after that state. A peer already known is replaced.
+    /// after that state. A spectator already known is replaced; a peer
+    /// holding a player's slot (lost or not) is refused
+    /// ([`Event::JoinRefused`]): its slot would be orphaned.
     pub fn add_spectator(&mut self, peer: PeerId, now_us: u64) {
+        if self.peers.get(&peer).is_some_and(|p| matches!(p.seat, Seat::Player(_))) {
+            self.events.push(Event::JoinRefused { peer });
+            return;
+        }
         let Role::Host { peers } = &mut self.role else { return };
         peers.retain(|&(id, _)| id != peer);
         peers.push((peer, Seat::Spectator));
@@ -1141,8 +1156,8 @@ impl<S: Simulation> Session<S> {
         let Some(p) = self.peers.get_mut(&from) else { return };
         let wanted = match p.checks.repair {
             Repair::Clean => true,
-            Repair::Owed => false,
-            Repair::Sent(t) => tick > t,
+            Repair::Owed | Repair::Failed => false,
+            Repair::Sent { tick: t, .. } => tick > t,
         };
         if wanted && tick >= upto && tick < upto.saturating_add(REPORT_WINDOW) {
             p.checks.reported.insert(tick, hash);
@@ -1150,30 +1165,43 @@ impl<S: Simulation> Session<S> {
     }
 
     /// Host: compares `peer`'s checksum of `tick` with ours. A difference
-    /// is a desync: the event, `Control::Desync`, and our confirmed state
-    /// owed to it (at most one repair in flight). While the state is on its
-    /// way the peer's reports differ: a repair ends with the first report
-    /// after the state's tick that matches.
+    /// is a desync ([`Session::desync`]), at most one repair in flight.
+    /// While the state is on its way the peer's reports differ: a repair
+    /// ends with the first report after the state's tick that matches, and
+    /// re-arms with a differing one from [`REPAIR_MARGIN`] ticks after the
+    /// sending on (the peer refused the state, or diverged again).
     fn compare(&mut self, peer: PeerId, tick: u32, remote: u64) {
         let Some(local) = self.checks.get(tick) else { return };
         let Some(p) = self.peers.get_mut(&peer) else { return };
         match p.checks.repair {
-            Repair::Owed => {}
-            Repair::Sent(t) => {
-                if tick > t && local == remote {
-                    p.checks.repair = Repair::Clean;
-                }
+            Repair::Owed | Repair::Failed => {}
+            Repair::Sent { tick: t, .. } if tick > t && local == remote => p.checks.repair = Repair::Clean,
+            Repair::Sent { until, .. } if local != remote && tick >= until => {
+                self.desync(peer, tick, local, remote)
             }
+            Repair::Sent { .. } => {}
             Repair::Clean if local == remote => {}
-            Repair::Clean => {
-                p.checks.repair = Repair::Owed;
-                p.checks.reported.clear();
-                self.stats.desyncs += 1;
-                self.events.push(Event::Desync { tick, local, remote, peer });
-                let c = encode_control(&Control::Desync { tick, host_hash: local });
-                self.push_out(peer, Channel::Reliable, c);
-            }
+            Repair::Clean => self.desync(peer, tick, local, remote),
         }
+    }
+
+    /// Host: `peer`'s checksum of `tick` differs: the event, then
+    /// `Control::Desync` and our confirmed state owed to it, or, after
+    /// [`MAX_REPAIRS`] states, [`Event::RepairFailed`] and no more repairs.
+    fn desync(&mut self, peer: PeerId, tick: u32, local: u64, remote: u64) {
+        self.stats.desyncs += 1;
+        self.events.push(Event::Desync { tick, local, remote, peer });
+        let Some(p) = self.peers.get_mut(&peer) else { return };
+        p.checks.reported.clear();
+        if p.checks.repairs >= MAX_REPAIRS {
+            p.checks.repair = Repair::Failed;
+            self.events.push(Event::RepairFailed { peer });
+            return;
+        }
+        p.checks.repairs += 1;
+        p.checks.repair = Repair::Owed;
+        let c = encode_control(&Control::Desync { tick, host_hash: local });
+        self.push_out(peer, Channel::Reliable, c);
     }
 
     /// At the end of an advance: pending checksums below the confirmed
@@ -1225,15 +1253,18 @@ impl<S: Simulation> Session<S> {
             return;
         }
         let Some((tick, state)) = self.encode_confirmed_state() else { return };
-        // A state past what a peer accepts cannot repair: give up on it.
+        // A state past what a peer accepts cannot repair: give up on it (a
+        // joining spectator would wait for ever).
         let controls = state_controls(tick, &state);
+        let until = self.current.saturating_add(REPAIR_MARGIN);
         for id in owed {
             let Some(p) = self.peers.get_mut(&id) else { continue };
             let Some(controls) = &controls else {
-                p.checks.repair = Repair::Clean;
+                p.checks.repair = Repair::Failed;
+                self.events.push(Event::RepairFailed { peer: id });
                 continue;
             };
-            p.checks.repair = Repair::Sent(tick);
+            p.checks.repair = Repair::Sent { tick, until };
             if mem::take(&mut p.joining) {
                 p.ack = tick + 1;
                 p.origin = tick + 1;
@@ -1274,6 +1305,10 @@ impl<S: Simulation> Session<S> {
         self.base = floor;
         self.floor = floor;
         self.current = floor;
+        // The state's own checksum (when `tick` is a checksum tick) is kept
+        // in our list but not reported: it is the host's own value echoed,
+        // so it would end a repair without showing that we simulate on
+        // correctly from the state. Our first report after the floor does.
         let hash = floor.is_multiple_of(self.checksum_every()).then(|| self.sim.checksum());
         self.checks.restart(tick, hash);
         match self.role {
@@ -1284,7 +1319,9 @@ impl<S: Simulation> Session<S> {
             _ if old > floor => self.restart_to = Some(old),
             Role::Client { .. } => {
                 // Ahead of us: the ticks between count as run, and our own
-                // inputs for them are none.
+                // inputs for them are none. (Deferred, plan 10: a hostile
+                // host can grow `own` by up to `MAX_AHEAD` ticks per valid
+                // state it sends.)
                 self.ticks_run = self.ticks_run.saturating_add(floor - old);
                 let at = floor as usize + self.delay() as usize;
                 if self.own.len() < at {
@@ -1386,6 +1423,52 @@ mod tests {
             c.drain_events().into_iter().filter(|e| matches!(e, Event::Rollback { .. })).collect();
         assert_eq!(rollbacks, vec![Event::Rollback { from: 10, to: 15 }]);
         assert_eq!(c.checksums(), &[]); // tick 9's was not known when the change came
+    }
+
+    #[test]
+    fn a_player_cannot_become_a_spectator() {
+        let role = Role::Host { peers: vec![(1, Seat::Player(1))] };
+        let mut h = Session::new(Config::new(3, 0), role, ToySim::new(3), 0);
+        h.add_spectator(1, 0);
+        assert_eq!(h.drain_events(), vec![Event::JoinRefused { peer: 1 }]);
+        assert_eq!(h.peers[&1].seat, Seat::Player(1));
+        h.peer_lost(1);
+        h.add_spectator(1, 0); // a lost player still holds its slot
+        assert_eq!(h.drain_events(), vec![Event::JoinRefused { peer: 1 }]);
+        h.add_spectator(2, 0);
+        assert_eq!(h.drain_events(), vec![]);
+        assert_eq!(h.peers[&2].seat, Seat::Spectator);
+    }
+
+    /// A world whose state is larger than any peer accepts.
+    struct Huge;
+
+    impl Simulation for Huge {
+        type Snapshot = ();
+        fn tick(&mut self, _keys: &[Keys]) {}
+        fn save(&mut self) {}
+        fn restore(&mut self, _s: &()) {}
+        fn forget_before(&mut self, _s: &()) {}
+        fn checksum(&self) -> u64 {
+            0
+        }
+        fn encode_state(&self) -> Vec<u8> {
+            alloc::vec![0; rl_proto::MAX_STATE + 1]
+        }
+        fn decode_state(&mut self, _bytes: &[u8]) -> Result<(), crate::StateRejected> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_state_too_large_to_send_fails_the_join() {
+        let mut h = Session::new(Config::new(1, 0), Role::Host { peers: vec![] }, Huge, 0);
+        h.add_spectator(5, 0);
+        h.advance(10_000, &mut Quiet);
+        let events = h.drain_events();
+        assert_eq!(events, vec![Event::RepairFailed { peer: 5 }]);
+        assert_eq!(h.peers[&5].checks.repair, Repair::Failed);
+        assert_eq!(h.stats.states_sent, 0);
     }
 
     #[test]
