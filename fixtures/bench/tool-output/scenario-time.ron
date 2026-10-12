@@ -1,0 +1,20 @@
+(
+    scenarios: [
+        (
+            name: "heavy-spikeballs",
+            tick_ns: [
+                150000,
+                160000,
+            ],
+            projectiles: [
+                2990,
+                3000,
+            ],
+            rand_calls: [
+                10,
+                20,
+            ],
+            matches_olx: Some(true),
+        ),
+    ],
+)

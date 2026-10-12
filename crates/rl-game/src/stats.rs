@@ -283,4 +283,35 @@ mod tests {
         assert_eq!((log.size, log.gpu.as_str()), ((1920, 1080), "test gpu"));
         assert_eq!(m.frame_log(100.0, (1, 1), "").frames, 0, "a run shorter than the skip");
     }
+
+    /// `--frame-log`'s RON, written as `main.rs` writes it, equals the
+    /// committed sample `xtask`'s envelope reads with its strict
+    /// `FrameLogOut` (`tool_outputs_parse`): a field renamed here fails
+    /// one test or the other instead of reading as a measured 0. After an
+    /// intended change, rewrite it with `RL_BLESS_TOOL_OUTPUT=1` and fix `xtask`.
+    #[test]
+    fn frame_log_sample() {
+        let pct = |b: f64| Pct { p50: b, p99: b * 2.0, max: b * 3.0 };
+        let log = FrameLog {
+            size: (3440, 1440),
+            gpu: "D3D12 (NVIDIA GeForce RTX 5070 Ti) (Gl, Other), Fifo, Bgra8Unorm".into(),
+            skipped_s: 3.0,
+            frames: 702,
+            seconds: 12.0,
+            fps: 58.5,
+            frame_ms: pct(16.9),
+            busy_ms: pct(12.6),
+            tick_ms: pct(0.2),
+        };
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/bench/tool-output/frame-log.ron");
+        let text = ron::ser::to_string_pretty(&log, ron::ser::PrettyConfig::default()).unwrap() + "\n";
+        if std::env::var_os("RL_BLESS_TOOL_OUTPUT").is_some() {
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, &text).unwrap();
+            return;
+        }
+        let committed = std::fs::read_to_string(&file).unwrap_or_default();
+        assert!(committed == text, "{} differs from what rl-game writes now:\n{text}", file.display());
+    }
 }

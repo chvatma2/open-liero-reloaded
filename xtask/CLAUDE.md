@@ -106,7 +106,12 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   took 7 min on this machine warm, 2026-10-12: sweeps 1 min, GPU 5 min
   with the Windows build cached, OLX 1 min; a cold Windows build adds a
   few). Modules: `results.rs` (the RON the tools write, read as
-  `*Out` with only the fields used; the kept `Envelope`; the pure
+  `*Out` with only the fields used and no defaults, so a field renamed
+  in a tool is a failed point saying why, never a measured 0; the
+  samples in `fixtures/bench/tool-output/` are kept equal to the tools'
+  output by `rl-cli`'s `tests/tool_output.rs` and `rl-game`'s
+  `frame_log_sample`, and `tool_outputs_parse` reads them; the kept
+  `Envelope`, lenient so older files read; the pure
   arithmetic, unit-tested: medians of runs, `Spread::of` nearest rank as
   `rl-cli`'s and `rl-game`'s (ruling PF8), breaking points per budget, the
   least-squares cost per unit, probe passes that fit, `compare`,

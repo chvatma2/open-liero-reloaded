@@ -167,6 +167,11 @@ a 4 s Deathmatch-bot one that fills some of the area cache, and chaos and
 Deathmatch runs on a small generated level (`gen-256x256-a2-s1`; the large
 ones run only in the envelope, ruling PF3), and a replay refused on
 assets other than its own, a pack level's and a generated one's.
+`tests/tool_output.rs` keeps `fixtures/bench/tool-output/` (`stress.ron`,
+`gpu-bench.ron`, `scenario-time.ron`) equal to what `stress --out`,
+`gpu-bench --out` and `scenario --time` write; `xtask`'s envelope reads
+them with its strict `*Out` structs, so a renamed field fails a test
+instead of reading as 0 (rewrite with `RL_BLESS_TOOL_OUTPUT=1`).
 `tests/gpu_bench.rs` (the GPU tier, `cargo xtask full`, `RL_GPU_TESTS=1`)
 records a short stress match and runs `gpu_bench::run` on it on the
 software adapter at 320 × 180 with a 2-pass probe (GPU probe time above 0

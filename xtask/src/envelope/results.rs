@@ -73,11 +73,13 @@ impl Default for Budgets {
     }
 }
 
-// ---- What the tools write (only the fields read here; every field defaults).
+// ---- What the tools write (only the fields read here). No field defaults:
+// a field renamed in the tool is an error (a failed point saying why), never
+// a measured 0; `tool_outputs_parse` ties these to the tools' own output.
+// Only the kept results below are lenient (older files still read).
 
 /// `rl-cli stress --out` (`rl_cli::stress::Report`).
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default)]
 pub struct StressOut {
     pub tick_us: Spread,
     pub sim_us: Spread,
@@ -98,7 +100,6 @@ pub struct StressOut {
 
 /// `rl-cli gpu-bench --out` (`rl_cli::gpu_bench::GpuReport`).
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default)]
 pub struct GpuReportOut {
     pub adapter: String,
     pub backend: String,
@@ -108,7 +109,6 @@ pub struct GpuReportOut {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default)]
 pub struct SizeOut {
     pub size: (u32, u32),
     pub tick_ms: Spread,
@@ -122,7 +122,6 @@ pub struct SizeOut {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default)]
 pub struct ProbeOut {
     pub passes: u32,
     pub ms: Spread,
@@ -132,7 +131,6 @@ pub struct ProbeOut {
 
 /// `rl-game --frame-log` (`rl_game::stats::FrameLog`).
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default)]
 pub struct FrameLogOut {
     pub size: (u32, u32),
     pub gpu: String,
@@ -144,7 +142,6 @@ pub struct FrameLogOut {
 
 /// `rl-cli scenario --time` (`rl_cli::timing`).
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default)]
 pub struct ScenarioTimingOut {
     pub name: String,
     pub tick_ns: Vec<u64>,
@@ -154,7 +151,6 @@ pub struct ScenarioTimingOut {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default)]
 pub struct TimingReportOut {
     pub scenarios: Vec<ScenarioTimingOut>,
 }
@@ -881,6 +877,86 @@ mod tests {
         let stored = Envelope { host: Host { cpus: 8, ..here.clone() }, ..Envelope::default() };
         assert!(crate::bench::host_notice(&stored.host, &here).unwrap().contains("another machine"));
         assert_eq!(path_for(&here), "fixtures/bench/envelope/x-12cpus.ron");
+    }
+
+    /// A tool's output missing a field xtask reads (renamed in the tool)
+    /// is an error, never a measured 0: only the stored results are
+    /// lenient (Review Focus 3).
+    #[test]
+    fn a_tool_output_missing_a_field_is_an_error() {
+        let spread = "(p50: 1.0, p99: 2.0, max: 3.0)";
+        let probe = format!("(passes: 2, ms: {spread}, gpu_dropped: 0)");
+        let size = format!(
+            "(size: (8, 8), tick_ms: {spread}, cpu_ms: {spread}, frame_ms: {spread}, total_ms: {spread}, \
+             gpu_ms: None, gpu_dropped: 0, probe: [{probe}])"
+        );
+        assert!(ron::from_str::<SizeOut>(&size).is_ok(), "{size}");
+        let renamed = size.replace("total_ms", "whole_ms");
+        let e = ron::from_str::<SizeOut>(&renamed).unwrap_err().to_string();
+        assert!(e.contains("total_ms"), "{e}");
+        assert!(ron::from_str::<ProbeOut>(&probe.replace("passes", "count")).is_err());
+        let frame_log = format!(
+            "(size: (8, 8), gpu: \"x\", frames: 3, fps: 60.0, frame_ms: {spread}, busy_ms: {spread})"
+        );
+        assert!(ron::from_str::<FrameLogOut>(&frame_log).is_ok());
+        assert!(ron::from_str::<FrameLogOut>(&frame_log.replace("busy_ms", "work_ms")).is_err());
+        let timing = "(name: \"x\", tick_ns: [1], projectiles: [0], rand_calls: [0], matches_olx: None)";
+        assert!(ron::from_str::<ScenarioTimingOut>(timing).is_ok());
+        assert!(ron::from_str::<ScenarioTimingOut>(&timing.replace("tick_ns", "ns")).is_err());
+        assert!(ron::from_str::<TimingReportOut>("()").is_err());
+        assert!(ron::from_str::<GpuReportOut>("(adapter: \"x\")").is_err());
+        assert!(ron::from_str::<StressOut>("(tick_us: (p50: 1.0, p99: 2.0, max: 3.0))").is_err());
+    }
+
+    /// The tools' own output (`fixtures/bench/tool-output/`, kept equal to
+    /// what `rl-cli` and `rl-game` write by their `tool_output` and
+    /// `frame_log_sample` tests) reads with every field xtask uses set:
+    /// none of them is a default 0.
+    #[test]
+    fn tool_outputs_parse() {
+        let read = |name: &str| {
+            std::fs::read_to_string(crate::root().join("fixtures/bench/tool-output").join(name)).unwrap()
+        };
+        let set = |s: Spread| s.p50 > 0.0 && s.p99 > 0.0 && s.max > 0.0;
+        let r: StressOut = ron::from_str(&read("stress.ron")).unwrap();
+        assert!(
+            [r.tick_us, r.sim_us, r.think_us, r.present_us, r.build_us].into_iter().all(set)
+                && [r.pool_capacity, r.projectiles_peak, r.fx_peak, r.fx_capacity, r.events_max]
+                    .iter()
+                    .all(|&n| n > 0)
+                && r.ticks_at_pool_cap > 0
+                && r.ticks_at_fx_cap > 0
+                && r.peak_mib.is_some()
+                && r.area_cache.0 > 0
+                && !r.caps.is_empty(),
+            "{r:?}"
+        );
+        let g: GpuReportOut = ron::from_str(&read("gpu-bench.ron")).unwrap();
+        assert!(!g.adapter.is_empty() && !g.backend.is_empty() && !g.device_type.is_empty() && g.timestamps);
+        let z = &g.sizes[0];
+        assert!(z.size.0 > 0 && [z.tick_ms, z.cpu_ms, z.frame_ms, z.total_ms].into_iter().all(set), "{z:?}");
+        assert!(z.gpu_ms.is_some_and(set) && z.gpu_dropped > 0, "{z:?}");
+        assert!(z.probe[1].passes > 0 && set(z.probe[1].ms) && z.probe[1].gpu_dropped > 0, "{z:?}");
+        let f: FrameLogOut = ron::from_str(&read("frame-log.ron")).unwrap();
+        assert!(
+            f.size.0 > 0
+                && !f.gpu.is_empty()
+                && f.frames > 0
+                && f.fps > 0.0
+                && set(f.frame_ms)
+                && set(f.busy_ms),
+            "{f:?}"
+        );
+        let t: TimingReportOut = ron::from_str(&read("scenario-time.ron")).unwrap();
+        let sc = &t.scenarios[0];
+        assert!(
+            !sc.name.is_empty()
+                && !sc.tick_ns.is_empty()
+                && !sc.projectiles.is_empty()
+                && !sc.rand_calls.is_empty()
+                && sc.matches_olx.is_some(),
+            "{sc:?}"
+        );
     }
 
     /// Review Focus 3.

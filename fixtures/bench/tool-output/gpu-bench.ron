@@ -1,0 +1,64 @@
+(
+    adapter: "NVIDIA GeForce RTX 5070 Ti",
+    backend: "Vulkan",
+    device_type: "DiscreteGpu",
+    timestamps: true,
+    scene: "olx-mw-1-0 on olx-level-castlestrike",
+    start_tick: 1000,
+    sizes: [
+        (
+            size: (2560, 1440),
+            frames: 600,
+            tick_ms: (
+                p50: 0.6,
+                p99: 1.2,
+                max: 1.7999999999999998,
+            ),
+            cpu_ms: (
+                p50: 0.3,
+                p99: 0.6,
+                max: 0.8999999999999999,
+            ),
+            frame_ms: (
+                p50: 0.4,
+                p99: 0.8,
+                max: 1.2000000000000002,
+            ),
+            total_ms: (
+                p50: 1.0,
+                p99: 2.0,
+                max: 3.0,
+            ),
+            gpu_ms: Some((
+                p50: 0.02,
+                p99: 0.04,
+                max: 0.06,
+            )),
+            gpu_dropped: 2,
+            probe: [
+                (
+                    passes: 0,
+                    taps: 9,
+                    ms: (
+                        p50: 0.05,
+                        p99: 0.1,
+                        max: 0.15000000000000002,
+                    ),
+                    timed_on_gpu: true,
+                    gpu_dropped: 1,
+                ),
+                (
+                    passes: 4,
+                    taps: 9,
+                    ms: (
+                        p50: 0.2,
+                        p99: 0.4,
+                        max: 0.6000000000000001,
+                    ),
+                    timed_on_gpu: true,
+                    gpu_dropped: 1,
+                ),
+            ],
+        ),
+    ],
+)
