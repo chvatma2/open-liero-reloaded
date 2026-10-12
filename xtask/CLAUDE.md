@@ -113,7 +113,10 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `frame_log_sample`, and `tool_outputs_parse` reads them; the kept
   `Envelope`, lenient so older files read; the pure
   arithmetic, unit-tested: medians of runs, `Spread::of` nearest rank as
-  `rl-cli`'s and `rl-game`'s (ruling PF8), breaking points per budget, the
+  `rl-cli`'s and `rl-game`'s (ruling PF8), breaking points per budget
+  (a map or art point's frame is `Point::frame_p99_ms`: its level's
+  `gpu-bench` tick and frame, which replay recorded inputs and so hold
+  no route finding, plus the point's bots' think p99), the
   least-squares cost per unit, probe passes that fit, `compare`,
   `merged`); `sweeps.rs` (each point is `rl-cli stress` in release in its
   own process, from the reference configuration: Classic on Castle

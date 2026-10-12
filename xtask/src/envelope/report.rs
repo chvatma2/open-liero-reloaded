@@ -47,7 +47,7 @@ fn point_row(p: &Point, b: &Budgets) -> String {
     if p.runs == 0 {
         return format!("| {} | — | — | — | — | — | — | — | — | — | — | {} |", p.value, p.caps.join("; "));
     }
-    let frame = p.frame.as_ref().map_or("—".to_string(), |f| format!("{:.2}", f.total_ms.p99));
+    let frame = p.frame_p99_ms().map_or("—".to_string(), |f| format!("{f:.2}"));
     let c = results::causes(p, b, b.frame_144_ms);
     let holds = if c.is_empty() { "yes".to_string() } else { c.join("; ") };
     let sat = if p.saturated.is_empty() { String::new() } else { format!(" ({})", p.saturated.join("; ")) };
@@ -72,7 +72,7 @@ fn sweep(o: &mut String, s: &Sweep, b: &Budgets) {
     let _ = writeln!(
         o,
         "| value | tick p50 / p99 (ms) | budget used | sim p99 | bots p99 | presentation p99 | draw list p99 | \
-         projectiles | effects | MiB | frame p99 (ms) | holds at 144 Hz |\n|---|---|---|---|---|---|---|---|---|---|---|---|"
+         projectiles | effects | MiB | frame with bots p99 (ms) | holds at 144 Hz |\n|---|---|---|---|---|---|---|---|---|---|---|---|"
     );
     for p in &s.points {
         let _ = writeln!(o, "{}", point_row(p, b));
@@ -80,7 +80,9 @@ fn sweep(o: &mut String, s: &Sweep, b: &Budgets) {
     if let Some(f) = s.points.iter().find_map(|p| p.frame.as_ref()) {
         let _ = writeln!(
             o,
-            "\nFrame: the point's level drawn offscreen at {} on {} (a tick and a frame, `rl-cli gpu-bench`).",
+            "\nFrame with bots: the point's level drawn offscreen at {} on {} (`rl-cli gpu-bench`: a tick and a \
+             frame; it replays recorded inputs, so its tick has no bots' thinking) plus the point's bots p99 \
+             above: a sum of p99s, so a bound. This is the frame the 144 Hz and 60 Hz budgets judge.",
             size(f.size),
             f.path
         );
@@ -185,8 +187,9 @@ fn gpu(o: &mut String, key: &str, g: &GpuPath, b: &Budgets) {
     }
     let _ = writeln!(
         o,
-        "\nThe heavy replay (MW 1.0, 32 chaos bots, a 20 000 pool) offscreen, a tick and a frame each:\n\n\
-         | size | tick + frame p50 / p99 (ms) | frame p99, CPU then GPU (ms) | GPU p99 (ms) |\n|---|---|---|---|"
+        "\nThe heavy replay (MW 1.0, 32 chaos bots, a 20 000 pool) offscreen, a tick and a frame each (the \
+         replay's recorded inputs: its tick has no bots' thinking):\n\n\
+         | size | tick (no bots) + frame p50 / p99 (ms) | frame p99, CPU then GPU (ms) | GPU p99 (ms) |\n|---|---|---|---|"
     );
     for s in &g.sizes {
         let gp = s.gpu_ms.map_or("—".to_string(), |x| format!("{:.2}", x.p99));
@@ -218,7 +221,8 @@ fn gpu(o: &mut String, key: &str, g: &GpuPath, b: &Budgets) {
     if !g.levels.is_empty() {
         let _ = writeln!(
             o,
-            "\nThe sweeps' levels drawn offscreen:\n\n| axis | value | size | tick + frame p99 (ms) | GPU p99 (ms) |\n|---|---|---|---|---|"
+            "\nThe sweeps' levels drawn offscreen (their replays: the tick has no bots' thinking; the sweeps' \
+             tables add it):\n\n| axis | value | size | tick (no bots) + frame p99 (ms) | GPU p99 (ms) |\n|---|---|---|---|---|"
         );
         for l in &g.levels {
             let gp = l.gpu_ms.map_or("—".to_string(), |x| format!("{:.2}", x.p99));
@@ -495,6 +499,25 @@ mod tests {
         ] {
             assert!(doc.contains(want), "missing {want:?} in:\n{doc}");
         }
+    }
+
+    /// A sweep's frame column and its 144 Hz verdict use one figure: the
+    /// level's tick and frame plus the bots' thinking.
+    #[test]
+    fn the_sweep_frame_includes_the_bots_thinking() {
+        use crate::envelope::results::FrameCheck;
+        let mut e = env();
+        let w = e.sweeps.get_mut("worms").unwrap();
+        w.points[0].think_us = Spread { p50: 500.0, p99: 1500.0, max: 1500.0 };
+        w.points[0].frame = Some(FrameCheck {
+            path: "wsl-gl".into(),
+            size: (2560, 1440),
+            total_ms: Spread { p50: 3.0, p99: 6.0, max: 6.0 },
+            gpu_ms: None,
+        });
+        let doc = render(&e, "s");
+        assert!(doc.contains("| 7.50 | frame p99 7.50 ms (6.00 drawn + 1.50 bots) > 6.9 ms |"), "{doc}");
+        assert!(doc.contains("frame with bots p99 (ms)") && doc.contains("no bots' thinking"), "{doc}");
     }
 
     /// The shader headroom is the GPU side of a frame, not the whole frame.

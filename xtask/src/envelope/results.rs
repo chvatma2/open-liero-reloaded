@@ -415,10 +415,14 @@ pub fn causes(p: &Point, b: &Budgets, frame_budget_ms: f64) -> Vec<String> {
     if p.peak_mib > b.memory_mib {
         c.push(format!("memory {:.0} MiB > {:.0} MiB", p.peak_mib, b.memory_mib));
     }
-    if let Some(f) = &p.frame
-        && f.total_ms.p99 > frame_budget_ms
+    if let (Some(f), Some(frame)) = (&p.frame, p.frame_p99_ms())
+        && frame > frame_budget_ms
     {
-        c.push(format!("frame p99 {:.2} ms > {:.1} ms", f.total_ms.p99, frame_budget_ms));
+        c.push(format!(
+            "frame p99 {frame:.2} ms ({:.2} drawn + {:.2} bots) > {frame_budget_ms:.1} ms",
+            f.total_ms.p99,
+            p.think_us.p99 / 1000.0
+        ));
     }
     c.extend(p.caps.iter().map(|x| format!("cap: {x}")));
     c
@@ -695,6 +699,14 @@ pub fn load_average() -> Option<f64> {
 }
 
 impl Point {
+    /// The whole frame's p99 (spec §3), ms: the level's tick and frame
+    /// (`gpu-bench`, which replays recorded inputs, so its tick has no
+    /// bots' thinking) plus the point's bots' thinking p99 from the sweep.
+    /// A sum of p99s: a bound, not a measured percentile.
+    pub fn frame_p99_ms(&self) -> Option<f64> {
+        self.frame.as_ref().map(|f| f.total_ms.p99 + self.think_us.p99 / 1000.0)
+    }
+
     /// One line for the console.
     pub fn line(&self) -> String {
         if self.runs == 0 {
@@ -767,6 +779,21 @@ mod tests {
         assert_eq!(breaking(&points, &b, b.frame_60_ms).unwrap().value, "8", "but holds 60 Hz");
         points[0].caps.push("the bots' area cache is full (4096 areas)".into());
         assert_eq!(breaking(&points, &b, b.frame_60_ms).unwrap().value, "2");
+    }
+
+    /// gpu-bench replays recorded inputs, so its tick has no route
+    /// finding: the frame judged is its tick and frame plus the point's
+    /// bots' thinking p99 from the sweep (spec §3: the whole frame).
+    #[test]
+    fn the_frame_judged_includes_the_bots_thinking() {
+        let b = Budgets::default();
+        let mut p = pt("4096x4096", 1.0, 1300.0);
+        p.think_us = s(400.0, 1200.0);
+        p.frame = Some(FrameCheck { total_ms: s(5.0, 6.0), ..FrameCheck::default() });
+        assert!((p.frame_p99_ms().unwrap() - 7.2).abs() < 1e-9, "{:?}", p.frame_p99_ms());
+        let c = causes(&p, &b, b.frame_144_ms);
+        assert_eq!(c, ["frame p99 7.20 ms (6.00 drawn + 1.20 bots) > 6.9 ms"], "6 ms alone would hold");
+        assert!(causes(&p, &b, b.frame_60_ms).is_empty());
     }
 
     /// Review Focus 1.
