@@ -2,7 +2,7 @@
 //! loop over the simulation, interpolated wgpu rendering with cosmetic
 //! entities, sound, input and an egui overlay. It plays the M5 sandbox
 //! (spec §19 E11: one player and idle targets on any level and mod), a
-//! Deathmatch against bots (M6) and replays.
+//! Deathmatch against bots (M6), replays and online matches (plan 10).
 //!
 //! The pure parts (the tick clock, the surface state machine, window
 //! requests and the window-system choice, the sandbox setup, scripts,
@@ -16,6 +16,7 @@ pub mod drive;
 pub mod gpu;
 pub mod hud;
 pub mod latency;
+pub mod online;
 pub mod overlay;
 pub mod script;
 pub mod session;

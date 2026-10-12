@@ -116,7 +116,7 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
     let world_p = ui.painter().with_clip_rect(o.map.points_rect());
     let p = &world_p;
     let s = o.session;
-    let world = &s.world;
+    let world = s.world();
     let small = FontId::proportional(13.0);
     let k = o.map.scale();
     let worms = crate::hud::worms_on_screen(s, &o.map, o.alpha);
@@ -193,8 +193,8 @@ fn debug(p: &Painter, rect: egui::Rect, o: &Overlay) {
         format!(
             "entities {}   projectiles {}   worms {}   voices {}",
             s.present.fx.len(),
-            s.world.projectiles().count(),
-            s.world.worms().iter().filter(|w| w.alive).count(),
+            s.world().projectiles().count(),
+            s.world().worms().iter().filter(|w| w.alive).count(),
             s.audio.playing()
         ),
         format!("{:?} interpolation, alpha {:.2}", s.present.scene.options.interpolation, o.alpha),

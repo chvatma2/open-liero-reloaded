@@ -1,21 +1,33 @@
 //! One match without a window: the world and who plays it (`drive.rs`:
-//! the sandbox's player, a Deathmatch's player and bots, a replay), its
-//! presentation (`rl_present::Presentation`: scene, cosmetic entities,
-//! colour terrain, atlas images), sound, the damage popups and the match
-//! HUD's state (`hud.rs`). The window and GPU (`app.rs`, `gpu.rs`) drive it.
+//! the sandbox's player, a Deathmatch's player and bots, a replay;
+//! `online.rs`: an online match), its presentation
+//! (`rl_present::Presentation`: scene, cosmetic entities, colour terrain,
+//! atlas images), sound, the damage popups and the match HUD's state
+//! (`hud.rs`). The window and GPU (`app.rs`, `gpu.rs`) drive it.
+//!
+//! The player plays the local slot ([`Session::local`]: any worm, not
+//! always worm 0; `None` when nobody here plays: a replay, bots alone, an
+//! online match watched). Its keys, name, look, camera, crosshair, HUD,
+//! minimap dot, scoreboard row, kills, deaths and spawns are that slot's.
+//! Every worm wears its own look ([`WormLook`]).
+
+use std::time::Instant;
 
 use rl_audio::Audio;
 use rl_content::{LoadedSkin, MatchAssets};
 use rl_math::Vec2;
 use rl_modes::Deathmatch;
+use rl_netcode::world_sim::ConfirmedTick;
+use rl_online::OnlineEvent;
 use rl_present::{PresentSetup, Presentation, default_colour};
 use rl_replay::Replay;
 use rl_scene::{DrawList, Interpolation, SceneOptions, Viewport};
-use rl_sim::{EventKind, Keys, TickEvents, World};
+use rl_sim::{Event, EventKind, Keys, MatchResult, Score, TickEvents, World};
 
 use rl_ui::hud::{Log, LogLine, Names, Results, message_text};
 
 use crate::drive::{MatchDriver, ReplayDriver};
+use crate::online::OnlineDriver;
 use crate::setup::{Assets, Game};
 
 /// How often (ticks) debug builds check that the colour terrain's material
@@ -44,18 +56,30 @@ pub struct Popup {
 pub enum Driver {
     /// The player (worm 0) and idle targets.
     Sandbox,
-    /// The player (worm 0) and bots.
+    /// The player (its slot, if one plays) and bots.
     Match(Box<MatchDriver>),
     /// A replay's keys.
     Replay(ReplayDriver),
+    /// An online match: its peer ticks it ([`Session::frame`], never
+    /// [`Session::tick`]).
+    Online(Box<OnlineDriver>),
+}
+
+/// How one worm looks: the name over it and in the HUD, its colour (the
+/// skin's tint, the minimap's dot) and its skin.
+#[derive(Clone, Debug)]
+pub struct WormLook {
+    pub name: String,
+    pub colour: [u8; 3],
+    pub skin: LoadedSkin,
 }
 
 /// Kills and time over the whole run (rematches included), for the exit
 /// summary.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Tally {
-    /// Kills of another worm by a bot, by the player (worm 0 when it is
-    /// not a bot), and suicides.
+    /// Kills of another worm by a bot, by the player (the local slot),
+    /// and suicides.
     pub bot_kills: u64,
     pub player_kills: u64,
     pub suicides: u64,
@@ -71,9 +95,12 @@ impl Tally {
     }
 }
 
-/// A match: worm 0 is the player (or, in a replay, the worm the camera
-/// follows).
+/// A match: the local slot is the player's (if one plays); the camera and
+/// the HUD follow it, or the worm a watcher chose ([`Session::follow`]).
 pub struct Session {
+    /// The world. An online match's is its peer's ([`Session::world`]):
+    /// this one is the newest kept since the match ended there (its start
+    /// until then).
     pub world: World,
     pub present: Presentation,
     pub events: TickEvents,
@@ -95,10 +122,15 @@ pub struct Session {
     pub player_spawns: u32,
     /// Rematches so far (the seed of rematch `n` is the match's plus `n`).
     pub rematches: u32,
-    /// A person plays worm 0 (`Assets::human_plays`, again at each
-    /// restart); otherwise the game is watched (a replay, bots alone) and
-    /// may run fast (`speed.rs`).
+    /// A person plays (`Assets::human_plays`, again at each restart; an
+    /// online match always counts); otherwise the game is watched (a
+    /// replay, bots alone) and may run fast (`speed.rs`).
     human: bool,
+    /// The slot this player controls; `None`: watching.
+    local: Option<u8>,
+    /// Every worm's look, by index (a worm a mode spawns mid-match gets a
+    /// default one).
+    looks: Vec<WormLook>,
     /// The ticks play their sounds (the app thins them out when the game
     /// runs fast: `Speed::sound`). The world never sees it.
     pub sound: bool,
@@ -109,13 +141,8 @@ pub struct Session {
     ended_at: Option<u64>,
     /// Worms the presentation knows (a worm spawned mid-match is added).
     shown: usize,
-    /// The human's skin (worm 0 when a human plays), and everyone else's.
-    skin: LoadedSkin,
-    bot_skin: LoadedSkin,
-    /// The player's colour (a profile's), else `default_colour(0)`.
-    colour: Option<rl_data::image::Rgba>,
-    /// Every worm's colour, as `add_worm` got it (the minimap's dots).
-    colours: Vec<[u8; 3]>,
+    /// OLX's default skin (a worm spawned mid-match wears it).
+    default_skin: LoadedSkin,
 }
 
 /// The world and driver `a` starts with, rematch `n`.
@@ -132,28 +159,98 @@ fn start(a: &Assets, n: u32) -> anyhow::Result<(World, Driver)> {
             let world = r.world(rl_content::replay_assets_from(&a.m, &a.level, &a.theme))?;
             (world, Driver::Replay(ReplayDriver::new(r.clone())))
         }
+        Game::Online { .. } => anyhow::bail!("an online match's world is its peer's (Session::online)"),
     })
 }
 
-/// The worms' names: the player is "You", the others are numbered from 1
-/// (a replay's worms all, from 1; bots alone all, from 1).
-fn names(a: &Assets, worms: usize) -> Names {
-    let human = a.human_plays();
-    let name = |i: usize| match a.game {
-        Game::Replay(_) => format!("Worm {}", i + 1),
-        Game::Deathmatch { .. } if !human => format!("Bot {}", i + 1),
-        _ if i == 0 => a.player.as_ref().map_or_else(|| "You".into(), |p| p.name.clone()),
-        Game::Sandbox(_) => format!("Target {i}"),
-        Game::Deathmatch { .. } => format!("Bot {i}"),
+fn rgb(c: rl_data::image::Rgba) -> [u8; 3] {
+    [c.r, c.g, c.b]
+}
+
+/// The looks of `a`'s first `n` worms. An online match's are the lobby's
+/// (every member's and bot's name, colour and skin). Otherwise the player
+/// (the local slot) has the profile's name ("You" without one), colour
+/// (else the default first colour) and skin; the others are numbered from
+/// 1 in worm order ("Target N" in the sandbox, "Bot N"), in OLX's bot
+/// colours away from the player's and the default skin; a game nobody
+/// plays numbers every worm from 1 ("Worm N" in a replay, whose looks are
+/// not recorded) in the default colours.
+fn looks(a: &Assets, n: usize) -> Vec<WormLook> {
+    let default = |i: usize| WormLook {
+        name: format!("Worm {}", i + 1),
+        colour: rgb(default_colour(i)),
+        skin: a.bot_skin.clone(),
     };
-    Names((0..worms).map(name).collect())
+    if let Game::Online { start, .. } = &a.game {
+        let lobby = start.slots.iter().map(|s| WormLook {
+            name: s.look.name.clone(),
+            colour: s.look.colour,
+            skin: a.skin_of(&s.look.skin).clone(),
+        });
+        return lobby.chain((start.slots.len()..n).map(default)).collect();
+    }
+    let local = a.local_slot().map(usize::from).filter(|&i| i < n);
+    let mine = a.player.as_ref().map_or_else(|| rgb(default_colour(0)), |p| p.colour);
+    let others = if local.is_some() { rl_ui::bot_colours(mine, n.saturating_sub(1)) } else { Vec::new() };
+    let mut other = 0;
+    (0..n)
+        .map(|i| {
+            if Some(i) == local {
+                let name = a.player.as_ref().map_or_else(|| "You".into(), |p| p.name.clone());
+                return WormLook { name, colour: mine, skin: a.skin.clone() };
+            }
+            other += 1;
+            let name = match a.game {
+                Game::Replay(_) => format!("Worm {}", i + 1),
+                _ if local.is_none() => format!("Bot {}", i + 1),
+                Game::Sandbox(_) => format!("Target {other}"),
+                _ => format!("Bot {other}"),
+            };
+            let colour = others.get(other - 1).copied().unwrap_or_else(|| rgb(default_colour(i)));
+            WormLook { name, colour, skin: a.bot_skin.clone() }
+        })
+        .collect()
+}
+
+/// The Deathmatch's time left in `world`, if it plays one with a limit.
+fn mode_time_left(world: &World) -> Option<u64> {
+    world.mode_state().as_any().downcast_ref::<Deathmatch>()?.time_left_ms()
+}
+
+/// Where the worms were after a tick (the damage popups').
+enum Positions<'a> {
+    World(&'a World),
+    Listed(&'a [(i32, Vec2)]),
+}
+
+impl Positions<'_> {
+    fn of(&self, worm: i32) -> Option<Vec2> {
+        match self {
+            Positions::World(w) => w.worms().iter().find(|w| w.id == worm).map(|w| w.pos),
+            Positions::Listed(l) => l.iter().find(|(id, _)| *id == worm).map(|&(_, p)| p),
+        }
+    }
+}
+
+/// One tick as the HUD's bookkeeping reads it (`Session::after_tick`): a
+/// local tick's world and events, or an online match's confirmed tick
+/// (`rl_netcode::world_sim::ConfirmedTick`, spec §3.4).
+struct TickView<'a> {
+    /// The ticks played with it (its number plus one).
+    played: u64,
+    events: &'a [Event],
+    scores: &'a [Score],
+    time_left_ms: Option<u64>,
+    result: Option<MatchResult>,
+    positions: Positions<'a>,
 }
 
 impl Session {
     /// A new match of `a`'s game seen through `viewport`, with its sound
     /// output `audio` (already loaded with the mod's sounds). Registers every
     /// image (scene, each worm's skin and gibs, entities); the caller's
-    /// `Presentation::upload` sends them to the renderer.
+    /// `Presentation::upload` sends them to the renderer. An online match
+    /// starts with [`Session::online`].
     pub fn new(
         a: &Assets,
         viewport: Viewport,
@@ -165,7 +262,52 @@ impl Session {
             Game::Sandbox(s) => s.seed,
             Game::Deathmatch { options, .. } => options.seed,
             Game::Replay(r) => r.setup.seed,
+            Game::Online { start, .. } => start.seed,
         };
+        Ok(Session::assemble(a, world, driver, seed, viewport, interpolation, audio))
+    }
+
+    /// The online match `a` describes (`setup::load_online`), played by
+    /// `driver`'s peer, which has just started it: its world is the
+    /// peer's. The peer's events polled after its `MatchStarting` go to
+    /// [`Session::present_events`]; from then on [`Session::frame`] polls
+    /// it.
+    pub fn online(
+        a: &Assets,
+        driver: OnlineDriver,
+        viewport: Viewport,
+        interpolation: Interpolation,
+        audio: Audio,
+    ) -> anyhow::Result<Session> {
+        let Game::Online { start, my_slot } = &a.game else { anyhow::bail!("not an online match") };
+        let world = driver.world().ok_or_else(|| anyhow::anyhow!("the peer plays no match"))?.clone();
+        anyhow::ensure!(world.worms().len() == start.slots.len(), "the match's worms are not its slots");
+        anyhow::ensure!(driver.peer().my_slot() == *my_slot, "the peer plays another slot");
+        let ticks = driver.peer().match_session().map_or(0, |s| u64::from(s.current_tick()));
+        let mut s = Session::assemble(
+            a,
+            world,
+            Driver::Online(Box::new(driver)),
+            start.seed,
+            viewport,
+            interpolation,
+            audio,
+        );
+        s.ticks = ticks;
+        Ok(s)
+    }
+
+    /// The session of `world` played by `driver`, its presentation made
+    /// and every worm registered with its look.
+    fn assemble(
+        a: &Assets,
+        world: World,
+        driver: Driver,
+        seed: u32,
+        viewport: Viewport,
+        interpolation: Interpolation,
+        audio: Audio,
+    ) -> Session {
         let setup = PresentSetup {
             core: a.content.core(),
             m: &a.m,
@@ -175,10 +317,14 @@ impl Session {
             options: SceneOptions { interpolation, show_health_bars: false },
             seed,
         };
-        let present = Presentation::new(&setup, &world);
+        let mut present = Presentation::new(&setup, &world);
+        let local = a.local_slot();
+        present.follow(local.map_or(0, i32::from));
         let n = world.worms().len();
+        let looks = looks(a, n.max(a.worms()));
         let mut s = Session {
-            names: names(a, n.max(a.worms())),
+            names: Names(looks.iter().map(|l| l.name.clone()).collect()),
+            time_left_ms: mode_time_left(&world),
             world,
             present,
             events: TickEvents::new(),
@@ -186,55 +332,45 @@ impl Session {
             popups: Vec::with_capacity(64),
             driver,
             log: Log::default(),
-            time_left_ms: None,
             results: None,
             tally: Tally::default(),
             player_deaths: 0,
             player_spawns: 0,
             rematches: 0,
             human: a.human_plays(),
+            local,
+            looks,
             sound: true,
             keys: vec![Keys(0); n],
             ticks: 0,
             ended_at: None,
             shown: 0,
-            skin: a.skin.clone(),
-            bot_skin: a.bot_skin.clone(),
-            colour: a
-                .player
-                .as_ref()
-                .map(|p| rl_data::image::Rgba::rgb(p.colour[0], p.colour[1], p.colour[2])),
-            colours: Vec::new(),
+            default_skin: a.bot_skin.clone(),
         };
         s.show_new_worms();
-        s.time_left_ms = s.mode_time_left();
-        Ok(s)
+        s
     }
 
     /// Registers the worms the presentation does not know yet (all at the
-    /// start; a worm a mode spawns mid-match later, which marks the atlas
-    /// for upload).
+    /// start; a worm a mode spawns mid-match later, in a default look,
+    /// which marks the atlas for upload). The local slot's worm has the
+    /// crosshair.
     fn show_new_worms(&mut self) {
-        let human = self.human;
-        let mine = self.colour.unwrap_or_else(|| default_colour(0));
-        while self.shown < self.world.worms().len() {
+        let n = self.world().worms().len();
+        while self.shown < n {
             let i = self.shown;
-            let player = i == 0 && human;
-            // The others in OLX's bot colours, none close to the player's
-            // (a replay's worms, and bots alone, in the default colours: a
-            // replay's looks are not recorded). Cosmetic: the world never
-            // sees them.
-            let colour = if player {
-                mine
-            } else if human {
-                let [r, g, b] = rl_ui::bot_colours([mine.r, mine.g, mine.b], i)[i - 1];
-                rl_data::image::Rgba::rgb(r, g, b)
-            } else {
-                default_colour(i)
-            };
-            let skin = if player { &self.skin } else { &self.bot_skin };
-            self.present.add_worm(skin, colour, i == 0, player);
-            self.colours.push([colour.r, colour.g, colour.b]);
+            if self.looks.len() <= i {
+                let skin = self.default_skin.clone();
+                self.looks.push(WormLook {
+                    name: format!("Worm {}", i + 1),
+                    colour: rgb(default_colour(i)),
+                    skin,
+                });
+            }
+            let look = &self.looks[i];
+            let [r, g, b] = look.colour;
+            let mine = self.local.is_some_and(|l| usize::from(l) == i);
+            self.present.add_worm(&look.skin, rl_data::image::Rgba::rgb(r, g, b), mine, mine);
             self.shown += 1;
         }
         if self.keys.len() < self.shown {
@@ -242,24 +378,76 @@ impl Session {
         }
         while self.names.0.len() < self.shown {
             let i = self.names.0.len();
-            self.names.0.push(format!("Worm {}", i + 1));
+            self.names.0.push(self.looks[i].name.clone());
         }
     }
 
-    /// The Deathmatch's time left, if the world plays one with a limit.
-    fn mode_time_left(&self) -> Option<u64> {
-        self.world.mode_state().as_any().downcast_ref::<Deathmatch>()?.time_left_ms()
+    /// The world drawn: the session's, or an online match's newest
+    /// predicted one (its peer's; the last kept once the peer ended it).
+    pub fn world(&self) -> &World {
+        match &self.driver {
+            Driver::Online(d) => d.world().unwrap_or(&self.world),
+            _ => &self.world,
+        }
+    }
+
+    /// The scores the HUD shows: the world's, an online match's after its
+    /// last confirmed tick (spec §3.4).
+    pub fn scores(&self) -> &[Score] {
+        match &self.driver {
+            Driver::Online(d) => d.confirmed_scores(),
+            _ => self.world.scores(),
+        }
+    }
+
+    /// The slot this player controls; `None` when nobody here plays (a
+    /// replay, bots alone, an online match watched).
+    pub fn local(&self) -> Option<u8> {
+        self.local
+    }
+
+    /// The worm the camera and the HUD follow: the local slot's, else the
+    /// one chosen ([`Session::follow`]; worm 0 at first).
+    pub fn followed(&self) -> i32 {
+        self.present.followed()
+    }
+
+    /// Whether this is an online match nobody here plays: PageUp and
+    /// PageDown choose the worm followed ([`Session::follow_next`]).
+    pub fn spectating(&self) -> bool {
+        matches!(self.driver, Driver::Online(_)) && self.local.is_none()
+    }
+
+    /// The camera and the HUD follow worm `slot`.
+    pub fn follow(&mut self, slot: u8) {
+        self.present.follow(i32::from(slot));
+    }
+
+    /// A watcher's next (`step` 1) or previous (-1) worm to follow, in
+    /// worm order, round; the player's camera stays on its own worm.
+    pub fn follow_next(&mut self, step: i32) {
+        let n = self.world().worms().len() as i64;
+        if self.local.is_some() || n == 0 {
+            return;
+        }
+        let next = (i64::from(self.followed()) + i64::from(step)).rem_euclid(n);
+        self.present.follow(next as i32);
     }
 
     /// The Deathmatch's kill limit, if on.
     pub fn kill_limit(&self) -> Option<i32> {
-        let k = self.world.mode_state().as_any().downcast_ref::<Deathmatch>()?.settings().kill_limit;
+        let k = self.world().mode_state().as_any().downcast_ref::<Deathmatch>()?.settings().kill_limit;
         (k > 0).then_some(k)
     }
 
     /// Worm `i`'s colour (black for one not shown yet).
     pub fn colour(&self, i: usize) -> [u8; 3] {
-        self.colours.get(i).copied().unwrap_or([0; 3])
+        self.looks.get(i).filter(|_| i < self.shown).map_or([0; 3], |l| l.colour)
+    }
+
+    /// Every worm's look, by index.
+    pub fn looks(&self) -> &[WormLook] {
+        &self.looks
     }
 
     /// F5: the sandbox or replay from the start, or a Deathmatch's rematch
@@ -284,6 +472,7 @@ impl Session {
         anyhow::ensure!(world.worms().len() == self.shown, "the restarted match has other worms");
         let old = self.take_replay();
         self.human = a.human_plays();
+        self.local = a.local_slot();
         self.rematches = n;
         self.world = world;
         self.driver = driver;
@@ -293,7 +482,7 @@ impl Session {
         self.log.clear();
         self.results = None;
         self.ended_at = None;
-        self.time_left_ms = self.mode_time_left();
+        self.time_left_ms = mode_time_left(&self.world);
         self.keys.fill(Keys(0));
         // The rematch's bots think first: the last match's events are not theirs.
         self.events = TickEvents::new();
@@ -319,13 +508,15 @@ impl Session {
         }
     }
 
-    /// Whether a person plays worm 0; a game nobody plays (a replay, bots
+    /// Whether a person plays (an online match counts, watched too: it
+    /// runs at the host's pace); a game nobody plays (a replay, bots
     /// alone) may run fast (`speed.rs`).
     pub fn human(&self) -> bool {
         self.human
     }
 
-    /// Ticks since the match (re)started.
+    /// Ticks since the match (re)started (an online match's: its newest
+    /// predicted tick).
     pub fn ticks(&self) -> u64 {
         self.ticks
     }
@@ -340,7 +531,7 @@ impl Session {
 
     /// Ticks since the match ended, once it has.
     pub fn since_end(&self) -> Option<u64> {
-        self.ended_at.map(|t| self.ticks - t)
+        self.ended_at.map(|t| self.ticks.saturating_sub(t))
     }
 
     /// A window of another shape: the camera's viewport follows.
@@ -348,27 +539,25 @@ impl Session {
         self.present.set_viewport(viewport);
     }
 
-    /// One 100 Hz tick with the player holding `player` (the sandbox's
-    /// targets hold nothing; a Deathmatch's bots think first; bots alone
-    /// and a replay ignore `player`; a replay plays its keys and stops at
-    /// its end): the simulation, then the cosmetic entities (which replay
-    /// the tick's terrain edits on the colour map and rebuild any area the
-    /// tick lost), the sounds at the view centre (unless [`Session::sound`]
-    /// is off), the scene's history and marks, the damage popups and the
-    /// HUD. Debug builds check every [`DRIFT_CHECK_TICKS`] that the colour
-    /// terrain has not drifted. Whether the world ticked (not after a
-    /// replay's end).
+    /// One 100 Hz tick with the player (the local slot) holding `player`
+    /// (the sandbox's targets hold nothing; a Deathmatch's bots think
+    /// first; bots alone and a replay ignore `player`; a replay plays its
+    /// keys and stops at its end; an online match never ticks here:
+    /// [`Session::frame`]): the simulation, then the cosmetic entities
+    /// (which replay the tick's terrain edits on the colour map and
+    /// rebuild any area the tick lost), the sounds at the view centre
+    /// (unless [`Session::sound`] is off), the scene's history and marks,
+    /// the damage popups and the HUD. Debug builds check every
+    /// [`DRIFT_CHECK_TICKS`] that the colour terrain has not drifted.
+    /// Whether the world ticked (not after a replay's end, nor online).
     pub fn tick(&mut self, player: Keys) -> bool {
         let ended = self.since_end();
+        if let Some(k) = self.local.and_then(|i| self.keys.get_mut(usize::from(i))) {
+            *k = player;
+        }
         match &mut self.driver {
-            Driver::Sandbox => {
-                self.keys[0] = player;
-                self.world.tick(&self.keys, &mut self.events);
-            }
+            Driver::Sandbox => self.world.tick(&self.keys, &mut self.events),
             Driver::Match(d) => {
-                if self.human {
-                    self.keys[0] = player;
-                }
                 d.think(&self.world, &self.events, &mut self.keys, ended);
                 self.world.tick(&self.keys, &mut self.events);
                 d.record(&self.keys, &self.world);
@@ -378,6 +567,7 @@ impl Session {
                     return false;
                 }
             }
+            Driver::Online(_) => return false,
         }
         self.show_new_worms();
         if self.sound {
@@ -392,72 +582,163 @@ impl Session {
                 self.ticks
             );
         }
-        self.popups.retain_mut(|p| {
-            p.age += 1;
-            p.age < POPUP_TICKS
-        });
-        self.after_tick();
+        self.after_tick(None);
         true
     }
 
-    /// The tick's events: popups, the event log, the tally, the end.
-    fn after_tick(&mut self) {
+    /// A tick's bookkeeping: the clock, the tally, the event log, the
+    /// end and its results, the damage popups. A local tick's (`None`:
+    /// the world and its events), or an online match's confirmed tick.
+    fn after_tick(&mut self, confirmed: Option<&ConfirmedTick>) {
+        let followed = self.present.followed();
+        let Session {
+            world,
+            events,
+            driver,
+            names,
+            log,
+            popups,
+            tally,
+            results,
+            ended_at,
+            time_left_ms,
+            player_deaths,
+            player_spawns,
+            local,
+            ticks,
+            ..
+        } = self;
+        let v = match confirmed {
+            Some(c) => TickView {
+                played: u64::from(c.tick) + 1,
+                events: &c.events,
+                scores: &c.scores,
+                time_left_ms: c.time_left_ms,
+                result: c.result,
+                positions: Positions::Listed(&c.positions),
+            },
+            None => TickView {
+                played: *ticks,
+                events: events.as_slice(),
+                scores: world.scores(),
+                time_left_ms: mode_time_left(world),
+                result: world.result(),
+                positions: Positions::World(world),
+            },
+        };
+        popups.retain_mut(|p| {
+            p.age += 1;
+            p.age < POPUP_TICKS
+        });
         // The mode's clock stops at the game over (`Deathmatch::time_left_ms`).
-        self.time_left_ms = self.mode_time_left();
-        if self.results.is_none() {
-            self.tally.match_ticks += 1;
+        *time_left_ms = v.time_left_ms;
+        if results.is_none() {
+            tally.match_ticks += 1;
         }
-        let bot = |w: i32| match &self.driver {
+        let me = local.map(i32::from);
+        let bot = |w: i32| match &*driver {
             Driver::Match(d) => d.bots.iter().any(|b| b.worm() as i32 == w),
+            Driver::Online(d) => d.is_bot(w),
             _ => false,
         };
-        for e in self.events.iter() {
+        for e in v.events {
             match e.kind {
                 EventKind::Kill { victim, killer } => {
-                    if victim == 0 && self.human {
-                        self.player_deaths += 1;
+                    if Some(victim) == me {
+                        *player_deaths += 1;
                     }
                     if killer == victim {
-                        self.tally.suicides += 1;
+                        tally.suicides += 1;
                     } else if bot(killer) {
-                        self.tally.bot_kills += 1;
-                    } else if killer == 0 {
-                        self.tally.player_kills += 1;
+                        tally.bot_kills += 1;
+                    } else if Some(killer) == me {
+                        tally.player_kills += 1;
                     }
                 }
-                EventKind::Spawned { worm: 0 } if self.human => self.player_spawns += 1,
+                EventKind::Spawned { worm } if Some(worm) == me => *player_spawns += 1,
                 EventKind::Message(m) => {
-                    if let Some(line) = message_text(&m, &self.names) {
-                        self.log.push(LogLine::event(line));
+                    if let Some(line) = message_text(&m, names) {
+                        log.push(LogLine::event(line));
                     }
                 }
                 EventKind::GameOver(_) => {
-                    self.ended_at = Some(self.ticks);
-                    self.tally.matches_ended += 1;
-                    self.results = Results::of(&self.world, &self.names, self.time_left_ms);
+                    *ended_at = Some(v.played);
+                    tally.matches_ended += 1;
+                    *results =
+                        v.result.map(|r| Results::new(r, v.scores, names, *time_left_ms, Some(followed)));
                 }
                 _ => {}
             }
             let EventKind::Damage { worm, dealt, .. } = e.kind else { continue };
-            let Some(w) = self.world.worms().iter().find(|w| w.id == worm) else { continue };
+            let Some(pos) = v.positions.of(worm) else { continue };
             if dealt <= 0.0 {
                 continue;
             }
             // Hits in quick succession sum into one number, as OLX's do.
-            if let Some(p) = self.popups.iter_mut().find(|p| p.worm == worm && p.age < MERGE_TICKS) {
+            if let Some(p) = popups.iter_mut().find(|p| p.worm == worm && p.age < MERGE_TICKS) {
                 p.amount += dealt;
-                p.pos = w.pos;
+                p.pos = pos;
                 p.age = 0;
-            } else if self.popups.len() < self.popups.capacity() {
-                self.popups.push(Popup { worm, amount: dealt, pos: w.pos, age: 0 });
+            } else if popups.len() < popups.capacity() {
+                popups.push(Popup { worm, amount: dealt, pos, age: 0 });
             }
         }
+    }
+
+    /// One frame of an online match at `now` (`Driver::Online`; nothing
+    /// otherwise): the peer polled once (the local player's keys from
+    /// `local_keys`, called once per new tick: the input latch), its
+    /// events presented (`online.rs`; sounds at the camera unless
+    /// [`Session::sound`] is off) and its confirmed ticks kept as a local
+    /// tick's (the log, the tally, the scoreboard, the results, the
+    /// popups). Returns the events that are not the match's presentation
+    /// (the lobby's, chat, the match's end, the connection's) for the
+    /// shell.
+    pub fn frame(&mut self, now: Instant, local_keys: &mut dyn FnMut() -> Keys) -> Vec<OnlineEvent> {
+        let Driver::Online(d) = &mut self.driver else { return Vec::new() };
+        let events = d.poll(now, local_keys, &mut self.present);
+        self.present_events(events)
+    }
+
+    /// An online match's polled `events` presented, as [`Session::frame`]
+    /// does (the shell's for the events of the poll that started the
+    /// match, after its `MatchStarting`); the others handed back.
+    pub fn present_events(&mut self, events: Vec<OnlineEvent>) -> Vec<OnlineEvent> {
+        let Driver::Online(d) = &mut self.driver else { return events };
+        let (sound, audio) = (self.sound, &mut self.audio);
+        let mut play = |sounds: &[Event], p: &Presentation| {
+            if sound {
+                audio.play(sounds, p.scene.camera.listener());
+            }
+        };
+        let (confirmed, rest) = d.present(events, &mut self.present, &mut play);
+        if let Some(s) = d.peer().match_session() {
+            self.ticks = u64::from(s.current_tick());
+        }
+        self.show_new_worms();
+        for c in &confirmed {
+            self.after_tick(Some(c));
+        }
+        // The peer drops the world when the match ends there: from its
+        // confirmed end on, the newest is kept to draw until the shell
+        // leaves the match.
+        if self.results.is_some()
+            && let Driver::Online(d) = &self.driver
+            && let Some(w) = d.world()
+        {
+            self.world = w.clone();
+        }
+        rest
     }
 
     /// One drawn frame at `alpha` between the last two ticks: the scene,
     /// then the cosmetic entities.
     pub fn build(&mut self, alpha: f32, list: &mut DrawList) {
-        self.present.build(&self.world, alpha, list);
+        let world = match &self.driver {
+            Driver::Online(d) => d.world().unwrap_or(&self.world),
+            _ => &self.world,
+        };
+        self.present.build(world, alpha, list);
     }
 }
 

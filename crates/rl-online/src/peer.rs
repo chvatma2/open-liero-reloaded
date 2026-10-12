@@ -801,6 +801,9 @@ impl OnlinePeer {
             Event::StateLoaded { tick } => {
                 if let Some(g) = &mut self.game {
                     g.recorder.state_loaded(tick);
+                    if g.ended.is_none() {
+                        self.events.push(OnlineEvent::StateLoaded { tick });
+                    }
                 }
             }
             Event::StateSent { peer, bytes, .. } if host => self.endpoint.allow_burst(peer, bytes),

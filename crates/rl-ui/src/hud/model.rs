@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 
 use rl_modes::text;
-use rl_sim::{EndReason, Message, Score, World};
+use rl_sim::{EndReason, MatchResult, Message, Score, World};
 
 /// The event log keeps this many lines; the bar shows the newest that
 /// fit (OLX's local chat showed 6 for 3 s over the playfield,
@@ -132,10 +132,14 @@ pub struct Row {
     pub suicides: i32,
     /// `Round(fDamage)`.
     pub damage: i32,
+    /// The worm the HUD follows (the player's own; a watched game's
+    /// followed worm): its row is highlighted.
+    pub followed: bool,
 }
 
-/// The scoreboard: the mode's rows (`World::scores`, best first).
-pub fn rows(scores: &[Score], names: &Names) -> Vec<Row> {
+/// The scoreboard: the mode's rows (`World::scores`, best first), worm
+/// `followed`'s highlighted.
+pub fn rows(scores: &[Score], names: &Names, followed: Option<i32>) -> Vec<Row> {
     scores
         .iter()
         .map(|s| Row {
@@ -147,6 +151,7 @@ pub fn rows(scores: &[Score], names: &Names) -> Vec<Row> {
             deaths: s.deaths,
             suicides: s.suicides,
             damage: rl_modes::olx_round(s.damage),
+            followed: Some(s.worm) == followed,
         })
         .collect()
 }
@@ -165,21 +170,38 @@ pub struct Results {
 }
 
 impl Results {
-    /// The results of `world`'s match, once it ended.
-    pub fn of(world: &World, names: &Names, time_left_ms: Option<u64>) -> Option<Results> {
-        let r = world.result()?;
+    /// The results of `world`'s match, once it ended, worm `followed`'s
+    /// row highlighted.
+    pub fn of(
+        world: &World,
+        names: &Names,
+        time_left_ms: Option<u64>,
+        followed: Option<i32>,
+    ) -> Option<Results> {
+        Some(Results::new(world.result()?, world.scores(), names, time_left_ms, followed))
+    }
+
+    /// The results of a match that ended with `r` and `scores` (the mode's
+    /// order; online play's from a confirmed tick).
+    pub fn new(
+        r: MatchResult,
+        scores: &[Score],
+        names: &Names,
+        time_left_ms: Option<u64>,
+        followed: Option<i32>,
+    ) -> Results {
         let reason = match r.reason {
             EndReason::KillLimit => "kill limit".to_string(),
             EndReason::TimeLimit => "time limit".to_string(),
             EndReason::LastStanding => "last worm standing".to_string(),
             EndReason::Other(n) => format!("the mode's reason {n}"),
         };
-        Some(Results {
+        Results {
             winner: (r.winner >= 0).then(|| names.of(r.winner)),
             reason,
-            rows: rows(world.scores(), names),
+            rows: rows(scores, names, followed),
             time_left_ms,
-        })
+        }
     }
 }
 

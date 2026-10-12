@@ -44,7 +44,18 @@ fn level() -> (Vec<u8>, u32, u32) {
 }
 
 fn row(worm: i32, name: &str, kills: i32, deaths: i32, damage: i32) -> Row {
-    Row { worm, name: name.into(), score: kills, lives: "∞".into(), kills, deaths, suicides: 0, damage }
+    let followed = worm == 0;
+    Row {
+        worm,
+        name: name.into(),
+        score: kills,
+        lives: "∞".into(),
+        kills,
+        deaths,
+        suicides: 0,
+        damage,
+        followed,
+    }
 }
 
 fn view(texture: egui::TextureId, scores: bool, arrangement: HudArrangement) -> HudView {

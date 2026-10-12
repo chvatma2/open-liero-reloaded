@@ -28,6 +28,7 @@ use crate::hud::{MinimapTexture, ScoreKey};
 use crate::latency::Latency;
 use crate::overlay::{Overlay, ScreenMap, Stats};
 use crate::script::{Command, Step};
+use crate::session::Session;
 use crate::shell::Shell;
 use crate::speed::{self, Speed};
 use crate::stats::Meter;
@@ -579,7 +580,7 @@ impl App {
             }
             s.build(alpha, &mut self.list);
             self.meter.peak_entities = self.meter.peak_entities.max(s.present.fx.len());
-            self.meter.peak_projectiles = self.meter.peak_projectiles.max(s.world.projectiles().count());
+            self.meter.peak_projectiles = self.meter.peak_projectiles.max(s.world().projectiles().count());
         }
         if self.meter.frame(elapsed, &mut self.stats) {
             self.stats.dropped = self.clock.dropped();
@@ -777,6 +778,12 @@ impl App {
             KeyCode::Escape if !self.cfg.menus => el.exit(),
             KeyCode::F5 if !self.cfg.menus => self.restart(el)?,
             KeyCode::F2 => self.debug = !self.debug,
+            // A watched online match: the next or previous worm followed.
+            KeyCode::PageUp | KeyCode::PageDown if self.shell.session().is_some_and(Session::spectating) => {
+                if let Some(s) = self.shell.session_mut() {
+                    s.follow_next(if code == KeyCode::PageDown { 1 } else { -1 });
+                }
+            }
             // Fast-forward, for a watched game only (`speed.rs`).
             KeyCode::PageUp | KeyCode::PageDown => self.change_speed(code == KeyCode::PageUp),
             // OLX's Game.ShowWormHealth toggle.

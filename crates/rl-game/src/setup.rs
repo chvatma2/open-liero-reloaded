@@ -2,6 +2,7 @@
 //! bots; a replay): which packs to load, the match to build, and the
 //! assets loaded once for every restart.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Context as _;
@@ -11,6 +12,7 @@ use rl_content::{
 };
 use rl_data::manifest::PackKind;
 use rl_modes::DeathmatchSettings;
+use rl_proto::MatchStartWire;
 use rl_replay::{Packs, Replay};
 use rl_sim::{MAX_WORMS, SimSettings};
 
@@ -125,14 +127,18 @@ pub const DEFAULT_SKIN: &str = "olx-skin-default";
 pub enum Game {
     /// The sandbox (spec §19 E11).
     Sandbox(SandboxSetup),
-    /// A Deathmatch, the human (worm 0) against bots; `packs` are its mod,
+    /// A Deathmatch, the human (any slot) against bots; `packs` are its mod,
     /// level and theme for the replay.
     Deathmatch { options: Box<MatchOptions>, packs: Packs },
     /// A replay, played with the normal renderer.
     Replay(Box<Replay>),
+    /// An online match (plan 10): its world is the netcode's (an
+    /// `rl_online::OnlinePeer`'s), built from `start` by every peer;
+    /// `my_slot` is the worm this player plays (`None`: watching).
+    Online { start: Box<MatchStartWire>, my_slot: Option<u8> },
 }
 
-/// The human's name and colour (the menus' profile), for worm 0.
+/// The human's name and colour (the menus' profile), for its slot.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlayerLook {
     pub name: String,
@@ -146,7 +152,7 @@ pub struct Assets {
     pub m: LoadedMod,
     pub level: LoadedLevel,
     pub theme: LoadedTheme,
-    /// The human's skin (worm 0's when a human plays it).
+    /// The human's skin (its slot's when a human plays).
     pub skin: LoadedSkin,
     /// Everyone else's: OLX's default skin, as OLX's bot profiles have
     /// (`src/client/ProfileSystem.cpp:59`).
@@ -159,6 +165,10 @@ pub struct Assets {
     pub warnings: Vec<String>,
     /// The human's look (a profile's); `None`: "You" in the default colour.
     pub player: Option<PlayerLook>,
+    /// Every skin loaded, by the id asked for: the human's and the
+    /// default one, an online match's every slot's (a skin missing here
+    /// is the default skin: `Content::skin_or_default`).
+    pub skins: BTreeMap<String, LoadedSkin>,
 }
 
 /// The packs `mod_id`, `level_id` (with its theme) and skin `skin` (a
@@ -179,6 +189,7 @@ fn open(
     let mut warnings = content.warnings().to_vec();
     let loaded = m.warnings.iter().chain(&theme.warnings).chain(&skin.warnings).chain(&bot_skin.warnings);
     warnings.extend(loaded.cloned());
+    let skins = BTreeMap::from([(skin_id, skin.clone()), (DEFAULT_SKIN.to_string(), bot_skin.clone())]);
     Ok(Assets {
         content,
         m,
@@ -191,6 +202,7 @@ fn open(
         level_id,
         warnings,
         player: None,
+        skins,
     })
 }
 
@@ -238,6 +250,28 @@ pub fn load_match(roots: &[&Path], o: &MatchOptions, skin: &str) -> anyhow::Resu
     let packs = content.replay_packs(&o.mod_id, &o.level_id)?;
     let options = Box::new(o.clone());
     open(content, o.mod_id.clone(), o.level_id.clone(), skin, Game::Deathmatch { options, packs })
+}
+
+/// The online match `start` describes (`rl_online`'s `MatchStarting`),
+/// played as slot `my_slot` (`None`: watching): its mod, level and theme,
+/// and every slot's skin by id, once each (a skin this install lacks is
+/// the default skin, with a warning; plan 11 downloads it). The peer
+/// already checked the packs and built the world from the same content.
+pub fn load_online(roots: &[&Path], start: &MatchStartWire, my_slot: Option<u8>) -> anyhow::Result<Assets> {
+    let content = Content::open_layers(roots)?;
+    let s = &start.setup;
+    let mine = my_slot.and_then(|i| start.slots.get(usize::from(i))).map_or(DEFAULT_SKIN, |w| &w.look.skin);
+    let game = Game::Online { start: Box::new(start.clone()), my_slot };
+    let mut a = open(content, s.mod_id.clone(), s.level_id.clone(), mine, game)?;
+    for w in &start.slots {
+        if !a.skins.contains_key(&w.look.skin) {
+            let id = a.content.skin_id(&w.look.skin).unwrap_or_else(|| w.look.skin.clone());
+            let skin = a.content.skin_or_default(&id);
+            a.warnings.extend(skin.warnings.iter().cloned());
+            a.skins.insert(w.look.skin.clone(), skin);
+        }
+    }
+    Ok(a)
 }
 
 /// The largest replay file read: [`rl_replay::MAX_TICKS`] ticks of
@@ -299,15 +333,34 @@ impl Assets {
         rl_content::new_world_from(&self.m, &self.level, &self.theme, setup)
     }
 
-    /// Whether a person plays the game (worm 0): the sandbox, a
-    /// Deathmatch with a human; not a replay, nor a match of bots alone.
-    /// Only a game nobody plays may run fast (`speed.rs`).
+    /// Whether a person plays the game: the sandbox, a Deathmatch with a
+    /// human; not a replay, nor a match of bots alone. Only a game nobody
+    /// plays may run fast (`speed.rs`), so an online match counts as
+    /// played even when watched: it runs at the host's pace.
     pub fn human_plays(&self) -> bool {
         match &self.game {
-            Game::Sandbox(_) => true,
-            Game::Deathmatch { options, .. } => options.players.iter().any(|p| !matches!(p, Player::Bot(_))),
-            Game::Replay(_) => false,
+            Game::Online { .. } => true,
+            _ => self.local_slot().is_some(),
         }
+    }
+
+    /// The worm this player plays: the sandbox's 0, a Deathmatch's first
+    /// that is not a bot, an online match's own slot; `None` for a replay,
+    /// bots alone and an online match watched.
+    pub fn local_slot(&self) -> Option<u8> {
+        match &self.game {
+            Game::Sandbox(_) => Some(0),
+            Game::Deathmatch { options, .. } => {
+                options.players.iter().position(|p| !matches!(p, Player::Bot(_))).map(|i| i as u8)
+            }
+            Game::Replay(_) => None,
+            Game::Online { my_slot, .. } => *my_slot,
+        }
+    }
+
+    /// The skin loaded as `id`, else the default skin.
+    pub fn skin_of(&self, id: &str) -> &LoadedSkin {
+        self.skins.get(id).unwrap_or(&self.bot_skin)
     }
 
     /// How many worms the game starts with.
@@ -316,6 +369,7 @@ impl Assets {
             Game::Sandbox(s) => s.worms.len(),
             Game::Deathmatch { options, .. } => options.players.len(),
             Game::Replay(r) => r.setup.worms.len(),
+            Game::Online { start, .. } => start.slots.len(),
         }
     }
 }

@@ -279,6 +279,7 @@ fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig, flags: &Overrid
         }
         Game::Deathmatch { options, .. } => format!("Deathmatch of bots (watched) seed {}", options.seed),
         Game::Replay(r) => format!("replay of {:.1} s", f64::from(r.ticks()) / 100.0),
+        Game::Online { start, .. } => format!("online match seed {}", start.seed),
     };
     println!("rl-game: {what}: {} on {}, {} worms", assets.mod_id, assets.level_id, assets.worms());
     let mut shell = Shell::playing(cfg, assets, session);

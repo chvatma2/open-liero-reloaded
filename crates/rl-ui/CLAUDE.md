@@ -157,7 +157,8 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
 - **HUD** (`hud/`, §21 G5; one style, the Classic one was dropped): `model.rs` (names, OLX's
   message texts, `Log` of `LogLine { text, kind: LineKind::{Event, Chat} }`
   (the last `LOG_KEEP` 64; `Chat` is for a multiplayer chat later),
-  `clock`, scoreboard `rows`, `Results`), `view.rs`
+  `clock`, scoreboard `rows(scores, names, followed)` with the followed
+  worm's `Row::followed` (yellow in `table`), `Results::of`/`new`), `view.rs`
   (`HudView`, the frame's data; `WormHud::of(world, i, names, ..)`: health,
   lives, kills, slots with OLX's bar states), `layout.rs`
   (`HudLayout::new(screen, arrangement)`: the game is designed for 16:9:

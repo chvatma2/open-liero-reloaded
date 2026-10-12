@@ -8,7 +8,7 @@ use crate::session::Session;
 /// when one plays).
 pub fn print(st: &Stats, s: Option<&Session>) {
     let (entities, projectiles, voices) =
-        s.map_or((0, 0, 0), |s| (s.present.fx.len(), s.world.projectiles().count(), s.audio.playing()));
+        s.map_or((0, 0, 0), |s| (s.present.fx.len(), s.world().projectiles().count(), s.audio.playing()));
     println!(
         "stats: {:.0} fps, frame {:.2} ms (max {:.2}), busy {:.2} ms, tick {:.3} ms (max {:.3}), {} ticks/s, entities {entities}, projectiles {projectiles}, voices {voices}",
         st.fps, st.frame_ms, st.frame_ms_max, st.busy_ms, st.tick_ms, st.tick_ms_max, st.ticks_per_second,

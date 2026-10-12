@@ -32,6 +32,8 @@ wired in the frame loop's order **once**, so each mode that draws a world
     `state_loaded(&world)` for a loaded state in online play (scene
     restarts, entities go; the colour map is repainted by the load's
     restored area).
+  - `follow(worm)` / `followed()`: the worm the camera follows (worm 0
+    when new; the game's local slot, or a spectator's choice).
   - `terrain_drift(&world)`: the colour map's material is not the world's.
     It compares the whole grid; `rl-game`'s session checks it every
     `DRIFT_CHECK_TICKS` in debug builds.

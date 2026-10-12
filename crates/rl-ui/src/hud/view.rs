@@ -34,7 +34,8 @@ pub struct SlotHud {
     pub bar: Bar,
 }
 
-/// The worm the HUD follows (the player's; a replay's first).
+/// The worm the HUD follows (the player's own; a watched game's: the
+/// camera's).
 #[derive(Clone, Debug, PartialEq)]
 pub struct WormHud {
     pub name: String,
@@ -108,7 +109,7 @@ pub struct Dot {
     pub pos: Pos2,
     /// The worm's game colour.
     pub colour: Color32,
-    /// The local human's: 3 × 3 minimap pixels, others 2 × 2.
+    /// The local player's: 3 × 3 minimap pixels, others 2 × 2.
     pub big: bool,
 }
 

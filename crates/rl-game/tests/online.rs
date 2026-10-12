@@ -1,0 +1,345 @@
+//! The local slot (not worm 0) and online play through `Session`
+//! (plan 10 task 10): a local match whose player is slot 2, and a session
+//! with `Driver::Online` against a host on 127.0.0.1. Classic on Dirt
+//! Level from `RL_CONTENT_DIR`; skipped with a notice without it.
+
+use std::collections::BTreeMap;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+use rl_audio::Audio;
+use rl_bots::{BotConfig, Difficulty};
+use rl_content::{Content, DEFAULT_PRESET, MatchOptions, Player};
+use rl_game::hud::{self, Frame};
+use rl_game::online::OnlineDriver;
+use rl_game::session::{Driver, Session};
+use rl_game::setup::{self, PlayerLook};
+use rl_lobby::{HostConfig, Identity};
+use rl_modes::DeathmatchSettings;
+use rl_net::endpoint::EndpointConfig;
+use rl_online::matches::{bot_wire, rules_wire, setup_packs};
+use rl_online::{OnlineEvent, OnlinePeer, PeerRole};
+use rl_proto::{Look, MatchSetupWire, SeatWire};
+use rl_scene::{DrawList, Interpolation, Viewport};
+use rl_sim::{EventKind, Keys, Score};
+
+const MOD: &str = "olx-classic";
+const LEVEL: &str = "olx-level-dirt-level";
+
+fn content_dir() -> Option<PathBuf> {
+    let dir = std::env::var_os("RL_CONTENT_DIR").map(PathBuf::from).filter(|d| d.is_dir());
+    if dir.is_none() {
+        eprintln!("RL_CONTENT_DIR not set; skipping");
+    }
+    dir
+}
+
+fn viewport() -> Viewport {
+    Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0)
+}
+
+/// The player's keys at tick `t`: walk about, jump and shoot now and then.
+fn player_keys(t: u64) -> Keys {
+    let walk = if (t / 200).is_multiple_of(2) { Keys::RIGHT } else { Keys::LEFT };
+    let jump = if t.is_multiple_of(97) { Keys::JUMP } else { 0 };
+    let fire = if (t / 50).is_multiple_of(3) { Keys::FIRE } else { 0 };
+    Keys(walk | jump | fire)
+}
+
+/// A local match whose player is slot 2 (two bots before it): its name,
+/// keys, look, camera, crosshair, HUD worm, minimap dot, scoreboard row,
+/// kill credit, deaths and spawns are slot 2's, never worm 0's.
+#[test]
+fn the_local_slot_drives_everything() {
+    let Some(dir) = content_dir() else { return };
+    let bot = Player::Bot(BotConfig { difficulty: Difficulty::Xtreme, ..BotConfig::default() });
+    let o = MatchOptions::deathmatch(MOD, LEVEL, 11, vec![bot, bot, Player::Human]);
+    let mut a = setup::load_match(&[dir.as_path()], &o, "default").unwrap();
+    a.player = Some(PlayerLook { name: "Mine".into(), colour: [20, 90, 255] });
+    let mut s = Session::new(&a, viewport(), Interpolation::Linear, Audio::silent()).unwrap();
+    assert_eq!(s.local(), Some(2));
+    assert!(s.human());
+    assert_eq!(s.names.0, ["Bot 1", "Bot 2", "Mine"]);
+    assert_eq!(s.colour(2), [20, 90, 255], "the profile's colour");
+    assert_eq!(s.colour(0), rl_ui::bot_colours([20, 90, 255], 1)[0], "OLX's first bot colour");
+    assert_eq!(s.present.scene.camera.target(), 2, "the camera follows the player");
+    let looks = s.present.assets();
+    assert_eq!(
+        (looks.worm(0).local, looks.worm(1).local, looks.worm(2).local),
+        (false, false, true),
+        "only the player's crosshair"
+    );
+    let content = Content::open(&dir).unwrap();
+    let default = content.load_skin("olx-skin-default").unwrap();
+    assert_eq!(
+        looks.image(looks.worm(2).skin).image,
+        default.colorized(rl_data::image::Rgba::rgb(20, 90, 255)),
+        "the player's skin in the player's colour"
+    );
+
+    let frame = Frame { scores: true, minimap: Some(egui::TextureId::default()), ..Frame::default() };
+    let view = hud::view(&s, &frame);
+    assert_eq!(view.worm.as_ref().map(|w| w.name.as_str()), Some("Mine"), "the HUD shows the player");
+    let rows = view.scoreboard.expect("Tab's scoreboard");
+    let followed: Vec<i32> = rows.iter().filter(|r| r.followed).map(|r| r.worm).collect();
+    assert_eq!(followed, [2], "the player's row is highlighted");
+    let dots = view.minimap.expect("the minimap").dots;
+    let me = s.world.worms()[2].pos;
+    let big: Vec<_> = dots.iter().filter(|d| d.big).map(|d| d.pos).collect();
+    assert_eq!(big, [egui::pos2(me.x, me.y)], "the player's dot is the big one");
+
+    // Play: the player's keys move worm 2, and every kill, death and
+    // spawn is credited by slot.
+    let (mut deaths, mut spawns, mut player_kills, mut bot_kills, mut fired) = (0, 0, 0, 0, 0);
+    let mut t = 0;
+    while (deaths == 0 || fired == 0) && t < 8000 {
+        s.tick(player_keys(t));
+        for e in s.events.iter() {
+            match e.kind {
+                EventKind::Kill { victim, killer } => {
+                    deaths += u32::from(victim == 2);
+                    if killer != victim {
+                        player_kills += u64::from(killer == 2);
+                        bot_kills += u64::from(killer != 2);
+                    }
+                }
+                EventKind::Spawned { worm: 2 } => spawns += 1,
+                EventKind::WeaponFired { worm: 2, .. } => fired += 1,
+                _ => {}
+            }
+        }
+        t += 1;
+    }
+    assert!(fired > 0, "the player's keys reach worm 2");
+    assert!(deaths > 0, "the bots killed the player within {t} ticks");
+    assert_eq!(s.player_deaths, deaths);
+    assert_eq!(s.player_spawns, spawns);
+    assert_eq!(s.tally.player_kills, player_kills);
+    assert_eq!(s.tally.bot_kills, bot_kills);
+    let view = hud::view(&s, &frame);
+    let w = &s.world.worms()[2];
+    let worm = view.worm.expect("the player's");
+    assert_eq!((worm.kills, worm.deaths, worm.lives), (w.kills, w.deaths, w.lives));
+}
+
+/// A game nobody here plays (bots alone) has no local slot: the camera
+/// and the HUD follow the worm chosen, round in worm order; a player's
+/// camera stays on its own worm.
+#[test]
+fn a_watcher_follows_any_worm() {
+    let Some(dir) = content_dir() else { return };
+    let o = setup::DeathmatchOptions { bots: 3, spectate: true, ..setup::DeathmatchOptions::default() };
+    let a = setup::load_deathmatch(&[dir.as_path()], "Classic", "Dirt Level", "default", &o).unwrap();
+    let mut s = Session::new(&a, viewport(), Interpolation::Linear, Audio::silent()).unwrap();
+    assert_eq!(s.local(), None);
+    assert!(!s.spectating(), "a local game is watched, not spectated online");
+    let looks = s.present.assets();
+    assert!((0..3).all(|i| !looks.worm(i).local), "no crosshair: nobody plays here");
+    let followed = |s: &Session| {
+        let worm = hud::view(s, &Frame::default()).worm.map(|w| w.name);
+        (s.followed(), s.present.scene.camera.target(), worm)
+    };
+    assert_eq!(followed(&s), (0, 0, Some("Bot 1".into())));
+    s.follow_next(1);
+    assert_eq!(followed(&s), (1, 1, Some("Bot 2".into())));
+    s.follow_next(-1);
+    s.follow_next(-1);
+    assert_eq!(followed(&s), (2, 2, Some("Bot 3".into())), "round");
+    s.follow(0);
+    assert_eq!(s.followed(), 0);
+    let o = setup::DeathmatchOptions { bots: 2, ..setup::DeathmatchOptions::default() };
+    let a = setup::load_deathmatch(&[dir.as_path()], "Classic", "Dirt Level", "default", &o).unwrap();
+    let mut s = Session::new(&a, viewport(), Interpolation::Linear, Audio::silent()).unwrap();
+    s.follow_next(1);
+    assert_eq!(s.followed(), 0, "the player's camera stays on its worm");
+}
+
+fn identity() -> Identity {
+    loop {
+        if let Some(id) = Identity::from_secret(rl_net::random_bytes::<32>().unwrap()) {
+            return id;
+        }
+    }
+}
+
+fn look(name: &str, colour: [u8; 3]) -> Look {
+    Look { name: name.into(), colour, skin: "olx-skin-default".into() }
+}
+
+fn endpoint() -> EndpointConfig {
+    EndpointConfig { port: 0, ..EndpointConfig::default() }
+}
+
+/// Polls `p` on the real clock with no keys.
+fn poll(p: &mut OnlinePeer) -> Vec<OnlineEvent> {
+    p.poll(Instant::now(), &mut || Keys(0), &mut |_, _, _| {})
+}
+
+/// Polls the host and the client on the real clock until `done` holds
+/// for them; panics after `limit` with `what`.
+fn until(
+    what: &str,
+    limit: Duration,
+    host: &mut OnlinePeer,
+    client: &mut OnlinePeer,
+    mut done: impl FnMut(&mut OnlinePeer, &mut OnlinePeer) -> bool,
+) {
+    let start = Instant::now();
+    loop {
+        assert!(start.elapsed() < limit, "{what} within {limit:?}");
+        poll(host);
+        poll(client);
+        if done(host, client) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// Classic on Dirt Level with one bot, ending after `minutes`.
+fn setup(content: &Content, minutes: f32) -> MatchSetupWire {
+    MatchSetupWire {
+        mod_id: MOD.into(),
+        level_id: LEVEL.into(),
+        packs: setup_packs(content, MOD, LEVEL).unwrap(),
+        rules: rules_wire(&DeathmatchSettings { time_limit: minutes, ..DeathmatchSettings::default() }),
+        bonuses: false,
+        loading_time: 100,
+        restrictions: DEFAULT_PRESET.into(),
+        bots: vec![bot_wire(&BotConfig::default(), look("Bot", [0, 200, 0]))],
+    }
+}
+
+/// A session with `Driver::Online` playing a client's slot against a host
+/// with a bot on 127.0.0.1, 300 frames on a fake 10 ms clock: no panic, the
+/// colour terrain never drifts (debug builds check after every advance),
+/// the HUD follows the client's slot and shows the confirmed scores (the
+/// host's for the same tick), and the match's end comes from a confirmed
+/// tick.
+#[test]
+fn an_online_match_runs_headless() {
+    let Some(dir) = content_dir() else { return };
+    let begun = Instant::now();
+    let content = || Content::open(&dir).unwrap();
+    let cfg = HostConfig {
+        name: "Test lobby".into(),
+        password: None,
+        max_players: 4,
+        max_spectators: 2,
+        admins: Vec::new(),
+    };
+    let mut host = OnlinePeer::start(
+        PeerRole::Host(cfg),
+        endpoint(),
+        identity(),
+        look("Host", [200, 80, 40]),
+        content(),
+        Some(setup(&content(), 0.02)),
+    )
+    .unwrap();
+    let addr = SocketAddr::from(([127, 0, 0, 1], host.local_port()));
+    let role = PeerRole::Client { addr, password: None };
+    let mut client =
+        OnlinePeer::start(role, endpoint(), identity(), look("Anna", [20, 90, 255]), content(), None)
+            .unwrap();
+    until("the client joins", Duration::from_secs(5), &mut host, &mut client, |_, c| {
+        c.lobby().me().is_some()
+    });
+    client.lobby().set_ready(true);
+    until("the client is ready", Duration::from_secs(3), &mut host, &mut client, |h, _| {
+        h.lobby().state().is_some_and(|s| {
+            s.members.iter().filter(|m| matches!(m.seat, SeatWire::Player { .. })).all(|m| m.ready)
+        })
+    });
+    host.lobby().start(5).unwrap();
+    let mut started = None;
+    let started_at = Instant::now();
+    while started.is_none() {
+        assert!(started_at.elapsed() < Duration::from_secs(3), "the match starts for the client");
+        poll(&mut host);
+        let mut events = poll(&mut client);
+        if let Some(i) = events.iter().position(|e| matches!(e, OnlineEvent::MatchStarting { .. })) {
+            let rest = events.split_off(i + 1);
+            let Some(OnlineEvent::MatchStarting { start, my_slot }) = events.pop() else { unreachable!() };
+            started = Some((start, my_slot, rest));
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let (start, my_slot, rest) = started.unwrap();
+    assert_eq!(my_slot, Some(1), "the host plays slot 0, the client slot 1, then the bot");
+
+    let a = setup::load_online(&[dir.as_path()], &start, my_slot).unwrap();
+    let driver = OnlineDriver::new(client, &start);
+    let mut s = Session::online(&a, driver, viewport(), Interpolation::Linear, Audio::silent()).unwrap();
+    let left = s.present_events(rest);
+    assert!(left.iter().all(|e| !matches!(e, OnlineEvent::Ticked(_) | OnlineEvent::Confirmed(_))));
+    assert_eq!(s.local(), Some(1));
+    assert_eq!(s.names.0, ["Host", "Anna", "Bot"], "the lobby's names");
+    assert_eq!(s.colour(1), [20, 90, 255], "the lobby's colours");
+    assert_eq!(s.present.scene.camera.target(), 1);
+    assert!(s.present.assets().worm(1).local && !s.present.assets().worm(0).local);
+
+    // The host's confirmed scores by tick.
+    let mut host_scores: BTreeMap<u32, (Vec<Score>, Option<u64>)> = BTreeMap::new();
+    let mut list = DrawList::new();
+    let frame = Frame { scores: true, ..Frame::default() };
+    let t0 = Instant::now();
+    let mut host_pressed = 0u64;
+    let mut pressed = 0u64;
+    let mut checked = 0;
+    let mut slowest = Duration::ZERO;
+    for i in 1..=300u64 {
+        let now = t0 + Duration::from_millis(10 * i);
+        let mut host_keys = || {
+            host_pressed += 1;
+            player_keys(host_pressed + 1000)
+        };
+        for e in host.poll(now, &mut host_keys, &mut |_, _, _| {}) {
+            if let OnlineEvent::Confirmed(c) = e {
+                host_scores.extend(c.into_iter().map(|t| (t.tick, (t.scores, t.time_left_ms))));
+            }
+        }
+        let mut keys = || {
+            pressed += 1;
+            player_keys(pressed)
+        };
+        let busy = Instant::now();
+        let events = s.frame(now, &mut keys);
+        slowest = slowest.max(busy.elapsed());
+        assert!(
+            events.iter().all(|e| !matches!(
+                e,
+                OnlineEvent::Refused(_) | OnlineEvent::Disconnected(_) | OnlineEvent::Kicked { .. }
+            )),
+            "frame {i}: {events:?}"
+        );
+        s.build(1.0, &mut list);
+        let Driver::Online(d) = &s.driver else { panic!("an online session") };
+        let view = hud::view(&s, &frame);
+        assert_eq!(view.worm.as_ref().map(|w| w.name.as_str()), Some("Anna"), "frame {i}");
+        if let (Some(rows), Some(t)) = (&view.scoreboard, d.confirmed_tick())
+            && let Some((scores, time_left)) = host_scores.get(&t)
+        {
+            let followed = Some(1);
+            assert_eq!(rows, &rl_ui::hud::rows(scores, &s.names, followed), "tick {t}");
+            assert_eq!(s.time_left_ms, *time_left, "tick {t}");
+            checked += 1;
+        }
+    }
+    eprintln!("the slowest online frame took {slowest:?}");
+    let Driver::Online(d) = &s.driver else { panic!("an online session") };
+    let confirmed = d.confirmed_tick().expect("confirmed ticks");
+    assert!(confirmed > 200, "the client confirmed {confirmed} ticks");
+    assert!(checked > 50, "the HUD's scores were checked against the host's {checked} times");
+    assert!(s.ticks() >= u64::from(confirmed), "the newest predicted tick is drawn");
+    assert!(!s.present.terrain_drift(s.world()), "the colour terrain is the world's");
+    // 1.2 s: the match ended on a confirmed tick, with the host's scores.
+    let r = s.results.clone().expect("the time limit ended the match");
+    assert_eq!(r.reason, "time limit");
+    let end = s.since_end().map(|since| s.ticks() - since).expect("the end's tick");
+    let (scores, _) = &host_scores[&(end as u32 - 1)];
+    assert_eq!(r.rows, rl_ui::hud::rows(scores, &s.names, Some(1)));
+    assert!(s.log.texts().any(|l| l == "Timelimit has been reached"));
+    assert!(begun.elapsed() < Duration::from_secs(30), "the test took {:?}", begun.elapsed());
+}

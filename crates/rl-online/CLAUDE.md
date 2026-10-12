@@ -60,7 +60,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     the `TickRecorder` in `simulated`, transmit; then `Restored` (before
     `Ticked`: rebuild those areas, then apply the ticks' edits), `Ticked`,
     `Confirmed` (`take_confirmed(Session::confirmed())`). `StateLoaded` →
-    `TickRecorder::state_loaded`; a client's `Lagging` → `Lagging`; the
+    `TickRecorder::state_loaded` and `OnlineEvent::StateLoaded { tick }`
+    (a state loads while receiving, so it comes before that poll's
+    `Restored`); a client's `Lagging` → `Lagging`; the
     host's `PeerTimedOut`/`RepairFailed`/`JoinRefused` drop the peer;
     `StateSent` → `allow_burst` on the sending side, a client's
     `StateBegin` → `allow_burst` on receiving. A client's endpoint lets its

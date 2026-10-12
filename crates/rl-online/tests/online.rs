@@ -301,6 +301,14 @@ fn a_late_joiner_watches_then_plays_the_next_match() {
         })
     });
     assert_eq!(net.peers[b].started(), vec![None], "it watches");
+    // The state it watches from is reported before the map it repaints.
+    let events = &net.peers[b].events;
+    let loaded = events.iter().position(|e| matches!(e, OnlineEvent::StateLoaded { .. }));
+    let loaded = loaded.expect("the joiner reports the state it loaded");
+    assert!(
+        events[loaded..].iter().any(|e| matches!(e, OnlineEvent::Restored(a) if !a.is_empty())),
+        "the loaded state's map comes after it"
+    );
     assert!(net.peers[b].peer().match_session().is_some_and(|s| s.input_log().origin() > 0), "from a state");
     net.run_until(Duration::from_secs(8), "the match ends everywhere", |n| {
         n.peers.iter().all(|p| p.has(ended))

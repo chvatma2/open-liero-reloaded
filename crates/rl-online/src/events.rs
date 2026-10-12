@@ -17,6 +17,12 @@ pub enum OnlineEvent {
     /// A match starts: every peer built its world from `start`; `my_slot`
     /// is the worm this peer plays (`None`: it watches).
     MatchStarting { start: MatchStartWire, my_slot: Option<u8> },
+    /// The match's state was replaced by the host's after `tick` (a
+    /// repair, or a late joiner's first state). It comes before the
+    /// [`OnlineEvent::Restored`] that repaints the whole map: the
+    /// presentation starts again from the world
+    /// (`Presentation::state_loaded`, `NetPresenter::reset(tick)`).
+    StateLoaded { tick: u32 },
     /// The map areas a rollback or a loaded state put back during this
     /// poll's advance (`Session::take_restored_areas`). It comes before the
     /// advance's [`OnlineEvent::Ticked`]: rebuild these areas of the colour

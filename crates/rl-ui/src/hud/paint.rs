@@ -251,7 +251,8 @@ fn scoreboard(ui: &Ui, rows: &[Row], offset: egui::Vec2) {
 
 /// The rows of a scoreboard or of the results as a grid: name, lives,
 /// score, kills, deaths, suicides, damage (OLX's results columns plus
-/// the deaths and suicides it counts); worm 0 (the player's) in yellow.
+/// the deaths and suicides it counts); the followed worm's (the
+/// player's own) in yellow.
 pub fn table(ui: &mut Ui, rows: &[Row]) {
     let head = |ui: &mut Ui, t: &str| {
         ui.label(RichText::new(t).monospace().color(Color32::from_gray(170)));
@@ -262,7 +263,7 @@ pub fn table(ui: &mut Ui, rows: &[Row]) {
         }
         ui.end_row();
         for (i, r) in rows.iter().enumerate() {
-            let colour = if r.worm == 0 { Color32::from_rgb(255, 230, 120) } else { Color32::WHITE };
+            let colour = if r.followed { Color32::from_rgb(255, 230, 120) } else { Color32::WHITE };
             let cell = |ui: &mut Ui, t: String| {
                 ui.label(RichText::new(t).monospace().color(colour));
             };

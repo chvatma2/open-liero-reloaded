@@ -28,6 +28,9 @@ rl-present.workspace = true
 rl-audio.workspace = true
 rl-input.workspace = true
 rl-ui.workspace = true
+rl-proto.workspace = true
+rl-netcode.workspace = true
+rl-online.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde = { workspace = true, features = ["std"] }
@@ -43,6 +46,8 @@ egui-winit.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+rl-lobby.workspace = true
+rl-net.workspace = true
 
 [lints]
 workspace = true

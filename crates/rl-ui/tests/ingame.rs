@@ -379,6 +379,7 @@ fn results() -> Results {
         deaths,
         suicides,
         damage,
+        followed: worm == 0,
     };
     Results {
         winner: Some("Bot 2".into()),

@@ -17,7 +17,8 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
 
 - **Layer 6.** Uses `rl-ui`, `rl-content`, `rl-present`, `rl-scene`, `rl-fx`, `rl-render`,
   `rl-audio`, `rl-input`, `rl-sim`, `rl-modes`, `rl-bots`, `rl-replay`,
-  `rl-terrain`, `rl-pack`, plus winit,
+  `rl-terrain`, `rl-pack`, `rl-online`, `rl-netcode`, `rl-proto` (and
+  `rl-lobby`, `rl-net` in tests), plus winit,
   wgpu, gilrs and egui / egui-wgpu / egui-winit 0.36.2 (exact pins). Logs
   are `eprintln!("warning: ...")`, each once.
 - **Menus first** (`main.rs`, `shell.rs`, plan 7 task 2): without a flag
@@ -56,11 +57,12 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   data directory's `replays/` when it ends, restarts or the game quits
   (`rl_ui::replays::auto_save`, none of no tick); the Replays screen plays
   them. Settings are written at most once a second (`Shell::flush`) and
-  at exit. The human's profile names and colours worm 0 (`PlayerLook`)
-  and its skin is worm 0's (`Assets::skin`); every other worm, and every
-  worm of a replay, wears OLX's default skin (`Assets::bot_skin`, as OLX's
-  bot profiles) in OLX's bot colours away from the player's
-  (`rl_ui::bot_colours`; a replay's worms in the default colours).
+  at exit. The human's profile names and colours the local slot's worm
+  (`PlayerLook`) and its skin is that worm's (`Assets::skin`); every
+  other worm, and every worm of a replay, wears OLX's default skin
+  (`Assets::bot_skin`, as OLX's bot profiles) in OLX's bot colours away
+  from the player's (`rl_ui::bot_colours`; a replay's worms in the
+  default colours). Weapon selection's Done arms the local slot.
   The menus list and play `--content` with the data directory's `packs/`
   over it (`Content::open_layers`, spec §9.4; the command line's games
   use `--content` alone). **Import** (plan 7 task 7): `StartImport`
@@ -162,11 +164,26 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
 - **Session** (`session.rs`): the match without a window, so it is tested
   headless; its presentation is one `rl_present::Presentation` (a worm a
   mode spawns mid-match gets `add_worm`, which marks the atlas for upload).
-  What it plays is `setup::Game` (`Sandbox`, `Deathmatch`, `Replay`), loaded
-  once into `setup::Assets`; who presses the keys is `session::Driver`
-  (`drive.rs`): the player alone, the player and `MatchDriver`'s bots, or
-  `ReplayDriver` (a `rl_replay::Cursor` checking every checksum; a
-  divergence is shown and logged once, the replay stops at its end).
+  What it plays is `setup::Game` (`Sandbox`, `Deathmatch`, `Replay`,
+  `Online`), loaded once into `setup::Assets`; who presses the keys is
+  `session::Driver` (`drive.rs`): the player alone, the player and
+  `MatchDriver`'s bots, `ReplayDriver` (a `rl_replay::Cursor` checking
+  every checksum; a divergence is shown and logged once, the replay stops
+  at its end), or `Online` (`online.rs`).
+  **The local slot** (`Session::local`, `Assets::local_slot`: the
+  sandbox's 0, a Deathmatch's first player that is not a bot, an online
+  match's own slot; `None` for a replay, bots alone and an online match
+  watched) gets the player's keys, name, look, the crosshair (the scene's
+  `local`), the camera (`Presentation::follow`), the HUD, the big minimap
+  dot, the highlighted scoreboard and results row (`Row::followed`), the
+  tally's player kills and `player_deaths`/`player_spawns`. Without one
+  the camera and the HUD follow the worm chosen (`follow`, `follow_next`,
+  worm 0 at first); an online spectator's PageUp/PageDown choose it
+  (`Session::spectating`; "Watching <name>" on the HUD). **Per-worm
+  looks** (`session::WormLook { name, colour, skin }`, one per worm,
+  registered in worm order): local play's as above, an online match's the
+  lobby's (`setup::load_online` loads every slot's skin once by id,
+  `Assets::skins`; one this install lacks is the default skin).
   `restart` (F5) builds the world from the assets loaded once: the
   sandbox again, a Deathmatch's rematch (seed + rematch number; the
   previous match's replay is handed back to save), a replay from the
@@ -174,6 +191,32 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   uploaded again. It clears the last tick's events (the rematch's bots
   think first, on the new world). Debug builds assert every `DRIFT_CHECK_TICKS` (100) that
   the colour terrain's material is the world's (`session_catches_terrain_drift`).
+  A tick's bookkeeping (`after_tick`: clock, tally, log, end and results,
+  popups) reads a `TickView`: a local tick's world and events, or an
+  online match's `ConfirmedTick`.
+- **Online** (`online.rs`, plan 10 task 10; spec §3.4, decision N20):
+  `Session::online(assets, OnlineDriver::new(peer, &start), ..)` after the
+  peer's `MatchStarting` (the events after it in that poll go to
+  `Session::present_events`); then `Session::frame(now, local_keys)` once a
+  frame instead of `Session::tick`: one `OnlinePeer::poll` (the local keys
+  from `local_keys`, which the netcode calls once per new tick: the input
+  latch; the scene reads every simulated tick inside it,
+  `after_tick_resimulated` for a re-simulated one), then the poll's events
+  in a fixed order whatever their order in the poll (`online::present_poll`,
+  pinned by `a_loaded_state_is_presented_before_the_polls_ticks`): a
+  loaded state (`OnlineEvent::StateLoaded`: `Presentation::state_loaded`,
+  `NetPresenter::reset`), the restored areas and ticks
+  (`NetPresenter::apply`, its sounds at the camera; debug builds check the
+  colour terrain after every advance, about 1 ms a frame at worst in
+  `an_online_match_runs_headless`), `NetPresenter::confirmed`, and the
+  confirmed ticks through `after_tick` (log, tally, results, clock,
+  popups: never a predicted tick). The HUD's scoreboard and the followed
+  worm's lives, kills and deaths are the last confirmed tick's
+  (`Session::scores`); the newest predicted world is drawn
+  (`Session::world`; the newest is kept once the match has ended, since
+  the peer drops it). The other events (lobby, chat, end, connection)
+  are handed back for the shell; `OnlineDriver::into_peer` gives the
+  peer back. An online match is never fast-forwarded (`human()`).
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the default
   restrictions) feeds `rl_content::build_match`, the same assembly as
@@ -310,7 +353,10 @@ Test: `cargo nextest run -p rl-game` (the pure parts; `setup`, `session`,
 budget, a recording replayed through a replay session), `tests/menu.rs`
 (starts with missing or broken content, rapid menu actions) and
 `tests/profiles.rs` (the preview's textures; a menu match wears the
-profile's look), `tests/ingame.rs` (the weapon selection, the pause and a
+profile's look), `tests/online.rs` (a local match whose player is slot 2,
+a watcher following any worm, a `Driver::Online` session against a host
+on 127.0.0.1: 300 frames on a fake 10 ms clock, the HUD's scores the
+host's confirmed ones, the end from a confirmed tick), `tests/ingame.rs` (the weapon selection, the pause and a
 valid replay, the results against the world's scores), `tests/options.rs`
 (video through the paced requests,
 a window made again keeps the game ticking, volumes live, the saved window with the flags on top) play the imported

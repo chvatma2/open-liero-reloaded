@@ -154,6 +154,18 @@ impl Presentation {
         self.fx.clear();
     }
 
+    /// The camera follows worm `worm` (by id) from the next frame: the
+    /// local player's, or the one a spectator watches. A new presentation
+    /// follows worm 0.
+    pub fn follow(&mut self, worm: i32) {
+        self.scene.camera.set_target(worm);
+    }
+
+    /// The worm the camera follows.
+    pub fn followed(&self) -> i32 {
+        self.scene.camera.target()
+    }
+
     /// A view of another shape: a new camera on the same target.
     pub fn set_viewport(&mut self, viewport: Viewport) {
         if self.scene.camera.viewport() != viewport {

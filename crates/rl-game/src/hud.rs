@@ -109,7 +109,7 @@ pub struct Frame<'a> {
 /// their names go there.
 pub fn worms_on_screen(s: &Session, map: &ScreenMap, alpha: f32) -> Vec<(usize, Pos2)> {
     let blend = Blend::new(s.present.scene.prev(), alpha, s.present.scene.options.interpolation);
-    s.world
+    s.world()
         .worms()
         .iter()
         .enumerate()
@@ -118,20 +118,35 @@ pub fn worms_on_screen(s: &Session, map: &ScreenMap, alpha: f32) -> Vec<(usize, 
         .collect()
 }
 
-/// What the HUD shows of `s` with frame `f`: the followed worm (0; no
-/// weapons during the selection), the event log, the clock and kill
-/// limit, a replay's progress, the fast-forward speed, the scoreboard
-/// while `scores`, the minimap ("Game Over" until the results show) and
-/// the keys.
+/// What the HUD shows of `s` with frame `f`: the followed worm (the
+/// player's own, `Session::local`, or the one watched; no weapons during
+/// the selection), the event log, the clock and kill limit, a replay's
+/// progress, the fast-forward speed, the scoreboard while `scores` (the
+/// followed worm's row highlighted), the minimap (the player's dot the
+/// big one; "Game Over" until the results show) and the keys. An online
+/// match's lives, kills, deaths and scoreboard are its confirmed tick's
+/// (spec §3.4); its health and weapons the newest predicted tick's.
 pub fn view(s: &Session, f: &Frame) -> HudView {
     let Frame { scores, minimap, time, menus, speed, .. } = *f;
-    let mut worm = WormHud::of(&s.world, 0, &s.names, s.human());
+    let world = s.world();
+    let followed = s.followed();
+    let local = s.local().map(i32::from);
+    let mut worm =
+        usize::try_from(followed).ok().and_then(|i| WormHud::of(world, i, &s.names, local == Some(followed)));
     if let Some(w) = worm.as_mut().filter(|_| f.selecting) {
         w.slots.clear();
+    }
+    if let (Driver::Online(_), Some(w)) = (&s.driver, worm.as_mut())
+        && let Some(c) = s.scores().iter().find(|c| c.worm == followed)
+    {
+        (w.lives, w.kills, w.deaths, w.suicides) = (c.lives, c.kills, c.deaths, c.suicides);
     }
     let mut notices = Vec::new();
     if let Some(speed) = speed.filter(|_| !s.human()) {
         notices.push(Notice { text: format!("Fast-forward {speed}"), warn: false });
+    }
+    if s.spectating() {
+        notices.push(Notice { text: format!("Watching {}", s.names.of(followed)), warn: false });
     }
     if let Driver::Replay(d) = &s.driver {
         let (t, n) = (d.cursor.tick(), d.replay.ticks());
@@ -146,13 +161,12 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
             notices.push(Notice { text, warn: true });
         }
     }
-    let t = s.world.terrain();
+    let t = world.terrain();
     let map = vec2(t.width() as f32, t.height() as f32);
     let minimap = minimap.map(|texture| MinimapView {
         texture,
         map,
-        dots: s
-            .world
+        dots: world
             .worms()
             .iter()
             .enumerate()
@@ -162,7 +176,7 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
                 Dot {
                     pos: pos2(w.pos.x, w.pos.y),
                     colour: Color32::from_rgb(r, g, b),
-                    big: i == 0 && s.human(),
+                    big: local == Some(i as i32),
                 }
             })
             .collect(),
@@ -175,6 +189,8 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
         }
         Driver::Match(_) => "PgUp/PgDn speed   Tab scores   F2 debug   F5 rematch   Esc quit",
         Driver::Replay(_) => "PgUp/PgDn speed   Tab scores   F2 debug   F5 from the start   Esc quit",
+        Driver::Online(_) if local.is_some() => "Shift+arrows weapon   Tab scores   F2 debug   Esc quit",
+        Driver::Online(_) => "PgUp/PgDn follow   Tab scores   F2 debug   Esc quit",
     };
     let hint = if menus { hint.replace("Esc quit", "Esc pause") } else { hint.to_string() };
     HudView {
@@ -183,7 +199,8 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
         time_left_ms: s.time_left_ms,
         kill_limit: s.kill_limit(),
         notices,
-        scoreboard: (scores && s.results.is_none()).then(|| rl_ui::hud::rows(s.world.scores(), &s.names)),
+        scoreboard: (scores && s.results.is_none())
+            .then(|| rl_ui::hud::rows(s.scores(), &s.names, Some(followed))),
         minimap,
         game_over: s.results.is_some() && !s.results_shown(),
         hint: Some(hint),
