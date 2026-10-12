@@ -453,3 +453,28 @@ fn tick_records_follow_rollbacks() {
     }
     assert!(records.ticked[&1].iter().any(|t| t.resim));
 }
+
+/// After a loaded state, the records restart at it: the old timeline's
+/// candidates up to its tick are dropped, and nothing up to it comes out.
+#[test]
+fn a_loaded_state_restarts_the_tick_records() {
+    let Some(c) = content() else { return };
+    let mut sim = WorldSim::new(dirt_world(&c, 1));
+    let mut rec = TickRecorder::default();
+    let info = |tick, resim| TickInfo { tick, resim, all_final: false };
+    for t in 0..20 {
+        sim.tick(&keys(t));
+        rec.simulated(&sim, info(t, false));
+    }
+    let first: Vec<u32> = rec.take_confirmed(5).iter().map(|t| t.tick).collect();
+    assert_eq!(first, vec![0, 1, 2, 3, 4]);
+    // The state after tick 14 loads; the ticks after it run again.
+    rec.state_loaded(14);
+    for t in 15..20 {
+        sim.tick(&keys(t));
+        rec.simulated(&sim, info(t, true));
+    }
+    rec.simulated(&sim, info(10, true)); // before the state: not recorded
+    let after: Vec<u32> = rec.take_confirmed(30).iter().map(|t| t.tick).collect();
+    assert_eq!(after, vec![15, 16, 17, 18, 19], "a gap from 5 to 14");
+}

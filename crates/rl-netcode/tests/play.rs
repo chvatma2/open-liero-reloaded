@@ -35,6 +35,7 @@ fn a_client_that_leaves_is_dropped_at_once() {
     while p.host.current_tick() < 300 {
         p.step();
     }
+    let before = p.client_sent.len();
     p.client.leave();
     p.transmit_client();
     let left_ms = p.now_ms;
@@ -58,7 +59,7 @@ fn a_client_that_leaves_is_dropped_at_once() {
     assert_eq!(lefts, 1);
     assert!(p.host_events.iter().all(|e| !matches!(e.1, Event::PeerTimedOut { .. })), "no timeout");
     // The client sent its Bye, then nothing.
-    let after: Vec<_> = p.client_sent.iter().filter(|m| m.0 >= left_ms).collect();
+    let after = &p.client_sent[before..];
     assert_eq!(after.len(), 1, "{} messages after leaving", after.len());
     assert_eq!(after[0].1, Channel::Reliable);
     assert_eq!(decode_control(&after[0].2), Ok(Control::Bye));

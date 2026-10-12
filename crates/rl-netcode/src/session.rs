@@ -170,7 +170,8 @@ pub enum Event {
     /// The host sent a final input that differs from an earlier one.
     Inconsistent { peer: PeerId, tick: u32, slot: u8 },
     /// Client: the host filled our inputs within ticks `from..to` (they
-    /// arrived too late): one per datagram of ours it answered.
+    /// arrived too late): one per datagram of ours it answered. The span
+    /// can include on-time ticks between two fill episodes.
     Late { from: u32, to: u32 },
     /// Client: the host has filled our inputs for [`LAGGING_TICKS`] ticks'
     /// worth within [`LAGGING_WINDOW_US`] (`true`), or not for
@@ -1330,6 +1331,7 @@ impl<S: Simulation> Session<S> {
                 self.events.push(Event::PeerLeft { peer: from });
             }
             Control::StateLoaded { tick } if host => self.on_state_loaded(from, tick),
+            Control::StateRefused { tick } if host => self.on_state_refused(from, tick),
             Control::Checksum { tick, hash } if host => self.on_checksum(from, tick, hash),
             Control::Desync { tick, host_hash } if !host => {
                 self.stats.desyncs += 1;
@@ -1344,7 +1346,7 @@ impl<S: Simulation> Session<S> {
                 Some(inc) => self.incoming = Some(inc),
                 None => {
                     self.incoming = None;
-                    self.events.push(Event::StateRejected { tick });
+                    self.state_refused(tick);
                 }
             },
             Control::StateChunk { index, bytes } if !host => {
@@ -1359,7 +1361,7 @@ impl<S: Simulation> Session<S> {
                     }
                     Err(()) => {
                         self.incoming = None;
-                        self.events.push(Event::StateRejected { tick });
+                        self.state_refused(tick);
                     }
                 }
             }
@@ -1404,6 +1406,19 @@ impl<S: Simulation> Session<S> {
         }
     }
 
+    /// Host: `peer` refused our state after `tick` (its transfer or its
+    /// bytes): the repair re-arms at once, without waiting for
+    /// [`LOAD_TIMEOUT_US`] (another state, or past [`MAX_REPAIRS`]
+    /// [`Event::RepairFailed`]).
+    fn on_state_refused(&mut self, peer: PeerId, tick: u32) {
+        let sent = self.peers.get(&peer).map(|p| p.checks.repair);
+        if let Some(Repair::Sent { tick: t, until: None, .. }) = sent
+            && t == tick
+        {
+            self.rearm(peer);
+        }
+    }
+
     /// Host: compares `peer`'s checksum of `tick` with ours. A difference
     /// is a desync ([`Session::desync`]), at most one repair in flight.
     /// While the state is on its way the peer's reports differ: a repair
@@ -1432,17 +1447,25 @@ impl<S: Simulation> Session<S> {
     fn desync(&mut self, peer: PeerId, tick: u32, local: u64, remote: u64) {
         self.stats.desyncs += 1;
         self.events.push(Event::Desync { tick, local, remote, peer });
-        let Some(p) = self.peers.get_mut(&peer) else { return };
+        if self.rearm(peer) {
+            let c = encode_control(&Control::Desync { tick, host_hash: local });
+            self.push_out(peer, Channel::Reliable, c);
+        }
+    }
+
+    /// Host: another state is owed to `peer` (`true`), or after
+    /// [`MAX_REPAIRS`] the repair fails ([`Event::RepairFailed`]).
+    fn rearm(&mut self, peer: PeerId) -> bool {
+        let Some(p) = self.peers.get_mut(&peer) else { return false };
         p.checks.reported.clear();
         if p.checks.repairs >= MAX_REPAIRS {
             p.checks.repair = Repair::Failed;
             self.events.push(Event::RepairFailed { peer });
-            return;
+            return false;
         }
         p.checks.repairs += 1;
         p.checks.repair = Repair::Owed;
-        let c = encode_control(&Control::Desync { tick, host_hash: local });
-        self.push_out(peer, Channel::Reliable, c);
+        true
     }
 
     /// At the end of an advance: pending checksums below the confirmed
@@ -1535,7 +1558,7 @@ impl<S: Simulation> Session<S> {
         };
         self.events.push(Event::StateArrived { tick, bytes });
         let Some(floor) = loaded else {
-            self.events.push(Event::StateRejected { tick });
+            self.state_refused(tick);
             return;
         };
         let old = self.current;
@@ -1574,10 +1597,22 @@ impl<S: Simulation> Session<S> {
         self.stats.states_loaded += 1;
         self.events.push(Event::StateLoaded { tick });
         // The host times its repair from our load, not from its sending.
-        if let Role::Client { host, .. } | Role::Spectator { host } = self.role
+        self.tell_host(Control::StateLoaded { tick });
+    }
+
+    /// Client or spectator: the host's state after `tick` was refused
+    /// (`StateRejected`); the host is told, so it can send another at once.
+    fn state_refused(&mut self, tick: u32) {
+        self.events.push(Event::StateRejected { tick });
+        self.tell_host(Control::StateRefused { tick });
+    }
+
+    /// Client or spectator (a joining one too): `c` to the host, unless lost.
+    fn tell_host(&mut self, c: Control) {
+        if let Role::Client { host, .. } | Role::Spectator { host } | Role::Joining { host } = self.role
             && self.peers.get(&host).is_some_and(|p| !p.lost)
         {
-            self.push_out(host, Channel::Reliable, encode_control(&Control::StateLoaded { tick }));
+            self.push_out(host, Channel::Reliable, encode_control(&c));
         }
     }
 }

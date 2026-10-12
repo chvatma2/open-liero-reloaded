@@ -80,9 +80,9 @@ impl Checks {
 /// round trip and the prediction window, with room) is taken to have
 /// failed: a later mismatch re-arms.
 pub(crate) const REPAIR_MARGIN: u32 = 300;
-/// A peer that has not said it loaded a state this long after it was sent
-/// (refused, or still downloading over a hopeless link) is given up
-/// (`Event::RepairFailed`).
+/// A peer that has not said it loaded or refused a state this long after
+/// it was sent (silent, or still downloading over a hopeless link) is
+/// given up (`Event::RepairFailed`).
 pub(crate) const LOAD_TIMEOUT_US: u64 = 60_000_000;
 /// States sent to repair one peer before the host gives up on it
 /// (`Event::RepairFailed`).

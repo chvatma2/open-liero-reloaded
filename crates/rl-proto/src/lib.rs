@@ -98,7 +98,9 @@ pub enum Control {
         hash: u64,
     },
     /// The host filled the receiver's inputs it got too late, within ticks
-    /// `from..to` (one per datagram; `from < to`).
+    /// `from..to` (one per datagram; `from < to`). The span covers every
+    /// filled tick the datagram hit, so it can include ticks between two
+    /// fill episodes whose inputs were on time.
     Late {
         from: u32,
         to: u32,
@@ -120,6 +122,11 @@ pub enum Control {
     Bye,
     /// A client or spectator loaded the host's state after `tick`.
     StateLoaded {
+        tick: u32,
+    },
+    /// A client or spectator refused the host's state after `tick` (its
+    /// transfer, or the bytes).
+    StateRefused {
         tick: u32,
     },
 }

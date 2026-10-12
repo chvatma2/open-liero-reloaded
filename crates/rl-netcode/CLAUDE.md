@@ -85,8 +85,9 @@ model that tests it in one process (spec §9.1).
     unknown at `t − fill_window` becomes its previous final value
     (`Stats::fills`); values arriving later for filled ticks are ignored
     and answered once, one `Control::Late { from, to }` per datagram
-    spanning the filled ticks it hit (`Event::Late` at the client; the
-    decoder refuses `from >= to`). 300 consecutive host ticks with a fill:
+    spanning the filled ticks it hit (it can include on-time ticks between
+    two fill episodes; `Event::Late` at the client; the decoder refuses
+    `from >= to`). 300 consecutive host ticks with a fill:
     `Event::PeerLate`. The client's own warning (spec §3.2):
     `Event::Lagging(true)` once its `Late`s span `LAGGING_TICKS` (300)
     ticks within `LAGGING_WINDOW_US` (4 s), `Lagging(false)` after
@@ -121,10 +122,13 @@ model that tests it in one process (spec §9.1).
   (repaired) or one from `REPAIR_MARGIN` (300) ticks after the peer's
   `Control::StateLoaded { tick }` arrived on differs (diverged again: a
   new desync); the window starts at the load, not the sending, so a
-  multi-MB state over a slow link is not re-sent while it downloads. No
-  `StateLoaded` within `LOAD_TIMEOUT_US` (60 s; refused, or a hopeless
-  link): `Event::RepairFailed`. After `MAX_REPAIRS` (3) states, or with a
-  state too large to send, `Event::RepairFailed` and no more repairs.
+  multi-MB state over a slow link is not re-sent while it downloads. A
+  refusal (`StateRejected` at the receiver, which sends
+  `Control::StateRefused { tick }`) re-arms at once (another state, or
+  past `MAX_REPAIRS` `RepairFailed`). Neither within `LOAD_TIMEOUT_US`
+  (60 s; a silent peer, or a hopeless link): `Event::RepairFailed`. After
+  `MAX_REPAIRS` (3) states, or with a state too large to send,
+  `Event::RepairFailed` and no more repairs.
   `add_spectator` for a player's peer is refused (`Event::JoinRefused`).
   The receiver refuses a transfer with an index out of range, a repeated
   chunk or more bytes than announced (`StateRejected`, later chunks
@@ -140,8 +144,8 @@ model that tests it in one process (spec §9.1).
   (a change outside the timeline is never rolled back across).
   `change_confirmed(driver, f)` plants a fault properly: `f` changes the
   state after the last confirmed tick and the unconfirmed ticks run again
-  on top, so predicted inputs are not made
-  final (the harness's `corrupt`).
+  on top, so predicted inputs are not made final (the harness's
+  `corrupt`).
 - **Spectators mid-match**: `Role::Joining` simulates nothing and ignores
   frames until a state loads, then is a `Spectator` whose input log
   begins after the state (`InputLog::start_at`). The host's
@@ -174,8 +178,13 @@ model that tests it in one process (spec §9.1).
   replaced when the tick is re-simulated; `take_confirmed(confirmed)`
   hands out those below `Session::confirmed()`, in order, each tick once
   (a tick re-simulated after it was taken, after a loaded state, is not
-  recorded again). `tests/world_sim.rs`' `tick_records_follow_rollbacks`
-  checks them against an offline replay of the final inputs.
+  recorded again). `state_loaded(tick)` (the driver calls it on
+  `Event::StateLoaded`) drops the old timeline's candidates up to `tick`:
+  confirmed ticks then have a gap, so `scores` and `result` (the world's
+  own, self-correcting) are the truth, and the match end is read from
+  `result`, not only from a `GameOver` event. `tests/world_sim.rs`'
+  `tick_records_follow_rollbacks` checks them against an offline replay of
+  the final inputs, `a_loaded_state_restarts_the_tick_records` the gap.
 - **Harness** (`harness.rs`, `toy.rs`): `run` plays a `Scenario` — the host
   (`HOST` = 0) and its clients and spectators over `Network`, in virtual
   time (1 ms steps, idle steps skipped), clocks skewed by `clock_ppm`,

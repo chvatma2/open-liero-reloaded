@@ -153,7 +153,13 @@ pub struct ConfirmedTick {
 /// §3.4: sounds and effects at once, the scoreboard and messages from
 /// confirmed ticks only). Fed from [`crate::Driver::simulated`]; after each
 /// `advance` the game takes the ticked records, then the confirmed ones
-/// below `Session::confirmed`.
+/// below `Session::confirmed`, and calls [`TickRecorder::state_loaded`]
+/// for every `Event::StateLoaded`.
+///
+/// Confirmed ticks can have a gap after a loaded state (a repair, a late
+/// spectator), so events in it are never seen; each record's `scores` and
+/// `result` are the world's own and correct themselves: the game takes the
+/// match end from `result`, not only from a `GameOver` event.
 #[derive(Debug, Default)]
 pub struct TickRecorder {
     ticked: Vec<TickedTick>,
@@ -193,6 +199,16 @@ impl TickRecorder {
                 positions: world.worms().iter().map(|w| (w.id, w.pos)).collect(),
             },
         );
+    }
+
+    /// The session loaded the state after `tick` (`Event::StateLoaded`):
+    /// the candidates up to it are the old timeline's and are dropped, and
+    /// nothing up to it is recorded or handed out any more. The confirmed
+    /// records then skip to `tick + 1`: a gap.
+    pub fn state_loaded(&mut self, tick: u32) {
+        let keep = tick.saturating_add(1);
+        self.pending = self.pending.split_off(&keep);
+        self.taken = self.taken.max(keep);
     }
 
     /// Every tick simulated since the last call, in simulation order.

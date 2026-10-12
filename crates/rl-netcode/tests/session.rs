@@ -6,8 +6,12 @@ use rl_netcode::harness::Factory;
 use rl_netcode::harness::{self, HOST, Outage, PeerPlan, Scenario};
 use rl_netcode::netsim::Profile;
 use rl_netcode::toy::ToyFactory;
-use rl_netcode::{Channel, Config, Role, Seat, Session, ToySim, input_delay};
-use rl_proto::{ClientInputs, Datagram, Frame, HostInputs, MAX_FRAMES, MAX_KEYS, Stamp, encode_datagram};
+use rl_netcode::{Channel, Config, Role, Seat, Session, Simulation, ToySim, input_delay};
+use rl_proto::{
+    ClientInputs, Control, Datagram, Frame, HostInputs, MAX_FRAMES, MAX_KEYS, Stamp, encode_control,
+    encode_datagram,
+};
+use rl_sim::Keys;
 
 fn scenario(seed: u64, profile: Profile, clients: u8, spectators: u8) -> Scenario {
     let slots = clients + 2; // two host-local slots (a human and a bot)
@@ -183,16 +187,29 @@ proptest! {
     #![proptest_config(ProptestConfig { cases: 256, failure_persistence: None, ..ProptestConfig::default() })]
 
     /// Well-formed datagrams with edge values never panic a client, a
-    /// spectator, a joining spectator or the host, and never change an
-    /// input it took as final.
+    /// spectator, a joining spectator, the host or a spectator joined from
+    /// a state (its log's origin past 0), and never change an input it
+    /// took as final.
     #[test]
     fn edge_datagrams_never_panic_or_change_final_inputs(datagrams in prop::collection::vec(datagram(), 1..24)) {
         let host = Role::Host { peers: vec![(1, Seat::Player(1)), (2, Seat::Spectator)] };
+        // A spectator joined from the state after tick 30: its log begins at 31.
+        let mut joined = Session::new(Config::new(4, 0), Role::Joining { host: 0 }, ToySim::new(4), 0);
+        let mut state = ToySim::new(4);
+        for _ in 0..=30 {
+            state.tick(&[Keys(3); 4]);
+        }
+        let bytes = state.encode_state();
+        let begin = Control::StateBegin { tick: 30, len: bytes.len() as u32, chunks: 1 };
+        joined.receive(0, Channel::Reliable, &encode_control(&begin), 0);
+        joined.receive(0, Channel::Reliable, &encode_control(&Control::StateChunk { index: 0, bytes }), 0);
+        prop_assert_eq!(joined.input_log().origin(), 31);
         let mut sessions = [
             (0, Session::new(Config::new(4, 1), Role::Client { host: 0, slot: 1 }, ToySim::new(4), 0)),
             (0, Session::new(Config::new(4, 0), Role::Spectator { host: 0 }, ToySim::new(4), 0)),
             (0, Session::new(Config::new(4, 0), Role::Joining { host: 0 }, ToySim::new(4), 0)),
             (1, Session::new(Config::new(4, 0), host, ToySim::new(4), 0)),
+            (0, joined),
         ];
         let mut f = ToyFactory { slots: 4, seed: 1 };
         for (from, s) in sessions.iter_mut() {

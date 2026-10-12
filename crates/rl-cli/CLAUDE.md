@@ -113,8 +113,9 @@ The headless command-line tool. Its commands:
   minute (`Stats::own_corrections`, the worst client), stalls (every
   player's stall episodes, `Stats::stalls`, to the end of the run) and
   bytes per second down and up (the worst client;
-  `Stats::bytes_in`/`bytes_out`, `OVERHEAD` per datagram included). A failed verdict is an error. `cargo xtask net-feel` gates
-  them (see xtask); `tests/feel.rs` checks the definitions on a short run.
+  `Stats::bytes_in`/`bytes_out`, `OVERHEAD` per datagram included). A
+  failed verdict is an error. `cargo xtask net-feel` gates them (see
+  xtask); `tests/feel.rs` checks the definitions on a short run.
 - `rl-cli gpu-bench --replay F [--sizes 1920x1080,2560x1440,3440x1440,3840x2160]
   [--start-tick 1000] [--frames 600] [--probe-passes 0,1,2,4,8,16,32]
   [--probe-taps 9] [--probe-frames 120] [--adapter hardware|software]

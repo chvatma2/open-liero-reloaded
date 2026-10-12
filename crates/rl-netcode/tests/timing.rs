@@ -106,6 +106,7 @@ fn a_frozen_host_stalls_its_clients_who_recover() {
         ..scenario(7, vec![plan(1, 2, Profile::GOOD, 0), plan(2, 3, Profile::TYPICAL, 0)], 3_000)
     };
     let r = run(&sc);
+    assert!(r.dropped.is_empty(), "dropped {:?}", r.dropped);
     for p in [1u16, 2] {
         let stalls: Vec<u32> = r.events[&p]
             .iter()

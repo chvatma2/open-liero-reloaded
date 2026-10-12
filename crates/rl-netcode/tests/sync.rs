@@ -328,14 +328,17 @@ fn a_peer_that_diverges_after_each_state_is_given_up() {
 
 #[test]
 fn a_peer_that_refuses_the_state_is_given_up() {
-    // It never says it loaded the state: the host waits for that a minute
-    // (a multi-MB state may take long), then gives up.
-    let (r, desyncs, sent) = failing_repairs(Fault::Refuse, 7_000);
+    // It says it refused each state (`Control::StateRefused`): the host
+    // sends another at once, and gives up after three.
+    let (r, desyncs, sent) = failing_repairs(Fault::Refuse, 1_800);
     assert_eq!(desyncs.len(), 1, "desyncs at {desyncs:?}");
-    assert_eq!(sent.len(), 1, "states at {sent:?}");
+    assert_eq!(sent.len(), 3, "states at {sent:?}");
+    for w in sent.windows(2) {
+        assert!(w[1] - w[0] < 30, "the next state a round trip later, not a margin: {sent:?}");
+    }
     assert_eq!(r.stats[&1].states_loaded, 0);
     let refused = r.events[&1].iter().filter(|e| matches!(e, Event::StateRejected { .. })).count();
-    assert_eq!(refused, 1);
+    assert_eq!(refused, 3);
 }
 
 fn client() -> Session<ToySim> {
@@ -440,6 +443,7 @@ fn arb_control() -> impl Strategy<Value = Control> {
             .prop_map(|(index, bytes)| Control::StateChunk { index, bytes }),
         (any::<u32>(), any::<u32>()).prop_map(|(from, to)| Control::Late { from, to }),
         any::<u32>().prop_map(|tick| Control::StateLoaded { tick }),
+        any::<u32>().prop_map(|tick| Control::StateRefused { tick }),
         Just(Control::Bye),
     ]
 }
