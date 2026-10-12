@@ -1,0 +1,28 @@
+//! The rollback netcode (networking spec §3): a sans-IO session that takes
+//! messages and the time and returns messages and ticks to run, generic over
+//! the [`Simulation`] it drives, and a deterministic network model to test
+//! it in one process ([`netsim`]).
+//!
+//! `#![no_std]` + `alloc`.
+#![no_std]
+
+extern crate alloc;
+
+pub mod netsim;
+mod rng;
+mod sim;
+
+pub use rng::Rng;
+pub use sim::{Simulation, StateRejected, ToySim};
+
+/// A peer's address within one session.
+pub type PeerId = u16;
+
+/// The two data channels of every connection (spec §2.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Channel {
+    /// Inputs: unordered, may be lost or duplicated.
+    Unreliable,
+    /// Everything else: ordered, never lost.
+    Reliable,
+}

@@ -3023,6 +3023,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-netcode"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "rl-proto",
+ "rl-sim",
+]
+
+[[package]]
 name = "rl-oracle"
 version = "0.1.0"
 dependencies = [

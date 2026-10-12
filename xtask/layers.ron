@@ -18,6 +18,7 @@
         "rl-bots": 3,
         "rl-replay": 3,
         "rl-proto": 4,
+        "rl-netcode": 4,
         "rl-scenario": 4,
         "rl-content": 4,
         "rl-scene": 5,
@@ -57,7 +58,9 @@
         ("rl-present", "rl-render"),
         // The options menu edits the key bindings (plan 7 task 1).
         ("rl-ui", "rl-input"),
+        // The session speaks the wire format.
+        ("rl-netcode", "rl-proto"),
     ],
-    no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-proto"],
-    wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-proto", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
+    no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-proto", "rl-netcode"],
+    wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-proto", "rl-netcode", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
 )
