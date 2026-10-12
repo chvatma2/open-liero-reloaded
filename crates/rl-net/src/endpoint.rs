@@ -39,13 +39,20 @@ pub const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
 pub const SILENCE_TIMEOUT: Duration = Duration::from_secs(10);
 /// The client's TCP connect gives up after this long.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// A host's signalling connection must deliver its offer within this time.
+pub const OFFER_TIMEOUT: Duration = Duration::from_secs(3);
 /// How long a finished or refused signalling connection may take to close.
 const LINGER: Duration = Duration::from_secs(1);
 /// At most this many signalling connections wait for their offer; more are
 /// closed as they come.
 const MAX_INCOMING: usize = 64;
-/// At most this many datagrams and TCP connections are taken in one poll.
-const MAX_PER_POLL: usize = 4096;
+/// At most this many connections not open yet (waiting for their offer, or
+/// a link connecting) per source IP; more are closed as they come.
+pub const MAX_PER_IP: usize = 8;
+/// At most this many TCP connections are taken in one poll.
+const MAX_ACCEPTS_PER_POLL: usize = 64;
+/// At most this many datagrams are taken in one poll.
+const MAX_DATAGRAMS_PER_POLL: usize = 1024;
 
 /// The host's admission check for a valid offer from the signalling
 /// connection's remote address (bans by IP, Task 6/13). It runs after the
@@ -135,6 +142,8 @@ pub struct PeerStats {
     /// Messages [`Endpoint::send`] dropped: over [`MAX_QUEUED`], or refused
     /// by the link (empty, too large).
     pub sends_dropped: u64,
+    /// Datagrams the local socket did not take (a full send buffer).
+    pub send_failures: u64,
 }
 
 struct Peer {
@@ -152,6 +161,8 @@ struct Peer {
     /// The link must open by then.
     deadline: Instant,
     heard: Instant,
+    /// The peer broke a limit with raw traffic; dropped at its next step.
+    broke: Option<Why>,
     limits: PeerLimits,
     stats: PeerStats,
     impair: Option<Impair>,
@@ -226,7 +237,18 @@ fn send_datagram(udp: &UdpSocket, stats: &mut PeerStats, t: &Transmit) {
     if udp.send_to(&t.bytes, t.to).is_ok() {
         stats.datagrams_sent += 1;
         stats.bytes_sent += t.bytes.len() as u64;
+    } else {
+        stats.send_failures += 1;
     }
+}
+
+/// The IP addresses of the `a=candidate` lines of an SDP, or `None` when
+/// one does not parse (e.g. an mDNS name).
+fn candidate_ips(sdp: &str) -> Option<Vec<IpAddr>> {
+    sdp.lines()
+        .filter_map(|line| line.trim_end().strip_prefix("a=candidate:"))
+        .map(|candidate| candidate.split_ascii_whitespace().nth(4)?.parse().ok())
+        .collect()
 }
 
 /// Polls the peer's link and sends its datagrams (through the impairment).
@@ -346,8 +368,10 @@ impl Endpoint {
     }
 
     /// Lets the next `bytes` of reliable messages from `peer` through the
-    /// byte limit: a state transfer the session expects (the sender side is
-    /// not limited).
+    /// byte limit: a state transfer the session expects (the sender's
+    /// messages are not limited). It also lifts the raw limits by twice the
+    /// transfer, which a sender of a state well above 3 MB needs too: the
+    /// receiver's SACKs count.
     pub fn allow_burst(&mut self, peer: PeerId, bytes: usize) {
         if let Some(p) = self.open.get_mut(&peer) {
             p.limits.allow_burst(bytes);
@@ -394,6 +418,7 @@ impl Endpoint {
             answered: !self.is_client(),
             deadline: now + SETUP_TIMEOUT,
             heard: now,
+            broke: None,
             limits: PeerLimits::new(&self.cfg.limits, now),
             stats: PeerStats::default(),
             impair,
@@ -406,15 +431,21 @@ impl Endpoint {
         let max = self.cfg.limits.max_signal_bytes;
         match &mut self.role {
             Role::Host { listener, incoming, .. } => {
-                for _ in 0..MAX_PER_POLL {
+                for _ in 0..MAX_ACCEPTS_PER_POLL {
                     let Ok((stream, addr)) = listener.accept() else { break };
-                    if incoming.len() >= MAX_INCOMING || stream.set_nonblocking(true).is_err() {
+                    let ip = addr.ip();
+                    let same_ip = incoming.iter().filter(|i| i.addr.ip() == ip).count()
+                        + self.pending.iter().filter(|p| p.addr.ip() == ip).count();
+                    if incoming.len() >= MAX_INCOMING
+                        || same_ip >= MAX_PER_IP
+                        || stream.set_nonblocking(true).is_err()
+                    {
                         continue;
                     }
                     let _ = stream.set_nodelay(true);
                     let Ok(local) = stream.local_addr() else { continue };
                     let conn = SignalConn::accept(stream, max);
-                    incoming.push(Incoming { conn, addr, local: local.ip(), deadline: now + SETUP_TIMEOUT });
+                    incoming.push(Incoming { conn, addr, local: local.ip(), deadline: now + OFFER_TIMEOUT });
                 }
                 let waiting = std::mem::take(incoming);
                 let mut kept = Vec::new();
@@ -489,6 +520,11 @@ impl Endpoint {
         if let Err(why) = gate(&addr, &signal) {
             return self.refuse(conn, why, now);
         }
+        // Every candidate must be the signalling connection's IP: the host
+        // never sends to an address the joiner does not hold (reflection).
+        if candidate_ips(sdp).is_none_or(|ips| ips.iter().any(|&ip| ip != addr.ip())) {
+            return self.refuse(conn, Refusal::Malformed, now);
+        }
         let local = SocketAddr::new(local, self.port);
         let Ok((link, answer)) = Link::answerer(&[local], sdp, now) else {
             return self.refuse(conn, Refusal::Malformed, now);
@@ -504,7 +540,8 @@ impl Endpoint {
     }
 
     /// Closes `conn`, giving it [`LINGER`] to go; at most [`MAX_INCOMING`]
-    /// linger, others are dropped at once.
+    /// linger, others are dropped at once (so under a flood of connections
+    /// a refusal may not reach its joiner, who sees the connection close).
     fn linger(&mut self, mut conn: SignalConn, now: Instant) {
         conn.close();
         if self.lingering.len() < MAX_INCOMING {
@@ -515,7 +552,7 @@ impl Endpoint {
     /// Hands each received datagram to the link that accepts it.
     fn receive(&mut self, now: Instant) {
         let mut buf = [0u8; 2048];
-        for _ in 0..MAX_PER_POLL {
+        for _ in 0..MAX_DATAGRAMS_PER_POLL {
             let (n, from) = match self.udp.recv_from(&mut buf) {
                 Ok(got) => got,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
@@ -529,12 +566,17 @@ impl Endpoint {
                 .chain(self.open.values_mut())
                 .find(|p| p.link.accepts(from, p.local, bytes));
             match peer {
-                Some(p) => {
+                Some(p) if p.broke.is_none() => {
                     p.stats.datagrams_received += 1;
                     p.stats.bytes_received += n as u64;
+                    if let Err(why) = p.limits.on_datagram(now, n) {
+                        p.broke = Some(why);
+                        continue;
+                    }
                     p.heard = now;
                     p.link.receive(from, p.local, bytes, now);
                 }
+                Some(_) => {}
                 None => self.stray += 1,
             }
         }
@@ -543,10 +585,22 @@ impl Endpoint {
     /// Drives one peer: its signalling, its link, its limits and timeouts.
     /// `None` when it is gone.
     fn step(&mut self, mut peer: Peer, now: Instant, events: &mut Vec<NetEvent>) -> Option<Peer> {
+        if let Some(why) = peer.broke {
+            return match peer.id {
+                Some(id) => {
+                    events.push(NetEvent::Disconnected { peer: id, why });
+                    finish(&self.udp, peer, now);
+                    None
+                }
+                None => self.fail_setup(peer, why, now, events),
+            };
+        }
         if let Some(ws) = &mut peer.ws {
-            while let Some(frame) = ws.poll() {
+            if let Some(frame) = ws.poll() {
+                // After the offer (host) or the answer (client) nothing more
+                // may come: one more frame is a violation.
                 if peer.answered {
-                    continue;
+                    return self.fail_setup(peer, Why::Malformed, now, events);
                 }
                 match decode_signal(&frame) {
                     Ok(Signal::Answer { sdp }) if peer.link.accept_answer(&sdp).is_ok() => {

@@ -69,11 +69,21 @@ announcements.
     offer (else `Refused { Malformed }`), `PROTOCOL_VERSION` and the
     fingerprint (`Version`), `max_peers` counting connecting links
     (`Full`), peer ids left (`Busy`), the `gate` (its reason), the SDP
-    (`Malformed`). Accepted: `Link::answerer` with the candidate (the TCP
-    connection's local IP, the UDP port; decision N16), `Signal::Answer`,
-    the WebSocket kept until the link opens. At most 64 connections wait
-    for their offer; a refused or finished one gets a WebSocket close and
-    1 s to go. Nothing is reported for a connection that never opens.
+    (`Malformed`; every `a=candidate` IP must be the TCP peer's IP, so the
+    host never sends to an address the joiner may not hold). Accepted:
+    `Link::answerer` with the candidate (the TCP connection's local IP, the
+    UDP port; decision N16), `Signal::Answer`, the WebSocket kept until the
+    link opens; any further frame drops the joiner. At most 64 connections
+    wait for their offer, each `OFFER_TIMEOUT` (3 s); at most `MAX_PER_IP`
+    (8) not-yet-open connections (waiting or linking) per source IP —
+    more are closed as they come. A refused or finished connection gets a
+    WebSocket close and 1 s to go (at most 64 linger; beyond, a refusal may
+    be lost). Nothing is reported for a connection that never opens.
+  - **Signalling never holds `poll`**: `SignalConn::poll` reads at most 4
+    messages; a ping, pong, text or close frame closes the connection (our
+    peers send none; tungstenite answers every ping). The reader takes one
+    frame of at most `max_signal_bytes` (+ 14) at a time; tungstenite's
+    handshake reader stops at 64 KiB.
   - **Client** (`Endpoint::connect(cfg, host)`): the TCP connect runs on
     its own thread (`connect_timeout`, 5 s), then the client handshake, the
     offer (candidate: the TCP local IP, the UDP port), the answer or
@@ -94,8 +104,15 @@ announcements.
   `rl_proto::MAX_DATAGRAM` or a reliable one above `MAX_CONTROL` →
   `Malformed`. The link is closed. `allow_burst(peer, bytes)` exempts an
   expected state transfer from the byte limit (receiver side; the sender
-  is not limited). Raw datagrams are not limited (SACKs of a big transfer
-  would trip it); they are counted in `PeerStats`.
+  is not limited). Raw datagrams from the peer's address, whatever they
+  carry (STUN, undecryptable DTLS, SCTP control), meet generous raw
+  buckets too: `max_raw_datagrams_per_s` (10 000) and
+  `max_raw_bytes_per_s` (12 MiB), about 4× a 3 MB transfer per second;
+  `allow_burst` lifts them by twice the transfer (call it on the sending
+  side too for states much larger than 3 MB: their SACKs count). Beyond →
+  `Limits`. At most 1024 datagrams and 64 TCP connections per `poll`.
+  `PeerStats` counts both ways, plus `sends_dropped` and `send_failures`
+  (datagrams the local socket refused).
 - **Impairment** (`impair.rs`, spec §9.4): with `cfg.impair`, every
   outgoing datagram (handshakes included) passes `rl_netcode::netsim`'s
   `LinkModel` with the profile — loss, delay with jitter, duplication —
@@ -115,5 +132,8 @@ connect, 3 MB reliable, 2 000 unreliable datagrams at 1 ms — 10 000, about
 10 s, with `RL_FULL_TESTS` in `cargo xtask full`. `tests/endpoint.rs`, on
 127.0.0.1 with port 0, every wait bounded: a host and three clients,
 refusals, floods, bad signalling, closes, 1000 reliable messages through
-`bad`, and the 10 s timeouts — the longest test, about 10 s).
+`bad`, the 10 s timeouts — the longest test, about 10 s — and hostile
+peers: pings in a tight loop, 20 offers from one IP (the second address
+is the machine's non-loopback IP, skipped with a notice without one), an
+offer naming another IP, raw junk from a connected peer's address).
 Cross-build: `cargo build --release --target x86_64-pc-windows-gnu -p rl-net`.

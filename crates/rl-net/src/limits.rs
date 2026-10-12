@@ -20,6 +20,13 @@ pub struct Limits {
     /// The largest signalling message (one WebSocket frame). Default
     /// [`rl_proto::MAX_SIGNAL`].
     pub max_signal_bytes: usize,
+    /// Raw UDP datagrams per second from the peer's address, whatever they
+    /// carry (STUN, DTLS, SCTP control, junk). Generous: 10 000, about 4×
+    /// what a 3 MB transfer per second takes, SACKs included.
+    pub max_raw_datagrams_per_s: u32,
+    /// Raw UDP bytes per second from the peer's address. Default 12 MiB,
+    /// about 4× a 3 MB transfer per second.
+    pub max_raw_bytes_per_s: u32,
 }
 
 impl Default for Limits {
@@ -28,6 +35,8 @@ impl Default for Limits {
             max_datagrams_per_s: 400,
             max_reliable_bytes_per_s: 256 * 1024,
             max_signal_bytes: MAX_SIGNAL,
+            max_raw_datagrams_per_s: 10_000,
+            max_raw_bytes_per_s: 12 * 1024 * 1024,
         }
     }
 }
@@ -69,6 +78,10 @@ pub(crate) struct PeerLimits {
     bytes: Bucket,
     /// Reliable bytes still exempt from the byte limit (a state transfer).
     exempt: u64,
+    raw_datagrams: Bucket,
+    raw_bytes: Bucket,
+    /// Raw datagrams and bytes still exempt from the raw limits.
+    raw_exempt: (u64, u64),
 }
 
 impl PeerLimits {
@@ -77,14 +90,34 @@ impl PeerLimits {
             datagrams: Bucket::new(limits.max_datagrams_per_s, now),
             bytes: Bucket::new(limits.max_reliable_bytes_per_s, now),
             exempt: 0,
+            raw_datagrams: Bucket::new(limits.max_raw_datagrams_per_s, now),
+            raw_bytes: Bucket::new(limits.max_raw_bytes_per_s, now),
+            raw_exempt: (0, 0),
         }
     }
 
     /// Lets the next `bytes` of state through the byte limit (plus each
-    /// chunk's [`MESSAGE_COST`]).
+    /// chunk's [`MESSAGE_COST`]), and twice their datagrams and bytes
+    /// through the raw limits (a sender's SACKs, packet overheads).
     pub(crate) fn allow_burst(&mut self, bytes: usize) {
         let chunks = bytes.div_ceil(STATE_CHUNK) as u64 + 1;
         self.exempt = self.exempt.saturating_add(bytes as u64 + chunks * MESSAGE_COST as u64);
+        let (datagrams, raw) = &mut self.raw_exempt;
+        *datagrams = datagrams.saturating_add(2 * (bytes as u64 / 1000 + 16));
+        *raw = raw.saturating_add(2 * bytes as u64 + 64 * 1024);
+    }
+
+    /// Counts a raw datagram of `len` bytes from the peer's address at
+    /// `now`: `Err(Why::Limits)` over either raw rate.
+    pub(crate) fn on_datagram(&mut self, now: Instant, len: usize) -> Result<(), Why> {
+        let (datagrams, raw) = &mut self.raw_exempt;
+        let one = u64::from(*datagrams > 0);
+        *datagrams -= one;
+        let free = (len as u64).min(*raw);
+        *raw -= free;
+        let ok = self.raw_datagrams.take(now, (1 - one) as f64)
+            & self.raw_bytes.take(now, (len as u64 - free) as f64);
+        if ok { Ok(()) } else { Err(Why::Limits) }
     }
 
     /// Counts a message of `len` bytes from the peer at `now`: `Err` when it
@@ -152,6 +185,27 @@ mod tests {
         let mut p = PeerLimits::new(&Limits::default(), t0);
         let n = (256 * 1024 / MESSAGE_COST as usize) + 1;
         assert!((0..n).any(|_| p.on_message(t0, true, 0).is_err()));
+    }
+
+    #[test]
+    fn raw_floods_are_caught_and_a_burst_lifts_the_raw_limits() {
+        let t0 = Instant::now();
+        let mut p = PeerLimits::new(&Limits::default(), t0);
+        // A 3 MB transfer's datagrams (and as many SACKs) within a second pass.
+        for _ in 0..2 * 3_000_000 / 1100 {
+            assert_eq!(p.on_datagram(t0, 1100), Ok(()));
+        }
+        let mut p = PeerLimits::new(&Limits::default(), t0);
+        let caught = (0..20_000).position(|_| p.on_datagram(t0, 100).is_err());
+        assert_eq!(caught, Some(10_000), "the datagram rate");
+        let mut p = PeerLimits::new(&Limits::default(), t0);
+        let caught = (0..20_000).position(|_| p.on_datagram(t0, 1500).is_err());
+        assert_eq!(caught, Some(12 * 1024 * 1024 / 1500), "the byte rate");
+        let mut p = PeerLimits::new(&Limits::default(), t0);
+        p.allow_burst(20_000_000);
+        for _ in 0..20_000_000 / 1100 {
+            assert_eq!(p.on_datagram(t0, 1100), Ok(()), "a 20 MB state at once");
+        }
     }
 
     #[test]

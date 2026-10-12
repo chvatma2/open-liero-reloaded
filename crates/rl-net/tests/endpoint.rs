@@ -470,3 +470,233 @@ fn silent_peers_are_timed_out() {
     assert_eq!(host.peers().count(), 0);
     drop(client);
 }
+
+/// A raw WebSocket to the host at `addr` (blocking, reads time out after
+/// 2 s), its handshake done; the host must be polled meanwhile.
+fn raw_ws(addr: SocketAddr) -> tungstenite::Result<tungstenite::WebSocket<TcpStream>> {
+    let stream = TcpStream::connect(addr)?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    match tungstenite::client::client(format!("ws://{addr}/"), stream) {
+        Ok((ws, _)) => Ok(ws),
+        Err(tungstenite::HandshakeError::Failure(e)) => Err(e),
+        Err(tungstenite::HandshakeError::Interrupted(_)) => Err(tungstenite::Error::ConnectionClosed),
+    }
+}
+
+/// A valid offer whose only candidate is `candidate`.
+fn offer_from(candidate: &str) -> (rl_net::link::Link, Vec<u8>) {
+    let (link, sdp) = rl_net::link::Link::offerer(&[candidate.parse().unwrap()], Instant::now());
+    let offer = rl_proto::Signal::Offer {
+        protocol: rl_proto::PROTOCOL_VERSION,
+        fingerprint: rl_proto::FINGERPRINT,
+        sdp,
+    };
+    (link, rl_proto::encode_signal(&offer))
+}
+
+/// Sends `offer` on `ws` and returns the host's reply.
+fn exchange(ws: &mut tungstenite::WebSocket<TcpStream>, offer: Vec<u8>) -> Option<rl_proto::Signal> {
+    ws.send(tungstenite::Message::Binary(offer.into())).ok()?;
+    rl_proto::decode_signal(&ws.read().ok()?.into_data()).ok()
+}
+
+/// Pings in a tight loop (before or after an offer) cannot keep the host
+/// inside `poll`: every poll returns quickly and both connections close.
+#[test]
+fn a_pinging_peer_cannot_hold_the_host() {
+    let mut host = Endpoint::host(config(), open_gate()).unwrap();
+    let addr = host_addr(&host);
+    let ready = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let closed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let attackers: Vec<_> = [false, true]
+        .into_iter()
+        .map(|after_offer| {
+            let (ready, closed) = (ready.clone(), closed.clone());
+            std::thread::spawn(move || {
+                let mut ws = raw_ws(addr).unwrap();
+                if after_offer {
+                    let reply = exchange(&mut ws, offer_from("127.0.0.1:9").1);
+                    assert!(matches!(reply, Some(rl_proto::Signal::Answer { .. })), "{reply:?}");
+                }
+                ready.fetch_add(1, Ordering::SeqCst);
+                // Masked empty pings, written straight to the socket.
+                let pings = [0x89u8, 0x80, 0, 0, 0, 0].repeat(1000);
+                let stream = ws.get_mut();
+                stream.set_write_timeout(Some(Duration::from_millis(20))).unwrap();
+                let start = Instant::now();
+                while start.elapsed() < Duration::from_secs(3) {
+                    match stream.write(&pings) {
+                        Ok(_) => {}
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) => {}
+                        Err(_) => {
+                            closed.fetch_add(1, Ordering::SeqCst);
+                            return;
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+    let mut events = Vec::new();
+    let start = Instant::now();
+    while ready.load(Ordering::SeqCst) < 2 {
+        assert!(start.elapsed() < Duration::from_secs(5), "the attackers connect");
+        host.poll(Instant::now(), &mut events);
+        std::thread::sleep(Duration::from_micros(300));
+    }
+    let (start, mut slowest) = (Instant::now(), Duration::ZERO);
+    while closed.load(Ordering::SeqCst) < 2 {
+        assert!(start.elapsed() < Duration::from_secs(3), "the host closes both connections");
+        let t = Instant::now();
+        host.poll(Instant::now(), &mut events);
+        slowest = slowest.max(t.elapsed());
+        std::thread::sleep(Duration::from_micros(300));
+    }
+    for attacker in attackers {
+        attacker.join().unwrap();
+    }
+    assert!(slowest < Duration::from_millis(50), "the slowest poll took {slowest:?}");
+    assert!(events.is_empty(), "{events:?}");
+}
+
+/// One IP holds at most `MAX_PER_IP` connections that are not open yet, so
+/// a flood of offers from it leaves room for others.
+#[test]
+fn one_address_cannot_hold_every_pending_slot() {
+    let host = Endpoint::host(EndpointConfig { max_peers: 16, ..config() }, open_gate()).unwrap();
+    let addr = host_addr(&host);
+    let (stop, events, thread) = host_thread(host);
+    let mut answered = 0;
+    let mut held = Vec::new();
+    for _ in 0..20 {
+        let Ok(mut ws) = raw_ws(addr) else { continue };
+        if let Some(rl_proto::Signal::Answer { .. }) = exchange(&mut ws, offer_from("127.0.0.1:9").1) {
+            answered += 1;
+            held.push(ws);
+        }
+    }
+    assert_eq!(answered, rl_net::endpoint::MAX_PER_IP, "offers answered from one address");
+
+    // A joiner from another address of this machine still gets in.
+    let other = std::net::UdpSocket::bind("0.0.0.0:0")
+        .and_then(|s| s.connect("192.0.2.1:9").and_then(|()| s.local_addr()))
+        .map(|a| a.ip())
+        .ok()
+        .filter(|ip| !ip.is_loopback() && !ip.is_unspecified());
+    match other {
+        None => eprintln!("skipped the second address: this machine has no non-loopback address"),
+        Some(ip) => {
+            let mut client = Endpoint::connect(config(), SocketAddr::new(ip, addr.port())).unwrap();
+            let mut ce = Vec::new();
+            let start = Instant::now();
+            while !ce.iter().any(|e| matches!(e, NetEvent::Connected { .. })) {
+                assert!(start.elapsed() < Duration::from_secs(5), "a joiner from {ip} connects: {ce:?}");
+                client.poll(Instant::now(), &mut ce);
+                std::thread::sleep(Duration::from_micros(300));
+            }
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    thread.join().unwrap();
+    drop(held);
+    let events = events.lock().unwrap();
+    assert!(events.iter().all(|e| matches!(e, NetEvent::Connected { .. })), "{events:?}");
+}
+
+/// The host answers no offer with a candidate on another IP than the
+/// joiner's: it would send to an address the joiner may not hold.
+#[test]
+fn an_offer_naming_another_address_is_refused() {
+    let host = Endpoint::host(config(), open_gate()).unwrap();
+    let addr = host_addr(&host);
+    let (stop, events, thread) = host_thread(host);
+    let mut ws = raw_ws(addr).unwrap();
+    let reply = exchange(&mut ws, offer_from("10.1.2.3:9").1);
+    stop.store(true, Ordering::Relaxed);
+    thread.join().unwrap();
+    assert_eq!(reply, Some(rl_proto::Signal::Refused { reason: Refusal::Malformed }));
+    assert!(events.lock().unwrap().is_empty());
+}
+
+/// A connected peer's address that floods raw datagrams no link can use
+/// (undecryptable DTLS) is dropped for its limits; others stay.
+#[test]
+fn raw_junk_from_a_peer_drops_it() {
+    let host = Endpoint::host(config(), open_gate()).unwrap();
+    let addr = host_addr(&host);
+    let (stop, events, thread) = host_thread(host);
+    let mut good = Endpoint::connect(config(), addr).unwrap();
+    let mut ge = Vec::new();
+    let start = Instant::now();
+    while !ge.iter().any(|e| matches!(e, NetEvent::Connected { .. })) {
+        assert!(start.elapsed() < Duration::from_secs(5), "the good client connects");
+        good.poll(Instant::now(), &mut ge);
+        std::thread::sleep(Duration::from_micros(300));
+    }
+
+    // A hand-made client: its own socket, link and signalling.
+    let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    udp.set_nonblocking(true).unwrap();
+    let local = udp.local_addr().unwrap();
+    let (mut link, offer) = offer_from(&local.to_string());
+    let mut ws = raw_ws(addr).unwrap();
+    let Some(rl_proto::Signal::Answer { sdp }) = exchange(&mut ws, offer) else { panic!("no answer") };
+    link.accept_answer(&sdp).unwrap();
+    let pump = |link: &mut rl_net::link::Link| {
+        let mut buf = [0u8; 2048];
+        while let Ok((n, from)) = udp.recv_from(&mut buf) {
+            link.receive(from, local, &buf[..n], Instant::now());
+        }
+        let mut out = Vec::new();
+        link.poll(Instant::now(), &mut out, &mut Vec::new());
+        for t in out {
+            let _ = udp.send_to(&t.bytes, t.to);
+        }
+    };
+    let start = Instant::now();
+    while !link.is_open() {
+        assert!(start.elapsed() < Duration::from_secs(5), "the hand-made client connects");
+        pump(&mut link);
+        good.poll(Instant::now(), &mut ge);
+        std::thread::sleep(Duration::from_micros(300));
+    }
+    drop(ws);
+
+    // Undecryptable DTLS application data from the peer's address.
+    let mut junk = vec![23u8, 0xfe, 0xfd];
+    junk.extend((0..1197).map(|i| (i * 31 % 251) as u8));
+    let dropped = |events: &Mutex<Vec<NetEvent>>| {
+        events.lock().unwrap().iter().find_map(|e| match e {
+            NetEvent::Disconnected { peer: 2, why } => Some(*why),
+            _ => None,
+        })
+    };
+    let start = Instant::now();
+    while dropped(&events).is_none() {
+        assert!(start.elapsed() < Duration::from_secs(5), "the flooding peer is dropped");
+        for _ in 0..200 {
+            let _ = udp.send_to(&junk, addr);
+        }
+        good.poll(Instant::now(), &mut ge);
+    }
+    eprintln!("flood dropped in {:?}", start.elapsed());
+    assert_eq!(dropped(&events), Some(Why::Limits));
+    // The good client is still answered by the host.
+    good.send(HOST, Channel::Reliable, b"ping");
+    let start = Instant::now();
+    stop.store(true, Ordering::Relaxed);
+    let mut host = thread.join().unwrap();
+    let mut he = Vec::new();
+    while !he.iter().any(|e| matches!(e, NetEvent::Message { peer: 1, .. })) {
+        assert!(start.elapsed() < Duration::from_secs(3), "the good client's message arrives");
+        host.poll(Instant::now(), &mut he);
+        good.poll(Instant::now(), &mut ge);
+        std::thread::sleep(Duration::from_micros(300));
+    }
+    assert_eq!(host.peers().map(|p| p.0).collect::<Vec<_>>(), [1]);
+    assert!(!ge.iter().any(|e| matches!(e, NetEvent::Disconnected { .. })), "{ge:?}");
+}

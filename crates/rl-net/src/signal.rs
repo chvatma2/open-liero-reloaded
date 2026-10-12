@@ -25,9 +25,17 @@ pub(crate) struct SignalConn {
     outbox: Vec<Vec<u8>>,
 }
 
-/// Frames and messages above `max` bytes are refused by the reader.
+/// At most this many messages are read in one `poll`, so a peer that
+/// keeps sending cannot hold the caller's loop.
+const MAX_READS: usize = 4;
+
+/// Frames and messages above `max` bytes are refused by the reader, which
+/// reads at most one such frame (and its 14-byte header) at a time.
 fn config(max: usize) -> WebSocketConfig {
-    WebSocketConfig::default().max_message_size(Some(max)).max_frame_size(Some(max))
+    WebSocketConfig::default()
+        .max_message_size(Some(max))
+        .max_frame_size(Some(max))
+        .read_buffer_size(max + 14)
 }
 
 fn would_block(e: &Error) -> bool {
@@ -70,22 +78,29 @@ impl SignalConn {
     }
 
     /// Advances the handshake, sends what is queued and returns the next
-    /// received frame, if any. A failure, a text frame or the peer's close
-    /// closes the connection (`is_closed`); a frame above the limit too.
+    /// received frame, if any, reading at most [`MAX_READS`] messages. A
+    /// failure, a text frame, a ping or pong (our peers send none; tungstenite
+    /// would answer every ping) or the peer's close closes the connection
+    /// (`is_closed`); a frame above the limit too.
     pub(crate) fn poll(&mut self) -> Option<Vec<u8>> {
         self.advance_handshake();
         self.write();
         let State::Open(ws) = &mut self.state else { return None };
-        loop {
+        for _ in 0..MAX_READS {
             match ws.read() {
                 Ok(Message::Binary(bytes)) => return Some(bytes.into()),
-                Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_)) => {}
-                Ok(Message::Text(_) | Message::Close(_)) => break,
+                Ok(Message::Frame(_)) => {}
+                Ok(Message::Ping(_) | Message::Pong(_) | Message::Text(_) | Message::Close(_)) => {
+                    self.state = State::Closed;
+                    return None;
+                }
                 Err(e) if would_block(&e) => return None,
-                Err(_) => break,
+                Err(_) => {
+                    self.state = State::Closed;
+                    return None;
+                }
             }
         }
-        self.state = State::Closed;
         None
     }
 
