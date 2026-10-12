@@ -28,32 +28,40 @@ use crate::bonus::Bonuses;
 use crate::events::TickEvents;
 use crate::input::Latches;
 use crate::mode::{MatchResult, ModeStateError};
+use crate::proj_sim::catch_up_step;
 use crate::projectile::{PoolState, Projectile};
 use crate::referee::{Referee, frozen};
 use crate::rng::Draws;
 use crate::rope::NinjaRope;
 use crate::setup::{MAX_SLOTS, Spare};
 use crate::shots::{MAX_SHOOTINGS, ShootList, Shot};
-use crate::world::{MAX_WORMS, World};
+use crate::world::{CLOCK_OFFSET_MS, FRAME_MS, MAX_WORMS, World};
 use crate::worm::Worm;
 
 /// The latest a clock may be (ms), or a counter that counts up once a
 /// tick or draw: far beyond any match, so that adding to it cannot overflow.
 const MAX_CLOCK: u64 = 1 << 62;
-/// How far a moving projectile's own clock may be from the frame clock
-/// (ms). A match keeps it within a few frames; a projectile far behind
-/// would run thousands of steps in one tick to catch up.
-const MAX_PROJECTILE_LAG_MS: u64 = 1000;
+/// Slack on top of the furthest a moving projectile's clock gets from the
+/// frame clock (ms; see `World::validate`).
+const PROJECTILE_LAG_MARGIN_MS: u64 = 4 * FRAME_MS;
 /// The fastest a thrown rope's hook may move (px/s, each axis): the rope
 /// halves its step until the hook moves less than a few pixels, so a
 /// hostile speed would keep a tick from ending. Rope speeds are at most
-/// `RopeSpeed` (1000) plus the worm's.
+/// `RopeSpeed` (1000) plus the worm's: at the extremes of
+/// `SimSettings::validate` (1 to 200 physics steps a second, GameSpeed 0.1
+/// to 10) the tests see hooks at about 1100 px/s and worms at about 3100.
 const MAX_ROPE_SPEED: f32 = 1e5;
-/// The largest dirt count (it only grows by carved pixels).
+/// The largest dirt count: digging adds to it without wrapping
+/// (`w.dirt_count += carved`, `physics.rs:204`), a few pixels a sub-step.
 const MAX_DIRT_COUNT: u32 = 1 << 30;
 
 /// Another world's dynamic state, for [`World::load_state`] (networking
 /// spec §3.5): [`WorldState::encode`] it to send it.
+///
+/// The field order is the wire layout: `tests/state.rs`'s aimed proptest
+/// counts on the cells first, then the worms, latches and clocks, and the
+/// generators (at least 3 KB with `Mt19937`'s 624 words), bonuses, mode and
+/// end last.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WorldState {
     width: u32,
@@ -310,6 +318,15 @@ impl World {
             StateError::Clocks,
         )?;
 
+        // A moving projectile's clock is caught up to the frame clock in
+        // steps of `catch_up_step`, only in sub-steps, which may be a whole
+        // `step_clock` (plus the frame) apart; a shot spawns up to
+        // `CLOCK_OFFSET_MS` ahead. Further away, it would run thousands of
+        // steps in one tick to catch up.
+        let max_lag = catch_up_step(&self.settings, self.physics_dt())
+            .0
+            .saturating_add(lag)
+            .saturating_add(CLOCK_OFFSET_MS + PROJECTILE_LAG_MARGIN_MS);
         let projs = self.sim_mod.projectiles();
         let frozen = frozen(s.over.is_some(), s.over_frame, s.server_frame);
         let projectile_ok = |p: &Projectile| {
@@ -320,7 +337,7 @@ impl World {
             let clock_ok = if frozen {
                 p.last_sim_time.0 <= MAX_CLOCK
             } else {
-                p.last_sim_time.0.abs_diff(s.time.0) <= MAX_PROJECTILE_LAG_MS
+                p.last_sim_time.0.abs_diff(s.time.0) <= max_lag
             };
             radius_ok(p.radius.0, info.def.width)
                 && radius_ok(p.radius.1, info.def.height)

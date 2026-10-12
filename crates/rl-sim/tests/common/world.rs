@@ -81,7 +81,16 @@ pub fn world_carving(worms: usize, w: u32, h: u32) -> World {
     build(worms, w, h, ActionKind::Carve)
 }
 
+/// [`world`] or [`world_carving`] with other settings.
+pub fn world_with(worms: usize, w: u32, h: u32, carving: bool, settings: SimSettings) -> World {
+    build_with(worms, w, h, if carving { ActionKind::Carve } else { ActionKind::Bounce }, settings)
+}
+
 fn build(worms: usize, w: u32, h: u32, hit: ActionKind) -> World {
+    build_with(worms, w, h, hit, SimSettings::lx56())
+}
+
+fn build_with(worms: usize, w: u32, h: u32, hit: ActionKind, settings: SimSettings) -> World {
     let cells = (0..w * h)
         .map(|i| {
             let (x, y) = (i % w, i / w);
@@ -107,7 +116,6 @@ fn build(worms: usize, w: u32, h: u32, hit: ActionKind) -> World {
             Stamp::from_image(&img)
         })
         .collect();
-    let settings = SimSettings::lx56();
     let loadout = Loadout::new(vec![Slot::ready(0); 5], &settings);
     let worms = (0..worms)
         .map(|i| {

@@ -6,7 +6,9 @@ mod common;
 
 use common::*;
 use rl_modes::{Deathmatch, DeathmatchSettings};
-use rl_sim::{Fnv, GameMode, Keys, MAX_WORMS, ModeStateError, Score, World, WorldState};
+use rl_sim::{
+    EndReason, Fnv, GameMode, Keys, MAX_WORMS, MatchResult, ModeStateError, Score, World, WorldState,
+};
 
 const ARENA: [(i32, i32); 4] = [(50, LASER), (120, GRAZE), (200, BOMB), (300, LASER)];
 
@@ -90,6 +92,20 @@ fn deathmatch_refuses_bad_bytes() {
     assert_eq!(m.load_state(&with_board(vec![far])), Err(ModeStateError::Invalid), "worm 32");
     assert_eq!(m.load_state(&with_board(vec![Score { worm: -1, ..row }])), Err(ModeStateError::Invalid));
     assert_eq!(m.load_state(&bytes[..bytes.len() / 2]), Err(ModeStateError::Decode), "truncated");
+    // `over` comes right before `ended_at` and the board: a winner outside the worms.
+    for (winner, ok) in [(-1, true), (31, true), (32, false), (-2, false)] {
+        let over = MatchResult { winner, reason: EndReason::TimeLimit };
+        let mut b = empty[..empty.len() - 3].to_vec(); // `over: None`, `ended_at: 0`, the empty board
+        b.extend(postcard::to_allocvec(&(Some(over), 300u64, Vec::<Score>::new())).unwrap());
+        let mut m = Deathmatch::resume(dm(), r.w.settings()).unwrap();
+        let got = m.load_state(&b);
+        assert_eq!(got.is_ok(), ok, "winner {winner}: {got:?}");
+        if ok {
+            assert_eq!(m.result(), Some(over));
+        } else {
+            assert_eq!(got, Err(ModeStateError::Invalid));
+        }
+    }
     assert_eq!(hash(&m), before, "a refused state changes nothing");
 }
 

@@ -525,13 +525,16 @@ impl GameMode for Deathmatch {
     }
 
     /// Refuses a board longer than [`MAX_WORMS`] (its capacity) or with a
-    /// worm id outside `0..MAX_WORMS`, and bytes left over.
+    /// worm id outside `0..MAX_WORMS`, a winner neither -1 nor such an id,
+    /// and bytes left over.
     fn load_state(&mut self, bytes: &[u8]) -> Result<(), ModeStateError> {
         let s: DeathmatchState = match postcard::take_from_bytes(bytes) {
             Ok((s, [])) => s,
             _ => return Err(ModeStateError::Decode),
         };
-        if s.board.len() > MAX_WORMS || !s.board.iter().all(|r| (0..MAX_WORMS as i32).contains(&r.worm)) {
+        let worm = |id: i32| (0..MAX_WORMS as i32).contains(&id);
+        let winner_ok = s.over.is_none_or(|r| r.winner == -1 || worm(r.winner));
+        if s.board.len() > MAX_WORMS || !s.board.iter().all(|r| worm(r.worm)) || !winner_ok {
             return Err(ModeStateError::Invalid);
         }
         let DeathmatchState {

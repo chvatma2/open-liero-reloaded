@@ -8,7 +8,7 @@ mod world;
 use std::sync::OnceLock;
 
 use proptest::prelude::*;
-use rl_sim::{Keys, RestoreError, StateError, TickEvents, World, WorldState};
+use rl_sim::{Keys, Latches, RestoreError, SimSettings, StateError, TickEvents, World, WorldState};
 use rl_terrain::JournalError;
 
 fn keys(t: u32) -> Vec<Keys> {
@@ -73,6 +73,54 @@ fn every_played_state_is_accepted() {
                 let mut dst = new();
                 dst.load_state(src.state()).unwrap_or_else(|e| panic!("tick {t}: {e:?}"));
                 assert_eq!(dst, src, "tick {t}");
+            }
+        }
+    }
+}
+
+/// The same at the extremes of `SimSettings::validate`'s ranges, where
+/// clocks lag furthest: one physics step a second, 200 a second, slow and
+/// fast games, and ropes thrown.
+#[test]
+fn every_state_is_accepted_at_extreme_settings() {
+    let lx56 = SimSettings::lx56();
+    let variants = [
+        (1, 1.0, false),
+        (200, 1.0, false),
+        (84, 0.1, false),
+        (84, 10.0, false),
+        (10, 0.1, false),
+        (1, 0.1, false),
+        (1, 10.0, false),
+        (200, 10.0, false),
+        (1, 0.1, true),
+        (200, 10.0, true),
+    ];
+    for (fps, speed, only_projs) in variants {
+        let settings = SimSettings {
+            lx56_physics_fps: fps,
+            game_speed: speed,
+            game_speed_only_for_projs: only_projs,
+            rope_speed: 1000.0,
+            ninjarope_precision: 10.0,
+            ..lx56.clone()
+        };
+        for carving in [false, true] {
+            let new = || world::world_with(8, 400, 300, carving, settings.clone());
+            let mut src = new();
+            let mut ev = TickEvents::new();
+            for t in 0..400 {
+                let mut k = keys(t);
+                if t % 40 < 3 {
+                    k.iter_mut().for_each(|k| k.0 |= Keys::ROPE);
+                }
+                src.tick(&k, &mut ev);
+                if t % 7 == 0 {
+                    let mut dst = new();
+                    let what = format!("fps {fps}, speed {speed}, only projs {only_projs}, tick {t}");
+                    dst.load_state(src.state()).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+                    assert_eq!(dst, src, "{what}");
+                }
             }
         }
     }
@@ -147,10 +195,12 @@ fn a_bomb_is_refused() {
     assert_eq!(WorldState::decode(&bomb), Err(StateError::TooLarge));
 }
 
-/// A played world's raw state, with where its parts lie: past the cells,
-/// the worms, latches and clocks come first (`head` bytes), the
-/// generators, bonuses and the mode last (in the final `TAIL` bytes), the
-/// shots and the projectile pool between.
+/// A played world's raw state, with where its parts lie (`WorldState`'s
+/// field order): past the cells, the worms, latches and clocks come first
+/// (`head` bytes, encoded here the same way), the generators, bonuses and
+/// the mode last (`TAIL` bytes reach into the generators, whose
+/// `Mt19937` alone takes 624 varints), the shots and the projectile pool
+/// between.
 struct Raw {
     bytes: Vec<u8>,
     carving: bool,
@@ -175,8 +225,22 @@ fn raws() -> &'static [Raw] {
                 }
                 let t = w.terrain();
                 let cells_end = postcard::to_allocvec(&(t.width(), t.height(), t.cells())).unwrap().len();
-                let worms = postcard::to_allocvec(&w.worms().to_vec()).unwrap().len();
-                Raw { bytes: w.state().to_raw(), carving, cells_end, head: 1 + worms + 8 * 3 + 30 }
+                let n = w.worms().len();
+                let head = (
+                    n as u64,
+                    w.worms().to_vec(),
+                    vec![Latches::default(); n],
+                    w.time(),
+                    w.physics_time(),
+                    w.server_frame(),
+                    w.substeps_last_tick(),
+                );
+                let head = postcard::to_allocvec(&head).unwrap();
+                let bytes = w.state().to_raw();
+                let worms = postcard::to_allocvec(&w.worms().to_vec()).unwrap();
+                let at = cells_end + 1; // past the setup's worm count, one varint byte
+                assert_eq!(bytes[at..at + worms.len()], worms, "the layout WorldState's fields give");
+                Raw { bytes, carving, cells_end, head: head.len() }
             })
             .collect()
     })

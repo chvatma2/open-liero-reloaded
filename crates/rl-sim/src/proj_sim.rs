@@ -88,11 +88,7 @@ impl ProjCtx<'_> {
 /// the pool's last used slot live, so children spawned into higher slots run
 /// in the same pass.
 pub(crate) fn simulate_projectiles(pool: &mut ProjectilePool, ctx: &mut ProjCtx) {
-    let speed = ctx.settings.game_speed.clamp(0.05, 10.0);
-    let mut frame_dt = ctx.physics_dt.scaled(1.0 / speed);
-    if frame_dt.0 == 0 {
-        frame_dt = TimeDiff(1);
-    }
+    let frame_dt = catch_up_step(ctx.settings, ctx.physics_dt);
     let mut next = pool.next_used(None);
     while let Some(i) = next {
         while let Some(p) = pool.get_mut(i) {
@@ -106,6 +102,14 @@ pub(crate) fn simulate_projectiles(pool: &mut ProjectilePool, ctx: &mut ProjCtx)
         }
         next = pool.next_used(Some(i));
     }
+}
+
+/// The step a projectile's clock catches up by: `LX56PhysicsDT / GameSpeed`,
+/// at least 1 ms.
+pub(crate) fn catch_up_step(s: &SimSettings, physics_dt: TimeDiff) -> TimeDiff {
+    let speed = s.game_speed.clamp(0.05, 10.0);
+    let step = physics_dt.scaled(1.0 / speed);
+    if step.0 == 0 { TimeDiff(1) } else { step }
 }
 
 /// `LX56ProjectileHandler_doFrame` (`:1330-1375`). Returns `false` once the
