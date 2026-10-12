@@ -227,13 +227,14 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 ## Disk use
 
 - The dev profile (workspace `Cargo.toml`) sets `debug = "line-tables-only"`
-  for workspace crates AND dependencies (`[profile.dev.package."*"]`). Every
-  integration test is its own binary linking wgpu/winit/egui, so full debug
-  info once grew `target/` to 45 GB. Line tables keep panic backtraces with
-  file:line everywhere, including inside wgpu/winit/egui; only variable and
-  type info (debugger-only) is dropped. Symbols are not stripped. Our workflow
-  reads backtraces and nobody steps a debugger; if a debugger session is ever
-  needed, set `debug = true` for that crate locally (do not commit it).
+  for workspace crates and `debug = false` for dependencies
+  (`[profile.dev.package."*"]`). Every test binary links wgpu/winit/egui:
+  full debug info once grew `target/` to 45 GB, and the dependencies' line
+  tables still let it reach 76 GB. Panic backtraces keep file:line in our
+  crates; frames inside dependencies show function names only (symbols are
+  not stripped). Nobody steps a debugger; if a debugger session or a
+  dependency's lines are ever needed, set `debug = true` for that crate
+  locally (do not commit it).
 - `oracle-record` prunes after building a new `rl-olx-oracle:<hash>` image:
   it removes every other `rl-olx-oracle:*` image except the current tag and
   `:dev`. Pruning failures only warn. `images_to_prune` and `prune_commands`

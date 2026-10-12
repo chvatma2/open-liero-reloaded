@@ -271,8 +271,8 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
 
 - **Disk:** WSL's virtual disk lives on the Windows drive, and a full debug
   `target/` plus Docker images can fill it. The dev profile keeps only line
-  tables for the workspace and dependencies (`debug = "line-tables-only"`;
-  backtraces still show file:line, only debugger variable info is dropped). `cargo xtask
+  tables for the workspace (`debug = "line-tables-only"`; backtraces still
+  show file:line in our crates) and no debug info for dependencies. `cargo xtask
   oracle-record` removes superseded `rl-olx-oracle:*` images (it keeps the
   current one and `:dev`). `cargo xtask tidy` removes `target/*/incremental`
   and prunes the images (never `content/packs` or `target/olx`); `cargo

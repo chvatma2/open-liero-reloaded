@@ -98,9 +98,12 @@ all = { level = "warn", priority = -1 }
 opt-level = 1
 debug = "line-tables-only"
 
+# Dependencies without debug info: every test binary links wgpu, winit and
+# egui, and their line tables alone kept `target/` growing by gigabytes.
+# Our crates keep line tables, so panics in our code still show file:line.
 [profile.dev.package."*"]
 opt-level = 3
-debug = "line-tables-only"
+debug = false
 
 # Whole-program optimisation for the shipped game and the measurements
 # (`bench` inherits it). Panics stay unwinding: the game, audio, import
