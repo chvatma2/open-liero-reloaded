@@ -65,7 +65,11 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
         });
         form_row(ui, "Password", |ui, label| {
             ui.add(
-                TextEdit::singleline(&mut p.password).password(true).hint_text("none").desired_width(240.0),
+                TextEdit::singleline(&mut p.password.0)
+                    .char_limit(crate::online::PASSWORD_CHARS)
+                    .password(true)
+                    .hint_text("none")
+                    .desired_width(240.0),
             )
             .labelled_by(label);
         });

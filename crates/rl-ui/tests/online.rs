@@ -151,7 +151,7 @@ fn typing_an_address_and_joining_emits_join_game() {
     let cmds = &h.state().commands;
     assert!(
         matches!(&cmds[..], [AppCommand::JoinGame { addr, password: Some(p) }, AppCommand::SaveSettings(s)]
-            if addr == "192.168.1.5:23400" && p == "hunter2" && s.online.last_address == addr.as_str()),
+            if addr == "192.168.1.5:23400" && p.as_str() == "hunter2" && s.online.last_address == addr.as_str()),
         "{cmds:?}"
     );
     // Waiting for the app: Join does nothing more, and the address is kept.
@@ -308,6 +308,11 @@ fn the_host_kicks_bans_and_moves_members() {
     settle(&mut h);
     h.get_by_label("Ban").click();
     settle(&mut h);
+    // Ban asks first; Kick did not.
+    h.get_by_label("Ban Guest?");
+    assert_eq!(lobby_commands(&h).len(), 1);
+    h.get_by_label("Yes, ban").click();
+    settle(&mut h);
     h.get_by_label("To spectators").click();
     settle(&mut h);
     assert_eq!(
@@ -455,4 +460,91 @@ fn lobby_actions_do_nothing_outside_the_lobby() {
     let c = ui.update(UiAction::Host(wild));
     let [AppCommand::HostGame(p), ..] = &c[..] else { panic!("{c:?}") };
     assert_eq!((p.max_players, p.port), (32, 23400));
+}
+
+#[test]
+fn ban_can_be_cancelled() {
+    let mut h = lobby(true);
+    h.get_by_label("Ban").click();
+    settle(&mut h);
+    h.get_by_label("Cancel").click();
+    settle(&mut h);
+    assert!(h.query_by_label("Ban Guest?").is_none());
+    assert!(lobby_commands(&h).is_empty());
+}
+
+#[test]
+fn escape_in_the_chat_field_does_not_leave_the_lobby() {
+    let mut h = lobby(false);
+    h.get_by_role_and_label(Role::TextInput, "Chat").focus();
+    settle(&mut h);
+    h.get_by_role_and_label(Role::TextInput, "Chat").type_text("half a thought");
+    settle(&mut h);
+    h.key_press(egui::Key::Escape);
+    settle(&mut h);
+    assert_eq!(h.state().ui.screen(), Screen::Lobby);
+    assert!(h.state().commands.is_empty(), "{:?}", h.state().commands);
+    // With nothing focused, Esc is Back again.
+    h.key_press(egui::Key::Escape);
+    settle(&mut h);
+    assert_eq!(h.state().ui.screen(), Screen::Multiplayer);
+}
+
+#[test]
+fn the_chat_draft_survives_the_weapon_screen_and_a_moot_dialog_closes() {
+    let mut h = harness();
+    let mut v = lobby_view(false);
+    v.phase = "Playing".into();
+    in_lobby(h.state_mut(), v);
+    settle(&mut h);
+    h.get_by_role_and_label(Role::TextInput, "Chat").focus();
+    settle(&mut h);
+    h.get_by_role_and_label(Role::TextInput, "Chat").type_text("draft");
+    settle(&mut h);
+    h.get_by_label("Back").click();
+    settle(&mut h);
+    h.get_by_label("Leave the match?");
+    // The match ends: the question goes.
+    h.state_mut().data.lobby.as_mut().unwrap().phase = PHASE_LOBBY.into();
+    settle(&mut h);
+    assert!(h.query_by_label("Leave the match?").is_none());
+    h.state_mut().ui.update(UiAction::Open(Screen::WeaponSelect));
+    settle(&mut h);
+    h.state_mut().ui.update(UiAction::Back);
+    settle(&mut h);
+    assert_eq!(h.state().ui.screen(), Screen::Lobby);
+    let field = h.get_by_role_and_label(Role::TextInput, "Chat");
+    assert_eq!(field.value().as_deref(), Some("draft"));
+}
+
+#[test]
+fn passwords_are_neither_printed_nor_saved() {
+    let p = HostPrefs { password: "s3cret".into(), ..HostPrefs::default() };
+    assert!(!format!("{p:?}").contains("s3cret"));
+    let cmd = AppCommand::JoinGame { addr: "a".into(), password: Some("s3cret".into()) };
+    assert!(!format!("{cmd:?}").contains("s3cret"));
+    let ron = ron::to_string(&Settings {
+        online: rl_ui::OnlineSettings { host: p, ..Default::default() },
+        ..Settings::default()
+    })
+    .unwrap();
+    assert!(!ron.contains("s3cret"), "{ron}");
+    // Hosting with a password alone changing saves nothing.
+    let mut ui = UiState::new(Settings::default(), Profiles::default(), 1);
+    ui.update(UiAction::Open(Screen::Multiplayer));
+    ui.update(UiAction::Open(Screen::Host));
+    let c = ui.update(UiAction::Host(HostPrefs {
+        name: "x".into(),
+        password: "pw".into(),
+        ..HostPrefs::default()
+    }));
+    assert!(c.iter().any(|c| matches!(c, AppCommand::SaveSettings(s) if s.online.host.password.is_empty())));
+}
+
+#[test]
+fn long_fields_are_cut() {
+    let mut s = rl_ui::OnlineSettings { last_address: "a".repeat(400), ..Default::default() };
+    s.host.password = "p".repeat(100).as_str().into();
+    assert_eq!(s.sanitize().len(), 2);
+    assert_eq!((s.last_address.len(), s.host.password.as_str().len()), (253, 64));
 }

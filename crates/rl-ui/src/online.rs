@@ -30,6 +30,37 @@ pub const PHASE_LOBBY: &str = "Lobby";
 /// A [`MemberView::seat`] that watches instead of playing.
 pub const SEAT_SPECTATOR: &str = "Spectator";
 
+/// The longest address typed (a DNS name's limit) and password.
+pub const ADDRESS_CHARS: usize = 253;
+pub const PASSWORD_CHARS: usize = 64;
+
+/// A password: `Debug` never shows it (commands and settings get logged).
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Password(pub String);
+
+impl Password {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for Password {
+    fn from(s: &str) -> Password {
+        Password(s.to_string())
+    }
+}
+
+impl std::fmt::Debug for Password {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Password(..)")
+    }
+}
+
 /// How a game is announced.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Visibility {
@@ -47,8 +78,9 @@ pub struct HostPrefs {
     /// The host's name in the lobby (empty: the profile playing's).
     pub name: String,
     pub visibility: Visibility,
-    /// Empty: no password.
-    pub password: String,
+    /// Empty: no password. Never saved: the form starts empty.
+    #[serde(skip)]
+    pub password: Password,
     /// [`MIN_PLAYERS`] to [`MAX_PLAYERS`].
     pub max_players: u8,
     pub port: u16,
@@ -59,7 +91,7 @@ impl Default for HostPrefs {
         HostPrefs {
             name: String::new(),
             visibility: Visibility::Lan,
-            password: String::new(),
+            password: Password::default(),
             max_players: 8,
             port: DEFAULT_PORT,
         }
@@ -77,6 +109,10 @@ impl HostPrefs {
                 self.max_players
             ));
             self.max_players = fixed;
+        }
+        if self.password.0.chars().count() > PASSWORD_CHARS {
+            self.password.0 = self.password.0.chars().take(PASSWORD_CHARS).collect();
+            w.push(format!("online.host.password is over {PASSWORD_CHARS} characters: cut"));
         }
         if self.port == 0 {
             w.push(format!("online.host.port is 0: {DEFAULT_PORT}"));
@@ -110,6 +146,10 @@ impl Default for OnlineSettings {
 impl OnlineSettings {
     pub fn sanitize(&mut self) -> Vec<String> {
         let mut w = self.host.sanitize();
+        if self.last_address.chars().count() > ADDRESS_CHARS {
+            self.last_address = self.last_address.chars().take(ADDRESS_CHARS).collect();
+            w.push(format!("online.last_address is over {ADDRESS_CHARS} characters: cut"));
+        }
         if self.port == 0 {
             w.push(format!("online.port is 0: {DEFAULT_PORT}"));
             self.port = DEFAULT_PORT;

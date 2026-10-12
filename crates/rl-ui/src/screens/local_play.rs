@@ -29,7 +29,7 @@ const WIDTH: f32 = 1100.0;
 const SECTION_GAP: f32 = 8.0;
 
 /// The pickers' width.
-pub(super) const COMBO_W: f32 = 200.0;
+const COMBO_W: f32 = 200.0;
 
 /// What a rule is set to when it is switched on (OLX's defaults,
 /// `src/common/FeatureList.cpp:31-33`; lives as OLX's menu starts them).
@@ -310,9 +310,32 @@ pub(super) fn level_combo(
         .labelled_by(label);
 }
 
+/// A personality picker, labelled by `label`.
+pub(super) fn personality_combo(
+    ui: &mut Ui,
+    label: egui::Id,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    personality: &mut BotPersonality,
+) {
+    let name = |b: BotPersonality| match b {
+        BotPersonality::Olx => "OLX bot",
+        BotPersonality::Chaos => "Chaos (fires everything)",
+    };
+    ComboBox::from_id_salt(id)
+        .selected_text(name(*personality))
+        .width(COMBO_W)
+        .show_ui(ui, |ui| {
+            for b in BotPersonality::ALL {
+                ui.selectable_value(personality, b, name(b));
+            }
+        })
+        .response
+        .labelled_by(label);
+}
+
 /// The bots: how many, their difficulty (one for all or each its own),
 /// personality and loadout.
-pub(super) fn bots(ui: &mut Ui, p: &mut MatchPrefs) {
+fn bots(ui: &mut Ui, p: &mut MatchPrefs) {
     form_row(ui, "Bots", |ui, label| {
         let mut n = p.bots;
         if ui.add(Slider::new(&mut n, 1..=MAX_BOTS)).labelled_by(label).changed() {
@@ -335,22 +358,7 @@ pub(super) fn bots(ui: &mut Ui, p: &mut MatchPrefs) {
             }
         }
     }
-    form_row(ui, "Personality", |ui, label| {
-        let name = |b: BotPersonality| match b {
-            BotPersonality::Olx => "OLX bot",
-            BotPersonality::Chaos => "Chaos (fires everything)",
-        };
-        ComboBox::from_id_salt("personality")
-            .selected_text(name(p.personality))
-            .width(COMBO_W)
-            .show_ui(ui, |ui| {
-                for b in BotPersonality::ALL {
-                    ui.selectable_value(&mut p.personality, b, name(b));
-                }
-            })
-            .response
-            .labelled_by(label);
-    });
+    form_row(ui, "Personality", |ui, label| personality_combo(ui, label, "personality", &mut p.personality));
     form_row(ui, "Loadout", |ui, label| {
         let name = |b: BotLoadout| match b {
             BotLoadout::OlxPreset => "OLX's choice",

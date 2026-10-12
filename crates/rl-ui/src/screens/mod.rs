@@ -97,6 +97,8 @@ pub struct MenuData {
     pub chat: Vec<LogLine>,
     /// What the online screens say besides errors (the app's status).
     pub online_status: Option<String>,
+    /// A text field had the focus as the last frame ended.
+    typing: bool,
     /// The weapon selection in progress.
     select: Option<WeaponSelect>,
     /// The thumbnails decoded so far by level id (`None`: unreadable, its
@@ -136,6 +138,7 @@ impl MenuData {
             lobby: None,
             chat: Vec::new(),
             online_status: None,
+            typing: false,
             select: None,
             thumbs: BTreeMap::new(),
             decodes_left: THUMB_DECODES_PER_FRAME,
@@ -212,6 +215,9 @@ impl MenuData {
 pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> {
     let mut out = Vec::new();
     let screen = state.screen();
+    // Esc in a text field only leaves the field (egui lets go of it at the
+    // start of the pass, so the field was in focus as the last frame ended).
+    let typing = data.typing && matches!(screen, Screen::Lobby | Screen::Multiplayer | Screen::Host);
     data.preview_wanted = None;
     data.decodes_left = THUMB_DECODES_PER_FRAME;
     if data.shown != Some(screen) {
@@ -222,7 +228,8 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
                 data.multiplayer = multiplayer::View::new(&state.settings().online.last_address);
             }
             Screen::Host => data.host = host::View::new(state),
-            Screen::Lobby => data.lobby_ui = lobby::View::default(),
+            // The weapon screen is a visit: the chat draft stays.
+            Screen::Lobby if from != Some(Screen::WeaponSelect) => data.lobby_ui = lobby::View::default(),
             Screen::Replays => data.refresh_replays(),
             Screen::Profiles => data.profiles = profiles::View::new(state.profiles().selected),
             Screen::Options => data.options = options::View::default(),
@@ -271,12 +278,13 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
         }
     }
     let (esc, f5) = (pressed_once(ui, Key::Escape), pressed_once(ui, Key::F5));
-    if esc && !dialog {
+    if esc && !dialog && !typing {
         out.push(UiAction::Back);
     }
     if f5 {
         out.push(UiAction::Restart);
     }
+    data.typing = ui.ctx().text_edit_focused();
     if screen == Screen::Lobby {
         lobby::intercept_back(data, &mut out);
     }

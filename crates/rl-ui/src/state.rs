@@ -39,7 +39,7 @@ use rl_input::Bindings;
 use rl_sim::MAX_SLOTS;
 
 use crate::match_prefs::MatchPrefs;
-use crate::online::{HostPrefs, LobbyCommand};
+use crate::online::{HostPrefs, LobbyCommand, Password};
 use crate::profiles::Profiles;
 use crate::settings::{AudioSettings, Settings, VideoSettings};
 
@@ -138,7 +138,7 @@ pub enum UiAction {
     /// password (none when empty).
     Join {
         addr: String,
-        password: Option<String>,
+        password: Option<Password>,
     },
     /// A game on the network was clicked.
     JoinLan(SocketAddr),
@@ -216,7 +216,7 @@ pub enum AppCommand {
     /// to `settings.online.port`), then report as for `HostGame`.
     JoinGame {
         addr: String,
-        password: Option<String>,
+        password: Option<Password>,
     },
     /// What the player asks of the lobby they are in.
     Lobby(LobbyCommand),
@@ -575,8 +575,10 @@ impl UiState {
         self.message = None;
         self.connecting = Some(Screen::Host);
         let mut out = vec![AppCommand::HostGame(prefs.clone())];
-        if self.settings.online.host != prefs {
-            self.settings.online.host = prefs;
+        // The password is never saved: it alone changing saves nothing.
+        let saved = HostPrefs { password: Password::default(), ..prefs.clone() };
+        if self.settings.online.host != saved {
+            self.settings.online.host = saved;
             out.push(self.save_settings());
         }
         out
@@ -584,8 +586,8 @@ impl UiState {
 
     /// Join a game (the Multiplayer screen): an address typed is remembered,
     /// one clicked in the LAN list is not.
-    fn join_at(&mut self, addr: String, password: Option<String>, remember: bool) -> Vec<AppCommand> {
-        let addr = addr.trim().to_string();
+    fn join_at(&mut self, addr: String, password: Option<Password>, remember: bool) -> Vec<AppCommand> {
+        let addr: String = addr.trim().chars().take(crate::online::ADDRESS_CHARS).collect();
         if self.screen != Screen::Multiplayer || self.is_connecting() || addr.is_empty() {
             return Vec::new();
         }

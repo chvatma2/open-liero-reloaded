@@ -6,12 +6,12 @@
 //! below, Start and "Force start" for the host, else "Waiting for the
 //! host". Back leaves the lobby, after a confirmation when a match runs.
 
-use egui::{Button, Color32, ComboBox, Key, RichText, ScrollArea, Sense, TextEdit, Ui, vec2};
+use egui::{Button, Color32, Key, RichText, ScrollArea, Sense, TextEdit, Ui, vec2};
 
-use super::local_play::{COMBO_W, level_combo, level_grid, mod_picker, olx_match, rules};
+use super::local_play::{level_combo, level_grid, mod_picker, olx_match, personality_combo, rules};
 use super::{MenuData, columns, footer, message, page, primary, section, tall_section};
 use crate::hud::LineKind;
-use crate::match_prefs::{BotPersonality, MAX_BOTS, MatchPrefs};
+use crate::match_prefs::{MAX_BOTS, MatchPrefs};
 use crate::online::{CHAT_CHARS, LobbyView, MemberView, PHASE_LOBBY};
 use crate::state::{Screen, UiAction, UiState};
 use crate::theme;
@@ -30,6 +30,8 @@ pub(super) struct View {
     chat: String,
     /// "Leave the match?" is asking.
     confirm_leave: bool,
+    /// "Ban <name>?" is asking: the member's id and name.
+    confirm_ban: Option<(u8, String)>,
 }
 
 /// What the lobby's Back does: leaves, unless a match runs (then it asks,
@@ -37,12 +39,14 @@ pub(super) struct View {
 /// every Back of the lobby screen, which it replaces.
 pub(super) fn intercept_back(data: &mut MenuData, out: &mut Vec<UiAction>) {
     let running = data.lobby.as_ref().is_some_and(|l| l.phase != PHASE_LOBBY);
-    let confirm = &mut data.lobby_ui.confirm_leave;
+    let (confirm, ban) = (&mut data.lobby_ui.confirm_leave, &mut data.lobby_ui.confirm_ban);
     out.retain(|a| {
         if *a != UiAction::Back {
             return true;
         }
-        if *confirm {
+        if ban.take().is_some() {
+            false
+        } else if *confirm {
             *confirm = false;
             false
         } else if running {
@@ -65,6 +69,10 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     let view = data.lobby.clone();
     let mut ui = page(ui, "Lobby", WIDTH, out);
     let ui = &mut ui;
+    // The match ended: the question is moot.
+    if view.as_ref().is_some_and(|v| v.phase == PHASE_LOBBY) {
+        data.lobby_ui.confirm_leave = false;
+    }
     let Some(view) = view else {
         ui.label("Connecting…");
         message(ui, state);
@@ -109,6 +117,29 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     if data.lobby_ui.confirm_leave {
         leave_dialog(ui.ctx(), &mut data.lobby_ui, out);
     }
+    if data.lobby_ui.confirm_ban.is_some() {
+        ban_dialog(ui.ctx(), &mut data.lobby_ui, out);
+    }
+}
+
+fn ban_dialog(ctx: &egui::Context, v: &mut View, out: &mut Vec<UiAction>) {
+    let Some((member, name)) = v.confirm_ban.clone() else { return };
+    egui::Window::new(format!("Ban {name}?"))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
+        .show(ctx, |ui| {
+            ui.label("They cannot join again with this key.");
+            ui.horizontal(|ui| {
+                if ui.button("Yes, ban").clicked() {
+                    v.confirm_ban = None;
+                    out.push(UiAction::LobbyKick { member, ban: true });
+                }
+                if ui.button("Cancel").clicked() {
+                    v.confirm_ban = None;
+                }
+            });
+        });
 }
 
 fn leave_dialog(ctx: &egui::Context, v: &mut View, out: &mut Vec<UiAction>) {
@@ -192,20 +223,7 @@ fn bots(ui: &mut Ui, p: &mut MatchPrefs) {
         });
         ui.horizontal(|ui| {
             let label = ui.label("Personality");
-            let name = |b: BotPersonality| match b {
-                BotPersonality::Olx => "OLX bot",
-                BotPersonality::Chaos => "Chaos (fires everything)",
-            };
-            ComboBox::from_id_salt("lobby personality")
-                .selected_text(name(p.personality))
-                .width(COMBO_W)
-                .show_ui(ui, |ui| {
-                    for b in BotPersonality::ALL {
-                        ui.selectable_value(&mut p.personality, b, name(b));
-                    }
-                })
-                .response
-                .labelled_by(label.id);
+            personality_combo(ui, label.id, "lobby personality", &mut p.personality);
         });
     }
 }
@@ -216,7 +234,7 @@ fn members_and_chat(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mu
             ui,
             |ui| {
                 for m in &view.members {
-                    member(ui, view, m, out);
+                    member(ui, view, m, &mut data.lobby_ui, out);
                 }
             },
         );
@@ -268,7 +286,7 @@ fn members_and_chat(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mu
     });
 }
 
-fn member(ui: &mut Ui, view: &LobbyView, m: &MemberView, out: &mut Vec<UiAction>) {
+fn member(ui: &mut Ui, view: &LobbyView, m: &MemberView, v: &mut View, out: &mut Vec<UiAction>) {
     ui.push_id(("member", m.id), |ui| {
         ui.horizontal_wrapped(|ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
@@ -302,7 +320,7 @@ fn member(ui: &mut Ui, view: &LobbyView, m: &MemberView, out: &mut Vec<UiAction>
                     out.push(UiAction::LobbyKick { member: m.id, ban: false });
                 }
                 if ui.small_button("Ban").clicked() {
-                    out.push(UiAction::LobbyKick { member: m.id, ban: true });
+                    v.confirm_ban = Some((m.id, m.name.clone()));
                 }
                 let (text, spectator) =
                     if m.is_spectator() { ("To players", false) } else { ("To spectators", true) };
