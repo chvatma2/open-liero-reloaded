@@ -35,3 +35,5 @@
   fixtures/ui/hud-3440x1440-sides.png
 2026-10-12 envelope: first performance envelope on this machine (plan 8): WSL GL and native Windows DX12/Vulkan, OLX comparison
   fixtures/bench/envelope/amd-ryzen-5-7600x-6-core-processor-12cpus.ron
+2026-10-12 envelope: probe now blurs the drawn frame (seeded from the world target, not a black texture); windowed runs checked for software adapters; frames judged with the bots' thinking
+  fixtures/bench/envelope/amd-ryzen-5-7600x-6-core-processor-12cpus.ron
