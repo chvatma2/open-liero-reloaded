@@ -29,7 +29,8 @@ use serde::{Deserialize, Serialize};
 use crate::root;
 
 /// The divan benchmarks as `(package, bench target)`.
-pub const BENCHES: &[(&str, &str)] = &[("rl-sim", "tick"), ("rl-render", "frame"), ("rl-cli", "game")];
+pub const BENCHES: &[(&str, &str)] =
+    &[("rl-sim", "tick"), ("rl-render", "frame"), ("rl-cli", "game"), ("rl-cli", "rollback")];
 
 pub const BASELINES: &str = "fixtures/bench/baselines.ron";
 pub const STRESS_BASELINE: &str = "fixtures/bench/stress.ron";

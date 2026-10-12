@@ -7,6 +7,7 @@ mod net_repro_cmd;
 mod net_sim_cmd;
 mod render;
 mod replay_cmd;
+mod rollback_cost_cmd;
 mod scenario;
 mod stress_cmd;
 mod validate;
@@ -47,6 +48,8 @@ enum Command {
     /// OLX's projectile pool or a larger one; prints tick, bot, pool, entity,
     /// event, render and memory figures.
     Stress(stress_cmd::Args),
+    /// Times a rollback: restoring the world and re-simulating ticks (plan 9, spec §3.3).
+    RollbackCost(rollback_cost_cmd::Args),
     /// Draw a recorded match offscreen at several sizes on the GPU, timing the CPU
     /// and (with timestamps) the GPU, plus the shader-headroom probe (plan 8).
     GpuBench(gpu_bench_cmd::Args),
@@ -68,6 +71,7 @@ fn main() -> ExitCode {
         Command::NetRepro(args) => net_repro_cmd::run(&args),
         Command::Replay(args) => replay_cmd::run(&args),
         Command::Stress(args) => stress_cmd::run(&args),
+        Command::RollbackCost(args) => rollback_cost_cmd::run(&args),
         Command::GpuBench(args) => gpu_bench_cmd::run(&args),
         Command::Validate { paths } => validate::run(&paths),
     };

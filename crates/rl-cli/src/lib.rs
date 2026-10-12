@@ -12,6 +12,7 @@ pub mod golden;
 pub mod gpu_bench;
 pub mod invariants;
 pub mod netsim;
+pub mod rollback_cost;
 pub mod runner;
 pub mod spec;
 pub mod stress;

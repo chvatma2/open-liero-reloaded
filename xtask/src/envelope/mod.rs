@@ -27,13 +27,14 @@ pub enum Axis {
     Fx,
     Map,
     Art,
+    Rollback,
     Gpu,
     Olx,
 }
 
 impl Axis {
-    pub const ALL: [Axis; 7] =
-        [Axis::Worms, Axis::Pool, Axis::Fx, Axis::Map, Axis::Art, Axis::Gpu, Axis::Olx];
+    pub const ALL: [Axis; 8] =
+        [Axis::Worms, Axis::Pool, Axis::Fx, Axis::Map, Axis::Art, Axis::Rollback, Axis::Gpu, Axis::Olx];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -42,13 +43,14 @@ impl Axis {
             Axis::Fx => "fx",
             Axis::Map => "map",
             Axis::Art => "art",
+            Axis::Rollback => "rollback",
             Axis::Gpu => "gpu",
             Axis::Olx => "olx",
         }
     }
 
     pub fn is_sweep(self) -> bool {
-        !matches!(self, Axis::Gpu | Axis::Olx)
+        !matches!(self, Axis::Rollback | Axis::Gpu | Axis::Olx)
     }
 }
 
@@ -72,6 +74,8 @@ pub struct Plan {
     pub fx: Vec<u32>,
     pub maps: Vec<(u32, u32)>,
     pub arts: Vec<u32>,
+    /// Samples of one `rollback-cost` run.
+    pub rollback_samples: usize,
     pub heavy_seconds: f32,
     pub sizes: Vec<(u32, u32)>,
     pub start_tick: u32,
@@ -98,6 +102,7 @@ impl Plan {
                 fx: vec![1024, 65_536],
                 maps: vec![(1024, 1024), (4096, 4096)],
                 arts: vec![1, 8],
+                rollback_samples: 100,
                 heavy_seconds: 15.0,
                 sizes: vec![(1920, 1080), (3840, 2160)],
                 start_tick: 500,
@@ -120,6 +125,7 @@ impl Plan {
             fx: vec![1024, 4096, 16_384, 65_536],
             maps: vec![(1024, 1024), (2048, 2048), (4096, 2048), (4096, 4096)],
             arts: vec![1, 2, 4, 8],
+            rollback_samples: 300,
             heavy_seconds: 40.0,
             sizes: vec![(1920, 1080), (2560, 1440), (3440, 1440), (3840, 2160)],
             start_tick: 1000,
@@ -183,6 +189,8 @@ fn display_missing() -> Option<String> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Step {
     Sweep(Axis),
+    /// The rollback cost (`rl-cli rollback-cost`, plan 9).
+    Rollback,
     /// The WSL GPU path; windowed runs too when a window can open.
     GpuWsl {
         windowed: bool,
@@ -197,6 +205,9 @@ pub enum Step {
 /// What `axes` and `gpu` ask for on a machine with `pre`.
 pub fn steps(axes: &[Axis], gpu: GpuPaths, pre: &Prereqs) -> Vec<Step> {
     let mut v: Vec<Step> = axes.iter().copied().filter(|a| a.is_sweep()).map(Step::Sweep).collect();
+    if axes.contains(&Axis::Rollback) {
+        v.push(Step::Rollback);
+    }
     if axes.contains(&Axis::Gpu) {
         if gpu == GpuPaths::None {
             v.push(Step::Skip("gpu (--gpu none)".into()));
@@ -252,6 +263,7 @@ pub fn adapter_problem(path: &GpuPath) -> Option<String> {
 /// What the steps run on: this machine ([`Here`]) or a test's stand-in.
 pub trait Machine {
     fn sweep(&mut self, axis: Axis) -> Sweep;
+    fn rollback(&mut self) -> results::Rollback;
     /// The GPU paths' scenes (the heavy replay, the levels' replays), once
     /// before the first path.
     fn gpu_scenes(&mut self) -> Result<(), String>;
@@ -273,6 +285,10 @@ struct Here<'a> {
 impl Machine for Here<'_> {
     fn sweep(&mut self, axis: Axis) -> Sweep {
         sweeps::run_axis(self.cli, self.content, axis, self.plan)
+    }
+
+    fn rollback(&mut self) -> results::Rollback {
+        sweeps::run_rollback(self.cli, self.content, self.plan)
     }
 
     fn gpu_scenes(&mut self) -> Result<(), String> {
@@ -325,6 +341,10 @@ pub fn execute(steps: &[Step], m: &mut dyn Machine, env: &mut Envelope) -> Vec<S
             Step::Sweep(axis) => {
                 println!("== {} sweep", axis.name());
                 env.sweeps.insert(axis.name().into(), m.sweep(*axis));
+            }
+            Step::Rollback => {
+                println!("== rollback");
+                env.rollback = Some(m.rollback());
             }
             Step::GpuWsl { windowed } => {
                 let r = m.gpu_wsl(*windowed);
@@ -481,6 +501,10 @@ mod tests {
             self.ran.push(axis.name().into());
             Sweep { axis: axis.name().into(), ..Sweep::default() }
         }
+        fn rollback(&mut self) -> results::Rollback {
+            self.ran.push("rollback".into());
+            results::Rollback::default()
+        }
         fn gpu_scenes(&mut self) -> Result<(), String> {
             self.ran.push("scenes".into());
             self.scenes.clone().map_or(Ok(()), Err)
@@ -516,7 +540,7 @@ mod tests {
         let (notices, env) = run_all(&all_here(), &mut Fake::default());
         assert!(notices.is_empty(), "{notices:?}");
         assert_eq!(env.gpu.keys().collect::<Vec<_>>(), ["windows-dx12", "windows-vulkan", "wsl-gl"]);
-        assert!(env.olx.is_some() && env.sweeps.len() == 5);
+        assert!(env.olx.is_some() && env.sweeps.len() == 5 && env.rollback.is_some());
 
         // Windows interop, or the rustup target (both `winbuild::missing`).
         let windows: [fn() -> Option<String>; 2] = [
@@ -626,6 +650,7 @@ mod tests {
     fn only_the_parts_asked_for_run() {
         let s = steps(&[Axis::Olx, Axis::Worms], GpuPaths::Both, &all_here());
         assert_eq!(s, [Step::Sweep(Axis::Worms), Step::Olx]);
+        assert_eq!(steps(&[Axis::Rollback], GpuPaths::Both, &all_here()), [Step::Rollback]);
         let s = steps(&[Axis::Gpu], GpuPaths::Wsl, &all_here());
         assert_eq!(s, [Step::GpuWsl { windowed: true }]);
         assert_eq!(steps(&[Axis::Gpu], GpuPaths::None, &all_here()), [Step::Skip("gpu (--gpu none)".into())]);

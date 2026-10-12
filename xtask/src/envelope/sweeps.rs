@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::results::{self, Point, StressOut, Sweep};
+use super::results::{self, Point, Rollback, RollbackOut, StressOut, Sweep};
 use super::{Axis, Plan};
 use crate::root;
 
@@ -103,7 +103,7 @@ pub fn values(axis: Axis, plan: &Plan) -> Vec<Value> {
                 ..reference(format!("a{a}"), f(a))
             })
             .collect(),
-        Axis::Gpu | Axis::Olx => Vec::new(),
+        Axis::Rollback | Axis::Gpu | Axis::Olx => Vec::new(),
     }
 }
 
@@ -198,5 +198,84 @@ pub fn run_axis(cli: &Path, content: &Path, axis: Axis, plan: &Plan) -> Sweep {
         ),
         points,
         ..Sweep::default()
+    }
+}
+
+/// One rollback point: the level, the depth and the total's budget (µs).
+pub struct RollbackSpec {
+    pub label: &'static str,
+    pub level: &'static str,
+    pub depth: u32,
+    pub budget_us: Option<f64>,
+}
+
+/// Spec §3.3 and ruling T7-A: the reference at the depth of the plan (12)
+/// and at `MAX_PREDICTION` (28), and the largest map at 12.
+pub const ROLLBACK_POINTS: [RollbackSpec; 3] = [
+    RollbackSpec { label: "castlestrike-12", level: REF_LEVEL, depth: 12, budget_us: Some(2000.0) },
+    RollbackSpec { label: "castlestrike-28", level: REF_LEVEL, depth: 28, budget_us: None },
+    RollbackSpec { label: "4096x4096-12", level: "gen-4096x4096-a1-s1", depth: 12, budget_us: Some(4000.0) },
+];
+
+fn rollback_cost(
+    cli: &Path,
+    content: &Path,
+    p: &RollbackSpec,
+    samples: usize,
+) -> Result<RollbackOut, String> {
+    let out = root().join("target/envelope/rollback.ron");
+    let _ = std::fs::remove_file(&out);
+    let o = Command::new(cli)
+        .current_dir(root())
+        .args(["rollback-cost", "--mod", REF_MOD, "--level", p.level])
+        .args(["--worms", &REF_WORMS.to_string(), "--depth", &p.depth.to_string()])
+        .args(["--samples", &samples.to_string()])
+        .arg("--content")
+        .arg(content)
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .map_err(|e| format!("cannot run rl-cli: {e}"))?;
+    if !o.status.success() {
+        return Err(failure("rl-cli rollback-cost", &o));
+    }
+    let text = std::fs::read_to_string(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    ron::from_str(&text).map_err(|e| format!("{}: {e}", out.display()))
+}
+
+/// The rollback axis: each point `runs` times; a failed run is a failed point.
+pub fn run_rollback(cli: &Path, content: &Path, plan: &Plan) -> Rollback {
+    let mut points = Vec::new();
+    for p in &ROLLBACK_POINTS {
+        let load = results::load_average().unwrap_or(0.0);
+        if load > 1.5 {
+            println!("  notice: load average {load:.2} before rollback {}: is the PC idle?", p.label);
+        }
+        let mut runs = Vec::new();
+        let mut failed = None;
+        for _ in 0..plan.runs {
+            match rollback_cost(cli, content, p, plan.rollback_samples) {
+                Ok(r) => runs.push(r),
+                Err(why) => {
+                    failed = Some(why);
+                    break;
+                }
+            }
+        }
+        let point = match failed {
+            Some(why) => results::failed_rollback_point(p.label, p.budget_us, &why),
+            None => results::rollback_point(p.label, p.budget_us, &runs),
+        };
+        println!("  rollback {}: {}", p.label, point.verdict_line());
+        points.push(point);
+    }
+    Rollback {
+        what: format!(
+            "Restoring the world and re-simulating `depth` ticks (the bots' keys recorded, not thought again), \
+             {REF_WORMS} chaos bots of mixed difficulties, Classic, pool {REF_POOL}, {} samples a run, seed 1.",
+            plan.rollback_samples
+        ),
+        points,
+        ..Rollback::default()
     }
 }

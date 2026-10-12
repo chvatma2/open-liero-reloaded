@@ -42,3 +42,8 @@
   fixtures/bench/stress.ron
 2026-10-12 net-feel: plan 9: first feel baselines
   fixtures/net/feel.ron
+2026-10-12 bench: plan 9: the rollback benchmark
+  fixtures/bench/baselines.ron
+  fixtures/bench/stress.ron
+2026-10-12 envelope: plan 9: the rollback axis
+  fixtures/bench/envelope/amd-ryzen-5-7600x-6-core-processor-12cpus.ron

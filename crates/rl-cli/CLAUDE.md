@@ -44,6 +44,11 @@ The headless command-line tool. Its commands:
   the seed, and the tick) to `target/failures/` (spec §7.3) and exits 1.
 - `rl-cli replay <file> [--until N] [--dump]` plays a replay on its content,
   checking every checksum; `--dump` prints the world (before tick N) as JSON.
+- `rl-cli rollback-cost [--mod olx-classic] [--level L] [--worms 16] [--depth 12]
+  [--samples 300] [--out f.ron]` (plan 9, `rollback_cost.rs`): 500 warm-up ticks
+  of chaos bots, then every 10 ticks save, play `depth` ticks, time `restore`
+  and the re-simulation with the recorded keys (bots not timed), nearest-rank
+  percentiles, checksum checked after each; prints `RollbackCost`.
 - `rl-cli stress [--mod M] [--level L] [--worms 32] [--pool 3000] [--seconds
   180] [--seed S] [--render-every 100] [--render-width W --render-height H]
   [--no-verify] [--fx-cap 1024] [--build-every 0] [--memory-ceiling-mib

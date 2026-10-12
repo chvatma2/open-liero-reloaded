@@ -17,7 +17,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   audio step, then `e2e`, `bench`, `stress` and `net-feel`.
 - `bench` (`bench.rs`, also `cargo xtask bench [--offline]`, spec §21 G8):
   the divan benchmarks (`BENCHES`: `rl-sim/benches/tick.rs`,
-  `rl-render/benches/frame.rs`, `rl-cli/benches/game.rs`; bench profile)
+  `rl-render/benches/frame.rs`, `rl-cli/benches/game.rs` and `rollback.rs`; bench profile)
   `RUNS` (3) times, each one's median of the runs' medians against
   `fixtures/bench/baselines.ron` (ns); then `stress`: the short stress run
   (`STRESS`: MW 1.0 and Classic × pool 3000 and 20 000 on Castle Strike,
@@ -117,7 +117,11 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   goes on this machine before the tick (10 ms p99), frame (6.9 / 16.7 ms
   p99) or memory (2 GiB) budget breaks. The parts (`Axis`, `--only`,
   repeatable; all by default): the sweeps `worms`, `pool`, `fx`, `map`,
-  `art`, then `gpu` and `olx`. `--quick` (`Plan::new`) is one run per
+  `art`, then `rollback` (plan 9: `rl-cli rollback-cost` at Castle Strike
+  depth 12 and 28 and `gen-4096x4096-a1-s1` depth 12, 16 worms; `RollbackOut`
+  strict, `Envelope::rollback` lenient and merged like `olx`; total p99
+  against 2000 µs / 4000 µs at depth 12, flagged in the report's Rollback
+  table), `gpu` and `olx`. `--quick` (`Plan::new`) is one run per
   point and fewer points (about 2 min; the full run, 3 runs a point,
   took 7 min on this machine warm, 2026-10-12: sweeps 1 min, GPU 5 min
   with the Windows build cached, OLX 1 min; a cold Windows build adds a

@@ -2,12 +2,14 @@
 
 Made by `cargo xtask envelope --report` from the results measured on 2026-10-12 (3 runs per point). Everything but the summary is regenerated; edit only the summary.
 
-Kept from an earlier bless (not measured in the last one): sweep art, sweep fx, sweep map, sweep pool, sweep worms, olx.
+Kept from an earlier bless (not measured in the last one): sweep art, sweep fx, sweep map, sweep pool, sweep worms, gpu windows-dx12, gpu windows-vulkan, gpu wsl-gl, olx.
 
 ## Headroom summary
 
 <!-- summary:start -->
 **Budget left today.** At the reference configuration with today's settings (16 bots, Classic on Castle Strike, OLX's 3000-projectile pool), the simulation tick's p99 is 0.15 ms: 1 % of the 10 ms budget (worms sweep, 16). The heaviest scene drawn, the heavy replay (MW 1.0, 32 chaos bots, a 20 000 pool), costs 2.95 ms at p99 for a tick and a frame at 2560 × 1440 offscreen on WSL, 2.34 ms on Windows DX12 and 2.18 ms on Vulkan. That is well inside both frame budgets, 6.9 ms (144 Hz) and 16.7 ms (60 Hz), and leaves about 4–4.8 ms of the 144 Hz frame depending on the path (3.99 ms on WSL, 4.60 ms on DX12, 4.76 ms on Vulkan). In a real window on Windows, with the HUD, the game runs uncapped at 1513–1602 FPS on DX12 (frame p99 2.11–2.22 ms) and 2124–2219 FPS on Vulkan (1.65–1.69 ms) at every size up to 3840 × 2160, holding both budgets everywhere. For networking, which will re-simulate several ticks within one frame, the frame is the limit that counts. Within what a 144 Hz frame leaves after today's heavy scene (offscreen), about 26 (WSL) to 30–31 (DX12, Vulkan) re-simulated reference ticks (0.15 ms p99 each) fit, but only about 3 at the heaviest sweep point's tick (1.20 ms p99, a 4096 × 4096 map); at 60 Hz (13.72 ms left on WSL, 14.33 ms on DX12, 14.49 ms on Vulkan) about 91–96 reference ticks fit, or 11–12 at the 4096 × 4096 point. Per tick alone, the 10 ms tick budget would hold about 66 reference ticks or 8 at the 4096 × 4096 point, but re-simulated ticks share the frame with drawing, so the per-frame counts are the ones to plan with. What this means: today the game uses a few per cent of its tick budget and under half of a 144 Hz frame, so nothing has to be optimised before adding features; rollback networking on very large maps at 144 Hz is the one combination that would be tight.
+
+Rollback: restoring and re-simulating 12 ticks costs 1.21 ms p99 at the reference configuration and 1.19 ms at 4096 × 4096 (budgets 2 and 4 ms).
 
 **Playing under WSL.** In a window under WSL the picture is different, and it is not the game's drawing. WSL presented every run with Fifo, and its presentation costs CPU time per pixel: a frame's busy time (without waiting to present) grows from 6.0 ms p50 at 1920 × 1080 to 9.6 ms at 2560 × 1440, 13.0 ms at 3440 × 1440 and 21.0 ms at 3840 × 2160, about 2.4 ms per million pixels, while the same scene's offscreen frame stays at 0.74–0.75 ms p50 at every size. So WSL windowed play misses the 144 Hz budget at every size (frame p99 13.99 ms at 1920 × 1080) and the 60 Hz budget from 2560 × 1440 up (frame p99 20.60 ms at 2560 × 1440, 26.74 ms at 3440 × 1440, 40.61 ms at 3840 × 2160; 107, 58, 45 and 27 FPS). At 3440 × 1440, the user's monitor, WSL gives about 45 FPS. The native Windows build is the game's real windowed cost and holds both budgets at every size (above). What this means: at high resolutions, play the native Windows build; WSL is fine for development and for 1920 × 1080 at 60 Hz.
 
@@ -36,6 +38,7 @@ Kept from an earlier bless (not measured in the last one): sweep art, sweep fx, 
 - Budgets: tick p99 ≤ 10 ms (OLX's 100 Hz frame), frame p99 ≤ 6.9 ms (144 Hz) and ≤ 16.7 ms (60 Hz), peak memory below 2048 MiB. A point holds when all of them do; the breaking point is the first value that does not, with the cause (tick, frame, memory, or a cap).
 - Sweeps: `rl-cli stress`, one process a point, medians of the runs; the reference is Classic on Castle Strike, 16 bots of mixed difficulty (chaos bots; Deathmatch bots on the map and art sweeps, so route finding counts), OLX's pool, 20 s, seed 1, `LoadingTime` 0, bonuses every 5 s. The pool sweep plays MW 1.0. Map and art levels are generated in memory (`gen-<w>x<h>-a<scale>-s1`).
 - Frames: `rl-cli gpu-bench` offscreen on the hardware adapter (timestamps when the adapter has them), and `rl-game --frame-log --uncapped` windowed; on WSL (GL over Mesa's d3d12, presented through WSLg) and native Windows (DX12, Vulkan) built with mingw-w64 and run through interop.
+- Rollback: `rl-cli rollback-cost`, a Classic match of 16 chaos bots (500 ticks of warm-up, then a sample every 10 ticks of play): save, play `depth` ticks, then time the restore and the re-simulation of those ticks with their recorded keys (the bots' thinking is not timed: online, bots think on the host only). Budgets: restore plus 12 ticks p99 ≤ 2 ms at the reference (Castle Strike) and ≤ 4 ms at 4096 × 4096; depth 28 (`MAX_PREDICTION`) is information.
 - OLX: the oracle's patched OLX (Docker; a Release build, -O3) timing each simulated frame to a file of its own; rl-sim timed on the same scenarios, the same work checked frame by frame.
 
 ## The machine
@@ -126,6 +129,18 @@ worms varies; otherwise 16 chaos bots of mixed difficulties, pool 3000, effects 
 Breaking point (144 Hz): none: every value holds. Breaking point (60 Hz): none: every value holds.
 
 Cost per worm: 6 µs of tick at p50, 15 µs at p99. At this rate the tick p99 reaches 10 ms at about 686 worms (a projection: `MAX_WORMS` stays 32).
+
+## Rollback
+
+Restoring the world and re-simulating `depth` ticks (the bots' keys recorded, not thought again), 16 chaos bots of mixed difficulties, Classic, pool 3000, 300 samples a run, seed 1.
+
+| point | worms | depth | restore p50 / p99 (µs) | re-simulation p50 / p99 (µs) | total p99 (µs) | snapshot (B) | journal, at most (B) | budget |
+|---|---|---|---|---|---|---|---|---|
+| castlestrike-12 | 16 | 12 | 21 / 41 | 741 / 1184 | 1210 | 95216 | 22762 | holds (2000 µs budget) |
+| castlestrike-28 | 16 | 28 | 31 / 63 | 1773 / 2912 | 2952 | 95216 | 50217 | no budget |
+| 4096x4096-12 | 16 | 12 | 24 / 52 | 376 / 1146 | 1185 | 57264 | 26843 | holds (4000 µs budget) |
+
+Every budgeted point holds.
 
 ## GPU
 

@@ -1,0 +1,12 @@
+(
+    level: "olx-level-castlestrike",
+    worms: 16,
+    depth: 12,
+    restore_us_p50: 40.0,
+    restore_us_p99: 50.0,
+    resim_us_p50: 300.0,
+    resim_us_p99: 350.0,
+    total_us_p99: 400.0,
+    snapshot_bytes: 21000,
+    journal_bytes_max: 9000,
+)

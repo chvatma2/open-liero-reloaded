@@ -7,7 +7,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use super::results::{self, Budgets, Envelope, GpuPath, OlxComparison, Point, Sweep, Windowed};
+use super::results::{self, Budgets, Envelope, GpuPath, OlxComparison, Point, Rollback, Sweep, Windowed};
 use crate::root;
 
 pub const REPORT: &str = "docs/perf/envelope.md";
@@ -358,6 +358,41 @@ fn gpu(o: &mut String, key: &str, g: &GpuPath, b: &Budgets, holding: &[&str]) {
     let _ = writeln!(o);
 }
 
+/// The rollback axis (plan 9, spec §3.3): the cost of restoring and
+/// re-simulating, against the budgets.
+fn rollback(o: &mut String, r: &Rollback) {
+    let _ = writeln!(o, "{}\n", r.what);
+    let _ = writeln!(
+        o,
+        "| point | worms | depth | restore p50 / p99 (µs) | re-simulation p50 / p99 (µs) | total p99 (µs) | \
+         snapshot (B) | journal, at most (B) | budget |\n|---|---|---|---|---|---|---|---|---|"
+    );
+    for p in &r.points {
+        let _ = writeln!(
+            o,
+            "| {} | {} | {} | {:.0} / {:.0} | {:.0} / {:.0} | {:.0} | {} | {} | {} |",
+            p.label,
+            p.worms,
+            p.depth,
+            p.restore_us_p50,
+            p.restore_us_p99,
+            p.resim_us_p50,
+            p.resim_us_p99,
+            p.total_us_p99,
+            p.snapshot_bytes,
+            p.journal_bytes_max,
+            p.verdict()
+        );
+    }
+    let broken: Vec<&str> = r.points.iter().filter(|p| p.over_budget()).map(|p| p.label.as_str()).collect();
+    if broken.is_empty() {
+        let _ = writeln!(o, "\nEvery budgeted point holds.");
+    } else {
+        let _ = writeln!(o, "\nBreaking: {}.", broken.join(", "));
+    }
+    let _ = writeln!(o);
+}
+
 fn olx(o: &mut String, c: &OlxComparison) {
     let _ = writeln!(
         o,
@@ -461,6 +496,11 @@ pub fn render(env: &Envelope, summary: &str) -> String {
          - Frames: `rl-cli gpu-bench` offscreen on the hardware adapter (timestamps when the adapter has them), and \
          `rl-game --frame-log --uncapped` windowed; on WSL (GL over Mesa's d3d12, presented through WSLg) and \
          native Windows (DX12, Vulkan) built with mingw-w64 and run through interop.\n\
+         - Rollback: `rl-cli rollback-cost`, a Classic match of 16 chaos bots (500 ticks of warm-up, then a \
+         sample every 10 ticks of play): save, play `depth` ticks, then time the restore and the re-simulation \
+         of those ticks with their recorded keys (the bots' thinking is not timed: online, bots think on the host \
+         only). Budgets: restore plus 12 ticks p99 ≤ 2 ms at the reference (Castle Strike) and ≤ 4 ms at \
+         4096 × 4096; depth 28 (`MAX_PREDICTION`) is information.\n\
          - OLX: the oracle's patched OLX (Docker; a Release build, -O3) timing each simulated frame to a file of \
          its own; rl-sim timed on the same scenarios, the same work checked frame by frame.\n",
         b.tick_ms, b.frame_144_ms, b.frame_60_ms, b.memory_mib, env.seconds
@@ -472,6 +512,13 @@ pub fn render(env: &Envelope, summary: &str) -> String {
     let _ = writeln!(o, "\n## Sweeps\n");
     for s in env.sweeps.values() {
         sweep(&mut o, s, &b);
+    }
+    let _ = writeln!(o, "## Rollback\n");
+    match &env.rollback {
+        Some(r) => rollback(&mut o, r),
+        None => {
+            let _ = writeln!(o, "Not measured in these results.\n");
+        }
     }
     let _ = writeln!(o, "## GPU\n");
     let holding: Vec<&str> =
@@ -756,6 +803,41 @@ mod tests {
     }
 
     /// The OLX build, the scenarios' load as measured, what the spans leave out and the notes.
+    #[test]
+    fn the_rollback_table_flags_a_broken_budget() {
+        use super::super::results::{Rollback, RollbackPoint};
+        let point = |label: &str, depth: u32, total: f64, budget: Option<f64>| RollbackPoint {
+            label: label.into(),
+            worms: 16,
+            depth,
+            runs: 3,
+            total_us_p99: total,
+            budget_us: budget,
+            ..RollbackPoint::default()
+        };
+        let mut e = env();
+        e.rollback = Some(Rollback {
+            what: "Rollback what.".into(),
+            points: vec![
+                point("castlestrike-12", 12, 1500.0, Some(2000.0)),
+                point("castlestrike-28", 28, 3000.0, None),
+                point("4096-12", 12, 4500.0, Some(4000.0)),
+            ],
+            noise: 0.05,
+        });
+        let doc = render(&e, "s");
+        let rb = &doc[doc.find("## Rollback").unwrap()..doc.find("## GPU").unwrap()];
+        for want in [
+            "| castlestrike-12 | 16 | 12 |",
+            "holds (2000 µs budget)",
+            "no budget",
+            "BREAKS the 4000 µs budget (total p99 4500 µs)",
+            "Breaking: 4096-12.",
+        ] {
+            assert!(rb.contains(want), "missing {want:?} in:\n{rb}");
+        }
+    }
+
     #[test]
     fn the_olx_comparison_says_what_it_measured() {
         let mut e = env();

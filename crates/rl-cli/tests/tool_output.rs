@@ -1,6 +1,6 @@
 //! The RON `cargo xtask envelope` reads from `rl-cli` (plan 8): `stress
 //! --out`, `gpu-bench --out` and `scenario --time`, and the RON `cargo xtask
-//! net-feel` reads (`net-sim --feel`, plan 9), written exactly as the
+//! net-feel` reads (`net-sim --feel`, plan 9) and `rollback-cost --out` (plan 9), written exactly as the
 //! commands write them, must equal the committed samples in
 //! `fixtures/bench/tool-output/`. `xtask`'s `tool_outputs_parse` and
 //! `the_tool_output_sample_parses_strictly` read the same samples with
@@ -13,6 +13,7 @@ use std::path::PathBuf;
 
 use rl_cli::feel::{FeelReport, NOTE, ProfileFeel};
 use rl_cli::gpu_bench::{GpuReport, ProbePoint, SizeReport};
+use rl_cli::rollback_cost::RollbackCost;
 use rl_cli::stress::{Report, Spread};
 use rl_cli::timing::{ScenarioTiming, TimingReport};
 
@@ -125,4 +126,10 @@ fn feel_report_sample() {
         bandwidth32: feel("typical", 8, 16_700),
     };
     sample("feel.ron", &r);
+}
+
+#[test]
+fn rollback_cost_sample() {
+    let r = RollbackCost::of("olx-level-castlestrike", 16, 12, &[40.0, 50.0], &[300.0, 350.0], 21_000, 9_000);
+    sample("rollback.ron", &r);
 }

@@ -101,6 +101,21 @@ pub struct StressOut {
     pub caps: Vec<String>,
 }
 
+/// `rl-cli rollback-cost --out` (`rl_cli::rollback_cost::RollbackCost`).
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct RollbackOut {
+    pub level: String,
+    pub worms: usize,
+    pub depth: u32,
+    pub restore_us_p50: f64,
+    pub restore_us_p99: f64,
+    pub resim_us_p50: f64,
+    pub resim_us_p99: f64,
+    pub total_us_p99: f64,
+    pub snapshot_bytes: usize,
+    pub journal_bytes_max: usize,
+}
+
 /// `rl-cli gpu-bench --out` (`rl_cli::gpu_bench::GpuReport`).
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct GpuReportOut {
@@ -337,6 +352,107 @@ pub struct OlxComparison {
     pub notes: Vec<String>,
 }
 
+/// One rollback point (plan 9, spec §3.3): restoring the world and
+/// re-simulating `depth` ticks, medians of the runs.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RollbackPoint {
+    pub label: String,
+    pub level: String,
+    pub worms: usize,
+    pub depth: u32,
+    pub runs: usize,
+    pub restore_us_p50: f64,
+    pub restore_us_p99: f64,
+    pub resim_us_p50: f64,
+    pub resim_us_p99: f64,
+    pub total_us_p99: f64,
+    pub snapshot_bytes: usize,
+    pub journal_bytes_max: usize,
+    /// The total's budget in µs, for the points that have one.
+    pub budget_us: Option<f64>,
+    /// Largest relative spread of the runs' totals.
+    pub spread: f64,
+    /// Why the point failed to run (then its figures are 0).
+    pub failure: Option<String>,
+}
+
+impl RollbackPoint {
+    /// Over its budget (a failed point holds nothing).
+    pub fn over_budget(&self) -> bool {
+        self.failure.is_some() || self.budget_us.is_some_and(|b| self.total_us_p99 > b)
+    }
+
+    /// One line for the console: the figures and the verdict.
+    pub fn verdict_line(&self) -> String {
+        if self.failure.is_some() {
+            return self.verdict();
+        }
+        format!(
+            "restore p99 {:.0} us, re-simulation p99 {:.0} us, total p99 {:.0} us: {}",
+            self.restore_us_p99,
+            self.resim_us_p99,
+            self.total_us_p99,
+            self.verdict()
+        )
+    }
+
+    /// The report's verdict for the total against the budget.
+    pub fn verdict(&self) -> String {
+        match (&self.failure, self.budget_us) {
+            (Some(why), _) => format!("failed: {why}"),
+            (None, Some(b)) if self.total_us_p99 > b => {
+                format!("BREAKS the {:.0} µs budget (total p99 {:.0} µs)", b, self.total_us_p99)
+            }
+            (None, Some(b)) => format!("holds ({:.0} µs budget)", b),
+            (None, None) => "no budget".into(),
+        }
+    }
+}
+
+/// The rollback axis: its points and the noise the comparison allows.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Rollback {
+    pub what: String,
+    pub points: Vec<RollbackPoint>,
+    pub noise: f64,
+}
+
+/// A rollback point from its runs (each figure's median over them).
+pub fn rollback_point(label: &str, budget_us: Option<f64>, runs: &[RollbackOut]) -> RollbackPoint {
+    let m = |f: fn(&RollbackOut) -> f64| median(&runs.iter().map(f).collect::<Vec<_>>());
+    let first = runs.first().cloned().unwrap_or_default();
+    RollbackPoint {
+        label: label.into(),
+        level: first.level.clone(),
+        worms: first.worms,
+        depth: first.depth,
+        runs: runs.len(),
+        restore_us_p50: m(|r| r.restore_us_p50),
+        restore_us_p99: m(|r| r.restore_us_p99),
+        resim_us_p50: m(|r| r.resim_us_p50),
+        resim_us_p99: m(|r| r.resim_us_p99),
+        total_us_p99: m(|r| r.total_us_p99),
+        snapshot_bytes: first.snapshot_bytes,
+        journal_bytes_max: runs.iter().map(|r| r.journal_bytes_max).max().unwrap_or(0),
+        budget_us,
+        spread: relative_spread(&runs.iter().map(|r| r.total_us_p99).collect::<Vec<_>>()),
+        failure: None,
+    }
+}
+
+/// A rollback point whose run failed.
+pub fn failed_rollback_point(label: &str, budget_us: Option<f64>, why: &str) -> RollbackPoint {
+    let last = why.lines().rfind(|l| !l.trim().is_empty()).unwrap_or(why);
+    RollbackPoint {
+        label: label.into(),
+        budget_us,
+        failure: Some(last.trim().into()),
+        ..RollbackPoint::default()
+    }
+}
+
 /// The results file.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -351,6 +467,8 @@ pub struct Envelope {
     pub sweeps: BTreeMap<String, Sweep>,
     pub gpu: BTreeMap<String, GpuPath>,
     pub olx: Option<OlxComparison>,
+    /// The rollback cost (plan 9); absent in older files.
+    pub rollback: Option<Rollback>,
     /// Parts a bless did not measure, kept from the file before.
     pub kept: Vec<String>,
 }
@@ -551,6 +669,9 @@ pub fn finish(env: &mut Envelope) {
         sweep.breaking_60 = breaking(&sweep.points, &b, b.frame_60_ms);
         sweep.fit = if sweep.axis == "map" { None } else { fit(&sweep.points, &b) };
     }
+    if let Some(r) = &mut env.rollback {
+        r.noise = r.points.iter().map(|p| p.spread).fold(NOISE_FLOOR, f64::max);
+    }
     for path in env.gpu.values_mut() {
         path.noise = path.sizes.iter().map(|s| s.spread).fold(NOISE_FLOOR, f64::max);
     }
@@ -604,6 +725,20 @@ pub fn compare(stored: &Envelope, now: &Envelope) -> Vec<Flag> {
             }
         }
     }
+    if let (Some(r), Some(old)) = (&now.rollback, &stored.rollback) {
+        for p in &r.points {
+            if let Some(o) =
+                old.points.iter().find(|o| o.label == p.label && o.failure.is_none() && p.failure.is_none())
+            {
+                out.push(Flag {
+                    name: format!("rollback {} total p99 ms", p.label),
+                    baseline: o.total_us_p99 / 1000.0,
+                    measured: p.total_us_p99 / 1000.0,
+                    noise: old.noise.max(NOISE_FLOOR),
+                });
+            }
+        }
+    }
     for (key, g) in &now.gpu {
         let Some(old) = stored.gpu.get(key) else { continue };
         for s in &g.sizes {
@@ -652,6 +787,10 @@ pub fn merged(old: Option<Envelope>, new: Envelope) -> Envelope {
     if m.olx.is_none() && old.olx.is_some() {
         m.kept.push("olx".into());
         m.olx = old.olx;
+    }
+    if m.rollback.is_none() && old.rollback.is_some() {
+        m.kept.push("rollback".into());
+        m.rollback = old.rollback;
     }
     finish(&mut m);
     m
@@ -993,6 +1132,18 @@ mod tests {
                 && set(f.busy_ms),
             "{f:?}"
         );
+        let rb: RollbackOut = ron::from_str(&read("rollback.ron")).unwrap();
+        assert!(
+            !rb.level.is_empty()
+                && rb.worms > 0
+                && rb.depth > 0
+                && [rb.restore_us_p50, rb.restore_us_p99, rb.resim_us_p50, rb.resim_us_p99, rb.total_us_p99]
+                    .iter()
+                    .all(|&x| x > 0.0)
+                && rb.snapshot_bytes > 0
+                && rb.journal_bytes_max > 0,
+            "{rb:?}"
+        );
         let t: TimingReportOut = ron::from_str(&read("scenario-time.ron")).unwrap();
         let sc = &t.scenarios[0];
         assert!(
@@ -1011,8 +1162,59 @@ mod tests {
         let old = "(host: (cpus: 12, cpu: \"X\"), sweeps: {\"worms\": (axis: \"worms\", points: [(value: \"2\")])})";
         let e: Envelope = ron::from_str(old).unwrap();
         assert_eq!(e.sweeps["worms"].points[0].value, "2");
-        assert!(e.gpu.is_empty() && e.olx.is_none());
+        assert!(e.gpu.is_empty() && e.olx.is_none() && e.rollback.is_none());
         assert_eq!(e.budgets, Budgets::default());
+    }
+
+    /// Plan 9: a bless of another part keeps the stored rollback axis, and
+    /// the axis blessed alone keeps the sweeps.
+    #[test]
+    fn rollback_merges_without_disturbing_other_parts() {
+        let point = |label: &str, total: f64| RollbackPoint {
+            label: label.into(),
+            runs: 3,
+            total_us_p99: total,
+            budget_us: Some(2000.0),
+            ..RollbackPoint::default()
+        };
+        let old = Envelope {
+            sweeps: BTreeMap::from([(
+                "worms".to_string(),
+                Sweep { axis: "worms".into(), ..Sweep::default() },
+            )]),
+            rollback: Some(Rollback { points: vec![point("ref-12", 1500.0)], ..Rollback::default() }),
+            ..Envelope::default()
+        };
+        let only_worms =
+            merged(Some(old.clone()), Envelope { sweeps: old.sweeps.clone(), ..Envelope::default() });
+        assert_eq!(only_worms.rollback.map(|r| r.points), old.rollback.clone().map(|r| r.points));
+        assert_eq!(only_worms.kept, ["rollback"]);
+        let only_rollback = merged(
+            Some(old.clone()),
+            Envelope {
+                rollback: Some(Rollback { points: vec![point("ref-12", 1800.0)], ..Rollback::default() }),
+                ..Envelope::default()
+            },
+        );
+        assert!(only_rollback.sweeps.contains_key("worms"));
+        assert_eq!(only_rollback.rollback.as_ref().unwrap().points[0].total_us_p99, 1800.0);
+        assert_eq!(only_rollback.kept, ["sweep worms"]);
+        // A slower total beyond the noise is flagged; compare reads both.
+        let flags = compare(&old, &only_rollback);
+        assert!(flags.iter().any(|f| f.name == "rollback ref-12 total p99 ms" && f.flagged()), "{flags:?}");
+    }
+
+    #[test]
+    fn rollback_points_are_judged_against_their_budget() {
+        let out =
+            |total: f64| RollbackOut { total_us_p99: total, restore_us_p99: 1.0, ..RollbackOut::default() };
+        let p = rollback_point("ref-12", Some(2000.0), &[out(1900.0), out(2100.0), out(2000.0)]);
+        assert_eq!((p.total_us_p99, p.runs, p.over_budget()), (2000.0, 3, false));
+        assert!(p.verdict().starts_with("holds"), "{}", p.verdict());
+        let p = rollback_point("ref-12", Some(2000.0), &[out(2500.0)]);
+        assert!(p.over_budget() && p.verdict().contains("BREAKS the 2000 µs budget"), "{}", p.verdict());
+        assert!(!rollback_point("ref-28", None, &[out(9000.0)]).over_budget());
+        assert!(failed_rollback_point("x", Some(1.0), "boom\n").over_budget());
     }
 
     /// Ruling T7-A: a quick run is never judged against a full one.
