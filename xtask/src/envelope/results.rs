@@ -17,7 +17,10 @@ use crate::olx_timing::OlxFrame;
 pub const DIR: &str = "fixtures/bench/envelope";
 /// Every run's results (not committed).
 pub const LATEST: &str = "target/envelope/latest.ron";
-/// The least noise an axis is given (run-to-run spread below it is luck).
+/// The least noise an axis is given (run-to-run spread below it is luck):
+/// 5 %, under the smallest noise an axis or GPU path had in the first
+/// bless (6 %, 2026-10-12), and the floor `compare` uses for a stored
+/// file without noise.
 pub const NOISE_FLOOR: f64 = 0.05;
 
 /// Percentiles of a measurement.
@@ -526,8 +529,9 @@ pub fn olx_row(name: &str, olx: &[Vec<OlxFrame>], rl: &[ScenarioTimingOut]) -> O
     }
 }
 
-/// Noise, frames from the GPU paths' levels (the WSL path first), fits and
-/// breaking points.
+/// Noise, frames from the GPU paths' levels (the WSL path first; a point
+/// without a level has none), fits and breaking points. It derives all of
+/// them from the measurements, so it can run again (as [`merged`] does).
 pub fn finish(env: &mut Envelope) {
     let b = env.budgets;
     let levels: Vec<(String, GpuLevel)> = ["wsl-gl", "windows-dx12", "windows-vulkan"]
@@ -537,14 +541,10 @@ pub fn finish(env: &mut Envelope) {
         .collect();
     for sweep in env.sweeps.values_mut() {
         for p in &mut sweep.points {
-            if let Some((path, l)) = levels.iter().find(|(_, l)| l.axis == sweep.axis && l.value == p.value) {
-                p.frame = Some(FrameCheck {
-                    path: path.clone(),
-                    size: l.size,
-                    total_ms: l.total_ms,
-                    gpu_ms: l.gpu_ms,
+            p.frame =
+                levels.iter().find(|(_, l)| l.axis == sweep.axis && l.value == p.value).map(|(path, l)| {
+                    FrameCheck { path: path.clone(), size: l.size, total_ms: l.total_ms, gpu_ms: l.gpu_ms }
                 });
-            }
         }
         sweep.noise = sweep.points.iter().map(|p| p.spread).fold(NOISE_FLOOR, f64::max);
         sweep.breaking_144 = breaking(&sweep.points, &b, b.frame_144_ms);
@@ -586,7 +586,8 @@ impl Flag {
 }
 
 /// Tick p99 (ms) of every sweep point and frame p99 and probe ms per pass
-/// of every GPU size measured in both, with the committed noise.
+/// of every GPU size measured in both, with the committed noise (at least
+/// [`NOISE_FLOOR`]: an older file without it would flag every slowdown).
 pub fn compare(stored: &Envelope, now: &Envelope) -> Vec<Flag> {
     let mut out = Vec::new();
     for (axis, s) in &now.sweeps {
@@ -598,7 +599,7 @@ pub fn compare(stored: &Envelope, now: &Envelope) -> Vec<Flag> {
                     name,
                     baseline: o.tick_us.p99 / 1000.0,
                     measured: p.tick_us.p99 / 1000.0,
-                    noise: old.noise,
+                    noise: old.noise.max(NOISE_FLOOR),
                 });
             }
         }
@@ -612,13 +613,13 @@ pub fn compare(stored: &Envelope, now: &Envelope) -> Vec<Flag> {
                     name: format!("{at} frame p99 ms"),
                     baseline: o.total_ms.p99,
                     measured: s.total_ms.p99,
-                    noise: old.noise,
+                    noise: old.noise.max(NOISE_FLOOR),
                 });
                 out.push(Flag {
                     name: format!("{at} ms per pass"),
                     baseline: o.ms_per_pass,
                     measured: s.ms_per_pass,
-                    noise: old.noise,
+                    noise: old.noise.max(NOISE_FLOOR),
                 });
             }
         }
@@ -626,11 +627,16 @@ pub fn compare(stored: &Envelope, now: &Envelope) -> Vec<Flag> {
     out
 }
 
-/// `new`, plus the sweeps, GPU paths and OLX table of `old` it did not measure (listed in `kept`).
+/// `new`, plus the sweeps, GPU paths and OLX table of `old` it did not
+/// measure (listed in `kept`), finished again: a kept sweep's frames and
+/// breaking points follow the GPU levels measured now.
 pub fn merged(old: Option<Envelope>, new: Envelope) -> Envelope {
     let mut m = new;
     m.kept.clear();
-    let Some(old) = old else { return m };
+    let Some(old) = old else {
+        finish(&mut m);
+        return m;
+    };
     for (k, v) in old.sweeps {
         if !m.sweeps.contains_key(&k) {
             m.kept.push(format!("sweep {k}"));
@@ -647,6 +653,7 @@ pub fn merged(old: Option<Envelope>, new: Envelope) -> Envelope {
         m.kept.push("olx".into());
         m.olx = old.olx;
     }
+    finish(&mut m);
     m
 }
 
@@ -681,6 +688,18 @@ pub fn load(path: &Path) -> Result<Option<Envelope>, String> {
     match std::fs::read_to_string(path) {
         Ok(text) => ron::from_str(&text).map(Some).map_err(|e| format!("{}: {e}", path.display())),
         Err(_) => Ok(None),
+    }
+}
+
+/// The committed results at `path` for the comparison and a bless: an
+/// unreadable file is treated as absent, with a notice saying so (the
+/// measuring is done by then; it must not fail on an old file).
+pub fn load_or_notice(path: &Path) -> (Option<Envelope>, Option<String>) {
+    match load(path) {
+        Ok(env) => (env, None),
+        Err(e) => {
+            (None, Some(format!("cannot read the stored results ({e}): not compared; a bless replaces them")))
+        }
     }
 }
 
@@ -1029,6 +1048,90 @@ mod tests {
         };
         let why = crate::envelope::sweeps::failure("rl-cli stress", &exited);
         assert_eq!(why, "rl-cli stress (exit status: 1): error: 16400 MiB resident, over 16384");
+    }
+
+    /// A bless of some parts keeps the others, and the kept sweeps' frames
+    /// and breaking points follow the GPU levels measured now.
+    #[test]
+    fn a_merged_bless_is_finished_again() {
+        let level = |total: f64| GpuLevel {
+            axis: "map".into(),
+            value: "4096x4096".into(),
+            size: (2560, 1440),
+            total_ms: s(total / 2.0, total),
+            ..GpuLevel::default()
+        };
+        let mut old = Envelope::default();
+        old.sweeps.insert(
+            "map".into(),
+            Sweep { axis: "map".into(), points: vec![pt("4096x4096", 1.0, 1000.0)], ..Sweep::default() },
+        );
+        old.gpu.insert("wsl-gl".into(), GpuPath { levels: vec![level(1.0)], ..GpuPath::default() });
+        finish(&mut old);
+        assert_eq!(old.sweeps["map"].points[0].frame.as_ref().unwrap().total_ms.p99, 1.0);
+        assert!(old.sweeps["map"].breaking_144.is_none());
+        let mut new = Envelope::default();
+        new.gpu.insert("wsl-gl".into(), GpuPath { levels: vec![level(9.0)], ..GpuPath::default() });
+        finish(&mut new);
+        let m = merged(Some(old), new);
+        assert_eq!(m.kept, ["sweep map"]);
+        let p = &m.sweeps["map"].points[0];
+        assert_eq!(p.frame.as_ref().unwrap().total_ms.p99, 9.0, "the frame measured now");
+        assert_eq!(m.sweeps["map"].breaking_144.as_ref().map(|b| b.value.as_str()), Some("4096x4096"));
+        let mut gone = m.clone();
+        gone.gpu.clear();
+        finish(&mut gone);
+        assert!(gone.sweeps["map"].points[0].frame.is_none(), "no level, no frame");
+    }
+
+    /// A stored file without `noise` (an older one) is judged with the floor,
+    /// not with 0 (which would flag every slowdown).
+    #[test]
+    fn a_stored_file_without_noise_uses_the_floor() {
+        let sweep = |p99: f64, noise: f64| Sweep {
+            axis: "worms".into(),
+            noise,
+            points: vec![pt("16", 16.0, p99)],
+            ..Sweep::default()
+        };
+        let mut stored = Envelope::default();
+        stored.sweeps.insert("worms".into(), sweep(1000.0, 0.0));
+        stored.gpu.insert(
+            "wsl-gl".into(),
+            GpuPath {
+                sizes: vec![GpuSize { size: (8, 8), total_ms: s(1.0, 1.0), ..GpuSize::default() }],
+                ..GpuPath::default()
+            },
+        );
+        let flagged = |p99: f64, total: f64| {
+            let mut now = Envelope::default();
+            now.sweeps.insert("worms".into(), sweep(p99, 0.0));
+            now.gpu.insert(
+                "wsl-gl".into(),
+                GpuPath {
+                    sizes: vec![GpuSize { size: (8, 8), total_ms: s(total, total), ..GpuSize::default() }],
+                    ..GpuPath::default()
+                },
+            );
+            compare(&stored, &now).iter().filter(|f| f.flagged()).map(|f| f.name.clone()).collect::<Vec<_>>()
+        };
+        assert!(flagged(1030.0, 1.03).is_empty(), "3 % is within the 5 % floor");
+        assert_eq!(flagged(1100.0, 1.10), ["worms 16 tick p99 ms", "wsl-gl 8x8 frame p99 ms"]);
+    }
+
+    /// An unreadable committed file is a notice (treated as absent), never
+    /// a failure after the measuring.
+    #[test]
+    fn an_unparseable_committed_file_is_a_notice() {
+        let dir = crate::root().join("target/envelope-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let bad = dir.join("bad.ron");
+        std::fs::write(&bad, "(sweeps: {\"worms\": oops})").unwrap();
+        let (env, notice) = load_or_notice(&bad);
+        assert!(env.is_none());
+        let n = notice.unwrap();
+        assert!(n.contains("bad.ron") && n.contains("not compared"), "{n}");
+        assert_eq!(load_or_notice(&dir.join("missing.ron")), (None, None));
     }
 
     #[test]

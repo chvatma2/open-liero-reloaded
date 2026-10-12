@@ -498,6 +498,21 @@ pub fn render(env: &Envelope, summary: &str) -> String {
     o
 }
 
+/// The summary a new report keeps from `existing` (the report on disk):
+/// the placeholder when there is none yet; an error when the report has
+/// lost its markers, rather than dropping a hand-written summary.
+fn summary_to_keep(existing: Option<&str>) -> anyhow::Result<String> {
+    match existing {
+        None => Ok(NO_SUMMARY.to_string()),
+        Some(text) => summary_of(text).ok_or_else(|| {
+            anyhow::anyhow!(
+                "{REPORT} has no `{START}` ... `{END}` markers: put them back around the summary \
+                 (or remove the file) before regenerating, so the hand-written summary is not lost"
+            )
+        }),
+    }
+}
+
 /// Writes the report of this host's results file (or `from`), keeping the summary.
 pub fn write(from: Option<&Path>) -> anyhow::Result<PathBuf> {
     let file = match from {
@@ -511,10 +526,7 @@ pub fn write(from: Option<&Path>) -> anyhow::Result<PathBuf> {
         )
     })?;
     let out = root().join(REPORT);
-    let summary = std::fs::read_to_string(&out)
-        .ok()
-        .and_then(|t| summary_of(&t))
-        .unwrap_or_else(|| NO_SUMMARY.to_string());
+    let summary = summary_to_keep(std::fs::read_to_string(&out).ok().as_deref())?;
     if let Some(dir) = out.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -582,6 +594,18 @@ mod tests {
         assert_eq!(summary_of(&doc).as_deref(), Some(summary));
         assert_eq!(render(&env(), &summary_of(&doc).unwrap()), doc, "regenerating is stable");
         assert_eq!(summary_of("no markers"), None);
+    }
+
+    /// A report whose markers were lost is refused, never overwritten with
+    /// the placeholder (the hand-written summary would be gone).
+    #[test]
+    fn a_report_without_markers_is_not_overwritten() {
+        assert_eq!(summary_to_keep(None).unwrap(), NO_SUMMARY, "no report yet");
+        let doc = render(&env(), "Shaders: plenty.");
+        assert_eq!(summary_to_keep(Some(&doc)).unwrap(), "Shaders: plenty.");
+        let lost = doc.replace(END, "");
+        let e = summary_to_keep(Some(&lost)).unwrap_err().to_string();
+        assert!(e.contains("no `<!-- summary:start -->`") && e.contains("not lost"), "{e}");
     }
 
     #[test]

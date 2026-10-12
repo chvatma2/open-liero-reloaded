@@ -147,13 +147,17 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   (ruling PF5; `execute` takes a `Machine`, which the tests fake). Every
   run writes `target/envelope/latest.ron` and compares with
   `fixtures/bench/envelope/<host>.ron` (`host_key`: the CPU model's slug
-  and CPU count; another machine's file is only a notice): a measurement
+  and CPU count; another machine's file, or one that does not parse,
+  `load_or_notice`, is only a notice): a measurement
   slower than its axis's or GPU path's `noise` (the largest run spread,
-  at least `NOISE_FLOOR`, 5 %) is flagged with `!`, never failed; stored
+  at least `NOISE_FLOOR`, 5 %, also for a stored file without `noise`)
+  is flagged with `!`, never failed; stored
   results of another kind (`incomparable`: quick against full, or other
   match lengths) are only a notice. `--bless --reason` (refused with
   `--quick`) writes that file, keeping the parts it did not measure
-  from results of the same kind (`kept`), and logs it in
+  from results of the same kind (`kept`; `merged` runs `finish` again,
+  so kept sweeps' frames and breaking points follow the GPU levels
+  measured now), and logs it in
   `fixtures/blessings.log`. `--report [--from F]` (`report.rs`) only
   writes `docs/perf/envelope.md` from this host's blessed results (or
   `F`): method, machine, each sweep's table and breaking points, each GPU
@@ -166,7 +170,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   each budget, and the other paths that hold both everywhere), dropped GPU spans and notes,
   the OLX table with its build, load, timed-span asymmetry and notes, and
   the limits; the hand-written summary between `<!-- summary:start -->`
-  and `<!-- summary:end -->` is kept word for word. Results also keep
+  and `<!-- summary:end -->` is kept word for word (a report that lost
+  its markers is refused, `summary_to_keep`, not overwritten). Results also keep
   `gpu-bench`'s `gpu_dropped` counts (frames whose timestamps gave no real
   span). Not part of `full`.
 - `olx_timing.rs` (plan 8; its caller is `envelope`, task 7): OLX's

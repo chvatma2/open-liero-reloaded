@@ -412,7 +412,10 @@ pub fn run(o: &Opts) -> anyhow::Result<bool> {
         println!("skipped: {n}");
     }
     let path = results::path_for(&host);
-    let stored = results::load(&root().join(&path)).map_err(anyhow::Error::msg)?;
+    let (stored, unreadable) = results::load_or_notice(&root().join(&path));
+    if let Some(n) = &unreadable {
+        println!("notice: {n}");
+    }
     match &stored {
         Some(s) if crate::bench::host_notice(&s.host, &host).is_some() => println!(
             "notice: {path} is from another machine ({} CPUs, {:?}, {:?}; here {:?}): not compared",
@@ -429,12 +432,15 @@ pub fn run(o: &Opts) -> anyhow::Result<bool> {
             let n = flags.iter().filter(|f| f.flagged()).count();
             println!("{n} of {} measurements beyond their noise (flagged with !, not failed)", flags.len());
         }
+        None if unreadable.is_some() => {}
         None => println!(
             "notice: no results for this host yet ({path}); `--bless --reason \"<why>\"` writes them"
         ),
     }
     if let Some(reason) = &o.bless {
-        // Only the same host's results of the same kind are kept.
+        // Only the same host's results of the same kind are kept; `merged`
+        // finishes the whole again, so kept sweeps' frames follow the GPU
+        // levels measured now.
         let same_host = stored.filter(|s| {
             crate::bench::host_notice(&s.host, &host).is_none() && results::incomparable(s, &env).is_none()
         });
