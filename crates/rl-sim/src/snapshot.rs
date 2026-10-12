@@ -1,8 +1,9 @@
 //! Snapshots for rollback (networking spec §3.3).
 
+use alloc::vec::Vec;
 use core::mem;
 
-use rl_terrain::{JournalError, JournalMark};
+use rl_terrain::{Area, JournalError, JournalMark};
 
 use crate::World;
 
@@ -29,7 +30,8 @@ impl Snapshot {
 pub enum RestoreError {
     /// The terrain journal refused the snapshot's mark (forgotten or stale).
     Journal(JournalError),
-    /// A snapshot taken without rollback restored into a world with it, or the reverse.
+    /// A snapshot taken without rollback restored into a world with it, or the
+    /// reverse, or a copy of another map (a snapshot of another world).
     NotThisWorld,
 }
 
@@ -60,7 +62,8 @@ impl World {
     /// Puts the world back to `s`. This invalidates every snapshot taken
     /// after `s`: restoring one of those is refused with
     /// `RestoreError::Journal(JournalError::Stale)`, never applied. The world
-    /// is unchanged on an error.
+    /// is unchanged on an error. The terrain it put back is reported by
+    /// [`World::take_restored_areas`].
     pub fn restore(&mut self, s: &Snapshot) -> Result<(), RestoreError> {
         match (s.mark, self.rollback_enabled()) {
             (Some(mark), true) => {
@@ -71,7 +74,15 @@ impl World {
                 Ok(())
             }
             (None, false) => {
+                // The snapshot's copy of the map, loaded so that the whole
+                // map is reported restored.
+                let mut terrain = mem::take(&mut self.terrain);
+                if !terrain.load_cells(s.world.terrain.cells()) {
+                    self.terrain = terrain;
+                    return Err(RestoreError::NotThisWorld);
+                }
                 self.clone_from(&s.world);
+                self.terrain = terrain;
                 Ok(())
             }
             _ => Err(RestoreError::NotThisWorld),
@@ -84,6 +95,22 @@ impl World {
         if let Some(mark) = s.mark {
             self.terrain.forget_before(mark);
         }
+    }
+
+    /// The map areas a [`World::restore`] put back (each undone edit's
+    /// rectangle, merged beyond `Terrain::MAX_RESTORED`) or a
+    /// [`World::load_state`] or a restore without rollback replaced (the
+    /// whole map), since the last call ([`Terrain::take_restored_areas`]).
+    ///
+    /// The presentation's colour map follows the edits ticks report
+    /// (`EventKind::TerrainEdit`), which an undo does not: after a restore
+    /// or a load, rebuild these areas from the terrain
+    /// (`ColorMap::rebuild_area`) before applying the next ticks' edits,
+    /// or an undone hole stays drawn.
+    ///
+    /// [`Terrain::take_restored_areas`]: rl_terrain::Terrain::take_restored_areas
+    pub fn take_restored_areas(&mut self) -> Vec<Area> {
+        self.terrain.take_restored_areas()
     }
 
     /// Bytes the terrain journal holds, for statistics.

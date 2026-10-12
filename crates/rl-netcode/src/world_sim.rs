@@ -5,8 +5,9 @@
 use alloc::vec::Vec;
 
 use rl_sim::{Keys, Snapshot, TickEvents, World, WorldState};
+use rl_terrain::Area;
 
-use crate::{Simulation, StateRejected};
+use crate::{Session, Simulation, StateRejected};
 
 /// A world under rollback.
 pub struct WorldSim {
@@ -36,6 +37,40 @@ impl WorldSim {
     /// state they are stale (the tick before it) until the next tick.
     pub fn events(&self) -> &TickEvents {
         &self.events
+    }
+
+    /// The map areas restores and loaded states put back since the last
+    /// call ([`World::take_restored_areas`]); see
+    /// [`Session::take_restored_areas`] for what the presentation does.
+    pub fn take_restored_areas(&mut self) -> Vec<Area> {
+        self.world.take_restored_areas()
+    }
+}
+
+impl Session<WorldSim> {
+    /// The map areas the session's restores and loaded states put back
+    /// since the last call ([`World::take_restored_areas`]), without
+    /// touching the timeline (unlike [`Session::sim_mut`]).
+    ///
+    /// The presentation's colour map follows the ticks' terrain edits
+    /// (`EventKind::TerrainEdit`, from [`WorldSim::events`] in
+    /// [`crate::Driver::simulated`]), which say nothing of an undo: a
+    /// mispredicted hole would stay drawn. So after every
+    /// [`Session::advance`] (the list is empty unless it reported
+    /// [`crate::Event::Rollback`] or [`crate::Event::StateLoaded`] or, at
+    /// a host, sent a repair, whose quiet re-simulation reports areas it
+    /// did again), the game takes these areas, calls
+    /// `ColorMap::rebuild_area` for each with `sim().world().terrain()`,
+    /// and only then applies the edits of the ticks the advance simulated,
+    /// in order (collected in `Driver::simulated`, re-simulated ones
+    /// included). Every restore of an advance comes before its reported
+    /// ticks. The rebuild paints from the terrain after the advance: the
+    /// edits applied after it paint their rims again; blood stains and the
+    /// level's own dirt art inside the areas are lost, as for
+    /// `TickEvents::lost_area`. `rl-netcode`'s `tests/world_sim.rs`
+    /// (`colour_maps_follow_rollbacks_and_loads`) does exactly this.
+    pub fn take_restored_areas(&mut self) -> Vec<Area> {
+        self.sim.take_restored_areas()
     }
 }
 

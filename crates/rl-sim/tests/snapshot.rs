@@ -6,7 +6,7 @@
 mod world;
 
 use rl_sim::{Keys, RestoreError, TickEvents, World};
-use rl_terrain::JournalError;
+use rl_terrain::{Area, JournalError};
 
 /// Fires constantly with a moving aim, so pellets fly and carve.
 fn keys(t: u32, n: usize) -> Vec<Keys> {
@@ -67,6 +67,42 @@ fn restore_undoes_terrain_edits() {
     assert_eq!(w.terrain(), &before);
 }
 
+/// The presentation's colour map follows the ticks' terrain edits, so it
+/// learns from `take_restored_areas` what a restore put back.
+#[test]
+fn restore_reports_every_cell_it_put_back() {
+    let mut ev = TickEvents::new();
+    let mut w = world::world_carving(8, 400, 300);
+    w.enable_rollback();
+    run(&mut w, 8, 0, 50, &mut ev);
+    w.take_restored_areas();
+    let before = w.terrain().clone();
+    let snap = w.save();
+    run(&mut w, 8, 50, 250, &mut ev);
+    let carved = w.terrain().clone();
+    assert!(w.take_restored_areas().is_empty(), "ticks restore nothing");
+    w.restore(&snap).unwrap();
+    let areas = w.take_restored_areas();
+    let covered =
+        |x: i32, y: i32| areas.iter().any(|a| (a.x0..a.x1).contains(&x) && (a.y0..a.y1).contains(&y));
+    let mut changed = 0;
+    for y in 0..300 {
+        for x in 0..400 {
+            if carved.material(x, y) != before.material(x, y) {
+                changed += 1;
+                assert!(covered(x as i32, y as i32), "({x}, {y}) was put back unreported");
+            }
+        }
+    }
+    assert!(changed > 0, "the fixture must carve");
+    assert!(areas.len() <= rl_terrain::Terrain::MAX_RESTORED);
+    assert!(w.take_restored_areas().is_empty(), "taken once");
+    // Nothing edited since the snapshot: nothing to report.
+    let snap = w.save();
+    w.restore(&snap).unwrap();
+    assert!(w.take_restored_areas().is_empty());
+}
+
 #[test]
 fn snapshots_without_rollback_copy_the_terrain() {
     let mut ev = TickEvents::new();
@@ -77,6 +113,8 @@ fn snapshots_without_rollback_copy_the_terrain() {
     run(&mut w, 4, 20, 120, &mut ev);
     w.restore(&snap).unwrap();
     assert_eq!(w, at);
+    // The copy replaced the whole map.
+    assert_eq!(w.take_restored_areas(), [Area { x0: 0, y0: 0, x1: 200, y1: 150 }]);
 }
 
 #[test]

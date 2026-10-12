@@ -342,7 +342,8 @@ enum TimeSync {
 pub struct Session<S: Simulation> {
     cfg: Config,
     role: Role,
-    sim: S,
+    /// `pub(crate)` for `world_sim.rs`'s presentation hooks.
+    pub(crate) sim: S,
     log: InputLog,
     /// The slots this peer presses (`Driver::local_inputs`).
     local: Vec<u8>,

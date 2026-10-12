@@ -3045,6 +3045,7 @@ dependencies = [
  "rl-content",
  "rl-proto",
  "rl-sim",
+ "rl-terrain",
 ]
 
 [[package]]

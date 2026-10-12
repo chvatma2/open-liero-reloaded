@@ -31,7 +31,9 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
 - **Rollback** (`snapshot.rs`, networking spec §3.3): `enable_rollback` +
   `save`/`restore`/`forget_before`; `sync_checksum` is `checksum` with the
   terrain's cell hash. Snapshots carry no events; the caller re-runs ticks
-  for them.
+  for them. `take_restored_areas` drains the map areas a restore put back
+  (the undone edits' rectangles; the whole map for a restore without
+  rollback or a `load_state`), for the colour map's `rebuild_area`.
 - **State transfer** (`state.rs`, networking spec §3.5): `World::state`/`load_state`;
   a new state field must be added to `WorldState` (the destructuring forces it)
   and validated if it indexes anything. `WorldState` holds what `checksum`

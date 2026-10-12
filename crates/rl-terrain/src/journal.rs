@@ -10,8 +10,9 @@
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
+use alloc::vec::Vec;
 
-use crate::Terrain;
+use crate::{Area, Terrain};
 
 /// A position in the journal: the count of edits recorded since
 /// `start_journal`, with the serial of the last edit before it, so a mark
@@ -62,6 +63,22 @@ pub(crate) struct Journal {
     hash: u64,
 }
 
+/// Adds `a` to `list`, or with `list` full ([`Terrain::MAX_RESTORED`])
+/// merges everything into one bounding box.
+pub(crate) fn note_restored(list: &mut Vec<Area>, a: Area) {
+    if list.len() >= Terrain::MAX_RESTORED {
+        let all = list.drain(..).fold(a, |u, b| Area {
+            x0: u.x0.min(b.x0),
+            y0: u.y0.min(b.y0),
+            x1: u.x1.max(b.x1),
+            y1: u.y1.max(b.y1),
+        });
+        list.push(all);
+    } else {
+        list.push(a);
+    }
+}
+
 /// The splitmix64 finaliser.
 pub(crate) fn mix(mut z: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -101,7 +118,8 @@ impl Terrain {
         Some(JournalMark { pos, last: j.edits.back().map_or(j.forgotten, |e| e.serial) })
     }
 
-    /// Puts back every cell changed since `mark`, newest edit first.
+    /// Puts back every cell changed since `mark`, newest edit first, and
+    /// reports each edit's rectangle ([`Terrain::take_restored_areas`]).
     pub fn undo_to(&mut self, mark: JournalMark) -> Result<(), JournalError> {
         let width = self.width as usize;
         let j = self.journal.as_mut().ok_or(JournalError::NotRecording)?;
@@ -119,6 +137,10 @@ impl Terrain {
         }
         while j.base + j.edits.len() as u64 > mark.pos {
             let e = j.edits.pop_back().expect("counted above");
+            note_restored(
+                &mut self.restored,
+                Area { x0: e.x0 as i32, y0: e.y0 as i32, x1: e.x1 as i32, y1: e.y1 as i32 },
+            );
             let (w, h) = ((e.x1 - e.x0) as usize, (e.y1 - e.y0) as usize);
             // The edit's bytes are the last w * h of the journal, row-major.
             for row in (0..h).rev() {
@@ -134,6 +156,19 @@ impl Terrain {
             }
         }
         Ok(())
+    }
+
+    /// The areas whose cells [`Terrain::undo_to`] put back, or the whole
+    /// map after a [`Terrain::load_cells`], since the last call; at most
+    /// [`Terrain::MAX_RESTORED`], merged into their bounding box beyond.
+    ///
+    /// For the colour image (`ColorMap`), which follows the edits a tick
+    /// reports and so never sees an undo: rebuilding these areas
+    /// (`ColorMap::rebuild_area`) erases what the undone edits painted.
+    /// An area may have no cell changed (an edit that changed nothing, or
+    /// one undone and done again).
+    pub fn take_restored_areas(&mut self) -> Vec<Area> {
+        core::mem::take(&mut self.restored)
     }
 
     /// Drops the records older than `mark` (they can no longer be undone).
@@ -344,6 +379,76 @@ mod tests {
         let mut plain = dirt(20, 20);
         assert!(plain.load_cells(other.cells()));
         assert_eq!(plain, other);
+    }
+
+    /// Whether `areas` cover `[x0, x1) x [y0, y1)` cell by cell.
+    fn covers(areas: &[Area], x0: i32, y0: i32, x1: i32, y1: i32) -> bool {
+        (y0..y1).all(|y| {
+            (x0..x1).all(|x| areas.iter().any(|a| (a.x0..a.x1).contains(&x) && (a.y0..a.y1).contains(&y)))
+        })
+    }
+
+    #[test]
+    fn undo_reports_the_areas_it_restored() {
+        let mut t = dirt(40, 30);
+        t.start_journal();
+        let mark = t.journal_mark().unwrap();
+        t.carve_hole(&square(8), 10, 10); // cells 6..14
+        t.carve_hole(&square(8), 0, 0); // clipped: 0..4
+        assert!(t.take_restored_areas().is_empty(), "edits are no restore");
+        t.undo_to(mark).unwrap();
+        let areas = t.take_restored_areas();
+        assert!(covers(&areas, 6, 6, 14, 14) && covers(&areas, 0, 0, 4, 4), "{areas:?}");
+        assert!(areas.iter().all(|a| a.x0 >= 0 && a.y0 >= 0 && a.x1 <= 40 && a.y1 <= 30), "{areas:?}");
+        assert!(t.take_restored_areas().is_empty(), "taken once");
+    }
+
+    #[test]
+    fn undo_without_edits_or_refused_reports_nothing() {
+        let mut t = dirt(20, 20);
+        t.start_journal();
+        let m0 = t.journal_mark().unwrap();
+        t.undo_to(m0).unwrap();
+        assert!(t.take_restored_areas().is_empty());
+        t.carve_hole(&square(4), 5, 5);
+        let m1 = t.journal_mark().unwrap();
+        t.undo_to(m0).unwrap();
+        t.take_restored_areas();
+        assert_eq!(t.undo_to(m1), Err(JournalError::Stale));
+        assert!(t.take_restored_areas().is_empty());
+    }
+
+    #[test]
+    fn a_load_reports_the_whole_map() {
+        let mut other = dirt(20, 10);
+        other.carve_hole(&square(6), 12, 5);
+        for journal in [false, true] {
+            let mut t = dirt(20, 10);
+            if journal {
+                t.start_journal();
+            }
+            assert!(!t.load_cells(&[9; 200]));
+            assert!(t.take_restored_areas().is_empty(), "a refused load changes nothing");
+            assert!(t.load_cells(other.cells()));
+            assert_eq!(t.take_restored_areas(), [Area { x0: 0, y0: 0, x1: 20, y1: 10 }]);
+        }
+    }
+
+    #[test]
+    fn restored_areas_are_bounded() {
+        let mut t = dirt(200, 200);
+        t.start_journal();
+        let mark = t.journal_mark().unwrap();
+        for i in 0..400 {
+            t.carve_hole(&square(2), (i % 20) * 10 + 1, (i / 20) * 10 + 1);
+        }
+        t.undo_to(mark).unwrap();
+        let areas = t.take_restored_areas();
+        assert!(areas.len() <= Terrain::MAX_RESTORED, "{}", areas.len());
+        assert!((0..400).all(|i| {
+            let (x, y) = ((i % 20) * 10, (i / 20) * 10);
+            covers(&areas, x, y, x + 2, y + 2)
+        }));
     }
 
     #[test]

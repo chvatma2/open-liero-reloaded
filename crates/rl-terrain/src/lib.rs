@@ -35,6 +35,8 @@ pub struct Terrain {
     cells: Vec<u8>,
     /// Rollback journal, off by default (`journal.rs`).
     journal: Option<Box<journal::Journal>>,
+    /// Areas put back or replaced since [`Terrain::take_restored_areas`].
+    restored: Vec<Area>,
 }
 
 /// Equality compares the terrain only: the journal is bookkeeping, not terrain.
@@ -47,12 +49,17 @@ impl PartialEq for Terrain {
 impl Eq for Terrain {}
 
 impl Terrain {
+    /// The most areas [`Terrain::take_restored_areas`] holds; beyond it
+    /// they are merged into their bounding box (as `ColorMap::MAX_DIRTY`).
+    pub const MAX_RESTORED: usize = 256;
+
     pub fn from_grid(grid: &MaterialGrid) -> Self {
         Self {
             width: grid.width(),
             height: grid.height(),
             cells: grid.cells().iter().map(|m| *m as u8).collect(),
             journal: None,
+            restored: Vec::new(),
         }
     }
 
@@ -129,7 +136,8 @@ impl Terrain {
     /// changes nothing. The journal's cell hash follows the new cells, but
     /// the load is not undoable: every mark taken before it is refused
     /// afterwards ([`crate::JournalError::Forgotten`]), as if the load were
-    /// one edit already forgotten.
+    /// one edit already forgotten. The whole map is reported restored
+    /// ([`Terrain::take_restored_areas`]).
     pub fn load_cells(&mut self, cells: &[u8]) -> bool {
         if !self.can_load(cells) {
             return false;
@@ -138,6 +146,10 @@ impl Terrain {
             self.set_cell(i, c);
         }
         self.seal_journal();
+        self.restored.clear();
+        let (x1, y1) =
+            (i32::try_from(self.width).unwrap_or(i32::MAX), i32::try_from(self.height).unwrap_or(i32::MAX));
+        self.restored.push(Area { x0: 0, y0: 0, x1, y1 });
         true
     }
 

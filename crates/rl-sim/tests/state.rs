@@ -36,6 +36,11 @@ fn a_loaded_state_evolves_identically() {
     dst.load_state(WorldState::decode(&bytes).unwrap()).unwrap();
     assert_eq!(dst.checksum(), src.checksum());
     assert_eq!(dst, src);
+    assert_eq!(
+        dst.take_restored_areas(),
+        [rl_terrain::Area { x0: 0, y0: 0, x1: 400, y1: 300 }],
+        "the whole map was replaced"
+    );
     let (mut a, mut b) = (src, dst);
     let mut ev = TickEvents::new();
     for t in 150..350 {
@@ -173,6 +178,7 @@ fn a_state_for_another_level_is_refused() {
     let before = dst.clone();
     assert_eq!(dst.load_state(src.state()), Err(StateError::Terrain));
     assert_eq!(dst, before, "a refused state changes nothing");
+    assert!(dst.take_restored_areas().is_empty());
 }
 
 #[test]

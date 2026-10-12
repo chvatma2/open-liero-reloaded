@@ -4,7 +4,8 @@ The rollback netcode (networking spec §3) and the deterministic network
 model that tests it in one process (spec §9.1).
 
 - **Layer 4, `#![no_std]` + `alloc`, wasm32.** Depends on rl-sim (keys, the
-  world adapter of `world_sim.rs`), rl-proto (same layer: the wire format).
+  world adapter of `world_sim.rs`), rl-proto (same layer: the wire format),
+  rl-terrain (`Area`, for the restored areas).
 - **Sans-IO**: no sockets, no clock, no threads; time is an argument
   (`now_us`).
 - **`Simulation`** is what the session drives (tick, save/restore,
@@ -132,6 +133,16 @@ model that tests it in one process (spec §9.1).
   `sync_checksum` (N4); states are `WorldState::{encode, decode}` +
   `load_state` (N5), every `StateError` a refusal; `events()` are the last
   simulated tick's (stale after a restore or a load until the next tick).
+  `take_restored_areas` (on `WorldSim`, and on `Session<WorldSim>`, which
+  leaves the timeline alone, unlike `sim_mut`) drains the map areas the
+  restores and loads put back. **For plan 10's colour map**: after every
+  `advance` (non-empty after `Event::Rollback`, `Event::StateLoaded`, or a
+  host's repair), take them, `ColorMap::rebuild_area` each from the
+  terrain, then apply the advance's ticks' `TerrainEdit`s (collected in
+  `Driver::simulated`, re-simulated ones included) in order; lost: blood
+  stains and the level's dirt art inside the areas.
+  `tests/world_sim.rs`' `colour_maps_follow_rollbacks_and_loads` keeps
+  every peer's colour map that way and checks its material every frame.
 - **Harness** (`harness.rs`, `toy.rs`): `run` plays a `Scenario` — the host
   (`HOST` = 0) and its clients and spectators over `Network`, in virtual
   time (1 ms steps, idle steps skipped), clocks skewed by `clock_ppm`,
