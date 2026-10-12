@@ -121,33 +121,125 @@ fn sweep(o: &mut String, s: &Sweep, b: &Budgets) {
     let _ = writeln!(o);
 }
 
-fn windowed(o: &mut String, key: &str, rows: &[Windowed]) {
-    if key.starts_with("wsl") {
+/// Megapixels of a size.
+fn mpx(s: (u32, u32)) -> f64 {
+    f64::from(s.0) * f64::from(s.1) / 1e6
+}
+
+/// Busy p50 (ms) against the window's megapixels, least squares: the
+/// slope (ms per million pixels), when it grows with the pixels (the
+/// largest window's busy p50 at least 1.5 times the smallest's and at
+/// least 0.25 ms more per million pixels); `None` when it stays flat.
+fn busy_growth(rows: &[Windowed]) -> Option<f64> {
+    if rows.len() < 2 {
+        return None;
+    }
+    let pts: Vec<(f64, f64)> = rows.iter().map(|w| (mpx(w.size), w.busy_ms.p50)).collect();
+    let n = pts.len() as f64;
+    let (sx, sy) = pts.iter().fold((0.0, 0.0), |(a, b), &(x, y)| (a + x, b + y));
+    let sxx: f64 = pts.iter().map(|&(x, _)| x * x).sum();
+    let sxy: f64 = pts.iter().map(|&(x, y)| x * y).sum();
+    let d = n * sxx - sx * sx;
+    if d.abs() < 1e-12 {
+        return None;
+    }
+    let slope = (n * sxy - sx * sy) / d;
+    let by_px = |a: &&Windowed, b: &&Windowed| mpx(a.size).total_cmp(&mpx(b.size));
+    let (lo, hi) = (rows.iter().min_by(by_px)?, rows.iter().max_by(by_px)?);
+    (slope >= 0.25 && hi.busy_ms.p50 >= 1.5 * lo.busy_ms.p50).then_some(slope)
+}
+
+/// Where a budget is missed: "every size", "none" or the sizes.
+fn missed(rows: &[Windowed], budget: f64) -> String {
+    let m: Vec<String> = rows.iter().filter(|w| w.frame_ms.p99 > budget).map(|w| size(w.size)).collect();
+    match m.len() {
+        0 => "holds at every size".into(),
+        n if n == rows.len() => "missed at every size".into(),
+        _ => format!("missed at {}", m.join(", ")),
+    }
+}
+
+/// Whether every windowed row holds both frame budgets.
+fn holds_everywhere(rows: &[Windowed], b: &Budgets) -> bool {
+    !rows.is_empty() && rows.iter().all(|w| w.frame_ms.p99 <= b.frame_144_ms)
+}
+
+/// A path's windowed runs. The text follows what was measured (the present
+/// mode, the busy time against the pixels, the budgets), not the path's
+/// name; `holding` are the other paths whose windowed runs hold both
+/// budgets at every size.
+fn windowed(o: &mut String, g: &GpuPath, b: &Budgets, holding: &[&str]) {
+    let rows = &g.windowed;
+    let _ = writeln!(
+        o,
+        "\nWindowed, asked for uncapped (`rl-game --frame-log --uncapped`, HUD included). Frame is frame to frame \
+         (what the player sees); busy is a frame's CPU time without waiting to present.\n"
+    );
+    let fifo: Vec<String> =
+        rows.iter().filter(|w| present_mode(&w.gpu) == "Fifo").map(|w| size(w.size)).collect();
+    if !fifo.is_empty() {
+        let which = if fifo.len() == rows.len() { "Every run".to_string() } else { fifo.join(", ") };
         let _ = writeln!(
             o,
-            "\nWindowed (`rl-game --frame-log --uncapped`, HUD included), presented through WSLg: WSLg presents \
-             at the compositor's rate (Fifo), not uncapped, so these frame rates are WSLg's present cap, not the \
-             game's cost. This path's cost is the offscreen table above; the native Windows paths' windowed runs \
-             are the real windowed numbers. Busy is a frame's CPU time without waiting to present.\n"
+            "{which} presented with Fifo: the surface offered no uncapped mode, so a frame also waits for the \
+             display's refresh and the frame rate is at most the refresh rate.\n"
         );
-    } else {
-        let _ = writeln!(
-            o,
-            "\nWindowed, uncapped (`rl-game --frame-log --uncapped`, HUD included). Busy is a frame's CPU time \
-             without waiting to present.\n"
-        );
-        if rows.iter().any(|w| present_mode(&w.gpu) == "Fifo") {
+    }
+    if let Some(slope) = busy_growth(rows) {
+        let by_px = |a: &&Windowed, b: &&Windowed| mpx(a.size).total_cmp(&mpx(b.size));
+        let (lo, hi) = (rows.iter().min_by(by_px), rows.iter().max_by(by_px));
+        if let (Some(lo), Some(hi)) = (lo, hi) {
+            let off: Vec<f64> = g.sizes.iter().map(|s| s.frame_ms.p50).collect();
+            let offscreen = if off.is_empty() {
+                String::new()
+            } else {
+                let (a, z) = off.iter().fold((f64::MAX, f64::MIN), |(a, z), &x| (a.min(x), z.max(x)));
+                format!(
+                    ", while the offscreen frame's p50 stays {a:.2}–{z:.2} ms at the same sizes (table above)"
+                )
+            };
             let _ = writeln!(
                 o,
-                "A row presented with Fifo waited for the display's refresh: its frame rate is that refresh, \
-                 not the game's cost.\n"
+                "The busy time grows with the window's pixels: {:.1} ms p50 at {} ({:.1} Mpx) to {:.1} ms at {} \
+                 ({:.1} Mpx), about {slope:.1} ms per million pixels (least squares over the p50s){offscreen}. \
+                 Presenting costs this path CPU time per pixel, so its windowed frame rate falls with the \
+                 resolution: this is the cost of playing on this path, not of drawing the game.\n",
+                lo.busy_ms.p50,
+                size(lo.size),
+                mpx(lo.size),
+                hi.busy_ms.p50,
+                size(hi.size),
+                mpx(hi.size),
             );
         }
     }
     let _ = writeln!(
         o,
-        "| asked | got | present mode | frames | FPS | frame p50 / p99 (ms) | busy p99 (ms) |\n|---|---|---|---|---|---|---|"
+        "Against the budgets (frame p99): 144 Hz ({:.1} ms) {}; 60 Hz ({:.1} ms) {}.",
+        b.frame_144_ms,
+        missed(rows, b.frame_144_ms),
+        b.frame_60_ms,
+        missed(rows, b.frame_60_ms)
     );
+    if !holds_everywhere(rows, b) && !holding.is_empty() {
+        let native = if holding.iter().all(|k| k.starts_with("windows-")) {
+            " (the native Windows build)"
+        } else {
+            ""
+        };
+        let _ = writeln!(
+            o,
+            "On {}{native} the windowed runs hold both budgets at every size (their tables): at high \
+             resolutions, play there rather than on this path.",
+            holding.join(" and ")
+        );
+    }
+    let _ = writeln!(
+        o,
+        "\n| asked | got | present mode | frames | FPS | frame p50 / p99 (ms) | busy p50 / p99 (ms) | holds 144 / 60 Hz |\n\
+         |---|---|---|---|---|---|---|---|"
+    );
+    let yes = |ok: bool| if ok { "yes" } else { "no" };
     for w in rows {
         let got = if w.reached {
             size(w.size)
@@ -156,19 +248,22 @@ fn windowed(o: &mut String, key: &str, rows: &[Windowed]) {
         };
         let _ = writeln!(
             o,
-            "| {} | {got} | {} | {} | {:.0} | {:.2} / {:.2} | {:.2} |",
+            "| {} | {got} | {} | {} | {:.0} | {:.2} / {:.2} | {:.2} / {:.2} | {} / {} |",
             size(w.requested),
             present_mode(&w.gpu),
             w.frames,
             w.fps,
             w.frame_ms.p50,
             w.frame_ms.p99,
-            w.busy_ms.p99
+            w.busy_ms.p50,
+            w.busy_ms.p99,
+            yes(w.frame_ms.p99 <= b.frame_144_ms),
+            yes(w.frame_ms.p99 <= b.frame_60_ms)
         );
     }
 }
 
-fn gpu(o: &mut String, key: &str, g: &GpuPath, b: &Budgets) {
+fn gpu(o: &mut String, key: &str, g: &GpuPath, b: &Budgets, holding: &[&str]) {
     let _ = writeln!(o, "### {key}: {} ({}, {})\n", g.adapter, g.backend, g.device_type);
     let _ = writeln!(
         o,
@@ -216,7 +311,8 @@ fn gpu(o: &mut String, key: &str, g: &GpuPath, b: &Budgets) {
             writeln!(o, "| {} | {:.3} | {} | {} |", size(s.size), s.ms_per_pass, s.passes_144, s.passes_60);
     }
     if !g.windowed.is_empty() {
-        windowed(o, key, &g.windowed);
+        let others: Vec<&str> = holding.iter().copied().filter(|k| *k != key).collect();
+        windowed(o, g, b, &others);
     }
     if !g.levels.is_empty() {
         let _ = writeln!(
@@ -378,8 +474,10 @@ pub fn render(env: &Envelope, summary: &str) -> String {
         sweep(&mut o, s, &b);
     }
     let _ = writeln!(o, "## GPU\n");
+    let holding: Vec<&str> =
+        env.gpu.iter().filter(|(_, g)| holds_everywhere(&g.windowed, &b)).map(|(k, _)| k.as_str()).collect();
     for (k, g) in &env.gpu {
-        gpu(&mut o, k, g, &b);
+        gpu(&mut o, k, g, &b, &holding);
     }
     let _ = writeln!(o, "## OLX\n");
     match &env.olx {
@@ -528,43 +626,78 @@ mod tests {
         assert!(doc.contains("not the whole frame"), "{doc}");
     }
 
-    fn windowed(gpu: &str) -> Windowed {
+    fn windowed(gpu: &str, size: (u32, u32), frame_p99: f64, busy_p50: f64) -> Windowed {
         Windowed {
-            requested: (3840, 2160),
-            size: (3840, 2160),
+            requested: size,
+            size,
             reached: true,
             gpu: gpu.into(),
             frames: 179,
             fps: 35.7,
-            frame_ms: Spread { p50: 28.1, p99: 33.9, max: 34.3 },
-            busy_ms: Spread { p50: 22.3, p99: 27.6, max: 28.7 },
+            frame_ms: Spread { p50: frame_p99 * 0.8, p99: frame_p99, max: frame_p99 * 1.1 },
+            busy_ms: Spread { p50: busy_p50, p99: busy_p50 * 1.3, max: busy_p50 * 1.4 },
         }
     }
 
-    /// WSLg presents at the compositor's rate: its windowed numbers are not the game's cost.
+    const SIZES: [(u32, u32); 4] = [(1920, 1080), (2560, 1440), (3440, 1440), (3840, 2160)];
+
+    /// The measured WSL rows (2026-10-12): busy time grows with the pixels.
+    fn presented_per_pixel() -> Vec<Windowed> {
+        let gpu = "D3D12 (NVIDIA GeForce RTX 5070 Ti) (Gl, Other), Fifo, Bgra8Unorm";
+        SIZES
+            .iter()
+            .zip([(11.49, 5.70), (18.59, 9.56), (20.42, 12.65), (32.82, 20.34)])
+            .map(|(&z, (f, b))| windowed(gpu, z, f, b))
+            .collect()
+    }
+
+    fn native() -> GpuPath {
+        let gpu = "NVIDIA GeForce RTX 5070 Ti (Dx12, DiscreteGpu), Immediate, Bgra8UnormSrgb";
+        GpuPath {
+            adapter: "NVIDIA GeForce RTX 5070 Ti".into(),
+            windowed: SIZES.iter().map(|&z| windowed(gpu, z, 2.4, 0.6)).collect(),
+            ..GpuPath::default()
+        }
+    }
+
+    /// The windowed text follows the measurements (present mode, busy
+    /// time against the pixels, the budgets), never the path's name.
     #[test]
-    fn wsl_windowed_runs_are_reported_as_presented_through_wslg() {
+    fn windowed_runs_are_explained_by_what_was_measured() {
         let mut e = env();
-        let wsl = e.gpu.get_mut("wsl-gl").unwrap();
-        wsl.windowed.push(windowed("D3D12 (NVIDIA GeForce RTX 5070 Ti) (Gl, Other), Fifo, Bgra8Unorm"));
-        e.gpu.insert(
-            "windows-dx12".into(),
-            GpuPath {
-                adapter: "NVIDIA GeForce RTX 5070 Ti".into(),
-                windowed: vec![windowed(
-                    "NVIDIA GeForce RTX 5070 Ti (Dx12, DiscreteGpu), Immediate, Bgra8UnormSrgb",
-                )],
-                ..GpuPath::default()
-            },
-        );
+        e.gpu.get_mut("wsl-gl").unwrap().windowed = presented_per_pixel();
+        e.gpu.insert("windows-dx12".into(), native());
         let doc = render(&e, "s");
         let wsl = &doc[doc.find("### wsl-gl").unwrap()..];
-        assert!(wsl.contains("presented through WSLg"), "{wsl}");
-        assert!(wsl.contains("not the game's cost"), "{wsl}");
-        assert!(wsl.contains("| 3840×2160 | 3840×2160 | Fifo | 179 | 36 | 28.10 / 33.90 | 27.60 |"), "{wsl}");
+        for want in [
+            "Every run presented with Fifo",
+            "5.7 ms p50 at 1920×1080 (2.1 Mpx) to 20.3 ms at 3840×2160 (8.3 Mpx), about 2.4 ms per million pixels",
+            "Presenting costs this path CPU time per pixel",
+            "144 Hz (6.9 ms) missed at every size; 60 Hz (16.7 ms) missed at 2560×1440, 3440×1440, 3840×2160.",
+            "On windows-dx12 (the native Windows build) the windowed runs hold both budgets at every size",
+            "| 1920×1080 | 1920×1080 | Fifo | 179 | 36 | 9.19 / 11.49 | 5.70 / 7.41 | no / yes |",
+        ] {
+            assert!(wsl.contains(want), "missing {want:?} in:\n{wsl}");
+        }
+        assert!(!wsl.contains("WSLg"), "not keyed on the name: {wsl}");
         let dx12 = &doc[doc.find("### windows-dx12").unwrap()..doc.find("### wsl-gl").unwrap()];
-        assert!(dx12.contains("Windowed, uncapped") && dx12.contains("| Immediate |"), "{dx12}");
-        assert!(!dx12.contains("WSLg"), "{dx12}");
+        assert!(
+            dx12.contains("144 Hz (6.9 ms) holds at every size; 60 Hz (16.7 ms) holds at every size."),
+            "{dx12}"
+        );
+        for not in ["Fifo", "per million pixels", "play there"] {
+            assert!(!dx12.contains(not), "{not:?} in {dx12}");
+        }
+        // The same rows under another name read the same.
+        let mut renamed = env();
+        renamed.gpu.clear();
+        renamed
+            .gpu
+            .insert("windows-gl".into(), GpuPath { windowed: presented_per_pixel(), ..GpuPath::default() });
+        let doc = render(&renamed, "s");
+        assert!(
+            doc.contains("about 2.4 ms per million pixels") && doc.contains("Every run presented with Fifo")
+        );
     }
 
     /// Timestamps without a real span are left out of the GPU times, and said so.

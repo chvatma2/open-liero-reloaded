@@ -158,8 +158,12 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   writes `docs/perf/envelope.md` from this host's blessed results (or
   `F`): method, machine, each sweep's table and breaking points, each GPU
   path's offscreen frames, shader headroom (labelled GPU-side, not the
-  whole frame), windowed runs (WSL's presented through WSLg, Fifo at the
-  compositor's rate: not the game's cost), dropped GPU spans and notes,
+  whole frame), windowed runs (frame and busy p50/p99 and whether each
+  holds 144 and 60 Hz; the text follows the measurements, never the
+  path's name: rows presented with Fifo, busy time growing with the
+  window's pixels (`busy_growth`: ms per million pixels, as WSL's
+  presentation costs, against the offscreen frame), the sizes missing
+  each budget, and the other paths that hold both everywhere), dropped GPU spans and notes,
   the OLX table with its build, load, timed-span asymmetry and notes, and
   the limits; the hand-written summary between `<!-- summary:start -->`
   and `<!-- summary:end -->` is kept word for word. Results also keep
