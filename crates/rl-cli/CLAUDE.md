@@ -92,6 +92,24 @@ The headless command-line tool. Its commands:
   (`tests/net_cases.rs`); `cargo xtask bless-regression --from
   target/failures/net-*.ron` keeps one. `tests/net_sim.rs`: two short runs in
   `check`, the profile grid in `full`.
+  `net-sim --feel <out.ron>` measures the **feel numbers** instead (plan 9
+  task 11, spec §9.2, `feel.rs`): `feel_spec(profile, seed)` (16 worms, 7
+  clients, Classic on Castle Strike, 3000 ticks) for every profile ×
+  seeds 1 and 2 (per metric the worse seed) and `bandwidth_spec()` (32
+  worms, 1 client, typical), in parallel threads (about 40 s in release);
+  one line per profile and a `FeelReport` (RON). Every number is virtual
+  time from seeded runs: the same on every host. They cover the match
+  (until the host reaches its last tick; the settle ticks are left out):
+  rollback depth p50/p99 (`to - from` of every client's `Rollback`,
+  nearest rank), `correction_px_p99` (at each client frame the displayed
+  tick `D = current - 1` and every worm's position are remembered; a later
+  re-simulation of `D` (`TickInfo::resim`) records the largest jump of a
+  worm other than the client's own, if above 0), own corrections per
+  minute (`Stats::own_corrections`, the worst client), stalls (every
+  player, to the end of the run) and bytes per second down and up (the
+  worst client; `Stats::bytes_in`/`bytes_out`, `OVERHEAD` per datagram
+  included). A failed verdict is an error. `cargo xtask net-feel` gates
+  them (see xtask); `tests/feel.rs` checks the definitions on a short run.
 - `rl-cli gpu-bench --replay F [--sizes 1920x1080,2560x1440,3440x1440,3840x2160]
   [--start-tick 1000] [--frames 600] [--probe-passes 0,1,2,4,8,16,32]
   [--probe-taps 9] [--probe-frames 120] [--adapter hardware|software]
@@ -144,7 +162,8 @@ stress test's runner and `Report`), `gpu_bench` (the GPU bench's runner
 and `GpuReport`), `timing` (`scenario --time`), `coverage` (required
 weapons and action kinds derived from the mod: `rl_sim::projectile_actions`
 and `World::actions_triggered`), `failure`, `golden`, `assets`,
-`genlevel`, `netsim` (`NetSpec`, `WorldFactory`, `run`, `NetCase`).
+`genlevel`, `netsim` (`NetSpec`, `WorldFactory`, `run`, `NetCase`), `feel`
+(`measure`, `measure_one`, `FeelReport`).
 
 **Generated levels** (`genlevel.rs`, plan 8; bench only, a game never
 loads one): `GenLevel` makes seeded noise caves in memory, no pack written,
@@ -184,9 +203,9 @@ Deathmatch runs on a small generated level (`gen-256x256-a2-s1`; the large
 ones run only in the envelope, ruling PF3), and a replay refused on
 assets other than its own, a pack level's and a generated one's.
 `tests/tool_output.rs` keeps `fixtures/bench/tool-output/` (`stress.ron`,
-`gpu-bench.ron`, `scenario-time.ron`) equal to what `stress --out`,
-`gpu-bench --out` and `scenario --time` write; `xtask`'s envelope reads
-them with its strict `*Out` structs, so a renamed field fails a test
+`gpu-bench.ron`, `scenario-time.ron`, `feel.ron`) equal to what `stress --out`,
+`gpu-bench --out`, `scenario --time` and `net-sim --feel` write; `xtask`'s envelope
+and `net-feel` read them with strict structs, so a renamed field fails a test
 instead of reading as 0 (rewrite with `RL_BLESS_TOOL_OUTPUT=1`).
 `tests/gpu_bench.rs` (the GPU tier, `cargo xtask full`, `RL_GPU_TESTS=1`)
 records a short stress match and runs `gpu_bench::run` on it on the

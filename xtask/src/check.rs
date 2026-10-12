@@ -42,7 +42,8 @@ pub fn run(offline: bool) -> anyhow::Result<bool> {
 /// on the default output), skipped with a notice when no device opens,
 /// the end-to-end autoplay on Xvfb (`e2e.rs`; skipped without Xvfb), and
 /// the benchmarks and the short stress run against their baselines
-/// (`bench.rs`).
+/// (`bench.rs`), and the feel numbers of online play against theirs
+/// (`net.rs`).
 pub fn full(offline: bool) -> anyhow::Result<bool> {
     run_with(offline, true)
 }
@@ -204,6 +205,7 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
         step("e2e", &mut || crate::e2e::run(content.as_deref()));
         step("bench", &mut || crate::bench::bench_step(&envs, false));
         step("stress", &mut || crate::bench::stress_step(content.as_deref(), false));
+        step("net-feel", &mut || crate::net::feel_step(content.as_deref()));
     }
     let what = if gpu { "full" } else { "check" };
     if failed.is_empty() {

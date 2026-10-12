@@ -40,3 +40,5 @@
 2026-10-12 bench: release profile: fat LTO and codegen-units=1; the old baselines were also stale (5-30 % slower than today's code)
   fixtures/bench/baselines.ron
   fixtures/bench/stress.ron
+2026-10-12 net-feel: plan 9: first feel baselines
+  fixtures/net/feel.ron

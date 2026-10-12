@@ -1,0 +1,35 @@
+(
+    note: "Seeded, virtual-time feel numbers (plan 9); host-independent.",
+    profiles: [
+        (
+            profile: "lan",
+            rollback_p50: 3,
+            rollback_p99: 5,
+            correction_px_p99: 9.5,
+            own_corrections_per_min: 0.5,
+            stalls: 0,
+            down_bytes_per_s: 9200,
+            up_bytes_per_s: 7700,
+        ),
+        (
+            profile: "typical",
+            rollback_p50: 8,
+            rollback_p99: 10,
+            correction_px_p99: 9.5,
+            own_corrections_per_min: 0.5,
+            stalls: 0,
+            down_bytes_per_s: 13000,
+            up_bytes_per_s: 7700,
+        ),
+    ],
+    bandwidth32: (
+        profile: "typical",
+        rollback_p50: 8,
+        rollback_p99: 10,
+        correction_px_p99: 9.5,
+        own_corrections_per_min: 0.5,
+        stalls: 0,
+        down_bytes_per_s: 16700,
+        up_bytes_per_s: 7700,
+    ),
+)

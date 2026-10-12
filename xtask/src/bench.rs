@@ -285,7 +285,7 @@ fn measure_benches(runs: usize, envs: &[(&str, PathBuf)]) -> Result<(Measured, B
 }
 
 /// `rl-cli` in the release profile, built.
-fn rl_cli() -> Result<PathBuf, String> {
+pub fn rl_cli() -> Result<PathBuf, String> {
     let out = cargo()
         .args(["build", "--quiet", "--release", "-p", "rl-cli"])
         .output()

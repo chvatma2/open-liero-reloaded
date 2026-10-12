@@ -9,6 +9,7 @@ mod e2e;
 mod envelope;
 mod fetch;
 mod layers;
+mod net;
 mod olx_timing;
 mod oracle;
 mod oracle_gen;
@@ -114,6 +115,17 @@ enum Command {
         #[arg(long, requires = "report")]
         from: Option<PathBuf>,
     },
+    /// The feel numbers of online play (plan 9): every network profile's rollback depth,
+    /// corrections, stalls and bytes from seeded `rl-cli net-sim --feel` runs, gated against
+    /// fixtures/net/feel.ron (also a step of `full`).
+    NetFeel {
+        /// Measure and write the baseline instead, logged in fixtures/blessings.log.
+        #[arg(long, requires = "reason")]
+        bless: bool,
+        /// Why the baseline changes (with --bless).
+        #[arg(long)]
+        reason: Option<String>,
+    },
     /// Install a git pre-push hook that runs `cargo xtask check`.
     InstallHooks,
     /// Record OLX reference traces for fixtures/oracle/**/*.ron (needs Docker).
@@ -173,6 +185,7 @@ fn main() -> ExitCode {
         Command::Envelope { quick, only, gpu, bless, reason, report, from } => {
             envelope::run(&envelope::Opts { quick, only, gpu, bless: reason.filter(|_| bless), report, from })
         }
+        Command::NetFeel { bless, reason } => net::run(reason.as_deref().filter(|_| bless)),
         Command::InstallHooks => install_hooks().map(|()| true),
         Command::OracleRecord { check, names } => oracle::run(&names, check),
         Command::OracleGenWeapons => oracle_gen::run(),

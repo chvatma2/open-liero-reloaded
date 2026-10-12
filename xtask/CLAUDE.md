@@ -2,7 +2,7 @@
 
 Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `oracle-record`, `tidy`, `bless-render`, `bless-regression`, `fetch-olx-content`,
-`e2e`, `bench`, `stress`, `windows`, `envelope`.
+`e2e`, `bench`, `stress`, `net-feel`, `windows`, `envelope`.
 
 - `fetch-olx-content` (`fetch.rs`) imports the manifest into the
   committed `content/packs`; `check`'s `olx-content` step (`fetch::verify`,
@@ -14,7 +14,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   (`check::GPU_TESTS` with `RL_GPU_TESTS=1`: `rl-render`'s `gpu`,
   `rl-cli`'s `render_golden` and `gpu_bench` (plan 8's `gpu-bench` on the
   software adapter), `rl-game`'s `soak`, `rl-ui`'s `hud_snapshots`) and the
-  audio step, then `e2e`, `bench` and `stress`.
+  audio step, then `e2e`, `bench`, `stress` and `net-feel`.
 - `bench` (`bench.rs`, also `cargo xtask bench [--offline]`, spec §21 G8):
   the divan benchmarks (`BENCHES`: `rl-sim/benches/tick.rs`,
   `rl-render/benches/frame.rs`, `rl-cli/benches/game.rs`; bench profile)
@@ -43,6 +43,22 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   run, every `STRESS` configuration through `rl-cli stress` (progress and
   each report as it plays, determinism checked), then a summary table
   (tick µs, projectiles, entities, frame ms, MiB) and the adapter.
+- `net-feel [--bless --reason "<why>"]` (`net.rs`, plan 9, spec §9.2;
+  also `full`'s last step): builds `rl-cli` in release, runs `net-sim
+  --feel target/net/feel.ron` (every network profile × seeds 1 and 2 and
+  the 32-worm bandwidth run; virtual time, so host-independent) and reads
+  it strictly (`FeelReport`, unknown fields refused; the sample
+  `fixtures/bench/tool-output/feel.ron` is tested), then compares with
+  `fixtures/net/feel.ron`: `ok   <profile>` / `FAIL <profile>: <why>` and
+  notices. Absolute rules: no stalls for `lan`, `good`, `typical`, `bad`;
+  `bandwidth32.down_bytes_per_s <= DOWN_BUDGET` (24 576, spec §3.1).
+  Regression rules: a metric worse than its baseline by more than 10 % and
+  more than its floor (rollback depth 1 tick, correction 1 px, own
+  corrections 0.5/min, bytes 256 B/s) fails; better by as much, a notice
+  to re-bless. No baseline: a notice, and the absolute rules still apply.
+  `--bless` writes the baseline (note `NOTE`) only when the absolute rules
+  pass (else the netcode has a problem to fix, not the gate) and logs the
+  reason in `fixtures/blessings.log`. About 40 s once built.
 - `e2e` (`e2e.rs`, also `cargo xtask e2e [--offline]`): builds `rl-game`
   (dev profile), starts Xvfb on the first display from `:90` without a
   lock file (`-displayfd` says when it is ready; stopped with SIGTERM so

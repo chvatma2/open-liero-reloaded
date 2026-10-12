@@ -1,14 +1,17 @@
 //! The RON `cargo xtask envelope` reads from `rl-cli` (plan 8): `stress
-//! --out`, `gpu-bench --out` and `scenario --time`, written exactly as the
+//! --out`, `gpu-bench --out` and `scenario --time`, and the RON `cargo xtask
+//! net-feel` reads (`net-sim --feel`, plan 9), written exactly as the
 //! commands write them, must equal the committed samples in
-//! `fixtures/bench/tool-output/`. `xtask`'s `tool_outputs_parse` reads the
-//! same samples with its strict `*Out` structs, so a field renamed here
+//! `fixtures/bench/tool-output/`. `xtask`'s `tool_outputs_parse` and
+//! `the_tool_output_sample_parses_strictly` read the same samples with
+//! their strict structs, so a field renamed here
 //! fails one test or the other instead of reading as a measured 0. After
 //! an intended change, rewrite the samples with `RL_BLESS_TOOL_OUTPUT=1
 //! cargo nextest run -p rl-cli --test tool_output` and fix `xtask`.
 
 use std::path::PathBuf;
 
+use rl_cli::feel::{FeelReport, NOTE, ProfileFeel};
 use rl_cli::gpu_bench::{GpuReport, ProbePoint, SizeReport};
 use rl_cli::stress::{Report, Spread};
 use rl_cli::timing::{ScenarioTiming, TimingReport};
@@ -102,4 +105,24 @@ fn scenario_timing_sample() {
         }],
     };
     sample("scenario-time.ron", &r);
+}
+
+#[test]
+fn feel_report_sample() {
+    let feel = |profile: &str, p50: u32, down: u32| ProfileFeel {
+        profile: profile.into(),
+        rollback_p50: p50,
+        rollback_p99: p50 + 2,
+        correction_px_p99: 9.5,
+        own_corrections_per_min: 0.5,
+        stalls: 0,
+        down_bytes_per_s: down,
+        up_bytes_per_s: 7_700,
+    };
+    let r = FeelReport {
+        note: NOTE.into(),
+        profiles: vec![feel("lan", 3, 9_200), feel("typical", 8, 13_000)],
+        bandwidth32: feel("typical", 8, 16_700),
+    };
+    sample("feel.ron", &r);
 }

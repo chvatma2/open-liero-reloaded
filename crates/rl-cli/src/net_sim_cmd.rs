@@ -28,6 +28,11 @@ pub struct Args {
     /// Where a failing run writes its case.
     #[arg(long, default_value = "target/failures")]
     failures: PathBuf,
+    /// Measure the feel numbers instead (every profile × seeds 1..=2 and the
+    /// 32-worm bandwidth run, `rl_cli::feel`; the options above are not
+    /// used) and write them to this RON file.
+    #[arg(long, conflicts_with_all = ["from", "seeds"])]
+    feel: Option<PathBuf>,
 }
 
 #[derive(clap::Args)]
@@ -114,6 +119,9 @@ fn parse_seeds(s: &str) -> Result<Range<u32>, String> {
 /// Returns `Ok(false)` if any run failed.
 pub fn run_cmd(args: Args) -> anyhow::Result<bool> {
     let content = rl_content::Content::open(&args.content)?;
+    if let Some(out) = &args.feel {
+        return feel(&content, out);
+    }
     let base: NetSpec = match &args.from {
         Some(path) => {
             let case = NetCase::load(path)?;
@@ -152,4 +160,20 @@ pub fn run_cmd(args: Args) -> anyhow::Result<bool> {
         }
     }
     Ok(ok)
+}
+
+/// `--feel`: measures, prints one line per profile, writes the report.
+fn feel(content: &rl_content::Content, out: &std::path::Path) -> anyhow::Result<bool> {
+    let report = rl_cli::feel::measure(content)?;
+    for p in &report.profiles {
+        println!("{}", p.line());
+    }
+    println!("bandwidth32 {}", report.bandwidth32.line());
+    if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    let text = ron::ser::to_string_pretty(&report, ron::ser::PrettyConfig::default())? + "\n";
+    std::fs::write(out, text).with_context(|| format!("writing {}", out.display()))?;
+    println!("wrote {}", out.display());
+    Ok(true)
 }

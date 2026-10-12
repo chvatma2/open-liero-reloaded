@@ -6,6 +6,7 @@ pub mod assets;
 pub mod bundle;
 pub mod coverage;
 pub mod failure;
+pub mod feel;
 pub mod genlevel;
 pub mod golden;
 pub mod gpu_bench;
