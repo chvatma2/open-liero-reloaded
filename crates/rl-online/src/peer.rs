@@ -29,6 +29,7 @@ use rl_proto::{
 };
 use rl_sim::{EndReason, Keys, MatchResult, Score, TickEvents, World};
 
+use crate::bundle::{GameBundle, MAX_BUNDLES_PER_MATCH};
 use crate::events::{NetStats, OnlineEvent};
 use crate::matches::{self, HostBots};
 use crate::replay::{MatchRecord, ReplayJob};
@@ -155,6 +156,8 @@ struct Game {
     /// When the match ended (the host's `Ended`).
     ended: Option<Instant>,
     window: Window,
+    /// Desync bundles made this match ([`MAX_BUNDLES_PER_MATCH`] at most).
+    bundles: u32,
 }
 
 /// One end of online play: the lobby, the match, the replay.
@@ -167,8 +170,9 @@ pub struct OnlinePeer {
     now: Option<Instant>,
     now_us: u64,
     game: Option<Game>,
-    /// The replay being made: one at a time.
-    replay: Option<ReplayJob>,
+    /// The replay being made (one at a time), and what it is made of (a
+    /// checksum it misses makes a desync bundle of it).
+    replay: Option<(ReplayJob, MatchRecord)>,
     last_record: Option<MatchRecord>,
     /// The match's world as last presented, kept when it ended (until
     /// taken: [`OnlinePeer::take_ended_world`]).
@@ -831,6 +835,7 @@ impl OnlinePeer {
                 self.drop_peer(peer);
             }
             Event::Lagging(on) if !host => self.events.push(OnlineEvent::Lagging(on)),
+            Event::Desync { tick, local, remote, peer } => self.desync_bundle(tick, local, remote, peer),
             Event::PeerLeft { .. } if !host => {
                 self.end_with(OnlineEvent::Disconnected("the host left".into()));
             }
@@ -838,6 +843,39 @@ impl OnlinePeer {
                 self.end_with(OnlineEvent::Disconnected("the host stopped answering".into()));
             }
             _ => {}
+        }
+    }
+
+    /// A desync's bundle (spec §3.5, §9.10): the start, the final inputs
+    /// this peer confirmed from tick 0, its checksums and the mismatch; at
+    /// most [`MAX_BUNDLES_PER_MATCH`] a match.
+    fn desync_bundle(&mut self, tick: u32, local: u64, remote: u64, peer: PeerId) {
+        let host = self.is_host();
+        let Some(g) = &mut self.game else { return };
+        if g.bundles >= MAX_BUNDLES_PER_MATCH {
+            return;
+        }
+        g.bundles += 1;
+        let record = record_of(&g.session, &g.start, g.session.confirmed()).unwrap_or_else(|| MatchRecord {
+            start: g.start.clone(),
+            rows: Vec::new(),
+            checksums: g.session.checksums().to_vec(),
+        });
+        let what = if host {
+            format!("peer {peer}'s checksum of tick {tick} differs from the host's")
+        } else {
+            format!("the host's checksum of tick {tick} differs from this peer's")
+        };
+        let mut bundle = GameBundle::of(record, what, host, g.my_slot);
+        bundle.mismatch = Some((tick, local, remote));
+        self.events.push(OnlineEvent::DesyncBundle(bundle.encode()));
+    }
+
+    /// This peer's member id in its lobby.
+    fn me(&self) -> Option<u8> {
+        match &self.side {
+            Side::Host(h) => h.lobby.state().members.iter().find(|m| m.key == self.my_key).map(|m| m.id),
+            Side::Client(c) => c.lobby.me(),
         }
     }
 
@@ -945,15 +983,22 @@ impl OnlinePeer {
             self.events.push(OnlineEvent::Notice(REPLAY_SKIPPED.into()));
             return;
         }
-        self.replay = Some(ReplayJob::spawn(Arc::clone(&self.content), record));
+        let job = ReplayJob::spawn(Arc::clone(&self.content), record.clone());
+        self.replay = Some((job, record));
     }
 
     fn collect_replay(&mut self) {
-        let Some(result) = self.replay.as_ref().and_then(ReplayJob::poll) else { return };
-        self.replay = None;
+        let Some(result) = self.replay.as_ref().and_then(|(job, _)| job.poll()) else { return };
+        let Some((_, record)) = self.replay.take() else { return };
         match result {
             Ok(made) => {
                 if let Some(w) = made.warning {
+                    // A confirmed checksum the re-simulation missed: a
+                    // desync too (spec §9.10).
+                    let my_slot =
+                        record.start.slots.iter().position(|s| s.member == self.me()).map(|i| i as u8);
+                    let bundle = GameBundle::of(record, w.clone(), self.is_host(), my_slot);
+                    self.events.push(OnlineEvent::DesyncBundle(bundle.encode()));
                     self.events.push(OnlineEvent::Notice(w));
                 }
                 self.events.push(OnlineEvent::ReplayReady(made.bytes));
@@ -1026,6 +1071,7 @@ impl Game {
             last: None,
             ended: None,
             window: Window::default(),
+            bundles: 0,
         }
     }
 }
@@ -1143,10 +1189,22 @@ impl LobbyHandle<'_> {
 
     /// This peer's member id.
     pub fn me(&self) -> Option<u8> {
+        self.peer.me()
+    }
+
+    /// Whether the host could start the match now (a client cannot).
+    pub fn can_start(&self) -> Result<(), StartError> {
         match &self.peer.side {
-            Side::Host(h) => h.lobby.state().members.iter().find(|m| m.key == self.peer.my_key).map(|m| m.id),
-            Side::Client(c) => c.lobby.me(),
+            _ if self.peer.game.is_some() => Err(StartError::Running),
+            Side::Host(h) => h.lobby.can_start().map_err(StartError::Lobby),
+            Side::Client(_) => Err(StartError::NotHost),
         }
+    }
+
+    /// Moves a member to the spectators or back to the players (the
+    /// host's; a client's does nothing: no admin command moves seats).
+    pub fn move_seat(&mut self, member: u8, spectate: bool) {
+        self.act(|h| h.move_seat(member, spectate), |_| {});
     }
 
     pub fn set_ready(&mut self, ready: bool) {

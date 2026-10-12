@@ -27,7 +27,11 @@ impl ApplicationHandler for App {
         {
             let _ = w.egui.on_window_event(&w.window, &event);
         }
-        self.input.on_window_event(&event);
+        // The in-game chat's field has the keys: the game hears none.
+        let chatting = self.shell.data.ingame_chat.is_some();
+        if !(chatting && matches!(event, WindowEvent::KeyboardInput { .. })) {
+            self.input.on_window_event(&event);
+        }
         // The options' "press a key" box, while open.
         if let Some(c) = &mut self.shell.data.capture {
             c.on_window_event(&event);
@@ -64,6 +68,9 @@ impl ApplicationHandler for App {
     /// covered or of no size, it stops asking for frames and sleeps until a
     /// window event (`Resized`, `Occluded`) changes that: the sandbox pauses
     /// (no ticks run, and the time hidden is not caught up afterwards).
+    /// While an online game exists it goes on instead (decision N21): a
+    /// frame without drawing (`App::hidden_frame`: the network, the
+    /// match's ticks) every `net::HIDDEN_FRAME`, not spinning.
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         if let Some(g) = &mut self.gilrs {
             while let Some(ev) = g.next_event() {
@@ -80,6 +87,12 @@ impl ApplicationHandler for App {
             }
             el.set_control_flow(ControlFlow::Poll);
             w.window.request_redraw();
+        } else if self.shell.online_active() {
+            self.paused = true;
+            let out = self.hidden_frame();
+            self.outcomes(el, out);
+            let next = std::time::Instant::now() + crate::net::HIDDEN_FRAME;
+            el.set_control_flow(ControlFlow::WaitUntil(next));
         } else {
             self.paused = true;
             el.set_control_flow(ControlFlow::Wait);

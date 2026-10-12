@@ -51,6 +51,12 @@ pub enum OnlineEvent {
     /// The finished match as an `.rlrp` replay (decision N18), made after
     /// the match from its confirmed inputs.
     ReplayReady(Vec<u8>),
+    /// A desync (spec §3.5, §9.10): this peer's simulation and another's
+    /// differed (a checksum the session compared, or one the replay's
+    /// re-simulation missed). The bytes are an encoded
+    /// [`crate::GameBundle`] for the game to save; at most
+    /// [`crate::bundle::MAX_BUNDLES_PER_MATCH`] a match.
+    DesyncBundle(Vec<u8>),
 }
 
 /// The connection's numbers for the overlay, over the last second of a

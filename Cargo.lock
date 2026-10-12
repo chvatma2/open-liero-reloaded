@@ -3984,6 +3984,7 @@ name = "rl-online"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "postcard",
  "proptest",
  "rl-bots",
  "rl-content",
@@ -3995,6 +3996,7 @@ dependencies = [
  "rl-replay",
  "rl-sim",
  "rl-terrain",
+ "serde",
 ]
 
 [[package]]

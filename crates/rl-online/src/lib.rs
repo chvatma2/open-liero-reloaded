@@ -3,10 +3,12 @@
 //! each start's match through `rl-netcode`'s session, its end, the replay,
 //! and back to the lobby.
 
+pub mod bundle;
 pub mod events;
 pub mod matches;
 pub mod peer;
 pub mod replay;
 
+pub use bundle::GameBundle;
 pub use events::{NetStats, OnlineEvent};
 pub use peer::{LobbyHandle, OnlinePeer, PeerRole, StartError};

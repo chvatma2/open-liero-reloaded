@@ -710,8 +710,18 @@ impl Session {
     /// An online match's polled `events` presented, as [`Session::frame`]
     /// does (the shell's for the events of the poll that started the
     /// match, after its `MatchStarting`); the others handed back.
-    pub fn present_events(&mut self, events: Vec<OnlineEvent>) -> Vec<OnlineEvent> {
-        let Driver::Online(d) = &mut self.driver else { return events };
+    /// A next match's `MatchStarting` and what follows it are not this
+    /// match's: they are handed back as they are (the shell starts that
+    /// match's session with them).
+    pub fn present_events(&mut self, mut events: Vec<OnlineEvent>) -> Vec<OnlineEvent> {
+        let next = match events.iter().position(|e| matches!(e, OnlineEvent::MatchStarting { .. })) {
+            Some(i) => events.split_off(i),
+            None => Vec::new(),
+        };
+        let Driver::Online(d) = &mut self.driver else {
+            events.extend(next);
+            return events;
+        };
         let (sound, audio) = (self.sound, &mut self.audio);
         let mut play = |sounds: &[Event], p: &Presentation| {
             if sound {
@@ -738,6 +748,8 @@ impl Session {
             }
             self.frozen = true;
         }
+        let mut rest = rest;
+        rest.extend(next);
         rest
     }
 

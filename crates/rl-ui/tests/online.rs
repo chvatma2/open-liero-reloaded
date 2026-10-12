@@ -548,3 +548,123 @@ fn long_fields_are_cut() {
     assert_eq!(s.sanitize().len(), 2);
     assert_eq!((s.last_address.len(), s.host.password.as_str().len()), (253, 64));
 }
+
+/// An online match (plan 10 task 12): the lobby's start goes in game (no
+/// weapon selection: it was the lobby's), the results return to the
+/// lobby, the next start goes in game again, and the menu's Leave leaves
+/// the online game. Nothing restarts in place.
+#[test]
+fn an_online_match_runs_from_the_lobby_to_the_results_and_back() {
+    let mut h = harness();
+    in_lobby(h.state_mut(), lobby_view(false));
+    let ui = &mut h.state_mut().ui;
+    assert!(ui.update(UiAction::MatchStarted).is_empty());
+    assert_eq!((ui.screen(), ui.game()), (Screen::InGame, Some(rl_ui::Game::Online)));
+    assert!(ui.update(UiAction::Restart).is_empty(), "no rematch in place online");
+    assert_eq!(
+        ui.update(UiAction::LobbyChat(" gg ".into())),
+        [AppCommand::Lobby(LobbyCommand::Chat("gg".into()))]
+    );
+    assert!(ui.update(UiAction::MatchOver).is_empty());
+    assert_eq!(ui.screen(), Screen::Results);
+    assert!(ui.update(UiAction::StartMatch).is_empty() && ui.update(UiAction::SaveReplay).is_empty());
+    assert_eq!(ui.update(UiAction::LobbyChat("again".into())).len(), 1, "chat on the results too");
+    assert_eq!(ui.update(UiAction::Back), [AppCommand::EndMatch]);
+    assert_eq!((ui.screen(), ui.game()), (Screen::Lobby, None));
+    assert!(ui.is_online());
+    // The next match, from the lobby's weapon screen too.
+    ui.update(UiAction::Open(Screen::WeaponSelect));
+    ui.update(UiAction::MatchStarted);
+    assert_eq!(ui.screen(), Screen::InGame);
+    assert_eq!(ui.update(UiAction::Back), [AppCommand::SetPaused(true)], "the match's menu");
+    assert_eq!(ui.update(UiAction::LeaveMatch), [AppCommand::EndMatch, AppCommand::LeaveOnline]);
+    assert_eq!(ui.screen(), Screen::Multiplayer);
+    assert!(!ui.is_online() && ui.game().is_none());
+    assert!(ui.update(UiAction::MatchStarted).is_empty());
+    assert_eq!(ui.screen(), Screen::Multiplayer, "no online match without a lobby");
+}
+
+/// The connection lost (or a kick) during the match ends it and returns
+/// to Multiplayer with the reason.
+#[test]
+fn a_lost_connection_ends_the_online_match() {
+    let mut ui = UiState::new(Settings::default(), Profiles::default(), 1);
+    let mut app = App { ui: ui.clone(), data: MenuData::new(catalog(), None), commands: Vec::new() };
+    in_lobby(&mut app, lobby_view(false));
+    ui = app.ui;
+    ui.update(UiAction::MatchStarted);
+    ui.update(UiAction::Back);
+    assert_eq!(ui.update(UiAction::OnlineFailed("the host left".into())), [AppCommand::EndMatch]);
+    assert_eq!((ui.screen(), ui.message()), (Screen::Multiplayer, Some("the host left")));
+    assert!(!ui.is_online() && !ui.is_paused() && ui.game().is_none());
+}
+
+/// Online, `T` opens a chat field over the match: what is typed goes to
+/// it (the `T` itself is not typed), Enter sends the line and closes it,
+/// Esc closes it without opening the menu. A local game has no chat.
+#[test]
+fn t_opens_the_chat_in_game() {
+    let mut h = harness();
+    in_lobby(h.state_mut(), lobby_view(false));
+    h.state_mut().ui.update(UiAction::MatchStarted);
+    settle(&mut h);
+    assert!(h.query_by_role_and_label(Role::TextInput, "Say:").is_none());
+    h.key_press(egui::Key::T);
+    settle(&mut h);
+    let field = h.get_by_role_and_label(Role::TextInput, "Say:");
+    assert_eq!(field.value().as_deref(), Some(""), "the T opens, it is not typed");
+    h.get_by_role_and_label(Role::TextInput, "Say:").type_text("good game");
+    settle(&mut h);
+    h.key_press(egui::Key::Enter);
+    settle(&mut h);
+    assert_eq!(lobby_commands(&h), [&LobbyCommand::Chat("good game".into())]);
+    assert!(h.query_by_role_and_label(Role::TextInput, "Say:").is_none(), "Enter closes it");
+    assert!(h.state().data.ingame_chat.is_none());
+    h.key_press(egui::Key::T);
+    settle(&mut h);
+    h.get_by_role_and_label(Role::TextInput, "Say:").type_text("never mind");
+    settle(&mut h);
+    h.key_press(egui::Key::Escape);
+    settle(&mut h);
+    assert!(h.query_by_role_and_label(Role::TextInput, "Say:").is_none(), "Esc closes it");
+    assert!(!h.state().ui.is_paused(), "Esc in the field is not the menu");
+    assert_eq!(lobby_commands(&h).len(), 1, "nothing more sent");
+    h.key_press(egui::Key::Escape);
+    settle(&mut h);
+    assert!(h.state().ui.is_paused(), "then Esc opens the menu");
+    h.get_by_label("Leave the game");
+
+    // A local game: no chat.
+    let mut h = harness();
+    let ui = &mut h.state_mut().ui;
+    ui.update(UiAction::Open(Screen::Main));
+    ui.update(UiAction::StartSandbox);
+    ui.update(UiAction::MatchStarted);
+    settle(&mut h);
+    assert_eq!(h.state().ui.screen(), Screen::InGame);
+    h.key_press(egui::Key::T);
+    settle(&mut h);
+    assert!(h.query_by_role_and_label(Role::TextInput, "Say:").is_none());
+}
+
+/// An online match's results lead back to the lobby, nothing else.
+#[test]
+fn online_results_lead_back_to_the_lobby() {
+    let mut h = harness();
+    in_lobby(h.state_mut(), lobby_view(false));
+    let app = h.state_mut();
+    app.ui.update(UiAction::MatchStarted);
+    app.ui.update(UiAction::MatchOver);
+    app.data.results = Some(rl_ui::hud::Results {
+        winner: None,
+        reason: "time limit".into(),
+        rows: Vec::new(),
+        time_left_ms: None,
+    });
+    settle(&mut h);
+    assert!(h.query_by_label("Rematch").is_none() && h.query_by_label("Save replay").is_none());
+    h.get_by_label("Back to lobby").click();
+    settle(&mut h);
+    assert_eq!(h.state().ui.screen(), Screen::Lobby);
+    assert_eq!(h.state().commands, [AppCommand::EndMatch]);
+}

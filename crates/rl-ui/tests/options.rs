@@ -365,7 +365,7 @@ fn options_set_video_and_audio() {
     assert!(h.query_by_label("Lives").is_none());
 }
 
-/// The game's own keys (`GAME_KEYS`: Esc, F5, F2, Tab, H, and PageUp and
+/// The game's own keys (`GAME_KEYS`: Esc, F5, F2, F3, T, Tab, H, and PageUp and
 /// PageDown for a watched game's fast-forward) are never bound,
 /// even from a file edited by hand: they are dropped, and an action left
 /// without a key gets OLX's back (Review Focus 2).

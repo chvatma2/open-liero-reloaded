@@ -18,6 +18,7 @@ use rl_game::speed::Speed;
 use rl_game::video::{self, Overrides};
 use rl_game::window::{self, WindowSystem};
 use rl_game::wsl;
+use rl_netcode::netsim::Profile;
 use rl_render::{RenderSettings, UpscaleFilter};
 use rl_scene::Interpolation;
 
@@ -198,6 +199,30 @@ struct Args {
     /// No sound output (no audio device is opened).
     #[arg(long)]
     no_sound: bool,
+    /// Host an online game at once (the Lobby opens), named NAME (else
+    /// the Host screen's name), with the profile's look and the saved match.
+    #[arg(long, value_name = "NAME", num_args = 0..=1, default_missing_value = "",
+          conflicts_with_all = ["join", "net_sim", "mode", "replay", "spectate", "script", "demo"])]
+    host: Option<String>,
+    /// Join the online game at ADDR (host[:port]) at once.
+    #[arg(long, value_name = "ADDR", conflicts_with_all = ["net_sim", "mode", "replay", "spectate", "script", "demo"])]
+    join: Option<String>,
+    /// Feel a network: a host with three bots in this process, joined over
+    /// a loopback link impaired as PROFILE (lan, good, typical, bad, awful).
+    #[arg(long, value_name = "PROFILE", value_parser = net_profile,
+          conflicts_with_all = ["mode", "replay", "spectate", "script", "demo"])]
+    net_sim: Option<Profile>,
+    /// The port to host on (TCP and UDP) and to join when the address has none.
+    #[arg(long)]
+    port: Option<u16>,
+}
+
+/// A `--net-sim` profile by name.
+fn net_profile(name: &str) -> Result<Profile, String> {
+    Profile::by_name(name).ok_or_else(|| {
+        let names: Vec<&str> = Profile::ALL.iter().map(|p| p.name).collect();
+        format!("no profile {name:?}: one of {}", names.join(", "))
+    })
 }
 
 /// The flags that choose a game: with any of them on the command line the
@@ -340,6 +365,23 @@ fn menus(args: &Args, audio: rl_audio::Audio, mut cfg: ShellConfig, flags: Overr
     let ui = rl_ui::UiState::new(settings.value, profiles.value, seed);
     let mut shell = Shell::new(cfg, ui, store, audio);
     shell.set_overrides(file, flags);
+    // The online flags: through the menus' own actions, nothing saved.
+    shell.set_port(args.port);
+    if let Some(profile) = args.net_sim {
+        if let Err(e) = shell.start_net_sim(profile) {
+            eprintln!("warning: --net-sim: {e:#}");
+        }
+    } else if let Some(name) = &args.host {
+        shell.host_from_flag(Some(name.clone()));
+    } else if let Some(addr) = &args.join {
+        shell.join_from_flag(addr);
+    }
+    // A flag's failure (hosting on a port taken, an address unknown).
+    if (args.host.is_some() || args.join.is_some())
+        && let Some(why) = shell.ui.message()
+    {
+        eprintln!("warning: {why}");
+    }
     shell
 }
 

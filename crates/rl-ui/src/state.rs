@@ -13,6 +13,16 @@
 //!   become `AppCommand::Lobby(LobbyCommand)`, the weapon screen opened
 //!   from it answers with `Loadout`, and Back or `LeaveLobby` leaves
 //!   (`LeaveOnline`, to Multiplayer).
+//! - **Online matches** (plan 10 task 12): while a lobby is up the app
+//!   reports `MatchStarted` when the host's match starts (from any
+//!   screen: InGame, no weapon selection, it was the lobby's). Esc opens
+//!   the menu over the match, which goes on (nothing pauses online); its
+//!   Quit to menu leaves the online game (`EndMatch`, `LeaveOnline`, to
+//!   Multiplayer). `MatchOver` shows the results, whose Back returns to
+//!   the Lobby (`EndMatch`; no rematch, no replay kept: the app saves
+//!   each match's replay). `LobbyChat` works in game and on the results
+//!   too. `OnlineFailed` (the connection lost, a kick) ends the match and
+//!   returns to Multiplayer from any screen.
 //! - **Matches:** Start emits one `StartMatch` with the next seed; until
 //!   the app reports `MatchStarted` or `MatchFailed`, starting again and
 //!   Back do nothing (no double matches). A Deathmatch starts with OLX's
@@ -231,6 +241,8 @@ pub enum Game {
     Match,
     Sandbox,
     Replay,
+    /// A lobby's match (plan 10).
+    Online,
 }
 
 /// What is running behind the menus.
@@ -342,6 +354,14 @@ impl UiState {
         self.paused
     }
 
+    /// The seed of the next match, taken (a lobby's start: the host picks
+    /// it as local play does).
+    pub fn take_seed(&mut self) -> u32 {
+        let seed = self.seed;
+        self.seed = self.seed.wrapping_add(1);
+        seed
+    }
+
     /// The results' Save replay has kept this match's replay.
     pub fn replay_saved(&self) -> bool {
         self.replay_saved
@@ -396,7 +416,8 @@ impl UiState {
                     Screen::Results => true,
                     _ => false,
                 };
-                if !can || !matches!(self.play, Play::Running(_)) {
+                if !can || !matches!(self.play, Play::Running(_)) || self.play == Play::Running(Game::Online)
+                {
                     return Vec::new();
                 }
                 self.go(Screen::InGame);
@@ -475,6 +496,14 @@ impl UiState {
                 out.extend(self.apply_bindings_if_changed(&before));
                 out
             }
+            // The lobby's match started (the host's start).
+            UiAction::MatchStarted if self.online && !self.is_starting() => {
+                self.play = Play::Running(Game::Online);
+                self.paused = false;
+                self.replay_saved = false;
+                self.go(Screen::InGame);
+                Vec::new()
+            }
             UiAction::MatchStarted => {
                 if let Play::Starting { game, .. } = self.play {
                     self.play = Play::Running(game);
@@ -529,10 +558,17 @@ impl UiState {
                         self.go(from);
                         self.message = Some(why);
                     }
-                    (None, Screen::Lobby | Screen::WeaponSelect) if self.online => {
+                    (None, _) if self.online => {
                         self.online = false;
+                        let mut out = Vec::new();
+                        if self.play == Play::Running(Game::Online) {
+                            self.play = Play::None;
+                            out.push(AppCommand::EndMatch);
+                        }
+                        self.paused = false;
                         self.go(Screen::Multiplayer);
                         self.message = Some(why);
+                        return out;
                     }
                     _ => {}
                 }
@@ -543,11 +579,12 @@ impl UiState {
             UiAction::LobbySpectate(on) => self.lobby(LobbyCommand::Spectate(on)),
             UiAction::LobbyChat(text) => {
                 let text = text.trim();
-                if text.is_empty() {
+                let here = matches!(self.screen, Screen::Lobby | Screen::InGame | Screen::Results);
+                if text.is_empty() || !self.online || !here {
                     return Vec::new();
                 }
                 let text: String = text.chars().take(crate::online::CHAT_CHARS).collect();
-                self.lobby(LobbyCommand::Chat(text))
+                vec![AppCommand::Lobby(LobbyCommand::Chat(text))]
             }
             UiAction::LobbySetup(m) => self.lobby(LobbyCommand::Setup(m)),
             UiAction::LobbyKick { member, ban } => self.lobby(LobbyCommand::Kick { member, ban }),
@@ -688,7 +725,8 @@ impl UiState {
     }
 
     /// Leaves a running match: from the pause menu, the weapon selection
-    /// or the results.
+    /// or the results. An online match's results return to the lobby; its
+    /// menu's Quit leaves the online game.
     fn leave(&mut self) -> Vec<AppCommand> {
         let can = match self.screen {
             Screen::InGame => self.paused,
@@ -698,10 +736,25 @@ impl UiState {
         if !can || !matches!(self.play, Play::Running(_)) {
             return Vec::new();
         }
+        let online = self.play == Play::Running(Game::Online);
+        let results = self.screen == Screen::Results;
         self.play = Play::None;
         self.paused = false;
-        self.go(Screen::Main);
-        vec![AppCommand::EndMatch]
+        match (online, results) {
+            (true, true) => {
+                self.go(Screen::Lobby);
+                vec![AppCommand::EndMatch]
+            }
+            (true, false) => {
+                self.online = false;
+                self.go(Screen::Multiplayer);
+                vec![AppCommand::EndMatch, AppCommand::LeaveOnline]
+            }
+            (false, _) => {
+                self.go(Screen::Main);
+                vec![AppCommand::EndMatch]
+            }
+        }
     }
 
     /// The weapon selection's Done: the player armed, the match on; the

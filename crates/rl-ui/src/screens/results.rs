@@ -61,16 +61,26 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &MenuData, out: &mut Vec<
     }
     let Some(r) = &data.results else {
         // No results (the app has none to give): a way out still.
+        let label = if state.game() == Some(Game::Online) { "Back to lobby" } else { "Back to menu" };
         centred(ui, &mut |ui| {
-            if ui.button("Back to menu").clicked() {
+            if ui.button(label).clicked() {
                 out.push(UiAction::LeaveMatch);
             }
         });
         return;
     };
     let replay = state.game() == Some(Game::Replay);
+    let online = state.game() == Some(Game::Online);
     panel(ui.ctx(), r, |ui| {
         ui.horizontal(|ui| {
+            if online {
+                // The lobby goes on: the host starts the next match there;
+                // the app saved the replay.
+                if ui.button("Back to lobby").clicked() {
+                    out.push(UiAction::LeaveMatch);
+                }
+                return;
+            }
             if replay {
                 if ui.button("Watch again").clicked() {
                     out.push(UiAction::Restart);

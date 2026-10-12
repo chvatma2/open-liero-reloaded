@@ -376,3 +376,308 @@ fn an_online_match_runs_headless() {
     }
     assert!(begun.elapsed() < Duration::from_secs(30), "the test took {:?}", begun.elapsed());
 }
+
+// ---- Online play from the menus (plan 10 task 12) ----
+
+use rl_game::app::{App, Config};
+use rl_game::shell::{Outcome, Shell, ShellConfig};
+use rl_ui::hud::LineKind;
+use rl_ui::{HostPrefs, Profiles, Screen, Settings, Store, UiAction, UiState, Visibility};
+
+/// A shell of the menus over `dir` playing as `name`, with Classic on Dirt
+/// Level saved as its match (no bot, a `minutes` time limit), no LAN
+/// (tests use no fixed port) and hosting on an ephemeral port.
+fn menus(dir: &std::path::Path, store: Store, name: &str, minutes: f32) -> Shell {
+    let mut settings = Settings::default();
+    let m = &mut settings.gameplay.match_prefs;
+    m.mod_id = MOD.into();
+    m.level_id = LEVEL.into();
+    m.bots = 0;
+    m.rules.time_limit = minutes;
+    let mut profiles = Profiles::default();
+    profiles.list[0].name = name.into();
+    let ui = UiState::new(settings, profiles, 1);
+    let cfg = ShellConfig {
+        content: dir.to_path_buf(),
+        interpolation: Interpolation::Linear,
+        viewport: viewport(),
+    };
+    let mut sh = Shell::new(cfg, ui, store, Audio::silent());
+    sh.set_lan(false);
+    sh.set_port(Some(0));
+    sh
+}
+
+/// One frame of each shell at `now` (their keys from `keys`), as the
+/// app's loop does them.
+fn frame(shells: &mut [&mut Shell], now: Instant, keys: &mut dyn FnMut(usize) -> Keys) -> Vec<Outcome> {
+    let mut out = Vec::new();
+    for (i, sh) in shells.iter_mut().enumerate() {
+        out.extend(sh.net_frame(now, &mut || keys(i)));
+        out.extend(sh.after_ticks());
+        out.extend(sh.poll());
+    }
+    out
+}
+
+/// Frames on the real clock until `done`; panics after `limit` with `what`.
+fn frames_until(
+    what: &str,
+    limit: Duration,
+    shells: &mut [&mut Shell],
+    mut done: impl FnMut(&mut [&mut Shell]) -> bool,
+) {
+    let start = Instant::now();
+    loop {
+        assert!(start.elapsed() < limit, "{what} within {limit:?}");
+        frame(shells, Instant::now(), &mut |i| {
+            player_keys(i as u64 * 1000 + start.elapsed().as_millis() as u64 / 10)
+        });
+        if done(shells) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// Hosts from the Host screen as the menus do.
+fn host(sh: &mut Shell) {
+    sh.act(UiAction::Open(Screen::Multiplayer));
+    sh.act(UiAction::Open(Screen::Host));
+    sh.act(UiAction::Host(HostPrefs { visibility: Visibility::DirectOnly, ..HostPrefs::default() }));
+}
+
+fn join(sh: &mut Shell, port: u16) {
+    sh.act(UiAction::Open(Screen::Multiplayer));
+    sh.act(UiAction::Join { addr: format!("127.0.0.1:{port}"), password: None });
+}
+
+fn members(sh: &Shell) -> usize {
+    sh.data.lobby.as_ref().map_or(0, |l| l.members.len())
+}
+
+/// A host and a client in its lobby, both on the Lobby screen.
+fn host_and_client(dir: &std::path::Path, minutes: f32, data: Option<&std::path::Path>) -> (Shell, Shell) {
+    let store = || data.map_or_else(Store::in_memory, Store::open);
+    let mut h = menus(dir, store(), "Hosty", minutes);
+    host(&mut h);
+    assert_eq!(h.ui.screen(), Screen::Lobby, "hosting opens the lobby: {:?}", h.ui.message());
+    let port = h.local_port().expect("the host's port");
+    let mut c = menus(dir, Store::in_memory(), "Anna", minutes);
+    join(&mut c, port);
+    assert!(c.ui.is_connecting());
+    frames_until("the client joins", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
+        s[1].ui.screen() == Screen::Lobby && members(s[0]) == 2 && members(s[1]) == 2
+    });
+    (h, c)
+}
+
+/// Both in the lobby, the host adds a bot, both ready, the host starts:
+/// both in game.
+fn start_match(h: &mut Shell, c: &mut Shell) {
+    let mut setup = h.data.lobby.as_ref().unwrap().setup.clone();
+    setup.bots = 1;
+    h.act(UiAction::LobbySetup(setup));
+    frames_until("the client sees the bot", Duration::from_secs(3), &mut [&mut *h, &mut *c], |s| {
+        s[1].data.lobby.as_ref().is_some_and(|l| l.setup.bots == 1)
+    });
+    c.act(UiAction::LobbyReady(true));
+    h.act(UiAction::LobbyReady(true));
+    frames_until("the host can start", Duration::from_secs(3), &mut [&mut *h, &mut *c], |s| {
+        s[0].data.lobby.as_ref().is_some_and(|l| l.can_start.is_ok())
+    });
+    h.act(UiAction::LobbyStart);
+    frames_until("both play", Duration::from_secs(5), &mut [&mut *h, &mut *c], |s| {
+        s.iter().all(|sh| sh.ui.screen() == Screen::InGame && sh.plays_online())
+    });
+}
+
+/// The confirmed tick and scores the HUD shows.
+fn confirmed(sh: &Shell) -> Option<(u32, Vec<Score>)> {
+    let Driver::Online(d) = &sh.session()?.driver else { return None };
+    Some((d.confirmed_tick()?, d.confirmed_scores().to_vec()))
+}
+
+/// Plan 10 task 12: two shells in one process, one hosting on an
+/// ephemeral port and the other joining it, reach the lobby; the host adds
+/// a bot, both ready, the host starts: both play, and 200 frames later
+/// both show the same confirmed scores for the same ticks. The match ends
+/// on the results (its replay saved), whose Back returns the host to the
+/// lobby; its forced start takes the client from its results into the
+/// next match, watching; the client leaves from the match's menu (back
+/// to Multiplayer) and the host's lobby shows it left.
+#[test]
+fn hosting_and_joining_from_the_shell() {
+    let Some(dir) = content_dir() else { return };
+    let begun = Instant::now();
+    let data = tempfile::tempdir().unwrap();
+    let (mut h, mut c) = host_and_client(&dir, 0.04, Some(data.path()));
+    let lobby = h.data.lobby.clone().unwrap();
+    assert!(lobby.host && !c.data.lobby.as_ref().unwrap().host);
+    let names: Vec<&str> = lobby.members.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, ["Hosty", "Anna"]);
+    start_match(&mut h, &mut c);
+    assert_eq!(h.session().unwrap().names.0, ["Hosty", "Anna", "Bot 1"]);
+    assert_eq!((h.session().unwrap().local(), c.session().unwrap().local()), (Some(0), Some(1)));
+
+    let mut seen: [BTreeMap<u32, Vec<Score>>; 2] = Default::default();
+    for _ in 0..200 {
+        frame(&mut [&mut h, &mut c], Instant::now(), &mut |i| player_keys(i as u64 * 7 + 3));
+        for (i, sh) in [&h, &c].into_iter().enumerate() {
+            if let Some((t, s)) = confirmed(sh) {
+                seen[i].insert(t, s);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    let common: Vec<u32> = seen[0].keys().filter(|t| seen[1].contains_key(t)).copied().collect();
+    assert!(common.len() > 5, "both confirmed the same ticks: {common:?}");
+    for t in &common {
+        assert_eq!(seen[0][t], seen[1][t], "the confirmed scores of tick {t}");
+    }
+    assert!(common.iter().any(|&t| t > 50), "the match went on: {common:?}");
+
+    // The time limit ends it: the results, then the replay saved.
+    frames_until("both show the results", Duration::from_secs(10), &mut [&mut h, &mut c], |s| {
+        s.iter().all(|sh| sh.ui.screen() == Screen::Results)
+    });
+    assert!(h.data.results.is_some() && c.data.results.is_some());
+    frames_until("the host's replay is saved", Duration::from_secs(10), &mut [&mut h, &mut c], |_| {
+        std::fs::read_dir(data.path().join("replays")).is_ok_and(|d| d.count() > 0)
+    });
+    // The host goes back to the lobby; the client still reads the results.
+    h.act(UiAction::Back);
+    assert_eq!(h.ui.screen(), Screen::Lobby);
+    assert!(h.session().is_none() && h.online_active());
+    frames_until("the lobby gathers again", Duration::from_secs(8), &mut [&mut h, &mut c], |s| {
+        s[0].data.lobby.as_ref().is_some_and(|l| l.can_start.as_ref().is_err_and(|e| e.contains("not ready")))
+    });
+    // A forced start: the client, not ready, watches; its results give way.
+    h.act(UiAction::LobbyForceStart);
+    frames_until("the next match plays", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
+        s.iter().all(|sh| sh.ui.screen() == Screen::InGame && sh.plays_online())
+    });
+    assert_eq!(c.session().unwrap().local(), None, "the client watches");
+    assert!(c.session().unwrap().results.is_none(), "the new match's view");
+    // The match's menu: Leave the game returns to Multiplayer.
+    c.act(UiAction::Back);
+    c.act(UiAction::LeaveMatch);
+    assert_eq!(c.ui.screen(), Screen::Multiplayer, "leaving returns to Multiplayer");
+    assert!(!c.online_active() && c.session().is_none());
+    frames_until("the host sees the client leave", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
+        members(s[0]) == 1
+    });
+    assert!(h.data.chat.iter().any(|l| l.text == "Anna left"), "{:?}", h.data.chat);
+    assert!(h.session().unwrap().log.texts().any(|l| l == "Anna left"), "in the host's HUD log too");
+    assert!(begun.elapsed() < Duration::from_secs(20), "the test took {:?}", begun.elapsed());
+}
+
+/// Chat typed in game reaches the other player's HUD log as a chat line
+/// ("name: text"), and its lobby chat.
+#[test]
+fn chat_reaches_the_other_player_in_game() {
+    let Some(dir) = content_dir() else { return };
+    let (mut h, mut c) = host_and_client(&dir, 1.0, None);
+    start_match(&mut h, &mut c);
+    c.act(UiAction::LobbyChat("hello host".into()));
+    frames_until("the line reaches the host's HUD", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
+        s[0].session().is_some_and(|x| x.log.lines().any(|l| l.text == "Anna: hello host"))
+    });
+    let line = h.session().unwrap().log.lines().find(|l| l.text == "Anna: hello host").unwrap();
+    assert_eq!(line.kind, LineKind::Chat);
+    assert!(h.data.chat.iter().any(|l| l.text == "Anna: hello host" && l.kind == LineKind::Chat));
+    // The sender sees its own line too (the host relays it).
+    frames_until("the line comes back", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
+        s[1].session().is_some_and(|x| x.log.lines().any(|l| l.text == "Anna: hello host"))
+    });
+}
+
+/// Decision N21: the app's frame without a window that can draw (what
+/// `about_to_wait` runs while the window is hidden) still polls the
+/// network and advances the online match.
+#[test]
+fn a_hidden_window_keeps_the_match_alive() {
+    let Some(dir) = content_dir() else { return };
+    let (mut h, c) = host_and_client(&dir, 1.0, None);
+    let cfg = Config {
+        backends: wgpu::Backends::empty(),
+        render: rl_render::RenderSettings::default(),
+        fullscreen: false,
+        uncapped: false,
+        interpolation: Interpolation::Linear,
+        autoquit_after: None,
+        script: Vec::new(),
+        shot_dir: std::env::temp_dir(),
+        print_stats: false,
+        latency_probe: None,
+        record: None,
+        menus: true,
+        speed: Default::default(),
+        fake_clock: false,
+    };
+    let mut app = App::new(cfg, c, true, None, None);
+    let mut setup = h.data.lobby.as_ref().unwrap().setup.clone();
+    setup.bots = 1;
+    h.act(UiAction::LobbySetup(setup));
+    let hidden = |app: &mut App, h: &mut Shell| {
+        frame(&mut [h], Instant::now(), &mut |_| Keys(0));
+        assert!(app.online_active(), "online: the hidden window keeps polling");
+        app.hidden_frame();
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    let start = Instant::now();
+    while app.shell().data.lobby.as_ref().is_none_or(|l| l.setup.bots != 1) {
+        assert!(start.elapsed() < Duration::from_secs(5), "the client sees the bot");
+        hidden(&mut app, &mut h);
+    }
+    app.shell_mut().act(UiAction::LobbyReady(true));
+    while h.data.lobby.as_ref().is_none_or(|l| l.can_start.is_err()) {
+        assert!(start.elapsed() < Duration::from_secs(8), "the host can start");
+        hidden(&mut app, &mut h);
+    }
+    h.act(UiAction::LobbyStart);
+    while !app.shell().plays_online() {
+        assert!(start.elapsed() < Duration::from_secs(10), "the hidden client plays");
+        hidden(&mut app, &mut h);
+    }
+    let ticks = |app: &App| app.shell().session().map_or(0, Session::ticks);
+    let from = ticks(&app);
+    let confirmed_from = confirmed(app.shell()).map_or(0, |c| c.0);
+    let played = Instant::now();
+    while ticks(&app) < from + 100 || confirmed(app.shell()).is_none_or(|c| c.0 < confirmed_from + 100) {
+        assert!(
+            played.elapsed() < Duration::from_secs(5),
+            "the match ticks while hidden: {from} to {}",
+            ticks(&app)
+        );
+        hidden(&mut app, &mut h);
+    }
+    assert_eq!(app.shell().ui.screen(), Screen::InGame);
+}
+
+/// `--net-sim typical` (spec §9.10): a host with three bots in this
+/// process and this player joining it over an impaired loopback link,
+/// playing at once.
+#[test]
+fn net_sim_flag_starts_a_local_match() {
+    let Some(dir) = content_dir() else { return };
+    let mut sh = menus(&dir, Store::in_memory(), "Anna", 1.0);
+    let profile = rl_netcode::netsim::Profile::by_name("typical").unwrap();
+    sh.start_net_sim(profile).unwrap();
+    frames_until("the net-sim match starts", Duration::from_secs(15), &mut [&mut sh], |s| {
+        s[0].plays_online() && s[0].ui.screen() == Screen::InGame
+    });
+    let s = sh.session().unwrap();
+    assert_eq!(s.world().worms().len(), 4, "this player and three bots: the host watches");
+    assert_eq!(s.local(), Some(0));
+    let from = s.ticks();
+    frames_until("the match plays", Duration::from_secs(5), &mut [&mut sh], |s| {
+        s[0].session().is_some_and(|x| x.ticks() > from + 100) && confirmed(s[0]).is_some_and(|c| c.0 > 50)
+    });
+    frames_until("the overlay measures the round trip", Duration::from_secs(5), &mut [&mut sh], |s| {
+        s[0].net_view().is_some_and(|n| n.stats.rtt_ms.is_some())
+    });
+    let net = sh.net_view().unwrap();
+    assert!(net.stats.rtt_ms.is_some_and(|ms| ms >= 60), "the profile's 80 ms ping: {:?}", net.stats.rtt_ms);
+    assert!(net.stats.input_delay > 0, "an input delay for the round trip");
+}

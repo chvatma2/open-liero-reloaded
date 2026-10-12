@@ -32,6 +32,8 @@ rl-ui.workspace = true
 rl-proto.workspace = true
 rl-netcode.workspace = true
 rl-online.workspace = true
+rl-lobby.workspace = true
+rl-net.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde = { workspace = true, features = ["std"] }
@@ -47,8 +49,6 @@ egui-winit.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-rl-lobby.workspace = true
-rl-net.workspace = true
 
 [[test]]
 name = "integration"

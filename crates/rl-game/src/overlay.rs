@@ -89,6 +89,11 @@ pub struct Overlay<'a> {
     pub names: bool,
     /// Where the HUD goes on a window wider than 16:9 (the options').
     pub arrangement: rl_ui::HudArrangement,
+    /// F3's network overlay while an online match plays (spec §7.3).
+    pub net: Option<crate::net::NetView>,
+    /// The host says this client's inputs are late (spec §3.2): the
+    /// warning at the top.
+    pub lagging: bool,
 }
 
 /// Where a name label of `size` goes for a worm at `at` (points): centred
@@ -162,6 +167,20 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
     if o.debug {
         debug(ui.painter(), ui.max_rect(), o);
     }
+    if let Some(net) = &o.net {
+        network(ui.painter(), o.map.points_rect().intersect(ui.max_rect()), net);
+    }
+    if o.lagging {
+        let r = o.map.points_rect();
+        shadowed(
+            ui.painter(),
+            r.center_top() + egui::vec2(0.0, 28.0),
+            Align2::CENTER_TOP,
+            CONNECTION_PROBLEM,
+            FontId::proportional(20.0),
+            Color32::from_rgb(255, 90, 60),
+        );
+    }
     // With the menus, the results are their screen (buttons); without,
     // OLX's keys under them. OLX shows "Game Over" for `GAMEOVER_WAIT`
     // first; a replay that ends sooner shows them at its end.
@@ -174,6 +193,34 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
         rl_ui::screens::results::panel(ui.ctx(), r, |ui| {
             ui.label(egui::RichText::new(keys).color(Color32::from_gray(200)));
         });
+    }
+}
+
+/// The warning while the host fills this client's late inputs (spec §3.2).
+pub const CONNECTION_PROBLEM: &str = "Connection problem";
+
+/// F3: the network's numbers (spec §7.3) at the playfield's top right.
+fn network(p: &Painter, field: egui::Rect, net: &crate::net::NetView) {
+    let lines = net.lines();
+    let font = FontId::monospace(13.0);
+    let (h, w) = (16.0, 380.0);
+    let at = field.right_top() + egui::vec2(-w - 10.0, 10.0);
+    p.rect_filled(
+        egui::Rect::from_min_size(
+            at - egui::vec2(6.0, 4.0),
+            egui::vec2(w + 6.0, h * lines.len() as f32 + 8.0),
+        ),
+        4.0,
+        Color32::from_black_alpha(150),
+    );
+    for (i, l) in lines.iter().enumerate() {
+        p.text(
+            at + egui::vec2(0.0, h * i as f32),
+            Align2::LEFT_TOP,
+            l,
+            font.clone(),
+            Color32::from_rgb(180, 220, 255),
+        );
     }
 }
 

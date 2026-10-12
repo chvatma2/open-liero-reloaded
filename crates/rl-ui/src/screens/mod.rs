@@ -97,6 +97,9 @@ pub struct MenuData {
     pub chat: Vec<LogLine>,
     /// What the online screens say besides errors (the app's status).
     pub online_status: Option<String>,
+    /// The in-game chat's line while its field is open (`T` online; the
+    /// app sends no key to the game meanwhile).
+    pub ingame_chat: Option<String>,
     /// A text field had the focus as the last frame ended.
     typing: bool,
     /// The weapon selection in progress.
@@ -138,6 +141,7 @@ impl MenuData {
             lobby: None,
             chat: Vec::new(),
             online_status: None,
+            ingame_chat: None,
             typing: false,
             select: None,
             thumbs: BTreeMap::new(),
@@ -217,7 +221,8 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
     let screen = state.screen();
     // Esc in a text field only leaves the field (egui lets go of it at the
     // start of the pass, so the field was in focus as the last frame ended).
-    let typing = data.typing && matches!(screen, Screen::Lobby | Screen::Multiplayer | Screen::Host);
+    let typing =
+        data.typing && matches!(screen, Screen::Lobby | Screen::Multiplayer | Screen::Host | Screen::InGame);
     data.preview_wanted = None;
     data.decodes_left = THUMB_DECODES_PER_FRAME;
     if data.shown != Some(screen) {
@@ -249,6 +254,9 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
     if screen != Screen::WeaponSelect {
         data.select = None;
     }
+    if screen != Screen::InGame {
+        data.ingame_chat = None;
+    }
     // The capture takes the key: egui must not also act on it (Space
     // pressing the focused button, Tab moving the focus, Esc leaving).
     if data.capture.is_some() {
@@ -257,7 +265,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
     // A dialog of the options is open: Esc closes it, and stays.
     let dialog = screen == Screen::Options && data.options.keys.busy(data.capture.is_some());
     match screen {
-        Screen::InGame => ingame::show(ui, state, &mut out),
+        Screen::InGame => ingame::show(ui, state, data, &mut out),
         Screen::WeaponSelect => weapon_select::show(ui, data, &mut out),
         Screen::Results => results::show(ui, state, data, &mut out),
         _ => {

@@ -16,6 +16,7 @@ pub mod drive;
 pub mod gpu;
 pub mod hud;
 pub mod latency;
+pub mod net;
 pub mod online;
 pub mod overlay;
 pub mod script;

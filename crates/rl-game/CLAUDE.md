@@ -13,12 +13,16 @@ cargo run --release -p rl-game -- --mode deathmatch --bots 4 --difficulty medium
     [--lives L] [--kill-limit K] [--time-limit M] [--seed S] [--record f.rlrp]
 cargo run --release -p rl-game -- --replay f.rlrp [--speed 1|2|4|8|16|max]
 cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alone, watched
+cargo run --release -p rl-game -- --host [name] [--port 23400]        # host online, the Lobby opens
+cargo run --release -p rl-game -- --join 192.168.1.20[:23400]         # join online
+cargo run --release -p rl-game -- --net-sim typical                   # feel a network (spec §9.10)
 ```
 
 - **Layer 6.** Uses `rl-ui`, `rl-content`, `rl-present`, `rl-scene`, `rl-fx`, `rl-render`,
   `rl-audio`, `rl-input`, `rl-sim`, `rl-modes`, `rl-bots`, `rl-replay`,
-  `rl-terrain`, `rl-pack`, `rl-online`, `rl-netcode`, `rl-proto` (and
-  `rl-lobby`, `rl-net` in tests), plus winit,
+  `rl-terrain`, `rl-pack`, `rl-online`, `rl-netcode`, `rl-proto`,
+  `rl-lobby` (identities, host settings), `rl-net` (endpoint settings,
+  LAN announcements), plus winit,
   wgpu, gilrs and egui / egui-wgpu / egui-winit 0.36.2 (exact pins). Logs
   are `eprintln!("warning: ...")`, each once.
 - **Menus first** (`main.rs`, `shell.rs`, plan 7 task 2): without a flag
@@ -225,6 +229,65 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   so the session would draw its start world: the shell must leave the
   match view before the next build (Task 12); `OnlineDriver::into_peer`
   gives the peer back. An online match is never fast-forwarded (`human()`).
+  A `MatchStarting` among a poll's events and everything after it are
+  handed back unpresented (`present_events`): they are the next match's.
+- **Online from the menus** (`shell.rs`'s second `impl`, `net.rs`; plan
+  10 task 12): `HostGame`/`JoinGame` make the `OnlinePeer` (the identity
+  from `Store::load_identity`, a fresh key with a warning when the file's
+  is no valid key; the selected profile's look, its skin by pack id; a
+  `Content` of the shell's roots; the host's setup from the saved match,
+  `net::setup_of`, bots "Bot N" in OLX's bot colours, never through
+  `MatchPrefs::sanitize`: a lobby may have no bot). The host is in its
+  lobby at once (`LobbyJoined`); a client when its first lobby names it.
+  `Shell::net_frame(now, keys)` (every frame, before the ticks; while an
+  online match plays its peer runs the ticks and the local clock rests)
+  polls `--net-sim`'s host, the LAN `Listener` on `LAN_PORT` while the
+  Multiplayer screen shows (games of another `FINGERPRINT` hidden), then
+  the peer once: through `Session::frame` while a match plays (the
+  input latch; `Keys(0)` while the match's menu, the chat or another
+  screen has the keys), else `OnlinePeer::poll`. Events: `Lobby` →
+  `MenuData::lobby` (`net::lobby_view`: `PHASE_LOBBY` while gathering or
+  showing results, `SEAT_SPECTATOR`, the host's `can_start` reason, a
+  client's "Waiting for the host"), a client's missing packs (`have`,
+  checked when the setup's packs change), the weapon screen's menu for
+  the lobby's mod (`net::weapon_menu`, decision N19), the host's LAN
+  announcement (`Announcer`, `Visibility::Lan`); `Chat` ("name: text",
+  `LineKind::Chat`), `Notice` and `Left` ("name left") → the lobby's chat
+  (`net::CHAT_KEEP` lines) and the HUD log; `MatchStarting` → the last
+  match's view ends, `setup::load_online`, `Session::online` with the
+  events after it, `MatchStarted` (InGame), `Outcome::Started`;
+  `MatchEnded` → the results if they did not show yet; `Results`' Back →
+  `EndMatch`: the peer back to `Net` (`end`), the Lobby; `Lagging` → the
+  warning; `Kicked`/`Refused`/`Disconnected` → the match view goes at
+  once (`lost`), then `OnlineFailed` (Multiplayer with the reason);
+  `ReplayReady` → `replays::auto_save`; `DesyncBundle` → `<data>/desyncs/
+  desync-<unix s>-<n>.rldg` (`net::save_bundle`; rl-online's `GameBundle`:
+  the start, the confirmed input rows from tick 0, both checksums, the
+  build fingerprint, the platform; a `net-repro` for game bundles is
+  still to come). The lobby's commands (`lobby_command`): Start and Force
+  start take `UiState::take_seed`; a refusal shows as
+  `MenuData::online_status`. Leaving (`LeaveOnline`, the match menu's
+  Leave the game, quitting) says goodbye (`OnlinePeer::leave`).
+  **Hidden window** (decision N21): while `Shell::online_active`,
+  `about_to_wait` runs `App::hidden_frame` (the network and the match's
+  ticks, no drawing) every `net::HIDDEN_FRAME` (4 ms, `WaitUntil`: not a
+  spinning `Poll`). **In-game chat**: `T` (a `GAME_KEYS` key now) opens
+  rl-ui's field over the playfield; while it is open no key reaches the
+  game (`handler.rs`, `App::key`) and those held are released. **Network
+  overlay** (F3, spec §7.3, `overlay::network`): ping, input delay,
+  rollback depth last and p99 over 5 s (`net::NetMeter` on the session's
+  depth histogram), the last second's deepest, loss, corrections per
+  second, the frontier lag (`current_tick - frontier`); "Connection
+  problem" at the playfield's top while `Lagging`. Online frames draw the
+  newest predicted tick at alpha 1 (the local clock's phase is not the
+  netcode's). **Flags**: `--host [name]` and `--join <addr>` act through
+  the menus (`host_from_flag`, `join_from_flag`; nothing they change is
+  saved), `--port <n>` hosts there and joins an address without a port
+  there (`Shell::set_port`; tests host on 0), `--net-sim <profile>`
+  (`start_net_sim`: a host in this process with `NET_SIM_BOTS` (3) bots
+  on the saved match, watching; this player joins it over a loopback
+  link impaired both ways, `EndpointConfig::impair`; the client readies
+  itself and the host starts whenever every player is ready).
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the default
   restrictions) feeds `rl_content::build_match`, the same assembly as
@@ -364,7 +427,13 @@ budget, a recording replayed through a replay session), `tests/menu.rs`
 profile's look), `tests/online.rs` (a local match whose player is slot 2,
 a watcher following any worm, a `Driver::Online` session against a host
 on 127.0.0.1: 300 frames on a fake 10 ms clock, the HUD's scores the
-host's confirmed ones, the end from a confirmed tick), `tests/ingame.rs` (the weapon selection, the pause and a
+host's confirmed ones, the end from a confirmed tick; two `Shell`s, one
+hosting on port 0 and one joining, to the lobby, a bot, ready, start,
+equal confirmed scores, the results, the replay saved, back to the
+lobby and leaving; chat in game reaching the other's HUD log; the
+hidden window's `App::hidden_frame` ticking the match; `--net-sim
+typical`'s setup playing; LAN off: `Shell::set_lan(false)`; each under
+20 s), `tests/ingame.rs` (the weapon selection, the pause and a
 valid replay, the results against the world's scores), `tests/options.rs`
 (video through the paced requests,
 a window made again keeps the game ticking, volumes live, the saved window with the flags on top) play the imported

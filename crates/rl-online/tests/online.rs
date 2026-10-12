@@ -11,6 +11,8 @@ use rl_content::{Content, DEFAULT_PRESET};
 use rl_lobby::{HostConfig, Identity};
 use rl_modes::DeathmatchSettings;
 use rl_net::endpoint::EndpointConfig;
+use rl_netcode::{Driver, WorldSim};
+use rl_online::bundle::GameBundle;
 use rl_online::matches::{bot_wire, rules_wire, setup_packs};
 use rl_online::peer::{MISMATCH, SETUP_REFUSED};
 use rl_online::{OnlineEvent, OnlinePeer, PeerRole};
@@ -386,6 +388,63 @@ fn a_client_vanishes_mid_match() {
     assert!(rows.len() > from + 300, "{} rows, gone at {gone_at}", rows.len());
     assert!(rows[from..].iter().all(|r| r[sb] == 0), "the vanished slot presses nothing");
     assert!(rows[from..].iter().any(|r| r[sa] != 0), "the other client plays on");
+    net.assert_quick();
+}
+
+/// Presses nothing: a planted change's re-simulation.
+struct Quiet;
+
+impl Driver<WorldSim> for Quiet {
+    fn local_inputs(&mut self, _: &WorldSim, _: u32, _: &[u8], _: &mut [Keys]) {}
+}
+
+fn bundles(p: &Peer) -> Vec<GameBundle> {
+    p.events
+        .iter()
+        .filter_map(|e| match e {
+            OnlineEvent::DesyncBundle(b) => Some(GameBundle::decode(b).expect("a bundle")),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Spec §3.5, §9.10: a desync in a real game saves a bundle on both
+/// sides: the start, the final inputs from tick 0, the checksums, the
+/// mismatch, the build and the platform. A health planted in the client's
+/// world alone makes one.
+#[test]
+fn a_desync_makes_a_bundle_on_both_sides() {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 0.1);
+    let a = net.join_all(&["Anna"])[0];
+    net.ready(&[a]);
+    net.host().peer().lobby().start(5).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() >= 150);
+    assert!(bundles(&net.peers[0]).is_empty() && bundles(&net.peers[a]).is_empty(), "no desync yet");
+    let s = net.peers[a].peer().match_session_mut().expect("Anna plays");
+    s.change_confirmed(&mut Quiet, |sim| sim.world_mut().set_health(0, 1.0));
+    net.run_until(Duration::from_secs(10), "both sides make a bundle", |n| {
+        !bundles(&n.peers[0]).is_empty() && !bundles(&n.peers[a]).is_empty()
+    });
+    for (i, host) in [(0, true), (a, false)] {
+        let b = &bundles(&net.peers[i])[0];
+        assert_eq!(b.host, host);
+        assert_eq!(b.my_slot, Some(i as u8), "the host plays slot 0, Anna slot 1");
+        assert_eq!(b.start.seed, 5);
+        assert_eq!(b.fingerprint, rl_proto::FINGERPRINT);
+        assert!(!b.platform.is_empty());
+        let (tick, local, remote) = b.mismatch.expect("the mismatch");
+        assert_ne!(local, remote);
+        assert!(
+            b.rows.len() > tick as usize,
+            "the inputs reach the mismatch: {} rows, tick {tick}",
+            b.rows.len()
+        );
+        assert!(b.checksums.iter().any(|&(t, c)| t == tick && c == local), "its own checksum of the tick");
+    }
+    let (h, c) = (&bundles(&net.peers[0])[0], &bundles(&net.peers[a])[0]);
+    let (ht, hl, hr) = h.mismatch.unwrap();
+    assert_eq!(c.mismatch, Some((ht, hr, hl)), "the same mismatch from both sides");
     net.assert_quick();
 }
 

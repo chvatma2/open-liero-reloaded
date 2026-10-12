@@ -8,7 +8,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   endpoint, its gate and limits, `random_bytes`), `rl-netcode` (`Session`,
   `WorldSim`, `TickRecorder`), `rl-proto` (tags, lobby messages), `rl-lobby`
   (`LobbyHost`, `LobbyClient`), `rl-content` (packs, `build_match`),
-  `rl-sim`, `rl-bots`, `rl-modes`, `rl-replay`, `rl-terrain` and anyhow.
+  `rl-sim`, `rl-bots`, `rl-modes`, `rl-replay`, `rl-terrain`, serde,
+  postcard (the desync bundle) and anyhow.
   Time is the caller's (`poll(now, ..)`); no clock is read here.
 - **`matches.rs`**: `options(start)` (slot `i` is worm `i`: a member's
   `Player::HumanWith` its loadout or `Player::Human`, a bot's `Player::Bot`;
@@ -26,7 +27,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
 - **`peer.rs`, `OnlinePeer`**: `start(role, endpoint, me, look, content,
   setup)`; `poll(now, local_keys, on_tick) -> Vec<OnlineEvent>`;
   `lobby()` (`LobbyHandle`: ready, spectate, look, loadout, chat, have,
-  setup, kick, start, force_start, state, me); `match_session[_mut]`,
+  setup, kick, move_seat (the host's), start, force_start, can_start
+  (the host's answer; `NotHost`, `Running`), state, me); `match_session[_mut]`,
   `my_slot` (`None` once the match ended); `take_ended_world` (the
   match's world as last presented, kept at its end: the host's after the
   presented advance, a client's at `Ended`, before the poll's unpresented
@@ -89,6 +91,16 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   match ending while one is made gets `REPLAY_SKIPPED`, so a hostile host
   cannot pile up threads). A spectator that joined mid-match has no rows
   from tick 0 and makes none.
+- **`bundle.rs`** (spec §3.5, §9.10): `GameBundle` (what happened, host
+  or not, `my_slot`, `FINGERPRINT`, platform `<arch>-<os>`, the
+  `MatchStartWire`, the confirmed input rows from tick 0, this peer's
+  checksums, the mismatch `(tick, local, remote)`), encoded as `RLDG`, a
+  u16 LE version and postcard (`.rldg`; not `rl-cli`'s `.rlds`, which
+  rebuilds its world from a `NetSpec`). The session's `Desync` (both
+  sides: a client's when the host reports it, the host's per peer) and a
+  replay's checksum warning (its record) each give an
+  `OnlineEvent::DesyncBundle(bytes)`, at most `MAX_BUNDLES_PER_MATCH` (3)
+  desyncs a match; the game saves them.
 - **`events.rs`**: `OnlineEvent`, `NetStats` (round trip, input delay, the
   last second's deepest rollback, a client's datagram loss, corrections
   per second, stall episodes).
@@ -100,7 +112,8 @@ clients play a 6 s match to equal confirmed inputs, checksums and replay
 bytes; a late joiner watches from a state, then plays the next match; a
 client whose world differs is refused at the start; a client that vanishes
 mid-match leaves `Keys(0)` in its slot while the others finish; a banned
-player cannot rejoin; an admin's setup is taken or refused with a notice.
+player cannot rejoin; an admin's setup is taken or refused with a notice;
+a health planted in a client's world makes a bundle on both sides.
 `tests/matches.rs`: a proptest of starts within rl-proto's bounds (256
 cases, about 30 build) never panics `build`; a slot both member and bot,
 a single slot, an unknown mod and a pack hash mismatch are refused.

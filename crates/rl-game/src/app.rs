@@ -9,6 +9,12 @@
 //! terrain's dirty rectangles to the GPU. Per frame: `Session::build`
 //! (scene, entities), the egui overlay, `Gpu::present`, a screenshot when
 //! one is due.
+//!
+//! Online (plan 10 task 12): every frame first polls the online game
+//! (`Shell::net_frame`); while an online match plays its peer runs the
+//! ticks (the input latch is its keys' source) and the local tick clock
+//! rests. While the window is hidden the loop keeps polling and ticking
+//! without drawing ([`App::hidden_frame`], decision N21).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,7 +35,7 @@ use crate::latency::Latency;
 use crate::overlay::{Overlay, ScreenMap, Stats};
 use crate::script::{Command, Step};
 use crate::session::Session;
-use crate::shell::Shell;
+use crate::shell::{Outcome, Shell};
 use crate::speed::{self, Speed};
 use crate::stats::Meter;
 use crate::video::Video;
@@ -138,6 +144,11 @@ pub struct App {
     pub error: Option<anyhow::Error>,
     /// The surface's size at the last frame drawn (`--frame-log`).
     drawn_size: (u32, u32),
+    /// F3: the network overlay (spec §7.3).
+    net_overlay: bool,
+    /// The in-game chat's field was open last frame (keys held are
+    /// released when it opens: they go to it, not the game).
+    chatting: bool,
 }
 
 /// Whether egui hears window event `event`: not a key while the options
@@ -250,7 +261,65 @@ impl App {
             flushed: None,
             error: None,
             drawn_size: (0, 0),
+            net_overlay: false,
+            chatting: false,
         }
+    }
+
+    /// The menus and what plays.
+    pub fn shell(&self) -> &Shell {
+        &self.shell
+    }
+
+    pub fn shell_mut(&mut self) -> &mut Shell {
+        &mut self.shell
+    }
+
+    /// An online game exists: the loop polls it every frame, the window
+    /// hidden or not (decision N21).
+    pub fn online_active(&self) -> bool {
+        self.shell.online_active()
+    }
+
+    /// The online game's frame at `now`: the peer polled (an online
+    /// match's ticks run inside, the input latch giving the player's keys
+    /// for each new tick), its events carried out.
+    fn net_step(&mut self, now: Instant) -> Vec<Outcome> {
+        let (input, latency) = (&mut self.input, &mut self.latency);
+        let mut keys = || {
+            latency.latched();
+            input.latch_tick()
+        };
+        let ticks = |shell: &Shell| shell.session().filter(|_| shell.plays_online()).map(Session::ticks);
+        let (before, t0) = (ticks(&self.shell), Instant::now());
+        let mut out = self.shell.net_frame(now, &mut keys);
+        // The F2 panel's and the summary's ticks: the poll's new ones, its
+        // time shared among them (re-simulated ticks included in it).
+        if let (Some(a), Some(b)) = (before, ticks(&self.shell))
+            && b > a
+        {
+            let each = t0.elapsed().as_secs_f64() / (b - a) as f64;
+            for _ in a..b {
+                self.meter.tick(each);
+            }
+        }
+        out.extend(self.shell.after_ticks());
+        out
+    }
+
+    /// A frame while the window cannot show one (minimised or covered)
+    /// and an online game exists (decision N21): the network polled and
+    /// the match ticked, nothing drawn. `about_to_wait` runs it about
+    /// every `net::HIDDEN_FRAME` and does the outcomes.
+    pub fn hidden_frame(&mut self) -> Vec<Outcome> {
+        let now = self.now();
+        let mut out = self.net_step(now);
+        out.extend(self.shell.poll());
+        if self.cfg.menus && self.flushed.is_none_or(|t| now.saturating_duration_since(t) >= FLUSH_INTERVAL) {
+            self.flushed = Some(now);
+            self.shell.flush();
+        }
+        out
     }
 
     /// The whole run, for the exit summary.
@@ -559,12 +628,23 @@ impl App {
         let start = *self.start.get_or_insert(now);
         let elapsed = self.last.map_or(0.0, |l| (now - l).as_secs_f64());
         self.last = Some(now);
-        let due = if self.fake_start.is_some() {
+        if self.shell.online_active() {
+            let out = self.net_step(now);
+            self.outcomes(el, out);
+        }
+        // An online match's peer runs its ticks (`net_step`): the local
+        // clock rests meanwhile (nothing to catch up afterwards).
+        let online = self.shell.plays_online();
+        let due = if online {
+            0
+        } else if self.fake_start.is_some() {
             autoplay::FAKE_TICKS_PER_FRAME
         } else {
             self.clock.advance(elapsed)
         };
-        self.run_ticks(el, due)?;
+        if !online {
+            self.run_ticks(el, due)?;
+        }
         if self.cfg.menus {
             let out = self.shell.after_ticks();
             self.outcomes(el, out);
@@ -575,7 +655,9 @@ impl App {
         let interpolate = self.clock.alpha();
         let mut alpha = 1.0;
         if let Some(s) = self.shell.session_mut() {
-            if s.present.scene.options.interpolation != Interpolation::Latest {
+            // Online the newest predicted tick is drawn as it is: the local
+            // clock's phase is not the netcode's (spec §3.4).
+            if s.present.scene.options.interpolation != Interpolation::Latest && !online {
                 alpha = interpolate;
             }
             s.build(alpha, &mut self.list);
@@ -638,6 +720,8 @@ impl App {
             selecting: self.shell.selecting(),
             names: !self.cfg.menus || self.shell.names_shown(),
             arrangement: self.shell.ui.settings().video.hud_layout,
+            net: self.net_overlay.then(|| self.shell.net_view()).flatten(),
+            lagging: self.shell.lagging(),
         });
         let (ui_state, data) = (&self.shell.ui, &mut self.shell.data);
         let menus = self.cfg.menus;
@@ -654,6 +738,12 @@ impl App {
             // The profiles' skin preview this frame asked for, from the next.
             self.shell.update_preview(&self.egui);
             self.shell.log_menu_warnings();
+            // The chat's field takes the keys: those held go up.
+            let chatting = self.shell.data.ingame_chat.is_some();
+            if chatting && !self.chatting {
+                self.input.release_keys();
+            }
+            self.chatting = chatting;
         }
         let tree = out.platform_output.accesskit_update.take();
         w.egui.handle_platform_output(&w.window, out.platform_output);
@@ -759,9 +849,9 @@ impl App {
         pressed: bool,
         repeat: bool,
     ) -> anyhow::Result<()> {
-        // The options capture this key: it is theirs alone (no scores,
-        // debug panel or health bars toggling under the dialog).
-        if self.shell.data.capture.is_some() {
+        // The options capture this key, or the chat's field has it: it is
+        // theirs alone (no scores, debug panel or health bars toggling).
+        if self.shell.data.capture.is_some() || self.shell.data.ingame_chat.is_some() {
             return Ok(());
         }
         // OLX's ShowScore: the scoreboard while Tab is held.
@@ -778,6 +868,8 @@ impl App {
             KeyCode::Escape if !self.cfg.menus => el.exit(),
             KeyCode::F5 if !self.cfg.menus => self.restart(el)?,
             KeyCode::F2 => self.debug = !self.debug,
+            // The network overlay (spec §7.3).
+            KeyCode::F3 => self.net_overlay = !self.net_overlay,
             // A watched online match: the next or previous worm followed.
             KeyCode::PageUp | KeyCode::PageDown if self.shell.session().is_some_and(Session::spectating) => {
                 if let Some(s) = self.shell.session_mut() {

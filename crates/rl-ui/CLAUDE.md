@@ -53,7 +53,8 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   (`MatchPrefs`: local play's last setup; the HUD has one style: an old file's `hud:` is ignored),
   `import` (`ImportSettings::last_path`, default empty).
   `sanitize()` fixes out-of-range values and
-  keys (`sanitize_bindings`: the `GAME_KEYS` Esc, F5, F2, Tab, H and
+  keys (`sanitize_bindings`: the `GAME_KEYS` Esc, F5, F2, F3 (the network
+  panel), T (the chat online), Tab, H and
   PageUp/PageDown (a watched game's fast-forward) are dropped, then an
   action left unreachable gets OLX's back), one warning each.
   The master volume defaults to OLX's 70 %; the game plays `master * sfx`.
@@ -158,6 +159,20 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   (`lobby::intercept_back`). A locked LAN entry copies its address to the
   Direct form instead of joining. Tests: `tests/online.rs`; a freshly
   opened page needs `settle` (two extra frames) before a pointer click.
+  **Online matches** (plan 10 task 12): while online the app's
+  `MatchStarted` (from any screen) is `Game::Online` in game, no weapon
+  selection (the lobby's); Esc opens the match's menu ("Menu", the match
+  goes on; its "Leave the game" emits `EndMatch`, `LeaveOnline` and goes
+  to Multiplayer); `Restart`, Rematch and Save replay do nothing (the app
+  saves every match's replay); `MatchOver` → Results, whose "Back to
+  lobby" emits `EndMatch` and returns to the Lobby; `OnlineFailed` from
+  any screen ends the match (`EndMatch`) and goes to Multiplayer;
+  `LobbyChat` works in game and on the results too; `take_seed` gives the
+  lobby's start its seed. In game `T` (no modifier) opens a chat field
+  over the playfield's bottom (`MenuData::ingame_chat`, `ingame.rs`; the
+  `T` is not typed): Enter sends (`LobbyChat`) and closes, Esc or a click
+  elsewhere closes, and Esc there is not Back (`show`'s typing check
+  covers InGame).
 - **Import job** (`import.rs`, plan 7 task 7): `ImportJob::spawn(path,
   packs)` runs `rl_content::import::discover` and `import` (no prune,
   revision `LOCAL_REVISION`) on a thread named `olx-import` and returns at
