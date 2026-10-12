@@ -10,6 +10,9 @@ publish.workspace = true
 [dependencies]
 str0m.workspace = true
 rl-netcode.workspace = true
+rl-proto.workspace = true
+tungstenite.workspace = true
+getrandom.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

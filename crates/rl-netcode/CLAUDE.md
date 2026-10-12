@@ -15,6 +15,9 @@ model that tests it in one process (spec §9.1).
 - **Network model** (`netsim`): `Network` carries datagrams between peers
   with per-direction latency, jitter, Gilbert-Elliott loss, duplication,
   outages; reliable messages arrive in order. Deterministic from its seed.
+  Each direction's loss, delay and duplication is a pub `LinkModel`
+  (profile + its own `Rng`), which `rl-net`'s impairment stage reuses over
+  real sockets (spec §9.4).
 
   | profile | ping ms | jitter ms | loss | burst | duplicate |
   |---|---|---|---|---|---|

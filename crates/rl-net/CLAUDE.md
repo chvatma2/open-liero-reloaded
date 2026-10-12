@@ -4,9 +4,12 @@ Real transport for online play (networking spec §2.1, §5.1): WebRTC data
 channels over the sans-IO str0m stack, signalling over a WebSocket, LAN
 announcements.
 
-- **Layer 5, std; not wasm.** Depends on rl-netcode (`Channel`) and str0m.
-  Real clocks and sockets live only in this crate's socket driver (and the
-  binaries); `link` itself is sans-IO.
+- **Layer 5, std; not wasm.** Depends on rl-netcode (`Channel`, `PeerId`,
+  `netsim::LinkModel`), rl-proto (`Signal`, the limits' sizes), str0m,
+  tungstenite (`=0.30.0`, default features: no TLS) and getrandom
+  (`=0.4.3`, `random_bytes`: the native peers' randomness). Real clocks and
+  sockets live only in this crate's socket driver, `endpoint` (and the
+  binaries); `link` itself is sans-IO, and `endpoint::poll` takes the time.
 - **str0m pinned exactly** (`=0.24.0`, decision N15), `default-features =
   false, features = ["rust-crypto"]`: the default features pull the
   `examples` web server and select aws-lc-rs as the crypto backend.
@@ -25,8 +28,9 @@ announcements.
   is converted by the endpoint). `accepts` demultiplexes a shared socket;
   `receive` takes a datagram (non-WebRTC bytes are ignored); `poll` feeds
   the time, flushes queued sends and hands out `Transmit`s, `LinkEvent`s
-  (`Open` once both channels are open, `Message`, `Closed` once; nothing
-  after a local `close`) and the next timeout.
+  (`Open` once both channels are open, `Message`, `Closed { why: Ended }`
+  once — `Peer`, `Lost` (ICE), `Failed`; nothing after a local `close`)
+  and the next timeout.
 - **Channels** (decision N17), both negotiated out of band, the same config
   on both sides: `INPUTS` = stream id 0, `"inputs"`, unordered,
   `MaxPacketLifetime { lifetime: 1 }` — in effect no retransmits
@@ -38,24 +42,78 @@ announcements.
   per message that overflows socket buffers and loses inputs (regression
   test `irregular_polling_does_not_multiply_the_inputs_traffic`). `send`
   refuses messages above `MAX_MESSAGE` (64 KiB, str0m's assumed remote
-  maximum).
+  maximum) and empty ones (str0m 0.24.0 makes no chunk for them but counts
+  them, so the ordered channel stalls behind one).
 - **Buffering**: str0m 0.24.0 refuses a write that does not fit its 128 KiB
   SCTP send buffer (shared by the streams), so `Link` queues messages per
   channel and moves them into str0m as room appears: inputs first, control
   leaving 16 KiB free for inputs. `buffered(channel)` = the queue plus
   str0m's buffered amount; big transfers keep it bounded (chunks of 32 KB,
-  under 256 KB queued).
+  under 256 KB queued). The link's queue has no limit: callers check
+  `buffered` (the endpoint drops sends beyond `MAX_QUEUED`, 4 MiB per peer
+  and channel, counted in `PeerStats::sends_dropped`).
 - **str0m's contract** — every mutation of the `Rtc` (input, write, SDP or
   direct API change, candidate) is followed by draining `poll_output` until
   it returns a timeout, before the next mutation — is kept inside `Link`:
-  every method that mutates drains into the link's own buffers. Keep it so
-  when adding methods.
+  every method that mutates drains into the link's own buffers (`fail`
+  too, after `rtc.disconnect()`). Keep it so when adding methods.
+- **`endpoint::Endpoint`**: the socket driver. One non-blocking UDP socket
+  for every link (a datagram goes to the link that `accepts` it, given the
+  link's own host candidate as the destination; others are counted,
+  `stray_datagrams`). `poll(now, events)` never blocks.
+  - **Host** (`Endpoint::host(cfg, gate)`): TCP and UDP on the same port
+    (`0.0.0.0`; port 0 picks one free for both, `local_port`). Each TCP
+    connection runs a non-blocking tungstenite server handshake, then
+    sends one binary frame, a `Signal::Offer` (frames above
+    `limits.max_signal_bytes` close it). Checks in order: decodes as an
+    offer (else `Refused { Malformed }`), `PROTOCOL_VERSION` and the
+    fingerprint (`Version`), `max_peers` counting connecting links
+    (`Full`), peer ids left (`Busy`), the `gate` (its reason), the SDP
+    (`Malformed`). Accepted: `Link::answerer` with the candidate (the TCP
+    connection's local IP, the UDP port; decision N16), `Signal::Answer`,
+    the WebSocket kept until the link opens. At most 64 connections wait
+    for their offer; a refused or finished one gets a WebSocket close and
+    1 s to go. Nothing is reported for a connection that never opens.
+  - **Client** (`Endpoint::connect(cfg, host)`): the TCP connect runs on
+    its own thread (`connect_timeout`, 5 s), then the client handshake, the
+    offer (candidate: the TCP local IP, the UDP port), the answer or
+    `NetEvent::Refused`. A failure before the link opens is
+    `Disconnected { peer: HOST }` without `Connected`.
+  - **Peers**: host side 1, 2, 3, … in the order links open, never reused;
+    the client's peer is `HOST` (0). `Connected { addr }` is the remote end
+    of the signalling connection. A local `close` (and dropping the
+    endpoint) tells the peer at once and reports nothing.
+  - **Timeouts**: a link must open within `SETUP_TIMEOUT` (10 s) of its
+    offer; an open link silent for `SILENCE_TIMEOUT` (10 s) or lost by ICE
+    is `Disconnected { Timeout }`.
+- **Limits** (`limits.rs`, spec §5.4), per peer, on what it sends us: a
+  token bucket holding one second, `max_datagrams_per_s` (400) messages on
+  the unreliable channel, `max_reliable_bytes_per_s` (256 KiB) reliable
+  bytes, each message costing `MESSAGE_COST` (64) more. Beyond either →
+  `Disconnected { Limits }`; an unreliable message above
+  `rl_proto::MAX_DATAGRAM` or a reliable one above `MAX_CONTROL` →
+  `Malformed`. The link is closed. `allow_burst(peer, bytes)` exempts an
+  expected state transfer from the byte limit (receiver side; the sender
+  is not limited). Raw datagrams are not limited (SACKs of a big transfer
+  would trip it); they are counted in `PeerStats`.
+- **Impairment** (`impair.rs`, spec §9.4): with `cfg.impair`, every
+  outgoing datagram (handshakes included) passes `rl_netcode::netsim`'s
+  `LinkModel` with the profile — loss, delay with jitter, duplication —
+  before `send_to`; each link's model forks from `impair_seed`. Each end
+  impairs its own sending, so impairing both ends gives the profile's
+  ping. SCTP retransmits what it loses.
 - **Never panics on network input**: offers, answers and datagrams are
-  fuzzed (`tests/fuzz.rs`); a forged datagram does not end an open link.
+  fuzzed (`tests/fuzz.rs`, also strangers' datagrams, datagrams to a
+  connecting link, empty sends); a forged datagram does not end an open
+  link. Signalling garbage, oversized frames and wrong messages close the
+  connection quietly (`tests/endpoint.rs`).
 
 Test: `cargo nextest run -p rl-net` (`tests/link.rs`: in memory on a
 virtual clock, 32 s in well under 1 s of wall time, and irregular
 polling without a FORWARD-TSN/SACK storm; over localhost UDP:
 connect, 3 MB reliable, 2 000 unreliable datagrams at 1 ms — 10 000, about
-10 s, with `RL_FULL_TESTS` in `cargo xtask full`).
+10 s, with `RL_FULL_TESTS` in `cargo xtask full`. `tests/endpoint.rs`, on
+127.0.0.1 with port 0, every wait bounded: a host and three clients,
+refusals, floods, bad signalling, closes, 1000 reliable messages through
+`bad`, and the 10 s timeouts — the longest test, about 10 s).
 Cross-build: `cargo build --release --target x86_64-pc-windows-gnu -p rl-net`.

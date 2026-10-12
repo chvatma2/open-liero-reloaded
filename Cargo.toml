@@ -76,9 +76,14 @@ egui-winit = { version = "=0.36.2", default-features = false, features = ["wayla
 # Menus (plan 7): exact pins. egui_kittest drives GUI flows by label, in lockstep with egui.
 egui_kittest = "=0.36.2"
 directories = "=6.0.0"
-# Online play (plan 10, decision N15): an exact pin, pure Rust crypto (no C
-# toolchain, so the mingw cross-build needs nothing more).
+# Online play (plan 10, decision N15): an exact pin, the rust-crypto backend.
+# Needs no system C libraries, but dimpl's `rcgen` builds aws-lc-sys from C
+# source (cc/cmake); the mingw cross-build handles it (ruling T1-C).
 str0m = { version = "=0.24.0", default-features = false, features = ["rust-crypto"] }
+# Signalling over a WebSocket (plan 10, spec §5.1): no TLS.
+tungstenite = "=0.30.0"
+# OS randomness for the native peers (plan 10).
+getrandom = "=0.4.3"
 # Identity keys (plan 10, spec §5.2): BIP-340 Schnorr over secp256k1, no_std.
 k256 = { version = "=0.14.0", default-features = false, features = ["schnorr"] }
 

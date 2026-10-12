@@ -10,9 +10,10 @@
 //! link's own buffers, which `poll` hands out.
 //!
 //! Both channels are negotiated out of band (decision N17): [`INPUTS`]
-//! (stream id 0, unordered, a 1 ms lifetime: in effect no retransmits) carries [`Channel::Unreliable`],
-//! [`CONTROL`] (stream id 1, reliable, ordered) carries
-//! [`Channel::Reliable`]. Neither side waits for in-band channel setup.
+//! (stream id 0, unordered, a 1 ms lifetime: in effect no retransmits)
+//! carries [`Channel::Unreliable`], [`CONTROL`] (stream id 1, reliable,
+//! ordered) carries [`Channel::Reliable`]. Neither side waits for in-band
+//! channel setup.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -59,7 +60,18 @@ pub enum LinkEvent {
     /// A message from the peer.
     Message { channel: Channel, bytes: Vec<u8> },
     /// The connection is gone (reported once; never after [`Link::close`]).
-    Closed { why: String },
+    Closed { why: Ended },
+}
+
+/// Why a link ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Ended {
+    /// The peer closed it (a channel or the whole connection).
+    Peer,
+    /// ICE lost the connection: nothing came back for several seconds.
+    Lost,
+    /// str0m failed (a protocol error or a damaged state).
+    Failed(String),
 }
 
 /// One datagram to send from the local address `from` to `to`.
@@ -79,6 +91,9 @@ pub enum LinkError {
     NotOpen,
     /// The message is larger than [`MAX_MESSAGE`].
     TooLarge,
+    /// The message is empty: str0m 0.24.0 makes no chunk for it but still
+    /// counts it, so a reliable channel would stall behind it.
+    Empty,
     /// The link is closed.
     Closed,
 }
@@ -89,6 +104,7 @@ impl fmt::Display for LinkError {
             LinkError::Sdp(why) => write!(f, "bad session description: {why}"),
             LinkError::NotOpen => f.write_str("the link is not open yet"),
             LinkError::TooLarge => write!(f, "message larger than {MAX_MESSAGE} bytes"),
+            LinkError::Empty => f.write_str("empty message"),
             LinkError::Closed => f.write_str("the link is closed"),
         }
     }
@@ -261,13 +277,17 @@ impl Link {
         if let Err(e) = handled
             && !self.rtc.is_alive()
         {
-            self.fail(e.to_string());
+            self.fail(Ended::Failed(e.to_string()));
         }
         self.refresh_buffered();
     }
 
     /// Queues `bytes` as one message on `channel`. Messages leave in order
     /// as str0m's send buffer has room; [`Link::buffered`] tells how much waits.
+    ///
+    /// The queue has no limit of its own: callers check [`Link::buffered`]
+    /// before sending more (the endpoint refuses sends beyond its per-peer
+    /// cap).
     pub fn send(&mut self, channel: Channel, bytes: &[u8]) -> Result<(), LinkError> {
         match self.state {
             State::Closed => return Err(LinkError::Closed),
@@ -276,6 +296,9 @@ impl Link {
         }
         if bytes.len() > MAX_MESSAGE {
             return Err(LinkError::TooLarge);
+        }
+        if bytes.is_empty() {
+            return Err(LinkError::Empty);
         }
         let i = index(channel);
         self.queues[i].push_back(bytes.to_vec());
@@ -299,7 +322,7 @@ impl Link {
         for _ in 0..MAX_SPINS {
             if let Err(e) = self.rtc.handle_input(Input::Timeout(self.now)) {
                 self.drain();
-                self.fail(e.to_string());
+                self.fail(Ended::Failed(e.to_string()));
                 break;
             }
             self.drain();
@@ -343,7 +366,7 @@ impl Link {
                 }
                 Ok(Output::Event(e)) => self.on_event(e),
                 Err(e) => {
-                    self.fail(e.to_string());
+                    self.fail(Ended::Failed(e.to_string()));
                     self.timeout = self.now;
                     return;
                 }
@@ -374,23 +397,24 @@ impl Link {
                     self.events.push(LinkEvent::Message { channel, bytes: data.data });
                 }
             }
-            Event::ChannelClose(id) if self.channel_of(id).is_some() => self.fail("a channel closed".into()),
-            Event::IceConnectionStateChange(IceConnectionState::Disconnected) => {
-                self.fail("the connection was lost".into())
-            }
-            Event::Closed => self.fail("the peer closed the connection".into()),
+            Event::ChannelClose(id) if self.channel_of(id).is_some() => self.fail(Ended::Peer),
+            Event::IceConnectionStateChange(IceConnectionState::Disconnected) => self.fail(Ended::Lost),
+            Event::Closed => self.fail(Ended::Peer),
             _ => {}
         }
     }
 
-    /// Ends the link, reporting `why` once.
-    fn fail(&mut self, why: String) {
+    /// Ends the link, reporting `why` once. `disconnect` mutates the `Rtc`,
+    /// so it is drained too (its events are dropped: the link is closed; a
+    /// nested `fail` returns at once).
+    fn fail(&mut self, why: Ended) {
         if self.state == State::Closed {
             return;
         }
         self.state = State::Closed;
         self.events.push(LinkEvent::Closed { why });
         self.rtc.disconnect();
+        self.drain();
     }
 
     /// Moves queued messages into str0m while its buffer has room: inputs
@@ -419,7 +443,7 @@ impl Link {
                     Ok(false) => break,
                     Err(e) => {
                         self.drain();
-                        self.fail(e.to_string());
+                        self.fail(Ended::Failed(e.to_string()));
                     }
                 }
             }

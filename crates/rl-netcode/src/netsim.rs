@@ -53,19 +53,33 @@ pub struct LinkStats {
     pub dropped: u64,
 }
 
-/// One direction of a connection.
-struct Link {
+/// The loss, delay and duplication of one direction of a connection, from
+/// its profile and its own random stream: `Network`'s per-link model, and
+/// `rl-net`'s impairment stage over real sockets (spec §9.4).
+pub struct LinkModel {
     profile: Profile,
     /// Gilbert-Elliott state: true is the lossy state.
     bad: bool,
-    last_reliable: u64,
-    outage: Option<(u64, u64)>,
     rng: Rng,
 }
 
-impl Link {
+impl LinkModel {
+    pub fn new(profile: Profile, rng: Rng) -> Self {
+        Self { profile, bad: false, rng }
+    }
+
+    pub fn profile(&self) -> Profile {
+        self.profile
+    }
+
+    /// Changes the profile; the loss chain restarts in its good state.
+    pub fn set_profile(&mut self, profile: Profile) {
+        self.profile = profile;
+        self.bad = false;
+    }
+
     /// One-way delay in microseconds: ping/2 plus a jitter draw, at least 0.
-    fn delay_us(&mut self) -> u64 {
+    pub fn delay_us(&mut self) -> u64 {
         let half = self.profile.ping_ms as f64 * 500.0;
         let spread = self.profile.jitter_ms as f64 * 500.0;
         let d = half + (self.rng.unit() * 2.0 - 1.0) * spread;
@@ -75,7 +89,7 @@ impl Link {
     /// Steps the loss state and says whether this datagram is lost. With a
     /// mean run of 1 or less, losses are independent; otherwise a
     /// Gilbert-Elliott chain gives the mean loss and run length.
-    fn lost(&mut self) -> bool {
+    pub fn lost(&mut self) -> bool {
         let p = self.profile;
         if p.loss <= 0.0 {
             return false;
@@ -90,6 +104,21 @@ impl Link {
         self.bad
     }
 
+    /// Whether a surviving datagram gets a second copy (draws only when the
+    /// profile duplicates).
+    pub fn duplicated(&mut self) -> bool {
+        self.profile.duplicate > 0.0 && self.rng.unit() < self.profile.duplicate
+    }
+}
+
+/// One direction of a connection.
+struct Link {
+    model: LinkModel,
+    last_reliable: u64,
+    outage: Option<(u64, u64)>,
+}
+
+impl Link {
     fn in_outage(&self, t: u64) -> bool {
         self.outage.is_some_and(|(a, b)| t >= a && t < b)
     }
@@ -147,15 +176,15 @@ impl Network {
     pub fn connect(&mut self, a: PeerId, b: PeerId, profile: Profile) {
         for key in [(a, b), (b, a)] {
             let rng = self.rng.fork();
-            self.links.insert(key, Link { profile, bad: false, last_reliable: 0, outage: None, rng });
+            self.links
+                .insert(key, Link { model: LinkModel::new(profile, rng), last_reliable: 0, outage: None });
         }
     }
 
     pub fn set_profile(&mut self, a: PeerId, b: PeerId, profile: Profile) {
         for key in [(a, b), (b, a)] {
             if let Some(l) = self.links.get_mut(&key) {
-                l.profile = profile;
-                l.bad = false;
+                l.model.set_profile(profile);
             }
         }
     }
@@ -181,10 +210,9 @@ impl Network {
         match ch {
             Channel::Unreliable => {
                 // The chain steps for every datagram, outage or not.
-                let lost = link.lost();
-                let first = now_us + link.delay_us();
-                let second = (link.profile.duplicate > 0.0 && link.rng.unit() < link.profile.duplicate)
-                    .then(|| now_us + link.delay_us());
+                let lost = link.model.lost();
+                let first = now_us + link.model.delay_us();
+                let second = link.model.duplicated().then(|| now_us + link.model.delay_us());
                 if lost || link.in_outage(now_us) {
                     self.received.entry(to).or_default().dropped += 1;
                     return;
@@ -201,12 +229,12 @@ impl Network {
                 }
             }
             Channel::Reliable => {
-                let mut d = link.delay_us();
-                let ping_us = link.profile.ping_ms as u64 * 1000;
+                let mut d = link.model.delay_us();
+                let ping_us = link.model.profile.ping_ms as u64 * 1000;
                 // Every loss draw (from the link's own loss chain, shared with
                 // the unreliable datagrams) is a retransmission one ping later.
                 let mut tries = 0;
-                while tries < 64 && link.lost() {
+                while tries < 64 && link.model.lost() {
                     d += ping_us;
                     tries += 1;
                 }
