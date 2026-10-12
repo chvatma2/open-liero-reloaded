@@ -5,6 +5,7 @@ mod bench;
 mod bless;
 mod bless_regression;
 mod check;
+mod determinism;
 mod e2e;
 mod envelope;
 mod fetch;
@@ -158,6 +159,23 @@ enum Command {
     /// Build rl-cli and rl-game for Windows (x86_64-pc-windows-gnu), stage them with the
     /// content in Windows' temp directory and list the adapters each backend sees (plan 8).
     Windows,
+    /// Cross-platform determinism (plan 9, spec §9.5): golden bot matches' replays are played
+    /// by `rl-detcheck` natively and on another platform; the checksum streams must be equal.
+    /// With no leg flag the WASM leg (Node.js WASI) runs; a flag runs that leg only.
+    Determinism {
+        /// The Windows leg (plan 8's interop runner); every golden match.
+        #[arg(long)]
+        windows: bool,
+        /// The arm64 Linux leg under QEMU; every golden match.
+        #[arg(long)]
+        arm64: bool,
+        /// The WASM leg (the default when no leg is named).
+        #[arg(long)]
+        wasm: bool,
+        /// Every golden match, not only the one `check` replays.
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 /// The workspace root (the parent of this crate's directory).
@@ -192,6 +210,9 @@ fn main() -> ExitCode {
         Command::BlessRender { reason } => bless::run(&reason),
         Command::BlessRegression { reason, from } => bless_regression::run(&reason, from.as_deref()),
         Command::Windows => winbuild::command(),
+        Command::Determinism { windows, arm64, wasm, all } => {
+            determinism::command(determinism::Opts { wasm, windows, arm64, all })
+        }
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

@@ -34,7 +34,7 @@ pub const STOP_SCRIPT: &str = "if (-not $env:RL_STAGE) { exit 2 }; \
 /// A generous bound for one run (an envelope point takes a minute or two):
 /// past it `run` stops the process and fails.
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-pub const EXES: [&str; 2] = ["rl-cli.exe", "rl-game.exe"];
+pub const EXES: [&str; 3] = ["rl-cli.exe", "rl-game.exe", "rl-detcheck.exe"];
 /// mingw's runtime DLLs an exe may import; copied beside it when it does.
 pub const MINGW_DLLS: [&str; 3] = ["libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll"];
 /// The stage's directory name in `%TEMP%`.
@@ -82,11 +82,23 @@ pub fn missing() -> Option<String> {
     None
 }
 
-/// Builds `rl-cli` and `rl-game` for Windows (release); gives their directory.
+/// Builds `rl-cli`, `rl-game` and `rl-detcheck` for Windows (release); gives their directory.
 pub fn build() -> Result<PathBuf, String> {
     let out = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
         .current_dir(root())
-        .args(["build", "--quiet", "--release", "--target", TARGET, "-p", "rl-cli", "-p", "rl-game"])
+        .args([
+            "build",
+            "--quiet",
+            "--release",
+            "--target",
+            TARGET,
+            "-p",
+            "rl-cli",
+            "-p",
+            "rl-game",
+            "-p",
+            "rl-detcheck",
+        ])
         .env("CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER", LINKER)
         .output()
         .map_err(|e| format!("cannot run cargo: {e}"))?;

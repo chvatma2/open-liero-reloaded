@@ -30,6 +30,7 @@
         "rl-ui": 5,
         "rl-cli": 6,
         "rl-game": 6,
+        "rl-detcheck": 6,
         "xtask": 6,
     },
     same_layer: [

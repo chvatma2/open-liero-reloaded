@@ -2912,6 +2912,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-detcheck"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rl-content",
+ "rl-replay",
+ "rl-sim",
+]
+
+[[package]]
 name = "rl-fx"
 version = "0.1.0"
 dependencies = [

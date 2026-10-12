@@ -197,6 +197,10 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
         }
     });
 
+    step("determinism", &mut || {
+        crate::determinism::step(crate::determinism::Opts { wasm: true, ..Default::default() })
+    });
+
     if gpu {
         step("bot-grid", &mut || full_cpu_step(&envs));
         step("gpu", &mut || gpu_step(&envs));
@@ -206,6 +210,12 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
         step("bench", &mut || crate::bench::bench_step(&envs, false));
         step("stress", &mut || crate::bench::stress_step(content.as_deref(), false));
         step("net-feel", &mut || crate::net::feel_step(content.as_deref()));
+        step("determinism-windows", &mut || {
+            crate::determinism::step(crate::determinism::Opts { windows: true, ..Default::default() })
+        });
+        step("determinism-arm64", &mut || {
+            crate::determinism::step(crate::determinism::Opts { arm64: true, ..Default::default() })
+        });
     }
     let what = if gpu { "full" } else { "check" };
     if failed.is_empty() {

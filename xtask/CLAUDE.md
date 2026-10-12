@@ -2,7 +2,7 @@
 
 Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `oracle-record`, `tidy`, `bless-render`, `bless-regression`, `fetch-olx-content`,
-`e2e`, `bench`, `stress`, `net-feel`, `windows`, `envelope`.
+`e2e`, `bench`, `stress`, `net-feel`, `windows`, `envelope`, `determinism`.
 
 - `fetch-olx-content` (`fetch.rs`) imports the manifest into the
   committed `content/packs`; `check`'s `olx-content` step (`fetch::verify`,
@@ -247,3 +247,26 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   exceeds 25 GB (`tidy::WARN_BYTES`); the size walk gives up after 1 s.
 - WSL footnote: the Windows drive hosts the virtual disk; `wsl --shutdown`
   then `wsl --manage <distro> --set-sparse true` lets it shrink.
+
+## determinism (`determinism.rs`, plan 9 task 13, spec §9.5)
+
+`cargo xtask determinism [--wasm] [--windows] [--arm64] [--all]`: the golden
+bot matches of `fixtures/matches/` (`check`: only `mw-castlestrike-8chaos`;
+`--all` and the Windows and arm64 legs: all three) are recorded natively
+(`rl-cli match ... --record target/determinism/<stem>.rlrp --no-verify`,
+flags read from the golden's `spec`), `rl-detcheck` prints their checksum
+streams (tick 0, every 10 ticks, the last) and each leg's stream must equal
+the native one (`compare`: the first differing `<file> <tick>`, or a length
+difference). No leg flag means the WASM leg; a flag runs that leg only.
+- WASM (`check`'s `determinism` step, one replay, about 15 s warm): `rl-detcheck`
+  for `wasm32-wasip1` run by `node tools/wasi-run.mjs` (Node's built-in WASI,
+  the repository root preopened as `/`). Needs `sudo apt install nodejs`.
+- Windows (`full`'s `determinism-windows`): plan 8's `winbuild` (`EXES` and
+  `build()` include `rl-detcheck`), `stage`, `run` with `RUN_TIMEOUT`.
+- arm64 (`full`'s `determinism-arm64`): `rl-detcheck` for
+  `aarch64-unknown-linux-gnu` (linker `aarch64-linux-gnu-gcc`, `.cargo/config.toml`)
+  under `qemu-aarch64 -L /usr/aarch64-linux-gnu`. Needs `sudo apt install
+  qemu-user gcc-aarch64-linux-gnu` and the rustup target.
+A leg whose tool or target is missing prints `skip <step> (<why and the fix>)`
+before anything is recorded; a differing stream fails the step (a real
+finding: rollback would desync across those platforms).
