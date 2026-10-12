@@ -170,6 +170,9 @@ pub struct OnlinePeer {
     /// The replay being made: one at a time.
     replay: Option<ReplayJob>,
     last_record: Option<MatchRecord>,
+    /// The match's world as last presented, kept when it ended (until
+    /// taken: [`OnlinePeer::take_ended_world`]).
+    ended_world: Option<World>,
     /// Member names by id, as last seen (members who left keep theirs).
     names: BTreeMap<u8, String>,
     /// Peers to close once what was sent to them is delivered (or at the deadline).
@@ -237,6 +240,7 @@ impl OnlinePeer {
             game: None,
             replay: None,
             last_record: None,
+            ended_world: None,
             names: BTreeMap::new(),
             closing: BTreeMap::new(),
             events: Vec::new(),
@@ -320,6 +324,15 @@ impl OnlinePeer {
     /// spectator that joined mid-match has none).
     pub fn last_record(&self) -> Option<&MatchRecord> {
         self.last_record.as_ref()
+    }
+
+    /// The world of the match that just ended, as last presented (the
+    /// last `on_tick` world): once `MatchEnded` is out the session goes on
+    /// unpresented ([`OnlinePeer::match_session`] is `None`) to confirm and
+    /// drain, so this is what a game draws until it leaves the match.
+    /// `None` once taken, or before a match ended.
+    pub fn take_ended_world(&mut self) -> Option<World> {
+        self.ended_world.take()
     }
 
     /// Leaves: the match's `Bye` (the netcode's) and the lobby's to everyone,
@@ -667,6 +680,9 @@ impl OnlinePeer {
                 if let Some(g) = &mut self.game
                     && g.ended.is_none()
                 {
+                    // Received before this poll's advance: the world is
+                    // the last poll's, the one presented.
+                    self.ended_world = Some(g.session.sim().world().clone());
                     g.ended = Some(now);
                 }
                 self.events.push(OnlineEvent::MatchEnded(end));
@@ -731,6 +747,7 @@ impl OnlinePeer {
         if let Some(now) = self.now {
             self.drain_lobby(now);
         }
+        self.ended_world = None;
         self.game = Some(Game::new(session, Some(HostBots::new(world.bots)), start.clone(), my_slot));
         self.events.push(OnlineEvent::MatchStarting { start, my_slot });
         Ok(())
@@ -782,6 +799,7 @@ impl OnlinePeer {
             (false, None) => (Role::Spectator { host: HOST }, Config::new(slots, 0), None),
         };
         let session = Session::new(cfg, role, world.sim, self.now_us);
+        self.ended_world = None;
         self.game = Some(Game::new(session, None, start.clone(), my_slot));
         self.events.push(OnlineEvent::MatchStarting { start, my_slot });
     }
@@ -895,6 +913,8 @@ impl OnlinePeer {
     fn host_end(&mut self, now: Instant) {
         let now_us = self.now_us;
         let Some(g) = &mut self.game else { return };
+        // After this poll's presented advance: the world presented.
+        self.ended_world = Some(g.session.sim().world().clone());
         g.ended = Some(now);
         let end = end_wire(g.last.as_ref());
         let record = g.end_at.and_then(|e| record_of(&g.session, &g.start, e + 1));

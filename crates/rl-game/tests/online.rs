@@ -124,8 +124,8 @@ fn the_local_slot_drives_everything() {
 }
 
 /// A game nobody here plays (bots alone) has no local slot: the camera
-/// and the HUD follow the worm chosen, round in worm order; a player's
-/// camera stays on its own worm.
+/// and the HUD follow the worm chosen, round in worm order (worm 0 keeps
+/// the crosshair); a player's camera stays on its own worm.
 #[test]
 fn a_watcher_follows_any_worm() {
     let Some(dir) = content_dir() else { return };
@@ -135,7 +135,11 @@ fn a_watcher_follows_any_worm() {
     assert_eq!(s.local(), None);
     assert!(!s.spectating(), "a local game is watched, not spectated online");
     let looks = s.present.assets();
-    assert!((0..3).all(|i| !looks.worm(i).local), "no crosshair: nobody plays here");
+    assert!(
+        looks.worm(0).local && (1..3).all(|i| !looks.worm(i).local),
+        "worm 0's crosshair, as OLX's local worms"
+    );
+    assert!((0..3).all(|i| !looks.worm(i).human), "nobody plays here");
     let followed = |s: &Session| {
         let worm = hud::view(s, &Frame::default()).worm.map(|w| w.name);
         (s.followed(), s.present.scene.camera.target(), worm)
@@ -341,5 +345,34 @@ fn an_online_match_runs_headless() {
     let (scores, _) = &host_scores[&(end as u32 - 1)];
     assert_eq!(r.rows, rl_ui::hud::rows(scores, &s.names, Some(1)));
     assert!(s.log.texts().any(|l| l == "Timelimit has been reached"));
+
+    // On to the host's end (300 confirmed ticks after the result): from
+    // `MatchEnded` the peer presents nothing more while its session goes
+    // on, and the session draws the world presented last, kept once.
+    let mut ended = None;
+    let mut i = 300u64;
+    while ended.is_none() {
+        i += 1;
+        assert!(i < 1500, "the match ends for the client");
+        let now = t0 + Duration::from_millis(10 * i);
+        host.poll(now, &mut || Keys(0), &mut |_, _, _| {});
+        let events = s.frame(now, &mut || Keys(0));
+        s.build(1.0, &mut list);
+        if events.iter().any(|e| matches!(e, OnlineEvent::MatchEnded(_))) {
+            ended = Some(s.world().clone());
+        }
+    }
+    let kept = ended.unwrap();
+    assert!(std::ptr::eq(s.world(), &s.world), "the session's own world is drawn, not the peer's");
+    assert!(!s.present.terrain_drift(s.world()), "the world kept is the one presented");
+    for _ in 0..100 {
+        i += 1;
+        let now = t0 + Duration::from_millis(10 * i);
+        host.poll(now, &mut || Keys(0), &mut |_, _, _| {});
+        s.frame(now, &mut || Keys(0));
+        s.build(1.0, &mut list);
+        assert!(std::ptr::eq(s.world(), &s.world));
+        assert!(*s.world() == kept, "frame {i}: the world drawn no longer changes");
+    }
     assert!(begun.elapsed() < Duration::from_secs(30), "the test took {:?}", begun.elapsed());
 }

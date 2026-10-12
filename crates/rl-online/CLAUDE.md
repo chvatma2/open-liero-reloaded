@@ -27,7 +27,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   setup)`; `poll(now, local_keys, on_tick) -> Vec<OnlineEvent>`;
   `lobby()` (`LobbyHandle`: ready, spectate, look, loadout, chat, have,
   setup, kick, start, force_start, state, me); `match_session[_mut]`,
-  `my_slot` (`None` once the match ended); `stats` (`NetStats`, per second);
+  `my_slot` (`None` once the match ended); `take_ended_world` (the
+  match's world as last presented, kept at its end: the host's after the
+  presented advance, a client's at `Ended`, before the poll's unpresented
+  advance; cleared at the next start); `stats` (`NetStats`, per second);
   `last_record` (the finished match's `MatchRecord`); `leave`.
   - Reliable payloads carry the tag byte: the session's untagged `Control`
     gets `0` on the way out and loses it on the way in; lobby messages are

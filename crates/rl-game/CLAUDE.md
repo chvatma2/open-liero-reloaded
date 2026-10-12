@@ -174,8 +174,9 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   sandbox's 0, a Deathmatch's first player that is not a bot, an online
   match's own slot; `None` for a replay, bots alone and an online match
   watched) gets the player's keys, name, look, the crosshair (the scene's
-  `local`), the camera (`Presentation::follow`), the HUD, the big minimap
-  dot, the highlighted scoreboard and results row (`Row::followed`), the
+  `local`; with no local slot a local game's worm 0 keeps it, as OLX's
+  local worms, and an online match watched has none), the camera
+  (`Presentation::follow`), the HUD, the big minimap dot, the highlighted scoreboard and results row (`Row::followed`), the
   tally's player kills and `player_deaths`/`player_spawns`. Without one
   the camera and the HUD follow the worm chosen (`follow`, `follow_next`,
   worm 0 at first); an online spectator's PageUp/PageDown choose it
@@ -210,13 +211,20 @@ cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alon
   colour terrain after every advance, about 1 ms a frame at worst in
   `an_online_match_runs_headless`), `NetPresenter::confirmed`, and the
   confirmed ticks through `after_tick` (log, tally, results, clock,
-  popups: never a predicted tick). The HUD's scoreboard and the followed
+  popups: never a predicted tick, so a damage popup comes late, at the
+  confirmed tick's positions). The HUD's scoreboard and the followed
   worm's lives, kills and deaths are the last confirmed tick's
   (`Session::scores`); the newest predicted world is drawn
-  (`Session::world`; the newest is kept once the match has ended, since
-  the peer drops it). The other events (lobby, chat, end, connection)
-  are handed back for the shell; `OnlineDriver::into_peer` gives the
-  peer back. An online match is never fast-forwarded (`human()`).
+  (`Session::world`). At `MatchEnded` the peer stops presenting while its
+  session goes on to confirm and drain: `present_events` takes the world
+  presented last once (`OnlinePeer::take_ended_world`) into
+  `Session::world` and freezes there (`frozen`; no clone per frame),
+  pinned by `an_online_match_runs_headless`. The other events (lobby,
+  chat, end, connection) are handed back for the shell. On
+  `Disconnected`, `Kicked` or `Refused` the peer has dropped its match,
+  so the session would draw its start world: the shell must leave the
+  match view before the next build (Task 12); `OnlineDriver::into_peer`
+  gives the peer back. An online match is never fast-forwarded (`human()`).
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the default
   restrictions) feeds `rl_content::build_match`, the same assembly as

@@ -99,8 +99,8 @@ impl Tally {
 /// the HUD follow it, or the worm a watcher chose ([`Session::follow`]).
 pub struct Session {
     /// The world. An online match's is its peer's ([`Session::world`]):
-    /// this one is the newest kept since the match ended there (its start
-    /// until then).
+    /// this one is its start, then the one presented last, kept once the
+    /// match ended there (`frozen`).
     pub world: World,
     pub present: Presentation,
     pub events: TickEvents,
@@ -128,6 +128,9 @@ pub struct Session {
     human: bool,
     /// The slot this player controls; `None`: watching.
     local: Option<u8>,
+    /// An online match ended: `world` is the one drawn, no longer the
+    /// peer's.
+    frozen: bool,
     /// Every worm's look, by index (a worm a mode spawns mid-match gets a
     /// default one).
     looks: Vec<WormLook>,
@@ -339,6 +342,7 @@ impl Session {
             rematches: 0,
             human: a.human_plays(),
             local,
+            frozen: false,
             looks,
             sound: true,
             keys: vec![Keys(0); n],
@@ -354,9 +358,13 @@ impl Session {
     /// Registers the worms the presentation does not know yet (all at the
     /// start; a worm a mode spawns mid-match later, in a default look,
     /// which marks the atlas for upload). The local slot's worm has the
-    /// crosshair.
+    /// crosshair; with none, a local game's worm 0 has it (a replay's,
+    /// bots alone: OLX draws the crosshair of its local worms), an online
+    /// match watched's none.
     fn show_new_worms(&mut self) {
         let n = self.world().worms().len();
+        let online = matches!(self.driver, Driver::Online(_));
+        let crosshair = self.local.or(if online { None } else { Some(0) });
         while self.shown < n {
             let i = self.shown;
             if self.looks.len() <= i {
@@ -370,7 +378,8 @@ impl Session {
             let look = &self.looks[i];
             let [r, g, b] = look.colour;
             let mine = self.local.is_some_and(|l| usize::from(l) == i);
-            self.present.add_worm(&look.skin, rl_data::image::Rgba::rgb(r, g, b), mine, mine);
+            let aims = crosshair.is_some_and(|l| usize::from(l) == i);
+            self.present.add_worm(&look.skin, rl_data::image::Rgba::rgb(r, g, b), aims, mine);
             self.shown += 1;
         }
         if self.keys.len() < self.shown {
@@ -383,12 +392,10 @@ impl Session {
     }
 
     /// The world drawn: the session's, or an online match's newest
-    /// predicted one (its peer's; the last kept once the peer ended it).
+    /// predicted one (its peer's) until the match ended there, then the
+    /// one presented last, kept ([`Session::present_events`]).
     pub fn world(&self) -> &World {
-        match &self.driver {
-            Driver::Online(d) => d.world().unwrap_or(&self.world),
-            _ => &self.world,
-        }
+        drawn(&self.driver, &self.world, self.frozen)
     }
 
     /// The scores the HUD shows: the world's, an online match's after its
@@ -719,14 +726,17 @@ impl Session {
         for c in &confirmed {
             self.after_tick(Some(c));
         }
-        // The peer drops the world when the match ends there: from its
-        // confirmed end on, the newest is kept to draw until the shell
-        // leaves the match.
-        if self.results.is_some()
-            && let Driver::Online(d) = &self.driver
-            && let Some(w) = d.world()
+        // At the end the peer stops presenting (its session goes on to
+        // confirm and drain): the world presented last is drawn from then
+        // on, taken once, until the shell leaves the match.
+        if !self.frozen
+            && rest.iter().any(|e| matches!(e, OnlineEvent::MatchEnded(_)))
+            && let Driver::Online(d) = &mut self.driver
         {
-            self.world = w.clone();
+            if let Some(w) = d.peer_mut().take_ended_world() {
+                self.world = w;
+            }
+            self.frozen = true;
         }
         rest
     }
@@ -734,11 +744,17 @@ impl Session {
     /// One drawn frame at `alpha` between the last two ticks: the scene,
     /// then the cosmetic entities.
     pub fn build(&mut self, alpha: f32, list: &mut DrawList) {
-        let world = match &self.driver {
-            Driver::Online(d) => d.world().unwrap_or(&self.world),
-            _ => &self.world,
-        };
-        self.present.build(world, alpha, list);
+        self.present.build(drawn(&self.driver, &self.world, self.frozen), alpha, list);
+    }
+}
+
+/// The world a session draws: its own, or an online match's peer's while
+/// it plays and the session is not `frozen` (the match over there; its
+/// own, the one presented last, then, or its start if the peer has none).
+fn drawn<'a>(driver: &'a Driver, world: &'a World, frozen: bool) -> &'a World {
+    match driver {
+        Driver::Online(d) if !frozen => d.world().unwrap_or(world),
+        _ => world,
     }
 }
 
@@ -793,6 +809,44 @@ mod tests {
             s.present.color().pixels() == a.level.color_map(&a.theme).pixels(),
             "the colour terrain starts again"
         );
+    }
+
+    /// Kill credit, deaths and spawns go by the local slot (2 here, two
+    /// bots before it), never worm 0: each event counted exactly once.
+    #[test]
+    fn credit_goes_by_the_local_slot() {
+        let Some(dir) = std::env::var_os("RL_CONTENT_DIR").filter(|d| std::path::Path::new(d).is_dir())
+        else {
+            eprintln!("RL_CONTENT_DIR not set; skipping");
+            return;
+        };
+        let bot = rl_content::Player::Bot(rl_bots::BotConfig::default());
+        let players = vec![bot, bot, rl_content::Player::Human];
+        let o = rl_content::MatchOptions::deathmatch("olx-classic", "olx-level-dirt-level", 3, players);
+        let a = crate::setup::load_match(&[std::path::Path::new(&dir)], &o, "default").unwrap();
+        let vp = Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
+        let mut s = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
+        assert_eq!(s.local(), Some(2));
+        let kind = |kind| Event { substep: 0, kind };
+        let c = ConfirmedTick {
+            tick: 0,
+            events: vec![
+                kind(EventKind::Kill { victim: 0, killer: 2 }),
+                kind(EventKind::Kill { victim: 2, killer: 1 }),
+                kind(EventKind::Spawned { worm: 2 }),
+                kind(EventKind::Kill { victim: 1, killer: 0 }),
+                kind(EventKind::Kill { victim: 1, killer: 1 }),
+                kind(EventKind::Spawned { worm: 0 }),
+            ],
+            scores: s.world.scores().to_vec(),
+            time_left_ms: None,
+            result: None,
+            positions: Vec::new(),
+        };
+        s.after_tick(Some(&c));
+        let t = &s.tally;
+        assert_eq!((t.player_kills, t.bot_kills, t.suicides), (1, 2, 1), "kills by slot");
+        assert_eq!((s.player_deaths, s.player_spawns), (1, 1), "the local slot's death and spawn");
     }
 
     /// Debug builds catch a colour terrain that drifted from the world's
