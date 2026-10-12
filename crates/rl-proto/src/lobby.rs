@@ -29,6 +29,8 @@ pub const MAX_BOTS: usize = 31;
 pub const MAX_MISSING: usize = 8;
 /// Longest id (pack, mod, level), in bytes.
 pub const MAX_ID: usize = 64;
+/// Largest input delay, in ticks.
+pub const MAX_INPUT_DELAY: u8 = 3;
 /// Longest restrictions string, in bytes.
 pub const MAX_RESTRICTIONS: usize = 256;
 
@@ -278,13 +280,35 @@ pub(crate) fn valid_text(s: &str, max: usize) -> bool {
     s.chars().count() <= max && !s.chars().any(char::is_control)
 }
 
-/// A mod or level id: non-empty, at most `MAX_ID` bytes, no control characters.
-pub(crate) fn valid_id_text(s: &str) -> bool {
-    !s.is_empty() && s.len() <= MAX_ID && !s.chars().any(char::is_control)
+/// Bidi overrides, isolates and marks: refused in chat and names.
+fn is_bidi(c: char) -> bool {
+    matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
-/// A pack id: ASCII `[a-z0-9-]`, 1 to `MAX_ID` bytes.
-fn valid_pack_id(s: &str) -> bool {
+/// Unicode format (Cf) and separator code points that make names
+/// ambiguous: bidi controls, zero-width characters, line and paragraph
+/// separators, the BOM.
+fn is_hidden(c: char) -> bool {
+    is_bidi(c)
+        || matches!(
+            c,
+            '\u{00AD}'
+                | '\u{200B}'..='\u{200D}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{FEFF}'
+        )
+}
+
+/// A name: 1 to `max` characters, no control, hidden or bidi characters,
+/// not blank, no leading or trailing whitespace.
+pub(crate) fn valid_name(s: &str, max: usize) -> bool {
+    valid_text(s, max) && !s.is_empty() && s.trim() == s && !s.chars().any(is_hidden)
+}
+
+/// A pack id: ASCII `[a-z0-9-]` (rl-pack's manifest rule), 1 to `MAX_ID` bytes.
+pub(crate) fn valid_pack_id(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= MAX_ID
         && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
@@ -295,7 +319,7 @@ fn valid_hash(s: &str) -> bool {
 }
 
 fn valid_look(l: &Look) -> bool {
-    valid_text(&l.name, MAX_NAME) && valid_pack_id(&l.skin)
+    valid_name(&l.name, MAX_NAME) && valid_pack_id(&l.skin)
 }
 
 fn valid_missing(m: &[String]) -> bool {
@@ -303,8 +327,8 @@ fn valid_missing(m: &[String]) -> bool {
 }
 
 fn valid_setup(s: &MatchSetupWire) -> bool {
-    valid_id_text(&s.mod_id)
-        && valid_id_text(&s.level_id)
+    valid_pack_id(&s.mod_id)
+        && valid_pack_id(&s.level_id)
         && s.packs.len() <= MAX_PACKS
         && s.packs.iter().all(|(id, h)| valid_pack_id(id) && valid_hash(h))
         && s.rules.time_limit_min.is_finite()
@@ -316,21 +340,39 @@ fn valid_setup(s: &MatchSetupWire) -> bool {
 }
 
 fn valid_lobby(l: &LobbyState) -> bool {
-    valid_text(&l.name, MAX_NAME)
+    valid_name(&l.name, MAX_NAME)
         && valid_setup(&l.setup)
         && l.members.len() <= MAX_MEMBERS
         && l.members.iter().all(|m| valid_look(&m.look) && valid_missing(&m.missing))
+        && unique(l.members.iter().map(|m| m.id))
+        && l.members.iter().filter(|m| matches!(m.seat, SeatWire::Player { .. })).count() <= MAX_PLAYERS
+        && unique(l.members.iter().filter_map(|m| match m.seat {
+            SeatWire::Player { slot } => Some(slot),
+            _ => None,
+        }))
 }
 
 fn valid_start(s: &MatchStartWire) -> bool {
     valid_setup(&s.setup)
         && s.slots.len() <= MAX_PLAYERS
         && s.slots.iter().all(|x| valid_look(&x.look))
+        && s.slots.iter().all(|x| x.bot.is_none_or(|b| (b as usize) < s.setup.bots.len()))
         && s.input_delay.len() <= MAX_MEMBERS
+        && s.input_delay.iter().all(|&(_, d)| d <= MAX_INPUT_DELAY)
+}
+
+fn unique(it: impl Iterator<Item = u8>) -> bool {
+    let mut seen = [false; 256];
+    for v in it {
+        if core::mem::replace(&mut seen[v as usize], true) {
+            return false;
+        }
+    }
+    true
 }
 
 fn valid_chat(s: &str) -> bool {
-    valid_text(s, MAX_CHAT)
+    valid_text(s, MAX_CHAT) && !s.chars().any(is_bidi)
 }
 
 pub fn encode_to_host(m: &ToHost) -> Vec<u8> {
@@ -410,7 +452,7 @@ mod tests {
             id,
             key: [id; 32],
             look: look(),
-            seat: SeatWire::Player { slot: id },
+            seat: if id < 32 { SeatWire::Player { slot: id } } else { SeatWire::Spectator },
             ready: true,
             missing: vec!["olx-skin-x".to_string()],
             ping_ms: Some(12),
@@ -571,6 +613,86 @@ mod tests {
             decode_to_host(&encode_to_host(&ToHost::Admin(AdminCommand::Settings(s)))),
             Err(ProtoError::Invalid)
         );
+    }
+
+    #[test]
+    fn mod_and_level_ids_are_pack_ids() {
+        for bad in ["../x", "Up", "a/b", ""] {
+            let mut s = setup();
+            s.mod_id = bad.to_string();
+            let m = ToHost::Admin(AdminCommand::Settings(s));
+            assert_eq!(decode_to_host(&encode_to_host(&m)), Err(ProtoError::Invalid), "{bad:?}");
+            let mut s = setup();
+            s.level_id = bad.to_string();
+            let mut l = lobby(1);
+            l.setup = s;
+            let m = ToClient::Lobby(l);
+            assert_eq!(decode_to_client(&encode_to_client(&m)), Err(ProtoError::Invalid), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn names_are_identity_safe() {
+        let bad = [
+            "",
+            "   ",
+            " a",
+            "a ",
+            "a\u{202E}b",
+            "a\u{2066}b",
+            "a\u{200E}b",
+            "a\u{200F}b",
+            "a\u{061C}b",
+            "a\u{200B}b",
+            "a\u{200C}b",
+            "a\u{200D}b",
+            "a\u{2060}b",
+            "a\u{FEFF}b",
+            "a\u{2028}b",
+            "a\u{2029}b",
+        ];
+        for n in bad {
+            let l = Look { name: n.to_string(), ..look() };
+            assert_eq!(
+                decode_to_host(&encode_to_host(&ToHost::SetLook(l))),
+                Err(ProtoError::Invalid),
+                "{n:?}"
+            );
+        }
+        to_host_round(ToHost::SetLook(Look { name: "a b".to_string(), ..look() }));
+    }
+
+    #[test]
+    fn chat_refuses_bidi_controls() {
+        for c in ['\u{202A}', '\u{202E}', '\u{2066}', '\u{2069}'] {
+            let m = ToHost::Chat(alloc::format!("a{c}b"));
+            assert_eq!(decode_to_host(&encode_to_host(&m)), Err(ProtoError::Invalid));
+        }
+    }
+
+    #[test]
+    fn start_and_lobby_invariants() {
+        let refused = |m: ToClient| {
+            assert_eq!(decode_to_client(&encode_to_client(&m)), Err(ProtoError::Invalid));
+        };
+        let mut s = start(2);
+        s.slots[0].bot = Some(1); // setup has one bot
+        refused(ToClient::Start(s));
+        let mut s = start(2);
+        s.slots[0].bot = Some(0);
+        to_client_round(ToClient::Start(s));
+        let mut s = start(2);
+        s.input_delay = vec![(0, MAX_INPUT_DELAY + 1)];
+        refused(ToClient::Start(s));
+        let mut l = lobby(3);
+        l.members[1].id = 0;
+        refused(ToClient::Lobby(l));
+        let mut l = lobby(3);
+        l.members[1].seat = SeatWire::Player { slot: 0 };
+        refused(ToClient::Lobby(l));
+        let mut l = lobby(1);
+        l.name = " ".to_string();
+        refused(ToClient::Lobby(l));
     }
 
     #[test]

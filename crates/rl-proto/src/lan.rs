@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
-use crate::lobby::{MAX_NAME, valid_id_text, valid_text};
+use crate::lobby::{MAX_NAME, valid_name, valid_pack_id};
 use crate::{ProtoError, decode_exact};
 
 /// UDP port hosts announce on.
@@ -35,9 +35,9 @@ pub fn decode_lan(b: &[u8]) -> Result<LanAnnounce, ProtoError> {
         return Err(ProtoError::TooLong);
     }
     let a: LanAnnounce = decode_exact(b)?;
-    let ok = valid_text(&a.name, MAX_NAME)
-        && valid_id_text(&a.mod_id)
-        && valid_id_text(&a.level_id)
+    let ok = valid_name(&a.name, MAX_NAME)
+        && valid_pack_id(&a.mod_id)
+        && valid_pack_id(&a.level_id)
         && a.players <= a.max_players
         && a.max_players as usize <= crate::lobby::MAX_PLAYERS
         && a.spectators as usize <= crate::lobby::MAX_SPECTATORS;
@@ -76,6 +76,16 @@ mod tests {
         a.name = "n".repeat(MAX_NAME + 1);
         assert_eq!(decode_lan(&encode_lan(&a)), Err(ProtoError::Invalid));
         a.name = "a\nb".to_string();
+        assert_eq!(decode_lan(&encode_lan(&a)), Err(ProtoError::Invalid));
+    }
+
+    #[test]
+    fn ids_are_pack_ids() {
+        let mut a = sample();
+        a.mod_id = "../x".to_string();
+        assert_eq!(decode_lan(&encode_lan(&a)), Err(ProtoError::Invalid));
+        let mut a = sample();
+        a.level_id = "a/b".to_string();
         assert_eq!(decode_lan(&encode_lan(&a)), Err(ProtoError::Invalid));
     }
 

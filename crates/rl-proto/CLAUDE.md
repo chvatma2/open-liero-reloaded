@@ -20,13 +20,15 @@ control messages, the frame delta codec and the simulation fingerprint.
   empty payload or unknown tag. The netcode session still sends untagged
   `Control`; rl-online tags and untags at the boundary.
 - **LAN** (`lan.rs`): `LanAnnounce` on UDP `LAN_PORT` (23401), `MAX_LAN`.
-- **Bounds** (violation = `ProtoError::Invalid`): names <= `MAX_NAME` (20)
-  characters and no control characters; chat, notice and end reason <=
-  `MAX_CHAT` (200) characters; members <= 48; slots <= 32; packs <= 8; bots
-  <= 31; `missing` <= 8; pack and skin ids ASCII `[a-z0-9-]`, 1..=64 bytes;
-  mod and level ids 1..=64 bytes without control characters; hashes 64 hex
-  characters; rules floats finite; restrictions <= 256 bytes. `Signature`
-  (64 bytes) uses a custom serde tuple (serde stops at 32).
+- **Bounds** (violation = `ProtoError::Invalid`): names 1..=`MAX_NAME` (20)
+  characters, no control, bidi, zero-width or separator code points, no edge
+  whitespace; chat, notice and end reason <= `MAX_CHAT` (200) characters
+  (chat: no bidi controls); members <= 48 with unique ids; slots <= 32; player
+  seats <= 32 with unique slots; `SlotWire.bot` indexes `setup.bots`;
+  input delays <= 3; packs <= 8; bots <= 31; `missing` <= 8; pack, skin, mod
+  and level ids ASCII `[a-z0-9-]` (rl-pack's manifest rule), 1..=64 bytes;
+  hashes 64 hex characters; rule floats finite; restrictions <= 256 bytes.
+  `Signature` (64 bytes) uses a custom serde tuple (serde stops at 32).
 - **Frame delta rule** (`frames.rs`): `known` = slots whose final input the
   host has; `changed ⊆ known` = slots differing from the previous tick, one
   key byte each in slot order. An unchanged known slot repeats the previous
