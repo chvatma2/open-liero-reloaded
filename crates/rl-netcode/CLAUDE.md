@@ -38,10 +38,26 @@ model that tests it in one process (spec §9.1).
     a simulated tick used marks a rollback; the next `advance` restores the
     snapshot before it and re-simulates (`Event::Rollback`, `depth_hist`).
     Snapshots are kept from the frontier on, then `forget_before`.
-  - Messages: the host sends each peer frames from its `ack` (≤ `MAX_FRAMES`,
-    halved until ≤ `MAX_DATAGRAM`) with `your_ack`; a client sends its own
-    inputs from `your_ack` (≤ `MAX_KEYS`) and its frontier as `ack`. Every
-    datagram carries a `Stamp`; `rtt_ms` is a 1/8 moving average.
+  - Messages: the host sends each peer frames up to its horizon (≤
+    `MAX_FRAMES`, halved until ≤ `MAX_DATAGRAM`) with `your_ack`; a client
+    sends its own inputs from `your_ack` (≤ `MAX_KEYS`) and its frontier as
+    `ack`. Every datagram carries a `Stamp`; `rtt_ms` is a 1/8 moving
+    average. Redundancy (plan 9 task 11, spec §3.1's budget): to a peer
+    whose measured round trip is at most `COPIES_MAX_RTT_MS` (100 ms), the
+    host's frames start at the lowest tick its log changed at before any of
+    its last `COPIES` (4) datagrams to that peer (`dirty`; never below the
+    peer's `ack`), so each change goes out four times. Losses beyond that
+    show in the peer's echo: the echoed datagram was sent when our frontier
+    was `f` (`sends`, the last 256), so the peer's `ack` below `f` means
+    something was lost, and the next datagram starts at its `ack`
+    (`resend`; echoes of datagrams older than that resend are not taken).
+    A longer or unmeasured round trip gets every frame from its `ack` in
+    every datagram: a resend's extra round trip would not fit under
+    `MAX_PREDICTION` (`bad` stalled with 4, 6 and 8 copies). A receiver
+    lacking a slot's input before `first` decodes that slot from a dummy
+    base: its values there are `Gap`s anyway. `bandwidth32` (32 worms,
+    typical) went from 28.7 to 16.7 KB/s received; the feel numbers did
+    not change.
   - Pace (`clock.rs`, `Pace`): local time to due ticks (minus ticks run,
     at most `MAX_CATCHUP` per `advance`), adjustable by ±1 % (re-anchored,
     so a change affects only later time) and shiftable by whole ticks (a

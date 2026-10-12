@@ -62,6 +62,20 @@ const MAX_JUMP_AHEAD: i32 = (SILENCE_TIMEOUT_US / TICK_US) as i32;
 /// when it is at most this far past our own current tick: one hostile
 /// value must not pin the term's clock.
 const HOST_TICK_SLACK: u32 = 100;
+/// The host repeats a change to its input log in this many datagrams to
+/// each peer (redundancy by repetition, not by resending every
+/// unacknowledged frame in every datagram: spec §3.1's budget).
+pub const COPIES: usize = 4;
+/// A peer whose round trip is at most this long gets each change of the
+/// input log in [`COPIES`] datagrams; a longer one (or one not measured yet)
+/// every frame it has not acknowledged in every datagram, as a lost burst
+/// longer than `COPIES` costs one more round trip (the resend): twice the
+/// round trip plus the burst must stay under [`MAX_PREDICTION`] (2 × 10 + 4
+/// ticks, with room for jitter), or a client stalls.
+pub const COPIES_MAX_RTT_MS: u32 = 100;
+/// The host remembers this many of its datagrams to a peer for the peer's
+/// echo (2.56 s at 100 Hz).
+const SENDS_KEPT: usize = 256;
 
 /// The input delay for a round trip (spec §3.2): `min(3, rtt_ms / 40)` ticks.
 pub fn input_delay(rtt_ms: u32) -> u8 {
@@ -274,6 +288,16 @@ struct PeerState {
     /// Host: the first tick the peer's input log holds (a joined
     /// spectator's): frames from it carry every value, no base.
     origin: u32,
+    /// Host: our recent datagrams to the peer, oldest first: their
+    /// `sent_ms` and our frontier when we sent them.
+    sends: VecDeque<(u32, u32)>,
+    /// Host: where our input log changed before each of our last
+    /// [`COPIES`] datagrams to the peer (`u32::MAX`: nowhere).
+    recent: VecDeque<u32>,
+    /// Host: the peer lacks inputs we sent: our next datagram starts at its `ack`.
+    resend: bool,
+    /// Host: the `sent_ms` of our last such datagram.
+    resent_ms: u32,
 }
 
 impl PeerState {
@@ -296,6 +320,10 @@ impl PeerState {
             checks: Remote::default(),
             joining: false,
             origin: 0,
+            sends: VecDeque::new(),
+            recent: VecDeque::new(),
+            resend: false,
+            resent_ms: 0,
         }
     }
 }
@@ -360,6 +388,9 @@ pub struct Session<S: Simulation> {
     restart_to: Option<u32>,
     /// Client or spectator: a state arriving in chunks.
     incoming: Option<Incoming>,
+    /// Host: the lowest tick of the input log that changed since our last
+    /// datagrams (`u32::MAX`: none).
+    dirty: u32,
 }
 
 /// A driver that presses nothing and sees nothing: re-simulations that
@@ -425,6 +456,7 @@ impl<S: Simulation> Session<S> {
             floor: 0,
             restart_to: None,
             incoming: None,
+            dirty: u32::MAX,
         }
     }
 
@@ -792,6 +824,9 @@ impl<S: Simulation> Session<S> {
                 for (&s, k) in self.local.iter().zip(&self.local_keys) {
                     self.log.set(t, s, k.0);
                 }
+                if !self.local.is_empty() {
+                    self.dirty = self.dirty.min(t);
+                }
             }
             Role::Client { .. } => {
                 if self.own.len() == at as usize {
@@ -844,6 +879,9 @@ impl<S: Simulation> Session<S> {
 
     /// A final value arrived: roll back if the tick ran on other keys.
     fn on_final(&mut self, tick: u32, slot: u8, v: u8) {
+        if self.is_host() {
+            self.dirty = self.dirty.min(tick);
+        }
         if self.own_slot() == Some(slot) && self.own.get(tick as usize).is_some_and(|&o| o != v) {
             self.stats.own_corrections += 1;
         }
@@ -905,13 +943,23 @@ impl<S: Simulation> Session<S> {
             Role::Host { .. } => {
                 let ids: Vec<PeerId> =
                     self.peers.iter().filter(|(_, p)| !p.lost).map(|(&id, _)| id).collect();
+                let dirty = mem::replace(&mut self.dirty, u32::MAX);
+                let frontier = self.log.frontier();
+                let horizon = self.log.horizon();
                 for id in ids {
-                    let frontier = self.log.frontier();
-                    let (ack, seat, margin, origin) = {
-                        let p = &self.peers[&id];
-                        (p.ack, p.seat, p.margins.median().unwrap_or(0), p.origin)
-                    };
-                    let first = ack.min(frontier);
+                    let Some(p) = self.peers.get_mut(&id) else { continue };
+                    // Every change goes out in `COPIES` datagrams; what the
+                    // peer still lacks after that (`resend`), from its ack.
+                    p.recent.push_back(dirty);
+                    while p.recent.len() > COPIES {
+                        p.recent.pop_front();
+                    }
+                    let resend = mem::take(&mut p.resend);
+                    let acked = p.ack.min(frontier);
+                    let changed = p.recent.iter().copied().min().unwrap_or(u32::MAX);
+                    let short = p.rtt_x8.is_some_and(|r| r <= i64::from(COPIES_MAX_RTT_MS) * 8);
+                    let first = if resend || !short { acked } else { acked.max(changed).min(horizon) };
+                    let (seat, margin, origin) = (p.seat, p.margins.median().unwrap_or(0), p.origin);
                     let your_ack = match seat {
                         Seat::Player(s) => self.log.known_upto(s),
                         Seat::Spectator => frontier,
@@ -924,7 +972,7 @@ impl<S: Simulation> Session<S> {
                         f if f == origin => None,
                         f => log.get(f - 1, s as u8),
                     };
-                    let mut n = log.horizon().saturating_sub(first).min(MAX_FRAMES as u32);
+                    let mut n = horizon.saturating_sub(first).min(MAX_FRAMES as u32);
                     let bytes = loop {
                         let frames = encode_frames(first, n, slots, &|t, s| log.get(t, s as u8), &base);
                         let d = Datagram::Host(HostInputs {
@@ -941,6 +989,15 @@ impl<S: Simulation> Session<S> {
                         }
                         n /= 2;
                     };
+                    if let Some(p) = self.peers.get_mut(&id) {
+                        if p.sends.len() == SENDS_KEPT {
+                            p.sends.pop_front();
+                        }
+                        p.sends.push_back((stamp.sent_ms, frontier));
+                        if resend {
+                            p.resent_ms = stamp.sent_ms;
+                        }
+                    }
                     self.push_out(id, Channel::Unreliable, bytes);
                 }
             }
@@ -1013,8 +1070,23 @@ impl<S: Simulation> Session<S> {
         self.on_stamp(from, c.stamp, now_us);
         let current = self.current;
         let limit = current.saturating_add(MAX_AHEAD);
+        let frontier = self.log.frontier();
         let Some(p) = self.peers.get_mut(&from) else { return };
         p.ack = p.ack.max(c.ack);
+        // The datagram of ours they had last when they sent this one held
+        // every input below our frontier then, or repeated them recently: if
+        // they still lack some, some were lost. Not while our resend is on
+        // its way.
+        let echo = c.stamp.echo_ms;
+        if echo != 0 && echo >= p.resent_ms {
+            let known = p.sends.iter().rev().find(|s| s.0 == echo).map(|s| s.1);
+            let older = p.sends.front().is_some_and(|s| echo < s.0);
+            match known {
+                Some(f) if c.ack < f => p.resend = true,
+                None if older && c.ack < frontier => p.resend = true,
+                _ => {}
+            }
+        }
         let Seat::Player(slot) = p.seat else { return };
         // Not pruned below the frontier: the lagging slot usually is the
         // frontier, so no `Late` would ever be sent. Below the client's
@@ -1103,7 +1175,13 @@ impl<S: Simulation> Session<S> {
         let mut scratch = mem::take(&mut self.scratch);
         scratch.clear();
         let log = &self.log;
-        let base = |s: usize| if first == 0 { Some(0) } else { log.get(first - 1, s as u8) };
+        // A slot we lack before `first` (its datagrams were lost) takes none
+        // of these values (they are beyond its known prefix: `Gap`), so any
+        // base decodes them; the host resends from our ack.
+        let base = |s: usize| match first {
+            0 => Some(0),
+            f => log.get(f - 1, s as u8).or_else(|| (log.known_upto(s as u8) < f).then_some(0)),
+        };
         let decoded =
             decode_frames(first, &h.frames, slots, &base, &mut |t, s, v| scratch.push((t, s as u8, v)));
         if decoded.is_err() {
@@ -1391,6 +1469,89 @@ mod tests {
     fn host_inputs(tick: u32, margin: i16, first: u32, frames: Vec<Frame>) -> Vec<u8> {
         let h = HostInputs { stamp: Stamp::default(), tick, your_ack: 0, margin, first, frames };
         encode_datagram(&Datagram::Host(h))
+    }
+
+    /// A host (slots 1 to 3 its own) and a client playing slot 0 over a
+    /// link of `one_way_ms` each way, for `ms` in 1 ms steps; the host's
+    /// datagrams to the client are numbered from 0 and `lost(k)` drops
+    /// one. Returns both and the host's datagrams to the client.
+    fn pair(
+        one_way_ms: u64,
+        ms: u64,
+        lost: impl Fn(usize) -> bool,
+    ) -> (Session<ToySim>, Session<ToySim>, Vec<HostInputs>) {
+        let role = Role::Host { peers: vec![(1, Seat::Player(0))] };
+        let mut h = Session::new(Config::new(4, 0), role, ToySim::new(4), 0);
+        let delay = input_delay(2 * one_way_ms as u32);
+        let mut c = Session::new(Config::new(4, delay), Role::Client { host: 0, slot: 0 }, ToySim::new(4), 0);
+        let mut f = ToyFactory { slots: 4, seed: 1 };
+        let (mut hd, mut cd) = (f.driver(0, None), f.driver(1, Some(Seat::Player(0))));
+        // (arrival µs, to, channel, bytes), in sending order.
+        let mut wire: Vec<(u64, PeerId, Channel, Vec<u8>)> = Vec::new();
+        let mut sent = Vec::new();
+        for step in 1..=ms {
+            let now = step * 1000;
+            let (due, later): (Vec<_>, Vec<_>) = wire.into_iter().partition(|m| m.0 <= now);
+            wire = later;
+            for (_, to, ch, bytes) in due {
+                let (session, from) = if to == 0 { (&mut h, 1) } else { (&mut c, 0) };
+                session.receive(from, ch, &bytes, now);
+            }
+            let at = now + one_way_ms * 1000;
+            h.advance(now, hd.as_mut());
+            h.transmit(&mut |to, ch, bytes| {
+                if ch == Channel::Unreliable {
+                    let Ok(Datagram::Host(d)) = decode_datagram(&bytes, 4) else { panic!("a host datagram") };
+                    sent.push(d);
+                    if lost(sent.len() - 1) {
+                        return;
+                    }
+                }
+                wire.push((at, to, ch, bytes));
+            });
+            c.advance(now, cd.as_mut());
+            c.transmit(&mut |to, ch, bytes| wire.push((at, to, ch, bytes)));
+        }
+        (h, c, sent)
+    }
+
+    /// The client confirmed the host's inputs and is at most `lag` ticks behind its frontier.
+    fn confirmed_alike(h: &Session<ToySim>, c: &Session<ToySim>, lag: u32) {
+        assert_eq!(c.stats.malformed, 0);
+        assert!(c.frontier() + lag >= h.frontier(), "client {} host {}", c.frontier(), h.frontier());
+        for t in 0..c.frontier() {
+            assert_eq!(c.input_log().row(t), h.input_log().row(t), "tick {t}");
+        }
+    }
+
+    #[test]
+    fn a_short_round_trip_gets_each_change_in_a_few_datagrams() {
+        // 80 ms: the client's ack is about ten ticks behind the host's frontier.
+        let (h, c, sent) = pair(40, 3_000, |_| false);
+        let late = &sent[100..];
+        let most = late.iter().map(|d| d.frames.len()).max().unwrap();
+        assert!(most <= COPIES + 3, "at most {most} frames");
+        // Every unacknowledged frame would be more.
+        assert!(h.frontier() - h.peers[&1].ack >= 8, "acknowledged {} of {}", h.peers[&1].ack, h.frontier());
+        confirmed_alike(&h, &c, 15);
+    }
+
+    #[test]
+    fn a_long_round_trip_gets_every_unacknowledged_frame() {
+        // 120 ms: a resend would come too late for the prediction limit.
+        let (h, c, sent) = pair(60, 3_000, |_| false);
+        let least = sent[100..].iter().map(|d| d.frames.len()).min().unwrap();
+        assert!(least >= 10, "at least {least} frames");
+        confirmed_alike(&h, &c, 20);
+    }
+
+    #[test]
+    fn inputs_lost_beyond_the_copies_are_resent_from_the_ack() {
+        // Ten datagrams in a row are lost: more than `COPIES` repeat a change.
+        let (h, c, sent) = pair(40, 3_000, |k| (150..160).contains(&k));
+        let resent = sent[160..].iter().position(|d| d.frames.len() > COPIES + 3).expect("a resend");
+        assert!(resent < 15, "the resend came {resent} datagrams after the loss");
+        confirmed_alike(&h, &c, 15);
     }
 
     #[test]
