@@ -102,6 +102,12 @@ pub enum ProtoError {
     Invalid,
 }
 
+/// Decodes one value and refuses trailing bytes.
+fn decode_exact<'a, T: Deserialize<'a>>(b: &'a [u8]) -> Result<T, ProtoError> {
+    let (v, rest) = postcard::take_from_bytes(b).map_err(|_| ProtoError::Decode)?;
+    if rest.is_empty() { Ok(v) } else { Err(ProtoError::Decode) }
+}
+
 pub fn encode_datagram(d: &Datagram) -> Vec<u8> {
     postcard::to_allocvec(d).expect("serialising into a Vec cannot fail")
 }
@@ -110,7 +116,7 @@ pub fn decode_datagram(b: &[u8], slots: usize) -> Result<Datagram, ProtoError> {
     if b.len() > MAX_DATAGRAM {
         return Err(ProtoError::TooLong);
     }
-    let d: Datagram = postcard::from_bytes(b).map_err(|_| ProtoError::Decode)?;
+    let d: Datagram = decode_exact(b)?;
     validate_datagram(&d, slots)?;
     Ok(d)
 }
@@ -139,7 +145,7 @@ pub fn decode_control(b: &[u8]) -> Result<Control, ProtoError> {
     if b.len() > MAX_CONTROL {
         return Err(ProtoError::TooLong);
     }
-    let c: Control = postcard::from_bytes(b).map_err(|_| ProtoError::Decode)?;
+    let c: Control = decode_exact(b)?;
     let ok = match &c {
         Control::StateChunk { bytes, .. } => bytes.len() <= STATE_CHUNK,
         Control::StateBegin { len, chunks, .. } => {
@@ -163,6 +169,22 @@ mod tests {
         assert_eq!(fingerprint(a), fingerprint(a));
         assert_ne!(fingerprint(a), fingerprint(changed));
         assert_ne!(fingerprint(a), fingerprint(swapped));
+    }
+
+    #[test]
+    fn trailing_bytes_are_refused() {
+        let mut d = encode_datagram(&Datagram::Client(ClientInputs {
+            stamp: Stamp::default(),
+            tick: 0,
+            ack: 0,
+            first: 0,
+            keys: alloc::vec![1],
+        }));
+        d.push(0);
+        assert_eq!(decode_datagram(&d, 8), Err(ProtoError::Decode));
+        let mut c = encode_control(&Control::Bye);
+        c.push(0);
+        assert_eq!(decode_control(&c), Err(ProtoError::Decode));
     }
 
     #[test]

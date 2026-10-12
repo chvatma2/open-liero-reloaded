@@ -9,8 +9,10 @@ include!("src/fingerprint_impl.rs");
 const DIRS: [&str; 5] = ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes"];
 
 fn collect(dir: &Path, rel: &str, out: &mut Vec<(String, PathBuf)>) {
-    let Ok(rd) = fs::read_dir(dir) else { return };
-    for e in rd.flatten() {
+    let rd =
+        fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read source directory {}: {e}", dir.display()));
+    for e in rd {
+        let e = e.expect("readable directory entry");
         let p = e.path();
         let name = e.file_name().to_string_lossy().into_owned();
         let rel = format!("{rel}/{name}");
@@ -31,15 +33,18 @@ fn main() {
         println!("cargo:rerun-if-changed={}", dir.display());
         collect(&dir, &format!("{d}/src"), &mut files);
     }
-    let lib = manifest.join("src/lib.rs");
-    println!("cargo:rerun-if-changed={}", lib.display());
-    files.push(("rl-proto/src/lib.rs".into(), lib));
+    let own = manifest.join("src");
+    println!("cargo:rerun-if-changed={}", own.display());
+    collect(&own, "rl-proto/src", &mut files);
     files.sort();
     let bodies: Vec<(String, Vec<u8>)> = files
         .into_iter()
         .map(|(rel, p)| {
-            let body: Vec<u8> =
-                fs::read(&p).unwrap_or_default().into_iter().filter(|&b| b != b'\r').collect();
+            let body: Vec<u8> = fs::read(&p)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", p.display()))
+                .into_iter()
+                .filter(|&b| b != b'\r')
+                .collect();
             (rel, body)
         })
         .collect();

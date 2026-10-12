@@ -154,4 +154,18 @@ mod tests {
             assert_eq!(decode_frames(1, &[f], 2, &|_| Some(0), &mut |_, _, _| {}), Err(ProtoError::Invalid));
         }
     }
+
+    #[test]
+    fn tick_zero_ignores_the_base() {
+        let t = table(&[&[Some(3), Some(0)], &[Some(3), Some(1)]]);
+        assert_eq!(round_trip(&t, 0, &[Some(9), Some(9)]), t);
+    }
+
+    #[test]
+    fn a_value_repeated_after_a_gap_is_sent_again() {
+        let t = table(&[&[Some(1)], &[None], &[Some(1)]]);
+        let frames = encode_frames(7, 3, 1, &|tick, s| t[(tick - 7) as usize][s], &|_| Some(1));
+        assert_eq!(frames[2].changed, 0b1);
+        assert_eq!(round_trip(&t, 7, &[Some(1)]), t);
+    }
 }
