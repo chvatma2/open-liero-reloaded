@@ -37,3 +37,6 @@
   fixtures/bench/envelope/amd-ryzen-5-7600x-6-core-processor-12cpus.ron
 2026-10-12 envelope: probe now blurs the drawn frame (seeded from the world target, not a black texture); windowed runs checked for software adapters; frames judged with the bots' thinking
   fixtures/bench/envelope/amd-ryzen-5-7600x-6-core-processor-12cpus.ron
+2026-10-12 bench: release profile: fat LTO and codegen-units=1; the old baselines were also stale (5-30 % slower than today's code)
+  fixtures/bench/baselines.ron
+  fixtures/bench/stress.ron

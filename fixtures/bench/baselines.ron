@@ -6,12 +6,12 @@
         adapter: "llvmpipe (LLVM 21.1.8, 256 bits) (Vulkan, Cpu)",
     ),
     benches: {
-        "rl-cli/game/bots_8_tick": 22050.0,
-        "rl-cli/game/drawlist_build": 2814.0,
-        "rl-render/frame/frame_1080p": 4914000.0,
-        "rl-render/frame/frame_1440p": 6948000.0,
-        "rl-sim/tick/tick_32_worms": 7182.0,
-        "rl-sim/tick/tick_full_pool": 226600.0,
+        "rl-cli/game/bots_8_tick": 13590.0,
+        "rl-cli/game/drawlist_build": 2440.0,
+        "rl-render/frame/frame_1080p": 4184000.0,
+        "rl-render/frame/frame_1440p": 5497000.0,
+        "rl-sim/tick/tick_32_worms": 4536.0,
+        "rl-sim/tick/tick_full_pool": 223100.0,
     },
     kept: [],
 )

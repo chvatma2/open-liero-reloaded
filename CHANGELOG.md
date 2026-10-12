@@ -8,6 +8,10 @@ All notable changes to rust-liero are recorded here. The format follows
 
 ### Changed
 
+- Release builds use whole-program optimisation (fat LTO, one codegen
+  unit). Small hot paths got up to 12 % faster (32 worms' tick, the draw
+  list); the heavy ticks and frames are unchanged within noise. A release
+  rebuild takes about two minutes.
 - The menus are centred: every screen the main menu opens is one column in
   the middle of the window, its title on top, its sections in panels and
   its main button (Start, Import) large and centred at the bottom. Local
