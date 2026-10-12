@@ -203,11 +203,10 @@ pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], 
 }
 
 impl ShootList {
-    /// Whether `s` (a received state) fits the list's capacity, with weapon
-    /// ids in the mod's `num_weapons`.
-    pub(crate) fn can_load(&self, s: &ShootList, num_weapons: i32) -> bool {
-        s.shots.len() <= MAX_SHOOTINGS.min(self.shots.capacity())
-            && s.shots.iter().all(|x| (0..num_weapons).contains(&x.weapon))
+    /// Whether `s` (a received state) fits the list's capacity, with every
+    /// shot `valid`.
+    pub(crate) fn can_load(&self, s: &ShootList, valid: impl Fn(&Shot) -> bool) -> bool {
+        s.shots.len() <= MAX_SHOOTINGS.min(self.shots.capacity()) && s.shots.iter().all(valid)
     }
 
     /// Takes `s`, which [`can_load`](Self::can_load) accepted, keeping the

@@ -121,9 +121,12 @@ impl PosRecorder {
     }
 
     /// Whether the indices are ones `push` and `clear` reach, so `get`
-    /// stays in the buffer (for a received state).
+    /// stays in the buffer, and every entry (a worm's position, or zero)
+    /// is finite (for a received state).
     pub(crate) fn is_valid(&self) -> bool {
-        self.cur < Self::FRAMES && self.count <= Self::FRAMES
+        self.cur < Self::FRAMES
+            && self.count <= Self::FRAMES
+            && self.data.iter().all(|v| v.x.is_finite() && v.y.is_finite())
     }
 
     /// `getBest(millisecsPerFrame, millisecsBack)`.

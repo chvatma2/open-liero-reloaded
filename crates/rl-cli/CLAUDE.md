@@ -207,6 +207,9 @@ a 4 s Deathmatch-bot one that fills some of the area cache, and chaos and
 Deathmatch runs on a small generated level (`gen-256x256-a2-s1`; the large
 ones run only in the envelope, ruling PF3), and a replay refused on
 assets other than its own, a pack level's and a generated one's.
+`tests/state_transfer.rs` (check) loads every 5th state of 40 s chaos
+matches (16 bots, MW 1.0 and Classic on Castle Strike) into another world:
+`World::load_state`'s checks are never stricter than play.
 `tests/tool_output.rs` keeps `fixtures/bench/tool-output/` (`stress.ron`,
 `gpu-bench.ron`, `scenario-time.ron`, `feel.ron`) equal to what `stress --out`,
 `gpu-bench --out`, `scenario --time` and `net-sim --feel` write; `xtask`'s envelope

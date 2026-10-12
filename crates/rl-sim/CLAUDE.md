@@ -39,9 +39,14 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `GameMode::save_state` bytes. The sender may be a stranger: `validate`
   refuses (`StateError`, nothing changed) anything that could index out of
   bounds, outgrow a `Buf`, overflow a clock or counter, or stall a tick
-  (projectile clocks, rope speed, aim); the proptest in `tests/state.rs`
-  fuzzes it. The receiving world must come from the same setup
-  (`setup_worms`, map size, pool size, bonus weapons are checked).
+  (projectile clocks, rope speed, aim), and every float of a worm (rope,
+  slots, position record), projectile in use, bonus in use or shot that is
+  NaN or infinite (`worm_finite` and its siblings, exhaustive
+  destructurings: a new float field must be listed); the proptest in
+  `tests/state.rs` fuzzes it, `state_tests.rs` refuses each non-finite
+  field, `rl-cli`'s `tests/state_transfer.rs` loads chaos matches' states.
+  The receiving world must come from the same setup (`setup_worms`, map
+  size, pool size, bonus weapons are checked).
 - **Two clocks.** `tick` is one 100 Hz frame. Inside it, LX56 physics runs in
   `1000 / LX56PhysicsFPS` ms sub-steps (11 ms by default) while the physics
   clock is behind the frame clock, so some frames run no sub-step.

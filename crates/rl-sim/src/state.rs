@@ -15,8 +15,9 @@
 //!
 //! The state comes from a host that may be a stranger: [`World::load_state`]
 //! checks everything that could index out of bounds, grow a buffer past
-//! its capacity, overflow a clock or a counter, or keep a tick from ending,
-//! before it changes anything, and is all-or-nothing.
+//! its capacity, overflow a clock or a counter, keep a tick from ending, or
+//! hand the presentation a number that is NaN or infinite, before it
+//! changes anything, and is all-or-nothing.
 
 use alloc::vec::Vec;
 use core::fmt;
@@ -24,7 +25,7 @@ use core::fmt;
 use rl_math::{AbsTime, GlibcRand, Mt19937};
 use serde::{Deserialize, Serialize};
 
-use crate::bonus::Bonuses;
+use crate::bonus::{Bonus, Bonuses};
 use crate::events::TickEvents;
 use crate::input::Latches;
 use crate::mode::{MatchResult, ModeStateError};
@@ -36,7 +37,7 @@ use crate::rope::NinjaRope;
 use crate::setup::{MAX_SLOTS, Spare};
 use crate::shots::{MAX_SHOOTINGS, ShootList, Shot};
 use crate::world::{CLOCK_OFFSET_MS, FRAME_MS, MAX_WORMS, World};
-use crate::worm::Worm;
+use crate::worm::{Slot, Worm};
 
 /// The latest a clock may be (ms), or a counter that counts up once a
 /// tick or draw: far beyond any match, so that adding to it cannot overflow.
@@ -99,17 +100,21 @@ pub enum StateError {
     /// Another map size, or a cell that is no material.
     Terrain,
     /// Another worm count at setup, too many worms, or a worm whose ids,
-    /// slots, weapons or position record a match never reaches.
+    /// slots, weapons or position record a match never reaches, or with a
+    /// number (its rope's and slots' included) that is NaN or infinite.
     Worms,
     /// The clocks or the server frame are out of step or out of range.
     Clocks,
     /// Another pool size, pool indices outside it, or a projectile of no
-    /// type, owner or clock a match reaches.
+    /// type, owner or clock a match reaches, or with a number that is NaN
+    /// or infinite.
     Projectiles,
-    /// A shot list, or the `RotIncrement` bumps, that do not fit.
+    /// A shot list, or the `RotIncrement` bumps, that do not fit, or a shot
+    /// with a number that is NaN or infinite.
     Buffers,
-    /// Bonus queues past their capacity, another setup's bonus weapons, or
-    /// a weapon outside the mod.
+    /// Bonus queues past their capacity, another setup's bonus weapons, a
+    /// weapon outside the mod, or a bonus with a number that is NaN or
+    /// infinite.
     Bonuses,
     /// A generator whose table index is out of range.
     Rng,
@@ -343,19 +348,25 @@ impl World {
                 && radius_ok(p.radius.1, info.def.height)
                 && (-1..MAX_WORMS as i32).contains(&p.owner)
                 && clock_ok
+                && projectile_finite(p)
         };
         check(self.projectiles.can_load(&s.projectiles, projectile_ok), StateError::Projectiles)?;
 
         let last_shots_room = MAX_SHOOTINGS.min(self.last_shots.capacity());
+        let shot_ok = |x: &Shot| (0..num_weapons).contains(&x.weapon) && shot_finite(x);
         check(
-            self.shots.can_load(&s.shots, num_weapons)
+            self.shots.can_load(&s.shots, shot_ok)
                 && s.last_shots.len() <= last_shots_room
-                && s.last_shots.iter().all(|x| (0..num_weapons).contains(&x.weapon))
+                && s.last_shots.iter().all(shot_ok)
                 && s.rot_bumped.len() == self.draws.rot_bumped.len(),
             StateError::Buffers,
         )?;
 
-        check(self.bonuses.can_load(&s.bonuses, num_weapons), StateError::Bonuses)?;
+        check(
+            self.bonuses.can_load(&s.bonuses, num_weapons)
+                && s.bonuses.client.iter().chain(&s.bonuses.server).all(|b| !b.used || bonus_finite(b)),
+            StateError::Bonuses,
+        )?;
 
         check(
             s.rand.is_valid() && s.mt.is_valid() && s.rand.calls() <= MAX_CLOCK && s.mt.calls() <= MAX_CLOCK,
@@ -367,15 +378,17 @@ impl World {
 /// Whether worm `i` of `worms` is one a match reaches: its id is its
 /// index, at most [`MAX_SLOTS`] slots of the mod's weapons (or none, -1),
 /// the current one among them, a rope hooked to a worm or none, a position
-/// record within its buffer, and no value that keeps a tick from ending
-/// or a counter from counting.
+/// record within its buffer, finite numbers ([`worm_finite`]), and no
+/// value that keeps a tick from ending or a counter from counting.
 fn worm_ok(i: usize, w: &Worm, worms: usize, num_weapons: i32) -> bool {
     let slots = w.slots.len();
     let NinjaRope { released, player_attached, vel, .. } = w.rope;
-    let rope_ok = !released || !(libm::fabsf(vel.x) > MAX_ROPE_SPEED || libm::fabsf(vel.y) > MAX_ROPE_SPEED);
-    // The laser sight turns a finite aim into (-180, 180] 360° at a time.
-    let angle_ok = !w.angle.is_finite() || libm::fabsf(w.angle) <= 360.0;
-    w.id as i64 == i as i64
+    let rope_ok = !released || (libm::fabsf(vel.x) <= MAX_ROPE_SPEED && libm::fabsf(vel.y) <= MAX_ROPE_SPEED);
+    // The laser sight turns the aim into (-180, 180] 360° at a time; play
+    // keeps it in [-90, 90].
+    let angle_ok = libm::fabsf(w.angle) <= 360.0;
+    worm_finite(w)
+        && w.id as i64 == i as i64
         && slots <= MAX_SLOTS
         && w.slots.iter().all(|s| s.weapon == -1 || (0..num_weapons).contains(&s.weapon))
         && (0..slots.max(1) as i64).contains(&(w.current_weapon as i64))
@@ -385,3 +398,180 @@ fn worm_ok(i: usize, w: &Worm, worms: usize, num_weapons: i32) -> bool {
         && angle_ok
         && w.dirt_count.unsigned_abs() <= MAX_DIRT_COUNT
 }
+
+/// Whether every number in a received state is finite (networking spec
+/// §5.4): NaN or an infinity from a stranger would reach the presentation
+/// (camera, renderer, HUD, audio), which takes the simulation's numbers as
+/// they are.
+///
+/// Play with the shipped mods never makes one (`rl-cli`'s
+/// `tests/state_transfer.rs` loads every 5th state of chaos matches with
+/// MW 1.0 and Classic): the settings are bounded (`SimSettings::validate`),
+/// and so is the aim. A mod made to overflow (a NaN or an infinity in its
+/// files, speeds or damage near `f32::MAX`) can make one, as in OLX (the
+/// checksum hashes every NaN alike for that); its match's state is then
+/// refused like a stranger's: a repair fails, a spectator cannot join, the
+/// match plays on. Finite values have no bound beyond the aim's and a
+/// thrown rope's speed, which keep a tick short: a worm leaving the map at
+/// a corner is not clamped back (`physics::move_and_check_collision`), so
+/// no position bound holds for every mod.
+///
+/// The destructurings are exhaustive: a new field does not compile until
+/// it is checked here or listed as no float.
+fn finite(v: &[f32]) -> bool {
+    v.iter().all(|v| v.is_finite())
+}
+
+fn worm_finite(w: &Worm) -> bool {
+    let Worm {
+        id: _,
+        team: _,
+        alive: _,
+        pos,
+        vel,
+        health,
+        angle,
+        angle_speed,
+        face: _,
+        move_dir: _,
+        on_ground: _,
+        state: _,
+        current_weapon: _,
+        slots,
+        rope,
+        lives: _,
+        kills: _,
+        deaths: _,
+        suicides: _,
+        damage,
+        damage_factor,
+        shield_factor,
+        time_of_death: _,
+        last_blood: _,
+        spawned_once: _,
+        can_respawn_now: _,
+        respawn_requested: _,
+        dirt_count: _,
+        frame,
+        speed_factor,
+        can_use_ninja: _,
+        can_air_jump: _,
+        last_input_time: _,
+        last_air_jump_time: _,
+        // `PosRecorder::is_valid` checks its entries.
+        pos_recorder: _,
+    } = w;
+    let NinjaRope {
+        released: _,
+        shooting: _,
+        attached: _,
+        player_attached: _,
+        pos: hook,
+        vel: hook_vel,
+        throws: _,
+    } = rope;
+    finite(&[
+        pos.x,
+        pos.y,
+        vel.x,
+        vel.y,
+        *health,
+        *angle,
+        *angle_speed,
+        *damage,
+        *damage_factor,
+        *shield_factor,
+        *frame,
+        *speed_factor,
+        hook.x,
+        hook.y,
+        hook_vel.x,
+        hook_vel.y,
+    ]) && slots.iter().all(|s| {
+        let Slot { weapon: _, charge, reloading: _, last_fire } = s;
+        finite(&[*charge, *last_fire])
+    })
+}
+
+/// [`worm_finite`] for a projectile in use (a freed slot's numbers are
+/// overwritten when it is taken again).
+fn projectile_finite(p: &Projectile) -> bool {
+    let Projectile {
+        used: _,
+        proj: _,
+        spawn_time: _,
+        life,
+        extra,
+        owner: _,
+        speed,
+        colour: _,
+        ignore_worm_coll_before: _,
+        last_trail_proj: _,
+        time_var_random,
+        pos,
+        vel,
+        old_pos,
+        rotation,
+        radius: _,
+        random: _,
+        max_checkstep: _,
+        min_checkstep: _,
+        max_checkstep2: _,
+        min_checkstep2: _,
+        avg_checkstep: _,
+        wallshoot_time,
+        changes_speed: _,
+        check_speed_len: _,
+        collision_side: _,
+        frame_delta: _,
+        frame,
+        frame_x: _,
+        first_bounce: _,
+        last_sim_time: _,
+        health,
+        serial: _,
+    } = p;
+    finite(&[
+        *life,
+        *extra,
+        *speed,
+        *time_var_random,
+        pos.x,
+        pos.y,
+        vel.x,
+        vel.y,
+        old_pos.x,
+        old_pos.y,
+        *rotation,
+        *wallshoot_time,
+        *frame,
+        *health,
+    ])
+}
+
+/// [`worm_finite`] for a bonus in use (spawning overwrites every number).
+fn bonus_finite(b: &Bonus) -> bool {
+    let Bonus { used: _, kind: _, weapon: _, pos, vel, life, spawn_time: _, flash_time } = b;
+    finite(&[pos.x, pos.y, vel.x, vel.y, *life, *flash_time])
+}
+
+/// [`worm_finite`] for a shot.
+fn shot_finite(x: &Shot) -> bool {
+    let Shot {
+        worm: _,
+        weapon: _,
+        pos,
+        worm_vel,
+        angle: _,
+        random: _,
+        speed: _,
+        time: _,
+        release: _,
+        spawn: _,
+    } = x;
+    finite(&[pos.x, pos.y, worm_vel.x, worm_vel.y])
+}
+
+#[cfg(test)]
+#[path = "state_tests.rs"]
+mod tests;
