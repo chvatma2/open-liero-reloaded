@@ -30,7 +30,7 @@
 
 ## Decisions this plan makes (recorded as STATUS.md N-rulings in Task 12)
 
-- **N1 – client prediction limit 20 ticks.** The spec's 12-tick window is the host's fill deadline (§3.2). A client may predict up to `MAX_PREDICTION = 20` ticks past its confirmed tick before it stalls, because the input path from another player through the host to a client is about the client's whole ping (two one-way legs) minus its input delay: at 150 ms ping that is 15 − 3 = 12 ticks plus jitter, which a 12-tick limit would turn into stalls in the `bad` profile. The snapshot ring holds 21 states. The §3.3 budget is measured at 12 re-simulated ticks (the usual depth) and reported at 20.
+- **N1 – client prediction limit 28 ticks** (amended during Task 7 from 20, measured). The spec's 12-tick window is the host's fill deadline (§3.2). A client may predict up to `MAX_PREDICTION = 28` ticks past its confirmed tick before it stalls: a client's frontier waits for the slowest client's inputs to reach the host (up to the 12-tick fill window under loss bursts) on top of its own two one-way legs minus its input delay. Measured in the `bad` profile (10 seeds, 4 clients), stall events by limit: 20 → 310, 22 → 68, 24 → 14, 26 → 3, 28 → 0. A stall freezes the player's game, which is worse than a deep correction, so the limit is 28 (snapshot ring of 29). The §3.3 budget is measured at 12 re-simulated ticks (the usual depth) and reported at 28.
 - **N2 – input delay fixed per match.** `d` is chosen once, at match start, from the round-trip time (or pinned by the player), not changed mid-match: changing it mid-match leaves a tick with two inputs or none.
 - **N3 – profiles are pings.** A profile's latency is the round-trip time; each direction takes half, with half the jitter.
 - **N4 – the sync checksum.** Rollback compares `World::sync_checksum`, which equals `World::checksum` except that the terrain enters as an incrementally maintained, order-independent cell hash (O(1) to read) instead of FNV over every cell (570 µs at Castle Strike, about 13 ms at 4096²). `World::checksum` (replays, goldens, oracle) is unchanged.
@@ -1636,7 +1636,7 @@ git commit -m "rl-netcode: the simulation trait, a toy simulation and a determin
   ```rust
   pub const TICK_US: u64 = 10_000;
   pub const FILL_WINDOW: u32 = 12;
-  pub const MAX_PREDICTION: u32 = 20;
+  pub const MAX_PREDICTION: u32 = 28;
   pub const CHECKSUM_EVERY: u32 = 10;
   pub const MAX_CATCHUP: u32 = 10;
   pub fn input_delay(rtt_ms: u32) -> u8;                 // min(3, rtt_ms / 40)
@@ -2167,7 +2167,7 @@ Expected: compile errors (`Pace`, `Margins`, new fields and events).
 - [ ] **Step 4: Run the tests**
 
 Run: `cargo nextest run -p rl-netcode`
-Expected: all pass, including Task 6's `every_profile_converges`. If `players_within_the_window_never_stall` fails for `bad`, look at the margin and depth numbers before changing constants; a constant change is a ruling to record (spec numbers: fill window 12; this plan's N1: prediction 20).
+Expected: all pass, including Task 6's `every_profile_converges`. If `players_within_the_window_never_stall` fails for `bad`, look at the margin and depth numbers before changing constants; a constant change is a ruling to record (spec numbers: fill window 12; this plan's N1: prediction 28).
 
 - [ ] **Step 5: Commit**
 
@@ -2690,7 +2690,7 @@ fn feel_numbers_make_sense_on_a_short_run() {
     let mut spec = rl_cli::feel::feel_spec("typical", 1);
     spec.ticks = 600;
     let f: ProfileFeel = measure_one(&c, &spec).unwrap();
-    assert!(f.rollback_p50 >= 1 && f.rollback_p99 <= 20, "{f:?}");
+    assert!(f.rollback_p50 >= 1 && f.rollback_p99 <= 28, "{f:?}");
     assert!(f.rollback_p50 <= f.rollback_p99);
     assert_eq!(f.stalls, 0);
     assert!(f.down_bytes_per_s > 0 && f.down_bytes_per_s < 24_576);
@@ -2768,7 +2768,7 @@ git commit -m "net-feel: seeded feel numbers for every network profile, gated in
 
 **Interfaces:**
 - Consumes: `WorldSim` (Task 8), the generated levels of plan 8 (`rl_cli::genlevel`, names like `gen-4096x4096-a1-s1`), `rl_content` matches.
-- Produces: `rl-cli rollback-cost --level <id> [--mod] [--worms 16] [--depth 12] [--samples 300] --out <ron>` printing `RollbackCost { level, worms, depth, restore_us_p50, restore_us_p99, resim_us_p50, resim_us_p99, total_us_p99, snapshot_bytes, journal_bytes_max }`; the envelope axis `rollback` (points: Castle Strike 16 worms depth 12 and 20; `gen-4096x4096-a1-s1` 16 worms depth 12), its table in the report, and the budget checks: total p99 ≤ 2000 µs (reference, depth 12) and ≤ 4000 µs (4096², depth 12) flagged in the report like other breaking points.
+- Produces: `rl-cli rollback-cost --level <id> [--mod] [--worms 16] [--depth 12] [--samples 300] --out <ron>` printing `RollbackCost { level, worms, depth, restore_us_p50, restore_us_p99, resim_us_p50, resim_us_p99, total_us_p99, snapshot_bytes, journal_bytes_max }`; the envelope axis `rollback` (points: Castle Strike 16 worms depth 12 and 28; `gen-4096x4096-a1-s1` 16 worms depth 12), its table in the report, and the budget checks: total p99 ≤ 2000 µs (reference, depth 12) and ≤ 4000 µs (4096², depth 12) flagged in the report like other breaking points.
 
 Context: spec §3.3's budget, decision N1. A sample: play the match with bots to a random tick (warm-up 500 ticks, then one sample every 10 ticks), save, tick `depth` ticks with the bots' keys, then time `restore` and the `depth` re-simulated ticks (the replayed keys), separately. Nearest-rank percentiles.
 
