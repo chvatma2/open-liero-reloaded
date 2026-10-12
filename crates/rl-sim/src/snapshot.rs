@@ -8,6 +8,9 @@ use crate::World;
 
 /// The world at one moment: everything but the terrain, which is kept as a
 /// mark in the terrain's journal when rollback is on (a full copy otherwise).
+///
+/// Restoring a snapshot invalidates every snapshot taken after it: those are
+/// refused ([`JournalError::Stale`]), never applied.
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     world: World,
@@ -24,6 +27,7 @@ impl Snapshot {
 /// Why [`World::restore`] failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RestoreError {
+    /// The terrain journal refused the snapshot's mark (forgotten or stale).
     Journal(JournalError),
     /// A snapshot taken without rollback restored into a world with it, or the reverse.
     NotThisWorld,
@@ -35,6 +39,7 @@ impl World {
         self.terrain.start_journal();
     }
 
+    /// Whether the terrain journal is on ([`World::enable_rollback`]).
     pub fn rollback_enabled(&self) -> bool {
         self.terrain.journal_mark().is_some()
     }
@@ -52,7 +57,10 @@ impl World {
         }
     }
 
-    /// Puts the world back to `s`.
+    /// Puts the world back to `s`. This invalidates every snapshot taken
+    /// after `s`: restoring one of those is refused with
+    /// `RestoreError::Journal(JournalError::Stale)`, never applied. The world
+    /// is unchanged on an error.
     pub fn restore(&mut self, s: &Snapshot) -> Result<(), RestoreError> {
         match (s.mark, self.rollback_enabled()) {
             (Some(mark), true) => {
@@ -78,6 +86,7 @@ impl World {
         }
     }
 
+    /// Bytes the terrain journal holds, for statistics.
     pub fn journal_bytes(&self) -> usize {
         self.terrain.journal_bytes()
     }

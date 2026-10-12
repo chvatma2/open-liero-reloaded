@@ -14,16 +14,26 @@ use alloc::collections::VecDeque;
 use crate::Terrain;
 
 /// A position in the journal: the count of edits recorded since
-/// `start_journal`. Marks only grow, so they survive `forget_before`.
+/// `start_journal`, with the serial of the last edit before it, so a mark
+/// that the journal's history has left behind is recognised. Positions only
+/// grow, so marks survive `forget_before`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct JournalMark(pub(crate) u64);
+pub struct JournalMark {
+    pos: u64,
+    /// Serial of the edit at `pos - 1`; 0 when there is none.
+    last: u64,
+}
 
+/// Why [`Terrain::undo_to`] refused a mark. Nothing is changed on an error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JournalError {
     /// `start_journal` was never called.
     NotRecording,
     /// The mark is older than what `forget_before` kept.
     Forgotten,
+    /// The mark is not in this journal's current history: it was taken after
+    /// edits that a restore has since undone, or in another world.
+    Stale,
 }
 
 /// One recorded edit: a clipped rectangle of the map; its old cells
@@ -34,6 +44,8 @@ pub(crate) struct Edit {
     y0: u32,
     x1: u32,
     y1: u32,
+    /// Unique and increasing over the journal's life.
+    serial: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -42,6 +54,11 @@ pub(crate) struct Journal {
     bytes: VecDeque<u8>,
     /// Edits dropped from the front by `forget_before`.
     base: u64,
+    /// Serial of the newest forgotten edit (0 if none), so a mark exactly at
+    /// `base` can still be checked.
+    forgotten: u64,
+    /// The serial of the next recorded edit; never reused, even after undo.
+    next_serial: u64,
     hash: u64,
 }
 
@@ -61,8 +78,14 @@ impl Terrain {
     pub fn start_journal(&mut self) {
         if self.journal.is_none() {
             let hash = self.scratch_hash();
-            self.journal =
-                Some(Box::new(Journal { edits: VecDeque::new(), bytes: VecDeque::new(), base: 0, hash }));
+            self.journal = Some(Box::new(Journal {
+                edits: VecDeque::new(),
+                bytes: VecDeque::new(),
+                base: 0,
+                forgotten: 0,
+                next_serial: 1,
+                hash,
+            }));
         }
     }
 
@@ -71,18 +94,30 @@ impl Terrain {
         self.journal = None;
     }
 
+    /// The journal's current position, or `None` while it is off.
     pub fn journal_mark(&self) -> Option<JournalMark> {
-        self.journal.as_ref().map(|j| JournalMark(j.base + j.edits.len() as u64))
+        let j = self.journal.as_ref()?;
+        let pos = j.base + j.edits.len() as u64;
+        Some(JournalMark { pos, last: j.edits.back().map_or(j.forgotten, |e| e.serial) })
     }
 
     /// Puts back every cell changed since `mark`, newest edit first.
     pub fn undo_to(&mut self, mark: JournalMark) -> Result<(), JournalError> {
         let width = self.width as usize;
         let j = self.journal.as_mut().ok_or(JournalError::NotRecording)?;
-        if mark.0 < j.base {
+        if mark.pos < j.base {
             return Err(JournalError::Forgotten);
         }
-        while j.base + j.edits.len() as u64 > mark.0 {
+        let head = j.base + j.edits.len() as u64;
+        let last = match mark.pos {
+            p if p > head => return Err(JournalError::Stale),
+            p if p == j.base => j.forgotten,
+            p => j.edits[(p - j.base - 1) as usize].serial,
+        };
+        if last != mark.last {
+            return Err(JournalError::Stale);
+        }
+        while j.base + j.edits.len() as u64 > mark.pos {
             let e = j.edits.pop_back().expect("counted above");
             let (w, h) = ((e.x1 - e.x0) as usize, (e.y1 - e.y0) as usize);
             // The edit's bytes are the last w * h of the journal, row-major.
@@ -104,8 +139,9 @@ impl Terrain {
     /// Drops the records older than `mark` (they can no longer be undone).
     pub fn forget_before(&mut self, mark: JournalMark) {
         let Some(j) = self.journal.as_mut() else { return };
-        while j.base < mark.0 {
+        while j.base < mark.pos {
             let Some(e) = j.edits.pop_front() else { break };
+            j.forgotten = e.serial;
             let n = (e.x1 - e.x0) as usize * (e.y1 - e.y0) as usize;
             j.bytes.drain(..n);
             j.base += 1;
@@ -141,7 +177,9 @@ impl Terrain {
             let row = y as usize * width;
             j.bytes.extend(&self.cells[row + x0 as usize..row + x1 as usize]);
         }
-        j.edits.push_back(Edit { x0, y0, x1, y1 });
+        let serial = j.next_serial;
+        j.next_serial += 1;
+        j.edits.push_back(Edit { x0, y0, x1, y1, serial });
     }
 
     /// Writes one cell, keeping the tracked hash.
@@ -224,12 +262,43 @@ mod tests {
     }
 
     #[test]
+    fn a_mark_after_undone_edits_is_stale() {
+        let mut t = dirt(20, 20);
+        t.start_journal();
+        let m0 = t.journal_mark().unwrap();
+        t.carve_hole(&square(4), 5, 5);
+        let m1 = t.journal_mark().unwrap();
+        t.undo_to(m0).unwrap();
+        let after = t.clone();
+        assert_eq!(t.undo_to(m1), Err(JournalError::Stale));
+        assert_eq!(t, after, "a refused mark changes nothing");
+    }
+
+    #[test]
+    fn a_mark_is_stale_even_when_the_journal_regrew_past_it() {
+        let mut t = dirt(20, 20);
+        t.start_journal();
+        let m0 = t.journal_mark().unwrap();
+        t.carve_hole(&square(4), 5, 5);
+        let m1 = t.journal_mark().unwrap();
+        t.undo_to(m0).unwrap();
+        t.carve_hole(&square(4), 10, 10);
+        t.carve_hole(&square(4), 14, 14);
+        let after = t.clone();
+        assert_eq!(t.undo_to(m1), Err(JournalError::Stale));
+        assert_eq!(t, after);
+        let mark = t.journal_mark().unwrap();
+        t.forget_before(mark);
+        t.undo_to(mark).unwrap(); // a mark exactly at the base still works
+    }
+
+    #[test]
     fn without_a_journal_nothing_is_recorded() {
         let mut t = dirt(20, 20);
         assert_eq!(t.journal_mark(), None);
         t.carve_hole(&square(4), 5, 5);
         assert_eq!(t.journal_bytes(), 0);
-        assert_eq!(t.undo_to(JournalMark(0)), Err(JournalError::NotRecording));
+        assert_eq!(t.undo_to(JournalMark { pos: 0, last: 0 }), Err(JournalError::NotRecording));
     }
 
     #[test]

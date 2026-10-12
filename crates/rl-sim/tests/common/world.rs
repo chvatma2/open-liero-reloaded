@@ -11,8 +11,8 @@ use rl_data::mod_def::*;
 use rl_sim::{Loadout, MatchSetup, OracleMode, SimMod, SimSettings, Slot, World, WormSetup};
 use rl_terrain::{Stamp, Terrain};
 
-/// A pellet that hits as `hit` says (bouncing for a minute and hurting nobody, for `Bounce`): once fired, it
-/// stays in the pool.
+/// A pellet that lives a minute, hurts nobody and reacts to terrain hits as
+/// `hit` says (`Bounce`: it stays in the pool once fired).
 pub fn pellet(hit: ActionKind) -> ProjectileDef {
     ProjectileDef {
         gfx: ProjectileGfx::Pixel { colours: vec![Rgba::rgb(208, 215, 208)] },
