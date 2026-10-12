@@ -12,7 +12,7 @@ use rl_lobby::{HostConfig, Identity};
 use rl_modes::DeathmatchSettings;
 use rl_net::endpoint::EndpointConfig;
 use rl_online::matches::{bot_wire, rules_wire, setup_packs};
-use rl_online::peer::MISMATCH;
+use rl_online::peer::{MISMATCH, SETUP_REFUSED};
 use rl_online::{OnlineEvent, OnlinePeer, PeerRole};
 use rl_proto::{Look, MatchSetupWire, Phase, PublicKey, SeatWire};
 use rl_replay::Replay;
@@ -133,6 +133,10 @@ struct Net {
 
 impl Net {
     fn new(content: Content, minutes: f32) -> Net {
+        Net::with_admins(content, minutes, Vec::new())
+    }
+
+    fn with_admins(content: Content, minutes: f32, admins: Vec<PublicKey>) -> Net {
         let content_dir = std::env::var("RL_CONTENT_DIR").unwrap();
         let me = identity();
         let key = me.public();
@@ -141,7 +145,7 @@ impl Net {
             password: None,
             max_players: 8,
             max_spectators: 4,
-            admins: Vec::new(),
+            admins,
         };
         let setup = setup(&content, minutes);
         let host = OnlinePeer::start(PeerRole::Host(cfg), endpoint(), me, look("Host"), content, Some(setup))
@@ -409,5 +413,35 @@ fn kicked_players_cannot_rejoin() {
         std::thread::sleep(Duration::from_millis(2));
     }
     assert_eq!(net.members(), 1, "never admitted");
+    net.assert_quick();
+}
+
+#[test]
+fn an_admins_setup_is_taken_or_refused_with_a_notice() {
+    let Some(content) = content() else { return };
+    let admin = identity();
+    let mut net = Net::with_admins(content, 0.1, vec![admin.public()]);
+    let a = net.join_as(admin, "Anna");
+    net.run_until(Duration::from_secs(5), "the admin joins", |n| {
+        n.members() == 2 && n.peers[a].has(|e| matches!(e, OnlineEvent::Lobby(_)))
+    });
+    // A mod the host does not have: refused, the admin is told.
+    let mut odd = setup(&net.content(), 0.1);
+    odd.mod_id = "olx-no-such-mod".into();
+    net.peers[a].peer().lobby().set_setup(odd).unwrap();
+    net.run_until(Duration::from_secs(3), "the admin hears the refusal", |n| {
+        n.peers[a].has(|e| matches!(e, OnlineEvent::Notice(t) if t.starts_with(SETUP_REFUSED)))
+    });
+    assert!(net.host().peer().lobby().state().is_some_and(|s| s.setup.mod_id == MOD), "unchanged");
+    // A setup the host can play: taken.
+    let longer = setup(&net.content(), 0.5);
+    net.peers[a].peer().lobby().set_setup(longer.clone()).unwrap();
+    net.run_until(Duration::from_secs(3), "the host takes it", |n| {
+        n.peers[a].peer().lobby().state().is_some_and(|s| s.setup == longer)
+    });
+    assert_eq!(
+        net.peers[a].count(|e| matches!(e, OnlineEvent::Notice(t) if t.starts_with(SETUP_REFUSED))),
+        1
+    );
     net.assert_quick();
 }

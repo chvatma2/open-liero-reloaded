@@ -39,16 +39,19 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     (250 ms; a start, an end, a kick and a mid-match join at once). A
     `Kick` or `Close` closes the peer once its messages are delivered
     (`CLOSE_LINGER`, 1 s at most) and is `peer_lost` in the match.
-    Pings: the join handshake's round trip (challenge to hello), then the
-    session's `peer_rtt_ms`, every `PING_EVERY` (2 s) into `set_ping`, and
-    the next start's input delays.
+    An admin's `Settings` is taken when the host has its mod, level and
+    packs and the lobby takes it; else that admin gets a notice starting
+    `SETUP_REFUSED`. Pings: the join handshake's round trip (challenge to
+    hello), then the session's `peer_rtt_ms`, every `PING_EVERY` (2 s) into
+    `set_ping`, and the next start's input delays.
   - **Start** (ruling PF1): `LobbyHost::start`/`force_start` → `build` →
     `start_checksum` = `World::checksum` of the start world →
     `announce_start` (drained at once) → `Session` (`Role::Host`: member
     peers in the slots `Seat::Player(i)`, the others `Seat::Spectator`);
     `playing(0)` at the first tick. A client builds the same world,
     compares the checksum (`MISMATCH` → `Refused` and it leaves), plays
-    its slot with its input delay, or watches. A member welcomed during a
+    its slot with its input delay, or watches; a `Start` while its match
+    runs is ignored (`START_IGNORED`). A member welcomed during a
     match gets `Start` after its welcome and the session's
     `add_spectator`; its client, seeing the lobby already starting or
     playing, is `Role::Joining`.
@@ -77,8 +80,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   rows from `build_match`'s start world with its `Recorder` and returns the
   `.rlrp` bytes, with a warning when a confirmed checksum differs (the
   replay is kept; the peer reports it as a `Notice`); `ReplayJob::spawn`
-  runs it on a thread (`rl-online-replay`). A spectator that joined
-  mid-match has no rows from tick 0 and makes none.
+  runs it on a thread (`rl-online-replay`); a peer runs one at a time (a
+  match ending while one is made gets `REPLAY_SKIPPED`, so a hostile host
+  cannot pile up threads). A spectator that joined mid-match has no rows
+  from tick 0 and makes none.
 - **`events.rs`**: `OnlineEvent`, `NetStats` (round trip, input delay, the
   last second's deepest rollback, a client's datagram loss, corrections
   per second, stall episodes).
@@ -90,4 +95,10 @@ clients play a 6 s match to equal confirmed inputs, checksums and replay
 bytes; a late joiner watches from a state, then plays the next match; a
 client whose world differs is refused at the start; a client that vanishes
 mid-match leaves `Keys(0)` in its slot while the others finish; a banned
-player cannot rejoin.
+player cannot rejoin; an admin's setup is taken or refused with a notice.
+`tests/matches.rs`: a proptest of starts within rl-proto's bounds (256
+cases, about 30 build) never panics `build`; a slot both member and bot,
+a single slot, an unknown mod and a pack hash mismatch are refused.
+`tests/replay.rs`: a replay of confirmed inputs plays; a corrupted
+confirmed checksum warns and the same replay is kept. `peer.rs`' unit test:
+one replay worker at a time.

@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use rl_content::Content;
 use rl_lobby::{
     ClientEvent, HostConfig, HostEvent, Identity, LobbyClient, LobbyError, LobbyHost, NotStartable,
+    sanitize_chat,
 };
 use rl_net::endpoint::{Endpoint, EndpointConfig, Gate, HOST, NetEvent, Why};
 use rl_net::random_bytes;
@@ -52,6 +53,12 @@ pub const CLOSE_LINGER: Duration = Duration::from_secs(1);
 pub const HOST_RELIABLE_BYTES_PER_S: u32 = 4 * 1024 * 1024;
 /// The host updates its members' pings this often.
 pub const PING_EVERY: Duration = Duration::from_secs(2);
+/// The start of the notice an admin gets for a setup the host refuses.
+pub const SETUP_REFUSED: &str = "the host cannot use that setup";
+/// Said when the host starts a match while one is running (ignored).
+pub const START_IGNORED: &str = "the host started a match during the match: ignored";
+/// Said when a match ends while the last one's replay is still being made.
+pub const REPLAY_SKIPPED: &str = "the last replay is still being made: this match has none";
 /// Why a client that cannot play the host's start leaves.
 pub const MISMATCH: &str = "your simulation differs from the host's: version or content";
 
@@ -103,6 +110,15 @@ struct HostSide {
     reported: Option<LobbyState>,
 }
 
+impl HostSide {
+    /// Forgets what the host kept of a closed peer's connection.
+    fn forget(&mut self, peer: PeerId) {
+        self.addrs.remove(&peer);
+        self.rtts.remove(&peer);
+        self.challenged.remove(&peer);
+    }
+}
+
 struct ClientSide {
     lobby: LobbyClient,
 }
@@ -151,7 +167,8 @@ pub struct OnlinePeer {
     now: Option<Instant>,
     now_us: u64,
     game: Option<Game>,
-    replays: Vec<ReplayJob>,
+    /// The replay being made: one at a time.
+    replay: Option<ReplayJob>,
     last_record: Option<MatchRecord>,
     /// Member names by id, as last seen (members who left keep theirs).
     names: BTreeMap<u8, String>,
@@ -218,7 +235,7 @@ impl OnlinePeer {
             now: None,
             now_us: 0,
             game: None,
-            replays: Vec::new(),
+            replay: None,
             last_record: None,
             names: BTreeMap::new(),
             closing: BTreeMap::new(),
@@ -272,7 +289,7 @@ impl OnlinePeer {
             self.close_lingering(now);
             self.update_stats(now);
         }
-        self.collect_replays();
+        self.collect_replay();
         std::mem::take(&mut self.events)
     }
 
@@ -425,9 +442,7 @@ impl OnlinePeer {
     fn forget_peer(&mut self, peer: PeerId) {
         if let Side::Host(h) = &mut self.side {
             h.lobby.disconnected(peer);
-            h.addrs.remove(&peer);
-            h.rtts.remove(&peer);
-            h.challenged.remove(&peer);
+            h.forget(peer);
         }
         self.closing.remove(&peer);
         if let Some(g) = &mut self.game {
@@ -454,9 +469,7 @@ impl OnlinePeer {
             self.closing.remove(&peer);
             self.endpoint.close(peer);
             if let Side::Host(h) = &mut self.side {
-                h.addrs.remove(&peer);
-                h.rtts.remove(&peer);
-                h.challenged.remove(&peer);
+                h.forget(peer);
             }
         }
     }
@@ -541,14 +554,30 @@ impl OnlinePeer {
                 HostEvent::Chat { from, text } => {
                     self.events.push(OnlineEvent::Chat { from: self.name(from), text });
                 }
-                HostEvent::Admin { cmd: AdminCommand::Settings(setup), .. } => {
-                    if let Side::Host(h) = &mut self.side {
-                        let _ = h.lobby.set_setup(setup);
-                    }
+                HostEvent::Admin { from, cmd: AdminCommand::Settings(setup) } => {
+                    self.admin_setup(from, setup)
                 }
                 HostEvent::Admin { .. } | HostEvent::StartRequested => {}
             }
         }
+    }
+
+    /// An admin's setup: taken when the host has its packs and the lobby
+    /// takes it, else a notice to that admin says why not.
+    fn admin_setup(&mut self, from: u8, setup: MatchSetupWire) {
+        let Side::Host(h) = &mut self.side else { return };
+        let have = |id: &str| self.content.pack_kind(id).is_some();
+        let refused = if !have(&setup.mod_id) || !have(&setup.level_id) {
+            Some("the host does not have that mod or level".to_string())
+        } else if let Err(e) = matches::check_packs(&self.content, &setup) {
+            Some(format!("{e:#}"))
+        } else {
+            h.lobby.set_setup(setup).err().map(|e| format!("{e:?}"))
+        };
+        let (Some(why), Some(peer)) = (refused, h.lobby.peer_of(from)) else { return };
+        let text = sanitize_chat(&format!("{SETUP_REFUSED}: {why}")).unwrap_or_else(|| SETUP_REFUSED.into());
+        let notice = ToClient::Notice(Notice::Message(text));
+        send_tagged(&mut self.endpoint, peer, TAG_TO_CLIENT, &encode_to_client(&notice));
     }
 
     /// A member welcomed during a match watches it (spec §3.6): it gets the
@@ -712,8 +741,14 @@ impl OnlinePeer {
     /// arriving mid-match (the lobby already starting or playing), a
     /// joining spectator's session.
     fn client_start(&mut self, start: MatchStartWire) {
-        if self.game.is_some() {
-            self.finish_client();
+        match &self.game {
+            // A host bug or a hostile one: one match at a time.
+            Some(g) if g.ended.is_none() => {
+                self.events.push(OnlineEvent::Notice(START_IGNORED.into()));
+                return;
+            }
+            Some(_) => self.finish_client(),
+            None => {}
         }
         let Side::Client(c) = &self.side else { return };
         let joining =
@@ -877,27 +912,31 @@ impl OnlinePeer {
         self.make_replay(record_of(&g.session, &g.start, upto));
     }
 
+    /// Starts making the match's replay, unless one is still being made:
+    /// one worker thread at a time (a host starting matches back to back
+    /// cannot pile them up); that match's replay is skipped then.
     fn make_replay(&mut self, record: Option<MatchRecord>) {
         let Some(record) = record else { return };
         self.last_record = Some(record.clone());
-        self.replays.push(ReplayJob::spawn(Arc::clone(&self.content), record));
+        if self.replay.is_some() {
+            self.events.push(OnlineEvent::Notice(REPLAY_SKIPPED.into()));
+            return;
+        }
+        self.replay = Some(ReplayJob::spawn(Arc::clone(&self.content), record));
     }
 
-    fn collect_replays(&mut self) {
-        let mut waiting = Vec::new();
-        for job in std::mem::take(&mut self.replays) {
-            match job.poll() {
-                None => waiting.push(job),
-                Some(Ok(made)) => {
-                    if let Some(w) = made.warning {
-                        self.events.push(OnlineEvent::Notice(w));
-                    }
-                    self.events.push(OnlineEvent::ReplayReady(made.bytes));
+    fn collect_replay(&mut self) {
+        let Some(result) = self.replay.as_ref().and_then(ReplayJob::poll) else { return };
+        self.replay = None;
+        match result {
+            Ok(made) => {
+                if let Some(w) = made.warning {
+                    self.events.push(OnlineEvent::Notice(w));
                 }
-                Some(Err(e)) => self.events.push(OnlineEvent::Notice(format!("the replay failed: {e}"))),
+                self.events.push(OnlineEvent::ReplayReady(made.bytes));
             }
+            Err(e) => self.events.push(OnlineEvent::Notice(format!("the replay failed: {e}"))),
         }
-        self.replays = waiting;
     }
 
     fn update_stats(&mut self, now: Instant) {
@@ -1164,5 +1203,75 @@ impl LobbyHandle<'_> {
                 self.peer.flush_client();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::matches::{bot_wire, rules_wire, setup_packs};
+    use rl_proto::{BotWire, SlotWire};
+
+    fn content() -> Option<Content> {
+        let dir = std::env::var("RL_CONTENT_DIR").ok().filter(|d| std::path::Path::new(d).is_dir());
+        let Some(dir) = dir else {
+            eprintln!("RL_CONTENT_DIR not set or missing (run `cargo xtask fetch-olx-content`); skipping");
+            return None;
+        };
+        Some(Content::open(std::path::Path::new(&dir)).unwrap())
+    }
+
+    fn look() -> Look {
+        Look { name: "Bot".into(), colour: [1, 2, 3], skin: "olx-skin-default".into() }
+    }
+
+    /// A record of 50 ticks of two bots on Dirt Level.
+    fn record(c: &Content) -> MatchRecord {
+        let (m, l) = ("olx-classic", "olx-level-dirt-level");
+        let bot: BotWire = bot_wire(&rl_bots::BotConfig::default(), look());
+        let setup = MatchSetupWire {
+            mod_id: m.into(),
+            level_id: l.into(),
+            packs: setup_packs(c, m, l).unwrap(),
+            rules: rules_wire(&rl_modes::DeathmatchSettings::default()),
+            bonuses: false,
+            loading_time: 100,
+            restrictions: String::new(),
+            bots: vec![bot.clone(), bot],
+        };
+        let slots =
+            (0..2).map(|i| SlotWire { member: None, bot: Some(i), look: look(), loadout: None }).collect();
+        let start = MatchStartWire { seed: 1, setup, slots, input_delay: vec![], start_checksum: 0 };
+        MatchRecord { start, rows: vec![[0; 32]; 50], checksums: vec![] }
+    }
+
+    /// A client whose host is not there: nothing but its replays happens.
+    fn peer(c: Content) -> OnlinePeer {
+        let me = Identity::from_secret([7; 32]).unwrap();
+        let role = PeerRole::Client { addr: SocketAddr::from(([127, 0, 0, 1], 9)), password: None };
+        let cfg = EndpointConfig { port: 0, ..EndpointConfig::default() };
+        OnlinePeer::start(role, cfg, me, look(), c, None).unwrap()
+    }
+
+    #[test]
+    fn one_replay_is_made_at_a_time() {
+        let Some(c) = content() else { return };
+        let r = record(&c);
+        let mut p = peer(c);
+        p.make_replay(Some(r.clone()));
+        p.make_replay(Some(r.clone()));
+        p.make_replay(Some(r.clone()));
+        assert_eq!(p.events, vec![OnlineEvent::Notice(REPLAY_SKIPPED.into()); 2], "the others skipped");
+        p.events.clear();
+        let begun = std::time::Instant::now();
+        while p.replay.is_some() {
+            assert!(begun.elapsed() < Duration::from_secs(10), "the replay is made");
+            p.collect_replay();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(matches!(p.events[..], [OnlineEvent::ReplayReady(_)]), "{:?}", p.events.len());
+        // The worker is free again.
+        p.make_replay(Some(r));
+        assert!(p.replay.is_some());
     }
 }
