@@ -2,10 +2,12 @@
 //! the verdict holds for every profile and many seeds.
 
 use proptest::prelude::*;
+use rl_netcode::harness::Factory;
 use rl_netcode::harness::{self, HOST, Outage, PeerPlan, Scenario};
 use rl_netcode::netsim::Profile;
 use rl_netcode::toy::ToyFactory;
 use rl_netcode::{Channel, Config, Role, Seat, Session, ToySim, input_delay};
+use rl_proto::{ClientInputs, Datagram, Frame, HostInputs, MAX_FRAMES, MAX_KEYS, Stamp, encode_datagram};
 
 fn scenario(seed: u64, profile: Profile, clients: u8, spectators: u8) -> Scenario {
     let slots = clients + 2; // two host-local slots (a human and a bot)
@@ -43,6 +45,7 @@ fn scenario(seed: u64, profile: Profile, clients: u8, spectators: u8) -> Scenari
         outages: Vec::new(),
         expect_no_stalls: false,
         corrupt: vec![],
+        host_freeze: None,
     }
 }
 
@@ -101,6 +104,108 @@ proptest! {
             let ch = if i % 2 == 0 { Channel::Unreliable } else { Channel::Reliable };
             host.receive(1, ch, p, i as u64 * 1000);
             client.receive(0, ch, p, i as u64 * 1000);
+        }
+    }
+}
+
+#[test]
+fn sim_mut_is_hidden_from_the_docs() {
+    // A test and harness hook, like `change_confirmed`.
+    let src = include_str!("../src/session.rs");
+    assert!(src.contains("#[doc(hidden)]\n    pub fn sim_mut("), "sim_mut is documented as API");
+}
+
+/// `0`, `u32::MAX` and their neighbours, values around the current tick
+/// (the sessions run tens of ticks), or anything.
+fn edge_u32() -> impl Strategy<Value = u32> {
+    prop_oneof![Just(0), Just(1), Just(u32::MAX), Just(u32::MAX - 1), 0u32..80, any::<u32>()]
+}
+
+fn stamp() -> impl Strategy<Value = Stamp> {
+    (edge_u32(), edge_u32(), prop_oneof![Just(0u16), Just(u16::MAX), any::<u16>()])
+        .prop_map(|(sent_ms, echo_ms, held_ms)| Stamp { sent_ms, echo_ms, held_ms })
+}
+
+/// A frame that decodes for 4 slots.
+fn frame() -> impl Strategy<Value = Frame> {
+    (0u32..16, 0u32..16, prop::collection::vec(any::<u8>(), 4)).prop_map(|(known, changed, keys)| {
+        let changed = changed & known;
+        Frame { known, changed, keys: keys[..changed.count_ones() as usize].to_vec() }
+    })
+}
+
+/// A well-formed datagram with edge values.
+fn datagram() -> impl Strategy<Value = Datagram> {
+    let margin = prop_oneof![Just(i16::MIN), Just(i16::MAX), Just(0i16), -40i16..40, any::<i16>()];
+    prop_oneof![
+        (stamp(), edge_u32(), edge_u32(), edge_u32(), prop::collection::vec(any::<u8>(), 0..=MAX_KEYS))
+            .prop_map(|(stamp, tick, ack, first, keys)| Datagram::Client(ClientInputs {
+                stamp,
+                tick,
+                ack,
+                first,
+                keys
+            })),
+        (stamp(), edge_u32(), edge_u32(), margin, edge_u32(), prop::collection::vec(frame(), 0..=MAX_FRAMES))
+            .prop_map(|(stamp, tick, your_ack, margin, first, frames)| Datagram::Host(HostInputs {
+                stamp,
+                tick,
+                your_ack,
+                margin,
+                first,
+                frames
+            })),
+    ]
+}
+
+/// Every final input a session knew stays as it was.
+#[derive(Default)]
+struct Finals(Vec<Vec<u8>>);
+
+impl Finals {
+    fn check(&mut self, s: &Session<ToySim>) {
+        let log = s.input_log();
+        self.0.resize(4, Vec::new());
+        for (slot, known) in self.0.iter_mut().enumerate() {
+            let slot = slot as u8;
+            for (i, &v) in known.iter().enumerate() {
+                assert_eq!(log.get(log.origin() + i as u32, slot), Some(v), "slot {slot} tick {i} changed");
+            }
+            let upto = log.known_upto(slot);
+            for t in log.origin() + known.len() as u32..upto {
+                known.push(log.get(t, slot).expect("known"));
+            }
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, failure_persistence: None, ..ProptestConfig::default() })]
+
+    /// Well-formed datagrams with edge values never panic a client, a
+    /// spectator, a joining spectator or the host, and never change an
+    /// input it took as final.
+    #[test]
+    fn edge_datagrams_never_panic_or_change_final_inputs(datagrams in prop::collection::vec(datagram(), 1..24)) {
+        let host = Role::Host { peers: vec![(1, Seat::Player(1)), (2, Seat::Spectator)] };
+        let mut sessions = [
+            (0, Session::new(Config::new(4, 1), Role::Client { host: 0, slot: 1 }, ToySim::new(4), 0)),
+            (0, Session::new(Config::new(4, 0), Role::Spectator { host: 0 }, ToySim::new(4), 0)),
+            (0, Session::new(Config::new(4, 0), Role::Joining { host: 0 }, ToySim::new(4), 0)),
+            (1, Session::new(Config::new(4, 0), host, ToySim::new(4), 0)),
+        ];
+        let mut f = ToyFactory { slots: 4, seed: 1 };
+        for (from, s) in sessions.iter_mut() {
+            let mut drv = f.driver(5, None);
+            let mut finals = Finals::default();
+            for (i, d) in datagrams.iter().enumerate() {
+                let now = (i as u64 + 1) * 10_000;
+                s.receive(*from, Channel::Unreliable, &encode_datagram(d), now);
+                finals.check(s);
+                s.advance(now, drv.as_mut());
+                s.transmit(&mut |_, _, _| {});
+                finals.check(s);
+            }
         }
     }
 }

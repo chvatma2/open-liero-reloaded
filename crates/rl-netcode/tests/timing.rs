@@ -28,6 +28,7 @@ fn scenario(seed: u64, peers: Vec<PeerPlan>, ticks: u32) -> Scenario {
         outages: vec![],
         expect_no_stalls: false,
         corrupt: vec![],
+        host_freeze: None,
     }
 }
 
@@ -93,4 +94,28 @@ fn a_silent_peer_times_out() {
     let r = harness::run(&sc, &mut f).unwrap();
     assert!(r.events[&HOST].iter().any(|e| matches!(e, Event::PeerTimedOut { peer: 1 })));
     assert!(r.events[&1].iter().any(|e| matches!(e, Event::PeerTimedOut { peer: HOST })));
+}
+
+#[test]
+fn a_frozen_host_stalls_its_clients_who_recover() {
+    // The host stops for 2 s (a hitch, a suspended laptop): no frames, its
+    // clock stands still, arrivals wait. Its clients stall at the
+    // prediction limit, then play on with it.
+    let sc = Scenario {
+        host_freeze: Some((1_000, 1_200)),
+        ..scenario(7, vec![plan(1, 2, Profile::GOOD, 0), plan(2, 3, Profile::TYPICAL, 0)], 3_000)
+    };
+    let r = run(&sc);
+    for p in [1u16, 2] {
+        let stalls: Vec<u32> = r.events[&p]
+            .iter()
+            .filter_map(|e| match e {
+                Event::Stalled { tick } => Some(*tick),
+                _ => None,
+            })
+            .collect();
+        assert!(!stalls.is_empty(), "peer {p} waited for the host");
+        let last = *stalls.last().unwrap();
+        assert!(last < 1_600, "peer {p} still stalled at tick {last}: {stalls:?}");
+    }
 }

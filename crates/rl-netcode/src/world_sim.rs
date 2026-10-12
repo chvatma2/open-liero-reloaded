@@ -2,12 +2,15 @@
 //! journal on (networking spec §3.3), checksummed with the terrain's cell
 //! hash (decision N4) and transferred as rl-sim's `WorldState` (N5).
 
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use rl_sim::{Keys, Snapshot, TickEvents, World, WorldState};
+use rl_math::Vec2;
+use rl_modes::Deathmatch;
+use rl_sim::{Event, EventKind, Keys, LostArea, MatchResult, Score, Snapshot, TickEvents, World, WorldState};
 use rl_terrain::Area;
 
-use crate::{Session, Simulation, StateRejected};
+use crate::{Session, Simulation, StateRejected, TickInfo};
 
 /// A world under rollback.
 pub struct WorldSim {
@@ -110,4 +113,113 @@ impl Simulation for WorldSim {
         let s = WorldState::decode(bytes).map_err(|_| StateRejected)?;
         self.world.load_state(s).map_err(|_| StateRejected)
     }
+}
+
+/// One simulated tick for the presentation (plan 10's sounds, effects and
+/// colour map): every tick [`crate::Driver::simulated`] saw, re-simulated
+/// ones included.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TickedTick {
+    pub tick: u32,
+    /// Re-simulated by a rollback (or after a loaded state).
+    pub resim: bool,
+    /// The physics sub-steps it ran (`World::substeps_last_tick`).
+    pub substeps: u8,
+    /// The area of terrain edits it dropped (`TickEvents::lost_area`).
+    pub lost: Option<LostArea>,
+    /// Its events, in order.
+    pub events: Vec<Event>,
+}
+
+/// One confirmed tick for the HUD, the log and the results (spec §3.4):
+/// what its last simulation left, kept until it was confirmed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConfirmedTick {
+    pub tick: u32,
+    /// Its gameplay events only (`WeaponFired`, `Damage`, `Kill`,
+    /// `BonusPickup`, `Spawned`, `Message`, `GameOver`), in order.
+    pub events: Vec<Event>,
+    /// `World::scores` after it.
+    pub scores: Vec<Score>,
+    /// The deathmatch's time left after it (`Deathmatch::time_left_ms`).
+    pub time_left_ms: Option<u64>,
+    /// `World::result` after it.
+    pub result: Option<MatchResult>,
+    /// Every worm's id and position after it (for damage popups).
+    pub positions: Vec<(i32, Vec2)>,
+}
+
+/// Turns the ticks a session simulates into records for the game (spec
+/// §3.4: sounds and effects at once, the scoreboard and messages from
+/// confirmed ticks only). Fed from [`crate::Driver::simulated`]; after each
+/// `advance` the game takes the ticked records, then the confirmed ones
+/// below `Session::confirmed`.
+#[derive(Debug, Default)]
+pub struct TickRecorder {
+    ticked: Vec<TickedTick>,
+    /// One candidate per simulated tick not taken yet, the last simulation's.
+    pending: BTreeMap<u32, ConfirmedTick>,
+    /// Ticks below it were taken as confirmed.
+    taken: u32,
+}
+
+impl TickRecorder {
+    /// Records the tick `sim` just simulated: a [`TickedTick`], and its
+    /// [`ConfirmedTick`] candidate, which replaces an earlier simulation's.
+    /// A tick already taken as confirmed (simulated again after a loaded
+    /// state) gets no new candidate: each tick is confirmed once.
+    pub fn simulated(&mut self, sim: &WorldSim, info: TickInfo) {
+        let (world, events) = (sim.world(), sim.events());
+        self.ticked.push(TickedTick {
+            tick: info.tick,
+            resim: info.resim,
+            substeps: world.substeps_last_tick(),
+            lost: events.lost_area(),
+            events: events.as_slice().to_vec(),
+        });
+        if info.tick < self.taken {
+            return;
+        }
+        let time_left_ms =
+            world.mode_state().as_any().downcast_ref::<Deathmatch>().and_then(Deathmatch::time_left_ms);
+        self.pending.insert(
+            info.tick,
+            ConfirmedTick {
+                tick: info.tick,
+                events: events.iter().filter(|e| gameplay(&e.kind)).copied().collect(),
+                scores: world.scores().to_vec(),
+                time_left_ms,
+                result: world.result(),
+                positions: world.worms().iter().map(|w| (w.id, w.pos)).collect(),
+            },
+        );
+    }
+
+    /// Every tick simulated since the last call, in simulation order.
+    pub fn take_ticked(&mut self) -> Vec<TickedTick> {
+        core::mem::take(&mut self.ticked)
+    }
+
+    /// The candidates of ticks below `confirmed` (`Session::confirmed`),
+    /// in tick order; each tick comes out once.
+    pub fn take_confirmed(&mut self, confirmed: u32) -> Vec<ConfirmedTick> {
+        let rest = self.pending.split_off(&confirmed);
+        let done = core::mem::replace(&mut self.pending, rest);
+        self.taken = self.taken.max(confirmed);
+        done.into_values().collect()
+    }
+}
+
+/// The kinds a confirmed tick keeps: what the HUD, the log and the results read.
+fn gameplay(kind: &EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::WeaponFired { .. }
+            | EventKind::Damage { .. }
+            | EventKind::Kill { .. }
+            | EventKind::BonusPickup { .. }
+            | EventKind::Spawned { .. }
+            | EventKind::Message(_)
+            | EventKind::GameOver(_)
+    )
 }

@@ -10,6 +10,7 @@ use std::rc::Rc;
 use rl_content::{Content, MatchOptions, Player};
 use rl_netcode::harness::{self, Factory, Observer, PeerPlan, Scenario};
 use rl_netcode::netsim::Profile;
+use rl_netcode::world_sim::{ConfirmedTick, TickRecorder, TickedTick};
 use rl_netcode::{Driver, PeerId, Seat, Session, Simulation, TickInfo, WorldSim, input_delay};
 use rl_sim::Keys;
 use rl_terrain::{Area, ColorEdit, ColorMap};
@@ -185,6 +186,7 @@ fn the_world_plays_over_the_network_with_a_late_spectator() {
         outages: vec![],
         expect_no_stalls: true,
         corrupt: vec![],
+        host_freeze: None,
     };
     let mut f = Worlds { content: &c };
     let r = harness::run(&sc, &mut f).unwrap();
@@ -311,6 +313,7 @@ fn colour_maps_follow_rollbacks_and_loads() {
         outages: vec![],
         expect_no_stalls: false,
         corrupt: vec![],
+        host_freeze: None,
     };
     let painted = Rc::new(RefCell::new(Painted::default()));
     let mut f = PaintingWorlds { content: &c, painted: painted.clone() };
@@ -321,4 +324,132 @@ fn colour_maps_follow_rollbacks_and_loads() {
     assert_eq!(r.stats[&4].states_loaded, 1);
     assert!(obs.rebuilt > 1, "areas were put back: {}", obs.rebuilt);
     eprintln!("{} areas rebuilt", obs.rebuilt);
+}
+
+/// Every peer's tick records, taken after each frame as plan 10's game takes them.
+#[derive(Default)]
+struct Records {
+    recorders: BTreeMap<PeerId, TickRecorder>,
+    ticked: BTreeMap<PeerId, Vec<TickedTick>>,
+    confirmed: BTreeMap<PeerId, Vec<ConfirmedTick>>,
+}
+
+/// [`Scripted`], feeding its peer's [`TickRecorder`].
+struct Recording {
+    peer: PeerId,
+    records: Rc<RefCell<Records>>,
+}
+
+impl Driver<WorldSim> for Recording {
+    fn local_inputs(&mut self, sim: &WorldSim, tick: u32, slots: &[u8], out: &mut [Keys]) {
+        Scripted.local_inputs(sim, tick, slots, out);
+    }
+
+    fn simulated(&mut self, sim: &WorldSim, info: TickInfo) {
+        self.records.borrow_mut().recorders.entry(self.peer).or_default().simulated(sim, info);
+    }
+}
+
+struct RecordingWorlds<'a> {
+    content: &'a Content,
+    records: Rc<RefCell<Records>>,
+}
+
+impl Factory<WorldSim> for RecordingWorlds<'_> {
+    fn sim(&mut self, _peer: PeerId) -> WorldSim {
+        WorldSim::new(dirt_world(self.content, 3))
+    }
+
+    fn driver(&mut self, peer: PeerId, _seat: Option<Seat>) -> Box<dyn Driver<WorldSim>> {
+        Box::new(Recording { peer, records: self.records.clone() })
+    }
+}
+
+struct Taker(Rc<RefCell<Records>>);
+
+impl Observer<WorldSim> for Taker {
+    fn on_frame(&mut self, peer: PeerId, session: &mut Session<WorldSim>) {
+        let mut r = self.0.borrow_mut();
+        let confirmed = session.confirmed();
+        let rec = r.recorders.entry(peer).or_default();
+        let (ticked, done) = (rec.take_ticked(), rec.take_confirmed(confirmed));
+        assert!(done.iter().all(|t| t.tick < confirmed), "peer {peer}: a record at or past {confirmed}");
+        r.ticked.entry(peer).or_default().extend(ticked);
+        r.confirmed.entry(peer).or_default().extend(done);
+    }
+}
+
+/// The records a peer that simulated only final inputs would make: the
+/// host's confirmed inputs replayed offline.
+fn final_timeline(c: &Content, host_log: &[[u8; 32]], ticks: u32) -> Vec<ConfirmedTick> {
+    let mut sim = WorldSim::new(dirt_world(c, 3));
+    let mut rec = TickRecorder::default();
+    for t in 0..ticks {
+        let keys: Vec<Keys> = host_log[t as usize][..8].iter().map(|&k| Keys(k)).collect();
+        sim.tick(&keys);
+        rec.simulated(&sim, TickInfo { tick: t, resim: false, all_final: true });
+    }
+    assert_eq!(rec.take_ticked().len(), ticks as usize);
+    rec.take_confirmed(ticks)
+}
+
+/// Confirmed records come out once per tick, in order, only below the
+/// confirmed tick, and are the final timeline's however often a tick was
+/// simulated; the ticked records are every simulation, in order.
+#[test]
+fn tick_records_follow_rollbacks() {
+    let Some(c) = content() else { return };
+    let plan = |id: u16, seat| PeerPlan {
+        id,
+        seat,
+        profile: Profile::BAD,
+        clock_ppm: 0,
+        input_delay: input_delay(Profile::BAD.ping_ms),
+        frame_us: 6_944,
+        join_tick: None,
+        freeze: None,
+    };
+    let sc = Scenario {
+        seed: 6,
+        slots: 8,
+        peers: vec![
+            plan(1, Seat::Player(5)),
+            plan(2, Seat::Player(6)),
+            plan(3, Seat::Player(7)),
+            plan(4, Seat::Spectator),
+        ],
+        ticks: 500,
+        settle_ticks: 100,
+        outages: vec![],
+        expect_no_stalls: false,
+        corrupt: vec![],
+        host_freeze: None,
+    };
+    let records = Rc::new(RefCell::new(Records::default()));
+    let mut f = RecordingWorlds { content: &c, records: records.clone() };
+    let mut obs = Taker(records.clone());
+    let r = harness::run_observed(&sc, &mut f, &mut obs).unwrap();
+    harness::verdict(&sc, &r, &mut f).unwrap();
+    assert!(r.stats[&1].rollbacks > 0);
+    let want = final_timeline(&c, &r.host_log, sc.ticks);
+    assert!(want.iter().any(|t| !t.events.is_empty()), "something happened");
+    let records = records.borrow();
+    for peer in [0u16, 1, 2, 3, 4] {
+        let got = &records.confirmed[&peer];
+        assert!(got.len() >= sc.ticks as usize, "peer {peer}: {} records", got.len());
+        for (i, t) in got.iter().enumerate() {
+            assert_eq!(t.tick, i as u32, "peer {peer}: once per tick, in order");
+        }
+        for (g, w) in got.iter().zip(&want) {
+            assert_eq!(g, w, "peer {peer}, tick {}", w.tick);
+        }
+        // Every new tick once, re-simulations after it, in simulation order.
+        let ticked = &records.ticked[&peer];
+        let new: Vec<u32> = ticked.iter().filter(|t| !t.resim).map(|t| t.tick).collect();
+        assert!(new.iter().enumerate().all(|(i, &t)| t == i as u32), "peer {peer}: new ticks in order");
+        let resims = ticked.len() - new.len();
+        assert_eq!(resims as u64, r.stats[&peer].resim_ticks, "peer {peer}");
+        assert!(ticked.iter().all(|t| t.events.iter().all(|e| e.substep <= t.substeps)));
+    }
+    assert!(records.ticked[&1].iter().any(|t| t.resim));
 }

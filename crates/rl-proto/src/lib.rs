@@ -93,12 +93,35 @@ pub struct Frame {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Control {
-    Checksum { tick: u32, hash: u64 },
-    Late { tick: u32 },
-    Desync { tick: u32, host_hash: u64 },
-    StateBegin { tick: u32, len: u32, chunks: u16 },
-    StateChunk { index: u16, bytes: Vec<u8> },
+    Checksum {
+        tick: u32,
+        hash: u64,
+    },
+    /// The host filled the receiver's inputs it got too late, within ticks
+    /// `from..to` (one per datagram; `from < to`).
+    Late {
+        from: u32,
+        to: u32,
+    },
+    Desync {
+        tick: u32,
+        host_hash: u64,
+    },
+    StateBegin {
+        tick: u32,
+        len: u32,
+        chunks: u16,
+    },
+    StateChunk {
+        index: u16,
+        bytes: Vec<u8>,
+    },
+    /// The sender leaves the match.
     Bye,
+    /// A client or spectator loaded the host's state after `tick`.
+    StateLoaded {
+        tick: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -157,6 +180,7 @@ pub fn decode_control(b: &[u8]) -> Result<Control, ProtoError> {
         Control::StateBegin { len, chunks, .. } => {
             *len as usize <= MAX_STATE && *chunks as usize == (*len as usize).div_ceil(STATE_CHUNK)
         }
+        Control::Late { from, to } => from < to,
         _ => true,
     };
     if ok { Ok(c) } else { Err(ProtoError::Invalid) }

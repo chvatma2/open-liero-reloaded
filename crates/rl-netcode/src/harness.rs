@@ -72,6 +72,10 @@ pub struct Scenario {
     /// passes index `i`; `Session::change_confirmed`). Only these peers may desync; the verdict compares them
     /// from their last loaded state on.
     pub corrupt: Vec<(PeerId, u32)>,
+    /// The host suspended, like [`PeerPlan::freeze`]: from its tick `.0`
+    /// it runs no frame, its clock stands still and arrivals wait, for
+    /// `.1 - .0` ticks' worth of time (its own tick stands still too).
+    pub host_freeze: Option<(u32, u32)>,
 }
 
 /// Watches a run as it happens (the driver's view, not the report's): what
@@ -113,8 +117,8 @@ pub struct Report {
     /// What reached each peer.
     pub received: BTreeMap<PeerId, LinkStats>,
     pub duration_us: u64,
-    /// Peers the host dropped after [`Event::PeerTimedOut`] or
-    /// [`Event::RepairFailed`]; the verdict skips them.
+    /// Peers the host dropped after [`Event::PeerTimedOut`],
+    /// [`Event::PeerLeft`] or [`Event::RepairFailed`]; the verdict skips them.
     pub dropped: BTreeSet<PeerId>,
     /// Peers the host dropped after [`Event::RepairFailed`].
     pub repair_failed: BTreeSet<PeerId>,
@@ -161,6 +165,9 @@ struct Peer<S: Simulation> {
     next_frame: u64,
     /// The freeze still to come.
     freeze: Option<(u32, u32)>,
+    /// The host's: a freeze lasts `until - from` ticks' worth of virtual
+    /// time (its own tick stands still), not until the host's tick `until`.
+    timed_freeze: bool,
     /// The virtual time the current freeze began.
     frozen_at: Option<u64>,
     /// Virtual time spent frozen: the peer's clock lags by it.
@@ -179,6 +186,16 @@ impl<S: Simulation> Peer<S> {
     /// Its clock at virtual time `now_us`.
     fn local(&self, now_us: u64) -> u64 {
         local_time(self.frozen_at.unwrap_or(now_us).saturating_sub(self.paused_us), self.ppm)
+    }
+
+    /// When its current freeze ends: the virtual time of a timed one.
+    fn thaws_at(&self) -> Option<u64> {
+        match (self.freeze, self.frozen_at) {
+            (Some((from, until)), Some(at)) if self.timed_freeze => {
+                Some(at.saturating_add(until.saturating_sub(from) as u64 * TICK_US))
+            }
+            _ => None,
+        }
     }
 
     /// The virtual time of its next frame (`u64::MAX` while frozen).
@@ -225,7 +242,11 @@ fn make_peer<S: Simulation>(
         ppm,
         frame_us,
         next_frame: local,
-        freeze: plan.and_then(|p| p.freeze),
+        freeze: match plan {
+            Some(p) => p.freeze,
+            None => sc.host_freeze,
+        },
+        timed_freeze: plan.is_none(),
         frozen_at: None,
         paused_us: 0,
         inbox: Vec::new(),
@@ -338,11 +359,15 @@ pub fn run_observed<S: Simulation>(
             peers.push(make_peer(sc, f, Some(plan), Role::Joining { host: HOST }, now));
         }
         for p in peers.iter_mut() {
+            let thawed = match p.thaws_at() {
+                Some(t) => now >= t,
+                None => p.freeze.is_some_and(|(_, until)| host_tick >= until),
+            };
             match (p.freeze, p.frozen_at) {
                 (Some((from, until)), None) if host_tick >= from && host_tick < until => {
                     p.frozen_at = Some(now)
                 }
-                (Some((_, until)), Some(at)) if host_tick >= until => {
+                (Some(_), Some(at)) if thawed => {
                     p.paused_us += now - at;
                     p.frozen_at = None;
                     p.freeze = None;
@@ -395,6 +420,10 @@ pub fn run_observed<S: Simulation>(
                             p.session.peer_lost(peer);
                             dropped.insert(peer);
                         }
+                        // The session abandoned it already.
+                        Event::PeerLeft { peer } => {
+                            dropped.insert(peer);
+                        }
                         Event::RepairFailed { peer } => {
                             p.session.peer_lost(peer);
                             dropped.insert(peer);
@@ -439,7 +468,7 @@ pub fn run_observed<S: Simulation>(
         // millisecond boundary.
         let mut next = net.next_delivery().unwrap_or(u64::MAX);
         for p in &peers {
-            next = next.min(p.next_frame_at());
+            next = next.min(p.next_frame_at()).min(p.thaws_at().unwrap_or(u64::MAX));
         }
         for (peer, &until) in &installed {
             if until > now && outages.get(peer).is_some_and(|l| !l.is_empty()) {

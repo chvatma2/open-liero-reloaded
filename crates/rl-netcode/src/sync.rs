@@ -75,10 +75,15 @@ impl Checks {
     }
 }
 
-/// A sent state that has not repaired a peer by the host's tick at sending
-/// plus this many ticks (a round trip, a long transfer and the prediction
-/// window, with room) is taken to have failed: a later mismatch re-arms.
+/// A loaded state that has not repaired a peer by the host's tick when the
+/// peer said it loaded it (`Control::StateLoaded`) plus this many ticks (a
+/// round trip and the prediction window, with room) is taken to have
+/// failed: a later mismatch re-arms.
 pub(crate) const REPAIR_MARGIN: u32 = 300;
+/// A peer that has not said it loaded a state this long after it was sent
+/// (refused, or still downloading over a hopeless link) is given up
+/// (`Event::RepairFailed`).
+pub(crate) const LOAD_TIMEOUT_US: u64 = 60_000_000;
 /// States sent to repair one peer before the host gives up on it
 /// (`Event::RepairFailed`).
 pub(crate) const MAX_REPAIRS: u8 = 3;
@@ -92,9 +97,11 @@ pub(crate) enum Repair {
     Owed,
     /// The state after `tick` was sent: the peer's reports differ until it
     /// loads it, so mismatches are ignored until one after `tick` matches
-    /// (repaired) or one for a tick from `until` on differs (the state was
-    /// refused, or the peer diverged again: a new desync).
-    Sent { tick: u32, until: u32 },
+    /// (repaired) or one for a tick from `until` on differs (the peer
+    /// diverged again: a new desync). `until` is set when the peer says it
+    /// loaded the state ([`REPAIR_MARGIN`] past our tick then); without
+    /// that by `deadline_us` (our time), the repair fails.
+    Sent { tick: u32, until: Option<u32>, deadline_us: u64 },
     /// Given up ([`MAX_REPAIRS`], or a state too large to send): reports
     /// are ignored.
     Failed,

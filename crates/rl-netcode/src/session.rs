@@ -18,7 +18,8 @@ use rl_sim::Keys;
 use crate::clock::{JUMP_TICKS, MARGIN_SAMPLES, MAX_ADJUST_PPM, Margins, Pace, TARGET_MARGIN};
 use crate::inputs::{InputLog, SetResult};
 use crate::sync::{
-    Checks, Incoming, MAX_REPAIRS, REPAIR_MARGIN, REPORT_WINDOW, Remote, Repair, state_controls,
+    Checks, Incoming, LOAD_TIMEOUT_US, MAX_REPAIRS, REPAIR_MARGIN, REPORT_WINDOW, Remote, Repair,
+    state_controls,
 };
 use crate::{Channel, PeerId, Simulation};
 
@@ -43,6 +44,13 @@ const MAX_AHEAD: u32 = 6_000;
 /// A client whose inputs miss the fill window this long gets a warning
 /// ([`Event::PeerLate`], spec §3.2's "connection problem").
 pub const LATE_WARNING_US: u64 = 3_000_000;
+/// A client whose filled inputs add up to this many ticks within
+/// [`LAGGING_WINDOW_US`] is lagging ([`Event::Lagging`]): 3 s worth.
+pub const LAGGING_TICKS: u32 = 300;
+/// The window [`LAGGING_TICKS`] are counted over.
+pub const LAGGING_WINDOW_US: u64 = 4_000_000;
+/// A lagging client is no longer lagging after this long without `Late`.
+pub const LAGGING_CLEAR_US: u64 = 2_000_000;
 /// Nothing heard from a peer this long: [`Event::PeerTimedOut`].
 pub const SILENCE_TIMEOUT_US: u64 = 10_000_000;
 /// The pace's speed change per tick of margin error (0.2 %).
@@ -154,14 +162,24 @@ pub trait Driver<S> {
 pub enum Event {
     /// Ticks `from..to` were re-simulated.
     Rollback { from: u32, to: u32 },
-    /// The prediction limit stopped the session before `tick`.
+    /// The prediction limit stopped the session before `tick`: once per
+    /// episode (a run of stalled advances).
     Stalled { tick: u32 },
     /// An undecodable message from `peer`.
     Malformed { peer: PeerId },
     /// The host sent a final input that differs from an earlier one.
     Inconsistent { peer: PeerId, tick: u32, slot: u8 },
-    /// Client: the host filled our input for `tick` (it arrived too late).
-    Late { tick: u32 },
+    /// Client: the host filled our inputs within ticks `from..to` (they
+    /// arrived too late): one per datagram of ours it answered.
+    Late { from: u32, to: u32 },
+    /// Client: the host has filled our inputs for [`LAGGING_TICKS`] ticks'
+    /// worth within [`LAGGING_WINDOW_US`] (`true`), or not for
+    /// [`LAGGING_CLEAR_US`] after that (`false`): spec §3.2's warning on
+    /// the lagging player's own screen.
+    Lagging(bool),
+    /// `peer` said it leaves ([`Session::leave`]): the host abandoned its
+    /// slot at once ([`Session::peer_lost`]); a client's host is gone.
+    PeerLeft { peer: PeerId },
     /// Host: this peer's inputs missed the fill window for
     /// [`LATE_WARNING_US`]. Pushed again only after it recovered.
     PeerLate { peer: PeerId },
@@ -197,6 +215,7 @@ pub struct Stats {
     /// Rollbacks by depth in ticks (63 and more in the last).
     pub depth_hist: [u64; 64],
     pub resim_ticks: u64,
+    /// Stall episodes: runs of advances the prediction limit stopped.
     pub stalls: u64,
     /// A client's own inputs the host's final values replaced.
     pub own_corrections: u64,
@@ -367,6 +386,14 @@ pub struct Session<S: Simulation> {
     sync: TimeSync,
     /// The last `advance` left due ticks unrun (a stall, or catching up).
     behind: bool,
+    /// The prediction limit stopped the last advance that ran or stalled:
+    /// a stall episode is on ([`Event::Stalled`] once per episode).
+    stalling: bool,
+    /// Client: the `Late` answers of the last [`LAGGING_WINDOW_US`]: when
+    /// each arrived and the ticks it spans.
+    lates: VecDeque<(u64, u32)>,
+    /// Client: [`Event::Lagging`]`(true)` was pushed, not yet ended.
+    lagging: bool,
     /// Client: the speed adjustment's integral term (ppm) and the host tick
     /// it was last integrated at.
     sync_i: i64,
@@ -446,6 +473,9 @@ impl<S: Simulation> Session<S> {
             sent_at: None,
             sync: TimeSync::Free,
             behind: false,
+            stalling: false,
+            lates: VecDeque::new(),
+            lagging: false,
             sync_i: 0,
             sync_tick: None,
             peers,
@@ -469,9 +499,10 @@ impl<S: Simulation> Session<S> {
     /// fault). The change cannot be rolled back across: the session forgets
     /// its snapshots and the state floor moves to the current tick (ticks
     /// before it count as confirmed); checksums of unconfirmed ticks are
-    /// dropped (they are no longer known). For tests and the harness only;
-    /// see [`Session::change_confirmed`] for a change that keeps the
-    /// predicted ticks open.
+    /// dropped (they are no longer known). For tests and the harness only
+    /// (hidden from the docs, like [`Session::change_confirmed`], which
+    /// keeps the predicted ticks open); the game reads [`Session::sim`].
+    #[doc(hidden)]
     pub fn sim_mut(&mut self) -> &mut S {
         self.snaps.clear();
         self.used.clear();
@@ -617,9 +648,10 @@ impl<S: Simulation> Session<S> {
         matches!(self.role, Role::Spectator { .. })
     }
 
-    /// Ticks below it are confirmed for rollback and checksums: the input
-    /// log's frontier, or the state floor above it.
-    fn confirmed(&self) -> u32 {
+    /// Ticks below it are final (the HUD's ticks, spec §3.4): the input
+    /// log's frontier, or the state floor above it (ticks before a loaded
+    /// state). Rollbacks and checksums never reach below it.
+    pub fn confirmed(&self) -> u32 {
         self.log.frontier().max(self.floor)
     }
 
@@ -668,13 +700,19 @@ impl<S: Simulation> Session<S> {
                     break;
                 }
             } else if self.current.saturating_sub(frontier) >= self.cfg.max_prediction {
-                self.events.push(Event::Stalled { tick: self.current });
-                self.stats.stalls += 1;
+                if !self.stalling {
+                    self.stalling = true;
+                    self.events.push(Event::Stalled { tick: self.current });
+                    self.stats.stalls += 1;
+                }
                 stalled = true;
                 break;
             }
             self.new_tick(driver);
             ran += 1;
+        }
+        if ran > 0 && !stalled {
+            self.stalling = false;
         }
         self.ticks_run += ran;
         self.behind = self.pace.due(now_us, self.ticks_run) > 0;
@@ -687,9 +725,11 @@ impl<S: Simulation> Session<S> {
             self.sync = TimeSync::Until((self.own.len() as u32).saturating_add(MARGIN_SAMPLES as u32));
         }
         self.confirm_checksums();
-        self.send_owed_states();
+        self.send_owed_states(now_us);
         self.trim_snapshots();
         self.check_silence(now_us);
+        self.check_loads(now_us);
+        self.check_lagging(now_us);
         // At most one datagram per tick of the pace. A stalled peer sends
         // too: a peer waiting for frames the other side already has would
         // otherwise wait for ever.
@@ -708,6 +748,60 @@ impl<S: Simulation> Session<S> {
                 p.timed_out = true;
                 self.events.push(Event::PeerTimedOut { peer: id });
             }
+        }
+    }
+
+    /// Leaves the match: a client or spectator says `Control::Bye` to the
+    /// host, the host to every peer, each then abandoned
+    /// ([`Session::peer_lost`]: nothing more is sent or taken). The other
+    /// side abandons us at once ([`Event::PeerLeft`]), without waiting for
+    /// [`SILENCE_TIMEOUT_US`].
+    pub fn leave(&mut self) {
+        let ids: Vec<PeerId> = self.peers.iter().filter(|(_, p)| !p.lost).map(|(&id, _)| id).collect();
+        for id in ids {
+            self.peer_lost(id);
+            self.push_out(id, Channel::Reliable, encode_control(&Control::Bye));
+        }
+    }
+
+    /// Host: a peer that has not said it loaded our state
+    /// (`Control::StateLoaded`) [`LOAD_TIMEOUT_US`] after we sent it cannot
+    /// be repaired: [`Event::RepairFailed`].
+    fn check_loads(&mut self, now_us: u64) {
+        for (&id, p) in self.peers.iter_mut() {
+            if let Repair::Sent { until: None, deadline_us, .. } = p.checks.repair
+                && !p.lost
+                && now_us >= deadline_us
+            {
+                p.checks.repair = Repair::Failed;
+                self.events.push(Event::RepairFailed { peer: id });
+            }
+        }
+    }
+
+    /// Client: a `Late` answer for ticks `from..to` arrived. Filled ticks
+    /// adding up to [`LAGGING_TICKS`] within [`LAGGING_WINDOW_US`]:
+    /// [`Event::Lagging`]`(true)`.
+    fn on_late(&mut self, from: u32, to: u32, now_us: u64) {
+        self.events.push(Event::Late { from, to });
+        self.lates.push_back((now_us, to.saturating_sub(from)));
+        while self.lates.front().is_some_and(|l| l.0.saturating_add(LAGGING_WINDOW_US) <= now_us) {
+            self.lates.pop_front();
+        }
+        let ticks: u64 = self.lates.iter().map(|l| l.1 as u64).sum();
+        if !self.lagging && ticks >= LAGGING_TICKS as u64 {
+            self.lagging = true;
+            self.events.push(Event::Lagging(true));
+        }
+    }
+
+    /// Client: lagging, and no `Late` for [`LAGGING_CLEAR_US`]:
+    /// [`Event::Lagging`]`(false)`.
+    fn check_lagging(&mut self, now_us: u64) {
+        let last = self.lates.back().map(|l| l.0);
+        if self.lagging && last.is_none_or(|at| now_us.saturating_sub(at) >= LAGGING_CLEAR_US) {
+            self.lagging = false;
+            self.events.push(Event::Lagging(false));
         }
     }
 
@@ -1049,7 +1143,7 @@ impl<S: Simulation> Session<S> {
         match ch {
             Channel::Reliable => match decode_control(bytes) {
                 Err(_) => self.malformed(from),
-                Ok(c) => self.on_control(from, c),
+                Ok(c) => self.on_control(from, c, now_us),
             },
             Channel::Unreliable => match decode_datagram(bytes, self.cfg.slots as usize) {
                 Ok(Datagram::Client(c)) if self.is_host() => self.on_client_inputs(from, c, now_us),
@@ -1106,6 +1200,8 @@ impl<S: Simulation> Session<S> {
             p.sampled = Some(t);
             p.margins.push((t as i64 - current as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32);
         }
+        // The filled ticks this datagram answers: one `Late` spans them.
+        let mut late: Option<(u32, u32)> = None;
         for (k, &v) in c.keys.iter().enumerate() {
             let Some(t) = c.first.checked_add(k as u32) else { break };
             if t >= limit {
@@ -1116,11 +1212,16 @@ impl<S: Simulation> Session<S> {
                 // The first value stays final; a filled tick's owner is told.
                 SetResult::Same | SetResult::Conflict => {
                     if self.peers.get_mut(&from).is_some_and(|p| p.filled.remove(&t)) {
-                        self.push_out(from, Channel::Reliable, encode_control(&Control::Late { tick: t }));
+                        // `t < limit`: `t + 1` does not overflow.
+                        late = Some((late.map_or(t, |l| l.0), t + 1));
                     }
                 }
                 SetResult::Gap => break,
             }
+        }
+        if let Some((from_tick, to)) = late {
+            let c = encode_control(&Control::Late { from: from_tick, to });
+            self.push_out(from, Channel::Reliable, c);
         }
     }
 
@@ -1173,6 +1274,14 @@ impl<S: Simulation> Session<S> {
     fn on_host_inputs(&mut self, from: PeerId, h: HostInputs, now_us: u64) {
         let slots = self.cfg.slots as usize;
         let first = h.first;
+        // Sent before the host had our state (a joined spectator's log
+        // begins after it): its base is a tick we never learn, and every
+        // value in it is before the state or chained to one before it.
+        // Old, not malformed; the host's later frames start at our origin.
+        if first != 0 && first < self.log.origin() {
+            self.on_stamp(from, h.stamp, now_us);
+            return;
+        }
         let mut scratch = mem::take(&mut self.scratch);
         scratch.clear();
         let log = &self.log;
@@ -1211,10 +1320,16 @@ impl<S: Simulation> Session<S> {
 
     /// A reliable message from `from`. Each is taken by the role it is for;
     /// any other changes nothing.
-    fn on_control(&mut self, from: PeerId, c: Control) {
+    fn on_control(&mut self, from: PeerId, c: Control, now_us: u64) {
         let host = self.is_host();
         match c {
-            Control::Late { tick } if !host => self.events.push(Event::Late { tick }),
+            Control::Late { from, to } if !host => self.on_late(from, to, now_us),
+            Control::Bye => {
+                // The host abandons the peer's slot now; a client its host.
+                self.peer_lost(from);
+                self.events.push(Event::PeerLeft { peer: from });
+            }
+            Control::StateLoaded { tick } if host => self.on_state_loaded(from, tick),
             Control::Checksum { tick, hash } if host => self.on_checksum(from, tick, hash),
             Control::Desync { tick, host_hash } if !host => {
                 self.stats.desyncs += 1;
@@ -1276,19 +1391,33 @@ impl<S: Simulation> Session<S> {
         }
     }
 
+    /// Host: `peer` loaded our state after `tick`. Its repair's re-arm
+    /// window ([`REPAIR_MARGIN`]) starts now: a multi-MB state over a slow
+    /// link may take long to arrive, and its reports differ until then.
+    fn on_state_loaded(&mut self, peer: PeerId, tick: u32) {
+        let until = self.current.saturating_add(REPAIR_MARGIN);
+        let Some(p) = self.peers.get_mut(&peer) else { return };
+        if let Repair::Sent { tick: t, until: u @ None, .. } = &mut p.checks.repair
+            && *t == tick
+        {
+            *u = Some(until);
+        }
+    }
+
     /// Host: compares `peer`'s checksum of `tick` with ours. A difference
     /// is a desync ([`Session::desync`]), at most one repair in flight.
     /// While the state is on its way the peer's reports differ: a repair
     /// ends with the first report after the state's tick that matches, and
     /// re-arms with a differing one from [`REPAIR_MARGIN`] ticks after the
-    /// sending on (the peer refused the state, or diverged again).
+    /// peer said it loaded the state on (it diverged again). A peer that
+    /// never says so fails after [`LOAD_TIMEOUT_US`] (`check_loads`).
     fn compare(&mut self, peer: PeerId, tick: u32, remote: u64) {
         let Some(local) = self.checks.get(tick) else { return };
         let Some(p) = self.peers.get_mut(&peer) else { return };
         match p.checks.repair {
             Repair::Owed | Repair::Failed => {}
             Repair::Sent { tick: t, .. } if tick > t && local == remote => p.checks.repair = Repair::Clean,
-            Repair::Sent { until, .. } if local != remote && tick >= until => {
+            Repair::Sent { until: Some(until), .. } if local != remote && tick >= until => {
                 self.desync(peer, tick, local, remote)
             }
             Repair::Sent { .. } => {}
@@ -1354,7 +1483,7 @@ impl<S: Simulation> Session<S> {
     /// Host: sends the owed states (repairs and joining spectators): our
     /// confirmed state, `StateBegin` and its chunks on the reliable channel.
     /// A joining spectator's frames then start right after the state.
-    fn send_owed_states(&mut self) {
+    fn send_owed_states(&mut self, now_us: u64) {
         let owed: Vec<PeerId> = self
             .peers
             .iter()
@@ -1368,7 +1497,7 @@ impl<S: Simulation> Session<S> {
         // A state past what a peer accepts cannot repair: give up on it (a
         // joining spectator would wait for ever).
         let controls = state_controls(tick, &state);
-        let until = self.current.saturating_add(REPAIR_MARGIN);
+        let deadline_us = now_us.saturating_add(LOAD_TIMEOUT_US);
         for id in owed {
             let Some(p) = self.peers.get_mut(&id) else { continue };
             let Some(controls) = &controls else {
@@ -1376,7 +1505,7 @@ impl<S: Simulation> Session<S> {
                 self.events.push(Event::RepairFailed { peer: id });
                 continue;
             };
-            p.checks.repair = Repair::Sent { tick, until };
+            p.checks.repair = Repair::Sent { tick, until: None, deadline_us };
             if mem::take(&mut p.joining) {
                 p.ack = tick + 1;
                 p.origin = tick + 1;
@@ -1444,6 +1573,12 @@ impl<S: Simulation> Session<S> {
         }
         self.stats.states_loaded += 1;
         self.events.push(Event::StateLoaded { tick });
+        // The host times its repair from our load, not from its sending.
+        if let Role::Client { host, .. } | Role::Spectator { host } = self.role
+            && self.peers.get(&host).is_some_and(|p| !p.lost)
+        {
+            self.push_out(host, Channel::Reliable, encode_control(&Control::StateLoaded { tick }));
+        }
     }
 }
 

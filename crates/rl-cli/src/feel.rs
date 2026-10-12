@@ -15,7 +15,8 @@
 //!   is a correction (when above 0). The p99 over all clients.
 //! - Own corrections: `Stats::own_corrections` per client and minute of
 //!   match; the worst client.
-//! - Stalls: every player peer's (the host's too), to the end of the run.
+//! - Stalls: every player peer's (the host's too) stall episodes (a run of
+//!   stalled advances counts once, `Stats::stalls`), to the end of the run.
 //! - Bytes: what reached a client (down) and what it sent (up), each
 //!   datagram counting `rl_proto::OVERHEAD` more, per second of match; the
 //!   worst client.
@@ -53,7 +54,7 @@ pub struct ProfileFeel {
     pub correction_px_p99: f32,
     /// Per client, the worst client.
     pub own_corrections_per_min: f32,
-    /// All players.
+    /// Stall episodes, all players.
     pub stalls: u64,
     /// The worst client, with `OVERHEAD` per datagram.
     pub down_bytes_per_s: u32,

@@ -9,7 +9,9 @@ use rl_netcode::{
     Channel, Config, Driver, Event, PeerId, Role, Seat, Session, Simulation, StateRejected, ToySim,
     input_delay,
 };
-use rl_proto::{ClientInputs, Control, Datagram, STATE_CHUNK, Stamp, encode_control, encode_datagram};
+use rl_proto::{
+    ClientInputs, Control, Datagram, HostInputs, STATE_CHUNK, Stamp, encode_control, encode_datagram,
+};
 use rl_sim::Keys;
 
 fn plan(id: u16, seat: Seat, profile: Profile, join_tick: Option<u32>) -> PeerPlan {
@@ -38,6 +40,7 @@ fn confirmed_checksums_agree_and_are_exchanged() {
         outages: vec![],
         expect_no_stalls: true,
         corrupt: vec![],
+        host_freeze: None,
     };
     let mut f = ToyFactory { slots: 3, seed: 2 };
     let r = harness::run(&sc, &mut f).unwrap();
@@ -63,6 +66,7 @@ fn a_spectator_joins_mid_match() {
         outages: vec![],
         expect_no_stalls: true,
         corrupt: vec![],
+        host_freeze: None,
     };
     let mut f = ToyFactory { slots: 3, seed: 3 };
     let r = harness::run(&sc, &mut f).unwrap();
@@ -83,6 +87,7 @@ fn a_desync_is_detected_and_repaired() {
         outages: vec![],
         expect_no_stalls: true,
         corrupt: vec![],
+        host_freeze: None,
     };
     sc.corrupt.push((1, 500));
     let mut f = ToyFactory { slots: 3, seed: 9 };
@@ -127,6 +132,7 @@ fn an_uncorrupted_desync_fails_the_verdict() {
         outages: vec![],
         expect_no_stalls: true,
         corrupt: vec![(1, 500)],
+        host_freeze: None,
     };
     let mut f = ToyFactory { slots: 3, seed: 9 };
     let r = harness::run(&sc, &mut f).unwrap();
@@ -262,20 +268,22 @@ impl harness::Factory<Faulty> for FaultyFactory {
     }
 }
 
-/// Peer 1 desyncs at host tick 500 and its simulation has `fault`: every
-/// state fails, so the host re-arms after each and gives up after three.
-fn failing_repairs(fault: Fault) -> harness::Report {
+/// Peer 1 desyncs at host tick 500 and its simulation has `fault`: no
+/// state repairs it, so the host gives up; the others play on and agree.
+/// The host's desync ticks and the ticks of the states it sent peer 1.
+fn failing_repairs(fault: Fault, ticks: u32) -> (harness::Report, Vec<u32>, Vec<u32>) {
     let peers =
         vec![plan(1, Seat::Player(2), Profile::GOOD, None), plan(2, Seat::Player(3), Profile::GOOD, None)];
     let sc = Scenario {
         seed: 11,
         slots: 4,
         peers,
-        ticks: 1_800,
+        ticks,
         settle_ticks: 200,
         outages: vec![],
         expect_no_stalls: true,
         corrupt: vec![(1, 500)],
+        host_freeze: None,
     };
     let mut f = FaultyFactory { toy: ToyFactory { slots: 4, seed: 11 }, fault };
     let r = harness::run(&sc, &mut f).unwrap();
@@ -296,32 +304,38 @@ fn failing_repairs(fault: Fault) -> harness::Report {
             _ => None,
         })
         .collect();
-    assert_eq!(desyncs.len(), 4, "desyncs at {desyncs:?}");
-    assert_eq!(sent.len(), 3, "states at {sent:?}");
     assert!((500..530).contains(&desyncs[0]));
-    // Each re-arm comes once the margin after the state has passed.
-    for (d, s) in desyncs[1..].iter().zip(&sent) {
-        assert!((s + 300..s + 340).contains(d), "desync at {d} after the state at {s}");
-    }
     assert!(host.iter().any(|e| matches!(e, Event::RepairFailed { peer: 1 })));
     assert!(r.repair_failed.contains(&1) && r.dropped.contains(&1));
-    assert_eq!(r.stats[&HOST].desyncs, 4);
     assert!(r.events[&2].iter().all(|e| !matches!(e, Event::Desync { .. })));
-    r
+    (r, desyncs, sent)
 }
 
 #[test]
 fn a_peer_that_diverges_after_each_state_is_given_up() {
-    let r = failing_repairs(Fault::Relapse);
+    // Every state loads, then the peer diverges again: the host re-arms
+    // after each and gives up after three.
+    let (r, desyncs, sent) = failing_repairs(Fault::Relapse, 1_800);
+    assert_eq!(desyncs.len(), 4, "desyncs at {desyncs:?}");
+    assert_eq!(sent.len(), 3, "states at {sent:?}");
+    // Each re-arm comes once the margin after the state's load has passed.
+    for (d, s) in desyncs[1..].iter().zip(&sent) {
+        assert!((s + 300..s + 340).contains(d), "desync at {d} after the state at {s}");
+    }
+    assert_eq!(r.stats[&HOST].desyncs, 4);
     assert_eq!(r.stats[&1].states_loaded, 3);
 }
 
 #[test]
 fn a_peer_that_refuses_the_state_is_given_up() {
-    let r = failing_repairs(Fault::Refuse);
+    // It never says it loaded the state: the host waits for that a minute
+    // (a multi-MB state may take long), then gives up.
+    let (r, desyncs, sent) = failing_repairs(Fault::Refuse, 7_000);
+    assert_eq!(desyncs.len(), 1, "desyncs at {desyncs:?}");
+    assert_eq!(sent.len(), 1, "states at {sent:?}");
     assert_eq!(r.stats[&1].states_loaded, 0);
     let refused = r.events[&1].iter().filter(|e| matches!(e, Event::StateRejected { .. })).count();
-    assert_eq!(refused, 3);
+    assert_eq!(refused, 1);
 }
 
 fn client() -> Session<ToySim> {
@@ -424,6 +438,8 @@ fn arb_control() -> impl Strategy<Value = Control> {
         }),
         (0u16..4, prop::collection::vec(any::<u8>(), 0..120))
             .prop_map(|(index, bytes)| Control::StateChunk { index, bytes }),
+        (any::<u32>(), any::<u32>()).prop_map(|(from, to)| Control::Late { from, to }),
+        any::<u32>().prop_map(|tick| Control::StateLoaded { tick }),
         Just(Control::Bye),
     ]
 }
@@ -480,6 +496,7 @@ fn an_observer_sees_events_and_frames_as_they_happen() {
         outages: vec![],
         expect_no_stalls: true,
         corrupt: vec![(1, 500)],
+        host_freeze: None,
     };
     let mut f = ToyFactory { slots: 3, seed: 9 };
     let mut w = Watcher::default();
@@ -491,4 +508,56 @@ fn an_observer_sees_events_and_frames_as_they_happen() {
     // The same run without an observer is the same run.
     let plain = harness::run(&sc, &mut ToyFactory { slots: 3, seed: 9 }).unwrap();
     assert_eq!(plain.host_log, r.host_log);
+}
+
+#[test]
+fn frames_older_than_a_joined_spectators_state_are_ignored() {
+    // Sent before the host had our state's tick (a spectator joined before
+    // any tick was confirmed gets such frames), arriving after the state:
+    // their base is before our log's origin, so they cannot be decoded;
+    // they are old, not malformed.
+    let mut s = Session::new(Config::new(3, 0), Role::Joining { host: 0 }, ToySim::new(3), 0);
+    let mut state = ToySim::new(3);
+    for _ in 0..=40 {
+        state.tick(&[Keys(1), Keys(2), Keys(3)]);
+    }
+    let bytes = state.encode_state();
+    send(&mut s, Control::StateBegin { tick: 40, len: bytes.len() as u32, chunks: 1 });
+    send(&mut s, Control::StateChunk { index: 0, bytes });
+    assert_eq!(s.confirmed(), 41);
+    for first in [1, 30, 40] {
+        // Every slot known and unchanged from the tick before `first`.
+        let frames = rl_proto::encode_frames(first, 5, 3, &|_, s| Some(s as u8 + 1), &|s| Some(s as u8 + 1));
+        let h =
+            HostInputs { stamp: Stamp::default(), tick: first + 5, your_ack: 0, margin: 0, first, frames };
+        s.receive(0, Channel::Unreliable, &encode_datagram(&Datagram::Host(h)), 2_000);
+    }
+    assert_eq!(s.stats().malformed, 0);
+    assert!(s.drain_events().iter().all(|e| !matches!(e, Event::Malformed { .. })));
+    assert_eq!(s.input_log().known_upto(0), 41, "nothing before the state is taken");
+}
+
+#[test]
+fn the_confirmed_tick_is_the_frontier_or_the_state_floor() {
+    let mut c = client();
+    assert_eq!(c.confirmed(), 0);
+    let mut state = ToySim::new(3);
+    for _ in 0..=50 {
+        state.tick(&[Keys(4); 3]);
+    }
+    let bytes = state.encode_state();
+    send(&mut c, Control::StateBegin { tick: 50, len: bytes.len() as u32, chunks: 1 });
+    send(&mut c, Control::StateChunk { index: 0, bytes });
+    // Final from the state on, though no input before it is known.
+    assert_eq!((c.frontier(), c.confirmed()), (0, 51));
+    // The host's own: its frontier.
+    let mut f = ToyFactory { slots: 3, seed: 4 };
+    let mut host =
+        Session::new(Config::new(3, 0), Role::Host { peers: vec![(1, Seat::Player(2))] }, ToySim::new(3), 0);
+    let mut drv = <ToyFactory as harness::Factory<ToySim>>::driver(&mut f, HOST, None);
+    for ms in 1..=500u64 {
+        host.advance(ms * 1000, drv.as_mut());
+    }
+    assert!(host.frontier() > 0);
+    assert_eq!(host.confirmed(), host.frontier());
 }

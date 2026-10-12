@@ -3966,6 +3966,8 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "rl-content",
+ "rl-math",
+ "rl-modes",
  "rl-proto",
  "rl-sim",
  "rl-terrain",

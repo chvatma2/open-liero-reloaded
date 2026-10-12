@@ -8,6 +8,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+rl-math.workspace = true
+rl-modes.workspace = true
 rl-sim.workspace = true
 rl-proto.workspace = true
 rl-terrain.workspace = true

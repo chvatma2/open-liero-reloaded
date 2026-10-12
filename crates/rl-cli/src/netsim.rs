@@ -162,6 +162,7 @@ impl NetSpec {
                 .collect(),
             expect_no_stalls: matches!(self.profile.as_str(), "lan" | "good" | "typical" | "bad"),
             corrupt: self.faults.iter().map(|f| (f.0, f.1)).collect(),
+            host_freeze: None,
         })
     }
 }

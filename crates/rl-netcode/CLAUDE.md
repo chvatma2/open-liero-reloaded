@@ -5,7 +5,8 @@ model that tests it in one process (spec §9.1).
 
 - **Layer 4, `#![no_std]` + `alloc`, wasm32.** Depends on rl-sim (keys, the
   world adapter of `world_sim.rs`), rl-proto (same layer: the wire format),
-  rl-terrain (`Area`, for the restored areas).
+  rl-terrain (`Area`, for the restored areas), rl-modes (the deathmatch's
+  time left in `ConfirmedTick`) and rl-math (`Vec2`).
 - **Sans-IO**: no sockets, no clock, no threads; time is an argument
   (`now_us`).
 - **`Simulation`** is what the session drives (tick, save/restore,
@@ -36,7 +37,8 @@ model that tests it in one process (spec §9.1).
     when simulated; a client's keys become final in arrival order (the first
     value stays). A client applies its own input `d = input_delay(rtt)`
     ticks later (`0..d` are `Keys(0)`); a spectator simulates confirmed
-    ticks only.
+    ticks only. `confirmed()` (`max(frontier, state floor)`): ticks below
+    it are final, the HUD's ticks (spec §3.4).
   - Prediction: final, else a client's own provisional input, else the
     slot's last final value, else `0`. A final value differing from the keys
     a simulated tick used marks a rollback; the next `advance` restores the
@@ -66,7 +68,9 @@ model that tests it in one process (spec §9.1).
     at most `MAX_CATCHUP` per `advance`), adjustable by ±1 % (re-anchored,
     so a change affects only later time) and shiftable by whole ticks (a
     jump). A player peer stalls at `MAX_PREDICTION` ticks past its frontier
-    (`Event::Stalled`). Every peer sends at most one datagram per tick of
+    (`Event::Stalled` once per episode, a run of stalled advances; an
+    advance that runs ticks without stalling ends it; `Stats::stalls`
+    counts episodes). Every peer sends at most one datagram per tick of
     its pace, a stalled one too.
   - Time sync (decision N7): a client datagram whose newest input is newer
     than all before is a margin sample at the host (that tick minus the
@@ -79,12 +83,20 @@ model that tests it in one process (spec §9.1).
     client the host filled past still yields samples.
   - Lagging-player rule (host): before its tick `t`, a player's input
     unknown at `t − fill_window` becomes its previous final value
-    (`Stats::fills`); a value arriving later for a filled tick is ignored
-    and answered once by `Control::Late` (`Event::Late` at the client).
-    300 consecutive host ticks with a fill: `Event::PeerLate`. Silence for
+    (`Stats::fills`); values arriving later for filled ticks are ignored
+    and answered once, one `Control::Late { from, to }` per datagram
+    spanning the filled ticks it hit (`Event::Late` at the client; the
+    decoder refuses `from >= to`). 300 consecutive host ticks with a fill:
+    `Event::PeerLate`. The client's own warning (spec §3.2):
+    `Event::Lagging(true)` once its `Late`s span `LAGGING_TICKS` (300)
+    ticks within `LAGGING_WINDOW_US` (4 s), `Lagging(false)` after
+    `LAGGING_CLEAR_US` (2 s) without one. Silence for
     `SILENCE_TIMEOUT_US`: `Event::PeerTimedOut` (host and client). The
     driver decides; `peer_lost` abandons a peer: its slot is `Keys(0)` at
     every new tick (decision N6), nothing more is sent to it or taken.
+    `leave()` says `Control::Bye` (a client to its host, the host to every
+    peer) and abandons them; a `Bye` received is `peer_lost` at once
+    (no 10 s timeout) and `Event::PeerLeft`.
   - Hardened against a hostile host: a jump moves the pace at most
     `MAX_PREDICTION` ticks back and `SILENCE_TIMEOUT_US / TICK_US` ahead;
     the integral term takes `HostInputs.tick` only when not older than the
@@ -106,11 +118,14 @@ model that tests it in one process (spec §9.1).
   unreported) as `StateBegin` and `STATE_CHUNK` chunks
   (`Event::StateSent`). One repair per peer at a time: the peer's
   mismatches are ignored until a report after the state's tick matches
-  (repaired) or one from `REPAIR_MARGIN` (300) ticks after the sending on
-  differs (refused, or diverged again: a new desync). After `MAX_REPAIRS`
-  (3) states, or with a state too large to send, `Event::RepairFailed`
-  and no more repairs. `add_spectator` for a player's peer is refused
-  (`Event::JoinRefused`).
+  (repaired) or one from `REPAIR_MARGIN` (300) ticks after the peer's
+  `Control::StateLoaded { tick }` arrived on differs (diverged again: a
+  new desync); the window starts at the load, not the sending, so a
+  multi-MB state over a slow link is not re-sent while it downloads. No
+  `StateLoaded` within `LOAD_TIMEOUT_US` (60 s; refused, or a hopeless
+  link): `Event::RepairFailed`. After `MAX_REPAIRS` (3) states, or with a
+  state too large to send, `Event::RepairFailed` and no more repairs.
+  `add_spectator` for a player's peer is refused (`Event::JoinRefused`).
   The receiver refuses a transfer with an index out of range, a repeated
   chunk or more bytes than announced (`StateRejected`, later chunks
   ignored); a whole one is `StateArrived` (the bytes), then
@@ -119,17 +134,21 @@ model that tests it in one process (spec §9.1).
   snapshots, the **state floor** at `tick + 1` (ticks below it count as
   confirmed for rollback and checksums; their inputs still arrive and are
   recorded, never rolling back), the ticks we had run simulated again at
-  the next advance (a client behind the state skips to it). `sim_mut`
-  also moves the floor to the current tick (a change outside the timeline
-  is never rolled back across). `change_confirmed(driver, f)` plants a
-  fault properly: `f` changes the state after the last confirmed tick and
-  the unconfirmed ticks run again on top, so predicted inputs are not made
+  the next advance (a client behind the state skips to it); a client or
+  spectator then sends `Control::StateLoaded`. `sim_mut` (doc-hidden:
+  tests and the harness only) also moves the floor to the current tick
+  (a change outside the timeline is never rolled back across).
+  `change_confirmed(driver, f)` plants a fault properly: `f` changes the
+  state after the last confirmed tick and the unconfirmed ticks run again
+  on top, so predicted inputs are not made
   final (the harness's `corrupt`).
 - **Spectators mid-match**: `Role::Joining` simulates nothing and ignores
   frames until a state loads, then is a `Spectator` whose input log
   begins after the state (`InputLog::start_at`). The host's
   `add_spectator` owes it the state like a repair; its frames then start
-  there with no base (`origin`).
+  there with no base (`origin`). A frame datagram from before the
+  joiner's origin (sent before the state, arriving after it) cannot be
+  decoded (its base is before the log) and is ignored, not `Malformed`.
 - **WorldSim** (`world_sim.rs`): the `rl_sim::World` adapter, rollback
   on (`enable_rollback`); `save`/`restore`/`forget_before` are the
   world's (`restore` refused is a session bug: `expect`); `checksum` is
@@ -146,12 +165,25 @@ model that tests it in one process (spec §9.1).
   stains and the level's dirt art inside the areas.
   `tests/world_sim.rs`' `colour_maps_follow_rollbacks_and_loads` keeps
   every peer's colour map that way and checks its material every frame.
+  **Tick records** (`rl_netcode::world_sim`, for plan 10's game):
+  `TickRecorder::simulated(sim, info)` from `Driver::simulated` keeps a
+  `TickedTick` per simulated tick (resim flag, substeps, lost area, all
+  events; `take_ticked`) and one `ConfirmedTick` candidate per tick
+  (gameplay events only, `World::scores`, the deathmatch's time left via
+  `mode_state()` downcast, `World::result`, every worm's position),
+  replaced when the tick is re-simulated; `take_confirmed(confirmed)`
+  hands out those below `Session::confirmed()`, in order, each tick once
+  (a tick re-simulated after it was taken, after a loaded state, is not
+  recorded again). `tests/world_sim.rs`' `tick_records_follow_rollbacks`
+  checks them against an offline replay of the final inputs.
 - **Harness** (`harness.rs`, `toy.rs`): `run` plays a `Scenario` — the host
   (`HOST` = 0) and its clients and spectators over `Network`, in virtual
   time (1 ms steps, idle steps skipped), clocks skewed by `clock_ppm`,
   outages, freezes (a suspended laptop: no frames, the clock stands still,
-  arrivals wait), spectators joining at `join_tick` (`Role::Joining`,
-  `add_spectator`), planted faults (`corrupt`: at the peer's first frame
+  arrivals wait; `Scenario::host_freeze` freezes the host for `until -
+  from` ticks' worth of time, its own tick standing still), spectators
+  joining at `join_tick` (`Role::Joining`, `add_spectator`), planted
+  faults (`corrupt`: at the peer's first frame
   after the host's tick `t` with `t` confirmed,
   `Factory::corrupt(sim, index)` through `change_confirmed`), an
   `Observer` (`run_observed`: `on_event` per event and `on_frame` per
@@ -159,15 +191,21 @@ model that tests it in one process (spec §9.1).
   for the last `settle_ticks` — and returns a `Report` (confirmed logs,
   checksums of ticks `t % 10 == 9` recorded while simulating, the
   sessions' confirmed `checksums`, stats, events, `dropped`). The host
-  drops a peer it reports timed out or failed to repair (`RepairFailed`,
-  `Report::repair_failed`). The run ends when the host is past `ticks +
-  settle_ticks` and every other peer re-simulated `ticks` confirmed
+  drops a peer it reports timed out, left (`PeerLeft`) or failed to
+  repair (`RepairFailed`, `Report::repair_failed`). The run ends when the
+  host is past `ticks + settle_ticks` and every other peer re-simulated
+  `ticks` confirmed
   ticks. `verdict` checks every peer not
   dropped confirmed the host's inputs and matches an offline replay of
   them (a joined spectator from its state, a corrupted peer from its last
   loaded state), with no desync but a corrupted peer's and no refused
   state. `ToyFactory` drives `ToySim` with seeded keys; its fault moves
   slot 0.
+
+`tests/play.rs` drives a host and one client over a link the test
+controls (`tests/common`: hold or drop either direction, see each
+datagram's answer): leaving, coalesced `Late`, lagging, stall episodes,
+repair timing.
 
 Test: `cargo nextest run -p rl-netcode` (`tests/world_sim.rs` plays MW 1.0
 on Castle Strike from `RL_CONTENT_DIR`, skipped with a notice without it;

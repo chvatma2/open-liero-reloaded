@@ -36,6 +36,14 @@ fn limits_are_enforced() {
 }
 
 #[test]
+fn a_late_range_is_never_empty() {
+    let late = |from, to| decode_control(&encode_control(&Control::Late { from, to }));
+    assert_eq!(late(5, 9), Ok(Control::Late { from: 5, to: 9 }));
+    assert_eq!(late(5, 5), Err(ProtoError::Invalid));
+    assert_eq!(late(u32::MAX, 0), Err(ProtoError::Invalid));
+}
+
+#[test]
 fn the_fingerprint_is_set() {
     assert_ne!(FINGERPRINT, 0);
 }

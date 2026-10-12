@@ -9,8 +9,9 @@ control messages, the frame delta codec and the simulation fingerprint.
   carries the sender's own keys for ticks `first..`, its `ack` and next
   `tick`; `Datagram::Host(HostInputs)` carries `Frame`s for ticks `first..`,
   `your_ack` and the arrival `margin`. Both carry a `Stamp` for round trips.
-  **Control** (reliable channel): `Checksum`, `Late`, `Desync`, `StateBegin`,
-  `StateChunk`, `Bye`.
+  **Control** (reliable channel): `Checksum`, `Late { from, to }` (one per
+  answered datagram; `from < to` or `Invalid`), `Desync`, `StateBegin`,
+  `StateChunk`, `Bye`, `StateLoaded`.
 - **Signalling** (`signal.rs`, WebSocket, one postcard message per frame,
   `MAX_SIGNAL`): `Signal::{Offer, Answer, Refused}`, `Refusal` (`Version`,
   `Full`, `Banned`, `Busy`, `Malformed`, `Password`: also the lobby's

@@ -47,3 +47,5 @@
   fixtures/bench/stress.ron
 2026-10-12 envelope: plan 9: the rollback axis
   fixtures/bench/envelope/amd-ryzen-5-7600x-6-core-processor-12cpus.ron
+2026-10-12 net-feel: stalls count episodes
+  fixtures/net/feel.ron
