@@ -695,6 +695,8 @@ deviation. Its rulings (`docs/superpowers/plans/2026-10-11-plan-8-performance-en
   `WSLENV`.
 - **P13:** sweep runs pass `--memory-ceiling-mib 16384`, so points past
   2 GiB are measured.
+- **P14:** OLX's rendering is not timed: the oracle's OLX is a dedicated
+  build with no renderer; the report says so.
 
 ## Kept OLX quirks
 
