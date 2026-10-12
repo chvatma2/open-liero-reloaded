@@ -270,3 +270,7 @@ difference). No leg flag means the WASM leg; a flag runs that leg only.
 A leg whose tool or target is missing prints `skip <step> (<why and the fix>)`
 before anything is recorded; a differing stream fails the step (a real
 finding: rollback would desync across those platforms).
+`rust-toolchain.toml`'s `targets` name `wasm32-wasip1` and
+`aarch64-unknown-linux-gnu` on purpose: a fresh clone downloads them (keep them).
+`Spec`/`Golden` deny unknown fields, so a field added to `rl-cli`'s `MatchSpec`
+fails the step until `flags` passes it on.

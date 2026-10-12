@@ -38,14 +38,25 @@ pub struct Opts {
 
 /// The flags of `rl-cli match` a golden's spec names (other fields are ignored).
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "named so that deny_unknown_fields accepts the golden's own fields")]
 struct Golden {
+    #[serde(default)]
+    end: String,
+    #[serde(default)]
+    ticks: u32,
+    #[serde(default)]
+    checksums: Vec<(u32, u64)>,
     spec: Spec,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Spec {
     mod_id: String,
     level_id: String,
+    #[serde(default)]
+    mode: Mode,
     bots: u32,
     difficulty: Difficulty,
     personality: Personality,
@@ -54,6 +65,17 @@ struct Spec {
     bonus_frequency: Option<f32>,
     kill_limit: i32,
     time_limit: f32,
+    #[serde(default)]
+    loading_time: Option<i32>,
+    #[serde(default)]
+    pool_capacity: Option<usize>,
+}
+
+/// `rl-cli`'s `Mode`: only Deathmatch exists; another mode fails parsing.
+#[derive(Deserialize, Default)]
+enum Mode {
+    #[default]
+    Deathmatch,
 }
 
 #[derive(Deserialize)]
@@ -85,6 +107,7 @@ impl Spec {
             Personality::Deathmatch => "dm",
             Personality::Chaos => "chaos",
         };
+        let Mode::Deathmatch = self.mode;
         let mut f: Vec<String> = [
             ("--mod", self.mod_id.clone()),
             ("--level", self.level_id.clone()),
@@ -102,6 +125,12 @@ impl Spec {
         if let Some(b) = self.bonus_frequency {
             f.extend(["--bonus-frequency".into(), b.to_string()]);
         }
+        if let Some(l) = self.loading_time {
+            f.extend(["--loading-time".into(), l.to_string()]);
+        }
+        if let Some(p) = self.pool_capacity {
+            f.extend(["--pool-capacity".into(), p.to_string()]);
+        }
         f
     }
 }
@@ -109,6 +138,9 @@ impl Spec {
 /// The first difference of two checksum streams (`<file> <tick> <checksum>`
 /// lines), or a length difference; `other` names the compared platform.
 pub fn compare(native: &str, other_stream: &str, other: &str) -> Result<(), String> {
+    if native.trim().is_empty() {
+        return Err("the native stream is empty".into());
+    }
     let (mut a, mut b) = (native.lines().map(str::trim), other_stream.lines().map(str::trim));
     let mut n = 0usize;
     loop {
@@ -162,6 +194,16 @@ fn ok_output(mut c: Command, what: &str) -> Result<String, String> {
 
 fn tool_works(tool: &str) -> bool {
     Command::new(tool).arg("--version").output().is_ok_and(|o| o.status.success())
+}
+
+/// Node.js's major version (`node --version` prints `v20.11.0`).
+fn node_major() -> Option<u32> {
+    let out = Command::new("node").arg("--version").output().ok().filter(|o| o.status.success())?;
+    parse_node_major(&String::from_utf8_lossy(&out.stdout))
+}
+
+fn parse_node_major(version: &str) -> Option<u32> {
+    version.trim().strip_prefix('v')?.split('.').next()?.parse().ok()
 }
 
 fn rustup_has(target: &str) -> bool {
@@ -230,8 +272,14 @@ fn skip(leg: &str, why: &str) -> Result<(), String> {
 }
 
 fn wasm_missing() -> Option<String> {
-    if !tool_works("node") {
-        return Some("no node: `sudo apt install nodejs`".into());
+    match node_major() {
+        None => return Some("no node: `sudo apt install nodejs`".into()),
+        Some(m) if m < 18 => {
+            return Some(format!(
+                "node {m} is too old for the WASI module (18 or newer): `sudo apt install nodejs`"
+            ));
+        }
+        Some(_) => {}
     }
     (!rustup_has(WASM_TARGET))
         .then(|| format!("the Rust target is missing: `rustup target add {WASM_TARGET}`"))
@@ -365,6 +413,63 @@ mod tests {
             compare(A, &b, "wasm"),
             Err("m.rlrp 10: native 00000000000000bb, wasm 00000000000000bd".into())
         );
+    }
+
+    #[test]
+    fn an_empty_native_stream_is_refused() {
+        assert_eq!(compare("", "", "wasm"), Err("the native stream is empty".into()));
+        assert!(compare("\n", A, "wasm").is_err());
+    }
+
+    #[test]
+    fn node_versions_parse() {
+        assert_eq!(parse_node_major("v20.11.0\n"), Some(20));
+        assert_eq!(parse_node_major("v8.1.0"), Some(8));
+        assert_eq!(parse_node_major("nonsense"), None);
+    }
+
+    #[test]
+    fn every_golden_becomes_its_match_flags() {
+        let want = [
+            (
+                "classic-dirt-level-8dm",
+                "--mod olx-classic --level olx-level-dirt-level --bots 8 --difficulty mixed --personality dm \
+                 --seed 1 --ticks 3000 --kill-limit 15 --time-limit 6 --bonus-frequency 5",
+            ),
+            (
+                "classic-fossilfacility-4xtreme-kill-limit",
+                "--mod olx-classic --level olx-level-fossilfacility --bots 4 --difficulty xtreme --personality dm \
+                 --seed 3 --ticks 12000 --kill-limit 2 --time-limit 6",
+            ),
+            (
+                "mw-castlestrike-8chaos",
+                "--mod olx-mw-1-0 --level olx-level-castlestrike --bots 8 --difficulty mixed --personality chaos \
+                 --seed 2 --ticks 3000 --kill-limit 0 --time-limit 6 --bonus-frequency 5",
+            ),
+        ];
+        let found = goldens(true).unwrap();
+        assert_eq!(found.len(), want.len());
+        for ((stem, spec), (name, flags)) in found.iter().zip(want) {
+            assert_eq!(stem, name);
+            assert_eq!(spec.flags().join(" "), flags, "{stem}");
+        }
+    }
+
+    #[test]
+    fn a_new_spec_field_is_an_error() {
+        let text = "(spec: (mod_id: \"m\", level_id: \"l\", bots: 4, difficulty: Mixed, personality: Chaos, \
+                    seed: 3, ticks: 9, kill_limit: 2, time_limit: 6.0, flux: 1), end: \"x\")";
+        assert!(ron::from_str::<Golden>(text).is_err());
+    }
+
+    #[test]
+    fn loading_time_and_pool_pass_through() {
+        let g: Golden = ron::from_str(
+            "(spec: (mod_id: \"m\", level_id: \"l\", bots: 4, difficulty: Mixed, personality: Chaos, \
+             seed: 3, ticks: 9, kill_limit: 2, time_limit: 6.0, loading_time: Some(0), pool_capacity: Some(99)))",
+        )
+        .unwrap();
+        assert!(g.spec.flags().join(" ").ends_with("--loading-time 0 --pool-capacity 99"));
     }
 
     #[test]
