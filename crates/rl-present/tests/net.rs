@@ -214,6 +214,7 @@ fn rollbacks_play_each_sound_once_and_keep_the_terrain() {
     // What the test expects, from every simulation the peer made.
     let mut played: BTreeSet<EventKey> = BTreeSet::new();
     let mut spawn_keys: BTreeSet<EventKey> = BTreeSet::new();
+    let mut spawned_keys: BTreeSet<EventKey> = BTreeSet::new();
     let (mut naive_sounds, mut naive_spawns, mut resims) = (0usize, 0usize, 0usize);
     let mut confirmed: Vec<ConfirmedTick> = Vec::new();
     let mut sounds = Vec::new();
@@ -222,11 +223,12 @@ fn rollbacks_play_each_sound_once_and_keep_the_terrain() {
         let conf = if target == TICKS { TICKS } else { target.saturating_sub(LAG) };
         let (restored, ticked, done) = peer.advance(target, conf);
         sounds.clear();
+        let spawned = peer.net.spawned();
         peer.net.apply(&mut peer.present, peer.sim.world(), &restored, &ticked, &mut sounds);
         // (b) the colour image's material is the world's after every advance.
         assert!(!peer.present.terrain_drift(peer.sim.world()), "tick {}: drift", peer.current);
         // (a) the sounds whose key is new, in order, never one twice.
-        let mut want = Vec::new();
+        let (mut want, mut new_spawns) = (Vec::new(), 0);
         for (k, e) in keyed(&ticked) {
             match e.kind {
                 EventKind::Sound { .. } => {
@@ -235,15 +237,21 @@ fn rollbacks_play_each_sound_once_and_keep_the_terrain() {
                         want.push(e);
                     }
                 }
-                _ if counted_spawn(&e) => {
-                    naive_spawns += 1;
-                    spawn_keys.insert(k);
+                EventKind::SpawnCosmetic { .. } => {
+                    new_spawns += u64::from(spawned_keys.insert(k));
+                    if counted_spawn(&e) {
+                        naive_spawns += 1;
+                        spawn_keys.insert(k);
+                    }
                 }
                 _ => {}
             }
         }
         assert_eq!(sounds, want, "tick {}: the sounds to play now", peer.current);
-        // (c) no more entities than distinct spawns, erased ones included.
+        // (c) each spawn key reaches the entities once, in the advance it
+        // first appears; and no more entities than distinct spawns, erased
+        // ones included.
+        assert_eq!(peer.net.spawned() - spawned, new_spawns, "tick {}: spawns", peer.current);
         let live = peer.present.fx.entities().filter(|(_, e)| e.kind != Kind::Blood).count();
         assert!(
             live <= spawn_keys.len(),
@@ -281,33 +289,98 @@ fn rollbacks_play_each_sound_once_and_keep_the_terrain() {
 }
 
 /// A loaded state (a repair, a late spectator): the presentation starts
-/// over from it, and the whole-map restored area repaints the colour image.
+/// over from it, the whole-map restored area repaints the colour image, and
+/// the ticks shown before the load and simulated again after it play no
+/// sound twice, whether the driver resets before or after applying them.
 #[test]
 fn a_loaded_state_restarts_the_presentation() {
     let Some(c) = content() else { return };
     let p = packs(&c);
+    // The state after tick 59 of the same inputs (a repair that matches).
     let mut a = WorldSim::new(world(&c));
     for t in 0..60 {
         a.tick(&final_keys(t));
     }
-    let w = world(&c);
-    let mut present = presentation(&c, &p, &w);
-    let mut b = WorldSim::new(w);
-    let mut net = NetPresenter::new();
-    let mut rec = TickRecorder::default();
-    b.decode_state(&a.encode_state()).unwrap();
-    rec.state_loaded(59);
-    present.state_loaded(b.world());
-    net.reset();
-    for t in 60..80 {
-        b.tick(&final_keys(t));
-        present.scene.after_tick(b.world(), b.events());
-        rec.simulated(&b, TickInfo { tick: t, resim: false, all_final: true });
+    let state = a.encode_state();
+    for reset_first in [true, false] {
+        let w = world(&c);
+        let mut present = presentation(&c, &p, &w);
+        let mut b = WorldSim::new(w);
+        let mut net = NetPresenter::new();
+        let mut rec = TickRecorder::default();
+        let mut sounds = Vec::new();
+        // Ticks 0..80 shown, as one advance.
+        for t in 0..80 {
+            b.tick(&final_keys(t));
+            present.scene.after_tick(b.world(), b.events());
+            rec.simulated(&b, TickInfo { tick: t, resim: false, all_final: true });
+        }
+        let ticked = rec.take_ticked();
+        let later = ticked[60..].iter().flat_map(|t| &t.events);
+        assert!(
+            later.filter(|e| matches!(e.kind, EventKind::Sound { .. })).count() > 0,
+            "sounds after the state"
+        );
+        net.apply(&mut present, b.world(), &[], &ticked, &mut sounds);
+        // The state loads; ticks 60..80 run again.
+        b.decode_state(&state).unwrap();
+        rec.state_loaded(59);
+        let loaded = |present: &mut Presentation, net: &mut NetPresenter, b: &WorldSim| {
+            present.state_loaded(b.world());
+            net.reset(59);
+        };
+        if reset_first {
+            loaded(&mut present, &mut net, &b);
+        }
+        for t in 60..80 {
+            b.tick(&final_keys(t));
+            present.scene.after_tick_resimulated(b.world(), b.events());
+            rec.simulated(&b, TickInfo { tick: t, resim: true, all_final: true });
+        }
+        sounds.clear();
+        let restored = b.take_restored_areas();
+        net.apply(&mut present, b.world(), &restored, &rec.take_ticked(), &mut sounds);
+        if !reset_first {
+            loaded(&mut present, &mut net, &b);
+        }
+        assert!(!present.terrain_drift(b.world()));
+        assert_eq!(sounds, [], "reset first: {reset_first}: no sound twice");
+        // The next tick is new.
+        b.tick(&final_keys(80));
+        rec.simulated(&b, TickInfo { tick: 80, resim: false, all_final: true });
+        net.apply(&mut present, b.world(), &[], &rec.take_ticked(), &mut sounds);
+        assert!(!present.terrain_drift(b.world()));
     }
+}
+
+/// Keys at the confirmed tick survive [`NetPresenter::confirmed`], those
+/// below it go: a rollback starting at the confirmed tick plays nothing
+/// again.
+#[test]
+fn keys_from_the_confirmed_tick_on_survive() {
+    let Some(c) = content() else { return };
+    let p = packs(&c);
+    let mut sim = WorldSim::new(world(&c));
+    let mut present = presentation(&c, &p, sim.world());
+    let mut rec = TickRecorder::default();
+    sim.tick(&final_keys(0));
+    rec.simulated(&sim, TickInfo { tick: 0, resim: false, all_final: true });
+    let mut net = NetPresenter::new();
     let mut sounds = Vec::new();
-    let restored = b.take_restored_areas();
-    net.apply(&mut present, b.world(), &restored, &rec.take_ticked(), &mut sounds);
-    assert!(!present.terrain_drift(b.world()));
+    net.apply(&mut present, sim.world(), &[], &rec.take_ticked(), &mut sounds);
+    // Hand-made ticks with a sound each and no terrain edit.
+    let beep = ev(0, EventKind::Sound { id: SoundId(3), pos: rl_math::Vec2::new(10.0, 10.0) });
+    let tick = |tick, resim| TickedTick { tick, resim, substeps: 0, lost: None, events: vec![beep] };
+    sounds.clear();
+    net.apply(&mut present, sim.world(), &[], &[tick(1, false), tick(2, false)], &mut sounds);
+    assert_eq!(sounds.len(), 2);
+    net.confirmed(2);
+    sounds.clear();
+    net.apply(&mut present, sim.world(), &[], &[tick(2, true), tick(3, false)], &mut sounds);
+    assert_eq!(sounds, [beep], "tick 2 is kept, tick 3 is new");
+    sounds.clear();
+    net.apply(&mut present, sim.world(), &[], &[tick(1, true)], &mut sounds);
+    assert_eq!(sounds, [beep], "tick 1's keys went with the confirmation");
 }
 
 fn ev(substep: u8, kind: EventKind) -> Event {

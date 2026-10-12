@@ -16,9 +16,15 @@
 //! 2. after it: [`NetPresenter::apply`] with the session's restored areas
 //!    and the recorder's ticked records; play the sounds it returns;
 //! 3. [`NetPresenter::confirmed`] with `Session::confirmed`;
-//! 4. on `Event::StateLoaded`: `Presentation::state_loaded` and
-//!    [`NetPresenter::reset`] (its whole-map restored area comes with the
-//!    next [`NetPresenter::apply`]).
+//! 4. on `Event::StateLoaded { tick }`: `Presentation::state_loaded` and
+//!    [`NetPresenter::reset`]`(tick)`, before or after step 2 of the same
+//!    poll: the result is the same (the whole-map restored area comes with
+//!    an [`NetPresenter::apply`], and the keys of the ticks after the state
+//!    are kept, so the ticks simulated again after it play no sound twice).
+//!
+//! A sound is keyed by its id, not its source (events carry none): when a
+//! correction swaps which worm fires the same weapon in the same tick and
+//! sub-step, the sound stays where it first played (spec §3.4: not undone).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -141,6 +147,8 @@ pub struct NetPresenter {
     kept: Vec<Event>,
     /// Its explosions seen for the first time (reused).
     shakes: Vec<Event>,
+    /// Cosmetic events handed to the entities so far.
+    spawned: u64,
 }
 
 impl NetPresenter {
@@ -155,8 +163,9 @@ impl NetPresenter {
     /// play now to `sounds` (`rl_audio::Audio::play`).
     ///
     /// A tick never shown runs as in local play (`Fx::step_tick` with all
-    /// its events: spawns, terrain edits, entity passes) and plays all its
-    /// sounds. A tick shown before (re-simulated) runs no entity pass (the
+    /// its events: spawns, terrain edits, entity passes) and plays its
+    /// sounds (all of them, but after a loaded state those of a tick shown
+    /// before it, whose keys [`NetPresenter::reset`] kept). A tick shown before (re-simulated) runs no entity pass (the
     /// entities do not age twice): its terrain edits and only its
     /// cosmetics with a new key spawn, only its sounds with a new key
     /// play, only its explosions with a new key shake the camera. The
@@ -184,11 +193,11 @@ impl NetPresenter {
             if t.tick >= self.next {
                 present.step_fx(&fx(&t.events, t.substeps));
                 for (e, k) in t.events.iter().zip(&keys) {
-                    if let Some(k) = k {
-                        self.shown.insert(*k);
-                    }
-                    if matches!(e.kind, EventKind::Sound { .. }) {
-                        sounds.push(*e);
+                    let new = k.is_some_and(|k| self.shown.insert(k));
+                    match e.kind {
+                        EventKind::Sound { .. } if new => sounds.push(*e),
+                        EventKind::SpawnCosmetic { .. } => self.spawned += 1,
+                        _ => {}
                     }
                 }
                 self.next = t.tick.saturating_add(1);
@@ -200,7 +209,10 @@ impl NetPresenter {
                 match k {
                     None => self.kept.push(*e),
                     Some(k) if self.shown.insert(*k) => match e.kind {
-                        EventKind::SpawnCosmetic { .. } => self.kept.push(*e),
+                        EventKind::SpawnCosmetic { .. } => {
+                            self.kept.push(*e);
+                            self.spawned += 1;
+                        }
                         EventKind::Sound { .. } => sounds.push(*e),
                         EventKind::Explosion { .. } => self.shakes.push(*e),
                         _ => {}
@@ -225,12 +237,18 @@ impl NetPresenter {
         self.shown = self.shown.split_off(&first);
     }
 
-    /// A loaded state (`Event::StateLoaded`): everything restarts, the
-    /// next ticks are new (with `Presentation::state_loaded`, which clears
-    /// the entities). Sounds of ticks simulated again after the state can
-    /// play again: a load is rare (a repair, a late spectator).
-    pub fn reset(&mut self) {
+    /// The cosmetic events handed to the entities so far: every one of a
+    /// new tick, and those with a new key of a re-simulated one.
+    pub fn spawned(&self) -> u64 {
+        self.spawned
+    }
+
+    /// The state after `loaded_tick` loaded (`Event::StateLoaded`): the
+    /// ticks after it are new again (with `Presentation::state_loaded`,
+    /// which clears the entities), but the keys of those already shown are
+    /// kept, so their sounds do not play twice when they run again.
+    pub fn reset(&mut self, loaded_tick: u32) {
         self.next = 0;
-        self.shown.clear();
+        self.shown.retain(|k| k.tick > loaded_tick);
     }
 }

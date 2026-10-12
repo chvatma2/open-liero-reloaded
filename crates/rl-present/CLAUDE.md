@@ -47,7 +47,12 @@ wired in the frame loop's order **once**, so each mode that draws a world
   pass, all its terrain edits, and only the cosmetics, sounds and camera
   shakes whose `EventKey` is new. Debug builds assert no `terrain_drift`
   after it. `confirmed(tick)` prunes keys below `Session::confirmed`;
-  `reset()` (with `Presentation::state_loaded`) on `Event::StateLoaded`.
+  `reset(tick)` (with `Presentation::state_loaded`) on
+  `Event::StateLoaded { tick }`, before or after that poll's `apply`: it
+  keeps the keys after the state, so ticks run again after it play no sound
+  twice. `spawned()` counts the cosmetics handed to the entities. A sound's
+  key has no source: a correction swapping which worm fires leaves the
+  sound where it first played.
   `event_keys` keys an event by tick, sub-step, a hash of its kind and
   integer identity fields (never positions or amounts, which a correction
   moves) and an ordinal among equal ones. An erased event is not undone.
