@@ -59,8 +59,9 @@ pub struct NetSpec {
     #[serde(default)]
     pub difficulty: Option<String>,
     /// Planted faults `(peer, host tick, worm, health)`: at the peer's first
-    /// frame after the host's tick, the worm's health is set in that peer's
-    /// world alone (a desync for the harness to repair).
+    /// frame after the host's tick at which it has confirmed that tick, the
+    /// worm's health is set in that peer's world alone, as it was after its
+    /// last confirmed tick (a desync for the harness to repair).
     #[serde(default)]
     pub faults: Vec<(u16, u32, u8, f32)>,
 }

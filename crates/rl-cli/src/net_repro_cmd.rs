@@ -42,6 +42,9 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     {
         match (state, diff) {
             (None, _) => println!("{what} state: not recorded"),
+            (Some((t, _)), _) if r.uncovered.contains(&what) => {
+                println!("{what} state at {t}: not covered by the recorded inputs")
+            }
             (Some((t, _)), None) => println!("{what} state at {t}: equal"),
             (Some((t, _)), Some(path)) => println!("{what} state at {t} differs first at {path}"),
         }

@@ -436,7 +436,9 @@ impl<S: Simulation> Session<S> {
     /// fault). The change cannot be rolled back across: the session forgets
     /// its snapshots and the state floor moves to the current tick (ticks
     /// before it count as confirmed); checksums of unconfirmed ticks are
-    /// dropped (they are no longer known).
+    /// dropped (they are no longer known). For tests and the harness only;
+    /// see [`Session::change_confirmed`] for a change that keeps the
+    /// predicted ticks open.
     pub fn sim_mut(&mut self) -> &mut S {
         self.snaps.clear();
         self.used.clear();
@@ -451,8 +453,12 @@ impl<S: Simulation> Session<S> {
     /// simulates the unconfirmed ticks again on top of the change (a test's
     /// planted fault): unlike [`Session::sim_mut`], the ticks predicted so
     /// far are not made final with it, so the change is the only
-    /// difference to an undisturbed peer. Rollbacks never reach before it.
-    /// Without that tick's snapshot it is `sim_mut`.
+    /// difference to an undisturbed peer. Rollbacks never reach before it
+    /// (every tick below it has its final inputs). A pending rollback is
+    /// consumed by the re-simulation (it leaves no `Rollback` event or
+    /// rollback statistic; `resim_ticks` counts the ticks). Without that
+    /// tick's snapshot it is `sim_mut`. For tests and the harness only.
+    #[doc(hidden)]
     pub fn change_confirmed(&mut self, driver: &mut dyn Driver<S>, change: impl FnOnce(&mut S)) {
         let x = self.confirmed().min(self.current).min(self.rollback_from.unwrap_or(u32::MAX));
         let i = x.checked_sub(self.base).map_or(usize::MAX, |i| i as usize);
@@ -466,7 +472,6 @@ impl<S: Simulation> Session<S> {
         self.snaps.truncate(i);
         self.used.truncate(i);
         self.checks.rewind(x);
-        self.floor = self.floor.max(x);
         self.rollback_from = None;
         self.current = x;
         while self.current < to {
@@ -1451,6 +1456,75 @@ mod tests {
             c.drain_events().into_iter().filter(|e| matches!(e, Event::Rollback { .. })).collect();
         assert_eq!(rollbacks, vec![Event::Rollback { from: 10, to: 15 }]);
         assert_eq!(c.checksums(), &[]); // tick 9's was not known when the change came
+    }
+
+    /// The state of a fresh `ToySim` with `displace(0, 1)` applied before
+    /// tick `x`, after ticks `0..to` on the keys `c` knows (final or predicted).
+    fn replay_with_change(c: &Session<ToySim>, x: u32, to: u32) -> Vec<u8> {
+        let mut s = ToySim::new(3);
+        for t in 0..to {
+            if t == x {
+                s.displace(0, 1);
+            }
+            let keys: Vec<Keys> = (0..3u8).map(|sl| Keys(c.keys_for(t, sl))).collect();
+            s.tick(&keys);
+        }
+        s.encode_state()
+    }
+
+    /// The host's datagram with finals for ticks `0..n`: slot 0 presses
+    /// `a(t)`, slot 1 `t`, slot 2 what the client pressed itself.
+    fn finals(c: &Session<ToySim>, n: u32, a: fn(u32) -> u8) -> Vec<u8> {
+        let own = c.own.clone();
+        let value = move |t: u32, s: usize| Some([a(t), t as u8, own[t as usize]][s]);
+        host_inputs(n, 1, 0, rl_proto::encode_frames(0, n, 3, &value, &|_| Some(0)))
+    }
+
+    #[test]
+    fn a_change_to_the_confirmed_state_keeps_the_predicted_ticks_open() {
+        for pending in [true, false] {
+            let mut c = client();
+            let mut drv = driver();
+            for ms in 1..=150u64 {
+                c.advance(ms * 1000, drv.as_mut());
+            }
+            let to = c.current_tick();
+            assert_eq!(to, 15);
+            // Finals for ticks 0..12 that differ from the predictions.
+            let data = finals(&c, 12, |t| 5 + (t as u8 % 3));
+            c.receive(0, Channel::Unreliable, &data, 150_000);
+            if !pending {
+                c.advance(151_000, drv.as_mut());
+                c.drain_events();
+            }
+            let to = c.current_tick().max(to);
+            assert_eq!(c.rollback_from.is_some(), pending);
+            let x = if pending { 0 } else { 12 };
+            let sums_before = c.checksums().to_vec();
+            let (resim, rollbacks) = (c.stats.resim_ticks, c.stats.rollbacks);
+            c.change_confirmed(drv.as_mut(), |s| s.displace(0, 1));
+            assert_eq!(c.current_tick(), to);
+            assert_eq!(c.sim().encode_state(), replay_with_change(&c, x, to), "pending {pending}");
+            assert_eq!(c.stats.resim_ticks, resim + (to - x) as u64);
+            assert_eq!(c.stats.rollbacks, rollbacks, "no rollback is counted");
+            assert_eq!(c.rollback_from, None);
+            let below = |v: &[(u32, u64)]| v.iter().filter(|e| e.0 < x).copied().collect::<Vec<_>>();
+            assert_eq!(below(c.checksums()), below(&sums_before));
+            if !pending {
+                assert!(!below(c.checksums()).is_empty(), "tick 9's checksum is kept");
+            }
+            // Finals for ticks 12.. that differ again: a rollback to them,
+            // not before the change; the change stays.
+            let data = finals(&c, 15, |t| if t < 12 { 5 + (t as u8 % 3) } else { 9 });
+            c.receive(0, Channel::Unreliable, &data, 152_000);
+            c.advance(153_000, drv.as_mut());
+            let rb: Vec<Event> =
+                c.drain_events().into_iter().filter(|e| matches!(e, Event::Rollback { .. })).collect();
+            assert_eq!(rb.len(), 1, "{rb:?}");
+            assert!(matches!(rb[0], Event::Rollback { from, .. } if from >= x));
+            let now = c.current_tick();
+            assert_eq!(c.sim().encode_state(), replay_with_change(&c, x, now), "after the rollback");
+        }
     }
 
     #[test]

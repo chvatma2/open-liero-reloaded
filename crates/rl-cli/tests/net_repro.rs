@@ -1,6 +1,7 @@
 mod common;
 
-use rl_cli::bundle::{BUNDLE_VERSION, DesyncBundle, first_difference, reproduce};
+use proptest::prelude::*;
+use rl_cli::bundle::{BUNDLE_VERSION, DesyncBundle, FIELDS, first_difference, reproduce};
 use rl_cli::netsim::{NetSpec, run_with};
 use serde_json::json;
 
@@ -78,6 +79,74 @@ fn a_planted_desync_is_repaired_and_pinpointed() {
     let t = repro.first_local_divergence.expect("the faulty peer's stream diverges from the replay");
     assert!((400..420).contains(&t), "diverged at {t}");
     let diff = repro.local_diff.expect("its state differs from the replay");
-    assert!(diff.starts_with("worms[3]"), "{diff}");
+    let worms: Vec<&str> = diff.split(", ").filter(|p| p.starts_with("worms")).collect();
+    assert_eq!(worms.len(), 1, "{diff}");
+    assert!(worms[0].starts_with("worms[3]"), "{diff}");
+    assert!(!diff.contains("worms[0]") && !diff.contains("worms[2]") && !diff.contains("worms[4]"), "{diff}");
+    assert!(repro.uncovered.is_empty());
     assert_eq!(repro.host_diff, None, "the host's state is the replay's");
+}
+
+#[test]
+fn fields_are_the_world_states_fields() {
+    let Some(c) = common::content() else { return };
+    let spec: NetSpec = ron::from_str(
+        r#"(mod_id: "olx-classic", level_id: "olx-level-castlestrike", seed: 1, slots: 2, clients: 1, spectators: 0, profile: "lan", ticks: 10)"#,
+    )
+    .unwrap();
+    use rl_netcode::harness::Factory as _;
+    let sim = rl_cli::netsim::WorldFactory::new(&c, &spec).unwrap().sim(0);
+    let value = serde_json::to_value(sim.world().state()).unwrap();
+    let mut real: Vec<&str> = value.as_object().unwrap().keys().map(String::as_str).collect();
+    let mut ours: Vec<&str> = FIELDS.to_vec();
+    real.sort_unstable();
+    ours.sort_unstable();
+    assert_eq!(ours, real);
+}
+
+fn valid_bundle() -> Vec<u8> {
+    let spec: NetSpec = ron::from_str(
+        r#"(mod_id: "m", level_id: "l", seed: 1, slots: 2, clients: 1, spectators: 0, profile: "lan", ticks: 10, faults: [(1, 4, 0, 3.0)])"#,
+    )
+    .unwrap();
+    DesyncBundle {
+        spec,
+        peer: 1,
+        fingerprint: 7,
+        platform: "x86_64-linux".into(),
+        inputs: vec![[3; 32]; 12],
+        local_checksums: vec![(9, 1)],
+        host: (9, 2),
+        local_state: Some((3, vec![1, 2, 3])),
+        host_state: Some((4, vec![9; 40])),
+    }
+    .encode()
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, failure_persistence: None, ..ProptestConfig::default() })]
+
+    #[test]
+    fn decoding_arbitrary_bytes_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..400)) {
+        let _ = DesyncBundle::decode(&bytes);
+        let mut with_header = b"RLDS\x01\x00".to_vec();
+        with_header.extend(&bytes);
+        let _ = DesyncBundle::decode(&with_header);
+    }
+
+    #[test]
+    fn decoding_mutated_bundles_never_panics(
+        edits in proptest::collection::vec((any::<usize>(), any::<u8>()), 1..8),
+        cut in proptest::option::of(any::<usize>()),
+    ) {
+        let mut b = valid_bundle();
+        for (i, v) in edits {
+            let n = b.len();
+            b[i % n] = v;
+        }
+        if let Some(c) = cut {
+            b.truncate(c % (b.len() + 1));
+        }
+        let _ = DesyncBundle::decode(&b);
+    }
 }

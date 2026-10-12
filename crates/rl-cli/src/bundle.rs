@@ -3,7 +3,7 @@
 //! becomes a test. [`reproduce`] replays the recorded inputs on this
 //! machine and names the first tick and world field that differ.
 
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{Context as _, ensure};
 use rl_content::Content;
 use rl_netcode::harness::{Factory as _, HOST};
 use rl_netcode::{Simulation as _, WorldSim};
@@ -59,33 +59,70 @@ pub struct Repro {
     /// The first checksum tick at which this machine's replay differs from
     /// the recording peer's own checksums.
     pub first_local_divergence: Option<u32>,
-    /// The first world field where the peer's state differs from the replay's.
+    /// Where the peer's state differs from the replay's: the first
+    /// differing path of every differing field of the world state, in
+    /// [`FIELDS`] order, comma separated (`worms[3].health, ents`).
     pub local_diff: Option<String>,
     /// The same for the host's state.
     pub host_diff: Option<String>,
+    /// `local` and/or `host` when that state's tick is past the recorded
+    /// inputs, so the replay cannot reach it.
+    pub uncovered: Vec<&'static str>,
 }
 
 impl Repro {
     /// Whether the replay agrees with everything the bundle holds.
     pub fn is_clean(&self) -> bool {
-        self.first_local_divergence.is_none() && self.local_diff.is_none() && self.host_diff.is_none()
+        self.first_local_divergence.is_none()
+            && self.local_diff.is_none()
+            && self.host_diff.is_none()
+            && self.uncovered.is_empty()
     }
 }
 
+/// The fields of `WorldState`, in its declaration (wire) order: the order
+/// differences are listed in. A test keeps it equal to the real field set.
+pub const FIELDS: &[&str] = &[
+    "width",
+    "height",
+    "cells",
+    "setup_worms",
+    "worms",
+    "latches",
+    "time",
+    "physics_time",
+    "server_frame",
+    "substeps",
+    "shots",
+    "last_shots",
+    "projectiles",
+    "rand",
+    "mt",
+    "ents",
+    "rot_bumped",
+    "bonuses",
+    "mode",
+    "over",
+    "over_frame",
+    "game_over_sent",
+];
+
 /// Replays the bundle's inputs from the start world.
 pub fn reproduce(content: &Content, b: &DesyncBundle) -> anyhow::Result<Repro> {
+    ensure!(!b.inputs.is_empty(), "the bundle holds no inputs");
+    ensure!((1..=32).contains(&b.spec.slots), "{} slots: a match has 1 to 32", b.spec.slots);
     let mut sim: WorldSim = WorldFactory::new(content, &b.spec)?.sim(HOST);
     let slots = usize::from(b.spec.slots);
     let sums: std::collections::BTreeMap<u32, u64> = b.local_checksums.iter().copied().collect();
+    let mut uncovered = Vec::new();
     let mut states: Vec<(u32, &[u8], bool)> = Vec::new();
     for (state, local) in [(&b.local_state, true), (&b.host_state, false)] {
         if let Some((tick, bytes)) = state {
-            ensure!(
-                (*tick as usize) < b.inputs.len(),
-                "a state after tick {tick} but inputs for only {} ticks",
-                b.inputs.len()
-            );
-            states.push((*tick, bytes, local));
+            if (*tick as usize) < b.inputs.len() {
+                states.push((*tick, bytes, local));
+            } else {
+                uncovered.push(if local { "local" } else { "host" });
+            }
         }
     }
     let (mut first_local_divergence, mut local_diff, mut host_diff) = (None, None, None);
@@ -111,23 +148,32 @@ pub fn reproduce(content: &Content, b: &DesyncBundle) -> anyhow::Result<Repro> {
             }
         }
     }
-    if b.inputs.is_empty() {
-        bail!("the bundle holds no inputs");
-    }
-    Ok(Repro { first_local_divergence, local_diff, host_diff })
+    Ok(Repro { first_local_divergence, local_diff, host_diff, uncovered })
 }
 
-/// The first difference between two serialized world states. The worms come
-/// first: their fields are causes (a health, a position) where the counters
-/// after them (`ents`, the generators) are effects, which sorted key order
-/// would name before `worms`.
+/// The first differing path of every differing top-level field, in
+/// [`FIELDS`] order (fields it does not know after them, sorted), joined by
+/// `, `; `None` if equal.
 fn state_difference(a: &serde_json::Value, b: &serde_json::Value) -> Option<String> {
-    if let (Some(x), Some(y)) = (a.get("worms"), b.get("worms"))
-        && let Some(d) = diff(x, y, "worms".to_string())
-    {
-        return Some(d);
-    }
-    first_difference(a, b)
+    let mut extra: Vec<&str> = [a, b]
+        .iter()
+        .filter_map(|v| v.as_object())
+        .flat_map(|o| o.keys().map(String::as_str))
+        .filter(|k| !FIELDS.contains(k))
+        .collect();
+    extra.sort_unstable();
+    extra.dedup();
+    let paths: Vec<String> = FIELDS
+        .iter()
+        .copied()
+        .chain(extra)
+        .filter_map(|k| match (a.get(k), b.get(k)) {
+            (Some(x), Some(y)) => diff(x, y, k.to_string()),
+            (None, None) => None,
+            _ => Some(k.to_string()),
+        })
+        .collect();
+    (!paths.is_empty()).then(|| paths.join(", "))
 }
 
 /// The path of the first difference between `a` and `b` (objects by sorted

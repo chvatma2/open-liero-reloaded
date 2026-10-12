@@ -2854,6 +2854,7 @@ dependencies = [
  "divan",
  "insta",
  "postcard",
+ "proptest",
  "rl-bots",
  "rl-content",
  "rl-data",
