@@ -1,9 +1,14 @@
-//! The shader-headroom probe (bench only, plan 8): after a frame,
-//! `passes` full-screen fragment passes, each a `taps`-tap blur of the
-//! previous pass's output, at the frame's size, into two textures of its
-//! own (ping-pong). The picture never changes; the probe's GPU time per
-//! pass answers "how many full-screen shaders fit in a frame".
+//! The shader-headroom probe (bench only, plan 8): after a frame, an
+//! untimed seed pass copies the drawn frame (the world target, stretched)
+//! into the probe's first source texture, then `passes` full-screen
+//! fragment passes, each a `taps`-tap blur of the previous pass's output,
+//! at the frame's size, into two textures of its own (ping-pong). The
+//! passes blur a real picture: a blank one, which GPUs compress, would
+//! make them look cheaper than a real effect. The picture never changes;
+//! the probe's GPU time per pass answers "how many full-screen shaders fit
+//! in a frame".
 
+use super::pass::begin;
 use super::timing::Timer;
 use super::{TEXTURE, UNIFORM, WORLD_FORMAT, entry, pipeline, texture};
 
@@ -29,6 +34,7 @@ impl Probe {
 /// The probe's textures, made for one size.
 struct Targets {
     size: (u32, u32),
+    textures: [wgpu::Texture; 2],
     views: [wgpu::TextureView; 2],
     /// `binds[j]` reads `views[j]`.
     binds: [wgpu::BindGroup; 2],
@@ -37,6 +43,8 @@ struct Targets {
 pub(crate) struct ProbeState {
     pub probe: Probe,
     pipeline: wgpu::RenderPipeline,
+    /// The seed pass: the drawn frame into the first pass's source.
+    seed: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     uniform: wgpu::Buffer,
     sampler: wgpu::Sampler,
@@ -54,17 +62,20 @@ impl ProbeState {
                 entry(2, frag, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)),
             ],
         });
-        let pipeline = pipeline(
-            device,
-            "rl-render probe",
-            include_str!("../probe.wgsl"),
-            ("vs_full", "fs_probe"),
-            &[Some(&layout)],
-            &[],
-            WORLD_FORMAT,
-            None,
-            wgpu::PrimitiveTopology::TriangleList,
-        );
+        let make = |fs: &str| {
+            pipeline(
+                device,
+                "rl-render probe",
+                include_str!("../probe.wgsl"),
+                ("vs_full", fs),
+                &[Some(&layout)],
+                &[],
+                WORLD_FORMAT,
+                None,
+                wgpu::PrimitiveTopology::TriangleList,
+            )
+        };
+        let (pipeline, seed) = (make("fs_probe"), make("fs_seed"));
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("rl-render probe"),
             size: 16,
@@ -77,7 +88,7 @@ impl ProbeState {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        ProbeState { probe, pipeline, layout, uniform, sampler, targets: None }
+        ProbeState { probe, pipeline, seed, layout, uniform, sampler, targets: None }
     }
 
     /// Makes the two textures fit `size` (new ones only when it changes).
@@ -85,11 +96,12 @@ impl ProbeState {
         if self.targets.as_ref().is_some_and(|t| t.size == size) {
             return;
         }
-        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
-        let views = [0, 1].map(|_| {
-            texture(device, "rl-render probe", size, usage)
-                .create_view(&wgpu::TextureViewDescriptor::default())
-        });
+        // COPY_SRC: tests read the last pass's output back (`Renderer::probe_output`).
+        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC;
+        let textures = [0, 1].map(|_| texture(device, "rl-render probe", size, usage));
+        let views = [0, 1].map(|j| textures[j].create_view(&wgpu::TextureViewDescriptor::default()));
         let binds = [0, 1].map(|j| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("rl-render probe"),
@@ -107,23 +119,29 @@ impl ProbeState {
                 ],
             })
         });
-        self.targets = Some(Targets { size, views, binds });
+        self.targets = Some(Targets { size, textures, views, binds });
     }
 
-    /// Encodes the passes for an output of `size`; with `timer`, slot 2 at
-    /// the first pass's start and 3 at the last pass's end.
+    /// The texture the last frame's last pass wrote (bench and tests only).
+    pub fn output(&self) -> Option<&wgpu::Texture> {
+        let t = self.targets.as_ref()?;
+        Some(&t.textures[(self.probe.passes.max(1) - 1) as usize % 2])
+    }
+
+    /// Encodes the seed (from `frame`, the drawn frame; even with 0
+    /// passes, so a 0-pass baseline's wall time holds it too) and the
+    /// passes for an output of `size`; with `timer`, slot 2 at the first
+    /// pass's start and 3 at the last pass's end (the seed is untimed).
     pub fn encode(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         size: (u32, u32),
+        frame: &wgpu::TextureView,
         timer: Option<&Timer>,
     ) {
         let n = self.probe.passes;
-        if n == 0 {
-            return;
-        }
         let size = (size.0.max(1), size.1.max(1));
         self.ensure(device, size);
         let f = |v: f32| v.to_bits();
@@ -133,6 +151,22 @@ impl ProbeState {
             bytemuck::cast_slice(&[f(size.0 as f32), f(size.1 as f32), self.probe.taps, 0]),
         );
         let t = self.targets.as_ref().expect("ensured above");
+        let seed = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rl-render probe seed"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.uniform.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(frame) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+            ],
+        });
+        {
+            // Into `views[1]`, which the first pass reads.
+            let mut pass = begin(encoder, "rl-render probe seed", &t.views[1], None);
+            pass.set_pipeline(&self.seed);
+            pass.set_bind_group(0, &seed, &[]);
+            pass.draw(0..3, 0..1);
+        }
         for i in 0..n {
             // Only the first pass and the last write a slot; a middle pass
             // asks for none (wgpu refuses timestamp writes with neither).
@@ -142,22 +176,7 @@ impl ProbeState {
                     beginning_of_pass_write_index: (i == 0).then_some(2),
                     end_of_pass_write_index: (i + 1 == n).then_some(3),
                 });
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("rl-render probe"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &t.views[(i % 2) as usize],
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: timestamps,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+            let mut pass = begin(encoder, "rl-render probe", &t.views[(i % 2) as usize], timestamps);
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &t.binds[((i + 1) % 2) as usize], &[]);
             pass.draw(0..3, 0..1);

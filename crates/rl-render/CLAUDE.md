@@ -58,9 +58,13 @@ on screen or offscreen.
   with a wait; reading waits for the frame, so offscreen only; each frame
   is read once). `set_probe(Some(Probe { passes, taps }))` (`probe.rs`,
   `probe.wgsl`, clamped to `MAX_PROBE_PASSES`/`MAX_PROBE_TAPS`): after
-  each frame, `passes` ping-pong blur passes of `taps` taps at the
-  output's size into the probe's own two textures; the picture never
-  changes. `None`, the default, runs none.
+  each frame, an untimed seed pass (`fs_seed`) stretches the drawn frame
+  (the world target) into the first pass's source (even with 0 passes,
+  so a baseline's wall time holds it), then `passes` ping-pong blur
+  passes of `taps` taps at the output's size into the probe's own two
+  textures: they blur a real picture, never a blank one a GPU would
+  compress; the picture never changes. `probe_output` gives the last
+  pass's texture (tests read it back). `None`, the default, runs none.
 - **Goldens** (`rl-cli/tests/render_golden.rs`, `fixtures/render/frame-*.png`):
   `rl-cli render` of one oracle scenario per level (`dig` on Dirt Level,
   `rope` on Liero Factory, `weapons/classic/bazooka` on FossilFacility,

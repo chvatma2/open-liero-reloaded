@@ -221,6 +221,25 @@ fn the_probe_never_changes_the_picture() {
     assert_eq!(a.as_raw(), b.as_raw());
 }
 
+/// The probe blurs the drawn frame, not a black texture (which a GPU
+/// compresses, so a blur of it would cost less than a real effect's).
+#[test]
+fn the_probe_blurs_the_drawn_frame() {
+    let Some(gpu) = offscreen() else { return };
+    let l = list(View { x: 10.0, y: 10.0, w: 64.0, h: 36.0 });
+    let mut r = gpu.renderer(RenderSettings::default());
+    r.upload_terrain(&map());
+    for passes in [1, 2, 3] {
+        r.set_probe(Some(Probe { passes, taps: 9 }));
+        let _ = gpu.render_to_image(&mut r, &l, (256, 144));
+        let out = gpu.read_texture(r.probe_output().expect("the probe ran"));
+        let mut colours: Vec<&[u8]> = out.as_raw().chunks(4).collect();
+        colours.sort_unstable();
+        colours.dedup();
+        assert!(colours.len() > 16, "{passes} passes: {} colours, a blur of a blank texture", colours.len());
+    }
+}
+
 /// GPU timing reports a frame (and the probe) when the device has
 /// timestamps, and nothing otherwise; it never fails. The first frame runs
 /// no probe, so its slots are never written: only the frame's are resolved.

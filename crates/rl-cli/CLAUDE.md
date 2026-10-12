@@ -88,7 +88,7 @@ The headless command-line tool. Its commands:
   `Offscreen::open` (the view, `Viewport::GAME`, over the whole target, no
   HUD: ruling P11), the device waited for after each frame; then the
   shader-headroom probe (`rl_render::Probe`, 0 passes first: the
-  baseline) for `--probe-frames` frames at each pass count. `GpuReport`
+  baseline, which runs the probe's untimed seed of the drawn frame too) for `--probe-frames` frames at each pass count. `GpuReport`
   (RON with `--out`; `cargo xtask envelope` reads it): adapter, backend,
   device type, `timestamps` (GPU times from timestamp queries, else CPU
   wall times only), scene, start tick and a `SizeReport` per size:

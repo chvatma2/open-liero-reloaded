@@ -84,7 +84,14 @@ impl Renderer {
             pass.draw(0..3, 0..1);
         }
         if let Some(p) = self.probe.as_mut() {
-            p.encode(&self.device, &self.queue, &mut encoder, (area[2], area[3]), self.timer.as_ref());
+            p.encode(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                (area[2], area[3]),
+                &world.view,
+                self.timer.as_ref(),
+            );
         }
         let probing = self.probe.as_ref().is_some_and(|p| p.probe.passes > 0);
         if let Some(t) = self.timer.as_mut() {
@@ -121,7 +128,7 @@ impl Renderer {
 
 /// A render pass that clears `view` to black, writing `timestamps` (GPU
 /// timing, bench only) when given.
-fn begin<'e>(
+pub(super) fn begin<'e>(
     encoder: &'e mut wgpu::CommandEncoder,
     label: &str,
     view: &wgpu::TextureView,

@@ -280,7 +280,10 @@ pub fn run(
         let mut probe = Vec::new();
         let mut base = 0.0;
         for &passes in &cfg.probe_passes {
-            renderer.set_probe((passes > 0).then_some(Probe { passes, taps: cfg.probe_taps }));
+            // The baseline too runs the probe's (untimed) seed, the drawn
+            // frame copied into the first pass's source, so a frame's wall
+            // time over the baseline is the passes alone.
+            renderer.set_probe(Some(Probe { passes, taps: cfg.probe_taps }));
             let (mut wall, mut on_gpu, mut dropped) = (vec![], vec![], 0);
             for _ in 0..cfg.probe_frames {
                 let t0 = Instant::now();

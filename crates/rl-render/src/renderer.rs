@@ -349,6 +349,12 @@ impl Renderer {
         self.probe = probe.map(|p| probe::ProbeState::new(&self.device, p.clamped()));
     }
 
+    /// Bench only: the probe's last output (for tests that read it back);
+    /// `None` without a probe or before its first frame.
+    pub fn probe_output(&self) -> Option<&wgpu::Texture> {
+        self.probe.as_ref()?.output()
+    }
+
     /// The terrain texture (for tests and tools that read it back).
     pub fn terrain_texture(&self) -> Option<&wgpu::Texture> {
         self.terrain.as_ref().map(|t| &t.texture)

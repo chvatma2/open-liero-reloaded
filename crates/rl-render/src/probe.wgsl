@@ -1,6 +1,8 @@
 // rl-render's shader-headroom probe (bench only, plan 8): a box blur of
 // `taps` texels of the last pass's output, over the whole target. Its GPU
-// time per pass says how many full-screen effects fit in a frame.
+// time per pass says how many full-screen effects fit in a frame. The
+// first pass reads the seed: the drawn frame (`fs_seed`), so the passes
+// blur a real picture, never a blank texture a GPU would compress.
 
 struct Probe {
     size: vec2<f32>,
@@ -27,4 +29,11 @@ fn fs_probe(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
         sum = sum + textureSampleLevel(src, smp, (frag.xy + o) / probe.size, 0.0);
     }
     return sum / f32(probe.taps);
+}
+
+// The seed (untimed): the drawn frame, the world target, stretched over the
+// probe's target, one tap a pixel.
+@fragment
+fn fs_seed(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
+    return textureSampleLevel(src, smp, frag.xy / probe.size, 0.0);
 }
