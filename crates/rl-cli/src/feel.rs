@@ -157,7 +157,10 @@ impl Driver<WorldSim> for FeelDriver {
             .zip(&shown)
             .enumerate()
             .filter(|(i, _)| *i != self.own)
-            .map(|(_, (w, &(x, y)))| (w.pos.x - x).hypot(w.pos.y - y))
+            .map(|(_, (w, &(x, y)))| {
+                let (dx, dy) = (w.pos.x - x, w.pos.y - y);
+                (dx * dx + dy * dy).sqrt()
+            })
             .fold(0.0_f32, f32::max);
         if live && jump > 0.0 {
             c.corrections.push(jump);
