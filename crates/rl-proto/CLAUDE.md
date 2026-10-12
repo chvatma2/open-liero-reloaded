@@ -11,6 +11,22 @@ control messages, the frame delta codec and the simulation fingerprint.
   `your_ack` and the arrival `margin`. Both carry a `Stamp` for round trips.
   **Control** (reliable channel): `Checksum`, `Late`, `Desync`, `StateBegin`,
   `StateChunk`, `Bye`.
+- **Signalling** (`signal.rs`, WebSocket, one postcard message per frame,
+  `MAX_SIGNAL`): `Signal::{Offer, Answer, Refused}`, `Refusal`; sdp <= 8 KiB.
+- **Lobby** (`lobby.rs`, reliable channel, `MAX_LOBBY`): `ToHost`,
+  `ToClient`, `LobbyState`, `MatchStartWire`, `MatchEndWire` and friends.
+  **Tag byte** first on every reliable payload: `0` netcode `Control`,
+  `1` `ToHost`, `2` `ToClient`; `tag()` splits it (`Tagged`), `None` for an
+  empty payload or unknown tag. The netcode session still sends untagged
+  `Control`; rl-online tags and untags at the boundary.
+- **LAN** (`lan.rs`): `LanAnnounce` on UDP `LAN_PORT` (23401), `MAX_LAN`.
+- **Bounds** (violation = `ProtoError::Invalid`): names <= `MAX_NAME` (20)
+  characters and no control characters; chat, notice and end reason <=
+  `MAX_CHAT` (200) characters; members <= 48; slots <= 32; packs <= 8; bots
+  <= 31; `missing` <= 8; pack and skin ids ASCII `[a-z0-9-]`, 1..=64 bytes;
+  mod and level ids 1..=64 bytes without control characters; hashes 64 hex
+  characters; rules floats finite; restrictions <= 256 bytes. `Signature`
+  (64 bytes) uses a custom serde tuple (serde stops at 32).
 - **Frame delta rule** (`frames.rs`): `known` = slots whose final input the
   host has; `changed ⊆ known` = slots differing from the previous tick, one
   key byte each in slot order. An unchanged known slot repeats the previous
@@ -19,7 +35,7 @@ control messages, the frame delta codec and the simulation fingerprint.
   `out` before a later frame proves invalid: collect, then apply on `Ok`.
 - **Limits:** `MAX_DATAGRAM`, `MAX_CONTROL`, `MAX_FRAMES`, `MAX_KEYS`,
   `STATE_CHUNK`, `MAX_STATE`, `MAX_SLOTS`; `OVERHEAD` is for budgets.
-- **Never panic:** every decoder bounds and validates; `tests/fuzz.rs`.
+- **Never panic:** every decoder bounds and validates; `tests/fuzz.rs`, `tests/fuzz_lobby.rs`.
 - **Fingerprint** (`build.rs`, `fingerprint_impl.rs`): FNV-1a over the
   sources of rl-math, rl-data, rl-terrain, rl-sim, rl-modes, rl-netcode
   (the session's semantics: checksum cadence, acks, resends, `WorldSim`'s

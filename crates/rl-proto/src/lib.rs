@@ -12,7 +12,13 @@ use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 mod frames;
+mod lan;
+mod lobby;
+mod signal;
 pub use frames::{decode_frames, encode_frames};
+pub use lan::*;
+pub use lobby::*;
+pub use signal::*;
 
 #[cfg(test)]
 #[path = "fingerprint_impl.rs"]

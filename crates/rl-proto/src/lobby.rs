@@ -1,0 +1,596 @@
+//! Lobby messages on the reliable channel (networking spec §5.2, §6.2,
+//! §7.2): joining, the lobby's state, chat, match start and end, and the
+//! tag byte that tells them from the netcode's `Control` messages.
+
+use alloc::string::String;
+use alloc::vec::Vec;
+use serde::{Deserialize, Serialize};
+
+use crate::signal::Refusal;
+use crate::{ProtoError, decode_exact};
+
+/// Largest accepted lobby message.
+pub const MAX_LOBBY: usize = 32 * 1024;
+/// Longest name, in characters (rl-ui's profile limit).
+pub const MAX_NAME: usize = 20;
+/// Longest chat line, in characters.
+pub const MAX_CHAT: usize = 200;
+/// Most players in a lobby.
+pub const MAX_PLAYERS: usize = 32;
+/// Most spectators in a lobby.
+pub const MAX_SPECTATORS: usize = 16;
+/// Most members (players plus spectators).
+pub const MAX_MEMBERS: usize = MAX_PLAYERS + MAX_SPECTATORS;
+/// Most packs in a match setup.
+pub const MAX_PACKS: usize = 8;
+/// Most bots in a match setup.
+pub const MAX_BOTS: usize = 31;
+/// Most missing pack ids a client reports.
+pub const MAX_MISSING: usize = 8;
+/// Longest id (pack, mod, level), in bytes.
+pub const MAX_ID: usize = 64;
+/// Longest restrictions string, in bytes.
+pub const MAX_RESTRICTIONS: usize = 256;
+
+/// Reliable-channel tag bytes.
+pub const TAG_NETCODE: u8 = 0;
+pub const TAG_TO_HOST: u8 = 1;
+pub const TAG_TO_CLIENT: u8 = 2;
+
+/// X-only secp256k1 public key (BIP-340).
+pub type PublicKey = [u8; 32];
+/// BIP-340 Schnorr signature.
+pub type Signature = [u8; 64];
+
+/// serde for `[u8; 64]` (serde itself stops at 32): a 64-byte tuple.
+mod sig64 {
+    use core::fmt;
+    use serde::de::{Error, SeqAccess, Visitor};
+    use serde::ser::SerializeTuple;
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
+        let mut t = s.serialize_tuple(64)?;
+        for b in v {
+            t.serialize_element(b)?;
+        }
+        t.end()
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = [u8; 64];
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("64 bytes")
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<[u8; 64], A::Error> {
+                let mut out = [0u8; 64];
+                for (i, o) in out.iter_mut().enumerate() {
+                    *o = a.next_element()?.ok_or_else(|| A::Error::invalid_length(i, &self))?;
+                }
+                Ok(out)
+            }
+        }
+        d.deserialize_tuple(64, V)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Look {
+    pub name: String,
+    pub colour: [u8; 3],
+    /// Skin pack id.
+    pub skin: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ToHost {
+    Hello {
+        key: PublicKey,
+        look: Look,
+        /// SHA-256 of the host's nonce and the password.
+        password: Option<[u8; 32]>,
+    },
+    /// Signature over the host's challenge.
+    Prove {
+        #[serde(with = "sig64")]
+        signature: Signature,
+    },
+    SetLook(Look),
+    Ready(bool),
+    Spectate(bool),
+    Loadout(Option<[i32; 5]>),
+    Chat(String),
+    /// Pack ids this client lacks.
+    Have {
+        missing: Vec<String>,
+    },
+    Admin(AdminCommand),
+    Bye,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum AdminCommand {
+    Kick(PublicKey),
+    Ban(PublicKey),
+    Next,
+    Settings(MatchSetupWire),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ToClient {
+    Challenge {
+        nonce: [u8; 32],
+        host_key: PublicKey,
+        needs_password: bool,
+    },
+    /// `you` is the receiver's member id.
+    Welcome {
+        you: u8,
+        lobby: LobbyState,
+    },
+    Refused(Refusal),
+    /// Full state on every change.
+    Lobby(LobbyState),
+    Chat {
+        from: u8,
+        text: String,
+    },
+    Notice(Notice),
+    Start(MatchStartWire),
+    Ended(MatchEndWire),
+    Kicked {
+        banned: bool,
+    },
+    Bye,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LobbyState {
+    pub name: String,
+    pub phase: Phase,
+    pub setup: MatchSetupWire,
+    pub members: Vec<Member>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Phase {
+    Gathering,
+    Starting,
+    Playing { tick: u32 },
+    Results,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Member {
+    pub id: u8,
+    pub key: PublicKey,
+    pub look: Look,
+    pub seat: SeatWire,
+    pub ready: bool,
+    pub missing: Vec<String>,
+    pub ping_ms: Option<u16>,
+    pub admin: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SeatWire {
+    Player { slot: u8 },
+    Spectator,
+    Waiting,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MatchSetupWire {
+    pub mod_id: String,
+    pub level_id: String,
+    /// Pack id and content hash (64 hex characters).
+    pub packs: Vec<(String, String)>,
+    pub rules: RulesWire,
+    pub bonuses: bool,
+    pub loading_time: i32,
+    pub restrictions: String,
+    pub bots: Vec<BotWire>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RulesWire {
+    pub lives: i32,
+    pub kill_limit: i32,
+    pub time_limit_min: f32,
+    pub allow_negative_score: bool,
+    pub death_decreases_score: f32,
+    pub suicide_decreases_score: bool,
+    pub sprees: [i32; 5],
+    pub dying_sprees: [i32; 5],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BotWire {
+    pub difficulty: u8,
+    pub personality: u8,
+    pub loadout: u8,
+    pub look: Look,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MatchStartWire {
+    pub seed: u32,
+    pub setup: MatchSetupWire,
+    pub slots: Vec<SlotWire>,
+    /// Member id and its input delay in ticks.
+    pub input_delay: Vec<(u8, u8)>,
+    pub start_checksum: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlotWire {
+    /// `None`: a bot.
+    pub member: Option<u8>,
+    /// Index into `setup.bots`.
+    pub bot: Option<u8>,
+    pub look: Look,
+    pub loadout: Option<[i32; 5]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MatchEndWire {
+    pub reason: String,
+    /// Slot, score, kills, deaths, lives.
+    pub rows: Vec<(u8, i32, i32, i32, i32)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Notice {
+    Joined(u8),
+    Left(u8),
+    Kicked(u8),
+    Banned(u8),
+    NotReady(Vec<u8>),
+    Started,
+    Message(String),
+}
+
+/// A reliable-channel payload split by its tag byte.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tagged<'a> {
+    Netcode(&'a [u8]),
+    ToHost(&'a [u8]),
+    ToClient(&'a [u8]),
+}
+
+/// Splits the tag byte off; `None` for an empty payload or an unknown tag.
+pub fn tag(bytes: &[u8]) -> Option<Tagged<'_>> {
+    let (t, rest) = bytes.split_first()?;
+    match *t {
+        TAG_NETCODE => Some(Tagged::Netcode(rest)),
+        TAG_TO_HOST => Some(Tagged::ToHost(rest)),
+        TAG_TO_CLIENT => Some(Tagged::ToClient(rest)),
+        _ => None,
+    }
+}
+
+// ---- validation ----
+
+/// At most `max` characters, no control characters.
+pub(crate) fn valid_text(s: &str, max: usize) -> bool {
+    s.chars().count() <= max && !s.chars().any(char::is_control)
+}
+
+/// A mod or level id: non-empty, at most `MAX_ID` bytes, no control characters.
+pub(crate) fn valid_id_text(s: &str) -> bool {
+    !s.is_empty() && s.len() <= MAX_ID && !s.chars().any(char::is_control)
+}
+
+/// A pack id: ASCII `[a-z0-9-]`, 1 to `MAX_ID` bytes.
+fn valid_pack_id(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= MAX_ID
+        && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+fn valid_hash(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn valid_look(l: &Look) -> bool {
+    valid_text(&l.name, MAX_NAME) && valid_pack_id(&l.skin)
+}
+
+fn valid_missing(m: &[String]) -> bool {
+    m.len() <= MAX_MISSING && m.iter().all(|s| valid_pack_id(s))
+}
+
+fn valid_setup(s: &MatchSetupWire) -> bool {
+    valid_id_text(&s.mod_id)
+        && valid_id_text(&s.level_id)
+        && s.packs.len() <= MAX_PACKS
+        && s.packs.iter().all(|(id, h)| valid_pack_id(id) && valid_hash(h))
+        && s.rules.time_limit_min.is_finite()
+        && s.rules.death_decreases_score.is_finite()
+        && s.restrictions.len() <= MAX_RESTRICTIONS
+        && !s.restrictions.chars().any(char::is_control)
+        && s.bots.len() <= MAX_BOTS
+        && s.bots.iter().all(|b| valid_look(&b.look))
+}
+
+fn valid_lobby(l: &LobbyState) -> bool {
+    valid_text(&l.name, MAX_NAME)
+        && valid_setup(&l.setup)
+        && l.members.len() <= MAX_MEMBERS
+        && l.members.iter().all(|m| valid_look(&m.look) && valid_missing(&m.missing))
+}
+
+fn valid_start(s: &MatchStartWire) -> bool {
+    valid_setup(&s.setup)
+        && s.slots.len() <= MAX_PLAYERS
+        && s.slots.iter().all(|x| valid_look(&x.look))
+        && s.input_delay.len() <= MAX_MEMBERS
+}
+
+fn valid_chat(s: &str) -> bool {
+    valid_text(s, MAX_CHAT)
+}
+
+pub fn encode_to_host(m: &ToHost) -> Vec<u8> {
+    postcard::to_allocvec(m).expect("serialising into a Vec cannot fail")
+}
+
+pub fn decode_to_host(b: &[u8]) -> Result<ToHost, ProtoError> {
+    if b.len() > MAX_LOBBY {
+        return Err(ProtoError::TooLong);
+    }
+    let m: ToHost = decode_exact(b)?;
+    let ok = match &m {
+        ToHost::Hello { look, .. } | ToHost::SetLook(look) => valid_look(look),
+        ToHost::Chat(t) => valid_chat(t),
+        ToHost::Have { missing } => valid_missing(missing),
+        ToHost::Admin(AdminCommand::Settings(s)) => valid_setup(s),
+        _ => true,
+    };
+    if ok { Ok(m) } else { Err(ProtoError::Invalid) }
+}
+
+pub fn encode_to_client(m: &ToClient) -> Vec<u8> {
+    postcard::to_allocvec(m).expect("serialising into a Vec cannot fail")
+}
+
+pub fn decode_to_client(b: &[u8]) -> Result<ToClient, ProtoError> {
+    if b.len() > MAX_LOBBY {
+        return Err(ProtoError::TooLong);
+    }
+    let m: ToClient = decode_exact(b)?;
+    let ok = match &m {
+        ToClient::Welcome { lobby, .. } | ToClient::Lobby(lobby) => valid_lobby(lobby),
+        ToClient::Chat { text, .. } => valid_chat(text),
+        ToClient::Notice(Notice::Message(t)) => valid_chat(t),
+        ToClient::Notice(Notice::NotReady(ids)) => ids.len() <= MAX_MEMBERS,
+        ToClient::Start(s) => valid_start(s),
+        ToClient::Ended(e) => valid_chat(&e.reason) && e.rows.len() <= MAX_PLAYERS,
+        _ => true,
+    };
+    if ok { Ok(m) } else { Err(ProtoError::Invalid) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::string::ToString;
+    use alloc::vec;
+
+    pub(crate) fn look() -> Look {
+        Look { name: "Martin".to_string(), colour: [1, 2, 3], skin: "olx-skin-afro".to_string() }
+    }
+
+    pub(crate) fn setup() -> MatchSetupWire {
+        MatchSetupWire {
+            mod_id: "olx-classic".to_string(),
+            level_id: "olx-level-dirt-level".to_string(),
+            packs: vec![("olx-classic".to_string(), "ab".repeat(32))],
+            rules: RulesWire {
+                lives: 10,
+                kill_limit: -1,
+                time_limit_min: 5.5,
+                allow_negative_score: true,
+                death_decreases_score: 0.5,
+                suicide_decreases_score: false,
+                sprees: [1, 2, 3, 4, 5],
+                dying_sprees: [5, 4, 3, 2, 1],
+            },
+            bonuses: true,
+            loading_time: 100,
+            restrictions: String::new(),
+            bots: vec![BotWire { difficulty: 2, personality: 1, loadout: 0, look: look() }],
+        }
+    }
+
+    fn member(id: u8) -> Member {
+        Member {
+            id,
+            key: [id; 32],
+            look: look(),
+            seat: SeatWire::Player { slot: id },
+            ready: true,
+            missing: vec!["olx-skin-x".to_string()],
+            ping_ms: Some(12),
+            admin: id == 0,
+        }
+    }
+
+    fn lobby(n: usize) -> LobbyState {
+        LobbyState {
+            name: "Office".to_string(),
+            phase: Phase::Playing { tick: 77 },
+            setup: setup(),
+            members: (0..n).map(|i| member(i as u8)).collect(),
+        }
+    }
+
+    fn start(slots: usize) -> MatchStartWire {
+        MatchStartWire {
+            seed: 9,
+            setup: setup(),
+            slots: (0..slots)
+                .map(|i| SlotWire {
+                    member: Some(i as u8),
+                    bot: None,
+                    look: look(),
+                    loadout: Some([1, 2, 3, 4, 5]),
+                })
+                .collect(),
+            input_delay: vec![(0, 2), (1, 3)],
+            start_checksum: 0xfeed,
+        }
+    }
+
+    fn to_host_round(m: ToHost) {
+        assert_eq!(decode_to_host(&encode_to_host(&m)), Ok(m));
+    }
+
+    fn to_client_round(m: ToClient) {
+        assert_eq!(decode_to_client(&encode_to_client(&m)), Ok(m));
+    }
+
+    #[test]
+    fn to_host_round_trips() {
+        to_host_round(ToHost::Hello { key: [7; 32], look: look(), password: Some([9; 32]) });
+        to_host_round(ToHost::Prove { signature: core::array::from_fn(|i| i as u8) });
+        to_host_round(ToHost::SetLook(look()));
+        to_host_round(ToHost::Ready(true));
+        to_host_round(ToHost::Spectate(false));
+        to_host_round(ToHost::Loadout(Some([1, -2, 3, 4, 5])));
+        to_host_round(ToHost::Chat("hello".to_string()));
+        to_host_round(ToHost::Have { missing: vec!["olx-skin-a".to_string()] });
+        to_host_round(ToHost::Admin(AdminCommand::Kick([3; 32])));
+        to_host_round(ToHost::Admin(AdminCommand::Settings(setup())));
+        to_host_round(ToHost::Bye);
+    }
+
+    #[test]
+    fn to_client_round_trips() {
+        to_client_round(ToClient::Challenge { nonce: [1; 32], host_key: [2; 32], needs_password: true });
+        to_client_round(ToClient::Welcome { you: 3, lobby: lobby(4) });
+        to_client_round(ToClient::Refused(Refusal::Full));
+        to_client_round(ToClient::Lobby(lobby(MAX_MEMBERS)));
+        to_client_round(ToClient::Chat { from: 1, text: "x".repeat(MAX_CHAT) });
+        to_client_round(ToClient::Notice(Notice::NotReady(vec![1, 2])));
+        to_client_round(ToClient::Notice(Notice::Message("hi".to_string())));
+        to_client_round(ToClient::Start(start(MAX_PLAYERS)));
+        to_client_round(ToClient::Ended(MatchEndWire {
+            reason: "kill limit".to_string(),
+            rows: vec![(0, 5, 3, 2, 1)],
+        }));
+        to_client_round(ToClient::Kicked { banned: true });
+        to_client_round(ToClient::Bye);
+    }
+
+    #[test]
+    fn name_of_21_characters_is_refused_and_20_multibyte_accepted() {
+        let mut l = look();
+        l.name = "n".repeat(MAX_NAME + 1);
+        assert_eq!(decode_to_host(&encode_to_host(&ToHost::SetLook(l))), Err(ProtoError::Invalid));
+        // 20 characters of 4 bytes each are within the limit (characters, not bytes).
+        to_host_round(ToHost::SetLook(Look { name: "\u{1F600}".repeat(MAX_NAME), ..look() }));
+    }
+
+    #[test]
+    fn name_with_control_character_is_refused() {
+        let mut l = look();
+        l.name = "a\nb".to_string();
+        let m = ToHost::Hello { key: [0; 32], look: l, password: None };
+        assert_eq!(decode_to_host(&encode_to_host(&m)), Err(ProtoError::Invalid));
+    }
+
+    #[test]
+    fn chat_of_201_characters_is_refused() {
+        let m = ToHost::Chat("c".repeat(MAX_CHAT + 1));
+        assert_eq!(decode_to_host(&encode_to_host(&m)), Err(ProtoError::Invalid));
+        let m = ToClient::Chat { from: 0, text: "c".repeat(MAX_CHAT + 1) };
+        assert_eq!(decode_to_client(&encode_to_client(&m)), Err(ProtoError::Invalid));
+    }
+
+    #[test]
+    fn forty_nine_members_are_refused() {
+        let m = ToClient::Lobby(lobby(MAX_MEMBERS + 1));
+        assert_eq!(decode_to_client(&encode_to_client(&m)), Err(ProtoError::Invalid));
+    }
+
+    #[test]
+    fn thirty_three_slots_are_refused() {
+        let m = ToClient::Start(start(MAX_PLAYERS + 1));
+        assert_eq!(decode_to_client(&encode_to_client(&m)), Err(ProtoError::Invalid));
+    }
+
+    #[test]
+    fn pack_id_with_slash_is_refused() {
+        let m = ToHost::Have { missing: vec!["a/b".to_string()] };
+        assert_eq!(decode_to_host(&encode_to_host(&m)), Err(ProtoError::Invalid));
+        let mut s = setup();
+        s.packs[0].0 = "../x".to_string();
+        let m = ToHost::Admin(AdminCommand::Settings(s));
+        assert_eq!(decode_to_host(&encode_to_host(&m)), Err(ProtoError::Invalid));
+        let mut l = look();
+        l.skin = "Up/per".to_string();
+        assert_eq!(decode_to_host(&encode_to_host(&ToHost::SetLook(l))), Err(ProtoError::Invalid));
+    }
+
+    #[test]
+    fn missing_is_bounded() {
+        let ids = |n: usize| (0..n).map(|i| alloc::format!("p{i}")).collect::<Vec<_>>();
+        to_host_round(ToHost::Have { missing: ids(MAX_MISSING) });
+        let m = ToHost::Have { missing: ids(MAX_MISSING + 1) };
+        assert_eq!(decode_to_host(&encode_to_host(&m)), Err(ProtoError::Invalid));
+        let m = ToHost::Have { missing: vec!["a".repeat(MAX_ID + 1)] };
+        assert_eq!(decode_to_host(&encode_to_host(&m)), Err(ProtoError::Invalid));
+    }
+
+    #[test]
+    fn setup_bounds() {
+        let mut s = setup();
+        s.packs = (0..=MAX_PACKS).map(|i| (alloc::format!("p{i}"), "0".repeat(64))).collect();
+        assert_eq!(
+            decode_to_host(&encode_to_host(&ToHost::Admin(AdminCommand::Settings(s)))),
+            Err(ProtoError::Invalid)
+        );
+        let mut s = setup();
+        s.packs[0].1 = "ab".repeat(31);
+        assert_eq!(
+            decode_to_host(&encode_to_host(&ToHost::Admin(AdminCommand::Settings(s)))),
+            Err(ProtoError::Invalid)
+        );
+        let mut s = setup();
+        s.bots = vec![setup().bots[0].clone(); MAX_BOTS + 1];
+        assert_eq!(
+            decode_to_host(&encode_to_host(&ToHost::Admin(AdminCommand::Settings(s)))),
+            Err(ProtoError::Invalid)
+        );
+        let mut s = setup();
+        s.rules.time_limit_min = f32::NAN;
+        assert_eq!(
+            decode_to_host(&encode_to_host(&ToHost::Admin(AdminCommand::Settings(s)))),
+            Err(ProtoError::Invalid)
+        );
+    }
+
+    #[test]
+    fn oversized_and_trailing_are_refused() {
+        assert_eq!(decode_to_host(&vec![0u8; MAX_LOBBY + 1]), Err(ProtoError::TooLong));
+        assert_eq!(decode_to_client(&vec![0u8; MAX_LOBBY + 1]), Err(ProtoError::TooLong));
+        let mut b = encode_to_host(&ToHost::Bye);
+        b.push(0);
+        assert_eq!(decode_to_host(&b), Err(ProtoError::Decode));
+        let mut b = encode_to_client(&ToClient::Bye);
+        b.push(0);
+        assert_eq!(decode_to_client(&b), Err(ProtoError::Decode));
+    }
+
+    #[test]
+    fn tag_demultiplexes() {
+        assert_eq!(tag(&[]), None);
+        assert_eq!(tag(&[0, 5, 6]), Some(Tagged::Netcode(&[5, 6])));
+        assert_eq!(tag(&[1]), Some(Tagged::ToHost(&[])));
+        assert_eq!(tag(&[2, 9]), Some(Tagged::ToClient(&[9])));
+        assert_eq!(tag(&[3, 9]), None);
+    }
+}
