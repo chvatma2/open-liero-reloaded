@@ -100,7 +100,9 @@ The headless command-line tool. Its commands:
   (`ProbePoint`: the probe passes' GPU ms, or the frame's wall ms over the
   baseline's median, `timed_on_gpu` saying which; its own
   `gpu_dropped`). `check_adapter`: a hardware run that got a software rasteriser
-  (`DeviceType::Cpu`: llvmpipe, lavapipe) is an error naming WSL's
+  (`DeviceType::Cpu`: llvmpipe, lavapipe; or one wgpu's GL backend reports
+  as `Other`, known by name, `software_name`: Microsoft's Basic Render
+  Driver (WARP, also behind Mesa's d3d12), softpipe, SwiftShader) is an error naming WSL's
   `GALLIUM_DRIVER=d3d12 WGPU_BACKEND=gl`; `--adapter software` allows it.
   At the end it plays on to the next recorded checksum and compares, so
   the scene drawn is the recorded match. All device work stays on the

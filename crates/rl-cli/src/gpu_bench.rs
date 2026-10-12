@@ -106,14 +106,29 @@ pub fn parse_sizes(text: &str) -> anyhow::Result<Vec<(u32, u32)>> {
     Ok(sizes)
 }
 
+/// Whether `name` is a software rasteriser's. wgpu's GL backend marks only
+/// Mesa's offscreen, SwiftShader and llvmpipe as `Cpu`, so WARP behind
+/// Mesa's d3d12 driver ("D3D12 (Microsoft Basic Render Driver)"), softpipe
+/// and the like come back as `Other`: they are known by name. `xtask`'s
+/// envelope keeps the same list (`envelope::software_name`).
+pub fn software_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.contains("basic render driver")
+        || lower
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|w| matches!(w, "llvmpipe" | "lavapipe" | "softpipe" | "warp" | "swiftshader"))
+}
+
 /// A run that asked for the hardware adapter and got a software
-/// rasteriser (llvmpipe, lavapipe) is an error, never a "GPU" result.
+/// rasteriser (a `Cpu` device, or one known by name: [`software_name`])
+/// is an error, never a "GPU" result.
 pub fn check_adapter(
     prefer: AdapterPreference,
     device_type: wgpu::DeviceType,
     name: &str,
 ) -> anyhow::Result<()> {
-    if prefer == AdapterPreference::Hardware && device_type == wgpu::DeviceType::Cpu {
+    if prefer == AdapterPreference::Hardware && (device_type == wgpu::DeviceType::Cpu || software_name(name))
+    {
         bail!(
             "asked for the hardware adapter, got {name} (a software rasteriser); under WSL run with \
              GALLIUM_DRIVER=d3d12 WGPU_BACKEND=gl (and MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA)"
@@ -343,5 +358,29 @@ mod tests {
         assert!(check_adapter(AdapterPreference::Software, D::Cpu, "lavapipe").is_ok());
         let why = check_adapter(AdapterPreference::Hardware, D::Cpu, "llvmpipe").unwrap_err().to_string();
         assert!(why.contains("GALLIUM_DRIVER=d3d12"), "{why}");
+    }
+
+    /// Review Focus 2: wgpu's GL backend marks only some software
+    /// rasterisers `Cpu`; the others are refused by name.
+    #[test]
+    fn a_software_adapter_reported_as_other_is_refused_by_name() {
+        use wgpu::DeviceType as D;
+        for name in [
+            "D3D12 (Microsoft Basic Render Driver)",
+            "Microsoft Basic Render Driver",
+            "softpipe",
+            "llvmpipe (LLVM 21.1.8, 256 bits)",
+            "lavapipe",
+            "WARP",
+            "SwiftShader Device (Subzero)",
+        ] {
+            assert!(check_adapter(AdapterPreference::Hardware, D::Other, name).is_err(), "{name}");
+            assert!(check_adapter(AdapterPreference::Software, D::Other, name).is_ok(), "{name}");
+        }
+        for name in
+            ["D3D12 (NVIDIA GeForce RTX 5070 Ti)", "NVIDIA GeForce RTX 5070 Ti", "AMD Radeon(TM) Graphics"]
+        {
+            assert!(check_adapter(AdapterPreference::Hardware, D::Other, name).is_ok(), "{name}");
+        }
     }
 }

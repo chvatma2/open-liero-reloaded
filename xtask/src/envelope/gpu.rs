@@ -10,7 +10,10 @@
 //! hardware` takes a non-CPU adapter whenever there is one (DX12 always
 //! lists Microsoft's Basic Render Driver beside the real GPU, ruling T5-A)
 //! and fails when there is none, and `super::adapter_problem` refuses a
-//! path whose report still names a `Cpu` device.
+//! path whose report still names a `Cpu` device or a software rasteriser
+//! by name (`super::software_name`: WARP behind Mesa's d3d12 comes back as
+//! `Other`). `rl-game` picks its own adapter, so a windowed run on one is
+//! a note, not a row (`windowed_row`).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -315,21 +318,32 @@ fn measure(
     }
     for &size in &plan.sizes {
         println!("  {} windowed {}x{}", r.name(), size.0, size.1);
-        match r.windowed(size, plan.windowed_seconds) {
-            Ok(log) => path.windowed.push(Windowed {
-                requested: size,
-                size: log.size,
-                reached: log.size == size,
-                gpu: log.gpu,
-                frames: log.frames,
-                fps: log.fps,
-                frame_ms: log.frame_ms,
-                busy_ms: log.busy_ms,
-            }),
+        match r.windowed(size, plan.windowed_seconds).and_then(|log| windowed_row(size, log)) {
+            Ok(row) => path.windowed.push(row),
             Err(e) => path.notes.push(format!("windowed {}x{}: {}", size.0, size.1, last_line(&e))),
         }
     }
     Ok(path)
+}
+
+/// A windowed run's row, unless a software rasteriser drew it: `rl-game`
+/// picks its own adapter, and its line (`<adapter> (<backend>, <type>),
+/// <present mode>, <format>`) says which (Review Focus 2).
+pub fn windowed_row(requested: (u32, u32), log: FrameLogOut) -> Result<Windowed, String> {
+    let adapter = log.gpu.rsplitn(3, ", ").nth(2).unwrap_or(&log.gpu);
+    if adapter.ends_with(", Cpu)") || super::software_name(adapter) {
+        return Err(format!("software-only adapter: {}, not the GPU: left out", log.gpu));
+    }
+    Ok(Windowed {
+        requested,
+        size: log.size,
+        reached: log.size == requested,
+        gpu: log.gpu,
+        frames: log.frames,
+        fps: log.fps,
+        frame_ms: log.frame_ms,
+        busy_ms: log.busy_ms,
+    })
 }
 
 /// The WSL path, `windowed` when a window can open here.
@@ -364,4 +378,42 @@ pub fn windows(content: &Path, levels: &[Level], plan: &Plan, b: &Budgets) -> Re
         .into_iter()
         .map(|backend| (backend, measure(&Runner::Windows { stage: &stage, backend }, levels, true, plan, b)))
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn log(gpu: &str) -> FrameLogOut {
+        FrameLogOut {
+            size: (1920, 1080),
+            gpu: gpu.into(),
+            frames: 100,
+            fps: 60.0,
+            frame_ms: results::Spread::default(),
+            busy_ms: results::Spread::default(),
+        }
+    }
+
+    /// Review Focus 2: `rl-game` picks its own adapter, so a windowed run
+    /// on a software rasteriser is a note, never a row.
+    #[test]
+    fn a_windowed_run_on_a_software_adapter_is_left_out() {
+        for gpu in [
+            "llvmpipe (LLVM 21.1.8, 256 bits) (Gl, Cpu), Fifo, Rgba8UnormSrgb",
+            "D3D12 (Microsoft Basic Render Driver) (Gl, Other), Fifo, Bgra8Unorm",
+            "Microsoft Basic Render Driver (Dx12, Cpu), Immediate, Bgra8Unorm",
+            "softpipe (Gl, Other), Fifo, Bgra8Unorm",
+        ] {
+            let why = windowed_row((1920, 1080), log(gpu)).unwrap_err();
+            assert!(why.starts_with("software-only adapter") && why.contains(gpu), "{why}");
+        }
+        for gpu in [
+            "D3D12 (NVIDIA GeForce RTX 5070 Ti) (Gl, Other), Fifo, Bgra8Unorm",
+            "NVIDIA GeForce RTX 5070 Ti (Vulkan, DiscreteGpu), Immediate, Bgra8Unorm",
+        ] {
+            let row = windowed_row((1920, 1080), log(gpu)).unwrap();
+            assert!(row.reached && row.gpu == gpu, "{row:?}");
+        }
+    }
 }

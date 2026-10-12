@@ -132,7 +132,10 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `-O3`, ruling T6-A). `mod.rs` runs `steps`: a part whose prerequisite
   is missing (`Prereqs`: `winbuild::missing`, `docker_missing`, a
   display) or that fails, and a GPU path measured on a software-only
-  adapter (`adapter_problem`), is a `skip` notice and the run goes on
+  adapter (`adapter_problem`: a `Cpu` device, or a software rasteriser
+  by name, `software_name`, as WARP behind Mesa's d3d12 is `Other`; a
+  windowed run on one is a note, `gpu::windowed_row`), is a `skip`
+  notice and the run goes on
   (ruling PF5; `execute` takes a `Machine`, which the tests fake). Every
   run writes `target/envelope/latest.ron` and compares with
   `fixtures/bench/envelope/<host>.ron` (`host_key`: the CPU model's slug

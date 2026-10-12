@@ -224,10 +224,24 @@ pub fn steps(axes: &[Axis], gpu: GpuPaths, pre: &Prereqs) -> Vec<Step> {
     v
 }
 
+/// Whether `name` is a software rasteriser's: wgpu's GL backend marks only
+/// Mesa's offscreen, SwiftShader and llvmpipe as `Cpu`, so WARP behind
+/// Mesa's d3d12 driver ("D3D12 (Microsoft Basic Render Driver)"), softpipe
+/// and the like come back as `Other`. The same list as
+/// `rl_cli::gpu_bench::software_name` (`xtask` does not link `rl-cli`).
+pub fn software_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.contains("basic render driver")
+        || lower
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|w| matches!(w, "llvmpipe" | "lavapipe" | "softpipe" | "warp" | "swiftshader"))
+}
+
 /// Why a measured GPU path is not the GPU: a software rasteriser (a `Cpu`
-/// device) drew it (ruling T5-A: the path has no non-CPU adapter).
+/// device, or one known by name: [`software_name`]) drew it (ruling T5-A:
+/// the path has no non-CPU adapter).
 pub fn adapter_problem(path: &GpuPath) -> Option<String> {
-    (path.device_type == "Cpu").then(|| {
+    (path.device_type == "Cpu" || software_name(&path.adapter)).then(|| {
         format!(
             "software-only adapter: {} ({}, a CPU rasteriser), no hardware GPU on this path",
             path.adapter, path.backend
@@ -564,6 +578,27 @@ mod tests {
         let e = gpu::wsl_env(true);
         assert!(e.contains(&("GALLIUM_DRIVER".into(), "d3d12".into())) && e.len() == 3);
         assert_eq!(gpu::wsl_env(false).len(), 2);
+    }
+
+    /// Review Focus 2: a software rasteriser wgpu reports as `Other` (WARP
+    /// behind Mesa's d3d12, softpipe) is known by name and refused.
+    #[test]
+    fn software_adapters_reported_as_other_are_refused() {
+        let other = |name: &str| GpuPath {
+            adapter: name.into(),
+            backend: "Gl".into(),
+            device_type: "Other".into(),
+            ..GpuPath::default()
+        };
+        for name in ["D3D12 (Microsoft Basic Render Driver)", "softpipe", "WARP", "SwiftShader Device"] {
+            let why = adapter_problem(&other(name)).unwrap_or_default();
+            assert!(why.starts_with(&format!("software-only adapter: {name}")), "{name}: {why:?}");
+        }
+        assert_eq!(adapter_problem(&other("D3D12 (NVIDIA GeForce RTX 5070 Ti)")), None);
+        let mut m = Fake { wsl: Some(other("D3D12 (Microsoft Basic Render Driver)")), ..Fake::default() };
+        let (notices, env) = run_all(&all_here(), &mut m);
+        assert!(notices[0].starts_with("gpu wsl (software-only adapter: D3D12 (Microsoft"), "{notices:?}");
+        assert!(!env.gpu.contains_key("wsl-gl"));
     }
 
     /// Ruling T7-A: a quick run is never the baseline.
