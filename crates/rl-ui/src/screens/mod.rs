@@ -11,11 +11,14 @@
 //! key, egui hears no key at all: the capture has it alone.
 
 pub mod about;
+mod host;
 mod import;
 mod ingame;
 mod keys;
+mod lobby;
 mod local_play;
 mod main;
+mod multiplayer;
 mod options;
 mod profiles;
 mod replays;
@@ -35,8 +38,10 @@ use rl_content::Catalog;
 use rl_input::Capture;
 use rl_sim::{Keys, MAX_SLOTS};
 
+use crate::hud::LogLine;
 use crate::hud::Results;
 use crate::import::ImportProgress;
+use crate::online::{LanEntry, LobbyView};
 use crate::replays::ReplayFile;
 use crate::skin_preview::{PreviewKey, PreviewTextures};
 use crate::state::{Screen, UiAction, UiState};
@@ -84,6 +89,14 @@ pub struct MenuData {
     pub packs_dir: Option<PathBuf>,
     /// The import running or done (the app updates it every frame).
     pub import: ImportProgress,
+    /// The games announced on the network (the app keeps it current).
+    pub lan_games: Vec<LanEntry>,
+    /// The lobby the player is in (the app updates it every frame).
+    pub lobby: Option<LobbyView>,
+    /// The lobby's chat, oldest first.
+    pub chat: Vec<LogLine>,
+    /// What the online screens say besides errors (the app's status).
+    pub online_status: Option<String>,
     /// The weapon selection in progress.
     select: Option<WeaponSelect>,
     /// The thumbnails decoded so far by level id (`None`: unreadable, its
@@ -93,6 +106,9 @@ pub struct MenuData {
     decodes_left: usize,
     /// Problems for the app to log (`take_warnings`).
     warnings: Vec<String>,
+    multiplayer: multiplayer::View,
+    host: host::View,
+    lobby_ui: lobby::View,
     profiles: profiles::View,
     options: options::View,
     /// The screen shown last frame (a screen reads its files on entry).
@@ -116,10 +132,17 @@ impl MenuData {
             import_path: String::new(),
             packs_dir: None,
             import: ImportProgress::default(),
+            lan_games: Vec::new(),
+            lobby: None,
+            chat: Vec::new(),
+            online_status: None,
             select: None,
             thumbs: BTreeMap::new(),
             decodes_left: THUMB_DECODES_PER_FRAME,
             warnings: Vec::new(),
+            multiplayer: multiplayer::View::default(),
+            host: host::View::default(),
+            lobby_ui: lobby::View::default(),
             profiles: profiles::View::default(),
             options: options::View::default(),
             shown: None,
@@ -192,8 +215,14 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
     data.preview_wanted = None;
     data.decodes_left = THUMB_DECODES_PER_FRAME;
     if data.shown != Some(screen) {
-        data.shown = Some(screen);
+        let from = data.shown.replace(screen);
         match screen {
+            // Back from Host or the lobby keeps what was typed.
+            Screen::Multiplayer if !matches!(from, Some(Screen::Host | Screen::Lobby)) => {
+                data.multiplayer = multiplayer::View::new(&state.settings().online.last_address);
+            }
+            Screen::Host => data.host = host::View::new(state),
+            Screen::Lobby => data.lobby_ui = lobby::View::default(),
             Screen::Replays => data.refresh_replays(),
             Screen::Profiles => data.profiles = profiles::View::new(state.profiles().selected),
             Screen::Options => data.options = options::View::default(),
@@ -234,6 +263,9 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
                 Screen::Options => options::show(ui, state, data, &mut out),
                 Screen::About => about::show(ui, data, &mut out),
                 Screen::Import => import::show(ui, state, data, &mut out),
+                Screen::Multiplayer => multiplayer::show(ui, state, data, &mut out),
+                Screen::Host => host::show(ui, state, data, &mut out),
+                Screen::Lobby => lobby::show(ui, state, data, &mut out),
                 _ => {}
             });
         }
@@ -244,6 +276,9 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
     }
     if f5 {
         out.push(UiAction::Restart);
+    }
+    if screen == Screen::Lobby {
+        lobby::intercept_back(data, &mut out);
     }
     out
 }

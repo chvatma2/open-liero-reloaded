@@ -80,7 +80,7 @@ fn widgets(h: &Harness<'static, App>) -> Vec<(String, Rect)> {
 
 /// The screens to check: each opened from the main menu, then the
 /// options' tabs clicked.
-const SCREENS: [(Screen, Option<&str>); 9] = [
+const SCREENS: [(Screen, Option<&str>); 12] = [
     (Screen::LocalPlay, None),
     (Screen::Options, None),
     (Screen::Options, Some("Audio")),
@@ -90,6 +90,9 @@ const SCREENS: [(Screen, Option<&str>); 9] = [
     (Screen::Import, None),
     (Screen::About, None),
     (Screen::Options, Some("Video")),
+    (Screen::Multiplayer, None),
+    (Screen::Host, None),
+    (Screen::Lobby, None),
 ];
 
 #[test]
@@ -100,9 +103,7 @@ fn every_sub_screen_is_a_centred_column() {
         // Physical pixels, as the accessibility tree's bounds are.
         let window = Rect::from_min_max(pos2(0.0, 0.0), pos2(w, h));
         for (screen, tab) in SCREENS {
-            harness.state_mut().ui.update(UiAction::Back);
-            harness.state_mut().ui.update(UiAction::Open(screen));
-            harness.run();
+            reach(&mut harness, screen);
             if let Some(tab) = tab {
                 harness.get_by_label(tab).click();
                 harness.run();
@@ -136,6 +137,30 @@ fn every_sub_screen_is_a_centred_column() {
     }
 }
 
+/// Opens `screen` from wherever the menus are: back to Main, then the
+/// way the player goes (the lobby by hosting and being let in).
+fn reach(harness: &mut Harness<'static, App>, screen: Screen) {
+    let app = harness.state_mut();
+    while app.ui.screen() != Screen::Main {
+        app.ui.update(UiAction::Back);
+    }
+    let path: &[Screen] = match screen {
+        Screen::Host | Screen::Lobby => &[Screen::Multiplayer, Screen::Host],
+        s => &[s],
+    };
+    for s in path {
+        app.ui.update(UiAction::Open(*s));
+    }
+    if screen == Screen::Lobby {
+        app.ui.update(UiAction::Host(rl_ui::HostPrefs::default()));
+        app.ui.update(UiAction::LobbyJoined);
+        app.data.lobby = Some(crate::online::lobby_view(true));
+    }
+    harness.run();
+    harness.step();
+    harness.step();
+}
+
 fn title_of(screen: Screen) -> &'static str {
     match screen {
         Screen::LocalPlay => "Local Play",
@@ -144,6 +169,9 @@ fn title_of(screen: Screen) -> &'static str {
         Screen::Replays => "Replays",
         Screen::Import => "Import OLX content",
         Screen::About => "About",
+        Screen::Multiplayer => "Multiplayer",
+        Screen::Host => "Host a game",
+        Screen::Lobby => "Lobby",
         _ => "",
     }
 }
@@ -154,10 +182,13 @@ fn title_of(screen: Screen) -> &'static str {
 fn the_primary_action_is_centred_below() {
     for (w, h) in [(1280.0, 720.0), (3440.0, 1440.0)] {
         let mut harness = harness(egui::vec2(w, h), 1.0);
-        for (screen, label) in [(Screen::LocalPlay, "Start"), (Screen::Import, "Import")] {
-            harness.state_mut().ui.update(UiAction::Back);
-            harness.state_mut().ui.update(UiAction::Open(screen));
-            harness.run();
+        for (screen, label) in [
+            (Screen::LocalPlay, "Start"),
+            (Screen::Import, "Import"),
+            (Screen::Multiplayer, "Host a game"),
+            (Screen::Host, "Start hosting"),
+        ] {
+            reach(&mut harness, screen);
             let b =
                 harness.get_by_role_and_label(Role::Button, label).accesskit_node().bounding_box().unwrap();
             let at = format!("{screen:?} at {w}x{h}");

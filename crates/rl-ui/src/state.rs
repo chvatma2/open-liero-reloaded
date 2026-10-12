@@ -5,6 +5,14 @@
 //!
 //! - **Menus:** Main opens LocalPlay, Profiles, Options, Replays, Import
 //!   and About; Back (Esc) returns to Main.
+//! - **Online** (plan 10 task 11): Main opens Multiplayer, which opens
+//!   Host (Back returns there). `Host(prefs)` and `Join`/`JoinLan` emit
+//!   `HostGame`/`JoinGame` and wait for the app (`LobbyJoined` opens the
+//!   Lobby, `OnlineFailed(why)` returns with the reason; Back while
+//!   waiting gives up: `LeaveOnline`). In the Lobby the `Lobby*` actions
+//!   become `AppCommand::Lobby(LobbyCommand)`, the weapon screen opened
+//!   from it answers with `Loadout`, and Back or `LeaveLobby` leaves
+//!   (`LeaveOnline`, to Multiplayer).
 //! - **Matches:** Start emits one `StartMatch` with the next seed; until
 //!   the app reports `MatchStarted` or `MatchFailed`, starting again and
 //!   Back do nothing (no double matches). A Deathmatch starts with OLX's
@@ -23,6 +31,7 @@
 //!   import runs on while the player leaves the screen, but no game
 //!   starts until it ends (the packs it writes are not loaded half-way).
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use rl_content::MatchOptions;
@@ -30,6 +39,7 @@ use rl_input::Bindings;
 use rl_sim::MAX_SLOTS;
 
 use crate::match_prefs::MatchPrefs;
+use crate::online::{HostPrefs, LobbyCommand};
 use crate::profiles::Profiles;
 use crate::settings::{AudioSettings, Settings, VideoSettings};
 
@@ -52,12 +62,19 @@ pub enum Screen {
     Import,
     /// Credits and licenses (§21 G9).
     About,
+    /// Games on the network, joining by address (plan 10 task 11).
+    Multiplayer,
+    /// Hosting a game: its name, visibility, password, size and port.
+    Host,
+    /// The lobby of a hosted or joined game.
+    Lobby,
 }
 
 impl Screen {
     /// The screens the main menu opens.
-    pub const MENUS: [Screen; 6] = [
+    pub const MENUS: [Screen; 7] = [
         Screen::LocalPlay,
+        Screen::Multiplayer,
         Screen::Profiles,
         Screen::Options,
         Screen::Replays,
@@ -115,6 +132,41 @@ pub enum UiAction {
     CancelImport,
     /// The app: the import has ended (its report is the screen's data).
     ImportFinished,
+    /// The Host screen's Start hosting.
+    Host(HostPrefs),
+    /// The Multiplayer screen's Join: `host[:port]` as typed and the
+    /// password (none when empty).
+    Join {
+        addr: String,
+        password: Option<String>,
+    },
+    /// A game on the network was clicked.
+    JoinLan(SocketAddr),
+    LobbyReady(bool),
+    LobbySpectate(bool),
+    LobbyChat(String),
+    /// The host changed the match's setup.
+    LobbySetup(MatchPrefs),
+    LobbyKick {
+        member: u8,
+        ban: bool,
+    },
+    /// The host moved a member to the spectators or the players.
+    LobbyMove {
+        member: u8,
+        spectator: bool,
+    },
+    LobbyStart,
+    /// The host starts although players are not ready: they watch.
+    LobbyForceStart,
+    /// This player's weapons by mod id (none: random).
+    LobbyLoadout(Option<[i32; MAX_SLOTS]>),
+    /// Back from the lobby, or its confirmed leave.
+    LeaveLobby,
+    /// The app: hosting or joining failed, or the lobby was lost.
+    OnlineFailed(String),
+    /// The app: the lobby is up (hosted, or joined and accepted).
+    LobbyJoined,
 }
 
 /// What the app must do.
@@ -157,6 +209,19 @@ pub enum AppCommand {
     StartImport(PathBuf),
     /// Stop the import after the item it is on.
     CancelImport,
+    /// Host a game with these choices, then report [`UiAction::LobbyJoined`]
+    /// or [`UiAction::OnlineFailed`].
+    HostGame(HostPrefs),
+    /// Join the game at `addr` (`host[:port]` as typed; the port defaults
+    /// to `settings.online.port`), then report as for `HostGame`.
+    JoinGame {
+        addr: String,
+        password: Option<String>,
+    },
+    /// What the player asks of the lobby they are in.
+    Lobby(LobbyCommand),
+    /// Leave the lobby, or give up hosting or joining.
+    LeaveOnline,
     Quit,
 }
 
@@ -200,6 +265,11 @@ pub struct UiState {
     message: Option<String>,
     /// An import runs (`StartImport` until `ImportFinished`).
     importing: bool,
+    /// Hosting or joining was asked for from this screen and the app has
+    /// not answered (`LobbyJoined` or `OnlineFailed`).
+    connecting: Option<Screen>,
+    /// A lobby is up (`LobbyJoined` until the player leaves it).
+    online: bool,
 }
 
 impl UiState {
@@ -217,6 +287,8 @@ impl UiState {
             seed,
             message: None,
             importing: false,
+            connecting: None,
+            online: false,
         }
     }
 
@@ -255,6 +327,16 @@ impl UiState {
         self.importing
     }
 
+    /// Hosting or joining was asked for and the app has not answered.
+    pub fn is_connecting(&self) -> bool {
+        self.connecting.is_some()
+    }
+
+    /// A lobby is up.
+    pub fn is_online(&self) -> bool {
+        self.online
+    }
+
     /// The pause menu is up.
     pub fn is_paused(&self) -> bool {
         self.paused
@@ -275,7 +357,13 @@ impl UiState {
     pub fn update(&mut self, action: UiAction) -> Vec<AppCommand> {
         match action {
             UiAction::Open(s) => {
-                if self.screen == Screen::Main && Screen::MENUS.contains(&s) && !self.is_starting() {
+                let from_main =
+                    self.screen == Screen::Main && Screen::MENUS.contains(&s) && !self.is_starting();
+                let to_host =
+                    self.screen == Screen::Multiplayer && s == Screen::Host && !self.is_connecting();
+                // The lobby's weapon choice (plan 10 ruling N19).
+                let to_weapons = self.screen == Screen::Lobby && s == Screen::WeaponSelect;
+                if from_main || to_host || to_weapons {
                     self.go(s);
                 } else if self.screen == Screen::InGame && self.paused && s == Screen::Options {
                     self.options_in_game = true;
@@ -425,7 +513,105 @@ impl UiState {
                 self.importing = false;
                 Vec::new()
             }
+            UiAction::Host(prefs) => self.host(prefs),
+            UiAction::Join { addr, password } => self.join_at(addr, password, true),
+            UiAction::JoinLan(addr) => self.join_at(addr.to_string(), None, false),
+            UiAction::LobbyJoined => {
+                if self.connecting.take().is_some() {
+                    self.online = true;
+                    self.go(Screen::Lobby);
+                }
+                Vec::new()
+            }
+            UiAction::OnlineFailed(why) => {
+                match (self.connecting.take(), self.screen) {
+                    (Some(from), _) => {
+                        self.go(from);
+                        self.message = Some(why);
+                    }
+                    (None, Screen::Lobby | Screen::WeaponSelect) if self.online => {
+                        self.online = false;
+                        self.go(Screen::Multiplayer);
+                        self.message = Some(why);
+                    }
+                    _ => {}
+                }
+                Vec::new()
+            }
+            UiAction::LeaveLobby => self.leave_online(),
+            UiAction::LobbyReady(on) => self.lobby(LobbyCommand::Ready(on)),
+            UiAction::LobbySpectate(on) => self.lobby(LobbyCommand::Spectate(on)),
+            UiAction::LobbyChat(text) => {
+                let text = text.trim();
+                if text.is_empty() {
+                    return Vec::new();
+                }
+                let text: String = text.chars().take(crate::online::CHAT_CHARS).collect();
+                self.lobby(LobbyCommand::Chat(text))
+            }
+            UiAction::LobbySetup(m) => self.lobby(LobbyCommand::Setup(m)),
+            UiAction::LobbyKick { member, ban } => self.lobby(LobbyCommand::Kick { member, ban }),
+            UiAction::LobbyMove { member, spectator } => self.lobby(LobbyCommand::Move { member, spectator }),
+            UiAction::LobbyStart => self.lobby(LobbyCommand::Start),
+            UiAction::LobbyForceStart => self.lobby(LobbyCommand::ForceStart),
+            UiAction::LobbyLoadout(w) => self.lobby(LobbyCommand::Loadout(w)),
         }
+    }
+
+    /// A lobby command, from the lobby screen only.
+    fn lobby(&mut self, c: LobbyCommand) -> Vec<AppCommand> {
+        if self.screen == Screen::Lobby && self.online { vec![AppCommand::Lobby(c)] } else { Vec::new() }
+    }
+
+    /// Start hosting (the Host screen): the choices fixed and remembered.
+    fn host(&mut self, mut prefs: HostPrefs) -> Vec<AppCommand> {
+        if self.screen != Screen::Host || self.is_connecting() {
+            return Vec::new();
+        }
+        prefs.sanitize();
+        if prefs.name.is_empty() {
+            prefs.name = self.profiles.selected().map(|p| p.name.clone()).unwrap_or_default();
+        }
+        self.message = None;
+        self.connecting = Some(Screen::Host);
+        let mut out = vec![AppCommand::HostGame(prefs.clone())];
+        if self.settings.online.host != prefs {
+            self.settings.online.host = prefs;
+            out.push(self.save_settings());
+        }
+        out
+    }
+
+    /// Join a game (the Multiplayer screen): an address typed is remembered,
+    /// one clicked in the LAN list is not.
+    fn join_at(&mut self, addr: String, password: Option<String>, remember: bool) -> Vec<AppCommand> {
+        let addr = addr.trim().to_string();
+        if self.screen != Screen::Multiplayer || self.is_connecting() || addr.is_empty() {
+            return Vec::new();
+        }
+        self.message = None;
+        self.connecting = Some(Screen::Multiplayer);
+        let password = password.filter(|p| !p.is_empty());
+        let mut out = vec![AppCommand::JoinGame { addr: addr.clone(), password }];
+        if remember && self.settings.online.last_address != addr {
+            self.settings.online.last_address = addr;
+            out.push(self.save_settings());
+        }
+        out
+    }
+
+    /// Leaves the lobby, or gives up hosting or joining.
+    fn leave_online(&mut self) -> Vec<AppCommand> {
+        if let Some(from) = self.connecting.take() {
+            self.go(from);
+            return vec![AppCommand::LeaveOnline];
+        }
+        if !self.online || !matches!(self.screen, Screen::Lobby | Screen::WeaponSelect) {
+            return Vec::new();
+        }
+        self.online = false;
+        self.go(Screen::Multiplayer);
+        vec![AppCommand::LeaveOnline]
     }
 
     /// Import's button: one import at a time, from the Import screen, with
@@ -466,6 +652,17 @@ impl UiState {
         }
         match self.screen {
             Screen::Main => Vec::new(),
+            Screen::Host | Screen::Multiplayer if self.is_connecting() => self.leave_online(),
+            Screen::Host => {
+                self.go(Screen::Multiplayer);
+                Vec::new()
+            }
+            Screen::Lobby => self.leave_online(),
+            // The lobby's weapon choice returns to the lobby.
+            Screen::WeaponSelect if self.online => {
+                self.go(Screen::Lobby);
+                Vec::new()
+            }
             Screen::InGame => self.set_paused(!self.paused),
             Screen::Options if self.options_in_game => {
                 self.options_in_game = false;
@@ -509,11 +706,18 @@ impl UiState {
     /// names (if any) remembered in the profile playing, as OLX's profile
     /// keeps its weapon slots (`CWormHuman.cpp:924-926`, saved on Done: `:939`, `:948`).
     fn choose_weapons(&mut self, weapons: [i32; MAX_SLOTS], names: Vec<String>) -> Vec<AppCommand> {
-        if self.screen != Screen::WeaponSelect || self.play != Play::Running(Game::Match) {
+        let lobby = self.online && self.screen == Screen::WeaponSelect && self.play == Play::None;
+        if !lobby && (self.screen != Screen::WeaponSelect || self.play != Play::Running(Game::Match)) {
             return Vec::new();
         }
-        self.go(Screen::InGame);
-        let mut out = vec![AppCommand::ArmPlayer(weapons)];
+        // The lobby's choice goes to the lobby, not into a local match.
+        let mut out = if lobby {
+            self.go(Screen::Lobby);
+            vec![AppCommand::Lobby(LobbyCommand::Loadout(Some(weapons)))]
+        } else {
+            self.go(Screen::InGame);
+            vec![AppCommand::ArmPlayer(weapons)]
+        };
         // The profile `Profiles::selected` gives.
         let selected =
             if self.profiles.selected < self.profiles.list.len() { self.profiles.selected } else { 0 };

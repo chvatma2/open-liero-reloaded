@@ -26,6 +26,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, notices: &[String], out: &mut V
             }
         };
         button(ui, "Local Play", UiAction::Open(Screen::LocalPlay));
+        button(ui, "Multiplayer", UiAction::Open(Screen::Multiplayer));
         button(ui, "Sandbox", UiAction::StartSandbox);
         button(ui, "Profiles", UiAction::Open(Screen::Profiles));
         button(ui, "Options", UiAction::Open(Screen::Options));

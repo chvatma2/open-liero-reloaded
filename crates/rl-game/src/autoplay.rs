@@ -44,7 +44,7 @@ pub const DEFAULT_WITHIN: u64 = 600;
 const INPUT_FRAMES: u64 = 3;
 
 /// The screens' names, as `WaitFor` and `Assert(Screen(..))` give them.
-pub const SCREENS: [(&str, Screen); 10] = [
+pub const SCREENS: [(&str, Screen); 13] = [
     ("Main", Screen::Main),
     ("LocalPlay", Screen::LocalPlay),
     ("Profiles", Screen::Profiles),
@@ -55,6 +55,9 @@ pub const SCREENS: [(&str, Screen); 10] = [
     ("Replays", Screen::Replays),
     ("Import", Screen::Import),
     ("About", Screen::About),
+    ("Multiplayer", Screen::Multiplayer),
+    ("Host", Screen::Host),
+    ("Lobby", Screen::Lobby),
 ];
 
 /// The keys a script may tap, by name: egui's key and the window's.

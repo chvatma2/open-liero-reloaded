@@ -9,6 +9,7 @@
 pub mod hud;
 pub mod import;
 pub mod match_prefs;
+pub mod online;
 pub mod profiles;
 pub mod replays;
 pub mod screens;
@@ -22,6 +23,10 @@ pub mod weapon_select;
 pub use match_prefs::{
     BotLevel, BotLoadout, BotPersonality, KILL_LIMIT_RANGE, LIVES_RANGE, LOADING_TIME_RANGE, MAX_BOTS,
     MatchPrefs, RulePrefs, TIME_LIMIT_RANGE,
+};
+pub use online::{
+    CHAT_CHARS, DEFAULT_PORT, HostPrefs, LanEntry, LobbyCommand, LobbyView, MAX_PLAYERS, MIN_PLAYERS,
+    MemberView, OnlineSettings, PHASE_LOBBY, SEAT_SPECTATOR, Visibility,
 };
 pub use profiles::{
     CPU_COLOURS, DEFAULT_WEAPONS, MAX_NAME_CHARS, MAX_PROFILES, NEW_COLOURS, NameError, PROFILES_VERSION,

@@ -9,6 +9,7 @@ mod flows;
 mod import;
 mod ingame;
 mod layout;
+mod online;
 mod options;
 mod profiles;
 mod state;

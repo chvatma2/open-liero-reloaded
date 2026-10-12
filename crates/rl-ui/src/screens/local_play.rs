@@ -29,7 +29,7 @@ const WIDTH: f32 = 1100.0;
 const SECTION_GAP: f32 = 8.0;
 
 /// The pickers' width.
-const COMBO_W: f32 = 200.0;
+pub(super) const COMBO_W: f32 = 200.0;
 
 /// What a rule is set to when it is switched on (OLX's defaults,
 /// `src/common/FeatureList.cpp:31-33`; lives as OLX's menu starts them).
@@ -119,7 +119,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     }
 }
 
-fn mod_picker(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) {
+pub(super) fn mod_picker(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) {
     let name = data
         .catalog
         .mod_info(&p.mod_id)
@@ -144,7 +144,7 @@ fn mod_picker(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) {
     }
 }
 
-fn level_grid(ui: &mut Ui, data: &mut MenuData, p: &mut MatchPrefs) {
+pub(super) fn level_grid(ui: &mut Ui, data: &mut MenuData, p: &mut MatchPrefs) {
     ui.label(RichText::new("Level").strong());
     if data.catalog.level(&p.level_id).is_none() {
         ui.label(RichText::new(format!("{} (missing)", p.level_id)).color(Color32::from_rgb(255, 110, 90)));
@@ -211,7 +211,7 @@ pub(crate) fn fit(size: Vec2, rect: egui::Rect) -> egui::Rect {
 
 /// The match OLX starts with: its rules, bots and weapons, the mod and
 /// level kept (the mod's presets decide the weapons).
-fn olx_match(data: &MenuData, p: &MatchPrefs) -> MatchPrefs {
+pub(super) fn olx_match(data: &MenuData, p: &MatchPrefs) -> MatchPrefs {
     let mut d =
         MatchPrefs { mod_id: p.mod_id.clone(), level_id: p.level_id.clone(), ..MatchPrefs::default() };
     if let Some(m) = data.catalog.mod_info(&d.mod_id) {
@@ -222,7 +222,7 @@ fn olx_match(data: &MenuData, p: &MatchPrefs) -> MatchPrefs {
 
 /// OLX's Deathmatch settings: a rule switched off says so in place of
 /// its slider. True when the player asked for OLX's match back.
-fn rules(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) -> bool {
+pub(super) fn rules(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) -> bool {
     let r = &mut p.rules;
     form_check_row(ui, r.lives >= 0, "Lives", |ui, on, changed| {
         if changed {
@@ -292,7 +292,7 @@ fn level_name(l: BotLevel) -> &'static str {
 }
 
 /// A difficulty picker, labelled by `label` (found by its name).
-fn level_combo(
+pub(super) fn level_combo(
     ui: &mut Ui,
     label: egui::Id,
     id: impl std::hash::Hash + std::fmt::Debug,
@@ -312,7 +312,7 @@ fn level_combo(
 
 /// The bots: how many, their difficulty (one for all or each its own),
 /// personality and loadout.
-fn bots(ui: &mut Ui, p: &mut MatchPrefs) {
+pub(super) fn bots(ui: &mut Ui, p: &mut MatchPrefs) {
     form_row(ui, "Bots", |ui, label| {
         let mut n = p.bots;
         if ui.add(Slider::new(&mut n, 1..=MAX_BOTS)).labelled_by(label).changed() {

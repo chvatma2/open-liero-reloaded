@@ -15,6 +15,7 @@ use rl_input::{Bindings, KeyCode, key_name};
 use serde::{Deserialize, Serialize};
 
 use crate::match_prefs::MatchPrefs;
+use crate::online::OnlineSettings;
 
 /// The version `settings.ron` is written with; any other is refused.
 pub const SETTINGS_VERSION: u32 = 1;
@@ -33,6 +34,8 @@ pub struct Settings {
     pub gameplay: GameplaySettings,
     /// The Import screen's (plan 7 task 7).
     pub import: ImportSettings,
+    /// The online screens' (plan 10 task 11).
+    pub online: OnlineSettings,
 }
 
 impl Settings {
@@ -45,6 +48,7 @@ impl Settings {
         // unreachable get OLX's back (Review Focus 2).
         w.extend(sanitize_bindings(&mut self.input).into_iter().map(|x| format!("input: {x}")));
         w.extend(self.gameplay.match_prefs.sanitize());
+        w.extend(self.online.sanitize());
         w
     }
 }

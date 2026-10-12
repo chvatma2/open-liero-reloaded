@@ -135,6 +135,29 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   with "Importing content…"). Esc is `Back` and
   F5 `Restart` on every screen, a held key's repeats ignored
   (`pressed_once`); in the options Esc first closes an open dialog.
+- **Online screens** (`online.rs`, `screens/{multiplayer,host,lobby}.rs`,
+  plan 10 task 11): plain views, no networking (this crate stays free of
+  `rl-net`/`rl-lobby`; `rl-game` converts): `LobbyView`/`MemberView`
+  (`seat` is `SEAT_SPECTATOR` or a player's; `phase` is `PHASE_LOBBY` or a
+  match under way), `LanEntry`, `HostPrefs` (`Visibility::{Lan,
+  DirectOnly}`, 2..=32 players, port; `settings.online` remembers the
+  last address and the host's choices), `LobbyCommand`. The state machine:
+  Main > Multiplayer > Host; `Host(prefs)` / `Join` / `JoinLan` emit
+  `HostGame` / `JoinGame` and wait (`is_connecting`) for the app's
+  `LobbyJoined` (opens Lobby) or `OnlineFailed(why)` (back, red message);
+  Back while waiting gives up (`LeaveOnline`); in Lobby the `Lobby*`
+  actions become `AppCommand::Lobby(LobbyCommand)`, Back / `LeaveLobby`
+  emit `LeaveOnline` and return to Multiplayer. The lobby reuses Local
+  Play's panels (`local_play`'s `rules`, `level_grid`, `mod_picker`: the
+  host edits, others see them greyed), bots 0..=MAX_BOTS (Add/Remove bot),
+  "Your weapons" (Random, or the weapon screen: `Open(WeaponSelect)` from
+  the lobby, whose Done answers `Loadout`, Back returns). Start (host,
+  `can_start`'s reason its tooltip) and Force start (two worms and a
+  member: `LobbyForceStart`), else "Waiting for the host"; a Back while
+  `phase != PHASE_LOBBY` first asks "Leave the match?" in the widget
+  (`lobby::intercept_back`). A locked LAN entry copies its address to the
+  Direct form instead of joining. Tests: `tests/online.rs`; a freshly
+  opened page needs `settle` (two extra frames) before a pointer click.
 - **Import job** (`import.rs`, plan 7 task 7): `ImportJob::spawn(path,
   packs)` runs `rl_content::import::discover` and `import` (no prune,
   revision `LOCAL_REVISION`) on a thread named `olx-import` and returns at

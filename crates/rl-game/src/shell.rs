@@ -388,6 +388,12 @@ impl Shell {
                     job.cancel();
                 }
             }
+            // The online commands: carried out once the game owns an online
+            // session (plan 10 task 12); until then there is none to ask.
+            AppCommand::HostGame(_)
+            | AppCommand::JoinGame { .. }
+            | AppCommand::Lobby(_)
+            | AppCommand::LeaveOnline => {}
             AppCommand::Quit => out.push(Outcome::Quit),
         }
     }
