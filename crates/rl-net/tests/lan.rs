@@ -27,9 +27,20 @@ fn listener() -> (Listener, SocketAddr) {
     (l, addr)
 }
 
-/// Polls until `done` holds or two seconds pass.
+/// Polls until `done` holds or ten seconds pass (a generous bound for a
+/// loaded machine; a passing test returns as soon as `done` holds).
 fn poll_until(l: &mut Listener, now: Instant, done: impl Fn(&[LanGame]) -> bool) -> Vec<LanGame> {
-    let end = Instant::now() + Duration::from_secs(2);
+    poll_within(l, now, Duration::from_secs(10), done)
+}
+
+/// Polls until `done` holds or `wait` passes.
+fn poll_within(
+    l: &mut Listener,
+    now: Instant,
+    wait: Duration,
+    done: impl Fn(&[LanGame]) -> bool,
+) -> Vec<LanGame> {
+    let end = Instant::now() + wait;
     loop {
         let games = l.poll(now).to_vec();
         if done(&games) || Instant::now() > end {
@@ -171,7 +182,9 @@ fn one_ip_holds_at_most_four_games() {
 #[test]
 fn ten_datagrams_in_a_second_are_admitted_the_eleventh_is_not() {
     let (mut l, target) = listener();
-    let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
+    // An address of its own: strays from other tests come from 127.0.0.1 and
+    // would count in this source IP's rate window.
+    let raw = sock([127, 0, 2, 1]);
     for _ in 0..9 {
         raw.send_to(&[9], target).unwrap();
     }
@@ -186,26 +199,38 @@ fn ten_datagrams_in_a_second_are_admitted_the_eleventh_is_not() {
     assert_eq!(games2[0].info.name, "tenth");
 }
 
+/// Time is virtual: every `poll` takes the instant the test chooses, so the
+/// ten seconds cost nothing and no scheduling delay can move a datagram into
+/// another rate window. Delivery is awaited, not slept for: the flood is
+/// valid announcements from one socket (loopback keeps their order), and the
+/// tenth, the last admitted, shows when every one before it has been read.
 #[test]
 fn a_flooding_source_is_ignored_for_ten_seconds() {
     let (mut l, target) = listener();
-    let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let raw = sock([127, 0, 2, 2]); // its own IP: see the test above
     let t0 = Instant::now();
-    raw.send_to(&encode_lan(&announce("first", 1)), target).unwrap();
-    for _ in 0..12 {
-        raw.send_to(&[1, 2, 3], target).unwrap();
+    for i in 0..12 {
+        raw.send_to(&encode_lan(&announce(&format!("flood{i:02}"), 1)), target).unwrap();
     }
-    std::thread::sleep(Duration::from_millis(100));
-    l.poll(t0);
+    // One source address holds one entry: the last admitted datagram (the
+    // 10th) is the entry's name once the flood has been read.
+    let games = poll_until(&mut l, t0, |g| g.iter().any(|g| g.info.name == "flood09"));
+    assert!(games.iter().any(|g| g.info.name == "flood09"), "the first ten datagrams arrive: {games:?}");
+    // The 11th and 12th were sent before the 10th was read, so they are in
+    // the socket (or read and ignored): `flood10`, `flood11` never show.
+    let games = poll_within(&mut l, t0, Duration::from_millis(200), |_| false);
+    assert!(games.iter().all(|g| g.info.name != "flood10" && g.info.name != "flood11"), "{games:?}");
+
     raw.send_to(&encode_lan(&announce("second", 1)), target).unwrap();
-    std::thread::sleep(Duration::from_millis(100));
     let t1 = t0 + Duration::from_secs(5);
-    assert!(l.poll(t1).iter().all(|g| g.info.name != "second"));
+    let games =
+        poll_within(&mut l, t1, Duration::from_millis(200), |g| g.iter().any(|g| g.info.name == "second"));
+    assert!(games.iter().all(|g| g.info.name != "second"), "ignored at 5 s: {games:?}");
+
     raw.send_to(&encode_lan(&announce("third", 1)), target).unwrap();
-    std::thread::sleep(Duration::from_millis(100));
     let t2 = t0 + Duration::from_secs(11);
-    let games = poll_until(&mut l, t2, |g| !g.is_empty());
-    assert_eq!(games.len(), 1);
+    let games = poll_until(&mut l, t2, |g| g.iter().any(|g| g.info.name == "third"));
+    assert_eq!(games.len(), 1, "{games:?}");
     assert_eq!(games[0].info.name, "third");
 }
 

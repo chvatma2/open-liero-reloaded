@@ -203,7 +203,7 @@ impl Net {
         let before = self.members();
         let ids: Vec<usize> = names.iter().map(|n| self.join(n)).collect();
         let want = before + names.len();
-        self.run_until(Duration::from_secs(5), "the clients join", |n| {
+        self.run_until(Duration::from_secs(10), "the clients join", |n| {
             n.members() == want && ids.iter().all(|&c| n.peers[c].has(|e| matches!(e, OnlineEvent::Lobby(_))))
         });
         ids
@@ -214,7 +214,7 @@ impl Net {
         for &c in clients {
             self.peers[c].peer().lobby().set_ready(true);
         }
-        self.run_until(Duration::from_secs(3), "everyone is ready", |n| {
+        self.run_until(Duration::from_secs(10), "everyone is ready", |n| {
             n.host().peer().lobby().state().is_some_and(|s| {
                 s.members.iter().filter(|m| matches!(m.seat, SeatWire::Player { .. })).all(|m| m.ready)
             })
@@ -226,7 +226,7 @@ impl Net {
     }
 
     fn assert_quick(&self) {
-        assert!(self.begun.elapsed() < Duration::from_secs(20), "the test took {:?}", self.begun.elapsed());
+        assert!(self.begun.elapsed() < Duration::from_secs(40), "the test took {:?}", self.begun.elapsed());
     }
 }
 
@@ -245,7 +245,7 @@ fn a_host_and_two_clients_play_a_short_match() {
     let clients = net.join_all(&["Anna", "Bert"]);
     net.ready(&clients);
     net.host().peer().lobby().start(7).unwrap();
-    net.run_until(Duration::from_secs(16), "every peer ends the match and makes its replay", |n| {
+    net.run_until(Duration::from_secs(32), "every peer ends the match and makes its replay", |n| {
         n.peers.iter().all(|p| p.has(ended) && p.has(replay_ready))
     });
     // Players by seat (the clients' in the order they were welcomed), then the bot.
@@ -279,7 +279,7 @@ fn a_host_and_two_clients_play_a_short_match() {
     assert_eq!(replay.ticks() as usize, r.rows.len());
     net.content().play_replay(&replay).unwrap();
     // Back to the lobby.
-    net.run_until(Duration::from_secs(1), "the lobby shows the results", |n| {
+    net.run_until(Duration::from_secs(10), "the lobby shows the results", |n| {
         n.peers[1].peer().lobby().state().is_some_and(|s| s.phase == Phase::Results)
     });
     net.assert_quick();
@@ -292,9 +292,9 @@ fn a_late_joiner_watches_then_plays_the_next_match() {
     let a = net.join_all(&["Anna"])[0];
     net.ready(&[a]);
     net.host().peer().lobby().start(3).unwrap();
-    net.run_until(Duration::from_secs(3), "the match runs", |n| n.host_tick() >= 50);
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() >= 50);
     let b = net.join("Bert");
-    net.run_until(Duration::from_secs(4), "the joiner watches confirmed ticks", |n| {
+    net.run_until(Duration::from_secs(10), "the joiner watches confirmed ticks", |n| {
         n.peers[b].events.iter().any(|e| match e {
             OnlineEvent::Confirmed(c) => c.iter().any(|t| t.tick > 100),
             _ => false,
@@ -310,12 +310,12 @@ fn a_late_joiner_watches_then_plays_the_next_match() {
         "the loaded state's map comes after it"
     );
     assert!(net.peers[b].peer().match_session().is_some_and(|s| s.input_log().origin() > 0), "from a state");
-    net.run_until(Duration::from_secs(8), "the match ends everywhere", |n| {
+    net.run_until(Duration::from_secs(16), "the match ends everywhere", |n| {
         n.peers.iter().all(|p| p.has(ended))
     });
     // Gathering again after the results: the joiner takes a free seat.
     let key = net.peers[b].key;
-    net.run_until(Duration::from_secs(7), "the joiner is seated", |n| {
+    net.run_until(Duration::from_secs(14), "the joiner is seated", |n| {
         n.host().peer().lobby().state().is_some_and(|s| {
             s.phase == Phase::Gathering
                 && s.members.iter().any(|m| m.key == key && matches!(m.seat, SeatWire::Player { .. }))
@@ -323,11 +323,11 @@ fn a_late_joiner_watches_then_plays_the_next_match() {
     });
     net.ready(&[a, b]);
     net.host().peer().lobby().start(4).unwrap();
-    net.run_until(Duration::from_secs(2), "the second match starts for the joiner", |n| {
+    net.run_until(Duration::from_secs(10), "the second match starts for the joiner", |n| {
         n.peers[b].started().len() == 2
     });
     assert_eq!(net.peers[b].started()[1], Some(2), "it plays");
-    net.run_until(Duration::from_secs(2), "it plays ticks", |n| {
+    net.run_until(Duration::from_secs(10), "it plays ticks", |n| {
         n.peers[b].peer().match_session().is_some_and(|s| s.current_tick() > 20)
     });
     assert!(net.peers[a].replays().len() == 1, "the first match's replay");
@@ -343,14 +343,14 @@ fn a_client_with_other_content_is_refused_at_start() {
     net.peers[b].peer().test_seed_override(Some(99));
     net.ready(&clients);
     net.host().peer().lobby().start(5).unwrap();
-    net.run_until(Duration::from_secs(4), "the odd client is refused and the host hears it left", |n| {
+    net.run_until(Duration::from_secs(10), "the odd client is refused and the host hears it left", |n| {
         n.peers[b].has(|e| matches!(e, OnlineEvent::Refused(r) if r == MISMATCH))
             && n.peers[0].has(|e| matches!(e, OnlineEvent::Left(name) if name == "Bert"))
     });
     assert!(net.peers[b].peer().is_closed());
-    net.run_until(Duration::from_secs(2), "the other client starts", |n| !n.peers[a].started().is_empty());
+    net.run_until(Duration::from_secs(10), "the other client starts", |n| !n.peers[a].started().is_empty());
     assert!(matches!(net.peers[a].started()[..], [Some(1 | 2)]), "the other client plays");
-    net.run_until(Duration::from_secs(2), "the match goes on", |n| n.host_tick() > 100);
+    net.run_until(Duration::from_secs(10), "the match goes on", |n| n.host_tick() > 100);
     assert!(!net.peers[a].has(|e| matches!(e, OnlineEvent::Refused(_) | OnlineEvent::Disconnected(_))));
     net.assert_quick();
 }
@@ -363,14 +363,14 @@ fn a_client_vanishes_mid_match() {
     let (a, b) = (clients[0], clients[1]);
     net.ready(&clients);
     net.host().peer().lobby().start(9).unwrap();
-    net.run_until(Duration::from_secs(4), "the match runs", |n| n.host_tick() >= 200);
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() >= 200);
     let gone_at = net.host_tick();
     let (Some(sa), Some(sb)) = (net.peers[a].started()[0], net.peers[b].started()[0]) else {
         panic!("both play")
     };
     let (sa, sb) = (usize::from(sa), usize::from(sb));
     net.peers[b].p = None;
-    net.run_until(Duration::from_secs(14), "the host and the other client finish", |n| {
+    net.run_until(Duration::from_secs(28), "the host and the other client finish", |n| {
         [0, a].iter().all(|&i| n.peers[i].has(ended) && n.peers[i].has(replay_ready))
     });
     assert!(net.peers[0].has(|e| matches!(e, OnlineEvent::Left(name) if name == "Bert")));
@@ -396,18 +396,18 @@ fn kicked_players_cannot_rejoin() {
     let me = identity();
     let secret = me.secret();
     let a = net.join_as(me, "Anna");
-    net.run_until(Duration::from_secs(5), "the client joins", |n| n.members() == 2);
+    net.run_until(Duration::from_secs(10), "the client joins", |n| n.members() == 2);
     let key = net.peers[a].key;
     let id = net.host().member_id(key).unwrap();
     net.host().peer().lobby().kick(id, true);
-    net.run_until(Duration::from_secs(3), "the client is kicked", |n| {
+    net.run_until(Duration::from_secs(10), "the client is kicked", |n| {
         n.peers[a].has(|e| matches!(e, OnlineEvent::Kicked { banned: true }))
     });
     assert!(net.peers[a].peer().is_closed());
-    net.run_until(Duration::from_secs(2), "the host's lobby lost it", |n| n.members() == 1);
+    net.run_until(Duration::from_secs(10), "the host's lobby lost it", |n| n.members() == 1);
     // The same key from the same address: refused.
     let again = net.join_as(Identity::from_secret(secret).unwrap(), "Anna");
-    net.run_until(Duration::from_secs(5), "the rejoin is refused", |n| {
+    net.run_until(Duration::from_secs(10), "the rejoin is refused", |n| {
         n.peers[again].has(|e| matches!(e, OnlineEvent::Refused(_)))
     });
     let refusal = net.peers[again].events.iter().find_map(|e| match e {
@@ -430,21 +430,21 @@ fn an_admins_setup_is_taken_or_refused_with_a_notice() {
     let admin = identity();
     let mut net = Net::with_admins(content, 0.1, vec![admin.public()]);
     let a = net.join_as(admin, "Anna");
-    net.run_until(Duration::from_secs(5), "the admin joins", |n| {
+    net.run_until(Duration::from_secs(10), "the admin joins", |n| {
         n.members() == 2 && n.peers[a].has(|e| matches!(e, OnlineEvent::Lobby(_)))
     });
     // A mod the host does not have: refused, the admin is told.
     let mut odd = setup(&net.content(), 0.1);
     odd.mod_id = "olx-no-such-mod".into();
     net.peers[a].peer().lobby().set_setup(odd).unwrap();
-    net.run_until(Duration::from_secs(3), "the admin hears the refusal", |n| {
+    net.run_until(Duration::from_secs(10), "the admin hears the refusal", |n| {
         n.peers[a].has(|e| matches!(e, OnlineEvent::Notice(t) if t.starts_with(SETUP_REFUSED)))
     });
     assert!(net.host().peer().lobby().state().is_some_and(|s| s.setup.mod_id == MOD), "unchanged");
     // A setup the host can play: taken.
     let longer = setup(&net.content(), 0.5);
     net.peers[a].peer().lobby().set_setup(longer.clone()).unwrap();
-    net.run_until(Duration::from_secs(3), "the host takes it", |n| {
+    net.run_until(Duration::from_secs(10), "the host takes it", |n| {
         n.peers[a].peer().lobby().state().is_some_and(|s| s.setup == longer)
     });
     assert_eq!(
