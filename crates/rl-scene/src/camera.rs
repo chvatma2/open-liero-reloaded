@@ -2,7 +2,7 @@
 //! hard lock on the followed worm, clamped to the map, with screen shake.
 
 use rl_math::{AbsTime, GlibcRand, Vec2};
-use rl_sim::{EventKind, TickEvents};
+use rl_sim::{Event, EventKind, TickEvents};
 
 use crate::draw_list::View;
 
@@ -149,6 +149,16 @@ impl Camera {
     ///
     /// OLX: src/client/CClient_Game.cpp:307-317
     pub fn on_events(&mut self, events: &TickEvents, now: AbsTime) {
+        self.shake_for(events.as_slice(), now);
+    }
+
+    /// [`Camera::on_events`] for any list of events: online play's
+    /// presentation shakes for an explosion first seen in a re-simulated
+    /// tick (spec §3.4), which [`crate::Scene::after_tick_resimulated`]
+    /// leaves alone.
+    ///
+    /// OLX: src/client/CClient_Game.cpp:307-317
+    pub fn shake_for(&mut self, events: &[Event], now: AbsTime) {
         for e in events {
             if let EventKind::Explosion { pos, shake, .. } = e.kind
                 && shake != 0

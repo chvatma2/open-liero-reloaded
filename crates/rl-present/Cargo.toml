@@ -15,10 +15,12 @@ rl-content.workspace = true
 rl-scene.workspace = true
 rl-fx.workspace = true
 rl-render.workspace = true
+rl-netcode.workspace = true
 
 [dev-dependencies]
 rl-scenario.workspace = true
 rl-oracle.workspace = true
+rl-math.workspace = true
 
 [lints]
 workspace = true

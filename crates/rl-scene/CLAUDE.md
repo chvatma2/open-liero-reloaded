@@ -13,7 +13,10 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   `after_tick(&world, &events)` after every tick:
   the old state becomes the previous `Snapshot`, explosions shake the
   camera, and the tick's `Marks` (muzzle flashes, green crosshairs, laser
-  sights, beams) replace the last. `build(&world, alpha, &assets, &mut list)`
+  sights, beams) replace the last. Online play calls
+  `after_tick_resimulated` for a tick a rollback simulates again: the
+  same without the camera shake (`Camera::shake_for(&[Event], now)` shakes
+  for an explosion first seen in it). `build(&world, alpha, &assets, &mut list)`
   per drawn frame: `Camera::process` (hard lock, shake, clamp), then the
   layers. The game's view is `Viewport::GAME`, 427 × 192 world pixels for
   every window (spec §19 E4 as amended after the v0.1 playtest);

@@ -4024,6 +4024,8 @@ dependencies = [
  "rl-content",
  "rl-data",
  "rl-fx",
+ "rl-math",
+ "rl-netcode",
  "rl-oracle",
  "rl-render",
  "rl-scenario",

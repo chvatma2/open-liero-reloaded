@@ -7,8 +7,9 @@ wired in the frame loop's order **once**, so each mode that draws a world
 
 - **Layer 5.** Depends on `rl-scene`, `rl-fx`, `rl-render` (same layer,
   listed in `xtask/layers.ron`), `rl-content`, `rl-sim`, `rl-terrain`,
-  `rl-data`. It holds no GPU or OS handle: only `upload` takes the
-  `rl_render::Renderer`, so everything else is tested headless.
+  `rl-data`, `rl-netcode` (its tick records, for online play). It holds
+  no GPU or OS handle: only `upload` takes the `rl_render::Renderer`, so
+  everything else is tested headless.
 - **Use** (`lib.rs`):
   - `Presentation::new(&PresentSetup, &world)` registers the core and mod
     images and starts the scene from the world; then `add_worm(skin,
@@ -25,12 +26,36 @@ wired in the frame loop's order **once**, so each mode that draws a world
     a worm was added (also mid-match), the whole colour map when it is new
     (`new`, `restart`, `invalidate_gpu` for a new renderer), else the dirty
     rectangles of the ticks since the last frame (the map merges them).
-  - `restart(&world, &level, &theme)` for the same worms on a new world.
+  - `step_fx(&FxTick)`: `on_tick`'s entities and colour part for a tick
+    described by hand (online play).
+  - `restart(&world, &level, &theme)` for the same worms on a new world;
+    `state_loaded(&world)` for a loaded state in online play (scene
+    restarts, entities go; the colour map is repainted by the load's
+    restored area).
   - `terrain_drift(&world)`: the colour map's material is not the world's.
     It compares the whole grid; `rl-game`'s session checks it every
     `DRIFT_CHECK_TICKS` in debug builds.
+- **Online play** (`net.rs`, spec §3.4, decision N20): the newest
+  predicted tick is drawn and corrections re-simulate shown ticks. Per
+  advance: inside it, for each simulated tick (rl-online's `on_tick`
+  callback, the world as of that tick) `Scene::after_tick` for a new tick,
+  `Scene::after_tick_resimulated` for a re-simulated one, and
+  `TickRecorder::simulated`; after it `NetPresenter::apply(present, world,
+  restored, ticked, &mut sounds)`: the restored areas are rebuilt from the
+  final terrain first, then each tick: a tick never shown runs as in local
+  play (all spawns, edits, entity passes, sounds); a shown one runs no entity
+  pass, all its terrain edits, and only the cosmetics, sounds and camera
+  shakes whose `EventKey` is new. Debug builds assert no `terrain_drift`
+  after it. `confirmed(tick)` prunes keys below `Session::confirmed`;
+  `reset()` (with `Presentation::state_loaded`) on `Event::StateLoaded`.
+  `event_keys` keys an event by tick, sub-step, a hash of its kind and
+  integer identity fields (never positions or amounts, which a correction
+  moves) and an ordinal among equal ones. An erased event is not undone.
 - **The simulation never sees presentation:** it only reads the world.
 
 Test: `cargo nextest run -p rl-present` (`tests/present.rs` plays oracle
 scenarios: the bundle draws what the hand wiring drew, the atlas bookkeeping,
-drift). It needs `RL_CONTENT_DIR` and skips without it.
+drift; `tests/net.rs` rolls a Dirt Level match back by hand: sounds and
+spawns once per key, no drift after any advance, the confirmed records the
+final timeline's, a loaded state). It needs `RL_CONTENT_DIR` and skips
+without it.

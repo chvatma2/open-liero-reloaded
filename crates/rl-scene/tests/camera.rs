@@ -113,3 +113,21 @@ fn shake_ends_when_the_world_restarts() {
     scene.reset();
     assert_eq!(scene.camera.shake_amount(), 0);
 }
+
+/// `shake_for` is `on_events` over any list of events (the online
+/// presentation's explosions first seen in a re-simulated tick).
+#[test]
+fn shake_for_shakes_for_explosions_in_view() {
+    use rl_sim::{Event, EventKind};
+    let t = AbsTime(100_000);
+    let explosion = |x: f32, shake| Event {
+        substep: 0,
+        kind: EventKind::Explosion { pos: Vec2::new(x, 50.0), damage: 1.0, shake },
+    };
+    let mut c = Camera::new(VP, 0, 7);
+    c.process(Some(Vec2::new(0.0, 0.0)), true, MAP, t);
+    c.shake_for(&[explosion(400.0, 3), explosion(50.0, 0)], t);
+    assert_eq!(c.shake_amount(), 0, "out of view, or no shake");
+    c.shake_for(&[explosion(50.0, 3)], t);
+    assert_eq!(c.shake_amount(), 3);
+}

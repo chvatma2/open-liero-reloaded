@@ -16,9 +16,15 @@
 //!   when an image was added, the whole terrain when the map is new, else
 //!   its dirty rectangles (merged across the ticks since the last frame).
 //!
+//! - Online play (spec §3.4) draws the newest predicted tick and replays
+//!   rolled-back ticks: [`net::NetPresenter`] plays each sound and effect
+//!   once across re-simulations and repairs the colour terrain after them.
+//!
 //! Pure CPU apart from [`Presentation::upload`], which takes the renderer:
 //! it holds no GPU or OS handle, so it is tested headless. It only reads
 //! the world (the simulation never sees presentation).
+
+pub mod net;
 
 use rl_content::{CorePack, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme};
 use rl_data::image::Rgba;
@@ -109,8 +115,16 @@ impl Presentation {
     /// tick's terrain edits on the colour map, and rebuild an area the tick
     /// lost), then the scene (history, shake, marks).
     pub fn on_tick(&mut self, world: &World, events: &TickEvents) {
-        self.fx.step_tick(&FxTick::new(world, events), &mut self.color, &self.fx_assets);
+        self.step_fx(&FxTick::new(world, events));
         self.scene.after_tick(world, events);
+    }
+
+    /// The entities' and the colour terrain's part of
+    /// [`Presentation::on_tick`], for a tick described by hand: online
+    /// play's [`net::NetPresenter`] replays recorded ticks after the
+    /// advance, filtered when they are re-simulated.
+    pub fn step_fx(&mut self, tick: &FxTick) {
+        self.fx.step_tick(tick, &mut self.color, &self.fx_assets);
     }
 
     /// One drawn frame at `alpha` between the last two ticks (0 the
@@ -128,6 +142,16 @@ impl Presentation {
         self.fx.clear();
         self.color = level.color_map(theme);
         self.terrain_new = true;
+    }
+
+    /// The world's state was replaced by a loaded one (online play's
+    /// repair or a late spectator, `rl_netcode::Event::StateLoaded`): the
+    /// scene starts from it and the entities go. The colour terrain is
+    /// repainted by the whole-map restored area the load reports
+    /// ([`net::NetPresenter::apply`]); call [`net::NetPresenter::reset`] too.
+    pub fn state_loaded(&mut self, world: &World) {
+        self.scene.start(world);
+        self.fx.clear();
     }
 
     /// A view of another shape: a new camera on the same target.

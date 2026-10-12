@@ -74,6 +74,18 @@ impl Scene {
         self.marks.observe(world, events);
     }
 
+    /// [`Scene::after_tick`] for a tick simulated again (a rollback in
+    /// online play, spec §3.4): the history and the marks move on as for a
+    /// new tick, so the frames blend between states of the corrected
+    /// timeline, but explosions do not shake the camera again (it shook
+    /// when the tick was first simulated; one first seen in the
+    /// re-simulation shakes through [`Camera::shake_for`]).
+    pub fn after_tick_resimulated(&mut self, world: &World, events: &TickEvents) {
+        core::mem::swap(&mut self.prev, &mut self.cur);
+        self.cur.capture_into(world);
+        self.marks.observe(world, events);
+    }
+
     /// Forgets the history and stops the camera's shake, for a new or
     /// restarted world.
     pub fn reset(&mut self) {
