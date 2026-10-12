@@ -101,7 +101,10 @@ model that tests it in one process (spec §9.1).
   recorded, never rolling back), the ticks we had run simulated again at
   the next advance (a client behind the state skips to it). `sim_mut`
   also moves the floor to the current tick (a change outside the timeline
-  is never rolled back across: planted faults).
+  is never rolled back across). `change_confirmed(driver, f)` plants a
+  fault properly: `f` changes the state after the last confirmed tick and
+  the unconfirmed ticks run again on top, so predicted inputs are not made
+  final (the harness's `corrupt`).
 - **Spectators mid-match**: `Role::Joining` simulates nothing and ignores
   frames until a state loads, then is a `Spectator` whose input log
   begins after the state (`InputLog::start_at`). The host's
@@ -119,7 +122,10 @@ model that tests it in one process (spec §9.1).
   outages, freezes (a suspended laptop: no frames, the clock stands still,
   arrivals wait), spectators joining at `join_tick` (`Role::Joining`,
   `add_spectator`), planted faults (`corrupt`: at the peer's first frame
-  after the host's tick, `Factory::corrupt(sim_mut, index)`), LAN links
+  after the host's tick `t` with `t` confirmed,
+  `Factory::corrupt(sim, index)` through `change_confirmed`), an
+  `Observer` (`run_observed`: `on_event` per event and `on_frame` per
+  peer frame, with the session; `run` is `run_observed` with `()`), LAN links
   for the last `settle_ticks` — and returns a `Report` (confirmed logs,
   checksums of ticks `t % 10 == 9` recorded while simulating, the
   sessions' confirmed `checksums`, stats, events, `dropped`). The host

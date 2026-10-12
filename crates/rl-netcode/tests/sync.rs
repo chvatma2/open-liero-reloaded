@@ -451,3 +451,44 @@ proptest! {
         }
     }
 }
+
+#[derive(Default)]
+struct Watcher {
+    frames: u64,
+    loaded: Vec<(PeerId, u32, u32)>,
+}
+
+impl harness::Observer<ToySim> for Watcher {
+    fn on_event(&mut self, peer: PeerId, e: &Event, session: &mut rl_netcode::Session<ToySim>) {
+        if let Event::StateLoaded { tick } = *e {
+            self.loaded.push((peer, tick, session.current_tick()));
+        }
+    }
+    fn on_frame(&mut self, _peer: PeerId, _session: &mut rl_netcode::Session<ToySim>) {
+        self.frames += 1;
+    }
+}
+
+#[test]
+fn an_observer_sees_events_and_frames_as_they_happen() {
+    let sc = Scenario {
+        seed: 9,
+        slots: 3,
+        peers: vec![plan(1, Seat::Player(2), Profile::GOOD, None)],
+        ticks: 900,
+        settle_ticks: 200,
+        outages: vec![],
+        expect_no_stalls: true,
+        corrupt: vec![(1, 500)],
+    };
+    let mut f = ToyFactory { slots: 3, seed: 9 };
+    let mut w = Watcher::default();
+    let r = harness::run_observed(&sc, &mut f, &mut w).unwrap();
+    assert!(w.frames > 1_000);
+    let [(peer, tick, now)] = w.loaded[..] else { panic!("loaded: {:?}", w.loaded) };
+    assert_eq!(peer, 1);
+    assert!((500..560).contains(&tick) && now > tick, "state after {tick} loaded at tick {now}");
+    // The same run without an observer is the same run.
+    let plain = harness::run(&sc, &mut ToyFactory { slots: 3, seed: 9 }).unwrap();
+    assert_eq!(plain.host_log, r.host_log);
+}

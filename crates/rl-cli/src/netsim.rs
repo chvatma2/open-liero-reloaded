@@ -16,10 +16,11 @@ use rl_bots::Bot;
 use rl_content::{Content, MatchOptions};
 use rl_netcode::harness::{self, Factory, Failure, HOST, Outage, PeerPlan, Report, Scenario};
 use rl_netcode::netsim::{LinkStats, Profile};
-use rl_netcode::{Driver, PeerId, Seat, Stats, WorldSim, input_delay};
+use rl_netcode::{Driver, Event, PeerId, Seat, Session, Stats, WorldSim, input_delay};
 use rl_sim::Keys;
 use serde::{Deserialize, Serialize};
 
+use crate::bundle::DesyncBundle;
 use crate::spec::{Difficulty, MatchSpec};
 
 /// The first spectator's peer id.
@@ -57,6 +58,11 @@ pub struct NetSpec {
     /// The bots' difficulty (`easy`, `medium`, `hard`, `xtreme`); `mixed` by default.
     #[serde(default)]
     pub difficulty: Option<String>,
+    /// Planted faults `(peer, host tick, worm, health)`: at the peer's first
+    /// frame after the host's tick, the worm's health is set in that peer's
+    /// world alone (a desync for the harness to repair).
+    #[serde(default)]
+    pub faults: Vec<(u16, u32, u8, f32)>,
 }
 
 impl NetSpec {
@@ -77,6 +83,12 @@ impl NetSpec {
             self.spectators,
             self.seed,
         )
+    }
+
+    /// The seat of peer `id` in this spec's scenario (clients `1..=clients`
+    /// play slot `id - 1`, spectators are `100..`).
+    fn scenario_seat(&self, id: PeerId) -> Option<Seat> {
+        (1..=PeerId::from(self.clients)).contains(&id).then(|| Seat::Player((id - 1) as u8))
     }
 
     fn profile(&self) -> anyhow::Result<Profile> {
@@ -148,7 +160,7 @@ impl NetSpec {
                 .map(|&(peer, from_tick, until_tick)| Outage { peer, from_tick, until_tick })
                 .collect(),
             expect_no_stalls: matches!(self.profile.as_str(), "lan" | "good" | "typical" | "bad"),
-            corrupt: Vec::new(),
+            corrupt: self.faults.iter().map(|f| (f.0, f.1)).collect(),
         })
     }
 }
@@ -198,6 +210,16 @@ impl Factory<WorldSim> for WorldFactory<'_> {
         });
         Box::new(BotDriver { bots })
     }
+
+    /// Fault `index` of the spec: a worm's health. A fault naming no worm is
+    /// ignored (the spec is untrusted input).
+    fn corrupt(&mut self, sim: &mut WorldSim, index: usize) {
+        if let Some(&(_, _, worm, health)) = self.spec.faults.get(index)
+            && usize::from(worm) < sim.world().worms().len()
+        {
+            sim.world_mut().set_health(usize::from(worm), health);
+        }
+    }
 }
 
 /// Presses the keys of a peer's local bots.
@@ -223,6 +245,8 @@ pub struct NetRun {
     pub spec: NetSpec,
     pub report: Report,
     pub verdict: Result<(), Failure>,
+    /// The desync bundles written (`run_with`).
+    pub bundles: Vec<PathBuf>,
 }
 
 fn empty_report() -> Report {
@@ -243,16 +267,101 @@ fn empty_report() -> Report {
 /// Plays the match and checks it. A harness error is a failed verdict (with
 /// an empty report); an error here is bad content or a bad spec.
 pub fn run(content: &Content, spec: &NetSpec) -> anyhow::Result<NetRun> {
+    run_with(content, spec, None)
+}
+
+/// [`run`]; with `bundles` set, a client that reports a desync writes a
+/// bundle to `<dir>/net-<stem>-peer<k>.rlds`.
+pub fn run_with(content: &Content, spec: &NetSpec, bundles: Option<&Path>) -> anyhow::Result<NetRun> {
     let scenario = spec.scenario()?;
     let mut factory = WorldFactory::new(content, spec)?;
-    let (report, verdict) = match harness::run(&scenario, &mut factory) {
+    let mut recorder = BundleRecorder { spec, dir: bundles, pending: BTreeMap::new(), done: Vec::new() };
+    let (report, verdict) = match harness::run_observed(&scenario, &mut factory, &mut recorder) {
         Ok(report) => {
             let verdict = harness::verdict(&scenario, &report, &mut factory);
             (report, verdict)
         }
         Err(f) => (empty_report(), Err(f)),
     };
-    Ok(NetRun { spec: spec.clone(), report, verdict })
+    let written = recorder.finish()?;
+    Ok(NetRun { spec: spec.clone(), report, verdict, bundles: written })
+}
+
+/// Collects a client's desync bundle: started at its `Desync`, completed by
+/// the state the host sends, written when that state is loaded.
+struct BundleRecorder<'a> {
+    spec: &'a NetSpec,
+    dir: Option<&'a Path>,
+    pending: BTreeMap<PeerId, DesyncBundle>,
+    /// Written (or failed to write): one bundle per peer.
+    done: Vec<(PeerId, anyhow::Result<PathBuf>)>,
+}
+
+impl BundleRecorder<'_> {
+    fn write(&mut self, peer: PeerId) {
+        let (Some(dir), Some(b)) = (self.dir, self.pending.remove(&peer)) else { return };
+        let path = dir.join(format!("net-{}-peer{peer}.rlds", self.spec.stem()));
+        let result = std::fs::create_dir_all(dir)
+            .and_then(|()| std::fs::write(&path, b.encode()))
+            .map(|()| path.clone())
+            .with_context(|| format!("writing {}", path.display()));
+        self.done.push((peer, result));
+    }
+
+    /// Writes bundles still waiting for a state; the paths, or the first write error.
+    fn finish(mut self) -> anyhow::Result<Vec<PathBuf>> {
+        let waiting: Vec<PeerId> = self.pending.keys().copied().collect();
+        for peer in waiting {
+            self.write(peer);
+        }
+        self.done.into_iter().map(|(_, r)| r).collect()
+    }
+}
+
+impl harness::Observer<WorldSim> for BundleRecorder<'_> {
+    fn on_event(&mut self, peer: PeerId, event: &Event, session: &mut Session<WorldSim>) {
+        if self.dir.is_none() || !matches!(self.spec.scenario_seat(peer), Some(Seat::Player(_))) {
+            return;
+        }
+        let rows = |s: &Session<WorldSim>| -> Vec<[u8; 32]> {
+            let log = s.input_log();
+            (0..log.frontier()).map(|t| log.row(t).unwrap_or([0; 32])).collect()
+        };
+        match *event {
+            Event::Desync { tick, remote, .. }
+                if !self.pending.contains_key(&peer) && !self.done.iter().any(|d| d.0 == peer) =>
+            {
+                self.pending.insert(
+                    peer,
+                    DesyncBundle {
+                        spec: self.spec.clone(),
+                        peer,
+                        fingerprint: rl_proto::FINGERPRINT,
+                        platform: format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS),
+                        inputs: rows(session),
+                        local_checksums: session.checksums().to_vec(),
+                        host: (tick, remote),
+                        local_state: session.encode_confirmed_state(),
+                        host_state: None,
+                    },
+                );
+            }
+            Event::StateArrived { tick, ref bytes } => {
+                if let Some(b) = self.pending.get_mut(&peer) {
+                    b.host_state = Some((tick, bytes.clone()));
+                }
+            }
+            Event::StateLoaded { .. } => {
+                if let Some(b) = self.pending.get_mut(&peer) {
+                    // The inputs may have grown since the report: the host's
+                    // state can be past them.
+                    b.inputs = rows(session);
+                }
+                self.write(peer);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// What `net-<stem>.ron` holds, in `target/failures/` and `fixtures/net/cases/`.
@@ -358,6 +467,7 @@ mod tests {
             outages: vec![],
             net_seed: 1,
             difficulty: None,
+            faults: vec![],
         }
     }
 

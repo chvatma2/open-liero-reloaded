@@ -203,3 +203,5 @@ xtask bless-regression --reason "<why>"`) run in `check`; `tests/grid.rs`
 (both mods × 4 levels × 3 seeds, chaos and Deathmatch bots, every weapon and
 action kind covered; `long_bot_match_bounded`, 30 minutes) runs in `full`
 (`RL_FULL_TESTS=1`).
+
+**Desync bundles** (`bundle.rs`): `.rlds` files from `net-sim` (and, in plan 10, real games); `rl-cli net-repro <file>` names the first diverging tick and world field. `net-sim` writes them to `--failures` when a client reports a desync (`netsim::run_with`; `NetSpec::faults` plants one: `(peer, host tick, worm, health)`). A state diff names `worms` first (their fields are causes; `ents` and the generators are effects), then the other fields in sorted key order.

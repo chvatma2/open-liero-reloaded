@@ -2853,6 +2853,7 @@ dependencies = [
  "clap",
  "divan",
  "insta",
+ "postcard",
  "rl-bots",
  "rl-content",
  "rl-data",

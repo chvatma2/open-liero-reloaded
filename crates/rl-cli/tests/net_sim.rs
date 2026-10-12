@@ -18,6 +18,7 @@ fn spec(profile: &str, seed: u32) -> NetSpec {
         outages: vec![],
         net_seed: seed as u64,
         difficulty: None,
+        faults: vec![],
     }
 }
 

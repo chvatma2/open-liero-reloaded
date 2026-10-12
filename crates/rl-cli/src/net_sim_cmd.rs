@@ -5,7 +5,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, bail};
-use rl_cli::netsim::{NetCase, NetSpec, run, write_failure};
+use rl_cli::netsim::{NetCase, NetSpec, run_with, write_failure};
 
 /// Plays an online match in one process (a host, clients and spectators with
 /// bots on every peer) over a simulated network and checks that every peer
@@ -82,6 +82,7 @@ impl From<NetSpecArgs> for NetSpec {
             outages: a.outages,
             net_seed: a.net_seed,
             difficulty: a.difficulty,
+            faults: Vec::new(),
         }
     }
 }
@@ -134,8 +135,12 @@ pub fn run_cmd(args: Args) -> anyhow::Result<bool> {
     }
     let mut ok = true;
     for spec in &specs {
-        let r = run(&content, spec).with_context(|| format!("running {}", spec.stem()))?;
+        let r = run_with(&content, spec, Some(&args.failures))
+            .with_context(|| format!("running {}", spec.stem()))?;
         println!("{}", r.summary());
+        for b in &r.bundles {
+            println!("wrote {}; replay with: rl-cli net-repro {}", b.display(), b.display());
+        }
         match &r.verdict {
             Ok(()) => println!("ok"),
             Err(f) => {

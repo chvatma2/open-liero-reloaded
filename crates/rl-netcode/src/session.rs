@@ -447,6 +447,34 @@ impl<S: Simulation> Session<S> {
         &mut self.sim
     }
 
+    /// Changes the simulation as it was after the last confirmed tick, then
+    /// simulates the unconfirmed ticks again on top of the change (a test's
+    /// planted fault): unlike [`Session::sim_mut`], the ticks predicted so
+    /// far are not made final with it, so the change is the only
+    /// difference to an undisturbed peer. Rollbacks never reach before it.
+    /// Without that tick's snapshot it is `sim_mut`.
+    pub fn change_confirmed(&mut self, driver: &mut dyn Driver<S>, change: impl FnOnce(&mut S)) {
+        let x = self.confirmed().min(self.current).min(self.rollback_from.unwrap_or(u32::MAX));
+        let i = x.checked_sub(self.base).map_or(usize::MAX, |i| i as usize);
+        if x == self.current || i >= self.snaps.len() {
+            change(self.sim_mut());
+            return;
+        }
+        let to = self.current;
+        self.sim.restore(&self.snaps[i]);
+        change(&mut self.sim);
+        self.snaps.truncate(i);
+        self.used.truncate(i);
+        self.checks.rewind(x);
+        self.floor = self.floor.max(x);
+        self.rollback_from = None;
+        self.current = x;
+        while self.current < to {
+            self.simulate(driver, true);
+        }
+        self.stats.resim_ticks += (to - x) as u64;
+    }
+
     /// The next tick to simulate.
     pub fn current_tick(&self) -> u32 {
         self.current

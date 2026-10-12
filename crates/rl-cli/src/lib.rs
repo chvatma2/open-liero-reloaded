@@ -3,6 +3,7 @@
 //! `tests/golden.rs`, `tests/grid.rs`) play.
 
 pub mod assets;
+pub mod bundle;
 pub mod coverage;
 pub mod failure;
 pub mod genlevel;

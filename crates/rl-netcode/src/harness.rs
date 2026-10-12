@@ -67,11 +67,26 @@ pub struct Scenario {
     /// No player peer (the host included) may stall.
     pub expect_no_stalls: bool,
     /// Planted faults: at peer `.0`'s first frame after the host's tick
-    /// `.1`, [`Factory::corrupt`] changes its simulation (entry `i` passes
-    /// index `i`). Only these peers may desync; the verdict compares them
+    /// `.1` at which it has confirmed tick `.1`, [`Factory::corrupt`] changes
+    /// its simulation as it was after its last confirmed tick (entry `i`
+    /// passes index `i`; `Session::change_confirmed`). Only these peers may desync; the verdict compares them
     /// from their last loaded state on.
     pub corrupt: Vec<(PeerId, u32)>,
 }
+
+/// Watches a run as it happens (the driver's view, not the report's): what
+/// a test or a tool wants from a session at the moment, such as a state to
+/// keep or the positions of every frame. Both methods do nothing by default.
+pub trait Observer<S: Simulation> {
+    /// After a peer's frame, once per event it reported, in order; the
+    /// session is as the frame left it.
+    fn on_event(&mut self, _peer: PeerId, _event: &Event, _session: &mut Session<S>) {}
+    /// After a peer's frame (its events included, its datagrams not yet sent).
+    fn on_frame(&mut self, _peer: PeerId, _session: &mut Session<S>) {}
+}
+
+/// The observer that sees nothing.
+impl<S: Simulation> Observer<S> for () {}
 
 /// Builds each peer's simulation and driver.
 pub trait Factory<S: Simulation> {
@@ -79,7 +94,7 @@ pub trait Factory<S: Simulation> {
     /// `seat` is `None` for the host.
     fn driver(&mut self, peer: PeerId, seat: Option<Seat>) -> Box<dyn Driver<S>>;
     /// Plants fault `index` of [`Scenario::corrupt`] in a peer's simulation
-    /// (through `Session::sim_mut`, so it survives rollbacks).
+    /// (through `Session::change_confirmed`, so it survives rollbacks).
     fn corrupt(&mut self, _sim: &mut S, _index: usize) {}
 }
 
@@ -263,6 +278,15 @@ fn check_scenario(sc: &Scenario) -> Result<(), Failure> {
 /// ticks before its last advance (which re-simulated them on their final
 /// inputs) and simulated them.
 pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Report, Failure> {
+    run_observed(sc, f, &mut ())
+}
+
+/// [`run`], with `obs` told of every frame and event as they happen.
+pub fn run_observed<S: Simulation>(
+    sc: &Scenario,
+    f: &mut dyn Factory<S>,
+    obs: &mut dyn Observer<S>,
+) -> Result<Report, Failure> {
     check_scenario(sc)?;
     let mut net = Network::new(sc.seed);
     for p in &sc.peers {
@@ -354,9 +378,10 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
                 continue;
             }
             p.next_frame += p.frame_us;
-            while let Some(i) = p.faults.iter().position(|&(_, t)| host_tick > t) {
+            while let Some(i) = p.faults.iter().position(|&(_, t)| host_tick > t && p.session.frontier() > t)
+            {
                 let (index, _) = p.faults.remove(i);
-                f.corrupt(p.session.sim_mut(), index);
+                p.session.change_confirmed(&mut p.driver, |sim| f.corrupt(sim, index));
             }
             let confirmed = p.session.frontier() >= sc.ticks;
             p.session.advance(local, &mut p.driver);
@@ -379,6 +404,10 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
                     }
                 }
             }
+            for e in &new {
+                obs.on_event(id, e, &mut p.session);
+            }
+            obs.on_frame(id, &mut p.session);
             p.session.transmit(&mut |to, ch: Channel, bytes| net.send(now, id, to, ch, bytes));
             events.entry(id).or_default().extend(new);
         }
