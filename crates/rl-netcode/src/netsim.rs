@@ -72,16 +72,20 @@ impl Link {
         if d <= 0.0 { 0 } else { d as u64 }
     }
 
-    /// Steps the loss state and says whether this datagram is lost.
+    /// Steps the loss state and says whether this datagram is lost. With a
+    /// mean run of 1 or less, losses are independent; otherwise a
+    /// Gilbert-Elliott chain gives the mean loss and run length.
     fn lost(&mut self) -> bool {
         let p = self.profile;
         if p.loss <= 0.0 {
             return false;
         }
-        let burst = if p.burst < 1.0 { 1.0 } else { p.burst };
-        let to_bad = (p.loss / (burst * (1.0 - p.loss))).min(1.0);
-        let to_good = 1.0 / burst;
         let u = self.rng.unit();
+        if p.burst <= 1.0 {
+            return u < p.loss;
+        }
+        let to_bad = (p.loss / (p.burst * (1.0 - p.loss))).min(1.0);
+        let to_good = 1.0 / p.burst;
         self.bad = if self.bad { u >= to_good } else { u < to_bad };
         self.bad
     }
@@ -151,6 +155,7 @@ impl Network {
         for key in [(a, b), (b, a)] {
             if let Some(l) = self.links.get_mut(&key) {
                 l.profile = profile;
+                l.bad = false;
             }
         }
     }
@@ -175,21 +180,31 @@ impl Network {
         let mut arrivals: [Option<u64>; 2] = [None, None];
         match ch {
             Channel::Unreliable => {
-                let lost = link.lost() || link.in_outage(now_us);
-                if lost {
+                // The chain steps for every datagram, outage or not.
+                let lost = link.lost();
+                let first = now_us + link.delay_us();
+                let second = (link.profile.duplicate > 0.0 && link.rng.unit() < link.profile.duplicate)
+                    .then(|| now_us + link.delay_us());
+                if lost || link.in_outage(now_us) {
                     self.received.entry(to).or_default().dropped += 1;
                     return;
                 }
-                let first = now_us + link.delay_us();
-                arrivals[0] = Some(first);
-                if link.profile.duplicate > 0.0 && link.rng.unit() < link.profile.duplicate {
-                    arrivals[1] = Some(now_us + link.delay_us());
+                // Nothing arrives inside an outage, so a datagram (or its
+                // duplicate) due inside one is dropped.
+                if !link.in_outage(first) {
+                    arrivals[0] = Some(first);
+                }
+                arrivals[1] = second.filter(|&t| !link.in_outage(t));
+                if arrivals == [None, None] {
+                    self.received.entry(to).or_default().dropped += 1;
+                    return;
                 }
             }
             Channel::Reliable => {
                 let mut d = link.delay_us();
                 let ping_us = link.profile.ping_ms as u64 * 1000;
-                // Every loss draw is a retransmission one ping later.
+                // Every loss draw (from the link's own loss chain, shared with
+                // the unreliable datagrams) is a retransmission one ping later.
                 let mut tries = 0;
                 while tries < 64 && link.lost() {
                     d += ping_us;

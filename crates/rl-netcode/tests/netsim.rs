@@ -81,3 +81,89 @@ fn profiles_are_found_by_name() {
     }
     assert_eq!(Profile::by_name("nope"), None);
 }
+
+/// Sends one datagram per ms with no jitter or duplicates; returns the
+/// lost/received flag per datagram.
+fn loss_pattern(p: Profile, n: u64) -> Vec<bool> {
+    let p = Profile { jitter_ms: 0, duplicate: 0.0, ..p };
+    let mut net = Network::new(5);
+    net.connect(0, 1, p);
+    for i in 0..n {
+        net.send(i * 1000, 0, 1, Channel::Unreliable, i.to_le_bytes().to_vec());
+    }
+    let mut got = vec![false; n as usize];
+    net.deliver_due(u64::MAX / 2, &mut |_, _, _, b| {
+        got[u64::from_le_bytes(b.try_into().unwrap()) as usize] = true
+    });
+    got.iter().map(|g| !g).collect()
+}
+
+fn mean_loss_and_run(lost: &[bool]) -> (f64, f64) {
+    let total = lost.iter().filter(|&&l| l).count();
+    let runs = lost.iter().enumerate().filter(|&(i, &l)| l && (i == 0 || !lost[i - 1])).count();
+    (total as f64 / lost.len() as f64, total as f64 / runs as f64)
+}
+
+#[test]
+fn bursts_have_the_profiles_mean_run() {
+    for (p, tol) in [(Profile::BAD, 0.2), (Profile::AWFUL, 0.6)] {
+        let (loss, run) = mean_loss_and_run(&loss_pattern(p, 400_000));
+        assert!((loss - p.loss).abs() < p.loss * 0.15, "{} loss {loss}", p.name);
+        assert!((run - p.burst).abs() < tol, "{} run {run}", p.name);
+    }
+}
+
+#[test]
+fn burst_one_is_independent_loss() {
+    let lost = loss_pattern(Profile::TYPICAL, 1_000_000);
+    let pairs = lost.windows(2).filter(|w| w[0] && w[1]).count() as f64 / lost.len() as f64;
+    assert!((pairs - 0.0001).abs() < 0.00005, "consecutive-loss rate {pairs}");
+}
+
+#[test]
+fn an_outage_scheduled_ahead_drops_datagrams_due_inside_it() {
+    let mut net = Network::new(1);
+    net.connect(0, 1, Profile::GOOD);
+    net.outage(0, 1, 100_000, 200_000);
+    // Sent before the outage, due (about 15 ms later) inside it.
+    net.send(95_000, 0, 1, Channel::Unreliable, vec![1]);
+    net.send(10_000, 0, 1, Channel::Unreliable, vec![2]);
+    let mut got = Vec::new();
+    net.deliver_due(1_000_000, &mut |_, _, _, b| got.push(b[0]));
+    assert_eq!(got, vec![2]);
+    assert_eq!(net.received(1).dropped, 1);
+}
+
+#[test]
+fn reliable_order_holds_across_an_outage() {
+    let mut net = Network::new(3);
+    net.connect(0, 1, Profile::BAD);
+    net.outage(0, 1, 20_000, 400_000);
+    for i in 0..100u8 {
+        net.send(u64::from(i) * 5_000, 0, 1, Channel::Reliable, vec![i]);
+    }
+    let mut got = Vec::new();
+    net.deliver_due(u64::MAX / 2, &mut |_, _, _, b| got.push(b[0]));
+    assert_eq!(got, (0..100).collect::<Vec<u8>>());
+}
+
+#[test]
+fn set_profile_changes_the_latency() {
+    let mut net = Network::new(2);
+    net.connect(0, 1, Profile::LAN);
+    net.set_profile(0, 1, Profile::AWFUL);
+    net.send(0, 0, 1, Channel::Reliable, vec![1]);
+    assert!(net.next_delivery().unwrap() >= 50_000);
+}
+
+#[test]
+fn stats_count_sent_and_received() {
+    let mut net = Network::new(2);
+    net.connect(0, 1, Profile::LAN);
+    net.send(0, 0, 1, Channel::Reliable, vec![0; 10]);
+    net.send(0, 1, 0, Channel::Reliable, vec![0; 3]);
+    net.deliver_due(1_000_000, &mut |_, _, _, _| {});
+    assert_eq!((net.sent(0).datagrams, net.sent(0).bytes), (1, 10));
+    assert_eq!((net.received(1).datagrams, net.received(1).bytes), (1, 10));
+    assert_eq!((net.received(0).datagrams, net.received(0).bytes), (1, 3));
+}
