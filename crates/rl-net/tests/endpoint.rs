@@ -607,10 +607,10 @@ fn one_address_cannot_hold_every_pending_slot() {
     assert!(events.iter().all(|e| matches!(e, NetEvent::Connected { .. })), "{events:?}");
 }
 
-/// The host answers no offer with a candidate on another IP than the
-/// joiner's: it would send to an address the joiner may not hold.
+/// An offer naming another IP than the joiner's is answered, its forged
+/// candidate dropped (ruling T4-A: the host never sends checks there).
 #[test]
-fn an_offer_naming_another_address_is_refused() {
+fn an_offer_naming_another_address_is_answered_without_it() {
     let host = Endpoint::host(config(), open_gate()).unwrap();
     let addr = host_addr(&host);
     let (stop, events, thread) = host_thread(host);
@@ -618,8 +618,24 @@ fn an_offer_naming_another_address_is_refused() {
     let reply = exchange(&mut ws, offer_from("10.1.2.3:9").1);
     stop.store(true, Ordering::Relaxed);
     thread.join().unwrap();
-    assert_eq!(reply, Some(rl_proto::Signal::Refused { reason: Refusal::Malformed }));
+    assert!(matches!(reply, Some(rl_proto::Signal::Answer { .. })), "{reply:?}");
     assert!(events.lock().unwrap().is_empty());
+}
+
+/// A client whose offer names an address the host cannot reach (behind NAT:
+/// its private address) still connects: with no candidate left, the host
+/// learns the peer-reflexive one from the client's checks.
+#[test]
+fn a_client_behind_nat_connects_through_its_reflexive_address() {
+    let mut net = Net::new(config());
+    let nat = EndpointConfig { offer_ip_override: Some("10.9.9.9".parse().unwrap()), ..config() };
+    let (c, id) = net.join_and_wait(nat);
+    net.clients[c].0.send(HOST, Channel::Reliable, b"hello");
+    net.run_until(Duration::from_secs(3), "the echo", |n| {
+        n.echo();
+        !messages(&n.clients[c].1, Channel::Reliable).is_empty()
+    });
+    assert_eq!(net.host.peers().map(|p| p.0).collect::<Vec<_>>(), [id]);
 }
 
 /// A connected peer's address that floods raw datagrams no link can use

@@ -74,6 +74,10 @@ pub struct EndpointConfig {
     /// `rl_proto::FINGERPRINT`.
     #[doc(hidden)]
     pub fingerprint_override: Option<u64>,
+    /// Tests only: a client's offer names this IP in its candidates instead
+    /// of its own (a client behind NAT, as the host sees it).
+    #[doc(hidden)]
+    pub offer_ip_override: Option<IpAddr>,
 }
 
 impl Default for EndpointConfig {
@@ -87,6 +91,7 @@ impl Default for EndpointConfig {
             impair: None,
             impair_seed: 0,
             fingerprint_override: None,
+            offer_ip_override: None,
         }
     }
 }
@@ -242,12 +247,37 @@ fn send_datagram(udp: &UdpSocket, stats: &mut PeerStats, t: &Transmit) {
     }
 }
 
-/// The IP addresses of the `a=candidate` lines of an SDP, or `None` when
-/// one does not parse (e.g. an mDNS name).
-fn candidate_ips(sdp: &str) -> Option<Vec<IpAddr>> {
-    sdp.lines()
-        .filter_map(|line| line.trim_end().strip_prefix("a=candidate:"))
-        .map(|candidate| candidate.split_ascii_whitespace().nth(4)?.parse().ok())
+/// The IP address of an `a=candidate` line (`None` for any other line, or
+/// an address that does not parse, e.g. an mDNS name).
+fn candidate_ip(line: &str) -> Option<IpAddr> {
+    let candidate = line.trim_end().strip_prefix("a=candidate:")?;
+    candidate.split_ascii_whitespace().nth(4)?.parse().ok()
+}
+
+/// `sdp` without the `a=candidate` lines whose address is not `ip` (ruling
+/// T4-A): the host never sends connectivity checks to an address the joiner
+/// may not hold (reflection), and a joiner behind NAT still connects through
+/// the peer-reflexive candidate its checks reveal.
+fn keep_candidates_of(sdp: &str, ip: IpAddr) -> String {
+    sdp.split_inclusive('\n')
+        .filter(|line| !line.starts_with("a=candidate:") || candidate_ip(line) == Some(ip))
+        .collect()
+}
+
+/// `sdp` with the address of every `a=candidate` line replaced by `ip`
+/// (the test hook `offer_ip_override`).
+fn rewrite_candidates(sdp: &str, ip: IpAddr) -> String {
+    sdp.split_inclusive('\n')
+        .map(|line| match line.strip_prefix("a=candidate:") {
+            Some(candidate) => {
+                let mut fields: Vec<String> = candidate.split(' ').map(str::to_owned).collect();
+                if let Some(field) = fields.get_mut(4) {
+                    *field = ip.to_string();
+                }
+                format!("a=candidate:{}", fields.join(" "))
+            }
+            None => line.to_owned(),
+        })
         .collect()
 }
 
@@ -488,7 +518,10 @@ impl Endpoint {
         stream.set_nonblocking(true)?;
         let _ = stream.set_nodelay(true);
         let local = SocketAddr::new(stream.local_addr()?.ip(), self.port);
-        let (link, sdp) = Link::offerer(&[local], now);
+        let (link, mut sdp) = Link::offerer(&[local], now);
+        if let Some(ip) = self.cfg.offer_ip_override {
+            sdp = rewrite_candidates(&sdp, ip);
+        }
         let mut ws = SignalConn::connect(stream, host, self.cfg.limits.max_signal_bytes);
         ws.send(encode_signal(&Signal::Offer {
             protocol: PROTOCOL_VERSION,
@@ -520,13 +553,10 @@ impl Endpoint {
         if let Err(why) = gate(&addr, &signal) {
             return self.refuse(conn, why, now);
         }
-        // Every candidate must be the signalling connection's IP: the host
-        // never sends to an address the joiner does not hold (reflection).
-        if candidate_ips(sdp).is_none_or(|ips| ips.iter().any(|&ip| ip != addr.ip())) {
-            return self.refuse(conn, Refusal::Malformed, now);
-        }
+        // Only candidates on the signalling connection's IP (ruling T4-A).
+        let sdp = keep_candidates_of(sdp, addr.ip());
         let local = SocketAddr::new(local, self.port);
-        let Ok((link, answer)) = Link::answerer(&[local], sdp, now) else {
+        let Ok((link, answer)) = Link::answerer(&[local], &sdp, now) else {
             return self.refuse(conn, Refusal::Malformed, now);
         };
         conn.send(encode_signal(&Signal::Answer { sdp: answer }));
@@ -694,5 +724,38 @@ impl Drop for Endpoint {
         {
             finish(&self.udp, peer, now);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SDP: &str = "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n\
+        a=candidate:1 1 udp 2130706431 192.168.1.5 50000 typ host\r\n\
+        a=candidate:2 1 udp 2130706431 203.0.113.7 50000 typ host\r\n\
+        a=candidate:3 1 udp 2130706431 x.local 50000 typ host\r\n\
+        a=end-of-candidates\r\n";
+
+    #[test]
+    fn only_the_joiners_own_candidates_are_kept() {
+        let kept = keep_candidates_of(SDP, "203.0.113.7".parse().unwrap());
+        assert_eq!(
+            kept,
+            "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n\
+             a=candidate:2 1 udp 2130706431 203.0.113.7 50000 typ host\r\n\
+             a=end-of-candidates\r\n"
+        );
+        let none = keep_candidates_of(SDP, "10.0.0.1".parse().unwrap());
+        assert!(!none.contains("a=candidate"), "{none}");
+    }
+
+    #[test]
+    fn the_test_hook_rewrites_every_candidate() {
+        let ip: IpAddr = "10.9.9.9".parse().unwrap();
+        let rewritten = rewrite_candidates(SDP, ip);
+        assert_eq!(rewritten.matches("a=candidate:").count(), 3);
+        assert_eq!(keep_candidates_of(&rewritten, ip), rewritten);
+        assert!(rewritten.contains("a=candidate:3 1 udp 2130706431 10.9.9.9 50000 typ host\r\n"));
     }
 }

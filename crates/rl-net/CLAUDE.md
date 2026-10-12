@@ -69,8 +69,12 @@ announcements.
     offer (else `Refused { Malformed }`), `PROTOCOL_VERSION` and the
     fingerprint (`Version`), `max_peers` counting connecting links
     (`Full`), peer ids left (`Busy`), the `gate` (its reason), the SDP
-    (`Malformed`; every `a=candidate` IP must be the TCP peer's IP, so the
-    host never sends to an address the joiner may not hold). Accepted:
+    (`Malformed`). The offer's `a=candidate` lines whose IP is not the
+    TCP peer's are dropped first (ruling T4-A): the host never sends checks
+    to an address the joiner may not hold (reflection), and a joiner behind
+    NAT (its private candidate dropped) still connects through the
+    peer-reflexive candidate its checks reveal; str0m takes an offer with
+    no candidate left. Test hook `offer_ip_override` (hidden). Accepted:
     `Link::answerer` with the candidate (the TCP connection's local IP, the
     UDP port; decision N16), `Signal::Answer`, the WebSocket kept until the
     link opens; any further frame drops the joiner. At most 64 connections
@@ -135,5 +139,6 @@ refusals, floods, bad signalling, closes, 1000 reliable messages through
 `bad`, the 10 s timeouts — the longest test, about 10 s — and hostile
 peers: pings in a tight loop, 20 offers from one IP (the second address
 is the machine's non-loopback IP, skipped with a notice without one), an
-offer naming another IP, raw junk from a connected peer's address).
+offer naming another IP, a client "behind NAT" connecting peer-reflexive,
+raw junk from a connected peer's address).
 Cross-build: `cargo build --release --target x86_64-pc-windows-gnu -p rl-net`.
