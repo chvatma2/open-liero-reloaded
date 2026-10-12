@@ -73,7 +73,11 @@ model that tests it in one process (spec §9.1).
     (`Event::Stalled` once per episode, a run of stalled advances; an
     advance that runs ticks without stalling ends it; `Stats::stalls`
     counts episodes). Every peer sends at most one datagram per tick of
-    its pace, a stalled one too.
+    its pace, a stalled one too. `Pace::phase(now)` is the timeline's
+    place in its tick, `[0, 1)`; `Session::tick_phase(now_us)` gives it
+    for drawing between the last two ticks (plan 10 task 12), `None` when
+    the last advance left due ticks unrun (stalled or catching up) and for
+    spectators (their ticks follow the host's frames).
   - Time sync (decision N7): a client datagram whose newest input is newer
     than all before is a margin sample at the host (that tick minus the
     host's current tick); `HostInputs.margin` is the median of the last 16
@@ -113,7 +117,9 @@ model that tests it in one process (spec §9.1).
   its start; at the end of `advance` pending ticks below the confirmed
   ticks (and a pending rollback) are confirmed (`Session::checksums`, all
   kept). Clients and spectators send each as `Control::Checksum`; the host
-  compares (peers' reports wait up to 1024 ticks for its own): a
+  compares (peers' reports wait up to 1024 ticks for its own; each peer's
+  compared reports are kept, the last `PEER_STREAM_KEEP` (4096):
+  `Session::peer_checksums`, a desync bundle's other stream): a
   difference is `Event::Desync` (`Stats::desyncs`), `Control::Desync` (the
   client's `Event::Desync`, `local` its own or 0) and a repair: at the end
   of the next advance the host sends `encode_confirmed_state` (the state

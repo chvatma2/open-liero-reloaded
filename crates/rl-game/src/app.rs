@@ -645,7 +645,8 @@ impl App {
         if !online {
             self.run_ticks(el, due)?;
         }
-        if self.cfg.menus {
+        // Online, `net_step` reported the results already.
+        if self.cfg.menus && !self.shell.online_active() {
             let out = self.shell.after_ticks();
             self.outcomes(el, out);
         }
@@ -655,10 +656,10 @@ impl App {
         let interpolate = self.clock.alpha();
         let mut alpha = 1.0;
         if let Some(s) = self.shell.session_mut() {
-            // Online the newest predicted tick is drawn as it is: the local
-            // clock's phase is not the netcode's (spec §3.4).
-            if s.present.scene.options.interpolation != Interpolation::Latest && !online {
-                alpha = interpolate;
+            // Online the pace's own tick phase (the local clock's is not the
+            // netcode's): 1 while it stalls, catches up or rolls back.
+            if s.present.scene.options.interpolation != Interpolation::Latest {
+                alpha = s.online_alpha(now).unwrap_or(interpolate);
             }
             s.build(alpha, &mut self.list);
             self.meter.peak_entities = self.meter.peak_entities.max(s.present.fx.len());
@@ -863,6 +864,12 @@ impl App {
             return Ok(());
         }
         self.latency.press(Instant::now());
+        // The chat key online (the options' `online.chat_key`): its field
+        // takes the keys from now on.
+        if code == self.shell.ui.settings().online.chat_key && self.shell.open_chat() {
+            self.input.release_keys();
+            return Ok(());
+        }
         match code {
             // With the menus, Esc and F5 are theirs (`rl_ui::screens::show`).
             KeyCode::Escape if !self.cfg.menus => el.exit(),

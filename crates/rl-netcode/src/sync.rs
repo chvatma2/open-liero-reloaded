@@ -4,7 +4,7 @@
 //! the network is bounded here: received ticks, lengths and chunk indices
 //! only ever key maps or are compared, never index.
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 
 use rl_proto::{Control, MAX_STATE, STATE_CHUNK};
@@ -107,10 +107,18 @@ pub(crate) enum Repair {
     Failed,
 }
 
+/// The host keeps the last this many of a peer's compared checksums (its
+/// stream for a desync bundle: about 7 minutes of match at one per 10
+/// ticks).
+pub const PEER_STREAM_KEEP: usize = 4096;
+
 /// The host's view of a peer's checksums.
 pub(crate) struct Remote {
     /// Reported for ticks the host has not confirmed yet.
     pub(crate) reported: BTreeMap<u32, u64>,
+    /// The peer's checksums the host compared with its own, oldest first
+    /// (the last [`PEER_STREAM_KEEP`]).
+    pub(crate) compared: VecDeque<(u32, u64)>,
     pub(crate) repair: Repair,
     /// States sent to repair it (a joining spectator's first is not one).
     pub(crate) repairs: u8,
@@ -118,7 +126,7 @@ pub(crate) struct Remote {
 
 impl Default for Remote {
     fn default() -> Self {
-        Remote { reported: BTreeMap::new(), repair: Repair::Clean, repairs: 0 }
+        Remote { reported: BTreeMap::new(), compared: VecDeque::new(), repair: Repair::Clean, repairs: 0 }
     }
 }
 

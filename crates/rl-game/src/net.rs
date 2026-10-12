@@ -37,6 +37,9 @@ pub const HIDDEN_FRAME: Duration = Duration::from_millis(4);
 /// Where desync bundles go in the data directory.
 pub const DESYNCS_DIR: &str = "desyncs";
 
+/// A mod's and a level's pack ids.
+pub type ModLevel = (String, String);
+
 /// What the shell keeps of an online game: its peer (while no match holds
 /// it: a match's is its session's `OnlineDriver`), whether it hosts, and
 /// what it showed last.
@@ -58,12 +61,36 @@ pub struct Net {
     pub announce: Option<LanAnnounce>,
     /// The setup's packs this client checked last (`LobbyHandle::have`).
     pub checked_packs: Option<Vec<(String, String)>>,
+    /// The host's setup packs (with their content hashes) of the mod and
+    /// level last set: a lobby edit of the rules does not hash them again.
+    pub setup_packs: Option<(ModLevel, Vec<(String, String)>)>,
     /// The lobby's weapon choice: its mod and restrictions, and the menu.
     pub weapons: Option<((String, String), Option<WeaponMenu>)>,
     /// The overlay's rollback depths.
     pub meter: NetMeter,
-    /// `--net-sim`: ready once in the lobby.
+    /// `--net-sim`: ready whenever the lobby gathers.
     pub auto_ready: bool,
+}
+
+impl Net {
+    /// The setup packs of `mod_id` on `level_id` (`setup_packs`), hashed
+    /// once while they stay the same.
+    pub fn packs(
+        &mut self,
+        content: &Content,
+        mod_id: &str,
+        level_id: &str,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        if let Some(((m, l), packs)) = &self.setup_packs
+            && m == mod_id
+            && l == level_id
+        {
+            return Ok(packs.clone());
+        }
+        let packs = setup_packs(content, mod_id, level_id)?;
+        self.setup_packs = Some(((mod_id.into(), level_id.into()), packs.clone()));
+        Ok(packs)
+    }
 }
 
 impl Net {
@@ -78,6 +105,7 @@ impl Net {
             max_players: 0,
             announce: None,
             checked_packs: None,
+            setup_packs: None,
             weapons: None,
             meter: NetMeter::default(),
             auto_ready: false,
@@ -189,10 +217,11 @@ pub fn prefs_of(s: &MatchSetupWire) -> MatchPrefs {
 }
 
 /// The lobby's setup of the menus' `p` (not through `MatchPrefs::sanitize`:
-/// a lobby of people may have no bot): the packs with their content
-/// hashes from `content`, the bots named "Bot N" in OLX's bot colours away
-/// from `host_colour`, in the default skin.
-pub fn setup_of(p: &MatchPrefs, content: &Content, host_colour: [u8; 3]) -> anyhow::Result<MatchSetupWire> {
+/// a lobby of people may have no bot): `packs` (its mod's, level's and
+/// theme's with their content hashes: `setup_packs`, `Net::packs`), the
+/// bots named "Bot N" in OLX's bot colours away from `host_colour`, in the
+/// default skin.
+pub fn setup_of(p: &MatchPrefs, packs: Vec<(String, String)>, host_colour: [u8; 3]) -> MatchSetupWire {
     let n = usize::from(p.bots);
     let colours = rl_ui::bot_colours(host_colour, n);
     let bots = (0..n)
@@ -207,16 +236,16 @@ pub fn setup_of(p: &MatchPrefs, content: &Content, host_colour: [u8; 3]) -> anyh
             bot_wire(&c, look)
         })
         .collect();
-    Ok(MatchSetupWire {
+    MatchSetupWire {
         mod_id: p.mod_id.clone(),
         level_id: p.level_id.clone(),
-        packs: setup_packs(content, &p.mod_id, &p.level_id)?,
+        packs,
         rules: rules_wire(&p.rules.deathmatch()),
         bonuses: p.bonuses,
         loading_time: p.loading_time,
         restrictions: p.restrictions.clone(),
         bots,
-    })
+    }
 }
 
 /// The packs of `setup` this install lacks, or has with other contents.

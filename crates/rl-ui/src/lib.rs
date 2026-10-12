@@ -25,9 +25,9 @@ pub use match_prefs::{
     MatchPrefs, RulePrefs, TIME_LIMIT_RANGE,
 };
 pub use online::{
-    ADDRESS_CHARS, CHAT_CHARS, DEFAULT_PORT, HostPrefs, LanEntry, LobbyCommand, LobbyView, MAX_PLAYERS,
-    MIN_PLAYERS, MemberView, OnlineSettings, PASSWORD_CHARS, PHASE_LOBBY, Password, SEAT_SPECTATOR,
-    Visibility,
+    ADDRESS_CHARS, CHAT_CHARS, CHAT_KEY, DEFAULT_PORT, HostPrefs, LanEntry, LobbyCommand, LobbyView,
+    MAX_PLAYERS, MIN_PLAYERS, MemberView, OnlineSettings, PASSWORD_CHARS, PHASE_LOBBY, Password,
+    SEAT_SPECTATOR, Visibility,
 };
 pub use profiles::{
     CPU_COLOURS, DEFAULT_WEAPONS, MAX_NAME_CHARS, MAX_PROFILES, NEW_COLOURS, NameError, PROFILES_VERSION,

@@ -29,7 +29,11 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   `lobby()` (`LobbyHandle`: ready, spectate, look, loadout, chat, have,
   setup, kick, move_seat (the host's), start, force_start, can_start
   (the host's answer; `NotHost`, `Running`), state, me); `match_session[_mut]`,
-  `my_slot` (`None` once the match ended); `take_ended_world` (the
+  `my_slot` (`None` once the match ended); `tick_phase(now)` (the
+  session's, for the game's interpolation); `take_replay` (the
+  `replay::PendingReplay` being made, handed out so it outlives the peer;
+  a client closing once its match has a result makes it first from what
+  it confirmed); `take_ended_world` (the
   match's world as last presented, kept at its end: the host's after the
   presented advance, a client's at `Ended`, before the poll's unpresented
   advance; cleared at the next start); `stats` (`NetStats`, per second);
@@ -90,11 +94,16 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   runs it on a thread (`rl-online-replay`); a peer runs one at a time (a
   match ending while one is made gets `REPLAY_SKIPPED`, so a hostile host
   cannot pile up threads). A spectator that joined mid-match has no rows
-  from tick 0 and makes none.
+  from tick 0 and makes none. `PendingReplay` (the job, its record, host
+  and slot) `poll`s to its events: a missed checksum's `DesyncBundle` and
+  `Notice`, then `ReplayReady`, or the failure's `Notice`.
 - **`bundle.rs`** (spec §3.5, §9.10): `GameBundle` (what happened, host
   or not, `my_slot`, `FINGERPRINT`, platform `<arch>-<os>`, the
   `MatchStartWire`, the confirmed input rows from tick 0, this peer's
-  checksums, the mismatch `(tick, local, remote)`), encoded as `RLDG`, a
+  checksums, the other side's stream (`other_checksums`: on the host the
+  peer's compared reports, `Session::peer_checksums`; on a client the
+  host's checksum of the mismatch), the mismatch `(tick, local,
+  remote)`), encoded as `RLDG`, a
   u16 LE version and postcard (`.rldg`; not `rl-cli`'s `.rlds`, which
   rebuilds its world from a `NetSpec`). The session's `Desync` (both
   sides: a client's when the host reports it, the host's per peer) and a

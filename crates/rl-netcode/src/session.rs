@@ -18,8 +18,8 @@ use rl_sim::Keys;
 use crate::clock::{JUMP_TICKS, MARGIN_SAMPLES, MAX_ADJUST_PPM, Margins, Pace, TARGET_MARGIN};
 use crate::inputs::{InputLog, SetResult};
 use crate::sync::{
-    Checks, Incoming, LOAD_TIMEOUT_US, MAX_REPAIRS, REPAIR_MARGIN, REPORT_WINDOW, Remote, Repair,
-    state_controls,
+    Checks, Incoming, LOAD_TIMEOUT_US, MAX_REPAIRS, PEER_STREAM_KEEP, REPAIR_MARGIN, REPORT_WINDOW, Remote,
+    Repair, state_controls,
 };
 use crate::{Channel, PeerId, Simulation};
 
@@ -585,6 +585,13 @@ impl<S: Simulation> Session<S> {
         self.checks.confirmed()
     }
 
+    /// Host: `peer`'s sync checksums it compared with ours, ascending (the
+    /// last [`PEER_STREAM_KEEP`]): the other stream of a desync bundle
+    /// (spec §3.5). Empty for an unknown peer, and on a client.
+    pub fn peer_checksums(&self, peer: PeerId) -> Vec<(u32, u64)> {
+        self.peers.get(&peer).map(|p| p.checks.compared.iter().copied().collect()).unwrap_or_default()
+    }
+
     /// The state after the last confirmed tick that was simulated, and that
     /// tick: the snapshot before the next is restored and encoded, then the
     /// ticks after it are simulated again (unreported: they come out the
@@ -681,6 +688,18 @@ impl<S: Simulation> Session<S> {
             Role::Client { .. } => self.cfg.input_delay as u32,
             _ => 0,
         }
+    }
+
+    /// How far the pace is into the tick after the newest one run, in
+    /// `[0, 1)`, for drawing between the last two ticks (spec §3.4: the
+    /// newest predicted tick, interpolated like local play's). `None` when
+    /// it would mislead, the caller drawing the newest tick as it is: the
+    /// last [`Session::advance`] left due ticks unrun (a stall at the
+    /// prediction limit, or catching up), or a spectator, whose ticks
+    /// follow the host's frames, not the pace.
+    pub fn tick_phase(&self, now_us: u64) -> Option<f32> {
+        let paced = matches!(self.role, Role::Host { .. } | Role::Client { .. });
+        (paced && !self.behind && !self.stalling).then(|| self.pace.phase(now_us))
     }
 
     /// Runs the ticks that are due: first a pending rollback, then new ticks.
@@ -1437,6 +1456,10 @@ impl<S: Simulation> Session<S> {
     fn compare(&mut self, peer: PeerId, tick: u32, remote: u64) {
         let Some(local) = self.checks.get(tick) else { return };
         let Some(p) = self.peers.get_mut(&peer) else { return };
+        if p.checks.compared.len() >= PEER_STREAM_KEEP {
+            p.checks.compared.pop_front();
+        }
+        p.checks.compared.push_back((tick, remote));
         match p.checks.repair {
             Repair::Owed | Repair::Failed => {}
             Repair::Sent { tick: t, .. } if tick > t && local == remote => p.checks.repair = Repair::Clean,
@@ -1692,6 +1715,39 @@ mod tests {
             c.transmit(&mut |to, ch, bytes| wire.push((at, to, ch, bytes)));
         }
         (h, c, sent)
+    }
+
+    /// The tick phase follows the pace while every due tick runs, and is
+    /// `None` (draw the newest tick as it is) once the prediction limit
+    /// stalls the client, or while it catches up.
+    #[test]
+    fn the_tick_phase_follows_the_pace_until_a_stall() {
+        let mut c = client();
+        let mut d = driver();
+        c.advance(25_000, d.as_mut());
+        assert_eq!(c.current_tick(), 2);
+        assert!(c.tick_phase(25_000).is_some_and(|p| (p - 0.5).abs() < 1e-6));
+        assert!(c.tick_phase(29_000).is_some_and(|p| (p - 0.9).abs() < 1e-6), "it grows within the tick");
+        // No host: the client predicts up to its limit, then stalls.
+        let mut now = 25_000;
+        while !c.stalling {
+            now += 10_000;
+            c.advance(now, d.as_mut());
+            assert!(now < 10_000_000, "the client stalls");
+        }
+        assert_eq!(c.tick_phase(now), None, "stalled: the newest tick as it is");
+        // Far behind the pace: catching up, at most MAX_CATCHUP a call.
+        let mut h = Session::new(Config::new(2, 0), Role::Host { peers: vec![] }, ToySim::new(2), 0);
+        h.advance(500_000, d.as_mut());
+        assert_eq!((h.current_tick(), h.tick_phase(500_000)), (MAX_CATCHUP, None), "catching up");
+        let mut t = 500_000;
+        while h.current_tick() < 50 {
+            t += 1_000;
+            h.advance(t, d.as_mut());
+        }
+        assert!(h.tick_phase(t).is_some(), "caught up");
+        let spectator = Session::new(Config::new(2, 0), Role::Spectator { host: 0 }, ToySim::new(2), 0);
+        assert_eq!(spectator.tick_phase(5_000), None, "a spectator follows the host's frames");
     }
 
     /// The client confirmed the host's inputs and is at most `lag` ticks behind its frontier.

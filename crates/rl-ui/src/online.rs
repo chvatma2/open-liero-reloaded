@@ -6,6 +6,7 @@
 
 use std::net::SocketAddr;
 
+use rl_input::KeyCode;
 use rl_sim::MAX_SLOTS;
 use serde::{Deserialize, Serialize};
 
@@ -135,11 +136,22 @@ pub struct OnlineSettings {
     pub host: HostPrefs,
     /// The port an address typed without one is joined at.
     pub port: u16,
+    /// The key that opens the chat in an online match (spec §7.2: T,
+    /// configurable). A key the game keeps (`GAME_KEYS`) is not one.
+    pub chat_key: KeyCode,
 }
+
+/// The chat key by default (spec §7.2).
+pub const CHAT_KEY: KeyCode = KeyCode::KeyT;
 
 impl Default for OnlineSettings {
     fn default() -> Self {
-        OnlineSettings { last_address: String::new(), host: HostPrefs::default(), port: DEFAULT_PORT }
+        OnlineSettings {
+            last_address: String::new(),
+            host: HostPrefs::default(),
+            port: DEFAULT_PORT,
+            chat_key: CHAT_KEY,
+        }
     }
 }
 
@@ -153,6 +165,10 @@ impl OnlineSettings {
         if self.port == 0 {
             w.push(format!("online.port is 0: {DEFAULT_PORT}"));
             self.port = DEFAULT_PORT;
+        }
+        if let Some((_, what)) = crate::settings::GAME_KEYS.iter().find(|(k, _)| *k == self.chat_key) {
+            w.push(format!("online.chat_key {:?} is the game's ({what}): {CHAT_KEY:?}", self.chat_key));
+            self.chat_key = CHAT_KEY;
         }
         w
     }

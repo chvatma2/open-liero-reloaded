@@ -55,12 +55,11 @@ impl Settings {
 
 /// The keys the game keeps for itself (`rl-game`'s `on_key` and the
 /// menus), with what they do: never bound to an action.
-pub const GAME_KEYS: [(KeyCode, &str); 9] = [
+pub const GAME_KEYS: [(KeyCode, &str); 8] = [
     (KeyCode::Escape, "the menus"),
     (KeyCode::F5, "restart"),
     (KeyCode::F2, "the debug panel"),
     (KeyCode::F3, "the network panel"),
-    (KeyCode::KeyT, "the chat online"),
     (KeyCode::Tab, "the scores"),
     (KeyCode::KeyH, "the health bars"),
     (KeyCode::PageUp, "fast-forward"),

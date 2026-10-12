@@ -18,6 +18,7 @@ use rl_game::setup::{self, PlayerLook};
 use rl_lobby::{HostConfig, Identity};
 use rl_modes::DeathmatchSettings;
 use rl_net::endpoint::EndpointConfig;
+use rl_netcode::world_sim::TickedTick;
 use rl_online::matches::{bot_wire, rules_wire, setup_packs};
 use rl_online::{OnlineEvent, OnlinePeer, PeerRole};
 use rl_proto::{Look, MatchSetupWire, SeatWire};
@@ -374,6 +375,14 @@ fn an_online_match_runs_headless() {
         assert!(std::ptr::eq(s.world(), &s.world));
         assert!(*s.world() == kept, "frame {i}: the world drawn no longer changes");
     }
+    // A next match's start in a poll, and everything after it, are handed
+    // back unpresented (that match's session presents them); the ticks
+    // before it are this match's.
+    let tick = |tick| TickedTick { tick, resim: false, substeps: 1, lost: None, events: Vec::new() };
+    let next = OnlineEvent::MatchStarting { start: start.clone(), my_slot };
+    let poll =
+        vec![OnlineEvent::Ticked(vec![tick(90_000)]), next.clone(), OnlineEvent::Ticked(vec![tick(90_001)])];
+    assert_eq!(s.present_events(poll), [next, OnlineEvent::Ticked(vec![tick(90_001)])]);
     assert!(begun.elapsed() < Duration::from_secs(30), "the test took {:?}", begun.elapsed());
 }
 
@@ -521,8 +530,15 @@ fn hosting_and_joining_from_the_shell() {
     assert_eq!((h.session().unwrap().local(), c.session().unwrap().local()), (Some(0), Some(1)));
 
     let mut seen: [BTreeMap<u32, Vec<Score>>; 2] = Default::default();
+    let mut between = 0;
     for _ in 0..200 {
-        frame(&mut [&mut h, &mut c], Instant::now(), &mut |i| player_keys(i as u64 * 7 + 3));
+        let now = Instant::now();
+        frame(&mut [&mut h, &mut c], now, &mut |i| player_keys(i as u64 * 7 + 3));
+        for sh in [&h, &c] {
+            let a = sh.session().and_then(|s| s.online_alpha(now)).expect("an online alpha");
+            assert!((0.0..=1.0).contains(&a), "{a}");
+            between += usize::from(a > 0.05 && a < 0.95);
+        }
         for (i, sh) in [&h, &c].into_iter().enumerate() {
             if let Some((t, s)) = confirmed(sh) {
                 seen[i].insert(t, s);
@@ -536,6 +552,7 @@ fn hosting_and_joining_from_the_shell() {
         assert_eq!(seen[0][t], seen[1][t], "the confirmed scores of tick {t}");
     }
     assert!(common.iter().any(|&t| t > 50), "the match went on: {common:?}");
+    assert!(between > 100, "frames drawn between ticks by the pace's phase: {between} of 400");
 
     // The time limit ends it: the results, then the replay saved.
     frames_until("both show the results", Duration::from_secs(10), &mut [&mut h, &mut c], |s| {
@@ -579,6 +596,10 @@ fn chat_reaches_the_other_player_in_game() {
     let Some(dir) = content_dir() else { return };
     let (mut h, mut c) = host_and_client(&dir, 1.0, None);
     start_match(&mut h, &mut c);
+    assert!(c.open_chat(), "the chat key opens the field in game");
+    assert_eq!(c.data.ingame_chat.as_deref(), Some(""));
+    assert!(!c.open_chat(), "once");
+    c.data.ingame_chat = None;
     c.act(UiAction::LobbyChat("hello host".into()));
     frames_until("the line reaches the host's HUD", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
         s[0].session().is_some_and(|x| x.log.lines().any(|l| l.text == "Anna: hello host"))
@@ -661,7 +682,8 @@ fn a_hidden_window_keeps_the_match_alive() {
 #[test]
 fn net_sim_flag_starts_a_local_match() {
     let Some(dir) = content_dir() else { return };
-    let mut sh = menus(&dir, Store::in_memory(), "Anna", 1.0);
+    let begun = Instant::now();
+    let mut sh = menus(&dir, Store::in_memory(), "Anna", 0.05);
     let profile = rl_netcode::netsim::Profile::by_name("typical").unwrap();
     sh.start_net_sim(profile).unwrap();
     frames_until("the net-sim match starts", Duration::from_secs(15), &mut [&mut sh], |s| {
@@ -680,4 +702,77 @@ fn net_sim_flag_starts_a_local_match() {
     let net = sh.net_view().unwrap();
     assert!(net.stats.rtt_ms.is_some_and(|ms| ms >= 60), "the profile's 80 ms ping: {:?}", net.stats.rtt_ms);
     assert!(net.stats.input_delay > 0, "an input delay for the round trip");
+    // The match ends; when the lobby gathers again this player readies
+    // itself again and the next match starts.
+    assert_eq!(sh.launches(), 1);
+    frames_until("the next net-sim match starts", Duration::from_secs(15), &mut [&mut sh], |s| {
+        s[0].launches() == 2 && s[0].ui.screen() == Screen::InGame
+    });
+    assert!(begun.elapsed() < Duration::from_secs(20), "the test took {:?}", begun.elapsed());
+}
+
+fn replays_in(dir: &std::path::Path) -> usize {
+    std::fs::read_dir(dir.join("replays")).map_or(0, |d| d.count())
+}
+
+/// A match's replay is made after it on a worker thread (decision N18):
+/// leaving the game the moment the results show (the host, the client,
+/// and the client quitting at once) still saves both replays.
+#[test]
+fn leaving_right_after_the_end_keeps_the_replay() {
+    let Some(dir) = content_dir() else { return };
+    let (hd, cd) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let mut h = menus(&dir, Store::open(hd.path()), "Hosty", 0.05);
+    host(&mut h);
+    let port = h.local_port().unwrap();
+    let mut c = menus(&dir, Store::open(cd.path()), "Anna", 0.05);
+    join(&mut c, port);
+    frames_until("the client joins", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
+        s[1].ui.screen() == Screen::Lobby && members(s[0]) == 2
+    });
+    start_match(&mut h, &mut c);
+    let mut left = [false; 2];
+    frames_until("both leave as their results show", Duration::from_secs(15), &mut [&mut h, &mut c], |s| {
+        for (i, sh) in s.iter_mut().enumerate() {
+            if !left[i] && sh.ui.screen() == Screen::Results {
+                sh.act(UiAction::Back);
+                sh.act(UiAction::Back);
+                assert_eq!(sh.ui.screen(), Screen::Multiplayer);
+                left[i] = true;
+            }
+            // The host left first (a loaded machine): the client is back
+            // in Multiplayer ("the host closed the lobby").
+            left[i] |= i == 1 && left[0] && sh.ui.screen() == Screen::Multiplayer;
+        }
+        left == [true, true]
+    });
+    // The client quits at once: quitting waits for the replay.
+    c.finish();
+    assert_eq!(replays_in(cd.path()), 1, "the client's replay");
+    // The host stays in the menus: its replay is saved when made.
+    frames_until("the host's replay is saved", Duration::from_secs(5), &mut [&mut h], |_| {
+        replays_in(hd.path()) == 1
+    });
+    assert!(!h.online_active(), "nothing online is left");
+}
+
+/// `--host NAME` hosts through the menus' own actions, but nothing it
+/// chose is remembered, not even by a save the options make later.
+#[test]
+fn flags_are_not_remembered() {
+    let Some(dir) = content_dir() else { return };
+    let data = tempfile::tempdir().unwrap();
+    let mut sh = menus(&dir, Store::open(data.path()), "Anna", 1.0);
+    sh.host_from_flag(Some("Flagged".into()));
+    assert_eq!(sh.ui.screen(), Screen::Lobby);
+    frames_until("the lobby shows", Duration::from_secs(3), &mut [&mut sh], |s| s[0].data.lobby.is_some());
+    assert_eq!(sh.data.lobby.as_ref().unwrap().name, "Flagged");
+    assert_eq!(sh.ui.settings().online, rl_ui::OnlineSettings::default());
+    let mut v = sh.ui.settings().video.clone();
+    v.ui_scale = 1.5;
+    sh.act(UiAction::SetVideo(v));
+    sh.flush();
+    let saved = Store::open(data.path()).load_settings().value;
+    assert_eq!(saved.video.ui_scale, 1.5, "the options' change is saved");
+    assert_eq!(saved.online, rl_ui::OnlineSettings::default(), "the flag's choices are not");
 }

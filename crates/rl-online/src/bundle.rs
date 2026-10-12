@@ -47,6 +47,11 @@ pub struct GameBundle {
     pub rows: Vec<[u8; 32]>,
     /// This peer's confirmed sync checksums (`(tick, checksum)`).
     pub checksums: Vec<(u32, u64)>,
+    /// The other side's stream as this peer knows it: on the host, the
+    /// peer's reports it compared (`Session::peer_checksums`, the last
+    /// `PEER_STREAM_KEEP`); on a client, the host's checksum of the
+    /// mismatch (the one the host sends).
+    pub other_checksums: Vec<(u32, u64)>,
     /// The mismatch: the tick, this peer's checksum and the other's (the
     /// host's on a client; the peer's on the host). `None` for a replay's
     /// checksum warning (in `what`).
@@ -65,6 +70,7 @@ impl GameBundle {
             start: record.start,
             rows: record.rows,
             checksums: record.checksums,
+            other_checksums: Vec::new(),
             mismatch: None,
         }
     }

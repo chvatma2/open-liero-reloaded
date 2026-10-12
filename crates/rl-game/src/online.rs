@@ -44,6 +44,9 @@ pub struct OnlineDriver {
     bots: Vec<i32>,
     /// The sounds one poll plays (reused).
     sounds: Vec<Event>,
+    /// The last poll loaded a state or put map areas back (a rollback):
+    /// its frame draws the newest tick as it is.
+    jumped: bool,
 }
 
 impl OnlineDriver {
@@ -59,7 +62,19 @@ impl OnlineDriver {
             confirmed_tick: None,
             bots,
             sounds: Vec::new(),
+            jumped: false,
         }
+    }
+
+    /// What to draw the frame at `now` with between the last two ticks
+    /// (spec §3.4): the pace's tick phase (`OnlinePeer::tick_phase`), or 1
+    /// (the newest tick as it is) while the match stalls or catches up, for
+    /// a spectator, and on the frame after a loaded state or a rollback.
+    pub fn alpha(&self, now: Instant) -> f32 {
+        if self.jumped {
+            return 1.0;
+        }
+        self.peer.tick_phase(now).unwrap_or(1.0)
     }
 
     pub fn peer(&self) -> &OnlinePeer {
@@ -128,6 +143,7 @@ impl OnlineDriver {
         let confirmed_below = session.map(|s| s.confirmed());
         self.sounds.clear();
         let p = present_poll(&mut self.presenter, present, world, confirmed_below, events, &mut self.sounds);
+        self.jumped = p.jumped;
         if !self.sounds.is_empty() {
             play(&self.sounds, present);
         }
@@ -145,6 +161,8 @@ pub(crate) struct Presented {
     pub confirmed: Vec<ConfirmedTick>,
     /// The events that are not the presentation's, in order.
     pub rest: Vec<OnlineEvent>,
+    /// A state loaded or map areas came back (a rollback).
+    pub jumped: bool,
 }
 
 /// Presents one poll's `events` on `present` with `presenter`, in the
@@ -175,6 +193,7 @@ pub(crate) fn present_poll(
             other => rest.push(other),
         }
     }
+    let jumped = !loaded.is_empty() || !restored.is_empty();
     if let Some(world) = world {
         for tick in loaded {
             present.state_loaded(world);
@@ -187,7 +206,7 @@ pub(crate) fn present_poll(
     if let Some(tick) = confirmed_below {
         presenter.confirmed(tick);
     }
-    Presented { confirmed, rest }
+    Presented { confirmed, rest, jumped }
 }
 
 #[cfg(test)]
@@ -249,6 +268,7 @@ mod tests {
                 &mut sounds,
             );
             assert!(p.confirmed.is_empty() && p.rest.is_empty());
+            assert!(!p.jumped, "plain ticks: drawn between the last two");
             // The state after tick 299 loads (the world goes on from it), the
             // whole map comes back, and ticks 300.. run in the same poll.
             let t = s.world.terrain();
@@ -275,6 +295,7 @@ mod tests {
             let p =
                 present_poll(&mut presenter, &mut s.present, Some(&s.world), Some(300), events, &mut sounds);
             assert_eq!(p.rest, [OnlineEvent::Lagging(false)], "the shell's events are handed back");
+            assert!(p.jumped, "a loaded state: its frame draws the newest tick as it is");
             assert_eq!(presenter.spawned() - spawned, spawns as u64, "every effect after the state spawned");
             assert!(!s.present.fx.is_empty(), "the load came first: its clearing kept the new effects");
             assert!(!s.present.terrain_drift(&s.world));

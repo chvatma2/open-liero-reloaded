@@ -599,20 +599,21 @@ fn a_lost_connection_ends_the_online_match() {
     assert!(!ui.is_online() && !ui.is_paused() && ui.game().is_none());
 }
 
-/// Online, `T` opens a chat field over the match: what is typed goes to
-/// it (the `T` itself is not typed), Enter sends the line and closes it,
-/// Esc closes it without opening the menu. A local game has no chat.
+/// Online, the chat key (the app's: `settings.online.chat_key`) opens a
+/// field over the match (`MenuData::ingame_chat`): Enter sends the line and
+/// closes it, Esc closes it without opening the menu. The menu closes it,
+/// and a local game has none.
 #[test]
-fn t_opens_the_chat_in_game() {
+fn the_chat_field_in_game() {
     let mut h = harness();
     in_lobby(h.state_mut(), lobby_view(false));
     h.state_mut().ui.update(UiAction::MatchStarted);
     settle(&mut h);
     assert!(h.query_by_role_and_label(Role::TextInput, "Say:").is_none());
-    h.key_press(egui::Key::T);
+    h.state_mut().data.ingame_chat = Some(String::new());
     settle(&mut h);
     let field = h.get_by_role_and_label(Role::TextInput, "Say:");
-    assert_eq!(field.value().as_deref(), Some(""), "the T opens, it is not typed");
+    assert_eq!(field.value().as_deref(), Some(""));
     h.get_by_role_and_label(Role::TextInput, "Say:").type_text("good game");
     settle(&mut h);
     h.key_press(egui::Key::Enter);
@@ -620,7 +621,7 @@ fn t_opens_the_chat_in_game() {
     assert_eq!(lobby_commands(&h), [&LobbyCommand::Chat("good game".into())]);
     assert!(h.query_by_role_and_label(Role::TextInput, "Say:").is_none(), "Enter closes it");
     assert!(h.state().data.ingame_chat.is_none());
-    h.key_press(egui::Key::T);
+    h.state_mut().data.ingame_chat = Some(String::new());
     settle(&mut h);
     h.get_by_role_and_label(Role::TextInput, "Say:").type_text("never mind");
     settle(&mut h);
@@ -633,18 +634,37 @@ fn t_opens_the_chat_in_game() {
     settle(&mut h);
     assert!(h.state().ui.is_paused(), "then Esc opens the menu");
     h.get_by_label("Leave the game");
+    h.state_mut().data.ingame_chat = Some(String::new());
+    settle(&mut h);
+    assert!(h.state().data.ingame_chat.is_none(), "not over the menu");
 
     // A local game: no chat.
     let mut h = harness();
     let ui = &mut h.state_mut().ui;
-    ui.update(UiAction::Open(Screen::Main));
     ui.update(UiAction::StartSandbox);
     ui.update(UiAction::MatchStarted);
+    h.state_mut().data.ingame_chat = Some(String::new());
     settle(&mut h);
     assert_eq!(h.state().ui.screen(), Screen::InGame);
-    h.key_press(egui::Key::T);
-    settle(&mut h);
     assert!(h.query_by_role_and_label(Role::TextInput, "Say:").is_none());
+}
+
+/// The chat key is T unless the settings say otherwise, never a key the
+/// game keeps.
+#[test]
+fn the_chat_key_is_a_setting() {
+    use rl_input::KeyCode;
+    let mut s = rl_ui::OnlineSettings::default();
+    assert_eq!(s.chat_key, KeyCode::KeyT);
+    s.chat_key = KeyCode::KeyY;
+    assert!(s.sanitize().is_empty());
+    s.chat_key = KeyCode::Escape;
+    assert_eq!(s.sanitize().len(), 1);
+    assert_eq!(s.chat_key, rl_ui::CHAT_KEY);
+    let ron =
+        ron::to_string(&rl_ui::OnlineSettings { chat_key: KeyCode::KeyY, ..Default::default() }).unwrap();
+    let back: rl_ui::OnlineSettings = ron::from_str(&ron).unwrap();
+    assert_eq!(back.chat_key, KeyCode::KeyY);
 }
 
 /// An online match's results lead back to the lobby, nothing else.

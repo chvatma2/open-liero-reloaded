@@ -282,16 +282,35 @@ impl Session {
         interpolation: Interpolation,
         audio: Audio,
     ) -> anyhow::Result<Session> {
-        let Game::Online { start, my_slot } = &a.game else { anyhow::bail!("not an online match") };
-        let world = driver.world().ok_or_else(|| anyhow::anyhow!("the peer plays no match"))?.clone();
-        anyhow::ensure!(world.worms().len() == start.slots.len(), "the match's worms are not its slots");
-        anyhow::ensure!(driver.peer().my_slot() == *my_slot, "the peer plays another slot");
+        Session::try_online(a, driver, viewport, interpolation, audio).map_err(|(e, _)| e)
+    }
+
+    /// [`Session::online`], the driver handed back with the error (its
+    /// peer still has to say goodbye).
+    pub fn try_online(
+        a: &Assets,
+        driver: OnlineDriver,
+        viewport: Viewport,
+        interpolation: Interpolation,
+        audio: Audio,
+    ) -> Result<Session, (anyhow::Error, Box<OnlineDriver>)> {
+        let checked = (|| {
+            let Game::Online { start, my_slot } = &a.game else { anyhow::bail!("not an online match") };
+            let world = driver.world().ok_or_else(|| anyhow::anyhow!("the peer plays no match"))?;
+            anyhow::ensure!(world.worms().len() == start.slots.len(), "the match's worms are not its slots");
+            anyhow::ensure!(driver.peer().my_slot() == *my_slot, "the peer plays another slot");
+            Ok((world.clone(), start.seed))
+        })();
+        let (world, seed) = match checked {
+            Ok(c) => c,
+            Err(e) => return Err((e, Box::new(driver))),
+        };
         let ticks = driver.peer().match_session().map_or(0, |s| u64::from(s.current_tick()));
         let mut s = Session::assemble(
             a,
             world,
             Driver::Online(Box::new(driver)),
-            start.seed,
+            seed,
             viewport,
             interpolation,
             audio,
@@ -751,6 +770,17 @@ impl Session {
         let mut rest = rest;
         rest.extend(next);
         rest
+    }
+
+    /// An online match's alpha for the frame at `now` (`OnlineDriver::alpha`;
+    /// 1 once the match ended here: its world is frozen); `None` for a
+    /// local game (the app's tick clock gives its alpha).
+    pub fn online_alpha(&self, now: Instant) -> Option<f32> {
+        match &self.driver {
+            Driver::Online(_) if self.frozen => Some(1.0),
+            Driver::Online(d) => Some(d.alpha(now)),
+            _ => None,
+        }
     }
 
     /// One drawn frame at `alpha` between the last two ticks: the scene,

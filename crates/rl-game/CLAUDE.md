@@ -231,7 +231,7 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   gives the peer back. An online match is never fast-forwarded (`human()`).
   A `MatchStarting` among a poll's events and everything after it are
   handed back unpresented (`present_events`): they are the next match's.
-- **Online from the menus** (`shell.rs`'s second `impl`, `net.rs`; plan
+- **Online from the menus** (`shell/online.rs`, `net.rs`; plan
   10 task 12): `HostGame`/`JoinGame` make the `OnlinePeer` (the identity
   from `Store::load_identity`, a fresh key with a warning when the file's
   is no valid key; the selected profile's look, its skin by pack id; a
@@ -254,13 +254,17 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   announcement (`Announcer`, `Visibility::Lan`); `Chat` ("name: text",
   `LineKind::Chat`), `Notice` and `Left` ("name left") → the lobby's chat
   (`net::CHAT_KEEP` lines) and the HUD log; `MatchStarting` → the last
-  match's view ends, `setup::load_online`, `Session::online` with the
+  match's view ends, `setup::load_online`, `Session::try_online` (a
+  failure hands the peer back to say goodbye) with the
   events after it, `MatchStarted` (InGame), `Outcome::Started`;
   `MatchEnded` → the results if they did not show yet; `Results`' Back →
   `EndMatch`: the peer back to `Net` (`end`), the Lobby; `Lagging` → the
   warning; `Kicked`/`Refused`/`Disconnected` → the match view goes at
   once (`lost`), then `OnlineFailed` (Multiplayer with the reason);
-  `ReplayReady` → `replays::auto_save`; `DesyncBundle` → `<data>/desyncs/
+  `ReplayReady` → `replays::auto_save` (a peer let go, `release`, hands
+  its replay being made to `Shell::replays`, polled every frame and
+  waited for at quitting, at most `REPLAY_STOP_WAIT` 2 s: leaving right
+  after a match keeps its replay); `DesyncBundle` → `<data>/desyncs/
   desync-<unix s>-<n>.rldg` (`net::save_bundle`; rl-online's `GameBundle`:
   the start, the confirmed input rows from tick 0, both checksums, the
   build fingerprint, the platform; a `net-repro` for game bundles is
@@ -271,18 +275,25 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   **Hidden window** (decision N21): while `Shell::online_active`,
   `about_to_wait` runs `App::hidden_frame` (the network and the match's
   ticks, no drawing) every `net::HIDDEN_FRAME` (4 ms, `WaitUntil`: not a
-  spinning `Poll`). **In-game chat**: `T` (a `GAME_KEYS` key now) opens
-  rl-ui's field over the playfield; while it is open no key reaches the
-  game (`handler.rs`, `App::key`) and those held are released. **Network
+  spinning `Poll`). **In-game chat**: the options' `online.chat_key` (T)
+  opens rl-ui's field over the playfield (`Shell::open_chat`, from
+  `App::key`); while it is open no key reaches the game (`handler.rs`,
+  `App::key`) and those held are released. **Network
   overlay** (F3, spec §7.3, `overlay::network`): ping, input delay,
   rollback depth last and p99 over 5 s (`net::NetMeter` on the session's
   depth histogram), the last second's deepest, loss, corrections per
   second, the frontier lag (`current_tick - frontier`); "Connection
-  problem" at the playfield's top while `Lagging`. Online frames draw the
-  newest predicted tick at alpha 1 (the local clock's phase is not the
-  netcode's). **Flags**: `--host [name]` and `--join <addr>` act through
+  problem" at the playfield's top while `Lagging`. Online frames are
+  interpolated by the pace's own tick phase (`Session::online_alpha` →
+  `OnlineDriver::alpha` → `OnlinePeer::tick_phase`; the local clock's
+  phase is not the netcode's), 1 (the newest tick as it is) while the
+  match stalls or catches up, for a spectator, on the frame after a
+  loaded state or a rollback (`Presented::jumped`) and once it ended. The
+  host's setup packs are hashed once per mod and level (`Net::packs`);
+  `--net-sim` readies again whenever the lobby gathers. **Flags**: `--host [name]` and `--join <addr>` act through
   the menus (`host_from_flag`, `join_from_flag`; nothing they change is
-  saved), `--port <n>` hosts there and joins an address without a port
+  remembered: `UiState::restore_online`, so no later save writes it),
+  `--port <n>` hosts there and joins an address without a port
   there (`Shell::set_port`; tests host on 0), `--net-sim <profile>`
   (`start_net_sim`: a host in this process with `NET_SIM_BOTS` (3) bots
   on the saved match, watching; this player joins it over a loopback
@@ -432,8 +443,9 @@ hosting on port 0 and one joining, to the lobby, a bot, ready, start,
 equal confirmed scores, the results, the replay saved, back to the
 lobby and leaving; chat in game reaching the other's HUD log; the
 hidden window's `App::hidden_frame` ticking the match; `--net-sim
-typical`'s setup playing; LAN off: `Shell::set_lan(false)`; each under
-20 s), `tests/ingame.rs` (the weapon selection, the pause and a
+typical`'s setup playing and starting the next match; leaving right
+after the end keeps both replays; the flags not remembered; LAN off:
+`Shell::set_lan(false)`; each under 20 s), `tests/ingame.rs` (the weapon selection, the pause and a
 valid replay, the results against the world's scores), `tests/options.rs`
 (video through the paced requests,
 a window made again keeps the game ticking, volumes live, the saved window with the flags on top) play the imported

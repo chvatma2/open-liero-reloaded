@@ -54,7 +54,7 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   `import` (`ImportSettings::last_path`, default empty).
   `sanitize()` fixes out-of-range values and
   keys (`sanitize_bindings`: the `GAME_KEYS` Esc, F5, F2, F3 (the network
-  panel), T (the chat online), Tab, H and
+  panel), Tab, H and
   PageUp/PageDown (a watched game's fast-forward) are dropped, then an
   action left unreachable gets OLX's back), one warning each.
   The master volume defaults to OLX's 70 %; the game plays `master * sfx`.
@@ -168,11 +168,13 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   lobby" emits `EndMatch` and returns to the Lobby; `OnlineFailed` from
   any screen ends the match (`EndMatch`) and goes to Multiplayer;
   `LobbyChat` works in game and on the results too; `take_seed` gives the
-  lobby's start its seed. In game `T` (no modifier) opens a chat field
+  lobby's start its seed; `restore_online` puts the online settings back
+  without saving (the app's command line flags). In game the chat field
   over the playfield's bottom (`MenuData::ingame_chat`, `ingame.rs`; the
-  `T` is not typed): Enter sends (`LobbyChat`) and closes, Esc or a click
-  elsewhere closes, and Esc there is not Back (`show`'s typing check
-  covers InGame).
+  app opens it with `settings.online.chat_key`, `CHAT_KEY` T by default,
+  never one of `GAME_KEYS`: sanitized): Enter sends (`LobbyChat`) and
+  closes, Esc or a click elsewhere closes, and Esc there is not Back
+  (`show`'s typing check covers InGame); the match's menu closes it.
 - **Import job** (`import.rs`, plan 7 task 7): `ImportJob::spawn(path,
   packs)` runs `rl_content::import::discover` and `import` (no prune,
   revision `LOCAL_REVISION`) on a thread named `olx-import` and returns at

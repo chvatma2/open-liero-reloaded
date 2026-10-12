@@ -12,6 +12,8 @@ use rl_content::Content;
 use rl_proto::MatchStartWire;
 use rl_sim::{Keys, TickEvents};
 
+use crate::bundle::GameBundle;
+use crate::events::OnlineEvent;
 use crate::matches;
 
 /// A finished match as one peer confirmed it: what its replay is made of.
@@ -63,6 +65,49 @@ pub fn make(content: &Content, record: &MatchRecord) -> anyhow::Result<Made> {
     }
     let replay = recorder.finish(&world).map_err(|e| anyhow!("{e}")).context("finishing the replay")?;
     Ok(Made { bytes: replay.encode(), warning })
+}
+
+/// A finished match's replay being made (decision N18), as the peer hands
+/// it out ([`crate::OnlinePeer::take_replay`]) so it survives the peer: the
+/// job, what it is made of, and who made it (for a desync bundle when a
+/// confirmed checksum is missed).
+pub struct PendingReplay {
+    job: ReplayJob,
+    record: MatchRecord,
+    host: bool,
+    my_slot: Option<u8>,
+}
+
+impl PendingReplay {
+    pub fn spawn(
+        content: Arc<Content>,
+        record: MatchRecord,
+        host: bool,
+        my_slot: Option<u8>,
+    ) -> PendingReplay {
+        let job = ReplayJob::spawn(content, record.clone());
+        PendingReplay { job, record, host, my_slot }
+    }
+
+    /// `None` while it is being made; then what it gave, in order: a
+    /// confirmed checksum the re-simulation missed (a desync too, spec
+    /// §9.10: `DesyncBundle` and a `Notice`), then `ReplayReady`; or the
+    /// failure's `Notice`. Once it gave them, the job is done: drop it.
+    pub fn poll(&self) -> Option<Vec<OnlineEvent>> {
+        let mut events = Vec::new();
+        match self.job.poll()? {
+            Ok(made) => {
+                if let Some(w) = made.warning {
+                    let bundle = GameBundle::of(self.record.clone(), w.clone(), self.host, self.my_slot);
+                    events.push(OnlineEvent::DesyncBundle(bundle.encode()));
+                    events.push(OnlineEvent::Notice(w));
+                }
+                events.push(OnlineEvent::ReplayReady(made.bytes));
+            }
+            Err(e) => events.push(OnlineEvent::Notice(format!("the replay failed: {e}"))),
+        }
+        Some(events)
+    }
 }
 
 /// A replay being made on its own thread.

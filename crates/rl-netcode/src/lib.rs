@@ -29,6 +29,7 @@ pub use session::{
     TickInfo, input_delay,
 };
 pub use sim::{Simulation, StateRejected, ToySim};
+pub use sync::PEER_STREAM_KEEP;
 pub use world_sim::WorldSim;
 
 /// A peer's address within one session.

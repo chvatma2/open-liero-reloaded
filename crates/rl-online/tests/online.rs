@@ -445,6 +445,15 @@ fn a_desync_makes_a_bundle_on_both_sides() {
     let (h, c) = (&bundles(&net.peers[0])[0], &bundles(&net.peers[a])[0]);
     let (ht, hl, hr) = h.mismatch.unwrap();
     assert_eq!(c.mismatch, Some((ht, hr, hl)), "the same mismatch from both sides");
+    // Both streams (spec §3.5): the host has the client's reports up to the
+    // mismatch, which agree with the client's own before it.
+    assert!(h.other_checksums.len() > 5, "the client's stream: {:?}", h.other_checksums);
+    assert_eq!(h.other_checksums.last(), Some(&(ht, hr)));
+    for &(t, sum) in h.other_checksums.iter().filter(|&&(t, _)| t < ht) {
+        assert!(c.checksums.contains(&(t, sum)), "tick {t}: the client's own");
+        assert!(h.checksums.contains(&(t, sum)), "tick {t}: in sync before the mismatch");
+    }
+    assert_eq!(c.other_checksums, [(ht, hl)], "a client knows the host's of the mismatch");
     net.assert_quick();
 }
 

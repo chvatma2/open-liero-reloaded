@@ -32,7 +32,7 @@ use rl_sim::{EndReason, Keys, MatchResult, Score, TickEvents, World};
 use crate::bundle::{GameBundle, MAX_BUNDLES_PER_MATCH};
 use crate::events::{NetStats, OnlineEvent};
 use crate::matches::{self, HostBots};
-use crate::replay::{MatchRecord, ReplayJob};
+use crate::replay::{MatchRecord, PendingReplay};
 
 /// The host sends its lobby's messages at most this often: changes in
 /// between are coalesced into one `Lobby` (a start, an end, a kick and a
@@ -170,9 +170,8 @@ pub struct OnlinePeer {
     now: Option<Instant>,
     now_us: u64,
     game: Option<Game>,
-    /// The replay being made (one at a time), and what it is made of (a
-    /// checksum it misses makes a desync bundle of it).
-    replay: Option<(ReplayJob, MatchRecord)>,
+    /// The replay being made (one at a time).
+    replay: Option<PendingReplay>,
     last_record: Option<MatchRecord>,
     /// The match's world as last presented, kept when it ended (until
     /// taken: [`OnlinePeer::take_ended_world`]).
@@ -312,6 +311,16 @@ impl OnlinePeer {
 
     pub fn match_session_mut(&mut self) -> Option<&mut Session<WorldSim>> {
         self.game.as_mut().filter(|g| g.ended.is_none()).map(|g| &mut g.session)
+    }
+
+    /// How far the running match's pace is into its next tick at `now`
+    /// (`rl_netcode::Session::tick_phase`): what the game interpolates by.
+    /// `None` without a match, while it stalls or catches up, and for a
+    /// spectator: then the newest tick is drawn as it is.
+    pub fn tick_phase(&self, now: Instant) -> Option<f32> {
+        let epoch = self.epoch?;
+        let now_us = now.saturating_duration_since(epoch).as_micros() as u64;
+        self.match_session()?.tick_phase(now_us)
     }
 
     /// The worm this peer plays in the running match.
@@ -494,6 +503,12 @@ impl OnlinePeer {
     /// Closes every connection; nothing more happens (a replay being made
     /// still arrives).
     fn shut(&mut self) {
+        // A client closing once its match has a result (the end confirmed,
+        // or the host's `Ended`): the replay from what it confirmed (else it
+        // would be lost with the session).
+        if !self.is_host() && self.game.as_ref().is_some_and(|g| g.ended.is_some() || g.end_at.is_some()) {
+            self.finish_client();
+        }
         // What was queued leaves with this poll, before the close (before
         // the first poll no connection is open).
         if let Some(now) = self.now {
@@ -868,6 +883,7 @@ impl OnlinePeer {
         };
         let mut bundle = GameBundle::of(record, what, host, g.my_slot);
         bundle.mismatch = Some((tick, local, remote));
+        bundle.other_checksums = if host { g.session.peer_checksums(peer) } else { vec![(tick, remote)] };
         self.events.push(OnlineEvent::DesyncBundle(bundle.encode()));
     }
 
@@ -983,28 +999,23 @@ impl OnlinePeer {
             self.events.push(OnlineEvent::Notice(REPLAY_SKIPPED.into()));
             return;
         }
-        let job = ReplayJob::spawn(Arc::clone(&self.content), record.clone());
-        self.replay = Some((job, record));
+        let my_slot = record.start.slots.iter().position(|s| s.member == self.me()).map(|i| i as u8);
+        let host = self.is_host();
+        self.replay = Some(PendingReplay::spawn(Arc::clone(&self.content), record, host, my_slot));
     }
 
     fn collect_replay(&mut self) {
-        let Some(result) = self.replay.as_ref().and_then(|(job, _)| job.poll()) else { return };
-        let Some((_, record)) = self.replay.take() else { return };
-        match result {
-            Ok(made) => {
-                if let Some(w) = made.warning {
-                    // A confirmed checksum the re-simulation missed: a
-                    // desync too (spec §9.10).
-                    let my_slot =
-                        record.start.slots.iter().position(|s| s.member == self.me()).map(|i| i as u8);
-                    let bundle = GameBundle::of(record, w.clone(), self.is_host(), my_slot);
-                    self.events.push(OnlineEvent::DesyncBundle(bundle.encode()));
-                    self.events.push(OnlineEvent::Notice(w));
-                }
-                self.events.push(OnlineEvent::ReplayReady(made.bytes));
-            }
-            Err(e) => self.events.push(OnlineEvent::Notice(format!("the replay failed: {e}"))),
-        }
+        let Some(events) = self.replay.as_ref().and_then(PendingReplay::poll) else { return };
+        self.replay = None;
+        self.events.extend(events);
+    }
+
+    /// The replay being made, handed out so it outlives this peer (the
+    /// game leaves right after a match: its replay is still saved). A
+    /// client that leaves once its match has a result makes it first, from
+    /// what it confirmed (`leave`).
+    pub fn take_replay(&mut self) -> Option<PendingReplay> {
+        self.replay.take()
     }
 
     fn update_stats(&mut self, now: Instant) {

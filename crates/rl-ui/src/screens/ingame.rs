@@ -5,9 +5,10 @@
 //! except online, where nothing pauses: there it is the match's menu, and
 //! Quit to menu leaves the online game.
 //!
-//! Online, `T` opens the chat (spec §7.2): a one-line field over the
-//! bottom of the playfield ([`MenuData::ingame_chat`] holds its text while
-//! it is open; the app sends no key to the game meanwhile). Enter sends
+//! Online, the chat key (`settings.online.chat_key`, T by default; the app
+//! opens it) opens the chat (spec §7.2): a one-line field over the bottom
+//! of the playfield ([`MenuData::ingame_chat`] holds its text while it is
+//! open; the app sends no key to the game meanwhile). Enter sends
 //! the line (`LobbyChat`) and closes it, Esc closes it (and does not open
 //! the menu: `show`'s typing check), as does a click elsewhere.
 
@@ -24,8 +25,6 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     let online = state.is_online();
     if !online || state.is_paused() {
         data.ingame_chat = None;
-    } else if data.ingame_chat.is_none() && opens_chat(ui) {
-        data.ingame_chat = Some(String::new());
     }
     if data.ingame_chat.is_some() {
         chat(ui, data, out);
@@ -61,17 +60,6 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     });
 }
 
-/// `T` went down this frame without a modifier (Shift-T is a capital in
-/// the field; Ctrl-T is not chat).
-fn opens_chat(ui: &Ui) -> bool {
-    ui.input(|i| {
-        i.events.iter().any(|e| {
-            matches!(e, egui::Event::Key { key: Key::T, pressed: true, repeat: false, modifiers, .. }
-                if modifiers.is_none())
-        })
-    })
-}
-
 /// The open chat field, at the bottom of the playfield.
 fn chat(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
     let (field, _) = super::playfield(ui.ctx());
@@ -102,7 +90,7 @@ fn chat(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
                             close = true;
                         } else if !r.has_focus() {
                             // Just opened: the field takes the keys from the
-                            // next frame (this frame's `T` is not typed).
+                            // next frame (the chat key's text is not typed).
                             r.request_focus();
                         }
                     });

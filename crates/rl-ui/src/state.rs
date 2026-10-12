@@ -354,6 +354,14 @@ impl UiState {
         self.paused
     }
 
+    /// Puts the online settings back to `s`, saving nothing: the app's
+    /// command line flags host and join through the menus' own actions,
+    /// which remember their choices, and a flag is not remembered (a later
+    /// save, from the options, would write it).
+    pub fn restore_online(&mut self, s: crate::online::OnlineSettings) {
+        self.settings.online = s;
+    }
+
     /// The seed of the next match, taken (a lobby's start: the host picks
     /// it as local play does).
     pub fn take_seed(&mut self) -> u32 {

@@ -48,6 +48,15 @@ impl Pace {
         (t as i64).saturating_add(self.shift)
     }
 
+    /// How far the timeline is into its current tick at `now_us`, in
+    /// `[0, 1)`: what a renderer interpolates by between the last two ticks
+    /// run (when every due tick ran). Jumps move whole ticks: no effect.
+    pub fn phase(&self, now_us: u64) -> f32 {
+        let tick = PPM * TICK_US as i128;
+        let into = self.timeline(now_us.max(self.last_us)).rem_euclid(tick);
+        (into as f64 / tick as f64) as f32
+    }
+
     /// The ticks due at `now_us` with `ticks_run` already run: at most [`MAX_CATCHUP`].
     pub fn due(&mut self, now_us: u64, ticks_run: u32) -> u32 {
         self.last_us = self.last_us.max(now_us);
@@ -114,6 +123,20 @@ mod tests {
         assert_eq!(p.due(9_999, 0), 0);
         assert_eq!(p.due(10_000, 0), 1);
         assert_eq!(p.due(1_000_000, 1), MAX_CATCHUP);
+    }
+
+    /// The phase grows within a tick and wraps at the next.
+    #[test]
+    fn the_phase_grows_within_a_tick_and_wraps() {
+        let p = Pace::new(1_000);
+        assert_eq!(p.phase(1_000), 0.0);
+        assert!((p.phase(3_500) - 0.25).abs() < 1e-6);
+        assert!((p.phase(10_999) - 0.9999).abs() < 1e-4);
+        assert_eq!(p.phase(11_000), 0.0, "wraps at the next tick");
+        assert!((p.phase(16_000) - 0.5).abs() < 1e-6);
+        let mut q = p.clone();
+        q.shift(3);
+        assert_eq!(q.phase(16_000), p.phase(16_000), "a jump moves whole ticks");
     }
 
     #[test]
