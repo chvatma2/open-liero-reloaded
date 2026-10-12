@@ -274,11 +274,12 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
   tables for the workspace (`debug = "line-tables-only"`; backtraces still
   show file:line in our crates) and no debug info for dependencies. `cargo xtask
   oracle-record` removes superseded `rl-olx-oracle:*` images (it keeps the
-  current one and `:dev`). `cargo xtask tidy` removes `target/*/incremental`
-  and prunes the images (never `content/packs` or `target/olx`); `cargo
-  xtask tidy --docker-cache` also bounds Docker's build cache to 2 GB, which
-  is machine-wide (other projects' build layers too), so it is opt-in.
-  `check` warns when `target/` passes 25 GB.
+  current one and `:dev`). `cargo xtask tidy` removes superseded builds from
+  `target/` (the older hashes cargo leaves beside each rebuilt artifact, and
+  old incremental sessions) and prunes the images (never `content/packs` or
+  `target/olx`); `cargo xtask tidy --docker-cache` also bounds Docker's build
+  cache to 2 GB, which is machine-wide (other projects' build layers too),
+  so it is opt-in. `check` runs the same sweep when `target/` passes 20 GB.
   (WSL's disk file does not shrink by itself; `wsl --manage <distro>
   --set-sparse true` after `wsl --shutdown` helps.)
 

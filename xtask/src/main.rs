@@ -55,7 +55,8 @@ enum Command {
         #[arg(long)]
         no_import: bool,
     },
-    /// Reclaim disk: remove target incremental caches and superseded oracle Docker images.
+    /// Reclaim disk: remove superseded builds and incremental sessions from
+    /// target/ and superseded oracle Docker images.
     Tidy {
         /// Also bound Docker's build cache to 2 GB (`docker builder prune`): the
         /// cache is the whole machine's, so this prunes other projects' layers too.

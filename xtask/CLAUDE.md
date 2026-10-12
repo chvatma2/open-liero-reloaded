@@ -239,13 +239,40 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   it removes every other `rl-olx-oracle:*` image except the current tag and
   `:dev`. Pruning failures only warn. `images_to_prune` and `prune_commands`
   (unit-tested) pick the tags and the commands.
-- `tidy` deletes `target/*/incremental` (and `target/<triple>/*/incremental`)
-  and prunes oracle images as above; `tidy --docker-cache` also runs
-  `docker builder prune -f --keep-storage 2GB`. That cache is the whole
-  machine's (Docker cannot select one project's layers), so pruning it is
-  opt-in and nothing else does it. It never touches `content/packs` or
-  `target/olx`. `check` prints a `warn` line (not a failure) when `target/`
-  exceeds 25 GB (`tidy::WARN_BYTES`); the size walk gives up after 1 s.
+- `tidy` (`tidy.rs`) sweeps `target/` and prunes oracle images as above;
+  `tidy --docker-cache` also runs `docker builder prune -f --keep-storage
+  2GB`. That cache is the whole machine's (Docker cannot select one
+  project's layers), so pruning it is opt-in and nothing else does it.
+  The sweep (`sweep`): cargo never deletes a build whose configuration
+  changed (profile, features, `Cargo.lock`, toolchain), the new one just
+  gets a new hash. In every cargo profile directory under `target/` (one
+  holding `.fingerprint`, at most three levels down: `debug`,
+  `<triple>/release`, ...), `stale_artifacts` groups `deps/` files into
+  builds by `<stem>-<16 hex>` (`split_artifact`; `lib` prefix and
+  extension dropped) and keys each build by stem, kind (rlib, proc-macro,
+  executable, metadata only), crate root (the `.d` file's first source, a
+  registry `name-x.y.z` reduced to its semver series by `version_series`,
+  so `syn` 2 and 3 both stay but 2.0.118 is superseded by 2.0.119) and,
+  from `.fingerprint/<package>-<hash>/<unit>.json`, unit (`bin-rl-cli`
+  vs `test-bin-rl-cli`) and features (so a crate built with two feature
+  sets keeps both). It removes every build older than its key's newest by
+  more than `SAME_RUN` (10 min: one run's builds alike but for their
+  dependencies, e.g. for build scripts and for the game, stay); a build
+  without its `.d` goes beside a newer one of its stem and kind.
+  `stale_sessions` does the same for `incremental/` sessions per crate
+  name (a whole `<crate>-<hash>` directory when all its sessions go; a
+  lost session only costs a non-incremental compile). The plain stem is
+  not a key: `integration`, `matches` or `no_alloc` test binaries of
+  several crates, `syn` 2 and 3, a crate's builds for two feature sets are
+  all live at once. Removing a live build only costs a rebuild. Only
+  regular files and directories inside `target/` go, never through a
+  symbolic link; `content/packs` and `target/olx` are never touched.
+  Builds of targets that no longer exist (a removed test file) are the
+  newest of their key and stay until `cargo clean`. `check` runs the
+  sweep first when `target/` exceeds 20 GB (`tidy::SWEEP_BYTES`, GiB; a
+  size walk over 10 s counts as over) and prints one line: `tidy target/
+  was <n> GB (over 20 GB): freed <n> GB (<n> stale artifacts, <n>
+  incremental sessions)`.
 - WSL footnote: the Windows drive hosts the virtual disk; `wsl --shutdown`
   then `wsl --manage <distro> --set-sparse true` lets it shrink.
 
