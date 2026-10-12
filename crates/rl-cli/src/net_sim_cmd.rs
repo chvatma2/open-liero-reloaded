@@ -114,7 +114,13 @@ fn parse_seeds(s: &str) -> Result<Range<u32>, String> {
 pub fn run_cmd(args: Args) -> anyhow::Result<bool> {
     let content = rl_content::Content::open(&args.content)?;
     let base: NetSpec = match &args.from {
-        Some(path) => NetCase::load(path)?.spec,
+        Some(path) => {
+            let case = NetCase::load(path)?;
+            if let Some(f) = &case.failure {
+                println!("recorded failure: {f}");
+            }
+            case.spec
+        }
         None => args.spec.into(),
     };
     let specs: Vec<NetSpec> = match &args.seeds {

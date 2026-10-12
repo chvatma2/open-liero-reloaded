@@ -18,10 +18,21 @@ use crate::root;
 
 const DIR: &str = "fixtures/matches";
 
+/// What `add_failure` kept the record as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kept {
+    /// A golden match, still to be recorded.
+    Golden,
+    /// A net case in `fixtures/net/cases`.
+    NetCase,
+}
+
+const NET_DIR: &str = "fixtures/net/cases";
+
 /// Copies failure record `from` into `dir` as a golden to be recorded (a
 /// `net-*` record into the net cases beside it, `dir/../net/cases`); gives
 /// its new path. An existing file of that name is kept: refused.
-pub fn add_failure(dir: &Path, from: &Path) -> anyhow::Result<PathBuf> {
+pub fn add_failure(dir: &Path, from: &Path) -> anyhow::Result<(PathBuf, Kept)> {
     ensure!(
         from.extension().is_some_and(|e| e == "ron"),
         "{} is not a failure record (.ron)",
@@ -36,7 +47,7 @@ pub fn add_failure(dir: &Path, from: &Path) -> anyhow::Result<PathBuf> {
     ensure!(!dest.exists(), "{} exists already", dest.display());
     std::fs::create_dir_all(&dir)?;
     std::fs::write(&dest, text)?;
-    Ok(dest)
+    Ok((dest, if is_net { Kept::NetCase } else { Kept::Golden }))
 }
 
 pub fn run(reason: &str, from: Option<&Path>) -> anyhow::Result<bool> {
@@ -49,10 +60,13 @@ pub fn run(reason: &str, from: Option<&Path>) -> anyhow::Result<bool> {
     let dir = root.join(DIR);
     let before = snapshot(&dir)?;
     if let Some(from) = from {
-        let added = add_failure(&dir, from)?;
+        let before_net = snapshot(&root.join(NET_DIR))?;
+        let (added, kept) = add_failure(&dir, from)?;
         println!("added {}", added.display());
-        if added.parent() != Some(dir.as_path()) {
+        if kept == Kept::NetCase {
             // A net case: nothing to record, it must pass now.
+            let changed = changed_files(NET_DIR, &before_net, &snapshot(&root.join(NET_DIR))?);
+            log_blessing("bless-regression", reason, &changed)?;
             let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
                 .args(["test", "--quiet", "-p", "rl-cli", "--test", "net_cases"])
                 .current_dir(&root)
@@ -93,7 +107,8 @@ mod tests {
         let failure = tmp.path().join("classic-x-panic-tick5.ron");
         std::fs::write(&failure, "(spec: (mod_id: \"olx-classic\"), tick: 5)").unwrap();
         let dir = tmp.path().join("matches");
-        let dest = super::add_failure(&dir, &failure).unwrap();
+        let (dest, kind) = super::add_failure(&dir, &failure).unwrap();
+        assert_eq!(kind, super::Kept::Golden);
         assert_eq!(dest, dir.join("classic-x-panic-tick5.ron"));
         assert!(std::fs::read_to_string(&dest).unwrap().contains("olx-classic"));
         assert!(super::add_failure(&dir, &failure).is_err(), "an existing golden is kept");
@@ -108,8 +123,15 @@ mod tests {
         let failure = tmp.path().join("net-x.ron");
         std::fs::write(&failure, "(spec: (mod_id: \"olx-classic\"))").unwrap();
         let dir = tmp.path().join("fixtures/matches");
-        let dest = super::add_failure(&dir, &failure).unwrap();
-        assert_eq!(dest, tmp.path().join("fixtures/net/cases/net-x.ron"));
+        let cases = tmp.path().join("fixtures/net/cases");
+        let before = crate::bless::snapshot(&cases).unwrap();
+        let (dest, kind) = super::add_failure(&dir, &failure).unwrap();
+        assert_eq!(kind, super::Kept::NetCase);
+        assert_eq!(dest, cases.join("net-x.ron"));
+        // What `run` logs with the reason.
+        let changed =
+            crate::bless::changed_files(super::NET_DIR, &before, &crate::bless::snapshot(&cases).unwrap());
+        assert_eq!(changed, ["fixtures/net/cases/net-x.ron"]);
         assert!(!dir.exists(), "nothing lands among the match goldens");
         assert!(super::add_failure(&dir, &failure).is_err(), "an existing case is kept");
     }

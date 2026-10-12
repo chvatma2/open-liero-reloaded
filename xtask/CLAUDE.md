@@ -200,7 +200,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   re-records `fixtures/matches/*.ron` (runs `rl-cli --test golden` with
   `RL_BLESS_REGRESSION=1`); `--from` first copies a failure record in as a
   new golden; a `net-*.ron` record (`rl-cli net-sim`'s) is kept in
-  `fixtures/net/cases/` instead and `rl-cli --test net_cases` runs. Like `bless-render`, it appends the date, the reason and the
+  `fixtures/net/cases/` instead (logged with the reason) and `rl-cli --test
+  net_cases` runs. Like `bless-render`, it appends the date, the reason and the
   changed files to `fixtures/blessings.log` (`bless::log_blessing`).
 
 ## Disk use

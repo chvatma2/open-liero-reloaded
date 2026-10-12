@@ -60,11 +60,15 @@ pub struct NetSpec {
 }
 
 impl NetSpec {
-    /// A file name for this run.
+    /// A file name for this run: readable parts and a hash of the whole
+    /// spec (FNV-1a over its RON, 8 hex digits), so specs that differ in
+    /// anything get different names.
     pub fn stem(&self) -> String {
         let short = |id: &str| id.trim_start_matches("olx-level-").trim_start_matches("olx-").to_string();
+        let ron = ron::to_string(self).unwrap_or_default();
+        let hash = ron.bytes().fold(0x811c_9dc5_u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193));
         format!(
-            "{}-{}-{}-{}s{}c{}v-seed{}-net{}",
+            "{}-{}-{}-{}s{}c{}v-seed{}-{hash:08x}",
             short(&self.mod_id),
             short(&self.level_id),
             self.profile,
@@ -72,7 +76,6 @@ impl NetSpec {
             self.clients,
             self.spectators,
             self.seed,
-            self.net_seed
         )
     }
 
@@ -182,7 +185,8 @@ impl Factory<WorldSim> for WorldFactory<'_> {
     }
 
     fn driver(&mut self, peer: PeerId, seat: Option<Seat>) -> Box<dyn Driver<WorldSim>> {
-        let mut bots = self.bots.remove(&peer).unwrap_or_default();
+        // The harness makes a peer's sim before its driver.
+        let mut bots = self.bots.remove(&peer).expect("a peer's sim is made before its driver");
         let clients = self.spec.clients;
         bots.retain(|b| {
             let slot = b.worm();
@@ -261,6 +265,7 @@ pub struct NetCase {
 }
 
 impl NetCase {
+    /// Reads a case file (the parse error names the path).
     pub fn load(path: &Path) -> anyhow::Result<NetCase> {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         ron::from_str(&text).with_context(|| format!("parsing {}", path.display()))
@@ -331,5 +336,46 @@ impl NetRun {
             );
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec() -> NetSpec {
+        NetSpec {
+            mod_id: "olx-classic".into(),
+            level_id: "olx-level-castlestrike".into(),
+            seed: 1,
+            slots: 8,
+            clients: 3,
+            spectators: 1,
+            join_tick: None,
+            profile: "typical".into(),
+            drift_ppm: 0,
+            ticks: 600,
+            outages: vec![],
+            net_seed: 1,
+            difficulty: None,
+        }
+    }
+
+    #[test]
+    fn specs_that_differ_in_anything_have_different_stems() {
+        let a = spec();
+        let variants = [
+            NetSpec { outages: vec![(1, 100, 200)], ..spec() },
+            NetSpec { outages: vec![(1, 100, 300)], ..spec() },
+            NetSpec { ticks: 601, ..spec() },
+            NetSpec { drift_ppm: 5, ..spec() },
+            NetSpec { join_tick: Some(5), ..spec() },
+            NetSpec { difficulty: Some("hard".into()), ..spec() },
+            NetSpec { net_seed: 2, ..spec() },
+        ];
+        let stems: std::collections::BTreeSet<_> = variants.iter().map(NetSpec::stem).collect();
+        assert_eq!(stems.len(), variants.len());
+        assert!(!stems.contains(&a.stem()));
+        assert_eq!(a.stem(), spec().stem(), "the stem is stable");
     }
 }

@@ -11,7 +11,7 @@ fn kept_net_cases_pass() {
         .collect();
     paths.sort();
     for p in paths {
-        let case: rl_cli::netsim::NetCase = ron::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        let case = rl_cli::netsim::NetCase::load(&p).unwrap();
         let r = rl_cli::netsim::run(&c, &case.spec).unwrap();
         assert!(r.verdict.is_ok(), "{}: {:?}", p.display(), r.verdict);
     }
