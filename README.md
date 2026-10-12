@@ -301,6 +301,12 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
 - `cargo xtask e2e`, `cargo xtask bench [--bless --reason "<why>"]` and
   `cargo xtask stress [--seconds N]` run those steps alone; `stress` plays
   32 chaos bots on Castle Strike past OLX's limits and prints a report.
+- `cargo xtask envelope [--quick] [--only <part>] [--gpu
+  wsl|windows|both|none]` measures how far the game goes on this machine
+  (about 7 minutes warm; not part of `full`) and compares with
+  `fixtures/bench/envelope/<host>.ron`; `--bless --reason "<why>"` writes
+  it, `--report` regenerates `docs/perf/envelope.md`. `cargo xtask
+  windows` builds the Windows binaries.
 - `cargo xtask bless-render --reason "<why>"` re-draws the render goldens and
   logs why in `fixtures/blessings.log`.
 - `fixtures/matches/` holds golden bot matches (their checksum streams);

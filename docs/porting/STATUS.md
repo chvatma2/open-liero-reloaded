@@ -70,6 +70,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Autoplay and end to end (§21 G7): `--autoplay` clicks widgets by label, holds the game's keys, takes checked screenshots and logs JSON lines; `--fake-clock` makes a run deterministic | — | `rl-game::autoplay`, `xtask e2e` | done (plan 7 task 8) | `scripts_parse_and_name_what_exists`, `steps_click_wait_and_fail_in_time`, `widgets_are_found_by_their_label`, `blank_pictures_fail_the_sanity_check`; `cargo xtask e2e` (in `full`, Xvfb) |
 | Benchmarks (§21 G8): a full 3000-projectile pool tick, 32 worms, 8 bots thinking, the draw list, an offscreen frame at 1080p and 1440p; machine-local baselines, more than 10 % slower fails | — | `rl-sim/benches/tick.rs`, `rl-cli/benches/game.rs`, `rl-render/benches/frame.rs`, `xtask bench` | done (plan 7 task 8) | `fixtures/bench/baselines.ron`; `regressions_need_more_than_the_tolerance`, `baselines_from_another_machine_only_notice` |
 | Engine stress test (the user's request): 32 chaos bots on Castle Strike, both mods, OLX's pool and 20 000; tick, think, pool, entities, events, render and memory; invariants every tick, determinism over two runs | — | `rl-cli stress`, `xtask stress` | done (plan 7 task 8) | `stress_run_is_bounded_and_deterministic`; `fixtures/bench/stress.ron` (in `full`) |
+| Performance envelope (plan 8): sweeps of worms, pool, effects, map and art; the GPU on WSL GL and Windows DX12/Vulkan with timestamps and the shader probe; OLX frame timing | `tools/olx-oracle` (`ORACLE_TIMING`) | `xtask/src/envelope/`, `rl-cli gpu-bench`, `rl-game --frame-log` | measured | `fixtures/bench/envelope/<host>.ron`, `docs/perf/envelope.md` |
 | v0.1 acceptance (spec §1.3): each of the 4 levels × 2 mods from the menus against 4 Medium bots for 60 s in a real window, timings and screenshots | — | — | done (plan 7 task 9) | `docs/porting/acceptance-v0.1.md`; `cargo xtask check` and `full` |
 
 ## Deliberate deviations
@@ -657,6 +658,43 @@ keeps their options and ranges and lays the screens out anew.
 - **Deferred:** replay seeking; spectating from the menus; recording the
   human's skin and colour in replays (they are drawn with the default
   look); the bot-skill redesign and a tournament command.
+
+## Performance envelope decisions (plan 8)
+
+Plan 8 measured and changed nothing in the simulation: no deliberate
+deviation. Its rulings (`docs/superpowers/plans/2026-10-11-plan-8-performance-envelope.md`):
+
+- **P1:** the reference configuration is `rl_cli::stress::spec` with 16
+  worms: chaos bots of mixed difficulty, `LoadingTime` 0, bonuses every
+  5 s, no kill or time limit, seed 1.
+- **P2:** the pool axis ends at 65 536 (`MatchSetup::MAX_POOL_CAPACITY`),
+  not 100 000; raising it is a simulation change.
+- **P3:** generated levels bypass the content loader's caps; a point above
+  `MAX_COLOR_MAP_BYTES` still runs and the cap is its breaking cause.
+- **P4:** sweeps are headless; the frame budget is judged in the GPU
+  scenes (the heavy replay at four sizes, each map and art level at
+  2560 × 1440 on WSL); breaking points use 144 Hz, 60 Hz beside it.
+- **P5:** windowed runs (`rl-game --frame-log`) measure wall frame times
+  only, one run each; GPU timestamps are taken offscreen.
+- **P6:** the colour-terrain edits are timed inside the presentation tick.
+- **P7:** an effects or pool cap reached at its own value is saturated, not
+  a break; a content cap, the bots' area cache full, a terrain cropped to
+  the texture limit or a failed run breaks a point.
+- **P8:** OLX's timed span is its whole simulated frame
+  (`OracleHooks::beforeFrame` to `afterFrame`), on six busy oracle
+  scenarios and two heavy ones in `fixtures/perf/olx/`; the same work is
+  checked by per-frame projectile counts and `rand()` calls.
+- **P9:** envelope runs skip the determinism replay (`--no-verify`);
+  `--quick` is one run per point.
+- **P10:** results live in `fixtures/bench/envelope/<CPU slug>-<n>cpus.ron`,
+  the host compared in full as for `baselines.ron`.
+- **P11:** GPU scenes draw `Viewport::GAME` over the whole target with the
+  default filter, no HUD.
+- **P12:** the Windows binaries and a content copy are staged in
+  `%TEMP%\rust-liero-envelope` and run there; `WGPU_BACKEND` goes through
+  `WSLENV`.
+- **P13:** sweep runs pass `--memory-ceiling-mib 16384`, so points past
+  2 GiB are measured.
 
 ## Kept OLX quirks
 

@@ -106,6 +106,13 @@ The headless command-line tool. Its commands:
   the scene drawn is the recorded match. All device work stays on the
   main thread (WSL's d3d12 driver crashes when a thread that used the
   device exits). Percentiles are nearest rank (`stress::Spread::of`).
+  Run times seen in the envelope on the user's machine (2026-10-12,
+  release, Ryzen 5 7600X, RTX 5070 Ti): a `stress` sweep point (20 s of
+  match, 16 bots, `--no-verify`) takes well under a second, a 4096 ×
+  4096 level about 2 s and art scale 8 about 5 s (5.1 GiB peak); a
+  `gpu-bench` of the heavy replay at four sizes with the probe about
+  11 s (WSL GL), 10 s (DX12) or 8 s (Vulkan), a level's replay about
+  1 s (art 8: 3 to 8 s).
 
 **The library** (`src/lib.rs`) holds the match runner for the commands and
 the tests: `spec::MatchSpec` (the options, serialized in failures and

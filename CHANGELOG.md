@@ -38,6 +38,17 @@ All notable changes to rust-liero are recorded here. The format follows
 - On a window 21:9 or wider the health, weapons and log can sit beside
   the 16:9 picture instead of in the bar: Options → Video → HUD layout
   (Auto, Bottom bar, Side panels), or `--hud-layout`.
+- `cargo xtask envelope`: the performance envelope (players, projectiles,
+  effects, map size, art scale, resolution, full-screen shader passes) on
+  this machine, on WSL and native Windows, against OLX; results in
+  `fixtures/bench/envelope/`, report in `docs/perf/envelope.md`.
+- `rl-cli gpu-bench` (a recorded match drawn on the GPU at several sizes,
+  with GPU timestamps and a shader-headroom probe) and `rl-cli stress`
+  options `--fx-cap`, `--build-every`, `--memory-ceiling-mib`, `--record`
+  and generated levels (`--level gen-<w>x<h>-a<scale>-s<seed>`).
+- `rl-game --frame-log`: a windowed run's frame times as RON.
+- `cargo xtask windows`: `rl-cli` and `rl-game` cross-compiled for Windows
+  and run from WSL.
 
 ### Added
 
