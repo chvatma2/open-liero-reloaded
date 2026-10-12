@@ -116,6 +116,8 @@ pub struct SizeOut {
     pub frame_ms: Spread,
     pub total_ms: Spread,
     pub gpu_ms: Option<Spread>,
+    /// Frames whose timestamps gave no real span (left out of `gpu_ms`).
+    pub gpu_dropped: u32,
     pub probe: Vec<ProbeOut>,
 }
 
@@ -124,6 +126,8 @@ pub struct SizeOut {
 pub struct ProbeOut {
     pub passes: u32,
     pub ms: Spread,
+    /// Probe frames whose timestamps gave no real span (left out of `ms`).
+    pub gpu_dropped: u32,
 }
 
 /// `rl-game --frame-log` (`rl_game::stats::FrameLog`).
@@ -250,6 +254,11 @@ pub struct GpuSize {
     pub frame_ms: Spread,
     pub total_ms: Spread,
     pub gpu_ms: Option<Spread>,
+    /// Frames, over every run, whose timestamps gave no real span (a
+    /// driver's fault): left out of `gpu_ms`, not counted as 0 ms.
+    pub gpu_dropped: u32,
+    /// The same for the probe's frames (left out of its times).
+    pub probe_dropped: u32,
     pub spread: f64,
     pub probe: Vec<ProbeRow>,
     /// GPU ms one full-screen probe pass costs (slope through the origin).
@@ -284,6 +293,8 @@ pub struct GpuLevel {
     pub size: (u32, u32),
     pub total_ms: Spread,
     pub gpu_ms: Option<Spread>,
+    /// Frames whose timestamps gave no real span (left out of `gpu_ms`).
+    pub gpu_dropped: u32,
 }
 
 /// One GPU path: `wsl-gl`, `windows-dx12`, `windows-vulkan`.
@@ -481,6 +492,8 @@ pub fn gpu_size(runs: &[SizeOut], b: &Budgets) -> GpuSize {
         frame_ms,
         total_ms: sp(|r| r.total_ms),
         gpu_ms,
+        gpu_dropped: runs.iter().map(|r| r.gpu_dropped).sum(),
+        probe_dropped: runs.iter().flat_map(|r| &r.probe).map(|p| p.gpu_dropped).sum(),
         spread: relative_spread(&runs.iter().map(|r| r.total_ms.p99).collect::<Vec<_>>()),
         probe,
         ms_per_pass,
@@ -790,7 +803,7 @@ mod tests {
     #[test]
     fn probe_passes_fit_the_budget() {
         let b = Budgets::default();
-        let probe = |k: u32, ms: f64| ProbeOut { passes: k, ms: s(ms, ms) };
+        let probe = |k: u32, ms: f64| ProbeOut { passes: k, ms: s(ms, ms), gpu_dropped: 0 };
         let size = SizeOut {
             size: (3840, 2160),
             frame_ms: s(2.0, 2.5),
@@ -802,6 +815,17 @@ mod tests {
         let g = gpu_size(&[size], &b);
         assert!((g.ms_per_pass - 0.25).abs() < 1e-9, "{}", g.ms_per_pass);
         assert_eq!((g.passes_144, g.passes_60), (24, 62), "(6.944 - 0.94) / 0.25, (16.667 - 0.94) / 0.25");
+    }
+
+    #[test]
+    fn dropped_gpu_spans_are_counted_over_the_runs() {
+        let run = |frames: u32, probe: [u32; 2]| SizeOut {
+            gpu_dropped: frames,
+            probe: probe.iter().map(|&d| ProbeOut { gpu_dropped: d, ..ProbeOut::default() }).collect(),
+            ..SizeOut::default()
+        };
+        let g = gpu_size(&[run(2, [0, 1]), run(0, [3, 0]), run(1, [0, 0])], &Budgets::default());
+        assert_eq!((g.gpu_dropped, g.probe_dropped), (3, 4));
     }
 
     #[test]

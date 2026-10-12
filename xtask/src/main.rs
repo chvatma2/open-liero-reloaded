@@ -107,6 +107,12 @@ enum Command {
         /// Why the results change (with --bless).
         #[arg(long)]
         reason: Option<String>,
+        /// Write docs/perf/envelope.md from this host's results file (or --from) and stop.
+        #[arg(long, conflicts_with_all = ["bless", "quick"])]
+        report: bool,
+        /// The results file the report is made from.
+        #[arg(long, requires = "report")]
+        from: Option<PathBuf>,
     },
     /// Install a git pre-push hook that runs `cargo xtask check`.
     InstallHooks,
@@ -164,8 +170,8 @@ fn main() -> ExitCode {
         Command::E2e { offline } => e2e_command(offline),
         Command::Bench { bless, reason, offline } => bench::run(reason.as_deref().filter(|_| bless), offline),
         Command::Stress { seconds } => bench::stress_command(seconds),
-        Command::Envelope { quick, only, gpu, bless, reason } => {
-            envelope::run(&envelope::Opts { quick, only, gpu, bless: reason.filter(|_| bless) })
+        Command::Envelope { quick, only, gpu, bless, reason, report, from } => {
+            envelope::run(&envelope::Opts { quick, only, gpu, bless: reason.filter(|_| bless), report, from })
         }
         Command::InstallHooks => install_hooks().map(|()| true),
         Command::OracleRecord { check, names } => oracle::run(&names, check),

@@ -302,6 +302,7 @@ fn measure(
                         size: s.size,
                         total_ms: s.total_ms,
                         gpu_ms: s.gpu_ms,
+                        gpu_dropped: s.gpu_dropped,
                     });
                 }
             }

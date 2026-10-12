@@ -9,6 +9,7 @@
 
 pub mod gpu;
 pub mod olx;
+pub mod report;
 pub mod results;
 pub mod sweeps;
 
@@ -139,6 +140,10 @@ pub struct Opts {
     pub only: Vec<Axis>,
     pub gpu: GpuPaths,
     pub bless: Option<String>,
+    /// Write `docs/perf/envelope.md` from the results and stop (`report.rs`).
+    pub report: bool,
+    /// The results file the report is made from (else this host's).
+    pub from: Option<std::path::PathBuf>,
 }
 
 /// What the parts beyond the CPU sweeps need from this machine (ruling
@@ -337,6 +342,11 @@ pub fn execute(steps: &[Step], m: &mut dyn Machine, env: &mut Envelope) -> Vec<S
 }
 
 pub fn run(o: &Opts) -> anyhow::Result<bool> {
+    if o.report {
+        let out = report::write(o.from.as_deref())?;
+        println!("wrote {}", out.display());
+        return Ok(true);
+    }
     if let Some(reason) = &o.bless {
         anyhow::ensure!(!reason.trim().is_empty(), "--reason must say why the results change");
         anyhow::ensure!(
@@ -559,7 +569,14 @@ mod tests {
     /// Ruling T7-A: a quick run is never the baseline.
     #[test]
     fn quick_results_are_never_blessed() {
-        let o = Opts { quick: true, only: vec![], gpu: GpuPaths::None, bless: Some("new machine".into()) };
+        let o = Opts {
+            quick: true,
+            only: vec![],
+            gpu: GpuPaths::None,
+            bless: Some("new machine".into()),
+            report: false,
+            from: None,
+        };
         let e = run(&o).unwrap_err().to_string();
         assert!(e.contains("--quick results are never blessed"), "{e}");
     }

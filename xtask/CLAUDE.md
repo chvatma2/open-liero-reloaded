@@ -96,7 +96,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 - `envelope` (`envelope/`, plan 8, spec
   `docs/superpowers/specs/2026-10-11-performance-envelope-design.md`;
   `cargo xtask envelope [--quick] [--only <part>]... [--gpu
-  wsl|windows|both|none] [--bless --reason "<why>"]`): how far each axis
+  wsl|windows|both|none] [--bless --reason "<why>"]`, or `--report
+  [--from F]`): how far each axis
   goes on this machine before the tick (10 ms p99), frame (6.9 / 16.7 ms
   p99) or memory (2 GiB) budget breaks. The parts (`Axis`, `--only`,
   repeatable; all by default): the sweeps `worms`, `pool`, `fx`, `map`,
@@ -140,8 +141,17 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   match lengths) are only a notice. `--bless --reason` (refused with
   `--quick`) writes that file, keeping the parts it did not measure
   from results of the same kind (`kept`), and logs it in
-  `fixtures/blessings.log`. Not part of
-  `full`.
+  `fixtures/blessings.log`. `--report [--from F]` (`report.rs`) only
+  writes `docs/perf/envelope.md` from this host's blessed results (or
+  `F`): method, machine, each sweep's table and breaking points, each GPU
+  path's offscreen frames, shader headroom (labelled GPU-side, not the
+  whole frame), windowed runs (WSL's presented through WSLg, Fifo at the
+  compositor's rate: not the game's cost), dropped GPU spans and notes,
+  the OLX table with its build, load, timed-span asymmetry and notes, and
+  the limits; the hand-written summary between `<!-- summary:start -->`
+  and `<!-- summary:end -->` is kept word for word. Results also keep
+  `gpu-bench`'s `gpu_dropped` counts (frames whose timestamps gave no real
+  span). Not part of `full`.
 - `olx_timing.rs` (plan 8; its caller is `envelope`, task 7): OLX's
   per-frame physics times. `Olx::open` builds or finds the oracle image
   (`oracle::ensure_image`); `Olx::time` plays a scenario through
