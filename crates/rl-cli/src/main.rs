@@ -3,6 +3,7 @@
 mod gpu_bench_cmd;
 mod import;
 mod match_cmd;
+mod net_sim_cmd;
 mod render;
 mod replay_cmd;
 mod scenario;
@@ -33,6 +34,9 @@ enum Command {
     /// Play a headless bot match: invariants every tick, tick times, determinism,
     /// replay round trip and coverage; a failure writes its replay to target/failures/.
     Match(match_cmd::Args),
+    /// Plays an online match in one process over a simulated network (bots on every peer)
+    /// and checks that every peer agrees; exits with status 1 on a failure.
+    NetSim(net_sim_cmd::Args),
     /// Play a recorded match, checking its checksums; exits with status 1 on a mismatch.
     Replay(replay_cmd::Args),
     /// The engine stress test: up to 32 chaos bots, near-instant reloads, bonuses,
@@ -56,6 +60,7 @@ fn main() -> ExitCode {
         Command::Scenario(args) => scenario::run(&args),
         Command::Render(args) => render::run(&args),
         Command::Match(args) => match_cmd::run(&args),
+        Command::NetSim(args) => net_sim_cmd::run_cmd(args),
         Command::Replay(args) => replay_cmd::run(&args),
         Command::Stress(args) => stress_cmd::run(&args),
         Command::GpuBench(args) => gpu_bench_cmd::run(&args),

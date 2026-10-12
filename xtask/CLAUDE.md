@@ -10,7 +10,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   fails listing the files (`differences`) if `content/packs` is stale.
   `--offline` skips it: the tests run on the committed packs.
 - `full` runs `check`, then `bot-grid` (`check::FULL_TESTS`: `rl-cli`'s
-  `tests/grid.rs` with `RL_FULL_TESTS=1`), then the GPU step
+  `tests/grid.rs` and `tests/net_sim.rs`' online grid, with `RL_FULL_TESTS=1`), then the GPU step
   (`check::GPU_TESTS` with `RL_GPU_TESTS=1`: `rl-render`'s `gpu`,
   `rl-cli`'s `render_golden` and `gpu_bench` (plan 8's `gpu-bench` on the
   software adapter), `rl-game`'s `soak`, `rl-ui`'s `hud_snapshots`) and the
@@ -199,7 +199,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 - `bless-regression --reason <why> [--from target/failures/<name>.ron]`
   re-records `fixtures/matches/*.ron` (runs `rl-cli --test golden` with
   `RL_BLESS_REGRESSION=1`); `--from` first copies a failure record in as a
-  new golden. Like `bless-render`, it appends the date, the reason and the
+  new golden; a `net-*.ron` record (`rl-cli net-sim`'s) is kept in
+  `fixtures/net/cases/` instead and `rl-cli --test net_cases` runs. Like `bless-render`, it appends the date, the reason and the
   changed files to `fixtures/blessings.log` (`bless::log_blessing`).
 
 ## Disk use

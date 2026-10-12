@@ -45,3 +45,8 @@ pub fn capture(run: &rl_cli::runner::MatchRun, failure: &rl_cli::runner::Failure
         Err(e) => format!("{}: {failure}\n  (not captured: {e:#})", run.spec.stem()),
     }
 }
+
+/// The repo's `target/failures`, where failing runs write their records.
+pub fn failures_dir() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/failures")
+}

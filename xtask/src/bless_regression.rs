@@ -4,7 +4,9 @@
 //! `RL_BLESS_REGRESSION` set) and records why in `fixtures/blessings.log`.
 //! `--from target/failures/<name>.ron` first adds that failed match as a new
 //! golden (its record names the match; the stream is recorded now, once
-//! the failure is fixed).
+//! the failure is fixed). A record named `net-*.ron` (`rl-cli net-sim`'s) is
+//! kept as a net case in `fixtures/net/cases/` instead, and the run checks
+//! the cases rather than re-recording goldens.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,8 +18,9 @@ use crate::root;
 
 const DIR: &str = "fixtures/matches";
 
-/// Copies failure record `from` into `dir` as a golden to be recorded;
-/// gives its new path. An existing golden of that name is kept: refused.
+/// Copies failure record `from` into `dir` as a golden to be recorded (a
+/// `net-*` record into the net cases beside it, `dir/../net/cases`); gives
+/// its new path. An existing file of that name is kept: refused.
 pub fn add_failure(dir: &Path, from: &Path) -> anyhow::Result<PathBuf> {
     ensure!(
         from.extension().is_some_and(|e| e == "ron"),
@@ -27,9 +30,11 @@ pub fn add_failure(dir: &Path, from: &Path) -> anyhow::Result<PathBuf> {
     let text = std::fs::read_to_string(from).with_context(|| format!("reading {}", from.display()))?;
     ensure!(text.contains("spec:"), "{} names no match (`spec`)", from.display());
     let name = from.file_name().context("a file name")?;
+    let is_net = name.to_string_lossy().starts_with("net-");
+    let dir = if is_net { dir.parent().unwrap_or(dir).join("net/cases") } else { dir.to_path_buf() };
     let dest = dir.join(name);
     ensure!(!dest.exists(), "{} exists already", dest.display());
-    std::fs::create_dir_all(dir)?;
+    std::fs::create_dir_all(&dir)?;
     std::fs::write(&dest, text)?;
     Ok(dest)
 }
@@ -44,7 +49,19 @@ pub fn run(reason: &str, from: Option<&Path>) -> anyhow::Result<bool> {
     let dir = root.join(DIR);
     let before = snapshot(&dir)?;
     if let Some(from) = from {
-        println!("added {}", add_failure(&dir, from)?.display());
+        let added = add_failure(&dir, from)?;
+        println!("added {}", added.display());
+        if added.parent() != Some(dir.as_path()) {
+            // A net case: nothing to record, it must pass now.
+            let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+                .args(["test", "--quiet", "-p", "rl-cli", "--test", "net_cases"])
+                .current_dir(&root)
+                .env("RL_CONTENT_DIR", &content)
+                .status()
+                .context("cannot run cargo")?;
+            ensure!(status.success(), "rl-cli --test net_cases failed: the case still fails");
+            return Ok(true);
+        }
     }
     let out = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
         .args(["test", "--quiet", "-p", "rl-cli", "--test", "golden"])
@@ -83,5 +100,17 @@ mod tests {
         let replay = tmp.path().join("x.rlrp");
         std::fs::write(&replay, b"RLRP").unwrap();
         assert!(super::add_failure(&dir, &replay).is_err(), "only a record names the match");
+    }
+
+    #[test]
+    fn a_net_failure_becomes_a_net_case() {
+        let tmp = tempfile::tempdir().unwrap();
+        let failure = tmp.path().join("net-x.ron");
+        std::fs::write(&failure, "(spec: (mod_id: \"olx-classic\"))").unwrap();
+        let dir = tmp.path().join("fixtures/matches");
+        let dest = super::add_failure(&dir, &failure).unwrap();
+        assert_eq!(dest, tmp.path().join("fixtures/net/cases/net-x.ron"));
+        assert!(!dir.exists(), "nothing lands among the match goldens");
+        assert!(super::add_failure(&dir, &failure).is_err(), "an existing case is kept");
     }
 }

@@ -50,8 +50,9 @@ pub fn full(offline: bool) -> anyhow::Result<bool> {
 /// The full tier's long CPU tests as `(package, test target)`, run with
 /// `RL_FULL_TESTS` set: the headless bot-match grid (both mods × 4 levels ×
 /// 3 seeds, chaos and Deathmatch bots, with its coverage) and the
-/// 30-minute bounded match (spec §7.1, plan 6 Review Focus 5).
-pub const FULL_TESTS: &[(&str, &str)] = &[("rl-cli", "grid")];
+/// 30-minute bounded match (spec §7.1, plan 6 Review Focus 5), and the
+/// online grid of bots over the network profiles (`net_sim`, plan 9).
+pub const FULL_TESTS: &[(&str, &str)] = &[("rl-cli", "grid"), ("rl-cli", "net_sim")];
 
 /// The test targets of the GPU tier as `(package, test target)`.
 pub const GPU_TESTS: &[(&str, &str)] = &[

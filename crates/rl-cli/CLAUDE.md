@@ -76,6 +76,22 @@ The headless command-line tool. Its commands:
   area cache); the new fields are `#[serde(default)]`, so older reports
   still read. A failed match writes its replay to `target/failures/`. `cargo
   xtask stress` runs both mods × pool 3000/20 000 on Castle Strike.
+- `rl-cli net-sim [--mod M --level L --seed N --slots 8 --clients 3
+  --spectators 1 --join-tick T --profile typical --drift-ppm P --ticks 1000
+  --outage peer:from:until --net-seed N --difficulty D] [--from CASE.ron]
+  [--seeds a..b] [--content DIR] [--failures DIR]` (plan 9, `netsim.rs`, the
+  command in `net_sim_cmd.rs`): an online match of bots in one process over
+  `rl-netcode`'s network model. Every peer (host, clients, spectators) builds
+  its own `World` and area cache from the same `MatchOptions` (all worms
+  `Player::Bot`); a peer runs only the bots of its local slots (the host
+  `clients..slots`, client `k` = peer `1 + k` slot `k`), thinking with its
+  own last tick's events. Prints per peer rollbacks (depth p50/p99), fills,
+  stalls, desyncs and bytes/s received, then `ok` or `FAIL <what> at tick
+  <t>`; a failure writes `target/failures/net-<stem>.ron` (a `NetCase`) and
+  exits 1. `fixtures/net/cases/*.ron` are kept cases that must pass
+  (`tests/net_cases.rs`); `cargo xtask bless-regression --from
+  target/failures/net-*.ron` keeps one. `tests/net_sim.rs`: two short runs in
+  `check`, the profile grid in `full`.
 - `rl-cli gpu-bench --replay F [--sizes 1920x1080,2560x1440,3440x1440,3840x2160]
   [--start-tick 1000] [--frames 600] [--probe-passes 0,1,2,4,8,16,32]
   [--probe-taps 9] [--probe-frames 120] [--adapter hardware|software]
@@ -128,7 +144,7 @@ stress test's runner and `Report`), `gpu_bench` (the GPU bench's runner
 and `GpuReport`), `timing` (`scenario --time`), `coverage` (required
 weapons and action kinds derived from the mod: `rl_sim::projectile_actions`
 and `World::actions_triggered`), `failure`, `golden`, `assets`,
-`genlevel`.
+`genlevel`, `netsim` (`NetSpec`, `WorldFactory`, `run`, `NetCase`).
 
 **Generated levels** (`genlevel.rs`, plan 8; bench only, a game never
 loads one): `GenLevel` makes seeded noise caves in memory, no pack written,
