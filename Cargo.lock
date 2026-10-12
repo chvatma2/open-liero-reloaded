@@ -3920,6 +3920,8 @@ name = "rl-lobby"
 version = "0.1.0"
 dependencies = [
  "k256",
+ "proptest",
+ "rl-netcode",
  "rl-proto",
  "sha2 0.11.0",
 ]

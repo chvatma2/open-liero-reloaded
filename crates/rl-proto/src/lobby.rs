@@ -303,12 +303,12 @@ fn is_hidden(c: char) -> bool {
 
 /// A name: 1 to `max` characters, no control, hidden or bidi characters,
 /// not blank, no leading or trailing whitespace.
-pub(crate) fn valid_name(s: &str, max: usize) -> bool {
+pub fn valid_name(s: &str, max: usize) -> bool {
     valid_text(s, max) && !s.is_empty() && s.trim() == s && !s.chars().any(is_hidden)
 }
 
 /// A pack id: ASCII `[a-z0-9-]` (rl-pack's manifest rule), 1 to `MAX_ID` bytes.
-pub(crate) fn valid_pack_id(s: &str) -> bool {
+pub fn valid_pack_id(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= MAX_ID
         && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
@@ -318,7 +318,8 @@ fn valid_hash(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn valid_look(l: &Look) -> bool {
+/// A look: a valid name and a pack-id skin.
+pub fn valid_look(l: &Look) -> bool {
     valid_name(&l.name, MAX_NAME) && valid_pack_id(&l.skin)
 }
 
@@ -326,7 +327,8 @@ fn valid_missing(m: &[String]) -> bool {
     m.len() <= MAX_MISSING && m.iter().all(|s| valid_pack_id(s))
 }
 
-fn valid_setup(s: &MatchSetupWire) -> bool {
+/// A match setup within the wire's bounds.
+pub fn valid_setup(s: &MatchSetupWire) -> bool {
     valid_pack_id(&s.mod_id)
         && valid_pack_id(&s.level_id)
         && s.packs.len() <= MAX_PACKS
@@ -371,7 +373,9 @@ fn unique(it: impl Iterator<Item = u8>) -> bool {
     true
 }
 
-fn valid_chat(s: &str) -> bool {
+/// A chat line, notice or end reason: at most `MAX_CHAT` characters, no
+/// control characters or bidi controls.
+pub fn valid_chat(s: &str) -> bool {
     valid_text(s, MAX_CHAT) && !s.chars().any(is_bidi)
 }
 

@@ -20,6 +20,8 @@ pub enum Refusal {
     Banned,
     Busy,
     Malformed,
+    /// The lobby's password proof was missing or wrong.
+    Password,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +61,7 @@ mod tests {
             Signal::Offer { protocol: 1, fingerprint: u64::MAX, sdp: "v=0\r\n".to_string() },
             Signal::Answer { sdp: "v=0".to_string() },
             Signal::Refused { reason: Refusal::Banned },
+            Signal::Refused { reason: Refusal::Password },
         ] {
             assert_eq!(decode_signal(&encode_signal(&s)), Ok(s));
         }

@@ -12,7 +12,9 @@ control messages, the frame delta codec and the simulation fingerprint.
   **Control** (reliable channel): `Checksum`, `Late`, `Desync`, `StateBegin`,
   `StateChunk`, `Bye`.
 - **Signalling** (`signal.rs`, WebSocket, one postcard message per frame,
-  `MAX_SIGNAL`): `Signal::{Offer, Answer, Refused}`, `Refusal`; sdp <= 8 KiB.
+  `MAX_SIGNAL`): `Signal::{Offer, Answer, Refused}`, `Refusal` (`Version`,
+  `Full`, `Banned`, `Busy`, `Malformed`, `Password`: also the lobby's
+  `ToClient::Refused`); sdp <= 8 KiB.
 - **Lobby** (`lobby.rs`, reliable channel, `MAX_LOBBY`): `ToHost`,
   `ToClient`, `LobbyState`, `MatchStartWire`, `MatchEndWire` and friends.
   **Tag byte** first on every reliable payload: `0` netcode `Control`,
@@ -29,6 +31,9 @@ control messages, the frame delta codec and the simulation fingerprint.
   and level ids ASCII `[a-z0-9-]` (rl-pack's manifest rule), 1..=64 bytes;
   hashes 64 hex characters; rule floats finite; restrictions <= 256 bytes.
   `Signature` (64 bytes) uses a custom serde tuple (serde stops at 32).
+  `valid_name`, `valid_pack_id`, `valid_look`, `valid_setup` and
+  `valid_chat` are public so producers (rl-lobby) never send what the
+  decoders refuse.
 - **Frame delta rule** (`frames.rs`): `known` = slots whose final input the
   host has; `changed ⊆ known` = slots differing from the previous tick, one
   key byte each in slot order. An unchanged known slot repeats the previous

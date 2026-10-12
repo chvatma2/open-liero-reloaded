@@ -1,0 +1,750 @@
+//! The lobby's host (networking spec §4, §5.2, §5.4, §7.2): admits peers
+//! that prove their key, seats players, spectators and late joiners, relays
+//! chat, kicks and bans, and turns the lobby into a match start. Sans-IO:
+//! the transport's events and the time come in, messages and events go out.
+
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::net::IpAddr;
+
+use rl_netcode::{PeerId, input_delay};
+use rl_proto::{
+    AdminCommand, LobbyState, Look, MAX_PLAYERS, MAX_SPECTATORS, MatchEndWire, MatchSetupWire,
+    MatchStartWire, Member, Notice, Phase, PublicKey, Refusal, SeatWire, SlotWire, ToClient, ToHost,
+    valid_setup,
+};
+
+use crate::identity::{Identity, challenge_message, password_proof, verify};
+use crate::model::*;
+
+/// A peer whose transport is open but who has not proven its key yet.
+struct Pending {
+    addr: IpAddr,
+    nonce: [u8; 32],
+    since_us: u64,
+    hello: Option<(PublicKey, Look)>,
+}
+
+enum Link {
+    Pending(Pending),
+    Member(u8),
+}
+
+/// A member as the host keeps it.
+struct Rec {
+    id: u8,
+    /// `None`: the host's own player.
+    peer: Option<PeerId>,
+    addr: Option<IpAddr>,
+    key: PublicKey,
+    look: Look,
+    seat: SeatWire,
+    /// Wants a player seat (false: spectates by choice).
+    wants_play: bool,
+    /// Said it is ready; ready on the wire only with nothing missing.
+    said_ready: bool,
+    missing: Vec<String>,
+    loadout: Option<[i32; 5]>,
+    admin: bool,
+    /// When its last chat lines were relayed (at most `CHAT_LINES`).
+    chat: VecDeque<u64>,
+}
+
+impl Rec {
+    fn ready(&self) -> bool {
+        self.said_ready && self.missing.is_empty()
+    }
+
+    fn wire(&self) -> Member {
+        Member {
+            id: self.id,
+            key: self.key,
+            look: self.look.clone(),
+            seat: self.seat,
+            ready: self.ready(),
+            missing: self.missing.clone(),
+            ping_ms: None,
+            admin: self.admin,
+        }
+    }
+}
+
+/// How a member leaves.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Gone {
+    Left,
+    Kicked { ban: bool },
+}
+
+/// The lobby's host.
+pub struct LobbyHost {
+    cfg: HostConfig,
+    key: Identity,
+    /// The host's own member id (`None`: a dedicated server).
+    me: Option<u8>,
+    links: BTreeMap<PeerId, Link>,
+    /// Members in join order.
+    members: Vec<Rec>,
+    phase: Phase,
+    setup: MatchSetupWire,
+    state: LobbyState,
+    banned_keys: BTreeSet<PublicKey>,
+    banned_ips: BTreeSet<IpAddr>,
+    next_id: u8,
+    /// Member ids in the announced match: never given to a new member
+    /// while it runs.
+    in_match: BTreeSet<u8>,
+    results_since: u64,
+    startable: bool,
+    out: Vec<(PeerId, ToClient)>,
+    events: Vec<HostEvent>,
+}
+
+impl LobbyHost {
+    /// A lobby gathering for `setup`. `key` is the host's identity (a
+    /// dedicated server has its own); `me` is the host player's look, `None`
+    /// for a dedicated server. The setup must be valid for the wire.
+    pub fn new(
+        cfg: HostConfig,
+        key: Identity,
+        me: Option<Look>,
+        setup: MatchSetupWire,
+    ) -> Result<LobbyHost, LobbyError> {
+        if !valid_setup(&setup) {
+            return Err(LobbyError::InvalidSetup);
+        }
+        let cfg = HostConfig {
+            name: sanitize_name(&cfg.name, "Lobby"),
+            max_players: cfg.max_players.clamp(1, MAX_PLAYERS as u8),
+            max_spectators: cfg.max_spectators.min(MAX_SPECTATORS as u8),
+            ..cfg
+        };
+        let state = LobbyState {
+            name: cfg.name.clone(),
+            phase: Phase::Gathering,
+            setup: setup.clone(),
+            members: Vec::new(),
+        };
+        let mut host = LobbyHost {
+            cfg,
+            key,
+            me: None,
+            links: BTreeMap::new(),
+            members: Vec::new(),
+            phase: Phase::Gathering,
+            setup,
+            state,
+            banned_keys: BTreeSet::new(),
+            banned_ips: BTreeSet::new(),
+            next_id: 0,
+            in_match: BTreeSet::new(),
+            results_since: 0,
+            startable: false,
+            out: Vec::new(),
+            events: Vec::new(),
+        };
+        if let Some(look) = me {
+            let id = host.alloc_id().unwrap_or(0);
+            host.members.push(Rec {
+                id,
+                peer: None,
+                addr: None,
+                key: host.key.public(),
+                look: sanitize_look(&look),
+                seat: SeatWire::Player { slot: 0 },
+                wants_play: true,
+                said_ready: true,
+                missing: Vec::new(),
+                loadout: None,
+                admin: true,
+                chat: VecDeque::new(),
+            });
+            host.me = Some(id);
+        }
+        host.refresh();
+        Ok(host)
+    }
+
+    // ---- the transport ----
+
+    /// The transport opened `peer` from `addr`: send the challenge (or
+    /// refuse a banned address). `nonce` must be fresh randomness.
+    pub fn connected(&mut self, peer: PeerId, addr: IpAddr, now_us: u64, nonce: [u8; 32]) {
+        if self.links.contains_key(&peer) {
+            self.disconnected(peer);
+        }
+        if self.banned_ips.contains(&addr) {
+            self.refuse(peer, Refusal::Banned);
+            return;
+        }
+        self.links.insert(peer, Link::Pending(Pending { addr, nonce, since_us: now_us, hello: None }));
+        let challenge = ToClient::Challenge {
+            nonce,
+            host_key: self.key.public(),
+            needs_password: self.cfg.password.is_some(),
+        };
+        self.out.push((peer, challenge));
+    }
+
+    /// A message from `peer` (decoded and validated by rl-proto).
+    pub fn receive(&mut self, peer: PeerId, msg: ToHost, now_us: u64) {
+        match self.links.get(&peer) {
+            None => {}
+            Some(Link::Pending(_)) => self.receive_pending(peer, msg),
+            Some(&Link::Member(id)) => self.receive_member(peer, id, msg, now_us),
+        }
+    }
+
+    /// The transport to `peer` closed. A no-op for a peer already gone.
+    pub fn disconnected(&mut self, peer: PeerId) {
+        if let Some(Link::Member(id)) = self.links.remove(&peer) {
+            self.drop_member(id, Gone::Left);
+        }
+    }
+
+    /// Timeouts: unproven peers after `PROOF_TIMEOUT_US`, the results after
+    /// `RESULTS_US`.
+    pub fn tick(&mut self, now_us: u64) {
+        let late: Vec<PeerId> = self
+            .links
+            .iter()
+            .filter_map(|(&peer, link)| match link {
+                Link::Pending(p) if now_us.saturating_sub(p.since_us) >= PROOF_TIMEOUT_US => Some(peer),
+                _ => None,
+            })
+            .collect();
+        for peer in late {
+            self.links.remove(&peer);
+            self.events.push(HostEvent::Kick { peer, ban: false });
+        }
+        if self.phase == Phase::Results && now_us.saturating_sub(self.results_since) >= RESULTS_US {
+            self.gather();
+        }
+    }
+
+    /// Drains the messages to send.
+    pub fn outgoing(&mut self) -> Vec<(PeerId, ToClient)> {
+        core::mem::take(&mut self.out)
+    }
+
+    /// Drains the events.
+    pub fn events(&mut self) -> Vec<HostEvent> {
+        core::mem::take(&mut self.events)
+    }
+
+    // ---- the host player's own actions ----
+
+    /// The next match's setup. A change clears every other member's ready
+    /// (they re-confirm what they agreed to); the same setup changes nothing.
+    pub fn set_setup(&mut self, setup: MatchSetupWire) -> Result<(), LobbyError> {
+        if !valid_setup(&setup) {
+            return Err(LobbyError::InvalidSetup);
+        }
+        if setup != self.setup {
+            self.setup = setup;
+            let me = self.me;
+            for m in self.members.iter_mut().filter(|m| Some(m.id) != me) {
+                m.said_ready = false;
+            }
+            self.publish();
+        }
+        Ok(())
+    }
+
+    pub fn set_my_look(&mut self, look: Look) {
+        if let Some(me) = self.me {
+            self.set_look(me, &look);
+            self.publish();
+        }
+    }
+
+    /// The host is ready from the start and stays so unless it says otherwise.
+    pub fn set_my_ready(&mut self, ready: bool) {
+        if let Some(i) = self.me.and_then(|me| self.index(me)) {
+            self.members[i].said_ready = ready;
+            self.publish();
+        }
+    }
+
+    pub fn set_my_loadout(&mut self, loadout: Option<[i32; 5]>) {
+        if let Some(i) = self.me.and_then(|me| self.index(me)) {
+            self.members[i].loadout = loadout;
+        }
+    }
+
+    /// The host's chat line (cut to 200 characters); a dedicated server's
+    /// is a notice.
+    pub fn chat(&mut self, text: &str) {
+        let Some(text) = sanitize_chat(text) else { return };
+        match self.me {
+            Some(me) => self.relay(me, text),
+            None => self.broadcast(&ToClient::Notice(Notice::Message(text))),
+        }
+    }
+
+    /// Kicks a member (not the host's own); `ban` also bans its key and
+    /// address for the lobby's life.
+    pub fn kick(&mut self, member: u8, ban: bool) {
+        if Some(member) != self.me && self.index(member).is_some() {
+            self.drop_member(member, Gone::Kicked { ban });
+        }
+    }
+
+    /// Moves a member to the spectators or back to the players (a free seat
+    /// at once while gathering, else at the next gathering).
+    pub fn move_seat(&mut self, member: u8, spectate: bool) {
+        if let Some(i) = self.index(member) {
+            self.members[i].wants_play = !spectate;
+            if Some(member) != self.me {
+                self.members[i].said_ready = false;
+            }
+            self.reseat();
+            self.publish();
+        }
+    }
+
+    // ---- the match ----
+
+    /// Whether a match can start: gathering, 2 to 32 worms (bots
+    /// included), every player ready with its content complete.
+    pub fn can_start(&self) -> Result<(), NotStartable> {
+        if self.phase != Phase::Gathering {
+            return Err(NotStartable::Phase);
+        }
+        let players = self.members.iter().filter(|m| matches!(m.seat, SeatWire::Player { .. }));
+        let worms = players.clone().count() + self.setup.bots.len();
+        if worms < 2 {
+            return Err(NotStartable::TooFewWorms);
+        }
+        if worms > MAX_PLAYERS {
+            return Err(NotStartable::TooManyWorms);
+        }
+        let not_ready: Vec<u8> = players.filter(|m| !m.ready()).map(|m| m.id).collect();
+        if not_ready.is_empty() { Ok(()) } else { Err(NotStartable::NotReady(not_ready)) }
+    }
+
+    /// The match start: players by seat, then the setup's bots in order;
+    /// each player's input delay from its round trip (`rtts_ms` by peer;
+    /// the host's 0, an unmeasured one 0). `start_checksum` is 0: the
+    /// caller builds the world from this, fills it in and calls
+    /// `announce_start`. Nothing is sent but, when players are not ready,
+    /// `Notice::NotReady` to everyone.
+    pub fn start(
+        &mut self,
+        seed: u32,
+        rtts_ms: &BTreeMap<PeerId, u32>,
+    ) -> Result<MatchStartWire, NotStartable> {
+        if let Err(e) = self.can_start() {
+            if let NotStartable::NotReady(ids) = &e {
+                self.broadcast(&ToClient::Notice(Notice::NotReady(ids.clone())));
+            }
+            return Err(e);
+        }
+        let mut players: Vec<&Rec> =
+            self.members.iter().filter(|m| matches!(m.seat, SeatWire::Player { .. })).collect();
+        players.sort_by_key(|m| match m.seat {
+            SeatWire::Player { slot } => slot,
+            _ => u8::MAX,
+        });
+        let mut slots: Vec<SlotWire> = players
+            .iter()
+            .map(|m| SlotWire { member: Some(m.id), bot: None, look: m.look.clone(), loadout: m.loadout })
+            .collect();
+        slots.extend(self.setup.bots.iter().enumerate().map(|(i, b)| SlotWire {
+            member: None,
+            bot: Some(i as u8),
+            look: b.look.clone(),
+            loadout: None,
+        }));
+        let delays = players
+            .iter()
+            .map(|m| (m.id, m.peer.map_or(0, |p| input_delay(rtts_ms.get(&p).copied().unwrap_or(0)))))
+            .collect();
+        Ok(MatchStartWire { seed, setup: self.setup.clone(), slots, input_delay: delays, start_checksum: 0 })
+    }
+
+    /// Sends `Start` to everyone and moves to `Phase::Starting`.
+    pub fn announce_start(&mut self, wire: MatchStartWire) -> Result<(), NotStartable> {
+        if self.phase != Phase::Gathering {
+            return Err(NotStartable::Phase);
+        }
+        self.phase = Phase::Starting;
+        self.in_match = wire.slots.iter().filter_map(|s| s.member).collect();
+        self.broadcast(&ToClient::Start(wire));
+        self.publish();
+        Ok(())
+    }
+
+    /// The match layer simulated its first tick: `Phase::Playing`.
+    pub fn playing(&mut self, tick: u32) {
+        if self.phase == Phase::Starting {
+            self.phase = Phase::Playing { tick };
+            self.publish();
+        }
+    }
+
+    /// The match ended: `Ended` to everyone (reason sanitized, at most 32
+    /// rows) and `Phase::Results` for `RESULTS_US`, then gathering again:
+    /// ready cleared, spectators and waiting members who want to play take
+    /// free seats in join order.
+    pub fn match_ended(&mut self, end: MatchEndWire, now_us: u64) {
+        if !matches!(self.phase, Phase::Starting | Phase::Playing { .. }) {
+            return;
+        }
+        let mut end = end;
+        end.reason = sanitize_chat(&end.reason).unwrap_or_default();
+        end.rows.truncate(MAX_PLAYERS);
+        self.phase = Phase::Results;
+        self.results_since = now_us;
+        self.broadcast(&ToClient::Ended(end));
+        self.publish();
+    }
+
+    // ---- queries ----
+
+    pub fn state(&self) -> &LobbyState {
+        &self.state
+    }
+
+    pub fn peer_of(&self, member: u8) -> Option<PeerId> {
+        self.index(member).and_then(|i| self.members[i].peer)
+    }
+
+    pub fn member_of(&self, peer: PeerId) -> Option<u8> {
+        match self.links.get(&peer) {
+            Some(&Link::Member(id)) => Some(id),
+            _ => None,
+        }
+    }
+
+    pub fn banned(&self, key: &PublicKey) -> bool {
+        self.banned_keys.contains(key)
+    }
+
+    pub fn banned_ip(&self, ip: IpAddr) -> bool {
+        self.banned_ips.contains(&ip)
+    }
+
+    // ---- joining ----
+
+    fn receive_pending(&mut self, peer: PeerId, msg: ToHost) {
+        let Some(Link::Pending(p)) = self.links.get(&peer) else { return };
+        let (addr, nonce, hello) = (p.addr, p.nonce, p.hello.clone());
+        match (msg, hello) {
+            (ToHost::Hello { key, look, password }, None) => {
+                if let Err(r) = self.may_join(&key, addr) {
+                    return self.refuse(peer, r);
+                }
+                if let Some(pw) = &self.cfg.password
+                    && password != Some(password_proof(&nonce, pw))
+                {
+                    return self.refuse(peer, Refusal::Password);
+                }
+                if let Some(Link::Pending(p)) = self.links.get_mut(&peer) {
+                    p.hello = Some((key, look));
+                }
+            }
+            (ToHost::Prove { signature }, Some((key, look))) => {
+                if !verify(&key, &challenge_message(&nonce, &self.key.public()), &signature) {
+                    return self.refuse(peer, Refusal::Malformed);
+                }
+                if let Err(r) = self.may_join(&key, addr) {
+                    return self.refuse(peer, r);
+                }
+                self.admit(peer, addr, key, &look);
+            }
+            (ToHost::Bye, _) => {
+                self.links.remove(&peer);
+            }
+            _ => self.refuse(peer, Refusal::Malformed),
+        }
+    }
+
+    fn may_join(&self, key: &PublicKey, addr: IpAddr) -> Result<(), Refusal> {
+        if self.banned_keys.contains(key) || self.banned_ips.contains(&addr) {
+            return Err(Refusal::Banned);
+        }
+        if *key == self.key.public() || self.members.iter().any(|m| m.key == *key) {
+            return Err(Refusal::Busy);
+        }
+        self.admit_seat().map(|_| ()).ok_or(Refusal::Full)
+    }
+
+    /// A new member's seat: a free player seat (waiting for the next
+    /// gathering during a match), else a spectator's, else none (full).
+    /// Members never exceed `max_players + max_spectators` (≤ 48).
+    fn admit_seat(&self) -> Option<SeatWire> {
+        let cap = usize::from(self.cfg.max_players) + usize::from(self.cfg.max_spectators);
+        if self.members.len() >= cap {
+            return None;
+        }
+        let seated = self
+            .members
+            .iter()
+            .filter(|m| matches!(m.seat, SeatWire::Player { .. } | SeatWire::Waiting))
+            .count();
+        if seated >= usize::from(self.cfg.max_players) {
+            Some(SeatWire::Spectator)
+        } else if self.phase == Phase::Gathering {
+            Some(self.free_slot().map_or(SeatWire::Spectator, |slot| SeatWire::Player { slot }))
+        } else {
+            Some(SeatWire::Waiting)
+        }
+    }
+
+    fn admit(&mut self, peer: PeerId, addr: IpAddr, key: PublicKey, look: &Look) {
+        let (Some(seat), Some(id)) = (self.admit_seat(), self.alloc_id()) else {
+            return self.refuse(peer, Refusal::Full);
+        };
+        self.links.insert(peer, Link::Member(id));
+        self.members.push(Rec {
+            id,
+            peer: Some(peer),
+            addr: Some(addr),
+            key,
+            look: Look { name: String::new(), ..look.clone() },
+            seat,
+            wants_play: true,
+            said_ready: false,
+            missing: Vec::new(),
+            loadout: None,
+            admin: self.cfg.admins.contains(&key),
+            chat: VecDeque::new(),
+        });
+        self.set_look(id, look);
+        self.refresh();
+        self.out.push((peer, ToClient::Welcome { you: id, lobby: self.state.clone() }));
+        let lobby = ToClient::Lobby(self.state.clone());
+        for p in self.member_peers().filter(|&p| p != peer).collect::<Vec<_>>() {
+            self.out.push((p, lobby.clone()));
+        }
+        self.broadcast(&ToClient::Notice(Notice::Joined(id)));
+        self.events.push(HostEvent::Joined(id));
+    }
+
+    fn refuse(&mut self, peer: PeerId, why: Refusal) {
+        self.links.remove(&peer);
+        self.out.push((peer, ToClient::Refused(why)));
+        self.events.push(HostEvent::Kick { peer, ban: false });
+    }
+
+    /// The lowest member id not in use (by a member or the running match).
+    fn alloc_id(&mut self) -> Option<u8> {
+        for _ in 0..=u8::MAX {
+            let id = self.next_id;
+            self.next_id = self.next_id.wrapping_add(1);
+            if self.index(id).is_none() && !self.in_match.contains(&id) {
+                return Some(id);
+            }
+        }
+        None
+    }
+
+    // ---- members ----
+
+    fn receive_member(&mut self, peer: PeerId, id: u8, msg: ToHost, now_us: u64) {
+        let Some(i) = self.index(id) else { return };
+        match msg {
+            ToHost::Hello { .. } | ToHost::Prove { .. } => self.drop_member(id, Gone::Kicked { ban: false }),
+            ToHost::SetLook(look) => {
+                self.set_look(id, &look);
+                self.publish();
+            }
+            ToHost::Ready(ready) => {
+                if self.phase != Phase::Gathering {
+                    return;
+                }
+                let m = &mut self.members[i];
+                if ready && !m.missing.is_empty() {
+                    m.said_ready = false;
+                    self.out.push((peer, ToClient::Notice(Notice::Message(MISSING_CONTENT.into()))));
+                } else {
+                    m.said_ready = ready;
+                }
+                self.publish();
+            }
+            ToHost::Spectate(spectate) => {
+                let m = &mut self.members[i];
+                m.wants_play = !spectate;
+                m.said_ready = false;
+                self.reseat();
+                self.publish();
+            }
+            ToHost::Loadout(loadout) => self.members[i].loadout = loadout,
+            ToHost::Chat(text) => {
+                let window = &mut self.members[i].chat;
+                while window.front().is_some_and(|&t| now_us.saturating_sub(t) >= CHAT_WINDOW_US) {
+                    window.pop_front();
+                }
+                if window.len() >= CHAT_LINES {
+                    self.out.push((peer, ToClient::Notice(Notice::Message(SLOW_DOWN.into()))));
+                } else if let Some(text) = sanitize_chat(&text) {
+                    window.push_back(now_us);
+                    self.relay(id, text);
+                }
+            }
+            ToHost::Have { missing } => {
+                let m = &mut self.members[i];
+                if !missing.is_empty() {
+                    m.said_ready = false;
+                }
+                m.missing = missing;
+                self.publish();
+            }
+            ToHost::Admin(cmd) => self.admin(peer, i, cmd),
+            ToHost::Bye => {
+                self.links.remove(&peer);
+                self.drop_member(id, Gone::Left);
+            }
+        }
+    }
+
+    fn admin(&mut self, peer: PeerId, i: usize, cmd: AdminCommand) {
+        let from = self.members[i].id;
+        if !self.members[i].admin {
+            self.out.push((peer, ToClient::Notice(Notice::Message(NOT_ADMIN.into()))));
+            return;
+        }
+        match cmd {
+            AdminCommand::Kick(key) | AdminCommand::Ban(key) => {
+                let ban = matches!(cmd, AdminCommand::Ban(_));
+                match self.members.iter().find(|m| m.key == key).map(|m| m.id) {
+                    Some(target) if Some(target) == self.me => {
+                        self.out.push((peer, ToClient::Notice(Notice::Message(NOT_THE_HOST.into()))));
+                    }
+                    Some(target) => self.drop_member(target, Gone::Kicked { ban }),
+                    None if ban => {
+                        self.banned_keys.insert(key);
+                    }
+                    None => {}
+                }
+            }
+            AdminCommand::Next | AdminCommand::Settings(_) => {
+                self.events.push(HostEvent::Admin { from, cmd })
+            }
+        }
+    }
+
+    /// Removes a member: a leaver is announced as `Left`, a kicked one gets
+    /// `Kicked` (and with `ban` its key and address are banned).
+    fn drop_member(&mut self, id: u8, how: Gone) {
+        let Some(i) = self.index(id) else { return };
+        let rec = self.members.remove(i);
+        if let Some(peer) = rec.peer {
+            self.links.remove(&peer);
+        }
+        match how {
+            Gone::Left => {
+                self.broadcast(&ToClient::Notice(Notice::Left(id)));
+                self.events.push(HostEvent::Left(id));
+            }
+            Gone::Kicked { ban } => {
+                if ban {
+                    self.banned_keys.insert(rec.key);
+                    if let Some(addr) = rec.addr {
+                        self.banned_ips.insert(addr);
+                    }
+                }
+                if let Some(peer) = rec.peer {
+                    self.out.push((peer, ToClient::Kicked { banned: ban }));
+                    self.events.push(HostEvent::Kick { peer, ban });
+                }
+                let notice = if ban { Notice::Banned(id) } else { Notice::Kicked(id) };
+                self.broadcast(&ToClient::Notice(notice));
+            }
+        }
+        self.reseat();
+        self.publish();
+    }
+
+    /// A member's look, sanitized, its name unique ignoring case.
+    fn set_look(&mut self, id: u8, look: &Look) {
+        let Some(i) = self.index(id) else { return };
+        let mut look = sanitize_look(look);
+        let taken = self.members.iter().filter(|m| m.id != id).map(|m| m.look.name.as_str());
+        look.name = unique_name(&look.name, taken);
+        self.members[i].look = look;
+    }
+
+    fn relay(&mut self, from: u8, text: String) {
+        self.broadcast(&ToClient::Chat { from, text: text.clone() });
+        self.events.push(HostEvent::Chat { from, text });
+    }
+
+    // ---- seats and phases ----
+
+    fn free_slot(&self) -> Option<u8> {
+        (0..self.cfg.max_players)
+            .find(|&s| !self.members.iter().any(|m| m.seat == SeatWire::Player { slot: s }))
+    }
+
+    /// While gathering: players who want to spectate give up their seats,
+    /// then members who want to play take free seats in join order.
+    fn reseat(&mut self) {
+        if self.phase != Phase::Gathering {
+            return;
+        }
+        for m in &mut self.members {
+            if !m.wants_play || m.seat == SeatWire::Waiting {
+                m.seat = SeatWire::Spectator;
+            }
+        }
+        for i in 0..self.members.len() {
+            if self.members[i].wants_play && !matches!(self.members[i].seat, SeatWire::Player { .. }) {
+                self.members[i].seat = match self.free_slot() {
+                    Some(slot) => SeatWire::Player { slot },
+                    None => SeatWire::Spectator,
+                };
+            }
+        }
+    }
+
+    /// Back from the results: everyone re-readies, seats are filled.
+    fn gather(&mut self) {
+        self.phase = Phase::Gathering;
+        self.in_match.clear();
+        let me = self.me;
+        for m in self.members.iter_mut().filter(|m| Some(m.id) != me) {
+            m.said_ready = false;
+        }
+        self.reseat();
+        self.publish();
+    }
+
+    // ---- state and sending ----
+
+    fn index(&self, id: u8) -> Option<usize> {
+        self.members.iter().position(|m| m.id == id)
+    }
+
+    fn member_peers(&self) -> impl Iterator<Item = PeerId> + '_ {
+        self.members.iter().filter_map(|m| m.peer)
+    }
+
+    fn broadcast(&mut self, msg: &ToClient) {
+        let peers: Vec<PeerId> = self.member_peers().collect();
+        self.out.extend(peers.into_iter().map(|p| (p, msg.clone())));
+    }
+
+    /// Rebuilds the state and notes the lobby becoming startable.
+    fn refresh(&mut self) {
+        self.state = LobbyState {
+            name: self.cfg.name.clone(),
+            phase: self.phase,
+            setup: self.setup.clone(),
+            members: self.members.iter().map(Rec::wire).collect(),
+        };
+        let startable = self.can_start().is_ok();
+        if startable && !self.startable {
+            self.events.push(HostEvent::StartRequested);
+        }
+        self.startable = startable;
+    }
+
+    /// Rebuilds the state and sends it to every member.
+    fn publish(&mut self) {
+        self.refresh();
+        self.broadcast(&ToClient::Lobby(self.state.clone()));
+    }
+}
