@@ -39,6 +39,19 @@ All notable changes to rust-liero are recorded here. The format follows
 
 ### Added
 
+- The netcode core for online play (not yet playable from the game):
+  rollback with the host ordering inputs, spectators, desync detection and
+  repair, tested by whole online matches with bots over simulated networks
+  (`rl-cli net-sim`).
+- `rl-cli net-repro` reads a desync bundle and names the first tick and
+  world field that differ.
+- The simulation is checked to give identical results on Linux, in the
+  browser's WebAssembly, on Windows and on arm64 Linux (`cargo xtask
+  determinism`; the WebAssembly leg needs `sudo apt install nodejs`, the
+  arm64 leg `sudo apt install qemu-user gcc-aarch64-linux-gnu`).
+- `cargo xtask net-feel` measures how online play feels on five simulated
+  network profiles (rollback depth, visible corrections, freezes,
+  bandwidth) and fails `full` if it gets worse.
 - On a window 21:9 or wider the health, weapons and log can sit beside
   the 16:9 picture instead of in the bar: Options → Video → HUD layout
   (Auto, Bottom bar, Side panels), or `--hud-layout`.

@@ -698,6 +698,67 @@ deviation. Its rulings (`docs/superpowers/plans/2026-10-11-plan-8-performance-en
 - **P14:** OLX's rendering is not timed: the oracle's OLX is a dedicated
   build with no renderer; the report says so.
 
+## Networking decisions (plan 9)
+
+Plan 9 adds the rollback netcode core and changes no simulation behaviour. Its
+rulings (`docs/superpowers/plans/2026-10-12-plan-9-netcode-core.md`):
+
+- **N1:** client prediction limit 28 ticks (amended during Task 7 from 20,
+  measured). The spec's 12-tick window is the host's fill deadline (§3.2). A
+  client may predict up to `MAX_PREDICTION = 28` ticks past its confirmed
+  tick before it stalls: a client's frontier waits for the slowest client's
+  inputs to reach the host (up to the 12-tick fill window under loss bursts)
+  on top of its own two one-way legs minus its input delay. Measured in the
+  `bad` profile (10 seeds, 4 clients), stall events by limit: 20 → 310, 22 →
+  68, 24 → 14, 26 → 3, 28 → 0. A stall freezes the player's game, which is
+  worse than a deep correction, so the limit is 28 (snapshot ring of 29).
+  The §3.3 budget is measured at 12 re-simulated ticks (the usual depth) and
+  reported at 28.
+- **N2:** input delay fixed per match: `d` is chosen once, at match start,
+  from the round-trip time (or pinned by the player), not changed mid-match:
+  changing it mid-match leaves a tick with two inputs or none.
+- **N3:** profiles are pings: A profile's latency is the round-trip time;
+  each direction takes half, with half the jitter.
+- **N4:** the sync checksum: Rollback compares `World::sync_checksum`,
+  which equals `World::checksum` except that the terrain enters as an
+  incrementally maintained, order-independent cell hash (O(1) to read)
+  instead of FNV over every cell (570 µs at Castle Strike, about 13 ms at
+  4096²). `World::checksum` (replays, goldens, oracle) is unchanged.
+- **N5:** world-state transfer by serde: The world's dynamic state crosses
+  the network as `rl_sim::WorldState` (serde-derived, postcard, deflated),
+  decoded into a world built from the same match setup, and validated before
+  use. The game mode transfers its own state through two new `GameMode`
+  methods.
+- **N6:** disconnected slots idle: In plan 9, when a peer is dropped the
+  host fills its slot with `Keys(0)` until the match ends; what happens to
+  the worm (removal, a bot taking over) is decided with the lobby in plan
+  10.
+- **N7:** time sync by arrival margin: The host measures, for each client,
+  how many ticks before it needs them the client's inputs arrive, and
+  reports the median of the last 16 samples; the client runs up to 1 %
+  faster or slower to hold it at 1 tick. A client more than 8 ticks off
+  jumps (catches up up to 10 ticks per call, or holds).
+- **N8:** on links with a round-trip time of 100 ms or less each input
+  change is repeated in 4 datagrams and resent from the ack when the peer's
+  echo shows a gap, instead of every datagram repeating every unacked input
+  (spec §3.1); longer links keep full redundancy. Measured: a 32-worm
+  typical client 28.7 → 16.7 KB/s, feel numbers unchanged (ledger ruling
+  T11-A).
+- **N9:** the 24 KB/s budget is held at the typical profile; on bad and
+  awful links a 32-worm client receives about 45 KB/s or more, because the
+  full redundancy keeps it stall-free (ruling T11-B).
+- **N10:** time sync has an integral term; after a jump, margins are ignored
+  until the catch-up ends and 16 fresh samples arrive; a client behind its
+  own pace is never sped up; a frozen peer's clock stops (ruling T7-B).
+- **N11:** desync repair re-arms 300 ticks after a state was sent if reports
+  still differ; after 3 repairs per peer per match the host raises
+  `RepairFailed` (the driver drops the peer); a spectator cannot take a
+  player's seat (`JoinRefused`) (ruling T8-A and the Task 8 fix).
+- **N12:** a received world state is validated before use, with bounds
+  derived from the receiving world's settings (e.g. the projectile clock lag
+  from the physics rate and game speed), and refused all-or-nothing (Task
+  3).
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
