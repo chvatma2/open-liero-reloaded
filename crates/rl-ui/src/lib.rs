@@ -33,5 +33,6 @@ pub use settings::{
 };
 pub use state::{AppCommand, Game, Screen, UiAction, UiState};
 pub use store::{
-    IDENTITY_FILE, IDENTITY_VERSION, Loaded, PACKS_DIR, PROFILES_FILE, REPLAYS_DIR, SETTINGS_FILE, Store,
+    IDENTITY_FILE, IDENTITY_VERSION, Loaded, PACKS_DIR, PROFILES_FILE, REPLAYS_DIR, SETTINGS_FILE, Secret,
+    Store,
 };

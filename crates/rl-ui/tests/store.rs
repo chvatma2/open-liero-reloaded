@@ -9,7 +9,7 @@ use std::path::Path;
 
 use rl_input::{Action, Bindings, KeyCode};
 use rl_ui::{
-    BotLevel, FrameRate, PROFILES_VERSION, Profile, Profiles, SETTINGS_VERSION, Settings, Store,
+    BotLevel, FrameRate, PROFILES_VERSION, Profile, Profiles, SETTINGS_VERSION, Secret, Settings, Store,
     UpscaleFilter, WindowPreset,
 };
 
@@ -339,15 +339,15 @@ fn identity_is_created_once_and_a_damaged_file_is_replaced() {
     let mut store = Store::open(&data);
 
     let first = store.load_identity(|| [7; 32]);
-    assert_eq!((first.value, first.warnings.is_empty()), ([7; 32], true));
+    assert_eq!((first.value.0, first.warnings.is_empty()), ([7; 32], true));
     assert_eq!(
         read(&path).split_whitespace().collect::<String>(),
         format!("(version:1,secret:\"{}\",)", "07".repeat(32))
     );
     // The next load reads it; `fresh` is not asked.
     let again = store.load_identity(|| panic!("a second identity"));
-    assert_eq!((again.value, again.warnings.is_empty()), ([7; 32], true));
-    assert_eq!(Store::open(&data).load_identity(|| panic!("a second identity")).value, [7; 32]);
+    assert_eq!((again.value.0, again.warnings.is_empty()), ([7; 32], true));
+    assert_eq!(Store::open(&data).load_identity(|| panic!("a second identity")).value.0, [7; 32]);
 
     // Damaged files (garbage, short, not hex, zero): new secret, one
     // warning, the old file moved to `.bak`, the new one saved.
@@ -358,18 +358,39 @@ fn identity_is_created_once_and_a_damaged_file_is_replaced() {
     {
         fs::write(&path, bad).unwrap();
         let got = store.load_identity(|| [9; 32]);
-        assert_eq!(got.value, [9; 32], "{bad}");
+        assert_eq!(got.value, Secret([9; 32]), "{bad}");
         assert_eq!(got.warnings.len(), 1, "{:?}", got.warnings);
         assert!(got.warnings[0].contains(".bak"), "{:?}", got.warnings);
         let bak = if n == 0 { "identity.ron.bak".to_string() } else { format!("identity.ron.{n}.bak") };
         assert_eq!(read(&data.join(bak)), bad);
         assert!(read(&path).contains(&"09".repeat(32)));
-        assert_eq!(store.load_identity(|| panic!("again")).value, [9; 32]);
+        assert_eq!(store.load_identity(|| panic!("again")).value.0, [9; 32]);
     }
 }
 
 #[test]
 fn identity_without_a_data_directory_is_fresh_each_time() {
     let mut store = Store::in_memory();
-    assert_eq!(store.load_identity(|| [3; 32]).value, [3; 32]);
+    assert_eq!(store.load_identity(|| [3; 32]).value.0, [3; 32]);
+}
+
+#[cfg(unix)]
+#[test]
+fn identity_file_and_backup_are_private() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    let path = data.join("identity.ron");
+    let mut store = Store::open(&data);
+    store.load_identity(|| [7; 32]);
+    assert_eq!(mode(&path), 0o600);
+    // A damaged file made world-readable: its backup is made private.
+    fs::write(&path, "garbage").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    store.load_identity(|| [9; 32]);
+    assert_eq!(mode(&path), 0o600);
+    assert_eq!(mode(&data.join("identity.ron.bak")), 0o600);
+    // Debug never prints the secret.
+    assert_eq!(format!("{:?}", Secret([9; 32])), "Secret(..)");
 }

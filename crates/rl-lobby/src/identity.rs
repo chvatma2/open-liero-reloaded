@@ -17,6 +17,9 @@ pub const CHALLENGE_PREFIX: &[u8] = b"rust-liero join v1";
 #[derive(Clone)]
 pub struct Identity {
     key: SigningKey,
+    /// The secret as given: `key.to_bytes()` is BIP-340's normalised scalar
+    /// (negated for an odd-y public key), which is not what was stored.
+    secret: [u8; 32],
 }
 
 impl core::fmt::Debug for Identity {
@@ -30,12 +33,12 @@ impl Identity {
     /// The identity of a secret scalar; `None` when it is not a valid one
     /// (zero, or not below the curve order).
     pub fn from_secret(secret: [u8; 32]) -> Option<Identity> {
-        SigningKey::from_bytes((&secret).into()).ok().map(|key| Identity { key })
+        SigningKey::from_bytes((&secret).into()).ok().map(|key| Identity { key, secret })
     }
 
     /// The secret scalar, for the identity file.
     pub fn secret(&self) -> [u8; 32] {
-        self.key.to_bytes().into()
+        self.secret
     }
 
     /// The x-only public key (32 bytes).
@@ -130,6 +133,16 @@ mod tests {
         assert_ne!(a, b);
         assert!(verify(&id.public(), b"m", &a) && verify(&id.public(), b"m", &b));
         assert_eq!(a, id.sign(b"m", [1; 32]));
+    }
+
+    #[test]
+    fn secret_round_trips_for_an_odd_y_key() {
+        // Secret 3's public key has odd y: BIP-340 negates the scalar.
+        let mut s = [0u8; 32];
+        s[31] = 3;
+        let id = Identity::from_secret(s).unwrap();
+        assert_eq!(id.secret(), s);
+        assert_eq!(Identity::from_secret(id.secret()).unwrap().public(), id.public());
     }
 
     #[test]

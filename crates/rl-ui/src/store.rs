@@ -58,6 +58,16 @@ pub struct Loaded<T> {
     pub warnings: Vec<String>,
 }
 
+/// A secret key's bytes; `Debug` never prints them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Secret(pub [u8; 32]);
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(..)")
+    }
+}
+
 /// The user's files.
 #[derive(Clone, Debug, Default)]
 pub struct Store {
@@ -204,8 +214,11 @@ impl Store {
     /// damaged file is moved to `.bak` and replaced the same way, with a
     /// warning (the player's fingerprint changes). Whether the scalar is
     /// valid is `rl-lobby`'s `Identity::from_secret`'s to say; all zeros
-    /// is refused here. Without a data directory the secret is not kept.
-    pub fn load_identity(&mut self, fresh: impl FnOnce() -> [u8; 32]) -> Loaded<[u8; 32]> {
+    /// is refused here. Without a data directory the secret is not kept,
+    /// and neither is one when the file is a newer game's (left
+    /// untouched): each launch then gets a fresh identity. The file and
+    /// its backups are private (unix mode 0600).
+    pub fn load_identity(&mut self, fresh: impl FnOnce() -> [u8; 32]) -> Loaded<Secret> {
         let loaded = self.load(
             IDENTITY_FILE,
             IDENTITY_VERSION,
@@ -226,7 +239,7 @@ impl Store {
                 secret
             }
         };
-        Loaded { value, warnings }
+        Loaded { value: Secret(value), warnings }
     }
 
     /// Writes `settings.ron` atomically.
@@ -298,7 +311,10 @@ impl Store {
     /// Moves a bad file to a backup; says where it went.
     fn move_aside(&mut self, path: &Path) -> String {
         match backup_slot(path).and_then(|bak| fs::rename(path, &bak).map(|()| bak)) {
-            Ok(bak) => format!("the file was moved to {}", bak.display()),
+            Ok(bak) => {
+                harden_backup(path, &bak);
+                format!("the file was moved to {}", bak.display())
+            }
             Err(e) => {
                 self.keep(path);
                 format!("the file is kept where it is and will not be overwritten: {e}")
@@ -353,7 +369,8 @@ impl Store {
         }
         let text = ron::ser::to_string_pretty(file, ron::ser::PrettyConfig::default())
             .with_context(|| format!("encoding {name}"))?;
-        write_atomic(&path, text.as_bytes()).with_context(|| format!("saving {}", path.display()))
+        let private = name == IDENTITY_FILE;
+        write_atomic(&path, text.as_bytes(), private).with_context(|| format!("saving {}", path.display()))
     }
 }
 
@@ -420,16 +437,42 @@ fn decode<T>(
     parse(text).map_err(|e| Bad::Other(format!("unreadable ({e})")))
 }
 
+/// A new file; `private` makes it readable by its owner only (unix).
+fn create_file(path: &Path, private: bool) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true);
+    #[cfg(unix)]
+    if private {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // A stale temporary file is removed first so the mode applies.
+        let _ = fs::remove_file(path);
+        return options.create_new(true).mode(0o600).open(path);
+    }
+    let _ = private;
+    options.create(true).truncate(true).open(path)
+}
+
+/// Makes the identity file's backup owner-only (unix); other files are
+/// left as they are.
+fn harden_backup(original: &Path, bak: &Path) {
+    #[cfg(unix)]
+    if original.file_name().is_some_and(|n| n == IDENTITY_FILE) {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = fs::set_permissions(bak, fs::Permissions::from_mode(0o600));
+    }
+    let _ = (original, bak);
+}
+
 /// Writes `bytes` to a temporary file next to `path`, syncs it and renames
 /// it over `path` (making the directory first).
-fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+fn write_atomic(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
     let dir = path.parent().ok_or_else(|| io::Error::other("no directory"))?;
     fs::create_dir_all(dir)?;
     let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
     tmp_name.push(".tmp");
     let tmp = dir.join(tmp_name);
     let written = (|| {
-        let mut f = fs::File::create(&tmp)?;
+        let mut f = create_file(&tmp, private)?;
         f.write_all(bytes)?;
         f.sync_all()?;
         fs::rename(&tmp, path)
