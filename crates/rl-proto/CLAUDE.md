@@ -21,8 +21,13 @@ control messages, the frame delta codec and the simulation fingerprint.
   `STATE_CHUNK`, `MAX_STATE`, `MAX_SLOTS`; `OVERHEAD` is for budgets.
 - **Never panic:** every decoder bounds and validates; `tests/fuzz.rs`.
 - **Fingerprint** (`build.rs`, `fingerprint_impl.rs`): FNV-1a over the
-  sources of rl-math, rl-data, rl-terrain, rl-sim, rl-modes and this crate
-  (`\r` stripped; all of this crate's `src`). It changes whenever simulation source changes;
-  peers only play with an equal fingerprint (spec §2.2).
+  sources of rl-math, rl-data, rl-terrain, rl-sim, rl-modes, rl-netcode
+  (the session's semantics: checksum cadence, acks, resends, `WorldSim`'s
+  checksum) and this crate (`\r` stripped; every `.rs` under each `src`,
+  `rerun-if-changed` on each; an unreadable source is a build panic). It
+  changes whenever that source changes; peers only play with an equal
+  fingerprint (spec §2.2). rl-netcode depends on this crate: `build.rs`
+  only reads its files, never depends on it. `tests/fingerprint.rs`
+  recomputes it over the list.
 
 Test: `cargo nextest run -p rl-proto`.

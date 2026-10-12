@@ -1,12 +1,15 @@
 //! Computes the simulation fingerprint: a hash of the source of every crate
-//! that decides what a tick does (spec §2.2).
+//! that decides what peers compute together (spec §2.2): what a tick does,
+//! and the session's semantics (rl-netcode: checksum cadence, acks, resends,
+//! `WorldSim`'s checksum). rl-netcode is a peer of this crate's layer that
+//! depends on it; only its source files are read here, never its code.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 include!("src/fingerprint_impl.rs");
 
-const DIRS: [&str; 5] = ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes"];
+const DIRS: [&str; 6] = ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-netcode"];
 
 fn collect(dir: &Path, rel: &str, out: &mut Vec<(String, PathBuf)>) {
     let rd =
