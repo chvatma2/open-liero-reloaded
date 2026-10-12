@@ -37,6 +37,14 @@ impl ToySim {
     pub fn tick_count(&self) -> u32 {
         self.tick
     }
+
+    /// Moves `slot` by `d` outside its inputs: a planted desync. A slot
+    /// out of range changes nothing.
+    pub fn displace(&mut self, slot: usize, d: i64) {
+        if let Some(p) = self.pos.get_mut(slot) {
+            *p += d;
+        }
+    }
 }
 
 impl Simulation for ToySim {

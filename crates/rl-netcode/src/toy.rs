@@ -21,6 +21,11 @@ impl Factory<ToySim> for ToyFactory {
     fn driver(&mut self, peer: PeerId, _seat: Option<Seat>) -> Box<dyn Driver<ToySim>> {
         Box::new(ToyDriver { rng: Rng::new(self.seed ^ (peer as u64).wrapping_mul(0x9e37)), held: [0; 32] })
     }
+
+    /// Every fault moves slot 0 by one.
+    fn corrupt(&mut self, sim: &mut ToySim, _index: usize) {
+        sim.displace(0, 1);
+    }
 }
 
 /// Changes a slot's key with probability 1/8 per tick, otherwise holds it.

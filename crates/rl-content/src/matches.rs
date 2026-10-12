@@ -55,6 +55,24 @@ pub struct MatchOptions {
     pub pool_capacity: usize,
 }
 
+impl MatchOptions {
+    /// A Deathmatch of `players` on these packs with the defaults: OLX's
+    /// LX56 settings, the default rules, [`crate::DEFAULT_PRESET`] and
+    /// OLX's projectile pool.
+    pub fn deathmatch(mod_id: &str, level_id: &str, seed: u32, players: Vec<Player>) -> MatchOptions {
+        MatchOptions {
+            mod_id: mod_id.into(),
+            level_id: level_id.into(),
+            seed,
+            settings: SimSettings::lx56(),
+            players,
+            deathmatch: DeathmatchSettings::default(),
+            restrictions: crate::DEFAULT_PRESET.into(),
+            pool_capacity: MatchSetup::DEFAULT_POOL_CAPACITY,
+        }
+    }
+}
+
 /// The assets a match is made of, loaded once (a rematch decodes nothing
 /// again), and their packs for the replay.
 #[derive(Clone, Copy)]

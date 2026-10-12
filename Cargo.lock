@@ -3027,6 +3027,7 @@ name = "rl-netcode"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "rl-content",
  "rl-proto",
  "rl-sim",
 ]

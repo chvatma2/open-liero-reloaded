@@ -2,9 +2,7 @@
 //! a failure's record and a golden match's header.
 
 use rl_bots::BotConfig;
-use rl_content::{DEFAULT_PRESET, MatchOptions, Player};
-use rl_modes::DeathmatchSettings;
-use rl_sim::{MatchSetup, SimSettings};
+use rl_content::{MatchOptions, Player};
 use serde::{Deserialize, Serialize};
 
 /// The game mode (`--mode`). Only Deathmatch exists so far.
@@ -139,27 +137,19 @@ impl MatchSpec {
     /// and loading time options, the Deathmatch limits, the default
     /// restrictions and the pool size (OLX's unless given).
     pub fn match_options(&self) -> MatchOptions {
-        let mut settings = SimSettings::lx56();
+        let players = (0..self.bots).map(|i| Player::Bot(self.bot_config(i))).collect();
+        let mut o = MatchOptions::deathmatch(&self.mod_id, &self.level_id, self.seed, players);
         if let Some(f) = self.bonus_frequency {
-            (settings.bonuses, settings.bonus_frequency) = (true, f);
+            (o.settings.bonuses, o.settings.bonus_frequency) = (true, f);
         }
         if let Some(l) = self.loading_time {
-            settings.loading_time = l;
+            o.settings.loading_time = l;
         }
-        MatchOptions {
-            mod_id: self.mod_id.clone(),
-            level_id: self.level_id.clone(),
-            seed: self.seed,
-            settings,
-            players: (0..self.bots).map(|i| Player::Bot(self.bot_config(i))).collect(),
-            deathmatch: DeathmatchSettings {
-                kill_limit: self.kill_limit,
-                time_limit: self.time_limit,
-                ..DeathmatchSettings::default()
-            },
-            restrictions: DEFAULT_PRESET.into(),
-            pool_capacity: self.pool_capacity.unwrap_or(MatchSetup::DEFAULT_POOL_CAPACITY),
+        (o.deathmatch.kill_limit, o.deathmatch.time_limit) = (self.kill_limit, self.time_limit);
+        if let Some(p) = self.pool_capacity {
+            o.pool_capacity = p;
         }
+        o
     }
 
     /// A file name for this match: mod, level, bots, personality,

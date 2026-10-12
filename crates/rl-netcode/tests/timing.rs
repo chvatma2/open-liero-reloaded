@@ -27,6 +27,7 @@ fn scenario(seed: u64, peers: Vec<PeerPlan>, ticks: u32) -> Scenario {
         settle_ticks: 300,
         outages: vec![],
         expect_no_stalls: false,
+        corrupt: vec![],
     }
 }
 

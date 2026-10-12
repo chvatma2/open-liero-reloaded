@@ -42,6 +42,7 @@ fn scenario(seed: u64, profile: Profile, clients: u8, spectators: u8) -> Scenari
         settle_ticks: 200,
         outages: Vec::new(),
         expect_no_stalls: false,
+        corrupt: vec![],
     }
 }
 

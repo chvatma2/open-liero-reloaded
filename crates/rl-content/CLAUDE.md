@@ -79,6 +79,9 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   refused; `Deathmatch::prepare`, `World::new`, a
   started `Recorder` and the bots on one shared `AreaCache` (think in
   `bots` order). `rl-cli`'s golden checksum streams pin it.
+  `MatchOptions::deathmatch(mod, level, seed, players)` gives the defaults
+  (LX56 settings, default rules, `DEFAULT_PRESET`, OLX's pool), which
+  `rl-cli`'s `MatchSpec::match_options` and `rl-netcode`'s tests start from.
 - **Replays' content:** `check_replay_packs` (ids and content hashes) and
   `replay_assets_from(m, level, theme)` let a game that draws a replay load
   its packs once.

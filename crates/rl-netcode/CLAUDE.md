@@ -65,17 +65,68 @@ model that tests it in one process (spec §9.1).
     `SILENCE_TIMEOUT_US`: `Event::PeerTimedOut` (host and client). The
     driver decides; `peer_lost` abandons a peer: its slot is `Keys(0)` at
     every new tick (decision N6), nothing more is sent to it or taken.
+  - Hardened against a hostile host: a jump moves the pace at most
+    `MAX_PREDICTION` ticks back and `SILENCE_TIMEOUT_US / TICK_US` ahead;
+    the integral term takes `HostInputs.tick` only when not older than the
+    last taken and at most 100 ticks past our own current tick. A client
+    with more unacknowledged inputs than `MAX_KEYS` sends the newest ones.
+    `peer_lost` also drops what is queued for the peer.
   - `receive` never panics: undecodable input is `Event::Malformed`.
+- **Sync** (`sync.rs`, spec §3.5, §3.6): after simulating tick `t` with
+  `(t + 1) % checksum_every == 0` (every 10) the session records
+  `Simulation::checksum` as pending; a rollback drops pending ticks from
+  its start; at the end of `advance` pending ticks below the confirmed
+  ticks (and a pending rollback) are confirmed (`Session::checksums`, all
+  kept). Clients and spectators send each as `Control::Checksum`; the host
+  compares (peers' reports wait up to 1024 ticks for its own): a
+  difference is `Event::Desync` (`Stats::desyncs`), `Control::Desync` (the
+  client's `Event::Desync`, `local` its own or 0) and a repair: at the end
+  of the next advance the host sends `encode_confirmed_state` (the state
+  after its last confirmed simulated tick: restore, encode, re-simulate
+  unreported) as `StateBegin` and `STATE_CHUNK` chunks
+  (`Event::StateSent`). One repair per peer at a time: the peer's
+  mismatches are ignored until a report after the state's tick matches.
+  The receiver refuses a transfer with an index out of range, a repeated
+  chunk or more bytes than announced (`StateRejected`, later chunks
+  ignored); a whole one is `StateArrived` (the bytes), then
+  `decode_state`: refused, `StateRejected` and the old state stays;
+  loaded, `StateLoaded` and the timeline restarts after it: no
+  snapshots, the **state floor** at `tick + 1` (ticks below it count as
+  confirmed for rollback and checksums; their inputs still arrive and are
+  recorded, never rolling back), the ticks we had run simulated again at
+  the next advance (a client behind the state skips to it). `sim_mut`
+  also moves the floor to the current tick (a change outside the timeline
+  is never rolled back across: planted faults).
+- **Spectators mid-match**: `Role::Joining` simulates nothing and ignores
+  frames until a state loads, then is a `Spectator` whose input log
+  begins after the state (`InputLog::start_at`). The host's
+  `add_spectator` owes it the state like a repair; its frames then start
+  there with no base (`origin`).
+- **WorldSim** (`world_sim.rs`): the `rl_sim::World` adapter, rollback
+  on (`enable_rollback`); `save`/`restore`/`forget_before` are the
+  world's (`restore` refused is a session bug: `expect`); `checksum` is
+  `sync_checksum` (N4); states are `WorldState::{encode, decode}` +
+  `load_state` (N5), every `StateError` a refusal; `events()` are the last
+  simulated tick's (stale after a restore or a load until the next tick).
 - **Harness** (`harness.rs`, `toy.rs`): `run` plays a `Scenario` — the host
   (`HOST` = 0) and its clients and spectators over `Network`, in virtual
   time (1 ms steps, idle steps skipped), clocks skewed by `clock_ppm`,
   outages, freezes (a suspended laptop: no frames, the clock stands still,
-  arrivals wait), LAN links for the last `settle_ticks` — and returns a
-  `Report` (confirmed logs, checksums of ticks `t % 10 == 9`, stats,
-  events, `dropped`). The host drops a peer it reports timed out. The run
-  ends when the host is past `ticks + settle_ticks` and every other peer
-  re-simulated `ticks` confirmed ticks. `verdict` checks every peer not
+  arrivals wait), spectators joining at `join_tick` (`Role::Joining`,
+  `add_spectator`), planted faults (`corrupt`: at the peer's first frame
+  after the host's tick, `Factory::corrupt(sim_mut, index)`), LAN links
+  for the last `settle_ticks` — and returns a `Report` (confirmed logs,
+  checksums of ticks `t % 10 == 9` recorded while simulating, the
+  sessions' confirmed `checksums`, stats, events, `dropped`). The host
+  drops a peer it reports timed out. The run ends when the host is past
+  `ticks + settle_ticks` and every other peer re-simulated `ticks`
+  confirmed ticks. `verdict` checks every peer not
   dropped confirmed the host's inputs and matches an offline replay of
-  them. `ToyFactory` drives `ToySim` with seeded keys.
+  them (a joined spectator from its state, a corrupted peer from its last
+  loaded state), with no desync but a corrupted peer's and no refused
+  state. `ToyFactory` drives `ToySim` with seeded keys; its fault moves
+  slot 0.
 
-Test: `cargo nextest run -p rl-netcode`.
+Test: `cargo nextest run -p rl-netcode` (`tests/world_sim.rs` plays MW 1.0
+on Castle Strike from `RL_CONTENT_DIR`, skipped with a notice without it;
+rl-content is a dev-dependency only).

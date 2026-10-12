@@ -16,7 +16,9 @@ pub mod netsim;
 mod rng;
 mod session;
 mod sim;
+mod sync;
 pub mod toy;
+mod world_sim;
 
 pub use clock::{JUMP_TICKS, MARGIN_SAMPLES, MAX_ADJUST_PPM, Margins, Pace, TARGET_MARGIN};
 pub use inputs::{InputLog, SetResult};
@@ -26,6 +28,7 @@ pub use session::{
     SILENCE_TIMEOUT_US, Seat, Session, Stats, TICK_US, TickInfo, input_delay,
 };
 pub use sim::{Simulation, StateRejected, ToySim};
+pub use world_sim::WorldSim;
 
 /// A peer's address within one session.
 pub type PeerId = u16;

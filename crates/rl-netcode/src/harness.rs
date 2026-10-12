@@ -33,7 +33,9 @@ pub struct PeerPlan {
     pub input_delay: u8,
     /// Its frame period in local time.
     pub frame_us: u64,
-    /// `None`: present from tick 0. Joining mid-match is not supported yet.
+    /// `None`: present from tick 0. A spectator may join at the host's
+    /// tick `Some(t)` (`t < ticks`): its session is made then
+    /// (`Role::Joining`) and the host's `add_spectator` sends it the state.
     pub join_tick: Option<u32>,
     /// A suspended laptop: from the host's tick `.0` until its tick `.1` the
     /// peer runs no frame, its clock stands still, and what arrives waits
@@ -64,6 +66,11 @@ pub struct Scenario {
     pub outages: Vec<Outage>,
     /// No player peer (the host included) may stall.
     pub expect_no_stalls: bool,
+    /// Planted faults: at peer `.0`'s first frame after the host's tick
+    /// `.1`, [`Factory::corrupt`] changes its simulation (entry `i` passes
+    /// index `i`). Only these peers may desync; the verdict compares them
+    /// from their last loaded state on.
+    pub corrupt: Vec<(PeerId, u32)>,
 }
 
 /// Builds each peer's simulation and driver.
@@ -71,6 +78,9 @@ pub trait Factory<S: Simulation> {
     fn sim(&mut self, peer: PeerId) -> S;
     /// `seat` is `None` for the host.
     fn driver(&mut self, peer: PeerId, seat: Option<Seat>) -> Box<dyn Driver<S>>;
+    /// Plants fault `index` of [`Scenario::corrupt`] in a peer's simulation
+    /// (through `Session::sim_mut`, so it survives rollbacks).
+    fn corrupt(&mut self, _sim: &mut S, _index: usize) {}
 }
 
 /// What a run produced, per peer (the host included).
@@ -78,7 +88,8 @@ pub trait Factory<S: Simulation> {
 pub struct Report {
     /// The host's confirmed inputs.
     pub host_log: Vec<[u8; 32]>,
-    /// Every peer's confirmed inputs (its log rows below its frontier).
+    /// Every peer's confirmed inputs (its log rows below its frontier; a
+    /// joined spectator's are zero before its state).
     pub logs: BTreeMap<PeerId, Vec<[u8; 32]>>,
     /// The checksum after every tick `t` with `t % 10 == 9`, from its last simulation.
     pub sims: BTreeMap<PeerId, BTreeMap<u32, u64>>,
@@ -89,6 +100,8 @@ pub struct Report {
     pub duration_us: u64,
     /// Peers the host dropped after [`Event::PeerTimedOut`]; the verdict skips them.
     pub dropped: BTreeSet<PeerId>,
+    /// Every peer's confirmed sync checksums ([`Session::checksums`]).
+    pub checksums: BTreeMap<PeerId, Vec<(u32, u64)>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,6 +149,8 @@ struct Peer<S: Simulation> {
     paused_us: u64,
     /// What arrived while frozen.
     inbox: Vec<(PeerId, Channel, Vec<u8>)>,
+    /// Faults still to plant: (index in `Scenario::corrupt`, host tick).
+    faults: Vec<(usize, u32)>,
     /// Its last advance began with `ticks` confirmed (so it re-simulated
     /// them on their final inputs) and ended at or past `ticks`. Ending on
     /// "frontier ≥ ticks" alone could stop before a pending rollback ran.
@@ -170,6 +185,37 @@ fn virtual_time(local_us: u64, ppm: i32) -> u64 {
     t.clamp(0, u64::MAX as i128) as u64
 }
 
+/// The host (`plan` `None`) or a peer, made at virtual time `now`: its
+/// clock and its first frame start there.
+fn make_peer<S: Simulation>(
+    sc: &Scenario,
+    f: &mut dyn Factory<S>,
+    plan: Option<&PeerPlan>,
+    role: Role,
+    now: u64,
+) -> Peer<S> {
+    let (id, seat, ppm, frame_us, delay) = match plan {
+        Some(p) => (p.id, Some(p.seat), p.clock_ppm, p.frame_us, p.input_delay),
+        None => (HOST, None, 0, HOST_FRAME_US, 0),
+    };
+    let delay = if matches!(role, Role::Client { .. }) { delay } else { 0 };
+    let local = local_time(now, ppm);
+    Peer {
+        id,
+        session: Session::new(Config::new(sc.slots, delay), role, f.sim(id), local),
+        driver: Recorder { inner: f.driver(id, seat), sums: BTreeMap::new() },
+        ppm,
+        frame_us,
+        next_frame: local,
+        freeze: plan.and_then(|p| p.freeze),
+        frozen_at: None,
+        paused_us: 0,
+        inbox: Vec::new(),
+        faults: sc.corrupt.iter().enumerate().filter(|(_, c)| c.0 == id).map(|(i, c)| (i, c.1)).collect(),
+        done: false,
+    }
+}
+
 fn check_scenario(sc: &Scenario) -> Result<(), Failure> {
     if !(1..=32).contains(&sc.slots) {
         return Err(fail(0, format!("{} slots: a match has 1 to 32", sc.slots)));
@@ -177,8 +223,13 @@ fn check_scenario(sc: &Scenario) -> Result<(), Failure> {
     let mut ids = Vec::new();
     let mut seats = Vec::new();
     for p in &sc.peers {
-        if let Some(t) = p.join_tick {
-            return Err(fail(t, format!("peer {} joins mid-match: not supported yet", p.id)));
+        if let Some(t) = p.join_tick
+            && (p.seat != Seat::Spectator || t >= sc.ticks)
+        {
+            return Err(fail(
+                t,
+                format!("peer {} joins at {t}: only a spectator, before tick {}", p.id, sc.ticks),
+            ));
         }
         if p.id == HOST || ids.contains(&p.id) {
             return Err(fail(0, format!("peer id {} is the host's or repeated", p.id)));
@@ -193,6 +244,9 @@ fn check_scenario(sc: &Scenario) -> Result<(), Failure> {
         if p.frame_us == 0 {
             return Err(fail(0, format!("peer {} has a zero frame period", p.id)));
         }
+    }
+    if let Some(&(peer, t)) = sc.corrupt.iter().find(|(peer, _)| !ids.contains(peer)) {
+        return Err(fail(t, format!("peer {peer} is corrupted but not in the match")));
     }
     Ok(())
 }
@@ -210,42 +264,22 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
     for p in &sc.peers {
         net.connect(HOST, p.id, p.profile);
     }
+    let (present, mut joiners): (Vec<&PeerPlan>, Vec<&PeerPlan>) =
+        sc.peers.iter().partition(|p| p.join_tick.is_none());
+    joiners.sort_by_key(|p| core::cmp::Reverse(p.join_tick)); // popped from the end
     let mut peers: Vec<Peer<S>> = Vec::with_capacity(sc.peers.len() + 1);
-    let host_role = Role::Host { peers: sc.peers.iter().map(|p| (p.id, p.seat)).collect() };
-    peers.push(Peer {
-        id: HOST,
-        session: Session::new(Config::new(sc.slots, 0), host_role, f.sim(HOST), 0),
-        driver: Recorder { inner: f.driver(HOST, None), sums: BTreeMap::new() },
-        ppm: 0,
-        frame_us: HOST_FRAME_US,
-        next_frame: 0,
-        freeze: None,
-        frozen_at: None,
-        paused_us: 0,
-        inbox: Vec::new(),
-        done: false,
-    });
-    for p in &sc.peers {
-        let (role, delay) = match p.seat {
-            Seat::Player(slot) => (Role::Client { host: HOST, slot }, p.input_delay),
-            Seat::Spectator => (Role::Spectator { host: HOST }, 0),
+    let host_role = Role::Host { peers: present.iter().map(|p| (p.id, p.seat)).collect() };
+    peers.push(make_peer(sc, f, None, host_role, 0));
+    for p in &present {
+        let role = match p.seat {
+            Seat::Player(slot) => Role::Client { host: HOST, slot },
+            Seat::Spectator => Role::Spectator { host: HOST },
         };
-        peers.push(Peer {
-            id: p.id,
-            session: Session::new(Config::new(sc.slots, delay), role, f.sim(p.id), 0),
-            driver: Recorder { inner: f.driver(p.id, Some(p.seat)), sums: BTreeMap::new() },
-            ppm: p.clock_ppm,
-            frame_us: p.frame_us,
-            next_frame: 0,
-            freeze: p.freeze,
-            frozen_at: None,
-            paused_us: 0,
-            inbox: Vec::new(),
-            done: false,
-        });
+        peers.push(make_peer(sc, f, Some(p), role, 0));
     }
-    let index: BTreeMap<PeerId, usize> = peers.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
-    let mut events: BTreeMap<PeerId, Vec<Event>> = peers.iter().map(|p| (p.id, Vec::new())).collect();
+    let mut index: BTreeMap<PeerId, usize> = peers.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
+    let mut events: BTreeMap<PeerId, Vec<Event>> = sc.peers.iter().map(|p| (p.id, Vec::new())).collect();
+    events.insert(HOST, Vec::new());
 
     // Outages, per peer in start order; one is installed at a time.
     let mut outages: BTreeMap<PeerId, Vec<(u64, u64)>> = BTreeMap::new();
@@ -266,6 +300,14 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
     let mut now = 0u64;
     let mut host_tick = 0;
     loop {
+        // Spectators joining mid-match: their session begins now.
+        while let Some(&plan) = joiners.last().filter(|p| p.join_tick.is_some_and(|t| host_tick >= t)) {
+            joiners.pop();
+            let host_now = peers[0].local(now);
+            peers[0].session.add_spectator(plan.id, host_now);
+            index.insert(plan.id, peers.len());
+            peers.push(make_peer(sc, f, Some(plan), Role::Joining { host: HOST }, now));
+        }
         for p in peers.iter_mut() {
             match (p.freeze, p.frozen_at) {
                 (Some((from, until)), None) if host_tick >= from && host_tick < until => {
@@ -307,6 +349,10 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
                 continue;
             }
             p.next_frame += p.frame_us;
+            while let Some(i) = p.faults.iter().position(|&(_, t)| host_tick > t) {
+                let (index, _) = p.faults.remove(i);
+                f.corrupt(p.session.sim_mut(), index);
+            }
             let confirmed = p.session.frontier() >= sc.ticks;
             p.session.advance(local, &mut p.driver);
             p.done = confirmed && p.session.current_tick() >= sc.ticks;
@@ -370,10 +416,13 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
         received: BTreeMap::new(),
         duration_us: now,
         dropped,
+        checksums: BTreeMap::new(),
     };
     for p in peers {
         let log = p.session.input_log();
-        let rows: Vec<[u8; 32]> = (0..log.frontier()).filter_map(|t| log.row(t)).collect();
+        // A joined spectator's log begins at its state: zeros before.
+        let rows: Vec<[u8; 32]> = (0..log.frontier()).map(|t| log.row(t).unwrap_or([0; 32])).collect();
+        report.checksums.insert(p.id, p.session.checksums().to_vec());
         if p.id == HOST {
             report.host_log = rows.clone();
         }
@@ -391,12 +440,36 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
 }
 
 /// Checks a run: every peer confirmed `ticks` ticks of the host's inputs,
-/// and its checksums match an offline replay of them; no stalls (when
-/// expected), malformed messages or inconsistent inputs. Dropped peers are
-/// skipped.
+/// and its checksums (recorded while simulating, and the session's
+/// confirmed ones) match an offline replay of them; no stalls (when
+/// expected), malformed messages, inconsistent inputs, refused states, or
+/// desyncs but of corrupted peers. Dropped peers are skipped. A spectator
+/// that joined is compared from its state on (inputs from its first,
+/// checksums from its last); a corrupted peer's checksums from its last
+/// loaded state on.
 pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>) -> Result<(), Failure> {
     let ticks = sc.ticks;
     let kept = |peer: &PeerId| !r.dropped.contains(peer);
+    let corrupted = |peer: PeerId| sc.corrupt.iter().any(|c| c.0 == peer);
+    let joined = |peer: PeerId| sc.peers.iter().any(|p| p.id == peer && p.join_tick.is_some());
+    // Where each peer's inputs and checksums are compared from.
+    let mut from: BTreeMap<PeerId, (u32, u32)> = BTreeMap::new();
+    for (&peer, events) in r.events.iter().filter(|(p, _)| kept(p)) {
+        let mut loads = events.iter().filter_map(|e| match *e {
+            Event::StateLoaded { tick } => Some(tick.saturating_add(1)),
+            _ => None,
+        });
+        let first = loads.next();
+        let last = loads.next_back().or(first);
+        let need = joined(peer) || corrupted(peer);
+        let (inputs, sums) = match (need, first, last) {
+            (false, ..) => (0, 0),
+            (true, Some(a), Some(b)) => (if joined(peer) { a } else { 0 }, b),
+            _ => return Err(fail(0, format!("peer {peer} never loaded a state"))),
+        };
+        from.insert(peer, (inputs, sums));
+    }
+    let from_of = |peer: &PeerId| from.get(peer).copied().unwrap_or((0, 0));
     for (&peer, rows) in r.logs.iter().filter(|(p, _)| kept(p)) {
         if rows.len() < ticks as usize {
             return Err(fail(
@@ -409,12 +482,14 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
         return Err(fail(r.host_log.len() as u32, format!("the host confirmed {} ticks", r.host_log.len())));
     }
     for (&peer, rows) in r.logs.iter().filter(|(p, _)| kept(p)) {
-        if let Some(t) = (0..ticks as usize).find(|&t| rows[t] != r.host_log[t]) {
+        let start = from_of(&peer).0 as usize;
+        if let Some(t) = (start..ticks as usize).find(|&t| rows[t] != r.host_log[t]) {
             return Err(fail(t as u32, format!("peer {peer} confirmed other inputs than the host")));
         }
     }
     let mut sim = f.sim(HOST);
     let slots = sc.slots as usize;
+    let mut replay = BTreeMap::new();
     for t in 0..ticks {
         let row = &r.host_log[t as usize];
         let keys: Vec<Keys> = row[..slots].iter().map(|&k| Keys(k)).collect();
@@ -423,13 +498,28 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
             continue;
         }
         let want = sim.checksum();
+        replay.insert(t, want);
         for (&peer, sums) in r.sims.iter().filter(|(p, _)| kept(p)) {
+            if t < from_of(&peer).1 {
+                continue;
+            }
             match sums.get(&t) {
                 Some(&got) if got == want => {}
                 Some(&got) => {
                     return Err(fail(t, format!("peer {peer} checksum {got:#x}, the replay {want:#x}")));
                 }
                 None => return Err(fail(t, format!("peer {peer} recorded no checksum"))),
+            }
+        }
+    }
+    for (&peer, sums) in r.checksums.iter().filter(|(p, _)| kept(p)) {
+        let start = from_of(&peer).1;
+        for &(t, got) in sums.iter().filter(|(t, _)| (start..ticks).contains(t)) {
+            if replay.get(&t) != Some(&got) {
+                return Err(fail(
+                    t,
+                    format!("peer {peer} confirmed checksum {got:#x} differs from the replay"),
+                ));
             }
         }
     }
@@ -450,6 +540,15 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
                         tick,
                         format!("peer {peer} got an inconsistent input for slot {slot} from {from}"),
                     ));
+                }
+                Event::StateRejected { tick } => {
+                    return Err(fail(tick, format!("peer {peer} refused the state after tick {tick}")));
+                }
+                Event::Desync { tick, peer: other, .. } => {
+                    let faulty = if peer == HOST { other } else { peer };
+                    if !corrupted(faulty) {
+                        return Err(fail(tick, format!("peer {faulty} desynced at tick {tick}")));
+                    }
                 }
                 _ => {}
             }
