@@ -17,6 +17,7 @@ rl-sim = { path = "crates/rl-sim" }
 rl-modes = { path = "crates/rl-modes" }
 rl-bots = { path = "crates/rl-bots" }
 rl-replay = { path = "crates/rl-replay" }
+rl-proto = { path = "crates/rl-proto" }
 rl-scenario = { path = "crates/rl-scenario" }
 rl-content = { path = "crates/rl-content" }
 rl-scene = { path = "crates/rl-scene" }

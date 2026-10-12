@@ -1,0 +1,19 @@
+[package]
+name = "rl-proto"
+description = "The network wire format: datagrams, control messages, the frame delta codec and the simulation fingerprint."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[dependencies]
+serde.workspace = true
+postcard.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

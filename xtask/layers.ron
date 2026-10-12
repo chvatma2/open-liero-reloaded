@@ -17,6 +17,7 @@
         "rl-modes": 3,
         "rl-bots": 3,
         "rl-replay": 3,
+        "rl-proto": 4,
         "rl-scenario": 4,
         "rl-content": 4,
         "rl-scene": 5,
@@ -57,6 +58,6 @@
         // The options menu edits the key bindings (plan 7 task 1).
         ("rl-ui", "rl-input"),
     ],
-    no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay"],
-    wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
+    no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-proto"],
+    wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-proto", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
 )
