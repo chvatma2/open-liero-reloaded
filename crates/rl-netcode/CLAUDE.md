@@ -38,7 +38,9 @@ model that tests it in one process (spec §9.1).
     value stays). A client applies its own input `d = input_delay(rtt)`
     ticks later (`0..d` are `Keys(0)`); a spectator simulates confirmed
     ticks only. `confirmed()` (`max(frontier, state floor)`): ticks below
-    it are final, the HUD's ticks (spec §3.4).
+    it are final, the HUD's ticks (spec §3.4). `peer_rtt_ms(peer)`: the
+    round trip to one peer (a host's `Stats::rtt_ms` is the largest), for
+    the lobby's pings and the next match's input delays.
   - Prediction: final, else a client's own provisional input, else the
     slot's last final value, else `0`. A final value differing from the keys
     a simulated tick used marks a rollback; the next `advance` restores the
@@ -178,13 +180,17 @@ model that tests it in one process (spec §9.1).
   replaced when the tick is re-simulated; `take_confirmed(confirmed)`
   hands out those below `Session::confirmed()`, in order, each tick once
   (a tick re-simulated after it was taken, after a loaded state, is not
-  recorded again). `state_loaded(tick)` (the driver calls it on
-  `Event::StateLoaded`) drops the old timeline's candidates up to `tick`:
-  confirmed ticks then have a gap, so `scores` and `result` (the world's
-  own, self-correcting) are the truth, and the match end is read from
-  `result`, not only from a `GameOver` event. `tests/world_sim.rs`'
-  `tick_records_follow_rollbacks` checks them against an offline replay of
-  the final inputs, `a_loaded_state_restarts_the_tick_records` the gap.
+  recorded again; a tick confirmed before it was simulated, as a
+  spectator's often is, comes out once simulated). `state_loaded(tick)`
+  (the driver calls it on `Event::StateLoaded`) drops the old timeline's
+  candidates up to `tick`: confirmed ticks then have a gap, so `scores`
+  and `result` (the world's own, self-correcting) are the truth, and the
+  match end is read from `result`, not only from a `GameOver` event.
+  `tests/world_sim.rs`' `tick_records_follow_rollbacks` checks them
+  against an offline replay of the final inputs,
+  `a_loaded_state_restarts_the_tick_records` the gap,
+  `ticks_confirmed_before_they_are_simulated_are_recorded` a spectator's
+  late ones.
 - **Harness** (`harness.rs`, `toy.rs`): `run` plays a `Scenario` — the host
   (`HOST` = 0) and its clients and spectators over `Network`, in virtual
   time (1 ms steps, idle steps skipped), clocks skewed by `clock_ppm`,

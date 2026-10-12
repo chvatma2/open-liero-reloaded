@@ -90,7 +90,9 @@ The headless command-line tool. Its commands:
   its own `World` and area cache from the same `MatchOptions` (all worms
   `Player::Bot`); a peer runs only the bots of its local slots (the host
   `clients..slots`, client `k` = peer `1 + k` slot `k`), thinking with its
-  own last tick's events. Prints per peer rollbacks (depth p50/p99), fills,
+  own last tick's events (the world and the bots from
+  `rl_online::matches::build_options` and `HostBots`: the online game's
+  one implementation). Prints per peer rollbacks (depth p50/p99), fills,
   stalls, desyncs and bytes/s received, then `ok` or `FAIL <what> at tick
   <t>`; a failure writes `target/failures/net-<stem>.ron` (a `NetCase`) and
   exits 1. `fixtures/net/cases/*.ron` are kept cases that must pass

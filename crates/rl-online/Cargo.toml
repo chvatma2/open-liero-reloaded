@@ -1,0 +1,24 @@
+[package]
+name = "rl-online"
+description = "Online play over real connections: the lobby, the match and its replay, from the first handshake back to the lobby."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rl-net.workspace = true
+rl-netcode.workspace = true
+rl-proto.workspace = true
+rl-lobby.workspace = true
+rl-content.workspace = true
+rl-sim.workspace = true
+rl-bots.workspace = true
+rl-modes.workspace = true
+rl-replay.workspace = true
+rl-terrain.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

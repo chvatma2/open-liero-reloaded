@@ -5,7 +5,9 @@
 //!
 //! Every peer builds the same world from the same options (every worm a
 //! bot, so the loadouts are identical) and *runs* only the bots of its local
-//! slots (spec §3.6: the host those no client holds, client `k` slot `k`).
+//! slots (spec §3.6: the host those no client holds, client `k` slot `k`),
+//! with `rl_online::matches`' world building and `HostBots`: the online
+//! game's own.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,7 +19,7 @@ use rl_content::{Content, MatchOptions};
 use rl_netcode::harness::{self, Factory, Failure, HOST, Outage, PeerPlan, Report, Scenario};
 use rl_netcode::netsim::{LinkStats, Profile};
 use rl_netcode::{Driver, Event, PeerId, Seat, Session, Stats, WorldSim, input_delay};
-use rl_sim::Keys;
+use rl_online::matches::{self, HostBots};
 use serde::{Deserialize, Serialize};
 
 use crate::bundle::DesyncBundle;
@@ -172,8 +174,8 @@ pub struct WorldFactory<'c> {
     content: &'c Content,
     options: MatchOptions,
     spec: NetSpec,
-    /// The bots of a peer's world, from `sim` to `driver`.
-    bots: BTreeMap<PeerId, Vec<Bot>>,
+    /// The bots of a peer's world by slot, from `sim` to `driver`.
+    bots: BTreeMap<PeerId, BTreeMap<u8, Bot>>,
 }
 
 impl<'c> WorldFactory<'c> {
@@ -189,28 +191,23 @@ impl Factory<WorldSim> for WorldFactory<'_> {
     fn sim(&mut self, peer: PeerId) -> WorldSim {
         // Validated by `new`: only a content directory changing under the
         // run could fail now.
-        let built = self
-            .content
-            .build_match(&self.options)
+        let built = matches::build_options(self.content, &self.options)
             .unwrap_or_else(|e| panic!("building {}: {e:#}", self.spec.stem()));
         // Each build has its own area cache: bots of different peers never share one.
         self.bots.insert(peer, built.bots);
-        WorldSim::new(built.world)
+        built.sim
     }
 
     fn driver(&mut self, peer: PeerId, seat: Option<Seat>) -> Box<dyn Driver<WorldSim>> {
         // The harness makes a peer's sim before its driver.
         let mut bots = self.bots.remove(&peer).expect("a peer's sim is made before its driver");
         let clients = self.spec.clients;
-        bots.retain(|b| {
-            let slot = b.worm();
-            match seat {
-                None => slot >= usize::from(clients),
-                Some(Seat::Player(s)) => slot == usize::from(s),
-                Some(Seat::Spectator) => false,
-            }
+        bots.retain(|&slot, _| match seat {
+            None => slot >= clients,
+            Some(Seat::Player(s)) => slot == s,
+            Some(Seat::Spectator) => false,
         });
-        Box::new(BotDriver { bots })
+        Box::new(HostBots::new(bots))
     }
 
     /// Fault `index` of the spec: a worm's health. A fault naming no worm is
@@ -222,24 +219,6 @@ impl Factory<WorldSim> for WorldFactory<'_> {
             sim.world_mut().set_health(usize::from(worm), health);
         }
     }
-}
-
-/// Presses the keys of a peer's local bots.
-struct BotDriver {
-    bots: Vec<Bot>,
-}
-
-impl Driver<WorldSim> for BotDriver {
-    fn local_inputs(&mut self, sim: &WorldSim, _tick: u32, slots: &[u8], out: &mut [Keys]) {
-        for (&slot, key) in slots.iter().zip(out.iter_mut()) {
-            *key = match self.bots.iter_mut().find(|b| b.worm() == usize::from(slot)) {
-                Some(bot) => bot.think(sim.world(), sim.events()),
-                None => Keys(0),
-            };
-        }
-    }
-
-    fn simulated(&mut self, _sim: &WorldSim, _info: rl_netcode::TickInfo) {}
 }
 
 /// A finished run.

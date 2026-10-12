@@ -3761,6 +3761,7 @@ dependencies = [
  "rl-fx",
  "rl-modes",
  "rl-netcode",
+ "rl-online",
  "rl-oracle",
  "rl-pack",
  "rl-present",
@@ -3969,6 +3970,23 @@ dependencies = [
  "rl-math",
  "rl-modes",
  "rl-proto",
+ "rl-sim",
+ "rl-terrain",
+]
+
+[[package]]
+name = "rl-online"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rl-bots",
+ "rl-content",
+ "rl-lobby",
+ "rl-modes",
+ "rl-net",
+ "rl-netcode",
+ "rl-proto",
+ "rl-replay",
  "rl-sim",
  "rl-terrain",
 ]

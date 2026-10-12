@@ -478,3 +478,26 @@ fn a_loaded_state_restarts_the_tick_records() {
     let after: Vec<u32> = rec.take_confirmed(30).iter().map(|t| t.tick).collect();
     assert_eq!(after, vec![15, 16, 17, 18, 19], "a gap from 5 to 14");
 }
+
+/// A spectator simulates the confirmed ticks after their inputs arrive:
+/// `confirmed()` can be ahead of its simulation, and those ticks still get
+/// their records once simulated.
+#[test]
+fn ticks_confirmed_before_they_are_simulated_are_recorded() {
+    let Some(c) = content() else { return };
+    let mut sim = WorldSim::new(dirt_world(&c, 1));
+    let mut rec = TickRecorder::default();
+    let info = |tick| TickInfo { tick, resim: false, all_final: true };
+    for t in 0..5 {
+        sim.tick(&keys(t));
+        rec.simulated(&sim, info(t));
+    }
+    let first: Vec<u32> = rec.take_confirmed(8).iter().map(|t| t.tick).collect();
+    assert_eq!(first, vec![0, 1, 2, 3, 4]);
+    for t in 5..8 {
+        sim.tick(&keys(t));
+        rec.simulated(&sim, info(t));
+    }
+    let later: Vec<u32> = rec.take_confirmed(8).iter().map(|t| t.tick).collect();
+    assert_eq!(later, vec![5, 6, 7], "simulated after they were confirmed");
+}

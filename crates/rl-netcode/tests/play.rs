@@ -227,3 +227,14 @@ fn a_state_never_loaded_fails_the_repair_after_a_minute() {
     assert_eq!(host_count(&p, |e| matches!(e, Event::Desync { .. })), 1);
     assert_eq!(host_count(&p, |e| matches!(e, Event::StateSent { .. })), 1);
 }
+
+#[test]
+fn the_host_measures_each_peers_round_trip() {
+    let mut p = Pair::new(3, 2, 20, 1);
+    assert_eq!(p.host.peer_rtt_ms(CLIENT), None, "unmeasured at first");
+    p.run_ms(2_000);
+    let rtt = p.host.peer_rtt_ms(CLIENT).expect("measured");
+    assert!((38..=60).contains(&rtt), "a 40 ms round trip measured as {rtt} ms");
+    assert_eq!(p.host.stats().rtt_ms, Some(rtt), "the largest of one");
+    assert_eq!(p.host.peer_rtt_ms(7), None, "not a peer");
+}

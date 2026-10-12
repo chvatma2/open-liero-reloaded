@@ -32,6 +32,7 @@ rl-bots.workspace = true
 rl-replay.workspace = true
 rl-netcode.workspace = true
 rl-proto.workspace = true
+rl-online.workspace = true
 serde_json.workspace = true
 postcard.workspace = true
 wgpu.workspace = true

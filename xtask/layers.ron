@@ -30,6 +30,7 @@
         "rl-input": 5,
         "rl-ui": 5,
         "rl-net": 5,
+        "rl-online": 5,
         "rl-cli": 6,
         "rl-game": 6,
         "rl-detcheck": 6,
@@ -68,6 +69,8 @@
         // The lobby addresses peers by the netcode's ids and computes their
         // input delay with it (peer ids and input delay).
         ("rl-lobby", "rl-netcode"),
+        // Online play drives the real transport's endpoint.
+        ("rl-online", "rl-net"),
     ],
     no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-proto", "rl-netcode", "rl-lobby"],
     wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-proto", "rl-netcode", "rl-lobby", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],

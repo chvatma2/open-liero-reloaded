@@ -567,6 +567,14 @@ impl<S: Simulation> Session<S> {
         &self.stats
     }
 
+    /// The round trip to `peer` in ms (its stamps' 1/8 moving average), once
+    /// measured; `None` for a peer not in the session. A host's
+    /// [`Stats::rtt_ms`] is the largest of these.
+    pub fn peer_rtt_ms(&self, peer: PeerId) -> Option<u32> {
+        let r = self.peers.get(&peer)?.rtt_x8?;
+        Some((r / 8).clamp(0, i64::from(u32::MAX)) as u32)
+    }
+
     pub fn config(&self) -> &Config {
         &self.cfg
     }

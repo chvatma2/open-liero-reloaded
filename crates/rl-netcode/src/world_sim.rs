@@ -217,11 +217,15 @@ impl TickRecorder {
     }
 
     /// The candidates of ticks below `confirmed` (`Session::confirmed`),
-    /// in tick order; each tick comes out once.
+    /// in tick order; each tick comes out once. A tick confirmed before it
+    /// was simulated (a spectator runs behind its inputs) comes out with a
+    /// later call, once simulated.
     pub fn take_confirmed(&mut self, confirmed: u32) -> Vec<ConfirmedTick> {
         let rest = self.pending.split_off(&confirmed);
         let done = core::mem::replace(&mut self.pending, rest);
-        self.taken = self.taken.max(confirmed);
+        if let Some(&last) = done.keys().next_back() {
+            self.taken = self.taken.max(last + 1);
+        }
         done.into_values().collect()
     }
 }

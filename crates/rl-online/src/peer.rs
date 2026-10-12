@@ -1,0 +1,1168 @@
+//! One end of online play over real connections (networking spec §4): the
+//! host's lobby and its peers, or a client and its host; the match each
+//! start builds, its advance every poll, its end, and back to the lobby.
+//!
+//! Every reliable payload carries `rl_proto`'s tag byte: `0` the netcode's
+//! `Control` (the session sends it untagged: tagged and untagged here), `1`
+//! `ToHost`, `2` `ToClient`. Time is the caller's (`poll(now, ..)`); the
+//! sockets are `rl-net`'s endpoint.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::io;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use rl_content::Content;
+use rl_lobby::{
+    ClientEvent, HostConfig, HostEvent, Identity, LobbyClient, LobbyError, LobbyHost, NotStartable,
+};
+use rl_net::endpoint::{Endpoint, EndpointConfig, Gate, HOST, NetEvent, Why};
+use rl_net::random_bytes;
+use rl_netcode::world_sim::TickRecorder;
+use rl_netcode::{Channel, Config, Driver, Event, PeerId, Role, Seat, Session, TickInfo, WorldSim};
+use rl_proto::{
+    AdminCommand, Control, LobbyState, Look, MAX_INPUT_DELAY, MatchEndWire, MatchSetupWire, MatchStartWire,
+    Notice, Phase, PublicKey, Refusal, TAG_NETCODE, TAG_TO_CLIENT, TAG_TO_HOST, Tagged, ToClient,
+    decode_control, decode_to_client, decode_to_host, encode_to_client, encode_to_host, tag,
+};
+use rl_sim::{EndReason, Keys, MatchResult, Score, TickEvents, World};
+
+use crate::events::{NetStats, OnlineEvent};
+use crate::matches::{self, HostBots};
+use crate::replay::{MatchRecord, ReplayJob};
+
+/// The host sends its lobby's messages at most this often: changes in
+/// between are coalesced into one `Lobby` (a start, an end, a kick and a
+/// mid-match join go out at once).
+pub const LOBBY_DRAIN: Duration = Duration::from_millis(250);
+/// The match goes on this many confirmed ticks after the tick it ended on
+/// (the results in game, local play's `RECORD_AFTER_END`), then ends.
+pub const RECORD_AFTER_END: u32 = 300;
+/// After the end, the host keeps sending the match this long, so every
+/// client confirms its last ticks.
+pub const HOST_DRAIN: Duration = Duration::from_secs(2);
+/// After the host's end, a client waits this long at most to confirm the
+/// match's last ticks before it makes its replay.
+pub const CLIENT_FINISH: Duration = Duration::from_secs(3);
+/// A peer being closed gets this long to receive what was sent to it.
+pub const CLOSE_LINGER: Duration = Duration::from_secs(1);
+/// A client lets its host send this many reliable bytes per second (whole
+/// lobbies, state transfers), far above the limit for other peers.
+pub const HOST_RELIABLE_BYTES_PER_S: u32 = 4 * 1024 * 1024;
+/// The host updates its members' pings this often.
+pub const PING_EVERY: Duration = Duration::from_secs(2);
+/// Why a client that cannot play the host's start leaves.
+pub const MISMATCH: &str = "your simulation differs from the host's: version or content";
+
+/// Which end of online play a peer is.
+pub enum PeerRole {
+    /// Hosts a lobby on the endpoint's port.
+    Host(HostConfig),
+    /// Joins the host whose signalling (TCP) address is `addr`.
+    Client { addr: SocketAddr, password: Option<String> },
+}
+
+/// Why the host could not start a match.
+#[derive(Clone, Debug, PartialEq)]
+pub enum StartError {
+    /// Only the host starts.
+    NotHost,
+    /// A match is still running.
+    Running,
+    Lobby(NotStartable),
+    /// The world could not be built (content).
+    Build(String),
+}
+
+impl std::fmt::Display for StartError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StartError::NotHost => write!(f, "only the host starts the match"),
+            StartError::Running => write!(f, "a match is running"),
+            StartError::Lobby(n) => write!(f, "the lobby cannot start: {n:?}"),
+            StartError::Build(e) => write!(f, "the match cannot be built: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for StartError {}
+
+struct HostSide {
+    lobby: LobbyHost,
+    /// The endpoint's gate refuses these addresses (the lobby's bans).
+    banned: Arc<Mutex<BTreeSet<IpAddr>>>,
+    addrs: BTreeMap<PeerId, SocketAddr>,
+    /// Measured round trips: the join handshake's, then the match's.
+    rtts: BTreeMap<PeerId, u32>,
+    /// When each pending peer's challenge left (the first round trip).
+    challenged: BTreeMap<PeerId, Instant>,
+    last_drain: Option<Instant>,
+    last_ping: Option<Instant>,
+    /// The lobby last reported to the caller.
+    reported: Option<LobbyState>,
+}
+
+struct ClientSide {
+    lobby: LobbyClient,
+}
+
+enum Side {
+    Host(Box<HostSide>),
+    Client(Box<ClientSide>),
+}
+
+/// The counters a second ago, for [`NetStats`].
+#[derive(Default)]
+struct Window {
+    at: Option<Instant>,
+    tick: u32,
+    datagrams_in: u64,
+    corrections: u64,
+    depth_hist: Vec<u64>,
+}
+
+/// A running match (decision N18: one session per match).
+struct Game {
+    session: Session<WorldSim>,
+    recorder: TickRecorder,
+    /// The host's bots.
+    bots: Option<HostBots>,
+    start: MatchStartWire,
+    my_slot: Option<u8>,
+    /// The lobby heard of the first tick.
+    playing: bool,
+    /// The last tick the match records: its end plus [`RECORD_AFTER_END`].
+    end_at: Option<u32>,
+    /// The latest confirmed scores and result.
+    last: Option<(Vec<Score>, Option<MatchResult>)>,
+    /// When the match ended (the host's `Ended`).
+    ended: Option<Instant>,
+    window: Window,
+}
+
+/// One end of online play: the lobby, the match, the replay.
+pub struct OnlinePeer {
+    endpoint: Endpoint,
+    side: Side,
+    content: Arc<Content>,
+    my_key: PublicKey,
+    epoch: Option<Instant>,
+    now: Option<Instant>,
+    now_us: u64,
+    game: Option<Game>,
+    replays: Vec<ReplayJob>,
+    last_record: Option<MatchRecord>,
+    /// Member names by id, as last seen (members who left keep theirs).
+    names: BTreeMap<u8, String>,
+    /// Peers to close once what was sent to them is delivered (or at the deadline).
+    closing: BTreeMap<PeerId, Instant>,
+    events: Vec<OnlineEvent>,
+    stats: NetStats,
+    /// Left, refused, kicked or disconnected: nothing more happens.
+    closed: bool,
+    test_seed: Option<u32>,
+}
+
+impl OnlinePeer {
+    /// Opens the endpoint: a host's lobby for `setup` (`me` plays with
+    /// `look`), or a connection to the host. A client's endpoint lets its
+    /// host send [`HOST_RELIABLE_BYTES_PER_S`].
+    pub fn start(
+        role: PeerRole,
+        endpoint: EndpointConfig,
+        me: Identity,
+        look: Look,
+        content: Content,
+        setup: Option<MatchSetupWire>,
+    ) -> io::Result<OnlinePeer> {
+        let invalid = |what: String| io::Error::new(io::ErrorKind::InvalidInput, what);
+        let my_key = me.public();
+        let (endpoint, side) = match role {
+            PeerRole::Host(cfg) => {
+                let setup = setup.ok_or_else(|| invalid("a host needs a match setup".into()))?;
+                let lobby = LobbyHost::new(cfg, me, Some(look), setup)
+                    .map_err(|e: LobbyError| invalid(format!("the match setup: {e:?}")))?;
+                let banned = Arc::new(Mutex::new(BTreeSet::new()));
+                let gate_banned = Arc::clone(&banned);
+                let gate: Gate = Box::new(move |addr, _| {
+                    let banned = gate_banned.lock().unwrap_or_else(|e| e.into_inner());
+                    if banned.contains(&addr.ip()) { Err(Refusal::Banned) } else { Ok(()) }
+                });
+                let side = HostSide {
+                    lobby,
+                    banned,
+                    addrs: BTreeMap::new(),
+                    rtts: BTreeMap::new(),
+                    challenged: BTreeMap::new(),
+                    last_drain: None,
+                    last_ping: None,
+                    reported: None,
+                };
+                (Endpoint::host(endpoint, gate)?, Side::Host(Box::new(side)))
+            }
+            PeerRole::Client { addr, password } => {
+                let mut cfg = endpoint;
+                cfg.limits.max_reliable_bytes_per_s =
+                    cfg.limits.max_reliable_bytes_per_s.max(HOST_RELIABLE_BYTES_PER_S);
+                let lobby = LobbyClient::new(me, look, password, None);
+                (Endpoint::connect(cfg, addr)?, Side::Client(Box::new(ClientSide { lobby })))
+            }
+        };
+        Ok(OnlinePeer {
+            endpoint,
+            side,
+            content: Arc::new(content),
+            my_key,
+            epoch: None,
+            now: None,
+            now_us: 0,
+            game: None,
+            replays: Vec::new(),
+            last_record: None,
+            names: BTreeMap::new(),
+            closing: BTreeMap::new(),
+            events: Vec::new(),
+            stats: NetStats::default(),
+            closed: false,
+            test_seed: None,
+        })
+    }
+
+    /// The endpoint's UDP port (a host's TCP port too).
+    pub fn local_port(&self) -> u16 {
+        self.endpoint.local_port()
+    }
+
+    pub fn is_host(&self) -> bool {
+        matches!(self.side, Side::Host(_))
+    }
+
+    /// Left, refused, kicked or disconnected.
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
+    /// Does what the network, the lobby and the match have for `now`:
+    /// receives, runs the lobby, advances the match (the local player's
+    /// keys from `local_keys`; `on_tick` sees the world after each simulated
+    /// tick, re-simulated ones included), sends.
+    pub fn poll(
+        &mut self,
+        now: Instant,
+        local_keys: &mut dyn FnMut() -> Keys,
+        on_tick: &mut dyn FnMut(&World, &TickEvents, TickInfo),
+    ) -> Vec<OnlineEvent> {
+        let epoch = *self.epoch.get_or_insert(now);
+        self.now = Some(now);
+        self.now_us = now.saturating_duration_since(epoch).as_micros() as u64;
+        if !self.closed {
+            let mut net = Vec::new();
+            self.endpoint.poll(now, &mut net);
+            for e in net {
+                self.on_net(e, now);
+            }
+            self.session_events();
+            if let Side::Host(h) = &mut self.side {
+                h.lobby.tick(self.now_us);
+            }
+            self.host_lobby_events(now);
+            self.advance(now, local_keys, on_tick);
+            self.host_tasks(now);
+            self.close_lingering(now);
+            self.update_stats(now);
+        }
+        self.collect_replays();
+        std::mem::take(&mut self.events)
+    }
+
+    /// The lobby's actions: the host's or the client's.
+    pub fn lobby(&mut self) -> LobbyHandle<'_> {
+        LobbyHandle { peer: self }
+    }
+
+    pub fn match_session(&self) -> Option<&Session<WorldSim>> {
+        self.game.as_ref().filter(|g| g.ended.is_none()).map(|g| &g.session)
+    }
+
+    pub fn match_session_mut(&mut self) -> Option<&mut Session<WorldSim>> {
+        self.game.as_mut().filter(|g| g.ended.is_none()).map(|g| &mut g.session)
+    }
+
+    /// The worm this peer plays in the running match.
+    pub fn my_slot(&self) -> Option<u8> {
+        self.game.as_ref().filter(|g| g.ended.is_none()).and_then(|g| g.my_slot)
+    }
+
+    /// The connection's numbers over the last second of the match.
+    pub fn stats(&self) -> NetStats {
+        self.stats
+    }
+
+    /// The last match this peer finished, as its replay is made of it (a
+    /// spectator that joined mid-match has none).
+    pub fn last_record(&self) -> Option<&MatchRecord> {
+        self.last_record.as_ref()
+    }
+
+    /// Leaves: the match's `Bye` (the netcode's) and the lobby's to everyone,
+    /// sent at once, then the connections close.
+    pub fn leave(&mut self) {
+        if self.closed {
+            return;
+        }
+        if let Some(g) = &mut self.game {
+            g.session.leave();
+            let ep = &mut self.endpoint;
+            g.session.transmit(&mut |peer, ch, bytes| send(ep, peer, ch, &bytes));
+        }
+        match &mut self.side {
+            Side::Host(h) => {
+                for (peer, msg) in h.lobby.outgoing() {
+                    send_tagged(&mut self.endpoint, peer, TAG_TO_CLIENT, &encode_to_client(&msg));
+                }
+                let peers: Vec<PeerId> = self.endpoint.peers().map(|(p, _)| p).collect();
+                for peer in peers {
+                    send_tagged(&mut self.endpoint, peer, TAG_TO_CLIENT, &encode_to_client(&ToClient::Bye));
+                }
+            }
+            Side::Client(c) => {
+                c.lobby.leave();
+                for msg in c.lobby.outgoing() {
+                    send_tagged(&mut self.endpoint, HOST, TAG_TO_HOST, &encode_to_host(&msg));
+                }
+            }
+        }
+        self.shut();
+    }
+
+    /// Tests only: a client builds the host's start with this seed instead
+    /// (a world that differs from the host's).
+    #[doc(hidden)]
+    pub fn test_seed_override(&mut self, seed: Option<u32>) {
+        self.test_seed = seed;
+    }
+
+    // ---- the network ----
+
+    fn on_net(&mut self, e: NetEvent, now: Instant) {
+        let now_us = self.now_us;
+        match &mut self.side {
+            Side::Host(h) => match e {
+                NetEvent::Connected { peer, addr } => {
+                    h.addrs.insert(peer, addr);
+                    match random_bytes::<32>() {
+                        Ok(nonce) => h.lobby.connected(peer, addr.ip(), now_us, nonce),
+                        Err(_) => self.drop_peer(peer),
+                    }
+                }
+                NetEvent::Message { peer, channel: Channel::Unreliable, bytes } => {
+                    if let Some(g) = &mut self.game {
+                        g.session.receive(peer, Channel::Unreliable, &bytes, now_us);
+                    }
+                }
+                NetEvent::Message { peer, channel: Channel::Reliable, bytes } => match tag(&bytes) {
+                    Some(Tagged::Netcode(b)) => {
+                        if let Some(g) = &mut self.game {
+                            g.session.receive(peer, Channel::Reliable, b, now_us);
+                        }
+                    }
+                    Some(Tagged::ToHost(b)) => match decode_to_host(b) {
+                        Ok(msg) => {
+                            if let Some(sent) = h.challenged.remove(&peer) {
+                                let rtt = now.saturating_duration_since(sent).as_millis();
+                                h.rtts.entry(peer).or_insert(u32::try_from(rtt).unwrap_or(u32::MAX));
+                            }
+                            h.lobby.receive(peer, msg, now_us);
+                        }
+                        Err(_) => self.drop_peer(peer),
+                    },
+                    _ => self.drop_peer(peer),
+                },
+                NetEvent::Disconnected { peer, .. } => self.forget_peer(peer),
+                NetEvent::Refused { .. } => {}
+            },
+            Side::Client(c) => match e {
+                NetEvent::Connected { .. } => c.lobby.connected(),
+                NetEvent::Message { channel: Channel::Unreliable, bytes, .. } => {
+                    if let Some(g) = &mut self.game {
+                        g.session.receive(HOST, Channel::Unreliable, &bytes, now_us);
+                    }
+                }
+                NetEvent::Message { channel: Channel::Reliable, bytes, .. } => match tag(&bytes) {
+                    Some(Tagged::Netcode(b)) => {
+                        if let Some(g) = &mut self.game {
+                            if let Ok(Control::StateBegin { len, .. }) = decode_control(b) {
+                                self.endpoint.allow_burst(HOST, len as usize);
+                            }
+                            g.session.receive(HOST, Channel::Reliable, b, now_us);
+                        }
+                    }
+                    Some(Tagged::ToClient(b)) => match decode_to_client(b) {
+                        Ok(msg) => self.client_receive(msg, now),
+                        Err(_) => self
+                            .end_with(OnlineEvent::Disconnected("the host sent a malformed message".into())),
+                    },
+                    _ => self.end_with(OnlineEvent::Disconnected("the host sent a malformed message".into())),
+                },
+                NetEvent::Disconnected { why, .. } => {
+                    c.lobby.disconnected();
+                    let _ = c.lobby.events();
+                    self.end_with(OnlineEvent::Disconnected(why_text(why).into()));
+                }
+                NetEvent::Refused { why } => self.end_with(OnlineEvent::Refused(refusal_text(why).into())),
+            },
+        }
+    }
+
+    /// Closes a host's peer at once: the lobby and the match forget it.
+    fn drop_peer(&mut self, peer: PeerId) {
+        self.endpoint.close(peer);
+        self.forget_peer(peer);
+    }
+
+    /// A host's peer is gone.
+    fn forget_peer(&mut self, peer: PeerId) {
+        if let Side::Host(h) = &mut self.side {
+            h.lobby.disconnected(peer);
+            h.addrs.remove(&peer);
+            h.rtts.remove(&peer);
+            h.challenged.remove(&peer);
+        }
+        self.closing.remove(&peer);
+        if let Some(g) = &mut self.game {
+            g.session.peer_lost(peer);
+        }
+    }
+
+    /// Closes a host's peer once what was sent to it is delivered.
+    fn close_later(&mut self, peer: PeerId, now: Instant) {
+        self.closing.entry(peer).or_insert(now + CLOSE_LINGER);
+        if let Some(g) = &mut self.game {
+            g.session.peer_lost(peer);
+        }
+    }
+
+    fn close_lingering(&mut self, now: Instant) {
+        let done: Vec<PeerId> = self
+            .closing
+            .iter()
+            .filter(|&(&peer, &until)| now >= until || self.endpoint.buffered(peer, Channel::Reliable) == 0)
+            .map(|(&peer, _)| peer)
+            .collect();
+        for peer in done {
+            self.closing.remove(&peer);
+            self.endpoint.close(peer);
+            if let Side::Host(h) = &mut self.side {
+                h.addrs.remove(&peer);
+                h.rtts.remove(&peer);
+                h.challenged.remove(&peer);
+            }
+        }
+    }
+
+    /// Closes every connection; nothing more happens (a replay being made
+    /// still arrives).
+    fn shut(&mut self) {
+        // What was queued leaves with this poll, before the close (before
+        // the first poll no connection is open).
+        if let Some(now) = self.now {
+            self.endpoint.poll(now, &mut Vec::new());
+        }
+        let peers: Vec<PeerId> = self.endpoint.peers().map(|(p, _)| p).collect();
+        for peer in peers {
+            self.endpoint.close(peer);
+        }
+        self.closing.clear();
+        self.game = None;
+        self.closed = true;
+        self.stats = NetStats::default();
+    }
+
+    /// A client's end: the event, then every connection closed.
+    fn end_with(&mut self, event: OnlineEvent) {
+        if !self.closed {
+            self.events.push(event);
+            self.shut();
+        }
+    }
+
+    // ---- the lobby ----
+
+    fn name(&self, id: u8) -> String {
+        self.names.get(&id).cloned().unwrap_or_else(|| format!("member {id}"))
+    }
+
+    fn learn_names(&mut self, state: &LobbyState) {
+        for m in &state.members {
+            self.names.insert(m.id, m.look.name.clone());
+        }
+    }
+
+    /// The host's lobby messages, now.
+    fn drain_lobby(&mut self, now: Instant) {
+        let Side::Host(h) = &mut self.side else { return };
+        for (peer, msg) in h.lobby.outgoing() {
+            if matches!(msg, ToClient::Challenge { .. }) {
+                h.challenged.insert(peer, now);
+            }
+            send_tagged(&mut self.endpoint, peer, TAG_TO_CLIENT, &encode_to_client(&msg));
+        }
+        h.last_drain = Some(now);
+    }
+
+    fn host_lobby_events(&mut self, now: Instant) {
+        let Side::Host(h) = &mut self.side else { return };
+        let events = h.lobby.events();
+        if events.is_empty() {
+            return;
+        }
+        let state = h.lobby.state().clone();
+        self.learn_names(&state);
+        for e in events {
+            match e {
+                HostEvent::Joined(id) => {
+                    self.events.push(OnlineEvent::Notice(format!("{} joined", self.name(id))));
+                    self.mid_match_join(id, now);
+                }
+                HostEvent::Left(id) => self.events.push(OnlineEvent::Left(self.name(id))),
+                HostEvent::Kick { peer, ban } => {
+                    if let Side::Host(h) = &mut self.side
+                        && ban
+                        && let Some(addr) = h.addrs.get(&peer)
+                    {
+                        h.banned.lock().unwrap_or_else(|e| e.into_inner()).insert(addr.ip());
+                    }
+                    // The refusal or `Kicked` leaves before the close.
+                    self.drain_lobby(now);
+                    self.close_later(peer, now);
+                }
+                HostEvent::Close { peer } => self.close_later(peer, now),
+                HostEvent::Chat { from, text } => {
+                    self.events.push(OnlineEvent::Chat { from: self.name(from), text });
+                }
+                HostEvent::Admin { cmd: AdminCommand::Settings(setup), .. } => {
+                    if let Side::Host(h) = &mut self.side {
+                        let _ = h.lobby.set_setup(setup);
+                    }
+                }
+                HostEvent::Admin { .. } | HostEvent::StartRequested => {}
+            }
+        }
+    }
+
+    /// A member welcomed during a match watches it (spec §3.6): it gets the
+    /// start (after its welcome), and the session owes it the state.
+    fn mid_match_join(&mut self, id: u8, now: Instant) {
+        let Side::Host(h) = &self.side else { return };
+        let Some(peer) = h.lobby.peer_of(id) else { return };
+        let Some(start) = self.game.as_ref().filter(|g| g.ended.is_none()).map(|g| g.start.clone()) else {
+            return;
+        };
+        self.drain_lobby(now);
+        send_tagged(&mut self.endpoint, peer, TAG_TO_CLIENT, &encode_to_client(&ToClient::Start(start)));
+        if let Some(g) = &mut self.game {
+            g.session.add_spectator(peer, self.now_us);
+        }
+    }
+
+    /// The host's lobby drain (every [`LOBBY_DRAIN`]), its pings and the
+    /// lobby reported to the caller.
+    fn host_tasks(&mut self, now: Instant) {
+        let Side::Host(h) = &mut self.side else { return };
+        if h.last_ping.is_none_or(|t| now.saturating_duration_since(t) >= PING_EVERY) {
+            h.last_ping = Some(now);
+            if let Some(g) = &self.game {
+                for &peer in h.addrs.keys() {
+                    if let Some(rtt) = g.session.peer_rtt_ms(peer) {
+                        h.rtts.insert(peer, rtt);
+                    }
+                }
+            }
+            for (&peer, &rtt) in &h.rtts {
+                h.lobby.set_ping(peer, rtt);
+            }
+        }
+        if h.last_drain.is_none_or(|t| now.saturating_duration_since(t) >= LOBBY_DRAIN) {
+            self.drain_lobby(now);
+        }
+        let Side::Host(h) = &mut self.side else { return };
+        if h.reported.as_ref() != Some(h.lobby.state()) {
+            let state = h.lobby.state().clone();
+            h.reported = Some(state.clone());
+            self.learn_names(&state);
+            self.events.push(OnlineEvent::Lobby(state));
+        }
+    }
+
+    fn client_receive(&mut self, msg: ToClient, now: Instant) {
+        let Side::Client(c) = &mut self.side else { return };
+        c.lobby.receive(msg, random_bytes::<32>().unwrap_or([0; 32]));
+        let events = c.lobby.events();
+        self.flush_client();
+        for e in events {
+            self.on_client_event(e, now);
+        }
+    }
+
+    fn flush_client(&mut self) {
+        let Side::Client(c) = &mut self.side else { return };
+        for msg in c.lobby.outgoing() {
+            send_tagged(&mut self.endpoint, HOST, TAG_TO_HOST, &encode_to_host(&msg));
+        }
+    }
+
+    fn on_client_event(&mut self, e: ClientEvent, now: Instant) {
+        match e {
+            ClientEvent::Welcome { .. } => {
+                if let Side::Client(c) = &self.side
+                    && let Some(state) = c.lobby.state().cloned()
+                {
+                    self.learn_names(&state);
+                    self.events.push(OnlineEvent::Lobby(state));
+                }
+            }
+            ClientEvent::Lobby(state) => {
+                self.learn_names(&state);
+                self.events.push(OnlineEvent::Lobby(state));
+            }
+            ClientEvent::Chat { from, text } => {
+                self.events.push(OnlineEvent::Chat { from: self.name(from), text })
+            }
+            ClientEvent::Notice(n) => {
+                let e = self.notice(n);
+                self.events.push(e);
+            }
+            ClientEvent::Start(start) => self.client_start(start),
+            ClientEvent::Ended(end) => {
+                if let Some(g) = &mut self.game
+                    && g.ended.is_none()
+                {
+                    g.ended = Some(now);
+                }
+                self.events.push(OnlineEvent::MatchEnded(end));
+            }
+            ClientEvent::Refused(why) => self.end_with(OnlineEvent::Refused(refusal_text(why).into())),
+            ClientEvent::Kicked { banned } => self.end_with(OnlineEvent::Kicked { banned }),
+            ClientEvent::WrongHost { .. } => {
+                self.end_with(OnlineEvent::Refused("the host is not the one expected".into()));
+            }
+            ClientEvent::Closed => {
+                self.end_with(OnlineEvent::Disconnected("the host closed the lobby".into()))
+            }
+        }
+    }
+
+    fn notice(&self, n: Notice) -> OnlineEvent {
+        match n {
+            Notice::Joined(id) => OnlineEvent::Notice(format!("{} joined", self.name(id))),
+            Notice::Left(id) => OnlineEvent::Left(self.name(id)),
+            Notice::Kicked(id) => OnlineEvent::Notice(format!("{} was kicked", self.name(id))),
+            Notice::Banned(id) => OnlineEvent::Notice(format!("{} was banned", self.name(id))),
+            Notice::NotReady(ids) => {
+                let names: Vec<String> = ids.iter().map(|&id| self.name(id)).collect();
+                OnlineEvent::Notice(format!("not ready: {}", names.join(", ")))
+            }
+            Notice::Started => OnlineEvent::Notice("the match starts".into()),
+            Notice::Message(text) => OnlineEvent::Notice(text),
+        }
+    }
+
+    // ---- the match ----
+
+    /// The host's start (spec §4): the lobby's start, the world built from
+    /// it and its start checksum filled in, `Start` to everyone at once,
+    /// the session.
+    fn host_start(&mut self, seed: u32, force: bool) -> Result<(), StartError> {
+        if self.game.is_some() {
+            return Err(StartError::Running);
+        }
+        let now_us = self.now_us;
+        let Side::Host(h) = &mut self.side else { return Err(StartError::NotHost) };
+        let started = if force { h.lobby.force_start(seed, &h.rtts) } else { h.lobby.start(seed, &h.rtts) };
+        let mut start = started.map_err(StartError::Lobby)?;
+        let world = matches::build(&self.content, &start).map_err(|e| StartError::Build(format!("{e:#}")))?;
+        start.start_checksum = world.sim.world().checksum();
+        h.lobby.announce_start(start.clone()).map_err(StartError::Lobby)?;
+        let me = h.lobby.state().members.iter().find(|m| m.key == self.my_key).map(|m| m.id);
+        let slot_of = |member: u8| start.slots.iter().position(|s| s.member == Some(member)).map(|i| i as u8);
+        let peers: Vec<(PeerId, Seat)> = h
+            .lobby
+            .state()
+            .members
+            .iter()
+            .filter_map(|m| {
+                let peer = h.lobby.peer_of(m.id)?;
+                Some((peer, slot_of(m.id).map_or(Seat::Spectator, Seat::Player)))
+            })
+            .collect();
+        let my_slot = me.and_then(slot_of);
+        let slots = start.slots.len() as u8;
+        let session = Session::new(Config::new(slots, 0), Role::Host { peers }, world.sim, now_us);
+        if let Some(now) = self.now {
+            self.drain_lobby(now);
+        }
+        self.game = Some(Game::new(session, Some(HostBots::new(world.bots)), start.clone(), my_slot));
+        self.events.push(OnlineEvent::MatchStarting { start, my_slot });
+        Ok(())
+    }
+
+    /// A client's start: the world built and checked against the host's
+    /// start checksum (else it leaves), then a player's, a spectator's or,
+    /// arriving mid-match (the lobby already starting or playing), a
+    /// joining spectator's session.
+    fn client_start(&mut self, start: MatchStartWire) {
+        if self.game.is_some() {
+            self.finish_client();
+        }
+        let Side::Client(c) = &self.side else { return };
+        let joining =
+            matches!(c.lobby.state().map(|s| s.phase), Some(Phase::Starting | Phase::Playing { .. }));
+        let me = c.lobby.me();
+        let mut built = start.clone();
+        if let Some(seed) = self.test_seed {
+            built.seed = seed;
+        }
+        let world = match matches::build(&self.content, &built) {
+            Ok(w) => w,
+            Err(e) => {
+                self.leave();
+                self.events.push(OnlineEvent::Refused(format!("cannot build the host's match: {e:#}")));
+                return;
+            }
+        };
+        if world.sim.world().checksum() != start.start_checksum {
+            self.leave();
+            self.events.push(OnlineEvent::Refused(MISMATCH.into()));
+            return;
+        }
+        let slots = start.slots.len() as u8;
+        let slot = me.and_then(|m| start.slots.iter().position(|s| s.member == Some(m))).map(|i| i as u8);
+        let delay = me
+            .and_then(|m| start.input_delay.iter().find(|d| d.0 == m))
+            .map_or(MAX_INPUT_DELAY, |d| d.1.min(MAX_INPUT_DELAY));
+        let (role, cfg, my_slot) = match (joining, slot) {
+            (true, _) => (Role::Joining { host: HOST }, Config::new(slots, 0), None),
+            (false, Some(slot)) => (Role::Client { host: HOST, slot }, Config::new(slots, delay), Some(slot)),
+            (false, None) => (Role::Spectator { host: HOST }, Config::new(slots, 0), None),
+        };
+        let session = Session::new(cfg, role, world.sim, self.now_us);
+        self.game = Some(Game::new(session, None, start.clone(), my_slot));
+        self.events.push(OnlineEvent::MatchStarting { start, my_slot });
+    }
+
+    /// The session's events since the last look.
+    fn session_events(&mut self) {
+        let Some(g) = &mut self.game else { return };
+        let events = g.session.drain_events();
+        for e in events {
+            self.on_session_event(e);
+        }
+    }
+
+    fn on_session_event(&mut self, e: Event) {
+        let host = self.is_host();
+        match e {
+            Event::StateLoaded { tick } => {
+                if let Some(g) = &mut self.game {
+                    g.recorder.state_loaded(tick);
+                }
+            }
+            Event::StateSent { peer, bytes, .. } if host => self.endpoint.allow_burst(peer, bytes),
+            Event::PeerTimedOut { peer } | Event::RepairFailed { peer } | Event::JoinRefused { peer }
+                if host =>
+            {
+                self.drop_peer(peer);
+            }
+            Event::Lagging(on) if !host => self.events.push(OnlineEvent::Lagging(on)),
+            Event::PeerLeft { .. } if !host => {
+                self.end_with(OnlineEvent::Disconnected("the host left".into()));
+            }
+            Event::PeerTimedOut { .. } if !host => {
+                self.end_with(OnlineEvent::Disconnected("the host stopped answering".into()));
+            }
+            _ => {}
+        }
+    }
+
+    /// Advances the match, sends its messages, reports its ticks, and ends it.
+    fn advance(
+        &mut self,
+        now: Instant,
+        local_keys: &mut dyn FnMut() -> Keys,
+        on_tick: &mut dyn FnMut(&World, &TickEvents, TickInfo),
+    ) {
+        let now_us = self.now_us;
+        let Some(g) = &mut self.game else { return };
+        let ended = g.ended.is_some();
+        let mut no_keys = || Keys(0);
+        let mut no_tick = |_: &World, _: &TickEvents, _: TickInfo| {};
+        let keys: &mut dyn FnMut() -> Keys = if ended { &mut no_keys } else { local_keys };
+        let on_tick: &mut dyn FnMut(&World, &TickEvents, TickInfo) =
+            if ended { &mut no_tick } else { on_tick };
+        let mut driver = PeerDriver {
+            my_slot: g.my_slot,
+            keys,
+            bots: g.bots.as_mut(),
+            recorder: &mut g.recorder,
+            on_tick,
+        };
+        g.session.advance(now_us, &mut driver);
+        let ep = &mut self.endpoint;
+        g.session.transmit(&mut |peer, ch, bytes| send(ep, peer, ch, &bytes));
+        let restored = g.session.take_restored_areas();
+        let ticked = g.recorder.take_ticked();
+        let confirmed = g.recorder.take_confirmed(g.session.confirmed());
+        for c in &confirmed {
+            if g.end_at.is_none() && c.result.is_some() {
+                g.end_at = Some(c.tick.saturating_add(RECORD_AFTER_END));
+            }
+        }
+        if let Some(c) = confirmed.last() {
+            g.last = Some((c.scores.clone(), c.result));
+        }
+        if !ended {
+            if !restored.is_empty() {
+                self.events.push(OnlineEvent::Restored(restored));
+            }
+            if !ticked.is_empty() {
+                self.events.push(OnlineEvent::Ticked(ticked));
+            }
+            if !confirmed.is_empty() {
+                self.events.push(OnlineEvent::Confirmed(confirmed));
+            }
+        }
+        if !g.playing && g.session.current_tick() > 0 {
+            g.playing = true;
+            if let Side::Host(h) = &mut self.side {
+                h.lobby.playing(0);
+            }
+        }
+        self.session_events();
+        let Some(g) = &self.game else { return };
+        let reached = g.end_at.is_some_and(|e| g.session.confirmed() > e);
+        match (&self.side, g.ended) {
+            (Side::Host(_), None) if reached => self.host_end(now),
+            (Side::Host(_), Some(t)) if now.saturating_duration_since(t) >= HOST_DRAIN => self.game = None,
+            (Side::Client(_), Some(t)) if reached || now.saturating_duration_since(t) >= CLIENT_FINISH => {
+                self.finish_client();
+            }
+            _ => {}
+        }
+    }
+
+    /// The host's end (spec §4): the results to the lobby and `Ended` to
+    /// everyone, the replay made; the session keeps sending for
+    /// [`HOST_DRAIN`].
+    fn host_end(&mut self, now: Instant) {
+        let now_us = self.now_us;
+        let Some(g) = &mut self.game else { return };
+        g.ended = Some(now);
+        let end = end_wire(g.last.as_ref());
+        let record = g.end_at.and_then(|e| record_of(&g.session, &g.start, e + 1));
+        if let Side::Host(h) = &mut self.side {
+            h.lobby.match_ended(end.clone(), now_us);
+        }
+        self.drain_lobby(now);
+        self.events.push(OnlineEvent::MatchEnded(end));
+        self.make_replay(record);
+    }
+
+    /// A client's match is over: its replay, from the ticks it confirmed
+    /// up to the match's last.
+    fn finish_client(&mut self) {
+        let Some(g) = self.game.take() else { return };
+        let confirmed = g.session.confirmed();
+        let upto = g.end_at.map_or(confirmed, |e| (e + 1).min(confirmed));
+        self.make_replay(record_of(&g.session, &g.start, upto));
+    }
+
+    fn make_replay(&mut self, record: Option<MatchRecord>) {
+        let Some(record) = record else { return };
+        self.last_record = Some(record.clone());
+        self.replays.push(ReplayJob::spawn(Arc::clone(&self.content), record));
+    }
+
+    fn collect_replays(&mut self) {
+        let mut waiting = Vec::new();
+        for job in std::mem::take(&mut self.replays) {
+            match job.poll() {
+                None => waiting.push(job),
+                Some(Ok(made)) => {
+                    if let Some(w) = made.warning {
+                        self.events.push(OnlineEvent::Notice(w));
+                    }
+                    self.events.push(OnlineEvent::ReplayReady(made.bytes));
+                }
+                Some(Err(e)) => self.events.push(OnlineEvent::Notice(format!("the replay failed: {e}"))),
+            }
+        }
+        self.replays = waiting;
+    }
+
+    fn update_stats(&mut self, now: Instant) {
+        let host = self.is_host();
+        let Some(g) = self.game.as_mut().filter(|g| g.ended.is_none()) else {
+            self.stats = NetStats::default();
+            return;
+        };
+        let s = g.session.stats();
+        let corrections = if host { s.rollbacks } else { s.own_corrections };
+        let w = &mut g.window;
+        let Some(at) = w.at else {
+            *w = Window {
+                at: Some(now),
+                tick: g.session.current_tick(),
+                datagrams_in: s.datagrams_in,
+                corrections,
+                depth_hist: s.depth_hist.to_vec(),
+            };
+            return;
+        };
+        let secs = now.saturating_duration_since(at).as_secs_f32();
+        if secs < 1.0 {
+            return;
+        }
+        let ticks = g.session.current_tick().saturating_sub(w.tick);
+        let datagrams = s.datagrams_in.saturating_sub(w.datagrams_in);
+        let loss = (!host && ticks > 0).then(|| (1.0 - datagrams as f32 / ticks as f32).clamp(0.0, 1.0));
+        let depth =
+            s.depth_hist.iter().zip(&w.depth_hist).rposition(|(now, before)| now > before).unwrap_or(0);
+        self.stats = NetStats {
+            rtt_ms: s.rtt_ms,
+            input_delay: g.session.config().input_delay,
+            rollback_depth: depth as u32,
+            loss,
+            corrections_per_s: corrections.saturating_sub(w.corrections) as f32 / secs,
+            stalls: s.stalls,
+        };
+        *w = Window {
+            at: Some(now),
+            tick: g.session.current_tick(),
+            datagrams_in: s.datagrams_in,
+            corrections,
+            depth_hist: s.depth_hist.to_vec(),
+        };
+    }
+}
+
+impl Game {
+    fn new(
+        session: Session<WorldSim>,
+        bots: Option<HostBots>,
+        start: MatchStartWire,
+        my_slot: Option<u8>,
+    ) -> Game {
+        Game {
+            session,
+            recorder: TickRecorder::default(),
+            bots,
+            start,
+            my_slot,
+            playing: false,
+            end_at: None,
+            last: None,
+            ended: None,
+            window: Window::default(),
+        }
+    }
+}
+
+/// The record of ticks `0..upto` (fewer when a row is missing); `None` for
+/// a spectator that joined mid-match (its inputs start at its state).
+fn record_of(s: &Session<WorldSim>, start: &MatchStartWire, upto: u32) -> Option<MatchRecord> {
+    let log = s.input_log();
+    if log.origin() > 0 {
+        return None;
+    }
+    let rows: Vec<[u8; 32]> = (0..upto).map_while(|t| log.row(t)).collect();
+    let n = rows.len() as u32;
+    let checksums = s.checksums().iter().copied().filter(|&(t, _)| t < n).collect();
+    Some(MatchRecord { start: start.clone(), rows, checksums })
+}
+
+/// The results of the last confirmed tick: why it ended, and each worm's
+/// slot, score, kills, deaths and lives.
+fn end_wire(last: Option<&(Vec<Score>, Option<MatchResult>)>) -> MatchEndWire {
+    let reason = match last.and_then(|l| l.1).map(|r| r.reason) {
+        Some(EndReason::KillLimit) => "kill limit",
+        Some(EndReason::TimeLimit) => "time limit",
+        Some(EndReason::LastStanding) => "last worm standing",
+        Some(EndReason::Other(_)) | None => "the match ended",
+    };
+    let rows = last
+        .map(|l| {
+            l.0.iter()
+                .take(rl_proto::MAX_SLOTS)
+                .map(|s| (u8::try_from(s.worm).unwrap_or(u8::MAX), s.score, s.kills, s.deaths, s.lives))
+                .collect()
+        })
+        .unwrap_or_default();
+    MatchEndWire { reason: reason.into(), rows }
+}
+
+/// The game's side of the session: the local player's keys, the host's
+/// bots, the tick records and the caller's view of each tick.
+struct PeerDriver<'a> {
+    my_slot: Option<u8>,
+    keys: &'a mut dyn FnMut() -> Keys,
+    bots: Option<&'a mut HostBots>,
+    recorder: &'a mut TickRecorder,
+    on_tick: &'a mut dyn FnMut(&World, &TickEvents, TickInfo),
+}
+
+impl Driver<WorldSim> for PeerDriver<'_> {
+    fn local_inputs(&mut self, sim: &WorldSim, _tick: u32, slots: &[u8], out: &mut [Keys]) {
+        let human = self.my_slot.map(|s| (s, &mut *self.keys as &mut dyn FnMut() -> Keys));
+        match &mut self.bots {
+            Some(bots) => bots.press(sim, slots, out, human),
+            None => {
+                for (&slot, key) in slots.iter().zip(out.iter_mut()) {
+                    *key = if Some(slot) == self.my_slot { (self.keys)() } else { Keys(0) };
+                }
+            }
+        }
+    }
+
+    fn simulated(&mut self, sim: &WorldSim, info: TickInfo) {
+        self.recorder.simulated(sim, info);
+        (self.on_tick)(sim.world(), sim.events(), info);
+    }
+}
+
+fn send(ep: &mut Endpoint, peer: PeerId, ch: Channel, bytes: &[u8]) {
+    match ch {
+        Channel::Unreliable => ep.send(peer, ch, bytes),
+        Channel::Reliable => send_tagged(ep, peer, TAG_NETCODE, bytes),
+    }
+}
+
+fn send_tagged(ep: &mut Endpoint, peer: PeerId, tag: u8, bytes: &[u8]) {
+    let mut v = Vec::with_capacity(bytes.len() + 1);
+    v.push(tag);
+    v.extend_from_slice(bytes);
+    ep.send(peer, Channel::Reliable, &v);
+}
+
+fn why_text(why: Why) -> &'static str {
+    match why {
+        Why::Closed => "the connection closed",
+        Why::Timeout => "the host stopped answering",
+        Why::Limits => "the host sent too much",
+        Why::Malformed => "the host sent a malformed message",
+        Why::Refused => "the host refused us",
+    }
+}
+
+fn refusal_text(r: Refusal) -> &'static str {
+    match r {
+        Refusal::Version => "the host plays another version",
+        Refusal::Full => "the lobby is full",
+        Refusal::Banned => "you are banned from this lobby",
+        Refusal::Busy => "you are in this lobby already",
+        Refusal::Malformed => "the host refused the handshake",
+        Refusal::Password => "wrong password",
+    }
+}
+
+/// The lobby's actions, for the host or a client.
+pub struct LobbyHandle<'a> {
+    peer: &'a mut OnlinePeer,
+}
+
+impl LobbyHandle<'_> {
+    /// The lobby as last known (a client's once welcomed).
+    pub fn state(&self) -> Option<&LobbyState> {
+        match &self.peer.side {
+            Side::Host(h) => Some(h.lobby.state()),
+            Side::Client(c) => c.lobby.state(),
+        }
+    }
+
+    /// This peer's member id.
+    pub fn me(&self) -> Option<u8> {
+        match &self.peer.side {
+            Side::Host(h) => h.lobby.state().members.iter().find(|m| m.key == self.peer.my_key).map(|m| m.id),
+            Side::Client(c) => c.lobby.me(),
+        }
+    }
+
+    pub fn set_ready(&mut self, ready: bool) {
+        self.act(|h| h.set_my_ready(ready), |c| c.set_ready(ready));
+    }
+
+    /// Watch the next matches (or play them again).
+    pub fn set_spectate(&mut self, spectate: bool) {
+        let me = self.me();
+        self.act(
+            |h| {
+                if let Some(me) = me {
+                    h.move_seat(me, spectate);
+                }
+            },
+            |c| c.set_spectate(spectate),
+        );
+    }
+
+    pub fn set_look(&mut self, look: Look) {
+        self.act(|h| h.set_my_look(look.clone()), |c| c.set_look(look.clone()));
+    }
+
+    /// The weapons for the next match (`None`: random).
+    pub fn set_loadout(&mut self, loadout: Option<[i32; 5]>) {
+        self.act(|h| h.set_my_loadout(loadout), |c| c.set_loadout(loadout));
+    }
+
+    pub fn chat(&mut self, text: &str) {
+        self.act(|h| h.chat(text), |c| c.chat(text));
+    }
+
+    /// The pack ids this client lacks (the host has every pack).
+    pub fn have(&mut self, missing: Vec<String>) {
+        self.act(|_| {}, |c| c.have(missing.clone()));
+    }
+
+    /// The next match's setup: the host's own, an admin client's request.
+    pub fn set_setup(&mut self, setup: MatchSetupWire) -> Result<(), LobbyError> {
+        let mut result = Ok(());
+        self.act(|h| result = h.set_setup(setup.clone()), |c| c.admin(AdminCommand::Settings(setup.clone())));
+        result
+    }
+
+    /// Kicks (and bans) a member: the host's own action, an admin client's
+    /// request by the member's key.
+    pub fn kick(&mut self, member: u8, ban: bool) {
+        let key = self.state().and_then(|s| s.members.iter().find(|m| m.id == member)).map(|m| m.key);
+        self.act(
+            |h| h.kick(member, ban),
+            |c| {
+                if let Some(key) = key {
+                    c.admin(if ban { AdminCommand::Ban(key) } else { AdminCommand::Kick(key) });
+                }
+            },
+        );
+    }
+
+    /// Starts the match on `seed` when every player is ready (the host's).
+    pub fn start(&mut self, seed: u32) -> Result<(), StartError> {
+        self.peer.host_start(seed, false)
+    }
+
+    /// Starts the match on `seed`; players not ready watch it (spec §7.2).
+    pub fn force_start(&mut self, seed: u32) -> Result<(), StartError> {
+        self.peer.host_start(seed, true)
+    }
+
+    fn act(&mut self, host: impl FnOnce(&mut LobbyHost), client: impl FnOnce(&mut LobbyClient)) {
+        if self.peer.closed {
+            return;
+        }
+        match &mut self.peer.side {
+            Side::Host(h) => host(&mut h.lobby),
+            Side::Client(c) => {
+                client(&mut c.lobby);
+                self.peer.flush_client();
+            }
+        }
+    }
+}
