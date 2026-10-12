@@ -20,7 +20,7 @@
 - Spec §3.2 numbers: fill window 12 ticks; input delay `d = min(3, floor(rtt_ms / 40))`; speed adjustment at most 1 %; checksum every 10 confirmed ticks; "connection problem" after 3 s of missed inputs; drop after 10 s silence.
 - Spec §3.1 budget: at most 24 KB/s received per client at 32 players, including 48 bytes of per-datagram overhead (DTLS + SCTP + UDP + IPv4 headers).
 - Spec §3.3 budget: restore plus 12 re-simulated ticks within 2 ms p99 at the reference configuration (16 players, Castle Strike, Classic), within 4 ms at the 4096 × 4096 envelope point.
-- New external dependencies: none beyond what the workspace already pins (serde, postcard `=1.1.3`, miniz_oxide `=0.9.1`, proptest, divan). System packages: `sudo apt install nodejs` (for the WASM leg; skipped with a notice without it) and `rustup target add wasm32-wasip1` (added to `rust-toolchain.toml`).
+- New external dependencies: none beyond what the workspace already pins (serde, postcard `=1.1.3`, miniz_oxide `=0.9.1`, proptest, divan). System packages: `sudo apt install nodejs` (for the WASM leg) and `sudo apt install qemu-user gcc-aarch64-linux-gnu` (for the arm64 leg), each skipped with a notice when missing; `rustup target add wasm32-wasip1 aarch64-unknown-linux-gnu` (added to `rust-toolchain.toml`).
 - Every new crate has a `CLAUDE.md`; every ported-free networking decision is recorded in `docs/porting/STATUS.md` under a new `## Networking decisions (plan 9)` section as `- **N<k>:** ...`; `CHANGELOG.md` gets bullets under `## Unreleased` → `### Added`.
 - Run `cargo xtask check` before every commit; commit on `main`, never push. Commit trailers:
   ```
@@ -2794,16 +2794,16 @@ git commit -m "envelope: the rollback cost (restore and re-simulation) with its 
 
 ---
 
-### Task 13: cross-platform determinism (Linux, WASM, Windows)
+### Task 13: cross-platform determinism (Linux x86-64, WASM, Windows, Linux arm64)
 
 **Files:**
 - Create: `crates/rl-detcheck/{Cargo.toml, CLAUDE.md, src/main.rs}`, `tools/wasi-run.mjs`, `xtask/src/determinism.rs`
-- Modify: `rust-toolchain.toml` (`targets` gains `"wasm32-wasip1"`), `xtask/layers.ron` (`"rl-detcheck": 6`), `xtask/src/{main.rs, check.rs, winbuild.rs}` (`EXES` and `build()` gain `rl-detcheck`), `xtask/CLAUDE.md`
+- Modify: `rust-toolchain.toml` (`targets` gains `"wasm32-wasip1"` and `"aarch64-unknown-linux-gnu"`), `.cargo/config.toml` (`[target.aarch64-unknown-linux-gnu] linker = "aarch64-linux-gnu-gcc"`), `xtask/layers.ron` (`"rl-detcheck": 6`), `xtask/src/{main.rs, check.rs, winbuild.rs}` (`EXES` and `build()` gain `rl-detcheck`), `xtask/CLAUDE.md`
 - Test: unit tests in `xtask/src/determinism.rs` (stream comparison), the step itself
 
 **Interfaces:**
 - Consumes: `rl_replay::Replay::{decode, ..}`, `rl_content::Content::{open, world_for_replay}`, `World::checksum`; `crate::winbuild::{missing, build, stage, run, RUN_TIMEOUT}`.
-- Produces: the binary `rl-detcheck --content <dir> [--every N] <replay.rlrp>...` printing `<file name> <tick> <checksum hex>` lines (tick 0 and every `N`, default 10, and the last tick), exit status 1 if a replay's own recorded checksums do not match; `cargo xtask determinism [--windows]`; a `determinism` step in `check` (WASM leg) and `determinism-windows` in `full`.
+- Produces: the binary `rl-detcheck --content <dir> [--every N] <replay.rlrp>...` printing `<file name> <tick> <checksum hex>` lines (tick 0 and every `N`, default 10, and the last tick), exit status 1 if a replay's own recorded checksums do not match; `cargo xtask determinism [--windows] [--arm64]`; a `determinism` step in `check` (WASM leg) and `determinism-windows` and `determinism-arm64` in `full`.
 
 Context: spec §9.5. Rollback rests on identical simulation everywhere. The tool replays recorded replays (keys only, so bots' own maths are not under test: bots think on the host only) and prints the world checksum stream; xtask compares the native stream with the WASM one (a `wasm32-wasip1` build of the same tool, run by Node.js's built-in WASI) and, in `full`, the Windows one (the plan 8 interop runner).
 
@@ -2900,22 +2900,24 @@ The xtask passes the repository root as `root` and paths relative to it (`/conte
 1. Record the replays natively: for each golden spec in `fixtures/matches/*.ron` (in `check`: only `mw-castlestrike-8chaos`; with `--all`/in `full`: all three) run `cargo run --quiet --release -p rl-cli -- match <spec flags> --record target/determinism/<stem>.rlrp --no-verify` — read the spec flags from the golden's `spec` (`rl_cli::golden::Golden` is in rl-cli's library; xtask may depend on it, or shell out with the flags built from the RON fields).
 2. Native stream: `cargo run --quiet --release -p rl-detcheck -- --content content/packs <replays>`.
 3. WASM leg: skip with `skip determinism (<why>)` when `node --version` fails (notice: `sudo apt install nodejs`) or `rustup target list --installed` lacks `wasm32-wasip1`; else `cargo build --quiet --release -p rl-detcheck --target wasm32-wasip1` and `node tools/wasi-run.mjs target/wasm32-wasip1/release/rl-detcheck.wasm <repo root> --content /content/packs /target/determinism/<stem>.rlrp`.
+4b. **arm64 leg** (`--arm64`, the `full` step `determinism-arm64`; the user asked for it on 2026-10-12 so a dedicated server or the game can later run on arm64 Linux): skip with `skip determinism-arm64 (<why>)` when `qemu-aarch64` is not on `PATH`, `aarch64-linux-gnu-gcc` is missing or `rustup target list --installed` lacks `aarch64-unknown-linux-gnu` (notice: `sudo apt install qemu-user gcc-aarch64-linux-gnu` and `rustup target add aarch64-unknown-linux-gnu`); else `cargo build --quiet --release -p rl-detcheck --target aarch64-unknown-linux-gnu` and run `qemu-aarch64 -L /usr/aarch64-linux-gnu target/aarch64-unknown-linux-gnu/release/rl-detcheck --content content/packs <replays>` (all three replays; QEMU is several times slower, so it is in `full` only). Compare with the native stream like the other legs.
 4. Windows leg (`--windows`, the `full` step): skip with a notice when `winbuild::missing()` says why; else `winbuild::build()`, `stage(&release, content, &replays)`, `run(&stage, "rl-detcheck.exe", ["--content", "content", "replays/<stem>.rlrp", ..], &[], RUN_TIMEOUT)` and parse stdout.
 5. Compare: `fn compare(a: &str, b: &str) -> Result<(), String>` — the first differing line (`<file> <tick>: native <x>, wasm <y>`), or a length difference. Unit tests: equal streams pass; a differing checksum names file and tick; a missing tail is reported.
 
-`check.rs`: `step("determinism", ...)` after `test` in `check`; `step("determinism-windows", ...)` in `full`. The `check` step must take under 30 s warm (one replay, release builds cached); record the time in the task report.
+`check.rs`: `step("determinism", ...)` after `test` in `check`; `step("determinism-windows", ...)` and `step("determinism-arm64", ...)` in `full`. The `check` step must take under 30 s warm (one replay, release builds cached); record the time in the task report.
 
 - [ ] **Step 4: Run**
 
 Run: `sudo apt install nodejs` is the user's step — if `node` is missing, the step prints the skip notice; verify that path, and tell the controller in the report so the user gets the apt command. Then `cargo xtask determinism && cargo xtask determinism --windows`.
+Then `cargo xtask determinism --arm64` (if QEMU or the cross linker is missing, verify the skip notice and report the apt command for the user).
 Expected: the streams match (or skips with notices). A mismatch is a real finding: stop and report it with the first differing tick (it would block rollback across platforms).
 
 - [ ] **Step 5: Commit**
 
-CLAUDE.md for rl-detcheck (layer 6, std; native, WASI, Windows; not a game tool) and xtask's (`determinism` in `check`, `determinism-windows` in `full`, the Node.js requirement). `cargo xtask check`, then:
+CLAUDE.md for rl-detcheck (layer 6, std; native, WASI, Windows, arm64 under QEMU; not a game tool) and xtask's (`determinism` in `check`, `determinism-windows` and `determinism-arm64` in `full`, the Node.js, QEMU and cross-linker requirements). `cargo xtask check`, then:
 
 ```bash
-git add rust-toolchain.toml xtask crates/rl-detcheck tools/wasi-run.mjs
+git add rust-toolchain.toml .cargo/config.toml xtask crates/rl-detcheck tools/wasi-run.mjs
 git commit -m "determinism: compare checksum streams on Linux, WASM and Windows"
 ```
 
@@ -2932,7 +2934,7 @@ git commit -m "determinism: compare checksum streams on Linux, WASM and Windows"
 - [ ] **Step 2: CHANGELOG.md** — under `### Added`, user-visible effects in the file's prose style:
   - "The netcode core for online play (not yet playable from the game): rollback with the host ordering inputs, spectators, desync detection and repair, tested by whole online matches with bots over simulated networks (`rl-cli net-sim`)."
   - "`rl-cli net-repro` reads a desync bundle and names the first tick and world field that differ."
-  - "The simulation is checked to give identical results on Linux, in the browser's WebAssembly and on Windows (`cargo xtask determinism`; the WebAssembly leg needs `sudo apt install nodejs`)."
+  - "The simulation is checked to give identical results on Linux, in the browser's WebAssembly, on Windows and on arm64 Linux (`cargo xtask determinism`; the WebAssembly leg needs `sudo apt install nodejs`, the arm64 leg `sudo apt install qemu-user gcc-aarch64-linux-gnu`)."
 
 - [ ] **Step 3: Commit**
 
