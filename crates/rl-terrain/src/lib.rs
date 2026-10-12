@@ -10,11 +10,14 @@ extern crate alloc;
 
 mod color;
 mod dirt;
+mod journal;
 mod stamp;
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 pub use color::{Area, ColorEdit, ColorMap, GREEN_SHADES, Rect, ThemeArt};
+pub use journal::{JournalError, JournalMark};
 use rl_data::level::{Material, MaterialGrid};
 pub use stamp::{GreenMask, GreenPixel, Stamp, StampPixel};
 
@@ -24,13 +27,24 @@ pub const PX_DIRT: u8 = 0x02;
 pub const PX_ROCK: u8 = 0x04;
 
 /// The material grid the simulation collides with and carves into.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct Terrain {
     width: u32,
     height: u32,
     /// Material indices (`Material as u8`), row-major.
     cells: Vec<u8>,
+    /// Rollback journal, off by default (`journal.rs`).
+    journal: Option<Box<journal::Journal>>,
 }
+
+/// Equality compares the terrain only: the journal is bookkeeping, not terrain.
+impl PartialEq for Terrain {
+    fn eq(&self, other: &Self) -> bool {
+        self.width == other.width && self.height == other.height && self.cells == other.cells
+    }
+}
+
+impl Eq for Terrain {}
 
 impl Terrain {
     pub fn from_grid(grid: &MaterialGrid) -> Self {
@@ -38,6 +52,7 @@ impl Terrain {
             width: grid.width(),
             height: grid.height(),
             cells: grid.cells().iter().map(|m| *m as u8).collect(),
+            journal: None,
         }
     }
 
@@ -81,6 +96,7 @@ impl Terrain {
         if !clip(&mut x, &mut cw, self.width as i32) || !clip(&mut y, &mut ch, self.height as i32) {
             return 0;
         }
+        self.record(x as u32, y as u32, (x + cw) as u32, (y + ch) as u32);
         let mut carved = 0;
         for row in 0..ch {
             for col in 0..cw {
@@ -88,7 +104,7 @@ impl Terrain {
                 if self.cells[i] == Material::Dirt as u8
                     && stamp.get(col as u32, row as u32) == StampPixel::Carve
                 {
-                    self.cells[i] = Material::Background as u8;
+                    self.set_cell(i, Material::Background as u8);
                     carved += 1;
                 }
             }

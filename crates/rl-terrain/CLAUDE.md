@@ -29,5 +29,6 @@ and the colour image that follows it (`ColorMap`).
   `MAX_DIRTY`, merged beyond). `rebuild_area(area, &material)` is the only
   fallback for edits a tick dropped (`lost_area`). The image is always
   opaque; odd art sizes are cropped or padded, never a panic.
+- **Journal** (`journal.rs`, networking spec §3.3): off by default; `start_journal` records each mutator's clipped pre-image and keeps the order-independent cell hash. Every new write to `cells` must go through `set_cell` after `record`, or rollback breaks.
 
 Test: `cargo nextest run -p rl-terrain`.

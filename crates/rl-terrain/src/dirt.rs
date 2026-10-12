@@ -66,6 +66,9 @@ impl Terrain {
         let sx = pos_x.wrapping_sub((w >> 1) as i32);
         let sy = pos_y.wrapping_sub((h >> 1) as i32);
         let clip = Clip::new(self, sx, sy, w, h);
+        if clip.x0 < clip.x1 && clip.y0 < clip.y1 {
+            self.record(clip.x0 as u32, clip.y0 as u32, clip.x1 as u32, clip.y1 as u32);
+        }
         let mut count = 0;
         for (i, x, y) in clip.cells(self.width) {
             let p = stamp.get(x, y);
@@ -75,10 +78,10 @@ impl Terrain {
                 if flag & PX_EMPTY != 0 {
                     count += 1;
                 }
-                self.cells[i] = Material::Dirt as u8;
+                self.set_cell(i, Material::Dirt as u8);
             }
             if matches!(p, StampPixel::Paint(_)) && flag & PX_EMPTY != 0 {
-                self.cells[i] = Material::Dirt as u8;
+                self.set_cell(i, Material::Dirt as u8);
                 count += 1;
             }
         }
@@ -101,17 +104,20 @@ impl Terrain {
         let sx = pos_x.wrapping_sub((w >> 1) as i32);
         let sy = pos_y.wrapping_sub((h >> 1) as i32);
         let clip = Clip::new(self, sx, sy, w, h);
+        if clip.x0 < clip.x1 && clip.y0 < clip.y1 {
+            self.record(clip.x0 as u32, clip.y0 as u32, clip.x1 as u32, clip.y1 as u32);
+        }
         let mut count = 0;
         for (i, x, y) in clip.cells(self.width) {
             let p = mask.get(x, y);
             let flag = flags_of(self.cells[i]);
             if p == GreenPixel::Green && flag & PX_EMPTY != 0 {
-                self.cells[i] = Material::Dirt as u8;
+                self.set_cell(i, Material::Dirt as u8);
                 count += 1;
                 rand();
             }
             if matches!(p, GreenPixel::Rim(_)) && flag & PX_EMPTY != 0 {
-                self.cells[i] = Material::Dirt as u8;
+                self.set_cell(i, Material::Dirt as u8);
                 count += 1;
             }
         }

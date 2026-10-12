@@ -3140,6 +3140,7 @@ dependencies = [
 name = "rl-terrain"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "rl-data",
 ]
 
