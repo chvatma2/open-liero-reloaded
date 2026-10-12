@@ -28,6 +28,7 @@
         "rl-audio": 5,
         "rl-input": 5,
         "rl-ui": 5,
+        "rl-net": 5,
         "rl-cli": 6,
         "rl-game": 6,
         "rl-detcheck": 6,

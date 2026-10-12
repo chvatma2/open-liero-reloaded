@@ -35,6 +35,7 @@ rl-import-gfx = { path = "crates/rl-import-gfx" }
 rl-oracle = { path = "crates/rl-oracle" }
 rl-ui = { path = "crates/rl-ui" }
 rl-detcheck = { path = "crates/rl-detcheck" }
+rl-net = { path = "crates/rl-net" }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "alloc"] }
 ron = "0.12.2"
 # Replays (plan 6): exact pins, the encoding is the replay format.
@@ -74,6 +75,9 @@ egui-winit = { version = "=0.36.2", default-features = false, features = ["wayla
 # Menus (plan 7): exact pins. egui_kittest drives GUI flows by label, in lockstep with egui.
 egui_kittest = "=0.36.2"
 directories = "=6.0.0"
+# Online play (plan 10, decision N15): an exact pin, pure Rust crypto (no C
+# toolchain, so the mingw cross-build needs nothing more).
+str0m = { version = "=0.24.0", default-features = false, features = ["rust-crypto"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
