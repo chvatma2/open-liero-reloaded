@@ -32,4 +32,6 @@ pub use settings::{
     Settings, UI_SCALE_RANGE, UpscaleFilter, VideoSettings, WindowPreset, clamp_scale, sanitize_bindings,
 };
 pub use state::{AppCommand, Game, Screen, UiAction, UiState};
-pub use store::{Loaded, PACKS_DIR, PROFILES_FILE, REPLAYS_DIR, SETTINGS_FILE, Store};
+pub use store::{
+    IDENTITY_FILE, IDENTITY_VERSION, Loaded, PACKS_DIR, PROFILES_FILE, REPLAYS_DIR, SETTINGS_FILE, Store,
+};

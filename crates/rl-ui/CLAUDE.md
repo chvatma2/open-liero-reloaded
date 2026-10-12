@@ -247,3 +247,10 @@ the weapon selection, the pause menu, Esc/F5 repeats, the results;
 `tests/import.rs`: `import_runs_off_the_ui_thread_and_reports` on
 `fixtures/olx-mini`, and the screen's flow; `tests/hud_snapshots.rs`
 with `RL_GPU_TESTS`).
+- **Identity file** (`identity.ron`, plan 10): `Store::load_identity(fresh)`
+  returns the install's 32-byte secret key, calling `fresh` (the caller's
+  randomness) and writing `(version: 1, secret: "<64 hex>")` atomically
+  when there is no file; a damaged file is moved to `.bak` and replaced by
+  a new identity with a warning (the fingerprint changes). The store does
+  not check the scalar: `rl-lobby`'s `Identity::from_secret` does, and the
+  caller then asks for a fresh secret.

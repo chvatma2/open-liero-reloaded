@@ -330,3 +330,46 @@ fn a_newer_file_is_never_overwritten() {
     assert_eq!(store.load_settings().value, Settings::default());
     assert_eq!(store.notices().len(), 1, "profiles.ron is still the newer one");
 }
+
+#[test]
+fn identity_is_created_once_and_a_damaged_file_is_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    let path = data.join("identity.ron");
+    let mut store = Store::open(&data);
+
+    let first = store.load_identity(|| [7; 32]);
+    assert_eq!((first.value, first.warnings.is_empty()), ([7; 32], true));
+    assert_eq!(
+        read(&path).split_whitespace().collect::<String>(),
+        format!("(version:1,secret:\"{}\",)", "07".repeat(32))
+    );
+    // The next load reads it; `fresh` is not asked.
+    let again = store.load_identity(|| panic!("a second identity"));
+    assert_eq!((again.value, again.warnings.is_empty()), ([7; 32], true));
+    assert_eq!(Store::open(&data).load_identity(|| panic!("a second identity")).value, [7; 32]);
+
+    // Damaged files (garbage, short, not hex, zero): new secret, one
+    // warning, the old file moved to `.bak`, the new one saved.
+    let zero = format!("(version: 1, secret: \"{}\")", "00".repeat(32));
+    let not_hex = format!("(version: 1, secret: \"{}\")", "zz".repeat(32));
+    for (n, bad) in
+        ["not ron\u{0}", "(version: 1, secret: \"abcd\")", &zero, &not_hex].into_iter().enumerate()
+    {
+        fs::write(&path, bad).unwrap();
+        let got = store.load_identity(|| [9; 32]);
+        assert_eq!(got.value, [9; 32], "{bad}");
+        assert_eq!(got.warnings.len(), 1, "{:?}", got.warnings);
+        assert!(got.warnings[0].contains(".bak"), "{:?}", got.warnings);
+        let bak = if n == 0 { "identity.ron.bak".to_string() } else { format!("identity.ron.{n}.bak") };
+        assert_eq!(read(&data.join(bak)), bad);
+        assert!(read(&path).contains(&"09".repeat(32)));
+        assert_eq!(store.load_identity(|| panic!("again")).value, [9; 32]);
+    }
+}
+
+#[test]
+fn identity_without_a_data_directory_is_fresh_each_time() {
+    let mut store = Store::in_memory();
+    assert_eq!(store.load_identity(|| [3; 32]).value, [3; 32]);
+}

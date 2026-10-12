@@ -19,6 +19,7 @@
         "rl-replay": 3,
         "rl-proto": 4,
         "rl-netcode": 4,
+        "rl-lobby": 4,
         "rl-scenario": 4,
         "rl-content": 4,
         "rl-scene": 5,
@@ -62,7 +63,9 @@
         ("rl-ui", "rl-input"),
         // The session speaks the wire format.
         ("rl-netcode", "rl-proto"),
+        // The lobby's identity signs the wire format's keys and signatures.
+        ("rl-lobby", "rl-proto"),
     ],
-    no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-proto", "rl-netcode"],
-    wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-proto", "rl-netcode", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
+    no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-proto", "rl-netcode", "rl-lobby"],
+    wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-proto", "rl-netcode", "rl-lobby", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
 )

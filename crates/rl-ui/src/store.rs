@@ -1,4 +1,4 @@
-//! `settings.ron` and `profiles.ron` in the platform data directory (spec
+//! `settings.ron`, `profiles.ron` and `identity.ron` in the platform data directory (spec
 //! §9.4, §21 G2).
 //!
 //! - **Format:** RON, `(version: N, settings: (...))` (or `profiles:`).
@@ -37,6 +37,10 @@ use crate::settings::{SETTINGS_VERSION, Settings};
 pub const SETTINGS_FILE: &str = "settings.ron";
 /// The profiles file's name in the data directory.
 pub const PROFILES_FILE: &str = "profiles.ron";
+/// The install's identity key (plan 10, spec §5.2).
+pub const IDENTITY_FILE: &str = "identity.ron";
+/// The identity file's format version.
+pub const IDENTITY_VERSION: u32 = 1;
 /// Auto-saved replays of the last matches (§21 G2).
 pub const REPLAYS_DIR: &str = "replays";
 /// Imported packs (spec §9.4), layered over the bundled ones.
@@ -80,6 +84,43 @@ struct SettingsFile {
 struct ProfilesFile {
     version: u32,
     profiles: Profiles,
+}
+
+#[derive(Serialize, Deserialize)]
+struct IdentityFile {
+    version: u32,
+    #[serde(with = "hex_secret")]
+    secret: [u8; 32],
+}
+
+/// A secret as 64 hex digits; all zeros is no key.
+mod hex_secret {
+    use serde::de::Error as _;
+    use serde::{Deserialize as _, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(secret: &[u8; 32], s: S) -> Result<S::Ok, S::Error> {
+        let text: String = secret.iter().map(|b| format!("{b:02x}")).collect();
+        s.serialize_str(&text)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 32], D::Error> {
+        let text = String::deserialize(d)?;
+        let digit = |c: u8| (c as char).to_digit(16).map(|v| v as u8);
+        let mut out = [0u8; 32];
+        if text.len() != 64 {
+            return Err(D::Error::custom("the secret is not 64 hex digits"));
+        }
+        for (o, pair) in out.iter_mut().zip(text.as_bytes().chunks(2)) {
+            match (digit(pair[0]), digit(pair[1])) {
+                (Some(h), Some(l)) => *o = h << 4 | l,
+                _ => return Err(D::Error::custom("the secret is not 64 hex digits")),
+            }
+        }
+        if out == [0; 32] {
+            return Err(D::Error::custom("the secret is zero"));
+        }
+        Ok(out)
+    }
 }
 
 impl Store {
@@ -156,6 +197,36 @@ impl Store {
             |p| p.sanitize(),
             |store, p| store.save_profiles(p),
         )
+    }
+
+    /// `identity.ron`: the install's secret key (spec §5.2). With no file,
+    /// `fresh` (the caller's randomness) makes one, which is saved; a
+    /// damaged file is moved to `.bak` and replaced the same way, with a
+    /// warning (the player's fingerprint changes). Whether the scalar is
+    /// valid is `rl-lobby`'s `Identity::from_secret`'s to say; all zeros
+    /// is refused here. Without a data directory the secret is not kept.
+    pub fn load_identity(&mut self, fresh: impl FnOnce() -> [u8; 32]) -> Loaded<[u8; 32]> {
+        let loaded = self.load(
+            IDENTITY_FILE,
+            IDENTITY_VERSION,
+            |t| ron::from_str::<IdentityFile>(t).map(|f| Some(f.secret)),
+            |_| Vec::new(),
+            |_, _| Ok(()),
+        );
+        let mut warnings = loaded.warnings;
+        let value = match loaded.value {
+            Some(secret) => secret,
+            None => {
+                let secret = fresh();
+                // A newer game's file stays untouched (the save skips it).
+                if let Err(e) = self.save(IDENTITY_FILE, &IdentityFile { version: IDENTITY_VERSION, secret })
+                {
+                    warnings.push(format!("cannot save the identity: {e:#}"));
+                }
+                secret
+            }
+        };
+        Loaded { value, warnings }
     }
 
     /// Writes `settings.ron` atomically.
