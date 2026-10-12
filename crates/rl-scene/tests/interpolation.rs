@@ -1,7 +1,7 @@
 //! Review Focus 1: interpolation never blends a projectile with another
 //! that reused its slot, nor a worm across a death or a respawn.
 
-mod common;
+use crate::common;
 
 use rl_data::image::Rgba;
 use rl_math::Vec2;

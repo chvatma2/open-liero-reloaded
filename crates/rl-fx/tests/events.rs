@@ -1,7 +1,7 @@
 //! How a tick's events become entities and colour edits, in OLX's order
 //! (spec §19: an event's sub-step counts the entity passes before it).
 
-mod common;
+use crate::common;
 
 use common::{DEFAULT_DIRT, DIRT, DT, SKY, Setup, art, cosmetic};
 use rl_data::image::Rgba;

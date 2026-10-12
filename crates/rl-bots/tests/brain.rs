@@ -3,7 +3,7 @@
 //! often, and bots that are stuck or hold odd weapons stay within their
 //! budget, keep moving and let the match end (Review Focus 1 and 4).
 
-mod common;
+use crate::common;
 
 use common::olx::*;
 use common::*;

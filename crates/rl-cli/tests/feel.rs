@@ -2,7 +2,7 @@
 //! definitions make sense. The gate on the full numbers is `cargo xtask
 //! net-feel` (in `full`).
 
-mod common;
+use crate::common;
 
 use rl_cli::feel::{ProfileFeel, measure_one};
 use rl_cli::netsim::NetSpec;

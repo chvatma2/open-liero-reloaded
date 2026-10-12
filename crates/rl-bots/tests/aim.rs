@@ -2,7 +2,7 @@
 //! shell aimed by the solver hits a worm standing still; OLX's direct aim
 //! drops it short.
 
-mod common;
+use crate::common;
 
 use common::*;
 use rl_bots::{Intent, Launch, Motor, ballistic_from, olx_direct};

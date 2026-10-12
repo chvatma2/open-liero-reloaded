@@ -23,6 +23,11 @@ modernized for current displays.
 2. **One crate per concern, under `crates/`.** Each crate has a `CLAUDE.md`:
    read it before editing the crate. Register every new crate in `xtask/layers.ron`.
    A crate may depend only on lower layers (`cargo xtask layers`).
+   A crate's integration tests are one binary (`autotests = false`): a new
+   `tests/<name>.rs` is a `mod <name>;` of `tests/integration.rs`, or its own
+   `[[test]]` only when it needs a process of its own (allocation counting,
+   process-global state) or xtask runs it by name (`cargo xtask layers`
+   fails on a test file no binary compiles).
 3. **Learn a dependency's API from its summary.** Run `cargo xtask api`, then
    read `target/api/<crate>.txt` instead of the crate's source.
 4. **Cite OLX for ported behavior.** Ported code gets a doc comment naming the

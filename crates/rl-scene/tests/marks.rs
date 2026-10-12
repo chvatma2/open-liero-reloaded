@@ -2,7 +2,7 @@
 //! one spawned in the last sub-step of a tick is drawn, and a tick that
 //! runs no sub-step keeps the last tick's.
 
-mod common;
+use crate::common;
 
 use rl_scene::{DrawList, Interpolation, Item, Layer, Line, SceneOptions};
 use rl_sim::{CosmeticKind, EventKind};

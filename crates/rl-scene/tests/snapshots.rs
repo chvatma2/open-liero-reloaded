@@ -4,7 +4,7 @@
 //! the `.snap.new` files; accept an intended one with
 //! `INSTA_UPDATE=always`.
 
-mod common;
+use crate::common;
 
 use rl_scene::{DrawList, Interpolation, SceneOptions};
 

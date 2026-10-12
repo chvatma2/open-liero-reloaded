@@ -2,7 +2,7 @@
 //! same world, reproduces every checksum, reports the first mismatch, and
 //! its encoding is compact, versioned and safe to decode.
 
-mod common;
+use crate::common;
 
 use common::*;
 use rl_replay::{

@@ -3,7 +3,7 @@
 //! drawn worm, a hook on another worm sits on that worm as drawn, and a
 //! falling bonus moves smoothly between ticks (the Task 3 review).
 
-mod common;
+use crate::common;
 
 use rl_content::{Content, SandboxSetup, SpawnSpec, olx_level_id, olx_mod_id};
 use rl_data::image::Rgba;

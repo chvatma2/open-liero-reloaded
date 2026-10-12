@@ -2,7 +2,7 @@
 //! gives the same keys and checksums, thinking allocates nothing, and every
 //! think stays within its budget.
 
-mod common;
+use crate::common;
 
 use common::olx::*;
 use rl_bots::{AimModel, BotConfig, Difficulty, Personality};

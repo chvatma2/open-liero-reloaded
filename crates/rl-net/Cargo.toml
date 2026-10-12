@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+autotests = false
 
 [dependencies]
 str0m.workspace = true
@@ -16,6 +17,13 @@ getrandom.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[[test]]
+name = "link"
 
 [lints]
 workspace = true

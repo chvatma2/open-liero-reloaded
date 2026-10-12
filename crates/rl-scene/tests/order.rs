@@ -1,7 +1,7 @@
 //! The draw list's layers and the order inside a worm follow OLX's
 //! `CViewport::gusRender` and `CWorm::Draw` (presentation note §11.2, §3).
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeSet;
 

@@ -2,7 +2,7 @@
 //! dynamic fields travel with the world's, and the mode refuses bytes it
 //! cannot hold.
 
-mod common;
+use crate::common;
 
 use common::*;
 use rl_modes::{Deathmatch, DeathmatchSettings};

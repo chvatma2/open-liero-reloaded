@@ -2,7 +2,7 @@
 //! matches of 8 bots on OLX's content, deterministic and replaying to the
 //! same checksums, and a failing match that writes its replay and seed.
 
-mod common;
+use crate::common;
 
 use std::process::Command;
 

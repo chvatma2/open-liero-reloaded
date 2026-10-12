@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+autotests = false
 
 [dependencies]
 rl-math.workspace = true
@@ -21,6 +22,16 @@ anyhow.workspace = true
 rl-pack.workspace = true
 allocation-counter.workspace = true
 tempfile.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[[test]]
+name = "no_alloc"
+
+[[test]]
+name = "render_golden"
 
 [lints]
 workspace = true

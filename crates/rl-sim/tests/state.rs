@@ -2,8 +2,7 @@
 //! same setup takes another world's state and then evolves identically; a
 //! corrupted or hostile state is refused, never a panic.
 
-#[path = "common/world.rs"]
-mod world;
+use crate::world;
 
 use std::sync::OnceLock;
 

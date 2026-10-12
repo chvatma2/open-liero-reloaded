@@ -1,7 +1,7 @@
 //! The match's replay from its confirmed inputs: a confirmed checksum the
 //! re-simulation misses is a warning, and the replay is still made.
 
-mod common;
+use crate::common;
 
 use common::{content, setup, start};
 use rl_netcode::Simulation;

@@ -1,7 +1,7 @@
 //! The chaos loadout rotation (spec §20 F10, notes §4.6): Deathmatch gives
 //! each chaos bot its weapons on every spawn through `give_weapon`.
 
-mod common;
+use crate::common;
 
 use common::*;
 use rl_modes::{ChaosCycle, DeathmatchSettings, RespawnLoadout};

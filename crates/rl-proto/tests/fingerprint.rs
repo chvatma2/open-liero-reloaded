@@ -6,8 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-#[path = "../src/fingerprint_impl.rs"]
-mod fingerprint_impl;
+use crate::fingerprint_impl;
 
 const HASHED: [&str; 7] =
     ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-netcode", "rl-proto"];

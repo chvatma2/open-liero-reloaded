@@ -1,7 +1,7 @@
 //! Whole bots in a world: their work budget, determinism, no allocation
 //! while thinking, and robustness (notes §4.3, §4.8).
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

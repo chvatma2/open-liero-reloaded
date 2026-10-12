@@ -1,6 +1,6 @@
 //! The ninja rope (notes §1.5, §1.8): a bot climbs what it cannot jump.
 
-mod common;
+use crate::common;
 
 use common::olx::{Match, Player};
 use common::*;

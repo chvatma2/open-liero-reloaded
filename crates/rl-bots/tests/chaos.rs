@@ -2,7 +2,7 @@
 //! matches, chaos bots fire every weapon of both OLX mods, whatever the
 //! restrictions, while Deathmatch rotates their loadouts on each spawn.
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeSet;
 

@@ -1,7 +1,7 @@
 //! The motor drives a real worm: OLX's bot turning speed and weapon
 //! switching through the keys a player has (notes §4.4).
 
-mod common;
+use crate::common;
 
 use common::*;
 use rl_bots::{Intent, Motor};

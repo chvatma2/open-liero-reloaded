@@ -198,9 +198,13 @@ another match) and makes its start world.
 
 **Layer 6.** `dump-state` comes later (spec §7.4).
 
-Test: `cargo nextest run -p rl-cli`. `tests/corpus.rs` checks every imported
+Test: `cargo nextest run -p rl-cli`. The tests are modules of one binary,
+`tests/integration.rs`, except those xtask runs by name (`golden`,
+`net_cases`, `grid`, `net_sim`, `render_golden`, `gpu_bench`): one module's
+tests are `cargo nextest run -p rl-cli --test integration corpus::`.
+`tests/corpus.rs` checks every imported
 pack when `RL_CONTENT_DIR` is set. To accept a reviewed snapshot change, run
-`INSTA_UPDATE=always cargo test -p rl-cli --test corpus`.
+`INSTA_UPDATE=always cargo test -p rl-cli --test integration corpus::`.
 `MatchSpec`'s `--loading-time` and `--pool-capacity` (serialized only when
 given, so goldens and failure records keep their form) are the stress
 test's; without them a match is OLX's (`LoadingTime` 100, pool 3000).

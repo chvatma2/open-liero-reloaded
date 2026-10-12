@@ -2,8 +2,7 @@
 //! straight run's world exactly, terrain included, and the sync checksum
 //! tracks the state like `checksum` does.
 
-#[path = "common/world.rs"]
-mod world;
+use crate::world;
 
 use rl_sim::{Keys, RestoreError, TickEvents, World};
 use rl_terrain::{Area, JournalError};

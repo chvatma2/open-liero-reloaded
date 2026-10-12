@@ -7,7 +7,8 @@
 //! their strict structs, so a field renamed here
 //! fails one test or the other instead of reading as a measured 0. After
 //! an intended change, rewrite the samples with `RL_BLESS_TOOL_OUTPUT=1
-//! cargo nextest run -p rl-cli --test tool_output` and fix `xtask`.
+//! cargo nextest run -p rl-cli --test integration tool_output::` and fix
+//! `xtask`.
 
 use std::path::PathBuf;
 

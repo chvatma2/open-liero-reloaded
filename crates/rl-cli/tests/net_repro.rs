@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use proptest::prelude::*;
 use rl_cli::bundle::{BUNDLE_VERSION, DesyncBundle, FIELDS, first_difference, reproduce};

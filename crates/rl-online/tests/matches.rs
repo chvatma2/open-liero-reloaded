@@ -1,7 +1,7 @@
 //! A match from a start that came off the network (spec §5.4): whatever
 //! rl-proto lets through, `matches::build` refuses or builds, never panics.
 
-mod common;
+use crate::common;
 
 use common::{LEVEL, MOD, content, look, setup, start};
 use proptest::prelude::*;

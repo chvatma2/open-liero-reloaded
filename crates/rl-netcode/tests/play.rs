@@ -3,7 +3,7 @@
 //! episode, and repairs timed from the client's load. A host and one client
 //! over a link the test controls (`common::Pair`), or a client alone.
 
-mod common;
+use crate::common;
 
 use common::{CLIENT, Fate, HOST, Pair};
 use rl_netcode::harness::Factory;

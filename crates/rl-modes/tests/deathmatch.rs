@@ -2,7 +2,7 @@
 //! messages, against OLX's `CGameMode` (`src/server/CGameMode.cpp`) and
 //! `GameServer::SimulateGame` (`src/server/CServer_Game.cpp:167-261`).
 
-mod common;
+use crate::common;
 
 use common::*;
 use rl_modes::text::*;

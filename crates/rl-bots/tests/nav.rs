@@ -1,7 +1,7 @@
 //! Navigation on synthetic levels: OLX's area growth, its passage rule, and
 //! the resumable search (notes §1.4, §4.3, §4.8).
 
-mod common;
+use crate::common;
 
 use common::*;
 use rl_bots::Budget;

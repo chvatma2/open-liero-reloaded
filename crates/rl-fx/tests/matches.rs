@@ -1,7 +1,7 @@
 //! Oracle scenarios played with entities attached (need the imported OLX
 //! content, `RL_CONTENT_DIR`; they skip with a notice without it).
 
-mod common;
+use crate::common;
 
 use rl_content::{olx_level_id, olx_mod_id};
 use rl_data::image::Rgba;

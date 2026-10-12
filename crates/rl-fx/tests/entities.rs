@@ -1,7 +1,7 @@
 //! Each entity type moves, animates, stains and dies as OLX's
 //! `SimulateEntities` makes it (presentation note §7.2).
 
-mod common;
+use crate::common;
 
 use common::{DEFAULT_DIRT, DIRT, ROCK, SKY, Setup, art, cosmetic, dt};
 use rl_data::image::Rgba;

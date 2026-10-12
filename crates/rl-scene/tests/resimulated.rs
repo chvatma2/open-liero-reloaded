@@ -1,7 +1,7 @@
 //! A re-simulated tick (online play's rollback, spec §3.4) moves the
 //! scene's history on like a new one, without shaking the camera again.
 
-mod common;
+use crate::common;
 
 use rl_content::olx_mod_id;
 use rl_scene::{Camera, DrawList, Scene, SceneAssets, SceneOptions, Viewport};
