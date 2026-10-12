@@ -113,6 +113,19 @@ impl World {
     /// events waiting for the next tick too), the spawn work counter and
     /// scratch and spare buffers.
     pub fn checksum(&self) -> u64 {
+        self.hash_state(self.terrain.material_hash())
+    }
+
+    /// [`World::checksum`] with the terrain as its cell hash
+    /// ([`rl_terrain::Terrain::cell_hash`]): O(1) to read while rollback is
+    /// on, so the session can compare worlds every 10 ticks (networking spec
+    /// §3.5). Not equal to `checksum`; equal between equal worlds whether or
+    /// not rollback is on.
+    pub fn sync_checksum(&self) -> u64 {
+        self.hash_state(self.terrain.cell_hash())
+    }
+
+    fn hash_state(&self, terrain_hash: u64) -> u64 {
         let World {
             settings: _,
             sim_mod: _,
@@ -137,7 +150,7 @@ impl World {
         let mut h = Fnv::new();
         h.u32(terrain.width());
         h.u32(terrain.height());
-        h.u64(terrain.material_hash());
+        h.u64(terrain_hash);
         worms[..].hash(&mut h);
         latches[..].hash(&mut h);
         h.time(*time);

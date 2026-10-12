@@ -28,6 +28,10 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   uses `box_clone`; `is_over(&World)` sees the whole world, the mode
   included (`World::scores`); `World::mode_state().as_any()` downcasts to
   the mode's own type.
+- **Rollback** (`snapshot.rs`, networking spec §3.3): `enable_rollback` +
+  `save`/`restore`/`forget_before`; `sync_checksum` is `checksum` with the
+  terrain's cell hash. Snapshots carry no events; the caller re-runs ticks
+  for them.
 - **Two clocks.** `tick` is one 100 Hz frame. Inside it, LX56 physics runs in
   `1000 / LX56PhysicsFPS` ms sub-steps (11 ms by default) while the physics
   clock is behind the frame clock, so some frames run no sub-step.
