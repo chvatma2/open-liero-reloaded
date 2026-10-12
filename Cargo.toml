@@ -38,6 +38,7 @@ rl-ui = { path = "crates/rl-ui" }
 rl-detcheck = { path = "crates/rl-detcheck" }
 rl-net = { path = "crates/rl-net" }
 rl-online = { path = "crates/rl-online" }
+rl-server = { path = "crates/rl-server" }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "alloc"] }
 ron = "0.12.2"
 # Replays (plan 6): exact pins, the encoding is the replay format.

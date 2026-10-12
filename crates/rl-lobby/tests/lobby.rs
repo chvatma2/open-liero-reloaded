@@ -210,6 +210,32 @@ fn a_forged_signature_is_refused() {
 }
 
 #[test]
+fn bans_given_by_key_or_address_are_refused_and_listed() {
+    let mut net = lobby();
+    // A dedicated server's bans file: a key and an address, before anyone joins.
+    net.host.ban_key(key(1));
+    net.host.ban_ip(ip(9));
+    let a = net.join(LobbyClient::new(ident(1), look("Ann"), None, None), ip(1));
+    net.settle();
+    assert!(got(&net, a, &ClientEvent::Refused(Refusal::Banned)));
+    let b = net.join(LobbyClient::new(ident(2), look("Bob"), None, None), ip(9));
+    net.settle();
+    assert_eq!(net.peers[b].received, vec![ToClient::Refused(Refusal::Banned)]);
+    let c = join(&mut net, 3, "Cid");
+    assert!(matches!(net.peers[c].events[0], ClientEvent::Welcome { .. }));
+    // A kick's ban joins the lists, in order.
+    net.host.kick(id_of(&net, c), true);
+    net.settle();
+    assert_eq!(net.host.banned_keys().copied().collect::<Vec<_>>(), {
+        let mut k = vec![key(1), key(3)];
+        k.sort();
+        k
+    });
+    assert_eq!(net.host.banned_ips().copied().collect::<Vec<_>>(), vec![ip(3), ip(9)]);
+    consistent(&net);
+}
+
+#[test]
 fn a_wrong_password_is_refused() {
     let mut net = lobby_with(HostConfig { password: Some("secret".into()), ..cfg() }, 0);
     let wrong = net.join(LobbyClient::new(ident(1), look("Ann"), Some("wrong".into()), None), ip(1));

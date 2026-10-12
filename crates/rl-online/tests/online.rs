@@ -139,9 +139,6 @@ impl Net {
     }
 
     fn with_admins(content: Content, minutes: f32, admins: Vec<PublicKey>) -> Net {
-        let content_dir = std::env::var("RL_CONTENT_DIR").unwrap();
-        let me = identity();
-        let key = me.public();
         let cfg = HostConfig {
             name: "Test lobby".into(),
             password: None,
@@ -149,9 +146,27 @@ impl Net {
             max_spectators: 4,
             admins,
         };
+        Net::hosted(content, minutes, PeerRole::Host(cfg))
+    }
+
+    /// A dedicated server's lobby: no local player (`PeerRole::Server`).
+    fn server(content: Content, minutes: f32) -> Net {
+        let cfg = HostConfig {
+            name: "Server".into(),
+            password: None,
+            max_players: 8,
+            max_spectators: 4,
+            admins: vec![],
+        };
+        Net::hosted(content, minutes, PeerRole::Server(cfg))
+    }
+
+    fn hosted(content: Content, minutes: f32, role: PeerRole) -> Net {
+        let content_dir = std::env::var("RL_CONTENT_DIR").unwrap();
+        let me = identity();
+        let key = me.public();
         let setup = setup(&content, minutes);
-        let host = OnlinePeer::start(PeerRole::Host(cfg), endpoint(), me, look("Host"), content, Some(setup))
-            .unwrap();
+        let host = OnlinePeer::start(role, endpoint(), me, look("Host"), content, Some(setup)).unwrap();
         let port = host.local_port();
         Net { content_dir, port, peers: vec![Peer::new(host, key)], begun: Instant::now() }
     }
@@ -519,5 +534,59 @@ fn an_admins_setup_is_taken_or_refused_with_a_notice() {
         net.peers[a].count(|e| matches!(e, OnlineEvent::Notice(t) if t.starts_with(SETUP_REFUSED))),
         1
     );
+    net.assert_quick();
+}
+
+/// A dedicated server (`PeerRole::Server`): no member of its own, the chat
+/// by member id, a notice to one member, its members' addresses, bans by
+/// key and address, a match its bots and members play, ended early.
+#[test]
+fn a_dedicated_server_hosts_without_a_player() {
+    let Some(content) = content() else { return };
+    let mut net = Net::server(content, 1.0);
+    assert_eq!(net.members(), 0, "the server is no member");
+    let clients = net.join_all(&["Anna", "Bert"]);
+    let (a, b) = (clients[0], clients[1]);
+    let bert_key = net.peers[b].key;
+    let bert = net.host().member_id(bert_key).unwrap();
+    net.peers[b].peer().lobby().chat("/players");
+    net.run_until(Duration::from_secs(10), "the server hears Bert by id", |n| {
+        n.host().has(|e| {
+            matches!(e, OnlineEvent::Chat { member, from, text }
+            if *member == bert && from == "Bert" && text == "/players")
+        })
+    });
+    net.host().peer().lobby().tell(bert, "just you");
+    net.run_until(Duration::from_secs(10), "Bert hears the notice", |n| {
+        n.peers[b].has(|e| matches!(e, OnlineEvent::Notice(t) if t == "just you"))
+    });
+    assert!(!net.peers[a].has(|e| matches!(e, OnlineEvent::Notice(t) if t == "just you")), "only Bert");
+    let addr = net.host().peer().lobby().addr_of(bert).expect("Bert's address");
+    assert!(addr.ip().is_loopback());
+    // Bans from a list: a key, an address.
+    let banned = identity();
+    let odd: std::net::IpAddr = "192.0.2.7".parse().unwrap();
+    net.host().peer().lobby().ban_key(banned.public());
+    net.host().peer().lobby().ban_ip(odd);
+    assert_eq!(net.host().peer().lobby().bans(), (vec![banned.public()], vec![odd]));
+    let c = net.join_as(banned, "Cid");
+    net.run_until(Duration::from_secs(10), "the banned key is refused", |n| {
+        n.peers[c].has(|e| matches!(e, OnlineEvent::Refused(r) if r == "you are banned from this lobby"))
+    });
+    // The members and the bot play; the server plays no slot.
+    net.ready(&clients);
+    net.host().peer().lobby().start(11).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() >= 100);
+    assert_eq!(net.peers[0].started(), vec![None]);
+    let mut slots: Vec<Option<u8>> = [a, b].iter().flat_map(|&i| net.peers[i].started()).collect();
+    slots.sort();
+    assert_eq!(slots, vec![Some(0), Some(1)]);
+    assert!(net.host().peer().lobby().end_match(), "a match to end");
+    assert!(!net.host().peer().lobby().end_match(), "once");
+    net.run_until(Duration::from_secs(10), "every peer ends the match at once", |n| {
+        [0, a, b].iter().all(|&i| n.peers[i].has(ended))
+    });
+    let record = net.peers[0].peer().last_record().cloned().expect("the host's record");
+    assert!((90..600).contains(&record.rows.len()), "{} rows: ended early", record.rows.len());
     net.assert_quick();
 }

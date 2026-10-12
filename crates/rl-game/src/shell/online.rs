@@ -504,7 +504,7 @@ impl Shell {
         while let Some(e) = queue.pop_front() {
             match e {
                 OnlineEvent::Lobby(state) => self.show_lobby(&state, out),
-                OnlineEvent::Chat { from, text } => {
+                OnlineEvent::Chat { from, text, .. } => {
                     self.chat_line(LogLine { text: format!("{from}: {text}"), kind: LineKind::Chat });
                 }
                 OnlineEvent::Notice(text) => self.chat_line(LogLine::event(text)),

@@ -9,8 +9,9 @@ use rl_terrain::Area;
 pub enum OnlineEvent {
     /// The lobby changed (also once when joined).
     Lobby(LobbyState),
-    /// A chat line, by the sender's name.
-    Chat { from: String, text: String },
+    /// A chat line, by the sender's name and member id (a dedicated
+    /// server reads its admins' commands by the id).
+    Chat { from: String, member: u8, text: String },
     /// Something to show in the lobby's log: a member joined, was kicked,
     /// a notice from the host, a replay that failed.
     Notice(String),

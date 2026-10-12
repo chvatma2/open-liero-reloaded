@@ -49,7 +49,9 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     server's `chat` is a `Notice::Message`.
   - Kick/ban: the host (`kick`) or an admin key (`AdminCommand::Kick/Ban`);
     the host is never kicked; a ban stores the key and the member's IP for
-    the lobby's life (`banned`, `banned_ip` for the endpoint's gate).
+    the lobby's life (`banned`, `banned_ip` for the endpoint's gate;
+    `banned_keys`/`banned_ips` list them, `ban_key`/`ban_ip` add a bans
+    file's).
     `Next`/`Settings` from an admin are `HostEvent::Admin`; non-admins get
     `NOT_ADMIN`.
   - Start (ruling PF1): `can_start` (gathering, at least one player —

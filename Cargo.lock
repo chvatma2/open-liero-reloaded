@@ -4116,6 +4116,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rl-bots",
+ "rl-content",
+ "rl-lobby",
+ "rl-modes",
+ "rl-net",
+ "rl-online",
+ "rl-proto",
+ "rl-sim",
+ "ron",
+ "serde",
+ "tempfile",
+]
+
+[[package]]
 name = "rl-sim"
 version = "0.1.0"
 dependencies = [

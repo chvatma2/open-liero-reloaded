@@ -25,10 +25,16 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   thinking in slot order; `press` with the host player's keys from a
   callback; `Driver<WorldSim>` for bots alone, `rl-cli`'s).
 - **`peer.rs`, `OnlinePeer`**: `start(role, endpoint, me, look, content,
-  setup)`; `poll(now, local_keys, on_tick) -> Vec<OnlineEvent>`;
+  setup)` (`PeerRole::Host`, `Server`: a host without a local player, the
+  dedicated server's, `look` unused; `Client`); `poll(now, local_keys,
+  on_tick) -> Vec<OnlineEvent>`;
   `lobby()` (`LobbyHandle`: ready, spectate, look, loadout, chat, have,
   setup, kick, move_seat (the host's), start, force_start, can_start
-  (the host's answer; `NotHost`, `Running`), state, me); `match_session[_mut]`,
+  (the host's answer; `NotHost`, `Running`), state, me; the host's alone:
+  `end_match` (ends the running match now, as at its end, the confirmed
+  ticks its record), `tell` (a notice to one member), `addr_of`,
+  `ban_key`/`ban_ip` (a bans file; the address also in the gate), `bans`);
+  `OnlineEvent::Chat` carries the sender's member id; `match_session[_mut]`,
   `my_slot` (`None` once the match ended); `tick_phase(now)` (the
   session's, for the game's interpolation); `take_replay` (the
   `replay::PendingReplay` being made, handed out so it outlives the peer;
@@ -122,7 +128,10 @@ bytes; a late joiner watches from a state, then plays the next match; a
 client whose world differs is refused at the start; a client that vanishes
 mid-match leaves `Keys(0)` in its slot while the others finish; a banned
 player cannot rejoin; an admin's setup is taken or refused with a notice;
-a health planted in a client's world makes a bundle on both sides.
+a health planted in a client's world makes a bundle on both sides; a
+dedicated server (`PeerRole::Server`) has no member of its own, hears chat
+by member id, tells one member, knows its members' addresses, refuses a
+banned key, and ends a match early.
 `tests/matches.rs`: a proptest of starts within rl-proto's bounds (256
 cases, about 30 build) never panics `build`; a slot both member and bot,
 a single slot, an unknown mod and a pack hash mismatch are refused.

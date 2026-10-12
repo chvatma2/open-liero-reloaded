@@ -502,6 +502,29 @@ impl LobbyHost {
         self.banned_ips.contains(&ip)
     }
 
+    /// Every banned key, in order (a dedicated server's bans file).
+    pub fn banned_keys(&self) -> impl Iterator<Item = &PublicKey> {
+        self.banned_keys.iter()
+    }
+
+    /// Every banned address, in order.
+    pub fn banned_ips(&self) -> impl Iterator<Item = &IpAddr> {
+        self.banned_ips.iter()
+    }
+
+    /// Bans a key for the lobby's life (a dedicated server's bans file): it
+    /// is refused at its next join. A member holding it now stays until
+    /// kicked.
+    pub fn ban_key(&mut self, key: PublicKey) {
+        self.banned_keys.insert(key);
+    }
+
+    /// Bans an address for the lobby's life: a peer opening from it is
+    /// refused (also mirror it in the transport's gate).
+    pub fn ban_ip(&mut self, ip: IpAddr) {
+        self.banned_ips.insert(ip);
+    }
+
     // ---- joining ----
 
     fn receive_pending(&mut self, peer: PeerId, msg: ToHost) {

@@ -67,6 +67,10 @@ pub const MISMATCH: &str = "your simulation differs from the host's: version or 
 pub enum PeerRole {
     /// Hosts a lobby on the endpoint's port.
     Host(HostConfig),
+    /// Hosts a lobby with no local player (a dedicated server): the look
+    /// given to [`OnlinePeer::start`] is not used, and the host plays only
+    /// its bots.
+    Server(HostConfig),
     /// Joins the host whose signalling (TCP) address is `addr`.
     Client { addr: SocketAddr, password: Option<String> },
 }
@@ -189,8 +193,9 @@ pub struct OnlinePeer {
 
 impl OnlinePeer {
     /// Opens the endpoint: a host's lobby for `setup` (`me` plays with
-    /// `look`), or a connection to the host. A client's endpoint lets its
-    /// host send [`HOST_RELIABLE_BYTES_PER_S`].
+    /// `look`; a server's lobby has no local player), or a connection to
+    /// the host. A client's endpoint lets its host send
+    /// [`HOST_RELIABLE_BYTES_PER_S`].
     pub fn start(
         role: PeerRole,
         endpoint: EndpointConfig,
@@ -201,10 +206,15 @@ impl OnlinePeer {
     ) -> io::Result<OnlinePeer> {
         let invalid = |what: String| io::Error::new(io::ErrorKind::InvalidInput, what);
         let my_key = me.public();
-        let (endpoint, side) = match role {
-            PeerRole::Host(cfg) => {
+        let hosting = match role {
+            PeerRole::Host(cfg) => Ok((cfg, Some(look))),
+            PeerRole::Server(cfg) => Ok((cfg, None)),
+            PeerRole::Client { addr, password } => Err((addr, password, look)),
+        };
+        let (endpoint, side) = match hosting {
+            Ok((cfg, look)) => {
                 let setup = setup.ok_or_else(|| invalid("a host needs a match setup".into()))?;
-                let lobby = LobbyHost::new(cfg, me, Some(look), setup)
+                let lobby = LobbyHost::new(cfg, me, look, setup)
                     .map_err(|e: LobbyError| invalid(format!("the match setup: {e:?}")))?;
                 let banned = Arc::new(Mutex::new(BTreeSet::new()));
                 let gate_banned = Arc::clone(&banned);
@@ -224,7 +234,7 @@ impl OnlinePeer {
                 };
                 (Endpoint::host(endpoint, gate)?, Side::Host(Box::new(side)))
             }
-            PeerRole::Client { addr, password } => {
+            Err((addr, password, look)) => {
                 let mut cfg = endpoint;
                 cfg.limits.max_reliable_bytes_per_s =
                     cfg.limits.max_reliable_bytes_per_s.max(HOST_RELIABLE_BYTES_PER_S);
@@ -584,7 +594,7 @@ impl OnlinePeer {
                 }
                 HostEvent::Close { peer } => self.close_later(peer, now),
                 HostEvent::Chat { from, text } => {
-                    self.events.push(OnlineEvent::Chat { from: self.name(from), text });
+                    self.events.push(OnlineEvent::Chat { from: self.name(from), member: from, text });
                 }
                 HostEvent::Admin { from, cmd: AdminCommand::Settings(setup) } => {
                     self.admin_setup(from, setup)
@@ -688,7 +698,7 @@ impl OnlinePeer {
                 self.events.push(OnlineEvent::Lobby(state));
             }
             ClientEvent::Chat { from, text } => {
-                self.events.push(OnlineEvent::Chat { from: self.name(from), text })
+                self.events.push(OnlineEvent::Chat { from: self.name(from), member: from, text })
             }
             ClientEvent::Notice(n) => {
                 let e = self.notice(n);
@@ -978,6 +988,22 @@ impl OnlinePeer {
         self.drain_lobby(now);
         self.events.push(OnlineEvent::MatchEnded(end));
         self.make_replay(record);
+    }
+
+    /// The host ends its running match now: as at a match's end, with the
+    /// confirmed ticks so far as the match.
+    fn host_end_now(&mut self) -> bool {
+        let Some(now) = self.now else { return false };
+        if !self.is_host() || self.closed {
+            return false;
+        }
+        let Some(g) = self.game.as_mut().filter(|g| g.ended.is_none()) else { return false };
+        if g.end_at.is_none() {
+            // The record is ticks `0..=end_at`: every tick confirmed so far.
+            g.end_at = Some(g.session.confirmed().saturating_sub(1));
+        }
+        self.host_end(now);
+        true
     }
 
     /// A client's match is over: its replay, from the ticks it confirmed
@@ -1282,6 +1308,57 @@ impl LobbyHandle<'_> {
     /// Starts the match on `seed`; players not ready watch it (spec §7.2).
     pub fn force_start(&mut self, seed: u32) -> Result<(), StartError> {
         self.peer.host_start(seed, true)
+    }
+
+    /// Ends the running match now (the host's; an admin's `/next` on a
+    /// dedicated server): the results of the last confirmed tick go out as
+    /// at a match's end, and the replay is made of the confirmed ticks.
+    /// Whether a match was ended.
+    pub fn end_match(&mut self) -> bool {
+        self.peer.host_end_now()
+    }
+
+    /// A notice to one member only (the host's; a dedicated server's answer
+    /// to a command). Nothing for an unknown member or on a client.
+    pub fn tell(&mut self, member: u8, text: &str) {
+        let Side::Host(h) = &self.peer.side else { return };
+        if self.peer.closed {
+            return;
+        }
+        let (Some(peer), Some(text)) = (h.lobby.peer_of(member), sanitize_chat(text)) else { return };
+        let notice = ToClient::Notice(Notice::Message(text));
+        send_tagged(&mut self.peer.endpoint, peer, TAG_TO_CLIENT, &encode_to_client(&notice));
+    }
+
+    /// The address a member's signalling connection came from (the host's).
+    pub fn addr_of(&self, member: u8) -> Option<SocketAddr> {
+        let Side::Host(h) = &self.peer.side else { return None };
+        h.lobby.peer_of(member).and_then(|peer| h.addrs.get(&peer)).copied()
+    }
+
+    /// Bans a key for the lobby's life (the host's; a dedicated server's
+    /// bans file): refused at its next join.
+    pub fn ban_key(&mut self, key: PublicKey) {
+        self.act(|h| h.ban_key(key), |_| {});
+    }
+
+    /// Bans an address for the lobby's life (the host's): the endpoint's
+    /// gate refuses it.
+    pub fn ban_ip(&mut self, ip: IpAddr) {
+        if let Side::Host(h) = &mut self.peer.side {
+            h.banned.lock().unwrap_or_else(|e| e.into_inner()).insert(ip);
+        }
+        self.act(|h| h.ban_ip(ip), |_| {});
+    }
+
+    /// The host's bans, keys and addresses, in order (a client's are empty).
+    pub fn bans(&self) -> (Vec<PublicKey>, Vec<IpAddr>) {
+        match &self.peer.side {
+            Side::Host(h) => {
+                (h.lobby.banned_keys().copied().collect(), h.lobby.banned_ips().copied().collect())
+            }
+            Side::Client(_) => (Vec::new(), Vec::new()),
+        }
     }
 
     fn act(&mut self, host: impl FnOnce(&mut LobbyHost), client: impl FnOnce(&mut LobbyClient)) {

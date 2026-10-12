@@ -1,0 +1,47 @@
+// An rl-server config (networking spec §7.4):
+//     rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
+// The data directory (the config file's own by default) keeps the server's
+// identity (server-identity.ron, made at the first start), the bans file,
+// server.log and desync bundles. Fields left out take the default shown.
+(
+    // The lobby's name in the game lists. Default "rust-liero server".
+    name: "Office Liero",
+    // Lan: announced on the LAN (UDP 23401, every 2 s) and joinable by
+    // address. DirectOnly: by address only. Default Lan.
+    visibility: Lan,
+    // Some("secret") makes joiners type it. Default None.
+    password: None,
+    // TCP and UDP; open or forward both for players outside the LAN.
+    // Default 23400.
+    port: 23400,
+    // Player seats, 1 to 32. Default 16.
+    max_players: 16,
+    // Spectator seats, at most 16. Default 8.
+    max_spectators: 8,
+    // Public keys (64 hex characters) whose chat commands the server takes:
+    // /kick <name>, /ban <name>, /next, /settings <field> <value>. Each
+    // join's log line names the member's key. (This placeholder is no one's.)
+    // Anyone may use /players and /help. Default [].
+    admins: ["0000000000000000000000000000000000000000000000000000000000000000"],
+    // Bots join while fewer players than this are seated (players + bots =
+    // fill_bots), at most 31. Default 0.
+    fill_bots: 4,
+    // The maps in turn, at least one: a mod and a level by pack id, then
+    // time_limit (minutes; 0 or less: none; default 6), kill_limit (0 or
+    // less: none; default 15), lives (below 0: unlimited; default -2) and
+    // bonuses (default true). /settings changes the next map's for the
+    // rest of the run.
+    rotation: [
+        (mod: "olx-classic", level: "olx-level-dirt-level", time_limit: 5.0, kill_limit: 15, lives: -2, bonuses: true),
+        (mod: "olx-mw-1-0", level: "olx-level-castlestrike", time_limit: 5.0, kill_limit: 20, lives: -2, bonuses: true),
+    ],
+    // Start as soon as every player is ready and at least min_players are
+    // seated. Either way, 60 s after the lobby gathers a match starts with
+    // at least min_players (those not ready watch it). Default true.
+    start_when_ready: true,
+    // At least 1, at most max_players. Default 1.
+    min_players: 2,
+    // Bans (keys and addresses) kept across restarts, relative to the data
+    // directory. None: bans last until the server stops. Default None.
+    bans_file: Some("bans.ron"),
+)
