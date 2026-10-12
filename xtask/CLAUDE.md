@@ -102,8 +102,10 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   p99) or memory (2 GiB) budget breaks. The parts (`Axis`, `--only`,
   repeatable; all by default): the sweeps `worms`, `pool`, `fx`, `map`,
   `art`, then `gpu` and `olx`. `--quick` (`Plan::new`) is one run per
-  point and fewer points (about 10 min; the full run, 3 runs a point,
-  about 45). Modules: `results.rs` (the RON the tools write, read as
+  point and fewer points (about 2 min; the full run, 3 runs a point,
+  took 7 min on this machine warm, 2026-10-12: sweeps 1 min, GPU 5 min
+  with the Windows build cached, OLX 1 min; a cold Windows build adds a
+  few). Modules: `results.rs` (the RON the tools write, read as
   `*Out` with only the fields used; the kept `Envelope`; the pure
   arithmetic, unit-tested: medians of runs, `Spread::of` nearest rank as
   `rl-cli`'s and `rl-game`'s (ruling PF8), breaking points per budget, the

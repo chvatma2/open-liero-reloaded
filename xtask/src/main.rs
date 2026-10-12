@@ -90,7 +90,7 @@ enum Command {
     /// The performance envelope (plan 8): sweeps of worms, projectiles, effects, map
     /// size and art scale, the GPU on WSL and native Windows with the shader probe,
     /// and OLX's frame times; compared with fixtures/bench/envelope/<host>.ron
-    /// (flagged, never failed). About 45 minutes (--quick about 10). Not in `full`.
+    /// (flagged, never failed). About 7 minutes warm (--quick about 2). Not in `full`.
     Envelope {
         /// One run per point and fewer points.
         #[arg(long)]

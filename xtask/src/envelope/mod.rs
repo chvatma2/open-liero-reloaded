@@ -364,10 +364,10 @@ pub fn run(o: &Opts) -> anyhow::Result<bool> {
     let plan = Plan::new(o.quick);
     let axes: Vec<Axis> = if o.only.is_empty() { Axis::ALL.to_vec() } else { o.only.clone() };
     println!(
-        "envelope ({}): keep this PC otherwise idle; load average now {:.2}. About {} minutes.",
+        "envelope ({}): keep this PC otherwise idle; load average now {:.2}. About {} minutes warm (the first Windows build adds a few).",
         if plan.quick { "quick" } else { "full" },
         results::load_average().unwrap_or(0.0),
-        if plan.quick { 10 } else { 45 }
+        if plan.quick { 2 } else { 7 }
     );
     sweeps::build_release(&["rl-cli"]).map_err(anyhow::Error::msg)?;
     let cli = root().join("target/release/rl-cli");
