@@ -758,6 +758,17 @@ rulings (`docs/superpowers/plans/2026-10-12-plan-9-netcode-core.md`):
   derived from the receiving world's settings (e.g. the projectile clock lag
   from the physics rate and game speed), and refused all-or-nothing (Task
   3).
+- **N13:** a received world state with any non-finite number (positions,
+  velocities, health, aim, rope, slots, projectiles, bonuses, shots) is
+  refused; positions are not bounded by the map, since worms can leave it
+  at a corner. No shipped mod produces non-finite values; a mod that does
+  gets its states refused like a stranger's (no desync repair, no late
+  spectators; the match itself plays on) (final review, ruling F-A).
+- **N14:** a rollback or a loaded state reports the terrain areas it put
+  back (`Session::take_restored_areas`, at most 256 rectangles, merged
+  beyond); the game rebuilds those areas of its colour image, which loses
+  blood stains and the level's dirt art inside them (final review, ruling
+  F-B; an exact colour undo is left to plan 10).
 
 ## Kept OLX quirks
 
