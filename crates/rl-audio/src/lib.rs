@@ -19,7 +19,7 @@ pub use mix::{
     DEFAULT_VOLUME, GLOBAL_GAIN, LISTENER_DISTANCE, Mix, REFERENCE_DISTANCE, ROLLOFF, SILENCE_DB,
     SOURCE_GAIN, attenuation, decibels, mix,
 };
-pub use voices::{GLOBAL_VOICES, Voice, Voices, max_plays};
+pub use voices::{Admit, GLOBAL_VOICES, Voice, Voices, max_plays};
 
 /// kira, for callers that pick a backend ([`Audio::with_backend`]).
 pub use kira;

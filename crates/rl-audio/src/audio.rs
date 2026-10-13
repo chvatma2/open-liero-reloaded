@@ -4,6 +4,7 @@
 use std::fmt::Debug;
 use std::io::Cursor;
 use std::panic::AssertUnwindSafe;
+use std::time::Duration;
 
 use kira::backend::Backend;
 use kira::sound::PlaybackState;
@@ -15,10 +16,13 @@ use rl_math::Vec2;
 use rl_sim::{Event, EventKind, GAME_SOUND_PREFIX, SoundId, TickEvents};
 
 use crate::mix::{DEFAULT_VOLUME, GLOBAL_GAIN, Mix, SOURCE_GAIN, decibels, mix};
-use crate::voices::{GLOBAL_VOICES, Voice, Voices};
+use crate::voices::{Admit, GLOBAL_VOICES, Voice, Voices};
+
+/// How long a voice a death sound takes the place of fades out.
+const STEAL_FADE: Duration = Duration::from_millis(5);
 
 /// kira's room for sounds on the main track: the voice limit plus the
-/// stopped sounds kira has not removed yet.
+/// stopped and stopping sounds kira has not removed yet.
 const SOUND_CAPACITY: usize = GLOBAL_VOICES * 2;
 
 impl Voice for StaticSoundHandle {
@@ -190,7 +194,9 @@ impl<B: Backend> Audio<B> {
     /// - Positional sounds play at their position with OpenAL's gain 0.7 and
     ///   inverse-distance attenuation ([`crate::mix`]).
     /// - THROW and PICKUP play at the listener with gain 1.0 ([`is_global`]).
-    /// - A start beyond the sound's or the global voice limit is skipped.
+    /// - A start beyond the sound's or the global voice limit is skipped,
+    ///   but a death sound's: it takes the oldest voice's place
+    ///   ([`Voices::admit`]), which fades out over 5 ms.
     /// - Beam weapons fire silently: the simulation emits no `Sound` for
     ///   their shots (OLX: src/client/CClient_Game.cpp:900-906).
     pub fn play_events(&mut self, events: &TickEvents, listener: Vec2) {
@@ -206,8 +212,12 @@ impl<B: Backend> Audio<B> {
         for e in events {
             let EventKind::Sound { id, pos } = e.kind else { continue };
             let Some(Some(data)) = self.sounds.get(usize::from(id.0)) else { continue };
-            if !self.voices.admits(id) {
-                continue;
+            match self.voices.admit(id) {
+                Admit::Start => {}
+                // A death sound takes another voice's place: it stops with
+                // a short fade, no click.
+                Admit::Steal(mut v) => v.stop(Tween { duration: STEAL_FADE, ..Tween::default() }),
+                Admit::Skip => continue,
             }
             let (source, gain) = if is_global(id) { (listener, GLOBAL_GAIN) } else { (pos, SOURCE_GAIN) };
             let m = mix(listener, source, gain, self.volume);

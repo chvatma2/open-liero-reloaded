@@ -8,7 +8,7 @@ use rl_audio::kira::backend::Backend;
 use rl_audio::kira::backend::Renderer;
 use rl_audio::kira::backend::mock::{MockBackend, MockBackendSettings};
 use rl_audio::{
-    Audio, DEFAULT_VOLUME, GLOBAL_GAIN, GLOBAL_VOICES, Mix, SOURCE_GAIN, Voice, Voices, attenuation,
+    Admit, Audio, DEFAULT_VOLUME, GLOBAL_GAIN, GLOBAL_VOICES, Mix, SOURCE_GAIN, Voice, Voices, attenuation,
     decibels, is_global, max_plays, mix,
 };
 use rl_content::Content;
@@ -67,6 +67,8 @@ fn positional_gain_matches_olx_openal_defaults() {
 struct Fake {
     playing: bool,
     mix: Option<Mix>,
+    /// Which voice it is, for the steal tests.
+    tag: u32,
 }
 
 impl Voice for Fake {
@@ -80,7 +82,21 @@ impl Voice for Fake {
 }
 
 fn fake() -> Fake {
-    Fake { playing: true, mix: None }
+    tagged(0)
+}
+
+fn tagged(tag: u32) -> Fake {
+    Fake { playing: true, mix: None, tag }
+}
+
+/// `admit`'s answer: `Ok(None)` start, `Ok(Some(tag))` steal that voice,
+/// `Err(())` skip.
+fn answer(a: Admit<Fake>) -> Result<Option<u32>, ()> {
+    match a {
+        Admit::Start => Ok(None),
+        Admit::Steal(f) => Ok(Some(f.tag)),
+        Admit::Skip => Err(()),
+    }
 }
 
 #[test]
@@ -97,7 +113,7 @@ fn voice_limits() {
     let mut v = Voices::new(GLOBAL_VOICES);
     let fill = |v: &mut Voices<Fake>, id: SoundId| {
         let mut n = 0;
-        while v.admits(id) {
+        while matches!(v.admit(id), Admit::Start) {
             v.push(id, p, SOURCE_GAIN, fake());
             n += 1;
         }
@@ -105,25 +121,31 @@ fn voice_limits() {
     };
     assert_eq!(fill(&mut v, SoundId::THROW), 4);
     assert_eq!(fill(&mut v, SoundId::PICKUP), 2);
-    assert_eq!(fill(&mut v, SoundId::DEATH[0]), 2);
-    assert_eq!(fill(&mut v, SoundId::DEATH[1]), 2, "each death sample has its own limit");
     assert_eq!(fill(&mut v, SoundId(7)), 10);
+    assert_eq!(v.len(), 16);
+    // Each death sample has its own limit (what a third does: below).
+    for d in [SoundId::DEATH[0], SoundId::DEATH[1]] {
+        for _ in 0..2 {
+            assert!(matches!(v.admit(d), Admit::Start));
+            v.push(d, p, SOURCE_GAIN, fake());
+        }
+    }
     assert_eq!(v.len(), 20);
 
     // A stopped voice no longer counts once pruned.
     v.voices_mut().next().expect("a voice").playing = false;
-    assert!(!v.admits(SoundId::THROW));
+    assert!(matches!(v.admit(SoundId::THROW), Admit::Skip));
     v.prune();
     assert_eq!((v.playing(SoundId::THROW), v.len()), (3, 19));
-    assert!(v.admits(SoundId::THROW));
+    assert!(matches!(v.admit(SoundId::THROW), Admit::Start));
 
     // The global limit: distinct mod sounds stop at it.
     let mut v = Voices::new(5);
     for i in 0..5 {
-        assert!(v.admits(SoundId(10 + i)));
+        assert!(matches!(v.admit(SoundId(10 + i)), Admit::Start));
         v.push(SoundId(10 + i), p, SOURCE_GAIN, fake());
     }
-    assert!(!v.admits(SoundId(20)));
+    assert!(matches!(v.admit(SoundId(20)), Admit::Skip));
 
     // Sources stay put while the listener follows the view.
     let mut v = Voices::new(GLOBAL_VOICES);
@@ -132,6 +154,48 @@ fn voice_limits() {
     let m = v.voices_mut().next().and_then(|f| f.mix).expect("re-mixed");
     assert_eq!(m, mix(Vec2::new(160.0, 0.0), Vec2::ZERO, SOURCE_GAIN, 1.0));
     assert!(m.pan < -0.9 && m.amplitude < 0.15, "{m:?}");
+}
+
+/// A death sound is never skipped (the user's ruling; OLX skips it): at its
+/// own limit it takes the oldest voice of that sound; at the global limit
+/// the oldest of that sound, else the oldest voice that is not a death's.
+/// Oldest is push order. Every other sound is skipped as in OLX.
+#[test]
+fn a_death_sound_steals_and_others_are_skipped() {
+    let p = Vec2::ZERO;
+    let (d0, d1, d2) = (SoundId::DEATH[0], SoundId::DEATH[1], SoundId::DEATH[2]);
+    let mut v = Voices::new(GLOBAL_VOICES);
+    for tag in 0..2 {
+        assert_eq!(answer(v.admit(d0)), Ok(None));
+        v.push(d0, p, SOURCE_GAIN, tagged(tag));
+    }
+    assert_eq!(answer(v.admit(d0)), Ok(Some(0)), "a third takes the oldest's place");
+    assert_eq!(v.playing(d0), 1, "the stolen voice is no longer counted");
+    v.push(d0, p, SOURCE_GAIN, tagged(2));
+    assert_eq!(answer(v.admit(d0)), Ok(Some(1)), "then the next oldest");
+    v.push(d0, p, SOURCE_GAIN, tagged(3));
+    assert_eq!(v.playing(d0), 2);
+    for _ in 0..2 {
+        v.push(SoundId::BUMP, p, SOURCE_GAIN, fake());
+    }
+    assert_eq!(answer(v.admit(SoundId::BUMP)), Err(()), "any other sound at its limit is skipped");
+
+    let mut v = Voices::new(4);
+    for (id, tag) in [(SoundId(10), 10), (SoundId(11), 11), (d1, 20), (SoundId(12), 12)] {
+        v.push(id, p, SOURCE_GAIN, tagged(tag));
+    }
+    assert_eq!(answer(v.admit(SoundId(13))), Err(()), "a mod sound at the global limit is skipped");
+    assert_eq!(answer(v.admit(d1)), Ok(Some(20)), "at the global limit, the same sound's oldest");
+    v.push(d1, p, SOURCE_GAIN, tagged(21));
+    assert_eq!(answer(v.admit(d2)), Ok(Some(10)), "else the oldest that is not a death's");
+    v.push(d2, p, SOURCE_GAIN, tagged(30));
+    assert_eq!(v.len(), 4);
+    assert_eq!(answer(v.admit(d0)), Ok(Some(11)));
+
+    let mut v = Voices::new(2);
+    v.push(d0, p, SOURCE_GAIN, tagged(0));
+    v.push(d1, p, SOURCE_GAIN, tagged(1));
+    assert_eq!(answer(v.admit(d2)), Err(()), "only other deaths' voices: none is taken");
 }
 
 /// A mono 16-bit WAV of `n` samples at 8 kHz.
@@ -245,6 +309,40 @@ fn plays_events_on_a_mock_device() {
     assert_eq!(a.playing(), 1);
     a.stop_all();
     assert_eq!(a.playing(), 0);
+}
+
+/// A death sound at its limit takes the place of the oldest voice of that
+/// sound, which stops (with a short fade) for it: every death is heard.
+#[test]
+fn a_death_sound_at_its_limit_steals_the_oldest_on_a_mock_device() {
+    let mut a = Audio::<MockBackend>::with_backend(MockBackendSettings { sample_rate: 8000 });
+    // One second; the mock device renders about 1/63 s a call.
+    let good = wav(8000);
+    a.load_sounds(&names(), |n| (n != "sfx/broken.wav" && n != "sfx/missing.wav").then_some(&good[..]));
+    let run = |a: &mut Audio<MockBackend>, frames| {
+        let manager = a.manager_mut().expect("mock device");
+        for _ in 0..frames {
+            manager.backend_mut().on_start_processing();
+            manager.backend_mut().process();
+        }
+    };
+    let death = sound(SoundId::DEATH[0], 0.0);
+    a.play(&[death, death], Vec2::ZERO);
+    run(&mut a, 20);
+    a.play(&[death], Vec2::ZERO);
+    assert_eq!(a.playing(), 2, "at most 2 of a death sound, as OLX");
+    // The two first ones would have ended by now; the oldest was stopped
+    // and the third plays on.
+    run(&mut a, 50);
+    a.play(&[], Vec2::ZERO);
+    assert_eq!(a.playing(), 1, "the third death sound plays");
+    // Three in one tick: the third takes the first's place.
+    a.stop_all();
+    a.play(&[death, death, death], Vec2::ZERO);
+    assert_eq!(a.playing(), 2);
+    run(&mut a, 5);
+    let sounds = a.manager_mut().expect("mock device").main_track().num_sounds();
+    assert_eq!(sounds, 2, "the stolen voice faded out and is gone");
 }
 
 fn content_dir() -> Option<PathBuf> {

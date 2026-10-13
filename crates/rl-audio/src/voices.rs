@@ -17,7 +17,8 @@ pub trait Voice {
 
 /// How many copies of sound `id` may play at once: OLX's `maxplaying` for
 /// its game sounds (throw 4, pickup, bump and the deaths 2) and 10 for a
-/// mod's sounds. A start beyond it is skipped.
+/// mod's sounds. A start beyond it is skipped, but a death sound's
+/// ([`Voices::admit`]).
 /// OLX: src/game/Sounds.cpp:25-30, src/common/CGameScript.cpp:1185-1205,
 /// src/sound/sfx.cpp:120-134.
 pub fn max_plays(id: SoundId) -> usize {
@@ -27,8 +28,19 @@ pub fn max_plays(id: SoundId) -> usize {
 
 /// How many voices may play at once in all: OpenAL Soft's default source
 /// count, the limit OLX met (`alGenSources` fails, and the sound is
-/// skipped). A start beyond it is skipped.
+/// skipped). A start beyond it is skipped, but a death sound's
+/// ([`Voices::admit`]).
 pub const GLOBAL_VOICES: usize = 256;
+
+/// What a new sound may do ([`Voices::admit`]).
+pub enum Admit<V> {
+    /// Start: it is below both limits.
+    Start,
+    /// Start in this voice's place: stop it (it no longer counts).
+    Steal(V),
+    /// Do not start.
+    Skip,
+}
 
 struct Live<V> {
     sound: SoundId,
@@ -70,10 +82,33 @@ impl<V: Voice> Voices<V> {
         self.live.retain(|l| l.voice.playing());
     }
 
-    /// Whether `sound` may start now: fewer than [`max_plays`] copies of
-    /// it, and fewer than the limit in all.
-    pub fn admits(&self, sound: SoundId) -> bool {
-        self.live.len() < self.limit && self.playing(sound) < max_plays(sound)
+    /// Whether `sound` may start now: with fewer than [`max_plays`] copies
+    /// of it and fewer than the limit in all, it starts; beyond either it
+    /// is skipped, as OLX skips it, unless it is a death sound
+    /// (`SoundId::DEATH`), which is never skipped while another voice can
+    /// make room (the user's ruling, `docs/porting/STATUS.md`): it takes
+    /// the place of the oldest voice of the same sound, else (at the
+    /// global limit with none of its own) of the oldest voice that is not
+    /// a death's. The taken voice leaves the live list and is returned for
+    /// the caller to stop. Oldest is push order, so it is deterministic.
+    pub fn admit(&mut self, sound: SoundId) -> Admit<V> {
+        let own = self.playing(sound) >= max_plays(sound);
+        if !own && self.live.len() < self.limit {
+            return Admit::Start;
+        }
+        if !SoundId::DEATH.contains(&sound) {
+            return Admit::Skip;
+        }
+        let same = self.live.iter().position(|l| l.sound == sound);
+        let victim = if own {
+            same
+        } else {
+            same.or_else(|| self.live.iter().position(|l| !SoundId::DEATH.contains(&l.sound)))
+        };
+        match victim {
+            Some(i) => Admit::Steal(self.live.remove(i).voice),
+            None => Admit::Skip,
+        }
     }
 
     /// Adds a started voice.
