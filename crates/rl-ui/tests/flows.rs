@@ -13,11 +13,16 @@ use rl_ui::{
     UiAction, UiState,
 };
 
-/// A `w` × `h` thumbnail written to a directory kept for the test run.
+/// A `w` × `h` thumbnail written to a directory of its own, in a temporary
+/// directory of the test's thread (removed when the test ends): tests
+/// running in parallel never write a file another one is reading.
 fn thumb_file(name: &str, w: u32, h: u32) -> ThumbRef {
-    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-    let dir = DIR.get_or_init(|| tempfile::tempdir().unwrap());
-    let pack = dir.path().join(name);
+    thread_local! {
+        static DIR: tempfile::TempDir = tempfile::tempdir().unwrap();
+    }
+    static MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pack = DIR.with(|d| d.path().join(format!("{n}-{name}")));
     std::fs::create_dir_all(&pack).unwrap();
     let png = rl_pack::image_io::encode_rgba(&RgbaImage::new(w, h));
     std::fs::write(pack.join(rl_pack::THUMB_FILE), png).unwrap();

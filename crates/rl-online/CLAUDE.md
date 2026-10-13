@@ -188,8 +188,11 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     first, skins after; a transfer the new list drops gets `Cancel` (its
     partial stays; the same hash listed with another size is cancelled,
     its partial discarded, and fetched afresh); a `Failed` item is tried
-    again at each new list (`Unavailable` stays). Missing bytes above `PROMPT_BYTES` wait for `approve`
-    (`waiting_approval`). `poll(now_us, out)` asks for the next item,
+    again at each new list (`Unavailable` stays). Items not approved before
+    wait for `approve` when more than `PROMPT_BYTES` of them are still to
+    download (each one's size less its partial's bytes; ruling PF11-6,
+    N35); `waiting_approval` is that number, steady while approved items
+    download. `poll(now_us, out)` asks for the next item,
     evicting first (`evict` and `trim_partials`, `keep` the list's hashes,
     `CACHE_BYTES`), resuming from a partial of the listed size. `receive`
     takes the source's `Begin`, `Chunk`, `Unavailable`: a `Begin` whose
@@ -325,7 +328,8 @@ for 10 s send 9.5-10.5 MiB, a third each; one receiver held to
 transfer at a time, `Cancel`, the outbox room. `fetch.rs`' unit tests:
 order, `Unavailable`, hostile `Begin`s and chunks, another archive,
 silence, a source leaving, a re-sent list with another size, a failed
-item retried once a list. `worker.rs`' unit test: a panicking job
+item retried once a list, the prompt counting only the bytes still to
+download of items not approved. `worker.rs`' unit test: a panicking job
 (a `#[cfg(test)]` hook in `run`) fails and the next job completes.
 `peer_side.rs`' unit tests: a list waits for the worker's hashes (nothing
 hashed on the caller's thread); a list's optional items under a required

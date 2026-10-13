@@ -96,7 +96,9 @@ impl Fetcher {
     /// in `local` nor in the cache; `NO_HASH` is never fetched). A transfer
     /// the list no longer wants is cancelled (its partial stays; one listed
     /// with another size starts afresh); a failed item is tried again; the
-    /// missing items above `PROMPT_BYTES` in all wait for `approve`.
+    /// missing items not approved before wait for `approve` when more than
+    /// `PROMPT_BYTES` of them are still to download (their partials' bytes
+    /// not counted, ruling PF11-6).
     pub fn list(&mut self, source: PeerId, items: &[Item], local: &Content) -> Vec<Item> {
         let old_source = self.source.replace(source);
         self.listed = items.iter().map(|i| i.hash.clone()).collect();
@@ -149,10 +151,22 @@ impl Fetcher {
                 }
             })
             .collect();
-        if missing.iter().map(|i| i.size).fold(0u64, u64::saturating_add) <= self.prompt_bytes {
+        if self.to_download() <= self.prompt_bytes {
             self.approve();
         }
         missing
+    }
+
+    /// The bytes still to download of the items not approved yet (ruling
+    /// PF11-6): each one's size less the bytes its partial holds. Items the
+    /// player approved are not asked about again, and the sum does not
+    /// change while they download.
+    fn to_download(&self) -> u64 {
+        self.downloads
+            .iter()
+            .filter(|d| !self.approved.contains(&d.item.hash))
+            .map(|d| d.item.size.saturating_sub(d.have))
+            .fold(0, u64::saturating_add)
     }
 
     /// The bytes of `item`'s partial download, if it is of the listed size.
@@ -174,10 +188,11 @@ impl Fetcher {
         self.approved.extend(self.downloads.iter().map(|d| d.item.hash.clone()));
     }
 
-    /// The missing bytes in all while some wait for `approve`.
+    /// The bytes still to download of the items waiting for `approve`
+    /// (ruling PF11-6: less what their partials hold), while some wait.
     pub fn waiting_approval(&self) -> Option<u64> {
         let waiting = self.downloads.iter().any(|d| !self.approved.contains(&d.item.hash));
-        waiting.then(|| self.downloads.iter().map(|d| d.item.size).fold(0, u64::saturating_add))
+        waiting.then(|| self.to_download())
     }
 
     /// A message from `from`; only the source's `Begin`, `Chunk` and
@@ -648,6 +663,49 @@ mod tests {
         s.send(begin('a', 'f', 120, 0));
         s.send(chunk('a', 0, 50));
         assert_eq!(s.fetcher.downloads()[0].have, 50);
+    }
+
+    /// Ruling PF11-6: the prompt counts the bytes still to download, each
+    /// item's size less what its partial holds.
+    #[test]
+    fn the_prompt_counts_only_the_bytes_still_to_download() {
+        let mut s = setup();
+        s.fetcher.set_prompt_bytes(100);
+        let items = [item('a', ItemKind::Level, 120, true), item('b', ItemKind::Mod, 30, true)];
+        // 150 bytes, 70 of them held: 80 to go, under the prompt.
+        s.cache.lock().unwrap().append(&sha('a'), &sha('e'), 120, 0, &[1; 70]).unwrap();
+        s.fetcher.list(SRC, &items, &s.local);
+        assert_eq!(s.fetcher.waiting_approval(), None);
+        assert_eq!(s.poll(0), vec![want('a', 70)]);
+        // Over it: the prompt names what is still to come.
+        let mut s = setup();
+        s.fetcher.set_prompt_bytes(100);
+        s.cache.lock().unwrap().append(&sha('a'), &sha('e'), 120, 0, &[1; 40]).unwrap();
+        s.fetcher.list(SRC, &items, &s.local);
+        assert_eq!(s.fetcher.waiting_approval(), Some(110));
+        assert!(s.poll(0).is_empty());
+        // A partial of another size is no use: it counts whole.
+        let mut s = setup();
+        s.fetcher.set_prompt_bytes(100);
+        s.cache.lock().unwrap().append(&sha('a'), &sha('e'), 121, 0, &[1; 70]).unwrap();
+        s.fetcher.list(SRC, &items, &s.local);
+        assert_eq!(s.fetcher.waiting_approval(), Some(150));
+        // Approved items are not asked about again: a list adding a small
+        // one starts it at once, and one adding a big one asks for that
+        // one alone, its number unchanged while the others download.
+        s.fetcher.approve();
+        let mut more = items.to_vec();
+        more.push(item('c', ItemKind::Skin, 10, false));
+        s.fetcher.list(SRC, &more, &s.local);
+        assert_eq!(s.fetcher.waiting_approval(), None);
+        more.push(item('d', ItemKind::Theme, 101, true));
+        s.fetcher.list(SRC, &more, &s.local);
+        assert_eq!(s.fetcher.waiting_approval(), Some(101));
+        assert_eq!(s.poll(0), vec![want('a', 0)]);
+        s.send(begin('a', 'f', 120, 0));
+        s.send(chunk('a', 0, 50));
+        assert_eq!((s.fetcher.downloads()[0].have, s.state('a')), (50, DownloadState::Receiving));
+        assert_eq!(s.fetcher.waiting_approval(), Some(101));
     }
 
     #[test]

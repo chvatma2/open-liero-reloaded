@@ -23,7 +23,10 @@ rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
   `fill_bots` ≤ 31, `min_players` 1..=`max_players`, admins 64 hex
   characters), `Visibility::{Lan, DirectOnly}`, rotation `Entry` (`mod`,
   `level`, `time_limit` minutes, `kill_limit`, `lives`, `bonuses`),
-  `host_config`, `check(content)` (the rotation against the packs).
+  `host_config`, `check(content)` (the rotation against the packs),
+  `upload_kib_s` (plan 11: content sent in all, KiB/s; default
+  `DEFAULT_UPLOAD_KIB_S` 4096, so older configs load; `upload_rate()`
+  clamps it to `UPLOAD_KIB_S`, 64..=65536, in bytes/s).
   `fixtures/server/example.ron` documents every field (its admin key is a
   placeholder no one holds).
 - **`rotation.rs`**: `Rotation::new` hashes each entry's packs once
@@ -53,7 +56,14 @@ rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
   `parse_key`.
 - **`lib.rs`, `Server`**: `start(config, content, data_dir, log)` (identity,
   bans into the lobby and the gate, the rotation, `PeerRole::Server` on the
-  config's port, LAN `Announcer` for `Lan`), `poll(now, log)`, `shutdown`
+  config's port, LAN `Announcer` for `Lan`; the download cache
+  `<data>/downloads`, `DOWNLOADS_DIR`, logged, shared with the peer as
+  `PeerContent { cache, upload_rate }`: the server serves its packs to
+  members lacking them and fetches members' skins it lacks into it;
+  when it cannot be opened (`InstallError::Locked`: another server on
+  the data directory) a warning line, and the server runs without one,
+  still serving its packs, members' skins it lacks drawn as the
+  default), `poll(now, log)`, `shutdown`
   (`Bye` to everyone), `local_port`, `key`. Each poll (the lobby copied
   only when `LobbyHandle::revision` changed): the peer's events
   (chat logged, a `/` line run as a command for that member id: admins by
@@ -113,7 +123,11 @@ leaves the others ready (T13-C); a rotation the content cannot build
 skipped once per entry, then no more starts; non-admins refused with
 `NOT_ADMIN`, `/players` and `/help` for anyone; `/settings` and `/next`;
 `run` stopping on its flag with `Bye`; the example and e2e configs parse and their
-rotations are in the committed packs. Unit tests: command parsing, `/unban` targets, hex keys,
+rotations are in the committed packs; `upload_kib_s` (default, clamped);
+a member lacking Dirt Level downloads it from the server and plays,
+another's skin the server lacks lands in `<data>/downloads` (held:
+`Locked`); with that cache held by another, a warning, the level still
+served, no skin fetched. Unit tests: command parsing, `/unban` targets, hex keys,
 the bans and identity files, the log's rotation (and a rename that
 fails, injected), notices split at 200
 characters, UTC dates.

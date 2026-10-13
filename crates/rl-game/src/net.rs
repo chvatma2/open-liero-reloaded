@@ -241,9 +241,7 @@ pub fn download_view(d: &Download) -> DownloadView {
 /// opens: downloads are off and the lobby says why.
 pub fn open_download_cache(dir: Option<PathBuf>) -> SharedCache {
     let Some(dir) = dir else { return Err("there is no cache directory".into()) };
-    let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    for i in 1..=CACHE_DIRS {
-        let d = if i == 1 { dir.clone() } else { dir.with_file_name(format!("{name}-{i}")) };
+    for d in cache_dirs(Some(dir.clone())) {
         match DownloadCache::open(&d) {
             Ok(c) => return Ok(Arc::new(Mutex::new(c))),
             Err(InstallError::Locked) => continue,
@@ -251,6 +249,18 @@ pub fn open_download_cache(dir: Option<PathBuf>) -> SharedCache {
         }
     }
     Err(format!("{CACHE_DIRS} download caches in {} are in use by other games", dir.display()))
+}
+
+/// Every directory a game's download cache may be in (ruling PF11-3):
+/// `dir` (`Store::cache_dir`), then `dir-2` to `dir-`[`CACHE_DIRS`]; none
+/// without `dir`. Replays look their packs up in all of them
+/// (`DownloadCache::lookup`), whichever cache a game holds.
+pub fn cache_dirs(dir: Option<PathBuf>) -> Vec<PathBuf> {
+    let Some(dir) = dir else { return Vec::new() };
+    let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    (1..=CACHE_DIRS)
+        .map(|i| if i == 1 { dir.clone() } else { dir.with_file_name(format!("{name}-{i}")) })
+        .collect()
 }
 
 fn level_of(d: Difficulty) -> BotLevel {
@@ -524,6 +534,9 @@ mod tests {
         let again = open_download_cache(Some(dir.clone())).unwrap();
         assert_eq!(again.lock().unwrap().dir(), dir, "the first again once free");
         assert!(open_download_cache(None).is_err_and(|why| why.contains("no cache directory")));
+        // Replays look in every one of them.
+        assert_eq!(cache_dirs(Some(dir)), names.map(|n| tmp.path().join(n)));
+        assert!(cache_dirs(None).is_empty());
     }
 
     #[test]

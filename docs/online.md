@@ -30,6 +30,46 @@ Online play is IPv4 only for now: a name is joined at its IPv4 address,
 and an IPv6 address (or a name with IPv6 addresses only) is refused with
 "IPv6 is not supported yet".
 
+## Missing content
+
+You need not have the host's packs. When a game uses a mod, level or
+theme you lack, or a player wears a skin you lack, the Lobby lists it under
+"Downloads" with its progress, and the game downloads it from the host.
+Ready waits until the mod, level and theme are complete ("get the missing
+content first"); skins never hold you back (one that does not arrive is
+drawn as the default skin). If a match starts while you are still
+downloading, you wait in the lobby, still connected, and watch or play
+once your content is complete.
+
+- **What travels.** The match's mod, level and the level's theme, and
+  every player's skin, each identified by the hash of its content; packs
+  in the game's own format (never OLX's original files). Skins are
+  fetched through the host: the host takes a skin it lacks from its
+  wearer and passes it on. Every download is checked against its hash and
+  loaded like any other untrusted pack. A pack you have under the same
+  name but with other content is left alone and only hidden for that
+  match; your own packs win for skins.
+- **The 50 MB prompt.** When more than 50 MB is still to download (a
+  partial download's bytes not counted), the Lobby asks first: "This game
+  needs N MB of content from the host.", with Download and Leave.
+  Nothing downloads before you answer, and what you approved is not asked
+  about again.
+- **Resuming.** A download cut off (you left, the host left) continues
+  where it stopped the next time a host lists the same pack.
+- **Speed.** At most 2 MB/s to each player and 4 MB/s from a host in all
+  (a server's `upload_kib_s`); 256 KB/s while a match runs, so the game
+  keeps its bandwidth.
+- **Where the cache lives.** The game keeps downloads in its download
+  cache: `~/.cache/rust-liero/downloads` on Linux,
+  `%LOCALAPPDATA%\rust-liero\cache\downloads` on Windows (with
+  `--data-dir D`: `D/cache/downloads`). A second game running on the same
+  machine uses `downloads-2` (up to `downloads-4`). The cache holds at
+  most 1 GB; the packs used least recently go first. Replays of matches
+  on downloaded content find their packs there.
+- **Clearing it.** Options → Online → "Download cache: N MB", Clear (not
+  while you are in an online game), or delete the directory while the
+  game is closed.
+
 ## Dedicated server
 
 ```
@@ -48,11 +88,21 @@ rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
   `lives`, `bonuses`);
 - `admins`: public keys (64 hex characters) allowed to use admin commands;
 - `bans_file`: bans (keys and addresses) kept across restarts, relative to
-  the data directory.
+  the data directory;
+- `upload_kib_s`: how fast the server sends content to players who lack
+  it, in KiB/s in all (default 4096, held to 64 to 65536; 256 KiB/s while
+  a match runs).
 
-The data directory (the config file's own by default) holds
-`server-identity.ron`, the bans file, `server.log` (rotated at 10 MiB:
-`server.log.1` and `.2` keep the older lines) and `desyncs/` bundles.
+The server sends its packs to players who lack them, and passes players'
+skins on (see "Missing content"). The data directory (the config file's
+own by default) holds `server-identity.ron`, the bans file, `server.log`
+(rotated at 10 MiB: `server.log.1` and `.2` keep the older lines),
+`desyncs/` bundles and `downloads/`, the skins it fetched from players
+(clear it by deleting it while the server is stopped). Two servers on one
+data directory cannot share `downloads/`: the second says so in its log
+and runs without one (players' skins it lacks are drawn as the default).
+A bot client, `rl-cli net-client --join ADDR --bot`, downloads what its
+`--content` lacks into `--cache DIR` (a temporary directory by default).
 Ctrl+C, SIGTERM or typing `quit` stops it cleanly.
 
 **Your admin key.** The game shows only an 8-character fingerprint, but the

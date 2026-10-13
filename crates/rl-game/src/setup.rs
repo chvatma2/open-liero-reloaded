@@ -3,8 +3,8 @@
 //! assets loaded once for every restart.
 
 use std::collections::BTreeMap;
-use std::path::Path;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use rl_bots::{BotConfig, Difficulty};
@@ -316,23 +316,20 @@ pub fn read_replay_file(file: &Path) -> anyhow::Result<Vec<u8>> {
 }
 
 /// `content` with the packs of `packs` it lacks (or has with another
-/// content hash) laid over from the download cache `cache` by content
-/// hash (`Content::with_packs`; plan 11): a replay of a match on
-/// downloaded content plays back. A pack in neither stays missing (the
-/// caller's `check_replay_packs` names it).
-pub fn with_cached_packs(
-    content: Content,
-    packs: &Packs,
-    cache: Option<&Mutex<DownloadCache>>,
-) -> anyhow::Result<Content> {
-    let Some(cache) = cache else { return Ok(content) };
+/// content hash) laid over from the download caches in `cache_dirs` by
+/// content hash (`Content::with_packs`; plan 11): a replay of a match on
+/// downloaded content plays back. The caches are read without opening
+/// them (`DownloadCache::lookup`: no lock, nothing written), so a cache
+/// another game holds counts, and a command-line replay never creates or
+/// locks one. A pack in none stays missing (the caller's
+/// `check_replay_packs` names it).
+pub fn with_cached_packs(content: Content, packs: &Packs, cache_dirs: &[PathBuf]) -> anyhow::Result<Content> {
     let mut laid = Vec::new();
     for r in [&packs.mod_pack, &packs.level, &packs.theme] {
         if content.has(&r.id, &r.hash) {
             continue;
         }
-        let dir = cache.lock().unwrap_or_else(PoisonError::into_inner).get(&r.hash);
-        if let Some(dir) = dir {
+        if let Some(dir) = cache_dirs.iter().find_map(|d| DownloadCache::lookup(d, &r.hash)) {
             laid.push((r.id.clone(), dir));
         }
     }
@@ -345,19 +342,19 @@ pub fn with_cached_packs(
 }
 
 /// The replay in file `file` (read by [`read_replay_file`]), on the packs
-/// it names: this install's, else the download cache's by content hash
-/// ([`with_cached_packs`]); refused when they are missing or differ from
-/// the recorded ones.
+/// it names: this install's, else the download caches' in `cache_dirs` by
+/// content hash ([`with_cached_packs`]); refused when they are missing or
+/// differ from the recorded ones.
 pub fn load_replay(
     roots: &[&Path],
     file: &Path,
     skin: &str,
-    cache: Option<&Mutex<DownloadCache>>,
+    cache_dirs: &[PathBuf],
 ) -> anyhow::Result<Assets> {
     let bytes = read_replay_file(file).with_context(|| format!("{}", file.display()))?;
     let replay = Replay::decode(&bytes).with_context(|| format!("{}", file.display()))?;
     let content = Content::open_layers(roots)?;
-    let content = with_cached_packs(content, &replay.setup.packs, cache)?;
+    let content = with_cached_packs(content, &replay.setup.packs, cache_dirs)?;
     content.check_replay_packs(&replay.setup).with_context(|| format!("{}", file.display()))?;
     let p = &replay.setup.packs;
     let (mod_id, level_id) = (p.mod_pack.id.clone(), p.level.id.clone());
@@ -517,7 +514,7 @@ mod tests {
         let file = file.to_path_buf();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let r = load_replay(&[], &file, "default", None).err().map(|e| format!("{e:#}"));
+            let r = load_replay(&[], &file, "default", &[]).err().map(|e| format!("{e:#}"));
             let _ = tx.send(r.unwrap_or_default());
         });
         rx.recv_timeout(std::time::Duration::from_secs(10)).ok()

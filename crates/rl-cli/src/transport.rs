@@ -20,14 +20,15 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow};
 use rl_bots::{Bot, BotConfig, Difficulty};
-use rl_content::Content;
+use rl_content::{Content, DownloadCache};
 use rl_lobby::Identity;
 use rl_net::endpoint::EndpointConfig;
 use rl_netcode::TickInfo;
 use rl_netcode::netsim::Profile;
+use rl_online::content::HOST_RATE;
 use rl_online::peer::RECORD_AFTER_END;
 use rl_online::replay::MatchRecord;
-use rl_online::{OnlineEvent, OnlinePeer, PeerRole};
+use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{Look, MatchStartWire, Phase, SeatWire};
 use rl_replay::Replay;
 use rl_server::config::{Config, Entry, Visibility};
@@ -55,6 +56,10 @@ pub struct ClientSpec {
     pub spectate: bool,
     /// Gives up (and reports itself dropped) at this time.
     pub deadline: Instant,
+    /// Its download cache's directory (plan 11): what its content lacks
+    /// of a match it downloads from the server into it. `None`: no
+    /// downloads (content lacking a match's packs sits it out).
+    pub cache: Option<PathBuf>,
 }
 
 /// One match as a client confirmed it.
@@ -180,17 +185,16 @@ pub fn run_bot_client(
         skin_hash: rl_proto::NO_HASH.into(),
     };
     let role = PeerRole::Client { addr: spec.addr, password: None };
-    let mut peer = OnlinePeer::start(
-        role,
-        endpoint,
-        new_identity()?,
-        look,
-        content,
-        None,
-        // Task 8 gives net-client a cache (`--cache`).
-        rl_online::PeerContent::without_downloads("net-client has no download cache"),
-    )
-    .with_context(|| format!("joining {}", spec.addr))?;
+    let downloads = match &spec.cache {
+        Some(dir) => {
+            let cache =
+                DownloadCache::open(dir).with_context(|| format!("the download cache {}", dir.display()))?;
+            PeerContent { cache: Ok(Arc::new(Mutex::new(cache))), upload_rate: HOST_RATE }
+        }
+        None => PeerContent::without_downloads("this client has no download cache"),
+    };
+    let mut peer = OnlinePeer::start(role, endpoint, new_identity()?, look, content, None, downloads)
+        .with_context(|| format!("joining {}", spec.addr))?;
     let brain = RefCell::new(Brain {
         cfg: BotConfig { difficulty: spec.difficulty, ..BotConfig::default() },
         playing: None,
@@ -360,6 +364,11 @@ pub struct TransportSpec {
     /// Each of the server's records holds at least this many checksums
     /// (never fewer than one: an empty record proves nothing).
     pub min_checksums: usize,
+    /// Content directories of their own for some clients (by index:
+    /// players, then spectators), such as a copy lacking the level: they
+    /// download the rest from the server (plan 11). The others open the
+    /// run's content directory.
+    pub client_content: BTreeMap<usize, PathBuf>,
 }
 
 impl TransportSpec {
@@ -381,7 +390,14 @@ impl TransportSpec {
             timeout: Duration::from_secs_f32(minutes.max(0.0) * 60.0) + Duration::from_secs(40),
             may_drop: Vec::new(),
             min_checksums: 1,
+            client_content: BTreeMap::new(),
         }
+    }
+
+    /// Client `i`'s download cache (players, then spectators; 0-based), in
+    /// the data directory.
+    pub fn client_cache(&self, i: usize) -> PathBuf {
+        self.data_dir.join(format!("client-{}-downloads", i + 1))
     }
 
     /// The name of player client `i` (0-based).
@@ -417,6 +433,7 @@ impl TransportSpec {
             start_when_ready: true,
             min_players: self.players.max(1),
             bans_file: None,
+            upload_kib_s: rl_server::config::DEFAULT_UPLOAD_KIB_S,
         }
     }
 }
@@ -456,7 +473,9 @@ impl SharedLog {
 }
 
 /// Runs `rl_server::run_with` in a thread on port 0 and `spec`'s bot
-/// clients in threads (each opening `content_dir`), until every client
+/// clients in threads (each opening `content_dir`, or its own in
+/// `spec.client_content`, with its download cache `spec.client_cache(i)`),
+/// until every client
 /// finished (or dropped) and the server finished as many matches (all
 /// bounded by `spec.timeout`); then stops the server.
 pub fn run_transport(content_dir: &Path, spec: &TransportSpec) -> anyhow::Result<TransportRun> {
@@ -520,8 +539,9 @@ pub fn run_transport(content_dir: &Path, spec: &TransportSpec) -> anyhow::Result
             impair_seed: spec.net_seed.wrapping_add(i as u64),
             spectate: join_after.is_some(),
             deadline,
+            cache: Some(spec.client_cache(i)),
         };
-        let content_dir = content_dir.to_path_buf();
+        let content_dir = spec.client_content.get(&i).map_or(content_dir, PathBuf::as_path).to_path_buf();
         let (stop, first_start) = (Arc::clone(&stop), Arc::clone(&first_start));
         let thread = std::thread::Builder::new().name(name.clone()).spawn(move || {
             if let Some(after) = join_after {

@@ -50,3 +50,29 @@ pub fn capture(run: &rl_cli::runner::MatchRun, failure: &rl_cli::runner::Failure
 pub fn failures_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/failures")
 }
+
+/// The packs a match of Classic on Dirt Level needs, and the default skin.
+pub const MATCH_PACKS: [&str; 5] =
+    ["olx-core", "olx-classic", "olx-theme-dirt", "olx-level-dirt-level", "olx-skin-default"];
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        if e.file_type().unwrap().is_dir() {
+            copy_dir(&e.path(), &to.join(e.file_name()));
+        } else {
+            std::fs::copy(e.path(), to.join(e.file_name())).unwrap();
+        }
+    }
+}
+
+/// A content directory with [`MATCH_PACKS`] from `dir` but `leave_out`
+/// (a client that downloads the rest from its host).
+pub fn partial_content(dir: &Path, leave_out: &[&str]) -> tempfile::TempDir {
+    let to = tempfile::tempdir().unwrap();
+    for id in MATCH_PACKS.iter().filter(|id| !leave_out.contains(id)) {
+        copy_dir(&dir.join(id), &to.path().join(id));
+    }
+    to
+}

@@ -80,11 +80,12 @@ fn widgets(h: &Harness<'static, App>) -> Vec<(String, Rect)> {
 
 /// The screens to check: each opened from the main menu, then the
 /// options' tabs clicked.
-const SCREENS: [(Screen, Option<&str>); 12] = [
+const SCREENS: [(Screen, Option<&str>); 13] = [
     (Screen::LocalPlay, None),
     (Screen::Options, None),
     (Screen::Options, Some("Audio")),
     (Screen::Options, Some("Keys")),
+    (Screen::Options, Some("Online")),
     (Screen::Profiles, None),
     (Screen::Replays, None),
     (Screen::Import, None),

@@ -292,8 +292,12 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `OnlinePeer::download_prompt` (`DownloadPrompt` refreshes it), its
   Download `approve_downloads`, its Leave leaves. A replay's packs
   (`setup::load_replay`, the Replays screen's and `--replay`'s) come from
-  the roots, else from the cache by content hash (`with_cached_packs`,
-  `Content::with_packs`), then `check_replay_packs` as before. The
+  the roots, else from any of the cache directories (`net::cache_dirs`:
+  `downloads`, `-2` .. `-4`) by content hash, read without opening the
+  cache (`DownloadCache::lookup`: no lock, nothing written; N36), laid
+  over (`with_cached_packs`, `Content::with_packs`), then
+  `check_replay_packs` as before: a replay plays while a game holds the
+  cache, and `--replay` creates, locks and writes none. The
   options' download cache row (`MenuData::download_cache`, kept current
   by `Shell::poll` while the options show: packs and partials, its lock
   tried, never waited for) and its Clear (`clear(&[])`: the menus keep
@@ -481,8 +485,10 @@ joiner whose content lacks Dirt Level downloads it in the lobby into its
 (`OnlinePeer::test_prompt_limit` through `Shell::peer_mut`: rl-online's
 `test-hooks` in the dev-dependencies) it waits, queued, until Download;
 a replay of that level,
-the level only in the cache, plays back from the Replays screen and is
-refused, naming it, without; the options' Clear, refused while a match
+the level only in the cache (`downloads`, or `downloads-2` while the
+shell holds `downloads`), plays back from the Replays screen and is
+refused, naming it, without; a command-line replay finds it while
+another holder locks the cache, and makes, locks and writes no cache; the options' Clear, refused while a match
 is online, empties the cache), `tests/ingame.rs` (the weapon selection, the pause and a
 valid replay, the results against the world's scores), `tests/options.rs`
 (video through the paced requests,

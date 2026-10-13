@@ -17,10 +17,11 @@ use std::io::Write;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use rl_content::Content;
+use rl_content::{Content, DownloadCache};
 use rl_lobby::{NOT_ADMIN, fingerprint};
 use rl_net::endpoint::EndpointConfig;
 use rl_net::lan::{Announcer, broadcast_targets};
@@ -51,6 +52,9 @@ pub const BANS_EVERY: Duration = Duration::from_secs(1);
 pub const BANS_WARN_EVERY: Duration = Duration::from_secs(60);
 /// Said to an admin who tries to kick or ban an admin (or themselves).
 pub const NOT_AN_ADMIN_TARGET: &str = "admins cannot kick or ban admins (or themselves)";
+/// The download cache (members' skins the server lacks, plan 11 ruling
+/// N30), in the data directory.
+pub const DOWNLOADS_DIR: &str = "downloads";
 
 /// What the server keeps of a member for its log.
 struct Known {
@@ -137,17 +141,10 @@ impl Server {
             skin: rl_lobby::DEFAULT_SKIN.into(),
             skin_hash: rl_proto::NO_HASH.into(),
         };
-        let mut peer = OnlinePeer::start(
-            role,
-            endpoint,
-            me,
-            unused,
-            content,
-            Some(setup),
-            // Task 8: the server's cache and upload rate (`server.ron`).
-            rl_online::PeerContent::without_downloads("the server has no download cache"),
-        )
-        .with_context(|| format!("hosting on port {}", config.port))?;
+        let downloads = open_downloads(&data_dir.join(DOWNLOADS_DIR), log);
+        let content_cfg = rl_online::PeerContent { cache: downloads, upload_rate: config.upload_rate() };
+        let mut peer = OnlinePeer::start(role, endpoint, me, unused, content, Some(setup), content_cfg)
+            .with_context(|| format!("hosting on port {}", config.port))?;
         for &k in &bans.keys {
             peer.lobby().ban_key(k);
         }
@@ -649,6 +646,30 @@ pub fn run_with(
     }
     server.shutdown(log);
     Ok(())
+}
+
+/// The server's download cache in `dir` (`<data dir>/downloads`, ruling
+/// N30). One the server cannot open (another server on the same data
+/// directory holds it: `InstallError::Locked`; or it cannot be made) is
+/// a warning: the server runs without, still serving its own packs, and
+/// draws members' skins it lacks with the default skin.
+fn open_downloads(dir: &Path, log: &mut dyn Write) -> Result<Arc<Mutex<DownloadCache>>, String> {
+    match DownloadCache::open(dir) {
+        Ok(cache) => {
+            line(log, format_args!("download cache {}", dir.display()));
+            Ok(Arc::new(Mutex::new(cache)))
+        }
+        Err(e) => {
+            let why = format!("{}: {e}", dir.display());
+            line(
+                log,
+                format_args!(
+                    "warning: no download cache ({why}); members' skins the server lacks are drawn with the default skin"
+                ),
+            );
+            Err(why)
+        }
+    }
 }
 
 /// One log line (a failing log never stops the server).

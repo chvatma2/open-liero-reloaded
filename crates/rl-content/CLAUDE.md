@@ -163,6 +163,10 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   Linux, LockFileEx on Windows: per open file, so a second `open` in the
   same process is refused too); one process shares one cache behind a mutex.
   A hash that is not 64 lowercase hex never names a file.
+  `DownloadCache::lookup(dir, hash)` reads without opening: a valid hash
+  whose `packs/<hash>/` holds a readable manifest; no lock, no index,
+  nothing created or written, the pack not verified (replays: their
+  `check_replay_packs` hashes again; plan 11 N36).
   `Content::with_packs(&[(id, dir)])` is a copy with those packs laid over
   by id (nothing on disk changes; a pack of another kind than this
   content's of that id is refused); `Content::has(id, hash)`; `pack_hash`

@@ -6,8 +6,32 @@ All notable changes to rust-liero are recorded here. The format follows
 
 ## Unreleased
 
+### Added — content download
+
+- A player who lacks a game's mod, level, theme or a player's skin
+  downloads it from the host in the lobby: a "Downloads" list with
+  progress, Ready once the content is complete. More than 50 MB still to
+  download asks first ("This game needs N MB of content from the host").
+  Downloads are verified, resume where they stopped and are kept in a
+  download cache (1 GB at most, the least recently used dropped first);
+  Options → Online shows its size and clears it. See `docs/online.md`.
+- Skins travel through the host: every player sees everyone's skin, even
+  one only its wearer has.
+- A player still downloading when a match starts waits it out in the
+  lobby, connected, and joins the next one (or watches once complete)
+  instead of being dropped.
+- `rl-server` serves its packs to players who lack them, keeps their
+  skins in `<data dir>/downloads`, and sends at most `upload_kib_s`
+  (default 4096 KiB/s) in all.
+- `rl-cli net-client --cache <dir>`: bot clients download what their
+  `--content` lacks (a temporary cache by default).
+- Replays of matches on downloaded content play back, from the Replays
+  screen and from `--replay`.
+
 ### Changed
 
+- Online play's protocol version is 2: this version and the earlier one
+  cannot play together.
 - Disk use of builds: dependencies are built without debug info in dev,
   tests are one binary per crate, and `cargo xtask check` sweeps
   superseded builds automatically.

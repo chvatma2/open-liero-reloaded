@@ -443,3 +443,39 @@ fn an_install_verifies_outside_the_cache() {
     assert_eq!(path, root.path().join("packs").join(&a.hash));
     assert!(cache.contains(&a.hash) && cache.partial(&a.hash).is_none());
 }
+
+/// `lookup` finds an installed pack by content hash without opening the
+/// cache: no lock taken, nothing written, a cache another holder has open
+/// readable (replays, ruling for plan 11 task 8).
+#[test]
+fn lookup_reads_without_the_lock() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("cache");
+    let a = archive_of(&skin_pack("skin-a", 1));
+    let mut cache = DownloadCache::open(&dir).unwrap();
+    let installed = install(&mut cache, &a, "skin-a");
+    drop(cache);
+    let index = std::fs::read(dir.join("index.ron")).unwrap();
+    // Another holder has the cache open: still found, and still locked.
+    let held = DownloadCache::open(&dir).unwrap();
+    assert_eq!(DownloadCache::lookup(&dir, &a.hash), Some(installed.clone()));
+    assert!(matches!(DownloadCache::open(&dir), Err(InstallError::Locked)));
+    drop(held);
+    assert_eq!(std::fs::read(dir.join("index.ron")).unwrap(), index, "the index is not written");
+    // Only a valid hash with a pack directory holding a manifest.
+    let upper = a.hash.to_uppercase();
+    for bad in ["", "..", "../cache", upper.as_str(), &a.hash[1..]] {
+        assert_eq!(DownloadCache::lookup(&dir, bad), None, "{bad:?}");
+    }
+    let other = "0".repeat(64);
+    assert_eq!(DownloadCache::lookup(&dir, &other), None);
+    std::fs::create_dir(dir.join("packs").join(&other)).unwrap();
+    assert_eq!(DownloadCache::lookup(&dir, &other), None, "no manifest");
+    // A directory that does not exist stays so.
+    let none = tmp.path().join("none");
+    assert_eq!(DownloadCache::lookup(&none, &a.hash), None);
+    assert!(!none.exists());
+    // Found without the index: `check_replay_packs` re-hashes anyway.
+    std::fs::remove_file(dir.join("index.ron")).unwrap();
+    assert_eq!(DownloadCache::lookup(&dir, &a.hash), Some(installed));
+}

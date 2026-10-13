@@ -221,6 +221,53 @@ fn a_replay_of_a_downloaded_level_plays_back() {
     assert_eq!(d.mismatch, None);
     assert_eq!(d.cursor.checked(), replay.checksums.len(), "every checksum checked");
     assert_eq!(s.world.checksum(), end, "the same world");
+
+    // Downloaded by a game that ran on `downloads-2` (another game held
+    // `downloads` then): found there too, while this shell holds `downloads`.
+    let data = tempfile::tempdir().unwrap();
+    let second = Store::open(data.path()).cache_dir().unwrap().with_file_name("downloads-2");
+    install(&second, &full, LEVEL, PackKind::Level);
+    let mut sh = shell(data.path());
+    play(&mut sh, &file);
+    assert_eq!(sh.ui.screen(), Screen::InGame, "{:?}", sh.ui.message());
+}
+
+/// A command-line replay (`--replay`, `setup::load_replay` with
+/// `net::cache_dirs`) finds a downloaded level while a running game holds
+/// that cache, and creates, locks and writes no cache itself.
+#[test]
+fn a_command_line_replay_reads_the_caches_without_opening_them() {
+    let Some(dir) = content_dir() else { return };
+    let o = MatchOptions::deathmatch(MOD, LEVEL, 3, vec![Player::Human, Player::Bot(Default::default())]);
+    let a = setup::load_match(&[dir.as_path()], &o, "default").unwrap();
+    let mut s = Session::new(&a, viewport(), Interpolation::Linear, Audio::silent()).unwrap();
+    for t in 0..100 {
+        s.tick(crate::online::player_keys(t));
+    }
+    let replay = s.take_replay().expect("a Deathmatch records");
+    let partial = partial_content(&dir, &[LEVEL]);
+    let file = partial.path().join("match.rlrp");
+    std::fs::write(&file, replay.encode()).unwrap();
+
+    let data = tempfile::tempdir().unwrap();
+    let base = Store::open(data.path()).cache_dir().unwrap();
+    let dirs = rl_game::net::cache_dirs(Some(base.clone()));
+    let roots = [partial.path()];
+    // No cache at all: refused, naming the level, and none made.
+    let e = setup::load_replay(&roots, &file, "default", &dirs).err().expect("refused");
+    assert!(format!("{e:#}").contains(LEVEL), "{e:#}");
+    assert!(!base.parent().unwrap().exists(), "no cache directory is made");
+    // The level downloaded; a game holds the cache while the replay loads.
+    install(&base, &Content::open(&dir).unwrap(), LEVEL, PackKind::Level);
+    let index = std::fs::read(base.join("index.ron")).unwrap();
+    let game = DownloadCache::open(&base).unwrap();
+    let a = setup::load_replay(&roots, &file, "default", &dirs).unwrap();
+    assert!(a.content.pack_dir(LEVEL).unwrap().starts_with(&base), "the level from the cache");
+    drop(game);
+    assert_eq!(std::fs::read(base.join("index.ron")).unwrap(), index, "the index is not written");
+    let made: Vec<_> =
+        std::fs::read_dir(base.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(made, ["downloads"], "no other cache is made");
 }
 
 /// The options show the download cache's size and Clear empties it.

@@ -837,6 +837,102 @@ execution.
   profile, tests are one binary per crate, and `cargo xtask check` sweeps
   superseded builds automatically.
 
+## Content download decisions (plan 11)
+
+Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
+("Decisions this plan makes") and by rulings during its execution
+(PF11-1 to PF11-6, R4-*, R6-*, Task 8's).
+
+- **N29 - pack archives.** A pack travels as a `.rlpk` archive: magic
+  `RLPK1\n`, a `u32` file count, then per file, sorted by path, a `u16`
+  path length, the UTF-8 `VPath`, a `u64` length and the bytes. No
+  compression (packs are mostly PNG and OGG). The same pack always gives
+  the same bytes, so a resumed download continues byte-exactly. The
+  archive's SHA-256 (the *archive hash*) identifies a partial download;
+  the *content hash* (`rl_pack::content_hash`, unchanged) identifies the
+  pack. Hidden files (a path component starting with `.`) are not part of
+  a pack: hashing and archiving skip them, decoding refuses them (PF11-2:
+  a stray `.DS_Store` would make a pack hashable but unservable). Archive
+  reading is bounded (512 MiB, 4096 files, 255-byte paths, 64 MiB a file);
+  `rl-proto` restates the archive limit without depending on `rl-pack`,
+  and a test pins the two equal (PF11-1).
+- **N30 - a content-addressed cache.** Downloads live in
+  `<cache>/packs/<content hash>/`, one pack directory each, with
+  `<cache>/index.ron` (each entry's id, kind, bytes and a use counter).
+  Above `CACHE_BYTES` (1 GiB, partial downloads counted) the least
+  recently used entries are evicted, never one the current lobby lists,
+  and the oldest partials not listed go first. The index is checked
+  against `packs/` when the cache opens (a pack installed but not recorded
+  is adopted, a record without its pack dropped). A match's content is the
+  player's own content with the needed cached packs laid over by id
+  (`Content::with_packs`); a local pack of the same id but another hash is
+  hidden for that match only, never changed. Paths: the game's cache is
+  `ProjectDirs::cache_dir()/downloads` (`--data-dir D`: `D/cache/downloads`),
+  the server's `<data dir>/downloads`. One directory belongs to one open
+  cache (PF11-3): opening holds an exclusive lock on `<dir>/lock`, and a
+  second game falls back to `downloads-2` to `downloads-4`; the peers of
+  one process share one cache. A peer without a cache (none opens:
+  PF11-4) has downloads off and the lobby says why; a server whose cache
+  is held (another server on the same data directory) logs a warning and
+  runs without one: it still serves its own packs, and members' skins it
+  lacks draw as the default skin. The Options' Online tab shows the
+  cache's size and clears it, refused while an online game is on.
+- **N31 - skins by hash.** `Look` gains `skin_hash` (64 lowercase hex).
+  A client offers its own skin to the host with a one-item content list
+  (R6-1; accepted only for its look's id and hash); the host fetches a
+  member's skin it lacks from that member and serves it to the others.
+  Bots' looks in the setup keep `NO_HASH`; the host lists a bot's skin
+  with its own pack's hash (R6-2: filling them would change the setup
+  under its owner). A skin is laid over only when no local pack has its
+  id: local packs win (PF11-5), and a skin is never taken under the id
+  of a required pack. Skins never block the ready mark: one that cannot
+  be fetched draws as the default skin. Mod, level and theme are
+  *required*.
+- **N32 - transfers.** Reliable-channel tag `TAG_CONTENT = 3` carries
+  `ContentMsg` both ways (`List`, `Want`, `Begin`, `Chunk`,
+  `Unavailable`, `Cancel`); chunks are 32 KiB. A peer serves one archive
+  at a time to each peer and queues the other wants. Pacing: at most
+  2 MiB/s to each receiving client, 4 MiB/s host-wide (the server's
+  `upload_kib_s`, default 4096, clamped to 64..=65536), 256 KiB/s
+  host-wide while a match starts or runs, 128 KiB/s for a client serving
+  its own skin, at most 256 KiB queued per peer. Resume: the fetcher keeps
+  `<hash>.part` and `<hash>.part.ron` (archive hash and size) and asks
+  `Want { hash, offset }`; another archive hash restarts from 0. Every
+  download is verified (archive SHA-256, bounds, content hash, id, kind,
+  `rl_pack::validate`); one that fails is fetched once more from 0, then
+  failed. The host sends no list until every required archive is made; a
+  required pack it cannot archive is listed with size 0 and answered
+  `Unavailable`.
+- **N33 - lacking content waits, never drops.** At a start, a member
+  whose required content is incomplete sits the match out as
+  `SeatWire::Waiting`: it is not in the session, gets no state, and stays
+  connected. A joiner during a match waits the same way until its content
+  is complete, then spectates. This replaces plan 10's "a spectator
+  lacking content is dropped at every start". A member counts as lacking
+  (not ready, waiting at a start) until its `Have` answers the host's
+  current list (each list has a revision, raised only when its required
+  items change: a skin change keeps every ready mark). A waiting member
+  counts toward `max_players` only if it wants to play.
+- **N34 - protocol version 2.** `PROTOCOL_VERSION` becomes 2, because
+  `Look`, `Member` and the reliable tags change.
+- **N35 (PF11-6) - the download prompt.** A list whose missing items not
+  yet approved need more than `PROMPT_BYTES` (50 MiB) still to download
+  waits for the player's Download (or Leave). The bytes counted are each
+  item's size less what its partial download already holds ("missing
+  bytes" is what the player will wait for), and items approved before are
+  not asked about again: a re-sent list (a skin change, a new member)
+  never re-prompts for an approved download, and the prompt's number does
+  not change while approved items download. A list under the limit
+  approves itself.
+- **N36 (plan 11 task 8) - replays read the caches without opening
+  them.** A replay's packs come from the player's content, else from any
+  of the game's cache directories (`downloads`, `downloads-2` to `-4`)
+  by content hash, read without the lock or the index
+  (`DownloadCache::lookup`); `check_replay_packs` hashes them again. So a
+  replay finds a pack whichever cache directory a session used, plays
+  while a game holds the cache, and `--replay` never creates, locks or
+  writes a cache.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

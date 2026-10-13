@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use common::{content, content_dir, full_tier};
+use common::{content, content_dir, full_tier, partial_content};
 use rl_cli::transport::{SharedLog, TransportRun, TransportSpec, run_transport};
 use rl_online::replay::MatchRecord;
 
@@ -32,6 +32,23 @@ fn pass(spec: &TransportSpec) -> TransportRun {
     run
 }
 
+/// The level both matches here are on.
+const LEVEL: &str = "olx-level-dirt-level";
+
+/// The ids of the packs in the download cache in `dir`.
+fn cached_packs(dir: &Path) -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(dir.join("packs")) else { return vec![] };
+    let mut ids: Vec<String> = rd.map(|e| pack_id(&e.unwrap().path())).collect();
+    ids.sort();
+    ids
+}
+
+/// A pack directory's id, from its manifest.
+fn pack_id(pack: &Path) -> String {
+    let manifest = std::fs::read_to_string(pack.join("pack.ron")).unwrap();
+    manifest.split("id: \"").nth(1).and_then(|t| t.split('"').next()).unwrap().to_string()
+}
+
 /// Every player's bot pressed keys in its slot.
 fn assert_played(run: &TransportRun) {
     for c in run.clients.iter().filter(|c| c.matches.iter().all(|m| m.slot.is_some())) {
@@ -43,11 +60,11 @@ fn assert_played(run: &TransportRun) {
     }
 }
 
+/// Client 2's content lacks the level (plan 11): it downloads it from the
+/// server into its cache, plays, and its replay is the server's.
 #[test]
 fn two_bots_play_a_match_over_real_connections() {
-    if content_dir().is_none() {
-        return;
-    }
+    let Some(dir) = content_dir() else { return };
     let data = tempfile::tempdir().unwrap();
     // 6 s of match and 3 s of results: about 900 ticks, 90 checksum ticks;
     // about 10 s in all. Impairment seeds 3 and 4: with seed 2 the 1 % loss
@@ -57,7 +74,12 @@ fn two_bots_play_a_match_over_real_connections() {
     let mut spec = TransportSpec::new(2, 0.1, Some("typical"), data.path());
     spec.min_checksums = 3;
     spec.net_seed = 3;
+    let partial = partial_content(Path::new(&dir), &[LEVEL]);
+    spec.client_content.insert(1, partial.path().to_path_buf());
     let run = pass(&spec);
+    let level = rl_content::Content::open(Path::new(&dir)).unwrap().pack_dir(LEVEL).unwrap().to_path_buf();
+    assert_eq!(cached_packs(&spec.client_cache(1)), [pack_id(&level)], "client 2 downloaded the level");
+    assert!(cached_packs(&spec.client_cache(0)).is_empty(), "client 1 had everything");
     assert_eq!(run.clients.len(), 2);
     let r = &run.server[0];
     assert!(r.rows.len() >= 600 + 300, "the whole match and its results: {} ticks", r.rows.len());
@@ -69,8 +91,9 @@ fn two_bots_play_a_match_over_real_connections() {
 }
 
 /// `rl-cli net-client --bot` against a server in this process (the client
-/// and one of the server's bots): it plays one match, prints its confirmed
-/// checksums (the server's) and exits 0.
+/// and one of the server's bots): its content lacking the level, it
+/// downloads it into its temporary cache (removed at exit), plays one
+/// match, prints its confirmed checksums (the server's) and exits 0.
 #[test]
 fn the_net_client_command_plays_a_match_and_prints_its_checksums() {
     let (Some(dir), Some(_)) = (content_dir(), content()) else { return };
@@ -104,11 +127,15 @@ fn the_net_client_command_plays_a_match_and_prints_its_checksums() {
         }
         std::thread::sleep(Duration::from_millis(5));
     };
+    let partial = partial_content(Path::new(&dir), &[LEVEL]);
+    let tmp = tempfile::tempdir().unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_rl-cli"))
         .args(["net-client", "--join", &format!("127.0.0.1:{port}"), "--bot", "--name", "Cli"])
         .args(["--difficulty", "hard", "--matches", "1", "--impair", "good", "--timeout", "40"])
         .arg("--content")
-        .arg(&dir)
+        .arg(partial.path())
+        // Its temporary download cache goes here.
+        .env("TMPDIR", tmp.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -149,6 +176,8 @@ fn the_net_client_command_plays_a_match_and_prints_its_checksums() {
         })
         .collect();
     assert_eq!(printed, record.checksums, "the printed checksums are the server's");
+    let left: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().path()).collect();
+    assert!(left.is_empty(), "the temporary download cache is removed at exit: {left:?}");
 }
 
 #[test]

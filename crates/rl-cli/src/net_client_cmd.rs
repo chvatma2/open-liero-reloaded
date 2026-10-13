@@ -46,6 +46,11 @@ pub struct Args {
     /// Imported content (packs written by `rl-cli import`).
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
+    /// The download cache: what `--content` lacks of a match is downloaded
+    /// from the host into it. By default a temporary directory, removed
+    /// at exit.
+    #[arg(long)]
+    cache: Option<PathBuf>,
 }
 
 /// A bot's difficulty.
@@ -124,6 +129,17 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     let deadline = Instant::now() + Duration::from_secs(args.timeout);
     let content =
         Content::open(&args.content).with_context(|| format!("opening {}", args.content.display()))?;
+    // Removed when this returns (dropped), unless `--cache` named one.
+    let temporary = match &args.cache {
+        Some(_) => None,
+        None => Some(
+            tempfile::Builder::new()
+                .prefix("rl-cli-downloads-")
+                .tempdir()
+                .context("a temporary download cache")?,
+        ),
+    };
+    let cache = args.cache.clone().or_else(|| temporary.as_ref().map(|t| t.path().to_path_buf()));
     let spec = ClientSpec {
         addr: address(&args.join, deadline)?,
         name: args.name.clone(),
@@ -133,6 +149,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         impair_seed: args.impair_seed,
         spectate: args.spectate,
         deadline,
+        cache,
     };
     let mut finished = 0;
     let run = run_bot_client(content, &spec, &AtomicBool::new(false), &mut |p| match p {

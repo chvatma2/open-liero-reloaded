@@ -90,8 +90,8 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   `theme::section_frame` panels under a title (the title's id may label a
   picker); `form_row`/`form_check_row` put a name right-aligned in a
   `FORM_LABEL`-wide column so a form's controls start on one line. A new
-  screen uses them: `tests/layout.rs` checks every sub-screen is centred
-  at 1280 × 720 and 3440 × 1440. Main
+  screen uses them: `tests/layout.rs` checks every sub-screen (the
+  options' four tabs each) is centred at 1280 × 720 and 3440 × 1440. Main
   (`main.rs`, centred on its own), local play (`local_play.rs`, 1100
   wide: the Map panel (mod, level grid with
   thumbnails or a name-and-size placeholder), the Match panel
@@ -296,7 +296,9 @@ Test: `cargo nextest run -p rl-ui` (`tests/store.rs`, `tests/state.rs`,
 `tests/flows.rs`: kittest flows by label and the local play's match,
 `tests/layout.rs`: every sub-screen a centred column, the primary action
 centred below,
-`thumbnails_decode_lazily_and_bounded`, `about_credits_the_authors_and_the_licenses`,
+`thumbnails_decode_lazily_and_bounded`, `about_credits_the_authors_and_the_licenses`
+(each thumbnail file in a directory of its own, in a temporary directory
+per test thread: parallel tests never read a file another writes),
 `tests/profiles.rs`: profiles through the widgets, names, the preview; its
 last part compares with `rl_scene::SceneAssets` when `RL_CONTENT_DIR` is
 set; `tests/options.rs`: rebinding never leaves an action unreachable, the

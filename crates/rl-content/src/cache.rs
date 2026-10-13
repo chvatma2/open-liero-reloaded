@@ -267,6 +267,21 @@ impl DownloadCache {
         Some(path)
     }
 
+    /// The directory of the pack with content hash `hash` in the cache in
+    /// `dir`, read without opening the cache: no lock, no index, nothing
+    /// created or written, so a cache another game holds is read too. Only
+    /// a valid hash whose `packs/<hash>/` holds a readable manifest; the
+    /// pack is not verified (a replay's `check_replay_packs` hashes it
+    /// again) and the LRU order is not touched. An eviction racing the
+    /// caller's read makes the read fail, never wrong.
+    pub fn lookup(dir: &Path, hash: &str) -> Option<PathBuf> {
+        if !valid_hash(hash) {
+            return None;
+        }
+        let path = dir.join("packs").join(hash);
+        (path.is_dir() && read_manifest(&DirFs::new(&path)).is_ok()).then_some(path)
+    }
+
     pub fn contains(&self, hash: &str) -> bool {
         valid_hash(hash) && self.index.entries.contains_key(hash)
     }

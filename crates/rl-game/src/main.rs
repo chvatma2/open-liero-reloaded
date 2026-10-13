@@ -261,10 +261,12 @@ fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig, flags: &Overrid
     );
     anyhow::ensure!(!args.spectate || mode == Mode::Deathmatch, "--spectate watches a Deathmatch of bots");
     let assets = if let Some(file) = &args.replay {
-        // Its packs from `--content`, else from the download cache by
-        // content hash (a match on downloaded content, plan 11).
-        let cache = rl_game::net::open_download_cache(store(args).0.cache_dir()).ok();
-        setup::load_replay(&[args.content.as_path()], file, &args.skin, cache.as_deref())?
+        // Its packs from `--content`, else from the download caches by
+        // content hash (a match on downloaded content, plan 11), read
+        // without opening them: a game running meanwhile keeps its cache,
+        // and this run creates, locks and writes none.
+        let caches = rl_game::net::cache_dirs(store(args).0.cache_dir());
+        setup::load_replay(&[args.content.as_path()], file, &args.skin, &caches)?
     } else if mode == Mode::Deathmatch {
         let o = DeathmatchOptions {
             seed: args.seed,

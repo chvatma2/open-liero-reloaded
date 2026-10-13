@@ -95,7 +95,7 @@ fn fast_forward_never_changes_the_simulation() {
     // The replay plays back at max with every checksum reproduced.
     let file = std::env::temp_dir().join(format!("rl-game-speed-{}.rlrp", std::process::id()));
     std::fs::write(&file, &base.replay).unwrap();
-    let r = setup::load_replay(&[dir.as_path()], &file, "default", None);
+    let r = setup::load_replay(&[dir.as_path()], &file, "default", &[]);
     std::fs::remove_file(&file).unwrap();
     let r = r.unwrap();
     let mut s = Session::new(&r, viewport(), Interpolation::Linear, Audio::silent()).unwrap();

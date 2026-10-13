@@ -120,7 +120,8 @@ The headless command-line tool. Its commands:
   xtask); `tests/feel.rs` checks the definitions on a short run.
 - `rl-cli net-client --join <host[:port]> --bot [--difficulty
   easy|medium|hard|xtreme] [--name N] [--matches 1] [--spectate] [--impair
-  <profile>] [--impair-seed S] [--timeout 3600] [--content DIR]` (plan 10,
+  <profile>] [--impair-seed S] [--timeout 3600] [--content DIR] [--cache
+  DIR]` (plan 10,
   spec §9.4, the command in `net_client_cmd.rs`, the client in
   `transport.rs`): a headless bot client over real connections (port
   23400 by default). It joins, readies whenever the lobby gathers and it
@@ -131,7 +132,9 @@ The headless command-line tool. Its commands:
   prints each finished match: `match <n>: <mod> on <level>, seed S, slot
   K|watching, <T> ticks|joined mid-match, <C> checksums, replay <B>
   bytes|no replay`, then `  checksum <tick> <16 hex>` per confirmed
-  checksum. `--impair` sends its datagrams through a netsim profile.
+  checksum. `--impair` sends its datagrams through a netsim profile. What
+  `--content` lacks of a match it downloads from the host (plan 11) into
+  `--cache` (by default a fresh temporary directory, removed at exit).
   Exits 1 when refused, kicked, disconnected or past `--timeout` seconds;
   every wait is bounded by it (the name resolves on its own thread; rl-net's
   TCP connect and signalling never block the poll loop).
@@ -192,7 +195,8 @@ and `World::actions_triggered`), `failure`, `golden`, `assets`,
 
 **Real transport** (`transport.rs`, plan 10, spec §9.4):
 `run_bot_client(content, ClientSpec, stop, progress)` is one bot client
-(`net-client`; a `ClientRun`: its `PeerMatch`es (start, slot, confirmed
+(`net-client`; `ClientSpec::cache`, its download cache's directory or
+`None` for no downloads; a `ClientRun`: its `PeerMatch`es (start, slot, confirmed
 checksums, record, replay), why it was `dropped`, desync bundles). A
 match is finished once it ended and rl-online kept its record (the
 replay then awaited), or at its end for a spectator that joined mid-match
@@ -204,6 +208,9 @@ clients in threads on 127.0.0.1 (players `Client N`, then spectators
 `Watcher N` joining a set time after the first player's match started),
 the clients' datagrams through the spec's netsim profile (`EndpointConfig::impair`,
 seed `net_seed + i`), all bounded by `timeout` (the match and 40 s);
+each client's download cache `TransportSpec::client_cache(i)` in the
+data directory, and `client_content` a content directory of its own for
+some (a partial copy: they download the rest);
 `TransportSpec::new(players, minutes, profile, data_dir)` (Classic on
 Dirt Level, one time-limited match with bonuses, no fill bots: a match
 needs two worms; `fill_bots` adds the server's). `TransportRun::verdict`:
@@ -286,8 +293,12 @@ action kind covered; `long_bot_match_bounded`, 30 minutes) runs in `full`
 `tests/transport.rs` (spec §9.4, real sockets on 127.0.0.1, every wait
 bounded; skipped without content): in `check`, two bot clients through
 `typical` play a 0.1-minute match (about 10 s, at least 3 checksums;
-impairment seeds 3 and 4, whose 1 % loss spares the handshakes) and `net-client` (the
-binary, through `good`, with one server bot) plays a 0.05-minute one and
+impairment seeds 3 and 4, whose 1 % loss spares the handshakes), the
+second's content lacking Dirt Level (`common::partial_content`): it
+downloads it into its cache, plays, its replay the server's; and `net-client` (the
+binary, through `good`, with one server bot, its content lacking the
+level) downloads it into its temporary cache (`TMPDIR` empty after it
+exits), plays a 0.05-minute match and
 prints the server's checksums (about 7 s); in `full`
 (`RL_FULL_TESTS=1`, `check::FULL_TESTS`), 8 clients per profile `good`,
 `typical`, `bad` (0.5 minutes each, about 106 s in all) and a spectator

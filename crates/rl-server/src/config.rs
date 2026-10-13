@@ -93,7 +93,16 @@ pub struct Config {
     /// Bans kept across restarts (keys and addresses), relative to the
     /// data directory; `None`: bans last until the server stops.
     pub bans_file: Option<PathBuf>,
+    /// KiB per second the server sends content in all (packs and skins to
+    /// members who lack them; plan 11), held to [`UPLOAD_KIB_S`] by
+    /// [`Config::upload_rate`]; during a match `rl_online`'s `MATCH_RATE`.
+    pub upload_kib_s: u32,
 }
+
+/// The default of `upload_kib_s`: `rl_online`'s `HOST_RATE`, 4 MiB/s.
+pub const DEFAULT_UPLOAD_KIB_S: u32 = 4096;
+/// What `upload_kib_s` is held to (a value outside is clamped).
+pub const UPLOAD_KIB_S: std::ops::RangeInclusive<u32> = 64..=65536;
 
 impl Default for Config {
     fn default() -> Self {
@@ -110,6 +119,7 @@ impl Default for Config {
             start_when_ready: true,
             min_players: 1,
             bans_file: None,
+            upload_kib_s: DEFAULT_UPLOAD_KIB_S,
         }
     }
 }
@@ -136,6 +146,12 @@ impl Config {
             bail!("min_players must be 1 to max_players");
         }
         Ok(config)
+    }
+
+    /// Bytes per second the server sends content in all: `upload_kib_s`
+    /// KiB, clamped to [`UPLOAD_KIB_S`].
+    pub fn upload_rate(&self) -> u64 {
+        u64::from(self.upload_kib_s.clamp(*UPLOAD_KIB_S.start(), *UPLOAD_KIB_S.end())) * 1024
     }
 
     /// The admins' keys.
