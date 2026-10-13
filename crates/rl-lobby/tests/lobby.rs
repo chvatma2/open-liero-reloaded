@@ -527,6 +527,27 @@ fn chat_is_cut_and_rate_limited() {
     consistent(&net);
 }
 
+/// Plan 11 review (Minor 3, C2): at most `LOOK_CHANGES` look changes per
+/// member within `LOOK_WINDOW_US`; more are ignored (each rebuilds the
+/// host's content list and can start a skin fetch).
+#[test]
+fn look_changes_are_rate_limited() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let coloured = |i: u8| Look { colour: [i, 0, 0], ..look("Ann") };
+    for i in 0..10 {
+        net.send_raw(a, ToHost::SetLook(coloured(i)));
+    }
+    net.settle();
+    let last = LOOK_CHANGES as u8 - 1;
+    assert_eq!(member(&net, a).look.colour, [last, 0, 0], "the first {LOOK_CHANGES} only");
+    net.run(LOOK_WINDOW_US);
+    net.send_raw(a, ToHost::SetLook(coloured(42)));
+    net.settle();
+    assert_eq!(member(&net, a).look.colour, [42, 0, 0], "a window later");
+    consistent(&net);
+}
+
 #[test]
 fn only_admins_kick() {
     let mut net = lobby_with(HostConfig { admins: vec![key(1)], ..cfg() }, 0);
@@ -996,7 +1017,8 @@ fn state_changes_are_coalesced() {
         |net: &Net| net.peers[a].received.iter().filter(|m| matches!(m, ToClient::Lobby(_))).count();
     let before = lobbies(&net);
     // A burst arriving together is one Lobby to everyone.
-    for i in 0..5 {
+    // (At most `LOOK_CHANGES` look changes a window are taken.)
+    for i in 0..LOOK_CHANGES {
         net.client(b).set_look(look(&format!("Bob {i}")));
     }
     net.client(b).set_ready(true);
@@ -1004,7 +1026,7 @@ fn state_changes_are_coalesced() {
     net.client(b).set_spectate(false);
     net.settle();
     assert_eq!(lobbies(&net), before + 1);
-    assert_eq!(member(&net, b).look.name, "Bob 4");
+    assert_eq!(member(&net, b).look.name, format!("Bob {}", LOOK_CHANGES - 1));
     consistent(&net);
 }
 

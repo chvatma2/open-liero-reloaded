@@ -15,7 +15,7 @@ pub use peer_side::{PeerContent, REPORT_EVERY_US};
 pub use serve::Server;
 pub use worker::{Done, Job, PackArchive, Worker};
 
-use rl_content::MAX_SKIN_ARCHIVE;
+use rl_content::archive_limits;
 use rl_data::manifest::PackKind;
 use rl_proto::ItemKind;
 
@@ -31,6 +31,9 @@ pub const MATCH_RATE: u64 = 256 << 10;
 pub const SKIN_RATE: u64 = 128 << 10;
 /// Bytes a peer's outbox may hold before it gets more chunks.
 pub const QUEUED: usize = 256 << 10;
+/// A host starts at most one new skin fetch from a member this often
+/// (review C2: a member cycling skins cannot cycle installs).
+pub const SKIN_FETCH_EVERY_US: u64 = 5_000_000;
 /// A source that sends no chunk for this long is asked again once, then
 /// the download fails.
 pub const SILENCE_US: u64 = 10_000_000;
@@ -46,10 +49,7 @@ pub fn pack_kind(kind: ItemKind) -> PackKind {
 }
 
 /// The largest archive of a content item: `MAX_SKIN_ARCHIVE` for a skin,
-/// `rl_pack::archive::MAX_ARCHIVE` otherwise.
+/// `rl_pack::archive::MAX_ARCHIVE` otherwise (`archive_limits(..).bytes`).
 pub fn archive_limit(kind: ItemKind) -> u64 {
-    match kind {
-        ItemKind::Skin => MAX_SKIN_ARCHIVE,
-        _ => rl_pack::archive::MAX_ARCHIVE,
-    }
+    archive_limits(pack_kind(kind)).bytes
 }

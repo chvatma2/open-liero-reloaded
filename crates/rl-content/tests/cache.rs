@@ -3,7 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use rl_content::{CACHE_BYTES, Content, DownloadCache, Eviction, InstallError, MAX_SKIN_ARCHIVE};
+use rl_content::{
+    CACHE_BYTES, Content, DownloadCache, Eviction, InstallError, MAX_SKIN_ARCHIVE, SKIN_LIMITS,
+};
 use rl_data::image::{Rgba, RgbaImage};
 use rl_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
 use rl_data::skin::{FrameLayout, MaskKind, Skin, SkinDef};
@@ -71,7 +73,7 @@ fn put(cache: &mut DownloadCache, a: &Archive) {
 
 fn install(cache: &mut DownloadCache, a: &Archive, id: &str) -> PathBuf {
     put(cache, a);
-    cache.install(&a.hash, id, PackKind::Skin, MAX_SKIN_ARCHIVE).unwrap()
+    cache.install(&a.hash, id, PackKind::Skin, SKIN_LIMITS).unwrap()
 }
 
 fn assert_clean(dir: &Path, a: &Archive) {
@@ -115,10 +117,10 @@ fn a_partial_survives_reopening() {
     let p = cache.partial(&a.hash).unwrap();
     assert_eq!((p.archive.as_str(), p.size, p.have), (a.sha.as_str(), a.bytes.len() as u64, half as u64));
     // An incomplete partial does not install, and stays.
-    assert!(cache.install(&a.hash, "x", PackKind::Skin, MAX_SKIN_ARCHIVE).is_err());
+    assert!(cache.install(&a.hash, "x", PackKind::Skin, SKIN_LIMITS).is_err());
     assert_eq!(cache.partial(&a.hash).unwrap().have, half as u64);
     cache.append(&a.hash, &a.sha, a.bytes.len() as u64, half as u64, &a.bytes[half..]).unwrap();
-    cache.install(&a.hash, "x", PackKind::Skin, MAX_SKIN_ARCHIVE).unwrap();
+    cache.install(&a.hash, "x", PackKind::Skin, SKIN_LIMITS).unwrap();
     assert!(cache.contains(&a.hash));
 }
 
@@ -134,35 +136,35 @@ fn install_refuses_what_does_not_verify() {
     let mut a = archive_of(&skin_pack("x", 3));
     a.bytes[40] ^= 1;
     put(&mut cache, &a);
-    let e = cache.install(&a.hash, "x", PackKind::Skin, MAX_SKIN_ARCHIVE).unwrap_err();
+    let e = cache.install(&a.hash, "x", PackKind::Skin, SKIN_LIMITS).unwrap_err();
     assert!(matches!(e, InstallError::Hash(_)), "{e}");
     assert_clean(&dir, &a);
 
     // Another id.
     let a = archive_of(&skin_pack("y", 3));
     put(&mut cache, &a);
-    let e = cache.install(&a.hash, "x", PackKind::Skin, MAX_SKIN_ARCHIVE).unwrap_err();
+    let e = cache.install(&a.hash, "x", PackKind::Skin, SKIN_LIMITS).unwrap_err();
     assert!(matches!(&e, InstallError::Id { wanted, found } if wanted == "x" && found == "y"), "{e}");
     assert_clean(&dir, &a);
 
     // A level archived as a skin.
     let a = archive_of(&level_pack("x"));
     put(&mut cache, &a);
-    let e = cache.install(&a.hash, "x", PackKind::Skin, MAX_SKIN_ARCHIVE).unwrap_err();
+    let e = cache.install(&a.hash, "x", PackKind::Skin, SKIN_LIMITS).unwrap_err();
     assert!(matches!(e, InstallError::Kind { wanted: PackKind::Skin, found: PackKind::Level }), "{e}");
     assert_clean(&dir, &a);
 
     // An invalid pack.
     let a = archive_of(&skin_pack("x", 4).with("skin.ron", "garbage"));
     put(&mut cache, &a);
-    let e = cache.install(&a.hash, "x", PackKind::Skin, MAX_SKIN_ARCHIVE).unwrap_err();
+    let e = cache.install(&a.hash, "x", PackKind::Skin, SKIN_LIMITS).unwrap_err();
     assert!(matches!(e, InstallError::Invalid(_)), "{e}");
     assert_clean(&dir, &a);
 
     // An archive over the limit.
     let a = archive_of(&skin_pack("x", 5).with("pad.bin", vec![7u8; MAX_SKIN_ARCHIVE as usize]));
     put(&mut cache, &a);
-    let e = cache.install(&a.hash, "x", PackKind::Skin, MAX_SKIN_ARCHIVE).unwrap_err();
+    let e = cache.install(&a.hash, "x", PackKind::Skin, SKIN_LIMITS).unwrap_err();
     assert!(matches!(e, InstallError::Archive(ArchiveError::TooLarge(_))), "{e}");
     assert_clean(&dir, &a);
 
@@ -172,7 +174,7 @@ fn install_refuses_what_does_not_verify() {
     let other = archive_of(&skin_pack("x", 7));
     let a = Archive { bytes: other.bytes, hash: wanted.hash, sha: other.sha };
     put(&mut cache, &a);
-    let e = cache.install(&a.hash, "x", PackKind::Skin, MAX_SKIN_ARCHIVE).unwrap_err();
+    let e = cache.install(&a.hash, "x", PackKind::Skin, SKIN_LIMITS).unwrap_err();
     assert!(matches!(&e, InstallError::Hash(m) if m.contains("content")), "{e}");
     assert_clean(&dir, &a);
 
@@ -435,8 +437,7 @@ fn an_install_verifies_outside_the_cache() {
     let mut cache = DownloadCache::open(root.path()).unwrap();
     let a = archive_of(&skin_pack("x", 90));
     put(&mut cache, &a);
-    let pending =
-        cache.begin_install(&a.hash, "x", rl_data::manifest::PackKind::Skin, MAX_SKIN_ARCHIVE).unwrap();
+    let pending = cache.begin_install(&a.hash, "x", rl_data::manifest::PackKind::Skin, SKIN_LIMITS).unwrap();
     // The verification needs no `&DownloadCache`: a worker runs it unlocked.
     let verified = pending.verify();
     let path = cache.finish_install(pending, verified).unwrap();
@@ -478,4 +479,82 @@ fn lookup_reads_without_the_lock() {
     // Found without the index: `check_replay_packs` re-hashes anyway.
     std::fs::remove_file(dir.join("index.ron")).unwrap();
     assert_eq!(DownloadCache::lookup(&dir, &a.hash), Some(installed));
+}
+
+/// The archive of `fs` as is, unchecked (what a hostile host may send).
+fn raw_archive_of(fs: &MemFs) -> Archive {
+    let files: Vec<_> = fs.files().collect();
+    let mut bytes = archive::MAGIC.to_vec();
+    bytes.extend((files.len() as u32).to_le_bytes());
+    for (p, data) in &files {
+        bytes.extend((p.as_str().len() as u16).to_le_bytes());
+        bytes.extend(p.as_str().as_bytes());
+        bytes.extend((data.len() as u64).to_le_bytes());
+        bytes.extend(*data);
+    }
+    let hash = rl_pack::content_hash(fs).unwrap();
+    Archive { sha: hex::encode(Sha256::digest(&bytes)), hash, bytes }
+}
+
+/// Every file and directory under `dir` charged a block at least, as the
+/// archive's charge does.
+fn disk_charge(dir: &Path) -> u64 {
+    let mut total = 0;
+    for e in std::fs::read_dir(dir).unwrap() {
+        let e = e.unwrap();
+        let meta = e.metadata().unwrap();
+        total += if meta.is_dir() {
+            archive::DIR_CHARGE + disk_charge(&e.path())
+        } else {
+            archive::file_charge(meta.len())
+        };
+    }
+    total
+}
+
+/// Review C2: the cache counts what its packs take on disk (a block a file
+/// and a directory at least), not their bytes, so eviction sees it.
+#[test]
+fn the_cache_counts_the_disk_charge() {
+    let root = tempfile::tempdir().unwrap();
+    let mut cache = DownloadCache::open(root.path()).unwrap();
+    let a = archive_of(&skin_pack("x", 60));
+    let path = install(&mut cache, &a, "x");
+    assert_eq!(cache.total_bytes(), disk_charge(&path));
+    drop(cache);
+    std::fs::remove_file(root.path().join("index.ron")).unwrap();
+    let cache = DownloadCache::open(root.path()).unwrap();
+    assert_eq!(cache.total_bytes(), disk_charge(&path), "adopted at its charge");
+}
+
+/// Review C1 and C2: hostile archives never install and leave nothing
+/// behind: a drive prefix, a device name, names alike but for case, deep
+/// paths, and the review's measured shape (a valid skin carrying hundreds
+/// of deep empty files).
+#[test]
+fn hostile_archives_never_install() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("cache");
+    let mut cache = DownloadCache::open(&dir).unwrap();
+    let deep = "d/".repeat(12) + "x";
+    let mut many = skin_pack("x", 61);
+    for i in 0..400 {
+        many = many.with(&format!("{}{i}", "q/".repeat(7)), Vec::new());
+    }
+    let cases = [
+        ("a drive", skin_pack("x", 62).with("C:/evil.dll", vec![1u8])),
+        ("a device", skin_pack("x", 63).with("NUL.png", vec![1u8])),
+        ("case", skin_pack("x", 64).with("Skin.png", vec![1u8])),
+        ("deep", skin_pack("x", 65).with(&deep, vec![1u8])),
+        ("many deep files", many),
+    ];
+    for (what, fs) in cases {
+        let a = raw_archive_of(&fs);
+        put(&mut cache, &a);
+        let r = cache.install(&a.hash, "x", PackKind::Skin, SKIN_LIMITS);
+        assert!(matches!(r, Err(InstallError::Archive(_))), "{what}: {r:?}");
+        assert_clean(&dir, &a);
+    }
+    assert_eq!(cache.total_bytes(), 0);
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1, "nothing outside the cache");
 }

@@ -440,7 +440,7 @@ fn the_worker_hashes_archives_and_stops() {
         hash: hash.clone(),
         id: "level-w".into(),
         kind: PackKind::Level,
-        limit: 1 << 20,
+        limits: rl_pack::archive::Limits { bytes: 1 << 20, ..rl_pack::archive::Limits::PACK },
     });
     let mut done = vec![];
     while done.len() < 3 {

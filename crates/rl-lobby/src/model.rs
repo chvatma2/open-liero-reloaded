@@ -17,6 +17,10 @@ pub const PROOF_TIMEOUT_US: u64 = 10_000_000;
 /// At most `CHAT_LINES` chat lines per member within `CHAT_WINDOW_US`.
 pub const CHAT_LINES: usize = 5;
 pub const CHAT_WINDOW_US: u64 = 5_000_000;
+/// At most `LOOK_CHANGES` look changes per member within `LOOK_WINDOW_US`;
+/// more are ignored.
+pub const LOOK_CHANGES: usize = 4;
+pub const LOOK_WINDOW_US: u64 = 1_000_000;
 /// A member's download progress changes at most this often in the lobby.
 pub const DOWNLOAD_EVERY_US: u64 = 250_000;
 /// How long the host stays in `Phase::Results` before gathering again.

@@ -302,7 +302,7 @@ impl Fetcher {
             hash: item.hash.clone(),
             id: item.id.clone(),
             kind: pack_kind(item.kind),
-            limit: archive_limit(item.kind),
+            limits: rl_content::archive_limits(pack_kind(item.kind)),
         });
     }
 

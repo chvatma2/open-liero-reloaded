@@ -68,6 +68,8 @@ struct Rec {
     ping_ms: Option<u16>,
     /// When its last chat lines were relayed (at most `CHAT_LINES`).
     chat: VecDeque<u64>,
+    /// When its last look changes were taken (at most `LOOK_CHANGES`).
+    looks: VecDeque<u64>,
 }
 
 impl Rec {
@@ -243,6 +245,7 @@ impl LobbyHost {
                 admin: true,
                 ping_ms: None,
                 chat: VecDeque::new(),
+                looks: VecDeque::new(),
             });
             host.me = Some(id);
         }
@@ -834,6 +837,7 @@ impl LobbyHost {
             admin: self.cfg.admins.contains(&key),
             ping_ms: None,
             chat: VecDeque::new(),
+            looks: VecDeque::new(),
         });
         self.set_look(id, look);
         self.publish();
@@ -891,6 +895,16 @@ impl LobbyHost {
                 self.drop_member(id, Gone::Kicked { ban: Ban::No })
             }
             ToHost::SetLook(look) => {
+                // Each change rebuilds the content list and may start a
+                // skin fetch: beyond the window's changes, ignored.
+                let window = &mut self.members[i].looks;
+                while window.front().is_some_and(|&t| now_us.saturating_sub(t) >= LOOK_WINDOW_US) {
+                    window.pop_front();
+                }
+                if window.len() >= LOOK_CHANGES {
+                    return;
+                }
+                window.push_back(now_us);
                 self.set_look(id, &look);
                 self.publish();
             }

@@ -166,7 +166,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   sans-IO (time is `now_us`). `PROMPT_BYTES`, the rates (`PEER_RATE`,
   `HOST_RATE`, `MATCH_RATE`, `SKIN_RATE`), `QUEUED`, `SILENCE_US` (10 s);
   `pack_kind(ItemKind)`, `archive_limit` (`MAX_SKIN_ARCHIVE` for skins,
-  else `MAX_ARCHIVE`).
+  else `MAX_ARCHIVE`: `rl_content::archive_limits(kind).bytes`; an
+  install is held to the whole `archive_limits`).
   - `serve.rs`, `Server::new(rate)`: `offer(hash, Arc<PackArchive>)`,
     `withdraw`, `receive(peer, Want|Cancel)`, `peer_left`, `poll(now_us,
     room, out)`. One transfer per receiver, the first queued want that is
@@ -247,7 +248,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       (worker results, offers, fetched skins, peers leaving). A member offers its own
       skin with a one-item `List` (ruling R6-1: id and hash its look's);
       a skin the host lacks is fetched from that member (one fetch per
-      hash), installed, then listed and served to the others. Its own
+      hash; a new fetch from one member at most every
+      `SKIN_FETCH_EVERY_US`, 5 s: an offer waits, and only the look worn
+      then counts), installed, then listed and served to the others. Its own
       look's skin hash is filled from its content.
     - **Client**: its look's skin hash filled once hashed (in `Hello`
       when it comes first, else a `SetLook`); its skin's archive offered

@@ -147,9 +147,14 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   `started`, a use counter; `append` only at `offset == have`; `partial`;
   `partial_bytes`; `trim_partials(keep, limit)` discards the oldest
   partials not in `keep` while packs plus partials exceed `limit`).
-  `install(hash, id, kind, limit)` checks the partial's size against
-  `limit` (`MAX_SKIN_ARCHIVE` for skins) and its archive SHA-256, decodes
-  into `tmp/`, then checks content hash, id, kind and `validate`; any
+  `install(hash, id, kind, limits)` checks the partial's size against
+  `limits.bytes` and its archive SHA-256, decodes into `tmp/` within
+  `limits` (`archive_limits(kind)`: `SKIN_LIMITS` for skins, 64 KiB,
+  16 files, depth 2, 256 KiB on disk; else `Limits::PACK`), then checks
+  content hash, id, kind and `validate`; an entry's bytes (and
+  `total_bytes`, what eviction counts) are its **disk charge**
+  (`rl_pack::archive::file_charge` a file, `DIR_CHARGE` a directory: real
+  disk use, review C2), the same when `open` adopts a pack; any
   failure removes `tmp/` and the partial (an incomplete partial stays).
   It is `begin_install` + `PendingInstall::verify` (needs no cache, so a
   worker verifies without holding the cache's mutex) + `finish_install`.

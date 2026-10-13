@@ -50,14 +50,21 @@ header's size); content hashing; validation.
   may lack although OLX has it; version 3 the mod's `restrictions.ron`; version 4 the
   level's `thumb.png` (plan 7 G6).
 
-- **Archive** (`archive`, plan 11 N29): `encode(src)` / `decode(reader, sink, limit)`
+- **Archive** (`archive`, plan 11 N29): `encode(src)` / `decode(reader, sink, &Limits)`
   of the `.rlpk` format (`RLPK1\n`, `u32` count, then per file sorted by path a
   `u16` path length, the path, a `u64` length and the bytes; no compression;
   deterministic). `decode` streams (one file in memory), refuses bad paths
   (backslash, `..`, absolute, a name starting with `.`, over `MAX_ARCHIVE_PATH`,
   a name `rl_vfs::non_portable` refuses, two paths or directories alike but
   for ASCII case, a file where a directory is; `encode` refuses the same),
-  duplicates and disorder, more than `MAX_ARCHIVE_FILES`, a total over `limit`
-  and bytes after the last file; it never panics (proptest).
+  duplicates and disorder, more than `MAX_ARCHIVE_FILES`, and bytes after the last
+  file; it never panics (proptest). `Limits { bytes, disk, files, depth }`
+  (the caller's; `Limits::PACK`: `MAX_ARCHIVE`, `MAX_UNPACKED` 512 MiB,
+  `MAX_ARCHIVE_FILES`, `MAX_DEPTH` 8) bounds the archive's bytes, files and
+  path depth and the unpacked **disk charge** (review C2): `file_charge(len)`
+  (rounded up to 4 KiB blocks, plus a block) per file and `DIR_CHARGE` (a
+  block) per directory, charged before each file is written; directories
+  are at most the file count and `MAX_DIRS` (512). `decode` returns
+  `Unpacked { files, disk }`; `encode` refuses what `Limits::PACK` would.
 
 Test: `cargo nextest run -p rl-pack`.

@@ -8,13 +8,12 @@ use std::path::Path;
 use std::time::Duration;
 
 use rl_audio::Audio;
-use rl_content::{Content, DownloadCache, MAX_SKIN_ARCHIVE, MatchOptions, Player};
+use rl_content::{Content, DownloadCache, MatchOptions, Player};
 use rl_data::manifest::PackKind;
 use rl_game::session::{Driver, Session};
 use rl_game::setup;
 use rl_game::shell::{Shell, ShellConfig};
 use rl_online::content::PackArchive;
-use rl_pack::archive::MAX_ARCHIVE;
 use rl_scene::Interpolation;
 use rl_sim::Keys;
 use rl_ui::{Profiles, Screen, Settings, Store, UiAction, UiState};
@@ -59,8 +58,7 @@ fn install(cache_dir: &Path, content: &Content, id: &str, kind: PackKind) -> Str
     let mut cache = DownloadCache::open(cache_dir).unwrap();
     let size = archive.bytes.len() as u64;
     cache.append(&hash, &archive.sha, size, 0, &archive.bytes).unwrap();
-    let limit = if kind == PackKind::Skin { MAX_SKIN_ARCHIVE } else { MAX_ARCHIVE };
-    cache.install(&hash, id, kind, limit).unwrap();
+    cache.install(&hash, id, kind, rl_content::archive_limits(kind)).unwrap();
     hash
 }
 

@@ -25,7 +25,7 @@ use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
 use rl_data::manifest::PackKind;
-use rl_pack::archive::{self, ArchiveError};
+use rl_pack::archive::{self, ArchiveError, Limits};
 use rl_pack::{Severity, content_hash, read_manifest, validate};
 use rl_vfs::DirFs;
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,19 @@ use sha2::{Digest, Sha256};
 pub const CACHE_BYTES: u64 = 1 << 30;
 /// The most bytes a skin's archive may have.
 pub const MAX_SKIN_ARCHIVE: u64 = 64 * 1024;
+/// What a skin's archive may hold (a skin has 4 files): `MAX_SKIN_ARCHIVE`
+/// bytes, 16 files, paths of at most 2 components, and 256 KiB of disk
+/// charge (the most 16 such files and their directories can charge).
+pub const SKIN_LIMITS: Limits = Limits { bytes: MAX_SKIN_ARCHIVE, disk: 256 << 10, files: 16, depth: 2 };
+
+/// What the archive of a pack of `kind` may hold: `SKIN_LIMITS` for a
+/// skin, `Limits::PACK` otherwise.
+pub fn archive_limits(kind: PackKind) -> Limits {
+    match kind {
+        PackKind::Skin => SKIN_LIMITS,
+        _ => Limits::PACK,
+    }
+}
 
 const INDEX: &str = "index.ron";
 
@@ -97,7 +110,7 @@ pub struct PendingInstall {
     hash: String,
     id: String,
     kind: PackKind,
-    limit: u64,
+    limits: Limits,
     partial: Partial,
     part: PathBuf,
     tmp: PathBuf,
@@ -123,16 +136,18 @@ fn valid_hash(h: &str) -> bool {
     h.len() == 64 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// The bytes of the regular files under `dir` (symlinks are not followed).
+/// The disk charge of what is under `dir`, as the archive charges it
+/// (`archive::file_charge` a regular file, `archive::DIR_CHARGE` and its
+/// contents a directory; symlinks are not followed): what eviction counts.
 fn dir_bytes(dir: &Path) -> u64 {
     let Ok(rd) = fs::read_dir(dir) else { return 0 };
     rd.filter_map(Result::ok)
         .map(|e| match e.file_type() {
-            Ok(t) if t.is_dir() => dir_bytes(&e.path()),
-            Ok(t) if t.is_file() => e.metadata().map_or(0, |m| m.len()),
+            Ok(t) if t.is_dir() => archive::DIR_CHARGE.saturating_add(dir_bytes(&e.path())),
+            Ok(t) if t.is_file() => archive::file_charge(e.metadata().map_or(0, |m| m.len())),
             _ => 0,
         })
-        .sum()
+        .fold(0, u64::saturating_add)
 }
 
 /// The download cache. See the module documentation.
@@ -352,8 +367,9 @@ impl DownloadCache {
     }
 
     /// Verifies the complete partial download of `hash` and moves it into
-    /// the cache: its archive's SHA-256 and size (`limit`, the archive's
-    /// bytes) first, then the archive's bounds while it is unpacked into
+    /// the cache: its archive's SHA-256 and size (`limits.bytes`) first,
+    /// then the archive's bounds (`limits`: files, depth, disk charge;
+    /// `archive_limits(kind)`) while it is unpacked into
     /// `tmp/`, then the content hash, the manifest's `id` and `kind`, and
     /// `rl_pack::validate`. A failure removes the unpacked files and the
     /// partial. A partial that is not yet complete stays (and is an error).
@@ -364,9 +380,9 @@ impl DownloadCache {
         hash: &str,
         id: &str,
         kind: PackKind,
-        limit: u64,
+        limits: Limits,
     ) -> Result<PathBuf, InstallError> {
-        let pending = self.begin_install(hash, id, kind, limit)?;
+        let pending = self.begin_install(hash, id, kind, limits)?;
         let verified = pending.verify();
         self.finish_install(pending, verified)
     }
@@ -377,7 +393,7 @@ impl DownloadCache {
         hash: &str,
         id: &str,
         kind: PackKind,
-        limit: u64,
+        limits: Limits,
     ) -> Result<PendingInstall, InstallError> {
         if !valid_hash(hash) {
             return Err(io("install", "not a content hash"));
@@ -393,7 +409,7 @@ impl DownloadCache {
             hash: hash.into(),
             id: id.into(),
             kind,
-            limit,
+            limits,
             partial: p,
             part: self.part_path(hash),
             tmp: self.dir.join("tmp").join(format!("{hash}-{}", self.installs)),
@@ -540,11 +556,11 @@ impl DownloadCache {
 
 impl PendingInstall {
     /// Unpacks the partial into its `tmp/` directory and verifies it (see
-    /// `DownloadCache::install`); returns the unpacked pack's size.
+    /// `DownloadCache::install`); returns the unpacked pack's disk charge.
     pub fn verify(&self) -> Result<u64, InstallError> {
-        let (p, limit, tmp, hash) = (&self.partial, self.limit, self.tmp.as_path(), self.hash.as_str());
-        if p.have > p.size || p.have > limit {
-            return Err(ArchiveError::TooLarge(limit).into());
+        let (p, limits, tmp, hash) = (&self.partial, self.limits, self.tmp.as_path(), self.hash.as_str());
+        if p.have > p.size || p.have > limits.bytes {
+            return Err(ArchiveError::TooLarge(limits.bytes).into());
         }
         let file = fs::File::open(&self.part).map_err(|e| io("partial", e))?;
         let mut sha = Sha256::new();
@@ -564,7 +580,7 @@ impl PendingInstall {
         fs::create_dir_all(tmp).map_err(|e| io("tmp", e))?;
         let file = fs::File::open(&self.part).map_err(|e| io("partial", e))?;
         let mut sink = DirFs::new(tmp);
-        archive::decode(&mut BufReader::new(file), &mut sink, limit)?;
+        let unpacked = archive::decode(&mut BufReader::new(file), &mut sink, &limits)?;
         let src = DirFs::new(tmp);
         let content = content_hash(&src).map_err(|e| InstallError::Invalid(e.to_string()))?;
         if content != hash {
@@ -582,6 +598,6 @@ impl PendingInstall {
         if !errors.is_empty() {
             return Err(InstallError::Invalid(errors.join("; ")));
         }
-        Ok(dir_bytes(tmp))
+        Ok(unpacked.disk)
     }
 }

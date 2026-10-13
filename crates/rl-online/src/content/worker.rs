@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use rl_content::DownloadCache;
 use rl_data::manifest::PackKind;
+use rl_pack::archive::Limits;
 use rl_vfs::DirFs;
 use sha2::{Digest, Sha256};
 
@@ -39,7 +40,7 @@ pub enum Job {
     /// Install the complete partial download of `hash`
     /// (`DownloadCache::install`; the cache is locked only to start and to
     /// finish, not while it verifies).
-    Install { hash: String, id: String, kind: PackKind, limit: u64 },
+    Install { hash: String, id: String, kind: PackKind, limits: Limits },
     /// The content hash of pack `id` in `dir`.
     Hash { id: String, dir: PathBuf },
 }
@@ -156,9 +157,9 @@ fn run(cache: Option<&Mutex<DownloadCache>>, job: Job) -> Done {
             let archive = archive(&hash, DirFs::new(dir));
             Done::Archived { hash, archive }
         }
-        Job::Install { hash, id, kind, limit } => {
+        Job::Install { hash, id, kind, limits } => {
             let dir = match cache {
-                Some(cache) => install(cache, &hash, &id, kind, limit),
+                Some(cache) => install(cache, &hash, &id, kind, limits),
                 None => Err("there is no download cache".to_string()),
             };
             Done::Installed { hash, dir }
@@ -185,10 +186,10 @@ fn install(
     hash: &str,
     id: &str,
     kind: PackKind,
-    limit: u64,
+    limits: Limits,
 ) -> Result<PathBuf, String> {
     let lock = || cache.lock().map_err(|_| "the download cache failed".to_string());
-    let pending = lock()?.begin_install(hash, id, kind, limit).map_err(|e| e.to_string())?;
+    let pending = lock()?.begin_install(hash, id, kind, limits).map_err(|e| e.to_string())?;
     let verified = pending.verify();
     lock()?.finish_install(pending, verified).map_err(|e| e.to_string())
 }

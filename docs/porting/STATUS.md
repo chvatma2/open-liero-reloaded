@@ -864,6 +864,13 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   `DirFs` writes only portable names and builds native paths only from
   plain components, on every platform; the OLX mod importer renames a
   weapon id that is a device name and skips a non-portable asset name.
+  What an archive unpacks to is bounded (final review C2: a 61 KB skin of
+  deep empty files took 111 MB on disk): at most 8 components a path, at
+  most as many directories as files and 512, and a disk charge (a file's
+  length rounded up to 4 KiB blocks plus a block, a block a directory) of
+  at most 512 MiB, charged before each file is written; a skin's archive
+  holds at most 16 files of depth 2 and 256 KiB of charge
+  (`SKIN_LIMITS`).
 - **N30 - a content-addressed cache.** Downloads live in
   `<cache>/packs/<content hash>/`, one pack directory each, with
   `<cache>/index.ron` (each entry's id, kind, bytes and a use counter).
@@ -884,7 +891,9 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   is held (another server on the same data directory) logs a warning and
   runs without one: it still serves its own packs, and members' skins it
   lacks draw as the default skin. The Options' Online tab shows the
-  cache's size and clears it, refused while an online game is on.
+  cache's size and clears it, refused while an online game is on. The
+  cache counts each pack by its disk charge (N29), not its bytes, so the
+  budget and eviction see real disk use (final review C2).
 - **N31 - skins by hash.** `Look` gains `skin_hash` (64 lowercase hex).
   A client offers its own skin to the host with a one-item content list
   (R6-1; accepted only for its look's id and hash); the host fetches a
@@ -895,7 +904,9 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   id: local packs win (PF11-5), and a skin is never taken under the id
   of a required pack. Skins never block the ready mark: one that cannot
   be fetched draws as the default skin. Mod, level and theme are
-  *required*.
+  *required*. A host starts at most one new skin fetch from a member
+  every 5 s (an offer waits; only the look then worn counts), and takes
+  at most 4 `SetLook`s a second from a member (final review C2).
 - **N32 - transfers.** Reliable-channel tag `TAG_CONTENT = 3` carries
   `ContentMsg` both ways (`List`, `Want`, `Begin`, `Chunk`,
   `Unavailable`, `Cancel`); chunks are 32 KiB. A peer serves one archive
