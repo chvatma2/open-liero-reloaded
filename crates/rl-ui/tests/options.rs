@@ -431,3 +431,24 @@ fn capture_swallows_the_captured_key() {
     assert_eq!(keys(&h, Action::Jump), [Binding::Key(KeyCode::AltLeft), Binding::Key(KeyCode::Space)]);
     assert_eq!(h.state().ui.screen(), Screen::Options);
 }
+
+/// The chat key (online) is rebound in the Keys tab; the game's keys are refused.
+#[test]
+fn options_rebind_the_chat_key() {
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
+    open_keys(&mut h);
+    assert_eq!(h.state().ui.settings().online.chat_key, KeyCode::KeyT);
+    h.get_by_label("Change chat key").click();
+    h.run();
+    h.get_by_label_contains("Press a key for Chat");
+    press(&mut h, KeyCode::F2);
+    h.get_by_label_contains("F2 is the game's");
+    assert_eq!(h.state().ui.settings().online.chat_key, KeyCode::KeyT);
+    h.get_by_label("Change chat key").click();
+    h.run();
+    press(&mut h, KeyCode::KeyY);
+    h.run();
+    assert_eq!(h.state().ui.settings().online.chat_key, KeyCode::KeyY);
+    assert!(matches!(h.state().commands.last(), Some(AppCommand::SaveSettings(_))));
+    assert_eq!(*h.state().ui.bindings(), Bindings::olx(), "the action keys are untouched");
+}

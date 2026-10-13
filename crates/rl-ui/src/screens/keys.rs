@@ -22,6 +22,8 @@ use crate::state::{UiAction, UiState};
 pub(super) struct View {
     /// The action the open capture is for.
     action: Option<Action>,
+    /// The open capture is for the online chat key.
+    chat: bool,
     /// A captured input other actions have, waiting for the player's choice.
     conflict: Option<(Action, Binding)>,
     /// Why the last captured key was not bound.
@@ -45,11 +47,18 @@ pub(super) fn show(
     let before = state.bindings().clone();
     let mut b = before.clone();
     // The capture the app fed: the input, or nothing yet.
-    if capture.is_some() != v.action.is_some() {
+    if capture.is_some() != (v.action.is_some() || v.chat) {
         *capture = None;
         v.action = None;
+        v.chat = false;
     }
-    if let (Some(c), Some(action)) = (capture.as_ref(), v.action)
+    if let (Some(c), true) = (capture.as_ref(), v.chat)
+        && let Some(input) = c.result()
+    {
+        *capture = None;
+        v.chat = false;
+        take_chat(v, input, out);
+    } else if let (Some(c), Some(action)) = (capture.as_ref(), v.action)
         && let Some(input) = c.result()
     {
         *capture = None;
@@ -75,6 +84,20 @@ pub(super) fn show(
                 ui.horizontal(|ui| row(ui, &mut b, a, d, capture, v));
             }
             ui.end_row();
+        }
+    });
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label("Chat (online matches)");
+        let key = key_name(state.settings().online.chat_key);
+        let r = ui.add(Button::new(key).small());
+        let label = "Change chat key";
+        r.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+        if r.on_hover_text(label).clicked() {
+            *capture = Some(Capture::new(Device::Keyboard));
+            v.chat = true;
+            v.action = None;
+            v.note = None;
         }
     });
     if let Some(n) = &v.note {
@@ -156,12 +179,29 @@ fn take(b: &mut Bindings, v: &mut View, action: Action, input: Binding) {
     }
 }
 
+/// A captured input for the chat key: any key but the game's.
+fn take_chat(v: &mut View, input: Binding, out: &mut Vec<UiAction>) {
+    let Binding::Key(k) = input else { return };
+    if let Some((_, what)) = GAME_KEYS.iter().find(|(g, _)| *g == k) {
+        if k != KeyCode::Escape {
+            v.note = Some(format!("{} is the game's ({what}): choose another key.", key_name(k)));
+        }
+        return;
+    }
+    out.push(UiAction::SetChatKey(k));
+}
+
 /// OLX's "Input for:" box, until the app captured an input (Esc cancels).
 fn capture_dialog(ui: &mut Ui, capture: &mut Option<Capture>, v: &mut View) {
-    let (Some(c), Some(action)) = (capture.as_ref(), v.action) else { return };
+    let Some(c) = capture.as_ref() else { return };
+    let name = match (v.action, v.chat) {
+        (Some(a), _) => a.name(),
+        (None, true) => "Chat",
+        (None, false) => return,
+    };
     let ask = match c.device() {
-        Device::Keyboard => format!("Press a key for {}", action.name()),
-        Device::Gamepad => format!("Press a gamepad button or push a stick for {}", action.name()),
+        Device::Keyboard => format!("Press a key for {name}"),
+        Device::Gamepad => format!("Press a gamepad button or push a stick for {name}"),
     };
     let r = Modal::new(Id::new("options capture")).show(ui.ctx(), |ui| {
         ui.set_min_width(320.0);
@@ -177,6 +217,7 @@ fn capture_dialog(ui: &mut Ui, capture: &mut Option<Capture>, v: &mut View) {
     if r.inner || r.should_close() || esc {
         *capture = None;
         v.action = None;
+        v.chat = false;
     }
 }
 

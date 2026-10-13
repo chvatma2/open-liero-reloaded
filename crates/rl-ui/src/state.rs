@@ -128,6 +128,8 @@ pub enum UiAction {
     SetAudio(AudioSettings),
     /// The options' key bindings.
     SetBindings(Bindings),
+    /// The options' online chat key (a key the game keeps is refused).
+    SetChatKey(rl_input::KeyCode),
     SetMatch(MatchPrefs),
     SetProfiles(Profiles),
     /// The app: the match or sandbox asked for is ready.
@@ -484,6 +486,14 @@ impl UiState {
                 let mut out = self.apply_bindings_if_changed(&before);
                 out.push(self.save_settings());
                 out
+            }
+            UiAction::SetChatKey(k) => {
+                let reserved = crate::settings::GAME_KEYS.iter().any(|(g, _)| *g == k);
+                if reserved || k == self.settings.online.chat_key {
+                    return Vec::new();
+                }
+                self.settings.online.chat_key = k;
+                vec![self.save_settings()]
             }
             UiAction::SetMatch(mut m) => {
                 m.sanitize();

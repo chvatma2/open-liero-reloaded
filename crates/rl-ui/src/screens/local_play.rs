@@ -248,7 +248,11 @@ pub(super) fn rules(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) -> bool {
         if changed {
             r.time_limit = if on { TIME_LIMIT_ON } else { -1.0 };
         }
-        if on {
+        if on && !ui.is_enabled() {
+            // Read-only (a client's lobby): the slider's range would clamp
+            // the host's value (a 0.2-minute limit shown as 0.50).
+            ui.label(format!("{} min", r.time_limit));
+        } else if on {
             ui.add(Slider::new(&mut r.time_limit, TIME_LIMIT_RANGE).step_by(0.5).suffix(" min"));
         } else {
             ui.label(RichText::new("off").weak());

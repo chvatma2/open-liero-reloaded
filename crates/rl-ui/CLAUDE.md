@@ -175,6 +175,8 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   never one of `GAME_KEYS`: sanitized): Enter sends (`LobbyChat`) and
   closes, Esc or a click elsewhere closes, and Esc there is not Back
   (`show`'s typing check covers InGame); the match's menu closes it.
+  The Keys tab rebinds it (`UiAction::SetChatKey`, refusing `GAME_KEYS`).
+  A read-only lobby (a client) shows the time limit as text, not a slider.
 - **Import job** (`import.rs`, plan 7 task 7): `ImportJob::spawn(path,
   packs)` runs `rl_content::import::discover` and `import` (no prune,
   revision `LOCAL_REVISION`) on a thread named `olx-import` and returns at

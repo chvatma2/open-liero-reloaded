@@ -360,6 +360,16 @@ fn a_client_sees_the_setup_read_only() {
 }
 
 #[test]
+fn a_client_sees_the_hosts_true_time_limit() {
+    let mut h = harness();
+    let mut v = lobby_view(false);
+    v.setup.rules.time_limit = 0.2;
+    in_lobby(h.state_mut(), v);
+    settle(&mut h);
+    h.get_by_label("0.2 min");
+}
+
+#[test]
 fn weapons_random_and_the_weapon_screen() {
     let mut h = lobby(false);
     h.get_by_label("Random").click();
