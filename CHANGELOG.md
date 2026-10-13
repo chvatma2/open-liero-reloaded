@@ -8,6 +8,9 @@ All notable changes to rust-liero are recorded here. The format follows
 
 ### Changed
 
+- Disk use of builds: dependencies are built without debug info in dev,
+  tests are one binary per crate, and `cargo xtask check` sweeps
+  superseded builds automatically.
 - Release builds use whole-program optimisation (fat LTO, one codegen
   unit). Small hot paths got up to 12 % faster (32 worms' tick, the draw
   list); the heavy ticks and frames are unchanged within noise. A release
@@ -39,6 +42,17 @@ All notable changes to rust-liero are recorded here. The format follows
 
 ### Added
 
+- Online play from the menus: host a game, find one in the LAN list or
+  join by address; a lobby with chat, ready marks, spectators, loadouts,
+  kick and ban; matches that run with rollback netcode. See `docs/online.md`.
+- The dedicated server `rl-server`: a map rotation, bots filling empty
+  seats, admin chat commands, bans kept in a file, LAN announcement.
+- `rl-game --net-sim <profile>`: feel a network (lan, good, typical, bad,
+  awful) against bots in one process.
+- The network overlay (F3): ping, input delay, rollback and loss.
+- Online replays: every online match saves its replay, equal on every peer;
+  a desync saves a bundle.
+- The Keys tab sets the online chat key (T by default).
 - The netcode core for online play (not yet playable from the game):
   rollback with the host ordering inputs, spectators, desync detection and
   repair, tested by whole online matches with bots over simulated networks

@@ -770,6 +770,61 @@ rulings (`docs/superpowers/plans/2026-10-12-plan-9-netcode-core.md`):
   blood stains and the level's dirt art inside them (final review, ruling
   F-B; an exact colour undo is left to plan 10).
 
+## Online play decisions (plan 10)
+
+Decided in `docs/superpowers/plans/2026-10-12-plan-10-online-play.md` ("Decisions this plan makes") and by rulings during its
+execution.
+
+- **N15:** the native WebRTC stack is `str0m` (sans-IO, clock-injected,
+  `rust-crypto`); it still compiles `aws-lc-sys` (C) through dimpl's rcgen,
+  needs no system C library and cross-builds with mingw (ruling T1-C).
+- **N16:** a peer's ICE candidates are its UDP socket's port on the IP its
+  signalling TCP connection uses, in both directions; no STUN until plan 12.
+  LAN and direct play, a forwarded port included, need nothing more.
+- **N17 (as amended by T1-A):** both data channels are pre-negotiated:
+  `inputs` id 0, unordered with a 1 ms packet lifetime (effectively
+  unreliable: `MaxRetransmits(0)` triggers a FORWARD-TSN/SACK storm in
+  sctp-proto 0.10.5) and `control` id 1, reliable and ordered. Browsers use
+  the same ids (plan 13).
+- **N18:** a `rl_netcode::Session` lives for one match; the replay is made
+  after the match on a worker thread by re-simulating the confirmed inputs.
+- **N19:** each player picks a loadout in the lobby or keeps "Random"; the
+  host's match setup carries every slot's choice, so every peer builds the
+  identical world.
+- **N20:** after each `advance` the game rebuilds the colour image's
+  restored areas from the final terrain, then applies the advance's terrain
+  edits in tick order (inexact only inside a corrected area's art, F-B).
+- **N21:** while an online lobby or match exists the game keeps polling the
+  network and ticking when its window is hidden or minimised (no rendering);
+  the hidden window's event loop uses `ControlFlow::WaitUntil` every 4 ms.
+- **N22 (T4-A):** a signalling offer's candidates whose IP differs from the
+  TCP peer's are filtered out, not refused (forged candidates cannot aim the
+  host at a third party); a NAT'd client joining a forwarded host connects
+  through a peer-reflexive candidate.
+- **N23 (T6-A):** a forced start (spec §7.2) is `LobbyHost::force_start`:
+  players not ready, or without a complete setup, spectate that match. The
+  Lobby has a "Force start" button for the host.
+- **N24 (T6-B):** `MAX_LOBBY` is 60 KiB, with a worst-case encoding test;
+  `rl-net`'s reliable cap is `max(MAX_CONTROL, MAX_LOBBY)` plus the tag.
+- **N25 (T13-A):** `rl-server` depends on `ctrlc` 3.5.2 (termination
+  feature) for a clean shutdown on Ctrl+C or SIGTERM (everyone gets `Bye`).
+- **N26 (T13-B):** `/ban` bans the key only, `/banip` the key and the
+  address, `/unban` lifts either; the game's Ban button bans the key only
+  (spec §5.2). Bans are soft: a banned player returns with a new key.
+- **N27 (T13-C):** players' ready marks survive setup changes that only
+  touch bots.
+- **N28 (T14-A):** `MatchEndWire` carries the host's last tick, so a match
+  ends at the host's tick on every peer and the replays are equal (after
+  `/next` the clients had run 200 ticks past the server).
+- **Note:** replays and bot-only games no longer count worm 0's kills as the
+  player's; a worm a mode adds mid-match gets the default look.
+- **Note:** when the host's clock is frozen its clients need about ten
+  jumps (about 2.5 s of stall episodes, bounded by `MAX_JUMP_BACK`) to
+  recover; a running host clock catches up through `MAX_CATCHUP`.
+- **Note (disk chore):** dependencies build without line tables in the dev
+  profile, tests are one binary per crate, and `cargo xtask check` sweeps
+  superseded builds automatically.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

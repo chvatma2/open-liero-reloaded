@@ -1,7 +1,7 @@
 # Networking: Design
 
 - **Date:** 2026-10-12
-- **Status:** Approved 2026-10-12; plan 9 implemented
+- **Status:** Approved 2026-10-12; plan 9 implemented; plan 10 implemented
 - **Builds on:** `2026-10-10-foundation-and-local-play-design.md` (§12.2, the
   networking constraints), `2026-10-11-performance-envelope-design.md` (the
   rollback headroom).
