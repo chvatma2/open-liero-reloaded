@@ -290,8 +290,10 @@ assets other than its own, a pack level's and a generated one's.
 `tests/hits.rs` (check): in seeded bot matches of both mods no projectile
 hit or explosion injury comes from outside the struck worm's current hit
 geometry (`World::hit_audit`), some do with `SimSettings::olx_quirks` on,
-and the investigation's phantom self-kill (Classic, Dirt Level, 2 bots,
-seed 2, tick 4629) happens only with it on. `tests/deaths.rs` (check):
+and the investigation's phantom kill (Classic, Dirt Level, 2 bots, seed
+2: the control finds the first kill by a stale hit, tick 4629 in 2026-10;
+a match that no longer has one fails the control, saying so) happens only
+with it on. `tests/deaths.rs` (check):
 every kill of seeded bot matches, by a lethal hit or at exactly 0 health,
 comes with its death sound, the victim's 7 gibs and 50 rounds of blood
 right after it (`Event::death`), the presentation spawns every one of

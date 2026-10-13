@@ -84,9 +84,17 @@ fn mw_hits_test_the_worms_current_position() {
     hits_are_current(&specs);
 }
 
-/// The investigation's match: with OLX's quirks, worm 1 dies by its own
-/// pellets at tick 4629 while about 30 px from every one of them (a stale
-/// hit); in play that phantom kill does not happen.
+/// The investigation's match (Classic on Dirt Level, 2 bots, seed 2): with
+/// OLX's quirks a worm dies by a stale hit (in 2026-10, worm 1 by its own
+/// pellets at tick 4629, about 30 px from every one of them); in play that
+/// phantom kill does not happen, and no hit is stale.
+///
+/// The control finds the kill itself: the first kill in a tick whose hit
+/// audit counted a stale hit, whatever tick a later blessed change to the
+/// bots or the simulation moves it to. If a change leaves this match with
+/// no such kill, the control says so, not this fix: pick another seed or
+/// length where `play(.., true, ..)` shows one (print each tick's
+/// `world.hit_audit()` and `Kill` events) and update `spec` below.
 #[test]
 fn the_phantom_self_kill_of_the_investigation_is_gone() {
     let Some(c) = content() else { return };
@@ -95,31 +103,36 @@ fn the_phantom_self_kill_of_the_investigation_is_gone() {
         time_limit: 0.0,
         ..MatchSpec::new(CLASSIC, "olx-level-dirt-level", 2, 2, 4630)
     };
-    let phantom = |e: &rl_sim::Event| matches!(e.kind, EventKind::Kill { victim: 1, killer: 1 });
+    let stale = |a: HitAudit| a.projectile_stale + a.explosion_stale;
 
-    let mut before = HitAudit::default();
-    let mut olx_kill = None;
+    let mut before = 0;
+    let mut phantom = None;
     play(&c, &spec, true, |tick, world, out| {
-        if tick == 4628 {
-            before = world.hit_audit();
+        let now = stale(world.hit_audit());
+        if phantom.is_none() && now > before {
+            phantom = out.iter().find_map(|e| match e.kind {
+                EventKind::Kill { victim, killer } => Some((tick, victim, killer)),
+                _ => None,
+            });
         }
-        if tick == 4629 {
-            let a = world.hit_audit();
-            olx_kill = Some((
-                out.iter().any(phantom),
-                a.projectile_stale + a.explosion_stale > before.projectile_stale + before.explosion_stale,
-            ));
-        }
+        before = now;
     });
-    assert_eq!(olx_kill, Some((true, true)), "with OLX's quirks: the self-kill at tick 4629, by a stale hit");
+    let Some((tick, victim, killer)) = phantom else {
+        panic!(
+            "the control (OLX's quirks on) has no kill by a stale hit in {} ticks of this match any more: \
+             the match changed, not the fix; choose another one (see this test's doc comment)",
+            spec.ticks
+        );
+    };
+    eprintln!("with OLX's quirks: worm {victim} killed by {killer} at tick {tick}, by a stale hit");
 
     let mut m = Match::new(&c, &spec, &Options::default()).unwrap();
-    let mut kills = Vec::new();
-    for tick in 0..spec.ticks {
+    let mut again = false;
+    for t in 0..spec.ticks {
         m.advance();
-        kills.extend(m.events().iter().filter(|e| phantom(e)).map(|_| tick));
+        again |= t == tick && m.events().iter().any(|e| e.kind == EventKind::Kill { victim, killer });
     }
-    assert!(!kills.contains(&4629), "the phantom self-kill at tick 4629 happens in play: {kills:?}");
     let a = m.world().hit_audit();
-    assert_eq!((a.projectile_stale, a.explosion_stale), (0, 0), "{a:?}");
+    assert_eq!((a.projectile_stale, a.explosion_stale), (0, 0), "stale hits in play: {a:?}");
+    assert!(!again, "in play, worm {victim} is killed by {killer} at tick {tick} too");
 }
