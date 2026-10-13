@@ -106,7 +106,7 @@ and keeps the identity and the ban; a joiner on a server full of bots
 leaves the others ready (T13-C); a rotation the content cannot build
 skipped once per entry, then no more starts; non-admins refused with
 `NOT_ADMIN`, `/players` and `/help` for anyone; `/settings` and `/next`;
-`run` stopping on its flag with `Bye`; the example config parses and its
-rotation is in the committed packs. Unit tests: command parsing, `/unban` targets, hex keys,
+`run` stopping on its flag with `Bye`; the example and e2e configs parse and their
+rotations are in the committed packs. Unit tests: command parsing, `/unban` targets, hex keys,
 the bans and identity files, notices split at 200 characters, UTC dates.
 Cross-build: `cargo build --release --target x86_64-pc-windows-gnu -p rl-server`.

@@ -409,10 +409,11 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   AccessKit tree, enabled for the run: `widgets`, `click_point`; a pointer
   press and release injected into the next two frames' `RawInput`),
   `Key(name)` (egui and `App::key`, as the window delivers a key),
+  `Type(text)` (egui's text event to the focused field: click it first),
   `Press`/`Release(action)` (the input path), `WaitFor(screen)`,
   `Wait(frames)`, `Screenshot(name)` (`<shot dir>/<name>.png`, checked not
   blank: `sanity`), `Assert(Screen | Label | WindowSize | Speed | Playing
-  | TicksAtLeast)`, `Quit`, `WaitForExit` (the menus' Quit). A step that
+  | TicksAtLeast | Lobby(members: n))` (the online lobby's members), `Quit`, `WaitForExit` (the menus' Quit). A step that
   waits fails the run after `within` frames (`DEFAULT_WITHIN`); the game
   then exits with the error. Each step is a JSON line in `<shot
   dir>/autoplay.jsonl`, the last `pass` or `fail`. `--fake-clock` (only
@@ -425,7 +426,9 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   replay and screenshots every time. `--data-dir` (a data directory
   instead of the platform's) and `--no-sound` (no device) keep a run
   away from the user's files and speakers. `fixtures/autoplay/menus.ron`
-  (with `settings.ron`) is `cargo xtask e2e`'s script, on Xvfb in `full`.
+  (with `settings.ron`) is `cargo xtask e2e`'s script, on Xvfb in `full`;
+  `fixtures/autoplay/online.ron` its online run against `rl-server` (real
+  clock).
 - **Soak** (`tests/soak.rs`, `cargo xtask full`): `soak_sandbox_10_minutes_headless`
   plays 60 000 ticks of `Session` with chaos keys, an offscreen render every
   10th tick (main thread only) and a kira mock device for sound, and bounds

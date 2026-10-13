@@ -1,0 +1,60 @@
+// Online play end to end (plan 10 task 15, spec §7.1-7.2, §21 G7): the game
+// joins a dedicated server through the menus, chats in its lobby, readies,
+// plays the server's short match against a bot client, sees the results,
+// goes back to the lobby, leaves and quits. `xtask e2e` starts the server
+// (`fixtures/server/e2e.ron`, port 0) and `rl-cli net-client --bot`, waits
+// until the bot is in the lobby, replaces `{port}` with the server's port
+// and runs this with the real clock (the netcode keeps real time, so no
+// --fake-clock): every wait is in frames, so the long ones are generous.
+(
+    steps: [
+        (ui: WaitFor("Main")),
+        (ui: Click("Multiplayer")),
+        (ui: WaitFor("Multiplayer")),
+        (ui: Click("Address")),
+        (ui: Type("127.0.0.1:{port}")),
+        (ui: Screenshot("online-join")),
+        (ui: Click("Join")),
+        (ui: WaitFor("Lobby"), within: 3000),
+        // The game and the bot client: the dedicated server is no member.
+        (ui: Assert(Lobby(members: 2))),
+        (ui: Click("Chat")),
+        (ui: Type("hello from the e2e run")),
+        (ui: Key("Enter")),
+        // The server's echo of the chat line, then ready.
+        (ui: Wait(60)),
+        (ui: Screenshot("online-lobby")),
+        (ui: Click("Ready")),
+        // Both ready: the server starts its match.
+        (ui: WaitFor("InGame"), within: 6000),
+        (ui: Assert(Playing(true))),
+        // Keys held for about 3 s (frames: about 180 a second here).
+        (ui: Press(Right)),
+        (ui: Press(Shoot)),
+        (ui: Wait(270)),
+        (ui: Release(Shoot)),
+        (ui: Press(Jump)),
+        (ui: Wait(10)),
+        (ui: Release(Jump)),
+        (ui: Release(Right)),
+        (ui: Press(Left)),
+        (ui: Press(Shoot)),
+        (ui: Wait(270)),
+        (ui: Screenshot("online")),
+        (ui: Release(Shoot)),
+        (ui: Release(Left)),
+        // The 0.2-minute limit, then OLX's 3 s of "Game Over".
+        (ui: WaitFor("Results"), within: 20000),
+        (ui: Wait(10)),
+        (ui: Screenshot("online-results")),
+        (ui: Click("Back to lobby")),
+        (ui: WaitFor("Lobby")),
+        // Leave, and quit from the main menu.
+        (ui: Click("Back")),
+        (ui: WaitFor("Multiplayer")),
+        (ui: Click("Back")),
+        (ui: WaitFor("Main")),
+        (ui: Click("Quit")),
+        (ui: WaitForExit, within: 600),
+    ],
+)

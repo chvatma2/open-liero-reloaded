@@ -108,6 +108,9 @@ pub enum Do {
     Click(String),
     /// Taps a key ([`KEYS`]'s names) for the menus and the game.
     Key(String),
+    /// Types this text into the field that has the keyboard (click it
+    /// first), at its cursor: egui's text event, as the window gives it.
+    Type(String),
     /// Holds or lets go of the key bound to a game action.
     Press(Action),
     Release(Action),
@@ -141,6 +144,9 @@ pub enum Check {
     Playing(bool),
     /// The game playing has ticked at least this often since it started.
     TicksAtLeast(u64),
+    /// The online lobby has this many members (players and spectators;
+    /// a dedicated server is none).
+    Lobby { members: usize },
 }
 
 /// The screen named `name`.
@@ -169,7 +175,9 @@ pub fn parse(text: &str) -> Result<Vec<Step>, String> {
             Do::Assert(Check::Speed(name)) => {
                 Speed::parse(name).map_err(|e| format!("step {i}: {e}"))?;
             }
-            Do::Click(l) | Do::Assert(Check::Label(l)) | Do::Screenshot(l) if l.trim().is_empty() => {
+            Do::Click(l) | Do::Assert(Check::Label(l)) | Do::Screenshot(l) | Do::Type(l)
+                if l.trim().is_empty() =>
+            {
                 return bad("an empty name");
             }
             Do::Screenshot(name) if !name.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) => {
@@ -195,6 +203,8 @@ pub struct Seen<'a> {
     pub speed: Speed,
     /// The game playing's ticks since it started, if one plays.
     pub ticks: Option<u64>,
+    /// The online lobby's members, while there is one.
+    pub members: Option<usize>,
 }
 
 /// What the app must do for the script.
@@ -496,6 +506,12 @@ impl Autoplay {
                     self.busy_until = seen.frame + INPUT_FRAMES;
                     return out;
                 }
+                Do::Type(text) => {
+                    self.pending.push(Event::Text(text.clone()));
+                    self.done(seen.frame, "typed");
+                    self.busy_until = seen.frame + INPUT_FRAMES;
+                    return out;
+                }
                 Do::Press(a) | Do::Release(a) => {
                     out.push(Effect::Action(*a, matches!(step.ui, Do::Press(_))));
                     self.done(seen.frame, "");
@@ -582,6 +598,11 @@ fn check(c: &Check, seen: &Seen, widgets: Option<&[Widget]>) -> Result<(), Strin
             let t = seen.ticks.unwrap_or(0);
             (t >= *n).then_some(()).ok_or_else(|| format!("{t} ticks"))
         }
+        Check::Lobby { members } => match seen.members {
+            Some(n) if n == *members => Ok(()),
+            Some(n) => Err(format!("the lobby has {n} members")),
+            None => Err("no lobby".into()),
+        },
     }
 }
 
@@ -690,7 +711,34 @@ mod tests {
     }
 
     fn seen(frame: u64, screen: Option<Screen>, tree: Option<&TreeUpdate>) -> Seen<'_> {
-        Seen { frame, tree, screen, window: (1280, 720), speed: Speed::X1, ticks: None }
+        Seen { frame, tree, screen, window: (1280, 720), speed: Speed::X1, ticks: None, members: None }
+    }
+
+    #[test]
+    fn text_is_typed_and_the_lobby_counted() {
+        let steps = parse(
+            r#"(steps: [
+                (ui: Type("127.0.0.1:23400")),
+                (ui: Assert(Lobby(members: 2))),
+            ])"#,
+        )
+        .unwrap();
+        assert_eq!(steps[0].ui, Do::Type("127.0.0.1:23400".into()));
+        assert!(parse(r#"(steps: [(ui: Type(""))])"#).is_err(), "nothing to type");
+        let mut a = Autoplay::from_steps(steps);
+        assert!(a.step(&seen(0, Some(Screen::Multiplayer), None)).is_empty());
+        let mut raw = RawInput::default();
+        a.input(&mut raw);
+        assert_eq!(raw.events, [Event::Text("127.0.0.1:23400".into())], "typed in the next frame");
+        let lobby = |frame, members| Seen { members, ..seen(frame, Some(Screen::Lobby), None) };
+        assert!(a.step(&lobby(1, Some(2))).is_empty(), "busy delivering the text");
+        let out = a.step(&lobby(3, Some(3)));
+        assert!(matches!(&out[..], [Effect::Fail(m)] if m.contains("3 members")), "{out:?}");
+
+        let mut a = Autoplay::from_steps(parse(r#"(steps: [(ui: Assert(Lobby(members: 2)))])"#).unwrap());
+        assert!(matches!(&a.step(&lobby(0, None))[..], [Effect::Fail(m)] if m.contains("no lobby")));
+        let mut a = Autoplay::from_steps(parse(r#"(steps: [(ui: Assert(Lobby(members: 2)))])"#).unwrap());
+        assert_eq!(a.step(&lobby(0, Some(2))), [Effect::Quit]);
     }
 
     #[test]

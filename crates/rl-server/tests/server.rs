@@ -634,12 +634,18 @@ fn run_stops_on_its_flag_and_says_bye() {
 }
 
 #[test]
-fn the_example_config_parses() {
+fn the_fixture_configs_parse() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/server/example.ron");
     let config = Config::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(config.port, rl_net::endpoint::DEFAULT_PORT);
     assert_eq!(config.rotation.len(), 2);
+    // `cargo xtask e2e`'s: port 0, one short match for the game and a bot client.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/server/e2e.ron");
+    let e2e = Config::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!((e2e.port, e2e.min_players, e2e.fill_bots, e2e.rotation.len()), (0, 2, 0, 1));
     let Some(dir) = content_dir() else { return };
-    // Its rotation's mods and levels are the committed packs.
-    config.check(&content(&dir)).unwrap();
+    // Their rotations' mods and levels are the committed packs.
+    let content = content(&dir);
+    config.check(&content).unwrap();
+    e2e.check(&content).unwrap();
 }

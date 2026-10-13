@@ -72,8 +72,27 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `GALLIUM_DRIVER=llvmpipe`; setting `WGPU_BACKEND` also stops the WSL
   relaunch onto the real GPU). It passes on exit 0, an `autoplay.jsonl`
   ending in `pass`, every screenshot the script names, and no `warning:`,
-  `error:` or panic line on stderr (`bad_lines`). Skipped without Xvfb or
-  content; killed after 240 s. About 15 s.
+  `error:` or panic line on stderr (`bad_lines`). Then the online run
+  (plan 10 task 15, `online`, in `target/e2e/online`): `rl-server --config
+  fixtures/server/e2e.ron` (port 0, by address only, no fill bots, one
+  0.2-minute Classic match on Dirt Level that starts when both players
+  are ready; its port read from the log's "listening on port N",
+  `unstamped`), `rl-cli net-client --bot --name "e2e bot"` waited for in
+  the server's log (so the game's lobby has both members at once), then
+  the game plays `fixtures/autoplay/online.ron` (`{port}` replaced) on the
+  real clock (no `--fake-clock`: the netcode keeps real time; the script's
+  waits are frames, about 180 a second here, so its long `within`s are
+  generous): Multiplayer, the address typed, Join, the lobby's 2 members
+  (the dedicated server is no member), a chat line, Ready, the match with
+  keys held, its results, Back to lobby, Back, Quit. Besides the game's
+  checks it needs the bot client to exit 0 by itself after its match, the
+  server to stop cleanly on SIGTERM ("server stopped"), the server's log
+  (stamps removed) to show two joins, the chat line, a match start and
+  end, and no `bad_lines` in either helper's output (`Helper`: output in
+  `<name>.out`/`.err` files, killed when dropped, so a failing run leaves
+  nothing running; a failure's report includes both). Skipped without
+  Xvfb or content; each game killed after 240 s. Both runs about 28 s
+  (local 11 s, online 16 s) once built.
 - `windows` (`winbuild.rs`, plan 8): the native Windows build run from
   WSL, for `envelope --gpu windows`. `missing()` says why it cannot run
   here (no `cmd.exe` or `WSLInterop`/`WSLInterop-late` not enabled, no

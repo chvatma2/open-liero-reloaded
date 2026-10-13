@@ -758,6 +758,7 @@ impl App {
                 window: w.gpu.size(),
                 speed,
                 ticks: self.shell.session().map(crate::session::Session::ticks),
+                members: self.shell.data.lobby.as_ref().map(|l| l.members.len()),
             };
             for e in a.step(&seen) {
                 match e {

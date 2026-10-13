@@ -6,6 +6,18 @@
 //! structured log (`autoplay.jsonl`) ends in `pass`, every screenshot the
 //! script names was written, and stderr has no warning, error or panic.
 //!
+//! Then the online run (plan 10 task 15): `rl-server` with
+//! `fixtures/server/e2e.ron` (port 0: the port is read from its log's
+//! "listening on port N", so runs never collide), a bot client (`rl-cli
+//! net-client --bot`) joined, and the game plays
+//! `fixtures/autoplay/online.ron` (its `{port}` replaced) on the real clock:
+//! joining through the menus, chat, ready, the server's short match, its
+//! results, back to the lobby, leaving and quitting. It also needs the bot
+//! client to finish its match and leave by itself, the server to stop
+//! cleanly on SIGTERM, the server's log to show both joins, the chat line
+//! and a match's start and end, and both helpers' output to be clean.
+//! Both helpers are killed whatever happens.
+//!
 //! Rendering is forced onto Mesa's software rasteriser, so the run is the
 //! same on every machine and the WSL relaunch (`rl-game`'s `wsl.rs`, which
 //! would pick the real GPU through d3d12) never happens: `WGPU_BACKEND=gl`,
@@ -13,8 +25,8 @@
 //! `--window-system x11`. Sound is off (`--no-sound`). Without Xvfb the
 //! step is skipped with a notice.
 
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::root;
@@ -23,7 +35,16 @@ use crate::root;
 pub const SCRIPT: &str = "fixtures/autoplay/menus.ron";
 pub const SETTINGS: &str = "fixtures/autoplay/settings.ron";
 
-/// Where a run writes (its data directory and screenshots); made afresh.
+/// The online run's script (`{port}` stands for the server's port) and
+/// the server's config.
+pub const ONLINE_SCRIPT: &str = "fixtures/autoplay/online.ron";
+pub const SERVER_CONFIG: &str = "fixtures/server/e2e.ron";
+
+/// The bot client's name (unlike the game's profile's).
+const BOT: &str = "e2e bot";
+
+/// Where the runs write (the local run's data directory and screenshots,
+/// the online run's in `online/`); made afresh.
 pub const OUT: &str = "target/e2e";
 
 /// The longest a run may take.
@@ -115,7 +136,8 @@ pub fn bad_lines(stderr: &str) -> Vec<&str> {
         .collect()
 }
 
-/// Runs the script; `content` is the imported content directory.
+/// Runs both scripts, the local one then the online one; `content` is the
+/// imported content directory.
 pub fn run(content: Option<&Path>) -> Result<(), String> {
     let root = root();
     let Some(content) = content else {
@@ -123,7 +145,7 @@ pub fn run(content: Option<&Path>) -> Result<(), String> {
         return Ok(());
     };
     let build = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-        .args(["build", "--quiet", "-p", "rl-game"])
+        .args(["build", "--quiet", "-p", "rl-game", "-p", "rl-server", "-p", "rl-cli"])
         .current_dir(&root)
         .output()
         .map_err(|e| format!("cannot run cargo: {e}"))?;
@@ -136,15 +158,49 @@ pub fn run(content: Option<&Path>) -> Result<(), String> {
     };
     let out = root.join(OUT);
     let _ = std::fs::remove_dir_all(&out);
+    let started = Instant::now();
+    let script = std::fs::read_to_string(root.join(SCRIPT)).map_err(|e| format!("{SCRIPT}: {e}"))?;
+    let local = play(&x, content, &script, &out, true)?;
+    println!(
+        "     e2e: {SCRIPT} passed on Xvfb {} in {:.1} s ({} frames)",
+        x.display, local.secs, local.frames
+    );
+    let online = online(&x, content, &out.join("online"))?;
+    println!(
+        "     e2e: {ONLINE_SCRIPT} passed against rl-server on port {} in {:.1} s ({} frames); both runs {:.1} s",
+        online.port,
+        online.game.secs,
+        online.game.frames,
+        started.elapsed().as_secs_f32()
+    );
+    Ok(())
+}
+
+/// A game's run that passed: how long it took and its frames.
+struct Played {
+    secs: f32,
+    frames: String,
+}
+
+/// Plays `script` in the game on `x`, from a fresh `<out>/data` holding
+/// [`SETTINGS`], its screenshots and log in `<out>/shots`; with
+/// `--fake-clock` or on the real clock. Fails unless it passed cleanly.
+fn play(x: &Xvfb, content: &Path, script: &str, out: &Path, fake_clock: bool) -> Result<Played, String> {
+    let root = root();
     let data = out.join("data");
     let shot_dir = out.join("shots");
     std::fs::create_dir_all(&data).map_err(|e| format!("{}: {e}", data.display()))?;
     std::fs::copy(root.join(SETTINGS), data.join("settings.ron")).map_err(|e| format!("{SETTINGS}: {e}"))?;
+    let script_file = out.join("script.ron");
+    std::fs::write(&script_file, script).map_err(|e| format!("{}: {e}", script_file.display()))?;
 
     let mut cmd = Command::new(root.join("target/debug/rl-game"));
-    cmd.args(["--window-system", "x11", "--fake-clock", "--no-sound"])
-        .arg("--autoplay")
-        .arg(root.join(SCRIPT))
+    cmd.args(["--window-system", "x11", "--no-sound"]);
+    if fake_clock {
+        cmd.arg("--fake-clock");
+    }
+    cmd.arg("--autoplay")
+        .arg(&script_file)
         .arg("--content")
         .arg(content)
         .arg("--data-dir")
@@ -155,6 +211,7 @@ pub fn run(content: Option<&Path>) -> Result<(), String> {
         .env("DISPLAY", &x.display)
         .env_remove("WAYLAND_DISPLAY")
         .envs(SOFTWARE_GL)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let started = Instant::now();
@@ -182,8 +239,7 @@ pub fn run(content: Option<&Path>) -> Result<(), String> {
     if !bad.is_empty() {
         return Err(report(&format!("the log is not clean: {bad:?}")));
     }
-    let script = std::fs::read_to_string(root.join(SCRIPT)).map_err(|e| format!("{SCRIPT}: {e}"))?;
-    for name in shots(&script) {
+    for name in shots(script) {
         let png = shot_dir.join(format!("{name}.png"));
         if !png.is_file() {
             return Err(report(&format!("no screenshot {}", png.display())));
@@ -194,13 +250,233 @@ pub fn run(content: Option<&Path>) -> Result<(), String> {
         .last()
         .and_then(|l| l.split("\"frame\":").nth(1))
         .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next().map(str::to_string));
-    println!(
-        "     e2e: {SCRIPT} passed on Xvfb {} in {:.1} s ({} frames)",
-        x.display,
-        started.elapsed().as_secs_f32(),
-        frames.unwrap_or_default()
-    );
-    Ok(())
+    Ok(Played { secs: started.elapsed().as_secs_f32(), frames: frames.unwrap_or_default() })
+}
+
+/// The online run's outcome.
+struct Online {
+    port: u16,
+    game: Played,
+}
+
+/// A helper process of the online run (the server, the bot client): its
+/// output goes to files in the run's directory; killed when dropped, so a
+/// failing run leaves nothing behind.
+struct Helper {
+    name: &'static str,
+    child: Child,
+    /// Its stdout and stderr files.
+    out: PathBuf,
+    err: PathBuf,
+}
+
+impl Helper {
+    fn start(name: &'static str, cmd: &mut Command, dir: &Path) -> Result<Helper, String> {
+        let out = dir.join(format!("{name}.out"));
+        let err = dir.join(format!("{name}.err"));
+        let file = |p: &Path| std::fs::File::create(p).map_err(|e| format!("{}: {e}", p.display()));
+        let child = cmd
+            .stdin(Stdio::null())
+            .stdout(file(&out)?)
+            .stderr(file(&err)?)
+            .spawn()
+            .map_err(|e| format!("cannot start {name}: {e}"))?;
+        Ok(Helper { name, child, out, err })
+    }
+
+    /// Its stdout and stderr so far.
+    fn output(&self) -> (String, String) {
+        let read = |p: &Path| std::fs::read_to_string(p).unwrap_or_default();
+        (read(&self.out), read(&self.err))
+    }
+
+    /// Waits until its stdout has a line `find` accepts, giving it; fails
+    /// when it exits first or after `within`.
+    fn wait_for(
+        &mut self,
+        what: &str,
+        within: Duration,
+        find: impl Fn(&str) -> Option<String>,
+    ) -> Result<String, String> {
+        let until = Instant::now() + within;
+        loop {
+            if let Some(found) = self.output().0.lines().find_map(&find) {
+                return Ok(found);
+            }
+            if let Ok(Some(status)) = self.child.try_wait() {
+                return Err(self.report(&format!("{} exited with {status} before {what}", self.name)));
+            }
+            if Instant::now() >= until {
+                return Err(self.report(&format!(
+                    "no {what} from {} within {} s",
+                    self.name,
+                    within.as_secs()
+                )));
+            }
+            std::thread::sleep(POLL);
+        }
+    }
+
+    /// Lets it end: SIGTERM first when `term` (else it ends by itself),
+    /// then waits at most `within`; killed past it. Its exit status, if it
+    /// ended in time.
+    fn end(&mut self, term: bool, within: Duration) -> Option<ExitStatus> {
+        if term && matches!(self.child.try_wait(), Ok(None)) {
+            let _ = Command::new("kill").arg(self.child.id().to_string()).status();
+        }
+        let until = Instant::now() + within;
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) => return Some(status),
+                Ok(None) if Instant::now() < until => std::thread::sleep(POLL),
+                _ => {
+                    let _ = self.child.kill();
+                    let _ = self.child.wait();
+                    return None;
+                }
+            }
+        }
+    }
+
+    /// `why`, then its output.
+    fn report(&self, why: &str) -> String {
+        format!("{why}\n{}", self.logs())
+    }
+
+    /// Its output, for a failure's report.
+    fn logs(&self) -> String {
+        let (out, err) = self.output();
+        format!("--- {} stdout\n{}\n--- {} stderr\n{}", self.name, out.trim(), self.name, err.trim())
+    }
+}
+
+impl Drop for Helper {
+    fn drop(&mut self) {
+        if matches!(self.child.try_wait(), Ok(None)) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+/// How often the online run looks at its helpers.
+const POLL: Duration = Duration::from_millis(50);
+
+/// The longest the server may take to listen and the bot client to join.
+const READY_WITHIN: Duration = Duration::from_secs(30);
+
+/// The chat line `ONLINE_SCRIPT` types, which the server must log.
+const CHAT: &str = "hello from the e2e run";
+
+/// The online run in `out`: `rl-server` with [`SERVER_CONFIG`] (port 0,
+/// its data in `<out>/server`), `rl-cli net-client --bot` joined (named
+/// [`BOT`]), then the game plays [`ONLINE_SCRIPT`] with the server's port
+/// on the real clock. Passes when the game passed (as [`play`] checks),
+/// the bot client played its match and left by itself (exit 0), the
+/// server stopped cleanly on SIGTERM, the server's log shows both joins,
+/// the chat line, a match's start and end, and no helper's output has a
+/// warning, error or panic.
+fn online(x: &Xvfb, content: &Path, out: &Path) -> Result<Online, String> {
+    let root = root();
+    let server_dir = out.join("server");
+    std::fs::create_dir_all(&server_dir).map_err(|e| format!("{}: {e}", server_dir.display()))?;
+    let mut server = Helper::start(
+        "server",
+        Command::new(root.join("target/debug/rl-server"))
+            .arg("--config")
+            .arg(root.join(SERVER_CONFIG))
+            .arg("--content")
+            .arg(content)
+            .arg("--data-dir")
+            .arg(&server_dir)
+            .current_dir(&root),
+        out,
+    )?;
+    let port = server.wait_for("a port", READY_WITHIN, |l| {
+        let rest = unstamped(l).strip_prefix("listening on port ")?;
+        rest.split(' ').next().map(str::to_string)
+    })?;
+    let port: u16 = port.parse().map_err(|_| server.report(&format!("a bad port {port:?}")))?;
+    let mut bot = Helper::start(
+        "bot",
+        Command::new(root.join("target/debug/rl-cli"))
+            .args(["net-client", "--join", &format!("127.0.0.1:{port}"), "--bot", "--name", BOT])
+            .args(["--timeout", &TIMEOUT.as_secs().to_string()])
+            .arg("--content")
+            .arg(content)
+            .current_dir(&root),
+        out,
+    )?;
+    // The bot is in the lobby before the game joins: the game's lobby
+    // shows both at once (the script counts them).
+    let joined = format!("join {BOT} [");
+    server
+        .wait_for("the bot's join", READY_WITHIN, |l| unstamped(l).starts_with(&joined).then(String::new))?;
+
+    let script =
+        std::fs::read_to_string(root.join(ONLINE_SCRIPT)).map_err(|e| format!("{ONLINE_SCRIPT}: {e}"))?;
+    let script = script.replace("{port}", &port.to_string());
+    let helpers =
+        |why: String, server: &Helper, bot: &Helper| format!("{why}\n{}\n{}", server.logs(), bot.logs());
+    let game = match play(x, content, &script, out, false) {
+        Ok(g) => g,
+        Err(why) => return Err(helpers(why, &server, &bot)),
+    };
+    // The bot client leaves after its match; the server stops on SIGTERM.
+    let bot_status = bot.end(false, Duration::from_secs(15));
+    let server_status = server.end(true, Duration::from_secs(15));
+    let fail = |why: &str| Err(helpers(why.to_string(), &server, &bot));
+    match bot_status {
+        Some(s) if s.success() => {}
+        Some(s) => return fail(&format!("the bot client exited with {s}")),
+        None => return fail("the bot client did not leave after its match: killed"),
+    }
+    match server_status {
+        Some(s) if s.success() => {}
+        Some(s) => return fail(&format!("the server exited with {s} on SIGTERM")),
+        None => return fail("the server did not stop on SIGTERM: killed"),
+    }
+    let (server_out, server_err) = server.output();
+    let (bot_out, bot_err) = bot.output();
+    let server_log: Vec<&str> = server_out.lines().map(unstamped).collect();
+    let server_text = server_log.join("\n");
+    let mut bad = bad_lines(&server_text);
+    for text in [&server_err, &bot_out, &bot_err] {
+        bad.extend(bad_lines(text));
+    }
+    if !bad.is_empty() {
+        return fail(&format!("the helpers' logs are not clean: {bad:?}"));
+    }
+    let has = |prefix: &str| server_log.iter().any(|l| l.starts_with(prefix));
+    let chat = format!(": {CHAT}");
+    let wanted = [
+        ("the game's join", server_log.iter().filter(|l| l.starts_with("join ")).count() == 2),
+        ("the chat line", server_log.iter().any(|l| l.starts_with("chat ") && l.ends_with(&chat))),
+        ("a match start", has("match start: ")),
+        ("a match end", has("match end ")),
+        ("a clean stop", server_log.last().is_some_and(|l| *l == "server stopped")),
+    ];
+    if let Some((what, _)) = wanted.iter().find(|(_, seen)| !seen) {
+        return fail(&format!("the server's log lacks {what}"));
+    }
+    if !bot_out.lines().any(|l| l.starts_with("match 1: ")) {
+        return fail("the bot client finished no match");
+    }
+    Ok(Online { port, game })
+}
+
+/// A server log line without its UTC stamp (`YYYY-MM-DD HH:MM:SS `).
+fn unstamped(line: &str) -> &str {
+    let b = line.as_bytes();
+    let stamped = b.len() >= 20
+        && b[..19].iter().enumerate().all(|(i, c)| match i {
+            4 | 7 => *c == b'-',
+            10 => *c == b' ',
+            13 | 16 => *c == b':',
+            _ => c.is_ascii_digit(),
+        })
+        && b[19] == b' ';
+    if stamped { &line[20..] } else { line }
 }
 
 /// Waits for `child` and its output, killing it after `timeout`.
@@ -231,7 +507,24 @@ mod tests {
         );
         let script = std::fs::read_to_string(root().join(SCRIPT)).unwrap();
         assert!(shots(&script).len() >= 5);
+        // The online script types the server's port and the chat line the
+        // server's log must show.
+        let online = std::fs::read_to_string(root().join(ONLINE_SCRIPT)).unwrap();
+        assert!(online.contains(r#"Type("127.0.0.1:{port}")"#));
+        assert!(online.contains(&format!("Type({CHAT:?})")));
+        assert!(shots(&online).contains(&"online".to_string()));
         let err = "rl-game: GPU x\nwarning: no gamepads\nthread 'main' panicked at x\nerror: y\nMesa: fine\n";
         assert_eq!(bad_lines(err), ["warning: no gamepads", "thread 'main' panicked at x", "error: y"]);
+    }
+
+    #[test]
+    fn server_lines_lose_their_stamp() {
+        assert_eq!(
+            unstamped("2026-10-13 01:30:28 listening on port 39214 (TCP and UDP)"),
+            "listening on port 39214 (TCP and UDP)"
+        );
+        assert_eq!(unstamped("2026-10-13 01:30:28 warning: x"), "warning: x");
+        assert_eq!(unstamped("Ctrl+C or quit stops the server"), "Ctrl+C or quit stops the server");
+        assert_eq!(unstamped("2026-10-13"), "2026-10-13");
     }
 }
