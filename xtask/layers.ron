@@ -30,6 +30,7 @@
         "rl-input": 5,
         "rl-ui": 5,
         "rl-net": 5,
+        "rl-discovery": 5,
         "rl-online": 5,
         "rl-cli": 6,
         "rl-server": 6,

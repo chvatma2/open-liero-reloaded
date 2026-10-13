@@ -37,6 +37,7 @@ rl-oracle = { path = "crates/rl-oracle" }
 rl-ui = { path = "crates/rl-ui" }
 rl-detcheck = { path = "crates/rl-detcheck" }
 rl-net = { path = "crates/rl-net" }
+rl-discovery = { path = "crates/rl-discovery" }
 rl-online = { path = "crates/rl-online" }
 rl-server = { path = "crates/rl-server" }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "alloc"] }

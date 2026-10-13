@@ -1,0 +1,78 @@
+[
+ {
+  "content": "Trump — Trump afirma que EE.UU. no sabe con quién negociar en Irán y niega apoyo de Rusia y China #Trump #DonaldTrump #EstadosUnidos #Colombia #News\nhttps://news.netasgard.com/a/e852c50d502a14d2?s=nostr\nhttps://live.staticflickr.com/2917/14419251471_e064d8a2fd_b.jpg\nPhoto : Michael Vadon · CC BY-SA · Flickr",
+  "created_at": 1791898402,
+  "id": "4952c5cfa9e63c0ad2e5213aca495684f80d905a472c60fabefa567ba1df785c",
+  "kind": 1,
+  "pubkey": "47429def6230d342d7e08e6dad68aa428dbc3717a69504a82a2695a8170d2fdd",
+  "sig": "fa5f6d3a0fa2e1ec4a09ba12d4f29d1eaf22a9c4b46c9506a8e01d15f02dc0d54aca75ac04662b00aa2aef553a00c3b3c081c99caa63fc3a473aadf7debb12d0",
+  "tags": [
+   [
+    "t",
+    "trump"
+   ],
+   [
+    "t",
+    "donaldtrump"
+   ],
+   [
+    "t",
+    "estadosunidos"
+   ],
+   [
+    "t",
+    "colombia"
+   ],
+   [
+    "t",
+    "news"
+   ],
+   [
+    "imeta",
+    "url https://live.staticflickr.com/2917/14419251471_e064d8a2fd_b.jpg",
+    "m image/jpeg"
+   ]
+  ]
+ },
+ {
+  "content": "{\"v\":1,\"online\":true,\"ts\":1791898398}",
+  "created_at": 1791898398,
+  "id": "6f419132b99ffd02e2bbe6fb029a113cb0acfa00315319530ee872cc025c5e55",
+  "kind": 1,
+  "pubkey": "77dad091662523c6d4c7921180277e767ec31420cbde72b27438101b43593d68",
+  "sig": "c2d387c49467ee109ee2c1f4d59c2d54c26123d97bec183b6052cdda52ebbe90f39b3b25603f2a11347dfcaf1f2fc2ef3ca292a2aa255d708f66d683f7d56938",
+  "tags": [
+   [
+    "t",
+    "nexora-webchat-v1"
+   ],
+   [
+    "presence",
+    "1"
+   ]
+  ]
+ },
+ {
+  "content": " \n\n\n\nhttps://media.libernet.app/s/yldnc6.mp4",
+  "created_at": 1791898391,
+  "id": "e1b27f035851acebfeb7d4e03a6d7e6ce36991285c2e968940d14d711c0ef3e1",
+  "kind": 1,
+  "pubkey": "04ea92f8a92eafc2f023c59de17f2d92f981bcfa62d5cee46ed8037da29709cb",
+  "sig": "954b3128d16716cf8586121c24fc222d157f62e37b771334d162e467205998193f959964121a6da8e55da2ee0958f7bf14bd8a53afcf00ecdd1ab11df8cc9551",
+  "tags": [
+   [
+    "imeta",
+    "url https://media.libernet.app/s/yldnc6.mp4",
+    "m video/mp4",
+    "ox a0fea0f3e6aaa15187c6b2ae4ef53376780c0af808c0afa36be583bc33d156e4",
+    "dim 720x1280",
+    "duration 24.03",
+    "bitrate 3080820"
+   ],
+   [
+    "client",
+    "Primal Android"
+   ]
+  ]
+ }
+]
