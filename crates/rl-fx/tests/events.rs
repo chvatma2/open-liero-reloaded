@@ -9,7 +9,11 @@ use rl_fx::{FxTick, Kind};
 use rl_sim::{CosmeticKind, Event, EventKind, LostArea, StampId, TerrainOp};
 
 fn carve(substep: u8, hole: u8, x: i32, y: i32) -> Event {
-    Event { substep, kind: EventKind::TerrainEdit { op: TerrainOp::Carve, stamp: StampId::Hole(hole), x, y } }
+    Event {
+        substep,
+        death: false,
+        kind: EventKind::TerrainEdit { op: TerrainOp::Carve, stamp: StampId::Hole(hole), x, y },
+    }
 }
 
 #[test]

@@ -127,9 +127,9 @@ fn a_death_reports_damage_the_kill_its_sound_and_gore() {
 }
 
 #[test]
-fn a_death_keeps_its_sound_and_gibs_when_the_cosmetics_are_full() {
-    // Blood of earlier hits must not crowd out a death's effects: its sound
-    // and gibs count against the gameplay quota.
+fn a_death_keeps_its_sound_gibs_and_blood_when_the_cosmetics_are_full() {
+    // Blood of earlier hits must not crowd out a death's effects: its sound,
+    // gibs and blood are pushed as gameplay, and marked as the death's.
     let mut w = walled_world();
     w.spawn_worm(80, 140);
     w.tick_new(&[]);
@@ -139,13 +139,27 @@ fn a_death_keeps_its_sound_and_gibs_when_the_cosmetics_are_full() {
     }
     injure_worm(&mut w.harm(), 1, 150.0, 0);
     let e = &w.draws.events;
-    let sounds =
-        e.iter().filter(|e| matches!(e.kind, EventKind::Sound { id, .. } if SoundId::DEATH.contains(&id)));
-    let gibs = e
-        .iter()
-        .filter(|e| matches!(e.kind, EventKind::SpawnCosmetic { kind: CosmeticKind::Gib { worm: 1 }, .. }));
-    assert_eq!((sounds.count(), gibs.count()), (1, 7));
-    assert_eq!(e.cosmetic_dropped(), 450, "the death's and the hit's blood");
+    let death: Vec<EventKind> = e.iter().filter(|e| e.death).map(|e| e.kind).collect();
+    assert!(
+        matches!(death[0], EventKind::Sound { id, .. } if SoundId::DEATH.contains(&id)),
+        "{:?}",
+        death[0]
+    );
+    let gib =
+        |k: &EventKind| matches!(k, EventKind::SpawnCosmetic { kind: CosmeticKind::Gib { worm: 1 }, .. });
+    assert!(death[1..8].iter().all(gib), "then its 7 gibs");
+    let blood = |k: &EventKind| {
+        matches!(
+            k,
+            EventKind::SpawnCosmetic { kind: CosmeticKind::Blood { .. } | CosmeticKind::BloodDropper, .. }
+        )
+    };
+    assert_eq!(death[8..].iter().filter(|k| blood(k)).count(), 150, "then its 50 rounds of blood");
+    assert_eq!(death.len(), 1 + 7 + 150);
+    assert_eq!(e.cosmetic_dropped(), 300, "only the hit's blood");
+    assert_eq!(e.gameplay_dropped(), 0);
+    let hit_blood = e.iter().filter(|e| !e.death && blood(&e.kind)).count();
+    assert_eq!(hit_blood, 0, "the hit's blood found the cosmetics full");
 }
 
 #[test]

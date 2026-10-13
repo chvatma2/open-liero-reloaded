@@ -122,6 +122,7 @@ fn shake_for_shakes_for_explosions_in_view() {
     let t = AbsTime(100_000);
     let explosion = |x: f32, shake| Event {
         substep: 0,
+        death: false,
         kind: EventKind::Explosion { pos: Vec2::new(x, 50.0), damage: 1.0, shake },
     };
     let mut c = Camera::new(VP, 0, 7);

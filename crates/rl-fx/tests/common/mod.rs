@@ -189,7 +189,7 @@ impl Setup {
 /// A cosmetic event of sub-step `substep`.
 pub fn cosmetic(substep: u8, kind: CosmeticKind, pos: (f32, f32), vel: (f32, f32)) -> Event {
     let (pos, vel) = (Vec2::new(pos.0, pos.1), Vec2::new(vel.0, vel.1));
-    Event { substep, kind: EventKind::SpawnCosmetic { kind, pos, vel } }
+    Event { substep, death: false, kind: EventKind::SpawnCosmetic { kind, pos, vel } }
 }
 
 /// `dt.seconds()` for the sub-step: `11 * 0.001f`.

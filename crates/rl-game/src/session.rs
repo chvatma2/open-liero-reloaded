@@ -934,7 +934,7 @@ mod tests {
         let vp = Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
         let mut s = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
         assert_eq!(s.local(), Some(2));
-        let kind = |kind| Event { substep: 0, kind };
+        let kind = |kind| Event { substep: 0, death: false, kind };
         let c = ConfirmedTick {
             tick: 0,
             events: vec![

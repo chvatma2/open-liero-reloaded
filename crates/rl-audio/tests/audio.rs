@@ -163,7 +163,7 @@ fn names() -> Vec<String> {
 }
 
 fn sound(id: SoundId, x: f32) -> Event {
-    Event { substep: 0, kind: EventKind::Sound { id, pos: Vec2::new(x, 0.0) } }
+    Event { substep: 0, death: false, kind: EventKind::Sound { id, pos: Vec2::new(x, 0.0) } }
 }
 
 /// A backend whose device never opens.
@@ -226,7 +226,7 @@ fn plays_events_on_a_mock_device() {
     ev.extend((0..12).map(|i| sound(SoundId(6), i as f32)));
     ev.extend([sound(SoundId::BUMP, 3000.0), sound(SoundId(7), 0.0), sound(SoundId(8), 0.0)]);
     ev.push(sound(SoundId(99), 0.0));
-    ev.push(Event { substep: 1, kind: EventKind::Kill { victim: 0, killer: 1 } });
+    ev.push(Event { substep: 1, death: false, kind: EventKind::Kill { victim: 0, killer: 1 } });
     a.play(&ev, Vec2::ZERO);
     assert_eq!(a.playing(), 15);
     // The next tick re-mixes them; of the same events only a second bump

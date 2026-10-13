@@ -100,8 +100,11 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   (the owner of the damage that left 0, cleared on respawn) with the
   lethal hit's death sound, gibs and blood (`death_effects`); with
   `SimSettings::olx_quirks`, as OLX, uncredited and without them (spec
-  §18 D9 as amended). A death's sound and gibs count against the events'
-  gameplay quota, so blood never crowds them out.
+  §18 D9 as amended). A death's sound, gibs and blood are pushed as the
+  death's where they are emitted (`TickEvents::death`,
+  `Draws::death_entity`; `Event::death` marks them for `rl-fx`'s death
+  reserve) and count against the gameplay quota, so no tick's other
+  cosmetics crowd them out.
   Bleeding is in `physics.rs`. After the physics, the server's respawn loop
   (`respawn.rs`) respawns dead worms at a `FindSpot` position drawn from the
   `Mt19937`.

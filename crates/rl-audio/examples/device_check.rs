@@ -54,7 +54,7 @@ fn main() -> ExitCode {
         ("bump (60 px right)", SoundId::BUMP, Vec2::new(60.0, 0.0)),
     ] {
         let t = Instant::now();
-        audio.play(&[Event { substep: 0, kind: EventKind::Sound { id, pos } }], Vec2::ZERO);
+        audio.play(&[Event { substep: 0, death: false, kind: EventKind::Sound { id, pos } }], Vec2::ZERO);
         let started = audio.playing();
         while audio.playing() > 0 && t.elapsed() < Duration::from_secs(5) {
             std::thread::sleep(Duration::from_millis(5));

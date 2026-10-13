@@ -116,12 +116,13 @@ fn add_damage(w: &mut Worm, damage: f32, victim: i32, s: &SimSettings) {
 /// The three blood entities of one round of `InjureWorm`'s blood at `pos`,
 /// each with a `GetRandomVec()` velocity (2 `rand()`) scaled by `sp`; the
 /// dropper's by `(sp, dropper_y)`.
-fn blood_round(d: &mut Draws, pos: Vec2, sp: f32, dropper_y: f32, reds: [u8; 2]) {
+fn blood_round(d: &mut Draws, pos: Vec2, sp: f32, dropper_y: f32, reds: [u8; 2], death: bool) {
+    let entity = if death { Draws::death_entity } else { Draws::entity };
     let v = d.rand.random_vec();
-    d.entity(CosmeticKind::BloodDropper, pos, Vec2::new(v.x * sp, v.y * dropper_y));
+    entity(d, CosmeticKind::BloodDropper, pos, Vec2::new(v.x * sp, v.y * dropper_y));
     for red in reds {
         let v = d.rand.random_vec() * sp;
-        d.entity(CosmeticKind::Blood { red }, pos, v);
+        entity(d, CosmeticKind::Blood { red }, pos, v);
     }
 }
 
@@ -189,7 +190,7 @@ pub(crate) fn injure_worm(h: &mut Harm, id: i32, damage: f32, owner: i32) {
         let mut i: u16 = 0;
         while (i as f32) < amount {
             let sp = h.draws.rand.random_num() * (50.0 + damage * 2.0);
-            blood_round(h.draws, pos, sp, sp * 4.0, [128, 200]);
+            blood_round(h.draws, pos, sp, sp * 4.0, [128, 200], false);
             i = i.wrapping_add(1);
         }
     }
@@ -197,14 +198,15 @@ pub(crate) fn injure_worm(h: &mut Harm, id: i32, damage: f32, owner: i32) {
 
 /// The local server's death effects in `CClient::InjureWorm`
 /// (`CClient_Game.cpp:419-437`): a death sound (`GetRandomInt(2)`), 7 gibs
-/// and 50 rounds of blood at `pos`, with their draws.
+/// and 50 rounds of blood at `pos`, with their draws. Their events are
+/// pushed as the death's ([`crate::Event::death`]), so none is dropped.
 fn death_effects(d: &mut Draws, id: i32, pos: Vec2) {
     let s = d.rand.random_int(2);
-    d.events.sound(SoundId::DEATH[s.clamp(0, 2) as usize], pos);
+    d.events.death(EventKind::Sound { id: SoundId::DEATH[s.clamp(0, 2) as usize], pos });
     for _ in 0..7 {
         // A gib draws its spin inside SpawnEntity, if the pool has room.
         let v = d.rand.random_vec() * 80.0;
-        if d.entity(CosmeticKind::Gib { worm: id }, pos, v) {
+        if d.death_entity(CosmeticKind::Gib { worm: id }, pos, v) {
             d.rand.random_num();
             d.rand.random_num();
         }
@@ -212,7 +214,7 @@ fn death_effects(d: &mut Draws, id: i32, pos: Vec2) {
     let amount = (50.0f32 * (BLOOD_AMOUNT as f32 / 100.0)) as i32;
     for _ in 0..amount {
         let sp = d.rand.random_num() * 100.0 + 50.0;
-        blood_round(d, pos, sp, sp, [200, 128]);
+        blood_round(d, pos, sp, sp, [200, 128], true);
     }
 }
 

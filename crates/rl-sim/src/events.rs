@@ -132,6 +132,12 @@ pub struct Event {
     /// `substep` (from 0; `substeps_last_tick()` means after the last one)
     /// steps it exactly as often as OLX's client does.
     pub substep: u8,
+    /// Part of a worm's death effects: its sound, 7 gibs and 50 rounds of
+    /// blood (`death_effects`). They count against the gameplay quota, so
+    /// no tick's other cosmetics crowd them out, and `rl-fx` lets their
+    /// entities use the pool's death reserve: every death shows (spec §18
+    /// D9 as amended 2026-10-13).
+    pub death: bool,
     pub kind: EventKind,
 }
 
@@ -175,12 +181,10 @@ pub enum EventKind {
 }
 
 impl EventKind {
-    /// A death's sound and gibs count as gameplay, so a tick's blood can
-    /// never crowd them out: every death shows (D9, amended 2026-10-13).
+    /// The quota an event counts against by its shape; a death's effects
+    /// are classified where they are emitted ([`TickEvents::death`]).
     fn class(&self) -> Class {
         match self {
-            EventKind::SpawnCosmetic { kind: CosmeticKind::Gib { .. }, .. } => Class::Gameplay,
-            EventKind::Sound { id, .. } if SoundId::DEATH.contains(id) => Class::Gameplay,
             EventKind::SpawnCosmetic { .. } | EventKind::Sound { .. } => Class::Cosmetic,
             EventKind::TerrainEdit { .. } => Class::Edit,
             _ => Class::Gameplay,
@@ -228,7 +232,8 @@ impl LostArea {
 /// Three quotas share the buffer, so no class of events can crowd out
 /// another: sounds and cosmetics ([`TickEvents::COSMETIC_LIMIT`]), terrain
 /// edits ([`TickEvents::EDIT_LIMIT`]) and the other gameplay events
-/// ([`TickEvents::GAMEPLAY_LIMIT`]), a death's sound and gibs included. What does not fit is counted in
+/// ([`TickEvents::GAMEPLAY_LIMIT`]), a death's sound, gibs and blood
+/// included ([`Event::death`]). What does not fit is counted in
 /// [`TickEvents::cosmetic_dropped`] or [`TickEvents::gameplay_dropped`].
 ///
 /// A renderer replays every [`EventKind::TerrainEdit`] on its colour images
@@ -337,11 +342,20 @@ impl TickEvents {
     /// Adds `e` at the current sub-step within its class's quota. Returns
     /// whether it fit.
     pub(crate) fn push(&mut self, e: EventKind) -> bool {
-        let class = e.class();
+        self.push_as(e, e.class(), false)
+    }
+
+    /// Adds `e`, a part of a worm's death effects ([`Event::death`]), within
+    /// the gameplay quota, whatever its shape. Returns whether it fit.
+    pub(crate) fn death(&mut self, e: EventKind) -> bool {
+        self.push_as(e, Class::Gameplay, true)
+    }
+
+    fn push_as(&mut self, e: EventKind, class: Class, death: bool) -> bool {
         let n = &mut self.counts[class as usize];
         if *n < Self::limit(class) {
             *n += 1;
-            self.list.push(Event { substep: self.substep, kind: e });
+            self.list.push(Event { substep: self.substep, death, kind: e });
             true
         } else if class == Class::Cosmetic {
             self.cosmetic_dropped = self.cosmetic_dropped.saturating_add(1);
@@ -393,7 +407,11 @@ impl TickEvents {
     pub(crate) fn start_tick(&mut self, pending: &mut TickEvents) {
         self.clear();
         for e in &pending.list {
-            self.push(e.kind);
+            if e.death {
+                self.death(e.kind);
+            } else {
+                self.push(e.kind);
+            }
         }
         self.cosmetic_dropped = self.cosmetic_dropped.saturating_add(pending.cosmetic_dropped);
         self.gameplay_dropped = self.gameplay_dropped.saturating_add(pending.gameplay_dropped);

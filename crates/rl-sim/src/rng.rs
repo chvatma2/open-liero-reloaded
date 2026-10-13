@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 
 use rl_math::{GlibcRand, Mt19937, Vec2};
 
-use crate::events::{CosmeticKind, TickEvents};
+use crate::events::{CosmeticKind, EventKind, TickEvents};
 use crate::tally::{ActionTally, HitAudit};
 
 /// The dedicated server's entity pool size (`tEntities`, `FastVector<entity_t, 1024>`,
@@ -82,6 +82,13 @@ impl Draws {
     /// emitted even when the pool is full. Returns whether it took a slot.
     pub fn entity(&mut self, kind: CosmeticKind, pos: Vec2, vel: Vec2) -> bool {
         self.events.cosmetic(kind, pos, vel);
+        self.spawn_entity()
+    }
+
+    /// [`entity`](Self::entity) for a part of a worm's death effects: the
+    /// event is pushed as one ([`crate::Event::death`]).
+    pub fn death_entity(&mut self, kind: CosmeticKind, pos: Vec2, vel: Vec2) -> bool {
+        self.events.death(EventKind::SpawnCosmetic { kind, pos, vel });
         self.spawn_entity()
     }
 

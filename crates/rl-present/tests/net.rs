@@ -385,7 +385,7 @@ fn keys_from_the_confirmed_tick_on_survive() {
 }
 
 fn ev(substep: u8, kind: EventKind) -> Event {
-    Event { substep, kind }
+    Event { substep, death: false, kind }
 }
 
 /// Keys leave out what a corrected re-simulation moves (positions,
