@@ -29,10 +29,12 @@ beside the executable, else in the working directory).
   `fill_bots` ≤ 31, `min_players` 1..=`max_players`, admins 64 hex
   characters), `Visibility::{Public, Lan, Invite}` (N43; default
   `Public`; plan 10's `DirectOnly` reads as `Invite`), `relays` (default
-  `DEFAULT_RELAYS`; each `wss://` or `ws://`), `region` (default
+  `DEFAULT_RELAYS`; each `wss://` or `ws://`, each once (a trailing `/`
+  names the same relay), at most `MAX_RELAYS` 32), `region` (default
   `Unknown`; an unknown name reads as `Unknown`), `public_address` (an IP,
-  checked; `public_ip()`), `stun` (default `DEFAULT_STUN`; `[]` asks
-  none), rotation `Entry` (`mod`,
+  checked; `public_ip()`; `unreachable_public_address()`: one that is IPv6
+  or not global while a relay is public), `stun` (default `DEFAULT_STUN`;
+  each `host:port`; `[]` asks none; final review B-M8), rotation `Entry` (`mod`,
   `level`, `time_limit` minutes, `kill_limit`, `lives`, `bonuses`),
   `host_config`, `check(content)` (the rotation against the packs),
   `upload_kib_s` (plan 11: content sent in all, KiB/s; default
@@ -73,7 +75,10 @@ beside the executable, else in the working directory).
 - **`lib.rs`, `Server`**: `start(config, content, data_dir, log)` (identity,
   bans into the lobby and the gate, the rotation, `PeerRole::Server` on the
   config's port, LAN `Announcer` for `Public` and `Lan`, a Nostr `Pool` on
-  `relays` for `Public` (none, with a warning, when `relays` is empty); the
+  `relays` for `Public` (none, with a warning, when `relays` is empty, or
+  when `unreachable_public_address` names the configured address: its
+  note would leak the LAN address to public relays, and every list
+  refuses it; declined item of final review A, B-M2); the
   address as `AddressWatch` says (logged); the download cache
   `<data>/downloads`, `DOWNLOADS_DIR`, logged, shared with the peer as
   `PeerContent { cache, upload_rate }`: the server serves its packs to

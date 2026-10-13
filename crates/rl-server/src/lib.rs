@@ -191,6 +191,16 @@ impl Server {
                 line(log, format_args!("warning: public, but no relays configured: not announced on Nostr"));
                 None
             }
+            Visibility::Public if let Some(ip) = config.unreachable_public_address() => {
+                line(
+                    log,
+                    format_args!(
+                        "warning: public_address {ip} is not reachable from the Internet: not announced on Nostr \
+                         (set the server's public IPv4 address, or remove public_address to ask STUN)"
+                    ),
+                );
+                None
+            }
             Visibility::Public => {
                 line(
                     log,

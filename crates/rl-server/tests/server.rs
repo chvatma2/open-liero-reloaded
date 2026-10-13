@@ -664,7 +664,7 @@ fn the_fixture_configs_parse() {
     assert_eq!(config.port, rl_net::endpoint::DEFAULT_PORT);
     assert_eq!(config.rotation.len(), 2);
     assert_eq!(config.upload_kib_s, rl_server::config::DEFAULT_UPLOAD_KIB_S);
-    // It shows the defaults of the lists.
+    // It leaves the lists out, so a copy follows later default lists.
     let defaults = Config::default();
     assert_eq!((&config.relays, &config.stun), (&defaults.relays, &defaults.stun));
     assert_eq!(config.visibility, Visibility::Public);
@@ -1053,8 +1053,51 @@ fn an_old_config_still_loads() {
         r#"public_address: Some("my.home.example")"#,
         r#"relays: ["https://relay.example.org"]"#,
         r#"visibility: Hidden"#,
+        // Final review B-M8: STUN servers need host:port, relays are bounded.
+        r#"stun: ["stun.example.org"]"#,
+        r#"stun: [":3478"]"#,
+        r#"stun: ["stun.example.org:x"]"#,
     ] {
         let text = format!(r#"({bad}, rotation: [(mod: "olx-classic", level: "olx-level-dirt-level")])"#);
         assert!(Config::parse(&text).is_err(), "{bad}");
     }
+}
+
+/// Final review B-M8: relays are held to the game's bound (32) and listed
+/// once each.
+#[test]
+fn server_relays_are_bounded_and_deduplicated() {
+    let with = |relays: &[String]| {
+        let list = relays.iter().map(|r| format!("{r:?}")).collect::<Vec<_>>().join(", ");
+        Config::parse(&format!(r#"(relays: [{list}], rotation: [(mod: "olx-classic", level: "{DIRT}")])"#))
+    };
+    let r = |i: usize| format!("wss://relay{i}.example.org");
+    let c = with(&[r(1), r(2), r(1), format!("{}/", r(2))]).unwrap();
+    assert_eq!(c.relays, [r(1), r(2)]);
+    assert!(with(&(0..32).map(r).collect::<Vec<_>>()).is_ok());
+    assert!(with(&(0..33).map(r).collect::<Vec<_>>()).is_err(), "at most 32");
+}
+
+/// Declined item of final review A, B-M2: a configured `public_address`
+/// the Internet cannot reach (private, local, IPv6) is not announced on
+/// public relays (the note would leak the LAN address and lists refuse
+/// it); with relays that are all local, it is.
+#[test]
+fn a_private_public_address_is_not_announced_on_public_relays() {
+    let with = |addr: &str, relays: &str| {
+        Config::parse(&format!(
+            r#"(public_address: Some("{addr}"), relays: [{relays}], rotation: [(mod: "olx-classic", level: "{DIRT}")])"#
+        ))
+        .unwrap()
+    };
+    let public = r#""wss://relay.example.org""#;
+    for addr in ["192.168.1.5", "127.0.0.1", "2a00:1450::1"] {
+        assert_eq!(with(addr, public).unreachable_public_address(), Some(addr.parse().unwrap()), "{addr}");
+    }
+    assert_eq!(with("81.2.69.142", public).unreachable_public_address(), None);
+    assert_eq!(
+        with("192.168.1.5", r#""ws://192.168.1.2:7000""#).unreachable_public_address(),
+        None,
+        "a LAN relay"
+    );
 }

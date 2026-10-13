@@ -8,6 +8,8 @@ use anyhow::{Context as _, bail};
 use rl_content::Content;
 use rl_discovery::Region;
 use rl_discovery::defaults::{DEFAULT_RELAYS, DEFAULT_STUN};
+use rl_discovery::hosting::local_relays;
+use rl_discovery::list::is_global;
 use rl_lobby::HostConfig;
 use rl_modes::DeathmatchSettings;
 use rl_net::endpoint::DEFAULT_PORT;
@@ -123,6 +125,8 @@ pub struct Config {
 pub const DEFAULT_UPLOAD_KIB_S: u32 = 4096;
 /// What `upload_kib_s` is held to (a value outside is clamped).
 pub const UPLOAD_KIB_S: std::ops::RangeInclusive<u32> = 64..=65536;
+/// Most relays (the game's bound too).
+pub const MAX_RELAYS: usize = 32;
 
 impl Default for Config {
     fn default() -> Self {
@@ -148,11 +152,32 @@ impl Default for Config {
     }
 }
 
+/// A STUN server as `host:port`: a host and a port number.
+fn valid_stun(s: &str) -> bool {
+    s.rsplit_once(':')
+        .is_some_and(|(host, port)| !host.is_empty() && port.parse::<u16>().is_ok_and(|p| p > 0))
+}
+
 impl Config {
     /// Reads a config file's text and checks what needs no content: the
-    /// bounds, the admins' keys, a rotation.
+    /// bounds, the admins' keys, a rotation, the relays (each once, at
+    /// most [`MAX_RELAYS`]) and the STUN servers (`host:port`).
     pub fn parse(text: &str) -> anyhow::Result<Config> {
-        let config: Config = ron::from_str(text).context("the config file")?;
+        let mut config: Config = ron::from_str(text).context("the config file")?;
+        // Each relay once (a trailing slash names the same relay).
+        let mut seen: Vec<String> = Vec::new();
+        config.relays.retain(|r| {
+            let key = r.trim_end_matches('/').to_owned();
+            let new = !seen.contains(&key);
+            seen.push(key);
+            new
+        });
+        if config.relays.len() > MAX_RELAYS {
+            bail!("at most {MAX_RELAYS} relays");
+        }
+        if let Some(s) = config.stun.iter().find(|s| !valid_stun(s)) {
+            bail!("STUN server {s:?}: host:port");
+        }
         config.admin_keys()?;
         if config.rotation.is_empty() {
             bail!("the rotation has no map");
@@ -183,6 +208,14 @@ impl Config {
     /// The configured public address (checked by [`Config::parse`]).
     pub fn public_ip(&self) -> Option<IpAddr> {
         self.public_address.as_deref().and_then(|a| a.parse().ok())
+    }
+
+    /// The configured public address when the Internet cannot reach it
+    /// (IPv6, which invites and joiners do not use, or not global) and a
+    /// relay is public: such a server is not announced on Nostr (its note
+    /// would leak the LAN address, and every list refuses it).
+    pub fn unreachable_public_address(&self) -> Option<IpAddr> {
+        self.public_ip().filter(|ip| ip.is_ipv6() || !is_global(*ip)).filter(|_| !local_relays(&self.relays))
     }
 
     /// Bytes per second the server sends content in all: `upload_kib_s`

@@ -53,33 +53,21 @@
     // who lack them, players' skins to the others (256 KiB/s while a match
     // runs). Held to 64..65536. Default 4096.
     upload_kib_s: 4096,
-    // Nostr relays (wss:// or ws://) a Public server announces on; the
-    // invite names them too. Default: the game's default relays.
-    relays: [
-        "wss://relay.damus.io",
-        "wss://nos.lol",
-        "wss://relay.primal.net",
-        "wss://relay.snort.social",
-        "wss://offchain.pub",
-        "wss://nostr.oxtr.dev",
-        "wss://relay.nostr.net",
-        "wss://nostr.bitcoiner.social",
-    ],
+    // Nostr relays (wss:// or ws://, at most 32) a Public server announces
+    // on; the invite names them too. Default: the game's default relays,
+    // which later versions extend: leave it out to follow them, e.g.
+    // relays: ["wss://relay.damus.io", "ws://192.168.1.2:7000"],
     // The region the game list shows: Europe, NorthAmericaEast,
     // NorthAmericaWest, SouthAmerica, Asia, Oceania, Africa or Unknown.
     // Default Unknown.
     region: Europe,
     // The server's public IP address, for players outside the LAN (the
     // announcement and the invite carry it). None: STUN servers learn it,
-    // at the start and every 10 minutes. Default None.
+    // at the start and every 10 minutes. A private or IPv6 address is not
+    // announced on public relays (the log warns). Default None.
     public_address: None,
     // STUN servers (host:port) asked for the public address, the first
-    // answering wins. []: none asked. Default: the game's default servers.
-    stun: [
-        "stun.cloudflare.com:3478",
-        "stun.l.google.com:19302",
-        "global.stun.twilio.com:3478",
-        "stun.nextcloud.com:443",
-        "stun.sipgate.net:3478",
-    ],
+    // answering wins. []: none asked. Default: the game's default servers,
+    // which later versions extend: leave it out to follow them, e.g.
+    // stun: ["stun.cloudflare.com:3478"],
 )
