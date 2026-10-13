@@ -127,11 +127,9 @@ fn url_bytes(u: &str) -> Vec<u8> {
 
 #[test]
 fn hints_are_validated() {
-    let n = DEFAULT_RELAYS.len() as u8;
     let two_urls = [vec![2], url_bytes("wss://a"), url_bytes("wss://b")].concat();
     let long = [vec![1], url_bytes(&format!("wss://{}", "a".repeat(59)))].concat(); // 65 bytes
     let bad: Vec<Vec<u8>> = vec![
-        vec![1, 0, n],
         vec![4, 0, 0, 0, 1, 0, 2],
         [vec![1], url_bytes("https://relay.example")].concat(),
         long,
@@ -144,6 +142,44 @@ fn hints_are_validated() {
     assert!(Invite::decode(&raw(&ok64)).is_ok());
     assert!(Invite::decode(&raw(&[vec![4, 0, 0, 0, 1, 0, 1, 0, 2], url_bytes("ws://a")].concat())).is_err()); // 4 defaults
     assert!(Invite::decode(&raw(&[vec![4, 0, 0, 0, 1, 0, 2], url_bytes("ws://a")].concat())).is_ok());
+}
+
+#[test]
+fn the_hrp_is_exactly_rlx() {
+    // `rlx1foo1…`: bech32's separator is the last `1`, so its HRP is
+    // `rlx1foo`; a valid checksum for that HRP is still not an invite.
+    let mut p = vec![1u8];
+    p.extend_from_slice(&[7; 32]);
+    p.extend_from_slice(&[0, 0]);
+    use bech32::{Bech32m, Hrp};
+    let other = bech32::encode::<Bech32m>(Hrp::parse("rlx1foo").unwrap(), &p).unwrap();
+    assert!(other.starts_with("rlx1foo1"), "{other}");
+    assert!(matches!(Invite::decode(&other), Err(InviteError::Damaged)), "{other}");
+    assert!(matches!(Invite::decode(&other.to_uppercase()), Err(InviteError::Damaged)));
+    assert!(Invite::decode(&code(&p)).is_ok());
+}
+
+#[test]
+fn a_plain_bech32_checksum_is_damage() {
+    let mut p = vec![1u8];
+    p.extend_from_slice(&[7; 32]);
+    p.extend_from_slice(&[0, 0]);
+    use bech32::{Bech32, Hrp};
+    let plain = bech32::encode::<Bech32>(Hrp::parse("rlx").unwrap(), &p).unwrap();
+    assert!(matches!(Invite::decode(&plain), Err(InviteError::Damaged)), "{plain}");
+}
+
+#[test]
+fn unknown_default_indices_are_ignored() {
+    // A newer build's longer list: an index beyond ours is skipped, so the
+    // code's other hints still serve.
+    let n = DEFAULT_RELAYS.len() as u8;
+    let got = Invite::decode(&raw(&[vec![4, 0, n, 0, 255, 0, 1], url_bytes("wss://a")].concat())).unwrap();
+    assert_eq!(got.relays, vec![RelayHint::Default(1), RelayHint::Url("wss://a".into())]);
+    assert_eq!(got.relay_urls(), vec![DEFAULT_RELAYS[1].to_string(), "wss://a".to_string()]);
+    // They still count towards the limits.
+    let four = [vec![4, 0, n, 0, n, 0, n, 0, 1]].concat();
+    assert!(matches!(Invite::decode(&raw(&four)), Err(InviteError::Invalid)));
 }
 
 #[test]

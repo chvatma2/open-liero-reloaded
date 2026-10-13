@@ -37,6 +37,7 @@ rl-online.workspace = true
 rl-net.workspace = true
 rl-lobby.workspace = true
 rl-server.workspace = true
+rl-discovery.workspace = true
 serde_json.workspace = true
 postcard.workspace = true
 wgpu.workspace = true
@@ -51,6 +52,8 @@ proptest.workspace = true
 allocation-counter.workspace = true
 insta.workspace = true
 divan.workspace = true
+# The relay probe's tests run against the in-process test relay.
+rl-discovery = { workspace = true, features = ["test-relay"] }
 
 [[test]]
 name = "integration"

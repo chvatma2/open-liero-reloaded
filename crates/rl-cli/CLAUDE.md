@@ -177,6 +177,26 @@ The headless command-line tool. Its commands:
   `gpu-bench` of the heavy replay at four sizes with the probe about
   11 s (WSL GL), 10 s (DX12) or 8 s (Vulkan), a level's replay about
   1 s (art 8: 3 to 8 s).
+- `rl-cli nostr-probe [urls…] [--wait-min 3]` and `rl-cli stun-probe
+  [servers…]` (plan 12a Task 8, `nostr_probe.rs`, library and commands):
+  measure public relays and STUN servers to choose `rl_discovery::defaults`
+  (the default lists when none are named). **By hand only: the relay probe
+  publishes to public relays**; no test runs it against the internet. Per
+  relay, two pool connections: a kind-31470 note (its `OK` and round trip),
+  read back at once on the second and after the wait on the first, and a
+  kind-21470 event forwarded from the first to the second. Every event is a
+  probe event: a fresh random key per run (`probe_key`, never the player's
+  identity), content `"rust-liero relay probe"`, tags `d` and `t` =
+  `rust-liero-probe`, expiry 10 minutes ahead (`probe_event`). A relay
+  passes when it accepts, keeps (both reads), forwards and refuses nothing
+  for payment or auth (`needs_payment_or_auth`: `restricted:`,
+  `auth-required:`, or naming payment or a whitelist). The STUN probe asks
+  over IPv4 (3 tries of 1 s) and keeps the RTT, the mapped address's family
+  and whether it is global, never the address (the prober's own IP). Both
+  print Markdown tables and exit 1 unless everything passes.
+  `tests/nostr_probe.rs` checks the verdicts against `TestRelay`
+  misbehaviours (`Refuse`, `RefuseKind`, `KeepFor`, `NoForward`) and
+  `StunResponder`.
 
 **The library** (`src/lib.rs`) holds the match runner for the commands and
 the tests: `spec::MatchSpec` (the options, serialized in failures and

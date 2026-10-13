@@ -52,7 +52,12 @@ test relay, relay pool, announcements, game list, STUN and invite codes
   the relay listens on 127.0.0.1 only, so a client connecting to `localhost`
   must fall back from `::1`, or connect to `port()` directly), `url()`,
   `port()`, `events()`, `set_misbehaviour(Honest | NeverEose | Garbage |
-  DropAfter(n) | Slow(d) | Silent | Drip | SlowReads)` (SlowReads: reads
+  DropAfter(n) | Slow(d) | Silent | Drip | SlowReads | Refuse(msg) |
+  RefuseKind(k) | KeepFor(secs) | NoForward)` (Refuse: every event gets
+  `OK false msg`, such as a paid relay's `restricted: …`; RefuseKind: that
+  kind gets `blocked: …`; KeepFor: a stored event is served only while the
+  relay's clock is under `created_at + secs`; NoForward: ephemeral events
+  accepted, forwarded to nobody; SlowReads: reads
   of at most 1 KiB, a 1 ms pause every 8, under any TLS; Silent: no reads,
   no writes, new connections held without a handshake; Drip: one byte per 40 ms,
   forever: an endless handshake response on new connections (on the TCP
@@ -127,8 +132,9 @@ test relay, relay pool, announcements, game list, STUN and invite codes
   address as given, no filtering: callers use `list::is_global`; bounded,
   integrity and fingerprint unchecked) and `public_ip(servers, deadline)`:
   `host:port` strings, IPv4 only, ephemeral `0.0.0.0:0` socket, 500 ms x 2
-  tries per server, never longer than `deadline` after resolution (DNS may
-  block longer): run it on a thread. `StunResponder` (feature `test-relay`;
+  tries per server, no lookup started past `deadline` (one lookup may
+  block longer): run it on a thread. Only a reply from the server's own
+  address with our transaction counts. `StunResponder` (feature `test-relay`;
   `start`, `start_plain`, `server()`, `answered()`) is the test server.
   Tests use the RFC 5769 section 2.2 response.
 - **`invite`** (N42) and **`defaults`**: `Invite::{encode, decode, relay_urls}`,
@@ -137,13 +143,17 @@ test relay, relay pool, announcements, game list, STUN and invite codes
   mixed), refuses text over `MAX_CODE` (200) as `Invalid` (the `bech32`
   0.12 crate's own Bech32m limit is 1023, so the 90 limit is simply not
   applied), text without the `rlx1` prefix is `NotInvite`, any checksum or
-  case failure `Damaged`, version above 1 `Newer` (checked before parsing),
+  case failure, a plain-bech32 checksum or an HRP other than exactly `rlx`
+  (`rlx1foo1…` is HRP `rlx1foo`) `Damaged`, version above 1 `Newer` (checked before parsing),
   version 0, bad postcard, trailing bytes or bad hints `Invalid`. Hints (PF12-6): at most
-  3 `Default` (in range) and 1 `Url` (`wss://`/`ws://`, at most 64 bytes);
-  the worst case is 191 characters, within `MAX_CODE`. `encode` is
+  3 `Default` and 1 `Url` (`wss://`/`ws://`, at most 64 bytes); a
+  `Default` index beyond this build's list (a newer build's code) is
+  skipped, not `Invalid`, so the other hints serve; the worst case is 191 characters, within `MAX_CODE`. `encode` is
   infallible and truncates: it drops bad hints, then those beyond the
-  limits (first win), so its code always decodes. `DEFAULT_RELAYS` is append-only (indices are wire format);
-  both default lists are placeholders until plan 12a Task 8.
+  limits (first win), so its code always decodes. `DEFAULT_RELAYS` is append-only (indices are wire format;
+  `defaults`' test pins the released prefix). Both lists were chosen by
+  `rl-cli nostr-probe`/`stun-probe` on 2026-10-13 (plan 12a Task 8; the
+  table is in STATUS.md N38).
 - Deps: `rustls` (default aws-lc-rs) and `webpki-roots` (workspace pins),
   `tungstenite` with `rustls-tls-webpki-roots` (for `Connector::Rustls`;
   its own default roots are never used). `rcgen =0.14.10` (`aws_lc_rs`

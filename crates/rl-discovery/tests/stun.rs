@@ -100,10 +100,53 @@ fn asks_the_next_server_when_one_is_silent() {
 
 #[test]
 fn no_stun_answer_leaves_no_address() {
-    let silent = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let servers = vec![silent.local_addr().unwrap().to_string(), "not a server".to_string()];
+    // Without the deadline the two silent servers alone take 2 s (two
+    // tries of 500 ms each); the bound leaves room for a loaded machine.
+    let (a, b) = (UdpSocket::bind("127.0.0.1:0").unwrap(), UdpSocket::bind("127.0.0.1:0").unwrap());
+    let servers = vec![
+        a.local_addr().unwrap().to_string(),
+        b.local_addr().unwrap().to_string(),
+        "not a server".to_string(),
+    ];
     let start = Instant::now();
     assert_eq!(public_ip(&servers, Duration::from_millis(300)), None, "the deadline cuts it short");
-    assert!(start.elapsed() < Duration::from_millis(900));
+    assert!(start.elapsed() < Duration::from_millis(1500), "{:?}", start.elapsed());
     assert_eq!(public_ip(&[], Duration::from_secs(1)), None);
+}
+
+#[test]
+fn the_deadline_is_checked_before_each_lookup() {
+    // A passed deadline resolves no further name (a lookup may block): with
+    // none left at all, nobody is asked.
+    let responder = StunResponder::start(sa("192.0.2.5:1"));
+    assert_eq!(public_ip(&[responder.server()], Duration::ZERO), None);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(responder.answered(), 0);
+}
+
+#[test]
+fn forged_and_stray_replies_are_ignored() {
+    // The server first gets a reply with the right transaction sent from
+    // another port (forged), then one with a wrong transaction from its own
+    // port, then the real answer.
+    let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let forger = UdpSocket::bind("127.0.0.1:0").unwrap();
+    server.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let addr = server.local_addr().unwrap();
+    let fake = std::thread::spawn(move || {
+        let mut buf = [0u8; 100];
+        let (len, from) = server.recv_from(&mut buf).unwrap();
+        assert_eq!(len, 20);
+        let mut t = [0u8; 12];
+        t.copy_from_slice(&buf[8..20]);
+        forger.send_to(&response(&t, sa("198.51.100.66:1"), true), from).unwrap();
+        let mut wrong = t;
+        wrong[0] ^= 1;
+        server.send_to(&response(&wrong, sa("198.51.100.67:1"), true), from).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        server.send_to(&response(&t, sa("203.0.113.5:1"), true), from).unwrap();
+    });
+    let ip = public_ip(&[addr.to_string()], Duration::from_secs(3));
+    fake.join().unwrap();
+    assert_eq!(ip, Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 5))));
 }

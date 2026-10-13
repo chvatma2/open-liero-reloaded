@@ -57,6 +57,11 @@ enum Command {
     /// Draw a recorded match offscreen at several sizes on the GPU, timing the CPU
     /// and (with timestamps) the GPU, plus the shader-headroom probe (plan 8).
     GpuBench(gpu_bench_cmd::Args),
+    /// Measures Nostr relays for the default list (by hand only: it publishes probe events
+    /// from a fresh random key); exits with status 1 unless every relay passes.
+    NostrProbe(rl_cli::nostr_probe::RelayArgs),
+    /// Measures STUN servers for the default list; exits with status 1 unless every one answers.
+    StunProbe(rl_cli::nostr_probe::StunArgs),
     /// Validate packs; exits with status 1 if any pack has errors.
     Validate {
         /// Pack directories, or directories containing pack directories.
@@ -78,6 +83,8 @@ fn main() -> ExitCode {
         Command::Stress(args) => stress_cmd::run(&args),
         Command::RollbackCost(args) => rollback_cost_cmd::run(&args),
         Command::GpuBench(args) => gpu_bench_cmd::run(&args),
+        Command::NostrProbe(args) => rl_cli::nostr_probe::run_relays(&args),
+        Command::StunProbe(args) => rl_cli::nostr_probe::run_stun(&args),
         Command::Validate { paths } => validate::run(&paths),
     };
     match result {

@@ -381,6 +381,45 @@ fn misbehaviours() {
 }
 
 #[test]
+fn refusing_forgetting_and_not_forwarding() {
+    let relay = TestRelay::start();
+    relay.set_time(1000);
+    let mut c = Client::connect(&relay);
+    let note = announce(1, 1000, "note");
+    let hs = ev(1, 1000, KIND_HANDSHAKE, &[], "offer");
+
+    // Refuse: every event, with the given message; nothing stored.
+    relay.set_misbehaviour(Misbehaviour::Refuse("restricted: pay first"));
+    assert_eq!(c.publish(&note), (false, "restricted: pay first".to_string()));
+    assert_eq!(c.publish(&hs), (false, "restricted: pay first".to_string()));
+    assert!(relay.events().is_empty());
+
+    // RefuseKind: that kind only.
+    relay.set_misbehaviour(Misbehaviour::RefuseKind(KIND_ANNOUNCE));
+    let (accepted, message) = c.publish(&note);
+    assert!(!accepted && message.starts_with("blocked:"), "{message}");
+    assert_eq!(c.publish(&ev(1, 1000, 1, &[], "text")), (true, String::new()));
+
+    // NoForward: an ephemeral event is accepted and reaches nobody.
+    relay.set_misbehaviour(Misbehaviour::NoForward);
+    let mut listener = Client::connect(&relay);
+    assert!(listener.subscribe("hs", vec![kinds(KIND_HANDSHAKE)]).is_empty());
+    assert_eq!(c.publish(&hs), (true, String::new()));
+    assert!(listener.query("after", vec![kinds(2)]).is_empty(), "a forwarded event would precede this EOSE");
+
+    // KeepFor: served until `created_at` + 60 on the relay's clock.
+    relay.set_misbehaviour(Misbehaviour::KeepFor(60));
+    assert!(c.publish(&note).0);
+    assert_eq!(c.query("a", vec![kinds(KIND_ANNOUNCE)]), vec![note.clone()]);
+    relay.set_time(1059);
+    assert_eq!(c.query("b", vec![kinds(KIND_ANNOUNCE)]), vec![note.clone()]);
+    relay.set_time(1060);
+    assert!(c.query("c", vec![kinds(KIND_ANNOUNCE)]).is_empty());
+    relay.set_misbehaviour(Misbehaviour::Honest);
+    assert_eq!(c.query("d", vec![kinds(KIND_ANNOUNCE)]), vec![note]);
+}
+
+#[test]
 fn garbage_input_is_answered_not_fatal() {
     let relay = TestRelay::start();
     let mut c = Client::connect(&relay);

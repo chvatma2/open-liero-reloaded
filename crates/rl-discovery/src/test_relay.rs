@@ -51,6 +51,17 @@ pub enum Misbehaviour {
     /// Reads the socket at most 1 KiB at a time, pausing 1 ms every 8
     /// reads (under any TLS): a peer that accepts writes slowly.
     SlowReads,
+    /// Refuses every event with this `OK` message, such as a paid relay's
+    /// `"restricted: …"` or `"auth-required: …"`; nothing is stored or
+    /// forwarded.
+    Refuse(&'static str),
+    /// Refuses events of this kind (`"blocked: kind … not accepted"`).
+    RefuseKind(u32),
+    /// Serves a stored event only while the relay's clock is less than this
+    /// many seconds past its `created_at` (a relay that drops notes).
+    KeepFor(u64),
+    /// Accepts ephemeral events but forwards them to nobody.
+    NoForward,
 }
 
 /// The relay's side of a TCP connection: under [`Misbehaviour::SlowReads`]
@@ -190,6 +201,14 @@ impl State {
         if !ev.verify() {
             return (false, "invalid: bad id or signature".into());
         }
+        match self.misbehaviour {
+            Misbehaviour::Refuse(message) => return (false, message.into()),
+            Misbehaviour::RefuseKind(k) if k == ev.kind => {
+                return (false, format!("blocked: kind {k} not accepted"));
+            }
+            Misbehaviour::NoForward if (20_000..30_000).contains(&ev.kind) => return (true, String::new()),
+            _ => {}
+        }
         let now = self.clock();
         if expired(&ev, now) {
             return (false, "invalid: event expired".into());
@@ -217,10 +236,14 @@ impl State {
     /// `limit`, the union newest first.
     fn query(&self, filters: &[Filter]) -> Vec<Event> {
         let now = self.clock();
+        let kept = |e: &Event| match self.misbehaviour {
+            Misbehaviour::KeepFor(secs) => e.created_at.saturating_add(secs) > now,
+            _ => true,
+        };
         let mut out: Vec<Event> = Vec::new();
         for f in filters {
             let mut hits: Vec<&Event> =
-                self.events.iter().filter(|e| !expired(e, now) && matches(f, e)).collect();
+                self.events.iter().filter(|e| !expired(e, now) && kept(e) && matches(f, e)).collect();
             hits.sort_by(|a, b| (b.created_at, a.id).cmp(&(a.created_at, b.id)));
             hits.truncate(f.limit.map_or(usize::MAX, |l| l as usize));
             for e in hits {

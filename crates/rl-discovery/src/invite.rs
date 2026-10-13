@@ -46,7 +46,8 @@ pub struct Invite {
 /// A relay named in an invite.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RelayHint {
-    /// An index into [`DEFAULT_RELAYS`] (append-only).
+    /// An index into [`DEFAULT_RELAYS`] (append-only). `decode` skips an
+    /// index beyond this build's list (a newer build's code).
     Default(u8),
     /// `wss://` or `ws://`, at most 100 bytes.
     Url(String),
@@ -129,6 +130,11 @@ impl Invite {
             return Err(InviteError::Invalid);
         }
         let checked = CheckedHrpstring::new::<Bech32m>(text).map_err(|_| InviteError::Damaged)?;
+        // `rlx1foo1…` with a valid checksum for HRP `rlx1foo` (bech32's
+        // separator is the last `1`) is not ours.
+        if !checked.hrp().as_str().eq_ignore_ascii_case(HRP) {
+            return Err(InviteError::Damaged);
+        }
         let bytes: Vec<u8> = checked.byte_iter().collect();
         match bytes.first() {
             None | Some(0) => return Err(InviteError::Invalid),
@@ -141,11 +147,15 @@ impl Invite {
         }
         let defaults = wire.relays.iter().filter(|h| matches!(h, RelayHint::Default(_))).count();
         let urls = wire.relays.len() - defaults;
-        if !wire.relays.iter().all(hint_ok) || defaults > MAX_DEFAULT_HINTS || urls > MAX_URL_HINTS {
+        let urls_ok = wire.relays.iter().all(|h| matches!(h, RelayHint::Default(_)) || hint_ok(h));
+        if !urls_ok || defaults > MAX_DEFAULT_HINTS || urls > MAX_URL_HINTS {
             return Err(InviteError::Invalid);
         }
+        // A `Default` index beyond this build's list comes from a newer
+        // build's longer one: it is skipped, the other hints still serve.
+        let relays = wire.relays.into_iter().filter(hint_ok).collect();
         let addr = wire.addr.map(|(ip, port)| SocketAddr::from((Ipv4Addr::from(ip), port)));
-        Ok(Invite { key: wire.key, relays: wire.relays, addr })
+        Ok(Invite { key: wire.key, relays, addr })
     }
 
     /// The relay URLs the hints name, in order (defaults resolved).

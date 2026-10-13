@@ -109,15 +109,20 @@ fn new_transaction(salt: u64) -> [u8; 12] {
 
 /// Asks each server (`host:port`) in turn, 500 ms per try and 2 tries each,
 /// from an ephemeral UDP socket on `0.0.0.0:0`; returns the IP of the first
-/// answer. Blocks for at most `deadline` once the names are resolved (name
-/// resolution itself is the system's and may take longer): call it on a
-/// thread. IPv4 servers only. The address is returned as the server gave
+/// answer. Blocks for at most `deadline` plus one name lookup (no lookup
+/// starts past the deadline, but the system's resolution of a name may take
+/// longer): call it on a thread. Only a reply from the server's own address
+/// with our transaction counts. IPv4 servers only. The address is returned as the server gave
 /// it, even a private one; callers decide with `list::is_global`.
 pub fn public_ip(servers: &[String], deadline: Duration) -> Option<IpAddr> {
     let end = Instant::now().checked_add(deadline)?;
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
     let mut buf = [0u8; MAX_DATAGRAM + 1];
     for (n, server) in servers.iter().enumerate() {
+        // A lookup may block: none is started past the deadline.
+        if Instant::now() >= end {
+            return None;
+        }
         let Some(target) = server.to_socket_addrs().ok().and_then(|mut a| a.find(SocketAddr::is_ipv4)) else {
             continue;
         };

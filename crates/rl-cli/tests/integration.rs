@@ -18,6 +18,7 @@ mod corpus;
 mod feel;
 mod matches;
 mod net_repro;
+mod nostr_probe;
 mod scenario;
 mod state_transfer;
 mod stress;
