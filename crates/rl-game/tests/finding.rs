@@ -274,3 +274,141 @@ fn the_relays_linger_after_the_multiplayer_screen() {
     frame(&mut [&mut sh], at(44), &mut |_| Keys(0));
     assert_eq!(sh.relay_pools_opened(), 2);
 }
+
+/// A game's note, as a host would announce it, published on `relay` by a
+/// pool of the test's own; returns once the relay holds it.
+fn announce_on(relay: &TestRelay, id: &rl_lobby::Identity, name: &str, created_at: u64) {
+    let summary = rl_discovery::GameSummary {
+        v: rl_proto::PROTOCOL_VERSION,
+        name: name.into(),
+        mode: "deathmatch".into(),
+        map: LEVEL.into(),
+        map_name: "Dirt Level".into(),
+        mod_id: MOD.into(),
+        mod_hash: rl_proto::NO_HASH.into(),
+        players: 1,
+        max_players: 8,
+        spectators: 0,
+        max_spectators: 4,
+        password: false,
+        region: rl_discovery::Region::Europe,
+        playing: false,
+        addr: Some([127, 0, 0, 1].into()),
+        port: 23400,
+        closed: false,
+    };
+    let note = rl_discovery::announcement(id, &summary, rl_proto::FINGERPRINT, created_at, [7; 32]);
+    let mut pool = rl_discovery::Pool::start(rl_discovery::PoolConfig {
+        relays: vec![relay.url()],
+        ..rl_discovery::PoolConfig::default()
+    });
+    pool.publish(note.clone());
+    let start = Instant::now();
+    while !relay.events().iter().any(|e| e.id == note.id) {
+        assert!(start.elapsed() < Duration::from_secs(10), "the relay takes the note");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+}
+
+/// Final review B-I2: relays edited in Options apply to the pool already
+/// open (lingering or in use): it is closed and one on the new relays
+/// opened, so a game announced only on the new relay is listed.
+#[test]
+fn relay_edits_apply_to_the_open_pool() {
+    let (old, new) = (TestRelay::start(), TestRelay::start());
+    let empty = tempfile::tempdir().unwrap();
+    let mut sh = menus(empty.path(), Store::in_memory(), "Anna", 1.0);
+    use_relays(&mut sh, &[old.url()]);
+    sh.act(UiAction::Open(Screen::Multiplayer));
+    frame(&mut [&mut sh], Instant::now(), &mut |_| Keys(0));
+    assert_eq!(sh.relay_pools_opened(), 1);
+    let host = rl_lobby::Identity::from_secret([42; 32]).unwrap();
+    announce_on(&new, &host, "On the new relay", unix_now());
+    // Options: the new relay instead, while the pool lingers.
+    sh.act(UiAction::Back);
+    frame(&mut [&mut sh], Instant::now(), &mut |_| Keys(0));
+    use_relays(&mut sh, &[new.url()]);
+    sh.act(UiAction::Open(Screen::Multiplayer));
+    run_until("listed from the new relay", Duration::from_secs(10), &mut [&mut sh], None, |s| {
+        listed(s[0], host.public()).is_some()
+    });
+    assert_eq!(sh.relay_pools_opened(), 2, "a pool on the new relays");
+}
+
+/// Final review B-I2: blocking and unblocking in Options apply to the open
+/// list at once: a blocked host's game goes, and an unblocked host's next
+/// note lists it again (the list never kept a blocked host's notes).
+#[test]
+fn block_edits_apply_to_the_open_list() {
+    let relay = TestRelay::start();
+    let empty = tempfile::tempdir().unwrap();
+    let mut sh = menus(empty.path(), Store::in_memory(), "Anna", 1.0);
+    use_relays(&mut sh, &[relay.url()]);
+    let host = rl_lobby::Identity::from_secret([43; 32]).unwrap();
+    let t = unix_now();
+    announce_on(&relay, &host, "Den", t);
+    sh.act(UiAction::Open(Screen::Multiplayer));
+    run_until("listed", Duration::from_secs(10), &mut [&mut sh], None, |s| {
+        listed(s[0], host.public()).is_some()
+    });
+    let set_blocked = |sh: &mut Shell, blocked: Vec<String>| {
+        let f = FindingSettings { blocked, ..sh.ui.settings().online.finding.clone() };
+        sh.act(UiAction::SetFinding(f));
+    };
+    set_blocked(&mut sh, vec![rl_ui::key_hex(&host.public())]);
+    run_until("hidden", Duration::from_secs(5), &mut [&mut sh], None, |s| {
+        listed(s[0], host.public()).is_none()
+    });
+    set_blocked(&mut sh, Vec::new());
+    announce_on(&relay, &host, "Den again", t + 12);
+    run_until("listed again", Duration::from_secs(10), &mut [&mut sh], None, |s| {
+        listed(s[0], host.public()).is_some_and(|g| g.name == "Den again")
+    });
+    assert_eq!(sh.relay_pools_opened(), 1, "blocking needs no new pool");
+}
+
+/// Final review B-I2: a Public host whose relays change in Options
+/// announces on the new relays at once, and its invite hints them.
+#[test]
+fn a_public_host_follows_relay_edits() {
+    let Some(dir) = content_dir() else { return };
+    let (old, new) = (TestRelay::start(), TestRelay::start());
+    let mut h = menus(&dir, Store::in_memory(), "Hosty", 1.0);
+    use_relays(&mut h, &[old.url()]);
+    host_as(&mut h, Visibility::Public);
+    run_until("announced on the old relay", Duration::from_secs(10), &mut [&mut h], None, |_| {
+        !old.events().is_empty()
+    });
+    use_relays(&mut h, &[new.url()]);
+    run_until("announced on the new relay", Duration::from_secs(10), &mut [&mut h], None, |_| {
+        !new.events().is_empty()
+    });
+    let invite = Invite::decode(h.data.lobby.as_ref().unwrap().invite.as_deref().unwrap()).unwrap();
+    assert_eq!(invite.relay_urls(), [new.url()], "the invite hints the new relays");
+}
+
+/// Final review B-I3: an Invite-only host is told when its code has no
+/// address (no STUN server, none configured), as a Public host is.
+#[test]
+fn an_invite_only_game_without_an_address_says_so() {
+    let Some(dir) = content_dir() else { return };
+    let mut h = menus(&dir, Store::in_memory(), "Hosty", 1.0);
+    host_as(&mut h, Visibility::Invite);
+    let port = h.local_port().unwrap();
+    run_until("the lobby's lines", Duration::from_secs(5), &mut [&mut h], None, |s| {
+        s[0].data.lobby.as_ref().is_some_and(|l| l.invite.is_some())
+    });
+    let lobby = h.data.lobby.clone().unwrap();
+    assert_eq!(Invite::decode(lobby.invite.as_deref().unwrap()).unwrap().addr, None);
+    assert_eq!(
+        lobby.listing.as_deref(),
+        Some(
+            format!("This code has no address: forward port {port} or set the public address in Options")
+                .as_str()
+        )
+    );
+}

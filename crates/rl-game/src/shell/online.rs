@@ -303,6 +303,11 @@ impl Shell {
         }
         n.hosted = Some(hosted);
         self.net = Some(n);
+        // The pool may still hold the last hosted game's verdicts: this
+        // game is "Listed" on its own notes only (final review B-M1).
+        if let Some(i) = &mut self.internet {
+            i.forget_ours();
+        }
         Ok(())
     }
 
@@ -658,7 +663,7 @@ impl Shell {
             let (region, addr) = n
                 .hosted
                 .as_ref()
-                .map_or((rl_discovery::Region::Unknown, None), |h| (h.region, h.address.current()));
+                .map_or((rl_discovery::Region::Unknown, None), |h| (h.region, h.announced_addr()));
             let hosting = Hosting {
                 port,
                 max_players: n.max_players,
@@ -836,6 +841,17 @@ impl Shell {
             .as_ref()
             .and_then(|n| n.hosted.as_ref())
             .is_some_and(|h| h.visibility == Visibility::Public);
+        let finding = &self.ui.settings().online.finding;
+        let relays = relays_of(finding);
+        // Relays edited in Options: the open pool (lingering or in use)
+        // gives way to one on the new list (final review B-I2).
+        if self.internet.as_ref().is_some_and(|i| i.relays() != relays.as_slice())
+            && let Some(i) = self.internet.take()
+        {
+            i.close(false);
+            self.internet_left = None;
+            self.pinged = None;
+        }
         if !browsing && !public {
             // Kept `RELAY_LINGER` (unsubscribed, still drained), then closed.
             let Some(i) = &mut self.internet else { return };
@@ -854,12 +870,12 @@ impl Shell {
             return;
         }
         self.internet_left = None;
-        let finding = &self.ui.settings().online.finding;
         if self.internet.is_none() {
             self.relay_pools += 1;
         }
-        let internet =
-            self.internet.get_or_insert_with(|| Internet::open(relays_of(finding), &finding.blocked));
+        let internet = self.internet.get_or_insert_with(|| Internet::open(relays, &finding.blocked));
+        // Blocks and unblocks from Options apply to the open list at once.
+        internet.set_blocked(&finding.blocked);
         let unix = unix_now();
         internet.browse(browsing, unix);
         internet.poll(now, unix);
@@ -895,17 +911,39 @@ impl Shell {
     fn poll_hosted(&mut self, now: Instant) {
         let port = self.local_port().unwrap_or(0);
         let key = self.identity.as_ref().map(Identity::public);
+        let pools = self.relay_pools;
+        let relays = relays_of(&self.ui.settings().online.finding);
         let Some(h) = self.net.as_mut().and_then(|n| n.hosted.as_mut()) else { return };
         if let Some(said) = h.address.poll(now) {
             println!("rl-game: {said}");
-            if let Some(s) = &mut h.summary {
-                s.addr = h.address.current();
+        }
+        // The invite hints the relays as edited in Options (final review
+        // B-I2); a Public game's pool follows them in `poll_internet`.
+        if h.relays != relays {
+            h.relays = relays;
+        }
+        let addr = h.announced_addr();
+        if let Some(s) = &mut h.summary {
+            s.addr = addr;
+        }
+        if let Some(i) = &mut self.internet
+            && h.publisher.is_some()
+            && h.pool != pools
+        {
+            // A pool on edited relays: the last note again at once, so the
+            // game stays listed there without waiting for the next minute.
+            h.pool = pools;
+            if let Some(note) = &h.last_note {
+                i.publish(note.clone());
             }
         }
         if h.address.settled()
+            && h.publishes()
             && let (Some(p), Some(summary), Some(i)) = (&mut h.publisher, &h.summary, &mut self.internet)
             && let Some(note) = p.tick(now, unix_now(), summary, aux)
         {
+            h.last_note = Some(note.clone());
+            h.pool = pools;
             i.publish(note);
         }
         let invite = key.and_then(|k| h.invite(k, port));

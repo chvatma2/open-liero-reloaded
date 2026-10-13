@@ -129,6 +129,26 @@ impl AddressWatch {
     }
 }
 
+/// Whether every relay is on this machine or a private network (a relay
+/// of one's own, or the tests'): lists then take games announcing local
+/// addresses too (ruling PF12-5's `allow_local`, PF12-8), and a host may
+/// announce a private address on them. A public relay among them keeps
+/// both to public addresses. A relay named by a host name other than
+/// `localhost` counts as public (its address is not known without a
+/// lookup).
+pub fn local_relays(relays: &[String]) -> bool {
+    let local = |url: &str| {
+        let rest = url.strip_prefix("wss://").or_else(|| url.strip_prefix("ws://")).unwrap_or(url);
+        let authority = rest.split('/').next().unwrap_or("");
+        let host = match authority.strip_prefix('[') {
+            Some(v6) => v6.split(']').next().unwrap_or(""),
+            None => authority.rsplit_once(':').map_or(authority, |(h, _)| h),
+        };
+        host.eq_ignore_ascii_case("localhost") || host.parse::<IpAddr>().is_ok_and(|ip| !is_global(ip))
+    };
+    !relays.is_empty() && relays.iter().all(|r| local(r))
+}
+
 /// The relay hints of an invite: the default relays among `relays` by
 /// index, and the first other one short enough to hint. `Invite::encode`
 /// keeps what fits (ruling PF12-6).
@@ -259,6 +279,16 @@ mod tests {
         let long = format!("wss://{}.example.org", "a".repeat(80));
         let relays = vec![long, "ws://127.0.0.1:7000".to_string()];
         assert_eq!(relay_hints(&relays), vec![RelayHint::Url("ws://127.0.0.1:7000".into())]);
+    }
+
+    #[test]
+    fn local_relays_allow_local_games() {
+        let v = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(local_relays(&v(&["ws://127.0.0.1:7000"])));
+        assert!(local_relays(&v(&["wss://localhost:7000/x", "ws://192.168.1.4", "ws://[::1]:80"])));
+        assert!(!local_relays(&v(&["ws://127.0.0.1:7000", "wss://relay.damus.io"])));
+        assert!(!local_relays(&v(&["wss://81.2.69.142"])));
+        assert!(!local_relays(&[]), "no relays: nothing to allow");
     }
 
     #[test]

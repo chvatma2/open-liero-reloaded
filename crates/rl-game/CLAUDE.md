@@ -348,13 +348,21 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   dropped on a thread of its own, `relays-closing`, so the UI never waits;
   at quitting, `close_internet` waits so a closing note leaves): a `Pool`
   on the settings' relays (`relays_of`: else `DEFAULT_RELAYS`; none: no
-  pool, "No relay reachable"), a `GameList` (the settings' blocked keys;
-  `allow_local` when every relay is local, `local_relays`: one's own or
-  the tests' relay) subscribed (`GAMES_SUB`, `filter_since`) while the
+  pool, "No relay reachable"; relays edited in Options close the open
+  pool, lingering or in use, and open one on the new list, final review
+  B-I2), a `GameList` (the settings' blocked keys, kept in step with
+  Options every frame, `Internet::set_blocked`: a block hides at once, an
+  unblocked host's game shows with its next note;
+  `allow_local` when every relay is local, `local_relays`, rl-discovery's
+  `hosting`: one's own or the tests' relay) subscribed (`GAMES_SUB`, `filter_since`) while the
   screens show, the selected game pinged (`Pinger`, a TCP connect on a
   thread, only games the list accepted with an address), the view
   (`internet_entry`: the mod's name from the catalog, the region
-  converted naming every variant) made again only when something changed.
+  converted naming every variant) made again only when something changed
+  (a note the list refused changes nothing: `GameList::offer`'s result).
+  The list's ages and the subscription's `since` use the wall clock read
+  at each poll (`unix_now`; never the frames' monotonic clock, which
+  stands still while the machine sleeps).
   `InternetStatus`: `NoRelay` without relays or when none is connected
   and each failed since the start, `Searching` until the list's first
   `EOSE`, else `Listed`. `BlockHost` drops the key's games at once.
@@ -369,14 +377,24 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   nothing) and the invite code (`LobbyView::invite`, the host's only);
   for Public a `Publisher` signing with the install's identity: notes once
   the address is settled (the summary's region and address from
-  `Hosted`), the closing note when the lobby is left or lost
-  (`close_hosted`), and `LobbyView::listing`: "Finding the public
+  `Hosted`: `announced_addr`, never a configured address the Internet
+  cannot reach unless every relay is local, and no note at all then,
+  `Hosted::publishes`, final review B-M2; `created_at` the wall clock; the
+  first note dated 10 s after this game's last closing note,
+  `Shell::closed_note`, A-M6), the closing note when the lobby is left or
+  lost (`close_hosted`), and `LobbyView::listing`: "Finding the public
   address…", "Not listed: no public address (forward port N or set it in
   Options)", `UNREACHABLE_ADDRESS` (a configured address that is private,
-  local or IPv6; never "Listed" then), "Not listed: no relays …", "Not listed: no relay reachable",
-  "Announcing on the Internet…", "Listed on the Internet" (a relay's `OK`
-  for one of our notes). Changes to the relays apply the next time the
-  pool opens.
+  local or IPv6; never "Listed" then), "Not listed: no relays …", "Not
+  listed: no relay reachable" (checked before "Listed": all relays
+  dropped), "Announcing on the Internet…", "Listed on the Internet" (a
+  relay's `OK` for one of this game's notes: `Internet::forget_ours` at
+  each hosting, B-M1). An Invite game's line is about its code
+  (B-I3): "Finding the public address…", then "This code has no address:
+  forward port N or set the public address in Options"
+  (`INVITE_NO_ADDRESS`) when its code carries none. The invite's relay
+  hints follow Options' relays; a Public game's pool opened on edited
+  relays gets the last note again at once (`Hosted::last_note`, `pool`).
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the default
   restrictions) feeds `rl_content::build_match`, the same assembly as
@@ -532,6 +550,10 @@ closing note takes it off the list), `the_internet_tab_without_relays`
 a direct join unaffected; none set: at once),
 `the_relays_linger_after_the_multiplayer_screen` (a fake clock: reused
 within 30 s, closed after, the selection cleared),
+`relay_edits_apply_to_the_open_pool`, `block_edits_apply_to_the_open_list`,
+`a_public_host_follows_relay_edits`,
+`an_invite_only_game_without_an_address_says_so` (final review B-I2,
+B-I3),
 `tests/deathmatch.rs` (a Deathmatch to its results, the bots' think
 budget, a recording replayed through a replay session), `tests/menu.rs`
 (starts with missing or broken content, rapid menu actions) and

@@ -48,7 +48,7 @@ fn a_closed_game_leaves_the_list() {
     let mut l = GameList::new(FP);
     assert!(l.is_empty());
     let h = key(0);
-    l.offer(&note(&h, &named("One"), FP, 1000), 1000);
+    assert!(l.offer(&note(&h, &named("One"), FP, 1000), 1000), "the list changed");
     assert_eq!((l.games().len(), l.len()), (1, 1));
     // The closing note is accepted at once, despite the rate limit.
     let closed = GameSummary { closed: true, ..named("One") };
@@ -56,7 +56,7 @@ fn a_closed_game_leaves_the_list() {
     assert!(l.games().is_empty() && l.is_empty());
     assert_eq!(l.len(), 0);
     // A replayed older note does not bring it back.
-    l.offer(&note(&h, &named("One"), FP, 1000), 1020);
+    assert!(!l.offer(&note(&h, &named("One"), FP, 1000), 1020), "nothing changed");
     assert!(l.games().is_empty());
     // A closed note for an unknown key lists nothing.
     l.offer(&note(&key(1), &closed, FP, 1000), 1002);
@@ -132,6 +132,11 @@ fn blocked_keys_are_hidden() {
     assert!(l.games().is_empty());
     l.offer(&note(&key(1), &named("Two"), FP, 1020), 1020);
     assert_eq!(l.games().len(), 1);
+    // Unblocked: its next note is listed.
+    l.unblock(&key(0).public());
+    assert!(l.blocked().is_empty());
+    l.offer(&note(&key(0), &named("Back"), FP, 1040), 1040);
+    assert_eq!(l.games().len(), 2);
 }
 
 #[test]

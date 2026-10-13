@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use rl_content::Catalog;
 use rl_discovery::defaults::{DEFAULT_RELAYS, DEFAULT_STUN};
+pub use rl_discovery::hosting::local_relays;
 use rl_discovery::list::is_global;
 use rl_discovery::{
     AddressWatch, Event, GameList, GameSummary, ListedGame, Ping, Pinger, Pool, PoolConfig, PoolEvent,
@@ -37,6 +38,9 @@ pub const RELAY_LINGER: Duration = Duration::from_secs(30);
 /// joiners do not use).
 pub const UNREACHABLE_ADDRESS: &str =
     "Not listed: your public address setting is not reachable from the Internet";
+/// An Invite game's lobby line when its code carries no address (no STUN
+/// answer, none configured, or IPv6); the forwarding advice follows.
+pub const INVITE_NO_ADDRESS: &str = "This code has no address";
 
 /// The relays `settings` name, else the game's defaults.
 pub fn relays_of(settings: &FindingSettings) -> Vec<String> {
@@ -46,23 +50,6 @@ pub fn relays_of(settings: &FindingSettings) -> Vec<String> {
 /// The STUN servers `settings` name, else the game's defaults.
 pub fn stun_of(settings: &FindingSettings) -> Vec<String> {
     settings.stun.clone().unwrap_or_else(|| DEFAULT_STUN.iter().map(|s| s.to_string()).collect())
-}
-
-/// Whether every relay is on this machine or a private network (a relay
-/// of one's own, or the tests'): the list then takes games announcing
-/// local addresses too (ruling PF12-5's `allow_local`). A public relay
-/// among them keeps the list to public addresses.
-pub fn local_relays(relays: &[String]) -> bool {
-    let local = |url: &str| {
-        let rest = url.strip_prefix("wss://").or_else(|| url.strip_prefix("ws://")).unwrap_or(url);
-        let authority = rest.split('/').next().unwrap_or("");
-        let host = match authority.strip_prefix('[') {
-            Some(v6) => v6.split(']').next().unwrap_or(""),
-            None => authority.rsplit_once(':').map_or(authority, |(h, _)| h),
-        };
-        host.eq_ignore_ascii_case("localhost") || host.parse::<IpAddr>().is_ok_and(|ip| !is_global(ip))
-    };
-    !relays.is_empty() && relays.iter().all(|r| local(r))
 }
 
 /// The region of the menus as announced.
@@ -207,8 +194,9 @@ impl Internet {
         for e in self.events.drain(..) {
             match e {
                 PoolEvent::Event { event, .. } if self.browsing => {
-                    self.list.offer(&event, unix);
-                    self.changed = true;
+                    // Only a note the list took makes the view again (a
+                    // flood of refused ones costs no rebuild).
+                    self.changed |= self.list.offer(&event, unix);
                 }
                 PoolEvent::Event { .. } => {}
                 PoolEvent::Eose { sub, .. } if sub == GAMES_SUB && self.browsing => {
@@ -295,6 +283,31 @@ impl Internet {
         self.changed = true;
     }
 
+    /// Keeps the list's blocked hosts those of the settings (hex keys):
+    /// Options' blocks and unblocks apply to the open list at once (an
+    /// unblocked host's game shows with its next note; final review B-I2).
+    pub fn set_blocked(&mut self, blocked: &[String]) {
+        let want: Vec<PublicKey> = blocked.iter().filter_map(|k| parse_key_hex(k)).collect();
+        let gone: Vec<PublicKey> =
+            self.list.blocked().iter().filter(|k| !want.contains(k)).copied().collect();
+        for k in &gone {
+            self.list.unblock(k);
+        }
+        let new: Vec<PublicKey> = want.into_iter().filter(|k| !self.list.blocked().contains(k)).collect();
+        for k in &new {
+            self.list.block(*k);
+        }
+        self.changed |= !gone.is_empty() || !new.is_empty();
+    }
+
+    /// Forgets which notes were ours and that a relay accepted one: a new
+    /// hosted game is not "Listed" on its predecessor's notes (final
+    /// review B-M1).
+    pub fn forget_ours(&mut self) {
+        self.ours.clear();
+        self.accepted = false;
+    }
+
     /// Publishes our note on every relay.
     pub fn publish(&mut self, note: Event) {
         if self.ours.len() >= OURS {
@@ -346,6 +359,10 @@ pub struct Hosted {
     pub summary: Option<GameSummary>,
     /// The invite and listing lines last shown.
     pub shown: (Option<String>, Option<String>),
+    /// The last note published, and the pool (`Shell::relay_pools_opened`)
+    /// it went to: a pool opened on edited relays gets it again at once.
+    pub last_note: Option<Event>,
+    pub pool: u32,
 }
 
 impl Hosted {
@@ -376,6 +393,8 @@ impl Hosted {
             configured: configured.is_some(),
             summary: None,
             shown: (None, None),
+            last_note: None,
+            pool: 0,
         };
         (hosted, asks.then_some(said))
     }
@@ -387,8 +406,40 @@ impl Hosted {
             .then(|| rl_discovery::invite(key, &self.relays, self.address.current(), port).encode())
     }
 
-    /// Whether a Public game is listed on the Internet, or why not.
+    /// The address announced: none for a configured one the Internet
+    /// cannot reach (private or local) unless every relay is local too, so
+    /// a LAN address never goes to public relays (final review B-M2).
+    pub fn announced_addr(&self) -> Option<IpAddr> {
+        self.address.current().filter(|ip| is_global(*ip) || local_relays(&self.relays))
+    }
+
+    /// Whether a Public game publishes: not with a configured address the
+    /// Internet cannot reach, on public relays (its lobby says so, and a
+    /// note would put the game on lists it is "Not listed" on).
+    pub fn publishes(&self) -> bool {
+        !self.unreachable() || local_relays(&self.relays)
+    }
+
+    /// A configured address that the Internet cannot reach (IPv6, which
+    /// invites and joiners do not use, or not global).
+    fn unreachable(&self) -> bool {
+        self.configured && self.address.current().is_some_and(|ip| ip.is_ipv6() || !is_global(ip))
+    }
+
+    /// Where a hosted game stands: for a Public game whether it is listed
+    /// on the Internet, or why not; for an Invite game whether its code
+    /// carries an address (final review B-I3). The line shows beside the
+    /// invite's Copy: one copied before STUN settles has no address.
     pub fn listing(&self, internet: Option<&Internet>, port: u16) -> Option<String> {
+        if self.visibility == Visibility::Invite {
+            return if !self.address.settled() {
+                Some("Finding the public address…".to_string())
+            } else if !matches!(self.address.current(), Some(IpAddr::V4(_))) {
+                Some(format!("{INVITE_NO_ADDRESS}: forward port {port} or set the public address in Options"))
+            } else {
+                None
+            };
+        }
         if self.visibility != Visibility::Public {
             return None;
         }
@@ -396,14 +447,14 @@ impl Hosted {
             "Finding the public address…".to_string()
         } else if self.address.current().is_none() {
             format!("Not listed: no public address (forward port {port} or set it in Options)")
-        } else if self.configured && self.address.current().is_some_and(|ip| ip.is_ipv6() || !is_global(ip)) {
+        } else if self.unreachable() {
             UNREACHABLE_ADDRESS.to_string()
         } else if internet.is_none_or(|i| i.relays().is_empty()) {
             "Not listed: no relays (set them in Options)".to_string()
-        } else if internet.is_some_and(Internet::accepted) {
-            "Listed on the Internet".to_string()
         } else if internet.is_some_and(|i| i.status() == InternetStatus::NoRelay) {
             "Not listed: no relay reachable".to_string()
+        } else if internet.is_some_and(Internet::accepted) {
+            "Listed on the Internet".to_string()
         } else {
             "Announcing on the Internet…".to_string()
         };
@@ -414,16 +465,6 @@ impl Hosted {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn local_relays_allow_local_games() {
-        let v = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert!(local_relays(&v(&["ws://127.0.0.1:7000"])));
-        assert!(local_relays(&v(&["wss://localhost:7000/x", "ws://192.168.1.4", "ws://[::1]:80"])));
-        assert!(!local_relays(&v(&["ws://127.0.0.1:7000", "wss://relay.damus.io"])));
-        assert!(!local_relays(&v(&["wss://81.2.69.142"])));
-        assert!(!local_relays(&[]), "no relays: nothing to allow");
-    }
 
     #[test]
     fn regions_convert_both_ways() {
@@ -500,5 +541,103 @@ mod tests {
         i.events.push(PoolEvent::Event { relay: 0, event: note });
         i.poll(t0 + Duration::from_secs(60), 1_000_660);
         assert_eq!(i.games().len(), 1, "a current note is listed");
+    }
+
+    /// Final review B-M1: a pool whose relays all dropped says so even
+    /// after one accepted a note, and a new hosted game is not "Listed" on
+    /// its predecessor's notes.
+    #[test]
+    fn listed_is_neither_stale_nor_inherited() {
+        let id = Identity::from_secret([7; 32]).unwrap();
+        let f = FindingSettings {
+            public_address: "81.2.69.142".into(),
+            relays: Some(vec!["ws://127.0.0.1:1".into()]),
+            stun: Some(Vec::new()),
+            ..FindingSettings::default()
+        };
+        let (h, _) = Hosted::start(Visibility::Public, &f, id, Instant::now(), None);
+        let mut i = Internet::open(Vec::new(), &[]);
+        i.relays = vec!["ws://127.0.0.1:1".into()];
+        i.connected = vec![false];
+        i.failed = vec![true];
+        i.accepted = true;
+        assert_eq!(h.listing(Some(&i), 23400).as_deref(), Some("Not listed: no relay reachable"));
+        i.failed = vec![false];
+        assert_eq!(h.listing(Some(&i), 23400).as_deref(), Some("Listed on the Internet"));
+        i.forget_ours();
+        assert_eq!(h.listing(Some(&i), 23400).as_deref(), Some("Announcing on the Internet…"));
+    }
+
+    /// Final review B-M2: a configured address the Internet cannot reach
+    /// is never announced on public relays (no note at all: the lobby says
+    /// "Not listed"), but is on relays that are all local.
+    #[test]
+    fn a_private_configured_address_stays_off_public_relays() {
+        let id = Identity::from_secret([7; 32]).unwrap();
+        let hosted = |relays: Option<Vec<String>>| {
+            let f = FindingSettings {
+                public_address: "192.168.1.5".into(),
+                relays,
+                stun: Some(Vec::new()),
+                ..FindingSettings::default()
+            };
+            Hosted::start(Visibility::Public, &f, id.clone(), Instant::now(), None).0
+        };
+        let public = hosted(None);
+        assert!(!public.publishes());
+        assert_eq!(public.announced_addr(), None);
+        let local = hosted(Some(vec!["ws://192.168.1.2:7000".into()]));
+        assert!(local.publishes());
+        assert_eq!(local.announced_addr(), Some("192.168.1.5".parse().unwrap()));
+    }
+
+    /// Final review B-I3: an Invite game's line says while the address is
+    /// asked, and when its code has none; nothing once it has one.
+    #[test]
+    fn an_invite_game_says_whether_its_code_has_an_address() {
+        let id = Identity::from_secret([7; 32]).unwrap();
+        let line = |addr: &str, stun: Vec<String>| {
+            let f = FindingSettings {
+                public_address: addr.into(),
+                relays: Some(Vec::new()),
+                stun: Some(stun),
+                ..FindingSettings::default()
+            };
+            let (h, _) = Hosted::start(Visibility::Invite, &f, id.clone(), Instant::now(), None);
+            h.listing(None, 23400)
+        };
+        // A STUN server on a closed local port: not answered yet.
+        assert_eq!(line("", vec!["127.0.0.1:9".into()]).as_deref(), Some("Finding the public address…"));
+        assert_eq!(
+            line("", Vec::new()).as_deref(),
+            Some("This code has no address: forward port 23400 or set the public address in Options")
+        );
+        assert!(line("2a00:1450::1", Vec::new()).is_some_and(|l| l.starts_with(INVITE_NO_ADDRESS)), "IPv6");
+        assert_eq!(line("81.2.69.142", Vec::new()), None);
+    }
+
+    /// Final review B-M6: a note the list refuses (a flood, a forgery, a
+    /// blocked host) does not make the Internet tab's view again.
+    #[test]
+    fn a_refused_note_changes_no_view() {
+        let catalog = Catalog::default();
+        let mut i = Internet::open(Vec::new(), &[]);
+        i.browse(true, 1_000_000);
+        i.poll(Instant::now(), 1_000_000);
+        assert!(i.view(&catalog).is_some(), "the first view");
+        assert!(i.view(&catalog).is_none(), "nothing changed");
+        let host = Identity::from_secret([9; 32]).unwrap();
+        let mut forged = rl_discovery::Event::sign(
+            &host,
+            1_000_000,
+            rl_discovery::KIND_ANNOUNCE,
+            Vec::new(),
+            "{}".into(),
+            [1; 32],
+        );
+        forged.sig[0] ^= 1;
+        i.events.push(PoolEvent::Event { relay: 0, event: forged });
+        i.poll(Instant::now(), 1_000_000);
+        assert!(i.view(&catalog).is_none(), "a refused note changes nothing");
     }
 }

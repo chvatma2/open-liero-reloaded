@@ -219,7 +219,9 @@ host a listed game (`hosting`, `ping`).
   (`list::is_global`, v4-mapped unwrapped) unless `allow_local(true)`. Refusals
   that need no signature check (stale, inside the gap) come first. `len()`/`is_empty()`; `games()`
   sorts compatible first, then ping (measured, unknown/measuring, no answer),
-  name, key. `filter()` has no `since` (no clock); `filter_since(now)` does.
+  name, key. `offer` returns whether the list changed (the game rebuilds
+  its view only then); `block`/`unblock` (an unblocked key is listed from
+  its next note). `filter()` has no `since` (no clock); `filter_since(now)` does.
 
 - **`hosting`** (plan 12a Task 10: shared by rl-server and rl-game, moved
   from rl-server's `finding.rs`): `AddressWatch` (N40, a driver: the
@@ -229,7 +231,10 @@ host a listed game (`hosting`, `ping`).
   keeps the address, one answering a non-public address drops it; `poll`
   returns a log line when the address is first settled or changes),
   `relay_hints` (default relays by index, plus the first other URL of at
-  most `MAX_URL_BYTES`), `invite(key, relays, addr, port)` (IPv4 only),
+  most `MAX_URL_BYTES`), `local_relays(relays)` (every relay `localhost`
+  or a loopback/private IP literal: lists may take local addresses
+  (PF12-8) and a host may announce a private configured address; a host
+  name other than `localhost` counts as public), `invite(key, relays, addr, port)` (IPv4 only),
   and `Publisher` (sans-IO: the `Announcer`'s timing, notes signed by the
   host's identity; `new(identity, after)`, the first note dated `after` at
   the earliest (a game hosted again right after its closing note, final

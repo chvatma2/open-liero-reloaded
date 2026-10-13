@@ -163,16 +163,17 @@ impl GameList {
     /// note of a listed game is exempt from the gap), and the list has
     /// room. Every accepted closing note leaves a tombstone, listed or not,
     /// so an older open note from a relay that missed the close is refused.
-    pub fn offer(&mut self, e: &Event, now_unix: u64) {
+    /// Whether the list changed.
+    pub fn offer(&mut self, e: &Event, now_unix: u64) -> bool {
         // Cheap checks first.
         if e.kind != KIND_ANNOUNCE || e.content.len() > MAX_CONTENT || self.blocked.contains(&e.pubkey) {
-            return;
+            return false;
         }
         if e.created_at > now_unix.saturating_add(MAX_FUTURE)
             || now_unix.saturating_sub(e.created_at) > ANNOUNCE_TTL
             || e.expiration().is_some_and(|x| x <= now_unix)
         {
-            return;
+            return false;
         }
         let last = self.seen.get(&e.pubkey).copied();
         let listed = self.games.contains_key(&e.pubkey);
@@ -191,40 +192,40 @@ impl GameList {
         // closing note is recognised by our compact encoding).
         let closing = e.content.contains("\"closed\":true");
         if !gap_ok && (!listed || !closing) {
-            return;
+            return false;
         }
         if last.is_some_and(|l| e.created_at < l.created_at) {
-            return;
+            return false;
         }
         if !listed && !closing && self.games.len() >= MAX_GAMES {
-            return;
+            return false;
         }
         self.verifications += 1;
         if !e.verify() {
-            return;
+            return false;
         }
-        let Ok((summary, fingerprint)) = parse_announcement(e) else { return };
+        let Ok((summary, fingerprint)) = parse_announcement(e) else { return false };
         if !gap_ok && !summary.closed {
-            return;
+            return false;
         }
         if !self.allow_local && summary.addr.is_some_and(|a| !is_global(a)) {
-            return;
+            return false;
         }
         // Newer than the key's last note (a closing note may share its second).
         if last
             .is_some_and(|l| e.created_at < l.created_at || (e.created_at == l.created_at && !summary.closed))
         {
-            return;
+            return false;
         }
         if summary.closed {
             // A tombstone, listed or not: another relay may still hold the
             // older open note and deliver it later (final review A-I1).
-            self.games.remove(&e.pubkey);
+            let listed = self.games.remove(&e.pubkey).is_some();
             self.remember(e, now_unix);
-            return;
+            return listed;
         }
         if !listed && self.games.len() >= MAX_GAMES {
-            return;
+            return false;
         }
         self.remember(e, now_unix);
         let ping = match self.games.get(&e.pubkey) {
@@ -242,6 +243,7 @@ impl GameList {
                 seen_unix: now_unix,
             },
         );
+        true
     }
 
     /// Records the accepted note. When the table is full, stale keys go,
@@ -297,6 +299,12 @@ impl GameList {
             self.blocked.push(key);
         }
         self.games.remove(&key);
+    }
+
+    /// Lists a key's games again from its next note (its notes were not
+    /// kept while it was blocked).
+    pub fn unblock(&mut self, key: &PublicKey) {
+        self.blocked.retain(|k| k != key);
     }
 
     pub fn blocked(&self) -> &[PublicKey] {

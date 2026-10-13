@@ -1388,15 +1388,29 @@ Task rulings:
   Options)", "Not listed: no relay reachable", "Announcing on the
   Internet…", "Listed on the Internet" (once a relay's `OK` accepted a
   note), "Not listed: your public address setting is not reachable from the
-  Internet" (a configured address that is IPv6 or not global). **R10-6:**
+  Internet" (a configured address that is IPv6 or not global; such a game
+  publishes no note on public relays, so its LAN address never leaves,
+  final review B-M2). "No relay reachable" is checked before "Listed", and
+  "Listed" counts only this hosted game's notes (B-M1). An Invite game's
+  line is about its code (B-I3): "Finding the public address…", then
+  "This code has no address: forward port N or set the public address in
+  Options" when it carries none. **R10-6:**
   Options → Online has a "Public address" field (checked as an IP) next to
   Region, Relays, STUN servers and Blocked hosts; a relay or STUN entry
   that cannot be added says why ("needs wss:// or ws://", "needs
   host:port", "already listed", "the list is full", at most 32). **R10-7:**
   the relay pool lingers 30 s after the Multiplayer and Host screens (and a
   Public host) stop needing it, so going back and forth does not reconnect,
-  and a Public host's closing note leaves on the open pool. Relay and STUN
-  edits apply the next time a pool opens or a game is hosted. **R10-8:** a
+  and a Public host's closing note leaves on the open pool. Relay edits
+  apply at once (final review B-I2): an open pool, lingering or in use,
+  whose relays differ from the settings is closed and one on the new list
+  opened; a Public host stops announcing on removed relays, sends its last
+  note to the new pool at once, and its invite hints the new relays.
+  Blocks and unblocks apply to the open list at once (an unblocked host's
+  game shows with its next note: the list never kept a blocked host's
+  notes). STUN and public-address edits apply the next time a game is
+  hosted (Options cannot be opened from the lobby; from a paused match
+  they wait for the next hosting). **R10-8:** a
   game is pinged on its first selection, not on every one. **R10-9:** the
   Join button on the Internet tab is labelled "Join"; the Direct tab's
   section is "Join by address or invite". **R10-10:** the pool is dropped on
