@@ -60,9 +60,13 @@ wired in the frame loop's order **once**, so each mode that draws a world
   key has no source: a correction swapping which worm fires leaves the
   sound where it first played. A death's events (`Event::death`: its
   sound, gibs and blood) show once per worm and life (`death_parts`; the
-  life counts the worm's spawns as last simulated), whatever tick a
-  correction moves the death to and whichever of the three sounds it
-  draws; a correction that kills another worm instead shows that death.
+  life counts the worm's spawns as last simulated), whatever tick within
+  `rl_netcode::MAX_PREDICTION` a correction moves the death to and
+  whichever of the three sounds it draws; a correction that kills another
+  worm instead shows that death. A death seen farther from the last one of
+  that life is a new death (a correction erased the first), and `reset`
+  forgets the deaths up to a loaded state, so a real death is never
+  hidden by an erased one.
   `event_keys` keys an event by tick, sub-step, a hash of its kind and
   integer identity fields (never positions or amounts, which a correction
   moves) and an ordinal among equal ones. An erased event is not undone.

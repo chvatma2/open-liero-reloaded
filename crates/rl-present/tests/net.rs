@@ -65,6 +65,74 @@ fn presentation(c: &Content, p: &Packs, world: &rl_sim::World) -> Presentation {
     present
 }
 
+/// One hand-made tick through `net`: the sounds it plays and the cosmetics
+/// it hands to the entities.
+fn apply_one(
+    net: &mut NetPresenter,
+    present: &mut Presentation,
+    world: &rl_sim::World,
+    tick: u32,
+    events: Vec<Event>,
+) -> (usize, u64) {
+    let (spawned, mut sounds) = (net.spawned(), Vec::new());
+    let t = TickedTick { tick, resim: false, substeps: 2, lost: None, events };
+    net.apply(present, world, &[], &[t], &mut sounds);
+    (sounds.len(), net.spawned() - spawned)
+}
+
+/// A predicted death a correction erases never hides the worm's real death
+/// later in the same life, nor one after a state load (desync repair);
+/// within the rollback window a moved death still shows once.
+#[test]
+fn an_erased_death_never_hides_the_real_one() {
+    let Some(c) = content() else { return };
+    let p = packs(&c);
+    let mut sim = WorldSim::new(world(&c));
+    let mut present = presentation(&c, &p, sim.world());
+    let mut rec = TickRecorder::default();
+    sim.tick(&final_keys(0));
+    rec.simulated(&sim, TickInfo { tick: 0, resim: false, all_final: true });
+    let mut net = NetPresenter::new();
+    net.apply(&mut present, sim.world(), &[], &rec.take_ticked(), &mut Vec::new());
+    let w = sim.world();
+    assert_eq!(
+        apply_one(&mut net, &mut present, w, 2, death(3, 1)),
+        (1, DEATH_SPAWNS),
+        "predicted: worm 1 dies at tick 2"
+    );
+    assert_eq!(apply_one(&mut net, &mut present, w, 2, vec![]), (0, 0), "a correction erases it");
+    assert_eq!(
+        apply_one(&mut net, &mut present, w, 302, death(4, 1)),
+        (1, DEATH_SPAWNS),
+        "its real death, same life, shows"
+    );
+    assert_eq!(
+        apply_one(&mut net, &mut present, w, 310, death(3, 2)),
+        (1, DEATH_SPAWNS),
+        "worm 2 dies at tick 310"
+    );
+    assert_eq!(apply_one(&mut net, &mut present, w, 310, vec![]), (0, 0), "a correction: not at tick 310");
+    assert_eq!(
+        apply_one(&mut net, &mut present, w, 320, death(3, 2)),
+        (0, 0),
+        "but at 320, within the window: once"
+    );
+    assert_eq!(
+        apply_one(&mut net, &mut present, w, 330, death(3, 3)),
+        (1, DEATH_SPAWNS),
+        "worm 3 dies at tick 330"
+    );
+    // A desync repair loads the state of tick 335: the old timeline's death
+    // is forgotten, and the repaired one's death of that life shows.
+    present.state_loaded(w);
+    net.reset(335);
+    assert_eq!(
+        apply_one(&mut net, &mut present, w, 340, death(5, 3)),
+        (1, DEATH_SPAWNS),
+        "the repaired timeline's death"
+    );
+}
+
 /// A match (OLX's quirks off) presents its effects in play's pool, with
 /// the death reserve.
 #[test]

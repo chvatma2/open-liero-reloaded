@@ -33,6 +33,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rl_fx::FxTick;
+use rl_netcode::MAX_PREDICTION;
 use rl_netcode::world_sim::TickedTick;
 use rl_sim::{BonusItem, CosmeticKind, EndReason, Event, EventKind, SoundId, World};
 use rl_terrain::Area;
@@ -157,8 +158,11 @@ pub struct NetPresenter {
     next: u32,
     /// The sounds, cosmetics and explosions shown, by key.
     shown: BTreeSet<EventKey>,
-    /// The deaths shown, by worm and life ([`NetPresenter::life`]).
-    deaths: BTreeSet<(i32, u32)>,
+    /// The deaths shown, by worm and life ([`NetPresenter::life`]), with
+    /// the tick each was last seen at: a death of that life within
+    /// `MAX_PREDICTION` ticks of it is the same one moved by a correction;
+    /// farther, a new one (the first was erased).
+    deaths: BTreeMap<(i32, u32), u32>,
     /// The worms spawned in each tick from the confirmed tick on, as last
     /// simulated (a re-simulated tick replaces its entry).
     spawns: BTreeMap<u32, Vec<i32>>,
@@ -290,9 +294,12 @@ impl NetPresenter {
             let n = self.spawns_before.entry(worm).or_insert(0);
             *n = n.saturating_add(1);
         }
-        // A life followed by a confirmed spawn ended in a confirmed tick.
+        // A life followed by a confirmed spawn ended in a confirmed tick,
+        // and no correction moves a death seen before the window.
         let before = &self.spawns_before;
-        self.deaths.retain(|(worm, life)| *life >= before.get(worm).copied().unwrap_or(0));
+        self.deaths.retain(|(worm, life), seen| {
+            *life >= before.get(worm).copied().unwrap_or(0) && seen.saturating_add(MAX_PREDICTION) >= tick
+        });
     }
 
     /// Worm `worm`'s life at `tick`: how many times it spawned up to that
@@ -309,7 +316,9 @@ impl NetPresenter {
     /// Fills `parts` for `tick`'s events: `None` for an event that is not
     /// a death's, and for a death's events (a run of `Event::death` from
     /// its sound, `rl_sim::damage`'s order) whether that death of the
-    /// worm whose gibs it holds shows now, which records it. A death
+    /// worm whose gibs it holds shows now: not when the same life's death
+    /// was seen within `MAX_PREDICTION` ticks (a correction moved it). It
+    /// records the tick it is seen at. A death
     /// without gibs (dropped beyond the event quota) is keyed like any
     /// event. The tick's spawns replace those it had before.
     fn death_parts(&mut self, tick: u32, events: &[Event]) {
@@ -336,7 +345,10 @@ impl NetPresenter {
             });
             let part = worm.map(|w| {
                 let life = self.life(w, tick);
-                self.deaths.insert((w, life))
+                let new =
+                    self.deaths.get(&(w, life)).is_none_or(|&seen| seen.abs_diff(tick) > MAX_PREDICTION);
+                self.deaths.insert((w, life), tick);
+                new
             });
             self.parts.extend(std::iter::repeat_n(part, len));
             i += len;
@@ -358,9 +370,12 @@ impl NetPresenter {
     /// The state after `loaded_tick` loaded (`Event::StateLoaded`): the
     /// ticks after it are new again (with `Presentation::state_loaded`,
     /// which clears the entities), but the keys of those already shown are
-    /// kept, so their sounds do not play twice when they run again.
+    /// kept, so their sounds do not play twice when they run again. The
+    /// deaths seen up to the state go with the old timeline, so the loaded
+    /// one's death of the same life shows.
     pub fn reset(&mut self, loaded_tick: u32) {
         self.next = 0;
         self.shown.retain(|k| k.tick > loaded_tick);
+        self.deaths.retain(|_, seen| *seen > loaded_tick);
     }
 }
