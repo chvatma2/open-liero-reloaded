@@ -1,8 +1,6 @@
 # Performance envelope
 
-Made by `cargo xtask envelope --report` from the results measured on 2026-10-12 (3 runs per point). Everything but the summary is regenerated; edit only the summary.
-
-Kept from an earlier bless (not measured in the last one): sweep art, sweep fx, sweep map, sweep pool, sweep worms, gpu windows-dx12, gpu windows-vulkan, gpu wsl-gl, olx.
+Made by `cargo xtask envelope --report` from the results measured on 2026-10-13 (3 runs per point). Everything but the summary is regenerated; edit only the summary.
 
 ## Headroom summary
 
@@ -56,16 +54,16 @@ art varies; otherwise 16 Deathmatch bots (OLX's bot: routes through the area cac
 
 | value | tick p50 / p99 (ms) | budget used | sim p99 | bots p99 | presentation p99 | draw list p99 | projectiles | effects | MiB | frame with bots p99 (ms) | holds at 144 Hz |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| a1 | 0.06 / 0.32 | 3 % | 0.02 | 0.32 | 0.02 | 0.02 | 75 | 1024 | 111 | 1.32 | yes (effects full (1024) for 33 ticks) |
-| a2 | 0.06 / 0.31 | 3 % | 0.02 | 0.30 | 0.02 | 0.02 | 75 | 1024 | 351 | 1.33 | yes (effects full (1024) for 33 ticks) |
-| a4 | 0.06 / 0.30 | 3 % | 0.02 | 0.30 | 0.02 | 0.02 | 75 | 1024 | 1311 | 1.37 | yes (effects full (1024) for 33 ticks) |
-| a8 | 0.06 / 0.31 | 3 % | 0.02 | 0.31 | 0.04 | 0.02 | 75 | 1024 | 5151 | 1.87 | memory 5151 MiB > 2048 MiB; cap: the content loader refuses a 2048x2048 level at art scale 8: a 1024 MiB colour image, above MAX_COLOR_MAP_BYTES (256 MiB) (effects full (1024) for 33 ticks) |
+| a1 | 0.04 / 0.22 | 2 % | 0.01 | 0.21 | 0.01 | 0.01 | 76 | 959 | 113 | 1.22 | yes |
+| a2 | 0.04 / 0.22 | 2 % | 0.01 | 0.21 | 0.02 | 0.01 | 76 | 959 | 353 | 1.11 | yes |
+| a4 | 0.04 / 0.21 | 2 % | 0.01 | 0.21 | 0.02 | 0.01 | 76 | 959 | 1313 | 1.23 | yes |
+| a8 | 0.05 / 0.22 | 2 % | 0.02 | 0.21 | 0.04 | 0.01 | 76 | 959 | 5153 | 2.82 | memory 5153 MiB > 2048 MiB; cap: the content loader refuses a 2048x2048 level at art scale 8: a 1024 MiB colour image, above MAX_COLOR_MAP_BYTES (256 MiB) |
 
 Frame with bots: the point's level drawn offscreen at 2560×1440 on wsl-gl (`rl-cli gpu-bench`: a tick and a frame; it replays recorded inputs, so its tick has no bots' thinking) plus the point's bots p99 above: a sum of p99s, so a bound. This is the frame the 144 Hz and 60 Hz budgets judge.
 
-Breaking point (144 Hz): **a8** (memory 5151 MiB > 2048 MiB; cap: the content loader refuses a 2048x2048 level at art scale 8: a 1024 MiB colour image, above MAX_COLOR_MAP_BYTES (256 MiB)). Breaking point (60 Hz): **a8** (memory 5151 MiB > 2048 MiB; cap: the content loader refuses a 2048x2048 level at art scale 8: a 1024 MiB colour image, above MAX_COLOR_MAP_BYTES (256 MiB)).
+Breaking point (144 Hz): **a8** (memory 5153 MiB > 2048 MiB; cap: the content loader refuses a 2048x2048 level at art scale 8: a 1024 MiB colour image, above MAX_COLOR_MAP_BYTES (256 MiB)). Breaking point (60 Hz): **a8** (memory 5153 MiB > 2048 MiB; cap: the content loader refuses a 2048x2048 level at art scale 8: a 1024 MiB colour image, above MAX_COLOR_MAP_BYTES (256 MiB)).
 
-Tick p99 grows -0.4356 µs per unit of art (least squares).
+Tick p99 grows 0.1470 µs per unit of art (least squares).
 
 ### fx
 
@@ -73,14 +71,14 @@ fx varies; otherwise 16 chaos bots of mixed difficulties, pool 3000, effects 102
 
 | value | tick p50 / p99 (ms) | budget used | sim p99 | bots p99 | presentation p99 | draw list p99 | projectiles | effects | MiB | frame with bots p99 (ms) | holds at 144 Hz |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 1024 | 0.06 / 0.14 | 1 % | 0.14 | 0.00 | 0.02 | 0.13 | 993 | 1024 | 28 | — | yes (effects full (1024) for 1250 ticks) |
-| 4096 | 0.06 / 0.14 | 1 % | 0.14 | 0.01 | 0.05 | 0.15 | 993 | 4096 | 28 | — | yes (effects full (4096) for 439 ticks) |
-| 16384 | 0.06 / 0.14 | 1 % | 0.14 | 0.01 | 0.08 | 0.19 | 993 | 9892 | 29 | — | yes |
-| 65536 | 0.06 / 0.14 | 1 % | 0.14 | 0.01 | 0.07 | 0.20 | 993 | 9892 | 32 | — | yes |
+| 1024 | 0.05 / 0.13 | 1 % | 0.13 | 0.00 | 0.02 | 0.03 | 891 | 1024 | 31 | — | yes (effects full (1024) for 27 ticks) |
+| 4096 | 0.06 / 0.13 | 1 % | 0.13 | 0.00 | 0.04 | 0.06 | 891 | 3997 | 31 | — | yes |
+| 16384 | 0.06 / 0.13 | 1 % | 0.13 | 0.00 | 0.05 | 0.08 | 891 | 7572 | 31 | — | yes |
+| 65536 | 0.06 / 0.13 | 1 % | 0.13 | 0.00 | 0.05 | 0.08 | 891 | 7572 | 34 | — | yes |
 
 Breaking point (144 Hz): none: every value holds. Breaking point (60 Hz): none: every value holds.
 
-Tick p99 grows -0.0000 µs per unit of fx (least squares).
+Tick p99 grows 0.0000 µs per unit of fx (least squares).
 
 ### map
 
@@ -88,10 +86,10 @@ map varies; otherwise 16 Deathmatch bots (OLX's bot: routes through the area cac
 
 | value | tick p50 / p99 (ms) | budget used | sim p99 | bots p99 | presentation p99 | draw list p99 | projectiles | effects | MiB | frame with bots p99 (ms) | holds at 144 Hz |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 1024x1024 | 0.03 / 0.20 | 2 % | 0.01 | 0.19 | 0.01 | 0.02 | 71 | 1024 | 35 | 1.10 | yes (effects full (1024) for 17 ticks) |
-| 2048x2048 | 0.06 / 0.31 | 3 % | 0.02 | 0.31 | 0.02 | 0.02 | 75 | 1024 | 111 | 1.28 | yes (effects full (1024) for 33 ticks) |
-| 4096x2048 | 0.07 / 0.66 | 7 % | 0.02 | 0.66 | 0.01 | 0.01 | 75 | 1024 | 211 | 1.50 | yes (effects full (1024) for 15 ticks) |
-| 4096x4096 | 0.40 / 1.20 | 12 % | 0.01 | 1.19 | 0.02 | 0.01 | 52 | 856 | 411 | 2.07 | yes |
+| 1024x1024 | 0.03 / 0.13 | 1 % | 0.01 | 0.13 | 0.01 | 0.01 | 77 | 960 | 38 | 1.52 | yes |
+| 2048x2048 | 0.04 / 0.21 | 2 % | 0.01 | 0.21 | 0.01 | 0.01 | 76 | 959 | 113 | 1.18 | yes |
+| 4096x2048 | 0.06 / 0.57 | 6 % | 0.01 | 0.57 | 0.02 | 0.01 | 77 | 960 | 213 | 1.40 | yes |
+| 4096x4096 | 0.34 / 1.28 | 13 % | 0.01 | 1.27 | 0.02 | 0.01 | 86 | 892 | 413 | 2.12 | yes |
 
 Frame with bots: the point's level drawn offscreen at 2560×1440 on wsl-gl (`rl-cli gpu-bench`: a tick and a frame; it replays recorded inputs, so its tick has no bots' thinking) plus the point's bots p99 above: a sum of p99s, so a bound. This is the frame the 144 Hz and 60 Hz budgets judge.
 
@@ -103,15 +101,15 @@ pool varies; otherwise 16 chaos bots of mixed difficulties, pool 3000, effects 1
 
 | value | tick p50 / p99 (ms) | budget used | sim p99 | bots p99 | presentation p99 | draw list p99 | projectiles | effects | MiB | frame with bots p99 (ms) | holds at 144 Hz |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 3000 | 0.24 / 0.57 | 6 % | 0.56 | 0.01 | 0.03 | 0.07 | 3000 | 1024 | 42 | — | yes (pool full (3000) for 38 ticks; effects full (1024) for 1757 ticks) |
-| 10000 | 0.28 / 0.68 | 7 % | 0.68 | 0.01 | 0.03 | 0.08 | 4770 | 1024 | 43 | — | yes (effects full (1024) for 1855 ticks) |
-| 20000 | 0.28 / 0.68 | 7 % | 0.68 | 0.01 | 0.04 | 0.08 | 4770 | 1024 | 45 | — | yes (effects full (1024) for 1855 ticks) |
-| 50000 | 0.28 / 0.69 | 7 % | 0.68 | 0.01 | 0.03 | 0.08 | 4770 | 1024 | 49 | — | yes (effects full (1024) for 1855 ticks) |
-| 65536 | 0.28 / 0.67 | 7 % | 0.67 | 0.01 | 0.04 | 0.08 | 4770 | 1024 | 52 | — | yes (effects full (1024) for 1855 ticks) |
+| 3000 | 0.23 / 0.51 | 5 % | 0.51 | 0.01 | 0.03 | 0.11 | 3000 | 1024 | 45 | — | yes (pool full (3000) for 22 ticks; effects full (1024) for 54 ticks) |
+| 10000 | 0.24 / 0.57 | 6 % | 0.56 | 0.01 | 0.03 | 0.14 | 4324 | 1024 | 45 | — | yes (effects full (1024) for 51 ticks) |
+| 20000 | 0.24 / 0.59 | 6 % | 0.59 | 0.01 | 0.04 | 0.14 | 4324 | 1024 | 47 | — | yes (effects full (1024) for 51 ticks) |
+| 50000 | 0.24 / 0.57 | 6 % | 0.57 | 0.01 | 0.03 | 0.14 | 4324 | 1024 | 52 | — | yes (effects full (1024) for 51 ticks) |
+| 65536 | 0.24 / 0.58 | 6 % | 0.58 | 0.01 | 0.03 | 0.14 | 4324 | 1024 | 54 | — | yes (effects full (1024) for 51 ticks) |
 
 Breaking point (144 Hz): none: every value holds. Breaking point (60 Hz): none: every value holds.
 
-Tick p99 grows 0.0009 µs per unit of pool (least squares).
+Tick p99 grows 0.0006 µs per unit of pool (least squares).
 
 ### worms
 
@@ -119,16 +117,16 @@ worms varies; otherwise 16 chaos bots of mixed difficulties, pool 3000, effects 
 
 | value | tick p50 / p99 (ms) | budget used | sim p99 | bots p99 | presentation p99 | draw list p99 | projectiles | effects | MiB | frame with bots p99 (ms) | holds at 144 Hz |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 2 | 0.01 / 0.02 | 0 % | 0.02 | 0.00 | 0.01 | 0.01 | 217 | 1024 | 27 | — | yes (effects full (1024) for 60 ticks) |
-| 4 | 0.01 / 0.03 | 0 % | 0.03 | 0.00 | 0.01 | 0.01 | 315 | 1024 | 27 | — | yes (effects full (1024) for 48 ticks) |
-| 8 | 0.02 / 0.05 | 1 % | 0.05 | 0.00 | 0.02 | 0.04 | 550 | 1024 | 27 | — | yes (effects full (1024) for 424 ticks) |
-| 16 | 0.06 / 0.15 | 1 % | 0.14 | 0.01 | 0.02 | 0.13 | 993 | 1024 | 28 | — | yes (effects full (1024) for 1250 ticks) |
-| 24 | 0.13 / 0.36 | 4 % | 0.36 | 0.01 | 0.03 | 0.05 | 2272 | 1024 | 29 | — | yes (effects full (1024) for 1792 ticks) |
-| 32 | 0.17 / 0.42 | 4 % | 0.42 | 0.01 | 0.03 | 0.05 | 2338 | 1024 | 30 | — | yes (effects full (1024) for 1866 ticks) |
+| 2 | 0.01 / 0.03 | 0 % | 0.03 | 0.00 | 0.01 | 0.01 | 357 | 1024 | 29 | — | yes (effects full (1024) for 1 ticks) |
+| 4 | 0.01 / 0.03 | 0 % | 0.02 | 0.00 | 0.01 | 0.01 | 283 | 1024 | 29 | — | yes (effects full (1024) for 2 ticks) |
+| 8 | 0.02 / 0.05 | 1 % | 0.05 | 0.00 | 0.01 | 0.02 | 564 | 1024 | 30 | — | yes (effects full (1024) for 4 ticks) |
+| 16 | 0.05 / 0.13 | 1 % | 0.13 | 0.00 | 0.02 | 0.02 | 891 | 1024 | 31 | — | yes (effects full (1024) for 27 ticks) |
+| 24 | 0.10 / 0.25 | 3 % | 0.25 | 0.01 | 0.02 | 0.09 | 1762 | 1024 | 31 | — | yes (effects full (1024) for 53 ticks) |
+| 32 | 0.15 / 0.36 | 4 % | 0.36 | 0.01 | 0.02 | 0.10 | 1879 | 1024 | 32 | — | yes (effects full (1024) for 80 ticks) |
 
 Breaking point (144 Hz): none: every value holds. Breaking point (60 Hz): none: every value holds.
 
-Cost per worm: 6 µs of tick at p50, 15 µs at p99. At this rate the tick p99 reaches 10 ms at about 686 worms (a projection: `MAX_WORMS` stays 32).
+Cost per worm: 5 µs of tick at p50, 12 µs at p99. At this rate the tick p99 reaches 10 ms at about 870 worms (a projection: `MAX_WORMS` stays 32).
 
 ## Rollback
 
@@ -136,9 +134,9 @@ Restoring the world and re-simulating `depth` ticks (the bots' keys recorded, no
 
 | point | worms | depth | restore p50 / p99 (µs) | re-simulation p50 / p99 (µs) | total p99 (µs) | snapshot (B) | journal, at most (B) | budget |
 |---|---|---|---|---|---|---|---|---|
-| castlestrike-12 | 16 | 12 | 21 / 41 | 741 / 1184 | 1210 | 95216 | 22762 | holds (2000 µs budget) |
-| castlestrike-28 | 16 | 28 | 31 / 63 | 1773 / 2912 | 2952 | 95216 | 50217 | no budget |
-| 4096x4096-12 | 16 | 12 | 24 / 52 | 376 / 1146 | 1185 | 57264 | 26843 | holds (4000 µs budget) |
+| castlestrike-12 | 16 | 12 | 21 / 45 | 646 / 1231 | 1259 | 95066 | 20135 | holds (2000 µs budget) |
+| castlestrike-28 | 16 | 28 | 31 / 63 | 1555 / 2543 | 2600 | 95066 | 42423 | no budget |
+| 4096x4096-12 | 16 | 12 | 26 / 53 | 371 / 670 | 720 | 56016 | 20723 | holds (4000 µs budget) |
 
 Every budgeted point holds.
 
@@ -152,16 +150,16 @@ The heavy replay (MW 1.0, 32 chaos bots, a 20 000 pool) offscreen, a tick and a 
 
 | size | tick (no bots) + frame p50 / p99 (ms) | frame p99, CPU then GPU (ms) | GPU p99 (ms) |
 |---|---|---|---|
-| 1920×1080 | 1.17 / 2.31 | 0.74 | 0.02 |
-| 2560×1440 | 1.17 / 2.34 | 0.78 | 0.02 |
-| 3440×1440 | 1.19 / 2.37 | 0.77 | 0.03 |
-| 3840×2160 | 1.20 / 2.40 | 0.82 | 0.04 |
+| 1920×1080 | 1.96 / 3.12 | 1.59 | 0.02 |
+| 2560×1440 | 1.99 / 3.42 | 1.67 | 0.02 |
+| 3440×1440 | 1.99 / 3.50 | 1.62 | 0.03 |
+| 3840×2160 | 2.03 / 4.19 | 1.97 | 0.04 |
 
 Shader headroom, GPU side (a full-screen blur pass, `rl_render::Probe`): the GPU time one pass costs, and how many passes fit beside the frame's GPU p99 (its frame p99 without timestamps) within the 6.9 ms (144 Hz) and 16.7 ms (60 Hz) budgets. This is GPU-side headroom, not the whole frame: the tick and the draw list run on the CPU beside it.
 
 | size | GPU ms per pass | passes that fit at 144 Hz | at 60 Hz |
 |---|---|---|---|
-| 1920×1080 | 0.034 | 203 | 488 |
+| 1920×1080 | 0.034 | 202 | 487 |
 | 2560×1440 | 0.060 | 115 | 278 |
 | 3440×1440 | 0.080 | 86 | 208 |
 | 3840×2160 | 0.133 | 51 | 124 |
@@ -172,10 +170,10 @@ Against the budgets (frame p99): 144 Hz (6.9 ms) holds at every size; 60 Hz (16.
 
 | asked | got | present mode | frames | FPS | frame p50 / p99 (ms) | busy p50 / p99 (ms) | holds 144 / 60 Hz |
 |---|---|---|---|---|---|---|---|
-| 1920×1080 | 1920×1080 | Immediate | 19229 | 1602 | 0.53 / 2.12 | 0.41 / 1.97 | yes / yes |
-| 2560×1440 | 2560×1440 | Immediate | 18949 | 1579 | 0.54 / 2.11 | 0.42 / 1.96 | yes / yes |
-| 3440×1440 | 3440×1440 | Immediate | 18156 | 1513 | 0.56 / 2.22 | 0.43 / 2.06 | yes / yes |
-| 3840×2160 | 3840×2160 | Immediate | 19049 | 1587 | 0.54 / 2.16 | 0.41 / 2.02 | yes / yes |
+| 1920×1080 | 1920×1080 | Immediate | 12741 | 1062 | 0.79 / 3.42 | 0.62 / 3.24 | yes / yes |
+| 2560×1440 | 2560×1440 | Immediate | 12074 | 1006 | 0.82 / 3.41 | 0.63 / 3.20 | yes / yes |
+| 3440×1440 | 3440×1440 | Immediate | 12248 | 1021 | 0.82 / 3.36 | 0.61 / 3.13 | yes / yes |
+| 3840×2160 | 3840×2160 | Immediate | 11898 | 992 | 0.81 / 3.68 | 0.60 / 3.43 | yes / yes |
 
 The sweeps' levels drawn offscreen (their replays: the tick has no bots' thinking; the sweeps' tables add it):
 
@@ -183,11 +181,11 @@ The sweeps' levels drawn offscreen (their replays: the tick has no bots' thinkin
 |---|---|---|---|---|
 | map | 1024x1024 | 2560×1440 | 0.36 | 0.02 |
 | map | 2048x2048 | 2560×1440 | 0.40 | 0.02 |
-| map | 4096x2048 | 2560×1440 | 0.35 | 0.02 |
-| map | 4096x4096 | 2560×1440 | 0.37 | 0.02 |
-| art | a1 | 2560×1440 | 0.46 | 0.02 |
-| art | a2 | 2560×1440 | 0.43 | 0.02 |
-| art | a4 | 2560×1440 | 0.41 | 0.02 |
+| map | 4096x2048 | 2560×1440 | 0.34 | 0.02 |
+| map | 4096x4096 | 2560×1440 | 0.32 | 0.02 |
+| art | a1 | 2560×1440 | 0.36 | 0.02 |
+| art | a2 | 2560×1440 | 0.38 | 0.02 |
+| art | a4 | 2560×1440 | 0.39 | 0.02 |
 | art | a8 | 2560×1440 | 0.44 | 0.04 |
 
 ### windows-vulkan: NVIDIA GeForce RTX 5070 Ti (Vulkan, DiscreteGpu)
@@ -198,10 +196,10 @@ The heavy replay (MW 1.0, 32 chaos bots, a 20 000 pool) offscreen, a tick and a 
 
 | size | tick (no bots) + frame p50 / p99 (ms) | frame p99, CPU then GPU (ms) | GPU p99 (ms) |
 |---|---|---|---|
-| 1920×1080 | 1.08 / 2.16 | 0.54 | 0.02 |
-| 2560×1440 | 1.07 / 2.18 | 0.54 | 0.02 |
-| 3440×1440 | 1.10 / 2.23 | 0.54 | 0.03 |
-| 3840×2160 | 1.11 / 2.27 | 0.57 | 0.04 |
+| 1920×1080 | 1.53 / 2.62 | 0.98 | 0.02 |
+| 2560×1440 | 1.62 / 2.92 | 1.08 | 0.02 |
+| 3440×1440 | 1.59 / 2.85 | 1.01 | 0.03 |
+| 3840×2160 | 1.61 / 2.80 | 0.98 | 0.04 |
 
 Shader headroom, GPU side (a full-screen blur pass, `rl_render::Probe`): the GPU time one pass costs, and how many passes fit beside the frame's GPU p99 (its frame p99 without timestamps) within the 6.9 ms (144 Hz) and 16.7 ms (60 Hz) budgets. This is GPU-side headroom, not the whole frame: the tick and the draw list run on the CPU beside it.
 
@@ -210,7 +208,7 @@ Shader headroom, GPU side (a full-screen blur pass, `rl_render::Probe`): the GPU
 | 1920×1080 | 0.028 | 246 | 593 |
 | 2560×1440 | 0.049 | 142 | 343 |
 | 3440×1440 | 0.065 | 107 | 257 |
-| 3840×2160 | 0.108 | 64 | 154 |
+| 3840×2160 | 0.108 | 63 | 153 |
 
 Windowed, asked for uncapped (`rl-game --frame-log --uncapped`, HUD included). Frame is frame to frame (what the player sees); busy is a frame's CPU time without waiting to present.
 
@@ -218,23 +216,23 @@ Against the budgets (frame p99): 144 Hz (6.9 ms) holds at every size; 60 Hz (16.
 
 | asked | got | present mode | frames | FPS | frame p50 / p99 (ms) | busy p50 / p99 (ms) | holds 144 / 60 Hz |
 |---|---|---|---|---|---|---|---|
-| 1920×1080 | 1920×1080 | Immediate | 26590 | 2216 | 0.38 / 1.67 | 0.28 / 1.55 | yes / yes |
-| 2560×1440 | 2560×1440 | Immediate | 26299 | 2192 | 0.39 / 1.67 | 0.28 / 1.56 | yes / yes |
-| 3440×1440 | 3440×1440 | Immediate | 25493 | 2124 | 0.40 / 1.69 | 0.29 / 1.56 | yes / yes |
-| 3840×2160 | 3840×2160 | Immediate | 26630 | 2219 | 0.38 / 1.65 | 0.27 / 1.53 | yes / yes |
+| 1920×1080 | 1920×1080 | Immediate | 18135 | 1511 | 0.55 / 2.52 | 0.41 / 2.35 | yes / yes |
+| 2560×1440 | 2560×1440 | Immediate | 18354 | 1530 | 0.54 / 2.57 | 0.41 / 2.38 | yes / yes |
+| 3440×1440 | 3440×1440 | Immediate | 17032 | 1419 | 0.59 / 2.67 | 0.45 / 2.42 | yes / yes |
+| 3840×2160 | 3840×2160 | Immediate | 18181 | 1515 | 0.55 / 2.64 | 0.41 / 2.38 | yes / yes |
 
 The sweeps' levels drawn offscreen (their replays: the tick has no bots' thinking; the sweeps' tables add it):
 
 | axis | value | size | tick (no bots) + frame p99 (ms) | GPU p99 (ms) |
 |---|---|---|---|---|
-| map | 1024x1024 | 2560×1440 | 0.27 | 0.02 |
-| map | 2048x2048 | 2560×1440 | 0.29 | 0.02 |
-| map | 4096x2048 | 2560×1440 | 0.24 | 0.02 |
-| map | 4096x4096 | 2560×1440 | 0.24 | 0.02 |
-| art | a1 | 2560×1440 | 0.28 | 0.02 |
-| art | a2 | 2560×1440 | 0.26 | 0.02 |
+| map | 1024x1024 | 2560×1440 | 0.28 | 0.02 |
+| map | 2048x2048 | 2560×1440 | 0.23 | 0.02 |
+| map | 4096x2048 | 2560×1440 | 0.30 | 0.02 |
+| map | 4096x4096 | 2560×1440 | 0.23 | 0.02 |
+| art | a1 | 2560×1440 | 0.27 | 0.02 |
+| art | a2 | 2560×1440 | 0.28 | 0.02 |
 | art | a4 | 2560×1440 | 0.27 | 0.02 |
-| art | a8 | 2560×1440 | 0.39 | 0.04 |
+| art | a8 | 2560×1440 | 0.31 | 0.04 |
 
 ### wsl-gl: D3D12 (NVIDIA GeForce RTX 5070 Ti) (Gl, Other)
 
@@ -244,48 +242,48 @@ The heavy replay (MW 1.0, 32 chaos bots, a 20 000 pool) offscreen, a tick and a 
 
 | size | tick (no bots) + frame p50 / p99 (ms) | frame p99, CPU then GPU (ms) | GPU p99 (ms) |
 |---|---|---|---|
-| 1920×1080 | 1.69 / 3.21 | 1.80 | 0.02 |
-| 2560×1440 | 1.70 / 2.95 | 1.59 | 0.03 |
-| 3440×1440 | 1.68 / 2.95 | 1.54 | 0.04 |
-| 3840×2160 | 1.61 / 2.95 | 1.58 | 0.06 |
+| 1920×1080 | 3.02 / 4.71 | 3.02 | 0.03 |
+| 2560×1440 | 3.07 / 4.52 | 3.07 | 0.04 |
+| 3440×1440 | 3.03 / 4.69 | 3.03 | 0.05 |
+| 3840×2160 | 3.03 / 4.75 | 3.09 | 0.20 |
 
 Shader headroom, GPU side (a full-screen blur pass, `rl_render::Probe`): the GPU time one pass costs, and how many passes fit beside the frame's GPU p99 (its frame p99 without timestamps) within the 6.9 ms (144 Hz) and 16.7 ms (60 Hz) budgets. This is GPU-side headroom, not the whole frame: the tick and the draw list run on the CPU beside it.
 
 | size | GPU ms per pass | passes that fit at 144 Hz | at 60 Hz |
 |---|---|---|---|
 | 1920×1080 | 0.027 | 259 | 624 |
-| 2560×1440 | 0.046 | 149 | 358 |
+| 2560×1440 | 0.046 | 149 | 359 |
 | 3440×1440 | 0.062 | 111 | 269 |
-| 3840×2160 | 0.102 | 67 | 162 |
+| 3840×2160 | 0.102 | 65 | 160 |
 
 Windowed, asked for uncapped (`rl-game --frame-log --uncapped`, HUD included). Frame is frame to frame (what the player sees); busy is a frame's CPU time without waiting to present.
 
 Every run presented with Fifo: the surface offered no uncapped mode, so a frame also waits for the display's refresh and the frame rate is at most the refresh rate.
 
-The busy time grows with the window's pixels: 6.0 ms p50 at 1920×1080 (2.1 Mpx) to 21.0 ms at 3840×2160 (8.3 Mpx), about 2.4 ms per million pixels (least squares over the p50s), while the offscreen frame's p50 stays 0.74–0.75 ms at the same sizes (table above). Presenting costs this path CPU time per pixel, so its windowed frame rate falls with the resolution: this is the cost of playing on this path, not of drawing the game.
+The busy time grows with the window's pixels: 7.2 ms p50 at 1920×1080 (2.1 Mpx) to 25.6 ms at 3840×2160 (8.3 Mpx), about 3.0 ms per million pixels (least squares over the p50s), while the offscreen frame's p50 stays 1.90–1.95 ms at the same sizes (table above). Presenting costs this path CPU time per pixel, so its windowed frame rate falls with the resolution: this is the cost of playing on this path, not of drawing the game.
 
 Against the budgets (frame p99): 144 Hz (6.9 ms) missed at every size; 60 Hz (16.7 ms) missed at 2560×1440, 3440×1440, 3840×2160.
 On windows-dx12 and windows-vulkan (the native Windows build) the windowed runs hold both budgets at every size (their tables): at high resolutions, play there rather than on this path.
 
 | asked | got | present mode | frames | FPS | frame p50 / p99 (ms) | busy p50 / p99 (ms) | holds 144 / 60 Hz |
 |---|---|---|---|---|---|---|---|
-| 1920×1080 | 1920×1080 | Fifo | 1284 | 107 | 9.07 / 13.99 | 5.99 / 9.60 | no / yes |
-| 2560×1440 | 2560×1440 | Fifo | 696 | 58 | 17.07 / 20.60 | 9.57 / 14.33 | no / no |
-| 3440×1440 | 3440×1440 | Fifo | 543 | 45 | 21.75 / 26.74 | 13.04 / 17.11 | no / no |
-| 3840×2160 | 3840×2160 | Fifo | 328 | 27 | 36.64 / 40.61 | 21.01 / 25.89 | no / no |
+| 1920×1080 | 1920×1080 | Fifo | 1254 | 105 | 9.42 / 13.72 | 7.22 / 10.44 | no / yes |
+| 2560×1440 | 2560×1440 | Fifo | 787 | 66 | 14.94 / 19.75 | 11.63 / 15.88 | no / no |
+| 3440×1440 | 3440×1440 | Fifo | 618 | 51 | 19.22 / 24.01 | 15.15 / 18.48 | no / no |
+| 3840×2160 | 3840×2160 | Fifo | 381 | 32 | 30.99 / 38.28 | 25.59 / 30.22 | no / no |
 
 The sweeps' levels drawn offscreen (their replays: the tick has no bots' thinking; the sweeps' tables add it):
 
 | axis | value | size | tick (no bots) + frame p99 (ms) | GPU p99 (ms) |
 |---|---|---|---|---|
-| map | 1024x1024 | 2560×1440 | 0.91 | 0.03 |
-| map | 2048x2048 | 2560×1440 | 0.98 | 0.03 |
-| map | 4096x2048 | 2560×1440 | 0.84 | 0.03 |
-| map | 4096x4096 | 2560×1440 | 0.88 | 0.03 |
-| art | a1 | 2560×1440 | 1.00 | 0.03 |
-| art | a2 | 2560×1440 | 1.03 | 0.03 |
-| art | a4 | 2560×1440 | 1.07 | 0.04 |
-| art | a8 | 2560×1440 | 1.56 | 0.05 |
+| map | 1024x1024 | 2560×1440 | 1.39 | 0.03 |
+| map | 2048x2048 | 2560×1440 | 0.97 | 0.03 |
+| map | 4096x2048 | 2560×1440 | 0.83 | 0.03 |
+| map | 4096x4096 | 2560×1440 | 0.85 | 0.03 |
+| art | a1 | 2560×1440 | 1.01 | 0.03 |
+| art | a2 | 2560×1440 | 0.89 | 0.04 |
+| art | a4 | 2560×1440 | 1.02 | 0.03 |
+| art | a8 | 2560×1440 | 2.60 | 0.06 |
 
 ## OLX
 
@@ -295,14 +293,14 @@ Load: heavy-spikeballs fills OLX's 3000-projectile pool (`MAX_PROJECTILES`); hea
 
 | scenario | frames | peak projectiles | OLX p50 / p99 (µs) | rl-sim p50 / p99 (µs) | rl-sim / OLX (p50) | same work | matches OLX |
 |---|---|---|---|---|---|---|---|
-| two-worms-fire | 200 | 114 | 10.3 / 66.2 | 4.0 / 13.4 | 0.39 | yes | yes |
-| multi-shot | 150 | 114 | 5.4 / 22.6 | 2.8 / 9.8 | 0.52 | yes | yes |
-| suicide-score | 660 | 23 | 3.3 / 28.8 | 0.6 / 6.1 | 0.17 | yes | yes |
-| fire-minigun | 200 | 25 | 2.5 / 13.5 | 1.1 / 6.7 | 0.45 | yes | yes |
-| weapons/classic/spikeballs | 368 | 23 | 3.7 / 14.3 | 1.3 / 5.4 | 0.34 | yes | yes |
-| weapons/classic/uzi | 368 | 16 | 3.8 / 21.9 | 0.9 / 3.7 | 0.23 | yes | yes |
-| heavy-spikeballs | 800 | 3000 | 442.3 / 1439.3 | 153.8 / 497.8 | 0.35 | yes | — (timing trace) |
-| heavy-napalm | 800 | 829 | 162.2 / 302.6 | 48.6 / 85.4 | 0.30 | yes | — (timing trace) |
+| two-worms-fire | 200 | 114 | 11.1 / 55.4 | 3.8 / 17.4 | 0.35 | yes | yes |
+| multi-shot | 150 | 114 | 6.1 / 18.5 | 2.7 / 14.0 | 0.44 | yes | yes |
+| suicide-score | 660 | 23 | 3.2 / 28.8 | 0.5 / 5.8 | 0.15 | yes | yes |
+| fire-minigun | 200 | 25 | 2.9 / 20.2 | 1.4 / 6.1 | 0.49 | yes | yes |
+| weapons/classic/spikeballs | 368 | 23 | 4.0 / 12.1 | 1.2 / 4.6 | 0.29 | yes | yes |
+| weapons/classic/uzi | 368 | 16 | 4.7 / 25.1 | 0.8 / 4.5 | 0.17 | yes | yes |
+| heavy-spikeballs | 800 | 3000 | 426.8 / 1372.9 | 154.3 / 503.5 | 0.36 | yes | — (timing trace) |
+| heavy-napalm | 800 | 829 | 159.4 / 302.1 | 48.5 / 81.9 | 0.30 | yes | — (timing trace) |
 
 ### Limits
 

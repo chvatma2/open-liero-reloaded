@@ -70,3 +70,5 @@
 2026-10-13 bench: drift and play's effects pool: base 9f8f491 measures tick_32_worms 4.65 us against its 4.18 baseline (+11 %, interleaved runs 2026-10-13) and HEAD 4.96 us (+6.5 % over 9f8f491, within the gate); frame_1440p drifted (rl-render unchanged); the stress runs' render_ms p50 rises 10-29 % on llvmpipe with play's 16384-entity pool (6.0-6.3 to 6.5-7.8 ms; spec §19 E1 amended)
   fixtures/bench/baselines.ron
   fixtures/bench/stress.ron
+2026-10-13 envelope: play's effect pool is 16384 (was OLX's 1024); deaths always show
+  fixtures/bench/envelope/amd-ryzen-5-7600x-6-core-processor-12cpus.ron
