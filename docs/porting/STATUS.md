@@ -174,8 +174,10 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     `TickEvents`' gameplay quota, not the cosmetic one, so a tick's other
     cosmetics never crowd them out. Online play shows a death's events
     once per worm and life (`NetPresenter`, the life counting the worm's
-    spawns as last simulated), whatever tick a correction moves the death
-    to and whichever of the three sounds it drew. The entity pool keeps a
+    spawns as last simulated), whatever tick within the rollback window
+    (`MAX_PREDICTION`) a correction moves the death to and whichever of
+    the three sounds it drew; a death erased by a correction never hides
+    the real one later in that life, nor after a state load. The entity pool keeps a
     reserve for deaths and a death sound steals a voice: the two entries
     below.
 - **More cosmetic entities in play (2026-10-13; spec §19 E1, amended).**
@@ -212,8 +214,8 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   answers start, steal or skip: a death sound at its own limit takes the
   place of the oldest voice of that sound; at the global limit (256) the
   oldest of that sound, else the oldest voice that is not a death's
-  (push order, deterministic). `Audio::play` stops the taken voice with
-  a 5 ms fade. Every other sound is skipped as in OLX. Audio never runs
+  (push order, deterministic). `Audio::play` takes the voice only once
+  the new one has started, and stops it with a 5 ms fade. Every other sound is skipped as in OLX. Audio never runs
   in the oracle, so it applies always.
 - **Exact-zero deaths' Gusanos particles (spec §18 D9).** Three scenarios stay
   pinned in `rl-scenario/tests/oracle.rs`, the only ones that do not match
