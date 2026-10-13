@@ -61,6 +61,15 @@ fn a_closed_game_leaves_the_list() {
     // A closed note for an unknown key lists nothing.
     l.offer(&note(&key(1), &closed, FP, 1000), 1002);
     assert!(l.games().is_empty());
+    // Out of order: one relay's closing note of a key never listed, then
+    // another relay's older open note (it missed the close). The closing
+    // note's tombstone refuses it, at once and after the gap.
+    let late = key(2);
+    l.offer(&note(&late, &closed, FP, 2001), 2001);
+    l.offer(&note(&late, &named("Late"), FP, 2000), 2001);
+    assert!(l.games().is_empty(), "the closed game stays closed");
+    l.offer(&note(&late, &named("Late"), FP, 2000), 2030);
+    assert!(l.games().is_empty(), "after the gap too");
 }
 
 #[test]
@@ -381,4 +390,46 @@ fn a_forged_note_under_a_listed_key_costs_no_verification() {
     l.offer(&forged, 1003);
     assert_eq!(l.verifications(), 2);
     assert_eq!(l.games().len(), 1);
+}
+
+/// The gap counts in arrival time, but a note dated at least the gap after
+/// the key's last one is no faster than the host published it: it is
+/// taken at once (a subscription that caught the last minute's note just
+/// before the next; a relay that delivered an older version first).
+#[test]
+fn a_note_dated_a_gap_later_is_taken_at_once() {
+    let mut l = GameList::new(FP);
+    let h = key(0);
+    // Subscribed 55 s after the host's note, the next one 5 s later.
+    l.offer(&note(&h, &named("Old"), FP, 1000), 1055);
+    l.offer(&note(&h, &named("New"), FP, 1060), 1060);
+    assert_eq!(l.games()[0].summary.name, "New");
+    // Two relays at the subscription: the older version first.
+    let k = key(1);
+    l.offer(&note(&k, &named("Older"), FP, 1040), 1100);
+    l.offer(&note(&k, &named("Newest"), FP, 1052), 1100);
+    let g = l.games().into_iter().find(|g| g.key == k.public()).unwrap();
+    assert_eq!(g.summary.name, "Newest");
+    // Less than the gap apart, in both clocks: still refused.
+    l.offer(&note(&k, &named("Soon"), FP, 1061), 1101);
+    let g = l.games().into_iter().find(|g| g.key == k.public()).unwrap();
+    assert_eq!(g.summary.name, "Newest");
+}
+
+/// A full list refuses a new key before checking its signature (a flood of
+/// fresh keys costs no verification once the list is full).
+#[test]
+fn a_full_list_refuses_new_keys_without_verifying() {
+    let mut l = GameList::new(FP);
+    for i in 0..500 {
+        l.offer(&note(&key(100 + i), &named("Flood"), FP, 1000), 1000);
+    }
+    assert_eq!(l.len(), 500);
+    let before = l.verifications();
+    l.offer(&note(&key(5000), &named("More"), FP, 1000), 1000);
+    assert_eq!(l.verifications(), before, "no signature checked");
+    assert_eq!(l.len(), 500);
+    // A listed key's next note is still taken.
+    l.offer(&note(&key(100), &named("Next"), FP, 1010), 1010);
+    assert_eq!(l.verifications(), before + 1);
 }

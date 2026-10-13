@@ -159,8 +159,10 @@ impl GameList {
 
     /// Takes a note from a relay. It is dropped unless it is a valid, signed,
     /// current announcement of a key not blocked, newer than the key's last
-    /// one and at least 10 s after it (a closing note of a listed game is
-    /// exempt from the gap), and the list has room.
+    /// one and at least 10 s after it, by arrival or by date (a closing
+    /// note of a listed game is exempt from the gap), and the list has
+    /// room. Every accepted closing note leaves a tombstone, listed or not,
+    /// so an older open note from a relay that missed the close is refused.
     pub fn offer(&mut self, e: &Event, now_unix: u64) {
         // Cheap checks first.
         if e.kind != KIND_ANNOUNCE || e.content.len() > MAX_CONTENT || self.blocked.contains(&e.pubkey) {
@@ -174,15 +176,27 @@ impl GameList {
         }
         let last = self.seen.get(&e.pubkey).copied();
         let listed = self.games.contains_key(&e.pubkey);
-        let gap_ok = last.is_none_or(|l| now_unix.saturating_sub(l.accepted_unix) >= MIN_NOTE_GAP);
+        // The gap counts in arrival time, or in the notes' own dates: a
+        // note dated a gap after the last one is no faster than its host
+        // published (a key stays bounded: dates lie within the last 180 s
+        // and the next 60 s).
+        let gap_ok = last.is_none_or(|l| {
+            now_unix.saturating_sub(l.accepted_unix) >= MIN_NOTE_GAP
+                || e.created_at >= l.created_at.saturating_add(MIN_NOTE_GAP)
+        });
         // A closing note of a listed game may follow at once; any other
-        // note waits. A note older than the key's last is stale. Both are
-        // refused before the costly signature check (a closing note is
-        // recognised by our compact encoding).
-        if !gap_ok && (!listed || !e.content.contains("\"closed\":true")) {
+        // note waits. A note older than the key's last is stale. A full
+        // list takes no new key (a closing note still leaves its
+        // tombstone). All are refused before the costly signature check (a
+        // closing note is recognised by our compact encoding).
+        let closing = e.content.contains("\"closed\":true");
+        if !gap_ok && (!listed || !closing) {
             return;
         }
         if last.is_some_and(|l| e.created_at < l.created_at) {
+            return;
+        }
+        if !listed && !closing && self.games.len() >= MAX_GAMES {
             return;
         }
         self.verifications += 1;
@@ -203,10 +217,10 @@ impl GameList {
             return;
         }
         if summary.closed {
-            // Only a listed game has anything to close.
-            if self.games.remove(&e.pubkey).is_some() {
-                self.remember(e, now_unix);
-            }
+            // A tombstone, listed or not: another relay may still hold the
+            // older open note and deliver it later (final review A-I1).
+            self.games.remove(&e.pubkey);
+            self.remember(e, now_unix);
             return;
         }
         if !listed && self.games.len() >= MAX_GAMES {

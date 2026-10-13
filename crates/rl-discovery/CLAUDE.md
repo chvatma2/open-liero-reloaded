@@ -196,11 +196,16 @@ host a listed game (`hosting`, `ping`).
   after a first publish).
 - **`list`** (N41): `GameList::offer` checks cheaply first (kind, size, age
   at most 180 s, not in the future by over 60 s, expiration, blocked, rate
-  gap), then verifies and parses. One note per key per 10 s of `now_unix`
-  (a closing note of a listed game is exempt); only newer `created_at` than
-  the key's last replaces it (a tombstone is kept after a close); at most
-  500 games (new keys refused when full) and 4096 remembered keys (when full
-  the oldest unlisted one is evicted). Announced addresses must be global
+  gap, staleness, a full list), then verifies and parses. One note per key
+  per 10 s of `now_unix`, or a note dated at least 10 s after the key's
+  last (final review A-M2: a subscription or a relay delivering an older
+  version first no longer holds the newest back; a closing note of a
+  listed game is exempt); only newer `created_at` than the key's last
+  replaces it; every accepted closing note leaves a tombstone, listed or
+  not (final review A-I1: a relay that missed the close cannot bring the
+  game back with its older open note); at most 500 games (new keys
+  refused when full, before the signature check) and 4096 remembered keys
+  (when full the oldest unlisted one is evicted). Announced addresses must be global
   (`list::is_global`, v4-mapped unwrapped) unless `allow_local(true)`. Refusals
   that need no signature check (stale, inside the gap) come first. `len()`/`is_empty()`; `games()`
   sorts compatible first, then ping (measured, unknown/measuring, no answer),
@@ -400,11 +405,16 @@ timings in `src`).
   after a first publish).
 - **`list`** (N41): `GameList::offer` checks cheaply first (kind, size, age
   at most 180 s, not in the future by over 60 s, expiration, blocked, rate
-  gap), then verifies and parses. One note per key per 10 s of `now_unix`
-  (a closing note of a listed game is exempt); only newer `created_at` than
-  the key's last replaces it (a tombstone is kept after a close); at most
-  500 games (new keys refused when full) and 4096 remembered keys (when full
-  the oldest unlisted one is evicted). Announced addresses must be global
+  gap, staleness, a full list), then verifies and parses. One note per key
+  per 10 s of `now_unix`, or a note dated at least 10 s after the key's
+  last (final review A-M2: a subscription or a relay delivering an older
+  version first no longer holds the newest back; a closing note of a
+  listed game is exempt); only newer `created_at` than the key's last
+  replaces it; every accepted closing note leaves a tombstone, listed or
+  not (final review A-I1: a relay that missed the close cannot bring the
+  game back with its older open note); at most 500 games (new keys
+  refused when full, before the signature check) and 4096 remembered keys
+  (when full the oldest unlisted one is evicted). Announced addresses must be global
   (`list::is_global`, v4-mapped unwrapped) unless `allow_local(true)`. Refusals
   that need no signature check (stale, inside the gap) come first. `len()`/`is_empty()`; `games()`
   sorts compatible first, then ping (measured, unknown/measuring, no answer),

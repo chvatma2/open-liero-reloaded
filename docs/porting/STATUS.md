@@ -1228,12 +1228,15 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
 - **N41 - the game list.** `GameList` verifies every event (id and
   signature), keeps the newest note per key, drops expired notes and closed
   games, shows games of another fingerprint greyed out ("needs version X"),
-  accepts at most one note per key per 10 s (a closing note of a listed game
-  is exempt), at most 500 games and 4096 remembered keys (the oldest
-  unlisted one is evicted when full, so hostile keys cannot lock honest
-  hosts out, R5-2), refuses notes older than 180 s or more than 60 s in the
-  future, and hides blocked keys. Cheap refusals come before the signature
-  check. Announced addresses must be global (PF12-5). Ping is a TCP connect
+  accepts at most one note per key per 10 s of arrival, or dated 10 s after
+  the key's last (a closing note of a listed game is exempt), at most 500
+  games and 4096 remembered keys (the oldest unlisted one is evicted when
+  full, so hostile keys cannot lock honest hosts out, R5-2), refuses notes
+  older than 180 s or more than 60 s in the future, and hides blocked keys.
+  Every accepted closing note leaves a tombstone, listed or not, so a relay
+  that missed the close cannot bring the game back with its older open
+  note (final review A-I1). Cheap refusals (a full list's new key too)
+  come before the signature check. Announced addresses must be global (PF12-5). Ping is a TCP connect
   to `addr:port`, timed, 2 s timeout, at most 4 at once, on a game's first
   selection; a failed ping sinks the game to the bottom for the life of the
   list.
