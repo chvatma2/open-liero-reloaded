@@ -27,9 +27,11 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   thinking in slot order; `press` with the host player's keys from a
   callback; `Driver<WorldSim>` for bots alone, `rl-cli`'s).
 - **`peer.rs`, `OnlinePeer`**: `start(role, endpoint, me, look, content,
-  setup)` (`PeerRole::Host`, `Server`: a host without a local player, the
-  dedicated server's, `look` unused; `Client`); `poll(now, local_keys,
-  on_tick) -> Vec<OnlineEvent>`;
+  setup, content_cfg)` (`PeerRole::Host`, `Server`: a host without a local
+  player, the dedicated server's, `look` unused; `Client`; `content_cfg`:
+  `PeerContent`, below); `poll(now, local_keys, on_tick) ->
+  Vec<OnlineEvent>`; `content()` (what matches and replays load from),
+  `downloads()`, `approve_downloads()`;
   `lobby()` (`LobbyHandle`: ready, spectate, look, loadout, chat, have,
   setup, kick, move_seat (the host's), start, force_start, can_start
   (the host's answer; `NotHost`, `Running`), state, me; the host's alone:
@@ -49,8 +51,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   advance; cleared at the next start); `stats` (`NetStats`, per second);
   `last_record` (the finished match's `MatchRecord`); `leave`;
   `LobbyHandle::revision` (the host's `LobbyHost::revision`).
-  `test_seed_override` exists only with the `test-hooks` feature (this
-  crate's own dev-dependency).
+  `test_seed_override`, `test_serve_instead` (a host serves another
+  pack's archive for a pack) and `test_prompt_limit` (a client's prompt
+  bytes) exist only with the `test-hooks` feature (this crate's own
+  dev-dependency).
   - **Reliable sends are never dropped** (`outbox.rs`, `Outbox`): every
     reliable message (the session's, the lobby's) waits in a per-peer FIFO
     backlog fed into the endpoint while its `buffered` for that peer is
@@ -68,8 +72,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     peer lingers until its backlog and the endpoint's are delivered.
   - Reliable payloads carry the tag byte: the session's untagged `Control`
     gets `0` on the way out and loses it on the way in; lobby messages are
-    `1`/`2`. A payload that does not decode drops the peer (host) or ends
-    the connection (client).
+    `1`/`2`, `ContentMsg` `3` (the content side; a host takes them from
+    members only). A payload that does not decode drops the peer (host) or
+    ends the connection (client).
   - **Host**: the endpoint's gate refuses the lobby's banned addresses (a
     set mirrored from `Kick { ban: true }` when the lobby banned the
     address, and from `ban_ip`/`unban_ip`). `Connected` → `connected` with
@@ -89,10 +94,12 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     `playing(0)` at the first tick. A client builds the same world,
     compares the checksum (`MISMATCH` → `Refused` and it leaves), plays
     its slot with its input delay, or watches; a `Start` while its match
-    runs is ignored (`START_IGNORED`). A member welcomed during a
-    match gets `Start` after its welcome and the session's
-    `add_spectator`; its client, seeing the lobby already starting or
-    playing, is `Role::Joining`.
+    runs is ignored (`START_IGNORED`). A member waiting during a match
+    (welcomed then, or lacking content at its start: N33) gets `Start` at
+    its `HostEvent::ContentComplete` (its `Have` after the content list)
+    and the session's `add_spectator`; its client, seeing the lobby
+    already starting or playing, is `Role::Joining`. Matches build from
+    `content()` (the overlay); `check_packs` stays the last guard.
   - **Advance** (every poll): receive, `advance` with a driver giving the
     local keys (the host's bots from `HostBots`) and calling `on_tick` and
     the `TickRecorder` in `simulated`, transmit; then `Restored` (before
@@ -195,7 +202,39 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     timeout (the worker answers every job, a panic too). `missing_required`,
     `installed` (the list's cached packs, for `Content::with_packs`),
     `source_left` (partials stay; the next list resumes).
-  - `worker.rs`, `Worker::start(cache)`: one thread (`rl-online-content`)
+  - `peer_side.rs` (called from `peer.rs`'s poll, after the lobby's
+    events): `PeerContent { cache: Result<Arc<Mutex<DownloadCache>>,
+    String>, upload_rate }` (ruling PF11-4: the peers of one process share
+    one cache; `Err(why)`: no downloads, and a client lacking content gets
+    a `Notice` naming why; `without_downloads(why)`). Every hash and
+    archive is made on the worker (`Content::known_hash`/`remember_hash`):
+    a list naming a pack this peer has but has not hashed yet waits for
+    the worker. Chunks go to a peer while its outbox (`Outbox::buffered`)
+    holds less than `QUEUED`. `OnlineEvent::Downloads` at most every
+    `REPORT_EVERY_US` (250 ms), `DownloadPrompt { bytes }` when a list is
+    over the prompt. The content of matches is this peer's packs with the
+    downloaded ones laid over (`Content::with_packs`, their verified
+    hashes remembered).
+    - **Host**: the list is the setup's packs (required) and every
+      member's and bot's skin it has, once by hash (a bot's skin as the
+      host has it, ruling R6-2), each listed once archived; no list
+      goes out until every required item is archived (one that cannot be
+      is listed with size 0 and refused when asked). A changed list goes
+      to every member, the current one to each joiner after its
+      `Welcome`. Served at `upload_rate`, `MATCH_RATE` while the phase is
+      `Starting`/`Playing`. `Member::download` from the archive bytes sent
+      to each member of what its `Have` names. A member offers its own
+      skin with a one-item `List` (ruling R6-1: id and hash its look's);
+      a skin the host lacks is fetched from that member (one fetch per
+      hash), installed, then listed and served to the others. Its own
+      look's skin hash is filled from its content.
+    - **Client**: its look's skin hash filled once hashed (in `Hello`
+      when it comes first, else a `SetLook`); its skin's archive offered
+      to the host and served at `SKIN_RATE` (that hash only). A host's
+      `List` goes to its `Fetcher` (its own content and the cache), then
+      `Have { missing: missing_required }` after every list and whenever
+      that changes; installs are routed to `Fetcher::finished`.
+  - `worker.rs`, `Worker::start(cache)` (`None`: installs fail): one thread (`rl-online-content`)
     running `Job::{Archive, Install, Hash}` in order; `take` returns the
     `Done`s. A job that panics (a parser of untrusted content) is caught
     (`catch_unwind`) and fails with the panic's message; the thread goes
@@ -225,6 +264,17 @@ checksum tick), as its clients do; `/next` (`end_match`) on such a
 server, while it has confirmed a checksum tick it has not simulated, ends
 at the last tick it simulated with every checksum up to there, and every
 client's record and replay equal the server's (`MatchEndWire::last_tick`).
+Content (each peer a cache in a temporary directory; `common::
+partial_content` copies the match's packs but some, `with_test_skin`
+adds a skin pack of another hash): a client without the level, or the mod,
+downloads it (reports coalesced, ending in `Done`), is ready, plays and
+makes the host's replay; a member's skin the host lacks travels through
+the host to another client; another pack's archive served for the level
+fails after one retry, the client stays, not ready, lacking it; a
+spectator joining mid-match without the level waits, downloads at the
+match's rate, then watches, and nobody is dropped; no cache (`Err`) is a
+notice and an unwritable one a `Failed` download with the I/O reason;
+content over the prompt waits for `approve_downloads`.
 `tests/matches.rs`: a proptest of starts within rl-proto's bounds (256
 cases, about 30 build) never panics `build`; a slot both member and bot,
 a single slot, an unknown mod and a pack hash mismatch are refused.
@@ -251,3 +301,6 @@ order, `Unavailable`, hostile `Begin`s and chunks, another archive,
 silence, a source leaving, a re-sent list with another size, a failed
 item retried once a list. `worker.rs`' unit test: a panicking job
 (a `#[cfg(test)]` hook in `run`) fails and the next job completes.
+`peer_side.rs`' unit tests: a list waits for the worker's hashes (nothing
+hashed on the caller's thread); an outbox that never drains holds at most
+`QUEUED` of content.

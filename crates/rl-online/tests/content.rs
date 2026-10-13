@@ -117,7 +117,7 @@ impl Host {
     fn new(rate: u64) -> Host {
         let dir = tempfile::tempdir().unwrap();
         let cache = Arc::new(Mutex::new(DownloadCache::open(dir.path()).unwrap()));
-        Host { worker: Worker::start(cache), server: Server::new(rate), _dir: dir }
+        Host { worker: Worker::start(Some(cache)), server: Server::new(rate), _dir: dir }
     }
 
     /// Archives the pack in `dir` and offers it under `hash` (its own
@@ -150,7 +150,7 @@ impl Client {
         let cache = Arc::new(Mutex::new(DownloadCache::open(dir).unwrap()));
         Client {
             dir: dir.to_path_buf(),
-            worker: Worker::start(cache.clone()),
+            worker: Worker::start(Some(cache.clone())),
             fetcher: Fetcher::new(cache.clone()),
             cache,
             local: Content::open_layers(&[empty]).unwrap(),
@@ -432,7 +432,7 @@ fn the_worker_hashes_archives_and_stops() {
     let dir = generated_level(root.path(), "level-w", 6);
     let hash = rl_pack::content_hash(&DirFs::new(&dir)).unwrap();
     let cache = Arc::new(Mutex::new(DownloadCache::open(&root.path().join("cache")).unwrap()));
-    let worker = Worker::start(cache.clone());
+    let worker = Worker::start(Some(cache.clone()));
     worker.submit(Job::Hash { id: "level-w".into(), dir: dir.clone() });
     // An archive for another hash (the pack changed since): refused.
     worker.submit(Job::Archive { hash: "0".repeat(64), dir: dir.clone() });

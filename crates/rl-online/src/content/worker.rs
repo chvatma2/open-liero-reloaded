@@ -65,7 +65,9 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn start(cache: Arc<Mutex<DownloadCache>>) -> Worker {
+    /// The worker; without a cache (`None`: downloads are off) it archives
+    /// and hashes, and every install fails.
+    pub fn start(cache: Option<Arc<Mutex<DownloadCache>>>) -> Worker {
         let (jobs, job_rx) = mpsc::channel::<Job>();
         let (done_tx, done) = mpsc::channel();
         let (exit_tx, exited) = mpsc::channel::<()>();
@@ -83,7 +85,7 @@ impl Worker {
                     // A panic in a parser of untrusted content fails its
                     // job, not the thread.
                     let backup = job.clone();
-                    let done = std::panic::catch_unwind(AssertUnwindSafe(|| run(&cache, job)))
+                    let done = std::panic::catch_unwind(AssertUnwindSafe(|| run(cache.as_deref(), job)))
                         .unwrap_or_else(|panic| failed(backup, &panic_message(panic.as_ref())));
                     if thread_done.send(done).is_err() {
                         break;
@@ -144,7 +146,7 @@ fn failed(job: Job, why: &str) -> Done {
 #[cfg(test)]
 const PANIC_ID: &str = "test-panic";
 
-fn run(cache: &Mutex<DownloadCache>, job: Job) -> Done {
+fn run(cache: Option<&Mutex<DownloadCache>>, job: Job) -> Done {
     #[cfg(test)]
     if matches!(&job, Job::Hash { id, .. } if id == PANIC_ID) {
         panic!("a test panic");
@@ -155,7 +157,10 @@ fn run(cache: &Mutex<DownloadCache>, job: Job) -> Done {
             Done::Archived { hash, archive }
         }
         Job::Install { hash, id, kind, limit } => {
-            let dir = install(cache, &hash, &id, kind, limit);
+            let dir = match cache {
+                Some(cache) => install(cache, &hash, &id, kind, limit),
+                None => Err("there is no download cache".to_string()),
+            };
             Done::Installed { hash, dir }
         }
         Job::Hash { id, dir } => {
@@ -208,7 +213,7 @@ mod tests {
     fn a_panicking_job_fails_and_the_worker_goes_on() {
         let dir = tempfile::tempdir().unwrap();
         let cache = Arc::new(Mutex::new(DownloadCache::open(dir.path()).unwrap()));
-        let worker = Worker::start(cache);
+        let worker = Worker::start(Some(cache));
         worker.submit(Job::Hash { id: PANIC_ID.into(), dir: dir.path().into() });
         worker.submit(Job::Hash { id: "after".into(), dir: dir.path().into() });
         let done = wait(&worker, 2);

@@ -4,6 +4,8 @@ use rl_netcode::world_sim::{ConfirmedTick, TickedTick};
 use rl_proto::{LobbyState, MatchEndWire, MatchStartWire};
 use rl_terrain::Area;
 
+use crate::content::Download;
+
 /// What happened during one [`crate::OnlinePeer::poll`], in order.
 #[derive(Clone, Debug, PartialEq)]
 pub enum OnlineEvent {
@@ -58,6 +60,14 @@ pub enum OnlineEvent {
     /// [`crate::GameBundle`] for the game to save; at most
     /// [`crate::bundle::MAX_BUNDLES_PER_MATCH`] a match.
     DesyncBundle(Vec<u8>),
+    /// The content downloads changed (a client's from its host, a host's
+    /// skins from its members): every item, at most every
+    /// [`crate::content::REPORT_EVERY_US`] (4 a second).
+    Downloads(Vec<Download>),
+    /// The content this client lacks is more than the prompt's bytes
+    /// ([`crate::content::PROMPT_BYTES`]): nothing downloads until
+    /// [`crate::OnlinePeer::approve_downloads`] (or the player leaves).
+    DownloadPrompt { bytes: u64 },
 }
 
 /// The connection's numbers for the overlay, over the last second of a

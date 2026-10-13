@@ -4,7 +4,8 @@
 //!
 //! Every reliable payload carries `rl_proto`'s tag byte: `0` the netcode's
 //! `Control` (the session sends it untagged: tagged and untagged here), `1`
-//! `ToHost`, `2` `ToClient`. Time is the caller's (`poll(now, ..)`); the
+//! `ToHost`, `2` `ToClient`, `3` `ContentMsg` (the content side,
+//! `content::peer_side`). Time is the caller's (`poll(now, ..)`); the
 //! sockets are `rl-net`'s endpoint.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,12 +25,15 @@ use rl_netcode::world_sim::TickRecorder;
 use rl_netcode::{Channel, Config, Driver, Event, PeerId, Role, Seat, Session, TickInfo, WorldSim};
 use rl_proto::{
     AdminCommand, Control, LobbyState, Look, MAX_INPUT_DELAY, MatchEndWire, MatchSetupWire, MatchStartWire,
-    Notice, Phase, PublicKey, Refusal, TAG_NETCODE, TAG_TO_CLIENT, TAG_TO_HOST, Tagged, ToClient,
-    decode_control, decode_to_client, decode_to_host, encode_control, encode_to_client, encode_to_host, tag,
+    Notice, Phase, PublicKey, Refusal, TAG_CONTENT, TAG_NETCODE, TAG_TO_CLIENT, TAG_TO_HOST, Tagged,
+    ToClient, decode_content, decode_control, decode_to_client, decode_to_host, encode_content,
+    encode_control, encode_to_client, encode_to_host, tag,
 };
 use rl_sim::{EndReason, Keys, MatchResult, Score, TickEvents, World};
 
 use crate::bundle::{GameBundle, MAX_BUNDLES_PER_MATCH};
+use crate::content::peer_side::ContentSide;
+use crate::content::{Download, PeerContent};
 use crate::events::{NetStats, OnlineEvent};
 use crate::matches::{self, HostBots};
 use crate::outbox::{Outbox, Part};
@@ -170,7 +174,9 @@ pub struct OnlinePeer {
     /// The endpoint behind the reliable backlog (`outbox`).
     endpoint: Outbox,
     side: Side,
-    content: Arc<Content>,
+    /// The content: what this peer has, downloads and serves
+    /// (`content::peer_side`).
+    content: ContentSide,
     my_key: PublicKey,
     epoch: Option<Instant>,
     now: Option<Instant>,
@@ -197,7 +203,9 @@ impl OnlinePeer {
     /// Opens the endpoint: a host's lobby for `setup` (`me` plays with
     /// `look`; a server's lobby has no local player), or a connection to
     /// the host. A client's endpoint lets its host send
-    /// [`HOST_RELIABLE_BYTES_PER_S`].
+    /// [`HOST_RELIABLE_BYTES_PER_S`]. `content` is this peer's own packs;
+    /// `content_cfg` its download cache (or why there is none) and a
+    /// host's upload rate.
     pub fn start(
         role: PeerRole,
         endpoint: EndpointConfig,
@@ -205,9 +213,15 @@ impl OnlinePeer {
         look: Look,
         content: Content,
         setup: Option<MatchSetupWire>,
+        content_cfg: PeerContent,
     ) -> io::Result<OnlinePeer> {
         let invalid = |what: String| io::Error::new(io::ErrorKind::InvalidInput, what);
         let my_key = me.public();
+        let content = match &role {
+            PeerRole::Host(_) => ContentSide::new(content, content_cfg, true, Some(look.clone())),
+            PeerRole::Server(_) => ContentSide::new(content, content_cfg, true, None),
+            PeerRole::Client { .. } => ContentSide::new(content, content_cfg, false, Some(look.clone())),
+        };
         let hosting = match role {
             PeerRole::Host(cfg) => Ok((cfg, Some(look))),
             PeerRole::Server(cfg) => Ok((cfg, None)),
@@ -247,7 +261,7 @@ impl OnlinePeer {
         Ok(OnlinePeer {
             endpoint: Outbox::new(endpoint),
             side,
-            content: Arc::new(content),
+            content,
             my_key,
             epoch: None,
             now: None,
@@ -303,6 +317,7 @@ impl OnlinePeer {
                 h.lobby.tick(self.now_us);
             }
             self.host_lobby_events(now);
+            self.content_tasks();
             self.advance(now, local_keys, on_tick);
             self.host_tasks(now);
             self.overflowed();
@@ -392,6 +407,38 @@ impl OnlinePeer {
         self.shut();
     }
 
+    /// The content this peer's matches and replays load from: its own
+    /// with the list's downloaded packs laid over.
+    pub fn content(&self) -> Arc<Content> {
+        self.content.content()
+    }
+
+    /// The content downloads: a client's from its host, a host's skins
+    /// from its members.
+    pub fn downloads(&self) -> Vec<Download> {
+        self.content.downloads()
+    }
+
+    /// The player lets the content over the prompt download
+    /// ([`OnlineEvent::DownloadPrompt`]).
+    pub fn approve_downloads(&mut self) {
+        self.content.approve();
+    }
+
+    /// Tests only (`test-hooks`): a host serves pack `other`'s archive for
+    /// pack `id` (listed with that archive's size; it fails to verify).
+    #[cfg(feature = "test-hooks")]
+    pub fn test_serve_instead(&mut self, id: &str, other: &str) {
+        self.content.serve_instead(id, other);
+    }
+
+    /// Tests only (`test-hooks`): a client's prompt comes above `bytes`
+    /// instead of `content::PROMPT_BYTES`.
+    #[cfg(feature = "test-hooks")]
+    pub fn test_prompt_limit(&mut self, bytes: u64) {
+        self.content.set_prompt_bytes(bytes);
+    }
+
     /// Tests only (`test-hooks`): a client builds the host's start with
     /// this seed instead (a world that differs from the host's).
     #[cfg(feature = "test-hooks")]
@@ -433,6 +480,18 @@ impl OnlinePeer {
                         }
                         Err(_) => self.drop_peer(peer),
                     },
+                    Some(Tagged::Content(b)) => match decode_content(b) {
+                        // Only members fetch and offer content.
+                        Ok(msg) => {
+                            let look = h.lobby.member_of(peer).and_then(|id| {
+                                h.lobby.state().members.iter().find(|m| m.id == id).map(|m| m.look.clone())
+                            });
+                            if look.is_some() {
+                                self.content.receive(peer, msg, look.as_ref());
+                            }
+                        }
+                        Err(_) => self.drop_peer(peer),
+                    },
                     _ => self.drop_peer(peer),
                 },
                 NetEvent::Disconnected { peer, .. } => self.forget_peer(peer),
@@ -456,6 +515,11 @@ impl OnlinePeer {
                     }
                     Some(Tagged::ToClient(b)) => match decode_to_client(b) {
                         Ok(msg) => self.client_receive(msg, now),
+                        Err(_) => self
+                            .end_with(OnlineEvent::Disconnected("the host sent a malformed message".into())),
+                    },
+                    Some(Tagged::Content(b)) => match decode_content(b) {
+                        Ok(msg) => self.content.receive(HOST, msg, None),
                         Err(_) => self
                             .end_with(OnlineEvent::Disconnected("the host sent a malformed message".into())),
                     },
@@ -484,6 +548,7 @@ impl OnlinePeer {
             h.forget(peer);
         }
         self.closing.remove(&peer);
+        self.content.peer_left(peer);
         if let Some(g) = &mut self.game {
             g.session.peer_lost(peer);
         }
@@ -526,6 +591,7 @@ impl OnlinePeer {
         for peer in done {
             self.closing.remove(&peer);
             self.endpoint.close(peer);
+            self.content.peer_left(peer);
             if let Side::Host(h) = &mut self.side {
                 h.forget(peer);
             }
@@ -588,6 +654,24 @@ impl OnlinePeer {
         h.last_drain = Some(now);
     }
 
+    /// The content side's poll: the list, downloads, `Have`, serving; its
+    /// messages sent on `TAG_CONTENT`. Chunks go to a peer while its
+    /// outbox (backlog and endpoint) holds less than `content::QUEUED`.
+    fn content_tasks(&mut self) {
+        let now_us = self.now_us;
+        let ep = &self.endpoint;
+        let buffered = |peer: PeerId| ep.buffered(peer);
+        match &mut self.side {
+            Side::Host(h) => self.content.poll_host(now_us, &mut h.lobby, &buffered),
+            Side::Client(c) => self.content.poll_client(now_us, &mut c.lobby, &buffered),
+        }
+        self.flush_client();
+        for (peer, msg) in self.content.take_out() {
+            send_tagged(&mut self.endpoint, peer, TAG_CONTENT, &encode_content(&msg)[1..]);
+        }
+        self.events.extend(self.content.take_events());
+    }
+
     fn host_lobby_events(&mut self, now: Instant) {
         let Side::Host(h) = &mut self.side else { return };
         let events = h.lobby.events();
@@ -600,12 +684,18 @@ impl OnlinePeer {
             match e {
                 HostEvent::Joined(id) => {
                     self.events.push(OnlineEvent::Notice(format!("{} joined", self.name(id))));
-                    self.mid_match_join(id, now);
+                    // The content list follows its welcome.
+                    self.drain_lobby(now);
+                    if let Side::Host(h) = &self.side
+                        && let Some(peer) = h.lobby.peer_of(id)
+                    {
+                        self.content.joined(peer);
+                    }
                 }
-                // Task 6 (N33): `mid_match_join` moves here from `Joined`
-                // once the clients report their content with a `Have`
-                // after the welcome.
-                HostEvent::ContentComplete(_) => {}
+                // N33: a member waiting during a match (a joiner, or one
+                // that lacked content at its start) watches once its
+                // content is complete (its `Have`, after every list).
+                HostEvent::ContentComplete(id) => self.mid_match_join(id, now),
                 HostEvent::Left(id) => self.events.push(OnlineEvent::Left(self.name(id))),
                 HostEvent::Kick { peer, ban } => {
                     // A ban by key leaves the address open (spec §5.2);
@@ -636,11 +726,12 @@ impl OnlinePeer {
     /// An admin's setup: taken when the host has its packs and the lobby
     /// takes it, else a notice to that admin says why not.
     fn admin_setup(&mut self, from: u8, setup: MatchSetupWire) {
+        let content = self.content.content();
         let Side::Host(h) = &mut self.side else { return };
-        let have = |id: &str| self.content.pack_kind(id).is_some();
+        let have = |id: &str| content.pack_kind(id).is_some();
         let refused = if !have(&setup.mod_id) || !have(&setup.level_id) {
             Some("the host does not have that mod or level".to_string())
-        } else if let Err(e) = matches::check_packs(&self.content, &setup) {
+        } else if let Err(e) = matches::check_packs(&content, &setup) {
             Some(format!("{e:#}"))
         } else {
             h.lobby.set_setup(setup).err().map(|e| e.to_string())
@@ -789,7 +880,8 @@ impl OnlinePeer {
         let Side::Host(h) = &mut self.side else { return Err(StartError::NotHost) };
         let started = if force { h.lobby.force_start(seed, &h.rtts) } else { h.lobby.start(seed, &h.rtts) };
         let mut start = started.map_err(StartError::Lobby)?;
-        let world = matches::build(&self.content, &start).map_err(|e| StartError::Build(format!("{e:#}")))?;
+        let world = matches::build(&self.content.content(), &start)
+            .map_err(|e| StartError::Build(format!("{e:#}")))?;
         start.start_checksum = world.sim.world().checksum();
         h.lobby.announce_start(start.clone()).map_err(StartError::Lobby)?;
         let me = h.lobby.state().members.iter().find(|m| m.key == self.my_key).map(|m| m.id);
@@ -838,7 +930,7 @@ impl OnlinePeer {
         if let Some(seed) = self.test_seed {
             built.seed = seed;
         }
-        let world = match matches::build(&self.content, &built) {
+        let world = match matches::build(&self.content.content(), &built) {
             Ok(w) => w,
             Err(e) => {
                 self.leave();
@@ -1069,7 +1161,7 @@ impl OnlinePeer {
         }
         let my_slot = record.start.slots.iter().position(|s| s.member == self.me()).map(|i| i as u8);
         let host = self.is_host();
-        self.replay = Some(PendingReplay::spawn(Arc::clone(&self.content), record, host, my_slot));
+        self.replay = Some(PendingReplay::spawn(self.content.content(), record, host, my_slot));
     }
 
     fn collect_replay(&mut self) {
@@ -1338,7 +1430,13 @@ impl LobbyHandle<'_> {
         );
     }
 
+    /// The player's look; its skin's hash comes from this peer's content
+    /// (filled in now when known, else once hashed).
     pub fn set_look(&mut self, look: Look) {
+        if self.peer.closed {
+            return;
+        }
+        let look = self.peer.content.set_look(look);
         self.act(|h| h.set_my_look(look.clone()), |c| c.set_look(look.clone()));
     }
 
@@ -1351,7 +1449,9 @@ impl LobbyHandle<'_> {
         self.act(|h| h.chat(text), |c| c.chat(text));
     }
 
-    /// The pack ids this client lacks (the host has every pack).
+    /// The pack ids this client lacks (the host has every pack). The peer
+    /// tells the host itself after every content list (plan 11); this is
+    /// the game's older report, until it goes (Task 7).
     pub fn have(&mut self, missing: Vec<String>) {
         self.act(|_| {}, |c| c.have(missing.clone()));
     }
@@ -1525,7 +1625,7 @@ mod tests {
         let me = Identity::from_secret([7; 32]).unwrap();
         let role = PeerRole::Client { addr: SocketAddr::from(([127, 0, 0, 1], 9)), password: None };
         let cfg = EndpointConfig { port: 0, ..EndpointConfig::default() };
-        OnlinePeer::start(role, cfg, me, look(), c, None).unwrap()
+        OnlinePeer::start(role, cfg, me, look(), c, None, PeerContent::without_downloads("a test")).unwrap()
     }
 
     #[test]

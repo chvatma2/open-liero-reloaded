@@ -14,7 +14,7 @@ use rl_net::endpoint::EndpointConfig;
 use rl_net::lan::{Announcer, Listener, broadcast_targets};
 use rl_netcode::netsim::Profile;
 use rl_online::matches::setup_packs;
-use rl_online::{OnlineEvent, OnlinePeer, PeerRole};
+use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{LAN_PORT, LobbyState, Look, MatchStartWire};
 use rl_sim::Keys;
 use rl_ui::hud::{LineKind, LogLine};
@@ -167,8 +167,15 @@ impl Shell {
             skin: DEFAULT_SKIN.into(),
             skin_hash: rl_proto::NO_HASH.into(),
         };
-        let mut host =
-            OnlinePeer::start(PeerRole::Host(cfg), endpoint, fresh_identity()?, look, content, Some(setup))?;
+        let mut host = OnlinePeer::start(
+            PeerRole::Host(cfg),
+            endpoint,
+            fresh_identity()?,
+            look,
+            content,
+            Some(setup),
+            no_downloads(),
+        )?;
         host.lobby().set_spectate(true);
         let port = host.local_port();
         println!("rl-game: net-sim {}: a host on port {port} with {NET_SIM_BOTS} bots", profile.name);
@@ -251,8 +258,9 @@ impl Shell {
         };
         let port = self.port.unwrap_or(prefs.port);
         let endpoint = EndpointConfig { port, impair: self.impair, ..EndpointConfig::default() };
-        let peer = OnlinePeer::start(PeerRole::Host(cfg), endpoint, id, look, content, Some(setup))
-            .map_err(|e| anyhow::anyhow!("cannot host on port {port}: {e}"))?;
+        let peer =
+            OnlinePeer::start(PeerRole::Host(cfg), endpoint, id, look, content, Some(setup), no_downloads())
+                .map_err(|e| anyhow::anyhow!("cannot host on port {port}: {e}"))?;
         println!("rl-game: hosting on port {}", peer.local_port());
         let mut n = Net::new(peer, true);
         n.setup_packs = Some((key, packs));
@@ -279,7 +287,7 @@ impl Shell {
         let content = self.open_content()?;
         let role = PeerRole::Client { addr: to, password: password.map(|p| p.0) };
         let endpoint = EndpointConfig { port: 0, impair: self.impair, ..EndpointConfig::default() };
-        let peer = OnlinePeer::start(role, endpoint, id, look, content, None)?;
+        let peer = OnlinePeer::start(role, endpoint, id, look, content, None, no_downloads())?;
         println!("rl-game: joining {to}");
         self.net = Some(Net::new(peer, false));
         Ok(())
@@ -537,6 +545,9 @@ impl Shell {
                 OnlineEvent::Refused(why) | OnlineEvent::Disconnected(why) => return self.lost(why, out),
                 OnlineEvent::ReplayReady(bytes) => self.save_online_replay(&bytes),
                 OnlineEvent::DesyncBundle(bytes) => self.save_bundle(&bytes),
+                // The lobby's download rows and prompt come with Task 7 (this
+                // game has no download cache yet).
+                OnlineEvent::Downloads(_) | OnlineEvent::DownloadPrompt { .. } => {}
                 // The match's presentation, polled without a match view (a
                 // view that failed to start): nothing to show it on.
                 OnlineEvent::StateLoaded { .. }
@@ -745,6 +756,12 @@ impl Shell {
 }
 
 /// A fresh identity (a key the store does not keep).
+/// Downloads are wired into the game by plan 11's Task 7 (the cache in
+/// the store's cache directory); until then a peer has none.
+fn no_downloads() -> PeerContent {
+    PeerContent::without_downloads("this game has no download cache yet")
+}
+
 fn fresh_identity() -> anyhow::Result<Identity> {
     for _ in 0..8 {
         if let Some(id) = Identity::from_secret(rl_net::random_bytes::<32>()?) {

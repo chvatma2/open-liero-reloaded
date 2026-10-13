@@ -323,6 +323,30 @@ fn has_compares_the_hash() {
     assert!(!content.has("nope", &ha));
 }
 
+/// A hash computed elsewhere (a worker thread) is remembered for the pack
+/// it was computed from: `known_hash` never hashes, and `has` uses it.
+#[test]
+fn a_remembered_hash_is_used_without_hashing() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = write_pack(root.path(), "x", &skin_pack("x", 50));
+    write_pack(root.path(), "y", &skin_pack("y", 51));
+    let content = Content::open_layers(&[root.path()]).unwrap();
+    assert_eq!(content.known_hash("x"), None, "not hashed yet");
+    let elsewhere = "ab".repeat(32);
+    // Not the pack's directory: ignored.
+    content.remember_hash("x", &root.path().join("y"), &elsewhere);
+    content.remember_hash("nope", &dir, &elsewhere);
+    assert_eq!(content.known_hash("x"), None);
+    content.remember_hash("x", &dir, &elsewhere);
+    assert_eq!(content.known_hash("x"), Some(elsewhere.clone()));
+    assert!(content.has("x", &elsewhere), "the remembered hash, not a fresh one");
+    // `known_hash` sees what `pack_hash` memoised too; an overlay keeps both.
+    let hy = content.pack_hash("y", PackKind::Skin).unwrap();
+    assert_eq!(content.known_hash("y"), Some(hy.clone()));
+    let over = content.with_packs(&[]).unwrap();
+    assert_eq!((over.known_hash("x"), over.known_hash("y")), (Some(elsewhere), Some(hy)));
+}
+
 #[test]
 fn a_cache_directory_belongs_to_one_open_cache() {
     let root = tempfile::tempdir().unwrap();

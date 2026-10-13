@@ -279,4 +279,24 @@ impl Content {
     pub fn has(&self, id: &str, hash: &str) -> bool {
         self.packs.get(id).is_some_and(|(kind, _)| self.pack_hash(id, *kind).is_ok_and(|h| h == hash))
     }
+
+    /// Pack `id`'s content hash if it is known already ([`Content::pack_hash`]
+    /// memoised it, or [`Content::remember_hash`] was told it): never
+    /// hashes, so a caller that must not block can ask.
+    pub fn known_hash(&self, id: &str) -> Option<String> {
+        let dir = self.pack_dir(id)?;
+        self.hashes.lock().ok()?.get(dir).cloned()
+    }
+
+    /// Records `hash` as the content hash of pack `id`, computed elsewhere
+    /// (such as on a worker thread, `rl_pack::content_hash` of `dir`):
+    /// ignored unless `dir` is pack `id`'s directory. [`Content::pack_hash`]
+    /// and [`Content::has`] then use it.
+    pub fn remember_hash(&self, id: &str, dir: &Path, hash: &str) {
+        if self.pack_dir(id) == Some(dir)
+            && let Ok(mut m) = self.hashes.lock()
+        {
+            m.insert(dir.to_path_buf(), hash.to_string());
+        }
+    }
 }

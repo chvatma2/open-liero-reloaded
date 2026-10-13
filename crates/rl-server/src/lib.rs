@@ -137,8 +137,17 @@ impl Server {
             skin: rl_lobby::DEFAULT_SKIN.into(),
             skin_hash: rl_proto::NO_HASH.into(),
         };
-        let mut peer = OnlinePeer::start(role, endpoint, me, unused, content, Some(setup))
-            .with_context(|| format!("hosting on port {}", config.port))?;
+        let mut peer = OnlinePeer::start(
+            role,
+            endpoint,
+            me,
+            unused,
+            content,
+            Some(setup),
+            // Task 8: the server's cache and upload rate (`server.ron`).
+            rl_online::PeerContent::without_downloads("the server has no download cache"),
+        )
+        .with_context(|| format!("hosting on port {}", config.port))?;
         for &k in &bans.keys {
             peer.lobby().ban_key(k);
         }

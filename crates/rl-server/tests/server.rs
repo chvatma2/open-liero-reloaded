@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use rl_content::Content;
 use rl_lobby::{Identity, NOT_ADMIN};
 use rl_net::endpoint::EndpointConfig;
-use rl_online::{OnlineEvent, OnlinePeer, PeerRole};
+use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{Look, Phase, PublicKey, SeatWire};
 use rl_server::config::Config;
 use rl_server::files::{IDENTITY_FILE, hex};
@@ -23,6 +23,11 @@ use rl_sim::Keys;
 
 const DIRT: &str = "olx-level-dirt-level";
 const FACTORY: &str = "olx-level-liero-factory";
+
+/// The clients here have every pack: no download cache.
+fn no_downloads() -> PeerContent {
+    PeerContent::without_downloads("a test")
+}
 
 fn content_dir() -> Option<PathBuf> {
     let Some(dir) = std::env::var("RL_CONTENT_DIR").ok().filter(|d| Path::new(d).is_dir()) else {
@@ -195,7 +200,9 @@ impl Rig {
         let addr = SocketAddr::from(([127, 0, 0, 1], self.server().local_port()));
         let role = PeerRole::Client { addr, password: None };
         let cfg = EndpointConfig { port: 0, ..EndpointConfig::default() };
-        let p = OnlinePeer::start(role, cfg, me, look(name), content(&self.content_dir), None).unwrap();
+        let p =
+            OnlinePeer::start(role, cfg, me, look(name), content(&self.content_dir), None, no_downloads())
+                .unwrap();
         self.clients.push(Client {
             p,
             key,
@@ -598,7 +605,8 @@ fn run_stops_on_its_flag_and_says_bye() {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let cfg = EndpointConfig { port: 0, ..EndpointConfig::default() };
     let role = PeerRole::Client { addr, password: None };
-    let mut p = OnlinePeer::start(role, cfg, identity(), look("Anna"), content(&dir), None).unwrap();
+    let mut p =
+        OnlinePeer::start(role, cfg, identity(), look("Anna"), content(&dir), None, no_downloads()).unwrap();
     let mut events = Vec::new();
     let wait = |p: &mut OnlinePeer,
                 events: &mut Vec<OnlineEvent>,

@@ -20,7 +20,7 @@ use rl_modes::DeathmatchSettings;
 use rl_net::endpoint::EndpointConfig;
 use rl_netcode::world_sim::TickedTick;
 use rl_online::matches::{bot_wire, rules_wire, setup_packs};
-use rl_online::{OnlineEvent, OnlinePeer, PeerRole};
+use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{Look, MatchSetupWire, SeatWire};
 use rl_scene::{DrawList, Interpolation, Viewport};
 use rl_sim::{EventKind, Keys, Score};
@@ -240,13 +240,21 @@ fn an_online_match_runs_headless() {
         look("Host", [200, 80, 40]),
         content(),
         Some(setup(&content(), 0.02)),
+        PeerContent::without_downloads("a test"),
     )
     .unwrap();
     let addr = SocketAddr::from(([127, 0, 0, 1], host.local_port()));
     let role = PeerRole::Client { addr, password: None };
-    let mut client =
-        OnlinePeer::start(role, endpoint(), identity(), look("Anna", [20, 90, 255]), content(), None)
-            .unwrap();
+    let mut client = OnlinePeer::start(
+        role,
+        endpoint(),
+        identity(),
+        look("Anna", [20, 90, 255]),
+        content(),
+        None,
+        PeerContent::without_downloads("a test"),
+    )
+    .unwrap();
     until("the client joins", Duration::from_secs(5), &mut host, &mut client, |_, c| {
         c.lobby().me().is_some()
     });

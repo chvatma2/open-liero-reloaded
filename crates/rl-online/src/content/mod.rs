@@ -6,10 +6,12 @@
 //! as `now_us`.
 
 pub mod fetch;
+pub mod peer_side;
 pub mod serve;
 pub mod worker;
 
 pub use fetch::{Download, DownloadState, Fetcher};
+pub use peer_side::{PeerContent, REPORT_EVERY_US};
 pub use serve::Server;
 pub use worker::{Done, Job, PackArchive, Worker};
 

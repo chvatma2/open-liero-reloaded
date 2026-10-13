@@ -4,21 +4,26 @@
 //! notice without it); every wait is bounded, every test under 20 s.
 
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rl_bots::BotConfig;
-use rl_content::{Content, DEFAULT_PRESET};
+use rl_content::{Content, DEFAULT_PRESET, DownloadCache};
 use rl_lobby::{HostConfig, Identity};
 use rl_modes::DeathmatchSettings;
 use rl_net::endpoint::EndpointConfig;
 use rl_netcode::{Driver, WorldSim};
 use rl_online::bundle::GameBundle;
+use rl_online::content::{Download, DownloadState};
 use rl_online::matches::{bot_wire, rules_wire, setup_packs};
 use rl_online::peer::{MISMATCH, SETUP_REFUSED};
-use rl_online::{OnlineEvent, OnlinePeer, PeerRole};
+use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{Look, MatchSetupWire, Phase, PublicKey, SeatWire};
 use rl_replay::Replay;
 use rl_sim::Keys;
+use tempfile::TempDir;
+
+use crate::common::{TEST_SKIN, cache, partial_content, peer_content, with_test_skin};
 
 const MOD: &str = "olx-classic";
 const LEVEL: &str = "olx-level-dirt-level";
@@ -73,11 +78,13 @@ struct Peer {
     events: Vec<OnlineEvent>,
     /// Keys pressed so far: they change every 25 ticks.
     pressed: u32,
+    /// Its download cache.
+    cache: Option<Arc<Mutex<DownloadCache>>>,
 }
 
 impl Peer {
     fn new(p: OnlinePeer, key: PublicKey) -> Peer {
-        Peer { p: Some(p), key, events: Vec::new(), pressed: 0 }
+        Peer { p: Some(p), key, events: Vec::new(), pressed: 0, cache: None }
     }
 
     fn peer(&mut self) -> &mut OnlinePeer {
@@ -135,6 +142,8 @@ struct Net {
     content_dir: String,
     port: u16,
     peers: Vec<Peer>,
+    /// Caches and partial contents, removed at the end.
+    dirs: Vec<TempDir>,
 }
 
 impl Net {
@@ -174,23 +183,53 @@ impl Net {
         let content_dir = std::env::var("RL_CONTENT_DIR").unwrap();
         let me = identity();
         let key = me.public();
-        let host = OnlinePeer::start(role, endpoint(), me, look("Host"), content, Some(setup)).unwrap();
+        let (dir, cache) = cache();
+        let host =
+            OnlinePeer::start(role, endpoint(), me, look("Host"), content, Some(setup), peer_content(&cache))
+                .unwrap();
         let port = host.local_port();
-        Net { content_dir, port, peers: vec![Peer::new(host, key)] }
+        let mut peer = Peer::new(host, key);
+        peer.cache = Some(cache);
+        Net { content_dir, port, peers: vec![peer], dirs: vec![dir] }
     }
 
     fn content(&self) -> Content {
         Content::open(std::path::Path::new(&self.content_dir)).unwrap()
     }
 
-    /// A client joining as `me`; its index.
+    /// A client joining as `me`, with every pack and a cache of its own;
+    /// its index.
     fn join_as(&mut self, me: Identity, name: &str) -> usize {
+        let content = self.content();
+        self.join_with(me, look(name), content, None)
+    }
+
+    /// A client joining as `me` with `look` and `content`, and `cfg` or a
+    /// cache of its own; its index.
+    fn join_with(&mut self, me: Identity, look: Look, content: Content, cfg: Option<PeerContent>) -> usize {
         let key = me.public();
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
         let role = PeerRole::Client { addr, password: None };
-        let p = OnlinePeer::start(role, endpoint(), me, look(name), self.content(), None).unwrap();
-        self.peers.push(Peer::new(p, key));
+        let mut own = None;
+        let cfg = cfg.unwrap_or_else(|| {
+            let (dir, cache) = cache();
+            self.dirs.push(dir);
+            own = Some(Arc::clone(&cache));
+            peer_content(&cache)
+        });
+        let p = OnlinePeer::start(role, endpoint(), me, look, content, None, cfg).unwrap();
+        let mut peer = Peer::new(p, key);
+        peer.cache = own;
+        self.peers.push(peer);
         self.peers.len() - 1
+    }
+
+    /// A client whose content lacks the packs `leave_out` (a cache of
+    /// its own); its index.
+    fn join_lacking(&mut self, name: &str, leave_out: &[&str]) -> usize {
+        let (dir, content) = partial_content(leave_out);
+        self.dirs.push(dir);
+        self.join_with(identity(), look(name), content, None)
     }
 
     fn join(&mut self, name: &str) -> usize {
@@ -709,4 +748,311 @@ fn a_dedicated_server_hosts_without_a_player() {
     });
     let record = net.peers[0].peer().last_record().cloned().expect("the host's record");
     assert!((90..600).contains(&record.rows.len()), "{} rows: ended early", record.rows.len());
+}
+
+// ---- content downloads (plan 11, N30-N33) ----
+
+/// `key`'s member in the host's lobby.
+fn member_of(net: &mut Net, key: PublicKey) -> Option<rl_proto::Member> {
+    net.host().peer().lobby().state()?.members.iter().find(|m| m.key == key).cloned()
+}
+
+/// The last downloads a peer reported (`OnlineEvent::Downloads`).
+fn reported(p: &Peer) -> Vec<Download> {
+    p.events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            OnlineEvent::Downloads(d) => Some(d.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// Pack `id`'s download state, as last reported.
+fn reported_state(p: &Peer, id: &str) -> Option<DownloadState> {
+    reported(p).into_iter().find(|d| d.item.id == id).map(|d| d.state)
+}
+
+/// Pack `id`'s content hash in the full content.
+fn hash_of(net: &Net, id: &str) -> String {
+    let c = net.content();
+    c.pack_hash(id, c.pack_kind(id).unwrap()).unwrap()
+}
+
+fn in_cache(p: &Peer, hash: &str) -> bool {
+    p.cache.as_ref().is_some_and(|c| c.lock().unwrap().contains(hash))
+}
+
+/// A client lacking `pack` downloads it from the host in the lobby, is
+/// ready, plays, and makes the replay every peer makes.
+fn downloads_and_plays(pack: &str) {
+    let mut net = Net::new(content().unwrap(), 0.05);
+    let a = net.join_lacking("Anna", &[pack]);
+    let key = net.peers[a].key;
+    net.run_until(Duration::from_secs(15), "the download is done and reported", |n| {
+        reported_state(&n.peers[a], pack) == Some(DownloadState::Done)
+    });
+    let states: Vec<DownloadState> = net.peers[a]
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            OnlineEvent::Downloads(d) => d.iter().find(|d| d.item.id == pack).map(|d| d.state.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(!states.is_empty() && states[..states.len() - 1].iter().all(|s| *s != DownloadState::Done));
+    assert!(states.len() <= 20, "coalesced: {} reports", states.len());
+    net.run_until(Duration::from_secs(10), "the host sees its content complete", |n| {
+        member_of(n, key).is_some_and(|m| m.missing.is_empty() && m.download.is_none())
+    });
+    assert!(in_cache(&net.peers[a], &hash_of(&net, pack)), "the cache holds the pack");
+    assert!(net.peers[a].peer().content().pack_dir(pack).is_some(), "the match's content has it");
+    net.ready(&[a]);
+    net.host().peer().lobby().start(8).unwrap();
+    net.run_until(Duration::from_secs(25), "both end the match and make their replay", |n| {
+        n.peers.iter().all(|p| p.has(ended) && p.has(replay_ready))
+    });
+    assert_eq!(net.peers[a].started(), vec![Some(1)], "it played");
+    let bytes: Vec<&Vec<u8>> = net.peers.iter().map(|p| p.replays()[0]).collect();
+    assert_eq!(bytes[0], bytes[1], "equal replays");
+}
+
+#[test]
+fn a_client_without_the_level_downloads_it_and_plays() {
+    if content().is_none() {
+        return;
+    }
+    downloads_and_plays(LEVEL);
+}
+
+#[test]
+fn a_client_without_the_mod_downloads_it() {
+    if content().is_none() {
+        return;
+    }
+    downloads_and_plays(MOD);
+}
+
+/// N31: a member's skin the host lacks is fetched from that member, then
+/// served to the others (never required).
+#[test]
+fn a_skin_travels_through_the_host() {
+    let Some(content) = content() else { return };
+    let (dir, _) = partial_content(&[]);
+    let anna_content = with_test_skin(dir.path());
+    let skin_hash = anna_content.pack_hash(TEST_SKIN, rl_data::manifest::PackKind::Skin).unwrap();
+    let mut net = Net::new(content, 0.1);
+    net.dirs.push(dir);
+    let mut anna = look("Anna");
+    anna.skin = TEST_SKIN.into();
+    let a = net.join_with(identity(), anna, anna_content, None);
+    let b = net.join("Bert");
+    let a_key = net.peers[a].key;
+    net.run_until(Duration::from_secs(15), "Bert has Anna's skin", |n| {
+        reported_state(&n.peers[b], TEST_SKIN) == Some(DownloadState::Done)
+    });
+    assert!(in_cache(&net.peers[0], &skin_hash), "the host fetched it from Anna");
+    assert!(in_cache(&net.peers[b], &skin_hash), "Bert's cache holds it");
+    assert!(
+        net.host()
+            .peer()
+            .downloads()
+            .iter()
+            .any(|d| d.item.hash == skin_hash && d.state == DownloadState::Done)
+    );
+    let look = member_of(&mut net, a_key).unwrap().look;
+    assert_eq!((look.skin.as_str(), look.skin_hash.as_str()), (TEST_SKIN, skin_hash.as_str()), "Anna's look");
+    // A skin never makes anyone lack content.
+    let host_state = net.host().peer().lobby().state().unwrap().clone();
+    assert!(host_state.members.iter().all(|m| m.missing.is_empty()));
+    assert!(net.peers[b].peer().content().pack_dir(TEST_SKIN).is_some(), "Bert draws it");
+}
+
+/// Another pack's archive served for the level: it fails to verify, is
+/// fetched once more, then fails; the client stays, not ready, lacking it.
+#[test]
+fn a_tampered_archive_is_refused_and_retried_once() {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 0.1);
+    net.host().peer().test_serve_instead(LEVEL, "olx-theme-dirt");
+    let a = net.join_lacking("Anna", &[LEVEL]);
+    let key = net.peers[a].key;
+    net.run_until(Duration::from_secs(15), "the level fails", |n| {
+        matches!(reported_state(&n.peers[a], LEVEL), Some(DownloadState::Failed(_)))
+    });
+    let Some(DownloadState::Failed(why)) = reported_state(&net.peers[a], LEVEL) else { unreachable!() };
+    assert!(why.contains("differs"), "{why}");
+    net.peers[a].peer().lobby().set_ready(true);
+    for _ in 0..100 {
+        net.poll();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(!net.peers[a].peer().is_closed(), "it stays");
+    let m = member_of(&mut net, key).unwrap();
+    assert!(!m.ready, "not ready");
+    assert_eq!(m.missing, vec![LEVEL.to_string()], "the lobby shows what it lacks");
+    assert!(!in_cache(&net.peers[a], &hash_of(&net, LEVEL)));
+}
+
+/// A spectator joining mid-match without the level waits, downloads at
+/// the match's rate, then watches; the match goes on to its end.
+fn late_spectator_lacking_the_level() -> (Net, usize) {
+    let mut net = Net::new(content().unwrap(), 0.1);
+    let a = net.join_all(&["Anna"])[0];
+    net.ready(&[a]);
+    net.host().peer().lobby().start(12).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() >= 50);
+    let b = net.join_lacking("Bert", &[LEVEL]);
+    let key = net.peers[b].key;
+    net.run_until(Duration::from_secs(10), "it waits", |n| {
+        member_of(n, key).is_some_and(|m| m.seat == SeatWire::Waiting)
+    });
+    net.run_until(Duration::from_secs(16), "the match ends everywhere", |n| {
+        n.peers.iter().all(|p| p.has(ended))
+    });
+    (net, b)
+}
+
+#[test]
+fn a_spectator_lacking_content_waits_then_spectates() {
+    if content().is_none() {
+        return;
+    }
+    let (net, b) = late_spectator_lacking_the_level();
+    let events = &net.peers[b].events;
+    // Reports are coalesced: `Done` may come after the start, but the
+    // download was under way before it.
+    let downloading = events.iter().position(|e| {
+        matches!(e, OnlineEvent::Downloads(d) if d.iter().any(|d| d.item.id == LEVEL && d.state != DownloadState::Done))
+    });
+    let started = events.iter().position(|e| matches!(e, OnlineEvent::MatchStarting { .. }));
+    let (Some(downloading), Some(started)) = (downloading, started) else {
+        panic!("downloading, then started: {downloading:?} {started:?}")
+    };
+    assert!(downloading < started, "it downloaded before it watched");
+    assert_eq!(reported_state(&net.peers[b], LEVEL), Some(DownloadState::Done));
+    assert_eq!(net.peers[b].started(), vec![None], "it watches");
+    assert!(events.iter().any(|e| matches!(e, OnlineEvent::StateLoaded { .. })), "from a state");
+    assert!(
+        events.iter().any(|e| matches!(e, OnlineEvent::Confirmed(c) if !c.is_empty())),
+        "confirmed ticks"
+    );
+}
+
+#[test]
+fn downloads_during_a_match_keep_it_alive() {
+    if content().is_none() {
+        return;
+    }
+    let (net, b) = late_spectator_lacking_the_level();
+    assert_eq!(reported_state(&net.peers[b], LEVEL), Some(DownloadState::Done));
+    for p in &net.peers {
+        assert!(
+            !p.has(|e| matches!(
+                e,
+                OnlineEvent::Disconnected(_) | OnlineEvent::Refused(_) | OnlineEvent::Left(_)
+            )),
+            "nobody was dropped (a peer over its limits is)"
+        );
+    }
+    let ends: Vec<_> = net.peers[..2].iter().map(|p| p.count(ended)).collect();
+    assert_eq!(ends, [1, 1], "the match reached its end");
+}
+
+/// Ruling PF11-4: without a cache (`Err`) the lobby says why and the client
+/// stays, not ready; a cache that cannot install fails the download with
+/// the I/O reason, no panic.
+#[test]
+fn an_unwritable_cache_is_reported() {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 0.1);
+    let (dir, partial) = partial_content(&[LEVEL]);
+    net.dirs.push(dir);
+    let cfg = PeerContent::without_downloads("the cache is a regular file");
+    let a = net.join_with(identity(), look("Anna"), partial, Some(cfg));
+    let a_key = net.peers[a].key;
+    net.run_until(Duration::from_secs(10), "Anna hears why", |n| {
+        n.peers[a].has(|e| matches!(e, OnlineEvent::Notice(t) if t.contains("the cache is a regular file") && t.contains(LEVEL)))
+    });
+    net.run_until(Duration::from_secs(10), "the host sees what Anna lacks", |n| {
+        member_of(n, a_key).is_some_and(|m| m.missing == [LEVEL.to_string()])
+    });
+    // A cache whose packs cannot be written.
+    let (dir, partial) = partial_content(&[LEVEL]);
+    net.dirs.push(dir);
+    let (cache_dir, cache) = cache();
+    let locked = [cache_dir.path().join("packs"), cache_dir.path().join("tmp")];
+    std::fs::create_dir_all(&locked[1]).unwrap();
+    // The cache removes an empty `tmp/`: only what is there is changed.
+    let set_readonly = |on: bool| {
+        for d in locked.iter().filter(|d| d.is_dir()) {
+            let mut perm = std::fs::metadata(d).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            perm.set_readonly(on);
+            std::fs::set_permissions(d, perm).unwrap();
+        }
+    };
+    set_readonly(true);
+    if std::fs::write(locked[0].join("probe"), b"").is_ok() {
+        eprintln!("this user writes to read-only directories (root?): skipping the unwritable cache");
+        set_readonly(false);
+        return;
+    }
+    let b = net.join_with(identity(), look("Bert"), partial, Some(peer_content(&cache)));
+    net.dirs.push(cache_dir);
+    net.run_until(Duration::from_secs(15), "Bert's download fails", |n| {
+        matches!(reported_state(&n.peers[b], LEVEL), Some(DownloadState::Failed(_)))
+    });
+    let Some(DownloadState::Failed(why)) = reported_state(&net.peers[b], LEVEL) else { unreachable!() };
+    assert!(why.contains("the download cache"), "the I/O reason: {why}");
+    for i in [a, b] {
+        net.peers[i].peer().lobby().set_ready(true);
+    }
+    for _ in 0..100 {
+        net.poll();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    for i in [a, b] {
+        assert!(!net.peers[i].peer().is_closed(), "it stays");
+        let key = net.peers[i].key;
+        let m = member_of(&mut net, key).unwrap();
+        assert!(!m.ready && m.missing == [LEVEL.to_string()], "not ready, lacking the level");
+    }
+    set_readonly(false);
+}
+
+/// Content above the prompt's bytes waits for the player.
+#[test]
+fn big_downloads_wait_for_the_prompt() {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 0.1);
+    let (dir, partial) = partial_content(&[LEVEL]);
+    net.dirs.push(dir);
+    let a = net.join_with(identity(), look("Anna"), partial, None);
+    net.peers[a].peer().test_prompt_limit(1000);
+    net.run_until(Duration::from_secs(10), "the prompt", |n| {
+        n.peers[a].has(|e| matches!(e, OnlineEvent::DownloadPrompt { .. }))
+    });
+    let level = net.peers[a].peer().downloads().into_iter().find(|d| d.item.id == LEVEL).unwrap();
+    let prompts: Vec<u64> = net.peers[a]
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            OnlineEvent::DownloadPrompt { bytes } => Some(*bytes),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(prompts, [level.item.size], "once, for the level's bytes");
+    let until = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < until {
+        net.poll();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let waiting = net.peers[a].peer().downloads();
+    assert!(waiting.iter().all(|d| d.state == DownloadState::Queued && d.have == 0), "{waiting:?}");
+    net.peers[a].peer().approve_downloads();
+    net.run_until(Duration::from_secs(15), "the level downloads", |n| {
+        reported_state(&n.peers[a], LEVEL) == Some(DownloadState::Done)
+    });
 }

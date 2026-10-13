@@ -59,8 +59,11 @@ pub struct Fetcher {
     downloads: Vec<Download>,
     /// The list's packs in the cache: (id, directory).
     cached: Vec<(String, PathBuf)>,
-    /// Hashes the player approved (or below `PROMPT_BYTES` in all).
+    /// Hashes the player approved (or below `prompt_bytes` in all).
     approved: BTreeSet<String>,
+    /// Missing bytes above which a list waits for `approve`
+    /// (`PROMPT_BYTES`; lowered by the tests).
+    prompt_bytes: u64,
     current: Option<Current>,
     /// Messages for the next `poll`.
     outbox: Vec<(PeerId, ContentMsg)>,
@@ -77,6 +80,7 @@ impl Fetcher {
             downloads: Vec::new(),
             cached: Vec::new(),
             approved: BTreeSet::new(),
+            prompt_bytes: PROMPT_BYTES,
             current: None,
             outbox: Vec::new(),
             now_us: 0,
@@ -145,7 +149,7 @@ impl Fetcher {
                 }
             })
             .collect();
-        if missing.iter().map(|i| i.size).fold(0u64, u64::saturating_add) <= PROMPT_BYTES {
+        if missing.iter().map(|i| i.size).fold(0u64, u64::saturating_add) <= self.prompt_bytes {
             self.approve();
         }
         missing
@@ -157,6 +161,12 @@ impl Fetcher {
             .and_then(|c| c.partial(&item.hash))
             .filter(|p| p.size == item.size)
             .map_or(0, |p| p.have.min(p.size))
+    }
+
+    /// The missing bytes above which a list waits for `approve`, instead of
+    /// `PROMPT_BYTES` (the tests' prompt).
+    pub fn set_prompt_bytes(&mut self, bytes: u64) {
+        self.prompt_bytes = bytes;
     }
 
     /// Lets every listed missing item download (after the player's prompt).
@@ -451,7 +461,7 @@ mod tests {
         let cache = Arc::new(Mutex::new(DownloadCache::open(&dir.path().join("cache")).unwrap()));
         Setup {
             local: Content::open_layers(&[dir.path().join("empty").as_path()]).unwrap(),
-            worker: Worker::start(cache.clone()),
+            worker: Worker::start(Some(cache.clone())),
             fetcher: Fetcher::new(cache.clone()),
             cache,
             _dir: dir,

@@ -12,5 +12,6 @@ pub mod peer;
 pub mod replay;
 
 pub use bundle::GameBundle;
+pub use content::PeerContent;
 pub use events::{NetStats, OnlineEvent};
 pub use peer::{LobbyHandle, OnlinePeer, PeerRole, StartError};

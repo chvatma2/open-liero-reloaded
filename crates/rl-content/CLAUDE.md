@@ -165,7 +165,10 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   A hash that is not 64 lowercase hex never names a file.
   `Content::with_packs(&[(id, dir)])` is a copy with those packs laid over
   by id (nothing on disk changes); `Content::has(id, hash)`; `pack_hash`
-  is memoised per pack directory for the `Content`'s life.
+  is memoised per pack directory for the `Content`'s life (an overlay
+  copies the memo); `known_hash(id)` reads the memo without hashing and
+  `remember_hash(id, dir, hash)` fills it from a hash computed elsewhere
+  (rl-online's worker thread; ignored unless `dir` is `id`'s directory).
 - `Content::pack_dir(id)`, `pack_kind(id)`, `pack_origin(id)`.
 - Pack ids of OLX imports: `olx_mod_id("MW 1.0")`, `olx_level_id("CastleStrike.lxl")`.
 

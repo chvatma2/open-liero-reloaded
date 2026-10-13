@@ -180,8 +180,17 @@ pub fn run_bot_client(
         skin_hash: rl_proto::NO_HASH.into(),
     };
     let role = PeerRole::Client { addr: spec.addr, password: None };
-    let mut peer = OnlinePeer::start(role, endpoint, new_identity()?, look, content, None)
-        .with_context(|| format!("joining {}", spec.addr))?;
+    let mut peer = OnlinePeer::start(
+        role,
+        endpoint,
+        new_identity()?,
+        look,
+        content,
+        None,
+        // Task 8 gives net-client a cache (`--cache`).
+        rl_online::PeerContent::without_downloads("net-client has no download cache"),
+    )
+    .with_context(|| format!("joining {}", spec.addr))?;
     let brain = RefCell::new(Brain {
         cfg: BotConfig { difficulty: spec.difficulty, ..BotConfig::default() },
         playing: None,

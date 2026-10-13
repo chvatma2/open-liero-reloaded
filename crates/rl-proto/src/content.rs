@@ -47,7 +47,9 @@ pub struct Item {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContentMsg {
-    /// The match's content (host to client), whole, on every change.
+    /// The match's content (host to client), whole, on every change; a
+    /// client's own skin, one item (client to host: the archive size the
+    /// host's fetch checks, rl-online's ruling R6-1).
     List(Vec<Item>),
     /// Send the archive of `hash` from byte `offset`.
     Want { hash: String, offset: u64 },
