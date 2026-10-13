@@ -54,7 +54,9 @@ header's size); content hashing; validation.
   of the `.rlpk` format (`RLPK1\n`, `u32` count, then per file sorted by path a
   `u16` path length, the path, a `u64` length and the bytes; no compression;
   deterministic). `decode` streams (one file in memory), refuses bad paths
-  (backslash, `..`, absolute, a name starting with `.`, over `MAX_ARCHIVE_PATH`),
+  (backslash, `..`, absolute, a name starting with `.`, over `MAX_ARCHIVE_PATH`,
+  a name `rl_vfs::non_portable` refuses, two paths or directories alike but
+  for ASCII case, a file where a directory is; `encode` refuses the same),
   duplicates and disorder, more than `MAX_ARCHIVE_FILES`, a total over `limit`
   and bytes after the last file; it never panics (proptest).
 

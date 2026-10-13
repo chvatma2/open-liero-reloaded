@@ -68,6 +68,55 @@ fn hostile_archives_are_refused() {
     ));
 }
 
+/// An archive of `files` (path, bytes) in the given order, unchecked.
+fn raw(files: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut a = archive::MAGIC.to_vec();
+    a.extend((files.len() as u32).to_le_bytes());
+    for (p, data) in files {
+        a.extend((p.len() as u16).to_le_bytes());
+        a.extend(p.as_bytes());
+        a.extend((data.len() as u64).to_le_bytes());
+        a.extend(*data);
+    }
+    a
+}
+
+/// Review C1: paths Windows reads otherwise (a drive, a stream, a device,
+/// a dropped trailing dot or space) or folds together (case) are refused
+/// before they are written, and refused by `encode` too.
+#[test]
+fn non_portable_paths_are_refused() {
+    for bad in ["C:/x", "a/b:c", "NUL.png", "con", "aux.txt", "a./b", "b /c", "a?", "x/COM1.ron"] {
+        let mut out = MemFs::new();
+        let r = archive::decode(&mut raw(&[(bad, b"x")]).as_slice(), &mut out, archive::MAX_ARCHIVE);
+        assert!(matches!(r, Err(ArchiveError::BadPath(_))), "{bad}: {r:?}");
+        assert!(out.files().next().is_none(), "{bad}: nothing is written");
+        let src = pack().with(bad, vec![1u8]);
+        assert!(archive::encode(&src).is_err(), "{bad} is archived");
+    }
+    // Two paths alike but for case: one file on Windows and macOS.
+    for pair in [["A/x", "a/x"], ["Skin.png", "skin.png"], ["G/a", "g/b"]] {
+        let mut out = MemFs::new();
+        let r = archive::decode(
+            &mut raw(&[(pair[0], b"1"), (pair[1], b"2")]).as_slice(),
+            &mut out,
+            archive::MAX_ARCHIVE,
+        );
+        assert!(matches!(r, Err(ArchiveError::BadPath(_))), "{pair:?}: {r:?}");
+        let written: Vec<&str> = out.files().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(written, [pair[0]], "{pair:?}: the second is not written");
+        let src = MemFs::new().with(pair[0], vec![1u8]).with(pair[1], vec![2u8]);
+        assert!(archive::encode(&src).is_err(), "{pair:?} is archived");
+    }
+    // A file and a directory of one name: refused before the write fails.
+    let r = archive::decode(
+        &mut raw(&[("a", b"1"), ("a/x", b"2")]).as_slice(),
+        &mut MemFs::new(),
+        archive::MAX_ARCHIVE,
+    );
+    assert!(matches!(r, Err(ArchiveError::BadPath(_))), "{r:?}");
+}
+
 #[test]
 fn bad_magic_and_empty_input_are_refused() {
     assert!(matches!(
@@ -133,6 +182,25 @@ fn every_committed_pack_round_trips() {
         assert_eq!(rl_pack::content_hash(&src).unwrap(), rl_pack::content_hash(&out).unwrap(), "{name}");
         if name == "olx-skin-default" {
             assert!(a.len() <= 64 * 1024, "{name} archive is {} bytes: N31's skin limit is wrong", a.len());
+        }
+    }
+}
+
+/// Every committed pack satisfies the archive's path rules (portable names,
+/// no case clashes), so every one can be sent to any platform.
+#[test]
+fn every_committed_pack_is_archived() {
+    let Some(dir) = packs_dir() else {
+        eprintln!("skipping: content/packs is absent");
+        return;
+    };
+    let mut packs: Vec<_> =
+        std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_dir()).collect();
+    packs.sort();
+    assert!(packs.len() > 100, "{} packs", packs.len());
+    for pack in packs {
+        if let Err(e) = archive::encode(&DirFs::new(&pack)) {
+            panic!("{}: {e}", pack.display());
         }
     }
 }

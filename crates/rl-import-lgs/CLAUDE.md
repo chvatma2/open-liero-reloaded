@@ -9,6 +9,10 @@ Imports OLX `script.lgs` gamescript **version 7** mods into `ModPack`s.
 - **Asset lookup is OLX's:** `<mod>/gfx/` then `data/gfx/`; `<mod>/sfx/` then
   `data/sounds/`, case-insensitive, and sounds also try `.ogg`. A missing sound
   is dropped with a warning (OLX does the same); a missing image is an error.
+- **Portable pack names** (plan 11 review C1): a weapon id that is a
+  Windows device name gets `-2` (`con-2`), and an asset whose OLX file name
+  is not portable (`rl_vfs::non_portable`) is not taken (a warning; a
+  missing image is still the item's error).
 - **Weapon restriction presets** (`wps.rs`, `CWpnRest::loadList`,
   `src/common/CWpnRest.cpp:183-213`): `import_mod` adds every
   `cfg/presets/<mod dir>/*.wps`, then every `cfg/presets/*.wps` of another

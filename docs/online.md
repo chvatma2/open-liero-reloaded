@@ -49,6 +49,9 @@ once your content is complete.
   loaded like any other untrusted pack. A pack you have under the same
   name but with other content is left alone and only hidden for that
   match; your own packs win for skins.
+- **Portable file names.** A pack's file names must be portable: a host's
+  pack with a name Windows cannot store as itself (`C:`, `NUL.png`, a
+  trailing dot, two names alike but for case) is refused, on every system.
 - **The 50 MB prompt.** When more than 50 MB is still to download (a
   partial download's bytes not counted), the Lobby asks first: "This game
   needs N MB of content from the host.", with Download and Leave.

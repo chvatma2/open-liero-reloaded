@@ -12,7 +12,7 @@ mod path;
 pub use dir::DirFs;
 pub use lookup::{find_ci, find_ci_any};
 pub use mem::MemFs;
-pub use path::VPath;
+pub use path::{VPath, non_portable};
 
 /// Errors from content backends.
 #[derive(Debug, thiserror::Error)]

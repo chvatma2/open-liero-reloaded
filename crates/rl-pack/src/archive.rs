@@ -19,14 +19,22 @@
 //! [`crate::content_hash`] alike (plan 11 ruling PF11-2), and [`decode`]
 //! refuses such a path.
 //!
+//! Every path must be portable (review C1): each component a portable name
+//! ([`rl_vfs::non_portable`]: no drive or stream `:`, no `<>"|?*` or
+//! control characters, no trailing dot or space, no Windows device name),
+//! and no two paths of an archive (nor their directories) may be alike but
+//! for ASCII case, as a case-insensitive file system would store them as
+//! one. [`encode`] and [`decode`] refuse the same paths.
+//!
 //! Reading is streaming and bounded: [`decode`] holds at most one file
 //! (at most [`MAX_FILE_BYTES`]) in memory, checks every length before it
 //! reads the bytes, and stops at the first violation. The strictly
 //! increasing order makes duplicates detectable in one pass.
 
+use std::collections::BTreeMap;
 use std::io::Read;
 
-use rl_vfs::{ContentSink, ContentSource, VPath, walk};
+use rl_vfs::{ContentSink, ContentSource, VPath, non_portable, walk};
 
 use crate::{MAX_FILE_BYTES, PackError};
 
@@ -75,8 +83,12 @@ pub fn encode(src: &dyn ContentSource) -> Result<Vec<u8>, PackError> {
     }
     let mut out = MAGIC.to_vec();
     out.extend((paths.len() as u32).to_le_bytes());
+    let mut layout = Layout::default();
     for path in &paths {
         if let Some(why) = path_problem(path.as_str()) {
+            return Err(PackError::invalid(path.as_str(), why));
+        }
+        if let Err(why) = layout.add(path.as_str()) {
             return Err(PackError::invalid(path.as_str(), why));
         }
         let data = src.read_max(path, MAX_FILE_BYTES)?;
@@ -108,7 +120,39 @@ fn path_problem(path: &str) -> Option<&'static str> {
     } else if VPath::new(path).is_err() {
         Some("not a valid path")
     } else {
-        None
+        path.split('/').find_map(non_portable)
+    }
+}
+
+/// The files and directories an archive's paths make, as a
+/// case-insensitive file system would see them: each by its ASCII
+/// lowercase form, with its spelling and whether it is a directory.
+#[derive(Default)]
+struct Layout {
+    names: BTreeMap<String, (String, bool)>,
+}
+
+impl Layout {
+    /// Takes the next path (valid by [`path_problem`]): refused when it, or
+    /// one of its directories, is alike but for case to an earlier file or
+    /// directory, or is a file where a directory is (or the reverse).
+    fn add(&mut self, path: &str) -> Result<(), &'static str> {
+        let ends = path.match_indices('/').map(|(i, _)| (i, true)).chain([(path.len(), false)]);
+        for (end, dir) in ends {
+            let name = &path[..end];
+            let folded = name.to_ascii_lowercase();
+            match self.names.get(&folded) {
+                Some((spelled, was_dir)) if spelled == name && *was_dir && dir => {}
+                Some((spelled, _)) if spelled != name => {
+                    return Err("another path differs from it only in case");
+                }
+                Some(_) => return Err("a file and a directory of one name"),
+                None => {
+                    self.names.insert(folded, (name.to_string(), dir));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -197,6 +241,7 @@ pub fn decode(r: &mut dyn Read, sink: &mut dyn ContentSink, limit: u64) -> Resul
         return Err(ArchiveError::TooManyFiles);
     }
     let mut previous: Option<String> = None;
+    let mut layout = Layout::default();
     for _ in 0..count {
         let path_len = r.u16()? as usize;
         if path_len == 0 || path_len > MAX_ARCHIVE_PATH {
@@ -206,11 +251,14 @@ pub fn decode(r: &mut dyn Read, sink: &mut dyn ContentSink, limit: u64) -> Resul
         r.exact(&mut raw)?;
         let path = String::from_utf8(raw)
             .map_err(|e| ArchiveError::BadPath(String::from_utf8_lossy(e.as_bytes()).into_owned()))?;
-        if path_problem(&path).is_some() {
-            return Err(ArchiveError::BadPath(path));
+        if let Some(why) = path_problem(&path) {
+            return Err(ArchiveError::BadPath(format!("{path} ({why})")));
         }
         if previous.as_ref().is_some_and(|p| path <= *p) {
             return Err(ArchiveError::Order(path));
+        }
+        if let Err(why) = layout.add(&path) {
+            return Err(ArchiveError::BadPath(format!("{path} ({why})")));
         }
         let len = r.u64()?;
         let data = r.bytes(len)?;

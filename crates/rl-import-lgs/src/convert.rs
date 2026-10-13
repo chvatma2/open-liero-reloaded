@@ -9,7 +9,7 @@ use rl_data::manifest::{Origin, PACK_FORMAT_VERSION, PackKind, PackManifest};
 use rl_data::mod_def::{ModDef, ProjectileDef, ProjectileGfx, WeaponDef, WeaponKind};
 use rl_data::slug::slug;
 use rl_pack::ModPack;
-use rl_vfs::{ContentSource, VPath, find_ci, find_ci_any};
+use rl_vfs::{ContentSource, VPath, find_ci, find_ci_any, non_portable};
 
 use crate::LgsError;
 use crate::parse::{ProjNode, RawMod, parse_lgs};
@@ -75,7 +75,8 @@ impl Converter<'_> {
         let mut used_ids = BTreeMap::new();
         for rw in raw.weapons {
             let mut w: WeaponDef = rw.def;
-            w.id = unique(&slug(&w.name), |id| used_ids.contains_key(id));
+            // An id names files (`weapons/<id>.ron`): never a device name.
+            w.id = unique(&slug(&w.name), |id| used_ids.contains_key(id) || non_portable(id).is_some());
             used_ids.insert(w.id.clone(), ());
             if let WeaponKind::Projectile { sound, spawn, .. } = &mut w.kind {
                 *sound = self.sound(sound.take(), &format!("weapon {:?}", w.name))?;
@@ -172,6 +173,11 @@ impl Converter<'_> {
         }
         let Some(found) = find_ci_any(self.olx, &candidates) else { return Ok(None) };
         let file_name = found.file_name().to_ascii_lowercase();
+        if non_portable(&file_name).is_some() {
+            self.warnings
+                .push(format!("asset {name:?}: the file name {file_name:?} is not portable; ignored"));
+            return Ok(None);
+        }
         let pack_path = VPath::new(pack_dir)?.join(&file_name)?;
         match self.sources.get(&pack_path) {
             Some(prev) if *prev != found => return Err(LgsError::AssetConflict(pack_path.to_string())),
@@ -276,6 +282,27 @@ mod tests {
         let m = import_mod(&fs, &VPath::new("Tiny").unwrap(), origin()).unwrap();
         assert_eq!(m.pack.def.weapons[0].sound(), None);
         assert!(m.pack.assets.values().all(|v| v != b"do not copy"));
+    }
+
+    /// A pack's file names must be portable (plan 11 review C1): a weapon
+    /// whose slug is a Windows device name gets another id, and an asset
+    /// whose OLX file name is not portable is not taken (a sound dropped).
+    #[test]
+    fn pack_names_are_portable() {
+        let script = Lgs::header("Tiny", 2).projectile_weapon("Con", Some("boom?.wav"));
+        let script =
+            script.pixel_projectile(1, None).projectile_weapon("Aux", None).pixel_projectile(2, None);
+        let fs = gamedir(script.footer().0).with("Tiny/sfx/boom?.wav", "odd");
+        let m = import_mod(&fs, &VPath::new("Tiny").unwrap(), origin()).unwrap();
+        let ids: Vec<&str> = m.pack.def.weapons.iter().map(|w| w.id.as_str()).collect();
+        assert_eq!(ids, vec!["con-2", "aux-2"]);
+        assert_eq!(m.pack.def.weapons[0].sound(), None);
+        assert!(m.warnings.iter().any(|w| w.contains("boom?.wav")), "{:?}", m.warnings);
+        let mut out = MemFs::new();
+        rl_pack::write_mod(&mut out, &m.pack).unwrap();
+        for (path, _) in out.files() {
+            assert!(path.components().all(|c| rl_vfs::non_portable(c).is_none()), "{path}");
+        }
     }
 
     #[test]

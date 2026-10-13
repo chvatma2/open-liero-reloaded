@@ -91,6 +91,48 @@ impl VPath {
     }
 }
 
+/// Why `name` (one path component) is not a portable file name, if it is
+/// not: one that every supported file system stores as itself, below its
+/// directory. Windows reads `:` as a drive or stream separator (`C:x`
+/// leaves the directory), refuses `<>"|?*` and control characters, drops
+/// a trailing dot or space, and opens a device for `CON`, `PRN`, `AUX`,
+/// `NUL`, `COM1`-`COM9` and `LPT1`-`LPT9` (any case, any extension).
+/// Files written from untrusted content (packs, downloads) must have
+/// portable names.
+pub fn non_portable(name: &str) -> Option<&'static str> {
+    if name.contains(':') {
+        return Some("contains a colon");
+    }
+    if name.contains(['<', '>', '"', '|', '?', '*']) {
+        return Some("contains one of <>\"|?*");
+    }
+    if name.chars().any(|c| (c as u32) < 0x20 || c == '\u{7f}') {
+        return Some("contains a control character");
+    }
+    if name.ends_with(['.', ' ']) {
+        return Some("ends with a dot or a space");
+    }
+    let base = name.split('.').next().unwrap_or("").trim_end_matches(' ');
+    let device = |prefix: &str| {
+        base.len() == prefix.len() + 1
+            && base.is_char_boundary(prefix.len())
+            && base[..prefix.len()].eq_ignore_ascii_case(prefix)
+            && matches!(&base[prefix.len()..], "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+    };
+    let named =
+        ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].iter().any(|d| base.eq_ignore_ascii_case(d));
+    let superscript = ["COM", "LPT"].iter().any(|p| {
+        base.len() > p.len()
+            && base.is_char_boundary(p.len())
+            && base[..p.len()].eq_ignore_ascii_case(p)
+            && matches!(&base[p.len()..], "\u{b9}" | "\u{b2}" | "\u{b3}")
+    });
+    if named || device("COM") || device("LPT") || superscript {
+        return Some("is a Windows device name");
+    }
+    None
+}
+
 impl fmt::Display for VPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
@@ -130,6 +172,41 @@ mod tests {
         assert_eq!(p.strip_prefix(&VPath::new("a").unwrap()).unwrap().as_str(), "b/c.txt");
         assert!(p.strip_prefix(&VPath::new("ab").unwrap()).is_none());
         assert!(VPath::root().join("../x").is_err());
+    }
+
+    #[test]
+    fn portable_names() {
+        for good in
+            ["a", "skin.png", "MW 1.0", "x-y_z", "console.png", "nul-2", "com10", "lpt0.ron", "auxiliary"]
+        {
+            assert_eq!(non_portable(good), None, "{good:?}");
+        }
+        for bad in [
+            "C:",
+            "a:b",
+            "a<b",
+            "a>b",
+            "a\"b",
+            "a|b",
+            "a?b",
+            "a*b",
+            "a\u{1}b",
+            "a\u{7f}",
+            "x.",
+            "x ",
+            "CON",
+            "con",
+            "Nul.png",
+            "aux.txt",
+            "prn.a.b",
+            "COM1",
+            "lpt9.ron",
+            "com\u{b9}",
+            "conin$",
+            "NUL .txt",
+        ] {
+            assert!(non_portable(bad).is_some(), "{bad:?}");
+        }
     }
 
     proptest::proptest! {

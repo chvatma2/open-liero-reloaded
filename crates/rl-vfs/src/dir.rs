@@ -1,7 +1,9 @@
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
-use crate::{ContentSink, ContentSource, VPath, VfsError};
+use std::path::Component;
+
+use crate::{ContentSink, ContentSource, VPath, VfsError, non_portable};
 
 /// A directory on the native file system. Paths are resolved below `root` only.
 #[derive(Clone, Debug)]
@@ -18,19 +20,25 @@ impl DirFs {
         &self.root
     }
 
-    fn native(&self, p: &VPath) -> PathBuf {
+    /// The native path of `p` below the root, built only from plain
+    /// components ([`plain_component`]); for a write (`write`), from
+    /// portable names too ([`native_component`]). Anything else is
+    /// `VfsError::InvalidPath`: content never names a file outside the root.
+    fn native(&self, p: &VPath, write: bool) -> Result<PathBuf, VfsError> {
         let mut out = self.root.clone();
         for c in p.components() {
+            let checked = if write { native_component(c) } else { plain_component(c) };
+            checked.map_err(|reason| VfsError::InvalidPath { path: p.to_string(), reason })?;
             out.push(c);
         }
-        out
+        Ok(out)
     }
 
     /// The regular file at `path` (following links), opened, and its
     /// length. Anything else (a directory, a FIFO, a device) is refused
     /// before it is opened, so a FIFO in a pack cannot block a read.
     fn open(&self, path: &VPath) -> Result<(std::fs::File, u64), VfsError> {
-        let native = self.native(path);
+        let native = self.native(path, false)?;
         let meta = std::fs::metadata(&native).map_err(|e| io(path, e))?;
         if !meta.is_file() {
             return Err(VfsError::NotAFile(path.to_string()));
@@ -38,6 +46,26 @@ impl DirFs {
         let file = std::fs::File::open(&native).map_err(|e| io(path, e))?;
         Ok((file, meta.len()))
     }
+}
+
+/// Whether `c` is one plain component on this platform: it parses as
+/// exactly one `Component::Normal`, itself (on Windows, `C:` is a prefix
+/// that would replace the whole path).
+fn plain_component(c: &str) -> Result<(), &'static str> {
+    let mut parts = Path::new(c).components();
+    match (parts.next(), parts.next()) {
+        (Some(Component::Normal(n)), None) if n == std::ffi::OsStr::new(c) => Ok(()),
+        _ => Err("is not a plain path component here"),
+    }
+}
+
+/// Whether `c` may name a file this backend writes: a plain component
+/// and a portable name ([`non_portable`]), on every platform alike.
+fn native_component(c: &str) -> Result<(), &'static str> {
+    if let Some(why) = non_portable(c) {
+        return Err(why);
+    }
+    plain_component(c)
 }
 
 fn io(path: &VPath, source: std::io::Error) -> VfsError {
@@ -57,7 +85,7 @@ impl ContentSource for DirFs {
     }
 
     fn exists(&self, path: &VPath) -> bool {
-        std::fs::metadata(self.native(path)).is_ok_and(|m| m.is_file())
+        self.native(path, false).is_ok_and(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file()))
     }
 
     fn read_max(&self, path: &VPath, limit: u64) -> Result<Vec<u8>, VfsError> {
@@ -88,7 +116,7 @@ impl ContentSource for DirFs {
 
     fn list(&self, dir: &VPath) -> Result<Vec<String>, VfsError> {
         let mut names = Vec::new();
-        for entry in std::fs::read_dir(self.native(dir)).map_err(|e| io(dir, e))? {
+        for entry in std::fs::read_dir(self.native(dir, false)?).map_err(|e| io(dir, e))? {
             let entry = entry.map_err(|e| io(dir, e))?;
             let Some(name) = entry.file_name().to_str().map(str::to_string) else {
                 continue; // non-UTF-8 names cannot be addressed by VPath
@@ -106,7 +134,7 @@ impl ContentSource for DirFs {
 
 impl ContentSink for DirFs {
     fn write(&mut self, path: &VPath, data: &[u8]) -> Result<(), VfsError> {
-        let native = self.native(path);
+        let native = self.native(path, true)?;
         if let Some(parent) = native.parent() {
             std::fs::create_dir_all(parent).map_err(|e| io(path, e))?;
         }
@@ -152,6 +180,32 @@ mod tests {
         assert!(!fs.exists(&d));
         assert!(matches!(fs.read(&d), Err(VfsError::NotAFile(_))));
         assert!(matches!(fs.read_max(&d, 10), Err(VfsError::NotAFile(_))));
+    }
+
+    /// A write never leaves the root, whatever the platform: a component
+    /// that is not one plain portable name (a drive prefix such as `C:`, a
+    /// device name, a trailing dot) is refused before anything is created.
+    #[test]
+    fn a_write_of_a_non_portable_path_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        let mut fs = DirFs::new(&root);
+        for bad in ["C:/x", "a/b:c", "NUL.png", "con", "aux.txt", "a./b", "b /c", "a/x?", "a\u{1}b"] {
+            let p = VPath::new(bad).unwrap();
+            assert!(matches!(fs.write(&p, b"x"), Err(VfsError::InvalidPath { .. })), "{bad:?} is written");
+        }
+        assert!(!root.exists(), "nothing was created");
+    }
+
+    /// The component check alone, on every platform.
+    #[test]
+    fn native_components_are_single_portable_names() {
+        for good in ["a", "gfx", "skin.png", "MW 1.0", "x-y_z"] {
+            assert!(native_component(good).is_ok(), "{good:?}");
+        }
+        for bad in ["C:", "c:x", "a:b", "NUL", "com1.txt", "x.", "x ", "a<b", "a*b", "\u{7f}"] {
+            assert!(native_component(bad).is_err(), "{bad:?}");
+        }
     }
 
     /// A FIFO named like a pack file is refused without opening it (which

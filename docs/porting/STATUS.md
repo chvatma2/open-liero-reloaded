@@ -855,7 +855,15 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   a stray `.DS_Store` would make a pack hashable but unservable). Archive
   reading is bounded (512 MiB, 4096 files, 255-byte paths, 64 MiB a file);
   `rl-proto` restates the archive limit without depending on `rl-pack`,
-  and a test pins the two equal (PF11-1).
+  and a test pins the two equal (PF11-1). Paths are portable (final
+  review C1: on Windows a `C:` component replaced the cache's path):
+  every component a portable name (no `:`, `<>"|?*`, control characters,
+  trailing dot or space, or Windows device name, any case and
+  extension), and no two paths or directories alike but for ASCII case
+  (one file on Windows and macOS); `encode` and `decode` refuse the same.
+  `DirFs` writes only portable names and builds native paths only from
+  plain components, on every platform; the OLX mod importer renames a
+  weapon id that is a device name and skips a non-portable asset name.
 - **N30 - a content-addressed cache.** Downloads live in
   `<cache>/packs/<content hash>/`, one pack directory each, with
   `<cache>/index.ron` (each entry's id, kind, bytes and a use counter).
