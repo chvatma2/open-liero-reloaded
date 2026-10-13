@@ -344,9 +344,7 @@ impl Shell {
                 Ok(())
             }
             LobbyCommand::Setup(_) => match setup {
-                Some(Ok(s)) => {
-                    lobby.set_setup(s).map_err(|e| format!("the lobby refuses that setup ({e:?})"))
-                }
+                Some(Ok(s)) => lobby.set_setup(s).map_err(|e| format!("the lobby refuses that setup: {e}")),
                 Some(Err(e)) => Err(format!("{e:#}")),
                 None => Ok(()),
             },

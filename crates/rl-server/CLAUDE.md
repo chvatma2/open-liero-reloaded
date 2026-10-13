@@ -87,7 +87,10 @@ rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
 - **`main.rs`**: clap; the data directory defaults to the config file's;
   the log goes to stdout and `<data>/server.log` (`files::RotatingLog`:
   past `LOG_MAX_BYTES`, 10 MiB, at a line start, `server.log` becomes
-  `server.log.1`, `.1` `.2`; `LOG_KEEP` 2 old files), each line stamped
+  `server.log.1`, `.1` `.2`; `LOG_KEEP` 2 old files; `server.log` moves
+  first, through `server.log.0`, so a rename that fails — Windows, a
+  viewer holding it open — touches no old file: the log goes on in
+  `server.log`, said once on stderr, never tried again that run), each line stamped
   with the UTC time. **Stopping** (ruling T13-A): Ctrl+C, SIGTERM or closing
   the console (Windows), through `ctrlc` 3.5.2 (`termination`), or `quit`
   (`stop`, `exit`) typed on the terminal: each sets `STOP`, and `run`
@@ -111,6 +114,7 @@ skipped once per entry, then no more starts; non-admins refused with
 `NOT_ADMIN`, `/players` and `/help` for anyone; `/settings` and `/next`;
 `run` stopping on its flag with `Bye`; the example and e2e configs parse and their
 rotations are in the committed packs. Unit tests: command parsing, `/unban` targets, hex keys,
-the bans and identity files, the log's rotation, notices split at 200
+the bans and identity files, the log's rotation (and a rename that
+fails, injected), notices split at 200
 characters, UTC dates.
 Cross-build: `cargo build --release --target x86_64-pc-windows-gnu -p rl-server`.

@@ -53,7 +53,8 @@ announcements.
   `buffered` (the endpoint drops sends beyond `MAX_QUEUED`, 4 MiB per peer
   and channel, counted in `PeerStats::sends_dropped`; a reliable message
   it cannot queue, beyond `MAX_QUEUED` or refused by the link, ends the
-  link at the next `poll`, `Disconnected { Limits }`: the ordered channel
+  link at the next `poll`, `Disconnected { Unsent }` (our failure,
+  not the peer's; rl-online tells a client so): the ordered channel
   never loses a message silently. rl-online keeps its own backlog and
   feeds it while `buffered` is below 1 MiB).
 - **str0m's contract** — every mutation of the `Rtc` (input, write, SDP or

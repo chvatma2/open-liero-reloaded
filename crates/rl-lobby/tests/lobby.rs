@@ -299,6 +299,25 @@ fn password_guessers_are_held_off_for_a_minute() {
     consistent(&net);
 }
 
+/// Links opened before the guessing starts (all challenged, none held off
+/// yet) get no more than `PASSWORD_TRIES` guesses between them: the hold
+/// is checked at each join attempt (`Hello`), not only when a link opens.
+#[test]
+fn links_opened_early_get_no_more_guesses() {
+    let mut net = lobby_with(HostConfig { password: Some("secret".into()), ..cfg() }, 0);
+    let links: Vec<usize> = (0..10)
+        .map(|i| net.join(LobbyClient::new(ident(10 + i), look("Ann"), Some("guess".into()), None), ip(1)))
+        .collect();
+    net.settle();
+    let refused = |r: Refusal| links.iter().filter(|&&c| got(&net, c, &ClientEvent::Refused(r))).count();
+    assert!(
+        links.iter().all(|&c| net.peers[c].received.iter().any(|m| matches!(m, ToClient::Challenge { .. })))
+    );
+    assert_eq!(refused(Refusal::Password), PASSWORD_TRIES, "guesses answered");
+    assert_eq!(refused(Refusal::Throttled), links.len() - PASSWORD_TRIES, "the rest held off");
+    consistent(&net);
+}
+
 /// Guesses spread over more than a minute never hold anyone off.
 #[test]
 fn slow_password_mistakes_are_forgiven() {

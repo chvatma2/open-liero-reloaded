@@ -132,6 +132,28 @@ pub enum LobbyError {
     NotGathering,
 }
 
+impl core::fmt::Display for NotStartable {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            NotStartable::Phase => "the last match is still ending",
+            NotStartable::NoPlayers => "nobody plays",
+            NotStartable::TooFewWorms => "two worms at least: add a bot",
+            NotStartable::TooManyWorms => "32 worms at most",
+            NotStartable::NotReady(_) => "not every player is ready",
+            NotStartable::Stale => "the lobby changed",
+        })
+    }
+}
+
+impl core::fmt::Display for LobbyError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            LobbyError::InvalidSetup => "the setup is out of bounds",
+            LobbyError::NotGathering => "the setup changes only between matches",
+        })
+    }
+}
+
 /// Whether `c` may stand inside a name.
 fn name_char(c: char) -> bool {
     let mut buf = [0u8; 12];
@@ -201,6 +223,29 @@ pub fn unique_name<'a>(name: &str, taken: impl Iterator<Item = &'a str> + Clone)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
+
+    /// Errors read as words, never as their Rust names.
+    #[test]
+    fn errors_read_as_words() {
+        let all = [
+            format!("{}", LobbyError::InvalidSetup),
+            format!("{}", LobbyError::NotGathering),
+            format!("{}", NotStartable::Phase),
+            format!("{}", NotStartable::NoPlayers),
+            format!("{}", NotStartable::TooFewWorms),
+            format!("{}", NotStartable::TooManyWorms),
+            format!("{}", NotStartable::NotReady(alloc::vec![1, 2])),
+            format!("{}", NotStartable::Stale),
+        ];
+        assert_eq!(all[1], "the setup changes only between matches");
+        for text in all {
+            assert!(
+                text.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || " :,".contains(c)),
+                "{text}"
+            );
+        }
+    }
 
     #[test]
     fn names_are_made_valid() {

@@ -93,7 +93,7 @@ impl std::fmt::Display for StartError {
         match self {
             StartError::NotHost => write!(f, "only the host starts the match"),
             StartError::Running => write!(f, "a match is running"),
-            StartError::Lobby(n) => write!(f, "the lobby cannot start: {n:?}"),
+            StartError::Lobby(n) => write!(f, "the lobby cannot start: {n}"),
             StartError::Build(e) => write!(f, "the match cannot be built: {e}"),
         }
     }
@@ -217,7 +217,7 @@ impl OnlinePeer {
             Ok((cfg, look)) => {
                 let setup = setup.ok_or_else(|| invalid("a host needs a match setup".into()))?;
                 let lobby = LobbyHost::new(cfg, me, look, setup)
-                    .map_err(|e: LobbyError| invalid(format!("the match setup: {e:?}")))?;
+                    .map_err(|e: LobbyError| invalid(format!("the match setup: {e}")))?;
                 let banned = Arc::new(Mutex::new(BTreeSet::new()));
                 let gate_banned = Arc::clone(&banned);
                 let gate: Gate = Box::new(move |addr, _| {
@@ -639,7 +639,7 @@ impl OnlinePeer {
         } else if let Err(e) = matches::check_packs(&self.content, &setup) {
             Some(format!("{e:#}"))
         } else {
-            h.lobby.set_setup(setup).err().map(|e| format!("{e:?}"))
+            h.lobby.set_setup(setup).err().map(|e| e.to_string())
         };
         let (Some(why), Some(peer)) = (refused, h.lobby.peer_of(from)) else { return };
         let text = sanitize_chat(&format!("{SETUP_REFUSED}: {why}")).unwrap_or_else(|| SETUP_REFUSED.into());
@@ -1257,6 +1257,7 @@ fn why_text(why: Why) -> &'static str {
         Why::Limits => "the host sent too much",
         Why::Malformed => "the host sent a malformed message",
         Why::Refused => "the host refused us",
+        Why::Unsent => "this game could not send to the host",
     }
 }
 
@@ -1556,5 +1557,12 @@ mod tests {
             assert_eq!(state_part(&encode_control(&other)), Part::Message, "{other:?}");
         }
         assert_eq!(state_part(&[]), Part::Message);
+    }
+
+    /// A client's own failed send is not blamed on the host.
+    #[test]
+    fn a_failed_send_is_not_the_hosts_fault() {
+        assert_eq!(why_text(Why::Limits), "the host sent too much");
+        assert_eq!(why_text(Why::Unsent), "this game could not send to the host");
     }
 }

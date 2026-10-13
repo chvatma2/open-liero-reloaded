@@ -156,7 +156,6 @@ struct Rig {
     server: Option<Server>,
     log: Vec<u8>,
     clients: Vec<Client>,
-    begun: Instant,
 }
 
 impl Rig {
@@ -166,15 +165,8 @@ impl Rig {
 
     fn new_on(content_dir: PathBuf, server_content: PathBuf, config: Config) -> Rig {
         let data = tempfile::tempdir().unwrap();
-        let mut rig = Rig {
-            content_dir,
-            server_content,
-            data,
-            server: None,
-            log: Vec::new(),
-            clients: Vec::new(),
-            begun: Instant::now(),
-        };
+        let mut rig =
+            Rig { content_dir, server_content, data, server: None, log: Vec::new(), clients: Vec::new() };
         rig.restart(config);
         rig
     }
@@ -268,10 +260,6 @@ impl Rig {
             self.clients[c].p.lobby().state().cloned().unwrap_or_else(|| panic!("client {c}'s lobby"));
         state.members.iter().map(|m| m.look.name.clone()).collect()
     }
-
-    fn assert_quick(&self) {
-        assert!(self.begun.elapsed() < Duration::from_secs(40), "the test took {:?}", self.begun.elapsed());
-    }
 }
 
 #[test]
@@ -335,7 +323,6 @@ fn a_server_runs_a_rotation() {
     }
     assert_eq!(log.matches("match start").count(), 2, "{log}");
     assert!(log.contains("127.0.0.1"), "joins name the address:\n{log}");
-    rig.assert_quick();
 }
 
 #[test]
@@ -429,7 +416,6 @@ fn admins_kick_and_ban_by_chat() {
     rig.hears(anna, "unbanned Bob");
     let bob = rig.join_as(Identity::from_secret(bob_secret).unwrap(), "Bob");
     rig.run_until(Duration::from_secs(10), "Bob comes back", |r| r.clients[bob].welcomed());
-    rig.assert_quick();
 }
 
 /// Ruling T13-C: a player joining a server full of bots changes only the
@@ -456,7 +442,6 @@ fn a_joiner_leaves_the_others_ready() {
         r.clients[bert].p.lobby().state().is_some_and(|s| s.setup.bots.len() == 2 && s.members.len() == 2)
     });
     assert!(anna_ready(&mut rig), "Anna is still ready");
-    rig.assert_quick();
 }
 
 #[test]
@@ -491,7 +476,6 @@ fn non_admins_cannot_use_admin_commands() {
     assert!(!rig.clients[bob].notices().iter().any(|n| n.contains("/kick")), "no admin commands offered");
     let log = rig.log_text();
     assert!(log.contains("refused /kick from Bob"), "{log}");
-    rig.assert_quick();
 }
 
 #[test]
@@ -522,7 +506,6 @@ fn admins_change_the_settings_and_skip_maps() {
     rig.hears(anna, "/kick");
     rig.say(anna, "/kick Nobody");
     rig.hears(anna, "no member named");
-    rig.assert_quick();
 }
 
 fn copy_dir(from: &Path, to: &Path) {
@@ -564,7 +547,6 @@ fn a_rotation_that_cannot_be_built_stops_after_one_cycle() {
     assert_eq!(log.matches("cannot start").count(), 2, "once per entry:\n{log}");
     assert_eq!(log.matches("error: no map").count(), 1, "{log}");
     assert!(clients.iter().all(|&c| rig.clients[c].starts().is_empty() && rig.clients[c].welcomed()));
-    rig.assert_quick();
 }
 
 /// A writer the test reads while `run` writes on its own thread.

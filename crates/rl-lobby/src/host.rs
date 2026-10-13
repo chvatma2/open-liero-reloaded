@@ -225,7 +225,7 @@ impl LobbyHost {
             self.refuse(peer, Refusal::Banned);
             return;
         }
-        if self.guesses.get(&addr).is_some_and(|g| g.held(now_us)) {
+        if self.held(addr, now_us) {
             self.refuse(peer, Refusal::Throttled);
             return;
         }
@@ -607,6 +607,11 @@ impl LobbyHost {
         let (addr, nonce, hello) = (p.addr, p.nonce, p.hello.clone());
         match (msg, hello) {
             (ToHost::Hello { key, look, password }, None) => {
+                // Checked at each attempt, not only when the link opened:
+                // links opened before the hold get no more guesses.
+                if self.held(addr, now_us) {
+                    return self.refuse(peer, Refusal::Throttled);
+                }
                 if let Err(r) = self.may_join(&key, addr) {
                     return self.refuse(peer, r);
                 }
@@ -639,6 +644,11 @@ impl LobbyHost {
             }
             _ => self.refuse(peer, Refusal::Malformed),
         }
+    }
+
+    /// `addr` is held off for guessing the password.
+    fn held(&self, addr: IpAddr, now_us: u64) -> bool {
+        self.guesses.get(&addr).is_some_and(|g| g.held(now_us))
     }
 
     fn may_join(&self, key: &PublicKey, addr: IpAddr) -> Result<(), Refusal> {

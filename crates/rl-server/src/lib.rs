@@ -443,7 +443,7 @@ impl Server {
         if wanted != state.setup {
             match self.peer.lobby().set_setup(wanted) {
                 Ok(()) => self.set_by_us = self.state().map(|s| s.setup),
-                Err(e) => line(log, format_args!("warning: the lobby refuses the rotation's setup: {e:?}")),
+                Err(e) => line(log, format_args!("warning: the lobby refuses the rotation's setup: {e}")),
             }
         }
     }

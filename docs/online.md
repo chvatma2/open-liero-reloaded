@@ -19,6 +19,9 @@ opens the Lobby straight away; `--port` changes the port.
 Multiplayer lists the games announced on your LAN: pick one and Join. For
 any other game type its address (`host` or `host:port`; a bare host uses
 port 23400) and Join; a password is asked for when the game has one.
+Three wrong passwords from one address within a minute hold that address
+off for a minute ("too many wrong passwords: try again in a minute"),
+everyone behind the same public address included.
 `rl-game --join ADDR` does the same from the command line. You can also join
 mid-match as a spectator, and see each player's key fingerprint (8
 characters) in the Lobby.

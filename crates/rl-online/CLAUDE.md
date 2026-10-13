@@ -118,7 +118,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     (at most `CLIENT_FINISH`, 3 s; then the shorter record it has). Each peer then makes its replay (decision N18).
   - **Leaving**: the session's `Bye` and the lobby's (`Bye` to every member
     from a host), one endpoint poll to send them, then every connection
-    closed. Refusals, kicks and lost connections end a client the same way.
+    closed. Refusals, kicks and lost connections end a client the same way,
+    each with its reason in words (`rl_net::endpoint::Why::Unsent`, its own
+    failed send, is "this game could not send to the host", not the
+    host's fault).
 - **`replay.rs`**: `MatchRecord { start, rows, checksums }` (rows below the
   last tick, the session's confirmed checksums); `make` re-simulates the
   rows from `build_match`'s start world with its `Recorder` and returns the

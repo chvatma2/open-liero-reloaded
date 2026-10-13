@@ -24,7 +24,8 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   `Notice(Joined)`, so the others know the member it names).
   - Join: `connected(peer, ip, now, nonce)` sends `Challenge` (a banned IP:
     `Refused(Banned)`; an IP held off for guessing: `Refused(Throttled)`);
-    `Hello` is checked for bans (`Banned`), a key already in the lobby or
+    `Hello` is checked for the guessing hold again (`Throttled`: links
+    opened before it get no more guesses), bans (`Banned`), a key already in the lobby or
     the host's (`Busy`), room (`Full`) and the password proof
     (`Password`; `PASSWORD_TRIES` (3) wrong proofs from one IP within
     `PASSWORD_WINDOW_US` (60 s) hold it off for `PASSWORD_LOCKOUT_US`
@@ -50,7 +51,9 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     starts ready) unless only its bots changed (ruling T13-C: a server's
     fill bots, Add/Remove bot), and so does the return to gathering.
     `set_setup` outside gathering is `LobbyError::NotGathering` (the
-    running match's setup stays what the lobby shows).
+    running match's setup stays what the lobby shows). `LobbyError` and
+    `NotStartable` display as words for players (`Display`), never their
+    Rust names.
   - `revision()` changes whenever `state()` does (compare it instead of
     cloning the state: the dedicated server's poll).
   - Chat: sanitized and cut to 200 characters; `CHAT_LINES` (5) per

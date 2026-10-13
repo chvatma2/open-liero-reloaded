@@ -210,7 +210,8 @@ fn a_host_out_of_peer_ids_says_so() {
 }
 
 /// A reliable message beyond `MAX_QUEUED` cannot be dropped (the ordered
-/// channel would silently lose it): the link ends, `Why::Limits`.
+/// channel would silently lose it): the link ends, `Why::Unsent` (our own
+/// failure, not the peer's).
 #[test]
 fn a_reliable_overflow_ends_the_link() {
     let mut net = Net::new(config());
@@ -222,7 +223,7 @@ fn a_reliable_overflow_ends_the_link() {
     }
     let now = Instant::now();
     net.host.poll(now, &mut net.host_events);
-    assert_eq!(net.host_disconnect(peer), Some(Why::Limits), "{:?}", net.host_events);
+    assert_eq!(net.host_disconnect(peer), Some(Why::Unsent), "{:?}", net.host_events);
     assert!(net.host.peers().next().is_none(), "the link is closed");
     // Unreliable messages may still be dropped and counted.
     let (_, other) = net.join_and_wait(config());

@@ -205,13 +205,27 @@ pub struct RotatingLog {
     max: u64,
     keep: usize,
     line_start: bool,
+    /// A rotation failed: the log goes on in the current file for the rest
+    /// of the run, and no rotation is tried again.
+    stuck: bool,
+    /// `fs::rename` (a test injects failures).
+    rename: fn(&Path, &Path) -> io::Result<()>,
 }
 
 impl RotatingLog {
     pub fn open(path: &Path, max: u64, keep: usize) -> io::Result<RotatingLog> {
         let file = fs::OpenOptions::new().create(true).append(true).open(path)?;
         let size = file.metadata()?.len();
-        Ok(RotatingLog { path: path.to_path_buf(), file: Some(file), size, max, keep, line_start: true })
+        Ok(RotatingLog {
+            path: path.to_path_buf(),
+            file: Some(file),
+            size,
+            max,
+            keep,
+            line_start: true,
+            stuck: false,
+            rename: |from, to| fs::rename(from, to),
+        })
     }
 
     /// `<path>.<n>` (`n` from 1).
@@ -222,26 +236,52 @@ impl RotatingLog {
     }
 
     /// `<path>` becomes `<path>.1`, `.1` becomes `.2`, … the oldest beyond
-    /// `keep` is removed; a fresh `<path>` is opened.
+    /// `keep` is removed; a fresh `<path>` is opened. On a failure (Windows:
+    /// a viewer holding the log open) the old files are kept, the log goes
+    /// on in `<path>`, and that is said once on stderr.
     fn rotate(&mut self) {
         self.file = None;
-        if self.keep == 0 {
-            let _ = fs::remove_file(&self.path);
-        } else {
-            let _ = fs::remove_file(self.old(self.keep));
-            for n in (1..self.keep).rev() {
-                let _ = fs::rename(self.old(n), self.old(n + 1));
-            }
-            let _ = fs::rename(&self.path, self.old(1));
+        if let Err(e) = self.shift() {
+            self.stuck = true;
+            eprintln!("warning: cannot rotate {}: {e}; it grows from now on", self.path.display());
         }
         self.file = fs::OpenOptions::new().create(true).append(true).open(&self.path).ok();
         self.size = self.file.as_ref().and_then(|f| f.metadata().ok()).map_or(0, |m| m.len());
+    }
+
+    /// Moves the files along: `<path>` first, out of the way to `<path>.0`
+    /// (what fails while it is held open), so nothing old is touched until
+    /// that worked; on a later failure `<path>.0` goes back in place.
+    fn shift(&self) -> io::Result<()> {
+        if self.keep == 0 {
+            return fs::remove_file(&self.path);
+        }
+        let fresh = self.old(0);
+        // A stale one (a crash mid-rotation) would block the rename on Windows.
+        let _ = fs::remove_file(&fresh);
+        (self.rename)(&self.path, &fresh)?;
+        let shifted = (|| {
+            match fs::remove_file(self.old(self.keep)) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
+            for n in (1..self.keep).rev() {
+                if self.old(n).exists() {
+                    (self.rename)(&self.old(n), &self.old(n + 1))?;
+                }
+            }
+            (self.rename)(&fresh, &self.old(1))
+        })();
+        if shifted.is_err() {
+            let _ = (self.rename)(&fresh, &self.path);
+        }
+        shifted
     }
 }
 
 impl io::Write for RotatingLog {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.line_start && self.size > 0 && self.size + buf.len() as u64 > self.max {
+        if self.line_start && !self.stuck && self.size > 0 && self.size + buf.len() as u64 > self.max {
             self.rotate();
         }
         if let Some(f) = &mut self.file
@@ -334,5 +374,42 @@ mod tests {
         log.write_all(lines[0].as_bytes()).unwrap();
         assert_eq!(read("server.log"), lines[0].clone());
         assert_eq!(read("server.log.1"), lines[9..].concat());
+    }
+
+    thread_local! {
+        static RENAMES_OF_THE_LOG: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// A rename that fails for `server.log` itself (Windows, with a viewer
+    /// holding it open), counting those attempts.
+    fn held_open(from: &Path, to: &Path) -> io::Result<()> {
+        if from.file_name().is_some_and(|n| n == "server.log") {
+            RENAMES_OF_THE_LOG.with(|c| c.set(c.get() + 1));
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "held open"));
+        }
+        fs::rename(from, to)
+    }
+
+    /// When the log cannot be renamed, the old files stay as they are, the
+    /// log goes on in the current file and no rotation is tried again.
+    #[test]
+    fn a_log_that_cannot_rotate_keeps_its_old_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.log");
+        let read = |name: &str| fs::read_to_string(dir.path().join(name)).unwrap_or_default();
+        let mut log = RotatingLog::open(&path, 100, 2).unwrap();
+        let lines: Vec<String> = (0..15).map(|i| format!("line {i:02} {}\n", "x".repeat(23))).collect();
+        for l in &lines[..9] {
+            log.write_all(l.as_bytes()).unwrap();
+        }
+        log.rename = held_open;
+        for l in &lines[9..] {
+            log.write_all(l.as_bytes()).unwrap();
+        }
+        drop(log);
+        assert_eq!(read("server.log.2"), lines[..3].concat(), "the oldest file kept");
+        assert_eq!(read("server.log.1"), lines[3..6].concat(), "the newer old file kept");
+        assert_eq!(read("server.log"), lines[6..].concat(), "the log goes on in the current file");
+        assert_eq!(RENAMES_OF_THE_LOG.with(|c| c.get()), 1, "tried once");
     }
 }

@@ -145,14 +145,17 @@ pub enum Why {
     /// Nothing heard for [`SILENCE_TIMEOUT`], ICE lost the connection, or
     /// the setup took longer than [`SETUP_TIMEOUT`].
     Timeout,
-    /// The peer sent faster than its [`Limits`], or a reliable message to
-    /// it did not fit [`MAX_QUEUED`].
+    /// The peer sent faster than its [`Limits`].
     Limits,
     /// The peer sent a message too large for its channel, or bad signalling.
     Malformed,
     /// Not reported by the endpoint: the session layers' refusal (a kick or
     /// a ban).
     Refused,
+    /// A reliable message to the peer could not be queued (beyond
+    /// [`MAX_QUEUED`], or refused by the link): our own failure, the
+    /// ordered stream cannot go on.
+    Unsent,
 }
 
 /// What went through the socket for one peer.
@@ -416,7 +419,7 @@ impl Endpoint {
     /// [`MAX_QUEUED`] or refused by the link (empty, too large) is dropped
     /// and counted. On the reliable channel a dropped message would break
     /// the ordered stream silently, so it also ends the link: the next
-    /// `poll` reports `Disconnected { why: Why::Limits }` (callers keep
+    /// `poll` reports `Disconnected { why: Why::Unsent }` (callers keep
     /// their own backlog and feed it as [`Endpoint::buffered`] drains).
     pub fn send(&mut self, peer: PeerId, channel: Channel, bytes: &[u8]) {
         let Some(p) = self.open.get_mut(&peer) else { return };
@@ -426,7 +429,7 @@ impl Endpoint {
         {
             p.stats.sends_dropped += 1;
             if channel == Channel::Reliable {
-                p.broke.get_or_insert(Why::Limits);
+                p.broke.get_or_insert(Why::Unsent);
             }
         }
     }
