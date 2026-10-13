@@ -912,7 +912,9 @@ execution.
   `rust-crypto`); it still compiles `aws-lc-sys` (C) through dimpl's rcgen,
   needs no system C library and cross-builds with mingw (ruling T1-C).
 - **N16:** a peer's ICE candidates are its UDP socket's port on the IP its
-  signalling TCP connection uses, in both directions; no STUN until plan 12.
+  signalling TCP connection uses, in both directions; no STUN for
+  candidates until plan 12b (plan 12a's STUN only learns the public
+  address, N40).
   LAN and direct play, a forwarded port included, need nothing more. A
   forward must map TCP and UDP on the same external port (ruling F-G: the
   client takes the host's candidates as the address it dialled).
@@ -1102,6 +1104,292 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   replay finds a pack whichever cache directory a session used, plays
   while a game holds the cache, and `--replay` never creates, locks or
   writes a cache.
+
+## Finding games decisions (plan 12a)
+
+Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
+("Decisions this plan makes") and by rulings during its execution
+(PL12-1 to PL12-3, PF12-4 to PF12-8, R1-* to R10-*).
+
+- **N37 - the host proves its key.** The joiner sends its own 32-byte
+  nonce in `Hello`; the host answers `ToClient::HostProof { signature }`
+  over `b"rust-liero host v1" ++ client nonce ++ client key ++ offer DTLS
+  fingerprint ++ answer DTLS fingerprint`. The joiner's own proof
+  (`challenge_message`) covers both fingerprints too, so a relayed or
+  swapped handshake fails both proofs. The fingerprints come from the
+  certificates str0m verified for the connection (`LobbyClient::connected`),
+  never from parsed SDP (R1-1). A joiner with `expected_host = Some(k)`
+  (an invite's key, or a listed game's) refuses a host whose key is not
+  `k` or whose proof fails: "this is not the game you were invited to"
+  (`WRONG_HOST`). A joiner also gives up on a host that opens the link and
+  then stays silent (`JOIN_DEADLINE` 10 s, "the game did not answer",
+  `NO_ANSWER`; keepalives alone would keep it waiting for ever). Protocol
+  stays 2 (unreleased).
+- **N38 - one Nostr core, no Nostr library.** `rl-discovery` implements the
+  NIP-01 subset it needs (event serialization and id, BIP-340 signing
+  through `Identity`, the frames `EVENT`/`REQ`/`CLOSE`/`EOSE`/`OK`/`NOTICE`/
+  `CLOSED`) and NIP-40 expiration, sans-IO, so the dependency tree and the
+  WASM build (plan 13) stay small. Event kinds: 31470 (addressable
+  announcement, tag `d` = `rust-liero`) and 21470 (ephemeral, reserved for
+  plan 12b's handshakes); neither is in the NIPs kinds table or the
+  registry-of-kinds (checked 2026-10-13, to re-check before a release).
+  The relays and STUN servers are the lists below, chosen by measurement
+  (`rl-cli nostr-probe`, `rl-cli stun-probe`, run once by hand on
+  2026-10-13 from WSL2 over IPv4, one vantage point), not by reputation.
+  `DEFAULT_RELAYS` is append-only: an invite code names a relay by its
+  index, so a dead relay stays in place and a test pins the released
+  prefix. "OK ms" is the round trip from publishing the note to its `OK`;
+  the operators come from public directories, not from the probe.
+
+  Default relays (each accepts kind 31470, serves the note at once and
+  after 3 minutes, forwards kind 21470 live, asks for no payment or
+  authentication):
+
+  | index | url | operator | accepts 31470 | keeps ≥3 min | forwards 21470 | no payment/auth | RTT (OK ms) | connect ms |
+  |---|---|---|---|---|---|---|---|---|
+  | 0 | wss://relay.damus.io | Damus | yes | yes | yes | yes | 201 | 615 |
+  | 1 | wss://nos.lol | nos.lol | yes | yes | yes | yes | 40 | 141 |
+  | 2 | wss://relay.primal.net | Primal | yes | yes | yes | yes | 60 | 212 |
+  | 3 | wss://relay.snort.social | Snort | yes | yes | yes | yes | 60 | 315 |
+  | 4 | wss://offchain.pub | offchain.pub | yes | yes | yes | yes | 161 | 474 |
+  | 5 | wss://nostr.oxtr.dev | 0xtr | yes | yes | yes | yes | 40 | 131 |
+  | 6 | wss://relay.nostr.net | nostr.net | yes | yes | yes | yes | 70 | 282 |
+  | 7 | wss://nostr.bitcoiner.social | bitcoiner.social | yes | yes | yes | yes | 211 | 635 |
+
+  These relays passed but were not chosen:
+
+  | url | operator | why not chosen |
+  |---|---|---|
+  | wss://nostr.mom | nos.lol's sibling relay (likely the same operator) | not a separate operator |
+  | wss://nostrue.com | nostrue | passed; 9th by order, spare |
+  | wss://nostr-pub.wellorder.net | scsibug (nostr-rs-relay author) | the idle connection was reset 5 times during the 3-minute wait |
+
+  These relays failed:
+
+  | url | why |
+  |---|---|
+  | wss://relay.nostr.band | connect timed out |
+  | wss://relay.nostr.bg | no DNS |
+  | wss://relay.0xchat.com | no DNS |
+  | wss://nostr.fmt.wiz.biz | connect timed out |
+
+  Skipped without probing as paid or whitelist-only: nostr.wine,
+  nostr.land, nostr21.com; purplepag.es takes only profile and relay-list
+  kinds. The chosen 8 come from 8 operators, as far as public information
+  shows.
+
+  Default STUN servers (`public_ip` takes the first that answers):
+
+  | server | operator | answers | RTT ms | mapped family |
+  |---|---|---|---|---|
+  | stun.cloudflare.com:3478 | Cloudflare | yes | 16 | IPv4 |
+  | stun.l.google.com:19302 | Google | yes | 20 | IPv4 |
+  | global.stun.twilio.com:3478 | Twilio | yes | 23 | IPv4 |
+  | stun.nextcloud.com:443 | Nextcloud | yes | 20 | IPv4 |
+  | stun.sipgate.net:3478 | sipgate | yes | 23 | IPv4 |
+
+  These answered but were not chosen: stun1.l.google.com (Google again),
+  stun.voip.blackberry.com, stun.miwifi.com (Xiaomi, 340 ms).
+  stun.stunprotocol.org, one of the placeholders, no longer resolves and
+  was dropped. The STUN probe never records the mapped address (it is the
+  prober's own IP). Open: wellorder reset an idle connection every ~36 s,
+  so another relay may do the same under the driver's 30 s idle ping; a
+  shorter idle ping is the remedy.
+- **N39 - the announcement.** The content is JSON (`serde_json`, at most
+  4 KiB): `{v, name, mode, map, map_name, mod, mod_hash, players,
+  max_players, spectators, max_spectators, password, region, playing,
+  addr, port}`. Tags: `["d","rust-liero"]`, `["t","rust-liero"]`,
+  `["f","<fingerprint, 16 hex>"]`, `["expiration","<unix+180>"]`. A note is
+  re-published every 60 s and when the lobby changes (at most every 12 s,
+  R5-3). On close the host publishes a note with `"closed": true` and an
+  expiry 10 s ahead, `created_at` at least a second newer than its last
+  note (a same-second tie would let a relay keep the open note, R9-5).
+  One builder, `GameSummary::of_lobby`, serves rl-server and rl-game and
+  also gives the LAN broadcast (`.lan()`); players and spectators are held
+  to their maximums (R9-1, R9-8).
+- **N40 - the public address.** A host learns its public IP from the
+  configured `public_address`, else a STUN binding request (RFC 5389) to
+  the first answering server of the STUN list (IPv4 only, 2 tries of
+  500 ms per server, a 3 s deadline in all, on a thread; again every
+  10 minutes). Only a global address is kept: a later round with no answer
+  keeps the known address, one answering a non-global address drops it
+  (R9-4). The announcement's `addr` is that IP and `port` the host's port.
+  Without either, a public game is still announced, without an address:
+  the list shows it as "cannot be joined yet" (plan 12b adds handshakes)
+  and its invite carries no address (the lobby says "Not listed: no public
+  address (forward port N or set it in Options)"). STUN is only about the
+  address: ICE candidates stay as in N16 until plan 12b.
+- **N41 - the game list.** `GameList` verifies every event (id and
+  signature), keeps the newest note per key, drops expired notes and closed
+  games, shows games of another fingerprint greyed out ("needs version X"),
+  accepts at most one note per key per 10 s (a closing note of a listed game
+  is exempt), at most 500 games and 4096 remembered keys (the oldest
+  unlisted one is evicted when full, so hostile keys cannot lock honest
+  hosts out, R5-2), refuses notes older than 180 s or more than 60 s in the
+  future, and hides blocked keys. Cheap refusals come before the signature
+  check. Announced addresses must be global (PF12-5). Ping is a TCP connect
+  to `addr:port`, timed, 2 s timeout, at most 4 at once, on a game's first
+  selection; a failed ping sinks the game to the bottom for the life of the
+  list.
+- **N42 - invite codes.** bech32m with HRP exactly `rlx` (`rlx1…`, any one
+  case); the payload is postcard `{version: u8 = 1, key: [u8;32], relays:
+  Vec<RelayHint>, addr: Option<(IPv4, u16)>}`. `RelayHint` is `Default(u8)`,
+  an index into the append-only default relay list, or `Url(String)`.
+  Hints are at most 3 `Default` and 1 `Url` of at most 64 bytes, so the
+  worst case is 191 characters and a code never exceeds `MAX_CODE` (200):
+  this narrows the plan's "at most 2 URLs of 100 bytes" (PF12-6). A
+  `Default` index beyond the build's list is skipped, so an old build reads
+  a new build's code; a wrong checksum, a plain-bech32 checksum or another
+  HRP is "damaged"; a newer version is "newer". Joining by code uses the
+  address and expects the code's key (N37). A code without an address
+  cannot be joined: "this invite has no address: the game cannot be joined
+  yet".
+- **N43 - visibility.** `Visibility { Public, Lan, Invite }`. Public is
+  announced on Nostr and broadcast on the LAN; Lan is broadcast on the LAN
+  only; Invite is neither, and its invite code is shown in the lobby (with
+  Copy) and printed by the server (`/invite` repeats it: anyone's in a
+  Public game, admins' otherwise). The plan 10 `DirectOnly` reads as
+  `Invite` (serde alias). The server's default is Public (it was Lan: a
+  config with no `visibility` now announces on public relays); the game's
+  own hosting stays Lan until the player picks "Anyone (Internet)" (R10-1).
+  STUN runs for every server visibility, since every server prints its
+  invite and the invite needs the address (R9-2): a Lan or Invite server
+  contacts the STUN servers at its start and every 10 minutes. The game asks
+  STUN for Public and Invite games only, never for Lan (R10-4). LAN
+  announcements keep the old broadcast, with counts now held to the
+  maximums.
+
+Plan rulings:
+
+- **PL12-1:** the spec's plan 12 row is split into 12a (finding games: the
+  Nostr list, invites, host-key proof, the STUN address), 12b (through
+  routers: Nostr handshakes, ICE with STUN, port mapping, TURN relays,
+  Docker NAT tests) and 12c (host migration, net-soak). Too large for one
+  plan; each ends testable. If wrong: two extra plan documents.
+- **PL12-2:** event kinds 31470 (addressable announcement) and 21470
+  (ephemeral handshake, 12b), unassigned in the NIPs kinds table on
+  2026-10-13; Task 2 re-checked the registry. If wrong: a kind change
+  before release.
+- **PL12-3:** the carried finding F-B (the host-key proof bound to the DTLS
+  fingerprints) is Task 1, before invites rely on `expected_host`. If
+  wrong: none; it is N37.
+
+Pre-flight and process rulings:
+
+- **PF12-4:** the relay driver uses non-blocking sockets with explicit short
+  waits (send retry, handshake, idle read), not `SO_RCVTIMEO`/`SO_SNDTIMEO`:
+  after a send timeout the socket's state is indeterminate on Windows
+  (partial sends duplicated or lost), while `WouldBlock` is well defined
+  everywhere. Cost: about 10 ms polling latency per idle relay (about 100
+  wakeups a second per relay; a longer idle wait would suit laptops).
+- **PF12-5:** the game list refuses announced addresses that are not global
+  (hand-written v4 and v6 ranges, v4-mapped unwrapped) unless `allow_local`
+  is set, with no port policy: a note from a remote relay must never steer
+  clients at their own network. If wrong: a LAN-only relay setup must enable
+  `allow_local` (see PF12-8).
+- **PF12-6:** invite hints are at most one URL of at most 64 bytes plus at
+  most 3 defaults, so the worst case fits 200 characters and `encode` never
+  produces an undecodable code (it drops bad hints and truncates). If wrong:
+  a custom relay URL over 64 bytes cannot be hinted (the defaults still
+  can).
+- **PF12-7:** `rl-game` takes `rl-server` as a dev-dependency (same layer 6,
+  tests only; `xtask layers` skips dev-dependencies): the end-to-end test of
+  finding a game needs an in-process server. If wrong: one test helper to
+  move.
+- **PF12-8:** `allow_local` switches on by itself when every configured
+  relay is loopback, private or `localhost`, so an office LAN relay lists
+  LAN games; the shipped defaults keep it off and any public relay in the
+  list keeps PF12-5's policy. If wrong: a user with only a LAN relay can be
+  steered at LAN addresses by notes on that relay.
+
+Task rulings:
+
+- **R1-1:** the fingerprints in N37 are taken from str0m's verified local and
+  remote certificates, not parsed from SDP; the host proof's `aux` is the
+  challenge nonce. If wrong: the proof binds to what a peer claimed, not
+  what was verified.
+- **R4-1:** the pool's rate limits are token buckets that allow a burst: a
+  sustained 200 frames/s and 1 MiB/s, each bucket holding 5 s of burst
+  (1000 frames, 5 MiB). **Deviation from a strict per-second window:** a
+  `REQ`'s stored events arrive at once (the list's filter has no `limit`,
+  so up to 500 games), and a strict window would drop such a relay and
+  reconnect it into the same burst for ever. A sustained flood is still
+  dropped (`a_flooding_relay_is_dropped`). If wrong: a relay that bursts
+  more than 5 s of budget is dropped and retried.
+- **R4-2:** the "5 s read timeout" is two deadlines: the TLS and WebSocket
+  handshakes get 5 s together; an established connection must answer
+  `EOSE` (10 s) and `OK` (5 s) when asked, and is pinged after 30 s idle
+  (dropped 10 s after the ping unanswered). An idle connection is never
+  timed out otherwise. A missing `OK` is reported, not fatal. If wrong: a
+  slow relay is reported or dropped too soon (`Timings` is tunable).
+- **R4-3:** a frame that is not a Nostr message drops the connection; unknown
+  types (`AUTH`, `COUNT`) and a known frame with one bad field are skipped,
+  so one bad stored event cannot make a relay useless. Events are verified
+  in the driver, so a forged event carrying a real id cannot poison the
+  cross-relay dedupe. Incoming is bounded at 4096 events or 8 MiB per relay
+  (a count alone allowed 512 MiB). If wrong: a relay is dropped or an event
+  lost where a laxer reading would keep it.
+- **R5-1:** `GameList` accepts loopback and private addresses only with
+  `allow_local` (PF12-5). **R5-2:** `seen` evicts the oldest unlisted key
+  when full (a flood of fresh hostile keys no longer locks honest hosts out
+  for 3 minutes). **R5-3:** the announcer's change gap is 12 s (the plan
+  said 10 s), so a lobby that changes at every tick publishes at most one
+  note per 12 s, inside the list's 10 s per-key gap.
+- **R6-1:** `StunResponder` and `TestRelay` exist only behind the
+  `test-relay` feature; STUN is IPv4 only, as `public_ip` is. If wrong:
+  an IPv6-only host learns no address.
+- **R8-1:** the probe lives in the library (`rl_cli::nostr_probe`), one
+  fresh random key per run (never the player's identity), every event
+  marked `rust-liero-probe` with a 10 minute expiry; the command publishes
+  to public relays, so it is run by hand only and no test touches the
+  internet. A relay's first connection failure fails it (no waiting for the
+  pool's reconnect). Order of the defaults: well-known large operators
+  first, since the index is fixed by invite codes. If wrong: a relay that
+  needed a second try is left out of the defaults.
+- **R9-1:** the summary builder lives in `rl-discovery` (the layer-5 crate
+  that already depends on `rl-proto`), not `rl-online`: no new same-layer
+  pair. **R9-2:** STUN runs for every visibility (see N43). **R9-3:** the
+  server prints `invite code: rlx1…` once the address is settled
+  (immediately when configured or when there are no STUN servers, else at
+  the first answer, at most ~3 s) and again whenever it changes. **R9-4:**
+  see N40. **R9-5:** the closing note is forced newer (see N39).
+  **R9-6:** `/invite` is admins-only in a Lan or Invite game. **R9-7:** an
+  unknown `region` in a config reads as `Unknown`. **R9-8:** the server's
+  default visibility is Public; LAN counts are held to the maximums, so a
+  note is never refused for `players > max_players`. If wrong: an operator
+  who wanted a private server must say `visibility: Invite`.
+- **R10-1:** the game's default visibility stays Lan (see N43). **R10-2:**
+  relays and STUN servers in the settings are `Option<Vec<String>>`, `None`
+  meaning the defaults, so a player who never edits them follows later
+  default lists (append-only); `rl-ui` (layer 5) cannot read the defaults
+  without a same-layer pair, so the app passes them through `MenuData`.
+  **R10-3:** PF12-8. **R10-4:** the address and invite are for Public and
+  Invite games only, and the invite is shown to the host only (a client
+  may not know the host's key). **R10-5:** the lobby's listing lines:
+  "Finding the public address…", "Not listed: no public address (forward
+  port N or set it in Options)", "Not listed: no relays (set them in
+  Options)", "Not listed: no relay reachable", "Announcing on the
+  Internet…", "Listed on the Internet" (once a relay's `OK` accepted a
+  note), "Not listed: your public address setting is not reachable from the
+  Internet" (a configured address that is IPv6 or not global). **R10-6:**
+  Options → Online has a "Public address" field (checked as an IP) next to
+  Region, Relays, STUN servers and Blocked hosts; a relay or STUN entry
+  that cannot be added says why ("needs wss:// or ws://", "needs
+  host:port", "already listed", "the list is full", at most 32). **R10-7:**
+  the relay pool lingers 30 s after the Multiplayer and Host screens (and a
+  Public host) stop needing it, so going back and forth does not reconnect,
+  and a Public host's closing note leaves on the open pool. Relay and STUN
+  edits apply the next time a pool opens or a game is hosted. **R10-8:** a
+  game is pinged on its first selection, not on every one. **R10-9:** the
+  Join button on the Internet tab is labelled "Join"; the Direct tab's
+  section is "Join by address or invite". **R10-10:** the pool is dropped on
+  a thread (its drop can wait 2 s). **R10-11:** `hosting` (the address
+  watch, hints, invite, `Publisher`) and `ping` moved into `rl-discovery`,
+  shared by `rl-server` and `rl-game`; `rl-game/src/finding.rs` holds the
+  pool and the list. **R10-12:** an IPv6 address in a listed game still
+  shows as joinable but `start_client` refuses it ("IPv6 is not supported
+  yet"), as before. If wrong: a hosted game appears for a player who cannot
+  join it.
 
 ## Kept OLX quirks
 

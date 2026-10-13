@@ -6,6 +6,31 @@ All notable changes to rust-liero are recorded here. The format follows
 
 ## Unreleased
 
+### Added — finding games
+
+- Multiplayer has three tabs: **Internet** (games announced on public Nostr
+  relays: name, map, mod, players, ping, region and a lock for a password;
+  games of another version greyed out, games without a public address "cannot
+  be joined yet"; Join, and Block this host), **LAN** and **Direct** (an
+  address or an invite code). See `docs/online.md`.
+- Invite codes (`rlx1…`): a hosted game's lobby shows its code with a Copy
+  button; pasting one in Direct joins that game and only that game.
+- Visibility, chosen when hosting ("Who can join"): Anyone (Internet), This
+  network or Invite only. `rl-server` takes `visibility: Public`, `Lan` or
+  `Invite` (`DirectOnly` still reads as `Invite`) and now defaults to Public.
+- Options → Online: region, public address, the relays and the STUN servers
+  (with Reset to defaults), and the blocked hosts.
+- `rl-server` announces itself on the relays (`relays`, `region`), learns its
+  public address from the STUN servers (`stun`) or `public_address`, prints
+  its invite code in the log and answers `/invite`.
+- A joiner with an invite or a listed game checks the host's key: a host that
+  cannot prove it is refused ("this is not the game you were invited to"). A
+  host that never answers is given up on after 10 s.
+- `rl-cli nostr-probe` and `rl-cli stun-probe` measure public relays and STUN
+  servers (by hand: the relay probe publishes short-lived notes to them).
+- Still needed: players outside your LAN reach a game only through a
+  forwarded port (NAT traversal comes with plan 12b).
+
 ### Added — content download
 
 - A player who lacks a game's mod, level, theme or a player's skin
