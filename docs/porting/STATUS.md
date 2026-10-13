@@ -780,7 +780,9 @@ execution.
   needs no system C library and cross-builds with mingw (ruling T1-C).
 - **N16:** a peer's ICE candidates are its UDP socket's port on the IP its
   signalling TCP connection uses, in both directions; no STUN until plan 12.
-  LAN and direct play, a forwarded port included, need nothing more.
+  LAN and direct play, a forwarded port included, need nothing more. A
+  forward must map TCP and UDP on the same external port (ruling F-G: the
+  client takes the host's candidates as the address it dialled).
 - **N17 (as amended by T1-A):** both data channels are pre-negotiated:
   `inputs` id 0, unordered with a 1 ms packet lifetime (effectively
   unreliable: `MaxRetransmits(0)` triggers a FORWARD-TSN/SACK storm in
@@ -806,7 +808,11 @@ execution.
 - **N22 (T4-A):** a signalling offer's candidates whose IP differs from the
   TCP peer's are filtered out, not refused (forged candidates cannot aim the
   host at a third party); a NAT'd client joining a forwarded host connects
-  through a peer-reflexive candidate.
+  through a peer-reflexive candidate. Ruling F-G: the client rewrites every
+  candidate of the host's answer to the address it dialled (IP and port),
+  so a host behind NAT (port forward, Docker, cloud VM), whose answer names
+  its private address, is reachable; TCP and UDP must be forwarded on the
+  same external port.
 - **N23 (T6-A):** a forced start (spec §7.2) is `LobbyHost::force_start`:
   players not ready, or without a complete setup, spectate that match. The
   Lobby has a "Force start" button for the host.

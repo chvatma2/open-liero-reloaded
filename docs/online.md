@@ -67,9 +67,11 @@ or banned. Bans are soft: a banned player can return with a new key.
 ## Open the port
 
 Players outside your LAN need TCP **and** UDP 23400 (or your `port`)
-forwarded to the host, and allowed through its firewall. A player behind
-their own NAT connects through the forwarded host; the game does not use
-STUN or relays yet.
+forwarded to the host on the **same** external port, and allowed through
+its firewall: a joiner sends its game traffic to the address and port it
+dialled. This also holds for a server in Docker or on a cloud VM: publish
+or open both protocols on one port. A player behind their own NAT connects
+through the forwarded host; the game does not use STUN or relays yet.
 
 ## Testing a bad network
 

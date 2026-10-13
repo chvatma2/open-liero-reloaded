@@ -692,9 +692,43 @@ fn a_client_behind_nat_connects_through_its_reflexive_address() {
     assert_eq!(net.host.peers().map(|p| p.0).collect::<Vec<_>>(), [id]);
 }
 
+/// A host behind NAT (a port forward, Docker, a cloud VM) answers with its
+/// private address, unreachable from the client, and the client is behind
+/// NAT too (its offer names an address the host cannot reach). The client
+/// still connects: it sends its checks to the address it dialled (ruling
+/// F-G), and the host learns the client's reflexive address from them.
+#[test]
+fn a_client_behind_nat_joins_a_host_behind_nat() {
+    let private: SocketAddr = "192.0.2.1:9".parse().unwrap();
+    let mut net = Net::new(EndpointConfig { answer_addr_override: Some(private), ..config() });
+    let nat = EndpointConfig { offer_ip_override: Some("10.9.9.9".parse().unwrap()), ..config() };
+    let (c, id) = net.join_and_wait(nat);
+    net.clients[c].0.send(HOST, Channel::Reliable, b"hello");
+    net.run_until(Duration::from_secs(10), "the echo", |n| {
+        n.echo();
+        !messages(&n.clients[c].1, Channel::Reliable).is_empty()
+    });
+    assert_eq!(net.host.peers().map(|p| p.0).collect::<Vec<_>>(), [id]);
+}
+
+/// A host behind NAT answering with its private address is joined by a
+/// client that is not behind NAT.
+#[test]
+fn a_client_joins_a_host_behind_nat() {
+    let private: SocketAddr = "192.0.2.1:9".parse().unwrap();
+    let mut net = Net::new(EndpointConfig { answer_addr_override: Some(private), ..config() });
+    let (c, id) = net.join_and_wait(config());
+    net.clients[c].0.send(HOST, Channel::Reliable, b"hello");
+    net.run_until(Duration::from_secs(10), "the echo", |n| {
+        n.echo();
+        !messages(&n.clients[c].1, Channel::Reliable).is_empty()
+    });
+    assert_eq!(net.host.peers().map(|p| p.0).collect::<Vec<_>>(), [id]);
+}
+
 /// A host's answer naming another address than its own (here a decoy on
-/// 127.0.0.2) is filtered like an offer (ruling T4-A): the client never
-/// sends checks there, and connects through the host's own checks.
+/// 127.0.0.2) is rewritten to the address the client dialled (ruling F-G):
+/// the client never sends checks to the decoy.
 #[test]
 fn a_hosts_answer_cannot_aim_the_client_elsewhere() {
     let decoy = std::net::UdpSocket::bind("127.0.0.2:0").unwrap();

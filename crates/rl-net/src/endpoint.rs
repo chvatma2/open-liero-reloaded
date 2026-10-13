@@ -283,9 +283,8 @@ fn keep_candidates_of(sdp: &str, ip: IpAddr) -> String {
 }
 
 /// `sdp` with the address of every `a=candidate` line replaced by `ip`
-/// (and the port by `port`; the test hooks `offer_ip_override`,
-/// `answer_addr_override`).
-#[cfg(any(test, feature = "test-hooks"))]
+/// (and the port by `port`): a client's view of the host's answer (ruling
+/// F-G), and the test hooks `offer_ip_override`, `answer_addr_override`.
 fn rewrite_candidates(sdp: &str, ip: IpAddr, port: Option<u16>) -> String {
     sdp.split_inclusive('\n')
         .map(|line| match line.strip_prefix("a=candidate:") {
@@ -682,11 +681,17 @@ impl Endpoint {
                     return self.fail_setup(peer, Why::Malformed, now, events);
                 }
                 match decode_signal(&frame) {
-                    // Only candidates on the host's signalling IP (as the
-                    // host does with offers, ruling T4-A): a host cannot aim
-                    // its joiners' checks at a third party.
+                    // Every candidate becomes the address the client dialled
+                    // (ruling F-G): a host behind NAT (a port forward,
+                    // Docker, a cloud VM) answers with its private address,
+                    // and the host's TCP and UDP share the port, so a
+                    // forward maps both alike; a host still cannot aim its
+                    // joiners' checks at a third party (T4-A).
                     Ok(Signal::Answer { sdp })
-                        if peer.link.accept_answer(&keep_candidates_of(&sdp, peer.addr.ip())).is_ok() =>
+                        if peer
+                            .link
+                            .accept_answer(&rewrite_candidates(&sdp, peer.addr.ip(), Some(peer.addr.port())))
+                            .is_ok() =>
                     {
                         peer.answered = true
                     }
@@ -805,11 +810,21 @@ mod tests {
     }
 
     #[test]
-    fn the_test_hook_rewrites_every_candidate() {
+    fn every_candidate_is_rewritten() {
         let ip: IpAddr = "10.9.9.9".parse().unwrap();
         let rewritten = rewrite_candidates(SDP, ip, None);
         assert_eq!(rewritten.matches("a=candidate:").count(), 3);
         assert_eq!(keep_candidates_of(&rewritten, ip), rewritten);
         assert!(rewritten.contains("a=candidate:3 1 udp 2130706431 10.9.9.9 50000 typ host\r\n"));
+    }
+
+    /// A client sees every answer candidate as the address it dialled
+    /// (ruling F-G), port included.
+    #[test]
+    fn an_answer_becomes_the_dialled_address() {
+        let rewritten = rewrite_candidates(SDP, "198.51.100.4".parse().unwrap(), Some(23400));
+        assert_eq!(rewritten.matches("a=candidate:").count(), 3);
+        assert_eq!(rewritten.matches(" 198.51.100.4 23400 typ host\r\n").count(), 3, "{rewritten}");
+        assert!(rewritten.ends_with("a=end-of-candidates\r\n"));
     }
 }

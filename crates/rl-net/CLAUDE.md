@@ -99,10 +99,13 @@ announcements.
   - **Client** (`Endpoint::connect(cfg, host)`): the TCP connect runs on
     its own thread (`connect_timeout`, 5 s), then the client handshake, the
     offer (candidate: the TCP local IP, the UDP port), the answer or
-    `NetEvent::Refused`. The answer's `a=candidate` lines whose IP is not
-    the host's (the TCP address) are dropped, as the host does with offers
-    (ruling T4-A): a host cannot aim its joiners' checks at a third party;
-    the link still opens through the host's own checks (peer-reflexive).
+    `NetEvent::Refused`. Every `a=candidate` line of the answer is
+    rewritten to the address the client dialled, IP and port (ruling F-G):
+    a host behind NAT (a port forward, Docker, a cloud VM) answers with its
+    private address, and its TCP and UDP share the port, so a forward of
+    both on the same external port maps alike; a host cannot aim its
+    joiners' checks at a third party (T4-A). A NAT'd client then reaches
+    a NAT'd host: the host learns the client peer-reflexive from its checks.
     A failure before the link opens is
     `Disconnected { peer: HOST }` without `Connected`.
   - **Peers**: host side 1, 2, 3, … in the order links open, never reused
@@ -171,7 +174,9 @@ link, 1000 reliable messages through
 peers: pings in a tight loop, 20 offers from one IP (the second address
 is the machine's non-loopback IP, skipped with a notice without one), an
 offer naming another IP, an answer naming a decoy address the client never
-sends to, a client "behind NAT" connecting peer-reflexive, a host's ids past
+sends to, a client "behind NAT" connecting peer-reflexive, a host "behind
+NAT" (its answer naming 192.0.2.1:9) joined by a client behind NAT or not,
+a host's ids past
 65 535 and exhausted,
 raw junk from a connected peer's address).
 Cross-build: `cargo build --release --target x86_64-pc-windows-gnu -p rl-net`.
