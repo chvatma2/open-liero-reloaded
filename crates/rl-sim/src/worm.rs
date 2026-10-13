@@ -248,6 +248,12 @@ pub struct Worm {
     pub last_air_jump_time: AbsTime,
     /// `posRecordings`.
     pub pos_recorder: PosRecorder,
+    /// The owner of the last damage that lowered this life's health (-1:
+    /// none), as OLX's Gusanos `m_lastHurt`, which `base_die` credits a
+    /// worm's death to (`src/gusanos/base_worm.cpp:623-653`) but classic
+    /// damage never sets. Without [`SimSettings::olx_quirks`] an
+    /// exact-zero-health death is credited to it. A respawn clears it.
+    pub last_damager: i32,
 }
 
 impl Worm {
@@ -297,6 +303,7 @@ impl Worm {
             last_input_time: now,
             last_air_jump_time: AbsTime(0),
             pos_recorder,
+            last_damager: -1,
         }
     }
 

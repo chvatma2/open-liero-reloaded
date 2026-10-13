@@ -96,7 +96,12 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   with its blood draws; a kill (`kill_worm`) counts kills, deaths, suicides
   (as the mode's `KillCredit` says) and lives at once, as OLX's server
   does. A worm left at exactly 0 health dies at the start of the next
-  frame, uncredited (`die_at_zero_health`).
+  frame (`die_at_zero_health`): in play credited to its `last_damager`
+  (the owner of the damage that left 0, cleared on respawn) with the
+  lethal hit's death sound, gibs and blood (`death_effects`); with
+  `SimSettings::olx_quirks`, as OLX, uncredited and without them (spec
+  §18 D9 as amended). A death's sound and gibs count against the events'
+  gameplay quota, so blood never crowds them out.
   Bleeding is in `physics.rs`. After the physics, the server's respawn loop
   (`respawn.rs`) respawns dead worms at a `FindSpot` position drawn from the
   `Mt19937`.

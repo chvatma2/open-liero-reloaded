@@ -175,8 +175,12 @@ pub enum EventKind {
 }
 
 impl EventKind {
+    /// A death's sound and gibs count as gameplay, so a tick's blood can
+    /// never crowd them out: every death shows (D9, amended 2026-10-13).
     fn class(&self) -> Class {
         match self {
+            EventKind::SpawnCosmetic { kind: CosmeticKind::Gib { .. }, .. } => Class::Gameplay,
+            EventKind::Sound { id, .. } if SoundId::DEATH.contains(id) => Class::Gameplay,
             EventKind::SpawnCosmetic { .. } | EventKind::Sound { .. } => Class::Cosmetic,
             EventKind::TerrainEdit { .. } => Class::Edit,
             _ => Class::Gameplay,
@@ -224,7 +228,7 @@ impl LostArea {
 /// Three quotas share the buffer, so no class of events can crowd out
 /// another: sounds and cosmetics ([`TickEvents::COSMETIC_LIMIT`]), terrain
 /// edits ([`TickEvents::EDIT_LIMIT`]) and the other gameplay events
-/// ([`TickEvents::GAMEPLAY_LIMIT`]). What does not fit is counted in
+/// ([`TickEvents::GAMEPLAY_LIMIT`]), a death's sound and gibs included. What does not fit is counted in
 /// [`TickEvents::cosmetic_dropped`] or [`TickEvents::gameplay_dropped`].
 ///
 /// A renderer replays every [`EventKind::TerrainEdit`] on its colour images

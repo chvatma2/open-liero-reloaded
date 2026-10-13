@@ -127,6 +127,28 @@ fn a_death_reports_damage_the_kill_its_sound_and_gore() {
 }
 
 #[test]
+fn a_death_keeps_its_sound_and_gibs_when_the_cosmetics_are_full() {
+    // Blood of earlier hits must not crowd out a death's effects: its sound
+    // and gibs count against the gameplay quota.
+    let mut w = walled_world();
+    w.spawn_worm(80, 140);
+    w.tick_new(&[]);
+    let zero = rl_math::Vec2::ZERO;
+    for _ in 0..TickEvents::COSMETIC_LIMIT {
+        w.draws.events.cosmetic(CosmeticKind::Smoke, zero, zero);
+    }
+    injure_worm(&mut w.harm(), 1, 150.0, 0);
+    let e = &w.draws.events;
+    let sounds =
+        e.iter().filter(|e| matches!(e.kind, EventKind::Sound { id, .. } if SoundId::DEATH.contains(&id)));
+    let gibs = e
+        .iter()
+        .filter(|e| matches!(e.kind, EventKind::SpawnCosmetic { kind: CosmeticKind::Gib { worm: 1 }, .. }));
+    assert_eq!((sounds.count(), gibs.count()), (1, 7));
+    assert_eq!(e.cosmetic_dropped(), 450, "the death's and the hit's blood");
+}
+
+#[test]
 fn the_sound_table_lists_game_sounds_then_mod_sounds_once() {
     let m = gun_mod();
     assert_eq!(&m.sounds()[..GAME_SOUNDS.len()], &GAME_SOUNDS);

@@ -61,8 +61,9 @@ impl Worm {
     /// aiming level to the right, rope cleared, input cleared
     /// (`clearInput`), and every weapon slot full and ready with its weapon
     /// kept. The position recorder is cleared to `pos` (`clear(vPos)`),
-    /// keeping its old entries only with `olx_quirks` (spec §18 D7).
-    /// Lives, kills, the dirt count, `fLastBlood` and the factors stay.
+    /// keeping its old entries only with `olx_quirks` (spec §18 D7), and
+    /// the last damager is forgotten. Lives, kills, the dirt count,
+    /// `fLastBlood` and the factors stay.
     pub(crate) fn respawn(&mut self, pos: Vec2, now: AbsTime, olx_quirks: bool) {
         self.pos = pos;
         self.vel = Vec2::ZERO;
@@ -76,6 +77,7 @@ impl Worm {
         self.move_dir = Dir::Right;
         self.last_input_time = now;
         self.pos_recorder.respawn_to(pos, olx_quirks);
+        self.last_damager = -1;
         self.rope.clear();
         self.frame = 0.0;
         self.on_ground = false;

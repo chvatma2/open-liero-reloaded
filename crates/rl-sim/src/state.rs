@@ -393,6 +393,7 @@ fn worm_ok(i: usize, w: &Worm, worms: usize, num_weapons: i32) -> bool {
         && w.slots.iter().all(|s| s.weapon == -1 || (0..num_weapons).contains(&s.weapon))
         && (0..slots.max(1) as i64).contains(&(w.current_weapon as i64))
         && (-1..worms as i64).contains(&(player_attached as i64))
+        && (-1..MAX_WORMS as i64).contains(&(w.last_damager as i64))
         && w.pos_recorder.is_valid()
         && rope_ok
         && angle_ok
@@ -460,6 +461,7 @@ fn worm_finite(w: &Worm) -> bool {
         last_air_jump_time: _,
         // `PosRecorder::is_valid` checks its entries.
         pos_recorder: _,
+        last_damager: _,
     } = w;
     let NinjaRope {
         released: _,

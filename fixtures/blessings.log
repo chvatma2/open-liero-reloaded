@@ -53,3 +53,7 @@
   fixtures/matches/classic-dirt-level-8dm.ron
   fixtures/matches/classic-fossilfacility-4xtreme-kill-limit.ron
   fixtures/matches/mw-castlestrike-8chaos.ron
+2026-10-13 bless-regression: zero-health deaths credited to the last damager; every death emits gibs and sound
+  fixtures/matches/classic-dirt-level-8dm.ron
+  fixtures/matches/classic-fossilfacility-4xtreme-kill-limit.ron
+  fixtures/matches/mw-castlestrike-8chaos.ron

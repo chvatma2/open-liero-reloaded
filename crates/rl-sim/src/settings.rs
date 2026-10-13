@@ -87,15 +87,18 @@ pub struct SimSettings {
     pub bonus_life: f32,
     /// `BonusHealthToWeaponChance`: the chance that a spawned bonus is a weapon.
     pub bonus_health_to_weapon_chance: f32,
-    /// OLX `d1ad953f`'s hit bug, which play fixes (spec §18 D7, amended
-    /// 2026-10-13; `docs/porting/STATUS.md`). On, as in OLX: projectile hit
-    /// tests and explosions read the worm's position recorder through
-    /// `VecTimeRecorder::get`'s off-by-one, so frames-back 0 is the
-    /// *oldest* entry (about 1.1 s old, or an earlier life's), and a
-    /// respawn keeps the old entries.
+    /// OLX `d1ad953f`'s hit and death bugs, which play fixes (spec §18 D7
+    /// and D9, amended 2026-10-13; `docs/porting/STATUS.md`). On, as in OLX:
+    /// - projectile hit tests and explosions read the worm's position
+    ///   recorder through `VecTimeRecorder::get`'s off-by-one, so
+    ///   frames-back 0 is the *oldest* entry (about 1.1 s old, or an
+    ///   earlier life's), and a respawn keeps the old entries;
+    /// - a worm left at exactly 0 health dies at the start of the next
+    ///   frame credited to nobody, with no death sound, gibs or blood.
     ///
-    /// Off (play): hits test the newest recorded position, and a respawn
-    /// forgets the old life's.
+    /// Off (play): hits test the newest recorded position, a respawn
+    /// forgets the old life's, and the exact-zero death is credited to the
+    /// worm whose damage left it at 0 and plays the death effects.
     /// [`SimSettings::from_olx_features`] (an oracle trace's header: the
     /// oracle, scenarios and what is drawn from them) turns it on;
     /// [`SimSettings::lx56`] and every game leave it off.
@@ -107,7 +110,7 @@ pub struct SettingsError(pub String);
 
 impl SimSettings {
     /// OLX's "LieroX 0.56" values with the Classic mod (as in the oracle
-    /// trace headers), without OLX's hit bug
+    /// trace headers), without OLX's hit and death bugs
     /// ([`SimSettings::olx_quirks`] off, as every game plays).
     pub fn lx56() -> Self {
         Self {
@@ -382,7 +385,7 @@ mod tests {
     fn olx_header_gives_the_lx56_defaults_with_olx_quirks() {
         let olx = SimSettings { olx_quirks: true, ..SimSettings::lx56() };
         assert_eq!(SimSettings::from_olx_features(&olx_header()), Ok(olx));
-        assert!(!SimSettings::lx56().olx_quirks, "play fixes OLX's hit bug");
+        assert!(!SimSettings::lx56().olx_quirks, "play fixes OLX's hit and death bugs");
     }
 
     #[test]

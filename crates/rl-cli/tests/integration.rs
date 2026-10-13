@@ -15,6 +15,7 @@ mod common;
 
 mod cli;
 mod corpus;
+mod deaths;
 mod feel;
 mod hits;
 mod matches;

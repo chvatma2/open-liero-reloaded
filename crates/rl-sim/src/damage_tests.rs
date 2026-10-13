@@ -57,11 +57,12 @@ fn draws() -> Draws {
 }
 
 #[test]
-fn exact_zero_health_dies_next_frame_uncredited() {
+fn exact_zero_health_dies_next_frame_uncredited_with_olx_quirks() {
     // OLX: `CGameObject::injure` kills only below 0; the Gusanos `CWorm::think`
     // (base_worm.cpp:365-381) kills a worm at exactly 0 at the start of the
-    // next frame, with killer -1 (spec §18 D9).
-    let mut s = SimSettings::lx56();
+    // next frame, with killer -1 (spec §18 D9), and plays no death effects:
+    // `killWorm`'s `SendWormDied` skips the local client (CServer_Send.cpp:1122-1135).
+    let mut s = SimSettings { olx_quirks: true, ..SimSettings::lx56() };
     s.allow_negative_score = true;
     let mut w = world(s);
     w.tick_new(&[]);
@@ -75,13 +76,91 @@ fn exact_zero_health_dies_next_frame_uncredited() {
         assert_eq!(h.worms[1].health, 0.0);
     }
     assert_eq!(w.rand_calls(), 70, "10 rounds of hit blood, no death draws");
-    w.tick_new(&[]);
+    let ev = w.tick_new(&[]);
     let (killer, victim) = (&w.worms()[0], &w.worms()[1]);
     assert!(!victim.alive);
     assert_eq!(victim.time_of_death, now, "Kill() sets the frame clock");
     assert_eq!((killer.kills, victim.deaths, victim.suicides, victim.lives), (0, 1, 0, -2));
     assert!(!victim.rope.released, "base_die clears the rope");
     assert_eq!(w.rand_calls(), 70, "Gusanos death particles are not ported (D9)");
+    assert_eq!(death_events(&ev), (vec![(1, -1)], 0, 0), "uncredited, no sound, no gibs");
+}
+
+/// A tick's kills (victim, killer), death sounds and gibs.
+fn death_events(ev: &crate::TickEvents) -> (Vec<(i32, i32)>, usize, usize) {
+    use crate::events::{EventKind, SoundId};
+    let kills = ev
+        .iter()
+        .filter_map(|e| match e.kind {
+            EventKind::Kill { victim, killer } => Some((victim, killer)),
+            _ => None,
+        })
+        .collect();
+    let sounds = ev
+        .iter()
+        .filter(|e| matches!(e.kind, EventKind::Sound { id, .. } if SoundId::DEATH.contains(&id)))
+        .count();
+    let gibs = ev
+        .iter()
+        .filter(|e| matches!(e.kind, EventKind::SpawnCosmetic { kind: CosmeticKind::Gib { .. }, .. }))
+        .count();
+    (kills, sounds, gibs)
+}
+
+#[test]
+fn exact_zero_health_death_is_the_last_damagers_kill_with_death_effects() {
+    // Play (D9, amended 2026-10-13): the next-frame death is credited to the
+    // worm whose damage left 0 health, and plays the death sound, the 7 gibs
+    // and the blood a lethal hit plays.
+    let mut s = SimSettings::lx56();
+    s.allow_negative_score = true;
+    (s.respawn_time, s.max_respawn_time) = (0.05, 0.0);
+    let mut w = world(s);
+    w.tick_new(&[]);
+    {
+        let h = &mut w.harm();
+        h.worms[1].health = 10.0;
+        injure_worm(h, 1, 4.0, -1);
+        injure_worm(h, 1, 6.0, 0);
+        assert!(h.worms[1].alive, "exactly 0 is alive");
+        assert_eq!((h.worms[1].health, h.worms[1].last_damager), (0.0, 0));
+    }
+    let before = w.rand_calls();
+    let ev = w.tick_new(&[]);
+    let (killer, victim) = (&w.worms()[0], &w.worms()[1]);
+    assert!(!victim.alive);
+    assert_eq!((killer.kills, victim.deaths, victim.suicides), (1, 1, 0));
+    assert_eq!(death_events(&ev), (vec![(1, 0)], 1, 7), "credited, one death sound, 7 gibs");
+    // The death's draws: the sound, 7 gibs (2 each, 2 more for the spin),
+    // 50 rounds of blood (7 each), as `injure_worm`'s lethal branch.
+    assert_eq!(w.rand_calls() - before, 1 + 28 + 350);
+    for _ in 0..20 {
+        if w.worms()[1].alive {
+            break;
+        }
+        w.tick_new(&[]);
+    }
+    assert!(w.worms()[1].alive, "respawned");
+    assert_eq!(w.worms()[1].last_damager, -1, "a respawn clears the last damager");
+}
+
+#[test]
+fn a_hit_at_zero_health_kills_once() {
+    // Between reaching exactly 0 and the next frame, any damage kills at
+    // once (below 0), credited to its owner; the next frame finds the worm
+    // dead and adds no second death.
+    for olx_quirks in [false, true] {
+        let s = SimSettings { olx_quirks, ..SimSettings::lx56() };
+        let mut ws = worms(3, &s);
+        let mut d = draws();
+        ws[1].health = 5.0;
+        let h = &mut harm(&s, &mut ws, &mut d);
+        injure_worm(h, 1, 5.0, 0);
+        injure_worm(h, 1, 1.0, 2);
+        die_at_zero_health(h, T0);
+        assert_eq!((h.worms[0].kills, h.worms[2].kills), (0, 1), "olx_quirks {olx_quirks}");
+        assert_eq!(death_events(&d.events), (vec![(1, 2)], 1, 7), "olx_quirks {olx_quirks}");
+    }
 }
 
 #[test]
