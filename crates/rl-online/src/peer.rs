@@ -582,9 +582,12 @@ impl OnlinePeer {
                 }
                 HostEvent::Left(id) => self.events.push(OnlineEvent::Left(self.name(id))),
                 HostEvent::Kick { peer, ban } => {
+                    // A ban by key leaves the address open (spec §5.2);
+                    // one with the address closes the gate to it.
                     if let Side::Host(h) = &mut self.side
                         && ban
                         && let Some(addr) = h.addrs.get(&peer)
+                        && h.lobby.banned_ip(addr.ip())
                     {
                         h.banned.lock().unwrap_or_else(|e| e.into_inner()).insert(addr.ip());
                     }
@@ -1286,8 +1289,8 @@ impl LobbyHandle<'_> {
         result
     }
 
-    /// Kicks (and bans) a member: the host's own action, an admin client's
-    /// request by the member's key.
+    /// Kicks (and bans, by key: spec §5.2) a member: the host's own action,
+    /// an admin client's request by the member's key.
     pub fn kick(&mut self, member: u8, ban: bool) {
         let key = self.state().and_then(|s| s.members.iter().find(|m| m.id == member)).map(|m| m.key);
         self.act(
@@ -1349,6 +1352,30 @@ impl LobbyHandle<'_> {
             h.banned.lock().unwrap_or_else(|e| e.into_inner()).insert(ip);
         }
         self.act(|h| h.ban_ip(ip), |_| {});
+    }
+
+    /// Kicks a member and bans its key and its address (the host's; a
+    /// server's `/banip`).
+    pub fn ban_with_address(&mut self, member: u8) {
+        self.act(|h| h.ban_with_address(member), |_| {});
+    }
+
+    /// Lifts a key's ban (the host's); whether it was banned.
+    pub fn unban_key(&mut self, key: &PublicKey) -> bool {
+        let mut lifted = false;
+        self.act(|h| lifted = h.unban_key(key), |_| {});
+        lifted
+    }
+
+    /// Lifts an address's ban, in the gate too (the host's); whether it
+    /// was banned.
+    pub fn unban_ip(&mut self, ip: IpAddr) -> bool {
+        if let Side::Host(h) = &mut self.peer.side {
+            h.banned.lock().unwrap_or_else(|e| e.into_inner()).remove(&ip);
+        }
+        let mut lifted = false;
+        self.act(|h| lifted = h.unban_ip(ip), |_| {});
+        lifted
     }
 
     /// The host's bans, keys and addresses, in order (a client's are empty).

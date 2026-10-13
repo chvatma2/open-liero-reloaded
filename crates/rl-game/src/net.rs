@@ -398,17 +398,10 @@ impl NetMeter {
 
 /// Saves desync bundle `bytes` in `dir` (made if missing) as
 /// `desync-<unix seconds>-<n>.rldg`, the first `n` free; returns the file.
+/// Bounded by rl-online's `bundle::save`: 4 MiB a bundle, 64 MiB of
+/// bundles (the oldest go).
 pub fn save_bundle(dir: &Path, bytes: &[u8], unix_secs: u64) -> io::Result<PathBuf> {
-    std::fs::create_dir_all(dir)?;
-    let ext = rl_online::bundle::GAME_BUNDLE_EXTENSION;
-    let path = (1..=1000u32)
-        .map(|n| dir.join(format!("desync-{unix_secs}-{n}.{ext}")))
-        .find(|p| !p.exists())
-        .ok_or_else(|| io::Error::other("a thousand bundles this second"))?;
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, &path)?;
-    Ok(path)
+    rl_online::bundle::save(dir, bytes, unix_secs)
 }
 
 #[cfg(test)]

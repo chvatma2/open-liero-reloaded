@@ -10,6 +10,9 @@
 //! everything one needs (the start, the final inputs from tick 0, both
 //! checksums, the build and the platform).
 
+use std::io;
+use std::path::{Path, PathBuf};
+
 use anyhow::{Context as _, ensure};
 use rl_proto::MatchStartWire;
 use serde::{Deserialize, Serialize};
@@ -25,6 +28,11 @@ pub const GAME_BUNDLE_EXTENSION: &str = "rldg";
 /// At most this many bundles a match, per peer (a desync the host repairs
 /// may come back; a lobby of many peers could make one per peer).
 pub const MAX_BUNDLES_PER_MATCH: u32 = 3;
+
+/// A bundle larger than this is not saved (a 20-minute match's inputs fit).
+pub const MAX_BUNDLE_BYTES: usize = 4 * 1024 * 1024;
+/// The bundles in one directory keep below this many bytes: the oldest go.
+pub const MAX_BUNDLES_DIR_BYTES: u64 = 64 * 1024 * 1024;
 
 /// One desync, as one peer saw it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -94,6 +102,66 @@ impl GameBundle {
     }
 }
 
+/// Saves bundle `bytes` in `dir` (made if missing) as
+/// `desync-<unix_secs>-<n>.rldg`, the first `n` free, written to a
+/// temporary file and renamed; returns the file. Bounded: a bundle above
+/// [`MAX_BUNDLE_BYTES`] is refused, and the oldest bundles of this naming
+/// (by their seconds, then `n`; other files are never touched) are removed
+/// until the directory's bundles stay within [`MAX_BUNDLES_DIR_BYTES`].
+/// The time is the caller's (no clock is read here).
+pub fn save(dir: &Path, bytes: &[u8], unix_secs: u64) -> io::Result<PathBuf> {
+    save_within(dir, bytes, unix_secs, MAX_BUNDLE_BYTES, MAX_BUNDLES_DIR_BYTES)
+}
+
+fn save_within(
+    dir: &Path,
+    bytes: &[u8],
+    unix_secs: u64,
+    max_one: usize,
+    max_all: u64,
+) -> io::Result<PathBuf> {
+    if bytes.len() > max_one {
+        return Err(io::Error::other(format!(
+            "the bundle has {} bytes, more than {max_one}: not saved",
+            bytes.len()
+        )));
+    }
+    std::fs::create_dir_all(dir)?;
+    let path = (1..=1000u32)
+        .map(|n| dir.join(format!("desync-{unix_secs}-{n}.{GAME_BUNDLE_EXTENSION}")))
+        .find(|p| !p.exists())
+        .ok_or_else(|| io::Error::other("a thousand bundles this second"))?;
+    // The oldest first, until the new one fits.
+    let mut old: Vec<((u64, u32), PathBuf, u64)> = std::fs::read_dir(dir)?
+        .filter_map(Result::ok)
+        .filter_map(|e| {
+            let order = bundle_order(e.file_name().to_str()?)?;
+            let meta = e.metadata().ok().filter(std::fs::Metadata::is_file)?;
+            Some((order, e.path(), meta.len()))
+        })
+        .collect();
+    old.sort();
+    let mut total: u64 = old.iter().map(|o| o.2).sum::<u64>() + bytes.len() as u64;
+    for (_, p, len) in &old {
+        if total <= max_all {
+            break;
+        }
+        std::fs::remove_file(p)?;
+        total -= len;
+    }
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(path)
+}
+
+/// `(seconds, n)` of a `desync-<seconds>-<n>.rldg` name.
+fn bundle_order(name: &str) -> Option<(u64, u32)> {
+    let stem = name.strip_prefix("desync-")?.strip_suffix(&format!(".{GAME_BUNDLE_EXTENSION}"))?;
+    let (secs, n) = stem.split_once('-')?;
+    Some((secs.parse().ok()?, n.parse().ok()?))
+}
+
 /// This machine, as `<arch>-<os>`.
 pub fn platform() -> String {
     format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS)
@@ -102,6 +170,32 @@ pub fn platform() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_bundles_are_bounded_and_the_oldest_go() {
+        let tmp = std::env::temp_dir().join(format!("rl-online-bundles-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let a = save(&tmp, b"one", 1_700_000_000).unwrap();
+        let b = save(&tmp, b"two", 1_700_000_000).unwrap();
+        assert_eq!(a.file_name().unwrap(), "desync-1700000000-1.rldg");
+        assert_eq!(b.file_name().unwrap(), "desync-1700000000-2.rldg");
+        assert!(save(&tmp, &vec![0; MAX_BUNDLE_BYTES + 1], 1).is_err(), "too large");
+        // Another file stays whatever happens.
+        std::fs::write(tmp.join("notes.txt"), b"mine").unwrap();
+        // With 100 bytes a bundle and 1000 in all (the same rule as 4 and
+        // 64 MiB): 11 more bundles do not fit, the oldest go, in order.
+        let big = vec![7; 100];
+        let saved: Vec<PathBuf> =
+            (0..11).map(|i| save_within(&tmp, &big, 1_800_000_000 + i, 100, 1000).unwrap()).collect();
+        assert!(save_within(&tmp, &[0; 101], 1, 100, 1000).is_err());
+        assert!(!a.exists() && !b.exists() && !saved[0].exists());
+        assert!(saved[1..].iter().all(|p| p.exists()));
+        let total: u64 =
+            std::fs::read_dir(&tmp).unwrap().map(|e| e.unwrap().metadata().unwrap().len()).sum::<u64>() - 4;
+        assert_eq!(total, 1000);
+        assert!(tmp.join("notes.txt").exists());
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
 
     #[test]
     fn a_bundle_round_trips_and_refuses_other_files() {

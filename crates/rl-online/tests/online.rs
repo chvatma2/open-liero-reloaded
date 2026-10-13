@@ -504,6 +504,11 @@ fn kicked_players_cannot_rejoin() {
         std::thread::sleep(Duration::from_millis(2));
     }
     assert_eq!(net.members(), 1, "never admitted");
+    // A ban is by key (spec §5.2): another key from the same address joins.
+    let other = net.join("Bert");
+    net.run_until(Duration::from_secs(10), "another key joins", |n| {
+        n.members() == 2 && n.peers[other].has(|e| matches!(e, OnlineEvent::Lobby(_)))
+    });
     net.assert_quick();
 }
 
@@ -569,10 +574,22 @@ fn a_dedicated_server_hosts_without_a_player() {
     net.host().peer().lobby().ban_key(banned.public());
     net.host().peer().lobby().ban_ip(odd);
     assert_eq!(net.host().peer().lobby().bans(), (vec![banned.public()], vec![odd]));
+    let banned_secret = banned.secret();
     let c = net.join_as(banned, "Cid");
     net.run_until(Duration::from_secs(10), "the banned key is refused", |n| {
         n.peers[c].has(|e| matches!(e, OnlineEvent::Refused(r) if r == "you are banned from this lobby"))
     });
+    // Lifted, it joins.
+    let banned_key = net.peers[c].key;
+    assert!(net.host().peer().lobby().unban_key(&banned_key));
+    assert!(net.host().peer().lobby().unban_ip(odd));
+    assert_eq!(net.host().peer().lobby().bans(), (vec![], vec![]));
+    let c = net.join_as(Identity::from_secret(banned_secret).unwrap(), "Cid");
+    net.run_until(Duration::from_secs(10), "the unbanned key joins", |n| {
+        n.peers[c].has(|e| matches!(e, OnlineEvent::Lobby(_)))
+    });
+    net.peers[c].peer().leave();
+    net.run_until(Duration::from_secs(10), "it leaves", |n| n.members() == 2);
     // The members and the bot play; the server plays no slot.
     net.ready(&clients);
     net.host().peer().lobby().start(11).unwrap();

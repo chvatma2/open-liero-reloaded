@@ -12,7 +12,7 @@ pub mod config;
 pub mod files;
 pub mod rotation;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
@@ -24,16 +24,15 @@ use rl_content::Content;
 use rl_lobby::{NOT_ADMIN, fingerprint};
 use rl_net::endpoint::EndpointConfig;
 use rl_net::lan::{Announcer, broadcast_targets};
-use rl_online::bundle::GAME_BUNDLE_EXTENSION;
 use rl_online::{OnlineEvent, OnlinePeer, PeerRole, StartError};
 use rl_proto::{
     LanAnnounce, LobbyState, Look, MAX_CHAT, MatchEndWire, MatchStartWire, Phase, PublicKey, SeatWire,
 };
 use rl_sim::Keys;
 
-use crate::admin::{Command, Setting};
+use crate::admin::{Command, Setting, Unban};
 use crate::config::{Config, Visibility};
-use crate::files::hex;
+use crate::files::{BanList, Who, hex};
 use crate::rotation::Rotation;
 
 /// A match starts this long after the lobby gathered, forced (players not
@@ -41,12 +40,16 @@ use crate::rotation::Rotation;
 pub const AUTO_START: Duration = Duration::from_secs(60);
 /// [`run`] polls this often.
 pub const POLL_EVERY: Duration = Duration::from_millis(2);
-/// Desync bundles go here, in the data directory.
+/// Desync bundles go here, in the data directory (rl-online's bounded
+/// `bundle::save`).
 pub const DESYNCS_DIR: &str = "desyncs";
-/// The bans file is brought up to date at most this often (and at the end).
+/// The bans file is compared with the lobby's bans this often (an admin's
+/// ban from the game's lobby; the server's own commands save at once).
 pub const BANS_EVERY: Duration = Duration::from_secs(1);
-/// At most this many desync bundles are kept (`desync-1.rldg`, ...).
-pub const MAX_BUNDLES: u32 = 1000;
+/// A bans file that cannot be written is said at most this often.
+pub const BANS_WARN_EVERY: Duration = Duration::from_secs(60);
+/// Said to an admin who tries to kick or ban an admin (or themselves).
+pub const NOT_AN_ADMIN_TARGET: &str = "admins cannot kick or ban admins (or themselves)";
 
 /// What the server keeps of a member for its log.
 struct Known {
@@ -71,9 +74,21 @@ pub struct Server {
     bans_path: Option<PathBuf>,
     /// The bans as last written to the bans file.
     bans_saved: (Vec<PublicKey>, Vec<IpAddr>),
+    /// Who each banned key was (by `/ban`, `/banip`, or the file).
+    who: BTreeMap<PublicKey, Who>,
+    /// `who` changed since the file was written.
+    who_changed: bool,
     /// When the lobby's bans were last compared with the file's
     /// ([`BANS_EVERY`]; the lists may be long).
     bans_checked: Option<Instant>,
+    /// When a failure to write the bans file was last said.
+    bans_warned: Option<Instant>,
+    /// The last poll's time.
+    now: Option<Instant>,
+    /// Rotation entries the content could not build since the last start.
+    failed: BTreeSet<usize>,
+    /// Every entry failed in a row: no start until the server restarts.
+    halted: bool,
     announcer: Option<Announcer>,
     members: BTreeMap<u8, Known>,
     /// The setup the server last gave the lobby; another (an admin's
@@ -107,7 +122,7 @@ impl Server {
         let bans_path = config.bans_file.as_ref().map(|f| data_dir.join(f));
         let bans = match &bans_path {
             Some(p) => files::load_bans(p)?,
-            None => (Vec::new(), Vec::new()),
+            None => BanList::default(),
         };
         let setup = rotation.setup(config.fill_bots);
         let endpoint = EndpointConfig { port: config.port, ..EndpointConfig::default() };
@@ -115,10 +130,10 @@ impl Server {
         let unused = Look { name: config.name.clone(), colour: [0; 3], skin: rl_lobby::DEFAULT_SKIN.into() };
         let mut peer = OnlinePeer::start(role, endpoint, me, unused, content, Some(setup))
             .with_context(|| format!("hosting on port {}", config.port))?;
-        for &k in &bans.0 {
+        for &k in &bans.keys {
             peer.lobby().ban_key(k);
         }
-        for &ip in &bans.1 {
+        for &ip in &bans.ips {
             peer.lobby().ban_ip(ip);
         }
         let set_by_us = peer.lobby().state().map(|s| s.setup.clone());
@@ -136,7 +151,7 @@ impl Server {
         let fp = fingerprint(&key);
         let identity = if made { "a new identity" } else { "its identity" };
         line(log, format_args!("server {:?} with {identity} {fp} (key {})", config.name, hex(&key)));
-        line(log, format_args!("bans: {} keys, {} addresses", bans.0.len(), bans.1.len()));
+        line(log, format_args!("bans: {} keys, {} addresses", bans.keys.len(), bans.ips.len()));
         line(log, format_args!("listening on port {} (TCP and UDP)", peer.local_port()));
         let next = rotation.next();
         line(log, format_args!("next map: {} on {}", next.mod_id, next.level));
@@ -147,8 +162,14 @@ impl Server {
             data_dir: data_dir.to_path_buf(),
             rotation,
             bans_path,
-            bans_saved: bans,
+            bans_saved: (bans.keys, bans.ips),
+            who: bans.who,
+            who_changed: false,
             bans_checked: None,
+            bans_warned: None,
+            now: None,
+            failed: BTreeSet::new(),
+            halted: false,
             announcer,
             members: BTreeMap::new(),
             set_by_us,
@@ -173,6 +194,7 @@ impl Server {
     /// Does what the network, the lobby and the match have for `now`, and
     /// what the server decides: commands, bots, starts, bans, the log.
     pub fn poll(&mut self, now: Instant, log: &mut dyn Write) {
+        self.now = Some(now);
         let events = self.peer.poll(now, &mut || Keys(0), &mut |_, _, _| {});
         for e in events {
             self.on_event(e, log);
@@ -266,7 +288,11 @@ impl Server {
             line(log, format_args!("refused {} from {name} (not an admin)", command_word(&cmd)));
             return self.peer.lobby().tell(member, NOT_ADMIN);
         }
-        let ban = matches!(cmd, Command::Ban(_));
+        let how = match cmd {
+            Command::Ban(_) => "ban",
+            Command::BanIp(_) => "banip",
+            _ => "kick",
+        };
         match cmd {
             Command::Help => {
                 for l in admin::help(m.admin) {
@@ -286,24 +312,39 @@ impl Server {
                     self.peer.lobby().tell(member, &l);
                 }
             }
-            Command::Kick(target) | Command::Ban(target) => {
+            Command::Kick(target) | Command::Ban(target) | Command::BanIp(target) => {
                 let wanted = target.to_lowercase();
                 let Some(t) = state.members.iter().find(|t| t.look.name.to_lowercase() == wanted) else {
                     return self.peer.lobby().tell(member, &format!("no member named {target}"));
                 };
-                let ip = self.peer.lobby().addr_of(t.id).map_or_else(|| "?".into(), |a| a.ip().to_string());
-                let what = if ban { "ban" } else { "kick" };
+                if t.admin || t.id == member {
+                    line(log, format_args!("refused /{how} {} from {name} (an admin)", t.look.name));
+                    return self.peer.lobby().tell(member, NOT_AN_ADMIN_TARGET);
+                }
+                let addr = self.peer.lobby().addr_of(t.id).map(|a| a.ip());
+                let ip = addr.map_or_else(|| "?".into(), |a| a.to_string());
                 line(
                     log,
                     format_args!(
-                        "{what} {} [{}] from {ip} by {name} key {}",
+                        "{how} {} [{}] from {ip} by {name} key {}",
                         t.look.name,
                         fingerprint(&t.key),
                         hex(&t.key)
                     ),
                 );
-                self.peer.lobby().kick(t.id, ban);
+                match how {
+                    "kick" => self.peer.lobby().kick(t.id, false),
+                    "ban" => self.peer.lobby().kick(t.id, true),
+                    _ => self.peer.lobby().ban_with_address(t.id),
+                }
+                if how != "kick" {
+                    let ip = if how == "banip" { addr } else { None };
+                    self.who.insert(t.key, Who { name: t.look.name.clone(), ip });
+                    self.who_changed = true;
+                    self.save_bans(log);
+                }
             }
+            Command::Unban(arg) => self.unban(member, name, &arg, log),
             Command::Next => {
                 if self.peer.lobby().end_match() {
                     line(log, format_args!("{name} ended the match (/next)"));
@@ -327,6 +368,39 @@ impl Server {
                 Err(why) => self.peer.lobby().tell(member, &why),
             },
         }
+    }
+
+    /// `/unban <name|key prefix|address>`: a key's ban (and the address
+    /// banned with it), or an address's.
+    fn unban(&mut self, member: u8, name: &str, arg: &str, log: &mut dyn Write) {
+        let (keys, _) = self.peer.lobby().bans();
+        let banned: Vec<(PublicKey, Option<&str>)> =
+            keys.iter().map(|k| (*k, self.who.get(k).map(|w| w.name.as_str()))).collect();
+        let lifted = match admin::unban_target(arg, &banned) {
+            Err(why) => return self.peer.lobby().tell(member, &why),
+            Ok(Unban::Address(ip)) => {
+                if !self.peer.lobby().unban_ip(ip) {
+                    return self.peer.lobby().tell(member, &format!("{ip} is not banned"));
+                }
+                ip.to_string()
+            }
+            Ok(Unban::Key(key)) => {
+                self.peer.lobby().unban_key(&key);
+                let who = self.who.remove(&key);
+                self.who_changed = true;
+                let mut text =
+                    format!("{} [{}]", who.as_ref().map_or("a key", |w| w.name.as_str()), fingerprint(&key));
+                if let Some(ip) = who.and_then(|w| w.ip)
+                    && self.peer.lobby().unban_ip(ip)
+                {
+                    text.push_str(&format!(" and {ip}"));
+                }
+                text
+            }
+        };
+        line(log, format_args!("unban {lifted} by {name}"));
+        self.peer.lobby().tell(member, &format!("unbanned {lifted}"));
+        self.save_bans(log);
     }
 
     // ---- the lobby's setup and the starts ----
@@ -367,7 +441,7 @@ impl Server {
             return;
         }
         let since = *self.gathering_since.get_or_insert(now);
-        if seated(state) < self.config.min_players {
+        if self.halted || seated(state) < self.config.min_players {
             return;
         }
         let ready = self.peer.lobby().can_start().is_ok();
@@ -379,13 +453,28 @@ impl Server {
         let started = if ready { self.peer.lobby().start(seed) } else { self.peer.lobby().force_start(seed) };
         match started {
             Ok(()) => {}
-            // The content cannot build it: the rotation's entry is skipped,
-            // an admin's setup dropped.
+            // The content cannot build it: an admin's setup is dropped, the
+            // rotation's entry skipped (said once a cycle); after a whole
+            // cycle of failures no start is tried again.
             Err(StartError::Build(e)) => {
                 let s = &state.setup;
-                line(log, format_args!("cannot start {} on {}: {e}; skipping it", s.mod_id, s.level_id));
-                if !std::mem::take(&mut self.admin_setup) {
-                    self.rotation.advance();
+                if std::mem::take(&mut self.admin_setup) {
+                    line(log, format_args!("cannot start {} on {}: {e}; dropped", s.mod_id, s.level_id));
+                    return;
+                }
+                if self.failed.insert(self.rotation.next_index()) {
+                    line(log, format_args!("cannot start {} on {}: {e}; skipping it", s.mod_id, s.level_id));
+                }
+                self.rotation.advance();
+                if self.failed.len() == self.rotation.len() {
+                    self.halted = true;
+                    line(
+                        log,
+                        format_args!(
+                            "error: no map of the rotation can be built: no match starts until the server \
+                             restarts (the lobby stays open)"
+                        ),
+                    );
                 }
             }
             // Not startable even forced (no ready player): try again later.
@@ -417,6 +506,7 @@ impl Server {
                 start.setup.bots.len()
             ),
         );
+        self.failed.clear();
         // The lobby now offers the map after it (unless an admin's own setup played).
         if self.admin_setup {
             self.admin_setup = false;
@@ -456,34 +546,38 @@ impl Server {
 
     fn save_bundle(&mut self, bytes: &[u8], log: &mut dyn Write) {
         let dir = self.data_dir.join(DESYNCS_DIR);
-        let saved = std::fs::create_dir_all(&dir).and_then(|()| {
-            let path = (1..=MAX_BUNDLES)
-                .map(|n| dir.join(format!("desync-{n}.{GAME_BUNDLE_EXTENSION}")))
-                .find(|p| !p.exists())
-                .ok_or_else(|| std::io::Error::other(format!("{MAX_BUNDLES} bundles are there already")))?;
-            std::fs::write(&path, bytes).map(|()| path)
-        });
-        match saved {
+        let secs =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        // Bounded: 4 MiB a bundle, 64 MiB of bundles (the oldest go).
+        match rl_online::bundle::save(&dir, bytes, secs) {
             Ok(path) => line(log, format_args!("desync bundle saved: {}", path.display())),
             Err(e) => line(log, format_args!("warning: cannot save a desync bundle: {e}")),
         }
     }
 
-    /// Writes the bans file when the lobby's bans changed (a failure is
-    /// logged and tried again at the next check).
+    /// Writes the bans file when the lobby's bans (or who they were)
+    /// changed. A failure is tried again at the next check and said at most
+    /// every [`BANS_WARN_EVERY`].
     fn save_bans(&mut self, log: &mut dyn Write) {
         let bans = self.peer.lobby().bans();
-        if bans == self.bans_saved {
+        if bans == self.bans_saved && !self.who_changed {
             return;
         }
+        self.who.retain(|k, _| bans.0.contains(k));
         if let Some(path) = &self.bans_path {
-            if let Err(e) = files::save_bans(path, &bans.0, &bans.1) {
-                line(log, format_args!("warning: {e:#}"));
+            let list = BanList { keys: bans.0.clone(), ips: bans.1.clone(), who: self.who.clone() };
+            if let Err(e) = files::save_bans(path, &list) {
+                let now = self.now.unwrap_or_else(Instant::now);
+                if self.bans_warned.is_none_or(|t| now.saturating_duration_since(t) >= BANS_WARN_EVERY) {
+                    self.bans_warned = Some(now);
+                    line(log, format_args!("warning: {e:#} (tried again every second)"));
+                }
                 return;
             }
             line(log, format_args!("bans saved: {} keys, {} addresses", bans.0.len(), bans.1.len()));
         }
         self.bans_saved = bans;
+        self.who_changed = false;
     }
 
     fn announce(&mut self, state: &LobbyState, now: Instant) {
@@ -530,6 +624,8 @@ fn command_word(c: &Command) -> &'static str {
     match c {
         Command::Kick(_) => "/kick",
         Command::Ban(_) => "/ban",
+        Command::BanIp(_) => "/banip",
+        Command::Unban(_) => "/unban",
         Command::Next => "/next",
         Command::Settings(_) => "/settings",
         Command::Players => "/players",

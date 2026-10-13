@@ -1,7 +1,8 @@
 //! `rl-server --config <file.ron> [--content <dir>] [--data-dir <dir>]`:
 //! the dedicated server (networking spec §7.4). Logs every event to the
 //! terminal and to `<data>/server.log`, each line stamped with the UTC
-//! time. Type `quit` (and Enter) to stop it cleanly: everyone gets `Bye`.
+//! time. Ctrl+C, SIGTERM, closing its console (Windows) or typing `quit`
+//! stops it cleanly: everyone gets `Bye`.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead as _, Write};
@@ -54,8 +55,10 @@ fn main() -> anyhow::Result<()> {
         .open(data_dir.join(LOG_FILE))
         .with_context(|| format!("opening {}", data_dir.join(LOG_FILE).display()))?;
     let mut log = Stamped { file, line_start: true };
+    // Ruling T13-A: the handler only sets the flag the loop reads.
+    ctrlc::set_handler(|| STOP.store(true, Ordering::Relaxed)).context("the Ctrl+C handler")?;
     std::thread::Builder::new().name("rl-server-console".into()).spawn(console)?;
-    println!("type quit to stop the server");
+    println!("Ctrl+C or quit stops the server");
     rl_server::run(config, content, &data_dir, &STOP, &mut log)
 }
 

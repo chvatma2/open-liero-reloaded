@@ -265,7 +265,8 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   its replay being made to `Shell::replays`, polled every frame and
   waited for at quitting, at most `REPLAY_STOP_WAIT` 2 s: leaving right
   after a match keeps its replay); `DesyncBundle` → `<data>/desyncs/
-  desync-<unix s>-<n>.rldg` (`net::save_bundle`; rl-online's `GameBundle`:
+  desync-<unix s>-<n>.rldg` (`net::save_bundle`, rl-online's bounded
+  `bundle::save`: 4 MiB a bundle, 64 MiB in all; rl-online's `GameBundle`:
   the start, the confirmed input rows from tick 0, both checksums, the
   build fingerprint, the platform; a `net-repro` for game bundles is
   still to come). The lobby's commands (`lobby_command`): Start and Force

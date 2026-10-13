@@ -223,15 +223,19 @@ fn bans_given_by_key_or_address_are_refused_and_listed() {
     assert_eq!(net.peers[b].received, vec![ToClient::Refused(Refusal::Banned)]);
     let c = join(&mut net, 3, "Cid");
     assert!(matches!(net.peers[c].events[0], ClientEvent::Welcome { .. }));
-    // A kick's ban joins the lists, in order.
-    net.host.kick(id_of(&net, c), true);
+    // A ban with the address joins both lists, in order.
+    net.host.ban_with_address(id_of(&net, c));
     net.settle();
-    assert_eq!(net.host.banned_keys().copied().collect::<Vec<_>>(), {
-        let mut k = vec![key(1), key(3)];
-        k.sort();
-        k
-    });
+    assert!(got(&net, c, &ClientEvent::Kicked { banned: true }));
+    let mut keys = vec![key(1), key(3)];
+    keys.sort();
+    assert_eq!(net.host.banned_keys().copied().collect::<Vec<_>>(), keys);
     assert_eq!(net.host.banned_ips().copied().collect::<Vec<_>>(), vec![ip(3), ip(9)]);
+    // Lifted: the key and the address join again.
+    assert!(net.host.unban_key(&key(3)) && net.host.unban_ip(ip(3)));
+    assert!(!net.host.unban_key(&key(3)) && !net.host.unban_ip(ip(3)), "once");
+    let back = join(&mut net, 3, "Cid");
+    assert!(matches!(net.peers[back].events[0], ClientEvent::Welcome { .. }));
     consistent(&net);
 }
 
@@ -265,19 +269,27 @@ fn banned_keys_and_ips_are_refused() {
     assert!(!net.peers[a].open);
     assert!(got(&net, b, &ClientEvent::Notice(Notice::Banned(a_id))));
     assert!(net.host_events.contains(&HostEvent::Kick { peer: net.peers[a].peer, ban: true }));
+    // Spec §5.2: by key; the address stays open.
     assert!(net.host.banned(&key(1)));
-    assert!(net.host.banned_ip(ip(1)));
+    assert!(!net.host.banned_ip(ip(1)));
     assert!(!net.host.banned(&key(2)) && !net.host.banned_ip(ip(2)));
 
     // The same key from another address.
     let again = net.join(LobbyClient::new(ident(1), look("Ann"), None, None), ip(50));
     net.settle();
     assert!(got(&net, again, &ClientEvent::Refused(Refusal::Banned)));
-    // Another key from the banned address: refused at once, no challenge.
-    let other = net.join(LobbyClient::new(ident(3), look("Cid"), None, None), ip(1));
+    // Another key from the same address: welcome.
+    let other = join(&mut net, 3, "Cid");
+    assert!(matches!(net.peers[other].events[0], ClientEvent::Welcome { .. }));
+    // Banned with the address: another key from it is refused at once.
+    let c_id = id_of(&net, other);
+    net.host.ban_with_address(c_id);
     net.settle();
-    assert_eq!(net.peers[other].received, vec![ToClient::Refused(Refusal::Banned)]);
-    assert!(!net.peers[other].open);
+    assert!(net.host.banned(&key(3)) && net.host.banned_ip(ip(3)));
+    let from_there = net.join(LobbyClient::new(ident(4), look("Dan"), None, None), ip(3));
+    net.settle();
+    assert_eq!(net.peers[from_there].received, vec![ToClient::Refused(Refusal::Banned)]);
+    assert!(!net.peers[from_there].open);
 
     // A plain kick does not ban.
     let b_id = id_of(&net, b);
@@ -346,6 +358,22 @@ fn setup_changes_clear_ready() {
     assert!(!member(&net, a).ready && !member(&net, b).ready);
     assert!(member_by_id(&net, host_id(&net)).ready, "the host's own ready stays");
     assert_eq!(net.peers[a].client.as_ref().unwrap().state().unwrap().setup, changed);
+
+    // Only the bots changed (a server's fill bots, Add/Remove bot): the
+    // ready marks stay.
+    for x in [a, b] {
+        net.client(x).set_ready(true);
+    }
+    net.settle();
+    let mut more_bots = changed.clone();
+    more_bots.bots = setup(2).bots;
+    net.host.set_setup(more_bots.clone()).unwrap();
+    net.settle();
+    assert!(member(&net, a).ready && member(&net, b).ready, "bots alone keep ready");
+    assert_eq!(net.host.state().setup, more_bots);
+    net.host.set_setup(changed.clone()).unwrap();
+    net.settle();
+    assert!(member(&net, a).ready && member(&net, b).ready);
 
     // The same setup again changes nothing.
     for x in [a, b] {
@@ -429,7 +457,7 @@ fn only_admins_kick() {
     net.client(a).admin(AdminCommand::Ban(key(2)));
     net.settle();
     assert!(got(&net, b, &ClientEvent::Kicked { banned: true }));
-    assert!(net.host.banned(&key(2)) && net.host.banned_ip(ip(2)));
+    assert!(net.host.banned(&key(2)) && !net.host.banned_ip(ip(2)), "an admin's ban is by key");
     // A key not in the lobby is banned all the same.
     net.client(a).admin(AdminCommand::Ban(key(9)));
     net.client(a).admin(AdminCommand::Next);
@@ -916,8 +944,10 @@ fn worm_counts_bound_the_start() {
     net.client(a).set_ready(true);
     net.settle();
     assert_eq!(net.host.can_start(), Err(NotStartable::TooManyWorms));
-    // Not-ready players are named to everyone when a start fails.
+    // Not-ready players are named to everyone when a start fails (a
+    // change of bots alone keeps Ann's ready mark: she takes it back).
     net.host.set_setup(setup(0)).unwrap();
+    net.client(a).set_ready(false);
     net.settle();
     assert_eq!(net.host.start(1, &BTreeMap::new()), Err(NotStartable::NotReady(vec![id_of(&net, a)])));
     net.settle();

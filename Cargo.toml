@@ -86,6 +86,9 @@ str0m = { version = "=0.24.0", default-features = false, features = ["rust-crypt
 tungstenite = "=0.30.0"
 # OS randomness for the native peers (plan 10).
 getrandom = "=0.4.3"
+# The dedicated server stops cleanly on Ctrl+C, SIGTERM and a closed
+# console (plan 10 ruling T13-A): an exact pin.
+ctrlc = { version = "=3.5.2", features = ["termination"] }
 # Identity keys (plan 10, spec §5.2): BIP-340 Schnorr over secp256k1, no_std.
 k256 = { version = "=0.14.0", default-features = false, features = ["schnorr"] }
 

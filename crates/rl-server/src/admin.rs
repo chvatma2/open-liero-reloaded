@@ -1,19 +1,35 @@
 //! Chat commands (networking spec §7.4): admins' `/kick <name>`,
-//! `/ban <name>`, `/next`, `/settings <field> <value>`; anyone's
-//! `/players` and `/help`. Parsed defensively: a chat line is at most 200
-//! characters, a name at most `MAX_NAME`, a value at most `MAX_VALUE`.
+//! `/ban <name>` (the key, spec §5.2), `/banip <name>` (the key and the
+//! address), `/unban <name|key prefix|address>`, `/next`,
+//! `/settings <field> <value>`; anyone's `/players` and `/help`. Parsed
+//! defensively: a chat line is at most 200 characters, a name at most
+//! `MAX_NAME`, a value at most `MAX_VALUE`, an unban's argument at most
+//! `MAX_UNBAN`.
 
-use rl_proto::MAX_NAME;
+use std::net::IpAddr;
+
+use rl_proto::{MAX_NAME, PublicKey};
+
+use crate::files::hex;
 
 /// The longest value `/settings` reads.
 pub const MAX_VALUE: usize = 16;
+/// The longest argument `/unban` reads (a whole key).
+pub const MAX_UNBAN: usize = 64;
+/// A key prefix `/unban` takes has at least this many hex characters.
+pub const MIN_KEY_PREFIX: usize = 8;
 
 /// A command from the chat.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     /// A member by name (any case).
     Kick(String),
+    /// Bans the member's key.
     Ban(String),
+    /// Bans the member's key and address.
+    BanIp(String),
+    /// Lifts a ban: a banned name, a key prefix or an address.
+    Unban(String),
     /// Ends the match, or skips to the next map while gathering.
     Next,
     Settings(Setting),
@@ -43,7 +59,8 @@ pub fn help(admin: bool) -> Vec<&'static str> {
     let mut lines = vec!["/players: who is here", "/help: these commands"];
     if admin {
         lines.extend([
-            "/kick <name>, /ban <name>: remove a member (a ban keeps its key and address out)",
+            "/kick <name>, /ban <name>: remove a member (a ban keeps its key out)",
+            "/banip <name>: ban its key and its address; /unban <name|key prefix|address>",
             "/next: end the match, or skip to the next map",
             "/settings <field> <value>: time_limit (minutes), kill_limit, lives, bonuses (on/off)",
         ]);
@@ -63,12 +80,52 @@ pub fn parse(line: &str) -> Option<Result<Command, String>> {
     Some(match word.as_str() {
         "kick" => name(arg, "kick").map(Command::Kick),
         "ban" => name(arg, "ban").map(Command::Ban),
+        "banip" => name(arg, "banip").map(Command::BanIp),
+        "unban" => match arg.chars().count() {
+            0 => Err("usage: /unban <name|key prefix|address>".into()),
+            n if n > MAX_UNBAN => Err("no ban matches that".into()),
+            _ => Ok(Command::Unban(arg.to_string())),
+        },
         "next" => Ok(Command::Next),
         "settings" => setting(arg).map(Command::Settings),
         "players" => Ok(Command::Players),
         "help" => Ok(Command::Help),
         _ => Err(format!("unknown command /{}: try /help", word.chars().take(MAX_NAME).collect::<String>())),
     })
+}
+
+/// What `/unban <arg>` lifts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unban {
+    Address(IpAddr),
+    /// The key (and the address its ban recorded).
+    Key(PublicKey),
+}
+
+/// The ban `/unban <arg>` names among `banned` (each key with the name it
+/// was banned under, if known): an address, else a name (any case), else
+/// a key prefix of at least [`MIN_KEY_PREFIX`] hex characters; exactly
+/// one must match.
+pub fn unban_target(arg: &str, banned: &[(PublicKey, Option<&str>)]) -> Result<Unban, String> {
+    if let Ok(ip) = arg.parse::<IpAddr>() {
+        return Ok(Unban::Address(ip));
+    }
+    let lower = arg.to_lowercase();
+    let by_name: Vec<PublicKey> =
+        banned.iter().filter(|(_, n)| n.is_some_and(|n| n.to_lowercase() == lower)).map(|b| b.0).collect();
+    let matches = if by_name.is_empty()
+        && lower.len() >= MIN_KEY_PREFIX
+        && lower.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        banned.iter().map(|b| b.0).filter(|k| hex(k).starts_with(&lower)).collect()
+    } else {
+        by_name
+    };
+    match matches[..] {
+        [key] => Ok(Unban::Key(key)),
+        [] => Err(format!("no ban matches {arg} (a name, {MIN_KEY_PREFIX}+ hex of a key, or an address)")),
+        _ => Err(format!("several bans match {arg}: give more of the key")),
+    }
 }
 
 fn name(arg: &str, cmd: &str) -> Result<String, String> {
@@ -117,6 +174,8 @@ mod tests {
         assert_eq!(parse("hello"), None);
         assert_eq!(parse(" /KICK  Anna (2) "), Some(Ok(Command::Kick("Anna (2)".into()))));
         assert_eq!(parse("/ban Bob"), Some(Ok(Command::Ban("Bob".into()))));
+        assert_eq!(parse("/BanIP Bob"), Some(Ok(Command::BanIp("Bob".into()))));
+        assert_eq!(parse("/unban 10.0.0.1"), Some(Ok(Command::Unban("10.0.0.1".into()))));
         assert_eq!(parse("/next"), Some(Ok(Command::Next)));
         assert_eq!(parse("/players"), Some(Ok(Command::Players)));
         assert_eq!(parse("/help me"), Some(Ok(Command::Help)));
@@ -130,6 +189,8 @@ mod tests {
     fn bad_commands_say_why() {
         for line in [
             "/kick",
+            "/banip",
+            "/unban",
             "/kick ThisNameIsFarTooLongToBeAnyMembers",
             "/settings",
             "/settings lives",
@@ -151,6 +212,22 @@ mod tests {
         for line in ["/\u{0}", "/kick \u{202e}x", "/settings é é", &"/".repeat(300), "/ kick x"] {
             let _ = parse(line);
         }
+    }
+
+    #[test]
+    fn unban_finds_one_ban() {
+        let (a, b): ([u8; 32], [u8; 32]) = ([0xab; 32], [0xac; 32]);
+        let banned = [(a, Some("Bob")), (b, None)];
+        assert_eq!(unban_target("bob", &banned), Ok(Unban::Key(a)));
+        assert_eq!(unban_target("acacacac", &banned), Ok(Unban::Key(b)));
+        assert_eq!(unban_target(&hex(&a), &banned), Ok(Unban::Key(a)));
+        assert_eq!(unban_target("10.0.0.7", &banned), Ok(Unban::Address("10.0.0.7".parse().unwrap())));
+        assert_eq!(unban_target("::1", &banned), Ok(Unban::Address("::1".parse().unwrap())));
+        assert!(unban_target("acac", &banned).is_err(), "too short a prefix");
+        assert!(unban_target("Cid", &banned).is_err());
+        let twice = [(a, Some("Bob")), (b, Some("BOB"))];
+        assert!(unban_target("bob", &twice).is_err(), "ambiguous");
+        assert!(unban_target("a", &[(a, None), ([0xaa; 32], None)]).is_err());
     }
 
     #[test]

@@ -71,6 +71,17 @@ impl Rotation {
         &self.entries[self.next].entry
     }
 
+    /// The next entry's place in the rotation.
+    pub fn next_index(&self) -> usize {
+        self.next
+    }
+
+    /// How many entries the rotation has (at least one).
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
     /// The next match's setup with `bots` bots.
     pub fn setup(&self, bots: u8) -> MatchSetupWire {
         self.entries[self.next].setup(bots)

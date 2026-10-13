@@ -76,7 +76,15 @@ impl Rec {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Gone {
     Left,
-    Kicked { ban: bool },
+    Kicked { ban: Ban },
+}
+
+/// What a kick bans (spec §5.2: by key, optionally the address).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Ban {
+    No,
+    Key,
+    KeyAndAddress,
 }
 
 /// The lobby's host.
@@ -271,10 +279,15 @@ impl LobbyHost {
             return Err(LobbyError::InvalidSetup);
         }
         if setup != self.setup {
+            // Only the bots changed (a server's fill bots, Add/Remove bot):
+            // the players' ready marks stay.
+            let bots_only = MatchSetupWire { bots: setup.bots.clone(), ..self.setup.clone() } == setup;
             self.setup = setup;
-            let me = self.me;
-            for m in self.members.iter_mut().filter(|m| Some(m.id) != me) {
-                m.said_ready = false;
+            if !bots_only {
+                let me = self.me;
+                for m in self.members.iter_mut().filter(|m| Some(m.id) != me) {
+                    m.said_ready = false;
+                }
             }
             self.publish();
         }
@@ -313,9 +326,20 @@ impl LobbyHost {
         }
     }
 
-    /// Kicks a member (not the host's own); `ban` also bans its key and
-    /// address for the lobby's life.
+    /// Kicks a member (not the host's own); `ban` also bans its key for
+    /// the lobby's life (spec §5.2: by key; [`LobbyHost::ban_with_address`]
+    /// bans the address too).
     pub fn kick(&mut self, member: u8, ban: bool) {
+        self.kick_as(member, if ban { Ban::Key } else { Ban::No });
+    }
+
+    /// Kicks a member (not the host's own) and bans its key and its
+    /// address for the lobby's life.
+    pub fn ban_with_address(&mut self, member: u8) {
+        self.kick_as(member, Ban::KeyAndAddress);
+    }
+
+    fn kick_as(&mut self, member: u8, ban: Ban) {
         if Some(member) != self.me && self.index(member).is_some() {
             self.drop_member(member, Gone::Kicked { ban });
         }
@@ -525,6 +549,16 @@ impl LobbyHost {
         self.banned_ips.insert(ip);
     }
 
+    /// Lifts a key's ban; whether it was banned.
+    pub fn unban_key(&mut self, key: &PublicKey) -> bool {
+        self.banned_keys.remove(key)
+    }
+
+    /// Lifts an address's ban; whether it was banned.
+    pub fn unban_ip(&mut self, ip: IpAddr) -> bool {
+        self.banned_ips.remove(&ip)
+    }
+
     // ---- joining ----
 
     fn receive_pending(&mut self, peer: PeerId, msg: ToHost) {
@@ -645,7 +679,9 @@ impl LobbyHost {
     fn receive_member(&mut self, peer: PeerId, id: u8, msg: ToHost, now_us: u64) {
         let Some(i) = self.index(id) else { return };
         match msg {
-            ToHost::Hello { .. } | ToHost::Prove { .. } => self.drop_member(id, Gone::Kicked { ban: false }),
+            ToHost::Hello { .. } | ToHost::Prove { .. } => {
+                self.drop_member(id, Gone::Kicked { ban: Ban::No })
+            }
             ToHost::SetLook(look) => {
                 self.set_look(id, &look);
                 self.publish();
@@ -716,7 +752,10 @@ impl LobbyHost {
                     Some(target) if Some(target) == self.me => {
                         self.out.push((peer, ToClient::Notice(Notice::Message(NOT_THE_HOST.into()))));
                     }
-                    Some(target) => self.drop_member(target, Gone::Kicked { ban }),
+                    Some(target) => {
+                        let ban = if ban { Ban::Key } else { Ban::No };
+                        self.drop_member(target, Gone::Kicked { ban });
+                    }
                     None if ban => {
                         self.banned_keys.insert(key);
                     }
@@ -743,12 +782,13 @@ impl LobbyHost {
                 self.events.push(HostEvent::Left(id));
             }
             Gone::Kicked { ban } => {
-                if ban {
+                if ban != Ban::No {
                     self.banned_keys.insert(rec.key);
-                    if let Some(addr) = rec.addr {
-                        self.banned_ips.insert(addr);
-                    }
                 }
+                if let (Ban::KeyAndAddress, Some(addr)) = (ban, rec.addr) {
+                    self.banned_ips.insert(addr);
+                }
+                let ban = ban != Ban::No;
                 if let Some(peer) = rec.peer {
                     self.out.push((peer, ToClient::Kicked { banned: ban }));
                     self.events.push(HostEvent::Kick { peer, ban });

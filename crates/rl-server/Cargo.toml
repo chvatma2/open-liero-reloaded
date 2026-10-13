@@ -26,6 +26,7 @@ rl-modes.workspace = true
 rl-sim.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+ctrlc.workspace = true
 serde = { workspace = true, features = ["std"] }
 ron.workspace = true
 

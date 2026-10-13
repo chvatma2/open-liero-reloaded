@@ -2,6 +2,7 @@
 //! (`server-identity.ron`, owner-only like the game's `identity.ron`) and
 //! the bans file.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write as _};
 use std::net::IpAddr;
@@ -27,12 +28,33 @@ struct IdentityFile {
     secret: String,
 }
 
-/// The bans kept across restarts: keys (64 hex characters) and addresses.
+/// The bans file: keys (64 hex characters), addresses, and who each key
+/// was (by its hex), for `/unban <name>`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct Bans {
-    pub keys: Vec<String>,
+struct BansFile {
+    keys: Vec<String>,
+    ips: Vec<IpAddr>,
+    who: BTreeMap<String, Who>,
+}
+
+/// Who a banned key was: its name, and the address banned with it
+/// (`/banip`; lifted with the key).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Who {
+    pub name: String,
+    #[serde(default)]
+    pub ip: Option<IpAddr>,
+}
+
+/// The bans kept across restarts.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BanList {
+    pub keys: Vec<PublicKey>,
     pub ips: Vec<IpAddr>,
+    /// Only for banned keys.
+    pub who: BTreeMap<PublicKey, Who>,
 }
 
 /// 32 bytes as 64 lowercase hex characters.
@@ -93,25 +115,38 @@ fn fresh_identity() -> anyhow::Result<Identity> {
 }
 
 /// The bans in `path` (none when there is no file); its keys checked.
-pub fn load_bans(path: &Path) -> anyhow::Result<(Vec<PublicKey>, Vec<IpAddr>)> {
+pub fn load_bans(path: &Path) -> anyhow::Result<BanList> {
     let text = match fs::metadata(path) {
         Ok(m) if m.len() > MAX_BANS_BYTES => bail!("{}: larger than {MAX_BANS_BYTES} bytes", path.display()),
         Ok(_) => fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok((Vec::new(), Vec::new())),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(BanList::default()),
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    let bans: Bans = ron::from_str(&text).with_context(|| format!("{}", path.display()))?;
-    let keys = bans
-        .keys
-        .iter()
-        .map(|k| parse_key(k).with_context(|| format!("{}: key {k:?}", path.display())))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    Ok((keys, bans.ips))
+    let bans: BansFile = ron::from_str(&text).with_context(|| format!("{}", path.display()))?;
+    let key = |k: &String| parse_key(k).with_context(|| format!("{}: key {k:?}", path.display()));
+    let keys = bans.keys.iter().map(key).collect::<anyhow::Result<Vec<_>>>()?;
+    let mut who = BTreeMap::new();
+    for (k, w) in bans.who {
+        let k = key(&k)?;
+        if keys.contains(&k) {
+            who.insert(k, w);
+        }
+    }
+    Ok(BanList { keys, ips: bans.ips, who })
 }
 
 /// Writes the bans to `path` atomically.
-pub fn save_bans(path: &Path, keys: &[PublicKey], ips: &[IpAddr]) -> anyhow::Result<()> {
-    let bans = Bans { keys: keys.iter().map(hex).collect(), ips: ips.to_vec() };
+pub fn save_bans(path: &Path, bans: &BanList) -> anyhow::Result<()> {
+    let bans = BansFile {
+        keys: bans.keys.iter().map(hex).collect(),
+        ips: bans.ips.clone(),
+        who: bans
+            .who
+            .iter()
+            .filter(|(k, _)| bans.keys.contains(k))
+            .map(|(k, w)| (hex(k), w.clone()))
+            .collect(),
+    };
     write_atomic(path, to_ron(&bans)?.as_bytes(), false).with_context(|| format!("saving {}", path.display()))
 }
 
@@ -173,10 +208,19 @@ mod tests {
     fn bans_round_trip_and_a_missing_file_is_none() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bans.ron");
-        assert_eq!(load_bans(&path).unwrap(), (vec![], vec![]));
+        assert_eq!(load_bans(&path).unwrap(), BanList::default());
         let ips: Vec<IpAddr> = vec!["10.0.0.1".parse().unwrap(), "::1".parse().unwrap()];
-        save_bans(&path, &[[7; 32]], &ips).unwrap();
-        assert_eq!(load_bans(&path).unwrap(), (vec![[7; 32]], ips));
+        let who = Who { name: "Bob".into(), ip: Some(ips[0]) };
+        let mut bans = BanList { keys: vec![[7; 32]], ips, who: BTreeMap::from([([7; 32], who)]) };
+        save_bans(&path, &bans).unwrap();
+        assert_eq!(load_bans(&path).unwrap(), bans);
+        // Who an unbanned key was is not kept.
+        bans.who.insert([8; 32], Who { name: "Old".into(), ip: None });
+        save_bans(&path, &bans).unwrap();
+        assert_eq!(load_bans(&path).unwrap().who.len(), 1);
+        // A hand-written file: keys alone.
+        fs::write(&path, format!("(keys: [{:?}])", hex(&[9; 32]))).unwrap();
+        assert_eq!(load_bans(&path).unwrap().keys, vec![[9; 32]]);
         fs::write(&path, "(keys: [\"zz\"])").unwrap();
         assert!(load_bans(&path).is_err(), "a bad key is an error, not an empty list");
     }

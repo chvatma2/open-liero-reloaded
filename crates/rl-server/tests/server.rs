@@ -18,7 +18,7 @@ use rl_online::{OnlineEvent, OnlinePeer, PeerRole};
 use rl_proto::{Look, Phase, PublicKey, SeatWire};
 use rl_server::config::Config;
 use rl_server::files::{IDENTITY_FILE, hex};
-use rl_server::{Server, run};
+use rl_server::{NOT_AN_ADMIN_TARGET, Server, run};
 use rl_sim::Keys;
 
 const DIRT: &str = "olx-level-dirt-level";
@@ -150,6 +150,8 @@ impl Client {
 /// A server and its clients, polled together on the real clock.
 struct Rig {
     content_dir: PathBuf,
+    /// The server's content (the clients': `content_dir`).
+    server_content: PathBuf,
     data: tempfile::TempDir,
     server: Option<Server>,
     log: Vec<u8>,
@@ -159,9 +161,14 @@ struct Rig {
 
 impl Rig {
     fn new(content_dir: PathBuf, config: Config) -> Rig {
+        Rig::new_on(content_dir.clone(), content_dir, config)
+    }
+
+    fn new_on(content_dir: PathBuf, server_content: PathBuf, config: Config) -> Rig {
         let data = tempfile::tempdir().unwrap();
         let mut rig = Rig {
             content_dir,
+            server_content,
             data,
             server: None,
             log: Vec::new(),
@@ -177,7 +184,8 @@ impl Rig {
         if let Some(mut s) = self.server.take() {
             s.shutdown(&mut self.log);
         }
-        let s = Server::start(config, content(&self.content_dir), self.data.path(), &mut self.log).unwrap();
+        let s =
+            Server::start(config, content(&self.server_content), self.data.path(), &mut self.log).unwrap();
         self.server = Some(s);
     }
 
@@ -323,17 +331,19 @@ fn a_server_runs_a_rotation() {
 #[test]
 fn admins_kick_and_ban_by_chat() {
     let Some(dir) = content_dir() else { return };
-    let admin = identity();
-    let cfg = || config(&[admin.public()], 0, false, 1.0);
+    let (admin, zed_id) = (identity(), identity());
+    let admins = [admin.public(), zed_id.public()];
+    let cfg = || config(&admins, 0, false, 1.0);
     let mut rig = Rig::new(dir, cfg());
     let server_key = rig.server().key();
     let anna = rig.join_as(admin.clone(), "Anna");
+    let zed = rig.join_as(zed_id, "Zed");
     let bob_id = identity();
     let bob_secret = bob_id.secret();
     let bob = rig.join_as(bob_id, "Bob");
     let cid = rig.join_all(&["Cid"])[0];
     rig.run_until(Duration::from_secs(10), "everyone is in", |r| {
-        r.clients[anna].welcomed() && r.clients[bob].welcomed() && r.member_names(cid).len() == 3
+        [anna, zed, bob].iter().all(|&c| r.clients[c].welcomed()) && r.member_names(cid).len() == 4
     });
     // A kick, by a name in any case: Cid may come back.
     rig.say(anna, "/kick cid");
@@ -342,26 +352,54 @@ fn admins_kick_and_ban_by_chat() {
     });
     let back = rig.join_all(&["Cid"])[0];
     assert!(rig.clients[back].welcomed());
-    // A ban: Bob is gone, and his key cannot come back.
+    // A ban is by key (spec §5.2): Bob's key stays out, his address does not.
     let bob_key = rig.clients[bob].key;
     rig.say(anna, "/ban BOB");
     rig.run_until(Duration::from_secs(10), "Bob is banned", |r| {
         r.clients[bob].has(|e| matches!(e, OnlineEvent::Kicked { banned: true }))
     });
+    // Saved at once, with who he was.
+    let bans = rig.data.path().join("bans.ron");
+    let text = std::fs::read_to_string(&bans).expect("the bans file, written at the ban");
+    assert!(text.contains(&hex(&bob_key)) && text.contains("Bob"), "{text}");
+    assert!(!text.contains("127.0.0.1"), "a key-only ban: {text}");
     let again = rig.join_as(Identity::from_secret(bob_secret).unwrap(), "Bob");
+    let eve = rig.join_all(&["Eve"])[0];
     rig.run_until(Duration::from_secs(10), "Bob's rejoin is refused", |r| {
         r.clients[again].refused().is_some()
     });
     assert_eq!(rig.clients[again].refused(), Some("you are banned from this lobby"));
-    let log = rig.log_text();
-    assert!(log.contains("kick Cid"), "{log}");
-    assert!(log.contains("ban Bob"), "{log}");
-    // The bans file holds his key and address.
-    let bans = rig.data.path().join("bans.ron");
-    rig.run_until(Duration::from_secs(5), "the bans file is written", |_| bans.is_file());
+    assert!(rig.clients[eve].welcomed(), "another key from the same address joins");
+    // Admins (and oneself) cannot be kicked or banned.
+    rig.say(anna, "/kick Zed");
+    rig.hears(anna, NOT_AN_ADMIN_TARGET);
+    rig.say(anna, "/ban anna");
+    rig.run_until(Duration::from_secs(10), "refused twice", |r| {
+        r.clients[anna].notices().iter().filter(|n| **n == NOT_AN_ADMIN_TARGET).count() == 2
+    });
+    assert!(!rig.clients[zed].has(|e| matches!(e, OnlineEvent::Kicked { .. })));
+    assert!(!rig.clients[anna].has(|e| matches!(e, OnlineEvent::Kicked { .. })));
+    // A ban with the address: a new key from there is refused too.
+    rig.say(anna, "/banip Eve");
+    rig.run_until(Duration::from_secs(10), "Eve is banned", |r| {
+        r.clients[eve].has(|e| matches!(e, OnlineEvent::Kicked { banned: true }))
+    });
+    assert!(std::fs::read_to_string(&bans).unwrap().contains("127.0.0.1"));
+    let fay = rig.join_as(identity(), "Fay");
+    rig.run_until(Duration::from_secs(10), "Fay is refused", |r| r.clients[fay].refused().is_some());
+    assert_eq!(rig.clients[fay].refused(), Some("you are banned from this lobby"));
+    // Lifted by name: the key and the address.
+    let eve_secret_key = rig.clients[eve].key;
+    rig.say(anna, "/unban eve");
+    rig.hears(anna, "unbanned Eve");
     let text = std::fs::read_to_string(&bans).unwrap();
-    assert!(text.contains(&hex(&bob_key)), "{text}");
-    assert!(text.contains("127.0.0.1"), "{text}");
+    assert!(!text.contains("127.0.0.1") && !text.contains(&hex(&eve_secret_key)), "{text}");
+    let fay = rig.join_all(&["Fay"])[0];
+    assert!(rig.clients[fay].welcomed());
+    let log = rig.log_text();
+    for want in ["kick Cid", "ban Bob", "banip Eve", "unban Eve", "refused /kick Zed"] {
+        assert!(log.contains(want), "{want:?} in the log:\n{log}");
+    }
 
     // Stopping says goodbye to everyone.
     rig.restart(cfg());
@@ -369,19 +407,45 @@ fn admins_kick_and_ban_by_chat() {
         r.clients[anna].has(|e| matches!(e, OnlineEvent::Disconnected(_)))
     });
     assert_eq!(rig.server().key(), server_key, "the same identity after a restart");
-    // After the restart the ban holds.
+    // After the restart Bob's key ban holds; Anna, from the same address, joins.
     let later = rig.join_as(Identity::from_secret(bob_secret).unwrap(), "Bob");
-    rig.run_until(Duration::from_secs(10), "Bob is still refused", |r| r.clients[later].refused().is_some());
-    assert_eq!(rig.clients[later].refused(), Some("you are banned from this lobby"));
-    // By the key alone too: the file without its addresses.
-    std::fs::write(&bans, format!("(keys: [{:?}], ips: [])", hex(&bob_key))).unwrap();
-    rig.restart(cfg());
-    let by_key = rig.join_as(Identity::from_secret(bob_secret).unwrap(), "Bob");
-    let admin_again = rig.join_as(admin, "Anna");
+    let anna = rig.join_as(admin, "Anna");
     rig.run_until(Duration::from_secs(10), "Bob refused, Anna welcomed", |r| {
-        r.clients[by_key].refused().is_some() && r.clients[admin_again].welcomed()
+        r.clients[later].refused().is_some() && r.clients[anna].welcomed()
     });
-    assert_eq!(rig.clients[by_key].refused(), Some("you are banned from this lobby"));
+    assert_eq!(rig.clients[later].refused(), Some("you are banned from this lobby"));
+    // Lifted by a key prefix.
+    rig.say(anna, &format!("/unban {}", &hex(&bob_key)[..12]));
+    rig.hears(anna, "unbanned Bob");
+    let bob = rig.join_as(Identity::from_secret(bob_secret).unwrap(), "Bob");
+    rig.run_until(Duration::from_secs(10), "Bob comes back", |r| r.clients[bob].welcomed());
+    rig.assert_quick();
+}
+
+/// Ruling T13-C: a player joining a server full of bots changes only the
+/// bots, so the others stay ready.
+#[test]
+fn a_joiner_leaves_the_others_ready() {
+    let Some(dir) = content_dir() else { return };
+    let mut rig = Rig::new(dir, config(&[], 4, false, 1.0));
+    let anna = rig.join_all(&["Anna"])[0];
+    rig.clients[anna].p.lobby().set_ready(true);
+    let anna_ready = |r: &mut Rig| {
+        let me = r.clients[anna].p.lobby().me();
+        r.clients[anna]
+            .p
+            .lobby()
+            .state()
+            .is_some_and(|s| s.members.iter().any(|m| Some(m.id) == me && m.ready))
+    };
+    rig.run_until(Duration::from_secs(10), "Anna is ready with three bots", |r| {
+        anna_ready(r) && r.clients[anna].p.lobby().state().is_some_and(|s| s.setup.bots.len() == 3)
+    });
+    let bert = rig.join_all(&["Bert"])[0];
+    rig.run_until(Duration::from_secs(10), "two bots for two players", |r| {
+        r.clients[bert].p.lobby().state().is_some_and(|s| s.setup.bots.len() == 2 && s.members.len() == 2)
+    });
+    assert!(anna_ready(&mut rig), "Anna is still ready");
     rig.assert_quick();
 }
 
@@ -448,6 +512,48 @@ fn admins_change_the_settings_and_skip_maps() {
     rig.hears(anna, "/kick");
     rig.say(anna, "/kick Nobody");
     rig.hears(anna, "no member named");
+    rig.assert_quick();
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        if e.file_type().unwrap().is_dir() {
+            copy_dir(&e.path(), &to.join(e.file_name()));
+        } else {
+            std::fs::copy(e.path(), to.join(e.file_name())).unwrap();
+        }
+    }
+}
+
+/// Maps the content can no longer build are skipped, each said once; after
+/// a whole cycle of failures the server stops trying (the lobby stays).
+#[test]
+fn a_rotation_that_cannot_be_built_stops_after_one_cycle() {
+    let Some(dir) = content_dir() else { return };
+    let packs = tempfile::tempdir().unwrap();
+    for p in ["olx-classic", "olx-core", "olx-theme-dirt", "olx-skin-default", DIRT, FACTORY] {
+        copy_dir(&dir.join(p), &packs.path().join(p));
+    }
+    // A server on the copy, whose levels then go.
+    let mut rig = Rig::new_on(dir, packs.path().to_path_buf(), config(&[], 3, true, 1.0));
+    for level in [DIRT, FACTORY] {
+        std::fs::remove_dir_all(packs.path().join(level)).unwrap();
+    }
+    let clients = rig.join_all(&["Anna", "Bert"]);
+    for &c in &clients {
+        rig.clients[c].auto_ready = true;
+    }
+    rig.run_until(Duration::from_secs(10), "the server gives up", |r| r.log_text().contains("error: no map"));
+    for _ in 0..200 {
+        rig.poll();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let log = rig.log_text();
+    assert_eq!(log.matches("cannot start").count(), 2, "once per entry:\n{log}");
+    assert_eq!(log.matches("error: no map").count(), 1, "{log}");
+    assert!(clients.iter().all(|&c| rig.clients[c].starts().is_empty() && rig.clients[c].welcomed()));
     rig.assert_quick();
 }
 

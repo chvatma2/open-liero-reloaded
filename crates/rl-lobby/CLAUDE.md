@@ -42,16 +42,18 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   - Ready: said ready with nothing `missing`; `Ready(true)` with missing
     content is refused (`MISSING_CONTENT` notice), missing content clears
     it, a setup change clears every member's but the host's (the host
-    starts ready), and so does the return to gathering.
+    starts ready) unless only its bots changed (ruling T13-C: a server's
+    fill bots, Add/Remove bot), and so does the return to gathering.
   - Chat: sanitized and cut to 200 characters; `CHAT_LINES` (5) per
     `CHAT_WINDOW_US` (5 s) per member, beyond: dropped and `SLOW_DOWN` to
     the sender. Relayed as `Chat` to all and `HostEvent::Chat`. A dedicated
     server's `chat` is a `Notice::Message`.
   - Kick/ban: the host (`kick`) or an admin key (`AdminCommand::Kick/Ban`);
-    the host is never kicked; a ban stores the key and the member's IP for
-    the lobby's life (`banned`, `banned_ip` for the endpoint's gate;
-    `banned_keys`/`banned_ips` list them, `ban_key`/`ban_ip` add a bans
-    file's).
+    the host is never kicked; a ban stores the key for the lobby's life
+    (spec §5.2, ruling T13-B: by key); `ban_with_address` (the host's,
+    a server's `/banip`) also bans the member's IP (`banned`, `banned_ip`
+    for the endpoint's gate; `banned_keys`/`banned_ips` list them,
+    `ban_key`/`ban_ip` add a bans file's, `unban_key`/`unban_ip` lift them).
     `Next`/`Settings` from an admin are `HostEvent::Admin`; non-admins get
     `NOT_ADMIN`.
   - Start (ruling PF1): `can_start` (gathering, at least one player —

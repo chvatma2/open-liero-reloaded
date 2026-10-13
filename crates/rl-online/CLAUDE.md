@@ -33,7 +33,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   (the host's answer; `NotHost`, `Running`), state, me; the host's alone:
   `end_match` (ends the running match now, as at its end, the confirmed
   ticks its record), `tell` (a notice to one member), `addr_of`,
-  `ban_key`/`ban_ip` (a bans file; the address also in the gate), `bans`);
+  `ban_key`/`ban_ip` (a bans file; the address also in the gate),
+  `ban_with_address` (key and address), `unban_key`/`unban_ip`, `bans`;
+  `kick(member, true)` bans the key alone, spec §5.2);
   `OnlineEvent::Chat` carries the sender's member id; `match_session[_mut]`,
   `my_slot` (`None` once the match ended); `tick_phase(now)` (the
   session's, for the game's interpolation); `take_replay` (the
@@ -49,7 +51,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     `1`/`2`. A payload that does not decode drops the peer (host) or ends
     the connection (client).
   - **Host**: the endpoint's gate refuses the lobby's banned addresses (a
-    set mirrored from `Kick { ban: true }`). `Connected` → `connected` with
+    set mirrored from `Kick { ban: true }` when the lobby banned the
+    address, and from `ban_ip`/`unban_ip`). `Connected` → `connected` with
     a fresh nonce. Lobby messages leave at most every `LOBBY_DRAIN`
     (250 ms; a start, an end, a kick and a mid-match join at once). A
     `Kick` or `Close` closes the peer once its messages are delivered
@@ -115,7 +118,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   sides: a client's when the host reports it, the host's per peer) and a
   replay's checksum warning (its record) each give an
   `OnlineEvent::DesyncBundle(bytes)`, at most `MAX_BUNDLES_PER_MATCH` (3)
-  desyncs a match; the game saves them.
+  desyncs a match; the game and the server save them with `bundle::save`
+  (`desync-<unix s>-<n>.rldg`, the caller's time; at most
+  `MAX_BUNDLE_BYTES` 4 MiB a bundle and `MAX_BUNDLES_DIR_BYTES` 64 MiB of
+  bundles in the directory, the oldest removed; other files untouched).
 - **`events.rs`**: `OnlineEvent`, `NetStats` (round trip, input delay, the
   last second's deepest rollback, a client's datagram loss, corrections
   per second, stall episodes).
