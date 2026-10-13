@@ -41,6 +41,12 @@ pub const POPUP_TICKS: u32 = 100;
 /// Hits on one worm this close together (ticks) show as one number.
 pub const MERGE_TICKS: u32 = 30;
 
+/// How long the weapon name stays over the player's worm after a change
+/// (ticks): OLX's `fForceWeapon_Time = tLX->currentTime + 0.75f`.
+///
+/// OLX: src/common/CWormHuman.cpp:405-428
+pub const WEAPON_NAME_TICKS: u64 = 75;
+
 /// A damage number floating up from a worm (spec §19 E10).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Popup {
@@ -142,6 +148,10 @@ pub struct Session {
     ticks: u64,
     /// The tick the match ended in.
     ended_at: Option<u64>,
+    /// The weapon name shows over the player's worm until this tick: a
+    /// change made with the change key (OLX's `bForceWeapon_Name` and
+    /// `fForceWeapon_Time`, [`Session::weapon_name`]).
+    weapon_name_until: Option<u64>,
     /// Worms the presentation knows (a worm spawned mid-match is added).
     shown: usize,
     /// OLX's default skin (a worm spawned mid-match wears it).
@@ -367,6 +377,7 @@ impl Session {
             keys: vec![Keys(0); n],
             ticks: 0,
             ended_at: None,
+            weapon_name_until: None,
             shown: 0,
             default_skin: a.bot_skin.clone(),
         };
@@ -436,6 +447,48 @@ impl Session {
     /// one chosen ([`Session::follow`]; worm 0 at first).
     pub fn followed(&self) -> i32 {
         self.present.followed()
+    }
+
+    /// The player's worm's current weapon index, while it is alive.
+    fn local_weapon(&self) -> Option<i32> {
+        let w = self.world().worms().get(usize::from(self.local?))?;
+        w.alive.then_some(w.current_weapon)
+    }
+
+    /// After a tick (or an online frame's ticks) whose player keys were
+    /// `keys`: a weapon change made with the change key held (the
+    /// player's worm, alive before and after, no longer holds weapon
+    /// `before`) shows its name for [`WEAPON_NAME_TICKS`] (OLX sets
+    /// `bForceWeapon_Name` when SelectWeapon and left or right change the
+    /// weapon).
+    ///
+    /// OLX: src/common/CWormHuman.cpp:405-428
+    fn note_weapon_change(&mut self, before: Option<i32>, keys: Keys) {
+        let now = self.local_weapon();
+        // A worm that (re)spawned this tick did not change weapons.
+        if keys.0 & Keys::CHANGE != 0 && before.is_some() && now.is_some() && now != before {
+            self.weapon_name_until = Some(self.ticks + WEAPON_NAME_TICKS);
+        }
+    }
+
+    /// The weapon name over the player's worm (OLX's `CWorm::Draw`): the
+    /// worm and its current weapon's name while `held` (the change key,
+    /// as the input holds it now) or for [`WEAPON_NAME_TICKS`] after a
+    /// change made with it. Only the player's own worm (OLX: a local
+    /// human worm), alive and with a weapon; `None` otherwise (a replay,
+    /// bots alone, an online match watched).
+    ///
+    /// OLX: src/common/CWorm.cpp:1304-1315, src/gusanos/base_worm.cpp:678-684
+    pub fn weapon_name(&self, held: bool) -> Option<(usize, String)> {
+        let i = usize::from(self.local?);
+        let forced = self.weapon_name_until.is_some_and(|until| self.ticks <= until);
+        if !(held || forced) {
+            return None;
+        }
+        let world = self.world();
+        let w = world.worms().get(i).filter(|w| w.alive && !w.slots.is_empty())?;
+        let weapon = world.sim_mod().weapon(w.current_slot().weapon)?;
+        Some((i, weapon.name.clone()))
     }
 
     /// Whether this is an online match nobody here plays: PageUp and
@@ -510,6 +563,7 @@ impl Session {
         self.ended_at = None;
         self.time_left_ms = mode_time_left(&self.world);
         self.keys.fill(Keys(0));
+        self.weapon_name_until = None;
         // The rematch's bots think first: the last match's events are not theirs.
         self.events = TickEvents::new();
         self.ticks = 0;
@@ -578,6 +632,7 @@ impl Session {
     /// Whether the world ticked (not after a replay's end, nor online).
     pub fn tick(&mut self, player: Keys) -> bool {
         let ended = self.since_end();
+        let weapon = self.local_weapon();
         if let Some(k) = self.local.and_then(|i| self.keys.get_mut(usize::from(i))) {
             *k = player;
         }
@@ -601,6 +656,7 @@ impl Session {
         }
         self.present.on_tick(&self.world, &self.events);
         self.ticks += 1;
+        self.note_weapon_change(weapon, player);
         if cfg!(any(debug_assertions, test)) && self.ticks.is_multiple_of(DRIFT_CHECK_TICKS) {
             assert!(
                 !self.present.terrain_drift(&self.world),
@@ -721,9 +777,18 @@ impl Session {
     /// (the lobby's, chat, the match's end, the connection's) for the
     /// shell.
     pub fn frame(&mut self, now: Instant, local_keys: &mut dyn FnMut() -> Keys) -> Vec<OnlineEvent> {
+        let weapon = self.local_weapon();
         let Driver::Online(d) = &mut self.driver else { return Vec::new() };
-        let events = d.poll(now, local_keys, &mut self.present);
-        self.present_events(events)
+        let mut pressed = Keys(0);
+        let mut keys = || {
+            let k = local_keys();
+            pressed.0 |= k.0;
+            k
+        };
+        let events = d.poll(now, &mut keys, &mut self.present);
+        let rest = self.present_events(events);
+        self.note_weapon_change(weapon, pressed);
+        rest
     }
 
     /// An online match's polled `events` presented, as [`Session::frame`]

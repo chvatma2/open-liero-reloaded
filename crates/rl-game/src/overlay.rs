@@ -1,5 +1,6 @@
 //! The egui overlay at the display's resolution (spec §19 E10): worm
-//! names, damage popups, the HUD (`rl_ui::hud`, from `hud::view`), the
+//! names (the player's current weapon in its place while changing it),
+//! damage popups, the HUD (`rl_ui::hud`, from `hud::view`), the
 //! command line's results and the F2 debug panel. It only paints; it takes
 //! no input from the game.
 
@@ -87,6 +88,9 @@ pub struct Overlay<'a> {
     pub selecting: bool,
     /// Worm names show: not through the menus' panels (`Shell::names_shown`).
     pub names: bool,
+    /// The change-weapon key is held now (the input's, not a tick's):
+    /// the player's worm shows its weapon (`Session::weapon_name`).
+    pub changing: bool,
     /// Where the HUD goes on a window wider than 16:9 (the options').
     pub arrangement: rl_ui::HudArrangement,
     /// F3's network overlay while an online match plays (spec §7.3).
@@ -110,6 +114,27 @@ pub fn name_rect(at: Pos2, size: egui::Vec2, bounds: egui::Rect) -> egui::Rect {
     egui::Rect::from_min_size(Pos2::new(x, y), size)
 }
 
+/// OLX's `clPlayerName` (`data/frontend/colours.cfg`: `#FFFFFF`), the
+/// weapon name's colour.
+pub const WEAPON_NAME_COLOUR: Color32 = Color32::WHITE;
+
+/// The worm names' colour.
+const NAME_COLOUR: Color32 = Color32::from_gray(230);
+
+/// The label over worm `i`, named `name`: the player's weapon (`weapon`,
+/// from `Session::weapon_name`) in its name's place while it shows, in
+/// OLX's colour, else the name. OLX draws no name over a local human
+/// worm and the weapon name 15 world pixels above it (`y-30` at double
+/// resolution), where the name label is here.
+///
+/// OLX: src/common/CWorm.cpp:1304-1331
+pub fn worm_label<'a>(i: usize, name: &'a str, weapon: Option<&'a (usize, String)>) -> (&'a str, Color32) {
+    match weapon {
+        Some((w, text)) if *w == i => (text, WEAPON_NAME_COLOUR),
+        _ => (name, NAME_COLOUR),
+    }
+}
+
 fn shadowed(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, colour: Color32) {
     p.text(pos + egui::vec2(1.0, 1.0), anchor, text, font.clone(), Color32::from_black_alpha(200));
     p.text(pos, anchor, text, font, colour);
@@ -127,16 +152,18 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
     let worms = crate::hud::worms_on_screen(s, &o.map, o.alpha);
     if o.names {
         let bounds = o.map.points_rect().intersect(ui.max_rect());
+        let weapon = s.weapon_name(o.changing);
         for &(i, at) in &worms {
             let name = s.names.of(world.worms()[i].id);
-            let galley = p.layout_no_wrap(name, small.clone(), Color32::from_gray(230));
+            let (text, colour) = worm_label(i, &name, weapon.as_ref());
+            let galley = p.layout_no_wrap(text.to_string(), small.clone(), colour);
             let r = name_rect(at - egui::vec2(0.0, 12.0 * k), galley.size(), bounds);
             p.galley_with_override_text_color(
                 r.min + egui::vec2(1.0, 1.0),
                 galley.clone(),
                 Color32::from_black_alpha(200),
             );
-            p.galley(r.min, galley, Color32::from_gray(230));
+            p.galley(r.min, galley, colour);
         }
     }
     for pop in &s.popups {
@@ -305,6 +332,17 @@ mod tests {
         assert_eq!(wide.left(), 20.0);
         // No size or not a number: no panic.
         let _ = name_rect(Pos2::new(f32::NAN, 1.0), size, egui::Rect::NOTHING);
+    }
+
+    /// While the player changes weapons its worm's label is the weapon,
+    /// in OLX's white; every other worm keeps its name.
+    #[test]
+    fn the_players_label_is_its_weapon_while_changing() {
+        let weapon = (2, "Big Nuke".to_string());
+        assert_eq!(worm_label(2, "You", Some(&weapon)), ("Big Nuke", WEAPON_NAME_COLOUR));
+        assert_eq!(worm_label(0, "Bot 1", Some(&weapon)), ("Bot 1", NAME_COLOUR));
+        assert_eq!(worm_label(2, "You", None), ("You", NAME_COLOUR));
+        assert_ne!(WEAPON_NAME_COLOUR, NAME_COLOUR, "told apart from a name");
     }
 
     #[test]

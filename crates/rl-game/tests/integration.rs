@@ -15,3 +15,4 @@ mod online;
 mod options;
 mod profiles;
 mod speed;
+mod weapon_name;

@@ -13,7 +13,7 @@ use rl_bots::{BotConfig, Difficulty};
 use rl_content::{Content, DEFAULT_PRESET, MatchOptions, Player};
 use rl_game::hud::{self, Frame};
 use rl_game::online::OnlineDriver;
-use rl_game::session::{Driver, Session};
+use rl_game::session::{Driver, Session, WEAPON_NAME_TICKS};
 use rl_game::setup::{self, PlayerLook};
 use rl_lobby::{HostConfig, Identity};
 use rl_modes::DeathmatchSettings;
@@ -301,6 +301,7 @@ fn an_online_match_runs_headless() {
     let mut pressed = 0u64;
     let mut checked = 0;
     let mut slowest = Duration::ZERO;
+    let mut named = 0u64;
     for i in 1..=300u64 {
         let now = t0 + Duration::from_millis(10 * i);
         let mut host_keys = || {
@@ -312,9 +313,14 @@ fn an_online_match_runs_headless() {
                 host_scores.extend(c.into_iter().map(|t| (t.tick, (t.scores, t.time_left_ms))));
             }
         }
+        // Ticks 50 to 52 change the weapon (Change, Change + Right, Change).
         let mut keys = || {
             pressed += 1;
-            player_keys(pressed)
+            match pressed {
+                50 | 52 => Keys(Keys::CHANGE),
+                51 => Keys(Keys::CHANGE | Keys::RIGHT),
+                _ => player_keys(pressed),
+            }
         };
         let busy = Instant::now();
         let events = s.frame(now, &mut keys);
@@ -327,6 +333,10 @@ fn an_online_match_runs_headless() {
             "frame {i}: {events:?}"
         );
         s.build(1.0, &mut list);
+        if let Some((worm, _)) = s.weapon_name(false) {
+            assert_eq!(worm, 1, "frame {i}: the client's worm shows its weapon");
+            named += 1;
+        }
         let Driver::Online(d) = &s.driver else { panic!("an online session") };
         let view = hud::view(&s, &frame);
         assert_eq!(view.worm.as_ref().map(|w| w.name.as_str()), Some("Anna"), "frame {i}");
@@ -340,6 +350,10 @@ fn an_online_match_runs_headless() {
         }
     }
     eprintln!("the slowest online frame took {slowest:?}");
+    assert!(
+        (1..=WEAPON_NAME_TICKS + 5).contains(&named),
+        "the client's weapon change showed its name for {named} frames"
+    );
     let Driver::Online(d) = &s.driver else { panic!("an online session") };
     let confirmed = d.confirmed_tick().expect("confirmed ticks");
     assert!(confirmed > 200, "the client confirmed {confirmed} ticks");

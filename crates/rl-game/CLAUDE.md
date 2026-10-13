@@ -453,7 +453,13 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   every delta was handled.
 - **Overlay** (`overlay.rs`): names over worms (inside the picture at
   its edges: `name_rect`; only in game and not paused, `Shell::names_shown`,
-  never through the selection, the pause menu or the results), summed damage popups
+  never through the selection, the pause menu or the results); the
+  player's worm's label is its current weapon's name, in white, while the
+  change key is held now (`Overlay::changing`, the input's) or for
+  `WEAPON_NAME_TICKS` (OLX's 0.75 s) after a change made with it
+  (`Session::weapon_name`, `worm_label`; the change noted by
+  `Session::tick` and `Session::frame` from the player's keys,
+  `tests/weapon_name.rs`), summed damage popups
   (`Damage.dealt`), the HUD (OLX's kills, deaths and suicides, which a
   zero score does not count), and F2's counters: FPS, frame and *busy* ms
   (the frame without the VSync wait), tick ms, entities, projectiles,

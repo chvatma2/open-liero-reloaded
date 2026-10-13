@@ -720,6 +720,7 @@ impl App {
             speed: speed_shown,
             selecting: self.shell.selecting(),
             names: !self.cfg.menus || self.shell.names_shown(),
+            changing: self.shell.data.held.0 & rl_sim::Keys::CHANGE != 0,
             arrangement: self.shell.ui.settings().video.hud_layout,
             net: self.net_overlay.then(|| self.shell.net_view()).flatten(),
             lagging: self.shell.lagging(),

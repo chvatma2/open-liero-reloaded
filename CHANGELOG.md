@@ -39,6 +39,12 @@ All notable changes to rust-liero are recorded here. The format follows
   beside the program when there is one, else the one in the working
   directory as before.
 
+### Added — in game
+
+- While the change-weapon key is held, the selected weapon's name shows
+  above your worm, in place of your name, and stays for 0.75 s after a
+  change, as in OLX.
+
 ### Changed
 
 - Online play's protocol version is 2: this version and the earlier one

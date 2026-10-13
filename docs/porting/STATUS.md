@@ -351,6 +351,21 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   run per drawn frame, and the rest of a longer stall is dropped. The
   sandbox HUD, names and damage popups are egui text at the display's
   resolution (E10), not OLX's bitmap fonts.
+- **Weapon name over the worm** (`rl-game`, the user's request;
+  `src/common/CWorm.cpp:1304-1315`, `src/gusanos/base_worm.cpp:678-684`,
+  `src/common/CWormHuman.cpp:405-428`): as OLX, while the change-weapon
+  key is held, and for 0.75 s (75 ticks) after a change made with it, the
+  player's own worm shows its current weapon's name (the mod's, dots kept)
+  in OLX's `PlayerName` white; bots, other players online and the worms of
+  a game nobody plays show none. It is egui text in the worm names' font
+  with their drop shadow, not OLX's outline font, and it takes the place
+  of the player's own name label (OLX draws no name over a local human
+  worm and puts the weapon name's top 15 world pixels above it, `y-30` at
+  double resolution: where the name label sits here), kept inside the
+  picture at its edges. The 0.75 s are counted in ticks, so they stand
+  still while the game is paused (OLX's run in real time). With one local
+  player (no split screen), OLX's weapon name of every local human worm in
+  every viewport is the player's worm's alone.
 - **Window** (`rl-game`, plan 6 hotfix, the user's ruling): the window
   cannot be drag-resized or maximised; its size comes from the defaults
   (later the options menu, M7) and `--fullscreen` (borderless). The game's
