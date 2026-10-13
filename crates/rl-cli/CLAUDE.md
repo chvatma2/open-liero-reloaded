@@ -132,7 +132,9 @@ The headless command-line tool. Its commands:
   K|watching, <T> ticks|joined mid-match, <C> checksums, replay <B>
   bytes|no replay`, then `  checksum <tick> <16 hex>` per confirmed
   checksum. `--impair` sends its datagrams through a netsim profile.
-  Exits 1 when refused, kicked, disconnected or past `--timeout` seconds.
+  Exits 1 when refused, kicked, disconnected or past `--timeout` seconds;
+  every wait is bounded by it (the name resolves on its own thread; rl-net's
+  TCP connect and signalling never block the poll loop).
 - `rl-cli gpu-bench --replay F [--sizes 1920x1080,2560x1440,3440x1440,3840x2160]
   [--start-tick 1000] [--frames 600] [--probe-passes 0,1,2,4,8,16,32]
   [--probe-taps 9] [--probe-frames 120] [--adapter hardware|software]
@@ -212,7 +214,10 @@ bytes equal the server's (made from its record with
 `rl_online::replay::make`), a late spectator's checksums equal the
 server's at their ticks and reach the match's end; no desync bundle; the
 server's replay played back (`replay_checksums`) meets every server
-checksum.
+checksum; every server record holds at least `min_checksums` (at least
+one: an empty record proves nothing). The server observer tells a new
+record by a cheap key (seed, start checksum, rows, checksums), not by
+comparing whole records every poll.
 
 **Generated levels** (`genlevel.rs`, plan 8; bench only, a game never
 loads one): `GenLevel` makes seeded noise caves in memory, no pack written,
@@ -280,7 +285,8 @@ action kind covered; `long_bot_match_bounded`, 30 minutes) runs in `full`
 (`RL_FULL_TESTS=1`).
 `tests/transport.rs` (spec §9.4, real sockets on 127.0.0.1, every wait
 bounded; skipped without content): in `check`, two bot clients through
-`typical` play a 0.2-minute match (about 17 s) and `net-client` (the
+`typical` play a 0.1-minute match (about 10 s, at least 3 checksums;
+impairment seeds 3 and 4, whose 1 % loss spares the handshakes) and `net-client` (the
 binary, through `good`, with one server bot) plays a 0.05-minute one and
 prints the server's checksums (about 7 s); in `full`
 (`RL_FULL_TESTS=1`, `check::FULL_TESTS`), 8 clients per profile `good`,

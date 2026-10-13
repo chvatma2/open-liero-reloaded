@@ -68,11 +68,24 @@ impl From<Level> for rl_bots::Difficulty {
     }
 }
 
-fn address(join: &str) -> anyhow::Result<SocketAddr> {
-    // `host:port`, else `host` on the default port.
-    let addrs =
-        join.to_socket_addrs().or_else(|_| (join.trim_matches(['[', ']']), DEFAULT_PORT).to_socket_addrs());
-    addrs.with_context(|| format!("resolving {join}"))?.next().ok_or_else(|| anyhow!("{join} has no address"))
+/// `join` resolved (`host:port`, else `host` on the default port), given up
+/// at `deadline`: name resolution (the system's resolver) runs on its own
+/// thread, so a resolver that never answers cannot hold the client past
+/// `--timeout`.
+fn address(join: &str, deadline: Instant) -> anyhow::Result<SocketAddr> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let name = join.to_string();
+    std::thread::Builder::new().name("rl-cli resolve".into()).spawn(move || {
+        let addrs = name
+            .to_socket_addrs()
+            .or_else(|_| (name.trim_matches(['[', ']']), DEFAULT_PORT).to_socket_addrs())
+            .map(|mut a| a.next());
+        let _ = tx.send(addrs);
+    })?;
+    let wait = deadline.saturating_duration_since(Instant::now());
+    let resolved =
+        rx.recv_timeout(wait).map_err(|_| anyhow!("resolving {join}: no answer within --timeout"))?;
+    resolved.with_context(|| format!("resolving {join}"))?.ok_or_else(|| anyhow!("{join} has no address"))
 }
 
 /// Prints one finished match: a header line, then `  checksum <tick> <hex>`
@@ -104,17 +117,22 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         Some(p) => Some(Profile::by_name(p).ok_or_else(|| anyhow!("no network profile {p:?}"))?),
         None => None,
     };
+    // Every wait is bounded by `--timeout`: the name's resolution here, then
+    // `run_bot_client`'s loop. Joining itself never blocks: rl-net's TCP
+    // connect runs on its own thread (`CONNECT_TIMEOUT`, 5 s) and the
+    // signalling within `SETUP_TIMEOUT` (10 s), both polled by the loop.
+    let deadline = Instant::now() + Duration::from_secs(args.timeout);
     let content =
         Content::open(&args.content).with_context(|| format!("opening {}", args.content.display()))?;
     let spec = ClientSpec {
-        addr: address(&args.join)?,
+        addr: address(&args.join, deadline)?,
         name: args.name.clone(),
         difficulty: args.difficulty.into(),
         matches: args.matches,
         impair,
         impair_seed: args.impair_seed,
         spectate: args.spectate,
-        deadline: Instant::now() + Duration::from_secs(args.timeout),
+        deadline,
     };
     let mut finished = 0;
     let run = run_bot_client(content, &spec, &AtomicBool::new(false), &mut |p| match p {

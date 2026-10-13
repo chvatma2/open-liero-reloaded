@@ -343,6 +343,9 @@ pub struct TransportSpec {
     pub timeout: Duration,
     /// Clients (by name) that may be dropped without failing the verdict.
     pub may_drop: Vec<String>,
+    /// Each of the server's records holds at least this many checksums
+    /// (never fewer than one: an empty record proves nothing).
+    pub min_checksums: usize,
 }
 
 impl TransportSpec {
@@ -363,6 +366,7 @@ impl TransportSpec {
             data_dir: data_dir.to_path_buf(),
             timeout: Duration::from_secs_f32(minutes.max(0.0) * 60.0) + Duration::from_secs(40),
             may_drop: Vec::new(),
+            min_checksums: 1,
         }
     }
 
@@ -461,6 +465,12 @@ pub fn run_transport(content_dir: &Path, spec: &TransportSpec) -> anyhow::Result
             rl_server::run_with(config, content, &data_dir, &stop, &mut log, &mut |s| {
                 let _ = port_tx.send(s.local_port());
                 if let Some(r) = s.last_record() {
+                    // A record is made once, at its match's end, and replaced
+                    // only by the next match's: a cheap key that names the
+                    // match (its random seed and start world, its length) tells
+                    // a new one, instead of comparing whole records every poll
+                    // (2 ms). Two matches alike in all four would be one
+                    // match's start played twice, which the server never does.
                     let key = (r.start.seed, r.start.start_checksum, r.rows.len(), r.checksums.len());
                     if last != Some(key) {
                         last = Some(key);
@@ -553,7 +563,8 @@ pub fn run_transport(content_dir: &Path, spec: &TransportSpec) -> anyhow::Result
 }
 
 impl TransportRun {
-    /// The verdict (spec §9.4): the server finished `spec.matches` matches;
+    /// The verdict (spec §9.4): the server finished `spec.matches` matches,
+    /// each record with at least `spec.min_checksums` checksums (at least one);
     /// every client did too (unless dropped and `spec.may_drop` names it: a
     /// dropped client is a failure otherwise); every client's confirmed
     /// checksums of each match equal the server's (a spectator that joined
@@ -568,6 +579,15 @@ impl TransportRun {
         }
         let mut server_replays = Vec::new();
         for (i, r) in self.server.iter().enumerate() {
+            let least = spec.min_checksums.max(1);
+            if r.checksums.len() < least {
+                fails.push(format!(
+                    "the server's match {}: {} checksums, fewer than {least} ({} ticks)",
+                    i + 1,
+                    r.checksums.len(),
+                    r.rows.len()
+                ));
+            }
             match rl_online::replay::make(content, r) {
                 Ok(made) => {
                     if let Some(w) = made.warning {

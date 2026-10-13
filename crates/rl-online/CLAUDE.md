@@ -143,7 +143,11 @@ dedicated server (`PeerRole::Server`) has no member of its own, hears chat
 by member id, tells one member, knows its members' addresses, refuses a
 banned key, and ends a match early; a server without bots records the
 checksum of a match's last tick (a 2.997 s limit: the last tick, 599, is a
-checksum tick), as its clients do.
+checksum tick), as its clients do; `/next` (`end_match`) on such a
+server, while it has confirmed a checksum tick it has not simulated, ends
+at the last tick it simulated with every checksum up to there (the
+clients agree on those ticks; their records run on: `MatchEndWire` names
+no last tick).
 `tests/matches.rs`: a proptest of starts within rl-proto's bounds (256
 cases, about 30 build) never panics `build`; a slot both member and bot,
 a single slot, an unknown mod and a pack hash mismatch are refused.

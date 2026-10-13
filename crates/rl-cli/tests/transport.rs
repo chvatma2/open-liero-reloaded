@@ -49,11 +49,18 @@ fn two_bots_play_a_match_over_real_connections() {
         return;
     }
     let data = tempfile::tempdir().unwrap();
-    let spec = TransportSpec::new(2, 0.2, Some("typical"), data.path());
+    // 6 s of match and 3 s of results: about 900 ticks, 90 checksum ticks;
+    // about 10 s in all. Impairment seeds 3 and 4: with seed 2 the 1 % loss
+    // takes one of client 2's handshake datagrams, and the retransmission
+    // adds 1 s (3 s under check's load) to the join: correct, but slow for
+    // `check` (the full tier's profiles cover lost handshakes).
+    let mut spec = TransportSpec::new(2, 0.1, Some("typical"), data.path());
+    spec.min_checksums = 3;
+    spec.net_seed = 3;
     let run = pass(&spec);
     assert_eq!(run.clients.len(), 2);
     let r = &run.server[0];
-    assert!(r.rows.len() >= 1200, "the whole match: {} ticks", r.rows.len());
+    assert!(r.rows.len() >= 600 + 300, "the whole match and its results: {} ticks", r.rows.len());
     let mut slots: Vec<Option<u8>> = run.clients.iter().map(|c| c.matches[0].slot).collect();
     slots.sort();
     assert_eq!(slots, [Some(0), Some(1)]);
@@ -153,6 +160,7 @@ fn eight_bots_per_profile() {
         let data = tempfile::tempdir().unwrap();
         let mut spec = TransportSpec::new(8, 0.5, Some(profile), data.path());
         spec.net_seed = 100 * (i as u64 + 1);
+        spec.min_checksums = 3;
         let run = pass(&spec);
         assert_eq!(run.clients.len(), 8);
         assert_played(&run);
@@ -167,6 +175,7 @@ fn a_spectator_joins_mid_match_over_real_connections() {
     let data = tempfile::tempdir().unwrap();
     let mut spec = TransportSpec::new(2, 0.2, Some("typical"), data.path());
     spec.spectators = vec![Duration::from_secs(4)];
+    spec.min_checksums = 3;
     let run = pass(&spec);
     let watcher = &run.clients[2];
     assert_eq!(watcher.name, TransportSpec::spectator_name(0));

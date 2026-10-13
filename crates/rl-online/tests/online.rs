@@ -345,6 +345,61 @@ fn a_server_without_bots_records_the_last_checksum() {
     net.assert_quick();
 }
 
+/// `/next` on a dedicated server without bots (`end_match`) at a moment it
+/// has confirmed a checksum tick it has not simulated yet: the match ends at
+/// the last tick it simulated, and its record has the checksum of every
+/// checksum tick up to there. The clients agree on those ticks; their
+/// records run on (`MatchEndWire` names no last tick, so a client ended
+/// early keeps what it confirmed, the server's drain included).
+#[test]
+fn ending_a_botless_servers_match_keeps_its_last_checksum() {
+    let Some(content) = content() else { return };
+    let mut setup = setup(&content, 1.0);
+    setup.bots.clear();
+    let cfg = HostConfig {
+        name: "Server".into(),
+        password: None,
+        max_players: 8,
+        max_spectators: 4,
+        admins: vec![],
+    };
+    let mut net = Net::hosted_with(content, setup, PeerRole::Server(cfg));
+    let clients = net.join_all(&["Anna", "Bert"]);
+    net.ready(&clients);
+    net.host().peer().lobby().start(6).unwrap();
+    // Played a while, then a poll whose inputs confirm a checksum tick the
+    // server has not simulated (its clients' inputs run ahead of it).
+    let ahead = |n: &mut Net| {
+        n.host().peer().match_session().is_some_and(|s| {
+            let (current, confirmed) = (s.current_tick(), s.confirmed());
+            current > 100 && (current..confirmed).any(|t| (t + 1) % rl_netcode::CHECKSUM_EVERY == 0)
+        })
+    };
+    net.run_until(
+        Duration::from_secs(15),
+        "the server confirms a checksum tick ahead of its simulation",
+        ahead,
+    );
+    let simulated = net.host().peer().match_session().unwrap().current_tick();
+    assert!(net.host().peer().lobby().end_match(), "the running match ends");
+    net.run_until(Duration::from_secs(15), "every peer keeps its record", |n| {
+        n.peers.iter_mut().all(|p| p.peer().last_record().is_some())
+    });
+    let records: Vec<_> = net.peers.iter_mut().map(|p| p.peer().last_record().cloned().unwrap()).collect();
+    let r = &records[0];
+    let n = r.rows.len() as u32;
+    assert_eq!(n, simulated, "the record ends at the last tick the server simulated");
+    let want: Vec<u32> = (0..n).filter(|t| (t + 1) % rl_netcode::CHECKSUM_EVERY == 0).collect();
+    let ticks: Vec<u32> = r.checksums.iter().map(|c| c.0).collect();
+    assert_eq!(ticks, want, "the server's checksums of {n} ticks, the last one's too");
+    for other in &records[1..] {
+        assert!(other.rows.len() >= r.rows.len(), "a client confirmed the server's ticks");
+        assert_eq!(other.rows[..r.rows.len()], r.rows[..]);
+        assert_eq!(other.checksums[..r.checksums.len()], r.checksums[..]);
+    }
+    net.assert_quick();
+}
+
 #[test]
 fn a_late_joiner_watches_then_plays_the_next_match() {
     let Some(content) = content() else { return };
