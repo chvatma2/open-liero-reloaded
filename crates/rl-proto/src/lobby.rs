@@ -98,8 +98,11 @@ pub enum ToHost {
         look: Look,
         /// SHA-256 of the host's nonce and the password.
         password: Option<[u8; 32]>,
+        /// The joiner's fresh nonce: the host signs it in `HostProof`.
+        nonce: [u8; 32],
     },
-    /// Signature over the host's challenge.
+    /// Signature over the host's challenge, sent once the host's
+    /// `HostProof` verified.
     Prove {
         #[serde(with = "sig64")]
         signature: Signature,
@@ -153,6 +156,13 @@ pub enum ToClient {
         banned: bool,
     },
     Bye,
+    /// The host's signature over the joiner's `Hello` nonce and key and
+    /// both DTLS fingerprints (rl-lobby's `host_proof_message`): it holds
+    /// the key its `Challenge` named. Sent right after `Hello`.
+    HostProof {
+        #[serde(with = "sig64")]
+        signature: Signature,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -518,7 +528,7 @@ mod tests {
 
     #[test]
     fn to_host_round_trips() {
-        to_host_round(ToHost::Hello { key: [7; 32], look: look(), password: Some([9; 32]) });
+        to_host_round(ToHost::Hello { key: [7; 32], look: look(), password: Some([9; 32]), nonce: [5; 32] });
         to_host_round(ToHost::Prove { signature: core::array::from_fn(|i| i as u8) });
         to_host_round(ToHost::SetLook(look()));
         to_host_round(ToHost::Ready(true));
@@ -548,6 +558,7 @@ mod tests {
         }));
         to_client_round(ToClient::Kicked { banned: true });
         to_client_round(ToClient::Bye);
+        to_client_round(ToClient::HostProof { signature: core::array::from_fn(|i| 255 - i as u8) });
     }
 
     #[test]
@@ -563,7 +574,7 @@ mod tests {
     fn name_with_control_character_is_refused() {
         let mut l = look();
         l.name = "a\nb".to_string();
-        let m = ToHost::Hello { key: [0; 32], look: l, password: None };
+        let m = ToHost::Hello { key: [0; 32], look: l, password: None, nonce: [0; 32] };
         assert_eq!(decode_to_host(&encode_to_host(&m)), Err(ProtoError::Invalid));
     }
 
@@ -796,6 +807,17 @@ mod tests {
         assert!(encode_to_client(&ToClient::Start(start.clone())).len() <= MAX_LOBBY);
         to_client_round(ToClient::Start(start));
         to_host_round(ToHost::Admin(AdminCommand::Settings(worst_setup())));
+        let hello = ToHost::Hello {
+            key: [0xff; 32],
+            look: worst_look(0),
+            password: Some([0xff; 32]),
+            nonce: [0xff; 32],
+        };
+        assert!(encode_to_host(&hello).len() <= MAX_LOBBY);
+        to_host_round(hello);
+        let proof = ToClient::HostProof { signature: [0xff; 64] };
+        assert!(encode_to_client(&proof).len() <= MAX_LOBBY);
+        to_client_round(proof);
         let have = ToHost::Have {
             revision: u32::MAX,
             missing: (0..MAX_MISSING).map(|j| alloc::format!("{j}{}", "x".repeat(MAX_ID - 1))).collect(),

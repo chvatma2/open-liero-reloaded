@@ -133,6 +133,14 @@ fn a_host_and_three_clients_carry_both_channels() {
     assert_eq!(peers.iter().map(|p| p.0).collect::<Vec<_>>(), [1, 2, 3]);
     assert!(peers.iter().all(|p| p.1.ip() == std::net::Ipv4Addr::LOCALHOST), "{peers:?}");
     assert_eq!(net.clients[0].0.peers().map(|p| p.0).collect::<Vec<_>>(), [HOST]);
+    // Both ends of each link see the same DTLS fingerprints (the lobby's
+    // proofs sign them), and every link its own.
+    let seen: Vec<_> = ids.iter().map(|&id| net.host.dtls_fingerprints(id).expect("open")).collect();
+    for (c, fps) in seen.iter().enumerate() {
+        assert_eq!(net.clients[c].0.dtls_fingerprints(HOST), Some(*fps));
+    }
+    assert!(seen[0] != seen[1] && seen[1] != seen[2] && seen[0] != seen[2], "{seen:?}");
+    assert_eq!(net.host.dtls_fingerprints(9), None);
 
     let mut sent = 0u16;
     net.run_until(Duration::from_secs(20), "every echo", |n| {

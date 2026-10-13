@@ -9,7 +9,9 @@ use rl_proto::{
     AdminCommand, LobbyState, Look, MAX_MISSING, PublicKey, ToClient, ToHost, valid_pack_id, valid_setup,
 };
 
-use crate::identity::{Identity, challenge_message, password_proof};
+use crate::identity::{
+    DtlsFingerprints, Identity, challenge_message, host_proof_message, password_proof, verify,
+};
 use crate::model::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,7 +20,9 @@ enum Stage {
     Idle,
     /// The transport is open: waiting for the challenge.
     Connected,
-    /// Hello and Prove sent: waiting for the welcome.
+    /// Hello sent: waiting for the host's proof of its key.
+    Hello,
+    /// Prove sent: waiting for the welcome.
     Proving,
     Joined,
     /// Refused, kicked, left or disconnected.
@@ -31,8 +35,13 @@ pub struct LobbyClient {
     look: Look,
     password: Option<String>,
     expected_host: Option<PublicKey>,
+    /// The link's DTLS fingerprints as this end saw them (`connected`).
+    fingerprints: DtlsFingerprints,
     stage: Stage,
     host_key: Option<PublicKey>,
+    /// The challenge's nonce and the one this client sent in `Hello`,
+    /// until the host's proof arrives.
+    nonces: Option<([u8; 32], [u8; 32])>,
     you: Option<u8>,
     state: Option<LobbyState>,
     out: Vec<ToHost>,
@@ -45,11 +54,12 @@ impl LobbyClient {
     /// carries it; a direct connection passes `None`): a challenge naming
     /// another key is not answered.
     ///
-    /// `expected_host` only checks the key the challenge *names*: the host
-    /// never proves it holds that key, so anyone who knows the public key
-    /// can name it. It protects nothing yet. Carried to plan 12: the host
-    /// signs the client's nonce, bound to the DTLS fingerprints of the
-    /// connection, before invites rely on it.
+    /// Whatever `expected_host`, the host must prove the key its challenge
+    /// names (`HostProof`, N37) over this client's nonce and both DTLS
+    /// fingerprints before this client proves its own. Without
+    /// `expected_host` that catches a man in the middle (its certificates
+    /// change the fingerprints), not an impostor answering with its own
+    /// key: `expected_host` is for that.
     pub fn new(
         me: Identity,
         look: Look,
@@ -61,8 +71,10 @@ impl LobbyClient {
             look: sanitize_look(&look),
             password,
             expected_host,
+            fingerprints: ([0; 32], [0; 32]),
             stage: Stage::Idle,
             host_key: None,
+            nonces: None,
             you: None,
             state: None,
             out: Vec::new(),
@@ -70,9 +82,11 @@ impl LobbyClient {
         }
     }
 
-    /// The transport opened: wait for the host's challenge.
-    pub fn connected(&mut self) {
+    /// The transport opened with the DTLS `fingerprints` this end saw
+    /// (offer side's, answer side's): wait for the host's challenge.
+    pub fn connected(&mut self, fingerprints: DtlsFingerprints) {
         if self.stage == Stage::Idle {
+            self.fingerprints = fingerprints;
             self.stage = Stage::Connected;
         }
     }
@@ -82,10 +96,12 @@ impl LobbyClient {
         self.close();
     }
 
-    /// A message from the host. `aux` is fresh randomness for signing the
+    /// A message from the host. `aux` is fresh randomness: the challenge's
+    /// is this client's nonce in `Hello`, the host proof's signs the
     /// challenge. The challenge is answered with `Hello` (with the password
-    /// proof when the host asks for one; an empty password without one) and
-    /// `Prove` at once.
+    /// proof when the host asks for one; an empty password without one);
+    /// the host's `HostProof` with `Prove` when it verifies, else
+    /// `WrongHost` and nothing more.
     pub fn receive(&mut self, msg: ToClient, aux: [u8; 32]) {
         match (self.stage, msg) {
             (Stage::Connected, ToClient::Challenge { host_key, .. })
@@ -97,13 +113,28 @@ impl LobbyClient {
             (Stage::Connected, ToClient::Challenge { nonce, host_key, needs_password }) => {
                 let password = needs_password
                     .then(|| password_proof(&nonce, self.password.as_deref().unwrap_or_default()));
-                self.out.push(ToHost::Hello { key: self.me.public(), look: self.look.clone(), password });
-                let signature = self.me.sign(&challenge_message(&nonce, &host_key), aux);
-                self.out.push(ToHost::Prove { signature });
+                let hello =
+                    ToHost::Hello { key: self.me.public(), look: self.look.clone(), password, nonce: aux };
+                self.out.push(hello);
                 self.host_key = Some(host_key);
+                self.nonces = Some((nonce, aux));
+                self.stage = Stage::Hello;
+            }
+            (Stage::Hello, ToClient::HostProof { signature }) => {
+                let (Some(host_key), Some((nonce, mine))) = (self.host_key, self.nonces.take()) else {
+                    return self.close();
+                };
+                let message = host_proof_message(&mine, &self.me.public(), &self.fingerprints);
+                if !verify(&host_key, &message, &signature) {
+                    self.stage = Stage::Closed;
+                    self.events.push(ClientEvent::WrongHost { key: host_key });
+                    return;
+                }
+                let signature = self.me.sign(&challenge_message(&nonce, &host_key, &self.fingerprints), aux);
+                self.out.push(ToHost::Prove { signature });
                 self.stage = Stage::Proving;
             }
-            (Stage::Connected | Stage::Proving, ToClient::Refused(why)) => {
+            (Stage::Connected | Stage::Hello | Stage::Proving, ToClient::Refused(why)) => {
                 self.events.push(ClientEvent::Refused(why));
                 self.stage = Stage::Closed;
             }
@@ -142,7 +173,10 @@ impl LobbyClient {
                 ClientEvent::Kicked { banned }
             }
             ToClient::Bye => return self.close(),
-            ToClient::Challenge { .. } | ToClient::Welcome { .. } | ToClient::Refused(_) => return,
+            ToClient::Challenge { .. }
+            | ToClient::HostProof { .. }
+            | ToClient::Welcome { .. }
+            | ToClient::Refused(_) => return,
         };
         self.events.push(event);
     }
@@ -217,7 +251,7 @@ impl LobbyClient {
 
     /// Says goodbye; the caller closes the transport after sending.
     pub fn leave(&mut self) {
-        if matches!(self.stage, Stage::Connected | Stage::Proving | Stage::Joined) {
+        if matches!(self.stage, Stage::Connected | Stage::Hello | Stage::Proving | Stage::Joined) {
             self.out.push(ToHost::Bye);
         }
         self.stage = Stage::Closed;
@@ -240,7 +274,7 @@ impl LobbyClient {
         self.you
     }
 
-    /// The key the host's challenge named.
+    /// The key the host's challenge named (proven once joined).
     pub fn host_key(&self) -> Option<PublicKey> {
         self.host_key
     }

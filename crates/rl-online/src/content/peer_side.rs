@@ -1175,6 +1175,8 @@ mod tests {
     }
 
     const HOST_ID: [u8; 32] = [4; 32];
+    /// The DTLS fingerprints of every test link.
+    const FPS: rl_lobby::DtlsFingerprints = ([1; 32], [2; 32]);
 
     /// A host's content side for Classic on Dirt Level, its lobby and cache.
     struct Host {
@@ -1243,10 +1245,14 @@ mod tests {
         fn join(&mut self, n: u8, look: Look) {
             let me = Identity::from_secret([n; 32]).unwrap();
             let (peer, nonce) = (PeerId::from(n), [n; 32]);
-            self.lobby.connected(peer, std::net::IpAddr::from([10, 0, 0, n]), 0, nonce);
-            self.lobby.receive(peer, rl_proto::ToHost::Hello { key: me.public(), look, password: None }, 0);
+            self.lobby.connected(peer, std::net::IpAddr::from([10, 0, 0, n]), 0, nonce, FPS);
+            self.lobby.receive(
+                peer,
+                rl_proto::ToHost::Hello { key: me.public(), look, password: None, nonce },
+                0,
+            );
             let host = Identity::from_secret(HOST_ID).unwrap().public();
-            let signature = me.sign(&rl_lobby::challenge_message(&nonce, &host), [0; 32]);
+            let signature = me.sign(&rl_lobby::challenge_message(&nonce, &host, &FPS), [0; 32]);
             self.lobby.receive(peer, rl_proto::ToHost::Prove { signature }, 0);
             assert!(self.lobby.member_of(peer).is_some(), "joined");
         }
@@ -1255,10 +1261,14 @@ mod tests {
         fn join_as(&mut self, peer: PeerId, key: u8, ip: [u8; 4], look: Look, now: u64) {
             let me = Identity::from_secret([key; 32]).unwrap();
             let nonce = [key; 32];
-            self.lobby.connected(peer, std::net::IpAddr::from(ip), now, nonce);
-            self.lobby.receive(peer, rl_proto::ToHost::Hello { key: me.public(), look, password: None }, now);
+            self.lobby.connected(peer, std::net::IpAddr::from(ip), now, nonce, FPS);
+            self.lobby.receive(
+                peer,
+                rl_proto::ToHost::Hello { key: me.public(), look, password: None, nonce },
+                now,
+            );
             let host = Identity::from_secret(HOST_ID).unwrap().public();
-            let signature = me.sign(&rl_lobby::challenge_message(&nonce, &host), [0; 32]);
+            let signature = me.sign(&rl_lobby::challenge_message(&nonce, &host, &FPS), [0; 32]);
             self.lobby.receive(peer, rl_proto::ToHost::Prove { signature }, now);
             assert!(self.lobby.member_of(peer).is_some(), "joined");
         }

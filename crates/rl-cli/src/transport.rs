@@ -184,7 +184,7 @@ pub fn run_bot_client(
         skin: rl_lobby::DEFAULT_SKIN.into(),
         skin_hash: rl_proto::NO_HASH.into(),
     };
-    let role = PeerRole::Client { addr: spec.addr, password: None };
+    let role = PeerRole::Client { addr: spec.addr, password: None, expected_host: None };
     let downloads = match &spec.cache {
         Some(dir) => {
             let cache =

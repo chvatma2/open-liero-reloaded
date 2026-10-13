@@ -26,8 +26,8 @@ use rl_netcode::{Channel, Config, Driver, Event, PeerId, Role, Seat, Session, Ti
 use rl_proto::{
     AdminCommand, Control, LobbyState, Look, MAX_INPUT_DELAY, MatchEndWire, MatchSetupWire, MatchStartWire,
     Notice, Phase, PublicKey, Refusal, SeatWire, TAG_CONTENT, TAG_NETCODE, TAG_TO_CLIENT, TAG_TO_HOST,
-    Tagged, ToClient, decode_content, decode_control, decode_to_client, decode_to_host, encode_content,
-    encode_control, encode_to_client, encode_to_host, tag,
+    Tagged, ToClient, ToHost, decode_content, decode_control, decode_to_client, decode_to_host,
+    encode_content, encode_control, encode_to_client, encode_to_host, tag,
 };
 use rl_sim::{EndReason, Keys, MatchResult, Score, TickEvents, World};
 
@@ -67,6 +67,9 @@ pub const START_IGNORED: &str = "the host started a match during the match: igno
 pub const REPLAY_SKIPPED: &str = "the last replay is still being made: this match has none";
 /// Why a client that cannot play the host's start leaves.
 pub const MISMATCH: &str = "your simulation differs from the host's: version or content";
+/// Why a client leaves a host that is not the one expected, or that does
+/// not prove its key over the connection's DTLS fingerprints (N37).
+pub const WRONG_HOST: &str = "this is not the game you were invited to";
 
 /// Which end of online play a peer is.
 pub enum PeerRole {
@@ -76,8 +79,10 @@ pub enum PeerRole {
     /// given to [`OnlinePeer::start`] is not used, and the host plays only
     /// its bots.
     Server(HostConfig),
-    /// Joins the host whose signalling (TCP) address is `addr`.
-    Client { addr: SocketAddr, password: Option<String> },
+    /// Joins the host whose signalling (TCP) address is `addr`; with
+    /// `expected_host` (an invite's key), only a host proving that key
+    /// (`WRONG_HOST` otherwise). Every host proves the key it names.
+    Client { addr: SocketAddr, password: Option<String>, expected_host: Option<PublicKey> },
 }
 
 /// Why the host could not start a match.
@@ -225,7 +230,7 @@ impl OnlinePeer {
         let hosting = match role {
             PeerRole::Host(cfg) => Ok((cfg, Some(look))),
             PeerRole::Server(cfg) => Ok((cfg, None)),
-            PeerRole::Client { addr, password } => Err((addr, password, look)),
+            PeerRole::Client { addr, password, expected_host } => Err((addr, password, expected_host, look)),
         };
         let (endpoint, side) = match hosting {
             Ok((cfg, look)) => {
@@ -250,11 +255,11 @@ impl OnlinePeer {
                 };
                 (Endpoint::host(endpoint, gate)?, Side::Host(Box::new(side)))
             }
-            Err((addr, password, look)) => {
+            Err((addr, password, expected_host, look)) => {
                 let mut cfg = endpoint;
                 cfg.limits.max_reliable_bytes_per_s =
                     cfg.limits.max_reliable_bytes_per_s.max(HOST_RELIABLE_BYTES_PER_S);
-                let lobby = LobbyClient::new(me, look, password, None);
+                let lobby = LobbyClient::new(me, look, password, expected_host);
                 (Endpoint::connect(cfg, addr)?, Side::Client(Box::new(ClientSide { lobby })))
             }
         };
@@ -461,9 +466,9 @@ impl OnlinePeer {
             Side::Host(h) => match e {
                 NetEvent::Connected { peer, addr } => {
                     h.addrs.insert(peer, addr);
-                    match random_bytes::<32>() {
-                        Ok(nonce) => h.lobby.connected(peer, addr.ip(), now_us, nonce),
-                        Err(_) => self.drop_peer(peer),
+                    match (random_bytes::<32>(), self.endpoint.endpoint().dtls_fingerprints(peer)) {
+                        (Ok(nonce), Some(fps)) => h.lobby.connected(peer, addr.ip(), now_us, nonce, fps),
+                        _ => self.drop_peer(peer),
                     }
                 }
                 NetEvent::Message { peer, channel: Channel::Unreliable, bytes } => {
@@ -483,7 +488,14 @@ impl OnlinePeer {
                                 let rtt = now.saturating_duration_since(sent).as_millis();
                                 h.rtts.entry(peer).or_insert(u32::try_from(rtt).unwrap_or(u32::MAX));
                             }
+                            let hello = matches!(msg, ToHost::Hello { .. });
                             h.lobby.receive(peer, msg, now_us);
+                            if hello {
+                                // The host's proof of its key leaves at
+                                // once: the joiner waits for it to prove
+                                // itself.
+                                self.drain_lobby(now);
+                            }
                         }
                         Err(_) => self.drop_peer(peer),
                     },
@@ -505,7 +517,11 @@ impl OnlinePeer {
                 NetEvent::Refused { .. } => {}
             },
             Side::Client(c) => match e {
-                NetEvent::Connected { .. } => c.lobby.connected(),
+                NetEvent::Connected { .. } => match self.endpoint.endpoint().dtls_fingerprints(HOST) {
+                    Some(fps) => c.lobby.connected(fps),
+                    // An open link always has them.
+                    None => self.end_with(OnlineEvent::Disconnected("the connection is not secured".into())),
+                },
                 NetEvent::Message { channel: Channel::Unreliable, bytes, .. } => {
                     if let Some(g) = &mut self.game {
                         g.session.receive(HOST, Channel::Unreliable, &bytes, now_us);
@@ -850,9 +866,7 @@ impl OnlinePeer {
             }
             ClientEvent::Refused(why) => self.end_with(OnlineEvent::Refused(refusal_text(why).into())),
             ClientEvent::Kicked { banned } => self.end_with(OnlineEvent::Kicked { banned }),
-            ClientEvent::WrongHost { .. } => {
-                self.end_with(OnlineEvent::Refused("the host is not the one expected".into()));
-            }
+            ClientEvent::WrongHost { .. } => self.end_with(OnlineEvent::Refused(WRONG_HOST.into())),
             ClientEvent::Closed => {
                 self.end_with(OnlineEvent::Disconnected("the host closed the lobby".into()))
             }
@@ -1627,7 +1641,11 @@ mod tests {
     /// A client whose host is not there: nothing but its replays happens.
     fn peer(c: Content) -> OnlinePeer {
         let me = Identity::from_secret([7; 32]).unwrap();
-        let role = PeerRole::Client { addr: SocketAddr::from(([127, 0, 0, 1], 9)), password: None };
+        let role = PeerRole::Client {
+            addr: SocketAddr::from(([127, 0, 0, 1], 9)),
+            password: None,
+            expected_host: None,
+        };
         let cfg = EndpointConfig { port: 0, ..EndpointConfig::default() };
         OnlinePeer::start(role, cfg, me, look(), c, None, PeerContent::without_downloads("a test")).unwrap()
     }

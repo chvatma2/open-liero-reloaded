@@ -20,6 +20,9 @@ control messages, the frame delta codec and the simulation fingerprint.
 - **Lobby** (`lobby.rs`, reliable channel, `MAX_LOBBY` = 60 KiB: a full
   lobby at every bound is about 40 KB, `worst_case_messages_fit`): `ToHost`,
   `ToClient`, `LobbyState`, `MatchStartWire`, `MatchEndWire` and friends.
+  Joining: `Challenge` → `Hello` (with the joiner's 32-byte `nonce`) →
+  `HostProof { signature }` (the host proves its key, N37) → `Prove` →
+  `Welcome`.
   **Tag byte** first on every reliable payload: `0` netcode `Control`,
   `1` `ToHost`, `2` `ToClient`; `tag()` splits it (`Tagged`), `None` for an
   empty payload or unknown tag. The netcode session still sends untagged

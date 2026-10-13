@@ -244,7 +244,7 @@ fn an_online_match_runs_headless() {
     )
     .unwrap();
     let addr = SocketAddr::from(([127, 0, 0, 1], host.local_port()));
-    let role = PeerRole::Client { addr, password: None };
+    let role = PeerRole::Client { addr, password: None, expected_host: None };
     let mut client = OnlinePeer::start(
         role,
         endpoint(),

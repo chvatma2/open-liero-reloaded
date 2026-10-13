@@ -24,6 +24,7 @@ use rl_proto::{
 
 use crate::client::LobbyClient;
 use crate::host::LobbyHost;
+use crate::identity::DtlsFingerprints;
 use crate::model::{ClientEvent, HostEvent, NotStartable};
 
 /// One client's end.
@@ -67,6 +68,10 @@ pub struct Net {
     serial: u64,
 }
 
+/// The DTLS fingerprints of every link, as both ends see them (unless a
+/// test makes a client see others: `join_seeing`).
+pub const FINGERPRINTS: DtlsFingerprints = ([0xf1; 32], [0xf2; 32]);
+
 /// Most deliveries one `settle` makes (a loop between host and clients
 /// would be a lobby bug; the bound turns it into a test failure).
 const SETTLE_LIMIT: usize = 100_000;
@@ -93,14 +98,14 @@ impl Net {
         b
     }
 
-    fn open(&mut self, client: Option<LobbyClient>, addr: IpAddr) -> usize {
+    fn open(&mut self, client: Option<LobbyClient>, addr: IpAddr, seen: DtlsFingerprints) -> usize {
         let i = self.peers.len();
         let peer = PeerId::try_from(i + 1).unwrap_or(PeerId::MAX);
         self.peers.push(NetPeer { peer, addr, client, received: Vec::new(), events: Vec::new(), open: true });
         let nonce = self.fresh();
-        self.host.connected(peer, addr, self.now_us, nonce);
+        self.host.connected(peer, addr, self.now_us, nonce, FINGERPRINTS);
         if let Some(c) = &mut self.peers[i].client {
-            c.connected();
+            c.connected(seen);
         }
         self.pump();
         i
@@ -109,13 +114,19 @@ impl Net {
     /// Opens a link from `addr` for `client`; the handshake runs as time
     /// passes (`settle`, `run`).
     pub fn join(&mut self, client: LobbyClient, addr: IpAddr) -> usize {
-        self.open(Some(client), addr)
+        self.open(Some(client), addr, FINGERPRINTS)
+    }
+
+    /// As `join`, the client seeing the DTLS fingerprints `seen` while the
+    /// host sees `FINGERPRINTS` (a man in the middle).
+    pub fn join_seeing(&mut self, client: LobbyClient, addr: IpAddr, seen: DtlsFingerprints) -> usize {
+        self.open(Some(client), addr, seen)
     }
 
     /// Opens a link without a client: the test sends with `send_raw` and
     /// reads `received`.
     pub fn join_raw(&mut self, addr: IpAddr) -> usize {
-        self.open(None, addr)
+        self.open(None, addr, FINGERPRINTS)
     }
 
     /// Sends `msg` from peer `c` as is.

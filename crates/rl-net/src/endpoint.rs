@@ -463,6 +463,12 @@ impl Endpoint {
         self.open.iter().map(|(&id, p)| (id, p.addr))
     }
 
+    /// The DTLS fingerprints of an open peer's link, offer side's then
+    /// answer side's (`Link::dtls_fingerprints`): the same at both ends.
+    pub fn dtls_fingerprints(&self, peer: PeerId) -> Option<([u8; 32], [u8; 32])> {
+        self.open.get(&peer).and_then(|p| p.link.dtls_fingerprints())
+    }
+
     /// What went through the socket for an open peer.
     pub fn stats(&self, peer: PeerId) -> Option<PeerStats> {
         self.open.get(&peer).map(|p| p.stats)

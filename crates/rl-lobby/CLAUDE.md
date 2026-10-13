@@ -13,16 +13,21 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   (BIP-340 with the caller's 32 aux bytes), `verify(key, message, sig)`
   (false for any bad input, never a panic). `fingerprint(key)` is 8
   characters: lowercase unpadded base32 of `SHA-256(key)[..5]`; the format
-  is pinned by a test. `challenge_message(nonce, host)` is
-  `b"rust-liero join v1" ++ nonce ++ host`, what a joiner signs;
-  `password_proof(nonce, password)` is `SHA-256(nonce ++ password)`.
+  is pinned by a test. `DtlsFingerprints` = (offer side's, answer
+  side's) SHA-256 certificate fingerprints, the same at both ends of a
+  link (rl-net's `dtls_fingerprints`). `challenge_message(nonce, host,
+  fps)` is `b"rust-liero join v1" ++ host nonce ++ host key ++ fps.0 ++
+  fps.1`, what a joiner signs; `host_proof_message(client_nonce, client,
+  fps)` is `b"rust-liero host v1" ++ joiner nonce ++ joiner key ++ fps.0
+  ++ fps.1`, what the host signs (N37); `password_proof(nonce, password)`
+  is `SHA-256(nonce ++ password)`.
 - The secret lives in `<data>/identity.ron` (rl-ui's `Store::load_identity`).
 - **Host** (`host.rs`, `LobbyHost`): transport events, messages and time in;
   `outgoing()` (peer, `ToClient`) and `events()` (`HostEvent`) out. State
   changes are coalesced: `state()` is always current, and one `Lobby` per
   `outgoing()` drain goes to every member (also flushed right before a
   `Notice(Joined)`, so the others know the member it names).
-  - Join: `connected(peer, ip, now, nonce)` sends `Challenge` (a banned IP:
+  - Join: `connected(peer, ip, now, nonce, fingerprints)` sends `Challenge` (a banned IP:
     `Refused(Banned)`; an IP held off for guessing: `Refused(Throttled)`);
     `Hello` is checked for the guessing hold again (`Throttled`: links
     opened before it get no more guesses), bans (`Banned`), a key already in the lobby or
@@ -31,8 +36,11 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     `PASSWORD_WINDOW_US` (60 s) hold it off for `PASSWORD_LOCKOUT_US`
     (60 s); the empty password's proof is no guess; at most
     `PASSWORD_ADDRESSES` (1024) addresses remembered, the oldest
-    forgotten); `Prove` must verify over
-    `challenge_message(nonce, host key)` (else `Malformed`); then
+    forgotten); a `Hello` passing them is answered at once with
+    `HostProof`, the host's signature of `host_proof_message(Hello's
+    nonce, joiner key, fingerprints)` (BIP-340 aux: the challenge's nonce,
+    fresh per link); `Prove` must verify over
+    `challenge_message(nonce, host key, fingerprints)` (else `Malformed`); then
     `Welcome` to the joiner, `Lobby` to the others, `Notice(Joined)` to
     all. Anything else before the proof, a second `Hello`, or no proof
     within `PROOF_TIMEOUT_US` (10 s): dropped. Every refusal and drop is
@@ -114,13 +122,18 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     `HostEvent::Left`; during a match the slot stays in the match.
   - The state never breaks rl-proto's decoders (looks, names, chat, end
     reasons sanitized; setups validated: `LobbyError::InvalidSetup`).
-- **Client** (`client.rs`, `LobbyClient`): `new(.., expected_host)`: a
-  challenge naming another key is not answered (`WrongHost`). The host
-  never proves it holds the key it names, so this protects nothing yet
-  (ruling F-B, carried to plan 12: the host signs the client's nonce,
-  bound to the DTLS fingerprints);
-  `connected()`, then on `Challenge` sends `Hello` (with the password
-  proof when asked) and `Prove` at once; a `Welcome` or `Lobby` without
+- **Client** (`client.rs`, `LobbyClient`): `new(.., expected_host)`,
+  `connected(fingerprints)` (the link's, as this end saw them); on
+  `Challenge` sends `Hello` (with the password proof when asked, and the
+  `aux` given with the challenge as its nonce); on `HostProof` that
+  verifies under the challenge's key over `host_proof_message(its nonce,
+  its key, fingerprints)` sends `Prove`. A challenge naming another key
+  than `expected_host` (nothing sent) or a proof that fails (`Hello`
+  alone sent) is `WrongHost` (carried ruling F-B, N37): a man in the
+  middle presents its own DTLS certificates, so the fingerprints differ
+  and both proofs fail; without `expected_host`, an impostor proving its
+  own key is not caught (invites pass the key). A `Welcome` before the
+  proof is ignored; a `Welcome` or `Lobby` without
   this member closes (`Closed`); `ClientEvent`s for the welcome, refusals, lobby
   changes, chat, notices, start, end, kicks and closing. Actions are sent
   only once joined; `leave()` sends `Bye`.
@@ -129,7 +142,9 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   messages tagged and encoded through rl-proto, a fixed one-way delay
   (what arrives at one instant is delivered before the drain: one poll),
   virtual time (`settle`, `run`), raw peers for forged messages
-  (`join_raw`, `send_raw`), `disconnect`, and the match layer's `start`.
+  (`join_raw`, `send_raw`), every link's DTLS fingerprints `FINGERPRINTS`
+  (`join_seeing`: a client seeing others, a man in the middle),
+  `disconnect`, and the match layer's `start`.
 
 Test: `cargo nextest run -p rl-lobby` (`tests/lobby.rs`: one test per rule
 and a proptest of random messages and host actions — a crowd of worst-case

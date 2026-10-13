@@ -30,7 +30,12 @@ announcements.
   the time, flushes queued sends and hands out `Transmit`s, `LinkEvent`s
   (`Open` once both channels are open, `Message`, `Closed { why: Ended }`
   once — `Peer`, `Lost` (ICE), `Failed`; nothing after a local `close`)
-  and the next timeout.
+  and the next timeout. `dtls_fingerprints()` (from `Open`, else `None`):
+  the offer side's and the answer side's SHA-256 certificate
+  fingerprints, the same at both ends — ours as our SDP announced it, the
+  peer's as its DTLS handshake presented it (str0m ends a link whose
+  certificate differs from its SDP `a=fingerprint`); the lobby's proofs
+  sign them (N37). Every link has its own certificate.
 - **Channels** (decision N17), both negotiated out of band, the same config
   on both sides: `INPUTS` = stream id 0, `"inputs"`, unordered,
   `MaxPacketLifetime { lifetime: 1 }` — in effect no retransmits
@@ -112,7 +117,8 @@ announcements.
   - **Peers**: host side 1, 2, 3, … in the order links open, never reused
     (`PeerId` is `u32` and never goes on the wire);
     the client's peer is `HOST` (0). `Connected { addr }` is the remote end
-    of the signalling connection. A local `close` (and dropping the
+    of the signalling connection. `dtls_fingerprints(peer)`: an open
+    peer's link's. A local `close` (and dropping the
     endpoint) tells the peer at once and reports nothing.
   - **Timeouts**: a link must open within `SETUP_TIMEOUT` (10 s) of its
     offer; an open link silent for `SILENCE_TIMEOUT` (10 s) or lost by ICE

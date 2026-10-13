@@ -301,7 +301,7 @@ impl Shell {
         let to = resolve(addr, default_port)?;
         let (id, look) = self.me()?;
         let content = self.open_content()?;
-        let role = PeerRole::Client { addr: to, password: password.map(|p| p.0) };
+        let role = PeerRole::Client { addr: to, password: password.map(|p| p.0), expected_host: None };
         let endpoint = EndpointConfig { port: 0, impair: self.impair, ..EndpointConfig::default() };
         let peer = OnlinePeer::start(role, endpoint, id, look, content, None, self.peer_content())?;
         println!("rl-game: joining {to}");

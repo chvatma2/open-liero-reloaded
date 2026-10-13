@@ -17,7 +17,7 @@ use rl_netcode::{Driver, WorldSim};
 use rl_online::bundle::GameBundle;
 use rl_online::content::{Download, DownloadState};
 use rl_online::matches::{bot_wire, rules_wire, setup_packs};
-use rl_online::peer::{MISMATCH, SETUP_REFUSED};
+use rl_online::peer::{MISMATCH, SETUP_REFUSED, WRONG_HOST};
 use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{Look, MatchSetupWire, Phase, PublicKey, SeatWire};
 use rl_replay::Replay;
@@ -208,9 +208,27 @@ impl Net {
     /// A client joining as `me` with `look` and `content`, and `cfg` or a
     /// cache of its own; its index.
     fn join_with(&mut self, me: Identity, look: Look, content: Content, cfg: Option<PeerContent>) -> usize {
+        self.join_expecting_with(me, look, content, cfg, None)
+    }
+
+    /// A client expecting the host's key `expected` (an invite's), with
+    /// every pack and a cache of its own; its index.
+    fn join_expecting(&mut self, name: &str, expected: PublicKey) -> usize {
+        let content = self.content();
+        self.join_expecting_with(identity(), look(name), content, None, Some(expected))
+    }
+
+    fn join_expecting_with(
+        &mut self,
+        me: Identity,
+        look: Look,
+        content: Content,
+        cfg: Option<PeerContent>,
+        expected_host: Option<PublicKey>,
+    ) -> usize {
         let key = me.public();
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
-        let role = PeerRole::Client { addr, password: None };
+        let role = PeerRole::Client { addr, password: None, expected_host };
         let mut own = None;
         let cfg = cfg.unwrap_or_else(|| {
             let (dir, cache) = cache();
@@ -616,6 +634,36 @@ fn a_desync_makes_a_bundle_on_both_sides() {
         assert!(h.checksums.contains(&(t, sum)), "tick {t}: in sync before the mismatch");
     }
     assert_eq!(c.other_checksums, [(ht, hl)], "a client knows the host's of the mismatch");
+}
+
+/// A joiner expecting another key than the host's (an invite naming
+/// another game) refuses the host, in words, and is never admitted; one
+/// expecting the host's key joins (carried ruling F-B, N37).
+#[test]
+fn a_host_with_another_key_is_refused() {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 0.1);
+    let a = net.join_expecting("Anna", identity().public());
+    net.run_until(Duration::from_secs(10), "the client refuses the host", |n| {
+        n.peers[a].has(|e| matches!(e, OnlineEvent::Refused(_)))
+    });
+    let refusal = net.peers[a].events.iter().find_map(|e| match e {
+        OnlineEvent::Refused(r) => Some(r.clone()),
+        _ => None,
+    });
+    assert_eq!(refusal.as_deref(), Some(WRONG_HOST));
+    assert_eq!(WRONG_HOST, "this is not the game you were invited to");
+    assert!(net.peers[a].peer().is_closed());
+    for _ in 0..50 {
+        net.poll();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(net.members(), 1, "never admitted");
+    let host_key = net.host().key;
+    let b = net.join_expecting("Bert", host_key);
+    net.run_until(Duration::from_secs(10), "the client expecting the host's key joins", |n| {
+        n.members() == 2 && n.peers[b].has(|e| matches!(e, OnlineEvent::Lobby(_)))
+    });
 }
 
 #[test]

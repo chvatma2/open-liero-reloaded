@@ -72,7 +72,7 @@ fn samples() -> Vec<Vec<u8>> {
         }),
     ];
     for m in [
-        ToHost::Hello { key: [7; 32], look: look(), password: Some([1; 32]) },
+        ToHost::Hello { key: [7; 32], look: look(), password: Some([1; 32]), nonce: [3; 32] },
         ToHost::Prove { signature: [9; 64] },
         ToHost::Chat("hello there".into()),
         ToHost::Have { revision: 2, missing: vec!["olx-skin-a".into(), "olx-skin-b".into()] },
@@ -82,6 +82,8 @@ fn samples() -> Vec<Vec<u8>> {
         v.push(encode_to_host(&m));
     }
     for m in [
+        ToClient::Challenge { nonce: [4; 32], host_key: [5; 32], needs_password: true },
+        ToClient::HostProof { signature: [6; 64] },
         ToClient::Welcome { you: 1, lobby: lobby() },
         ToClient::Lobby(lobby()),
         ToClient::Chat { from: 1, text: "hi".into() },

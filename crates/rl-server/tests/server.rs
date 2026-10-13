@@ -209,7 +209,7 @@ impl Rig {
     fn join_with(&mut self, me: Identity, look: Look, content: Content, downloads: PeerContent) -> usize {
         let key = me.public();
         let addr = SocketAddr::from(([127, 0, 0, 1], self.server().local_port()));
-        let role = PeerRole::Client { addr, password: None };
+        let role = PeerRole::Client { addr, password: None, expected_host: None };
         let cfg = EndpointConfig { port: 0, ..EndpointConfig::default() };
         let p = OnlinePeer::start(role, cfg, me, look, content, None, downloads).unwrap();
         self.clients.push(Client {
@@ -613,7 +613,7 @@ fn run_stops_on_its_flag_and_says_bye() {
     };
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let cfg = EndpointConfig { port: 0, ..EndpointConfig::default() };
-    let role = PeerRole::Client { addr, password: None };
+    let role = PeerRole::Client { addr, password: None, expected_host: None };
     let mut p =
         OnlinePeer::start(role, cfg, identity(), look("Anna"), content(&dir), None, no_downloads()).unwrap();
     let mut events = Vec::new();

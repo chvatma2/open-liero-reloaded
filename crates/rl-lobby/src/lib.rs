@@ -15,5 +15,7 @@ mod model;
 
 pub use client::LobbyClient;
 pub use host::LobbyHost;
-pub use identity::{Identity, challenge_message, fingerprint, password_proof, verify};
+pub use identity::{
+    DtlsFingerprints, Identity, challenge_message, fingerprint, host_proof_message, password_proof, verify,
+};
 pub use model::*;

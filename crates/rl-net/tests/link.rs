@@ -100,6 +100,32 @@ fn links_connect_and_carry_both_channels_on_a_virtual_clock() {
     assert!(wall < Duration::from_secs(10), "virtual time, not wall time");
 }
 
+/// The `a=fingerprint:sha-256` line of an SDP, as bytes.
+fn sdp_fingerprint(sdp: &str) -> [u8; 32] {
+    let line = sdp.lines().find_map(|l| l.strip_prefix("a=fingerprint:sha-256 ")).expect("a fingerprint");
+    let bytes: Vec<u8> = line.trim().split(':').map(|h| u8::from_str_radix(h, 16).unwrap()).collect();
+    bytes.try_into().unwrap()
+}
+
+#[test]
+fn both_ends_see_the_same_dtls_fingerprints() {
+    let now = Instant::now();
+    let (a, offer) = Link::offerer(&[A.parse().unwrap()], now);
+    let (b, answer) = Link::answerer(&[B.parse().unwrap()], &offer, now).unwrap();
+    let mut w = Wire { now, a, b, in_flight: vec![], got_a: vec![], got_b: vec![] };
+    w.a.accept_answer(&answer).unwrap();
+    assert_eq!(w.a.dtls_fingerprints(), None, "not before the DTLS handshake");
+    let t = w.now + Duration::from_secs(2);
+    w.run(t, Duration::from_millis(20));
+    assert!(w.a.is_open() && w.b.is_open());
+    let seen = w.a.dtls_fingerprints().expect("known once open");
+    assert_eq!(w.b.dtls_fingerprints(), Some(seen), "identical on both sides");
+    assert_eq!(seen, (sdp_fingerprint(&offer), sdp_fingerprint(&answer)), "offer side's, then answer side's");
+    assert_ne!(seen.0, seen.1);
+    let (_, another) = Link::offerer(&[A.parse().unwrap()], now);
+    assert_ne!(sdp_fingerprint(&another), seen.0, "every link has its own certificate");
+}
+
 #[test]
 fn links_refuse_early_oversized_and_late_sends_and_report_a_close() {
     let delay = Duration::from_millis(20);

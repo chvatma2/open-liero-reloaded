@@ -106,9 +106,11 @@ pub enum ClientEvent {
     Kicked {
         banned: bool,
     },
-    /// The challenge named another host key than the one expected
-    /// (nothing was sent; close the transport). The named key is not
-    /// proven (see `LobbyClient::new`).
+    /// The host is not the one expected (close the transport): its
+    /// challenge named another key than `expected_host` (nothing was
+    /// sent), or its `HostProof` did not verify (`Hello` alone was sent):
+    /// it does not hold the key `key` it named, or the DTLS fingerprints
+    /// the two ends saw differ (a man in the middle).
     WrongHost {
         key: rl_proto::PublicKey,
     },

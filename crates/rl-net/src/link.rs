@@ -182,6 +182,14 @@ pub struct Link {
     events: Vec<LinkEvent>,
     timeout: Instant,
     now: Instant,
+    /// The DTLS fingerprints, offer side's then answer side's, once the
+    /// handshake has verified the peer's certificate.
+    fingerprints: Option<([u8; 32], [u8; 32])>,
+}
+
+/// A SHA-256 certificate fingerprint as bytes (`None` for another hash).
+fn sha256(fp: &str0m::config::Fingerprint) -> Option<[u8; 32]> {
+    fp.hash_func.eq_ignore_ascii_case("sha-256").then(|| fp.bytes.as_slice().try_into().ok()).flatten()
 }
 
 impl Link {
@@ -200,6 +208,7 @@ impl Link {
             events: Vec::new(),
             timeout: now,
             now,
+            fingerprints: None,
         };
         for &addr in local {
             // An address no candidate can have (unspecified, multicast) is skipped.
@@ -253,6 +262,17 @@ impl Link {
     /// Which end of the offer/answer exchange this link is.
     pub fn side(&self) -> Side {
         self.side
+    }
+
+    /// The SHA-256 DTLS certificate fingerprints of the offer side and the
+    /// answer side, the same on both ends of a link, once it is open
+    /// (`None` before). The local one is the certificate this link's SDP
+    /// announced; the remote one is the certificate the peer presented,
+    /// which str0m has checked against the peer's SDP `a=fingerprint` (a
+    /// mismatch ends the link). The lobby's proofs sign them (N37), so a
+    /// man in the middle, presenting its own certificates, fails them.
+    pub fn dtls_fingerprints(&self) -> Option<([u8; 32], [u8; 32])> {
+        self.fingerprints
     }
 
     /// Whether the datagram `bytes` from `from` to the local `to` belongs to
@@ -389,6 +409,7 @@ impl Link {
                 }
                 if self.opened == [true; 2] && self.state == State::Connecting {
                     self.state = State::Open;
+                    self.fingerprints = self.read_fingerprints();
                     self.events.push(LinkEvent::Open);
                 }
             }
@@ -402,6 +423,19 @@ impl Link {
             Event::Closed => self.fail(Ended::Peer),
             _ => {}
         }
+    }
+
+    /// The offer side's and the answer side's DTLS fingerprints: ours as
+    /// announced, the peer's as verified by the handshake (reading them
+    /// changes nothing in the `Rtc`).
+    fn read_fingerprints(&mut self) -> Option<([u8; 32], [u8; 32])> {
+        let api = self.rtc.direct_api();
+        let local = sha256(api.local_dtls_fingerprint())?;
+        let remote = sha256(api.remote_dtls_fingerprint()?)?;
+        Some(match self.side {
+            Side::Offerer => (local, remote),
+            Side::Answerer => (remote, local),
+        })
     }
 
     /// Ends the link, reporting `why` once. `disconnect` mutates the `Rtc`,

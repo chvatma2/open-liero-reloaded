@@ -3,6 +3,7 @@
 //! chat, kicks and bans, and turns the lobby into a match start. Sans-IO:
 //! the transport's events and the time come in, messages and events go out.
 
+use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -15,19 +16,24 @@ use rl_proto::{
     ToHost, valid_setup,
 };
 
-use crate::identity::{Identity, challenge_message, password_proof, verify};
+use crate::identity::{
+    DtlsFingerprints, Identity, challenge_message, host_proof_message, password_proof, verify,
+};
 use crate::model::*;
 
 /// A peer whose transport is open but who has not proven its key yet.
 struct Pending {
     addr: IpAddr,
     nonce: [u8; 32],
+    /// The link's DTLS fingerprints as the host saw them (both proofs sign them).
+    fingerprints: DtlsFingerprints,
     since_us: u64,
     hello: Option<(PublicKey, Look)>,
 }
 
 enum Link {
-    Pending(Pending),
+    /// Boxed: a pending link carries its nonce and fingerprints.
+    Pending(Box<Pending>),
     Member(u8),
 }
 
@@ -275,8 +281,17 @@ impl LobbyHost {
     // ---- the transport ----
 
     /// The transport opened `peer` from `addr`: send the challenge (or
-    /// refuse a banned address). `nonce` must be fresh randomness.
-    pub fn connected(&mut self, peer: PeerId, addr: IpAddr, now_us: u64, nonce: [u8; 32]) {
+    /// refuse a banned address). `nonce` must be fresh randomness;
+    /// `fingerprints` are the link's DTLS fingerprints, which the joiner's
+    /// proof and the host's (`HostProof`) sign.
+    pub fn connected(
+        &mut self,
+        peer: PeerId,
+        addr: IpAddr,
+        now_us: u64,
+        nonce: [u8; 32],
+        fingerprints: DtlsFingerprints,
+    ) {
         self.now_us = self.now_us.max(now_us);
         if self.links.contains_key(&peer) {
             self.disconnected(peer);
@@ -289,7 +304,8 @@ impl LobbyHost {
             self.refuse(peer, Refusal::Throttled);
             return;
         }
-        self.links.insert(peer, Link::Pending(Pending { addr, nonce, since_us: now_us, hello: None }));
+        let pending = Pending { addr, nonce, fingerprints, since_us: now_us, hello: None };
+        self.links.insert(peer, Link::Pending(Box::new(pending)));
         let challenge = ToClient::Challenge {
             nonce,
             host_key: self.key.public(),
@@ -760,9 +776,9 @@ impl LobbyHost {
 
     fn receive_pending(&mut self, peer: PeerId, msg: ToHost, now_us: u64) {
         let Some(Link::Pending(p)) = self.links.get(&peer) else { return };
-        let (addr, nonce, hello) = (p.addr, p.nonce, p.hello.clone());
+        let (addr, nonce, fingerprints, hello) = (p.addr, p.nonce, p.fingerprints, p.hello.clone());
         match (msg, hello) {
-            (ToHost::Hello { key, look, password }, None) => {
+            (ToHost::Hello { key, look, password, nonce: client_nonce }, None) => {
                 // Checked at each attempt, not only when the link opened:
                 // links opened before the hold get no more guesses.
                 if self.held(addr, now_us) {
@@ -784,9 +800,15 @@ impl LobbyHost {
                 if let Some(Link::Pending(p)) = self.links.get_mut(&peer) {
                     p.hello = Some((key, look));
                 }
+                // The host proves its key (N37) before the joiner proves
+                // its own. BIP-340's aux is the challenge's nonce: fresh
+                // per link; the signature stays safe with a public aux.
+                let message = host_proof_message(&client_nonce, &key, &fingerprints);
+                let signature = self.key.sign(&message, nonce);
+                self.out.push((peer, ToClient::HostProof { signature }));
             }
             (ToHost::Prove { signature }, Some((key, look))) => {
-                if !verify(&key, &challenge_message(&nonce, &self.key.public()), &signature) {
+                if !verify(&key, &challenge_message(&nonce, &self.key.public(), &fingerprints), &signature) {
                     return self.refuse(peer, Refusal::Malformed);
                 }
                 if let Err(r) = self.may_join(&key, addr) {

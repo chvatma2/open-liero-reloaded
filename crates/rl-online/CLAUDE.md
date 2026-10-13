@@ -28,7 +28,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   callback; `Driver<WorldSim>` for bots alone, `rl-cli`'s).
 - **`peer.rs`, `OnlinePeer`**: `start(role, endpoint, me, look, content,
   setup, content_cfg)` (`PeerRole::Host`, `Server`: a host without a local
-  player, the dedicated server's, `look` unused; `Client`; `content_cfg`:
+  player, the dedicated server's, `look` unused; `Client { addr,
+  password, expected_host }`: a host whose key is not `expected_host`, or
+  whose `HostProof` fails, ends it with `Refused(WRONG_HOST)`, "this is not
+  the game you were invited to"; `content_cfg`:
   `PeerContent`, below); `poll(now, local_keys, on_tick) ->
   Vec<OnlineEvent>`; `content()` (what matches and replays load from),
   `downloads()`, `download_prompt()` (the bytes waiting for approval, as
@@ -79,9 +82,11 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   - **Host**: the endpoint's gate refuses the lobby's banned addresses (a
     set mirrored from `Kick { ban: true }` when the lobby banned the
     address, and from `ban_ip`/`unban_ip`). `Connected` → `connected` with
-    a fresh nonce. Lobby messages leave at most every `LOBBY_DRAIN`
+    a fresh nonce and the link's `dtls_fingerprints` (a client's
+    `connected` takes them too). Lobby messages leave at most every `LOBBY_DRAIN`
     (250 ms; a start, an end, a kick, a join (its welcome before the
-    content list) and a mid-match join at once). A
+    content list), the `HostProof` answering a `Hello` and a mid-match
+    join at once). A
     `Kick` or `Close` closes the peer once its messages are delivered
     (`CLOSE_LINGER`, 1 s at most) and is `peer_lost` in the match.
     An admin's `Settings` is taken when the host has its mod, level and
@@ -295,7 +300,9 @@ checksum of a match's last tick (a 2.997 s limit: the last tick, 599, is a
 checksum tick), as its clients do; `/next` (`end_match`) on such a
 server, while it has confirmed a checksum tick it has not simulated, ends
 at the last tick it simulated with every checksum up to there, and every
-client's record and replay equal the server's (`MatchEndWire::last_tick`).
+client's record and replay equal the server's (`MatchEndWire::last_tick`);
+a client expecting another host key is refused (`WRONG_HOST`), one
+expecting the host's joins.
 Content (each peer a cache in a temporary directory; `common::
 partial_content` copies the match's packs but some, `with_test_skin`
 adds a skin pack of another hash): a client without the level, or the mod,
