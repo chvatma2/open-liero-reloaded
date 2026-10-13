@@ -25,14 +25,14 @@ use rl_netcode::{Channel, Config, Driver, Event, PeerId, Role, Seat, Session, Ti
 use rl_proto::{
     AdminCommand, Control, LobbyState, Look, MAX_INPUT_DELAY, MatchEndWire, MatchSetupWire, MatchStartWire,
     Notice, Phase, PublicKey, Refusal, TAG_NETCODE, TAG_TO_CLIENT, TAG_TO_HOST, Tagged, ToClient,
-    decode_control, decode_to_client, decode_to_host, encode_to_client, encode_to_host, tag,
+    decode_control, decode_to_client, decode_to_host, encode_control, encode_to_client, encode_to_host, tag,
 };
 use rl_sim::{EndReason, Keys, MatchResult, Score, TickEvents, World};
 
 use crate::bundle::{GameBundle, MAX_BUNDLES_PER_MATCH};
 use crate::events::{NetStats, OnlineEvent};
 use crate::matches::{self, HostBots};
-use crate::outbox::Outbox;
+use crate::outbox::{Outbox, Part};
 use crate::replay::{MatchRecord, PendingReplay};
 
 /// The host sends its lobby's messages at most this often: changes in
@@ -490,7 +490,8 @@ impl OnlinePeer {
     }
 
     /// Peers the outbox closed: they did not read what was sent to them
-    /// (a backlog past `outbox::MAX_BACKLOG`).
+    /// (a backlog past `outbox::MAX_BACKLOG`, or a second state while one
+    /// was outstanding).
     fn overflowed(&mut self) {
         for peer in self.endpoint.take_overflowed() {
             if self.is_host() {
@@ -1222,7 +1223,26 @@ impl Driver<WorldSim> for PeerDriver<'_> {
 fn send(ep: &mut Outbox, peer: PeerId, ch: Channel, bytes: &[u8]) {
     match ch {
         Channel::Unreliable => ep.send(peer, ch, bytes),
-        Channel::Reliable => ep.send_tagged(peer, TAG_NETCODE, bytes),
+        Channel::Reliable => ep.send_part(peer, TAG_NETCODE, bytes, state_part(bytes)),
+    }
+}
+
+/// What the session's reliable message `control` is to the outbox's bound:
+/// a state transfer's `StateBegin` or `StateChunk`, else an ordinary
+/// message. postcard encodes a variant's index first (one byte below 128),
+/// so a chunk is known without decoding its 32 KiB.
+fn state_part(control: &[u8]) -> Part {
+    let variant = |c: &Control| encode_control(c).first().copied();
+    let first = control.first().copied();
+    if first == variant(&Control::StateChunk { index: 0, bytes: Vec::new() }) {
+        Part::StateChunk
+    } else if first == variant(&Control::StateBegin { tick: 0, len: 0, chunks: 0 }) {
+        match decode_control(control) {
+            Ok(Control::StateBegin { chunks, .. }) => Part::StateBegin { chunks: usize::from(chunks) },
+            _ => Part::Message,
+        }
+    } else {
+        Part::Message
     }
 }
 
@@ -1518,5 +1538,23 @@ mod tests {
         // The worker is free again.
         p.make_replay(Some(r));
         assert!(p.replay.is_some());
+    }
+
+    /// The session's state messages are told apart for the outbox's bound.
+    #[test]
+    fn state_messages_are_told_apart() {
+        let begin = encode_control(&Control::StateBegin { tick: 9, len: 70_000, chunks: 3 });
+        assert_eq!(state_part(&begin), Part::StateBegin { chunks: 3 });
+        let chunk = encode_control(&Control::StateChunk { index: 2, bytes: vec![7; rl_proto::STATE_CHUNK] });
+        assert_eq!(state_part(&chunk), Part::StateChunk);
+        for other in [
+            Control::Checksum { tick: 1, hash: 2 },
+            Control::StateLoaded { tick: 3 },
+            Control::Bye,
+            Control::Desync { tick: 4, host_hash: 5 },
+        ] {
+            assert_eq!(state_part(&encode_control(&other)), Part::Message, "{other:?}");
+        }
+        assert_eq!(state_part(&[]), Part::Message);
     }
 }

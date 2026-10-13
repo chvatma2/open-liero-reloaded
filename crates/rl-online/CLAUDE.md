@@ -54,11 +54,16 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     backlog fed into the endpoint while its `buffered` for that peer is
     below `FEED_BELOW` (1 MiB), so the endpoint's `MAX_QUEUED` (4 MiB,
     fatal for the link) is never reached by a state transfer (up to
-    `MAX_STATE`, 64 MiB). A backlog passing `MAX_BACKLOG` (`MAX_STATE` +
-    `LOBBY_HEADROOM`, 8 MiB) means the peer does not read: it is closed
-    (the host says "<name> did not keep up and was disconnected" and
-    forgets it; a client ends, `Disconnected`). A closing peer lingers
-    until its backlog and the endpoint's are delivered.
+    `MAX_STATE`, 64 MiB). Ordinary messages passing `MAX_BACKLOG` (8 MiB)
+    in a peer's backlog mean the peer does not read: it is closed (the
+    host says "<name> did not keep up and was disconnected" and forgets
+    it; a client ends, `Disconnected`). Only a state transfer may pass
+    that bound (`outbox::Part`, told apart by `peer::state_part`: its
+    `StateBegin` announces its chunks, counted apart up to
+    `MAX_STATE_BACKLOG`), one per peer at a time: a second `StateBegin`
+    while the first is still queued closes the peer as above. So a host
+    holds at most 8 MiB per peer, plus the states outstanding. A closing
+    peer lingers until its backlog and the endpoint's are delivered.
   - Reliable payloads carry the tag byte: the session's untagged `Control`
     gets `0` on the way out and loses it on the way in; lobby messages are
     `1`/`2`. A payload that does not decode drops the peer (host) or ends
@@ -166,7 +171,10 @@ client's record and replay equal the server's (`MatchEndWire::last_tick`).
 cases, about 30 build) never panics `build`; a slot both member and bot,
 a single slot, an unknown mod and a pack hash mismatch are refused.
 `tests/replay.rs`: a replay of confirmed inputs plays; a corrupted
-confirmed checksum warns and the same replay is kept. `peer.rs`' unit test:
-one replay worker at a time. `outbox.rs`' unit tests (127.0.0.1): a 10 MB
-transfer arrives whole and in order with nothing dropped; a peer that never
-reads is closed once its backlog passes `MAX_BACKLOG`, reported once.
+confirmed checksum warns and the same replay is kept. `peer.rs`' unit
+tests: one replay worker at a time; the session's state messages told
+apart. `outbox.rs`' unit tests (127.0.0.1): a 10 MB state between two
+lobby messages arrives whole and in order with nothing dropped; a peer that
+never reads, flooded with lobby states, is closed at about 8 MiB of
+backlog, reported once; a second state while one is queued closes the
+peer, and chunks no `StateBegin` announced count as ordinary.
