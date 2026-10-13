@@ -452,3 +452,48 @@ fn a_drift_is_counted_not_a_panic() {
         assert_eq!(net.drifts(), 1, "counted (checked in debug builds)");
     }
 }
+
+/// A death as the simulation emits it in sub-step 1: the kill, the death
+/// sound `id` (one of three, drawn) and worm `worm`'s 7 gibs.
+fn death(id: u16, worm: i32) -> Vec<Event> {
+    use rl_math::Vec2;
+    let gib = EventKind::SpawnCosmetic { kind: CosmeticKind::Gib { worm }, pos: Vec2::ZERO, vel: Vec2::ZERO };
+    let mut v = vec![
+        ev(1, EventKind::Kill { victim: worm, killer: 0 }),
+        ev(1, EventKind::Sound { id: SoundId(id), pos: Vec2::ZERO }),
+    ];
+    v.extend((0..7).map(|_| ev(1, gib)));
+    v
+}
+
+/// A death's sound is keyed by the worm whose gibs follow it, not by which
+/// of the three death sounds it drew: a correction that re-rolls the sound
+/// plays no second one, and one that kills another worm instead plays that
+/// death's sound and spawns its gibs (neither is deduped away).
+#[test]
+fn every_death_plays_its_sound_and_gibs_once_under_corrections() {
+    assert!(SoundId::DEATH.contains(&SoundId(3)) && SoundId::DEATH.contains(&SoundId(4)));
+    let key = |events: &[Event]| event_keys(5, events)[1].unwrap();
+    assert_eq!(key(&death(3, 1)), key(&death(4, 1)), "a re-rolled death sound");
+    assert_ne!(key(&death(3, 1)), key(&death(3, 2)), "another worm's death");
+
+    let Some(c) = content() else { return };
+    let p = packs(&c);
+    let mut sim = WorldSim::new(world(&c));
+    let mut present = presentation(&c, &p, sim.world());
+    let mut rec = TickRecorder::default();
+    sim.tick(&final_keys(0));
+    rec.simulated(&sim, TickInfo { tick: 0, resim: false, all_final: true });
+    let mut net = NetPresenter::new();
+    let mut sounds = Vec::new();
+    net.apply(&mut present, sim.world(), &[], &rec.take_ticked(), &mut sounds);
+    let tick = |resim, events: Vec<Event>| TickedTick { tick: 1, resim, substeps: 2, lost: None, events };
+    let mut step = |resim, events: Vec<Event>| {
+        let (spawned, mut sounds) = (net.spawned(), Vec::new());
+        net.apply(&mut present, sim.world(), &[], &[tick(resim, events)], &mut sounds);
+        (sounds.len(), net.spawned() - spawned)
+    };
+    assert_eq!(step(false, death(3, 1)), (1, 7), "worm 1 dies: its sound, its gibs");
+    assert_eq!(step(true, death(4, 1)), (0, 0), "the same death, its sound re-rolled");
+    assert_eq!(step(true, death(3, 2)), (1, 7), "worm 2 dies instead");
+}

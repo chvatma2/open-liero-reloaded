@@ -25,12 +25,16 @@
 //! A sound is keyed by its id, not its source (events carry none): when a
 //! correction swaps which worm fires the same weapon in the same tick and
 //! sub-step, the sound stays where it first played (spec §3.4: not undone).
+//! A death's sound is the exception: it is keyed by the worm whose gibs
+//! follow it, not by which of the three death sounds it drew, so a
+//! correction that re-rolls it plays no second death sound, and one that
+//! kills another worm instead plays that death's.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use rl_fx::FxTick;
 use rl_netcode::world_sim::TickedTick;
-use rl_sim::{BonusItem, CosmeticKind, EndReason, Event, EventKind, World};
+use rl_sim::{BonusItem, CosmeticKind, EndReason, Event, EventKind, SoundId, World};
 use rl_terrain::Area;
 
 use crate::Presentation;
@@ -50,7 +54,8 @@ pub struct EventKey {
 /// The keys of one tick's events, in order: `None` for terrain edits,
 /// which are never deduped (the colour terrain replays every one).
 ///
-/// The class is the kind and: a sound's id; a shot's worm and weapon; a
+/// The class is the kind and: a sound's id (a death sound's worm, from the
+/// gibs right after it, `rl_sim::damage`'s order); a shot's worm and weapon; a
 /// damage's worm and attacker; a kill's victim and killer; a spawn's worm;
 /// a cosmetic's kind with its worm (gib, laser sight, beam) or size
 /// (explosion); an explosion's shake; a pickup's worm and bonus; a
@@ -59,8 +64,9 @@ pub fn event_keys(tick: u32, events: &[Event]) -> Vec<Option<EventKey>> {
     let mut seen: BTreeMap<(u8, u64), u16> = BTreeMap::new();
     events
         .iter()
-        .map(|e| {
-            let class = class(&e.kind)?;
+        .enumerate()
+        .map(|(i, e)| {
+            let class = class(&e.kind, events.get(i + 1).map(|n| &n.kind))?;
             let n = seen.entry((e.substep, class)).or_insert(0);
             let ordinal = *n;
             *n = n.saturating_add(1);
@@ -69,12 +75,20 @@ pub fn event_keys(tick: u32, events: &[Event]) -> Vec<Option<EventKey>> {
         .collect()
 }
 
-/// The hash of `kind`'s identity, `None` for a terrain edit.
-fn class(kind: &EventKind) -> Option<u64> {
+/// The hash of `kind`'s identity (`next` is the event after it), `None`
+/// for a terrain edit.
+fn class(kind: &EventKind, next: Option<&EventKind>) -> Option<u64> {
     let mut h = Fnv::new();
     match *kind {
         EventKind::TerrainEdit { .. } => return None,
-        EventKind::Sound { id, .. } => h.words(&[0, id.0.into()]),
+        EventKind::Sound { id, .. } => match next {
+            Some(&EventKind::SpawnCosmetic { kind: CosmeticKind::Gib { worm }, .. })
+                if SoundId::DEATH.contains(&id) =>
+            {
+                h.words(&[10, worm.into()])
+            }
+            _ => h.words(&[0, id.0.into()]),
+        },
         EventKind::Explosion { shake, .. } => h.words(&[1, shake.into()]),
         EventKind::SpawnCosmetic { kind, .. } => {
             let (tag, n) = match kind {
