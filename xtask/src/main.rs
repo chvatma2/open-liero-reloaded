@@ -6,6 +6,7 @@ mod bless;
 mod bless_regression;
 mod check;
 mod determinism;
+mod dist;
 mod e2e;
 mod envelope;
 mod fetch;
@@ -160,6 +161,14 @@ enum Command {
     /// Build rl-cli and rl-game for Windows (x86_64-pc-windows-gnu), stage them with the
     /// content in Windows' temp directory and list the adapters each backend sees (plan 8).
     Windows,
+    /// Portable release zips: rl-game and rl-server (the `dist` profile) with the content,
+    /// docs and an example server config, for Linux and Windows, in
+    /// target/dist/rust-liero-<version>-<platform>.zip; then each is unpacked and run.
+    Dist {
+        /// Only build the zips: do not unpack and run them.
+        #[arg(long)]
+        no_verify: bool,
+    },
     /// Cross-platform determinism (plan 9, spec §9.5): golden bot matches' replays are played
     /// by `rl-detcheck` natively and on another platform; the checksum streams must be equal.
     /// With no leg flag the WASM leg (Node.js WASI) runs; a flag runs that leg only.
@@ -211,6 +220,7 @@ fn main() -> ExitCode {
         Command::BlessRender { reason } => bless::run(&reason),
         Command::BlessRegression { reason, from } => bless_regression::run(&reason, from.as_deref()),
         Command::Windows => winbuild::command(),
+        Command::Dist { no_verify } => dist::command(!no_verify),
         Command::Determinism { windows, arm64, wasm, all } => {
             determinism::command(determinism::Opts { wasm, windows, arm64, all })
         }

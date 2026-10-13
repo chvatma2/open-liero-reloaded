@@ -28,6 +28,17 @@ All notable changes to rust-liero are recorded here. The format follows
 - Replays of matches on downloaded content play back, from the Replays
   screen and from `--replay`.
 
+### Added — release zips
+
+- `cargo xtask dist` builds portable zips for Linux and Windows,
+  `target/dist/rust-liero-<version>-<platform>.zip`: `rl-game`,
+  `rl-server`, the content, the docs and an example server config in one
+  folder, to unpack and run anywhere. It unpacks and runs each zip to
+  check it (`--no-verify` skips that).
+- `rl-game` and `rl-server` without `--content` use the `content/packs`
+  beside the program when there is one, else the one in the working
+  directory as before.
+
 ### Changed
 
 - Online play's protocol version is 2: this version and the earlier one

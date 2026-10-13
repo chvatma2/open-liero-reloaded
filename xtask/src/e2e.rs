@@ -466,7 +466,7 @@ fn online(x: &Xvfb, content: &Path, out: &Path) -> Result<Online, String> {
 }
 
 /// A server log line without its UTC stamp (`YYYY-MM-DD HH:MM:SS `).
-fn unstamped(line: &str) -> &str {
+pub fn unstamped(line: &str) -> &str {
     let b = line.as_bytes();
     let stamped = b.len() >= 20
         && b[..19].iter().enumerate().all(|(i, c)| match i {

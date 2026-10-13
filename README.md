@@ -283,6 +283,29 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
   (WSL's disk file does not shrink by itself; `wsl --manage <distro>
   --set-sparse true` after `wsl --shutdown` helps.)
 
+## Building a release zip
+
+`cargo xtask dist` builds portable zips for Linux and Windows in one run:
+`target/dist/rust-liero-<version>-linux-x64.zip` and
+`target/dist/rust-liero-<version>-windows-x64.zip`. Each holds one folder,
+`rust-liero-<version>/`, with `rl-game` and `rl-server` (`.exe` on
+Windows, built in the `dist` profile: release without symbols), the
+content in `content/packs/`, this README, the license, the changelog,
+`docs/online.md` and `server.example.ron`. Copy a zip anywhere, unpack it
+and run `rl-game`: without `--content` both programs use the
+`content/packs` beside them. Settings, profiles and replays stay in the
+user's profile directory, as with any build. The Linux programs need
+`libasound2` and `libudev1` (`rl-game` only) and a glibc at least as new
+as the building machine's; the Windows ones need no extra DLLs.
+
+The Windows build needs mingw-w64 and the Rust target (`sudo apt install
+mingw-w64`, `rustup target add x86_64-pc-windows-gnu`). At the end each
+zip is unpacked into a fresh directory and run from another one: on Linux
+`rl-game --help` and an `rl-server` match with a bot client, on Windows
+(through WSL interop; skipped with a notice without it) `rl-game.exe
+--help` and `rl-server.exe` loading its map. `--no-verify` skips that.
+The two whole-program-optimised builds take several minutes from cold.
+
 ## Checks
 
 - `cargo xtask check` (about 30 s warm) is the gate before every commit. It

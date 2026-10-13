@@ -12,8 +12,9 @@ pub const CONTENT_DIR: &str = "content/packs";
 /// running executable's path, `std::env::current_exe()`), else
 /// `content/packs` relative to the working directory.
 pub fn default_content_dir(exe: Option<&Path>) -> PathBuf {
+    // By components: Windows shows `<exe dir>\content\packs`.
     exe.and_then(Path::parent)
-        .map(|dir| dir.join(CONTENT_DIR))
+        .map(|dir| CONTENT_DIR.split('/').fold(dir.to_path_buf(), |d, c| d.join(c)))
         .filter(|dir| dir.is_dir())
         .unwrap_or_else(|| PathBuf::from(CONTENT_DIR))
 }

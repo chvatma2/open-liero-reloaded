@@ -97,6 +97,9 @@ getrandom = "=0.4.3"
 # The dedicated server stops cleanly on Ctrl+C, SIGTERM and a closed
 # console (plan 10 ruling T13-A): an exact pin.
 ctrlc = { version = "=3.5.2", features = ["termination"] }
+# The release zips (`cargo xtask dist`, xtask only): zip 8.6.0 (2026-04-25),
+# deflate through flate2's pure-Rust backend; no bzip2, zstd or lzma.
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2"] }
 # Identity keys (plan 10, spec §5.2): BIP-340 Schnorr over secp256k1, no_std.
 k256 = { version = "=0.14.0", default-features = false, features = ["schnorr"] }
 
@@ -123,3 +126,10 @@ debug = false
 [profile.release]
 lto = "fat"
 codegen-units = 1
+
+# The release zips (`cargo xtask dist`): the release build without symbols
+# or debug info. Panics stay unwinding, as in release.
+[profile.dist]
+inherits = "release"
+strip = true
+debug = false

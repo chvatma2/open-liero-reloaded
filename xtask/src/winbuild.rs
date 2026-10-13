@@ -47,6 +47,11 @@ fn tail(text: &str, n: usize) -> String {
 
 /// Why the Windows path cannot run here, if it cannot (a notice names the fix).
 pub fn missing() -> Option<String> {
+    interop_missing().or_else(build_missing)
+}
+
+/// Why Windows programs cannot run here through WSL interop, if they cannot.
+pub fn interop_missing() -> Option<String> {
     if !Path::new(CMD).exists() {
         return Some(format!("no Windows interop ({CMD} is missing)"));
     }
@@ -63,6 +68,11 @@ pub fn missing() -> Option<String> {
     if !Path::new(POWERSHELL).exists() {
         return Some(format!("no Windows PowerShell ({POWERSHELL} is missing)"));
     }
+    None
+}
+
+/// Why the Windows build cannot be made here (the Rust target, mingw-w64), if it cannot.
+pub fn build_missing() -> Option<String> {
     let installed = Command::new("rustup")
         .current_dir(root())
         .args(["target", "list", "--installed"])
@@ -212,6 +222,29 @@ fn mingw_dll(name: &str) -> Option<PathBuf> {
     dirs.into_iter().map(|d| d.join(name)).find(|p| p.is_file())
 }
 
+/// The mingw runtime DLLs (`MINGW_DLLS`) the Windows exe `exe` imports
+/// (`objdump -p`), each with its file in mingw-w64's directories.
+pub fn mingw_imports(exe: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+    let dump = Command::new(OBJDUMP).arg("-p").arg(exe).output().map_err(|e| format!("{OBJDUMP}: {e}"))?;
+    if !dump.status.success() {
+        return Err(format!(
+            "{OBJDUMP} -p {} failed ({}): {}",
+            exe.display(),
+            dump.status,
+            tail(&String::from_utf8_lossy(&dump.stderr), 5)
+        ));
+    }
+    let mut found = Vec::new();
+    for dll in imported_dlls(&String::from_utf8_lossy(&dump.stdout)) {
+        if MINGW_DLLS.iter().any(|d| d.eq_ignore_ascii_case(&dll)) {
+            let file = mingw_dll(&dll)
+                .ok_or_else(|| format!("{} needs {dll}, not in mingw-w64's directories", exe.display()))?;
+            found.push((dll, file));
+        }
+    }
+    Ok(found)
+}
+
 /// A staged Windows build.
 pub struct Stage {
     pub dir: PathBuf,
@@ -230,22 +263,8 @@ pub fn stage(release: &Path, content: &Path, files: &[PathBuf]) -> Result<Stage,
     for exe in EXES {
         let src = release.join(exe);
         copy(&src, &dir.join(exe))?;
-        let dump =
-            Command::new(OBJDUMP).arg("-p").arg(&src).output().map_err(|e| format!("{OBJDUMP}: {e}"))?;
-        if !dump.status.success() {
-            return Err(format!(
-                "{OBJDUMP} -p {} failed ({}): {}",
-                src.display(),
-                dump.status,
-                tail(&String::from_utf8_lossy(&dump.stderr), 5)
-            ));
-        }
-        for dll in imported_dlls(&String::from_utf8_lossy(&dump.stdout)) {
-            if MINGW_DLLS.iter().any(|d| d.eq_ignore_ascii_case(&dll)) {
-                let found = mingw_dll(&dll)
-                    .ok_or_else(|| format!("{exe} needs {dll}, not in mingw-w64's directories"))?;
-                copy(&found, &dir.join(&dll))?;
-            }
+        for (dll, found) in mingw_imports(&src)? {
+            copy(&found, &dir.join(&dll))?;
         }
     }
     let stamp = content_stamp(content)?;
@@ -286,7 +305,7 @@ pub fn stop_target(stage_win: &str) -> Option<&str> {
 
 /// Stops whatever runs from the stage directory `dir` (`STOP_SCRIPT`);
 /// gives how many processes it stopped.
-fn stop_stage_processes(dir: &Path) -> Result<usize, String> {
+pub fn stop_stage_processes(dir: &Path) -> Result<usize, String> {
     let win = to_windows_path(dir).ok_or_else(|| format!("{} is not on a Windows drive", dir.display()))?;
     let target = stop_target(&win).ok_or_else(|| format!("{win} is not a {STAGE} directory"))?;
     let out = Command::new(POWERSHELL)
@@ -337,8 +356,21 @@ pub fn run(
     env: &[(&str, &str)],
     timeout: Duration,
 ) -> Result<Output, String> {
-    let mut c = Command::new(stage.dir.join(exe));
-    c.current_dir(&stage.dir).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    run_in(stage, &stage.dir.join(exe), &stage.dir, args, env, timeout)
+}
+
+/// [`run`] for the exe at `path` (under the stage) in the working directory `cwd`.
+pub fn run_in(
+    stage: &Stage,
+    path: &Path,
+    cwd: &Path,
+    args: &[String],
+    env: &[(&str, &str)],
+    timeout: Duration,
+) -> Result<Output, String> {
+    let exe = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let mut c = Command::new(path);
+    c.current_dir(cwd).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     if !env.is_empty() {
         for (k, v) in env {
             c.env(k, v);
