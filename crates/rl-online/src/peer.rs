@@ -32,6 +32,7 @@ use rl_sim::{EndReason, Keys, MatchResult, Score, TickEvents, World};
 use crate::bundle::{GameBundle, MAX_BUNDLES_PER_MATCH};
 use crate::events::{NetStats, OnlineEvent};
 use crate::matches::{self, HostBots};
+use crate::outbox::Outbox;
 use crate::replay::{MatchRecord, PendingReplay};
 
 /// The host sends its lobby's messages at most this often: changes in
@@ -166,7 +167,8 @@ struct Game {
 
 /// One end of online play: the lobby, the match, the replay.
 pub struct OnlinePeer {
-    endpoint: Endpoint,
+    /// The endpoint behind the reliable backlog (`outbox`).
+    endpoint: Outbox,
     side: Side,
     content: Arc<Content>,
     my_key: PublicKey,
@@ -243,7 +245,7 @@ impl OnlinePeer {
             }
         };
         Ok(OnlinePeer {
-            endpoint,
+            endpoint: Outbox::new(endpoint),
             side,
             content: Arc::new(content),
             my_key,
@@ -265,7 +267,7 @@ impl OnlinePeer {
 
     /// The endpoint's UDP port (a host's TCP port too).
     pub fn local_port(&self) -> u16 {
-        self.endpoint.local_port()
+        self.endpoint.endpoint().local_port()
     }
 
     pub fn is_host(&self) -> bool {
@@ -303,6 +305,7 @@ impl OnlinePeer {
             self.host_lobby_events(now);
             self.advance(now, local_keys, on_tick);
             self.host_tasks(now);
+            self.overflowed();
             self.close_lingering(now);
             self.update_stats(now);
         }
@@ -446,7 +449,7 @@ impl OnlinePeer {
                     Some(Tagged::Netcode(b)) => {
                         if let Some(g) = &mut self.game {
                             if let Ok(Control::StateBegin { len, .. }) = decode_control(b) {
-                                self.endpoint.allow_burst(HOST, len as usize);
+                                self.endpoint.endpoint_mut().allow_burst(HOST, len as usize);
                             }
                             g.session.receive(HOST, Channel::Reliable, b, now_us);
                         }
@@ -486,6 +489,24 @@ impl OnlinePeer {
         }
     }
 
+    /// Peers the outbox closed: they did not read what was sent to them
+    /// (a backlog past `outbox::MAX_BACKLOG`).
+    fn overflowed(&mut self) {
+        for peer in self.endpoint.take_overflowed() {
+            if self.is_host() {
+                let name = match &self.side {
+                    Side::Host(h) => h.lobby.member_of(peer).map(|id| self.name(id)),
+                    Side::Client(_) => None,
+                };
+                let who = name.unwrap_or_else(|| format!("connection {peer}"));
+                self.events.push(OnlineEvent::Notice(format!("{who} did not keep up and was disconnected")));
+                self.forget_peer(peer);
+            } else {
+                self.end_with(OnlineEvent::Disconnected("the host did not take what this peer sent".into()));
+            }
+        }
+    }
+
     /// Closes a host's peer once what was sent to it is delivered.
     fn close_later(&mut self, peer: PeerId, now: Instant) {
         self.closing.entry(peer).or_insert(now + CLOSE_LINGER);
@@ -498,7 +519,7 @@ impl OnlinePeer {
         let done: Vec<PeerId> = self
             .closing
             .iter()
-            .filter(|&(&peer, &until)| now >= until || self.endpoint.buffered(peer, Channel::Reliable) == 0)
+            .filter(|&(&peer, &until)| now >= until || self.endpoint.buffered(peer) == 0)
             .map(|(&peer, _)| peer)
             .collect();
         for peer in done {
@@ -861,7 +882,9 @@ impl OnlinePeer {
                     }
                 }
             }
-            Event::StateSent { peer, bytes, .. } if host => self.endpoint.allow_burst(peer, bytes),
+            Event::StateSent { peer, bytes, .. } if host => {
+                self.endpoint.endpoint_mut().allow_burst(peer, bytes)
+            }
             Event::PeerTimedOut { peer } | Event::RepairFailed { peer } | Event::JoinRefused { peer }
                 if host =>
             {
@@ -1196,18 +1219,15 @@ impl Driver<WorldSim> for PeerDriver<'_> {
     }
 }
 
-fn send(ep: &mut Endpoint, peer: PeerId, ch: Channel, bytes: &[u8]) {
+fn send(ep: &mut Outbox, peer: PeerId, ch: Channel, bytes: &[u8]) {
     match ch {
         Channel::Unreliable => ep.send(peer, ch, bytes),
-        Channel::Reliable => send_tagged(ep, peer, TAG_NETCODE, bytes),
+        Channel::Reliable => ep.send_tagged(peer, TAG_NETCODE, bytes),
     }
 }
 
-fn send_tagged(ep: &mut Endpoint, peer: PeerId, tag: u8, bytes: &[u8]) {
-    let mut v = Vec::with_capacity(bytes.len() + 1);
-    v.push(tag);
-    v.extend_from_slice(bytes);
-    ep.send(peer, Channel::Reliable, &v);
+fn send_tagged(ep: &mut Outbox, peer: PeerId, tag: u8, bytes: &[u8]) {
+    ep.send_tagged(peer, tag, bytes);
 }
 
 fn why_text(why: Why) -> &'static str {

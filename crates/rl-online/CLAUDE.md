@@ -46,6 +46,16 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   presented advance, a client's at `Ended`, before the poll's unpresented
   advance; cleared at the next start); `stats` (`NetStats`, per second);
   `last_record` (the finished match's `MatchRecord`); `leave`.
+  - **Reliable sends are never dropped** (`outbox.rs`, `Outbox`): every
+    reliable message (the session's, the lobby's) waits in a per-peer FIFO
+    backlog fed into the endpoint while its `buffered` for that peer is
+    below `FEED_BELOW` (1 MiB), so the endpoint's `MAX_QUEUED` (4 MiB,
+    fatal for the link) is never reached by a state transfer (up to
+    `MAX_STATE`, 64 MiB). A backlog passing `MAX_BACKLOG` (`MAX_STATE` +
+    `LOBBY_HEADROOM`, 8 MiB) means the peer does not read: it is closed
+    (the host says "<name> did not keep up and was disconnected" and
+    forgets it; a client ends, `Disconnected`). A closing peer lingers
+    until its backlog and the endpoint's are delivered.
   - Reliable payloads carry the tag byte: the session's untagged `Control`
     gets `0` on the way out and loses it on the way in; lobby messages are
     `1`/`2`. A payload that does not decode drops the peer (host) or ends
@@ -154,4 +164,6 @@ cases, about 30 build) never panics `build`; a slot both member and bot,
 a single slot, an unknown mod and a pack hash mismatch are refused.
 `tests/replay.rs`: a replay of confirmed inputs plays; a corrupted
 confirmed checksum warns and the same replay is kept. `peer.rs`' unit test:
-one replay worker at a time.
+one replay worker at a time. `outbox.rs`' unit tests (127.0.0.1): a 10 MB
+transfer arrives whole and in order with nothing dropped; a peer that never
+reads is closed once its backlog passes `MAX_BACKLOG`, reported once.

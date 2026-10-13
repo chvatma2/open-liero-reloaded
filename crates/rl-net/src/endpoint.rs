@@ -29,7 +29,8 @@ pub const HOST: PeerId = 0;
 /// The host's default TCP and UDP port (spec §5.1).
 pub const DEFAULT_PORT: u16 = 23400;
 /// At most this many bytes wait to be sent to one peer on one channel;
-/// [`Endpoint::send`] drops a message beyond it (`PeerStats::sends_dropped`).
+/// [`Endpoint::send`] drops a message beyond it (`PeerStats::sends_dropped`),
+/// and a reliable one ends the link (`Why::Limits`).
 pub const MAX_QUEUED: usize = 4 * 1024 * 1024;
 /// A connection not set up within this time is dropped: the signalling, and
 /// the link until it opens.
@@ -133,7 +134,8 @@ pub enum Why {
     /// Nothing heard for [`SILENCE_TIMEOUT`], ICE lost the connection, or
     /// the setup took longer than [`SETUP_TIMEOUT`].
     Timeout,
-    /// The peer sent faster than its [`Limits`].
+    /// The peer sent faster than its [`Limits`], or a reliable message to
+    /// it did not fit [`MAX_QUEUED`].
     Limits,
     /// The peer sent a message too large for its channel, or bad signalling.
     Malformed,
@@ -150,7 +152,7 @@ pub struct PeerStats {
     pub datagrams_received: u64,
     pub bytes_received: u64,
     /// Messages [`Endpoint::send`] dropped: over [`MAX_QUEUED`], or refused
-    /// by the link (empty, too large).
+    /// by the link (empty, too large). A reliable one ends the link.
     pub sends_dropped: u64,
     /// Datagrams the local socket did not take (a full send buffer).
     pub send_failures: u64,
@@ -389,11 +391,21 @@ impl Endpoint {
 
     /// Queues `bytes` as one message to `peer`; it leaves with the next
     /// `poll`. A message to an unknown peer is ignored; one beyond
-    /// [`MAX_QUEUED`] or refused by the link is dropped and counted.
+    /// [`MAX_QUEUED`] or refused by the link (empty, too large) is dropped
+    /// and counted. On the reliable channel a dropped message would break
+    /// the ordered stream silently, so it also ends the link: the next
+    /// `poll` reports `Disconnected { why: Why::Limits }` (callers keep
+    /// their own backlog and feed it as [`Endpoint::buffered`] drains).
     pub fn send(&mut self, peer: PeerId, channel: Channel, bytes: &[u8]) {
         let Some(p) = self.open.get_mut(&peer) else { return };
-        if p.link.buffered(channel) + bytes.len() > MAX_QUEUED || p.link.send(channel, bytes).is_err() {
+        if p.broke.is_some()
+            || p.link.buffered(channel) + bytes.len() > MAX_QUEUED
+            || p.link.send(channel, bytes).is_err()
+        {
             p.stats.sends_dropped += 1;
+            if channel == Channel::Reliable {
+                p.broke.get_or_insert(Why::Limits);
+            }
         }
     }
 

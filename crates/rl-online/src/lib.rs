@@ -6,6 +6,7 @@
 pub mod bundle;
 pub mod events;
 pub mod matches;
+pub mod outbox;
 pub mod peer;
 pub mod replay;
 

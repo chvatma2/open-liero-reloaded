@@ -51,7 +51,11 @@ announcements.
   str0m's buffered amount; big transfers keep it bounded (chunks of 32 KB,
   under 256 KB queued). The link's queue has no limit: callers check
   `buffered` (the endpoint drops sends beyond `MAX_QUEUED`, 4 MiB per peer
-  and channel, counted in `PeerStats::sends_dropped`).
+  and channel, counted in `PeerStats::sends_dropped`; a reliable message
+  it cannot queue, beyond `MAX_QUEUED` or refused by the link, ends the
+  link at the next `poll`, `Disconnected { Limits }`: the ordered channel
+  never loses a message silently. rl-online keeps its own backlog and
+  feeds it while `buffered` is below 1 MiB).
 - **str0m's contract** — every mutation of the `Rtc` (input, write, SDP or
   direct API change, candidate) is followed by draining `poll_output` until
   it returns a timeout, before the next mutation — is kept inside `Link`:
@@ -155,7 +159,8 @@ polling without a FORWARD-TSN/SACK storm; over localhost UDP:
 connect, 3 MB reliable, 2 000 unreliable datagrams at 1 ms — 10 000, about
 10 s, with `RL_FULL_TESTS` in `cargo xtask full`. `tests/endpoint.rs`, on
 127.0.0.1 with port 0, every wait bounded: a host and three clients,
-refusals, floods, bad signalling, closes, 1000 reliable messages through
+refusals, floods, bad signalling, closes, a reliable overflow ending the
+link, 1000 reliable messages through
 `bad`, the 10 s timeouts — the longest test, about 10 s — and hostile
 peers: pings in a tight loop, 20 offers from one IP (the second address
 is the machine's non-loopback IP, skipped with a notice without one), an
