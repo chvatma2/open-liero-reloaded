@@ -434,9 +434,17 @@ pub struct InternetView {
 /// What an Internet game's Join says when it cannot join.
 pub const CANNOT_JOIN_YET: &str = "cannot be joined yet";
 
-/// The text of the Direct tab's field is an invite code (`rlx1`, any case).
+/// The shortest invite code: `rlx1`, 35 bytes of payload and the checksum.
+const MIN_CODE: usize = 60;
+
+/// The text of the Direct tab's field is an invite code: `rlx1`, any case,
+/// or at least [`MIN_CODE`] letters and digits (a code with a typo in its
+/// prefix, which the game then calls damaged; no host name is one label
+/// that long), never an address to look up.
 pub fn is_invite(text: &str) -> bool {
-    text.trim().get(..4).is_some_and(|p| p.eq_ignore_ascii_case("rlx1"))
+    let text = text.trim();
+    text.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("rlx1"))
+        || (text.len() >= MIN_CODE && text.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 
 /// The lobby as the player in it sees it.
@@ -462,7 +470,8 @@ pub struct LobbyView {
     pub prompt: Option<u64>,
     /// The hosted game's invite code (Copy puts it on the clipboard).
     pub invite: Option<String>,
-    /// Whether a public game is listed on the Internet, or why not.
+    /// Where the hosted game stands: a Public game's listing on the
+    /// Internet (or why not), an Invite game's code without an address.
     pub listing: Option<String>,
 }
 

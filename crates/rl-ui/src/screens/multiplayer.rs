@@ -57,6 +57,10 @@ pub(super) struct View {
     pub password: String,
     /// The Internet tab's password for the selected game.
     pub internet_password: String,
+    /// The game `internet_password` was typed for: another selection
+    /// clears it (one game's password is never offered to another, which
+    /// could guess it offline from the proof).
+    pub password_for: Option<[u8; 32]>,
 }
 
 impl View {
@@ -132,6 +136,10 @@ fn internet(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<Ui
         },
     );
     data.selected_game = selected;
+    if data.multiplayer.password_for != selected {
+        data.multiplayer.password_for = selected;
+        data.multiplayer.internet_password.clear();
+    }
     let Some(g) = selected.and_then(|k| games.iter().find(|g| g.key == k)) else { return };
     ui.add_space(8.0);
     let full = g.players >= g.max_players;

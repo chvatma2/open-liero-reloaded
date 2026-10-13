@@ -324,7 +324,7 @@ impl Shell {
     ) -> anyhow::Result<()> {
         self.leave_net();
         let (to, expected_host) = if is_invite(addr) {
-            let invite = Invite::decode(addr)?;
+            let invite = decode_invite(addr)?;
             let Some(to) = invite.addr else { anyhow::bail!("{INVITE_WITHOUT_ADDRESS}") };
             (to, Some(invite.key))
         } else {
@@ -1005,6 +1005,16 @@ impl Shell {
     }
 }
 
+/// The invite code `text`, which the menus took for one (`is_invite`): a
+/// code with a typo in its `rlx1` prefix is damaged, not "not an invite
+/// code".
+fn decode_invite(text: &str) -> Result<Invite, rl_discovery::InviteError> {
+    Invite::decode(text).map_err(|e| match e {
+        rl_discovery::InviteError::NotInvite => rl_discovery::InviteError::Damaged,
+        e => e,
+    })
+}
+
 /// Why an invite code without an address is not joined (N40: its host
 /// had no public address; plan 12b reaches such hosts).
 pub const INVITE_WITHOUT_ADDRESS: &str = "this invite has no address: the game cannot be joined yet";
@@ -1086,6 +1096,18 @@ mod tests {
 
     fn addrs(list: &[&str]) -> Vec<SocketAddr> {
         list.iter().map(|a| a.parse().unwrap()).collect()
+    }
+
+    /// Text the menus take for an invite code (rl-ui's `is_invite`: `rlx1`
+    /// or a long run of letters and digits) without the `rlx1` prefix has
+    /// a typo there: "damaged", never "not an invite code".
+    #[test]
+    fn a_code_with_a_typo_in_its_prefix_is_damaged() {
+        let code = rl_discovery::invite([1; 32], &[], None, 23400).encode();
+        let typo = code.replacen("rlx1", "rkx1", 1);
+        assert!(rl_ui::is_invite(&typo));
+        assert_eq!(decode_invite(&typo).unwrap_err().to_string(), "this invite code is damaged");
+        assert_eq!(decode_invite(&code).unwrap().key, [1; 32]);
     }
 
     #[test]

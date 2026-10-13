@@ -184,7 +184,11 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   → `AppCommand::BlockHost`, the hex key saved in
   `online.finding.blocked`)), **LAN** (today's list) and **Direct**
   ("Address or invite code": `Join` as before, `is_invite` text, `rlx1`
-  any case, said to be an invite; the app decodes it). `FindingSettings`
+  any case or at least 60 letters and digits (a typo in the prefix: the
+  app then says "damaged", never looks it up as a name), said to be an
+  invite; the app decodes it). The Internet tab's password is cleared
+  when the selection changes (`View::password_for`: one game's password
+  is never offered to another, final review B-M7). `FindingSettings`
   (`online.finding`): `region` (`Region`, rl-discovery's mirrored), `relays`
   and `stun` (`None`: the app's defaults, `MenuData::default_relays`/
   `default_stun`; `valid_relay`, `valid_stun`, at most `MAX_SERVERS`),
@@ -192,7 +196,7 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   `key_hex`/`parse_key_hex`, at most `MAX_BLOCKED`); `sanitize` drops bad
   entries, one warning each; `SetFinding` saves. The lobby shows
   `LobbyView::invite` with Copy (`ctx.copy_text`) and `listing` (a Public
-  game's line) in an "Invite" section over the setup, the host's only.
+  game's listing line, an Invite game's "This code has no address …") in an "Invite" section over the setup, the host's only.
   **Online matches** (plan 10 task 12): while online the app's
   `MatchStarted` (from any screen) is `Game::Online` in game, no weapon
   selection (the lobby's); Esc opens the match's menu ("Menu", the match

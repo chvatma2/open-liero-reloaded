@@ -862,6 +862,15 @@ fn tabs_and_direct_invite() {
     );
     assert!(rl_ui::is_invite(" rlx1abc") && rl_ui::is_invite("Rlx1") && !rl_ui::is_invite("rlx"));
     assert!(!rl_ui::is_invite("192.168.1.5"));
+    // A typo in the prefix still reads as a code (the game then says it is
+    // damaged), never as an address to look up: a code is at least 60
+    // letters and digits, no host name a single label that long.
+    let typo = code.replacen("RLX1", "RKX1", 1);
+    assert!(rl_ui::is_invite(&format!("{typo}{}", "Q".repeat(20))));
+    assert!(rl_ui::is_invite(&format!("rlz1{}", "q".repeat(60))));
+    for address in ["localhost", "my-server.example.org:23400", "office", &"a".repeat(59), "[::1]:23400"] {
+        assert!(!rl_ui::is_invite(address), "{address}");
+    }
 }
 
 /// The Internet list: a game of another version greyed with its version,
@@ -913,9 +922,28 @@ fn internet_games_join_by_key_and_block() {
     };
     assert_eq!((addr.as_str(), p.as_str(), *k), ("81.2.69.1:23400", "hunter2", [1; 32]));
     assert_eq!(h.state().ui.settings().online.last_address, "", "a listed game is not remembered");
-    // Give up, then block it.
+    // Final review B-M7: the password typed for one game is not offered to
+    // another: a new selection clears it.
     h.state_mut().ui.update(UiAction::Back);
     h.state_mut().commands.clear();
+    let mut other = entry(4, "Other locked");
+    other.password = true;
+    h.state_mut().data.internet.games.push(other);
+    settle(&mut h);
+    h.get_by_label("Other locked").click();
+    settle(&mut h);
+    h.get_by_role_and_label(Role::Button, "Join").click();
+    settle(&mut h);
+    let cmds = h.state().commands.clone();
+    let [AppCommand::JoinGame { password, expected_host: Some(k), .. }] = &cmds[..] else {
+        panic!("{cmds:?}")
+    };
+    assert_eq!((password, *k), (&None, [4; 32]), "no password carried over");
+    // Give up, then block the first one.
+    h.state_mut().ui.update(UiAction::Back);
+    h.state_mut().commands.clear();
+    h.get_by_label("Locked").click();
+    settle(&mut h);
     h.get_by_label("Block this host").click();
     settle(&mut h);
     let cmds = &h.state().commands;
@@ -961,6 +989,17 @@ fn the_lobby_shows_the_invite_and_copies_it() {
         |c| matches!(c, egui::OutputCommand::CopyText(t) if t == "rlx1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn"),
     );
     assert!(copied, "{:?}", h.output().platform_output.commands);
+    // An Invite game whose code has no address says so beside its Copy
+    // (final review B-I3).
+    let mut h = harness();
+    let mut v = lobby_view(true);
+    v.invite = Some("rlx1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn".into());
+    v.listing =
+        Some("This code has no address: forward port 23400 or set the public address in Options".into());
+    in_lobby(h.state_mut(), v);
+    settle(&mut h);
+    h.get_by_label("Copy");
+    h.get_by_label_contains("This code has no address");
     // A client's lobby has none.
     let mut h = lobby(false);
     settle(&mut h);
