@@ -70,6 +70,16 @@ pub const MISMATCH: &str = "your simulation differs from the host's: version or 
 /// Why a client leaves a host that is not the one expected, or that does
 /// not prove its key over the connection's DTLS fingerprints (N37).
 pub const WRONG_HOST: &str = "this is not the game you were invited to";
+/// Why a client leaves a host that does not prove its key when no key was
+/// expected (a LAN or direct join: nobody was invited).
+pub const UNPROVEN_HOST: &str = "this game could not prove who it is";
+
+/// Why a client left a host that failed its proof: [`WRONG_HOST`] when a
+/// key was `expected` (an invite's or a listed game's), else
+/// [`UNPROVEN_HOST`].
+fn wrong_host_text(expected: bool) -> &'static str {
+    if expected { WRONG_HOST } else { UNPROVEN_HOST }
+}
 /// A client gives up a host that has not welcomed it this long after the
 /// link opened (a host that never sends `Challenge`, `HostProof` or
 /// `Welcome`: the link's keepalives alone never time it out).
@@ -142,6 +152,8 @@ impl HostSide {
 
 struct ClientSide {
     lobby: LobbyClient,
+    /// A host key was expected (an invite's or a listed game's).
+    expected: bool,
     /// When the link opened, until the host's `Welcome`
     /// ([`JOIN_DEADLINE`]).
     waiting_since: Option<Instant>,
@@ -268,10 +280,11 @@ impl OnlinePeer {
                 let mut cfg = endpoint;
                 cfg.limits.max_reliable_bytes_per_s =
                     cfg.limits.max_reliable_bytes_per_s.max(HOST_RELIABLE_BYTES_PER_S);
+                let expected = expected_host.is_some();
                 let lobby = LobbyClient::new(me, look, password, expected_host);
                 (
                     Endpoint::connect(cfg, addr)?,
-                    Side::Client(Box::new(ClientSide { lobby, waiting_since: None })),
+                    Side::Client(Box::new(ClientSide { lobby, expected, waiting_since: None })),
                 )
             }
         };
@@ -894,7 +907,10 @@ impl OnlinePeer {
             }
             ClientEvent::Refused(why) => self.end_with(OnlineEvent::Refused(refusal_text(why).into())),
             ClientEvent::Kicked { banned } => self.end_with(OnlineEvent::Kicked { banned }),
-            ClientEvent::WrongHost { .. } => self.end_with(OnlineEvent::Refused(WRONG_HOST.into())),
+            ClientEvent::WrongHost { .. } => {
+                let expected = matches!(&self.side, Side::Client(c) if c.expected);
+                self.end_with(OnlineEvent::Refused(wrong_host_text(expected).into()));
+            }
             ClientEvent::Closed => {
                 self.end_with(OnlineEvent::Disconnected("the host closed the lobby".into()))
             }
@@ -1716,6 +1732,16 @@ mod tests {
             assert_eq!(state_part(&encode_control(&other)), Part::Message, "{other:?}");
         }
         assert_eq!(state_part(&[]), Part::Message);
+    }
+
+    /// A host that fails its proof is "not the game you were invited to"
+    /// only when there was an invitation (a key expected); otherwise (a LAN
+    /// or direct join) it could not prove who it is.
+    #[test]
+    fn a_failed_host_proof_names_the_invitation_only_when_there_was_one() {
+        assert_eq!(wrong_host_text(true), WRONG_HOST);
+        assert_eq!(wrong_host_text(false), UNPROVEN_HOST);
+        assert_eq!(UNPROVEN_HOST, "this game could not prove who it is");
     }
 
     /// A client's own failed send is not blamed on the host.

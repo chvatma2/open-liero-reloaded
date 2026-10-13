@@ -31,7 +31,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   player, the dedicated server's, `look` unused; `Client { addr,
   password, expected_host }`: a host whose key is not `expected_host`, or
   whose `HostProof` fails, ends it with `Refused(WRONG_HOST)`, "this is not
-  the game you were invited to"; a client not welcomed `JOIN_DEADLINE`
+  the game you were invited to" (without `expected_host`, a failed proof
+  is `UNPROVEN_HOST`, "this game could not prove who it is": nobody was
+  invited); a client not welcomed `JOIN_DEADLINE`
   (10 s) after its link opened ends with `Disconnected(NO_ANSWER)`, "the
   game did not answer" (a host that never sends `Challenge`, `HostProof`
   or `Welcome`: the link's keepalives alone never time it out); `content_cfg`:
