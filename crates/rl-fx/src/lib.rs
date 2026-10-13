@@ -25,9 +25,25 @@ mod entity;
 mod pool;
 
 /// `MAX_ENTITIES` (`include/Entity.h:30`): new entities are dropped beyond it.
-/// The pool's size everywhere but the performance envelope's effects sweep
-/// ([`Fx::with_capacity`]).
+/// The pool's size with [`rl_sim::SimSettings::olx_quirks`] (the oracle's
+/// scenarios, the render goldens), [`Fx::new`].
 pub const MAX_ENTITIES: usize = 1024;
+
+/// The pool's size in play ([`Fx::for_match`]): OLX's 1024 is a baseline,
+/// not a limit worth keeping (the user's ruling, spec §19 E1 amended
+/// 2026-10-13). A 16-bot chaos match peaks under 10 000 (the performance
+/// envelope's effects axis). Allocated once; a hostile mod still finds a
+/// hard cap, beyond which new entities are dropped as in OLX.
+pub const PLAY_ENTITIES: usize = 16384;
+
+// A frame full of play's entities fits the draw list's reserved room.
+const _: () = assert!(PLAY_ENTITIES <= DrawList::ENTITIES_RESERVED);
+
+/// The slots of play's pool that only a death's gibs and blood
+/// ([`rl_sim::Event::death`]) may take, so a death always shows: other
+/// entities stop at `PLAY_ENTITIES - DEATH_RESERVE`. One death is 157
+/// entities (7 gibs, 150 blood), so the reserve holds six at once.
+pub const DEATH_RESERVE: usize = PLAY_ENTITIES / 16;
 
 /// What one [`World::tick`] reported, as [`Fx::step_tick`] replays it.
 #[derive(Clone, Copy, Debug)]
@@ -61,22 +77,37 @@ impl<'a> FxTick<'a> {
 #[derive(Clone, Debug)]
 pub struct Fx {
     pool: Pool,
+    /// The slots only a death's entities take ([`DEATH_RESERVE`] in play).
+    reserve: usize,
+    /// A death's entities spawned and dropped (for want of room) so far.
+    death_spawns: u64,
+    death_drops: u64,
     /// The client's own `rand()` (spec §19 E8): gib spins and drips.
     rand: GlibcRand,
 }
 
 impl Fx {
-    /// No entities, OLX's pool of [`MAX_ENTITIES`]; `seed` seeds the
-    /// entities' own `rand()`.
+    /// No entities, OLX's pool of [`MAX_ENTITIES`] with no reserve; `seed`
+    /// seeds the entities' own `rand()`.
     pub fn new(seed: u32) -> Fx {
-        Fx { pool: Pool::new(), rand: GlibcRand::new(seed) }
+        Fx { pool: Pool::new(), reserve: 0, death_spawns: 0, death_drops: 0, rand: GlibcRand::new(seed) }
     }
 
-    /// [`Fx::new`] with a pool of `capacity` entities (at least 1): a
-    /// bench-only knob (`rl-cli stress --fx-cap`, plan 8). Every game keeps
-    /// OLX's [`MAX_ENTITIES`].
+    /// The pool for a match with these settings' `olx_quirks`: OLX's
+    /// ([`Fx::new`]) with them, else play's [`PLAY_ENTITIES`] with its
+    /// [`DEATH_RESERVE`]. Allocated here, once (about 1 MB in play).
+    pub fn for_match(seed: u32, olx_quirks: bool) -> Fx {
+        if olx_quirks { Fx::new(seed) } else { Fx::with_capacity(seed, PLAY_ENTITIES) }
+    }
+
+    /// A pool of `capacity` entities (at least 1) with play's rules: a
+    /// sixteenth of it is the death reserve ([`DEATH_RESERVE`] at
+    /// [`PLAY_ENTITIES`]). The performance envelope's knob (`rl-cli stress
+    /// --fx-cap`, plan 8); games use [`Fx::for_match`].
     pub fn with_capacity(seed: u32, capacity: usize) -> Fx {
-        Fx { pool: Pool::with_capacity(capacity), rand: GlibcRand::new(seed) }
+        let pool = Pool::with_capacity(capacity);
+        let reserve = pool.capacity() / 16;
+        Fx { pool, reserve, death_spawns: 0, death_drops: 0, rand: GlibcRand::new(seed) }
     }
 
     /// The pool's size.
@@ -84,12 +115,33 @@ impl Fx {
         self.pool.capacity()
     }
 
+    /// The slots only a death's entities take.
+    pub fn death_reserve(&self) -> usize {
+        self.reserve
+    }
+
+    /// A death's entities ([`rl_sim::Event::death`]) spawned so far.
+    pub fn death_spawns(&self) -> u64 {
+        self.death_spawns
+    }
+
+    /// A death's entities dropped so far because the pool was full: never
+    /// in play unless deaths alone fill it.
+    pub fn death_drops(&self) -> u64 {
+        self.death_drops
+    }
+
+    /// How many entities other than a death's may be alive.
+    fn ordinary_limit(&self) -> usize {
+        self.pool.capacity() - self.reserve
+    }
+
     /// Removes every entity (`ClearEntities`), for a new or restarted match.
     pub fn clear(&mut self) {
         self.pool.clear();
     }
 
-    /// How many entities are alive.
+    /// How many entities are alive (a count: no scan).
     pub fn len(&self) -> usize {
         self.pool.len()
     }
@@ -106,7 +158,9 @@ impl Fx {
 
     /// `SpawnEntity` for a cosmetic event: dirt takes its colour from
     /// `color` at its probe, a gib draws its spin. Returns whether it took a
-    /// slot (none for a beam, which `rl-scene` draws, or when all are used).
+    /// slot (none for a beam, which `rl-scene` draws, or when all are used;
+    /// a `death`'s entity, [`rl_sim::Event::death`], may use the death
+    /// reserve, any other stops short of it).
     ///
     /// Dirt whose probe is no longer dirt takes the theme's default colour:
     /// OLX reads an explosion's colour before the bonuses it blows up
@@ -119,6 +173,7 @@ impl Fx {
         kind: CosmeticKind,
         pos: Vec2,
         vel: Vec2,
+        death: bool,
         color: &ColorMap,
         assets: &FxAssets,
     ) -> bool {
@@ -133,14 +188,17 @@ impl Fx {
             _ => Rgba::BLACK,
         };
         let Some(mut e) = Entity::new(kind, pos, vel, colour) else { return false };
-        if self.pool.is_full() {
+        let limit = if death { self.pool.capacity() } else { self.ordinary_limit() };
+        if self.pool.is_full_below(limit) {
+            self.death_drops += u64::from(death);
             return false;
         }
+        self.death_spawns += u64::from(death);
         if let Kind::Gib { .. } = e.kind {
             e.angl_vel = self.rand.random_num().abs() * 20.0;
             e.rotation = (self.rand.random_num().abs() * 3.0) as i32;
         }
-        self.pool.add(e).is_some()
+        self.pool.add_below(e, limit).is_some()
     }
 
     /// One `SimulateEntities(dt)` pass over the entities in slot order,
@@ -190,7 +248,8 @@ impl Fx {
             let vel = self.rand.random_vec();
             let red = RED[col.clamp(0, 1) as usize];
             if let Some(blood) = Entity::new(CosmeticKind::Blood { red }, pos, vel, Rgba::BLACK) {
-                self.pool.add(blood);
+                let limit = self.ordinary_limit();
+                self.pool.add_below(blood, limit);
             }
             self.pool.get_mut(i).extra = TimeDiff(0);
         }
@@ -213,7 +272,7 @@ impl Fx {
             }
             match &ev.kind {
                 EventKind::SpawnCosmetic { kind, pos, vel } => {
-                    self.spawn(*kind, *pos, *vel, color, assets);
+                    self.spawn(*kind, *pos, *vel, ev.death, color, assets);
                 }
                 kind => {
                     if let Some(edit) = rl_content::color_edit(kind) {

@@ -23,8 +23,11 @@ const TICKS: u64 = 60_000;
 const RENDER_EVERY: u64 = 10;
 /// The simulation's projectile pool (`ProjectilePool::DEFAULT_CAPACITY`).
 const POOL: usize = 3000;
-/// OLX's entity cap, which `rl-fx` keeps (spec §19 E1).
-const ENTITY_CAP: usize = 1024;
+/// Play's cosmetic-entity pool (`rl-fx`, spec §19 E1 amended 2026-10-13).
+const FX_CAP: usize = rl_fx::PLAY_ENTITIES;
+/// The simulation's emulated dedicated-server entity counter (OLX's 1024),
+/// which only gates the gibs' draws.
+const SIM_ENTITY_CAP: usize = 1024;
 
 /// A cheap deterministic generator for the chaos keys (no wall clock).
 struct Lcg(u64);
@@ -151,16 +154,16 @@ fn soak_sandbox_10_minutes_headless() {
         s.player_deaths,
     );
     assert!(max_fx > 0 && max_voices > 0 && max_proj > 0, "the chaos exercised effects, sounds and shots");
-    assert!(max_fx <= ENTITY_CAP, "cosmetic entities are capped like OLX's");
+    assert!(max_fx <= FX_CAP, "cosmetic entities are capped by play's pool");
     assert!(max_proj <= POOL);
-    assert!(max_entities as usize <= ENTITY_CAP, "the sim's entity count: {max_entities}");
+    assert!(max_entities as usize <= SIM_ENTITY_CAP, "the sim's entity count: {max_entities}");
     assert!(max_voices <= rl_audio::GLOBAL_VOICES, "audio voices: {max_voices}");
     assert!(max_popups <= 64, "popups: {max_popups}");
     assert_eq!(atlas, renderer.atlas_layout().map(|l| (l.width, l.height)), "the atlas is uploaded once");
     assert_eq!(terrain, renderer.terrain_texture().map(|t| (t.width(), t.height())));
     // The buffer grows to the busiest frame's next power of two and no
     // further: every cosmetic entity, every projectile and some scenery.
-    let cap = 48 * (ENTITY_CAP + POOL + 256).next_power_of_two() as u64;
+    let cap = 48 * (FX_CAP + POOL + 256).next_power_of_two() as u64;
     assert!(buffer_second_half <= cap, "instance buffer: {buffer_second_half} B (cap {cap} B)");
     assert!(
         buffer_second_half <= 2 * buffer_first_half,

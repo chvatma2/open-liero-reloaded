@@ -16,6 +16,9 @@ wired in the frame loop's order **once**, so each mode that draws a world
     colour, local, human)` per worm in `World::worms` order (skin and gibs
     in one call, so the scene's and the entities' lists stay parallel).
     `default_colour(i)` is OLX's red, blue, green, yellow.
+    The entities' pool is the match's (`rl_fx::Fx::for_match`): play's
+    16384 with its death reserve, OLX's 1024 with
+    `SimSettings::olx_quirks` (scenarios, render goldens).
   - `set_fx_capacity(n)` before the first tick: a bench-only entity pool
     (plan 8).
   - `on_tick(&world, &events)` after every `World::tick`: `Fx::step_tick`

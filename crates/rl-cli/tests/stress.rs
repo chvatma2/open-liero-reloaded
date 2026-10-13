@@ -41,8 +41,8 @@ fn stress_run_is_bounded_and_deterministic() {
 }
 
 /// The envelope's knobs (plan 8) measure more without touching the match:
-/// the same shots, kills and projectiles with a larger effects pool and a
-/// draw list built every tick; the recorded replay is the match.
+/// the same shots, kills and projectiles with OLX's smaller effects pool
+/// and a draw list built every tick; the recorded replay is the match.
 #[test]
 fn the_bench_knobs_measure_without_changing_the_match() {
     let Some(content) = content() else { return };
@@ -53,7 +53,7 @@ fn the_bench_knobs_measure_without_changing_the_match() {
     let file = dir.path().join("stress.rlrp");
     let cfg = Config {
         verify: false,
-        fx_capacity: 16_384,
+        fx_capacity: rl_fx::MAX_ENTITIES,
         build_every: 1,
         record: Some(file.clone()),
         ..Config::new(spec)
@@ -64,9 +64,14 @@ fn the_bench_knobs_measure_without_changing_the_match() {
         (plain.shots, plain.kills, plain.projectiles_peak, plain.ticks),
         "the knobs never touch the simulation"
     );
-    assert_eq!((r.fx_capacity, plain.fx_capacity), (16_384, rl_fx::MAX_ENTITIES));
+    assert_eq!((r.fx_capacity, plain.fx_capacity), (rl_fx::MAX_ENTITIES, rl_fx::PLAY_ENTITIES));
     assert_eq!(plain.personality, Personality::Chaos, "the stress bots stay chaos by default");
-    assert!(r.fx_peak > rl_fx::MAX_ENTITIES, "32 chaos bots overflow OLX's 1024 entities: {}", r.fx_peak);
+    assert!(
+        plain.fx_peak > rl_fx::MAX_ENTITIES && r.fx_peak == rl_fx::MAX_ENTITIES,
+        "32 chaos bots overflow OLX's 1024 entities, not play's pool: {} and {}",
+        plain.fx_peak,
+        r.fx_peak
+    );
     assert!(r.build_us.p50 > 0.0 && r.present_us.p50 > 0.0, "{r:?}");
     assert_eq!(plain.build_us, Spread::default(), "no draw list without --build-every");
     assert!(r.area_cache.1 > 0 && r.area_cache.0 <= r.area_cache.1);

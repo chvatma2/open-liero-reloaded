@@ -38,8 +38,8 @@ pub struct Args {
     /// Do not play it again nor replay it.
     #[arg(long)]
     no_verify: bool,
-    /// The cosmetic entities' pool (OLX's 1024; the envelope raises it).
-    #[arg(long, default_value_t = rl_fx::MAX_ENTITIES)]
+    /// The cosmetic entities' pool (play's 16384; the envelope sweeps it).
+    #[arg(long, default_value_t = rl_fx::PLAY_ENTITIES)]
     fx_cap: usize,
     /// Build the draw list every this many ticks, timed (0: only for rendered frames).
     #[arg(long, default_value_t = 0)]

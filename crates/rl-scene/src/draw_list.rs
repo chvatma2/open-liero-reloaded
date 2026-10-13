@@ -133,11 +133,21 @@ impl DrawList {
     /// has a few hundred; laser sights add up to about a thousand dots).
     pub const RESERVED: usize = 2048;
 
-    /// An empty list with [`DrawList::RESERVED`] items of room per layer, so
-    /// ordinary frames never allocate.
+    /// The room of [`Layer::Entities`]: one item per cosmetic entity of
+    /// `rl-fx`'s play pool (`rl_fx::PLAY_ENTITIES`, which checks it is no
+    /// larger), so a frame full of effects never allocates either.
+    pub const ENTITIES_RESERVED: usize = 16384;
+
+    /// An empty list with [`DrawList::RESERVED`] items of room per layer
+    /// ([`DrawList::ENTITIES_RESERVED`] for the entities), so ordinary
+    /// frames never allocate.
     pub fn new() -> DrawList {
         DrawList {
-            layers: core::array::from_fn(|_| Vec::with_capacity(Self::RESERVED)),
+            layers: core::array::from_fn(|i| {
+                let room =
+                    if i == Layer::Entities as usize { Self::ENTITIES_RESERVED } else { Self::RESERVED };
+                Vec::with_capacity(room)
+            }),
             ..DrawList::default()
         }
     }
@@ -316,5 +326,12 @@ mod tests {
         assert_eq!(line((5, 2), (5, -1)), [(5, 2), (5, 1), (5, 0), (5, -1)]);
         // Extreme coordinates neither overflow nor panic.
         assert_eq!(line((i32::MIN, 0), (i32::MIN, 0)).len(), 1);
+    }
+
+    #[test]
+    fn the_entities_layer_has_room_for_plays_pool() {
+        let l = DrawList::new();
+        assert!(l.layers[Layer::Entities as usize].capacity() >= DrawList::ENTITIES_RESERVED);
+        assert!(l.layers[Layer::Worms as usize].capacity() >= DrawList::RESERVED);
     }
 }

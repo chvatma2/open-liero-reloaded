@@ -79,6 +79,7 @@ fn presentation_draws_what_the_hand_wiring_draws() {
                 for i in 0..sc.worms.len() {
                     pr.add_worm(&skin, default_colour(i), i == 0, i == 0);
                 }
+                assert_eq!(pr.fx.capacity(), rl_fx::MAX_ENTITIES, "a scenario keeps OLX's pool");
                 pr
             });
             scene.after_tick(world, events);

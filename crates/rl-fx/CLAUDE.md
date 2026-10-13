@@ -9,12 +9,20 @@ is `docs/porting/olx-notes/presentation.md` §7 (and §2.2 for stains).
   `rl-scene` (same layer, `xtask/layers.ron`), `rl-data`, `rl-math`. No GPU
   or OS handles. It only reads the world; its randomness (gib spins, drips)
   is its own `GlibcRand` (`Fx::new(seed)`), never the simulation's.
-- **Pool** (`pool.rs`): OLX's `FastVector<entity_t, 1024>`: lowest free
-  slot first, new entities dropped when full, iteration in slot order, and
-  a freed slot keeps its contents. Laser sights take a slot for two passes
-  like OLX's, but `rl-scene` draws them (and the beams, which take none).
-  Its size is `MAX_ENTITIES` (OLX's) everywhere; `Fx::with_capacity` is
-  the performance envelope's knob (plan 8), never used by a game.
+- **Pool** (`pool.rs`): OLX's `FastVector<entity_t, 1024>` of any size:
+  lowest free slot first, new entities dropped when full, iteration in
+  slot order, a freed slot keeps its contents, and `len` is a count, not a
+  scan. Laser sights take a slot for two passes like OLX's, but
+  `rl-scene` draws them (and the beams, which take none). Its size is the
+  match's (`Fx::for_match`, spec §19 E1 amended 2026-10-13): in play
+  `PLAY_ENTITIES` (16384, allocated once) of which the last
+  `DEATH_RESERVE` (1024) only a death's gibs and blood take
+  (`Event::death`; other spawns and drips stop short of it, so every
+  death shows; `death_spawns`/`death_drops` count them); with
+  `SimSettings::olx_quirks` (the oracle's scenarios, render goldens,
+  `Fx::new`) OLX's `MAX_ENTITIES` and no reserve. `Fx::with_capacity` is
+  the performance envelope's knob (plan 8; a sixteenth reserved), never
+  used by a game.
 - **Physics** (`entity.rs`): one `SimulateEntities` pass per sub-step,
   motion with the sub-step `dt` (`LX56PhysicsDT`, 11 ms), animation with
   OLX's fixed 10 ms frame, all in `f32` like OLX (the sums drift; tests pin

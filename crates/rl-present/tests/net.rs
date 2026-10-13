@@ -65,6 +65,19 @@ fn presentation(c: &Content, p: &Packs, world: &rl_sim::World) -> Presentation {
     present
 }
 
+/// A match (OLX's quirks off) presents its effects in play's pool, with
+/// the death reserve.
+#[test]
+fn a_match_gets_plays_entity_pool() {
+    let Some(c) = content() else { return };
+    let p = packs(&c);
+    let w = world(&c);
+    assert!(!w.settings().olx_quirks);
+    let present = presentation(&c, &p, &w);
+    assert_eq!(present.fx.capacity(), rl_fx::PLAY_ENTITIES);
+    assert_eq!(present.fx.death_reserve(), rl_fx::DEATH_RESERVE);
+}
+
 /// Every worm's final keys at tick `t`: firing, and walking or aiming in
 /// turns, each worm on its own period, so a prediction (the last final
 /// keys) is wrong now and then.

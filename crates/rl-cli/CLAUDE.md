@@ -51,7 +51,7 @@ The headless command-line tool. Its commands:
   percentiles, checksum checked after each; prints `RollbackCost`.
 - `rl-cli stress [--mod M] [--level L] [--worms 32] [--pool 3000] [--seconds
   180] [--seed S] [--render-every 100] [--render-width W --render-height H]
-  [--no-verify] [--fx-cap 1024] [--build-every 0] [--memory-ceiling-mib
+  [--no-verify] [--fx-cap 16384] [--build-every 0] [--memory-ceiling-mib
   4096] [--record f.rlrp] [--personality chaos|dm] [--out report.ron]`: the
   engine stress test (plan 7 task 8, `stress.rs`;
   `stress::Config::new(spec)` gives the defaults): `stress::spec` (32 bots,
@@ -69,8 +69,8 @@ The headless command-line tool. Its commands:
   bots, whose routes go through the shared area cache (chaos bots never
   touch it): the envelope's map-size and art-scale sweeps use them. The
   performance envelope's knobs (plan 8) never touch the match: `--fx-cap`
-  sizes the entity pool (`Presentation::set_fx_capacity`; OLX's
-  `rl_fx::MAX_ENTITIES` by default), `--build-every N` builds and times the
+  sizes the entity pool (`Presentation::set_fx_capacity`; play's
+  `rl_fx::PLAY_ENTITIES` by default), `--build-every N` builds and times the
   draw list every N ticks, `--record` writes the match's replay. `Report`
   (RON with `--out`): tick, sim and think µs (p50/p99/max; `Stats::think_ns`
   splits the bots' share), `present_us` (`on_tick`), `build_us` (the draw

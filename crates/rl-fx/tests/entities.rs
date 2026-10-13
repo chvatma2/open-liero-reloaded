@@ -5,10 +5,10 @@ use crate::common;
 
 use common::{DEFAULT_DIRT, DIRT, ROCK, SKY, Setup, art, cosmetic, dt};
 use rl_data::image::Rgba;
-use rl_fx::{Fx, Kind, MAX_ENTITIES};
+use rl_fx::{DEATH_RESERVE, Fx, Kind, MAX_ENTITIES, PLAY_ENTITIES};
 use rl_math::Vec2;
 use rl_scene::Rect;
-use rl_sim::CosmeticKind;
+use rl_sim::{CosmeticKind, Event};
 
 #[test]
 fn blood_falls_and_stains_like_olx() {
@@ -242,6 +242,57 @@ fn a_larger_bench_pool_keeps_more_entities() {
     assert_eq!(s.fx.capacity(), 4 * MAX_ENTITIES);
     assert_eq!(Fx::new(7).capacity(), MAX_ENTITIES);
     assert_eq!(Fx::with_capacity(7, 0).capacity(), 1, "never an empty pool");
+}
+
+/// A death's 7 gibs and its 50 rounds of blood, as `Event::death`.
+fn death_events() -> Vec<Event> {
+    let part = |kind| Event { death: true, ..cosmetic(0, kind, (20.0, 20.0), (0.0, 0.0)) };
+    let mut v: Vec<Event> = (0..7).map(|_| part(CosmeticKind::Gib { worm: 1 })).collect();
+    for _ in 0..50 {
+        v.push(part(CosmeticKind::BloodDropper));
+        v.push(part(CosmeticKind::Blood { red: 200 }));
+        v.push(part(CosmeticKind::Blood { red: 128 }));
+    }
+    v
+}
+
+/// Play's pool (the user's ruling, spec §19 E1 amended): 16384 entities,
+/// of which the last `DEATH_RESERVE` only a death's gibs and blood take,
+/// so every death shows even when other effects fill the pool.
+#[test]
+fn the_play_pool_holds_more_and_keeps_room_for_deaths() {
+    let mut s = Setup::new();
+    s.fx = Fx::for_match(7, false);
+    assert_eq!(s.fx.capacity(), PLAY_ENTITIES);
+    let smoke = cosmetic(0, CosmeticKind::Smoke, (20.0, 20.0), (0.0, 0.0));
+    s.tick(&vec![smoke; PLAY_ENTITIES], 0);
+    let ordinary = PLAY_ENTITIES - DEATH_RESERVE;
+    assert_eq!(s.fx.len(), ordinary, "ordinary effects stop short of the reserve");
+    assert!(s.fx.entities().map(|(i, _)| i).eq(0..ordinary));
+    let death = death_events();
+    s.tick(&death, 0);
+    assert_eq!(s.fx.len(), ordinary + death.len(), "the death shows in full");
+    assert_eq!(s.kinds().iter().filter(|(_, k)| matches!(k, Kind::Gib { .. })).count(), 7);
+    s.tick(&[smoke], 0);
+    assert_eq!(s.fx.len(), ordinary + death.len(), "the reserve is not for smoke");
+    // Deaths fill the reserve, then the pool is full: never more.
+    for _ in 0..DEATH_RESERVE / death.len() + 1 {
+        s.tick(&death, 0);
+    }
+    assert_eq!(s.fx.len(), PLAY_ENTITIES);
+}
+
+/// With OLX's quirks (the oracle's scenarios and render goldens), OLX's
+/// pool: 1024 entities and no reserve, a death dropped when it is full.
+#[test]
+fn with_olx_quirks_the_pool_is_olxs() {
+    let mut s = Setup::new();
+    s.fx = Fx::for_match(7, true);
+    assert_eq!(s.fx.capacity(), MAX_ENTITIES);
+    let smoke = cosmetic(0, CosmeticKind::Smoke, (20.0, 20.0), (0.0, 0.0));
+    s.tick(&vec![smoke; MAX_ENTITIES - 3], 0);
+    s.tick(&death_events(), 0);
+    assert_eq!(s.fx.len(), MAX_ENTITIES, "3 of the death's entities fit");
 }
 
 #[test]

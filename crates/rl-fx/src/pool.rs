@@ -1,4 +1,4 @@
-//! The entity pool: OLX's `FastVector<entity_t, MAX_ENTITIES>`.
+//! The entity pool: OLX's `FastVector<entity_t, MAX_ENTITIES>`, of any size.
 
 use rl_data::image::Rgba;
 use rl_math::{TimeDiff, Vec2};
@@ -6,10 +6,11 @@ use rl_math::{TimeDiff, Vec2};
 use crate::MAX_ENTITIES;
 use crate::entity::{Entity, Kind};
 
-/// A fixed array of slots ([`MAX_ENTITIES`], OLX's, unless a bench sizes
-/// it). New entities take the lowest free slot and are dropped when none is
-/// free; iteration is in slot order. A freed slot keeps its old contents, as
-/// OLX's does.
+/// A fixed array of slots ([`MAX_ENTITIES`], OLX's, or play's
+/// [`crate::PLAY_ENTITIES`]), allocated once. New entities take the lowest
+/// free slot and are dropped when none is free, or when as many are used as
+/// the caller's limit allows ([`Pool::add_below`]); iteration is in slot
+/// order. A freed slot keeps its old contents, as OLX's does.
 ///
 /// OLX: include/FastVector.h:27-150
 #[derive(Clone, Debug)]
@@ -20,6 +21,8 @@ pub(crate) struct Pool {
     first_unused: usize,
     /// `m_lastUsed`: no slot above it is used (-1 when empty).
     last_used: isize,
+    /// How many slots are used.
+    count: usize,
 }
 
 impl Pool {
@@ -42,7 +45,13 @@ impl Pool {
             rotation: 0,
         };
         let capacity = capacity.max(1);
-        Pool { slots: vec![blank; capacity], used: vec![false; capacity], first_unused: 0, last_used: -1 }
+        Pool {
+            slots: vec![blank; capacity],
+            used: vec![false; capacity],
+            first_unused: 0,
+            last_used: -1,
+            count: 0,
+        }
     }
 
     /// How many slots it has.
@@ -55,16 +64,18 @@ impl Pool {
         self.used.iter_mut().for_each(|u| *u = false);
         self.first_unused = 0;
         self.last_used = -1;
+        self.count = 0;
     }
 
-    /// `size`: the used slots up to the last used one.
+    /// `size`: the used slots (counted, not scanned: play's pool is large).
     pub fn len(&self) -> usize {
-        self.iter().count()
+        self.count
     }
 
-    /// Whether a new entity would be dropped.
-    pub fn is_full(&self) -> bool {
-        self.first_unused >= self.slots.len()
+    /// Whether a new entity would be dropped with `limit` used slots
+    /// allowed.
+    pub fn is_full_below(&self, limit: usize) -> bool {
+        self.count >= limit || self.first_unused >= self.slots.len()
     }
 
     pub fn get(&self, i: usize) -> &Entity {
@@ -76,8 +87,14 @@ impl Pool {
     }
 
     /// `getNewObj` and `entity_t::Spawn`: puts `e` in the lowest free slot.
+    #[cfg(test)]
     pub fn add(&mut self, e: Entity) -> Option<usize> {
-        if self.first_unused >= self.slots.len() {
+        self.add_below(e, usize::MAX)
+    }
+
+    /// [`Pool::add`] while fewer than `limit` slots are used.
+    pub fn add_below(&mut self, e: Entity, limit: usize) -> Option<usize> {
+        if self.is_full_below(limit) {
             return None;
         }
         let new = self.first_unused;
@@ -96,11 +113,16 @@ impl Pool {
         }
         self.slots[new] = e;
         self.used[new] = true;
+        self.count += 1;
         Some(new)
     }
 
-    /// `entity_t::setUnused`, then `refreshObj`.
+    /// `entity_t::setUnused`, then `refreshObj`. Removing a free slot again
+    /// (OLX's second switch does) only moves the bounds.
     pub fn remove(&mut self, i: usize) {
+        if self.used[i] {
+            self.count -= 1;
+        }
         self.used[i] = false;
         if i < self.first_unused {
             self.first_unused = i;
@@ -167,13 +189,29 @@ mod tests {
     }
 
     #[test]
+    fn the_count_follows_adds_and_removes() {
+        let mut p = Pool::with_capacity(8);
+        for _ in 0..6 {
+            p.add(smoke());
+        }
+        p.remove(2);
+        p.remove(2);
+        p.remove(5);
+        assert_eq!((p.len(), p.iter().count()), (4, 4));
+        assert_eq!(p.add_below(smoke(), 4), None, "4 used, a limit of 4");
+        assert_eq!(p.add_below(smoke(), 5), Some(2));
+        p.clear();
+        assert_eq!(p.len(), 0);
+    }
+
+    #[test]
     fn a_pool_of_any_size_fills_to_it() {
         let mut p = Pool::with_capacity(3);
         assert_eq!(p.capacity(), 3);
         for i in 0..3 {
             assert_eq!(p.add(smoke()), Some(i));
         }
-        assert!(p.is_full());
+        assert!(p.is_full_below(usize::MAX));
         assert_eq!(p.add(smoke()), None);
         assert_eq!(Pool::new().capacity(), MAX_ENTITIES);
     }

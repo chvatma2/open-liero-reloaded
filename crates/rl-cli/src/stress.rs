@@ -19,7 +19,7 @@ use std::time::Instant;
 
 use anyhow::{Context as _, bail};
 use rl_content::Content;
-use rl_fx::MAX_ENTITIES;
+use rl_fx::PLAY_ENTITIES;
 use rl_present::{PresentSetup, Presentation, default_colour};
 use rl_render::{OUTPUT_FORMAT, Offscreen, RenderSettings};
 use rl_scene::{DrawList, Interpolation, SceneOptions, Viewport};
@@ -67,8 +67,8 @@ pub struct Config {
     pub render_size: (u32, u32),
     /// Play it again and replay its recording (determinism).
     pub verify: bool,
-    /// The cosmetic entities' pool (OLX's [`MAX_ENTITIES`] unless the
-    /// envelope's effects sweep raises it).
+    /// The cosmetic entities' pool (play's [`PLAY_ENTITIES`] unless the
+    /// envelope's effects sweep sets another).
     pub fx_capacity: usize,
     /// Build the draw list every this many ticks, timed as
     /// [`Report::build_us`] (0: only for the rendered frames).
@@ -86,7 +86,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// `spec` with today's defaults: no frames, verified, OLX's entity
+    /// `spec` with today's defaults: no frames, verified, play's entity
     /// pool, no draw list, [`MEMORY_CEILING_MIB`], no recording, chaos
     /// bots.
     pub fn new(spec: MatchSpec) -> Config {
@@ -95,7 +95,7 @@ impl Config {
             render_every: 0,
             render_size: (2560, 1440),
             verify: true,
-            fx_capacity: MAX_ENTITIES,
+            fx_capacity: PLAY_ENTITIES,
             build_every: 0,
             memory_ceiling_mib: MEMORY_CEILING_MIB,
             record: None,

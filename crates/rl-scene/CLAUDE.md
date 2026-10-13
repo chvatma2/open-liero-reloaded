@@ -29,7 +29,8 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   sprites are 2× art, so positions fall on half pixels) and
   `Line { a, b, colour }`, a 1-pixel `perform_line`. A solid block is the
   `white` image tinted. `describe` is the compact text the snapshot tests
-  commit. Layers keep `RESERVED` items of room, so frames do not allocate
+  commit. Layers keep `RESERVED` items of room (the entities `ENTITIES_RESERVED`,
+  rl-fx's play pool), so frames do not allocate
   (`tests/no_alloc.rs`).
 - **`SceneAssets`** (`assets.rs`): core sprites and mod projectile images
   (OLX's magenta keyed to transparent at load), and per worm a colorized

@@ -83,7 +83,7 @@ impl Presentation {
         scene.start(world);
         Presentation {
             scene,
-            fx: Fx::new(s.seed.wrapping_add(2)),
+            fx: Fx::for_match(s.seed.wrapping_add(2), world.settings().olx_quirks),
             color: s.level.color_map(s.theme),
             assets,
             fx_assets,
@@ -93,9 +93,11 @@ impl Presentation {
         }
     }
 
-    /// A cosmetic-entity pool of `capacity` instead of OLX's 1024 (bench
-    /// only: the performance envelope's effects sweep, plan 8). Call it
-    /// before the first [`Presentation::on_tick`]: the entities so far go.
+    /// A cosmetic-entity pool of `capacity` instead of the match's
+    /// (`Fx::for_match`: play's 16384, or OLX's 1024 with `olx_quirks`), with
+    /// play's death reserve, a sixteenth (bench only: the performance
+    /// envelope's effects sweep, plan 8). Call it before the first
+    /// [`Presentation::on_tick`]: the entities so far go.
     pub fn set_fx_capacity(&mut self, capacity: usize) {
         self.fx = Fx::with_capacity(self.seed.wrapping_add(2), capacity);
     }

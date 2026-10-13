@@ -539,7 +539,7 @@ pub fn render(env: &Envelope, summary: &str) -> String {
          | Worms | 32 (`MAX_WORMS`, `include/Consts.h:34`) | 32 (`rl_sim::MAX_WORMS`) |\n\
          | Projectiles | 3000 (`MAX_PROJECTILES`, `include/CProjectile.h:36`) | 3000 by default, up to 65 536 (`MatchSetup::MAX_POOL_CAPACITY`) |\n\
          | Map side | 4096 (12-bit worm positions) | 4096 for imported levels (`rl-import-lxl`) |\n\
-         | Effects | 1024 (`MAX_ENTITIES`, `include/Entity.h:30`) | 1024 (`rl_fx::MAX_ENTITIES`; `Fx::with_capacity` in benches) |\n\
+         | Effects | 1024 (`MAX_ENTITIES`, `include/Entity.h:30`) | 16 384 in play, 1024 of them kept for deaths (`rl_fx::PLAY_ENTITIES`, `DEATH_RESERVE`); OLX's 1024 with `olx_quirks` (`rl_fx::MAX_ENTITIES`); `Fx::with_capacity` in benches |\n\
          | Colour image | — | 256 MiB (`MAX_COLOR_MAP_BYTES`), art scale at most 8 |"
     );
     o
