@@ -1121,7 +1121,13 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
   never from parsed SDP (R1-1). A joiner with `expected_host = Some(k)`
   (an invite's key, or a listed game's) refuses a host whose key is not
   `k` or whose proof fails: "this is not the game you were invited to"
-  (`WRONG_HOST`). A joiner also gives up on a host that opens the link and
+  (`WRONG_HOST`). The password proof travels in `Prove`, only after the
+  host's proof verified, and is `SHA-256(host nonce ++ joiner key ++ offer
+  fingerprint ++ answer fingerprint ++ password)` (plan 12a final review
+  B-I1: it was `SHA-256(nonce ++ password)` in `Hello`, so an impostor
+  relaying the host's challenge could replay a player's proof under its
+  own key, and any host could ask for a proof to guess offline). A
+  password refusal before the host's proof closes the join unbelieved. A joiner also gives up on a host that opens the link and
   then stays silent (`JOIN_DEADLINE` 10 s, "the game did not answer",
   `NO_ANSWER`; keepalives alone would keep it waiting for ever). Protocol
   stays 2 (unreleased).

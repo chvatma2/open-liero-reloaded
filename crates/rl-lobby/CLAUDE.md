@@ -19,8 +19,10 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   fps)` is `b"rust-liero join v1" ++ host nonce ++ host key ++ fps.0 ++
   fps.1`, what a joiner signs; `host_proof_message(client_nonce, client,
   fps)` is `b"rust-liero host v1" ++ joiner nonce ++ joiner key ++ fps.0
-  ++ fps.1`, what the host signs (N37); `password_proof(nonce, password)`
-  is `SHA-256(nonce ++ password)`.
+  ++ fps.1`, what the host signs (N37); `password_proof(nonce, client,
+  fps, password)` is `SHA-256(host nonce ++ joiner key ++ fps.0 ++ fps.1
+  ++ password)`, bound to the joiner and the link so a relayed proof fails
+  (plan 12a final review B-I1).
 - The secret lives in `<data>/identity.ron` (rl-ui's `Store::load_identity`).
 - **Host** (`host.rs`, `LobbyHost`): transport events, messages and time in;
   `outgoing()` (peer, `ToClient`) and `events()` (`HostEvent`) out. State
@@ -30,19 +32,21 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   - Join: `connected(peer, ip, now, nonce, fingerprints)` sends `Challenge` (a banned IP:
     `Refused(Banned)`; an IP held off for guessing: `Refused(Throttled)`);
     `Hello` is checked for the guessing hold again (`Throttled`: links
-    opened before it get no more guesses), bans (`Banned`), a key already in the lobby or
-    the host's (`Busy`), room (`Full`) and the password proof
-    (`Password`; `PASSWORD_TRIES` (3) wrong proofs from one IP within
+    opened before it get no more guesses), bans (`Banned`), a key already
+    in the lobby or the host's (`Busy`) and room (`Full`); a `Hello`
+    passing them is answered at once with `HostProof`, the host's
+    signature of `host_proof_message(Hello's nonce, joiner key,
+    fingerprints)` (BIP-340 aux: the challenge's nonce, fresh per link);
+    `Prove` must verify over `challenge_message(nonce, host key,
+    fingerprints)` (else `Malformed`), then the hold again and its password
+    proof (`Password`; `password_proof(nonce, joiner key, fingerprints,
+    password)`, so a proof relayed from another link or key fails;
+    `PASSWORD_TRIES` (3) wrong proofs from one IP within
     `PASSWORD_WINDOW_US` (60 s) hold it off for `PASSWORD_LOCKOUT_US`
     (60 s); the empty password's proof is no guess; at most
     `PASSWORD_ADDRESSES` (1024) addresses remembered, the oldest
-    forgotten); a `Hello` passing them is answered at once with
-    `HostProof`, the host's signature of `host_proof_message(Hello's
-    nonce, joiner key, fingerprints)` (BIP-340 aux: the challenge's nonce,
-    fresh per link); `Prove` must verify over
-    `challenge_message(nonce, host key, fingerprints)` (else `Malformed`); then
-    `Welcome` to the joiner, `Lobby` to the others, `Notice(Joined)` to
-    all. Anything else before the proof, a second `Hello`, or no proof
+    forgotten) and the bans and room again; then `Welcome` to the joiner,
+    `Lobby` to the others, `Notice(Joined)` to all. Anything else before the proof, a second `Hello`, or no proof
     within `PROOF_TIMEOUT_US` (10 s): dropped. Every refusal and drop is
     `HostEvent::Kick` (close the transport); a member sending
     `Hello`/`Prove` again is kicked. `Bye` (before or after the proof) is
@@ -124,10 +128,13 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     reasons sanitized; setups validated: `LobbyError::InvalidSetup`).
 - **Client** (`client.rs`, `LobbyClient`): `new(.., expected_host)`,
   `connected(fingerprints)` (the link's, as this end saw them); on
-  `Challenge` sends `Hello` (with the password proof when asked, and the
-  `aux` given with the challenge as its nonce); on `HostProof` that
-  verifies under the challenge's key over `host_proof_message(its nonce,
-  its key, fingerprints)` sends `Prove`. A challenge naming another key
+  `Challenge` sends `Hello` (the `aux` given with the challenge as its
+  nonce); on `HostProof` that verifies under the challenge's key over
+  `host_proof_message(its nonce, its key, fingerprints)` sends `Prove`,
+  with the password proof when the challenge asked for one: only a host
+  that proved its key gets it, and a `Refused(Password)` before that
+  proof closes (`Closed`), unbelieved, so an impostor can neither guess
+  the password from a proof nor prompt the player for it. A challenge naming another key
   than `expected_host` (nothing sent) or a proof that fails (`Hello`
   alone sent) is `WrongHost` (carried ruling F-B, N37): a man in the
   middle presents its own DTLS certificates, so the fingerprints differ

@@ -190,11 +190,8 @@ fn a_forged_signature_is_refused() {
             1 => me.sign(&challenge_message(&[9; 32], &host_key, &FINGERPRINTS), [0; 32]),
             _ => me.sign(&challenge_message(&nonce, &key(7), &FINGERPRINTS), [0; 32]),
         };
-        net.send_raw(
-            r,
-            ToHost::Hello { key: me.public(), look: look("Eve"), password: None, nonce: [0; 32] },
-        );
-        net.send_raw(r, ToHost::Prove { signature });
+        net.send_raw(r, ToHost::Hello { key: me.public(), look: look("Eve"), nonce: [0; 32] });
+        net.send_raw(r, ToHost::Prove { signature, password: None });
         net.settle();
         assert_eq!(net.peers[r].received.last(), Some(&ToClient::Refused(Refusal::Malformed)), "case {case}");
         assert!(net.host_events.contains(&HostEvent::Kick { peer: net.peers[r].peer, ban: false }));
@@ -205,11 +202,12 @@ fn a_forged_signature_is_refused() {
     let r = net.join_raw(ip(1));
     net.settle();
     let ToClient::Challenge { nonce, host_key, .. } = net.peers[r].received[0].clone() else { panic!() };
-    net.send_raw(r, ToHost::Hello { key: key(1), look: look("Eve"), password: None, nonce: [0; 32] });
+    net.send_raw(r, ToHost::Hello { key: key(1), look: look("Eve"), nonce: [0; 32] });
     net.send_raw(
         r,
         ToHost::Prove {
             signature: ident(1).sign(&challenge_message(&nonce, &host_key, &FINGERPRINTS), [3; 32]),
+            password: None,
         },
     );
     net.settle();
@@ -265,6 +263,61 @@ fn a_wrong_password_is_refused() {
     assert!(matches!(net.peers[right].events[0], ClientEvent::Welcome { .. }));
     assert_eq!(net.host.state().members.len(), 2);
     consistent(&net);
+}
+
+/// The password proof is bound to the joiner's key and the link's DTLS
+/// fingerprints: an impostor between a player and the host (a forged
+/// invite or a direct join, the impostor proving its own key to the player)
+/// that replays the player's proof under its own key, on its own link to
+/// the host, is refused.
+#[test]
+fn a_relayed_password_proof_is_refused() {
+    let mut net = lobby_with(HostConfig { password: Some("secret".into()), ..cfg() }, 0);
+    // Eve's own link to the host.
+    let eve = net.join_raw(ip(9));
+    net.settle();
+    let ToClient::Challenge { nonce, host_key, needs_password } = net.peers[eve].received[0].clone() else {
+        panic!("no challenge: {:?}", net.peers[eve].received)
+    };
+    assert!(needs_password);
+    // Bob, on his link to Eve (other fingerprints), answers the host's
+    // nonce under Eve's key, and Eve proves her key to him.
+    let me = ident(9);
+    let bob_link = ([0xb1; 32], [0xb2; 32]);
+    let mut bob = LobbyClient::new(ident(2), look("Bob"), Some("secret".into()), None);
+    bob.connected(bob_link);
+    bob.receive(ToClient::Challenge { nonce, host_key: me.public(), needs_password }, [4; 32]);
+    let out = bob.outgoing();
+    let [ToHost::Hello { nonce: bobs, .. }] = out[..] else { panic!("Bob's hello: {out:?}") };
+    let signature = me.sign(&host_proof_message(&bobs, &key(2), &bob_link), [0; 32]);
+    bob.receive(ToClient::HostProof { signature }, [6; 32]);
+    let out = bob.outgoing();
+    let [ToHost::Prove { password: Some(proof), .. }] = out[..] else { panic!("Bob's proof: {out:?}") };
+    // Eve replays it under her own key.
+    net.send_raw(eve, ToHost::Hello { key: me.public(), look: look("Eve"), nonce: [5; 32] });
+    let signature = me.sign(&challenge_message(&nonce, &host_key, &FINGERPRINTS), [0; 32]);
+    net.send_raw(eve, ToHost::Prove { signature, password: Some(proof) });
+    net.settle();
+    assert_eq!(net.peers[eve].received.last(), Some(&ToClient::Refused(Refusal::Password)));
+    assert_eq!(net.host.state().members.len(), 1, "Eve is not admitted");
+    consistent(&net);
+}
+
+/// The password proof goes only to a host that proved its key (`Prove`,
+/// after `HostProof`): an impostor relaying the real host's challenge gets
+/// nothing to guess the password from offline, and its unproven password
+/// refusal is not believed (it would prompt the player for the password).
+#[test]
+fn an_unproven_host_gets_no_password_proof() {
+    let challenge = ToClient::Challenge { nonce: [1; 32], host_key: key(HOST), needs_password: true };
+    let mut c = LobbyClient::new(ident(1), look("Ann"), Some("secret".into()), Some(key(HOST)));
+    c.connected(FINGERPRINTS);
+    c.receive(challenge.clone(), [2; 32]);
+    let out = c.outgoing();
+    assert!(matches!(out[..], [ToHost::Hello { .. }]), "{out:?}");
+    assert!(!format!("{out:?}").contains("password: Some"), "no proof before the host's: {out:?}");
+    c.receive(ToClient::Refused(Refusal::Password), [0; 32]);
+    assert_eq!(c.events(), vec![ClientEvent::Closed], "an unproven password refusal");
 }
 
 /// Guessing the password: after `PASSWORD_TRIES` (3) wrong proofs from an
@@ -807,7 +860,7 @@ fn unproven_peers_are_dropped() {
     for msg in [
         ToHost::Chat("hi".into()),
         ToHost::Ready(true),
-        ToHost::Prove { signature: [1; 64] },
+        ToHost::Prove { signature: [1; 64], password: None },
         ToHost::Admin(AdminCommand::Next),
     ] {
         let r = net.join_raw(ip(2));
@@ -818,7 +871,7 @@ fn unproven_peers_are_dropped() {
     }
     // A second Hello.
     let r = net.join_raw(ip(3));
-    let hello = ToHost::Hello { key: key(3), look: look("Cid"), password: None, nonce: [0; 32] };
+    let hello = ToHost::Hello { key: key(3), look: look("Cid"), nonce: [0; 32] };
     net.send_raw(r, hello.clone());
     net.send_raw(r, hello.clone());
     net.settle();
@@ -826,7 +879,7 @@ fn unproven_peers_are_dropped() {
 
     // A proven member sending a Hello again is kicked.
     let a = join(&mut net, 4, "Ann");
-    net.send_raw(a, ToHost::Hello { key: key(4), look: look("Ann"), password: None, nonce: [0; 32] });
+    net.send_raw(a, ToHost::Hello { key: key(4), look: look("Ann"), nonce: [0; 32] });
     net.settle();
     assert!(got(&net, a, &ClientEvent::Kicked { banned: false }));
     assert_eq!(net.host.state().members.len(), 1);
@@ -1130,7 +1183,7 @@ fn the_host_proof_verifies() {
     net.settle();
     let me = ident(1);
     let mine = [0x3c; 32];
-    net.send_raw(r, ToHost::Hello { key: me.public(), look: look("Eve"), password: None, nonce: mine });
+    net.send_raw(r, ToHost::Hello { key: me.public(), look: look("Eve"), nonce: mine });
     net.settle();
     let [ToClient::Challenge { .. }, ToClient::HostProof { signature }] = net.peers[r].received[..] else {
         panic!("the challenge, then the proof: {:?}", net.peers[r].received)
@@ -1198,9 +1251,9 @@ fn swapped_dtls_fingerprints_fail_the_proof() {
     net.settle();
     let ToClient::Challenge { nonce, host_key, .. } = net.peers[r].received[0].clone() else { panic!() };
     let me = ident(2);
-    net.send_raw(r, ToHost::Hello { key: me.public(), look: look("Bob"), password: None, nonce: [0; 32] });
+    net.send_raw(r, ToHost::Hello { key: me.public(), look: look("Bob"), nonce: [0; 32] });
     let signature = me.sign(&challenge_message(&nonce, &host_key, &swapped), [0; 32]);
-    net.send_raw(r, ToHost::Prove { signature });
+    net.send_raw(r, ToHost::Prove { signature, password: None });
     net.settle();
     assert_eq!(net.peers[r].received.last(), Some(&ToClient::Refused(Refusal::Malformed)));
     assert!(!net.peers[r].open);
@@ -1298,10 +1351,9 @@ fn to_host() -> impl Strategy<Value = ToHost> {
         (0u8..PEERS, look.clone()).prop_map(|(k, l)| ToHost::Hello {
             key: key(k + 1),
             look: l,
-            password: None,
             nonce: [k; 32],
         }),
-        any::<u8>().prop_map(|b| ToHost::Prove { signature: [b; 64] }),
+        any::<u8>().prop_map(|b| ToHost::Prove { signature: [b; 64], password: Some([b; 32]) }),
         look.prop_map(ToHost::SetLook),
         any::<bool>().prop_map(ToHost::Ready),
         any::<bool>().prop_map(ToHost::Spectate),
@@ -1384,9 +1436,9 @@ proptest! {
                     nonces.insert(peer, nonce);
                     if let Op::Join(p, look) = op {
                         let me = ident(p + 1);
-                        host.receive(peer, ToHost::Hello { key: me.public(), look, password: None, nonce: [0; 32] }, now);
+                        host.receive(peer, ToHost::Hello { key: me.public(), look, nonce: [0; 32] }, now);
                         let signature = me.sign(&challenge_message(&nonce, &key(HOST), &FINGERPRINTS), [0; 32]);
-                        host.receive(peer, ToHost::Prove { signature }, now);
+                        host.receive(peer, ToHost::Prove { signature, password: None }, now);
                     }
                 }
                 Op::Crowd => {
@@ -1394,9 +1446,9 @@ proptest! {
                         serial = serial.wrapping_add(1);
                         let (peer, nonce, me) = (u32::from(p), [serial; 32], ident(p + 1));
                         host.connected(peer, ip(p), now, nonce, FINGERPRINTS);
-                        host.receive(peer, ToHost::Hello { key: me.public(), look: long_look(p), password: None, nonce: [0; 32] }, now);
+                        host.receive(peer, ToHost::Hello { key: me.public(), look: long_look(p), nonce: [0; 32] }, now);
                         let signature = me.sign(&challenge_message(&nonce, &key(HOST), &FINGERPRINTS), [0; 32]);
-                        host.receive(peer, ToHost::Prove { signature }, now);
+                        host.receive(peer, ToHost::Prove { signature, password: None }, now);
                         let missing = (0..MAX_MISSING).map(|i| format!("{i}{}", "m".repeat(MAX_ID - 1))).collect();
                         host.receive(peer, ToHost::Have { revision: 0, missing }, now);
                     }

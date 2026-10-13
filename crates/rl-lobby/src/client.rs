@@ -1,12 +1,14 @@
 //! The lobby's client (networking spec §5.2, §7.2): answers the host's
-//! challenge with its key, look and password proof, follows the lobby's
-//! state and sends the player's actions. Sans-IO.
+//! challenge with its key and look, then, once the host proved its key,
+//! with its own proof and the password's; follows the lobby's state and
+//! sends the player's actions. Sans-IO.
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use rl_proto::{
-    AdminCommand, LobbyState, Look, MAX_MISSING, PublicKey, ToClient, ToHost, valid_pack_id, valid_setup,
+    AdminCommand, LobbyState, Look, MAX_MISSING, PublicKey, Refusal, ToClient, ToHost, valid_pack_id,
+    valid_setup,
 };
 
 use crate::identity::{
@@ -42,6 +44,8 @@ pub struct LobbyClient {
     /// The challenge's nonce and the one this client sent in `Hello`,
     /// until the host's proof arrives.
     nonces: Option<([u8; 32], [u8; 32])>,
+    /// The challenge asked for the password (proven in `Prove`).
+    needs_password: bool,
     you: Option<u8>,
     state: Option<LobbyState>,
     out: Vec<ToHost>,
@@ -75,6 +79,7 @@ impl LobbyClient {
             stage: Stage::Idle,
             host_key: None,
             nonces: None,
+            needs_password: false,
             you: None,
             state: None,
             out: Vec::new(),
@@ -98,10 +103,11 @@ impl LobbyClient {
 
     /// A message from the host. `aux` is fresh randomness: the challenge's
     /// is this client's nonce in `Hello`, the host proof's signs the
-    /// challenge. The challenge is answered with `Hello` (with the password
-    /// proof when the host asks for one; an empty password without one);
-    /// the host's `HostProof` with `Prove` when it verifies, else
-    /// `WrongHost` and nothing more.
+    /// challenge. The challenge is answered with `Hello`; the host's
+    /// `HostProof` with `Prove` when it verifies (with the password proof
+    /// when the challenge asked for one; an empty password without one),
+    /// else `WrongHost` and nothing more. A password refusal before the
+    /// host's proof closes, unbelieved.
     pub fn receive(&mut self, msg: ToClient, aux: [u8; 32]) {
         match (self.stage, msg) {
             (Stage::Connected, ToClient::Challenge { host_key, .. })
@@ -111,13 +117,11 @@ impl LobbyClient {
                 self.events.push(ClientEvent::WrongHost { key: host_key });
             }
             (Stage::Connected, ToClient::Challenge { nonce, host_key, needs_password }) => {
-                let password = needs_password
-                    .then(|| password_proof(&nonce, self.password.as_deref().unwrap_or_default()));
-                let hello =
-                    ToHost::Hello { key: self.me.public(), look: self.look.clone(), password, nonce: aux };
+                let hello = ToHost::Hello { key: self.me.public(), look: self.look.clone(), nonce: aux };
                 self.out.push(hello);
                 self.host_key = Some(host_key);
                 self.nonces = Some((nonce, aux));
+                self.needs_password = needs_password;
                 self.stage = Stage::Hello;
             }
             (Stage::Hello, ToClient::HostProof { signature }) => {
@@ -131,9 +135,23 @@ impl LobbyClient {
                     return;
                 }
                 let signature = self.me.sign(&challenge_message(&nonce, &host_key, &self.fingerprints), aux);
-                self.out.push(ToHost::Prove { signature });
+                // Only now, to a host that proved its key: the password's
+                // proof, bound to this key and this link.
+                let password = self.needs_password.then(|| {
+                    password_proof(
+                        &nonce,
+                        &self.me.public(),
+                        &self.fingerprints,
+                        self.password.as_deref().unwrap_or_default(),
+                    )
+                });
+                self.out.push(ToHost::Prove { signature, password });
                 self.stage = Stage::Proving;
             }
+            // A password refusal from a host that has not proven its key is
+            // not believed: it would prompt the player to type the password
+            // for an impostor.
+            (Stage::Connected | Stage::Hello, ToClient::Refused(Refusal::Password)) => self.close(),
             (Stage::Connected | Stage::Hello | Stage::Proving, ToClient::Refused(why)) => {
                 self.events.push(ClientEvent::Refused(why));
                 self.stage = Stage::Closed;

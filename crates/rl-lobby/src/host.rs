@@ -778,7 +778,7 @@ impl LobbyHost {
         let Some(Link::Pending(p)) = self.links.get(&peer) else { return };
         let (addr, nonce, fingerprints, hello) = (p.addr, p.nonce, p.fingerprints, p.hello.clone());
         match (msg, hello) {
-            (ToHost::Hello { key, look, password, nonce: client_nonce }, None) => {
+            (ToHost::Hello { key, look, nonce: client_nonce }, None) => {
                 // Checked at each attempt, not only when the link opened:
                 // links opened before the hold get no more guesses.
                 if self.held(addr, now_us) {
@@ -787,29 +787,35 @@ impl LobbyHost {
                 if let Err(r) = self.may_join(&key, addr) {
                     return self.refuse(peer, r);
                 }
-                if let Some(pw) = &self.cfg.password
-                    && password != Some(password_proof(&nonce, pw))
-                {
-                    // A client without a password proves the empty one: that
-                    // is no guess (the game asks for the password next).
-                    if password.is_some_and(|p| p != password_proof(&nonce, "")) {
-                        self.wrong_password(addr, now_us);
-                    }
-                    return self.refuse(peer, Refusal::Password);
-                }
                 if let Some(Link::Pending(p)) = self.links.get_mut(&peer) {
                     p.hello = Some((key, look));
                 }
                 // The host proves its key (N37) before the joiner proves
-                // its own. BIP-340's aux is the challenge's nonce: fresh
-                // per link; the signature stays safe with a public aux.
+                // its own and its password. BIP-340's aux is the
+                // challenge's nonce: fresh per link; the signature stays
+                // safe with a public aux.
                 let message = host_proof_message(&client_nonce, &key, &fingerprints);
                 let signature = self.key.sign(&message, nonce);
                 self.out.push((peer, ToClient::HostProof { signature }));
             }
-            (ToHost::Prove { signature }, Some((key, look))) => {
+            (ToHost::Prove { signature, password }, Some((key, look))) => {
                 if !verify(&key, &challenge_message(&nonce, &self.key.public(), &fingerprints), &signature) {
                     return self.refuse(peer, Refusal::Malformed);
+                }
+                if self.held(addr, now_us) {
+                    return self.refuse(peer, Refusal::Throttled);
+                }
+                // The proof is bound to this joiner's key and this link
+                // (`password_proof`): one relayed from another link fails.
+                if let Some(pw) = &self.cfg.password
+                    && password != Some(password_proof(&nonce, &key, &fingerprints, pw))
+                {
+                    // A client without a password proves the empty one: that
+                    // is no guess (the game asks for the password next).
+                    if password.is_some_and(|p| p != password_proof(&nonce, &key, &fingerprints, "")) {
+                        self.wrong_password(addr, now_us);
+                    }
+                    return self.refuse(peer, Refusal::Password);
                 }
                 if let Err(r) = self.may_join(&key, addr) {
                     return self.refuse(peer, r);

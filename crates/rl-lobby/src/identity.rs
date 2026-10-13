@@ -101,10 +101,20 @@ fn signed_message(prefix: &[u8], nonce: &[u8; 32], key: &PublicKey, fps: &DtlsFi
     m
 }
 
-/// The proof of a lobby password: `SHA-256(nonce ++ password)`.
-pub fn password_proof(nonce: &[u8; 32], password: &str) -> [u8; 32] {
+/// The proof of a lobby password: `SHA-256(host nonce ++ joiner key ++
+/// offer fingerprint ++ answer fingerprint ++ password)`. Bound to the
+/// joiner and the link, so a proof relayed onto another link, or under
+/// another key, fails (plan 12a final review B-I1).
+pub fn password_proof(
+    nonce: &[u8; 32],
+    client: &PublicKey,
+    fps: &DtlsFingerprints,
+    password: &str,
+) -> [u8; 32] {
     let mut h = Sha256::new();
-    h.update(nonce);
+    for part in [nonce, client, &fps.0, &fps.1] {
+        h.update(part);
+    }
     h.update(password.as_bytes());
     h.finalize().into()
 }
@@ -224,13 +234,18 @@ mod tests {
     }
 
     #[test]
-    fn password_proof_depends_on_nonce_and_password() {
-        let p = password_proof(&[1; 32], "secret");
-        assert_ne!(p, password_proof(&[2; 32], "secret"));
-        assert_ne!(p, password_proof(&[1; 32], "Secret"));
-        assert_eq!(p, password_proof(&[1; 32], "secret"));
+    fn password_proof_depends_on_nonce_key_link_and_password() {
+        let fps = ([3; 32], [4; 32]);
+        let p = password_proof(&[1; 32], &[2; 32], &fps, "secret");
+        assert_ne!(p, password_proof(&[2; 32], &[2; 32], &fps, "secret"));
+        assert_ne!(p, password_proof(&[1; 32], &[1; 32], &fps, "secret"));
+        assert_ne!(p, password_proof(&[1; 32], &[2; 32], &([4; 32], [3; 32]), "secret"));
+        assert_ne!(p, password_proof(&[1; 32], &[2; 32], &fps, "Secret"));
+        assert_eq!(p, password_proof(&[1; 32], &[2; 32], &fps, "secret"));
         let mut h = Sha256::new();
-        h.update([1u8; 32]);
+        for part in [[1u8; 32], [2; 32], [3; 32], [4; 32]] {
+            h.update(part);
+        }
         h.update(b"secret");
         assert_eq!(p, <[u8; 32]>::from(h.finalize()));
     }

@@ -1246,14 +1246,10 @@ mod tests {
             let me = Identity::from_secret([n; 32]).unwrap();
             let (peer, nonce) = (PeerId::from(n), [n; 32]);
             self.lobby.connected(peer, std::net::IpAddr::from([10, 0, 0, n]), 0, nonce, FPS);
-            self.lobby.receive(
-                peer,
-                rl_proto::ToHost::Hello { key: me.public(), look, password: None, nonce },
-                0,
-            );
+            self.lobby.receive(peer, rl_proto::ToHost::Hello { key: me.public(), look, nonce }, 0);
             let host = Identity::from_secret(HOST_ID).unwrap().public();
             let signature = me.sign(&rl_lobby::challenge_message(&nonce, &host, &FPS), [0; 32]);
-            self.lobby.receive(peer, rl_proto::ToHost::Prove { signature }, 0);
+            self.lobby.receive(peer, rl_proto::ToHost::Prove { signature, password: None }, 0);
             assert!(self.lobby.member_of(peer).is_some(), "joined");
         }
 
@@ -1262,14 +1258,10 @@ mod tests {
             let me = Identity::from_secret([key; 32]).unwrap();
             let nonce = [key; 32];
             self.lobby.connected(peer, std::net::IpAddr::from(ip), now, nonce, FPS);
-            self.lobby.receive(
-                peer,
-                rl_proto::ToHost::Hello { key: me.public(), look, password: None, nonce },
-                now,
-            );
+            self.lobby.receive(peer, rl_proto::ToHost::Hello { key: me.public(), look, nonce }, now);
             let host = Identity::from_secret(HOST_ID).unwrap().public();
             let signature = me.sign(&rl_lobby::challenge_message(&nonce, &host, &FPS), [0; 32]);
-            self.lobby.receive(peer, rl_proto::ToHost::Prove { signature }, now);
+            self.lobby.receive(peer, rl_proto::ToHost::Prove { signature, password: None }, now);
             assert!(self.lobby.member_of(peer).is_some(), "joined");
         }
 

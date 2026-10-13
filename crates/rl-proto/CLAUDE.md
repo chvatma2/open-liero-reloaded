@@ -21,8 +21,9 @@ control messages, the frame delta codec and the simulation fingerprint.
   lobby at every bound is about 40 KB, `worst_case_messages_fit`): `ToHost`,
   `ToClient`, `LobbyState`, `MatchStartWire`, `MatchEndWire` and friends.
   Joining: `Challenge` → `Hello` (with the joiner's 32-byte `nonce`) →
-  `HostProof { signature }` (the host proves its key, N37) → `Prove` →
-  `Welcome`.
+  `HostProof { signature }` (the host proves its key, N37) → `Prove {
+  signature, password }` (the password proof only now, to a proven host;
+  rl-lobby binds it to the joiner's key and the link) → `Welcome`.
   **Tag byte** first on every reliable payload: `0` netcode `Control`,
   `1` `ToHost`, `2` `ToClient`; `tag()` splits it (`Tagged`), `None` for an
   empty payload or unknown tag. The netcode session still sends untagged

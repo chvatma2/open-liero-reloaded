@@ -72,8 +72,8 @@ fn samples() -> Vec<Vec<u8>> {
         }),
     ];
     for m in [
-        ToHost::Hello { key: [7; 32], look: look(), password: Some([1; 32]), nonce: [3; 32] },
-        ToHost::Prove { signature: [9; 64] },
+        ToHost::Hello { key: [7; 32], look: look(), nonce: [3; 32] },
+        ToHost::Prove { signature: [9; 64], password: Some([1; 32]) },
         ToHost::Chat("hello there".into()),
         ToHost::Have { revision: 2, missing: vec!["olx-skin-a".into(), "olx-skin-b".into()] },
         ToHost::Admin(AdminCommand::Settings(setup())),
