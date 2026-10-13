@@ -239,6 +239,10 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `net::setup_of`, bots "Bot N" in OLX's bot colours, never through
   `MatchPrefs::sanitize`: a lobby may have no bot). The host is in its
   lobby at once (`LobbyJoined`); a client when its first lobby names it.
+  A typed address goes through `shell::resolve`: a name's first IPv4
+  address (`choose_address`; an IPv4-mapped one counts); an IPv6 literal
+  or an IPv6-only name is refused with `IPV6_UNSUPPORTED` (the host binds
+  `0.0.0.0`, the client's UDP socket is IPv4).
   `Shell::net_frame(now, keys)` (every frame, before the ticks; while an
   online match plays its peer runs the ticks and the local clock rests)
   polls `--net-sim`'s host, the LAN `Listener` on `LAN_PORT` while the

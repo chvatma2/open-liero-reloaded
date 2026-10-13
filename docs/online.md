@@ -23,6 +23,10 @@ port 23400) and Join; a password is asked for when the game has one.
 mid-match as a spectator, and see each player's key fingerprint (8
 characters) in the Lobby.
 
+Online play is IPv4 only for now: a name is joined at its IPv4 address,
+and an IPv6 address (or a name with IPv6 addresses only) is refused with
+"IPv6 is not supported yet".
+
 ## Dedicated server
 
 ```

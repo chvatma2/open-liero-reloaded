@@ -751,20 +751,87 @@ fn fresh_identity() -> anyhow::Result<Identity> {
     anyhow::bail!("no valid key from the system's randomness")
 }
 
-/// The address `typed` (`host[:port]`, an IPv6 address in brackets with a
-/// port), `default_port` when it has none; a name is looked up.
+/// Why an IPv6 address is not joined: the host listens on IPv4 only and
+/// the client's UDP socket is IPv4.
+pub const IPV6_UNSUPPORTED: &str = "IPv6 is not supported yet";
+
+/// The address `typed` (`host[:port]`, `default_port` when it has none); a
+/// name is looked up and its first IPv4 address taken. An IPv6 literal
+/// (`::1`, `[::1]:23400`) or a name with IPv6 addresses only is refused
+/// ([`IPV6_UNSUPPORTED`]).
 pub fn resolve(typed: &str, default_port: u16) -> anyhow::Result<SocketAddr> {
     let typed = typed.trim();
-    if let Ok(a) = typed.parse::<SocketAddr>() {
-        return Ok(a);
-    }
-    if let Ok(ip) = typed.trim_start_matches('[').trim_end_matches(']').parse::<IpAddr>() {
-        return Ok(SocketAddr::new(ip, default_port));
+    let literal = typed.parse::<SocketAddr>().ok().or_else(|| {
+        typed
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<IpAddr>()
+            .ok()
+            .map(|ip| SocketAddr::new(ip, default_port))
+    });
+    if let Some(a) = literal {
+        return choose_address(typed, [a]);
     }
     let with_port = if typed.contains(':') { typed.to_string() } else { format!("{typed}:{default_port}") };
-    with_port
-        .to_socket_addrs()
-        .map_err(|e| anyhow::anyhow!("{typed}: {e}"))?
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("{typed}: no address"))
+    let addrs = with_port.to_socket_addrs().map_err(|e| anyhow::anyhow!("{typed}: {e}"))?;
+    choose_address(typed, addrs)
+}
+
+/// The address to join among those `typed` resolved to: the first IPv4
+/// one; IPv6 alone is refused ([`IPV6_UNSUPPORTED`]).
+pub fn choose_address(
+    typed: &str,
+    addrs: impl IntoIterator<Item = SocketAddr>,
+) -> anyhow::Result<SocketAddr> {
+    let mut ipv6 = false;
+    for a in addrs {
+        match a {
+            SocketAddr::V4(_) => return Ok(a),
+            SocketAddr::V6(v6) => match v6.ip().to_ipv4_mapped() {
+                Some(v4) => return Ok(SocketAddr::new(v4.into(), a.port())),
+                None => ipv6 = true,
+            },
+        }
+    }
+    if ipv6 {
+        anyhow::bail!("{typed}: {IPV6_UNSUPPORTED}")
+    }
+    anyhow::bail!("{typed}: no address")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn addrs(list: &[&str]) -> Vec<SocketAddr> {
+        list.iter().map(|a| a.parse().unwrap()).collect()
+    }
+
+    #[test]
+    fn a_name_joins_its_ipv4_address_first() {
+        let got =
+            choose_address("host", addrs(&["[2001:db8::1]:23400", "192.0.2.7:23400", "192.0.2.8:23400"]));
+        assert_eq!(got.unwrap(), "192.0.2.7:23400".parse().unwrap());
+        let mapped = choose_address("host", addrs(&["[::ffff:192.0.2.9]:5"]));
+        assert_eq!(mapped.unwrap(), "192.0.2.9:5".parse().unwrap(), "an IPv4-mapped address is IPv4");
+    }
+
+    #[test]
+    fn an_ipv6_only_name_is_refused_clearly() {
+        let err = choose_address("host", addrs(&["[2001:db8::1]:23400"])).unwrap_err();
+        assert_eq!(err.to_string(), "host: IPv6 is not supported yet");
+        let err = choose_address("host", addrs(&[])).unwrap_err();
+        assert_eq!(err.to_string(), "host: no address");
+    }
+
+    #[test]
+    fn an_ipv6_literal_is_refused_clearly() {
+        for typed in ["::1", "[::1]", "[2001:db8::1]:23400"] {
+            let err = resolve(typed, 23400).unwrap_err();
+            assert_eq!(err.to_string(), format!("{typed}: IPv6 is not supported yet"));
+        }
+        assert_eq!(resolve("127.0.0.1", 23400).unwrap(), "127.0.0.1:23400".parse().unwrap());
+        assert_eq!(resolve(" 127.0.0.1:99 ", 23400).unwrap(), "127.0.0.1:99".parse().unwrap());
+        assert_eq!(resolve("localhost:5", 23400).unwrap(), "127.0.0.1:5".parse().unwrap());
+    }
 }
