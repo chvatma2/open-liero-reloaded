@@ -55,10 +55,11 @@ wired in the frame loop's order **once**, so each mode that draws a world
   keeps the keys after the state, so ticks run again after it play no sound
   twice. `spawned()` counts the cosmetics handed to the entities. A sound's
   key has no source: a correction swapping which worm fires leaves the
-  sound where it first played. A death sound is keyed by the worm whose
-  gibs follow it, not by which of the three it drew: a correction that
-  re-rolls it plays no second one, one that kills another worm instead
-  plays that death's.
+  sound where it first played. A death's events (`Event::death`: its
+  sound, gibs and blood) show once per worm and life (`death_parts`; the
+  life counts the worm's spawns as last simulated), whatever tick a
+  correction moves the death to and whichever of the three sounds it
+  draws; a correction that kills another worm instead shows that death.
   `event_keys` keys an event by tick, sub-step, a hash of its kind and
   integer identity fields (never positions or amounts, which a correction
   moves) and an ordinal among equal ones. An erased event is not undone.

@@ -25,10 +25,10 @@
 //! A sound is keyed by its id, not its source (events carry none): when a
 //! correction swaps which worm fires the same weapon in the same tick and
 //! sub-step, the sound stays where it first played (spec §3.4: not undone).
-//! A death's sound is the exception: it is keyed by the worm whose gibs
-//! follow it, not by which of the three death sounds it drew, so a
-//! correction that re-rolls it plays no second death sound, and one that
-//! kills another worm instead plays that death's.
+//! A death is the exception: its sound, gibs and blood (`Event::death`)
+//! show once per worm and life, whatever tick and sub-step a correction
+//! moves the death to and whichever of the three death sounds it draws;
+//! a correction that kills another worm instead shows that death.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -149,14 +149,24 @@ impl Fnv {
 }
 
 /// What online play's presentation has shown: the highest tick whose
-/// entities have run, and the keys played or spawned from the confirmed
-/// tick on (a re-simulation never reaches below it).
+/// entities have run, the keys played or spawned from the confirmed tick
+/// on (a re-simulation never reaches below it), and the deaths shown.
 #[derive(Debug, Default)]
 pub struct NetPresenter {
     /// Ticks from it on were never shown.
     next: u32,
     /// The sounds, cosmetics and explosions shown, by key.
     shown: BTreeSet<EventKey>,
+    /// The deaths shown, by worm and life ([`NetPresenter::life`]).
+    deaths: BTreeSet<(i32, u32)>,
+    /// The worms spawned in each tick from the confirmed tick on, as last
+    /// simulated (a re-simulated tick replaces its entry).
+    spawns: BTreeMap<u32, Vec<i32>>,
+    /// Per worm, its spawns in the ticks below the confirmed tick.
+    spawns_before: BTreeMap<i32, u32>,
+    /// Per event of the tick being applied: for a death's event, whether
+    /// that death shows now (reused).
+    parts: Vec<Option<bool>>,
     /// A re-simulated tick's events for the entities (reused).
     kept: Vec<Event>,
     /// Its explosions seen for the first time (reused).
@@ -205,36 +215,53 @@ impl NetPresenter {
         let dt = world.settings().lx56_physics_dt();
         for t in ticks {
             let keys = event_keys(t.tick, &t.events);
+            self.death_parts(t.tick, &t.events);
             let fx =
                 |events, substeps| FxTick { events, substeps, dt, lost: t.lost, material: world.terrain() };
+            self.kept.clear();
             if t.tick >= self.next {
-                present.step_fx(&fx(&t.events, t.substeps));
-                for (e, k) in t.events.iter().zip(&keys) {
-                    let new = k.is_some_and(|k| self.shown.insert(k));
+                for ((e, k), part) in t.events.iter().zip(&keys).zip(&self.parts) {
+                    // Every event, but a death shown before (moved here by a
+                    // correction) shows nothing again.
+                    let new = match part {
+                        Some(false) => continue,
+                        Some(true) => true,
+                        None => k.is_some_and(|k| self.shown.insert(k)),
+                    };
+                    self.kept.push(*e);
                     match e.kind {
                         EventKind::Sound { .. } if new => sounds.push(*e),
                         EventKind::SpawnCosmetic { .. } => self.spawned += 1,
                         _ => {}
                     }
                 }
+                present.step_fx(&fx(&self.kept, t.substeps));
                 self.next = t.tick.saturating_add(1);
                 continue;
             }
-            self.kept.clear();
             self.shakes.clear();
-            for (e, k) in t.events.iter().zip(&keys) {
-                match k {
-                    None => self.kept.push(*e),
-                    Some(k) if self.shown.insert(*k) => match e.kind {
-                        EventKind::SpawnCosmetic { .. } => {
-                            self.kept.push(*e);
-                            self.spawned += 1;
-                        }
-                        EventKind::Sound { .. } => sounds.push(*e),
-                        EventKind::Explosion { .. } => self.shakes.push(*e),
-                        _ => {}
-                    },
-                    Some(_) => {}
+            for ((e, k), part) in t.events.iter().zip(&keys).zip(&self.parts) {
+                // A terrain edit always; a death's event with its death; any
+                // other with a new key.
+                let new = match (part, k) {
+                    (Some(new), _) => *new,
+                    (None, None) => {
+                        self.kept.push(*e);
+                        continue;
+                    }
+                    (None, Some(k)) => self.shown.insert(*k),
+                };
+                if !new {
+                    continue;
+                }
+                match e.kind {
+                    EventKind::SpawnCosmetic { .. } => {
+                        self.kept.push(*e);
+                        self.spawned += 1;
+                    }
+                    EventKind::Sound { .. } => sounds.push(*e),
+                    EventKind::Explosion { .. } => self.shakes.push(*e),
+                    _ => {}
                 }
             }
             present.step_fx(&fx(&self.kept, 0));
@@ -258,6 +285,62 @@ impl NetPresenter {
     pub fn confirmed(&mut self, tick: u32) {
         let first = EventKey { tick, substep: 0, class: 0, ordinal: 0 };
         self.shown = self.shown.split_off(&first);
+        let later = self.spawns.split_off(&tick);
+        for worm in core::mem::replace(&mut self.spawns, later).into_values().flatten() {
+            let n = self.spawns_before.entry(worm).or_insert(0);
+            *n = n.saturating_add(1);
+        }
+        // A life followed by a confirmed spawn ended in a confirmed tick.
+        let before = &self.spawns_before;
+        self.deaths.retain(|(worm, life)| *life >= before.get(worm).copied().unwrap_or(0));
+    }
+
+    /// Worm `worm`'s life at `tick`: how many times it spawned up to that
+    /// tick, as the ticks were last simulated (a correction that moves a
+    /// spawn within the ticks before a death keeps the death's life). The
+    /// spawns before the presenter's first tick (a state loaded mid-match)
+    /// are not counted: every worm's life then starts at 0.
+    fn life(&self, worm: i32, tick: u32) -> u32 {
+        let later = self.spawns.range(..=tick).flat_map(|(_, w)| w).filter(|&&w| w == worm).count();
+        let before = self.spawns_before.get(&worm).copied().unwrap_or(0);
+        before.saturating_add(u32::try_from(later).unwrap_or(u32::MAX))
+    }
+
+    /// Fills `parts` for `tick`'s events: `None` for an event that is not
+    /// a death's, and for a death's events (a run of `Event::death` from
+    /// its sound, `rl_sim::damage`'s order) whether that death of the
+    /// worm whose gibs it holds shows now, which records it. A death
+    /// without gibs (dropped beyond the event quota) is keyed like any
+    /// event. The tick's spawns replace those it had before.
+    fn death_parts(&mut self, tick: u32, events: &[Event]) {
+        self.spawns.remove(&tick);
+        self.parts.clear();
+        let mut i = 0;
+        while i < events.len() {
+            let e = &events[i];
+            if !e.death {
+                if let EventKind::Spawned { worm } = e.kind {
+                    self.spawns.entry(tick).or_default().push(worm);
+                }
+                self.parts.push(None);
+                i += 1;
+                continue;
+            }
+            let len = 1 + events[i + 1..]
+                .iter()
+                .take_while(|n| n.death && !matches!(n.kind, EventKind::Sound { .. }))
+                .count();
+            let worm = events[i..i + len].iter().find_map(|e| match e.kind {
+                EventKind::SpawnCosmetic { kind: CosmeticKind::Gib { worm }, .. } => Some(worm),
+                _ => None,
+            });
+            let part = worm.map(|w| {
+                let life = self.life(w, tick);
+                self.deaths.insert((w, life))
+            });
+            self.parts.extend(std::iter::repeat_n(part, len));
+            i += len;
+        }
     }
 
     /// The cosmetic events handed to the entities so far: every one of a

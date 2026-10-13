@@ -453,18 +453,27 @@ fn a_drift_is_counted_not_a_panic() {
     }
 }
 
-/// A death as the simulation emits it in sub-step 1: the kill, the death
-/// sound `id` (one of three, drawn) and worm `worm`'s 7 gibs.
+/// A death as the simulation emits it in sub-step 1: the kill, then the
+/// death's own events (`Event::death`): the death sound `id` (one of
+/// three, drawn), worm `worm`'s 7 gibs and a round of its blood.
 fn death(id: u16, worm: i32) -> Vec<Event> {
     use rl_math::Vec2;
-    let gib = EventKind::SpawnCosmetic { kind: CosmeticKind::Gib { worm }, pos: Vec2::ZERO, vel: Vec2::ZERO };
+    let cosmetic = |kind| EventKind::SpawnCosmetic { kind, pos: Vec2::ZERO, vel: Vec2::ZERO };
+    let part = |kind| Event { substep: 1, death: true, kind };
     let mut v = vec![
         ev(1, EventKind::Kill { victim: worm, killer: 0 }),
-        ev(1, EventKind::Sound { id: SoundId(id), pos: Vec2::ZERO }),
+        part(EventKind::Sound { id: SoundId(id), pos: Vec2::ZERO }),
     ];
-    v.extend((0..7).map(|_| ev(1, gib)));
+    v.extend((0..7).map(|_| part(cosmetic(CosmeticKind::Gib { worm }))));
+    v.extend(
+        [CosmeticKind::BloodDropper, CosmeticKind::Blood { red: 200 }, CosmeticKind::Blood { red: 128 }]
+            .map(|k| part(cosmetic(k))),
+    );
     v
 }
+
+/// The cosmetics in [`death`]: 7 gibs and 3 blood.
+const DEATH_SPAWNS: u64 = 10;
 
 /// A death's sound is keyed by the worm whose gibs follow it, not by which
 /// of the three death sounds it drew: a correction that re-rolls the sound
@@ -493,7 +502,43 @@ fn every_death_plays_its_sound_and_gibs_once_under_corrections() {
         net.apply(&mut present, sim.world(), &[], &[tick(resim, events)], &mut sounds);
         (sounds.len(), net.spawned() - spawned)
     };
-    assert_eq!(step(false, death(3, 1)), (1, 7), "worm 1 dies: its sound, its gibs");
+    assert_eq!(step(false, death(3, 1)), (1, DEATH_SPAWNS), "worm 1 dies: its sound, its gibs");
     assert_eq!(step(true, death(4, 1)), (0, 0), "the same death, its sound re-rolled");
-    assert_eq!(step(true, death(3, 2)), (1, 7), "worm 2 dies instead");
+    assert_eq!(step(true, death(3, 2)), (1, DEATH_SPAWNS), "worm 2 dies instead");
+}
+
+/// A death is one per worm and life, whatever tick a correction moves it
+/// to: it shows once whether it moves to an earlier tick (shown before) or
+/// a later one (never shown), and the worm's next life dies anew.
+#[test]
+fn a_death_moved_to_another_tick_by_a_correction_shows_once() {
+    use rl_math::Vec2;
+    let Some(c) = content() else { return };
+    let p = packs(&c);
+    let mut sim = WorldSim::new(world(&c));
+    let mut present = presentation(&c, &p, sim.world());
+    let mut rec = TickRecorder::default();
+    sim.tick(&final_keys(0));
+    rec.simulated(&sim, TickInfo { tick: 0, resim: false, all_final: true });
+    let first = rec.take_ticked();
+    let spawned = |w| first[0].events.iter().any(|e| e.kind == EventKind::Spawned { worm: w });
+    assert!((1..=3).all(spawned), "tick 0 spawns the worms");
+    let mut net = NetPresenter::new();
+    net.apply(&mut present, sim.world(), &[], &first, &mut Vec::new());
+    let mut step = |tick, events: Vec<Event>| {
+        let (spawned, mut sounds) = (net.spawned(), Vec::new());
+        let t = TickedTick { tick, resim: false, substeps: 2, lost: None, events };
+        net.apply(&mut present, sim.world(), &[], &[t], &mut sounds);
+        (sounds.len(), net.spawned() - spawned)
+    };
+    assert_eq!(step(2, death(3, 1)), (1, DEATH_SPAWNS), "worm 1 dies at tick 2");
+    assert_eq!(step(1, death(4, 1)), (0, 0), "a correction: it died at tick 1, shown before");
+    assert_eq!(step(2, vec![]), (0, 0), "and not at tick 2");
+    assert_eq!(step(3, death(5, 2)), (1, DEATH_SPAWNS), "worm 2 dies at tick 3");
+    assert_eq!(step(3, vec![]), (0, 0), "a correction: not at tick 3");
+    assert_eq!(step(4, death(3, 2)), (0, 0), "but at tick 4, never shown before");
+    let spawn = ev(0, EventKind::Spawned { worm: 1 });
+    let mut later = vec![spawn, ev(0, EventKind::Sound { id: SoundId::THROW, pos: Vec2::ZERO })];
+    later.extend(death(3, 1));
+    assert_eq!(step(5, later), (2, DEATH_SPAWNS), "worm 1's next life dies anew");
 }
