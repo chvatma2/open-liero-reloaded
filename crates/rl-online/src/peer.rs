@@ -602,6 +602,10 @@ impl OnlinePeer {
                     self.events.push(OnlineEvent::Notice(format!("{} joined", self.name(id))));
                     self.mid_match_join(id, now);
                 }
+                // Task 6 (N33): `mid_match_join` moves here from `Joined`
+                // once the clients report their content with a `Have`
+                // after the welcome.
+                HostEvent::ContentComplete(_) => {}
                 HostEvent::Left(id) => self.events.push(OnlineEvent::Left(self.name(id))),
                 HostEvent::Kick { peer, ban } => {
                     // A ban by key leaves the address open (spec §5.2);

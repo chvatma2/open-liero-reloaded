@@ -17,6 +17,8 @@ pub const PROOF_TIMEOUT_US: u64 = 10_000_000;
 /// At most `CHAT_LINES` chat lines per member within `CHAT_WINDOW_US`.
 pub const CHAT_LINES: usize = 5;
 pub const CHAT_WINDOW_US: u64 = 5_000_000;
+/// A member's download progress changes at most this often in the lobby.
+pub const DOWNLOAD_EVERY_US: u64 = 250_000;
 /// How long the host stays in `Phase::Results` before gathering again.
 pub const RESULTS_US: u64 = 5_000_000;
 /// This many wrong password proofs from one IP address within
@@ -55,6 +57,12 @@ pub struct HostConfig {
 pub enum HostEvent {
     /// A member was welcomed.
     Joined(u8),
+    /// A member that sits a match out (waiting seat: it joined during the
+    /// match, or lacked content at its start) now has its content
+    /// complete: once per wait, from its `Have`. A mid-match joiner
+    /// spectates now (not at `Joined`); one that never sends `Have` stays
+    /// waiting.
+    ContentComplete(u8),
     /// A member left (`Bye` or its transport closed).
     Left(u8),
     /// Close this peer's transport: a refusal, a timeout, a protocol

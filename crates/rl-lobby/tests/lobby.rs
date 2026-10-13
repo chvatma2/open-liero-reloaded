@@ -900,7 +900,7 @@ fn a_forced_start_seats_only_the_ready() {
     let members: Vec<Option<u8>> = wire.slots.iter().map(|x| x.member).collect();
     assert_eq!(members, [Some(host_id(&net)), Some(a_id)]);
     assert_eq!(seat(&net, b), SeatWire::Spectator);
-    assert_eq!(seat(&net, c), SeatWire::Spectator);
+    assert_eq!(seat(&net, c), SeatWire::Waiting, "lacking content (N33)");
     wire.start_checksum = 1;
     net.host.announce_start(wire.clone()).unwrap();
     net.settle();
@@ -1293,4 +1293,114 @@ proptest! {
             prop_assert_eq!(decode_to_client(&encode_to_client(&msg)), Ok(msg));
         }
     }
+}
+
+#[test]
+fn a_spectator_lacking_content_waits_at_the_start() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let c = join(&mut net, 3, "Cid");
+    net.client(a).set_ready(true);
+    net.client(b).set_spectate(true);
+    net.client(c).set_spectate(true);
+    net.client(b).have(vec!["olx-skin-x".into()]);
+    net.settle();
+    assert_eq!(net.host.lacking(), vec![id_of(&net, b)]);
+    let wire = net.start(1, 2).unwrap();
+    assert_eq!(seat(&net, b), SeatWire::Waiting);
+    assert_eq!(seat(&net, c), SeatWire::Spectator);
+    assert!(got(&net, c, &ClientEvent::Start(wire)), "the complete spectator watches");
+    assert!(!net.peers[b].events.iter().any(|e| matches!(e, ClientEvent::Start(_))), "no start for b");
+    assert!(net.peers[b].open, "it stays connected");
+    consistent(&net);
+}
+
+#[test]
+fn force_start_makes_lacking_players_wait() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let c = join(&mut net, 3, "Cid");
+    net.client(a).set_ready(true);
+    net.client(c).have(vec!["olx-skin-x".into()]);
+    net.settle();
+    let rtts = net.rtts();
+    let wire = net.host.force_start(4, &rtts).unwrap();
+    assert_eq!(seat(&net, b), SeatWire::Spectator, "not ready, content complete");
+    assert_eq!(seat(&net, c), SeatWire::Waiting, "lacking content");
+    net.host.announce_start(wire.clone()).unwrap();
+    net.settle();
+    assert!(got(&net, b, &ClientEvent::Start(wire)));
+    assert!(!net.peers[c].events.iter().any(|e| matches!(e, ClientEvent::Start(_))));
+    assert!(net.peers[c].open);
+    // Back in its seat at the next gathering.
+    net.host.playing(0);
+    net.host.match_ended(MatchEndWire { reason: "time".into(), rows: vec![], last_tick: 900 }, net.now_us);
+    net.run(RESULTS_US + 1);
+    net.settle();
+    assert_eq!(seat(&net, c), SeatWire::Player { slot: 3 });
+    consistent(&net);
+}
+
+#[test]
+fn a_mid_match_joiner_spectates_once_complete() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    net.client(a).set_ready(true);
+    net.settle();
+    net.start(1, 2).unwrap();
+    net.host.playing(0);
+    net.settle();
+    let b = join(&mut net, 2, "Bob");
+    let b_id = id_of(&net, b);
+    let complete =
+        |net: &Net| net.host_events.iter().filter(|e| **e == HostEvent::ContentComplete(b_id)).count();
+    assert!(net.host_events.contains(&HostEvent::Joined(b_id)));
+    assert_eq!(complete(&net), 0, "nothing reported yet");
+    net.client(b).have(vec!["olx-skin-x".into()]);
+    net.settle();
+    assert_eq!(complete(&net), 0, "still lacking");
+    assert_eq!(seat(&net, b), SeatWire::Waiting);
+    net.client(b).have(vec![]);
+    net.settle();
+    assert_eq!(complete(&net), 1);
+    net.client(b).have(vec![]);
+    net.settle();
+    assert_eq!(complete(&net), 1, "reported once");
+    consistent(&net);
+}
+
+#[test]
+fn download_progress_is_published_and_coalesced() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let a_id = id_of(&net, a);
+    net.client(a).have(vec!["olx-skin-x".into()]);
+    net.settle();
+    let progress = |net: &Net| member_by_id(net, a_id).download;
+    let before = net.host.revision();
+    net.host.set_download(a_id, Some(10));
+    assert_eq!(progress(&net), Some(10));
+    assert_eq!(net.host.revision(), before + 1);
+    // Within 250 ms: held back.
+    net.run(100_000);
+    net.host.set_download(a_id, Some(20));
+    net.host.set_download(a_id, Some(30));
+    assert_eq!(progress(&net), Some(10));
+    assert_eq!(net.host.revision(), before + 1);
+    // Due: the latest goes out, once.
+    net.run(150_000);
+    assert_eq!(progress(&net), Some(30));
+    assert_eq!(net.host.revision(), before + 2);
+    net.run(1_000_000);
+    assert_eq!(net.host.revision(), before + 2);
+    // Over 100 is cut; complete content clears it.
+    net.host.set_download(a_id, Some(250));
+    assert_eq!(progress(&net), Some(100));
+    net.client(a).have(vec![]);
+    net.settle();
+    assert_eq!(progress(&net), None);
+    net.host.set_download(99, Some(5));
+    consistent(&net);
 }

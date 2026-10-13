@@ -45,6 +45,16 @@ struct Rec {
     /// Said it is ready; ready on the wire only with nothing missing.
     said_ready: bool,
     missing: Vec<String>,
+    /// The download progress shown (`Member::download`).
+    download: Option<u8>,
+    /// A progress held back by the coalescing, shown at `download_at +
+    /// DOWNLOAD_EVERY_US` (`LobbyHost::tick`).
+    download_next: Option<Option<u8>>,
+    /// When `download` last changed.
+    download_at: Option<u64>,
+    /// Sits a match out (waiting seat) and its content is not yet known to
+    /// be complete: `HostEvent::ContentComplete` fires when it is.
+    awaiting_content: bool,
     loadout: Option<[i32; 5]>,
     admin: bool,
     /// The round trip the transport measured (`set_ping`).
@@ -68,7 +78,7 @@ impl Rec {
             missing: self.missing.clone(),
             ping_ms: self.ping_ms,
             admin: self.admin,
-            download: None,
+            download: self.download,
         }
     }
 }
@@ -121,6 +131,8 @@ pub struct LobbyHost {
     guesses: BTreeMap<IpAddr, Guesses>,
     out: Vec<(PeerId, ToClient)>,
     events: Vec<HostEvent>,
+    /// The latest time the host was given.
+    now_us: u64,
 }
 
 /// One address's recent wrong password proofs.
@@ -190,6 +202,7 @@ impl LobbyHost {
             guesses: BTreeMap::new(),
             out: Vec::new(),
             events: Vec::new(),
+            now_us: 0,
         };
         if let Some(look) = me {
             let id = host.alloc_id().unwrap_or(0);
@@ -203,6 +216,10 @@ impl LobbyHost {
                 wants_play: true,
                 said_ready: true,
                 missing: Vec::new(),
+                download: None,
+                download_next: None,
+                download_at: None,
+                awaiting_content: false,
                 loadout: None,
                 admin: true,
                 ping_ms: None,
@@ -219,6 +236,7 @@ impl LobbyHost {
     /// The transport opened `peer` from `addr`: send the challenge (or
     /// refuse a banned address). `nonce` must be fresh randomness.
     pub fn connected(&mut self, peer: PeerId, addr: IpAddr, now_us: u64, nonce: [u8; 32]) {
+        self.now_us = self.now_us.max(now_us);
         if self.links.contains_key(&peer) {
             self.disconnected(peer);
         }
@@ -241,6 +259,7 @@ impl LobbyHost {
 
     /// A message from `peer` (decoded and validated by rl-proto).
     pub fn receive(&mut self, peer: PeerId, msg: ToHost, now_us: u64) {
+        self.now_us = self.now_us.max(now_us);
         match self.links.get(&peer) {
             None => {}
             Some(Link::Pending(_)) => self.receive_pending(peer, msg, now_us),
@@ -258,6 +277,8 @@ impl LobbyHost {
     /// Timeouts: unproven peers after `PROOF_TIMEOUT_US`, the results after
     /// `RESULTS_US`.
     pub fn tick(&mut self, now_us: u64) {
+        self.now_us = self.now_us.max(now_us);
+        self.flush_downloads();
         let late: Vec<PeerId> = self
             .links
             .iter()
@@ -294,6 +315,56 @@ impl LobbyHost {
             self.refresh();
             self.dirty = true;
         }
+    }
+
+    /// The share of `member`'s required content received, while it
+    /// downloads (`None`: complete or not started), shown as
+    /// `Member::download` (cut to 100). Coalesced: a member's progress
+    /// changes at most once per [`DOWNLOAD_EVERY_US`] of the time the host
+    /// was last given; the latest value waits for a `tick`. Not a change a
+    /// start depends on.
+    pub fn set_download(&mut self, member: u8, percent: Option<u8>) {
+        let Some(i) = self.index(member) else { return };
+        let percent = percent.map(|p| p.min(100));
+        let m = &mut self.members[i];
+        if percent == m.download {
+            m.download_next = None;
+        } else if m.download_at.is_none_or(|t| self.now_us.saturating_sub(t) >= DOWNLOAD_EVERY_US) {
+            m.download_next = None;
+            m.download = percent;
+            m.download_at = Some(self.now_us);
+            self.refresh();
+            self.dirty = true;
+        } else {
+            m.download_next = Some(percent);
+        }
+    }
+
+    /// Shows the progress held back for [`DOWNLOAD_EVERY_US`] once due.
+    fn flush_downloads(&mut self) {
+        let now = self.now_us;
+        let mut changed = false;
+        for m in &mut self.members {
+            let due = m.download_at.is_none_or(|t| now.saturating_sub(t) >= DOWNLOAD_EVERY_US);
+            if due
+                && let Some(next) = m.download_next.take()
+                && next != m.download
+            {
+                m.download = next;
+                m.download_at = Some(now);
+                changed = true;
+            }
+        }
+        if changed {
+            self.refresh();
+            self.dirty = true;
+        }
+    }
+
+    /// The members whose required content is incomplete (their last
+    /// `Have` named something missing), in join order.
+    pub fn lacking(&self) -> Vec<u8> {
+        self.members.iter().filter(|m| !m.missing.is_empty()).map(|m| m.id).collect()
     }
 
     /// Changes whenever [`LobbyHost::state`] does: compare it instead of
@@ -444,7 +515,8 @@ impl LobbyHost {
         Self::worms(ready, self.setup.bots.len())?;
         let mut moved = false;
         for m in self.members.iter_mut().filter(|m| seated(m) && !m.ready()) {
-            m.seat = SeatWire::Spectator;
+            // Lacking content: sits the match out (N33), else watches.
+            m.seat = if m.missing.is_empty() { SeatWire::Spectator } else { SeatWire::Waiting };
             moved = true;
         }
         if moved {
@@ -513,7 +585,18 @@ impl LobbyHost {
         self.started_at = None;
         self.phase = Phase::Starting;
         self.in_match = wire.slots.iter().filter_map(|s| s.member).collect();
-        self.broadcast(&ToClient::Start(wire));
+        // N33: a member lacking content sits the match out: no start, no
+        // state, still connected. It spectates once complete.
+        for m in &mut self.members {
+            m.awaiting_content = !m.missing.is_empty();
+            if m.awaiting_content {
+                m.seat = SeatWire::Waiting;
+            }
+        }
+        let start = ToClient::Start(wire);
+        let peers: Vec<PeerId> =
+            self.members.iter().filter(|m| m.seat != SeatWire::Waiting).filter_map(|m| m.peer).collect();
+        self.out.extend(peers.into_iter().map(|p| (p, start.clone())));
         self.publish();
         Ok(())
     }
@@ -699,6 +782,12 @@ impl LobbyHost {
             wants_play: true,
             said_ready: false,
             missing: Vec::new(),
+            download: None,
+            download_next: None,
+            download_at: None,
+            // Welcomed during a match: it spectates once its content is
+            // known to be complete (N33).
+            awaiting_content: self.phase != Phase::Gathering,
             loadout: None,
             admin: self.cfg.admins.contains(&key),
             ping_ms: None,
@@ -803,8 +892,16 @@ impl LobbyHost {
                 let m = &mut self.members[i];
                 if !missing.is_empty() {
                     m.said_ready = false;
+                } else {
+                    // Complete: no progress to show.
+                    m.download = None;
+                    m.download_next = None;
                 }
+                let complete = missing.is_empty() && core::mem::take(&mut m.awaiting_content);
                 m.missing = missing;
+                if complete {
+                    self.events.push(HostEvent::ContentComplete(id));
+                }
                 self.publish();
             }
             ToHost::Admin(cmd) => self.admin(peer, i, cmd),
@@ -924,6 +1021,9 @@ impl LobbyHost {
     fn gather(&mut self) {
         self.phase = Phase::Gathering;
         self.in_match.clear();
+        for m in &mut self.members {
+            m.awaiting_content = false;
+        }
         let me = self.me;
         for m in self.members.iter_mut().filter(|m| Some(m.id) != me) {
             m.said_ready = false;

@@ -81,9 +81,20 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     `playing(tick)`: `Phase::Playing`. `match_ended(end, now)`: `Ended` to
     all, `Phase::Results` for `RESULTS_US` (5 s, in `tick`), then gathering.
     Ids of the running match's members are not reused until it ends.
-    `force_start` (ruling T6-A, spec §7.2): players not ready (or lacking
-    content) watch this match as spectators and get seats back at the next
-    gathering; nobody moves when the ready players alone cannot start.
+    `force_start` (ruling T6-A, spec §7.2): players not ready watch this
+    match as spectators and get seats back at the next gathering; nobody
+    moves when the ready players alone cannot start.
+  - Content (N33): `lacking()` lists the members whose last `Have` named
+    something missing. At a start (`announce_start`; `force_start` for
+    players) a lacking member is `SeatWire::Waiting`: no `Start`, still
+    connected, seated again at the next gathering. A member welcomed during
+    a match is waiting too. Either way `HostEvent::ContentComplete(id)`
+    fires once, on the `Have` that empties its list (so a client sends
+    `Have` after the welcome, empty or not); the online layer lets it
+    spectate then, not at `Joined`. `set_download(member, percent)`
+    publishes `Member::download` (cut to 100), at most once per member per
+    `DOWNLOAD_EVERY_US` (250 ms) of the latest time given to the host; a
+    held-back value is shown by `tick`; an empty `Have` clears it.
   - `set_ping(peer, ms)`: the transport's round trip in `Member.ping_ms`
     (a change is a `Lobby`: call it every few seconds).
   - Leaving (`Bye`, `disconnected`): removed, `Notice(Left)`,
