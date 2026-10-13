@@ -5,6 +5,7 @@
 //! Readers and writers are deterministic: writing the same value twice yields
 //! byte-identical files.
 
+pub mod archive;
 mod core_pack;
 mod error;
 mod hash;

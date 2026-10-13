@@ -50,4 +50,12 @@ header's size); content hashing; validation.
   may lack although OLX has it; version 3 the mod's `restrictions.ron`; version 4 the
   level's `thumb.png` (plan 7 G6).
 
+- **Archive** (`archive`, plan 11 N29): `encode(src)` / `decode(reader, sink, limit)`
+  of the `.rlpk` format (`RLPK1\n`, `u32` count, then per file sorted by path a
+  `u16` path length, the path, a `u64` length and the bytes; no compression;
+  deterministic). `decode` streams (one file in memory), refuses bad paths
+  (backslash, `..`, absolute, a name starting with `.`, over `MAX_ARCHIVE_PATH`),
+  duplicates and disorder, more than `MAX_ARCHIVE_FILES`, a total over `limit`
+  and bytes after the last file; it never panics (proptest).
+
 Test: `cargo nextest run -p rl-pack`.

@@ -4035,6 +4035,7 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "png",
+ "proptest",
  "rl-data",
  "rl-vfs",
  "ron",
