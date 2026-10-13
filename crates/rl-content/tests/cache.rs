@@ -305,6 +305,15 @@ fn an_overlay_hides_a_local_pack_of_the_same_id() {
     assert!(over.pack_dir("keep").is_some());
     assert_eq!(tree(root.path()), before);
 
+    // A pack of another kind than this content's pack of that id is
+    // refused: a skin never stands in for a level.
+    let level = root.path().join("level");
+    write_pack(&level, "lvl", &level_pack("lvl"));
+    let fake = write_pack(&other, "lvl", &skin_pack("lvl", 33));
+    let with_level = Content::open_layers(&[level.as_path()]).unwrap();
+    let refused = with_level.with_packs(&[("lvl".to_string(), fake)]);
+    assert!(refused.is_err_and(|e| format!("{e:#}").contains("Level")), "another kind");
+
     // A directory that is not the named pack is refused.
     assert!(content.with_packs(&[("y".to_string(), cached)]).is_err());
     assert!(content.with_packs(&[("x".to_string(), root.path().join("nothing"))]).is_err());

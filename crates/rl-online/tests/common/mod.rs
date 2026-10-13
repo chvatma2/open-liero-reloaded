@@ -55,10 +55,17 @@ pub fn partial_content(leave_out: &[&str]) -> (TempDir, Content) {
 /// Adds the skin pack [`TEST_SKIN`] to the content directory `dir`: the
 /// default skin under another id, one pixel changed (another hash).
 pub fn with_test_skin(dir: &Path) -> Content {
-    let to = dir.join(TEST_SKIN);
+    with_skin(dir, TEST_SKIN)
+}
+
+/// Adds a skin pack `id` to the content directory `dir` (in `skin-<id>`):
+/// the default skin, one pixel changed (another hash).
+pub fn with_skin(dir: &Path, id: &str) -> Content {
+    let to = dir.join(format!("skin-{id}"));
     copy_dir(&content_dir().join("olx-skin-default"), &to);
     let manifest = std::fs::read_to_string(to.join("pack.ron")).unwrap();
-    std::fs::write(to.join("pack.ron"), manifest.replace("\"olx-skin-default\"", "\"test-skin\"")).unwrap();
+    let manifest = manifest.replace("\"olx-skin-default\"", &format!("\"{id}\""));
+    std::fs::write(to.join("pack.ron"), manifest).unwrap();
     let png = std::fs::read(to.join("skin.png")).unwrap();
     let img = rl_pack::image_io::decode_rgba(&png).unwrap();
     let mut pixels = img.as_raw().to_vec();

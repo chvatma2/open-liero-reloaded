@@ -23,7 +23,7 @@ use rl_replay::Replay;
 use rl_sim::Keys;
 use tempfile::TempDir;
 
-use crate::common::{TEST_SKIN, cache, partial_content, peer_content, with_test_skin};
+use crate::common::{TEST_SKIN, cache, partial_content, peer_content, with_skin, with_test_skin};
 
 const MOD: &str = "olx-classic";
 const LEVEL: &str = "olx-level-dirt-level";
@@ -867,6 +867,46 @@ fn a_skin_travels_through_the_host() {
     let host_state = net.host().peer().lobby().state().unwrap().clone();
     assert!(host_state.members.iter().all(|m| m.missing.is_empty()));
     assert!(net.peers[b].peer().content().pack_dir(TEST_SKIN).is_some(), "Bert draws it");
+}
+
+/// A member's "skin" under the level's id (a skin pack whose manifest
+/// says `olx-level-dirt-level`): the host never fetches it, never lists it,
+/// and its matches still build; a complete client still plays.
+#[test]
+fn a_skin_under_a_required_id_is_refused() {
+    let Some(content) = content() else { return };
+    let (dir, _) = partial_content(&[LEVEL]);
+    let fake_content = with_skin(dir.path(), LEVEL);
+    let fake_hash = fake_content.pack_hash(LEVEL, rl_data::manifest::PackKind::Skin).unwrap();
+    let mut net = Net::new(content, 0.1);
+    net.dirs.push(dir);
+    let mut fake = look("Mallory");
+    fake.skin = LEVEL.into();
+    let m = net.join_with(identity(), fake, fake_content, None);
+    let b = net.join("Bert");
+    let m_key = net.peers[m].key;
+    net.run_until(Duration::from_secs(10), "the host knows Mallory's look", |n| {
+        member_of(n, m_key).is_some_and(|m| m.look.skin_hash == fake_hash)
+    });
+    // Long enough for a fetch of a few KB, had it started.
+    let until = Instant::now() + Duration::from_millis(1500);
+    while Instant::now() < until {
+        net.poll();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(!in_cache(&net.peers[0], &fake_hash), "the host did not fetch it");
+    assert!(net.host().peer().downloads().is_empty());
+    let host_content = net.host().peer().content();
+    assert_eq!(host_content.pack_kind(LEVEL), Some(rl_data::manifest::PackKind::Level), "the host's level");
+    assert!(reported(&net.peers[b]).iter().all(|d| d.item.hash != fake_hash), "never listed");
+    let b_key = net.peers[b].key;
+    net.peers[b].peer().lobby().set_ready(true);
+    net.run_until(Duration::from_secs(10), "Bert is ready", |n| member_of(n, b_key).is_some_and(|m| m.ready));
+    net.host().peer().lobby().force_start(13).expect("the host's match still builds");
+    net.run_until(Duration::from_secs(10), "Bert plays", |n| {
+        n.peers[b].peer().match_session().is_some_and(|s| s.current_tick() > 20)
+    });
+    assert_eq!(net.peers[b].peer().content().pack_kind(LEVEL), Some(rl_data::manifest::PackKind::Level));
 }
 
 /// Another pack's archive served for the level: it fails to verify, is

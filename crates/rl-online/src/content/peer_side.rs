@@ -53,6 +53,16 @@ fn item_kind(kind: PackKind) -> Option<ItemKind> {
     }
 }
 
+/// Whether an item may be fetched and laid over `base`: a required one
+/// always; an optional one (a skin) only if no required item names its id
+/// and `base` has no pack of another kind under it. A member or a host
+/// cannot pass a skin off as a mod, level or theme.
+fn may_take(base: &Content, required: &[&str], item: &Item) -> bool {
+    item.required
+        || (!required.contains(&item.id.as_str())
+            && base.pack_kind(&item.id).is_none_or(|k| k == super::pack_kind(item.kind)))
+}
+
 /// This peer's own packs and the worker that hashes and archives them.
 struct Local {
     base: Arc<Content>,
@@ -180,6 +190,8 @@ pub(crate) struct ContentSide {
     reported_at: Option<u64>,
     /// The missing bytes last prompted for.
     prompted: Option<u64>,
+    /// Downloaded packs refused to be laid over (said once).
+    refused: BTreeSet<String>,
 }
 
 impl ContentSide {
@@ -244,6 +256,7 @@ impl ContentSide {
             reported: Vec::new(),
             reported_at: None,
             prompted: None,
+            refused: BTreeSet::new(),
         };
         // The player's skin is hashed from the start (its `Hello` carries it
         // when the hash comes first).
@@ -357,6 +370,7 @@ impl ContentSide {
                     || item.id != look.skin
                     || item.hash != look.skin_hash
                     || item.hash == NO_HASH
+                    || !may_take(&self.local.base, &[], item)
                 {
                     return;
                 }
@@ -437,14 +451,27 @@ impl ContentSide {
         }
     }
 
-    /// Lays `packs` (id, directory, content hash) over this peer's own:
-    /// the content of the next match.
-    fn lay_over(&mut self, packs: Vec<(String, PathBuf, String)>) {
+    /// Lays `packs` (their item and directory) over this peer's own: the
+    /// content of the next match. One that may not be taken
+    /// ([`may_take`] against `required`, the ids the list requires) is
+    /// refused with a notice, once.
+    fn lay_over(&mut self, packs: Vec<(Item, PathBuf)>, required: &[&str]) {
         let mut laid: Vec<(String, PathBuf)> = Vec::new();
-        for (id, dir, _) in &packs {
+        let mut hashes: Vec<(String, PathBuf, String)> = Vec::new();
+        for (item, dir) in &packs {
+            if !may_take(&self.local.base, required, item) {
+                if self.refused.insert(item.hash.clone()) {
+                    self.events.push(OnlineEvent::Notice(format!(
+                        "the downloaded {} is not used: it would replace another pack",
+                        item.id
+                    )));
+                }
+                continue;
+            }
             // One pack per id: the first listed.
-            if !laid.iter().any(|(i, _)| i == id) {
-                laid.push((id.clone(), dir.clone()));
+            if !laid.iter().any(|(i, _)| *i == item.id) {
+                laid.push((item.id.clone(), dir.clone()));
+                hashes.push((item.id.clone(), dir.clone(), item.hash.clone()));
             }
         }
         if laid == self.laid {
@@ -453,7 +480,7 @@ impl ContentSide {
         match self.local.base.with_packs(&laid) {
             Ok(content) => {
                 // Verified by the install: never hashed here.
-                for (id, dir, hash) in &packs {
+                for (id, dir, hash) in &hashes {
                     content.remember_hash(id, dir, hash);
                 }
                 self.overlay = Arc::new(content);
@@ -510,15 +537,28 @@ impl ContentSide {
     ) {
         self.results();
         self.host_look(lobby);
-        self.host_skins(now_us);
-        let fetched: Vec<(String, PathBuf, String)> = match &self.role {
-            Role::Host(h) => {
-                h.fetched.iter().map(|(hash, (id, dir))| (id.clone(), dir.clone(), hash.clone())).collect()
-            }
+        let required: Vec<String> = lobby.state().setup.packs.iter().map(|(id, _)| id.clone()).collect();
+        let required: Vec<&str> = required.iter().map(String::as_str).collect();
+        self.host_skins(now_us, &required);
+        self.host_list(lobby);
+        let fetched: Vec<(Item, PathBuf)> = match &self.role {
+            Role::Host(h) => h
+                .fetched
+                .iter()
+                .map(|(hash, (id, dir))| {
+                    let item = Item {
+                        kind: ItemKind::Skin,
+                        id: id.clone(),
+                        hash: hash.clone(),
+                        size: 0,
+                        required: false,
+                    };
+                    (item, dir.clone())
+                })
+                .collect(),
             Role::Client(_) => return,
         };
-        self.lay_over(fetched);
-        self.host_list(lobby);
+        self.lay_over(fetched, &required);
         let Role::Host(h) = &self.role else { return };
         let playing = matches!(lobby.state().phase, Phase::Starting | Phase::Playing { .. });
         self.server.set_rate(if playing { MATCH_RATE } else { h.upload_rate });
@@ -539,9 +579,12 @@ impl ContentSide {
         }
     }
 
-    /// Fetches the members' skins this host lacks, one fetch per hash.
-    fn host_skins(&mut self, now_us: u64) {
+    /// Fetches the members' skins this host lacks, one fetch per hash; an
+    /// offer under an id the setup requires is dropped ([`may_take`]).
+    fn host_skins(&mut self, now_us: u64, required: &[&str]) {
         let Role::Host(h) = &mut self.role else { return };
+        let base = &self.local.base;
+        h.skins.retain(|_, s| may_take(base, required, &s.item));
         let peers: Vec<PeerId> = h.skins.keys().copied().collect();
         for peer in peers {
             let Role::Host(h) = &mut self.role else { return };
@@ -598,11 +641,24 @@ impl ContentSide {
                 (true, Some(ours)) if look.skin_hash == NO_HASH => ours,
                 _ => look.skin_hash.clone(),
             };
-            if hash != NO_HASH && !wanted.iter().any(|w| w.2 == hash) {
+            let required: Vec<&str> = state.setup.packs.iter().map(|(id, _)| id.as_str()).collect();
+            let item = Item {
+                kind: ItemKind::Skin,
+                id: look.skin.clone(),
+                hash: hash.clone(),
+                size: 0,
+                required: false,
+            };
+            if hash != NO_HASH
+                && !wanted.iter().any(|w| w.2 == hash)
+                && may_take(&self.local.base, &required, &item)
+            {
                 wanted.push((ItemKind::Skin, look.skin.clone(), hash, false));
             }
         }
         let Role::Host(h) = &mut self.role else { return };
+        // Skins fetched from members stay only while the list names them.
+        h.fetched.retain(|hash, _| wanted.iter().any(|w| !w.3 && w.2 == *hash));
         let mut items = Vec::new();
         let mut ready = true;
         let mut needed = BTreeSet::new();
@@ -709,11 +765,13 @@ impl ContentSide {
             f.poll(now_us, &mut self.out);
             for (id, dir) in f.installed() {
                 if let Some(item) = c.items.iter().find(|i| i.id == id && dir.ends_with(&i.hash)) {
-                    installed.push((id, dir, item.hash.clone()));
+                    installed.push((item.clone(), dir));
                 }
             }
         }
-        self.lay_over(installed);
+        let required: Vec<String> = c.items.iter().filter(|i| i.required).map(|i| i.id.clone()).collect();
+        let required: Vec<&str> = required.iter().map(String::as_str).collect();
+        self.lay_over(installed, &required);
         self.have(lobby);
         let Role::Client(c) = &mut self.role else { return };
         let waiting = c.fetcher.as_ref().and_then(Fetcher::waiting_approval);
@@ -783,6 +841,11 @@ impl ContentSide {
             return;
         }
         let base = &self.local.base;
+        // Optional items under a required id, or a local pack's id of
+        // another kind, are not taken (a host cannot pass a skin off as a
+        // level).
+        let required: Vec<&str> = items.iter().filter(|i| i.required).map(|i| i.id.as_str()).collect();
+        let items: Vec<Item> = items.iter().filter(|i| may_take(base, &required, i)).cloned().collect();
         let Role::Client(c) = &mut self.role else { return };
         c.pending = None;
         match &mut c.fetcher {
@@ -887,6 +950,47 @@ mod tests {
         }
         assert_eq!(side.local.base.known_hash("olx-classic"), Some(hash), "the worker's hash");
         assert!(side.downloads().is_empty(), "nothing to fetch");
+    }
+
+    /// A host's list whose optional items reuse a required item's id, or
+    /// name a pack this client has under another kind: they are refused,
+    /// and the client keeps its own packs.
+    #[test]
+    fn optional_items_never_shadow_required_or_other_kinds() {
+        let Some(dir) = content_dir() else { return };
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Arc::new(Mutex::new(DownloadCache::open(tmp.path()).unwrap()));
+        let cfg = PeerContent { cache: Ok(cache), upload_rate: HOST_RATE };
+        let mut side = ContentSide::new(Content::open(&dir).unwrap(), cfg, false, Some(look()));
+        let full = Content::open(&dir).unwrap();
+        let level = "olx-level-dirt-level";
+        let level_hash = full.pack_hash(level, PackKind::Level).unwrap();
+        let skin = |id: &str, c: char| Item {
+            kind: ItemKind::Skin,
+            id: id.into(),
+            hash: c.to_string().repeat(64),
+            size: 1000,
+            required: false,
+        };
+        let items = vec![
+            Item { kind: ItemKind::Level, id: level.into(), hash: level_hash, size: 1000, required: true },
+            skin(level, 'a'),
+            skin("olx-classic", 'b'),
+            skin("not-here", 'c'),
+        ];
+        side.receive(HOST, ContentMsg::List(items), None);
+        let id = Identity::from_secret([5; 32]).unwrap();
+        let mut lobby = LobbyClient::new(id, look(), None, None);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while matches!(&side.role, Role::Client(c) if c.pending.is_some()) {
+            assert!(std::time::Instant::now() < until, "the list is processed");
+            side.poll_client(0, &mut lobby, &|_| 0);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let ids: Vec<String> = side.downloads().into_iter().map(|d| d.item.id).collect();
+        assert_eq!(ids, ["not-here"], "only the harmless skin is fetched");
+        assert_eq!(side.content().pack_kind(level), Some(PackKind::Level));
+        assert_eq!(side.content().pack_kind("olx-classic"), Some(PackKind::Mod));
     }
 
     /// Carried from Task 4: chunks go to a peer only while its outbox holds

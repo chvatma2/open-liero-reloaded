@@ -164,7 +164,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   same process is refused too); one process shares one cache behind a mutex.
   A hash that is not 64 lowercase hex never names a file.
   `Content::with_packs(&[(id, dir)])` is a copy with those packs laid over
-  by id (nothing on disk changes); `Content::has(id, hash)`; `pack_hash`
+  by id (nothing on disk changes; a pack of another kind than this
+  content's of that id is refused); `Content::has(id, hash)`; `pack_hash`
   is memoised per pack directory for the `Content`'s life (an overlay
   copies the memo); `known_hash(id)` reads the memo without hashing and
   `remember_hash(id, dir, hash)` fills it from a hash computed elsewhere

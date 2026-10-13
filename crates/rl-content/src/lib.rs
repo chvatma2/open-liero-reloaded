@@ -251,7 +251,9 @@ impl Content {
 impl Content {
     /// A copy whose packs `packs` (id → pack directory) hide this content's
     /// packs of the same id, as a new top layer. Each directory's manifest
-    /// must be pack `id`; the core pack cannot be overlaid. Nothing on disk
+    /// must be pack `id`, of the same kind as this content's pack `id` if
+    /// it has one (a skin never stands in for a level); the core pack
+    /// cannot be overlaid. Nothing on disk
     /// changes, and `self` stays as it is.
     pub fn with_packs(&self, packs: &[(String, PathBuf)]) -> anyhow::Result<Content> {
         let mut out = Content {
@@ -267,6 +269,9 @@ impl Content {
                 .with_context(|| format!("pack {id} in {}", dir.display()))?;
             anyhow::ensure!(m.id == *id, "{} is pack {}, not {id}", dir.display(), m.id);
             anyhow::ensure!(m.kind != PackKind::Core, "the core pack cannot be overlaid");
+            if let Some(&(kind, _)) = self.packs.get(id) {
+                anyhow::ensure!(kind == m.kind, "pack {id} is a {kind:?} here, not a {:?}", m.kind);
+            }
             out.names.insert(m.id.clone(), m.name);
             out.origins.insert(m.id.clone(), m.origin);
             out.packs.insert(m.id, (m.kind, dir.clone()));
