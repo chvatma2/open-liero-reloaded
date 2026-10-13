@@ -8,15 +8,20 @@ use crate::{MANIFEST, PackError, THUMB_FILE};
 /// Q4), so adding a thumbnail keeps every replay of the pack valid.
 pub const PRESENTATION_FILES: &[&str] = &[THUMB_FILE];
 
-/// SHA-256 over every file of the pack except `pack.ron` and the
-/// [`PRESENTATION_FILES`], as lowercase hex.
+/// SHA-256 over every file of the pack except `pack.ron`, the
+/// [`PRESENTATION_FILES`] and hidden files (a path with a component starting
+/// with `.`, plan 11 ruling PF11-2: the archive leaves them out too), as
+/// lowercase hex.
 /// Files are taken in sorted path order; each contributes its path, a 0 byte,
 /// its length as little-endian u64, and its bytes. Replays use this hash to
 /// identify the exact content they were recorded with.
 pub fn content_hash(src: &dyn ContentSource) -> Result<String, PackError> {
     let mut h = Sha256::new();
     for path in walk(src, &VPath::root())? {
-        if path.as_str() == MANIFEST || PRESENTATION_FILES.contains(&path.as_str()) {
+        if crate::archive::is_hidden(path.as_str())
+            || path.as_str() == MANIFEST
+            || PRESENTATION_FILES.contains(&path.as_str())
+        {
             continue;
         }
         let data = crate::ron_io::read_file(src, &path)?;

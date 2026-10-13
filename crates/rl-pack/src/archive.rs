@@ -14,6 +14,11 @@
 //! and the presentation files included; the receiver identifies the pack by
 //! [`crate::content_hash`], a partial download by the archive's own hash.
 //!
+//! Hidden files are not part of a pack: a path any of whose components starts
+//! with `.` (`.DS_Store`, `.git/...`) is left out by [`encode`] and by
+//! [`crate::content_hash`] alike (plan 11 ruling PF11-2), and [`decode`]
+//! refuses such a path.
+//!
 //! Reading is streaming and bounded: [`decode`] holds at most one file
 //! (at most [`MAX_FILE_BYTES`]) in memory, checks every length before it
 //! reads the bytes, and stops at the first violation. The strictly
@@ -59,11 +64,12 @@ pub enum ArchiveError {
 /// The archive of every file under `src`'s root (sorted by path, `pack.ron`
 /// and presentation files included), deterministic.
 ///
-/// Fails on what [`decode`] would refuse: more than [`MAX_ARCHIVE_FILES`]
-/// files, a path over [`MAX_ARCHIVE_PATH`] bytes or with a name starting with
-/// `.`, a file over [`MAX_FILE_BYTES`], or a total over [`MAX_ARCHIVE`].
+/// Hidden files ([`is_hidden`]) are left out. Fails on what [`decode`] would
+/// refuse: more than [`MAX_ARCHIVE_FILES`] files, a path over
+/// [`MAX_ARCHIVE_PATH`] bytes, a file over [`MAX_FILE_BYTES`], or a total over [`MAX_ARCHIVE`].
 pub fn encode(src: &dyn ContentSource) -> Result<Vec<u8>, PackError> {
-    let paths = walk(src, &VPath::root())?;
+    let mut paths = walk(src, &VPath::root())?;
+    paths.retain(|p| !is_hidden(p.as_str()));
     if paths.len() > MAX_ARCHIVE_FILES as usize {
         return Err(PackError::invalid("archive", format!("more than {MAX_ARCHIVE_FILES} files")));
     }
@@ -74,15 +80,21 @@ pub fn encode(src: &dyn ContentSource) -> Result<Vec<u8>, PackError> {
             return Err(PackError::invalid(path.as_str(), why));
         }
         let data = src.read_max(path, MAX_FILE_BYTES)?;
+        let entry = 2 + path.as_str().len() as u64 + 8 + data.len() as u64;
+        if out.len() as u64 + entry > MAX_ARCHIVE {
+            return Err(PackError::invalid("archive", format!("larger than {MAX_ARCHIVE} bytes")));
+        }
         out.extend((path.as_str().len() as u16).to_le_bytes());
         out.extend(path.as_str().as_bytes());
         out.extend((data.len() as u64).to_le_bytes());
         out.extend(data);
-        if out.len() as u64 > MAX_ARCHIVE {
-            return Err(PackError::invalid("archive", format!("larger than {MAX_ARCHIVE} bytes")));
-        }
     }
     Ok(out)
+}
+
+/// Whether a component of `path` starts with `.`: not part of a pack.
+pub(crate) fn is_hidden(path: &str) -> bool {
+    path.split('/').any(|c| c.starts_with('.'))
 }
 
 /// Why `path` may not be in an archive, if it may not.
@@ -91,7 +103,7 @@ fn path_problem(path: &str) -> Option<&'static str> {
         Some("empty path")
     } else if path.len() > MAX_ARCHIVE_PATH {
         Some("path too long")
-    } else if path.split('/').any(|c| c.starts_with('.')) {
+    } else if is_hidden(path) {
         Some("a name starts with a dot")
     } else if VPath::new(path).is_err() {
         Some("not a valid path")

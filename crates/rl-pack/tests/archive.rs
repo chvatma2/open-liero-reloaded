@@ -137,6 +137,36 @@ fn every_committed_pack_round_trips() {
     }
 }
 
+#[test]
+fn hidden_files_are_not_part_of_a_pack() {
+    let plain = pack();
+    let messy = pack().with(".DS_Store", vec![9u8]).with(".git/x", vec![8u8]).with("gfx/.hidden", vec![7u8]);
+    assert_eq!(rl_pack::content_hash(&plain).unwrap(), rl_pack::content_hash(&messy).unwrap());
+    assert_eq!(archive::encode(&plain).unwrap(), archive::encode(&messy).unwrap());
+}
+
+#[test]
+fn a_length_within_the_limit_but_beyond_the_data_is_truncated() {
+    let mut a = archive::MAGIC.to_vec();
+    a.extend(1u32.to_le_bytes());
+    a.extend(1u16.to_le_bytes());
+    a.extend(b"a");
+    a.extend(1000u64.to_le_bytes());
+    a.extend([0u8; 10]);
+    let r = archive::decode(&mut a.as_slice(), &mut MemFs::new(), archive::MAX_ARCHIVE);
+    assert!(matches!(r, Err(ArchiveError::Truncated)), "{r:?}");
+}
+
+#[test]
+fn encode_order_agrees_with_decode_across_levels() {
+    // Byte order: '-' (0x2d) sorts before '/' (0x2f), so "a-b" precedes "a/x".
+    let src = MemFs::new().with("a/x", vec![1u8]).with("a-b", vec![2u8]).with("a.c", vec![3u8]);
+    let a = archive::encode(&src).unwrap();
+    let mut out = MemFs::new();
+    assert_eq!(archive::decode(&mut a.as_slice(), &mut out, archive::MAX_ARCHIVE).unwrap(), 3);
+    assert_eq!(out, src);
+}
+
 proptest::proptest! {
     #![proptest_config(proptest::prelude::ProptestConfig { cases: 256, failure_persistence: None, ..Default::default() })]
     #[test]
