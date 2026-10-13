@@ -8,7 +8,8 @@
 //! - `grid`: the full tier's bot-match grid (`check::FULL_TESTS`);
 //! - `net_cases`: `bless-regression --from`;
 //! - `net_sim`: the full tier's online grid (`check::FULL_TESTS`);
-//! - `render_golden`: the GPU tier (`check::GPU_TESTS`) and `bless-render`.
+//! - `render_golden`: the GPU tier (`check::GPU_TESTS`) and `bless-render`;
+//! - `transport`: the full tier's real-transport matches (`check::FULL_TESTS`).
 
 mod common;
 

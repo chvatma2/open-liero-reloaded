@@ -80,7 +80,9 @@ rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
   go to `<data>/desyncs/` through rl-online's bounded `bundle::save`.
   `run(config, content, data_dir, stop, log)` polls every `POLL_EVERY` (2 ms) until `stop`, then shuts down;
   its log says "listening on port N" at the start (tests on port 0 read
-  it).
+  it). `run_with(.., observe)` shows the server to `observe` after each
+  poll; `last_record` is the last finished match's `MatchRecord` (`rl-cli`'s
+  real-transport verdict, spec §9.4, compares every client's with it).
 - **`main.rs`**: clap; the data directory defaults to the config file's;
   the log goes to stdout and `<data>/server.log`, each line stamped with
   the UTC time. **Stopping** (ruling T13-A): Ctrl+C, SIGTERM or closing
@@ -95,7 +97,8 @@ with port 0, Classic from `RL_CONTENT_DIR`, skipped with a notice without
 it; each under 20 s, every wait bounded): a rotation (two bot-driven
 clients ready, entry 0 on Dirt Level with one fill bot, its end, the lobby
 offering entry 1 on Liero Factory, which starts once both are ready again;
-the identity file owner-only; the log's lines); admins' `/kick`, `/ban`
+the identity file owner-only; the log's lines; the server's record equal
+to the clients'); admins' `/kick`, `/ban`
 (by key: another key from the same address joins; the bans file written at
 once), admins not kickable, `/banip` (a new key from the address refused),
 `/unban` by name (key and address) and by key prefix, a restart says `Bye`

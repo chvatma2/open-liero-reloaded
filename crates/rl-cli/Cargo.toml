@@ -34,6 +34,9 @@ rl-replay.workspace = true
 rl-netcode.workspace = true
 rl-proto.workspace = true
 rl-online.workspace = true
+rl-net.workspace = true
+rl-lobby.workspace = true
+rl-server.workspace = true
 serde_json.workspace = true
 postcard.workspace = true
 wgpu.workspace = true
@@ -70,6 +73,9 @@ name = "net_sim"
 
 [[test]]
 name = "render_golden"
+
+[[test]]
+name = "transport"
 
 [[bench]]
 name = "game"

@@ -24,6 +24,7 @@ use rl_content::Content;
 use rl_lobby::{NOT_ADMIN, fingerprint};
 use rl_net::endpoint::EndpointConfig;
 use rl_net::lan::{Announcer, broadcast_targets};
+use rl_online::replay::MatchRecord;
 use rl_online::{OnlineEvent, OnlinePeer, PeerRole, StartError};
 use rl_proto::{
     LanAnnounce, LobbyState, Look, MAX_CHAT, MatchEndWire, MatchStartWire, Phase, PublicKey, SeatWire,
@@ -189,6 +190,13 @@ impl Server {
     /// The server's public key (its identity).
     pub fn key(&self) -> PublicKey {
         self.key
+    }
+
+    /// The last match the server finished, as its confirmed inputs and
+    /// checksums (rl-online's `last_record`; `rl-cli`'s real-transport
+    /// verdict compares every client's with it).
+    pub fn last_record(&self) -> Option<&MatchRecord> {
+        self.peer.last_record()
     }
 
     /// Does what the network, the lobby and the match have for `now`, and
@@ -599,9 +607,23 @@ pub fn run(
     stop: &AtomicBool,
     log: &mut dyn Write,
 ) -> anyhow::Result<()> {
+    run_with(config, content, data_dir, stop, log, &mut |_| {})
+}
+
+/// [`run`], showing the server to `observe` after each poll (its port, its
+/// finished matches: `rl-cli`'s real-transport tests).
+pub fn run_with(
+    config: Config,
+    content: Content,
+    data_dir: &Path,
+    stop: &AtomicBool,
+    log: &mut dyn Write,
+    observe: &mut dyn FnMut(&Server),
+) -> anyhow::Result<()> {
     let mut server = Server::start(config, content, data_dir, log)?;
     while !stop.load(Ordering::Relaxed) {
         server.poll(Instant::now(), log);
+        observe(&server);
         std::thread::sleep(POLL_EVERY);
     }
     server.shutdown(log);

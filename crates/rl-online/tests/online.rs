@@ -162,10 +162,14 @@ impl Net {
     }
 
     fn hosted(content: Content, minutes: f32, role: PeerRole) -> Net {
+        let setup = setup(&content, minutes);
+        Net::hosted_with(content, setup, role)
+    }
+
+    fn hosted_with(content: Content, setup: MatchSetupWire, role: PeerRole) -> Net {
         let content_dir = std::env::var("RL_CONTENT_DIR").unwrap();
         let me = identity();
         let key = me.public();
-        let setup = setup(&content, minutes);
         let host = OnlinePeer::start(role, endpoint(), me, look("Host"), content, Some(setup)).unwrap();
         let port = host.local_port();
         Net { content_dir, port, peers: vec![Peer::new(host, key)], begun: Instant::now() }
@@ -299,6 +303,45 @@ fn a_host_and_two_clients_play_a_short_match() {
     net.run_until(Duration::from_secs(10), "the lobby shows the results", |n| {
         n.peers[1].peer().lobby().state().is_some_and(|s| s.phase == Phase::Results)
     });
+    net.assert_quick();
+}
+
+/// A dedicated server without bots has no slot of its own: its clients'
+/// inputs reach it before it simulates their ticks, so it confirms ticks it
+/// has not simulated. Its match still ends only once the last tick is
+/// simulated: its record holds the last tick's checksum, as the clients'.
+#[test]
+fn a_server_without_bots_records_the_last_checksum() {
+    let Some(content) = content() else { return };
+    // 2.997 s: the result at tick 299, the last tick 599, a checksum tick.
+    let mut setup = setup(&content, 0.04995);
+    setup.bots.clear();
+    let cfg = HostConfig {
+        name: "Server".into(),
+        password: None,
+        max_players: 8,
+        max_spectators: 4,
+        admins: vec![],
+    };
+    let mut net = Net::hosted_with(content, setup, PeerRole::Server(cfg));
+    let clients = net.join_all(&["Anna", "Bert"]);
+    net.ready(&clients);
+    net.host().peer().lobby().start(5).unwrap();
+    net.run_until(Duration::from_secs(30), "every peer keeps its record", |n| {
+        n.peers.iter_mut().all(|p| p.peer().last_record().is_some())
+    });
+    let records: Vec<_> = net.peers.iter_mut().map(|p| p.peer().last_record().cloned().unwrap()).collect();
+    let r = &records[0];
+    // A checksum of every checksum tick of the record, up to its last.
+    let n = r.rows.len() as u32;
+    assert_eq!(n, 600, "the result at tick 299 and 300 more");
+    let want: Vec<u32> = (0..n).filter(|t| (t + 1) % rl_netcode::CHECKSUM_EVERY == 0).collect();
+    let ticks: Vec<u32> = r.checksums.iter().map(|c| c.0).collect();
+    assert_eq!(ticks, want, "the server's checksums of {n} ticks");
+    for other in &records[1..] {
+        assert_eq!(other.rows, r.rows);
+        assert_eq!(other.checksums, r.checksums);
+    }
     net.assert_quick();
 }
 

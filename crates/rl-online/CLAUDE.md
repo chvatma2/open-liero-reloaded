@@ -86,7 +86,11 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     `StateBegin` → `allow_burst` on receiving. A client's endpoint lets its
     host send `HOST_RELIABLE_BYTES_PER_S` (4 MiB/s).
   - **End**: the first confirmed tick with `result` is the end; the match
-    records `RECORD_AFTER_END` (300) more confirmed ticks, then the host
+    records `RECORD_AFTER_END` (300) more confirmed ticks (reached once
+    the last is confirmed and simulated, `final_upto`: a dedicated server,
+    with no slot of its own, confirms inputs its clients sent ahead before
+    it simulates them, and its record would lack the last tick's
+    checksum; found by `rl-cli`'s real-transport test), then the host
     sends `match_ended` (the last confirmed scores: slot, score, kills,
     deaths, lives) and `MatchEnded`, and keeps the session sending for
     `HOST_DRAIN` (2 s) so clients confirm the last ticks. A client ends at
@@ -137,7 +141,9 @@ player cannot rejoin; an admin's setup is taken or refused with a notice;
 a health planted in a client's world makes a bundle on both sides; a
 dedicated server (`PeerRole::Server`) has no member of its own, hears chat
 by member id, tells one member, knows its members' addresses, refuses a
-banned key, and ends a match early.
+banned key, and ends a match early; a server without bots records the
+checksum of a match's last tick (a 2.997 s limit: the last tick, 599, is a
+checksum tick), as its clients do.
 `tests/matches.rs`: a proptest of starts within rl-proto's bounds (256
 cases, about 30 build) never panics `build`; a slot both member and bot,
 a single slot, an unknown mod and a pack hash mismatch are refused.

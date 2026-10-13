@@ -303,6 +303,16 @@ fn a_server_runs_a_rotation() {
     rig.run_until(Duration::from_secs(20), "the match ends", |r| {
         clients.iter().all(|&c| r.clients[c].has(|e| matches!(e, OnlineEvent::MatchEnded(_))))
     });
+    // The server's record of it is every client's (rl-cli's real-transport verdict reads it).
+    rig.run_until(Duration::from_secs(10), "the server and the clients keep the match's record", |r| {
+        r.server().last_record().is_some() && clients.iter().all(|&c| r.clients[c].p.last_record().is_some())
+    });
+    let record = rig.server().last_record().cloned().unwrap();
+    assert_eq!(record.start, first);
+    assert!(!record.checksums.is_empty());
+    for &c in &clients {
+        assert_eq!(rig.clients[c].p.last_record(), Some(&record), "client {c}'s record");
+    }
     rig.run_until(Duration::from_secs(12), "the lobby gathers for entry 1", |r| {
         r.clients[0]
             .p

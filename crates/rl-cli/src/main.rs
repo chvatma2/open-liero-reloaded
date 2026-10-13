@@ -3,6 +3,7 @@
 mod gpu_bench_cmd;
 mod import;
 mod match_cmd;
+mod net_client_cmd;
 mod net_repro_cmd;
 mod net_sim_cmd;
 mod render;
@@ -39,6 +40,9 @@ enum Command {
     /// Plays an online match in one process over a simulated network (bots on every peer)
     /// and checks that every peer agrees; exits with status 1 on a failure.
     NetSim(net_sim_cmd::Args),
+    /// A headless bot client over real connections: joins a server, plays its matches,
+    /// prints each one's confirmed checksums; exits with status 1 if it was dropped.
+    NetClient(net_client_cmd::Args),
     /// Replays a desync bundle (`.rlds`) and names the first diverging tick and world field;
     /// exits with status 1 if anything differs from the recording.
     NetRepro(net_repro_cmd::Args),
@@ -68,6 +72,7 @@ fn main() -> ExitCode {
         Command::Render(args) => render::run(&args),
         Command::Match(args) => match_cmd::run(&args),
         Command::NetSim(args) => net_sim_cmd::run_cmd(args),
+        Command::NetClient(args) => net_client_cmd::run(&args),
         Command::NetRepro(args) => net_repro_cmd::run(&args),
         Command::Replay(args) => replay_cmd::run(&args),
         Command::Stress(args) => stress_cmd::run(&args),

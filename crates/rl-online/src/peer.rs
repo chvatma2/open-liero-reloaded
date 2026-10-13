@@ -963,7 +963,10 @@ impl OnlinePeer {
         }
         self.session_events();
         let Some(g) = &self.game else { return };
-        let reached = g.end_at.is_some_and(|e| g.session.confirmed() > e);
+        // The last tick is reached once it is confirmed and simulated (its
+        // checksum recorded): a dedicated server, with no slot of its own,
+        // confirms inputs its clients sent ahead before it simulates them.
+        let reached = g.end_at.is_some_and(|e| final_upto(&g.session) > e);
         match (&self.side, g.ended) {
             (Side::Host(_), None) if reached => self.host_end(now),
             (Side::Host(_), Some(t)) if now.saturating_duration_since(t) >= HOST_DRAIN => self.game = None,
@@ -1002,8 +1005,9 @@ impl OnlinePeer {
         }
         let Some(g) = self.game.as_mut().filter(|g| g.ended.is_none()) else { return false };
         if g.end_at.is_none() {
-            // The record is ticks `0..=end_at`: every tick confirmed so far.
-            g.end_at = Some(g.session.confirmed().saturating_sub(1));
+            // The record is ticks `0..=end_at`: every tick confirmed and
+            // simulated so far.
+            g.end_at = Some(final_upto(&g.session).saturating_sub(1));
         }
         self.host_end(now);
         true
@@ -1114,6 +1118,13 @@ impl Game {
             bundles: 0,
         }
     }
+}
+
+/// Ticks below it are confirmed and simulated with their final inputs:
+/// their checksums are recorded. A host without local slots (a dedicated
+/// server) may confirm ticks it has not simulated yet.
+fn final_upto(s: &Session<WorldSim>) -> u32 {
+    s.confirmed().min(s.current_tick())
 }
 
 /// The record of ticks `0..upto` (fewer when a row is missing); `None` for

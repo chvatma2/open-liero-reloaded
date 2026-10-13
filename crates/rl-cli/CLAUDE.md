@@ -118,6 +118,21 @@ The headless command-line tool. Its commands:
   `Stats::bytes_in`/`bytes_out`, `OVERHEAD` per datagram included). A
   failed verdict is an error. `cargo xtask net-feel` gates them (see
   xtask); `tests/feel.rs` checks the definitions on a short run.
+- `rl-cli net-client --join <host[:port]> --bot [--difficulty
+  easy|medium|hard|xtreme] [--name N] [--matches 1] [--spectate] [--impair
+  <profile>] [--impair-seed S] [--timeout 3600] [--content DIR]` (plan 10,
+  spec §9.4, the command in `net_client_cmd.rs`, the client in
+  `transport.rs`): a headless bot client over real connections (port
+  23400 by default). It joins, readies whenever the lobby gathers and it
+  wants another match (or asks to watch, `--spectate`), plays with a bot on
+  its slot (`Bot::new` for its slot and the start's seed, thinking in
+  `on_tick` on the world each newest tick leaves: a re-simulation of an
+  older tick changes nothing; `local_keys` hands out the last keys), and
+  prints each finished match: `match <n>: <mod> on <level>, seed S, slot
+  K|watching, <T> ticks|joined mid-match, <C> checksums, replay <B>
+  bytes|no replay`, then `  checksum <tick> <16 hex>` per confirmed
+  checksum. `--impair` sends its datagrams through a netsim profile.
+  Exits 1 when refused, kicked, disconnected or past `--timeout` seconds.
 - `rl-cli gpu-bench --replay F [--sizes 1920x1080,2560x1440,3440x1440,3840x2160]
   [--start-tick 1000] [--frames 600] [--probe-passes 0,1,2,4,8,16,32]
   [--probe-taps 9] [--probe-frames 120] [--adapter hardware|software]
@@ -171,7 +186,33 @@ and `GpuReport`), `timing` (`scenario --time`), `coverage` (required
 weapons and action kinds derived from the mod: `rl_sim::projectile_actions`
 and `World::actions_triggered`), `failure`, `golden`, `assets`,
 `genlevel`, `netsim` (`NetSpec`, `WorldFactory`, `run`, `NetCase`), `feel`
-(`measure`, `measure_one`, `FeelReport`).
+(`measure`, `measure_one`, `FeelReport`), `transport` (below).
+
+**Real transport** (`transport.rs`, plan 10, spec §9.4):
+`run_bot_client(content, ClientSpec, stop, progress)` is one bot client
+(`net-client`; a `ClientRun`: its `PeerMatch`es (start, slot, confirmed
+checksums, record, replay), why it was `dropped`, desync bundles). A
+match is finished once it ended and rl-online kept its record (the
+replay then awaited), or at its end for a spectator that joined mid-match
+(its session's checksums as last seen: rl-online hides the session once
+the match ended; no record, no replay). `run_transport(content_dir,
+TransportSpec)` runs `rl_server::run_with` in a thread on port 0 (its
+`last_record` after each match, its log in a `SharedLog`) and the
+clients in threads on 127.0.0.1 (players `Client N`, then spectators
+`Watcher N` joining a set time after the first player's match started),
+the clients' datagrams through the spec's netsim profile (`EndpointConfig::impair`,
+seed `net_seed + i`), all bounded by `timeout` (the match and 40 s);
+`TransportSpec::new(players, minutes, profile, data_dir)` (Classic on
+Dirt Level, one time-limited match with bonuses, no fill bots: a match
+needs two worms; `fill_bots` adds the server's). `TransportRun::verdict`:
+the server finished its matches; no client dropped (unless `may_drop`
+names it) and each finished as many; per match (matched by start) a
+player's confirmed checksums and input rows equal the server's, its replay
+bytes equal the server's (made from its record with
+`rl_online::replay::make`), a late spectator's checksums equal the
+server's at their ticks and reach the match's end; no desync bundle; the
+server's replay played back (`replay_checksums`) meets every server
+checksum.
 
 **Generated levels** (`genlevel.rs`, plan 8; bench only, a game never
 loads one): `GenLevel` makes seeded noise caves in memory, no pack written,
@@ -200,7 +241,7 @@ another match) and makes its start world.
 
 Test: `cargo nextest run -p rl-cli`. The tests are modules of one binary,
 `tests/integration.rs`, except those xtask runs by name (`golden`,
-`net_cases`, `grid`, `net_sim`, `render_golden`, `gpu_bench`): one module's
+`net_cases`, `grid`, `net_sim`, `transport`, `render_golden`, `gpu_bench`): one module's
 tests are `cargo nextest run -p rl-cli --test integration corpus::`.
 `tests/corpus.rs` checks every imported
 pack when `RL_CONTENT_DIR` is set. To accept a reviewed snapshot change, run
@@ -237,5 +278,13 @@ xtask bless-regression --reason "<why>"`) run in `check`; `tests/grid.rs`
 (both mods × 4 levels × 3 seeds, chaos and Deathmatch bots, every weapon and
 action kind covered; `long_bot_match_bounded`, 30 minutes) runs in `full`
 (`RL_FULL_TESTS=1`).
+`tests/transport.rs` (spec §9.4, real sockets on 127.0.0.1, every wait
+bounded; skipped without content): in `check`, two bot clients through
+`typical` play a 0.2-minute match (about 17 s) and `net-client` (the
+binary, through `good`, with one server bot) plays a 0.05-minute one and
+prints the server's checksums (about 7 s); in `full`
+(`RL_FULL_TESTS=1`, `check::FULL_TESTS`), 8 clients per profile `good`,
+`typical`, `bad` (0.5 minutes each, about 106 s in all) and a spectator
+joining 4 s into a match (about 19 s).
 
 **Desync bundles** (`bundle.rs`): `.rlds` files from `net-sim` (and, in plan 10, real games); `rl-cli net-repro <file>` names the first diverging tick and world field. `net-sim` writes them to `--failures` when a client reports a desync (`netsim::run_with`; `NetSpec::faults` plants one: `(peer, host tick, worm, health)`). A state diff lists the first differing path of every differing `WorldState` field, in its declaration order (`worms[3].health, ents`; `bundle::FIELDS`, kept equal to the real field set by a test), so the cause is read from the whole list, not the first entry.
