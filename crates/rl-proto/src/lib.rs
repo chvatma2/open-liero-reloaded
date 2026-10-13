@@ -11,10 +11,12 @@ extern crate alloc;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
+mod content;
 mod frames;
 mod lan;
 mod lobby;
 mod signal;
+pub use content::*;
 pub use frames::{decode_frames, encode_frames};
 pub use lan::*;
 pub use lobby::*;
@@ -25,7 +27,7 @@ pub use signal::*;
 mod fingerprint_impl;
 
 /// Wire protocol version, checked in the handshake.
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 /// At most this many slots in a match.
 pub const MAX_SLOTS: usize = 32;
 /// Largest accepted inputs datagram.

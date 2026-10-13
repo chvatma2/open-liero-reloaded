@@ -1488,7 +1488,12 @@ mod tests {
     }
 
     fn look() -> Look {
-        Look { name: "Bot".into(), colour: [1, 2, 3], skin: "olx-skin-default".into() }
+        Look {
+            name: "Bot".into(),
+            colour: [1, 2, 3],
+            skin: "olx-skin-default".into(),
+            skin_hash: rl_proto::NO_HASH.into(),
+        }
     }
 
     /// A record of 50 ticks of two bots on Dirt Level.

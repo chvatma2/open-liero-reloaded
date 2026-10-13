@@ -131,7 +131,12 @@ impl Server {
         let setup = rotation.setup(config.fill_bots);
         let endpoint = EndpointConfig { port: config.port, ..EndpointConfig::default() };
         let role = PeerRole::Server(config.host_config()?);
-        let unused = Look { name: config.name.clone(), colour: [0; 3], skin: rl_lobby::DEFAULT_SKIN.into() };
+        let unused = Look {
+            name: config.name.clone(),
+            colour: [0; 3],
+            skin: rl_lobby::DEFAULT_SKIN.into(),
+            skin_hash: rl_proto::NO_HASH.into(),
+        };
         let mut peer = OnlinePeer::start(role, endpoint, me, unused, content, Some(setup))
             .with_context(|| format!("hosting on port {}", config.port))?;
         for &k in &bans.keys {

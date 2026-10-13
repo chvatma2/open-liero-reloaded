@@ -2,7 +2,12 @@ use proptest::prelude::*;
 use rl_proto::*;
 
 fn look() -> Look {
-    Look { name: "Martin".into(), colour: [1, 2, 3], skin: "olx-skin-afro".into() }
+    Look {
+        name: "Martin".into(),
+        colour: [1, 2, 3],
+        skin: "olx-skin-afro".into(),
+        skin_hash: "cd".repeat(32),
+    }
 }
 
 fn setup() -> MatchSetupWire {
@@ -42,6 +47,7 @@ fn lobby() -> LobbyState {
                 missing: vec!["olx-skin-x".into()],
                 ping_ms: Some(5),
                 admin: i == 0,
+                download: Some(40),
             })
             .collect(),
     }
@@ -95,6 +101,23 @@ fn samples() -> Vec<Vec<u8>> {
     ] {
         v.push(encode_to_client(&m));
     }
+    let item = |kind, c: &str, required| Item {
+        kind,
+        id: format!("pack-{c}"),
+        hash: c.repeat(64),
+        size: 1000,
+        required,
+    };
+    for m in [
+        ContentMsg::List(vec![item(ItemKind::Mod, "a", true), item(ItemKind::Skin, "b", false)]),
+        ContentMsg::Want { hash: "a".repeat(64), offset: 10 },
+        ContentMsg::Begin { hash: "a".repeat(64), archive: "b".repeat(64), size: 100, offset: 10 },
+        ContentMsg::Chunk { hash: "a".repeat(64), offset: 0, bytes: vec![1, 2, 3] },
+        ContentMsg::Unavailable { hash: "a".repeat(64) },
+        ContentMsg::Cancel { hash: "a".repeat(64) },
+    ] {
+        v.push(encode_content(&m)[1..].to_vec());
+    }
     v
 }
 
@@ -113,6 +136,9 @@ fn decode_all(b: &[u8]) {
     if let Ok(m) = decode_lan(b) {
         assert_eq!(decode_lan(&encode_lan(&m)), Ok(m));
     }
+    if let Ok(m) = decode_content(b) {
+        assert_eq!(decode_content(&encode_content(&m)[1..]), Ok(m));
+    }
 }
 
 #[test]
@@ -123,6 +149,7 @@ fn samples_decode() {
                 || decode_to_host(&b).is_ok()
                 || decode_to_client(&b).is_ok()
                 || decode_lan(&b).is_ok()
+                || decode_content(&b).is_ok()
         );
     }
 }

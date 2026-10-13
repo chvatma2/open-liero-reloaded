@@ -6,6 +6,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
+use crate::content::{TAG_CONTENT, valid_hash};
 use crate::signal::Refusal;
 use crate::{ProtoError, decode_exact};
 
@@ -39,6 +40,7 @@ pub const MAX_RESTRICTIONS: usize = 256;
 pub const TAG_NETCODE: u8 = 0;
 pub const TAG_TO_HOST: u8 = 1;
 pub const TAG_TO_CLIENT: u8 = 2;
+// `TAG_CONTENT = 3` is in `content.rs`.
 
 /// X-only secp256k1 public key (BIP-340).
 pub type PublicKey = [u8; 32];
@@ -85,6 +87,8 @@ pub struct Look {
     pub colour: [u8; 3],
     /// Skin pack id.
     pub skin: String,
+    /// Content hash of the skin pack (64 lowercase hex); `NO_HASH` when unknown.
+    pub skin_hash: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -175,6 +179,8 @@ pub struct Member {
     pub missing: Vec<String>,
     pub ping_ms: Option<u16>,
     pub admin: bool,
+    /// Percent of the required content received, while downloading.
+    pub download: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -265,6 +271,7 @@ pub enum Tagged<'a> {
     Netcode(&'a [u8]),
     ToHost(&'a [u8]),
     ToClient(&'a [u8]),
+    Content(&'a [u8]),
 }
 
 /// Splits the tag byte off; `None` for an empty payload or an unknown tag.
@@ -274,6 +281,7 @@ pub fn tag(bytes: &[u8]) -> Option<Tagged<'_>> {
         TAG_NETCODE => Some(Tagged::Netcode(rest)),
         TAG_TO_HOST => Some(Tagged::ToHost(rest)),
         TAG_TO_CLIENT => Some(Tagged::ToClient(rest)),
+        TAG_CONTENT => Some(Tagged::Content(rest)),
         _ => None,
     }
 }
@@ -319,13 +327,9 @@ pub fn valid_pack_id(s: &str) -> bool {
         && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-fn valid_hash(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-/// A look: a valid name and a pack-id skin.
+/// A look: a valid name, a pack-id skin and its hash.
 pub fn valid_look(l: &Look) -> bool {
-    valid_name(&l.name, MAX_NAME) && valid_pack_id(&l.skin)
+    valid_name(&l.name, MAX_NAME) && valid_pack_id(&l.skin) && valid_hash(&l.skin_hash)
 }
 
 fn valid_missing(m: &[String]) -> bool {
@@ -427,11 +431,17 @@ pub fn decode_to_client(b: &[u8]) -> Result<ToClient, ProtoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::content::*;
     use alloc::string::ToString;
     use alloc::vec;
 
     pub(crate) fn look() -> Look {
-        Look { name: "Martin".to_string(), colour: [1, 2, 3], skin: "olx-skin-afro".to_string() }
+        Look {
+            name: "Martin".to_string(),
+            colour: [1, 2, 3],
+            skin: "olx-skin-afro".to_string(),
+            skin_hash: "ab".repeat(32),
+        }
     }
 
     pub(crate) fn setup() -> MatchSetupWire {
@@ -466,6 +476,7 @@ mod tests {
             missing: vec!["olx-skin-x".to_string()],
             ping_ms: Some(12),
             admin: id == 0,
+            download: None,
         }
     }
 
@@ -711,6 +722,7 @@ mod tests {
             name: "\u{1F600}".repeat(MAX_NAME),
             colour: [255; 3],
             skin: alloc::format!("{i:02}{}", "s".repeat(MAX_ID - 2)),
+            skin_hash: "f".repeat(64),
         }
     }
 
@@ -755,6 +767,7 @@ mod tests {
                         .collect(),
                     ping_ms: Some(u16::MAX),
                     admin: true,
+                    download: Some(100),
                 })
                 .collect(),
         };
@@ -781,6 +794,25 @@ mod tests {
         assert!(encode_to_client(&ToClient::Start(start.clone())).len() <= MAX_LOBBY);
         to_client_round(ToClient::Start(start));
         to_host_round(ToHost::Admin(AdminCommand::Settings(worst_setup())));
+        // Content: a full list (longest ids, largest sizes) and a full chunk.
+        let list = ContentMsg::List(
+            (0..MAX_ITEMS)
+                .map(|i| Item {
+                    kind: ItemKind::Theme,
+                    id: alloc::format!("{i:02}{}", "i".repeat(MAX_ID - 2)),
+                    hash: alloc::format!("{i:064x}"),
+                    size: MAX_ARCHIVE_BYTES,
+                    required: true,
+                })
+                .collect(),
+        );
+        let chunk =
+            ContentMsg::Chunk { hash: "f".repeat(64), offset: u64::MAX, bytes: vec![0xff; CONTENT_CHUNK] };
+        for m in [list, chunk] {
+            let bytes = encode_content(&m);
+            assert!(bytes.len() <= MAX_CONTENT + 1, "{} bytes", bytes.len());
+            assert_eq!(decode_content(&bytes[1..]), Ok(m));
+        }
     }
 
     #[test]
@@ -801,6 +833,7 @@ mod tests {
         assert_eq!(tag(&[0, 5, 6]), Some(Tagged::Netcode(&[5, 6])));
         assert_eq!(tag(&[1]), Some(Tagged::ToHost(&[])));
         assert_eq!(tag(&[2, 9]), Some(Tagged::ToClient(&[9])));
-        assert_eq!(tag(&[3, 9]), None);
+        assert_eq!(tag(&[3, 9]), Some(Tagged::Content(&[9])));
+        assert_eq!(tag(&[4, 9]), None);
     }
 }

@@ -232,7 +232,12 @@ pub fn setup_of(p: &MatchPrefs, packs: Vec<(String, String)>, host_colour: [u8; 
                 loadout: p.loadout.policy(),
                 ..BotConfig::default()
             };
-            let look = Look { name: format!("Bot {}", i + 1), colour: colours[i], skin: DEFAULT_SKIN.into() };
+            let look = Look {
+                name: format!("Bot {}", i + 1),
+                colour: colours[i],
+                skin: DEFAULT_SKIN.into(),
+                skin_hash: rl_proto::NO_HASH.into(),
+            };
             bot_wire(&c, look)
         })
         .collect();

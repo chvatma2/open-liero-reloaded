@@ -22,7 +22,12 @@ fn key(n: u8) -> PublicKey {
 }
 
 fn look(name: &str) -> Look {
-    Look { name: name.into(), colour: [1, 2, 3], skin: "olx-skin-afro".into() }
+    Look {
+        name: name.into(),
+        colour: [1, 2, 3],
+        skin: "olx-skin-afro".into(),
+        skin_hash: rl_proto::NO_HASH.into(),
+    }
 }
 
 fn setup(bots: usize) -> MatchSetupWire {
@@ -1020,6 +1025,7 @@ fn a_client_leaves_a_host_that_breaks_the_protocol() {
                 missing: vec![],
                 ping_ms: None,
                 admin: false,
+                download: None,
             })
             .collect(),
     };
@@ -1128,7 +1134,12 @@ fn to_host() -> impl Strategy<Value = ToHost> {
         "[a-zA-Z]{1,20}",
     ];
     let skin = prop_oneof![Just("olx-skin-afro".to_string()), "[a-z0-9-]{64}"];
-    let look = (name, skin).prop_map(|(name, skin)| Look { name, colour: [1, 2, 3], skin });
+    let look = (name, skin).prop_map(|(name, skin)| Look {
+        name,
+        colour: [1, 2, 3],
+        skin,
+        skin_hash: rl_proto::NO_HASH.into(),
+    });
     prop_oneof![
         (0u8..PEERS, look.clone()).prop_map(|(k, l)| ToHost::Hello {
             key: key(k + 1),
@@ -1154,7 +1165,12 @@ fn to_host() -> impl Strategy<Value = ToHost> {
 fn long_look(p: u8) -> Look {
     let mut skin = format!("skin-{p}-");
     skin.extend(std::iter::repeat_n('x', MAX_ID - skin.len()));
-    Look { name: format!("{p}{}", "\u{1F600}".repeat(MAX_NAME - 2)), colour: [9, 9, 9], skin }
+    Look {
+        name: format!("{p}{}", "\u{1F600}".repeat(MAX_NAME - 2)),
+        colour: [9, 9, 9],
+        skin,
+        skin_hash: rl_proto::NO_HASH.into(),
+    }
 }
 
 /// A setup as large as the wire allows.

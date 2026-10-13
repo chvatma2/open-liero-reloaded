@@ -142,6 +142,7 @@ pub fn fill_bots(n: u8) -> Vec<BotWire> {
                 name: format!("Bot {}", i + 1),
                 colour: BOT_COLOURS[i % BOT_COLOURS.len()],
                 skin: DEFAULT_SKIN.into(),
+                skin_hash: rl_proto::NO_HASH.into(),
             };
             bot_wire(&BotConfig::default(), look)
         })

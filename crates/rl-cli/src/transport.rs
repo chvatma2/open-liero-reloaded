@@ -173,7 +173,12 @@ pub fn run_bot_client(
         impair_seed: spec.impair_seed,
         ..EndpointConfig::default()
     };
-    let look = Look { name: spec.name.clone(), colour: [120, 200, 80], skin: rl_lobby::DEFAULT_SKIN.into() };
+    let look = Look {
+        name: spec.name.clone(),
+        colour: [120, 200, 80],
+        skin: rl_lobby::DEFAULT_SKIN.into(),
+        skin_hash: rl_proto::NO_HASH.into(),
+    };
     let role = PeerRole::Client { addr: spec.addr, password: None };
     let mut peer = OnlinePeer::start(role, endpoint, new_identity()?, look, content, None)
         .with_context(|| format!("joining {}", spec.addr))?;

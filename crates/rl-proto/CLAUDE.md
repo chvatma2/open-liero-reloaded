@@ -24,6 +24,15 @@ control messages, the frame delta codec and the simulation fingerprint.
   `1` `ToHost`, `2` `ToClient`; `tag()` splits it (`Tagged`), `None` for an
   empty payload or unknown tag. The netcode session still sends untagged
   `Control`; rl-online tags and untags at the boundary.
+- **Content** (`content.rs`, plan 11, N32): `TAG_CONTENT = 3` carries
+  `ContentMsg::{List, Want, Begin, Chunk, Unavailable, Cancel}` both ways
+  (`encode_content` with the tag, `decode_content` without; `valid_content`);
+  `MAX_CONTENT` (`CONTENT_CHUNK` + 256) bounds one message (a worst-case
+  64-item `List` fits). `Item { kind, id, hash, size, required }`; a list
+  has no hash twice, skins are <= 64 KiB and never required.
+  `MAX_ARCHIVE_BYTES` restates rl-pack's `MAX_ARCHIVE`. `valid_hash` is 64
+  lowercase hex; `NO_HASH` is valid and means unknown. `Look::skin_hash`
+  and `Member::download` (percent) are new; `PROTOCOL_VERSION` is 2.
 - **LAN** (`lan.rs`): `LanAnnounce` on UDP `LAN_PORT` (23401), `MAX_LAN`.
 - **Bounds** (violation = `ProtoError::Invalid`): names 1..=`MAX_NAME` (20)
   characters, no control, bidi, zero-width or separator code points, no edge

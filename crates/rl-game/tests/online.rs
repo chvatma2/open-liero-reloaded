@@ -169,7 +169,7 @@ fn identity() -> Identity {
 }
 
 fn look(name: &str, colour: [u8; 3]) -> Look {
-    Look { name: name.into(), colour, skin: "olx-skin-default".into() }
+    Look { name: name.into(), colour, skin: "olx-skin-default".into(), skin_hash: rl_proto::NO_HASH.into() }
 }
 
 fn endpoint() -> EndpointConfig {

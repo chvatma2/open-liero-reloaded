@@ -68,6 +68,7 @@ impl Rec {
             missing: self.missing.clone(),
             ping_ms: self.ping_ms,
             admin: self.admin,
+            download: None,
         }
     }
 }

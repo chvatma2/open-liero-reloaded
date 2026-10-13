@@ -45,7 +45,12 @@ fn identity() -> Identity {
 }
 
 fn look(name: &str) -> Look {
-    Look { name: name.into(), colour: [200, 80, 40], skin: "olx-skin-default".into() }
+    Look {
+        name: name.into(),
+        colour: [200, 80, 40],
+        skin: "olx-skin-default".into(),
+        skin_hash: rl_proto::NO_HASH.into(),
+    }
 }
 
 /// A server's config: port 0, no LAN announcements, Classic on Dirt Level

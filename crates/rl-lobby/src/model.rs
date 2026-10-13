@@ -179,10 +179,15 @@ pub fn sanitize_name(name: &str, fallback: &str) -> String {
 /// A look the wire accepts: its name sanitized ("Player" if empty), its skin
 /// `DEFAULT_SKIN` if not a pack id.
 pub fn sanitize_look(look: &Look) -> Look {
-    let mut l =
-        Look { name: sanitize_name(&look.name, "Player"), colour: look.colour, skin: look.skin.clone() };
+    let mut l = Look {
+        name: sanitize_name(&look.name, "Player"),
+        colour: look.colour,
+        skin: look.skin.clone(),
+        skin_hash: look.skin_hash.clone(),
+    };
     if !valid_look(&l) {
         l.skin = DEFAULT_SKIN.into();
+        l.skin_hash = rl_proto::NO_HASH.into();
     }
     l
 }
@@ -258,8 +263,21 @@ mod tests {
 
     #[test]
     fn looks_get_a_default_skin() {
-        let l = sanitize_look(&Look { name: String::new(), colour: [1, 2, 3], skin: "Bad/Skin".into() });
-        assert_eq!(l, Look { name: "Player".into(), colour: [1, 2, 3], skin: DEFAULT_SKIN.into() });
+        let l = sanitize_look(&Look {
+            name: String::new(),
+            colour: [1, 2, 3],
+            skin: "Bad/Skin".into(),
+            skin_hash: rl_proto::NO_HASH.into(),
+        });
+        assert_eq!(
+            l,
+            Look {
+                name: "Player".into(),
+                colour: [1, 2, 3],
+                skin: DEFAULT_SKIN.into(),
+                skin_hash: rl_proto::NO_HASH.into()
+            }
+        );
     }
 
     #[test]

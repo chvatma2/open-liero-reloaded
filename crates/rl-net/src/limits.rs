@@ -188,6 +188,7 @@ mod tests {
         assert_eq!(p.on_message(t0, true, MAX_RELIABLE + 1), Err(Why::Malformed));
         assert_eq!(p.on_message(t0, true, MAX_RELIABLE), Ok(()));
         assert_eq!(MAX_RELIABLE, rl_proto::MAX_LOBBY + 1, "a full lobby and its tag byte");
+        const { assert!(rl_proto::MAX_CONTENT < MAX_RELIABLE, "a full content message and its tag byte") };
         // Tiny reliable messages count MESSAGE_COST each.
         let mut p = PeerLimits::new(&Limits::default(), t0);
         let n = (256 * 1024 / MESSAGE_COST as usize) + 1;

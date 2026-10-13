@@ -161,7 +161,12 @@ impl Shell {
         };
         let endpoint =
             EndpointConfig { port: 0, impair: Some(profile), impair_seed: 1, ..EndpointConfig::default() };
-        let look = Look { name: "net-sim host".into(), colour: [128, 128, 128], skin: DEFAULT_SKIN.into() };
+        let look = Look {
+            name: "net-sim host".into(),
+            colour: [128, 128, 128],
+            skin: DEFAULT_SKIN.into(),
+            skin_hash: rl_proto::NO_HASH.into(),
+        };
         let mut host =
             OnlinePeer::start(PeerRole::Host(cfg), endpoint, fresh_identity()?, look, content, Some(setup))?;
         host.lobby().set_spectate(true);
@@ -210,7 +215,7 @@ impl Shell {
         let p = self.ui.profiles().selected().cloned().unwrap_or_default();
         let skin =
             self.content.as_ref().and_then(|c| c.skin_id(&p.skin_id)).unwrap_or_else(|| DEFAULT_SKIN.into());
-        Ok((id, Look { name: p.name, colour: p.colour, skin }))
+        Ok((id, Look { name: p.name, colour: p.colour, skin, skin_hash: rl_proto::NO_HASH.into() }))
     }
 
     /// The identity file's key; a key the file holds that is no valid one
