@@ -164,6 +164,10 @@ pub fn build_match(a: MatchAssets<'_>, o: &MatchOptions) -> anyhow::Result<Built
     let game = Deathmatch::prepare(dm, &mut setup).map_err(|e| anyhow!("{e}"))?;
     let world = World::new(setup.clone(), Box::new(game)).map_err(|e| anyhow!("{e}"))?;
     let mut recorder = Recorder::new(a.packs.clone(), &setup, &mode);
+    // The first human's worm: where a watcher of the replay starts.
+    recorder.set_viewer(
+        o.players.iter().position(|p| !matches!(p, Player::Bot(_))).and_then(|i| u8::try_from(i).ok()),
+    );
     recorder.start(&world).map_err(|e| anyhow!("{e}"))?;
     let cache = AreaCache::new(world.terrain());
     let bots = (0..n)

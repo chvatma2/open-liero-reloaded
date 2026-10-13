@@ -16,6 +16,19 @@ use crate::bundle::GameBundle;
 use crate::events::OnlineEvent;
 use crate::matches;
 
+/// Whether two encoded replays are of the same match: equal but for the
+/// viewer, which is each peer's own slot.
+pub fn same_match(a: &[u8], b: &[u8]) -> bool {
+    match (rl_replay::Replay::decode(a), rl_replay::Replay::decode(b)) {
+        (Ok(mut a), Ok(mut b)) => {
+            a.setup.viewer = None;
+            b.setup.viewer = None;
+            a == b
+        }
+        _ => false,
+    }
+}
+
 /// A finished match as one peer confirmed it: what its replay is made of.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MatchRecord {
@@ -36,11 +49,13 @@ pub struct Made {
 }
 
 /// Re-simulates `record` from its start world and returns the encoded
-/// `.rlrp`.
-pub fn make(content: &Content, record: &MatchRecord) -> anyhow::Result<Made> {
+/// `.rlrp`, whose viewer is `viewer`: the slot of the peer that made it
+/// (`None`: a spectator, or nobody).
+pub fn make(content: &Content, record: &MatchRecord, viewer: Option<u8>) -> anyhow::Result<Made> {
     let options = matches::resolve(content, &record.start)?;
     let built = content.build_match(&options)?;
     let (mut world, mut recorder) = (built.world, built.recorder);
+    recorder.set_viewer(viewer);
     let slots = record.start.slots.len();
     let expected: BTreeMap<u32, u64> = record.checksums.iter().copied().collect();
     let mut events = TickEvents::new();
@@ -85,7 +100,7 @@ impl PendingReplay {
         host: bool,
         my_slot: Option<u8>,
     ) -> PendingReplay {
-        let job = ReplayJob::spawn(content, record.clone());
+        let job = ReplayJob::spawn(content, record.clone(), my_slot);
         PendingReplay { job, record, host, my_slot }
     }
 
@@ -116,11 +131,11 @@ pub struct ReplayJob {
 }
 
 impl ReplayJob {
-    /// Starts making `record`'s replay on a worker thread.
-    pub fn spawn(content: Arc<Content>, record: MatchRecord) -> ReplayJob {
+    /// Starts making `record`'s replay (its viewer `viewer`) on a worker thread.
+    pub fn spawn(content: Arc<Content>, record: MatchRecord, viewer: Option<u8>) -> ReplayJob {
         let (tx, rx) = mpsc::channel();
         let work = move || {
-            let made = make(&content, &record).map_err(|e| format!("{e:#}"));
+            let made = make(&content, &record, viewer).map_err(|e| format!("{e:#}"));
             let _ = tx.send(made);
         };
         // A thread that cannot start drops its sender: `poll` reports it.

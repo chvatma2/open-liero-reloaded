@@ -27,6 +27,7 @@ struct SetupW {
     pool_capacity: u32,
     bonus_weapons: Option<Vec<i32>>,
     calls: Vec<CallW>,
+    viewer: Option<u8>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -65,6 +66,7 @@ impl Replay {
                 pool_capacity: u32::try_from(s.pool_capacity).unwrap_or(u32::MAX),
                 bonus_weapons: s.bonus_weapons.clone(),
                 calls: s.calls.iter().map(|&c| c.into()).collect(),
+                viewer: s.viewer,
             },
             mode: (&self.mode).into(),
             ticks: self.ticks(),
@@ -131,12 +133,15 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
         }
         prev = Some(t);
     }
-    let SetupW { packs, settings, start, seed, worms, pool_capacity, bonus_weapons, calls } = setup;
+    let SetupW { packs, settings, start, seed, worms, pool_capacity, bonus_weapons, calls, viewer } = setup;
     if worms.len() > MAX_WORMS {
         return invalid(format!("{} worms, at most {MAX_WORMS}", worms.len()));
     }
     if let Some(i) = worms.iter().position(|w| w.slots.len() > MAX_SLOTS) {
         return invalid(format!("worm {i}: more than {MAX_SLOTS} weapon slots"));
+    }
+    if let Some(v) = viewer.filter(|&v| usize::from(v) >= worms.len()) {
+        return invalid(format!("viewer {v} is no worm of {}", worms.len()));
     }
     if calls.len() > MAX_SETUP_CALLS {
         return invalid(format!("{} setup calls, at most {MAX_SETUP_CALLS}", calls.len()));
@@ -168,6 +173,7 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
         pool_capacity: pool_capacity as usize,
         bonus_weapons,
         calls: calls.into_iter().map(Into::into).collect(),
+        viewer,
     };
     // NaN, infinities and values outside OLX's ranges, before anything
     // computes with them (`World::new` and `Replay::world` check them again).
@@ -203,6 +209,7 @@ mod tests {
                 pool_capacity: 3000,
                 bonus_weapons: None,
                 calls: vec![],
+                viewer: None,
             },
             mode: ModeW::Oracle,
             ticks,
@@ -242,5 +249,15 @@ mod tests {
         w.keys = vec![0xff; 4];
         assert!(matches!(err(w), DecodeError::Malformed(_)), "broken deflate stream");
         assert_eq!(from_wire(wire(0, 0, &[])).unwrap().ticks(), 0);
+    }
+
+    #[test]
+    fn the_viewer_is_one_of_the_worms() {
+        let mut w = wire(0, 0, &[]);
+        w.setup.viewer = Some(0);
+        assert_eq!(from_wire(w).unwrap().setup.viewer, Some(0));
+        let mut w = wire(0, 0, &[]);
+        w.setup.viewer = Some(1);
+        assert!(matches!(err(w), DecodeError::Invalid(_)), "worm 1 of 1");
     }
 }

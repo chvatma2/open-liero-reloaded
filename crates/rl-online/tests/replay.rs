@@ -33,7 +33,7 @@ fn record(c: &rl_content::Content) -> MatchRecord {
 fn a_replay_of_the_confirmed_inputs_plays() {
     let Some(c) = content() else { return };
     let r = record(&c);
-    let made = make(&c, &r).unwrap();
+    let made = make(&c, &r, None).unwrap();
     assert_eq!(made.warning, None);
     let replay = Replay::decode(&made.bytes).unwrap();
     assert_eq!(replay.ticks(), 300);
@@ -46,8 +46,19 @@ fn a_missed_checksum_warns_and_the_replay_is_kept() {
     let good = record(&c);
     let mut bad = good.clone();
     bad.checksums[12].1 ^= 1;
-    let (made, kept) = (make(&c, &bad).unwrap(), make(&c, &good).unwrap());
+    let (made, kept) = (make(&c, &bad, None).unwrap(), make(&c, &good, None).unwrap());
     let warning = made.warning.expect("a warning");
     assert!(warning.contains("after tick 129"), "{warning}");
     assert_eq!(made.bytes, kept.bytes, "the same replay");
+}
+
+/// The replay's viewer is the slot of the peer that made it: a player's
+/// own, none for a spectator.
+#[test]
+fn the_replay_starts_on_the_peers_own_slot() {
+    let Some(c) = content() else { return };
+    let r = record(&c);
+    let viewer = |slot| Replay::decode(&make(&c, &r, slot).unwrap().bytes).unwrap().setup.viewer;
+    assert_eq!(viewer(Some(1)), Some(1));
+    assert_eq!(viewer(None), None, "a spectator's");
 }

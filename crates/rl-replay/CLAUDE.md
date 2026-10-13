@@ -11,7 +11,9 @@ ticks and at the end.
   the encoding is the format). Learn the match API from
   `target/api/rl_sim.txt` and `rl_modes.txt`.
 - **What a replay holds** (`lib.rs`): `ReplaySetup` (the `MatchSetup`'s
-  settings, start, seed, worms, pool size and bonus weapons; its mod,
+  settings, start, seed, worms, pool size, bonus weapons and the `viewer`,
+  the slot of the player whose game made it, `Recorder::set_viewer`, none
+  for bots alone or a spectator, a slot that is no worm refused by decode; its mod,
   terrain, holes and green mask are named by `Packs`, ids and content
   hashes, never stored; the setup calls), `ModeSpec` (`Oracle` or
   `Deathmatch(DeathmatchSettings)`; `ModeSpec::game_mode(&settings)` makes

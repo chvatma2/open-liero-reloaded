@@ -50,6 +50,13 @@ impl Recorder {
         }
     }
 
+    /// Records the worm of the player whose game this is (`None`: nobody
+    /// here plays, a bots-only match or an online spectator); a slot that
+    /// is no worm of the setup is dropped.
+    pub fn set_viewer(&mut self, slot: Option<u8>) {
+        self.setup.viewer = slot.filter(|&s| usize::from(s) < self.setup.worms.len());
+    }
+
     /// Makes `call` on `world` and records it: every change to the world
     /// before its first tick goes through here, or the replay diverges.
     /// Gives `find_spot`'s position.

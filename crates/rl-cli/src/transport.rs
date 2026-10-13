@@ -627,7 +627,7 @@ impl TransportRun {
                     r.rows.len()
                 ));
             }
-            match rl_online::replay::make(content, r) {
+            match rl_online::replay::make(content, r, None) {
                 Ok(made) => {
                     if let Some(w) = made.warning {
                         fails.push(format!("the server's match {}: {w}", i + 1));
@@ -680,7 +680,7 @@ impl TransportRun {
                             ));
                         }
                         match (&m.replay, &server_replays[i]) {
-                            (Some(a), Some(b)) if a == b => {}
+                            (Some(a), Some(b)) if rl_online::replay::same_match(a, b) => {}
                             (Some(_), Some(_)) => {
                                 fails.push(format!("{what}: its replay differs from the server's"))
                             }

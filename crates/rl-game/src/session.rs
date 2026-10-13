@@ -351,7 +351,7 @@ impl Session {
         };
         let mut present = Presentation::new(&setup, &world);
         let local = a.local_slot();
-        present.follow(local.map_or(0, i32::from));
+        present.follow(i32::from(a.first_followed()));
         let n = world.worms().len();
         let looks = looks(a, n.max(a.worms()));
         let mut s = Session {

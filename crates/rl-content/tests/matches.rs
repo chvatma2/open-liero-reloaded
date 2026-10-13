@@ -94,3 +94,28 @@ fn chosen_weapons_are_the_humans_and_recorded() {
     let e = c.build_match(&refused).err().expect("refused").to_string();
     assert!(e.contains("worm 0"), "{e}");
 }
+
+/// The recording names the human's worm as the replay's viewer: the first
+/// that is no bot, wherever it sits; none for bots alone.
+#[test]
+fn the_recording_names_the_humans_worm() {
+    let Some(c) = content() else { return };
+    let bot = Player::Bot(BotConfig::default());
+    let o = MatchOptions {
+        mod_id: "olx-classic".into(),
+        level_id: "olx-level-liero-factory".into(),
+        seed: 5,
+        settings: SimSettings::lx56(),
+        players: vec![bot, bot, Player::Human],
+        deathmatch: DeathmatchSettings::default(),
+        restrictions: DEFAULT_PRESET.into(),
+        pool_capacity: MatchSetup::DEFAULT_POOL_CAPACITY,
+    };
+    let viewer = |o: &MatchOptions| {
+        let m = c.build_match(o).unwrap();
+        m.recorder.clone().finish(&m.world).unwrap().setup.viewer
+    };
+    assert_eq!(viewer(&o), Some(2));
+    let alone = MatchOptions { players: vec![bot, bot], ..o };
+    assert_eq!(viewer(&alone), None);
+}

@@ -31,18 +31,21 @@ fn bots(dir: &Path) -> Assets {
     load(dir, &DeathmatchOptions { bots: 3, spectate: true, seed: 3, ..DeathmatchOptions::default() })
 }
 
-/// A replay of `ticks` ticks of a match the human plays: worm 0 against
-/// two bots.
-fn replay_of_a_human(dir: &Path, ticks: u64) -> Assets {
+/// A replay of `ticks` ticks of a match the human plays (worm 0 against
+/// two bots), its viewer set to `viewer`: the menus and the command line
+/// seat the human first, an online peer may sit anywhere.
+fn replay_viewed_by(dir: &Path, ticks: u64, viewer: Option<u8>) -> Assets {
     let a = load(dir, &DeathmatchOptions { bots: 2, seed: 4, ..DeathmatchOptions::default() });
     let mut s = session(&a);
     assert_eq!(s.local(), Some(0));
     while s.ticks() < ticks {
         s.tick(Keys(0));
     }
-    let bytes = s.take_replay().expect("a Deathmatch records").encode();
-    let file = std::env::temp_dir().join(format!("rl-game-watch-{}.rlrp", std::process::id()));
-    std::fs::write(&file, bytes).unwrap();
+    let mut replay = s.take_replay().expect("a Deathmatch records");
+    assert_eq!(replay.setup.viewer, Some(0), "recorded from the human's slot");
+    replay.setup.viewer = viewer;
+    let file = std::env::temp_dir().join(format!("rl-game-watch-{}-{viewer:?}.rlrp", std::process::id()));
+    std::fs::write(&file, replay.encode()).unwrap();
     let r = setup::load_replay(&[dir], &file, "default", &[]);
     std::fs::remove_file(&file).unwrap();
     r.unwrap()
@@ -56,27 +59,35 @@ fn on(s: &Session) -> (i32, i32, Option<String>, Vec<usize>) {
     (s.followed(), s.present.scene.camera.target(), view.worm.map(|w| w.name), big)
 }
 
-/// A replay is watched: it starts on worm 0 (the replay does not record
-/// who was a bot, and the human is always the first worm of a game made
-/// by the menus or the command line), the arrows' steps go round in worm
-/// order, and the HUD, the camera and the minimap's big dot follow.
+/// A replay is watched: it starts on the worm of the player who made it
+/// (worm 0 when there was none), the arrows' steps go round in worm order,
+/// and the HUD, the camera and the minimap's big dot follow.
 #[test]
 fn a_replay_follows_the_worm_chosen() {
     let Some(dir) = content_dir() else { return };
-    let a = replay_of_a_human(&dir, 200);
-    let mut s = session(&a);
+    let mut s = session(&replay_viewed_by(&dir, 200, Some(2)));
     assert_eq!(s.local(), None);
     assert!(s.spectating(), "nobody plays a replay");
     let first = on(&s);
-    assert_eq!((first.0, first.1), (0, 0), "a replay starts on the human's worm, the first");
+    assert_eq!((first.0, first.1), (2, 2), "a replay starts on its human, here the third worm");
+    assert_eq!(first.3, [2]);
     s.follow_next(1);
     let second = on(&s);
-    assert_eq!((second.0, second.1), (1, 1));
+    assert_eq!((second.0, second.1), (0, 0), "round");
     assert_ne!(second.2, first.2, "the HUD shows the other worm");
-    assert_eq!(second.3, [1], "the big minimap dot follows");
-    s.follow_next(-1);
-    s.follow_next(-1);
-    assert_eq!(s.followed(), 2, "round");
+    assert_eq!(second.3, [0], "the big minimap dot follows");
+    s.follow_next(1);
+    assert_eq!(s.followed(), 1);
+
+    let none = session(&replay_viewed_by(&dir, 50, None));
+    assert_eq!(none.followed(), 0, "a replay of nobody's game starts on worm 0");
+    // A restart keeps the worm chosen.
+    let a = replay_viewed_by(&dir, 50, Some(1));
+    let mut s = session(&a);
+    assert_eq!(s.followed(), 1);
+    s.follow_next(1);
+    s.rebuild(&a).unwrap();
+    assert_eq!(s.followed(), 2);
 }
 
 /// The HUD's health, lives, kills and weapons are the followed worm's,

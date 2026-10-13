@@ -400,6 +400,15 @@ impl Assets {
         }
     }
 
+    /// The worm the camera starts on: the player's own, else (a replay)
+    /// the worm of the player whose game made it, else worm 0.
+    pub fn first_followed(&self) -> u8 {
+        match &self.game {
+            Game::Replay(r) if self.local_slot().is_none() => r.setup.viewer.unwrap_or(0),
+            _ => self.local_slot().unwrap_or(0),
+        }
+    }
+
     /// The skin loaded as `id`, else the default skin.
     pub fn skin_of(&self, id: &str) -> &LoadedSkin {
         self.skins.get(id).unwrap_or(&self.bot_skin)

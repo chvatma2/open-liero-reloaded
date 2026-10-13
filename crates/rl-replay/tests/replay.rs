@@ -79,6 +79,24 @@ fn replay_reports_the_first_mismatching_tick() {
     assert_eq!(player.tick(), 200);
 }
 
+/// The slot of the player whose game made the replay is recorded and
+/// survives the encoding; a slot that is no worm is dropped when
+/// recording, and none (bots alone) stays none.
+#[test]
+fn the_viewer_is_recorded() {
+    let (setup, mode) = deathmatch(4, 6);
+    let make = |viewer: Option<u8>| {
+        let world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
+        let mut rec = Recorder::new(packs(), &setup, &mode);
+        rec.set_viewer(viewer);
+        rec.start(&world).unwrap();
+        Replay::decode(&rec.finish(&world).unwrap().encode()).unwrap()
+    };
+    assert_eq!(make(None).setup.viewer, None);
+    assert_eq!(make(Some(2)).setup.viewer, Some(2));
+    assert_eq!(make(Some(4)).setup.viewer, None, "worm 4 of 4 does not exist");
+}
+
 /// Review Focus 3: a replay of another format version is refused, never
 /// replayed into a silent divergence.
 #[test]

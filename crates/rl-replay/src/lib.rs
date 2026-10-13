@@ -97,6 +97,9 @@ pub struct ReplaySetup {
     pub pool_capacity: usize,
     pub bonus_weapons: Option<Vec<i32>>,
     pub calls: Vec<SetupCall>,
+    /// The worm of the player whose game made the replay (a watcher
+    /// starts on it); `None` for bots alone or an online spectator.
+    pub viewer: Option<u8>,
 }
 
 impl ReplaySetup {
@@ -126,6 +129,7 @@ impl ReplaySetup {
             pool_capacity: *pool_capacity,
             bonus_weapons: bonus_weapons.clone(),
             calls: Vec::new(),
+            viewer: None,
         }
     }
 

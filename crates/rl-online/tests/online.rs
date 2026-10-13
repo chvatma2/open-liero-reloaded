@@ -353,7 +353,9 @@ fn a_host_and_two_clients_play_a_short_match() {
     }
     // The same replay everywhere, and it plays.
     let bytes: Vec<&Vec<u8>> = net.peers.iter().map(|p| p.replays()[0]).collect();
-    assert!(bytes.iter().all(|b| *b == bytes[0]), "equal replays");
+    assert!(bytes.iter().all(|b| rl_online::replay::same_match(b, bytes[0])), "equal replays");
+    let viewers: Vec<_> = bytes.iter().map(|b| Replay::decode(b).unwrap().setup.viewer).collect();
+    assert_eq!(viewers, [Some(0), Some(1), Some(2)], "each peer's own slot");
     let replay = Replay::decode(bytes[0]).unwrap();
     assert_eq!(replay.ticks() as usize, r.rows.len());
     net.content().play_replay(&replay).unwrap();
@@ -467,7 +469,7 @@ fn ending_a_botless_servers_match_keeps_its_last_checksum() {
         n.peers.iter().all(|p| p.has(replay_ready))
     });
     let bytes: Vec<&Vec<u8>> = net.peers.iter().map(|p| p.replays()[0]).collect();
-    assert!(bytes.iter().all(|b| *b == bytes[0]), "equal replays");
+    assert!(bytes.iter().all(|b| rl_online::replay::same_match(b, bytes[0])), "equal replays");
 }
 
 #[test]
@@ -561,7 +563,7 @@ fn a_client_vanishes_mid_match() {
     let anna = net.peers[a].peer().last_record().cloned().unwrap();
     assert_eq!(host.rows, anna.rows);
     assert_eq!(host.checksums, anna.checksums);
-    assert_eq!(net.peers[0].replays(), net.peers[a].replays());
+    assert!(rl_online::replay::same_match(net.peers[0].replays()[0], net.peers[a].replays()[0]));
     let rows = &host.rows;
     assert!(rows[..gone_at as usize].iter().any(|r| r[sb] != 0), "it played");
     // Within a second of leaving, its slot is `Keys(0)` to the end.
@@ -864,7 +866,7 @@ fn downloads_and_plays(pack: &str) {
     });
     assert_eq!(net.peers[a].started(), vec![Some(1)], "it played");
     let bytes: Vec<&Vec<u8>> = net.peers.iter().map(|p| p.replays()[0]).collect();
-    assert_eq!(bytes[0], bytes[1], "equal replays");
+    assert!(rl_online::replay::same_match(bytes[0], bytes[1]), "equal replays");
 }
 
 #[test]

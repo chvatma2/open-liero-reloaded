@@ -44,7 +44,8 @@ All notable changes to rust-liero are recorded here. The format follows
 - Left/Right choose the worm the camera and the HUD follow in any game
   nobody plays: a replay, a `--spectate` match and an online match you
   watch (before, only the last, with PageUp/PageDown). PageUp/PageDown
-  change the speed only; online they do nothing.
+  change the speed only; online they do nothing. A replay starts on the
+  worm of the player who recorded it (worm 0 for a match of bots alone).
 
 ### Added — in game
 
