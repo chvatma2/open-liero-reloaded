@@ -171,7 +171,7 @@ pub(crate) fn injure_worm(h: &mut Harm, id: i32, damage: f32, owner: i32) {
     let w = &mut h.worms[vi];
     w.health -= damage;
     if damage > 0.0 {
-        w.last_damager = if oi.is_some() { owner } else { -1 };
+        w.last_damager = if oi.is_some() { i8::try_from(owner).unwrap_or(-1) } else { -1 };
     }
     let pos = w.pos;
     let dies = w.health < 0.0;
@@ -300,7 +300,7 @@ pub(crate) fn die_at_zero_health(h: &mut Harm, wall_clock: AbsTime) {
             w.alive = false;
             w.time_of_death = wall_clock;
             let (id, pos) = (w.id, w.pos);
-            let killer = if olx { -1 } else { w.last_damager };
+            let killer = if olx { -1 } else { i32::from(w.last_damager) };
             if kill_worm(h, id, killer) && !olx {
                 death_effects(h.draws, id, pos);
             }

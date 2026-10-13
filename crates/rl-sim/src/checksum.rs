@@ -255,7 +255,7 @@ impl Checksum for Worm {
         h.time(*last_input_time);
         h.time(*last_air_jump_time);
         pos_recorder.hash(h);
-        h.i32(*last_damager);
+        h.i32(i32::from(*last_damager));
     }
 }
 

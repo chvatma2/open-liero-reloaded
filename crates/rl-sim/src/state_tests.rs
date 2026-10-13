@@ -151,3 +151,22 @@ fn large_finite_numbers_load() {
     dst.load_state(src.state()).unwrap();
     assert_eq!(dst, src);
 }
+
+#[test]
+fn a_last_damager_past_the_worlds_worms_is_refused() {
+    // Two worms: the killer an exact-zero death credits must be one of them.
+    let base = played();
+    let mut dst = base.clone();
+    dst.tick_new(&[Keys(0), Keys(Keys::JUMP)]);
+    let before = dst.clone();
+    for (who, ok) in [(-1, true), (0, true), (1, true), (2, false), (20, false), (-2, false)] {
+        let mut src = base.clone();
+        src.worms[0].last_damager = who;
+        let got = dst.clone().load_state(src.state());
+        assert_eq!(got.is_ok(), ok, "last_damager {who}: {got:?}");
+        if !ok {
+            assert_eq!(dst.load_state(src.state()), Err(StateError::Worms), "last_damager {who}");
+            assert!(dst == before, "last_damager {who}: a refused state changes nothing");
+        }
+    }
+}

@@ -393,7 +393,7 @@ fn worm_ok(i: usize, w: &Worm, worms: usize, num_weapons: i32) -> bool {
         && w.slots.iter().all(|s| s.weapon == -1 || (0..num_weapons).contains(&s.weapon))
         && (0..slots.max(1) as i64).contains(&(w.current_weapon as i64))
         && (-1..worms as i64).contains(&(player_attached as i64))
-        && (-1..MAX_WORMS as i64).contains(&(w.last_damager as i64))
+        && (-1..worms as i64).contains(&i64::from(w.last_damager))
         && w.pos_recorder.is_valid()
         && rope_ok
         && angle_ok

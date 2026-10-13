@@ -253,8 +253,15 @@ pub struct Worm {
     /// worm's death to (`src/gusanos/base_worm.cpp:623-653`) but classic
     /// damage never sets. Without [`SimSettings::olx_quirks`] an
     /// exact-zero-health death is credited to it. A respawn clears it.
-    pub last_damager: i32,
+    pub last_damager: i8,
 }
+
+// `Worm` is 992 bytes, a multiple of 32: one more field that breaks that
+// shifts every worm's hot fields against cache lines in `Vec<Worm>` (a
+// 4-byte `i32` here cost `tick_32_worms` about 16 %). Grow it on purpose.
+// (64-bit targets; `Vec` is smaller on wasm32.)
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<Worm>() == 992, "Worm's size changed: see the comment above");
 
 impl Worm {
     /// A worm as `CWorm::Prepare` and `CWorm::Spawn` leave it
