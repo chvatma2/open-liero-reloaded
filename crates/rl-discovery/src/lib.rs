@@ -8,3 +8,8 @@ pub use nostr::{
     Event, Filter, FromRelay, KIND_ANNOUNCE, KIND_HANDSHAKE, MAX_CONTENT, MAX_FRAME, NostrError, ToRelay,
     canonical, decode_from_relay, decode_to_relay, encode_from_relay, encode_to_relay,
 };
+
+#[cfg(feature = "test-relay")]
+pub mod test_relay;
+#[cfg(feature = "test-relay")]
+pub use test_relay::{Misbehaviour, TestRelay};

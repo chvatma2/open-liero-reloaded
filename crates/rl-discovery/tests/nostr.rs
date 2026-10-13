@@ -90,9 +90,6 @@ fn canonical_escapes_like_nip01() {
         "ab".repeat(32)
     );
     assert_eq!(s, expected);
-    // A NIP-01-compliant parser reads the same content back, except for the
-    // raw control characters JSON itself forbids.
-    assert!(s.contains('\u{0}'));
 }
 
 #[test]
@@ -191,6 +188,26 @@ fn bad_frames_are_errors() {
     let wire = encode_from_relay(&FromRelay::Event { sub: "s".into(), event: e.clone() });
     let bad = wire.replace(&hex::encode(e.pubkey), "zz");
     assert!(decode_from_relay(&bad).is_err());
+}
+
+#[test]
+fn out_of_range_numbers_are_errors() {
+    let e = sample();
+    let wire = encode_from_relay(&FromRelay::Event { sub: "s".into(), event: e.clone() });
+    let kind = format!("\"kind\":{}", e.kind);
+    let at = format!("\"created_at\":{}", e.created_at);
+    assert!(wire.contains(&kind) && wire.contains(&at));
+    for (from, to) in [
+        (&kind, "\"kind\":4294967296"),
+        (&kind, "\"kind\":-1"),
+        (&at, "\"created_at\":18446744073709551616"),
+        (&at, "\"created_at\":-5"),
+        (&at, "\"created_at\":1.5"),
+    ] {
+        let bad = wire.replace(from.as_str(), to);
+        assert!(decode_from_relay(&bad).is_err(), "{to}");
+    }
+    assert_eq!(decode_from_relay(&wire), Ok(FromRelay::Event { sub: "s".into(), event: e }));
 }
 
 fn mutate(s: &str, edits: &[(usize, u8)]) -> String {

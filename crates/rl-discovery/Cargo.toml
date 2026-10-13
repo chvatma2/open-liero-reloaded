@@ -15,9 +15,20 @@ serde_json.workspace = true
 sha2.workspace = true
 hex.workspace = true
 thiserror.workspace = true
+# The test relay (feature `test-relay`). rustls 0.23.45 (2026-09-14) with its
+# default aws-lc-rs provider; rcgen is the version already in the lockfile.
+# Task 4 makes rustls a normal dependency for the client.
+rustls = { version = "=0.23.45", optional = true }
+rcgen = { version = "=0.14.10", optional = true, default-features = false, features = ["aws_lc_rs"] }
+tungstenite = { workspace = true, optional = true }
+
+[features]
+test-relay = ["dep:rustls", "dep:rcgen", "dep:tungstenite"]
 
 [dev-dependencies]
 proptest.workspace = true
+# The integration tests exercise the test relay.
+rl-discovery = { path = ".", features = ["test-relay"] }
 
 [[test]]
 name = "integration"

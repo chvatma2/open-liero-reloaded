@@ -41,6 +41,27 @@ test relay, relay pool, announcements, game list, STUN and invite codes
   from node) and embedded; they verify with our code. No test touches the
   network.
 
+- **`test_relay`** (feature `test-relay`; rl-game, rl-server and rl-cli
+  tests enable it in dev-dependencies, never normal builds). `TestRelay`:
+  `start()` (`ws://127.0.0.1:<port>`), `start_tls()` (`wss://localhost:<port>`
+  plus the DER root; rcgen self-signed, rustls with the aws-lc-rs provider;
+  the relay listens on 127.0.0.1 only, so a client connecting to `localhost`
+  must fall back from `::1`, or connect to `port()` directly), `url()`,
+  `port()`, `events()`, `set_misbehaviour(Honest | NeverEose | Garbage |
+  DropAfter(n) | Slow(d))`, `set_time(unix)` (the clock for NIP-40; default
+  the system clock). Verifies events; regular events dedupe by id,
+  replaceable kinds by (key, kind), addressable by (key, kind, `d`), newest
+  wins; ephemeral 20000-29999 only forwarded; expired events are refused on
+  publish and not served. REQ: kinds, authors, `#x`, since, limit (per
+  filter, newest first), then EOSE; no filters select nothing. Frames are
+  limited to `MAX_FRAME`. One thread per connection; drop stops it (joins
+  bounded at 2 s). Tests that keep a subscription must say so: the test
+  client's `query` CLOSEs after EOSE, `subscribe` does not.
+- Deps: `rustls =0.23.45` (default aws-lc-rs), `rcgen =0.14.10`
+  (`aws_lc_rs` only, no pem) and `tungstenite`, all optional behind
+  `test-relay`. The crate's own dev-dependency on itself turns the feature
+  on for its tests.
+
 Test: `cargo nextest run -p rl-discovery` (`tests/nostr.rs`: the published
 events verify, signing round-trips, canonical escaping, tampering, frames
-round-trip, fuzzed frames never panic).
+round-trip, fuzzed frames never panic; `tests/test_relay.rs`: the relay).
