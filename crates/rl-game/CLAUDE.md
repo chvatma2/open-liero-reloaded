@@ -299,8 +299,9 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `check_replay_packs` as before: a replay plays while a game holds the
   cache, and `--replay` creates, locks and writes none. The
   options' download cache row (`MenuData::download_cache`, kept current
-  by `Shell::poll` while the options show: packs and partials, its lock
-  tried, never waited for) and its Clear (`clear(&[])`: the menus keep
+  by `Shell::poll` while the options show: packs and partials, read at
+  most every `CACHE_READ_EVERY` (1 s; at once on opening the options),
+  whether Clear may run every frame; its lock tried, never waited for) and its Clear (`clear(&[])`: the menus keep
   nothing), refused while an online game is on (`net` or `--net-sim`'s
   host: "leave the online game first").
   **Hidden window** (decision N21): while `Shell::online_active`,

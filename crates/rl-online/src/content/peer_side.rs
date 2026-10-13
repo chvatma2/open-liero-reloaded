@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use rl_content::{Content, DownloadCache, MAX_SKIN_ARCHIVE};
+use rl_content::{Content, DownloadCache, Keeper, MAX_SKIN_ARCHIVE};
 use rl_data::manifest::PackKind;
 use rl_lobby::{LobbyClient, LobbyHost};
 use rl_net::endpoint::HOST;
@@ -134,6 +134,9 @@ struct SkinFetch {
 struct HostContent {
     /// The list last sent (`None` before the first).
     list: Option<Vec<Item>>,
+    /// Keeps the list's hashes (its fetched skins) from every eviction of
+    /// the shared cache (review Minor 2); none without a cache.
+    keeper: Option<Keeper>,
     /// The list's revision (the lobby's `set_content_revision`): 1 for the
     /// first, one more for each change of its required items (a skin
     /// change keeps it: `Have` names required items only).
@@ -244,6 +247,7 @@ impl ContentSide {
         let role = if host {
             Role::Host(Box::new(HostContent {
                 list: None,
+                keeper: cache.as_ref().map(Keeper::new),
                 revision: 1,
                 skins: BTreeMap::new(),
                 skin_started: BTreeMap::new(),
@@ -615,19 +619,22 @@ impl ContentSide {
         if let Role::Host(h) = &self.role {
             lobby.set_content_revision(h.revision);
         }
+        // The fetched skins the list names, in its order (one per id).
         let fetched: Vec<(Item, PathBuf)> = match &self.role {
             Role::Host(h) => h
-                .fetched
+                .list
                 .iter()
-                .map(|(hash, (id, dir))| {
+                .flatten()
+                .filter_map(|i| {
+                    let (id, dir) = h.fetched.get(&i.hash)?;
                     let item = Item {
                         kind: ItemKind::Skin,
                         id: id.clone(),
-                        hash: hash.clone(),
+                        hash: i.hash.clone(),
                         size: 0,
                         required: false,
                     };
-                    (item, dir.clone())
+                    Some((item, dir.clone()))
                 })
                 .collect(),
             Role::Client(_) => return,
@@ -741,8 +748,10 @@ impl ContentSide {
                 size: 0,
                 required: false,
             };
+            // One skin per id, the first (review Minor 1): a match loads
+            // skins by id, so another of the same id is never shown.
             if hash != NO_HASH
-                && !wanted.iter().any(|w| w.2 == hash)
+                && !wanted.iter().any(|w| w.2 == hash || (w.0 == ItemKind::Skin && w.1 == look.skin))
                 && may_list(&self.local.base, &required, &item)
             {
                 wanted.push((ItemKind::Skin, look.skin.clone(), hash, false));
@@ -760,7 +769,11 @@ impl ContentSide {
             }
             worn
         });
-        h.fetched.retain(|hash, _| wanted.iter().any(|w| !w.3 && w.2 == *hash));
+        // (Or still offered: fetched again, it would change the list every
+        // poll.)
+        h.fetched.retain(|hash, _| {
+            wanted.iter().any(|w| !w.3 && w.2 == *hash) || h.skins.values().any(|s| s.item.hash == *hash)
+        });
         // Progress is kept for what the list names only.
         for sent in h.sent.values_mut() {
             sent.retain(|hash, _| wanted.iter().any(|w| w.2 == *hash));
@@ -825,6 +838,9 @@ impl ContentSide {
             if let Some(peer) = lobby.peer_of(m.id) {
                 self.out.push((peer, ContentMsg::List { revision: h.revision, items: items.clone() }));
             }
+        }
+        if let Some(k) = &h.keeper {
+            k.keep(&items.iter().map(|i| i.hash.clone()).collect::<Vec<String>>());
         }
         h.list = Some(items);
     }
@@ -1192,8 +1208,13 @@ mod tests {
     /// A skin pack `id` (the default skin under another id) in `dir`,
     /// installed in `cache`: its item.
     fn cached_skin(dir: &Path, cache: &Mutex<DownloadCache>, id: &str) -> Item {
+        cached_skin_shaded(dir, cache, id, 0x55)
+    }
+
+    /// `cached_skin` with its first pixel's red channel flipped by `flip`.
+    fn cached_skin_shaded(dir: &Path, cache: &Mutex<DownloadCache>, id: &str, flip: u8) -> Item {
         let from = content_dir().unwrap().join("olx-skin-default");
-        let to = dir.join(id);
+        let to = dir.join(format!("{id}-{flip}"));
         std::fs::create_dir_all(&to).unwrap();
         for e in std::fs::read_dir(&from).unwrap() {
             let e = e.unwrap();
@@ -1205,7 +1226,7 @@ mod tests {
         // Another image too: the content hash does not cover the id.
         let img = rl_pack::image_io::decode_rgba(&std::fs::read(to.join("skin.png")).unwrap()).unwrap();
         let mut pixels = img.as_raw().to_vec();
-        pixels[0] ^= 0x55;
+        pixels[0] ^= flip;
         let img = rl_data::image::RgbaImage::from_raw(img.width(), img.height(), pixels).unwrap();
         std::fs::write(to.join("skin.png"), rl_pack::image_io::encode_rgba(&img)).unwrap();
         let fs = rl_vfs::DirFs::new(&to);
@@ -1268,6 +1289,77 @@ mod tests {
         assert_eq!(host.h().built, built, "the list is not built again");
         assert!(!host.h().fetched.contains_key(&item.hash), "forgotten");
         assert!(host.h().list.as_ref().unwrap().iter().all(|i| i.hash != item.hash), "no longer listed");
+    }
+
+    /// Review Minor 1: two members wearing skins of one id with different
+    /// hashes: the list names the first member's only (a match loads skins
+    /// by id, so the second would never be shown), and the host lays that
+    /// one over.
+    #[test]
+    fn one_skin_is_listed_per_id() {
+        let Some(dir) = content_dir() else { return };
+        let mut host = Host::new(&dir);
+        host.list();
+        let tmp = tempfile::tempdir().unwrap();
+        let first = cached_skin_shaded(tmp.path(), &host.cache, "shared-skin", 0x11);
+        let second = cached_skin_shaded(tmp.path(), &host.cache, "shared-skin", 0x22);
+        assert_ne!(first.hash, second.hash);
+        for (n, item) in [(9, &first), (10, &second)] {
+            host.join(n, Look { skin: item.id.clone(), skin_hash: item.hash.clone(), ..look() });
+            let worn = host.look_of(PeerId::from(n));
+            host.side.receive(
+                PeerId::from(n),
+                ContentMsg::List { revision: 0, items: vec![item.clone()] },
+                Some(&worn),
+            );
+        }
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while host.h().fetched.len() < 2 {
+            assert!(std::time::Instant::now() < until, "both skins are taken: {:?}", host.h().fetched.keys());
+            host.poll();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        for _ in 0..20 {
+            host.poll();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let listed: Vec<&Item> =
+            host.h().list.as_ref().unwrap().iter().filter(|i| i.id == first.id).collect();
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(listed[0].hash, first.hash, "the first member's");
+        let laid = host.side.content().pack_dir(&first.id).map(Path::to_path_buf);
+        assert!(laid.is_some_and(|d| d.ends_with(&first.hash)), "the host draws the listed one");
+        let built = host.h().built;
+        for _ in 0..10 {
+            host.poll();
+        }
+        assert_eq!(host.h().built, built, "the list rests");
+    }
+
+    /// Review Minor 2: the host's own list keeps its fetched skins from
+    /// every eviction of the shared cache, its member-skin fetchers gone.
+    #[test]
+    fn the_hosts_list_is_kept_from_eviction() {
+        let Some(dir) = content_dir() else { return };
+        let mut host = Host::new(&dir);
+        host.list();
+        let tmp = tempfile::tempdir().unwrap();
+        let item = cached_skin(tmp.path(), &host.cache, "member-skin");
+        host.join(9, Look { skin: item.id.clone(), skin_hash: item.hash.clone(), ..look() });
+        let worn = host.look_of(9);
+        host.side.receive(9, ContentMsg::List { revision: 0, items: vec![item.clone()] }, Some(&worn));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !host.h().list.as_ref().is_some_and(|l| l.iter().any(|i| i.hash == item.hash)) {
+            assert!(std::time::Instant::now() < until, "the member's skin is listed");
+            host.poll();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        if let Role::Host(h) = &mut host.side.role {
+            h.skins.clear(); // the member-skin fetchers (and their keepers) gone
+        }
+        let evicted = host.cache.lock().unwrap().evict(&[], 0);
+        assert!(!evicted.evicted.contains(&item.hash), "{evicted:?}");
+        assert!(host.cache.lock().unwrap().contains(&item.hash));
     }
 
     /// Review C2: a member cycling skins makes the host start at most one

@@ -190,7 +190,8 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   needs N MB of content from the host." with Download
   (`LobbyDownload(true)` → `LobbyCommand::ApproveDownloads`) and Leave
   (`LobbyDownload(false)`: leaves as Back does). `megabytes(bytes)`:
-  "73.4 MB", "312 MB".
+  "73.4 MB", "312 MB", in MiB shown as "MB" (the prompt's 50 MiB
+  threshold reads "50.0 MB").
 - **Import job** (`import.rs`, plan 7 task 7): `ImportJob::spawn(path,
   packs)` runs `rl_content::import::discover` and `import` (no prune,
   revision `LOCAL_REVISION`) on a thread named `olx-import` and returns at

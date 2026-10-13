@@ -315,3 +315,32 @@ fn the_shell_clears_the_download_cache() {
     sh.poll();
     assert_eq!(sh.data.download_cache.clone().unwrap().bytes, 0);
 }
+
+/// Review Minor 4: the Options screen reads the cache's sizes (a directory
+/// listing and a file per partial) at most once a second, not every frame.
+#[test]
+fn the_options_read_the_cache_at_most_once_a_second() {
+    let Some(dir) = content_dir() else { return };
+    let data = tempfile::tempdir().unwrap();
+    let cache_dir = Store::open(data.path()).cache_dir().unwrap();
+    let mut sh = menus(&dir, Store::open(data.path()), "Anna", 1.0);
+    sh.act(UiAction::Open(Screen::Options));
+    let start = std::time::Instant::now();
+    sh.poll();
+    let shown = |sh: &Shell| sh.data.download_cache.clone().expect("a download cache").bytes;
+    let before = shown(&sh);
+    // A partial download appears.
+    let hash = "a".repeat(64);
+    std::fs::write(cache_dir.join(format!("{hash}.part")), vec![0u8; 1000]).unwrap();
+    std::fs::write(cache_dir.join(format!("{hash}.part.ron")), format!("(archive: \"{hash}\", size: 2000)"))
+        .unwrap();
+    for _ in 0..10 {
+        sh.poll();
+    }
+    if start.elapsed() < Duration::from_millis(900) {
+        assert_eq!(shown(&sh), before, "not read again within the second");
+    }
+    std::thread::sleep(Duration::from_millis(1100));
+    sh.poll();
+    assert_eq!(shown(&sh), before + 1000, "read again after it");
+}

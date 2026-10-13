@@ -35,7 +35,7 @@ use rl_data::manifest::PackKind;
 use rl_vfs::DirFs;
 
 pub use cache::{
-    CACHE_BYTES, DownloadCache, Eviction, InstallError, MAX_SKIN_ARCHIVE, Partial, PendingInstall,
+    CACHE_BYTES, DownloadCache, Eviction, InstallError, Keeper, MAX_SKIN_ARCHIVE, Partial, PendingInstall,
     SKIN_LIMITS, archive_limits,
 };
 pub use catalog::{Catalog, LevelInfo, MAX_THUMB_BYTES, MAX_THUMB_SIDE, ModInfo, PackSource, ThumbRef};

@@ -23,6 +23,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use rl_data::manifest::PackKind;
 use rl_pack::archive::{self, ArchiveError, Limits};
@@ -158,6 +159,10 @@ pub struct DownloadCache {
     dirty: bool,
     /// Installs begun, for unique `tmp/` names.
     installs: u64,
+    /// The hashes each `Keeper` keeps (review Minor 2): `evict` and
+    /// `trim_partials` keep their union besides the caller's `keep`.
+    keepers: BTreeMap<u64, Vec<String>>,
+    next_keeper: u64,
     /// Holds the directory's lock while the cache lives.
     _lock: fs::File,
 }
@@ -196,6 +201,8 @@ impl DownloadCache {
             index: parsed.unwrap_or_default(),
             dirty: false,
             installs: 0,
+            keepers: BTreeMap::new(),
+            next_keeper: 0,
             _lock: lock,
         };
         // The index only says what was recorded: a pack installed but not
@@ -208,6 +215,11 @@ impl DownloadCache {
 
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// Whether `hash` is in `keep` or kept by a `Keeper`.
+    fn kept(&self, keep: &[&str], hash: &str) -> bool {
+        keep.contains(&hash) || self.keepers.values().any(|k| k.iter().any(|h| h == hash))
     }
 
     fn pack_path(&self, hash: &str) -> PathBuf {
@@ -467,7 +479,8 @@ impl DownloadCache {
         out
     }
 
-    /// Discards partial downloads not in `keep`, oldest first, while the
+    /// Discards partial downloads not in `keep` nor kept by a `Keeper`,
+    /// oldest first, while the
     /// packs and the partials together take more than `limit` bytes;
     /// returns the discarded hashes.
     pub fn trim_partials(&mut self, keep: &[&str], limit: u64) -> Vec<String> {
@@ -477,7 +490,7 @@ impl DownloadCache {
             if total <= limit {
                 break;
             }
-            if keep.contains(&hash.as_str()) {
+            if self.kept(keep, &hash) {
                 continue;
             }
             self.discard_partial(&hash);
@@ -488,7 +501,7 @@ impl DownloadCache {
     }
 
     /// Removes least recently used packs, except those in `keep` (the
-    /// content hashes the lobby lists), until at most `limit` bytes remain
+    /// content hashes the lobby lists) and those a `Keeper` keeps, until at most `limit` bytes remain
     /// or only kept packs are left. A pack that cannot be removed whole is
     /// `stuck`: it leaves the index all the same, so it is never offered
     /// half-removed (`open` adopts it again if its manifest survived).
@@ -499,7 +512,7 @@ impl DownloadCache {
                 .index
                 .entries
                 .iter()
-                .filter(|(h, _)| !keep.contains(&h.as_str()))
+                .filter(|(h, _)| !self.kept(keep, h))
                 .min_by_key(|(h, e)| (e.used, (*h).clone()))
                 .map(|(h, _)| h.clone());
             let Some(h) = victim else { break };
@@ -551,6 +564,48 @@ impl DownloadCache {
         }
         self.save()?;
         failed.map_or(Ok(()), Err)
+    }
+}
+
+/// Keeps a list's hashes in a shared cache from eviction while it lives
+/// (review Minor 2): every list of a process (a host's member-skin
+/// fetchers and its own list, a client's fetcher, both peers of
+/// `--net-sim`) registers with the one cache they share, and each
+/// eviction keeps their union, whoever evicts.
+pub struct Keeper {
+    cache: Arc<Mutex<DownloadCache>>,
+    id: u64,
+}
+
+impl Keeper {
+    /// A keeper of nothing yet, on `cache`.
+    pub fn new(cache: &Arc<Mutex<DownloadCache>>) -> Keeper {
+        let mut c = cache.lock().unwrap_or_else(PoisonError::into_inner);
+        let id = c.next_keeper;
+        c.next_keeper += 1;
+        Keeper { cache: Arc::clone(cache), id }
+    }
+
+    /// Keeps `hashes` (instead of what it kept).
+    pub fn keep(&self, hashes: &[String]) {
+        let mut c = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
+        if hashes.is_empty() {
+            c.keepers.remove(&self.id);
+        } else {
+            c.keepers.insert(self.id, hashes.to_vec());
+        }
+    }
+}
+
+impl Drop for Keeper {
+    fn drop(&mut self) {
+        self.keep(&[]);
+    }
+}
+
+impl std::fmt::Debug for Keeper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Keeper").field("id", &self.id).finish()
     }
 }
 

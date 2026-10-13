@@ -558,3 +558,27 @@ fn hostile_archives_never_install() {
     assert_eq!(cache.total_bytes(), 0);
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1, "nothing outside the cache");
 }
+
+/// Review Minor 2: what any `Keeper` on a shared cache keeps survives every
+/// eviction, whoever evicts; a dropped keeper keeps nothing.
+#[test]
+fn keepers_keep_their_hashes_from_every_eviction() {
+    let root = tempfile::tempdir().unwrap();
+    let cache = std::sync::Arc::new(std::sync::Mutex::new(DownloadCache::open(root.path()).unwrap()));
+    let hashes: Vec<String> = (0..3u8)
+        .map(|i| {
+            let a = archive_of(&skin_pack("x", 70 + i));
+            install(&mut cache.lock().unwrap(), &a, "x");
+            a.hash
+        })
+        .collect();
+    let (one, two) = (rl_content::Keeper::new(&cache), rl_content::Keeper::new(&cache));
+    one.keep(&hashes[..1]);
+    two.keep(&hashes[1..2]);
+    let evicted = cache.lock().unwrap().evict(&[], 0);
+    assert_eq!(evicted.evicted, [hashes[2].clone()]);
+    drop(one);
+    let evicted = cache.lock().unwrap().evict(&[], 0);
+    assert_eq!(evicted.evicted, [hashes[0].clone()]);
+    assert!(cache.lock().unwrap().contains(&hashes[1]));
+}

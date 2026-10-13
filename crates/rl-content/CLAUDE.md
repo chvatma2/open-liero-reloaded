@@ -162,6 +162,11 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   Adoption reads only `pack.ron`, it does not re-verify the content hash:
   a pack `evict` left partly removed (`stuck`) is adopted again if its
   manifest survived (known, left for later).
+  `Keeper::new(&Arc<Mutex<DownloadCache>>)` / `keep(hashes)` registers a
+  list's hashes with the shared cache until it drops: `evict` and
+  `trim_partials` keep the union of every keeper's hashes besides their
+  `keep` (review Minor 2: one process's fetchers, host list and
+  `--net-sim` peers share one cache).
   One cache directory belongs to one open cache (ruling PF11-3): `open`
   holds an exclusive `File::try_lock` on `<dir>/lock` for the cache's life
   and fails with `InstallError::Locked` while another holds it (flock on

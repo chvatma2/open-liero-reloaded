@@ -195,7 +195,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     N35); `waiting_approval` is that number, steady while approved items
     download. `poll(now_us, out)` asks for the next item,
     evicting first (`evict` and `trim_partials`, `keep` the list's hashes,
-    `CACHE_BYTES`), resuming from a partial of the listed size. `receive`
+    `CACHE_BYTES`; every fetcher's list and the host's own list are
+    registered with the shared cache through a `rl_content::Keeper`, so
+    each eviction keeps the union of the process's lists: review Minor 2), resuming from a partial of the listed size. `receive`
     takes the source's `Begin`, `Chunk`, `Unavailable`: a `Begin` whose
     size is not the listed one, above the item's limit or past its end
     fails the item (`Cancel`); another archive than the partial's discards
@@ -224,7 +226,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     downloaded ones laid over (`Content::with_packs`, their verified
     hashes remembered).
     - **Host**: the list is the setup's packs (required) and every
-      member's and bot's skin it has, once by hash (a bot's skin as the
+      member's and bot's skin it has, once by hash and once by id (the
+      first: a match loads skins by id, so another of the id is never
+      shown; review Minor 1) (a bot's skin as the
       host has it, ruling R6-2), each listed once archived; no list
       goes out until every required item is archived (one that cannot be
       is listed with size 0 and refused when asked). A changed list goes

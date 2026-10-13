@@ -463,7 +463,7 @@ fn clears(h: &Harness<'static, App>) -> usize {
 #[test]
 fn options_clears_the_download_cache() {
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
-    h.state_mut().data.download_cache = Ok(DownloadCacheView { bytes: 312_400_000, clear: Ok(()) });
+    h.state_mut().data.download_cache = Ok(DownloadCacheView { bytes: 312 << 20, clear: Ok(()) });
     // Only the options clear.
     assert!(h.state_mut().ui.update(UiAction::ClearDownloadCache).is_empty());
     h.get_by_label("Options").click();

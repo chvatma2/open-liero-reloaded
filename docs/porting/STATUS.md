@@ -893,7 +893,12 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   lacks draw as the default skin. The Options' Online tab shows the
   cache's size and clears it, refused while an online game is on. The
   cache counts each pack by its disk charge (N29), not its bytes, so the
-  budget and eviction see real disk use (final review C2).
+  budget and eviction see real disk use (final review C2). "Never one the
+  current lobby lists" holds for the whole process: every list (a host's
+  member-skin fetchers and its own list, a client's fetcher, both peers
+  of `--net-sim`) registers its hashes with the shared cache
+  (`rl_content::Keeper`), and every eviction keeps their union (final
+  review Minor 2).
 - **N31 - skins by hash.** `Look` gains `skin_hash` (64 lowercase hex).
   A client offers its own skin to the host with a one-item content list
   (R6-1; accepted only for its look's id and hash); the host fetches a
@@ -906,7 +911,9 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   be fetched draws as the default skin. Mod, level and theme are
   *required*. A host starts at most one new skin fetch from a member
   every 5 s (an offer waits; only the look then worn counts), and takes
-  at most 4 `SetLook`s a second from a member (final review C2).
+  at most 4 `SetLook`s a second from a member (final review C2). The
+  host lists one skin per id, the first member's (final review Minor 1:
+  a match loads skins by id, so another of the same id is never shown).
 - **N32 - transfers.** Reliable-channel tag `TAG_CONTENT = 3` carries
   `ContentMsg` both ways (`List`, `Want`, `Begin`, `Chunk`,
   `Unavailable`, `Cancel`); chunks are 32 KiB. A peer serves one archive
@@ -942,7 +949,8 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   not asked about again: a re-sent list (a skin change, a new member)
   never re-prompts for an approved download, and the prompt's number does
   not change while approved items download. A list under the limit
-  approves itself.
+  approves itself. Sizes show in MiB as "MB", the threshold's unit, so
+  the prompt's floor reads "50.0 MB" (final review Minor 7).
 - **N36 (plan 11 task 8) - replays read the caches without opening
   them.** A replay's packs come from the player's content, else from any
   of the game's cache directories (`downloads`, `downloads-2` to `-4`)

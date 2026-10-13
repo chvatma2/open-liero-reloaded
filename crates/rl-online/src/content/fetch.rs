@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use rl_content::{CACHE_BYTES, Content, DownloadCache};
+use rl_content::{CACHE_BYTES, Content, DownloadCache, Keeper};
 use rl_netcode::PeerId;
 use rl_proto::{ContentMsg, Item, NO_HASH};
 
@@ -55,6 +55,9 @@ pub struct Fetcher {
     source: Option<PeerId>,
     /// Every hash the list names (kept by eviction).
     listed: Vec<String>,
+    /// Keeps `listed` from every eviction of the shared cache, whoever
+    /// evicts (review Minor 2).
+    keeper: Keeper,
     /// The list's missing items, in download order.
     downloads: Vec<Download>,
     /// The list's packs in the cache: (id, directory).
@@ -74,6 +77,7 @@ impl Fetcher {
     /// A fetcher using `cache`, shared with the `Worker`.
     pub fn new(cache: Arc<Mutex<DownloadCache>>) -> Fetcher {
         Fetcher {
+            keeper: Keeper::new(&cache),
             cache,
             source: None,
             listed: Vec::new(),
@@ -102,6 +106,7 @@ impl Fetcher {
     pub fn list(&mut self, source: PeerId, items: &[Item], local: &Content) -> Vec<Item> {
         let old_source = self.source.replace(source);
         self.listed = items.iter().map(|i| i.hash.clone()).collect();
+        self.keeper.keep(&self.listed);
         let mut missing = Vec::new();
         let mut cached = Vec::new();
         for it in items.iter().filter(|i| i.hash != NO_HASH) {
@@ -517,6 +522,30 @@ mod tests {
 
     fn chunk(c: char, offset: u64, len: usize) -> ContentMsg {
         ContentMsg::Chunk { hash: sha(c), offset, bytes: vec![1; len] }
+    }
+
+    /// Review Minor 2: what any fetcher on a cache lists is kept by every
+    /// eviction and trim of that cache (a host's member-skin fetchers, a
+    /// client's, both `--net-sim` peers'), not only by the fetcher's own;
+    /// a fetcher dropped keeps nothing.
+    #[test]
+    fn every_fetchers_list_is_kept() {
+        let s = setup();
+        let mut other = Fetcher::new(s.cache.clone());
+        let mut first = Fetcher::new(s.cache.clone());
+        first.list(SRC, &[item('a', ItemKind::Level, 10, true)], &s.local);
+        other.list(SRC + 1, &[item('b', ItemKind::Skin, 10, false)], &s.local);
+        {
+            let mut c = s.cache.lock().unwrap();
+            for h in ['a', 'b', 'c'] {
+                c.append(&sha(h), &sha('f'), 10, 0, &[1; 5]).unwrap();
+            }
+            assert_eq!(c.trim_partials(&[], 0), [sha('c')], "only the unlisted partial goes");
+        }
+        drop(first);
+        let mut c = s.cache.lock().unwrap();
+        assert_eq!(c.trim_partials(&[], 0), [sha('a')], "a dropped fetcher keeps nothing");
+        assert!(c.partial(&sha('b')).is_some());
     }
 
     #[test]

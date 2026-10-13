@@ -233,10 +233,11 @@ pub struct DownloadCacheView {
     pub clear: Result<(), String>,
 }
 
-/// `bytes` in megabytes (10^6) for the player: one decimal below 100 MB
-/// ("73.4 MB"), whole above ("312 MB").
+/// `bytes` in megabytes for the player: MiB (2^20 bytes, the unit of the
+/// download prompt's 50 MB threshold), shown as "MB"; one decimal below
+/// 100 MB ("73.4 MB"), whole above ("312 MB").
 pub fn megabytes(bytes: u64) -> String {
-    let mb = bytes as f64 / 1e6;
+    let mb = bytes as f64 / (1u64 << 20) as f64;
     if mb < 100.0 { format!("{mb:.1} MB") } else { format!("{mb:.0} MB") }
 }
 

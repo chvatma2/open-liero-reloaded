@@ -56,7 +56,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::PoisonError;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
 use rl_audio::Audio;
@@ -176,7 +176,14 @@ pub struct Shell {
     replays: Vec<PendingReplay>,
     /// The download cache every peer shares (plan 11, ruling PF11-3).
     cache: SharedCache,
+    /// When the Options' cache row last read the cache's sizes (`None`
+    /// off the Options screen): at most every `CACHE_READ_EVERY`.
+    cache_read: Option<Instant>,
 }
+
+/// The Options' download cache row reads the cache's sizes (a directory
+/// listing, a file per partial) at most this often (review Minor 4).
+pub const CACHE_READ_EVERY: Duration = Duration::from_secs(1);
 
 /// How long quitting waits for an online match's replay to be made.
 pub const REPLAY_STOP_WAIT: Duration = Duration::from_secs(2);
@@ -226,6 +233,7 @@ impl Shell {
             impair: None,
             replays: Vec::new(),
             cache: Err(String::new()),
+            cache_read: None,
         };
         shell.cache = net::open_download_cache(shell.store.cache_dir());
         if let Err(why) = &shell.cache {
@@ -271,6 +279,7 @@ impl Shell {
             impair: None,
             replays: Vec::new(),
             cache: Err("a game from the command line downloads nothing".into()),
+            cache_read: None,
         }
     }
 
@@ -498,8 +507,16 @@ impl Shell {
     /// again); then loads the game asked for in an earlier frame, if any,
     /// and reports to the menus whether it started.
     pub fn poll(&mut self) -> Vec<Outcome> {
-        if self.ui.screen() == Screen::Options {
+        if self.ui.screen() != Screen::Options {
+            self.cache_read = None;
+        } else if self.cache_read.is_none_or(|t| t.elapsed() >= CACHE_READ_EVERY) {
             self.show_download_cache();
+        } else {
+            // Whether Clear may run needs no disk: current every frame.
+            let clear = self.clear_refused().map_or(Ok(()), Err);
+            if let Ok(view) = &mut self.data.download_cache {
+                view.clear = clear;
+            }
         }
         let mut out = self.poll_import();
         let Some(launch) = self.pending.take() else { return out };
@@ -537,12 +554,15 @@ impl Shell {
 
     /// The options' download cache row: its size (packs and partial
     /// downloads) and whether Clear may run. A cache busy on a peer's
-    /// thread keeps the last row.
+    /// thread keeps the last row (and is read again next poll).
     fn show_download_cache(&mut self) {
         let clear = self.clear_refused().map_or(Ok(()), Err);
         self.data.download_cache = match &self.cache {
             Ok(c) => match c.try_lock() {
-                Ok(c) => Ok(DownloadCacheView { bytes: c.total_bytes() + c.partial_bytes(), clear }),
+                Ok(c) => {
+                    self.cache_read = Some(Instant::now());
+                    Ok(DownloadCacheView { bytes: c.total_bytes() + c.partial_bytes(), clear })
+                }
                 Err(_) => return,
             },
             Err(why) => Err(why.clone()),

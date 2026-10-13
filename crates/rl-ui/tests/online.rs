@@ -722,7 +722,7 @@ fn lobby_shows_downloads_and_the_prompt() {
     v.members[1].missing = vec!["olx-level-dirt-level".into()];
     v.members[1].download = Some(45);
     v.members[0].missing = vec!["olx-skin-x".into()];
-    v.prompt = Some(73_400_000);
+    v.prompt = Some(73 << 20 | 400 << 10);
     in_lobby(h.state_mut(), v);
     settle(&mut h);
     h.get_by_label("Downloads");
@@ -748,7 +748,16 @@ fn lobby_shows_downloads_and_the_prompt() {
     // Outside the lobby the prompt's answers do nothing.
     assert!(h.state_mut().ui.update(UiAction::LobbyDownload(true)).is_empty());
     assert!(h.state_mut().ui.update(UiAction::LobbyDownload(false)).is_empty());
-    assert_eq!(rl_ui::megabytes(312_400_000), "312 MB");
+    assert_eq!(rl_ui::megabytes(312 << 20), "312 MB");
+}
+
+/// Review Minor 7: the prompt's sizes are in the threshold's units
+/// (MiB, shown as "MB"): the 50 MB prompt's floor reads "50.0 MB".
+#[test]
+fn megabytes_match_the_prompts_threshold() {
+    assert_eq!(rl_ui::megabytes(50 * 1024 * 1024), "50.0 MB");
+    assert_eq!(rl_ui::megabytes(73 << 20 | 400 << 10), "73.4 MB");
+    assert_eq!(rl_ui::megabytes(0), "0.0 MB");
 }
 
 /// A player lacking required content cannot say ready: the box is
