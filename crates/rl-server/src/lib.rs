@@ -1,8 +1,9 @@
 //! The headless dedicated server (networking spec §7.4): a lobby without a
 //! local player (`rl_online`'s `PeerRole::Server`), a map rotation, bots
 //! filling empty seats, admins' chat commands, bans kept in a file, LAN
-//! announcements and one log line per event. No window, no GPU, no audio:
-//! it simulates only to run the bots and check checksums.
+//! and Nostr announcements, an invite code and one log line per event. No
+//! window, no GPU, no audio: it simulates only to run the bots and check
+//! checksums.
 //!
 //! [`Server`] does one poll at a time on the caller's clock (tests drive it
 //! in-process); [`run`] polls it on the real clock until a stop flag.
@@ -10,6 +11,7 @@
 pub mod admin;
 pub mod config;
 pub mod files;
+pub mod finding;
 pub mod rotation;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -22,19 +24,19 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use rl_content::{Content, DownloadCache};
-use rl_lobby::{NOT_ADMIN, fingerprint};
+use rl_discovery::{GameSummary, Hosting, Pool, PoolConfig, PoolEvent, RelayStatus, announcement};
+use rl_lobby::{Identity, NOT_ADMIN, fingerprint};
 use rl_net::endpoint::EndpointConfig;
 use rl_net::lan::{Announcer, broadcast_targets};
 use rl_online::replay::MatchRecord;
 use rl_online::{OnlineEvent, OnlinePeer, PeerRole, StartError};
-use rl_proto::{
-    LanAnnounce, LobbyState, Look, MAX_CHAT, MatchEndWire, MatchStartWire, Phase, PublicKey, SeatWire,
-};
+use rl_proto::{LobbyState, Look, MAX_CHAT, MatchEndWire, MatchStartWire, Phase, PublicKey, SeatWire};
 use rl_sim::Keys;
 
 use crate::admin::{Command, Setting, Unban};
 use crate::config::{Config, Visibility};
 use crate::files::{BanList, Who, hex};
+use crate::finding::AddressWatch;
 use crate::rotation::Rotation;
 
 /// A match starts this long after the lobby gathered, forced (players not
@@ -60,6 +62,22 @@ pub const DOWNLOADS_DIR: &str = "downloads";
 struct Known {
     name: String,
     key: PublicKey,
+}
+
+/// Announcing on Nostr (a public server): the relays, when to publish,
+/// and what each relay last said in the log.
+struct Nostr {
+    pool: Pool,
+    announcer: rl_discovery::Announcer,
+    /// Signs the notes: the server's identity.
+    identity: Identity,
+    /// Each relay's last status or refusal logged (said once until it
+    /// changes).
+    said: Vec<Option<String>>,
+    /// The last note's `created_at`: the closing note is newer, or relays
+    /// and lists keep the open one (a tie in the second goes by id).
+    last_unix: u64,
+    events: Vec<PoolEvent>,
 }
 
 /// The running match's counters last logged.
@@ -95,6 +113,11 @@ pub struct Server {
     /// Every entry failed in a row: no start until the server restarts.
     halted: bool,
     announcer: Option<Announcer>,
+    nostr: Option<Nostr>,
+    address: AddressWatch,
+    /// The unix time at an instant: notes' `created_at` follows the
+    /// poll's clock from there.
+    clock: (Instant, u64),
     members: BTreeMap<u8, Known>,
     /// The setup the server last gave the lobby; another (an admin's
     /// `Settings` from the game's lobby) is kept for the next match.
@@ -133,6 +156,7 @@ impl Server {
             None => BanList::default(),
         };
         let setup = rotation.setup(config.fill_bots);
+        let identity = me.clone();
         let endpoint = EndpointConfig { port: config.port, ..EndpointConfig::default() };
         let role = PeerRole::Server(config.host_config()?);
         let unused = Look {
@@ -153,24 +177,62 @@ impl Server {
         }
         let set_by_us = peer.lobby().state().map(|s| s.setup.clone());
         let announcer = match config.visibility {
-            Visibility::Lan => match broadcast_targets().first().map(|t| Announcer::new(*t)) {
-                Some(Ok(a)) => Some(a),
-                Some(Err(e)) => {
-                    line(log, format_args!("warning: no LAN announcements: {e}"));
-                    None
+            Visibility::Public | Visibility::Lan => {
+                match broadcast_targets().first().map(|t| Announcer::new(*t)) {
+                    Some(Ok(a)) => Some(a),
+                    Some(Err(e)) => {
+                        line(log, format_args!("warning: no LAN announcements: {e}"));
+                        None
+                    }
+                    None => None,
                 }
-                None => None,
-            },
-            Visibility::DirectOnly => None,
+            }
+            Visibility::Invite => None,
         };
         let fp = fingerprint(&key);
-        let identity = if made { "a new identity" } else { "its identity" };
-        line(log, format_args!("server {:?} with {identity} {fp} (key {})", config.name, hex(&key)));
+        let which = if made { "a new identity" } else { "its identity" };
+        line(log, format_args!("server {:?} with {which} {fp} (key {})", config.name, hex(&key)));
         line(log, format_args!("bans: {} keys, {} addresses", bans.keys.len(), bans.ips.len()));
         line(log, format_args!("listening on port {} (TCP and UDP)", peer.local_port()));
+        let nostr = match config.visibility {
+            Visibility::Public if config.relays.is_empty() => {
+                line(log, format_args!("warning: public, but no relays configured: not announced on Nostr"));
+                None
+            }
+            Visibility::Public => {
+                line(
+                    log,
+                    format_args!(
+                        "announcing on {} Nostr relays: {}",
+                        config.relays.len(),
+                        config.relays.join(", ")
+                    ),
+                );
+                let pool = Pool::start(PoolConfig { relays: config.relays.clone(), ..PoolConfig::default() });
+                let said = vec![None; config.relays.len()];
+                let announcer = rl_discovery::Announcer::new();
+                Some(Nostr { pool, announcer, identity, said, last_unix: 0, events: Vec::new() })
+            }
+            Visibility::Lan => {
+                line(log, format_args!("announced on the LAN only"));
+                None
+            }
+            Visibility::Invite => {
+                line(log, format_args!("not announced: joined by its invite code or address"));
+                None
+            }
+        };
+        let now = Instant::now();
+        let (address, said) = AddressWatch::start(config.public_ip(), &config.stun, now);
+        line(log, format_args!("{said}"));
         let next = rotation.next();
         line(log, format_args!("next map: {} on {}", next.mod_id, next.level));
-        Ok(Server {
+        let unix =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let server = Server {
+            nostr,
+            address,
+            clock: (now, unix),
             lobby: None,
             peer,
             config,
@@ -194,7 +256,26 @@ impl Server {
             counters: MatchCounters::default(),
             start_names: Vec::new(),
             seeds: 0,
-        })
+        };
+        if server.address.settled() {
+            server.say_invite(log);
+        }
+        Ok(server)
+    }
+
+    /// The server's invite code (decision N42): its key, its relays and
+    /// its public address, when known.
+    pub fn invite(&self) -> rl_discovery::Invite {
+        finding::invite(self.key, &self.config.relays, self.address.current(), self.local_port())
+    }
+
+    fn say_invite(&self, log: &mut dyn Write) {
+        match self.address.current() {
+            Some(IpAddr::V4(_)) => {}
+            Some(IpAddr::V6(_)) => line(log, format_args!("the invite has no address: codes hold IPv4 only")),
+            None => line(log, format_args!("the invite has no address: no public address is known")),
+        }
+        line(log, format_args!("invite code: {}", self.invite().encode()));
     }
 
     /// The TCP and UDP port it listens on.
@@ -218,6 +299,11 @@ impl Server {
     /// what the server decides: commands, bots, starts, bans, the log.
     pub fn poll(&mut self, now: Instant, log: &mut dyn Write) {
         self.now = Some(now);
+        if let Some(said) = self.address.poll(now) {
+            line(log, format_args!("{said}"));
+            self.say_invite(log);
+        }
+        self.relays(log);
         let events = self.peer.poll(now, &mut || Keys(0), &mut |_, _, _| {});
         for e in events {
             self.on_event(e, log);
@@ -239,9 +325,23 @@ impl Server {
         self.lobby = Some((revision, state));
     }
 
-    /// Says goodbye to everyone (`Bye`) and closes every connection.
+    /// Says goodbye to everyone (`Bye`), closes every connection and, when
+    /// it was announced on Nostr, publishes a closing note (the pool's drop
+    /// sends it, bounded at 2 s).
     pub fn shutdown(&mut self, log: &mut dyn Write) {
         self.peer.leave();
+        if let Some(mut n) = self.nostr.take() {
+            if n.announcer.closing()
+                && let Some((_, state)) = &self.lobby
+            {
+                let summary = GameSummary { closed: true, ..self.summary(state) };
+                let now = self.now.unwrap_or_else(Instant::now);
+                let unix = self.unix(now).max(n.last_unix.saturating_add(1));
+                n.pool.publish(announcement(&n.identity, &summary, rl_proto::FINGERPRINT, unix, aux()));
+                line(log, format_args!("closing note published"));
+            }
+            drop(n);
+        }
         self.save_bans(log);
         line(log, format_args!("server stopped"));
     }
@@ -310,7 +410,8 @@ impl Server {
             Ok(c) => c,
             Err(why) => return self.peer.lobby().tell(member, &why),
         };
-        if cmd.admin_only() && !m.admin {
+        let public = self.config.visibility == Visibility::Public;
+        if cmd.admin_only(public) && !m.admin {
             line(log, format_args!("refused {} from {name} (not an admin)", command_word(&cmd)));
             return self.peer.lobby().tell(member, NOT_ADMIN);
         }
@@ -321,9 +422,13 @@ impl Server {
         };
         match cmd {
             Command::Help => {
-                for l in admin::help(m.admin) {
+                for l in admin::help(m.admin, public) {
                     self.peer.lobby().tell(member, l);
                 }
+            }
+            Command::Invite => {
+                let code = self.invite().encode();
+                self.peer.lobby().tell(member, &format!("invite: {code}"));
             }
             Command::Players => {
                 let names: Vec<String> = state
@@ -606,11 +711,73 @@ impl Server {
         self.who_changed = false;
     }
 
+    /// The lobby's summary (one builder for the LAN and Nostr).
+    fn summary(&self, state: &LobbyState) -> GameSummary {
+        let content = self.peer.content();
+        let hosting = Hosting {
+            port: self.local_port(),
+            max_players: self.config.max_players,
+            max_spectators: self.config.max_spectators,
+            password: self.config.password.is_some(),
+            region: self.config.region,
+            addr: self.address.current(),
+            map_name: content.pack_name(&state.setup.level_id).unwrap_or_default().into(),
+        };
+        GameSummary::of_lobby(state, &hosting)
+    }
+
+    /// The LAN broadcast, and on Nostr every minute and at a change (once
+    /// the first STUN question is answered, so the first note has the
+    /// address).
     fn announce(&mut self, state: &LobbyState, now: Instant) {
-        let port = self.local_port();
-        if let Some(a) = &mut self.announcer {
-            a.tick(now, &announcement(state, port, self.config.max_players, self.config.password.is_some()));
+        if self.announcer.is_none() && self.nostr.is_none() {
+            return;
         }
+        let summary = self.summary(state);
+        if let Some(a) = &mut self.announcer {
+            a.tick(now, &summary.lan());
+        }
+        let unix = self.unix(now);
+        if let Some(n) = &mut self.nostr
+            && self.address.settled()
+            && n.announcer.tick(now, &summary)
+        {
+            n.last_unix = unix;
+            n.pool.publish(announcement(&n.identity, &summary, rl_proto::FINGERPRINT, unix, aux()));
+        }
+    }
+
+    /// The relays' news for the log: each status (but connecting) and
+    /// refusal of a note, once until it changes.
+    fn relays(&mut self, log: &mut dyn Write) {
+        let Some(n) = &mut self.nostr else { return };
+        n.pool.poll(&mut n.events);
+        let urls = &self.config.relays;
+        for e in n.events.drain(..) {
+            let (relay, said) = match e {
+                PoolEvent::Status { relay, status: RelayStatus::Connected } => {
+                    (relay, "connected".to_string())
+                }
+                PoolEvent::Status { relay, status: RelayStatus::Failed(why) | RelayStatus::Dropped(why) } => {
+                    (relay, format!("unreachable: {why}"))
+                }
+                PoolEvent::Ok { relay, accepted: false, message, .. } => {
+                    (relay, format!("refused the announcement: {message}"))
+                }
+                _ => continue,
+            };
+            let Some(last) = n.said.get_mut(relay) else { continue };
+            if last.as_deref() != Some(said.as_str()) {
+                let url = urls.get(relay).map_or("?", String::as_str);
+                line(log, format_args!("relay {url}: {said}"));
+                *last = Some(said);
+            }
+        }
+    }
+
+    /// The unix time at `now` (on the poll's clock, from the start's).
+    fn unix(&self, now: Instant) -> u64 {
+        self.clock.1.saturating_add(now.saturating_duration_since(self.clock.0).as_secs())
     }
 }
 
@@ -694,6 +861,7 @@ fn command_word(c: &Command) -> &'static str {
         Command::Settings(_) => "/settings",
         Command::Players => "/players",
         Command::Help => "/help",
+        Command::Invite => "/invite",
     }
 }
 
@@ -725,22 +893,10 @@ fn chunks(head: &str, items: &[String]) -> Vec<String> {
     lines
 }
 
-/// The LAN announcement of the lobby on `port` (as the game's).
-fn announcement(state: &LobbyState, port: u16, max_players: u8, password: bool) -> LanAnnounce {
-    let players = state.members.iter().filter(|m| matches!(m.seat, SeatWire::Player { .. })).count();
-    let spectators = state.members.len() - players;
-    LanAnnounce {
-        fingerprint: rl_proto::FINGERPRINT,
-        name: state.name.clone(),
-        port,
-        players: u8::try_from(players + state.setup.bots.len()).unwrap_or(u8::MAX),
-        max_players,
-        spectators: u8::try_from(spectators).unwrap_or(u8::MAX),
-        mod_id: state.setup.mod_id.clone(),
-        level_id: state.setup.level_id.clone(),
-        password,
-        playing: matches!(state.phase, Phase::Starting | Phase::Playing { .. }),
-    }
+/// A signature's randomness (BIP-340 `aux`; zeros, still safe, when the
+/// system has none).
+fn aux() -> [u8; 32] {
+    rl_net::random_bytes::<32>().unwrap_or([0; 32])
 }
 
 #[cfg(test)]

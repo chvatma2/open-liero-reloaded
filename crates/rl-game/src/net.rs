@@ -363,24 +363,6 @@ pub fn lan_entry(g: &LanGame, level_name: impl Fn(&str) -> Option<String>) -> La
     }
 }
 
-/// The LAN announcement of a hosted lobby on `port`.
-pub fn announcement(state: &LobbyState, port: u16, max_players: u8, password: bool) -> LanAnnounce {
-    let players = state.members.iter().filter(|m| matches!(m.seat, SeatWire::Player { .. })).count();
-    let spectators = state.members.len() - players;
-    LanAnnounce {
-        fingerprint: rl_proto::FINGERPRINT,
-        name: state.name.clone(),
-        port,
-        players: u8::try_from(players + state.setup.bots.len()).unwrap_or(u8::MAX),
-        max_players,
-        spectators: u8::try_from(spectators).unwrap_or(u8::MAX),
-        mod_id: state.setup.mod_id.clone(),
-        level_id: state.setup.level_id.clone(),
-        password,
-        playing: matches!(state.phase, Phase::Starting | Phase::Playing { .. }),
-    }
-}
-
 /// The network overlay's numbers (F3; spec §7.3).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct NetView {

@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use rl_audio::Audio;
 use rl_content::Content;
+use rl_discovery::{GameSummary, Hosting, Region};
 use rl_lobby::{HostConfig, Identity};
 use rl_net::endpoint::EndpointConfig;
 use rl_net::lan::{Announcer, Listener, broadcast_targets};
@@ -621,7 +622,19 @@ impl Shell {
         let host = n.host;
         let downloads = n.downloads.clone();
         if host {
-            n.announce = Some(net::announcement(state, port, n.max_players, n.password));
+            // The level's name from the peer's content (`weapons` holds it).
+            let level = &state.setup.level_id;
+            let map_name = n.weapons.as_ref().and_then(|w| w.0.content.pack_name(level)).unwrap_or_default();
+            let hosting = Hosting {
+                port,
+                max_players: n.max_players,
+                max_spectators: MAX_SPECTATORS,
+                password: n.password,
+                region: Region::Unknown,
+                addr: None,
+                map_name: map_name.into(),
+            };
+            n.announce = Some(GameSummary::of_lobby(state, &hosting).lan());
         }
         let can_start = if host {
             can.map_err(|e| net::start_reason(&e, state))

@@ -1,10 +1,13 @@
 //! The server's config file (networking spec §7.4), RON, every field
 //! documented in `fixtures/server/example.ron`.
 
+use std::net::IpAddr;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, bail};
 use rl_content::Content;
+use rl_discovery::Region;
+use rl_discovery::defaults::{DEFAULT_RELAYS, DEFAULT_STUN};
 use rl_lobby::HostConfig;
 use rl_modes::DeathmatchSettings;
 use rl_net::endpoint::DEFAULT_PORT;
@@ -14,14 +17,19 @@ use serde::Deserialize;
 use crate::files::parse_key;
 use crate::rotation::Rotation;
 
-/// Who can find the server (Nostr arrives in plan 12).
+/// Who can find the server (decision N43). Every server prints its invite
+/// code and is joinable by address.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 pub enum Visibility {
-    /// Announced on the LAN (UDP broadcast on `LAN_PORT` every 2 s) and
-    /// joinable by address.
+    /// Announced on Nostr (every minute, on the configured relays) and on
+    /// the LAN.
+    Public,
+    /// Announced on the LAN only (UDP broadcast on `LAN_PORT` every 2 s).
     Lan,
-    /// Joinable by address only.
-    DirectOnly,
+    /// Not announced: joined by its invite code or address. Plan 10's
+    /// `DirectOnly` reads as this.
+    #[serde(alias = "DirectOnly")]
+    Invite,
 }
 
 /// One map of the rotation: a mod, a level and the match's settings.
@@ -97,6 +105,18 @@ pub struct Config {
     /// members who lack them; plan 11), held to [`UPLOAD_KIB_S`] by
     /// [`Config::upload_rate`]; during a match `rl_online`'s `MATCH_RATE`.
     pub upload_kib_s: u32,
+    /// Nostr relays (`wss://` or `ws://`) a public server announces on;
+    /// the invite names them. Default `DEFAULT_RELAYS`.
+    pub relays: Vec<String>,
+    /// The region the game list shows.
+    pub region: Region,
+    /// The server's public IP address, when STUN cannot learn it (or
+    /// should not be asked).
+    pub public_address: Option<String>,
+    /// STUN servers (`host:port`) asked for the public address when
+    /// `public_address` is not set, at the start and every ten minutes.
+    /// Default `DEFAULT_STUN`; empty: none asked.
+    pub stun: Vec<String>,
 }
 
 /// The default of `upload_kib_s`: `rl_online`'s `HOST_RATE`, 4 MiB/s.
@@ -108,7 +128,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             name: "rust-liero server".into(),
-            visibility: Visibility::Lan,
+            visibility: Visibility::Public,
             password: None,
             port: DEFAULT_PORT,
             max_players: 16,
@@ -120,6 +140,10 @@ impl Default for Config {
             min_players: 1,
             bans_file: None,
             upload_kib_s: DEFAULT_UPLOAD_KIB_S,
+            relays: DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect(),
+            region: Region::Unknown,
+            public_address: None,
+            stun: DEFAULT_STUN.iter().map(|s| s.to_string()).collect(),
         }
     }
 }
@@ -145,7 +169,20 @@ impl Config {
         if config.min_players == 0 || config.min_players > config.max_players {
             bail!("min_players must be 1 to max_players");
         }
+        if let Some(a) = &config.public_address
+            && a.parse::<IpAddr>().is_err()
+        {
+            bail!("public_address {a:?} is not an IP address");
+        }
+        if let Some(r) = config.relays.iter().find(|r| !(r.starts_with("wss://") || r.starts_with("ws://"))) {
+            bail!("relay {r:?}: a wss:// or ws:// URL");
+        }
         Ok(config)
+    }
+
+    /// The configured public address (checked by [`Config::parse`]).
+    pub fn public_ip(&self) -> Option<IpAddr> {
+        self.public_address.as_deref().and_then(|a| a.parse().ok())
     }
 
     /// Bytes per second the server sends content in all: `upload_kib_s`

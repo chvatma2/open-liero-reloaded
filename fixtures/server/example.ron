@@ -7,9 +7,12 @@
 (
     // The lobby's name in the game lists. Default "rust-liero server".
     name: "Office Liero",
-    // Lan: announced on the LAN (UDP 23401, every 2 s) and joinable by
-    // address. DirectOnly: by address only. Default Lan.
-    visibility: Lan,
+    // Who can find it. Public: announced on the Nostr relays below (every
+    // minute) and on the LAN. Lan: announced on the LAN only (UDP 23401,
+    // every 2 s). Invite: not announced. Every server prints its invite code
+    // at the start (rlx1...: its key, relays and public address); anyone
+    // joins with it, or with the address. Default Public.
+    visibility: Public,
     // Some("secret") makes joiners type it. Default None.
     password: None,
     // TCP and UDP; open or forward both for players outside the LAN.
@@ -22,7 +25,8 @@
     // Public keys (64 hex characters) whose chat commands the server takes:
     // /kick <name>, /ban <name>, /next, /settings <field> <value>. Each
     // join's log line names the member's key. (This placeholder is no one's.)
-    // Anyone may use /players and /help. Default [].
+    // Anyone may use /players and /help, and /invite in a Public game
+    // (admins in any). Default [].
     admins: ["0000000000000000000000000000000000000000000000000000000000000000"],
     // Bots join while fewer players than this are seated (players + bots =
     // fill_bots), at most 31. Default 0.
@@ -49,4 +53,33 @@
     // who lack them, players' skins to the others (256 KiB/s while a match
     // runs). Held to 64..65536. Default 4096.
     upload_kib_s: 4096,
+    // Nostr relays (wss:// or ws://) a Public server announces on; the
+    // invite names them too. Default: the game's default relays.
+    relays: [
+        "wss://relay.damus.io",
+        "wss://nos.lol",
+        "wss://relay.primal.net",
+        "wss://relay.snort.social",
+        "wss://offchain.pub",
+        "wss://nostr.oxtr.dev",
+        "wss://relay.nostr.net",
+        "wss://nostr.bitcoiner.social",
+    ],
+    // The region the game list shows: Europe, NorthAmericaEast,
+    // NorthAmericaWest, SouthAmerica, Asia, Oceania, Africa or Unknown.
+    // Default Unknown.
+    region: Europe,
+    // The server's public IP address, for players outside the LAN (the
+    // announcement and the invite carry it). None: STUN servers learn it,
+    // at the start and every 10 minutes. Default None.
+    public_address: None,
+    // STUN servers (host:port) asked for the public address, the first
+    // answering wins. []: none asked. Default: the game's default servers.
+    stun: [
+        "stun.cloudflare.com:3478",
+        "stun.l.google.com:19302",
+        "global.stun.twilio.com:3478",
+        "stun.nextcloud.com:443",
+        "stun.sipgate.net:3478",
+    ],
 )

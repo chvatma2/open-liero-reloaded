@@ -19,6 +19,7 @@ path = "src/main.rs"
 rl-online.workspace = true
 rl-lobby.workspace = true
 rl-net.workspace = true
+rl-discovery.workspace = true
 rl-proto.workspace = true
 rl-content.workspace = true
 rl-bots.workspace = true
@@ -32,6 +33,8 @@ ron.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# The announcement tests run a relay and a STUN server in-process.
+rl-discovery = { workspace = true, features = ["test-relay"] }
 
 [[test]]
 name = "integration"

@@ -415,7 +415,7 @@ impl TransportSpec {
     pub fn server_config(&self) -> Config {
         Config {
             name: "Transport".into(),
-            visibility: Visibility::DirectOnly,
+            visibility: Visibility::Invite,
             password: None,
             port: 0,
             max_players: self.players.max(self.fill_bots).max(1),
@@ -434,6 +434,11 @@ impl TransportSpec {
             min_players: self.players.max(1),
             bans_file: None,
             upload_kib_s: rl_server::config::DEFAULT_UPLOAD_KIB_S,
+            // Nothing leaves the machine: no relay, no STUN server.
+            relays: Vec::new(),
+            region: rl_discovery::Region::Unknown,
+            public_address: None,
+            stun: Vec::new(),
         }
     }
 }

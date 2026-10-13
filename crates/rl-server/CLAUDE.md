@@ -2,7 +2,8 @@
 
 The headless dedicated server (networking spec §7.4): a lobby without a
 local player, a map rotation, bots filling empty seats, admins' chat
-commands, bans kept in a file, LAN announcements and a log line per event.
+commands, bans kept in a file, LAN and Nostr announcements, an invite code
+and a log line per event.
 No window, no GPU, no audio: it simulates only to run the bots and check
 checksums.
 
@@ -15,13 +16,19 @@ rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
   pairs `rl-cli` with `rl-server`). Depends on `rl-online` (`OnlinePeer`
   with `PeerRole::Server`, `LobbyHandle`), `rl-lobby` (fingerprints,
   `NOT_ADMIN`, `DEFAULT_SKIN`), `rl-net` (`EndpointConfig`, LAN
-  `Announcer`, `random_bytes`), `rl-proto`, `rl-content`, `rl-bots`,
+  `Announcer`, `random_bytes`), `rl-discovery` (the summary, `Pool`,
+  `Announcer`, STUN, `Invite`; its `test-relay` feature for the tests), `rl-proto`, `rl-content`, `rl-bots`,
   `rl-modes`, `rl-sim`, serde, ron, clap, ctrlc (the binary's stop) and
   anyhow. Not `rl-ui` (egui): the identity file's owner-only writing is replicated in `files.rs`.
 - **`config.rs`**: `Config::parse` (RON, `deny_unknown_fields`, every field
   defaulted but the rotation; bounds: 1-32 players, ≤ 16 spectators,
   `fill_bots` ≤ 31, `min_players` 1..=`max_players`, admins 64 hex
-  characters), `Visibility::{Lan, DirectOnly}`, rotation `Entry` (`mod`,
+  characters), `Visibility::{Public, Lan, Invite}` (N43; default
+  `Public`; plan 10's `DirectOnly` reads as `Invite`), `relays` (default
+  `DEFAULT_RELAYS`; each `wss://` or `ws://`), `region` (default
+  `Unknown`; an unknown name reads as `Unknown`), `public_address` (an IP,
+  checked; `public_ip()`), `stun` (default `DEFAULT_STUN`; `[]` asks
+  none), rotation `Entry` (`mod`,
   `level`, `time_limit` minutes, `kill_limit`, `lives`, `bonuses`),
   `host_config`, `check(content)` (the rotation against the packs),
   `upload_kib_s` (plan 11: content sent in all, KiB/s; default
@@ -44,7 +51,9 @@ rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
   case, else ≥ 8 hex characters of one key; exactly one ban), `/next`,
   `/settings <time_limit|kill_limit|lives|bonuses> <value>` (≤ 16
   characters, finite), `/players`, `/help` (a deviation from
-  the brief: anyone may ask for help; it lists only what the asker may use).
+  the brief: anyone may ask for help; it lists only what the asker may use),
+  `/invite` (the code; anyone's in a `Public` game, whose note is public
+  anyway, else admins': `admin_only(public)`, `help(admin, public)`).
   Command words and fields in any case.
 - **`files.rs`**: `server-identity.ron` (`(version: 1, secret: "<64 hex>")`,
   the game's `identity.ron` format, written atomically and owner-only;
@@ -54,9 +63,20 @@ rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
   `who` the name and `/banip` address of a key, for `/unban`; atomic;
   missing = none; a bad key or over 4 MiB is an error), `hex`,
   `parse_key`.
+- **`finding.rs`** (plan 12a): `AddressWatch` (N40): the configured
+  `public_address` wins; else `stun::public_ip(stun, 3 s)` on a thread at
+  the start and every `ADDRESS_EVERY` (10 minutes), an answer kept only
+  when `list::is_global`; a later round without an answer keeps the
+  address, one answering a non-public address drops it; `poll` returns a
+  log line when the address is first settled or changes. `relay_hints`
+  (default relays by index, plus the first other URL of at most
+  `MAX_URL_BYTES`; `encode` truncates, PF12-6) and `invite(key, relays,
+  addr, port)` (IPv4 only).
 - **`lib.rs`, `Server`**: `start(config, content, data_dir, log)` (identity,
   bans into the lobby and the gate, the rotation, `PeerRole::Server` on the
-  config's port, LAN `Announcer` for `Lan`; the download cache
+  config's port, LAN `Announcer` for `Public` and `Lan`, a Nostr `Pool` on
+  `relays` for `Public` (none, with a warning, when `relays` is empty); the
+  address as `AddressWatch` says (logged); the download cache
   `<data>/downloads`, `DOWNLOADS_DIR`, logged, shared with the peer as
   `PeerContent { cache, upload_rate }`: the server serves its packs to
   members lacking them and fetches members' skins it lacks into it;
@@ -64,7 +84,19 @@ rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
   the data directory) a warning line, and the server runs without one,
   still serving its packs, members' skins it lacks drawn as the
   default), `poll(now, log)`, `shutdown`
-  (`Bye` to everyone), `local_port`, `key`. Each poll (the lobby copied
+  (`Bye` to everyone; then a public server's closing note, `created_at`
+  after the last note's, and the pool dropped, which flushes it within
+  2 s), `local_port`, `key`, `invite()`. The log prints `invite code:
+  rlx1…` once the address is settled (at the start when configured or no
+  STUN is asked, else at STUN's first answer, within about 3 s) and again
+  whenever the address changes. Announcements: `GameSummary::of_lobby` with
+  the level's pack name, the config's maximums, password flag, region and
+  the public address on the local port; the LAN gets `summary.lan()` every
+  poll, Nostr an `announcement` signed with the server's identity when
+  the `Announcer` says (every minute, at a change after 12 s), not before
+  the address is settled; `created_at` is the start's unix time plus the
+  poll clock's elapsed time. Relay statuses (not `Connecting`) and refused
+  notes are logged once per relay until they change. Each poll (the lobby copied
   only when `LobbyHandle::revision` changed): the peer's events
   (chat logged, a `/` line run as a command for that member id: admins by
   the lobby's `admin` flag, others get `NOT_ADMIN`; names matched ignoring
@@ -127,8 +159,16 @@ rotations are in the committed packs; `upload_kib_s` (default, clamped);
 a member lacking Dirt Level downloads it from the server and plays,
 another's skin the server lacks lands in `<data>/downloads` (held:
 `Locked`); with that cache held by another, a warning, the level still
-served, no skin fetched. Unit tests: command parsing, `/unban` targets, hex keys,
+served, no skin fetched; finding the server (plan 12a, with rl-discovery's
+in-process `TestRelay` and `StunResponder`: nothing leaves the machine, so
+the shared `config` is `Invite` with `stun: []`): a public server listed by
+a `GameList` subscribed to the relay with the right summary and the STUN
+address, `/invite` for anyone, a closing note at shutdown; the printed
+invite joins (`expected_host`), a forged key is refused (`WRONG_HOST`),
+`/invite` admins only; an invite-only server publishes nothing and keeps no
+private STUN answer; the address asked again after ten minutes (a new
+invite printed); an old config (`DirectOnly`, no new fields) loads. Unit tests: command parsing, `/unban` targets, hex keys,
 the bans and identity files, the log's rotation (and a rename that
 fails, injected), notices split at 200
-characters, UTC dates.
+characters, UTC dates, relay hints, IPv4-only invites, the address watch.
 Cross-build: `cargo build --release --target x86_64-pc-windows-gnu -p rl-server`.

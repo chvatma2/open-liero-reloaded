@@ -22,7 +22,8 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `rl-audio`, `rl-input`, `rl-sim`, `rl-modes`, `rl-bots`, `rl-replay`,
   `rl-terrain`, `rl-pack`, `rl-online`, `rl-netcode`, `rl-proto`,
   `rl-lobby` (identities, host settings), `rl-net` (endpoint settings,
-  LAN announcements), plus winit,
+  LAN announcements), `rl-discovery` (the hosted lobby's summary,
+  `GameSummary::of_lobby`, shared with rl-server), plus winit,
   wgpu, gilrs and egui / egui-wgpu / egui-winit 0.36.2 (exact pins). Logs
   are `eprintln!("warning: ...")`, each once.
 - **Menus first** (`main.rs`, `shell.rs`, plan 7 task 2): without a flag
@@ -257,7 +258,8 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   weapon screen's menu for the lobby's mod (`net::weapon_menu`, decision
   N19, from the peer's content, made again when it changes: a downloaded
   mod counts, `net::WeaponsKey`), the host's LAN
-  announcement (`Announcer`, `Visibility::Lan`); `Chat` ("name: text",
+  announcement (`Announcer`, `Visibility::Lan`; `GameSummary::of_lobby(..).lan()`,
+  the level's name from the peer's content); `Chat` ("name: text",
   `LineKind::Chat`), `Notice` and `Left` ("name left") → the lobby's chat
   (`net::CHAT_KEEP` lines) and the HUD log; `MatchStarting` → the last
   match's view ends, `setup::load_online` (from `OnlinePeer::content`,

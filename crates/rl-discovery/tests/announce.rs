@@ -124,3 +124,151 @@ fn closing_without_a_published_note_needs_no_note() {
     let mut a = Announcer::new();
     assert!(!a.closing());
 }
+
+fn member(id: u8, seat: rl_proto::SeatWire) -> rl_proto::Member {
+    rl_proto::Member {
+        id,
+        key: [id; 32],
+        look: rl_proto::Look {
+            name: format!("Worm {id}"),
+            colour: [1, 2, 3],
+            skin: "olx-skin-default".into(),
+            skin_hash: rl_proto::NO_HASH.into(),
+        },
+        seat,
+        ready: false,
+        missing: Vec::new(),
+        ping_ms: None,
+        admin: false,
+        download: None,
+    }
+}
+
+fn lobby(phase: rl_proto::Phase, bots: usize) -> rl_proto::LobbyState {
+    use rl_proto::SeatWire::*;
+    let bot = rl_proto::BotWire { difficulty: 1, personality: 0, loadout: 0, look: member(99, Waiting).look };
+    rl_proto::LobbyState {
+        name: "Office".into(),
+        phase,
+        setup: rl_proto::MatchSetupWire {
+            mod_id: "olx-classic".into(),
+            level_id: "olx-level-dirt-level".into(),
+            packs: vec![
+                ("olx-level-dirt-level".into(), "cd".repeat(32)),
+                ("olx-classic".into(), "ab".repeat(32)),
+            ],
+            rules: rl_proto::RulesWire {
+                lives: -2,
+                kill_limit: 15,
+                time_limit_min: 6.0,
+                allow_negative_score: true,
+                death_decreases_score: 0.0,
+                suicide_decreases_score: false,
+                sprees: [0; 5],
+                dying_sprees: [0; 5],
+            },
+            bonuses: true,
+            loading_time: 100,
+            restrictions: String::new(),
+            bots: vec![bot; bots],
+        },
+        members: vec![
+            member(1, Player { slot: 0 }),
+            member(2, Player { slot: 1 }),
+            member(3, Spectator),
+            member(4, Waiting),
+        ],
+    }
+}
+
+fn hosting() -> Hosting {
+    Hosting {
+        port: 23400,
+        max_players: 8,
+        max_spectators: 4,
+        password: true,
+        region: Region::Oceania,
+        addr: Some(IpAddr::V4(Ipv4Addr::new(81, 2, 69, 142))),
+        map_name: "Dirt Level".into(),
+    }
+}
+
+#[test]
+fn one_builder_summarizes_a_lobby_for_nostr_and_the_lan() {
+    let s = GameSummary::of_lobby(&lobby(rl_proto::Phase::Gathering, 3), &hosting());
+    assert_eq!(
+        s,
+        GameSummary {
+            v: rl_proto::PROTOCOL_VERSION,
+            name: "Office".into(),
+            mode: "deathmatch".into(),
+            map: "olx-level-dirt-level".into(),
+            map_name: "Dirt Level".into(),
+            mod_id: "olx-classic".into(),
+            mod_hash: "ab".repeat(32),
+            // Two seated members and three bots; the waiting member watches.
+            players: 5,
+            max_players: 8,
+            spectators: 2,
+            max_spectators: 4,
+            password: true,
+            region: Region::Oceania,
+            playing: false,
+            addr: Some(IpAddr::V4(Ipv4Addr::new(81, 2, 69, 142))),
+            port: 23400,
+            closed: false,
+        }
+    );
+    // A note of it is valid.
+    let e = announcement(&host(), &s, rl_proto::FINGERPRINT, 1000, [1; 32]);
+    assert_eq!(parse_announcement(&e).unwrap().0, s);
+    // The LAN announcement counts the same.
+    assert_eq!(
+        s.lan(),
+        rl_proto::LanAnnounce {
+            fingerprint: rl_proto::FINGERPRINT,
+            name: "Office".into(),
+            port: 23400,
+            players: 5,
+            max_players: 8,
+            spectators: 2,
+            mod_id: "olx-classic".into(),
+            level_id: "olx-level-dirt-level".into(),
+            password: true,
+            playing: false,
+        }
+    );
+    let playing = GameSummary::of_lobby(&lobby(rl_proto::Phase::Playing { tick: 9 }, 0), &hosting());
+    assert!(playing.playing && playing.lan().playing);
+    assert!(GameSummary::of_lobby(&lobby(rl_proto::Phase::Starting, 0), &hosting()).playing);
+    assert!(!GameSummary::of_lobby(&lobby(rl_proto::Phase::Results, 0), &hosting()).playing);
+}
+
+#[test]
+fn the_builder_keeps_its_notes_valid() {
+    // More worms than seats, more watchers than places: held to the maximums.
+    let small = Hosting { max_players: 2, max_spectators: 1, ..hosting() };
+    let s = GameSummary::of_lobby(&lobby(rl_proto::Phase::Gathering, 3), &small);
+    assert_eq!((s.players, s.spectators), (2, 1));
+    // A blank or bad display name falls back to the level's id; a long one is cut.
+    for bad in ["", "  ", "Dirt\u{0}Level"] {
+        let s = GameSummary::of_lobby(
+            &lobby(rl_proto::Phase::Gathering, 0),
+            &Hosting { map_name: bad.into(), ..hosting() },
+        );
+        assert_eq!(s.map_name, "olx-level-dirt-level", "{bad:?}");
+    }
+    let long = "A".repeat(100);
+    let s = GameSummary::of_lobby(
+        &lobby(rl_proto::Phase::Gathering, 0),
+        &Hosting { map_name: long, ..hosting() },
+    );
+    assert_eq!(s.map_name.chars().count(), announce::MAX_MAP_NAME);
+    // No hash for the mod: the "unknown" hash, still a valid note.
+    let mut state = lobby(rl_proto::Phase::Gathering, 0);
+    state.setup.packs.clear();
+    let s = GameSummary::of_lobby(&state, &hosting());
+    assert_eq!(s.mod_hash, rl_proto::NO_HASH);
+    let e = announcement(&host(), &s, 1, 1000, [1; 32]);
+    assert!(parse_announcement(&e).is_ok());
+}

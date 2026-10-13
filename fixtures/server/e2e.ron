@@ -1,11 +1,13 @@
 // The dedicated server `cargo xtask e2e`'s online run joins (`xtask/src/e2e.rs`,
 // `fixtures/autoplay/online.ron`): port 0 (the run reads the port from the
-// log's "listening on port N" and types it in the game), by address only,
+// log's "listening on port N" and types it in the game), by address only
+// (invite only, asking no STUN server: nothing leaves the machine),
 // no fill bots, one short match on Dirt Level that starts when the game's
 // player and the run's bot client (`rl-cli net-client --bot`) are both ready.
 (
     name: "e2e server",
-    visibility: DirectOnly,
+    visibility: Invite,
+    stun: [],
     port: 0,
     max_players: 4,
     max_spectators: 2,

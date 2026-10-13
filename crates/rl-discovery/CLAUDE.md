@@ -160,7 +160,15 @@ test relay, relay pool, announcements, game list, STUN and invite codes
   only, no pem) is optional behind `test-relay`. The crate's own
   dev-dependency on itself turns the feature on for its tests.
 - **`announce`** (N39): `GameSummary` (JSON, mod id under `mod`; `mode`
-  free, at most 16 chars; unknown `region` reads as `Unknown`), `announcement(..)`
+  free, at most 16 chars; unknown `region` reads as `Unknown`);
+  `GameSummary::of_lobby(&LobbyState, &Hosting)`, the one summary of a
+  hosted lobby for rl-server and rl-game (plan 12a Task 9: here, since
+  `LobbyState` and `LanAnnounce` are rl-proto's, with no new same-layer
+  pair): players = seated members + bots, spectators = the other members,
+  each held to its maximum, `playing` from `Starting` to `Playing`, mode
+  "deathmatch", the mod's hash from the setup's packs (else `NO_HASH`),
+  `map_name` cut to 40 characters (blank or invalid: the level id);
+  `lan()` is the same game's `LanAnnounce`. `announcement(..)`
   (tags `d`, `t`, `f` = 16 lowercase hex, `expiration` +180 s, +10 s when
   `closed`), `parse_announcement` (validates names, ids and counts, no address policy; refuses
   a missing or malformed `f`; does not verify the signature) and the sans-IO

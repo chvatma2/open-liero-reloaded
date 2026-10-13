@@ -1,23 +1,29 @@
 //! The dedicated server (networking spec §7.4) driven in-process against
 //! `rl_online` clients on 127.0.0.1: a rotation played to its next entry,
-//! admins' chat commands, bans kept across a restart, the example config.
+//! admins' chat commands, bans kept across a restart, the example config,
+//! announcements on an in-process relay and the invite code.
 //! Classic on Dirt Level from `RL_CONTENT_DIR` (skipped with a notice
 //! without it); every wait is bounded, each test under 20 s.
 
 use std::io::Write;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rl_content::Content;
+use rl_discovery::defaults::{DEFAULT_RELAYS, DEFAULT_STUN};
+use rl_discovery::{
+    GameList, GameSummary, Invite, ListedGame, Pool, PoolConfig, PoolEvent, Region, StunResponder, TestRelay,
+    parse_announcement,
+};
 use rl_lobby::{Identity, NOT_ADMIN};
 use rl_net::endpoint::EndpointConfig;
 use rl_online::content::DownloadState;
 use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{Look, Phase, PublicKey, SeatWire};
-use rl_server::config::Config;
+use rl_server::config::{Config, Visibility};
 use rl_server::files::{IDENTITY_FILE, hex};
 use rl_server::{NOT_AN_ADMIN_TARGET, Server, run};
 use rl_sim::Keys;
@@ -59,14 +65,16 @@ fn look(name: &str) -> Look {
     }
 }
 
-/// A server's config: port 0, no LAN announcements, Classic on Dirt Level
-/// then on Liero Factory, each `minutes` long.
+/// A server's config: port 0, invite only (no LAN or Nostr announcements,
+/// no STUN: nothing leaves the machine), Classic on Dirt Level then on
+/// Liero Factory, each `minutes` long.
 fn config(admins: &[PublicKey], fill_bots: u8, start_when_ready: bool, minutes: f32) -> Config {
     let admins: Vec<String> = admins.iter().map(|k| format!("{:?}", hex(k))).collect();
     let text = format!(
         r#"(
             name: "Test server",
-            visibility: DirectOnly,
+            visibility: Invite,
+            stun: [],
             password: None,
             port: 0,
             max_players: 8,
@@ -207,9 +215,21 @@ impl Rig {
 
     /// A client of its own look, content and download cache.
     fn join_with(&mut self, me: Identity, look: Look, content: Content, downloads: PeerContent) -> usize {
-        let key = me.public();
         let addr = SocketAddr::from(([127, 0, 0, 1], self.server().local_port()));
         let role = PeerRole::Client { addr, password: None, expected_host: None };
+        self.join_role(me, look, content, downloads, role)
+    }
+
+    /// A client joining as `role`.
+    fn join_role(
+        &mut self,
+        me: Identity,
+        look: Look,
+        content: Content,
+        downloads: PeerContent,
+        role: PeerRole,
+    ) -> usize {
+        let key = me.public();
         let cfg = EndpointConfig { port: 0, ..EndpointConfig::default() };
         let p = OnlinePeer::start(role, cfg, me, look, content, None, downloads).unwrap();
         self.clients.push(Client {
@@ -644,10 +664,16 @@ fn the_fixture_configs_parse() {
     assert_eq!(config.port, rl_net::endpoint::DEFAULT_PORT);
     assert_eq!(config.rotation.len(), 2);
     assert_eq!(config.upload_kib_s, rl_server::config::DEFAULT_UPLOAD_KIB_S);
+    // It shows the defaults of the lists.
+    let defaults = Config::default();
+    assert_eq!((&config.relays, &config.stun), (&defaults.relays, &defaults.stun));
+    assert_eq!(config.visibility, Visibility::Public);
     // `cargo xtask e2e`'s: port 0, one short match for the game and a bot client.
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/server/e2e.ron");
     let e2e = Config::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!((e2e.port, e2e.min_players, e2e.fill_bots, e2e.rotation.len()), (0, 2, 0, 1));
+    // The e2e run stays on the machine: invite only, no STUN.
+    assert_eq!((e2e.visibility, e2e.stun.len()), (Visibility::Invite, 0));
     let Some(dir) = content_dir() else { return };
     // Their rotations' mods and levels are the committed packs.
     let content = content(&dir);
@@ -773,4 +799,262 @@ fn a_server_without_its_cache_still_serves_its_packs() {
     }
     assert!(cached_skins(rig.data.path()).is_empty(), "nothing fetched");
     drop(held);
+}
+
+// ---- finding the server (plan 12a): Nostr, STUN, the invite ----
+
+/// The public address the test's STUN server answers (a global one: no
+/// packet is ever sent to it).
+const PUBLIC: Ipv4Addr = Ipv4Addr::new(81, 2, 69, 142);
+/// Another public address, after the first changed.
+const PUBLIC_LATER: Ipv4Addr = Ipv4Addr::new(81, 2, 69, 143);
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+}
+
+/// The last invite code the log printed.
+fn printed_invite(log: &str) -> Option<Invite> {
+    let code = log.lines().rev().find_map(|l| l.strip_prefix("invite code: "))?;
+    Some(Invite::decode(code).unwrap_or_else(|e| panic!("the printed code {code:?}: {e}")))
+}
+
+/// A browser's view of `relay`: a pool subscribed to announcements and the
+/// game list it feeds.
+struct Browser {
+    pool: Pool,
+    list: GameList,
+}
+
+impl Browser {
+    fn new(relay: &TestRelay) -> Browser {
+        let mut pool = Pool::start(PoolConfig { relays: vec![relay.url()], ..PoolConfig::default() });
+        pool.subscribe("games", vec![GameList::filter()]);
+        Browser { pool, list: GameList::new(rl_proto::FINGERPRINT) }
+    }
+
+    fn game(&mut self, key: PublicKey) -> Option<ListedGame> {
+        let mut out = Vec::new();
+        self.pool.poll(&mut out);
+        for e in out {
+            if let PoolEvent::Event { event, .. } = e {
+                self.list.offer(&event, unix_now());
+            }
+        }
+        self.list.games().into_iter().find(|g| g.key == key)
+    }
+}
+
+#[test]
+fn a_public_server_is_listed() {
+    let Some(dir) = content_dir() else { return };
+    let relay = TestRelay::start();
+    let stun = StunResponder::start(SocketAddr::from((PUBLIC, 40000)));
+    let mut cfg = config(&[], 0, false, 1.0);
+    cfg.visibility = Visibility::Public;
+    cfg.relays = vec![relay.url()];
+    cfg.stun = vec![stun.server()];
+    cfg.region = Region::Europe;
+    let mut rig = Rig::new(dir, cfg);
+    let (key, port) = (rig.server().key(), rig.server().local_port());
+    let mut browser = Browser::new(&relay);
+    let mut listed = None;
+    rig.run_until(Duration::from_secs(15), "a browser lists the server", |_| {
+        listed = browser.game(key);
+        listed.is_some()
+    });
+    let game = listed.unwrap();
+    assert!(game.compatible, "this build's fingerprint");
+    let s = &game.summary;
+    assert_eq!(s.mod_hash.len(), 64, "the mod's content hash");
+    assert_ne!(s.mod_hash, rl_proto::NO_HASH);
+    let expected = GameSummary {
+        v: rl_proto::PROTOCOL_VERSION,
+        name: "Test server".into(),
+        mode: "deathmatch".into(),
+        map: DIRT.into(),
+        map_name: "Dirt Level".into(),
+        mod_id: "olx-classic".into(),
+        mod_hash: s.mod_hash.clone(),
+        players: 0,
+        max_players: 8,
+        spectators: 0,
+        max_spectators: 4,
+        password: false,
+        region: Region::Europe,
+        playing: false,
+        addr: Some(IpAddr::V4(PUBLIC)),
+        port,
+        closed: false,
+    };
+    assert_eq!(*s, expected);
+    let log = rig.log_text();
+    assert!(log.contains("public address 81.2.69.142 (STUN)"), "{log}");
+    let invite = printed_invite(&log).expect("the invite printed at the start");
+    assert_eq!((invite.key, invite.addr), (key, Some(SocketAddr::from((PUBLIC, port)))));
+    assert_eq!(invite.relay_urls(), vec![relay.url()], "the configured relay");
+
+    // In a public game the invite is no secret: anyone may ask for it.
+    let c = rig.join_all(&["Anna"])[0];
+    rig.say(c, "/invite");
+    rig.hears(c, "invite: ");
+    let heard = rig.clients[c].notices().iter().find_map(|n| n.strip_prefix("invite: ")).unwrap().to_string();
+    assert_eq!(Invite::decode(&heard).unwrap(), invite);
+
+    // Stopping publishes a closing note (the pool's drop flushes it).
+    rig.server.take().unwrap().shutdown(&mut rig.log);
+    let closed = || {
+        relay
+            .events()
+            .iter()
+            .any(|e| e.pubkey == key && parse_announcement(e).is_ok_and(|(s, _)| s.closed && s.port == port))
+    };
+    let start = Instant::now();
+    while !closed() {
+        assert!(start.elapsed() < Duration::from_secs(5), "a closing note; the log:\n{}", rig.log_text());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn the_invite_joins_the_server() {
+    let Some(dir) = content_dir() else { return };
+    let admin = identity();
+    let mut cfg = config(&[admin.public()], 0, false, 1.0);
+    cfg.public_address = Some("127.0.0.1".into());
+    let mut rig = Rig::new(dir, cfg);
+    let (key, port) = (rig.server().key(), rig.server().local_port());
+    // Printed at the start: the key, the default relays (as hints: three
+    // fit), the configured address.
+    let log = rig.log_text();
+    assert!(log.contains("public address 127.0.0.1 (configured)"), "{log}");
+    let invite = printed_invite(&log).expect("the invite printed at the start");
+    assert_eq!(invite.key, key);
+    assert_eq!(invite.addr, Some(SocketAddr::from(([127, 0, 0, 1], port))));
+    assert_eq!(invite.relay_urls(), DEFAULT_RELAYS[..3].iter().map(|r| r.to_string()).collect::<Vec<_>>());
+
+    // Joining by the code: its address, expecting its key.
+    let join = |rig: &mut Rig, me: Identity, name: &str, invite: &Invite| {
+        let role =
+            PeerRole::Client { addr: invite.addr.unwrap(), password: None, expected_host: Some(invite.key) };
+        let c = content(&rig.content_dir);
+        rig.join_role(me, look(name), c, no_downloads(), role)
+    };
+    let a = join(&mut rig, admin, "Anna", &invite);
+    let b = join(&mut rig, identity(), "Bert", &invite);
+    rig.run_until(Duration::from_secs(10), "the invited join", |r| {
+        r.clients[a].welcomed() && r.clients[b].welcomed()
+    });
+    // A code of another key at the same address is not this game.
+    let forged = Invite { key: identity().public(), ..invite.clone() };
+    let f = join(&mut rig, identity(), "Cid", &forged);
+    rig.run_until(Duration::from_secs(10), "the forged code is refused", |r| {
+        r.clients[f].refused().is_some()
+    });
+    assert_eq!(rig.clients[f].refused(), Some(rl_online::peer::WRONG_HOST));
+
+    // Invite only: the admin may ask for the code, the others not.
+    rig.say(a, "/invite");
+    rig.hears(a, "invite: ");
+    let heard = rig.clients[a].notices().iter().find_map(|n| n.strip_prefix("invite: ")).unwrap().to_string();
+    assert_eq!(Invite::decode(&heard).unwrap(), invite);
+    rig.say(b, "/invite");
+    rig.hears(b, NOT_ADMIN);
+}
+
+#[test]
+fn an_invite_server_is_not_announced() {
+    let Some(dir) = content_dir() else { return };
+    let relay = TestRelay::start();
+    // STUN answers a private address (a router of a router): not public.
+    let stun = StunResponder::start(SocketAddr::from(([10, 1, 2, 3], 40000)));
+    let mut cfg = config(&[], 0, false, 1.0);
+    cfg.relays = vec![relay.url()];
+    cfg.stun = vec![stun.server()];
+    let mut rig = Rig::new(dir, cfg);
+    rig.run_until(Duration::from_secs(10), "the invite printed", |r| r.log_text().contains("invite code: "));
+    let log = rig.log_text();
+    assert!(log.contains("no public address (STUN answered 10.1.2.3, not a public address)"), "{log}");
+    assert_eq!(printed_invite(&log).unwrap().addr, None);
+    assert_eq!(stun.answered(), 1);
+    let start = Instant::now();
+    rig.run_until(Duration::from_secs(5), "a second of polls", |_| start.elapsed() > Duration::from_secs(1));
+    rig.server.take().unwrap().shutdown(&mut rig.log);
+    assert!(relay.events().is_empty(), "nothing published");
+}
+
+#[test]
+fn the_public_address_is_checked_again() {
+    let Some(dir) = content_dir() else { return };
+    // The first server answers first; once it is gone, the second does.
+    let first = StunResponder::start(SocketAddr::from((PUBLIC, 40000)));
+    let second = StunResponder::start(SocketAddr::from((PUBLIC_LATER, 40000)));
+    let mut cfg = config(&[], 0, false, 1.0);
+    cfg.stun = vec![first.server(), second.server()];
+    let mut rig = Rig::new(dir, cfg);
+    let port = rig.server().local_port();
+    rig.run_until(Duration::from_secs(10), "the address", |r| r.log_text().contains("invite code: "));
+    assert_eq!(printed_invite(&rig.log_text()).unwrap().addr, Some(SocketAddr::from((PUBLIC, port))));
+    drop(first);
+    // Nothing is asked again within ten minutes …
+    let Rig { server, log, .. } = &mut rig;
+    let server = server.as_mut().unwrap();
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_millis(300) {
+        server.poll(Instant::now() + Duration::from_secs(590), log);
+    }
+    assert_eq!(second.answered(), 0);
+    // … then the new address is learnt and a new invite printed.
+    while !String::from_utf8_lossy(log).contains("public address 81.2.69.143 (STUN)") {
+        assert!(
+            t0.elapsed() < Duration::from_secs(10),
+            "the new address; the log:\n{}",
+            String::from_utf8_lossy(log)
+        );
+        server.poll(Instant::now() + Duration::from_secs(601), log);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(printed_invite(&rig.log_text()).unwrap().addr, Some(SocketAddr::from((PUBLIC_LATER, port))));
+}
+
+/// Plan 10's configs (`DirectOnly`, none of the new fields) still load.
+#[test]
+fn an_old_config_still_loads() {
+    let old = r#"(
+        name: "Old",
+        visibility: DirectOnly,
+        rotation: [(mod: "olx-classic", level: "olx-level-dirt-level")],
+    )"#;
+    let c = Config::parse(old).unwrap();
+    assert_eq!(c.visibility, Visibility::Invite);
+    assert_eq!(c.relays, DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect::<Vec<_>>());
+    assert_eq!(c.stun, DEFAULT_STUN.iter().map(|r| r.to_string()).collect::<Vec<_>>());
+    assert_eq!((c.region, c.public_address.as_deref()), (Region::Unknown, None));
+    // A server without a visibility is public.
+    let c = Config::parse(r#"(rotation: [(mod: "olx-classic", level: "olx-level-dirt-level")])"#).unwrap();
+    assert_eq!(c.visibility, Visibility::Public);
+    // The new fields.
+    let new = r#"(
+        visibility: Public,
+        relays: ["wss://relay.example.org"],
+        stun: [],
+        region: Oceania,
+        public_address: Some("2001:db8::7"),
+        rotation: [(mod: "olx-classic", level: "olx-level-dirt-level")],
+    )"#;
+    let c = Config::parse(new).unwrap();
+    assert_eq!((c.relays.len(), c.stun.len(), c.region), (1, 0, Region::Oceania));
+    assert_eq!(c.public_ip(), Some("2001:db8::7".parse().unwrap()));
+    // A region this version does not know reads as `Unknown` (as on the wire).
+    let c =
+        Config::parse(r#"(region: Mars, rotation: [(mod: "olx-classic", level: "olx-level-dirt-level")])"#);
+    assert_eq!(c.unwrap().region, Region::Unknown);
+    for bad in [
+        r#"public_address: Some("my.home.example")"#,
+        r#"relays: ["https://relay.example.org"]"#,
+        r#"visibility: Hidden"#,
+    ] {
+        let text = format!(r#"({bad}, rotation: [(mod: "olx-classic", level: "olx-level-dirt-level")])"#);
+        assert!(Config::parse(&text).is_err(), "{bad}");
+    }
 }

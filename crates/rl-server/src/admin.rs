@@ -1,7 +1,8 @@
 //! Chat commands (networking spec §7.4): admins' `/kick <name>`,
 //! `/ban <name>` (the key, spec §5.2), `/banip <name>` (the key and the
 //! address), `/unban <name|key prefix|address>`, `/next`,
-//! `/settings <field> <value>`; anyone's `/players` and `/help`. Parsed
+//! `/settings <field> <value>`; anyone's `/players` and `/help`; `/invite`
+//! (anyone's in a public game, else the admins'). Parsed
 //! defensively: a chat line is at most 200 characters, a name at most
 //! `MAX_NAME`, a value at most `MAX_VALUE`, an unban's argument at most
 //! `MAX_UNBAN`.
@@ -35,6 +36,8 @@ pub enum Command {
     Settings(Setting),
     Players,
     Help,
+    /// The server's invite code.
+    Invite,
 }
 
 /// A setting of the next match.
@@ -48,15 +51,24 @@ pub enum Setting {
 }
 
 impl Command {
-    /// Only admins may.
-    pub fn admin_only(&self) -> bool {
-        !matches!(self, Command::Players | Command::Help)
+    /// Only admins may. The invite code is no secret in a `public` game
+    /// (its note is), so anyone may ask for it there.
+    pub fn admin_only(&self, public: bool) -> bool {
+        match self {
+            Command::Players | Command::Help => false,
+            Command::Invite => !public,
+            _ => true,
+        }
     }
 }
 
-/// The help, one notice a line: the commands the asker may use.
-pub fn help(admin: bool) -> Vec<&'static str> {
+/// The help, one notice a line: the commands the asker may use (in a
+/// `public` game, or not).
+pub fn help(admin: bool, public: bool) -> Vec<&'static str> {
     let mut lines = vec!["/players: who is here", "/help: these commands"];
+    if admin || public {
+        lines.push("/invite: the server's invite code");
+    }
     if admin {
         lines.extend([
             "/kick <name>, /ban <name>: remove a member (a ban keeps its key out)",
@@ -90,6 +102,7 @@ pub fn parse(line: &str) -> Option<Result<Command, String>> {
         "settings" => setting(arg).map(Command::Settings),
         "players" => Ok(Command::Players),
         "help" => Ok(Command::Help),
+        "invite" => Ok(Command::Invite),
         _ => Err(format!("unknown command /{}: try /help", word.chars().take(MAX_NAME).collect::<String>())),
     })
 }
@@ -179,6 +192,7 @@ mod tests {
         assert_eq!(parse("/next"), Some(Ok(Command::Next)));
         assert_eq!(parse("/players"), Some(Ok(Command::Players)));
         assert_eq!(parse("/help me"), Some(Ok(Command::Help)));
+        assert_eq!(parse("/Invite"), Some(Ok(Command::Invite)));
         assert_eq!(parse("/settings Kill_Limit 3"), Some(Ok(Command::Settings(Setting::KillLimit(3)))));
         assert_eq!(parse("/settings time_limit 2.5"), Some(Ok(Command::Settings(Setting::TimeLimit(2.5)))));
         assert_eq!(parse("/settings lives -2"), Some(Ok(Command::Settings(Setting::Lives(-2)))));
@@ -232,8 +246,20 @@ mod tests {
 
     #[test]
     fn help_offers_admins_more() {
-        assert!(help(false).iter().all(|l| !l.contains("/kick")));
-        assert!(help(true).iter().any(|l| l.contains("/kick")));
-        assert!(help(true).iter().all(|l| l.chars().count() <= rl_proto::MAX_CHAT));
+        assert!(help(false, true).iter().all(|l| !l.contains("/kick")));
+        assert!(help(true, false).iter().any(|l| l.contains("/kick")));
+        assert!(help(true, true).iter().all(|l| l.chars().count() <= rl_proto::MAX_CHAT));
+        // The invite: anyone's in a public game, else the admins'.
+        let offers = |admin, public| help(admin, public).iter().any(|l| l.contains("/invite"));
+        assert!(offers(false, true) && offers(true, true) && offers(true, false));
+        assert!(!offers(false, false));
+    }
+
+    #[test]
+    fn the_invite_is_anyones_only_in_a_public_game() {
+        assert!(!Command::Invite.admin_only(true));
+        assert!(Command::Invite.admin_only(false));
+        assert!(!Command::Players.admin_only(false));
+        assert!(Command::Next.admin_only(true));
     }
 }

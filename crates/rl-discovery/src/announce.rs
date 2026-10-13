@@ -6,7 +6,10 @@ use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
 use rl_lobby::Identity;
-use rl_proto::{MAX_ID, MAX_NAME, MAX_PLAYERS, MAX_SPECTATORS, valid_hash, valid_name, valid_pack_id};
+use rl_proto::{
+    FINGERPRINT, LanAnnounce, LobbyState, MAX_ID, MAX_NAME, MAX_PLAYERS, MAX_SPECTATORS, NO_HASH,
+    PROTOCOL_VERSION, Phase, SeatWire, valid_hash, valid_name, valid_pack_id,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::nostr::{Event, KIND_ANNOUNCE, MAX_CONTENT};
@@ -69,6 +72,79 @@ pub struct GameSummary {
     pub port: u16,
     #[serde(default)]
     pub closed: bool,
+}
+
+/// What a host knows of its game beside its lobby: the summary's fields a
+/// `LobbyState` lacks.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hosting {
+    /// The port it listens on (TCP and UDP).
+    pub port: u16,
+    pub max_players: u8,
+    pub max_spectators: u8,
+    pub password: bool,
+    pub region: Region,
+    /// The public address (N40), when known.
+    pub addr: Option<IpAddr>,
+    /// The level's display name (the content's; the lobby has only the
+    /// id). A blank or invalid one reads as the level's id.
+    pub map_name: String,
+}
+
+impl GameSummary {
+    /// The one summary of a hosted lobby, for Nostr and (through
+    /// [`GameSummary::lan`]) the LAN, so both count alike: players are the
+    /// seated members and the bots, spectators the other members, each held
+    /// to its maximum; playing from the start to the results. Its notes are
+    /// valid when the lobby's name and level id are (the lobby's own are).
+    pub fn of_lobby(state: &LobbyState, host: &Hosting) -> GameSummary {
+        let seated = state.members.iter().filter(|m| matches!(m.seat, SeatWire::Player { .. })).count();
+        let count = |n: usize, max: u8| u8::try_from(n).unwrap_or(u8::MAX).min(max);
+        let setup = &state.setup;
+        let mod_hash = setup.packs.iter().find(|(id, _)| *id == setup.mod_id).map(|p| p.1.as_str());
+        GameSummary {
+            v: PROTOCOL_VERSION,
+            name: state.name.clone(),
+            mode: "deathmatch".into(),
+            map: setup.level_id.clone(),
+            map_name: display_name(&host.map_name, &setup.level_id),
+            mod_id: setup.mod_id.clone(),
+            mod_hash: mod_hash.unwrap_or(NO_HASH).into(),
+            players: count(seated + setup.bots.len(), host.max_players),
+            max_players: host.max_players,
+            spectators: count(state.members.len() - seated, host.max_spectators),
+            max_spectators: host.max_spectators,
+            password: host.password,
+            region: host.region,
+            playing: matches!(state.phase, Phase::Starting | Phase::Playing { .. }),
+            addr: host.addr,
+            port: host.port,
+            closed: false,
+        }
+    }
+
+    /// The LAN announcement of the same game (this build's fingerprint).
+    pub fn lan(&self) -> LanAnnounce {
+        LanAnnounce {
+            fingerprint: FINGERPRINT,
+            name: self.name.clone(),
+            port: self.port,
+            players: self.players,
+            max_players: self.max_players,
+            spectators: self.spectators,
+            mod_id: self.mod_id.clone(),
+            level_id: self.map.clone(),
+            password: self.password,
+            playing: self.playing,
+        }
+    }
+}
+
+/// `name` cut to [`MAX_MAP_NAME`] characters, else (blank or invalid) `id`'s.
+fn display_name(name: &str, id: &str) -> String {
+    let cut = |s: &str| s.chars().take(MAX_MAP_NAME).collect::<String>().trim().to_owned();
+    let name = cut(name);
+    if valid_name(&name, MAX_MAP_NAME) { name } else { cut(id) }
 }
 
 /// Why a note is not a valid announcement.
