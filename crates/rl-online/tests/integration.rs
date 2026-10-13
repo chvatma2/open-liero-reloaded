@@ -4,6 +4,7 @@
 
 mod common;
 
+mod content;
 mod matches;
 mod online;
 mod replay;

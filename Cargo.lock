@@ -4004,20 +4004,26 @@ name = "rl-online"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hex",
  "postcard",
  "proptest",
  "rl-bots",
  "rl-content",
+ "rl-data",
  "rl-lobby",
  "rl-modes",
  "rl-net",
  "rl-netcode",
  "rl-online",
+ "rl-pack",
  "rl-proto",
  "rl-replay",
  "rl-sim",
  "rl-terrain",
+ "rl-vfs",
  "serde",
+ "sha2 0.11.0",
+ "tempfile",
 ]
 
 [[package]]

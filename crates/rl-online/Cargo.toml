@@ -14,6 +14,9 @@ rl-netcode.workspace = true
 rl-proto.workspace = true
 rl-lobby.workspace = true
 rl-content.workspace = true
+rl-pack.workspace = true
+rl-data.workspace = true
+rl-vfs.workspace = true
 rl-sim.workspace = true
 rl-bots.workspace = true
 rl-modes.workspace = true
@@ -22,6 +25,8 @@ rl-terrain.workspace = true
 anyhow.workspace = true
 serde = { workspace = true, features = ["std"] }
 postcard.workspace = true
+sha2.workspace = true
+hex.workspace = true
 
 [features]
 # Test-only API (OnlinePeer::test_seed_override): enabled by this crate's
@@ -30,6 +35,7 @@ test-hooks = []
 
 [dev-dependencies]
 proptest.workspace = true
+tempfile.workspace = true
 rl-online = { workspace = true, features = ["test-hooks"] }
 
 [[test]]

@@ -4,6 +4,7 @@
 //! and back to the lobby.
 
 pub mod bundle;
+pub mod content;
 pub mod events;
 pub mod matches;
 pub mod outbox;
