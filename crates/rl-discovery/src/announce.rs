@@ -19,8 +19,9 @@ pub const ANNOUNCE_TTL: u64 = 180;
 pub const CLOSE_TTL: u64 = 10;
 /// The announcer's keep-alive period.
 pub const REPUBLISH: Duration = Duration::from_secs(60);
-/// The least time between two notes of a changing game.
-pub const MIN_GAP: Duration = Duration::from_secs(10);
+/// The least time between two notes of a changing game: above the list's
+/// 10 s rate limit, so clock skew does not get a note refused.
+pub const MIN_GAP: Duration = Duration::from_secs(12);
 /// Longest `mode`, in characters.
 pub const MAX_MODE: usize = 16;
 /// Longest `map_name`, in characters.
@@ -112,11 +113,6 @@ fn check(s: &GameSummary) -> Result<(), AnnounceError> {
     if s.spectators > s.max_spectators || usize::from(s.max_spectators) > MAX_SPECTATORS {
         return bad("spectators");
     }
-    if let Some(a) = s.addr
-        && (a.is_unspecified() || a.is_multicast() || s.port == 0)
-    {
-        return bad("addr");
-    }
     Ok(())
 }
 
@@ -134,7 +130,7 @@ pub fn announcement(
     aux: [u8; 32],
 ) -> Event {
     let content = serde_json::to_string(summary).unwrap_or_default();
-    debug_assert!(content.len() <= MAX_CONTENT && check(summary).is_ok());
+    debug_assert!(content.len() <= MAX_CONTENT);
     let ttl = if summary.closed { CLOSE_TTL } else { ANNOUNCE_TTL };
     let s = |a: &str, b: String| vec![a.to_owned(), b];
     let tags = vec![

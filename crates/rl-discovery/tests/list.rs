@@ -223,3 +223,160 @@ fn the_subscription_filter_selects_announcements() {
     assert_eq!(f.since, None);
     assert_eq!(GameList::filter_since(1000).since, Some(820));
 }
+
+fn at_addr(i: u32, addr: &str) -> Event {
+    let s = GameSummary { addr: Some(addr.parse().unwrap()), ..named("Addr") };
+    note(&key(i), &s, FP, 1000)
+}
+
+#[test]
+fn only_global_addresses_are_listed_unless_local_is_allowed() {
+    let refused = [
+        "0.1.2.3",
+        "10.1.2.3",
+        "100.64.0.1",
+        "100.127.255.255",
+        "127.0.0.1",
+        "169.254.1.1",
+        "172.16.0.1",
+        "172.31.255.255",
+        "192.0.0.8",
+        "192.0.2.5",
+        "192.168.1.1",
+        "198.18.0.1",
+        "198.19.255.255",
+        "198.51.100.9",
+        "203.0.113.7",
+        "224.0.0.1",
+        "239.1.2.3",
+        "240.0.0.1",
+        "255.255.255.255",
+        "::1",
+        "::",
+        "fc00::1",
+        "fdff::1",
+        "fe80::1",
+        "febf::1",
+        "2001:db8::1",
+        "ff02::1",
+        "::ffff:10.0.0.1",
+        "::ffff:127.0.0.1",
+        "::ffff:192.168.0.1",
+        "::10.0.0.1",
+        "::ffff:224.0.0.1",
+    ];
+    let accepted = [
+        "8.8.4.4",
+        "100.63.255.255",
+        "100.128.0.1",
+        "172.15.255.255",
+        "172.32.0.1",
+        "198.17.255.255",
+        "198.20.0.1",
+        "223.255.255.255",
+        "2606:4700::1111",
+        "2001:db9::1",
+        "::ffff:8.8.4.4",
+        "fe00::1",
+    ];
+    let mut strict = GameList::new(FP);
+    let mut local = GameList::new(FP);
+    local.allow_local(true);
+    for (i, a) in refused.iter().enumerate() {
+        let e = at_addr(i as u32, a);
+        strict.offer(&e, 1000);
+        local.offer(&e, 1000);
+    }
+    assert!(
+        strict.games().is_empty(),
+        "{:?}",
+        strict.games().iter().map(|g| g.summary.addr).collect::<Vec<_>>()
+    );
+    assert_eq!(local.games().len(), refused.len());
+    let mut strict = GameList::new(FP);
+    for (i, a) in accepted.iter().enumerate() {
+        strict.offer(&at_addr(i as u32, a), 1000);
+    }
+    assert_eq!(strict.games().len(), accepted.len());
+    // No address at all is fine; the host can build local notes.
+    let none = GameSummary { addr: None, ..named("None") };
+    strict.offer(&note(&key(500), &none, FP, 1000), 1000);
+    assert_eq!(strict.games().len(), accepted.len() + 1);
+    assert!(parse_announcement(&at_addr(0, "10.0.0.1")).is_ok());
+}
+
+#[test]
+fn the_remembered_keys_never_lock_out_an_honest_key() {
+    let mut l = GameList::new(FP);
+    let closed = GameSummary { closed: true, ..named("x") };
+    // Hostile keys open a game and close it at once, leaving a tombstone each.
+    for i in 0..4200 {
+        let t = 1000 + u64::from(i / 100);
+        l.offer(&note(&key(1000 + i), &named("x"), FP, t), t);
+        l.offer(&note(&key(1000 + i), &closed, FP, t + 1), t + 1);
+    }
+    assert!(l.remembered_keys() <= 4096);
+    assert!(l.games().is_empty());
+    let t = 1043;
+    l.offer(&note(&key(0), &named("Honest"), FP, t), t);
+    assert_eq!(l.games().len(), 1);
+    assert!(l.remembered_keys() <= 4096);
+}
+
+#[test]
+fn remembered_keys_are_pruned_when_they_cannot_matter() {
+    let mut l = GameList::new(FP);
+    l.offer(&note(&key(0), &named("One"), FP, 1000), 1000);
+    l.offer(&note(&key(1), &named("Two"), FP, 1000), 1000);
+    assert_eq!(l.remembered_keys(), 2);
+    l.expire(1100);
+    assert_eq!(l.remembered_keys(), 2, "listed keys stay");
+    l.expire(1180);
+    assert!(l.games().is_empty());
+    l.expire(1181);
+    assert_eq!(l.remembered_keys(), 0);
+}
+
+#[test]
+fn the_future_limit_is_sixty_seconds() {
+    let mut l = GameList::new(FP);
+    l.offer(&note(&key(0), &named("Ok"), FP, 1060), 1000);
+    l.offer(&note(&key(1), &named("Far"), FP, 1061), 1000);
+    let names: Vec<String> = l.games().into_iter().map(|g| g.summary.name).collect();
+    assert_eq!(names, ["Ok"]);
+}
+
+#[test]
+fn a_closing_note_expires_after_ten_seconds() {
+    let closed = GameSummary { closed: true, ..named("One") };
+    let mut l = GameList::new(FP);
+    l.offer(&note(&key(0), &named("One"), FP, 1000), 1000);
+    // Dated 1001, it expires at 1011: seen at 1011 it is dropped.
+    l.offer(&note(&key(0), &closed, FP, 1001), 1011);
+    assert_eq!(l.games().len(), 1);
+    l.offer(&note(&key(0), &closed, FP, 1001), 1010);
+    assert!(l.games().is_empty());
+}
+
+#[test]
+fn a_forged_note_under_a_listed_key_costs_no_verification() {
+    let mut l = GameList::new(FP);
+    let h = key(0);
+    l.offer(&note(&h, &named("One"), FP, 1000), 1000);
+    assert_eq!(l.verifications(), 1);
+    // Inside the gap and not closing, or older than the last note.
+    let mut forged = note(&h, &named("Two"), FP, 1003);
+    forged.sig[0] ^= 1;
+    l.offer(&forged, 1003);
+    let mut older = note(&h, &named("Two"), FP, 999);
+    older.sig[0] ^= 1;
+    l.offer(&older, 1020);
+    assert_eq!(l.verifications(), 1);
+    // A forged closing note inside the gap is checked and refused.
+    let closed = GameSummary { closed: true, ..named("One") };
+    let mut forged = note(&h, &closed, FP, 1003);
+    forged.sig[0] ^= 1;
+    l.offer(&forged, 1003);
+    assert_eq!(l.verifications(), 2);
+    assert_eq!(l.games().len(), 1);
+}

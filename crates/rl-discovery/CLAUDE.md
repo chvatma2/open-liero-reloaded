@@ -130,16 +130,19 @@ test relay, relay pool, announcements, game list, STUN and invite codes
 - **`announce`** (N39): `GameSummary` (JSON, mod id under `mod`; `mode`
   free, at most 16 chars; unknown `region` reads as `Unknown`), `announcement(..)`
   (tags `d`, `t`, `f` = 16 lowercase hex, `expiration` +180 s, +10 s when
-  `closed`), `parse_announcement` (validates names, ids, counts, addr; refuses
+  `closed`), `parse_announcement` (validates names, ids and counts, no address policy; refuses
   a missing or malformed `f`; does not verify the signature) and the sans-IO
-  `Announcer` (every 60 s, at a change after 10 s, `closing()` once, only
+  `Announcer` (every 60 s, at a change after 12 s, `closing()` once, only
   after a first publish).
 - **`list`** (N41): `GameList::offer` checks cheaply first (kind, size, age
   at most 180 s, not in the future by over 60 s, expiration, blocked, rate
   gap), then verifies and parses. One note per key per 10 s of `now_unix`
   (a closing note of a listed game is exempt); only newer `created_at` than
   the key's last replaces it (a tombstone is kept after a close); at most
-  500 games (new keys refused when full) and 4096 remembered keys. `games()`
+  500 games (new keys refused when full) and 4096 remembered keys (when full
+  the oldest unlisted one is evicted). Announced addresses must be global
+  (`list::is_global`, v4-mapped unwrapped) unless `allow_local(true)`. Refusals
+  that need no signature check (stale, inside the gap) come first. `games()`
   sorts compatible first, then ping (measured, unknown/measuring, no answer),
   name, key. `filter()` has no `since` (no clock); `filter_since(now)` does.
 

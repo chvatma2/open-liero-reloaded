@@ -2,6 +2,7 @@
 //! up to. Sans-IO: time is an argument.
 
 use std::collections::BTreeMap;
+use std::net::IpAddr;
 
 use rl_proto::PublicKey;
 
@@ -72,11 +73,72 @@ pub struct GameList {
     games: BTreeMap<PublicKey, Entry>,
     seen: BTreeMap<PublicKey, Seen>,
     blocked: Vec<PublicKey>,
+    allow_local: bool,
+    verifications: u64,
+}
+
+/// Whether `a` is a public address (no `is_global` on stable Rust): not
+/// unspecified, loopback, private, shared, link-local, documentation,
+/// benchmarking, multicast, reserved or broadcast. A v6 address that wraps a
+/// v4 one (mapped or compatible) is judged as the v4 address.
+pub fn is_global(a: IpAddr) -> bool {
+    match a {
+        IpAddr::V4(a) => {
+            let [a0, a1, a2, _] = a.octets();
+            !(a0 == 0
+                || a0 == 10
+                || (a0 == 100 && (64..128).contains(&a1))
+                || a0 == 127
+                || (a0 == 169 && a1 == 254)
+                || (a0 == 172 && (16..32).contains(&a1))
+                || (a0 == 192 && a1 == 0 && (a2 == 0 || a2 == 2))
+                || (a0 == 192 && a1 == 168)
+                || (a0 == 198 && (a1 == 18 || a1 == 19))
+                || (a0 == 198 && a1 == 51 && a2 == 100)
+                || (a0 == 203 && a1 == 0 && a2 == 113)
+                || a0 >= 224)
+        }
+        IpAddr::V6(a) => {
+            if let Some(v4) = a.to_ipv4() {
+                return is_global(IpAddr::V4(v4));
+            }
+            let s = a.segments();
+            !(a.is_unspecified()
+                || a.is_loopback()
+                || (s[0] & 0xfe00) == 0xfc00
+                || (s[0] & 0xffc0) == 0xfe80
+                || (s[0] == 0x2001 && s[1] == 0x0db8)
+                || (s[0] & 0xff00) == 0xff00)
+        }
+    }
 }
 
 impl GameList {
     pub fn new(fingerprint: u64) -> GameList {
-        GameList { fingerprint, games: BTreeMap::new(), seen: BTreeMap::new(), blocked: Vec::new() }
+        GameList {
+            fingerprint,
+            games: BTreeMap::new(),
+            seen: BTreeMap::new(),
+            blocked: Vec::new(),
+            allow_local: false,
+            verifications: 0,
+        }
+    }
+
+    /// Lists games announcing local, private or reserved addresses too (for
+    /// local and test relays); by default only public addresses are listed.
+    pub fn allow_local(&mut self, allow: bool) {
+        self.allow_local = allow;
+    }
+
+    /// How many signatures were checked (cheap refusals come first).
+    pub fn verifications(&self) -> u64 {
+        self.verifications
+    }
+
+    /// How many keys' last notes are remembered for the rate limit.
+    pub fn remembered_keys(&self) -> usize {
+        self.seen.len()
     }
 
     /// The relay subscription: announcements tagged `rust-liero`.
@@ -113,15 +175,25 @@ impl GameList {
         let last = self.seen.get(&e.pubkey).copied();
         let listed = self.games.contains_key(&e.pubkey);
         let gap_ok = last.is_none_or(|l| now_unix.saturating_sub(l.accepted_unix) >= MIN_NOTE_GAP);
-        // A closing note may follow at once; any other must wait.
-        if !gap_ok && !listed {
+        // A closing note of a listed game may follow at once; any other
+        // note waits. A note older than the key's last is stale. Both are
+        // refused before the costly signature check (a closing note is
+        // recognised by our compact encoding).
+        if !gap_ok && (!listed || !e.content.contains("\"closed\":true")) {
             return;
         }
+        if last.is_some_and(|l| e.created_at < l.created_at) {
+            return;
+        }
+        self.verifications += 1;
         if !e.verify() {
             return;
         }
         let Ok((summary, fingerprint)) = parse_announcement(e) else { return };
         if !gap_ok && !summary.closed {
+            return;
+        }
+        if !self.allow_local && summary.addr.is_some_and(|a| !is_global(a)) {
             return;
         }
         // Newer than the key's last note (a closing note may share its second).
@@ -140,9 +212,7 @@ impl GameList {
         if !listed && self.games.len() >= MAX_GAMES {
             return;
         }
-        if !self.remember(e, now_unix) {
-            return;
-        }
+        self.remember(e, now_unix);
         let ping = match self.games.get(&e.pubkey) {
             Some(old) if old.summary.addr == summary.addr && old.summary.port == summary.port => old.ping,
             _ => Ping::Unknown,
@@ -160,16 +230,24 @@ impl GameList {
         );
     }
 
-    /// Records the accepted note; false when the table is full.
-    fn remember(&mut self, e: &Event, now_unix: u64) -> bool {
+    /// Records the accepted note. When the table is full, stale keys go,
+    /// then the oldest key that is not listed.
+    fn remember(&mut self, e: &Event, now_unix: u64) {
         if self.seen.len() >= MAX_SEEN && !self.seen.contains_key(&e.pubkey) {
             self.prune_seen(now_unix);
             if self.seen.len() >= MAX_SEEN {
-                return false;
+                let oldest = self
+                    .seen
+                    .iter()
+                    .filter(|(k, _)| !self.games.contains_key(*k))
+                    .min_by_key(|(k, s)| (s.accepted_unix, **k))
+                    .map(|(k, _)| *k);
+                if let Some(k) = oldest {
+                    self.seen.remove(&k);
+                }
             }
         }
         self.seen.insert(e.pubkey, Seen { accepted_unix: now_unix, created_at: e.created_at });
-        true
     }
 
     /// Forgets keys whose last note no longer constrains anything: the gap

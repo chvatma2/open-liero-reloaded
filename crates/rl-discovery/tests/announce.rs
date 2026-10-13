@@ -26,7 +26,7 @@ pub fn summary() -> GameSummary {
         password: false,
         region: Region::Europe,
         playing: false,
-        addr: Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7))),
+        addr: Some(IpAddr::V4(Ipv4Addr::new(8, 8, 4, 4))),
         port: 23400,
         closed: false,
     }
@@ -80,8 +80,6 @@ fn malformed_announcements_are_refused() {
         bad_content("deathmatch", "a mode name far too long"),
         bad_content("olx-classic", "Not A Pack"),
         bad_content(&"ab".repeat(32), "xyz"),
-        bad_content("\"port\":23400", "\"port\":0"),
-        bad_content("203.0.113.7", "0.0.0.0"),
     ] {
         assert!(parse_announcement(&e).is_err(), "{}", e.content);
     }
@@ -104,14 +102,14 @@ fn the_announcer_republishes_every_minute_and_on_change() {
     assert!(!a.tick(at(59), &s));
     assert!(a.tick(at(60), &s), "every minute");
     assert!(!a.tick(at(61), &s));
-    // A change within 10 s waits for them to pass.
+    // A change within 12 s waits for them to pass.
     s.players = 3;
     assert!(!a.tick(at(65), &s));
-    assert!(!a.tick(at(69), &s));
-    assert!(a.tick(at(70), &s));
     assert!(!a.tick(at(71), &s));
+    assert!(a.tick(at(72), &s));
+    assert!(!a.tick(at(73), &s));
     assert!(!a.tick(at(100), &s));
-    // A change after 10 s is immediate.
+    // A change after the gap is immediate.
     s.players = 4;
     assert!(a.tick(at(101), &s));
     assert!(a.tick(at(161), &s));
