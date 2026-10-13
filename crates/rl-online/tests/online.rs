@@ -348,9 +348,8 @@ fn a_server_without_bots_records_the_last_checksum() {
 /// `/next` on a dedicated server without bots (`end_match`) at a moment it
 /// has confirmed a checksum tick it has not simulated yet: the match ends at
 /// the last tick it simulated, and its record has the checksum of every
-/// checksum tick up to there. The clients agree on those ticks; their
-/// records run on (`MatchEndWire` names no last tick, so a client ended
-/// early keeps what it confirmed, the server's drain included).
+/// checksum tick up to there. `MatchEndWire::last_tick` ends every
+/// client's record there too (ruling T14-A): equal records and replays.
 #[test]
 fn ending_a_botless_servers_match_keeps_its_last_checksum() {
     let Some(content) = content() else { return };
@@ -393,10 +392,26 @@ fn ending_a_botless_servers_match_keeps_its_last_checksum() {
     let ticks: Vec<u32> = r.checksums.iter().map(|c| c.0).collect();
     assert_eq!(ticks, want, "the server's checksums of {n} ticks, the last one's too");
     for other in &records[1..] {
-        assert!(other.rows.len() >= r.rows.len(), "a client confirmed the server's ticks");
-        assert_eq!(other.rows[..r.rows.len()], r.rows[..]);
-        assert_eq!(other.checksums[..r.checksums.len()], r.checksums[..]);
+        assert_eq!(other.rows, r.rows);
+        assert_eq!(other.checksums, r.checksums);
     }
+    // Every peer said the same last tick, and made the same replay.
+    for p in &net.peers {
+        let ends: Vec<u32> = p
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                OnlineEvent::MatchEnded(end) => Some(end.last_tick),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ends, [n - 1]);
+    }
+    net.run_until(Duration::from_secs(15), "every peer makes its replay", |n| {
+        n.peers.iter().all(|p| p.has(replay_ready))
+    });
+    let bytes: Vec<&Vec<u8>> = net.peers.iter().map(|p| p.replays()[0]).collect();
+    assert!(bytes.iter().all(|b| *b == bytes[0]), "equal replays");
     net.assert_quick();
 }
 

@@ -538,7 +538,7 @@ fn joiners_during_a_match_wait_and_get_seats_after() {
     net.settle();
     assert!(got(&net, b, &ClientEvent::Notice(Notice::Left(a_id))));
 
-    let end = MatchEndWire { reason: "time".into(), rows: vec![(0, 1, 1, 0, 0)] };
+    let end = MatchEndWire { reason: "time".into(), rows: vec![(0, 1, 1, 0, 0)], last_tick: 900 };
     net.host.match_ended(end.clone(), net.now_us);
     net.settle();
     assert_eq!(net.host.state().phase, Phase::Results);
@@ -628,7 +628,7 @@ fn leaving_at_every_stage() {
     assert_eq!(net.host.state().phase, Phase::Playing { tick: 3 });
 
     // During the results.
-    net.host.match_ended(MatchEndWire { reason: "kills".into(), rows: vec![] }, net.now_us);
+    net.host.match_ended(MatchEndWire { reason: "kills".into(), rows: vec![], last_tick: 900 }, net.now_us);
     net.settle();
     net.disconnect(d);
     net.settle();
@@ -808,7 +808,7 @@ fn a_forced_start_seats_only_the_ready() {
 
     // Back in their seats for the next match.
     net.host.playing(0);
-    net.host.match_ended(MatchEndWire { reason: "time".into(), rows: vec![] }, net.now_us);
+    net.host.match_ended(MatchEndWire { reason: "time".into(), rows: vec![], last_tick: 900 }, net.now_us);
     net.run(RESULTS_US + 1);
     net.settle();
     assert_eq!(seat(&net, b), SeatWire::Player { slot: 2 });
@@ -1127,7 +1127,7 @@ proptest! {
                     }
                 }
                 Op::Playing(t) => host.playing(t),
-                Op::Ended => host.match_ended(MatchEndWire { reason: "x\u{7}".repeat(150), rows: vec![(0, 0, 0, 0, 0); 40] }, now),
+                Op::Ended => host.match_ended(MatchEndWire { reason: "x\u{7}".repeat(150), rows: vec![(0, 0, 0, 0, 0); 40], last_tick: 900 }, now),
                 Op::Wait(us) => {
                     now += us;
                     host.tick(now);

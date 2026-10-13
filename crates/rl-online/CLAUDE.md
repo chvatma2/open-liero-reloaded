@@ -92,10 +92,12 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     it simulates them, and its record would lack the last tick's
     checksum; found by `rl-cli`'s real-transport test), then the host
     sends `match_ended` (the last confirmed scores: slot, score, kills,
-    deaths, lives) and `MatchEnded`, and keeps the session sending for
+    deaths, lives; `last_tick`, the record's last tick, `end_at`) and `MatchEnded`, and keeps the session sending for
     `HOST_DRAIN` (2 s) so clients confirm the last ticks. A client ends at
-    `Ended` and keeps its session until it confirmed the last tick (at most
-    `CLIENT_FINISH`, 3 s). Each peer then makes its replay (decision N18).
+    `Ended`, takes its `last_tick` as its own end (ruling T14-A: a `/next`
+    end has no result tick, and every peer's record and replay must be
+    equal) and keeps its session until it confirmed and simulated that tick
+    (at most `CLIENT_FINISH`, 3 s; then the shorter record it has). Each peer then makes its replay (decision N18).
   - **Leaving**: the session's `Bye` and the lobby's (`Bye` to every member
     from a host), one endpoint poll to send them, then every connection
     closed. Refusals, kicks and lost connections end a client the same way.
@@ -145,9 +147,8 @@ banned key, and ends a match early; a server without bots records the
 checksum of a match's last tick (a 2.997 s limit: the last tick, 599, is a
 checksum tick), as its clients do; `/next` (`end_match`) on such a
 server, while it has confirmed a checksum tick it has not simulated, ends
-at the last tick it simulated with every checksum up to there (the
-clients agree on those ticks; their records run on: `MatchEndWire` names
-no last tick).
+at the last tick it simulated with every checksum up to there, and every
+client's record and replay equal the server's (`MatchEndWire::last_tick`).
 `tests/matches.rs`: a proptest of starts within rl-proto's bounds (256
 cases, about 30 build) never panics `build`; a slot both member and bot,
 a single slot, an unknown mod and a pack hash mismatch are refused.

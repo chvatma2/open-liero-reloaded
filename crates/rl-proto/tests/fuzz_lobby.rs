@@ -80,7 +80,11 @@ fn samples() -> Vec<Vec<u8>> {
         ToClient::Lobby(lobby()),
         ToClient::Chat { from: 1, text: "hi".into() },
         ToClient::Notice(Notice::NotReady(vec![1, 2])),
-        ToClient::Ended(MatchEndWire { reason: "limit".into(), rows: vec![(0, 1, 2, 3, 4)] }),
+        ToClient::Ended(MatchEndWire {
+            reason: "limit".into(),
+            rows: vec![(0, 1, 2, 3, 4)],
+            last_tick: 4_000,
+        }),
         ToClient::Start(MatchStartWire {
             seed: 1,
             setup: setup(),

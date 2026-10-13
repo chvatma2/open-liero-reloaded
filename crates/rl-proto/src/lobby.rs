@@ -242,6 +242,10 @@ pub struct MatchEndWire {
     pub reason: String,
     /// Slot, score, kills, deaths, lives.
     pub rows: Vec<(u8, i32, i32, i32, i32)>,
+    /// The match's last recorded tick: every peer's record (and replay) is
+    /// ticks `0..=last_tick` (ruling T14-A). Below `u32::MAX`, so the
+    /// record's length `last_tick + 1` fits.
+    pub last_tick: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -414,7 +418,7 @@ pub fn decode_to_client(b: &[u8]) -> Result<ToClient, ProtoError> {
         ToClient::Notice(Notice::Message(t)) => valid_chat(t),
         ToClient::Notice(Notice::NotReady(ids)) => ids.len() <= MAX_MEMBERS,
         ToClient::Start(s) => valid_start(s),
-        ToClient::Ended(e) => valid_chat(&e.reason) && e.rows.len() <= MAX_PLAYERS,
+        ToClient::Ended(e) => valid_chat(&e.reason) && e.rows.len() <= MAX_PLAYERS && e.last_tick < u32::MAX,
         _ => true,
     };
     if ok { Ok(m) } else { Err(ProtoError::Invalid) }
@@ -527,6 +531,7 @@ mod tests {
         to_client_round(ToClient::Ended(MatchEndWire {
             reason: "kill limit".to_string(),
             rows: vec![(0, 5, 3, 2, 1)],
+            last_tick: 899,
         }));
         to_client_round(ToClient::Kicked { banned: true });
         to_client_round(ToClient::Bye);

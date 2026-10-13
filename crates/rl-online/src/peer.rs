@@ -716,6 +716,11 @@ impl OnlinePeer {
                     // the last poll's, the one presented.
                     self.ended_world = Some(g.session.sim().world().clone());
                     g.ended = Some(now);
+                    // The host's last tick ends every record (ruling T14-A;
+                    // a `/next` end has no result tick to find it by): the
+                    // client finishes once it confirmed and simulated it,
+                    // or after `CLIENT_FINISH` with what it has.
+                    g.end_at = Some(end.last_tick);
                 }
                 self.events.push(OnlineEvent::MatchEnded(end));
             }
@@ -986,8 +991,10 @@ impl OnlinePeer {
         // After this poll's presented advance: the world presented.
         self.ended_world = Some(g.session.sim().world().clone());
         g.ended = Some(now);
-        let end = end_wire(g.last.as_ref());
-        let record = g.end_at.and_then(|e| record_of(&g.session, &g.start, e + 1));
+        // The record's last tick, for every peer's record (ruling T14-A).
+        let last_tick = *g.end_at.get_or_insert_with(|| final_upto(&g.session).saturating_sub(1));
+        let end = end_wire(g.last.as_ref(), last_tick.min(u32::MAX - 1));
+        let record = record_of(&g.session, &g.start, last_tick.saturating_add(1));
         if let Side::Host(h) = &mut self.side {
             h.lobby.match_ended(end.clone(), now_us);
         }
@@ -1141,8 +1148,8 @@ fn record_of(s: &Session<WorldSim>, start: &MatchStartWire, upto: u32) -> Option
 }
 
 /// The results of the last confirmed tick: why it ended, and each worm's
-/// slot, score, kills, deaths and lives.
-fn end_wire(last: Option<&(Vec<Score>, Option<MatchResult>)>) -> MatchEndWire {
+/// slot, score, kills, deaths and lives; the match's last recorded tick.
+fn end_wire(last: Option<&(Vec<Score>, Option<MatchResult>)>, last_tick: u32) -> MatchEndWire {
     let reason = match last.and_then(|l| l.1).map(|r| r.reason) {
         Some(EndReason::KillLimit) => "kill limit",
         Some(EndReason::TimeLimit) => "time limit",
@@ -1157,7 +1164,7 @@ fn end_wire(last: Option<&(Vec<Score>, Option<MatchResult>)>) -> MatchEndWire {
                 .collect()
         })
         .unwrap_or_default();
-    MatchEndWire { reason: reason.into(), rows }
+    MatchEndWire { reason: reason.into(), rows, last_tick }
 }
 
 /// The game's side of the session: the local player's keys, the host's
