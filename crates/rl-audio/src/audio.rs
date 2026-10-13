@@ -212,18 +212,23 @@ impl<B: Backend> Audio<B> {
         for e in events {
             let EventKind::Sound { id, pos } = e.kind else { continue };
             let Some(Some(data)) = self.sounds.get(usize::from(id.0)) else { continue };
-            match self.voices.admit(id) {
-                Admit::Start => {}
-                // A death sound takes another voice's place: it stops with
-                // a short fade, no click.
-                Admit::Steal(mut v) => v.stop(Tween { duration: STEAL_FADE, ..Tween::default() }),
-                Admit::Skip => continue,
+            let admit = self.voices.admit(id);
+            if admit == Admit::Skip {
+                continue;
             }
             let (source, gain) = if is_global(id) { (listener, GLOBAL_GAIN) } else { (pos, SOURCE_GAIN) };
             let m = mix(listener, source, gain, self.volume);
             let data = data.volume(Decibels(decibels(m.amplitude))).panning(Panning(m.pan));
-            if let Ok(handle) = manager.play(data) {
-                self.voices.push(id, source, gain, handle);
+            // A start that fails takes nothing: a stolen voice plays on.
+            let Ok(handle) = manager.play(data) else { continue };
+            match admit {
+                // A death sound takes another voice's place once it has
+                // started: the old one stops with a short fade, no click.
+                Admit::Steal(victim) => {
+                    let mut old = self.voices.replace(victim, id, source, gain, handle);
+                    old.stop(Tween { duration: STEAL_FADE, ..Tween::default() });
+                }
+                _ => self.voices.push(id, source, gain, handle),
             }
         }
     }

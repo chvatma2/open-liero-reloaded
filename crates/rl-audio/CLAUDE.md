@@ -14,12 +14,13 @@ OpenAL driver does (spec §8.4, §19 E1/E12; presentation note §8).
   PICKUP (`is_global`) start at the listener with gain 1.0 (OLX's `play`).
 - **Voices** (`voices.rs`, pure): `max_plays` is OLX's `maxplaying` (throw
   4, other game sounds 2, mod sounds 10), `GLOBAL_VOICES` 256 (OpenAL
-  Soft's default source count); `admit` says `Start`, `Steal(voice)` or
-  `Skip`: a start beyond either limit is skipped, like OLX, except a death
+  Soft's default source count); `admit` says `Start`, `Steal(victim)` or
+  `Skip` and changes nothing: a start beyond either limit is skipped, like OLX, except a death
   sound's, which takes the place of the oldest voice of that sound (else,
   at the global limit, the oldest voice that is not a death's; push
   order), so every death is heard (the user's ruling, STATUS); `Audio::play`
-  stops the taken voice with a 5 ms fade. Sources stay where they started and every play call re-mixes the
+  starts the new voice first, then `replace`s the victim and stops it
+  with a 5 ms fade (a start that fails takes nothing). Sources stay where they started and every play call re-mixes the
   live voices for the moved listener (OpenAL recomputes as the listener
   follows the view).
 - **Device** (`audio.rs`): `Audio::new()` opens kira's default backend;

@@ -89,12 +89,16 @@ fn tagged(tag: u32) -> Fake {
     Fake { playing: true, mix: None, tag }
 }
 
-/// `admit`'s answer: `Ok(None)` start, `Ok(Some(tag))` steal that voice,
-/// `Err(())` skip.
-fn answer(a: Admit<Fake>) -> Result<Option<u32>, ()> {
-    match a {
-        Admit::Start => Ok(None),
-        Admit::Steal(f) => Ok(Some(f.tag)),
+/// Admits sound `id` into `v` and starts it as voice `tag`: `Ok(None)`
+/// started, `Ok(Some(tag))` started in that voice's place, `Err(())`
+/// skipped.
+fn start(v: &mut Voices<Fake>, id: SoundId, tag: u32) -> Result<Option<u32>, ()> {
+    match v.admit(id) {
+        Admit::Start => {
+            v.push(id, Vec2::ZERO, SOURCE_GAIN, tagged(tag));
+            Ok(None)
+        }
+        Admit::Steal(victim) => Ok(Some(v.replace(victim, id, Vec2::ZERO, SOURCE_GAIN, tagged(tag)).tag)),
         Admit::Skip => Err(()),
     }
 }
@@ -166,36 +170,35 @@ fn a_death_sound_steals_and_others_are_skipped() {
     let (d0, d1, d2) = (SoundId::DEATH[0], SoundId::DEATH[1], SoundId::DEATH[2]);
     let mut v = Voices::new(GLOBAL_VOICES);
     for tag in 0..2 {
-        assert_eq!(answer(v.admit(d0)), Ok(None));
-        v.push(d0, p, SOURCE_GAIN, tagged(tag));
+        assert_eq!(start(&mut v, d0, tag), Ok(None));
     }
-    assert_eq!(answer(v.admit(d0)), Ok(Some(0)), "a third takes the oldest's place");
-    assert_eq!(v.playing(d0), 1, "the stolen voice is no longer counted");
-    v.push(d0, p, SOURCE_GAIN, tagged(2));
-    assert_eq!(answer(v.admit(d0)), Ok(Some(1)), "then the next oldest");
-    v.push(d0, p, SOURCE_GAIN, tagged(3));
-    assert_eq!(v.playing(d0), 2);
+    // A steal changes nothing until the new voice has started: a start
+    // that fails leaves the old voice playing, never silence.
+    let Admit::Steal(victim) = v.admit(d0) else { panic!("a third death sound steals") };
+    assert_eq!(v.victim(victim).tag, 0, "the oldest");
+    assert_eq!((v.playing(d0), v.len()), (2, 2), "admitting a steal takes nothing yet");
+    assert_eq!(start(&mut v, d0, 2), Ok(Some(0)), "a third takes the oldest's place");
+    assert_eq!(v.playing(d0), 2, "the stolen voice no longer counts");
+    assert_eq!(start(&mut v, d0, 3), Ok(Some(1)), "then the next oldest");
     for _ in 0..2 {
         v.push(SoundId::BUMP, p, SOURCE_GAIN, fake());
     }
-    assert_eq!(answer(v.admit(SoundId::BUMP)), Err(()), "any other sound at its limit is skipped");
+    assert_eq!(start(&mut v, SoundId::BUMP, 9), Err(()), "any other sound at its limit is skipped");
 
     let mut v = Voices::new(4);
     for (id, tag) in [(SoundId(10), 10), (SoundId(11), 11), (d1, 20), (SoundId(12), 12)] {
         v.push(id, p, SOURCE_GAIN, tagged(tag));
     }
-    assert_eq!(answer(v.admit(SoundId(13))), Err(()), "a mod sound at the global limit is skipped");
-    assert_eq!(answer(v.admit(d1)), Ok(Some(20)), "at the global limit, the same sound's oldest");
-    v.push(d1, p, SOURCE_GAIN, tagged(21));
-    assert_eq!(answer(v.admit(d2)), Ok(Some(10)), "else the oldest that is not a death's");
-    v.push(d2, p, SOURCE_GAIN, tagged(30));
+    assert_eq!(start(&mut v, SoundId(13), 13), Err(()), "a mod sound at the global limit is skipped");
+    assert_eq!(start(&mut v, d1, 21), Ok(Some(20)), "at the global limit, the same sound's oldest");
+    assert_eq!(start(&mut v, d2, 30), Ok(Some(10)), "else the oldest that is not a death's");
     assert_eq!(v.len(), 4);
-    assert_eq!(answer(v.admit(d0)), Ok(Some(11)));
+    assert_eq!(start(&mut v, d0, 40), Ok(Some(11)));
 
     let mut v = Voices::new(2);
     v.push(d0, p, SOURCE_GAIN, tagged(0));
     v.push(d1, p, SOURCE_GAIN, tagged(1));
-    assert_eq!(answer(v.admit(d2)), Err(()), "only other deaths' voices: none is taken");
+    assert_eq!(start(&mut v, d2, 2), Err(()), "only other deaths' voices: none is taken");
 }
 
 /// A mono 16-bit WAV of `n` samples at 8 kHz.

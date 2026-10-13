@@ -33,14 +33,21 @@ pub fn max_plays(id: SoundId) -> usize {
 pub const GLOBAL_VOICES: usize = 256;
 
 /// What a new sound may do ([`Voices::admit`]).
-pub enum Admit<V> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Admit {
     /// Start: it is below both limits.
     Start,
-    /// Start in this voice's place: stop it (it no longer counts).
-    Steal(V),
+    /// Start in this voice's place ([`Voices::replace`] once the new voice
+    /// has started; until then the victim plays on and counts).
+    Steal(Victim),
     /// Do not start.
     Skip,
 }
+
+/// A live voice a death sound may take the place of ([`Admit::Steal`]):
+/// valid until the voices change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Victim(usize);
 
 struct Live<V> {
     sound: SoundId,
@@ -89,9 +96,10 @@ impl<V: Voice> Voices<V> {
     /// make room (the user's ruling, `docs/porting/STATUS.md`): it takes
     /// the place of the oldest voice of the same sound, else (at the
     /// global limit with none of its own) of the oldest voice that is not
-    /// a death's. The taken voice leaves the live list and is returned for
-    /// the caller to stop. Oldest is push order, so it is deterministic.
-    pub fn admit(&mut self, sound: SoundId) -> Admit<V> {
+    /// a death's. Nothing changes yet: the caller starts the new voice and
+    /// then calls [`Voices::replace`], so a start that fails leaves the old
+    /// voice playing. Oldest is push order, so it is deterministic.
+    pub fn admit(&self, sound: SoundId) -> Admit {
         let own = self.playing(sound) >= max_plays(sound);
         if !own && self.live.len() < self.limit {
             return Admit::Start;
@@ -106,9 +114,23 @@ impl<V: Voice> Voices<V> {
             same.or_else(|| self.live.iter().position(|l| !SoundId::DEATH.contains(&l.sound)))
         };
         match victim {
-            Some(i) => Admit::Steal(self.live.remove(i).voice),
+            Some(i) => Admit::Steal(Victim(i)),
             None => Admit::Skip,
         }
+    }
+
+    /// The voice `victim` names.
+    pub fn victim(&self, victim: Victim) -> &V {
+        &self.live[victim.0].voice
+    }
+
+    /// A started death sound takes `victim`'s place: the victim leaves the
+    /// live voices (it no longer counts) and is returned for the caller to
+    /// stop, and the new voice is added as [`Voices::push`] adds it.
+    pub fn replace(&mut self, victim: Victim, sound: SoundId, source: Vec2, gain: f32, voice: V) -> V {
+        let old = self.live.remove(victim.0).voice;
+        self.push(sound, source, gain, voice);
+        old
     }
 
     /// Adds a started voice.
