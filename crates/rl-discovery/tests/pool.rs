@@ -436,3 +436,39 @@ fn a_stalled_send_drops_the_connection_and_never_holds_up_a_drop() {
     drop(wb);
     assert!(t.elapsed() < ms(1500), "drop took {:?}", t.elapsed());
 }
+
+#[test]
+fn a_relay_that_reads_slowly_gets_every_frame_intact() {
+    // 64 events of 120 KiB (7.7 MB) per relay, read 1 KiB at a time with
+    // pauses: the pool's socket buffers fill, and its writes are partial
+    // and retried. Every frame must still arrive whole: the relay verifies
+    // each event (id and signature) before it accepts it.
+    let plain = TestRelay::start();
+    let (tls, root) = TestRelay::start_tls();
+    plain.set_misbehaviour(Misbehaviour::SlowReads);
+    tls.set_misbehaviour(Misbehaviour::SlowReads);
+    let mut cfg = config(vec![plain.url(), tls.url()]);
+    cfg.extra_roots = vec![root];
+    let mut w = Watch::new(cfg);
+    assert!(w.until(LONG, |s| (0..2).all(|r| statuses(s, r).contains(&RelayStatus::Connected))));
+    let body = "z".repeat(120 << 10);
+    let notes: Vec<Event> = (0..64u8).map(|n| note(n, &body)).collect();
+    for e in &notes {
+        w.pool.publish(e.clone());
+    }
+    let all_ok = |s: &[PoolEvent]| (0..2).all(|r| notes.iter().all(|e| ok(s, r, e.id)));
+    assert!(
+        w.until(Duration::from_secs(20), all_ok),
+        "{:?} {:?}",
+        statuses(&w.seen, 0),
+        statuses(&w.seen, 1)
+    );
+    for relay in [&plain, &tls] {
+        let stored = relay.events();
+        assert_eq!(stored.len(), notes.len());
+        assert!(stored.iter().all(|e| e.verify() && notes.contains(e)));
+    }
+    for r in 0..2 {
+        assert_eq!(statuses(&w.seen, r), vec![RelayStatus::Connecting, RelayStatus::Connected]);
+    }
+}

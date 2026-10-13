@@ -48,6 +48,41 @@ pub enum Misbehaviour {
     /// under any TLS), an established one an endless 64 KiB text frame.
     /// Nothing is read meanwhile.
     Drip,
+    /// Reads the socket at most 1 KiB at a time, pausing 1 ms every 8
+    /// reads (under any TLS): a peer that accepts writes slowly.
+    SlowReads,
+}
+
+/// The relay's side of a TCP connection: under [`Misbehaviour::SlowReads`]
+/// it reads in small chunks with pauses.
+struct Trickle<'a> {
+    tcp: TcpStream,
+    shared: &'a Shared,
+    reads: u32,
+}
+
+impl Read for Trickle<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.shared.lock().misbehaviour != Misbehaviour::SlowReads {
+            return self.tcp.read(buf);
+        }
+        self.reads = self.reads.wrapping_add(1);
+        if self.reads.is_multiple_of(8) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        let n = buf.len().min(1024);
+        self.tcp.read(&mut buf[..n])
+    }
+}
+
+impl Write for Trickle<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.tcp.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.tcp.flush()
+    }
 }
 
 const DRIP_EVERY: Duration = Duration::from_millis(40);
@@ -347,6 +382,7 @@ fn serve(shared: &Shared, conn: u64, mut stream: TcpStream, tls: Option<&Arc<rus
     let _ = ctl.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = ctl.set_write_timeout(Some(Duration::from_secs(5)));
     let config = WebSocketConfig::default().max_message_size(Some(MAX_FRAME)).max_frame_size(Some(MAX_FRAME));
+    let stream = Trickle { tcp: stream, shared, reads: 0 };
     match tls {
         None => {
             if let Ok(ws) = tungstenite::accept_with_config(stream, Some(config)) {

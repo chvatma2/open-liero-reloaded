@@ -52,8 +52,9 @@ test relay, relay pool, announcements, game list, STUN and invite codes
   the relay listens on 127.0.0.1 only, so a client connecting to `localhost`
   must fall back from `::1`, or connect to `port()` directly), `url()`,
   `port()`, `events()`, `set_misbehaviour(Honest | NeverEose | Garbage |
-  DropAfter(n) | Slow(d) | Silent | Drip)` (Silent: no reads, no writes,
-  new connections held without a handshake; Drip: one byte per 40 ms,
+  DropAfter(n) | Slow(d) | Silent | Drip | SlowReads)` (SlowReads: reads
+  of at most 1 KiB, a 1 ms pause every 8, under any TLS; Silent: no reads,
+  no writes, new connections held without a handshake; Drip: one byte per 40 ms,
   forever: an endless handshake response on new connections (on the TCP
   stream, under any TLS), an endless 64 KiB frame on established ones),
   `set_time(unix)` (the clock for NIP-40; default the system clock).
@@ -79,14 +80,18 @@ test relay, relay pool, announcements, game list, STUN and invite codes
     `extra_roots`, never the platform's. `ws://` is allowed. A bad URL is
     `Failed` for good; anything else retries after 1, 2, 4 … 60 s (a
     connection up 60 s resets the backoff).
-  - **Serve:** blocking socket, 50 ms (`TICK`) read and write timeouts
-    behind an I/O budget in `Sock`, re-armed at every turn of the loop and
-    every handshake round: reads stop (`WouldBlock`) once one `TICK` is
-    spent or the pool is stopping; writes once the turn's cumulative 5 s
-    send deadline has passed (then `Dropped("send timed out")`). A relay
+  - **Serve:** a non-blocking socket (ruling PF12-4: no `SO_RCVTIMEO`/
+    `SO_SNDTIMEO`, whose expiry leaves a Windows socket undefined) behind
+    an I/O budget in `Sock`. Each turn of the loop first sends (the
+    turn's sends share a cumulative 5 s deadline, then
+    `Dropped("send timed out")`; a full send buffer waits `POLL`, 10 ms,
+    between flushes), then reads for at most one `TICK` (50 ms), waiting
+    `POLL` only when nothing is left to read, so bursts drain at full
+    speed. Each handshake round reads for one `TICK` and waits `POLL`.
+    Reads also stop once the pool is stopping. A relay streaming or
     dripping bytes thus cannot hold the driver past a deadline or a stop.
-    `Sock` maps `TimedOut` to `WouldBlock` (Windows), on which rustls keeps
-    partial records and tungstenite partial frames, and the handshake
+    On `WouldBlock`, rustls keeps partial records and unsent output,
+    tungstenite partial frames and unflushed output, and the handshake
     resumes. Subscriptions are reconciled from the pool's set
     (`REQ`/`CLOSE`) and sent again after every reconnect.
   - **Liveness:** after 30 s with nothing received, a WebSocket ping;
@@ -115,8 +120,8 @@ test relay, relay pool, announcements, game list, STUN and invite codes
     reconnect; announcements are re-published every minute).
   - **Drop** stops every driver: each notices within about a `TICK`
     (even mid-read or mid-send), sends what is queued (a closing note)
-    within 1 s, closes, and is joined within 2 s in all (one stuck in a
-    TCP connect or DNS lookup is detached).
+    and the Close frame within 1 s, and is joined within 2 s in all (one
+    stuck in a TCP connect or DNS lookup is detached).
 - Deps: `rustls` (default aws-lc-rs) and `webpki-roots` (workspace pins),
   `tungstenite` with `rustls-tls-webpki-roots` (for `Connector::Rustls`;
   its own default roots are never used). `rcgen =0.14.10` (`aws_lc_rs`
@@ -127,7 +132,8 @@ Test: `cargo nextest run -p rl-discovery` (`tests/nostr.rs`: the published
 events verify, signing round-trips, canonical escaping, tampering, frames
 round-trip, fuzzed frames never panic; `tests/test_relay.rs`: the relay;
 `tests/pool.rs`: the pool against the test relay (silent, dripping,
-slow), a flooding relay and unreachable relays: a listener on
-`127.0.0.1` that never accepts, and TEST-NET-1 `192.0.2.1`, never
+slow, slow-reading: every frame arrives intact through partial writes,
+over `ws://` and `wss://`), a flooding relay and unreachable relays: a
+listener on `127.0.0.1` that never accepts, and TEST-NET-1 `192.0.2.1`, never
 routed; unit tests of the backoff, limiter, queues, dedupe and default
 timings in `src`).

@@ -12,11 +12,15 @@
 //! reported as not accepted, and the connection kept. Failed or dropped,
 //! it waits 1, 2, 4 … 60 s and tries again. (Defaults: see [`Timings`].)
 //!
-//! The socket is blocking with short timeouts ([`TICK`]) behind an I/O
-//! budget ([`Sock`]), so one thread both reads and writes, keeps its
-//! deadlines and notices the pool going away. A read that stops early
-//! loses nothing: rustls keeps a partial TLS record and tungstenite a
-//! partial frame, and both resume on the next read.
+//! The socket is non-blocking (ruling PF12-4) behind an I/O budget
+//! ([`Sock`]), so one thread both reads and writes, keeps its deadlines and
+//! notices the pool going away; where nothing can move, it waits [`POLL`].
+//! `WouldBlock` is the socket's ordinary answer, never a timeout, so no
+//! socket is ever retried after an `SO_RCVTIMEO`/`SO_SNDTIMEO` expiry
+//! (whose state Windows leaves undefined). A partial read or write is
+//! counted by the OS as usual: rustls keeps a partial TLS record and
+//! unsent records, tungstenite a partial frame and its unflushed output,
+//! and both resume on the next call.
 //!
 //! [`Pool`]: crate::pool::Pool
 
@@ -37,8 +41,12 @@ use tungstenite::{Connector, HandshakeError, Message, WebSocket};
 use crate::nostr::{Event, Filter, FromRelay, ToRelay, decode_from_relay, encode_to_relay};
 use crate::pool::{PoolEvent, RelayStatus, Timings};
 
-/// The longest a driver blocks in a read before servicing its queue.
+/// The read budget of one turn of the loop: a relay streaming without
+/// pause is read for this long before the queue and deadlines are seen to.
 pub(crate) const TICK: Duration = Duration::from_millis(50);
+/// The wait when the socket cannot move (nothing to read, or its send
+/// buffer full), before trying again.
+const POLL: Duration = Duration::from_millis(10);
 /// TCP connect timeout, per address.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// The sends of one turn of the loop share this deadline; past it, the
@@ -134,6 +142,11 @@ impl Link {
     /// `write_until`.
     fn arm(&self, read_until: Instant, write_until: Instant) {
         *self.budget.lock().unwrap_or_else(PoisonError::into_inner) = Budget { read_until, write_until };
+    }
+
+    /// Re-arms the read budget only.
+    fn arm_read(&self, read_until: Instant) {
+        self.budget.lock().unwrap_or_else(PoisonError::into_inner).read_until = read_until;
     }
 
     fn write_expired(&self) -> bool {
@@ -269,16 +282,14 @@ impl Limiter {
     }
 }
 
-/// The driver's TCP stream. Reads and writes go through an I/O budget the
-/// driver re-arms ([`Link::arm`]): once the read budget (about one
-/// [`TICK`]) is spent, or the pool is stopping, every read returns
+/// The driver's TCP stream, non-blocking. Reads and writes go through an
+/// I/O budget the driver re-arms ([`Link::arm`]): once the read budget
+/// (one [`TICK`]) is spent, or the pool is stopping, every read returns
 /// `WouldBlock`; once the cumulative write deadline has passed, every
-/// write does. A relay dripping a byte at a time therefore cannot keep the
-/// driver inside one read or one handshake past its deadlines or past a
-/// stop. The socket's own timeouts (one `TICK` each) bound a single
-/// syscall. Timeouts read as `WouldBlock` on every platform (Windows
-/// reports `TimedOut`): tungstenite resumes an interrupted handshake, and
-/// rustls stops cleanly, only on `WouldBlock`.
+/// write does. A relay streaming or dripping without end therefore cannot
+/// keep the driver inside one read or one handshake past its deadlines or
+/// past a stop. tungstenite resumes an interrupted handshake, and rustls
+/// stops cleanly, on `WouldBlock`.
 pub(crate) struct Sock {
     tcp: TcpStream,
     link: Arc<Link>,
@@ -288,16 +299,12 @@ fn would_block() -> io::Error {
     io::ErrorKind::WouldBlock.into()
 }
 
-fn timeout_as_would_block(e: io::Error) -> io::Error {
-    if e.kind() == io::ErrorKind::TimedOut { would_block() } else { e }
-}
-
 impl Read for Sock {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.link.stopping() || Instant::now() >= self.link.budget().read_until {
             return Err(would_block());
         }
-        self.tcp.read(buf).map_err(timeout_as_would_block)
+        self.tcp.read(buf)
     }
 }
 
@@ -306,11 +313,11 @@ impl Write for Sock {
         if self.link.write_expired() {
             return Err(would_block());
         }
-        self.tcp.write(buf).map_err(timeout_as_would_block)
+        self.tcp.write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.tcp.flush().map_err(timeout_as_would_block)
+        self.tcp.flush()
     }
 }
 
@@ -367,12 +374,12 @@ fn connect(link: &Arc<Link>, cfg: &DriverConfig) -> Result<Ws, ConnectError> {
     let stream = stream.ok_or(ConnectError::Retry(last))?;
     let io = |e: io::Error| ConnectError::Retry(format!("socket: {e}"));
     stream.set_nodelay(true).map_err(io)?;
-    stream.set_read_timeout(Some(TICK)).map_err(io)?;
-    stream.set_write_timeout(Some(TICK)).map_err(io)?;
+    stream.set_nonblocking(true).map_err(io)?;
 
     let config =
         WebSocketConfig::default().max_message_size(Some(cfg.max_frame)).max_frame_size(Some(cfg.max_frame));
-    // Every round reads for at most one TICK; writes share the deadline.
+    // Every round reads for at most one TICK; writes share the deadline;
+    // between rounds, the driver waits for the socket.
     let deadline = Instant::now() + cfg.timings.handshake;
     link.arm(Instant::now() + TICK, deadline);
     let sock = Sock { tcp: stream, link: Arc::clone(link) };
@@ -388,6 +395,7 @@ fn connect(link: &Arc<Link>, cfg: &DriverConfig) -> Result<Ws, ConnectError> {
                 if Instant::now() >= deadline {
                     return Err(ConnectError::Retry("handshake timed out".into()));
                 }
+                thread::sleep(POLL);
                 link.arm(Instant::now() + TICK, deadline);
                 attempt = mid.handshake();
             }
@@ -473,12 +481,19 @@ impl<'a> Session<'a> {
         }
     }
 
-    /// Sends one message within the armed write deadline, retrying the
-    /// socket's short timeouts until then. Unless `closing`, a stop
-    /// interrupts it (the closing path sends what is left).
+    /// Sends one message within the armed write deadline. Unless
+    /// `closing`, a stop interrupts it (the closing path sends what is
+    /// left).
     fn send(&self, ws: &mut Ws, msg: Message, closing: bool) -> Result<(), String> {
         // On `WouldBlock`, tungstenite keeps the frame in its buffer.
-        let mut r = ws.write(msg).and_then(|()| ws.flush());
+        let r = ws.write(msg).and_then(|()| ws.flush());
+        self.finish(ws, r, closing)
+    }
+
+    /// Flushes until `r` (the first attempt) is through: while the send
+    /// buffer is full, waits [`POLL`] and flushes again, until the write
+    /// deadline.
+    fn finish(&self, ws: &mut Ws, mut r: tungstenite::Result<()>, closing: bool) -> Result<(), String> {
         loop {
             match r {
                 Ok(()) => return Ok(()),
@@ -492,6 +507,7 @@ impl<'a> Session<'a> {
                 }
                 Err(e) => return Err(format!("send: {e}")),
             }
+            thread::sleep(POLL);
             r = ws.flush();
         }
     }
@@ -509,11 +525,12 @@ impl<'a> Session<'a> {
                         break;
                     }
                 }
-                let _ = ws.close(None);
-                let _ = ws.flush();
+                let closed = ws.close(None);
+                let _ = self.finish(ws, closed, true);
                 return End::Stop;
             }
-            self.link.arm(now + TICK, now + WRITE_TIMEOUT);
+            // Sends first (no reading meanwhile), then one TICK of reading.
+            self.link.arm(now, now + WRITE_TIMEOUT);
             if let Err(reason) = self.send_pending(ws) {
                 if self.link.stopping() {
                     continue;
@@ -526,6 +543,7 @@ impl<'a> Session<'a> {
                 }
                 return End::Dropped(reason);
             }
+            self.link.arm_read(Instant::now() + TICK);
             let result = match ws.read() {
                 Ok(m) => {
                     self.last_rx = Instant::now();
@@ -537,9 +555,10 @@ impl<'a> Session<'a> {
                         Message::Frame(_) => Ok(()),
                     }
                 }
-                Err(tungstenite::Error::Io(e))
-                    if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
-                {
+                // Nothing (more) to read: wait for the socket. A burst is
+                // drained at full speed, without this wait.
+                Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(POLL);
                     Ok(())
                 }
                 Err(tungstenite::Error::Capacity(e)) => Err(format!("frame too large: {e}")),
