@@ -11,7 +11,7 @@ pub use nostr::{
     Event, Filter, FromRelay, KIND_ANNOUNCE, KIND_HANDSHAKE, MAX_CONTENT, MAX_FRAME, NostrError, ToRelay,
     canonical, decode_from_relay, decode_to_relay, encode_from_relay, encode_to_relay,
 };
-pub use pool::{Pool, PoolConfig, PoolEvent, RelayStatus};
+pub use pool::{Pool, PoolConfig, PoolEvent, RelayStatus, Timings};
 
 #[cfg(feature = "test-relay")]
 pub mod test_relay;

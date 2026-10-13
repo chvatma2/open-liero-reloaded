@@ -1,7 +1,7 @@
 //! The in-process test relay: storage, replacement, expiry, ephemeral
 //! forwarding, filters, TLS, misbehaviour and shutdown.
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,9 +30,21 @@ impl Write for Conn {
 
 struct Client(WebSocket<Conn>);
 
-fn tcp(port: u16, timeout: Duration) -> TcpStream {
-    let s = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    s.set_read_timeout(Some(timeout)).unwrap();
+/// What the next read brought.
+#[derive(Debug, PartialEq)]
+enum Next {
+    Frame(Box<FromRelay>),
+    /// Nothing within the read timeout; the connection is open.
+    Timeout,
+    /// The relay closed the connection.
+    Closed,
+}
+
+/// Connects with a 5 s timeout for the TCP connect and the handshake.
+fn tcp(port: u16) -> TcpStream {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let s = TcpStream::connect_timeout(&addr, Duration::from_secs(5)).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     s.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
     s
 }
@@ -42,9 +54,13 @@ impl Client {
         Client::connect_timeout(relay, Duration::from_secs(5))
     }
 
+    /// Connects (5 s), then reads with `timeout`.
     fn connect_timeout(relay: &TestRelay, timeout: Duration) -> Client {
+        let s = tcp(relay.port());
+        let ctl = s.try_clone().unwrap();
         let url = relay.url();
-        let (ws, _) = tungstenite::client(url.as_str(), Conn(Box::new(tcp(relay.port(), timeout)))).unwrap();
+        let (ws, _) = tungstenite::client(url.as_str(), Conn(Box::new(s))).unwrap();
+        ctl.set_read_timeout(Some(timeout)).unwrap();
         Client(ws)
     }
 
@@ -61,7 +77,7 @@ impl Client {
         let conn =
             rustls::ClientConnection::new(Arc::new(config), ServerName::try_from("localhost").unwrap())
                 .unwrap();
-        let stream = rustls::StreamOwned::new(conn, tcp(relay.port(), Duration::from_secs(5)));
+        let stream = rustls::StreamOwned::new(conn, tcp(relay.port()));
         let url = relay.url();
         tungstenite::client(url.as_str(), Conn(Box::new(stream)))
             .map(|(ws, _)| Client(ws))
@@ -72,18 +88,42 @@ impl Client {
         self.0.send(Message::text(encode_to_relay(m))).unwrap();
     }
 
-    fn try_recv(&mut self) -> Option<FromRelay> {
+    fn next(&mut self) -> Next {
+        use tungstenite::error::{Error, ProtocolError};
         loop {
             match self.0.read() {
-                Ok(Message::Text(t)) => return Some(decode_from_relay(t.as_str()).unwrap()),
+                Ok(Message::Text(t)) => return Next::Frame(Box::new(decode_from_relay(t.as_str()).unwrap())),
+                Ok(Message::Close(_)) => return Next::Closed,
                 Ok(_) => {}
-                Err(_) => return None,
+                Err(Error::Io(e)) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                    return Next::Timeout;
+                }
+                Err(
+                    Error::ConnectionClosed
+                    | Error::AlreadyClosed
+                    | Error::Protocol(ProtocolError::ResetWithoutClosingHandshake),
+                ) => return Next::Closed,
+                Err(Error::Io(e))
+                    if matches!(
+                        e.kind(),
+                        ErrorKind::UnexpectedEof
+                            | ErrorKind::ConnectionReset
+                            | ErrorKind::ConnectionAborted
+                            | ErrorKind::BrokenPipe
+                    ) =>
+                {
+                    return Next::Closed;
+                }
+                Err(e) => panic!("neither a frame, a timeout nor a close: {e}"),
             }
         }
     }
 
     fn recv(&mut self) -> FromRelay {
-        self.try_recv().expect("a frame from the relay")
+        match self.next() {
+            Next::Frame(f) => *f,
+            other => panic!("expected a frame from the relay, got {other:?}"),
+        }
     }
 
     /// Publishes an event; the relay's verdict.
@@ -225,6 +265,11 @@ fn ephemeral_events_reach_live_subscriptions_only() {
     assert!(listener.query("probe", vec![kinds(2)]).is_empty());
     let note2 = ev(1, 1002, 1, &[], "after close");
     sender.publish(&note2);
+    // `hs` is closed: a second handshake event reaches nobody. Had it
+    // reached `listener`, it would arrive before probe2's EOSE (the relay
+    // forwards before its OK), and `query` would panic on it.
+    let e2 = ev(1, 1003, KIND_HANDSHAKE, &[&["p", "abc"]], "offer 2");
+    assert_eq!(sender.publish(&e2), (true, String::new()));
     assert!(listener.query("probe2", vec![kinds(2)]).is_empty());
     // `other` received `note` (live) but not `note2` (closed); a frame from
     // a closed sub would arrive before this query's EOSE and fail the assert.
@@ -305,7 +350,7 @@ fn misbehaviours() {
     let mut c = Client::connect_timeout(&relay, Duration::from_millis(300));
     c.send(&ToRelay::Req { sub: "s".into(), filters: vec![kinds(1)] });
     assert_eq!(c.recv(), FromRelay::Event { sub: "s".into(), event: e.clone() });
-    assert_eq!(c.try_recv(), None);
+    assert_eq!(c.next(), Next::Timeout, "open, but no EOSE");
 
     // Garbage: a frame that is not Nostr.
     relay.set_misbehaviour(Misbehaviour::Garbage);
@@ -322,7 +367,7 @@ fn misbehaviours() {
     c.send(&ToRelay::Req { sub: "s".into(), filters: vec![kinds(1)] });
     assert_eq!(c.recv(), FromRelay::Event { sub: "s".into(), event: e.clone() });
     assert_eq!(c.recv(), FromRelay::Eose { sub: "s".into() });
-    assert_eq!(c.try_recv(), None, "closed");
+    assert_eq!(c.next(), Next::Closed);
 
     // Slow: the answer comes late, but comes.
     relay.set_misbehaviour(Misbehaviour::Slow(Duration::from_millis(200)));
@@ -344,7 +389,7 @@ fn garbage_input_is_answered_not_fatal() {
         assert!(matches!(c.recv(), FromRelay::Notice(m) if m.starts_with("error")), "{junk}");
     }
     c.0.send(Message::text("x".repeat(MAX_FRAME + 10))).unwrap();
-    assert!(c.try_recv().is_none(), "an oversized frame closes the connection");
+    assert_eq!(c.next(), Next::Closed, "an oversized frame closes the connection");
     // The relay itself lives on.
     assert!(Client::connect(&relay).query("s", vec![kinds(1)]).is_empty());
 }
@@ -359,5 +404,5 @@ fn dropping_the_relay_closes_the_port() {
     drop(relay);
     assert!(t.elapsed() < Duration::from_secs(2), "shutdown is bounded: {:?}", t.elapsed());
     assert!(TcpStream::connect(("127.0.0.1", port)).is_err());
-    assert!(c.try_recv().is_none(), "open connections are closed");
+    assert_eq!(c.next(), Next::Closed, "open connections are closed");
 }

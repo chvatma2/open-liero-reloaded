@@ -7,13 +7,16 @@
 //! events, `EOSE` and `OK` back through the shared [`Link`]. Limits drop
 //! the connection: a frame above `max_frame`, a sustained rate above
 //! 200 frames/s or 1 MiB/s, a frame that is not a Nostr message, no `EOSE`
-//! or `OK` within 5 s of asking. Failed or dropped, it waits 1, 2, 4 … 60 s
-//! and tries again.
+//! within 10 s of a `REQ`, nothing at all within 10 s of a ping (sent
+//! after 30 s of silence), a send not done within 5 s. A missing `OK` is
+//! reported as not accepted, and the connection kept. Failed or dropped,
+//! it waits 1, 2, 4 … 60 s and tries again. (Defaults: see [`Timings`].)
 //!
-//! The socket is blocking with a short read timeout ([`TICK`]), so one
-//! thread both reads and writes and notices the pool going away. A read
-//! that times out loses nothing: rustls keeps a partial TLS record and
-//! tungstenite a partial frame, and both resume on the next read.
+//! The socket is blocking with short timeouts ([`TICK`]) behind an I/O
+//! budget ([`Sock`]), so one thread both reads and writes, keeps its
+//! deadlines and notices the pool going away. A read that stops early
+//! loses nothing: rustls keeps a partial TLS record and tungstenite a
+//! partial frame, and both resume on the next read.
 //!
 //! [`Pool`]: crate::pool::Pool
 
@@ -31,19 +34,18 @@ use tungstenite::protocol::WebSocketConfig;
 use tungstenite::stream::{MaybeTlsStream, Mode};
 use tungstenite::{Connector, HandshakeError, Message, WebSocket};
 
-use crate::nostr::{Event, Filter, FromRelay, NostrError, ToRelay, decode_from_relay, encode_to_relay};
-use crate::pool::{PoolEvent, RelayStatus};
+use crate::nostr::{Event, Filter, FromRelay, ToRelay, decode_from_relay, encode_to_relay};
+use crate::pool::{PoolEvent, RelayStatus, Timings};
 
 /// The longest a driver blocks in a read before servicing its queue.
 pub(crate) const TICK: Duration = Duration::from_millis(50);
 /// TCP connect timeout, per address.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// The TLS and WebSocket handshakes together.
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
-/// A blocked write drops the connection after this.
+/// The sends of one turn of the loop share this deadline; past it, the
+/// connection is dropped.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-/// `EOSE` after a `REQ`, `OK` after an `EVENT`.
-const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+/// Stopping, what is queued gets this long to go out.
+const STOP_FLUSH: Duration = Duration::from_secs(1);
 const BACKOFF_FIRST: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
 /// A connection that stayed up this long resets the backoff; one dropped
@@ -94,6 +96,14 @@ pub(crate) struct Link {
     pub url: String,
     state: Mutex<LinkState>,
     stop: AtomicBool,
+    budget: Mutex<Budget>,
+}
+
+/// The current connection's I/O budget ([`Sock`]).
+#[derive(Clone, Copy)]
+struct Budget {
+    read_until: Instant,
+    write_until: Instant,
 }
 
 impl Link {
@@ -112,7 +122,22 @@ impl Link {
                 dropped: 0,
             }),
             stop: AtomicBool::new(false),
+            budget: Mutex::new(Budget { read_until: Instant::now(), write_until: Instant::now() }),
         }
+    }
+
+    fn budget(&self) -> Budget {
+        *self.budget.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Re-arms the I/O budget: reads until `read_until`, writes until
+    /// `write_until`.
+    fn arm(&self, read_until: Instant, write_until: Instant) {
+        *self.budget.lock().unwrap_or_else(PoisonError::into_inner) = Budget { read_until, write_until };
+    }
+
+    fn write_expired(&self) -> bool {
+        Instant::now() >= self.budget().write_until
     }
 
     pub fn lock(&self) -> MutexGuard<'_, LinkState> {
@@ -189,6 +214,7 @@ pub(crate) struct DriverConfig {
     /// `None` if rustls could not be configured: `wss://` relays fail.
     pub tls: Option<Arc<rustls::ClientConfig>>,
     pub max_frame: usize,
+    pub timings: Timings,
 }
 
 /// The reconnect delays: 1, 2, 4 … 60 s.
@@ -243,28 +269,48 @@ impl Limiter {
     }
 }
 
-/// A TCP stream whose timeouts read as `WouldBlock` on every platform
-/// (Windows reports `TimedOut`): tungstenite resumes an interrupted
-/// handshake, and rustls stops cleanly, only on `WouldBlock`.
-pub(crate) struct Sock(TcpStream);
+/// The driver's TCP stream. Reads and writes go through an I/O budget the
+/// driver re-arms ([`Link::arm`]): once the read budget (about one
+/// [`TICK`]) is spent, or the pool is stopping, every read returns
+/// `WouldBlock`; once the cumulative write deadline has passed, every
+/// write does. A relay dripping a byte at a time therefore cannot keep the
+/// driver inside one read or one handshake past its deadlines or past a
+/// stop. The socket's own timeouts (one `TICK` each) bound a single
+/// syscall. Timeouts read as `WouldBlock` on every platform (Windows
+/// reports `TimedOut`): tungstenite resumes an interrupted handshake, and
+/// rustls stops cleanly, only on `WouldBlock`.
+pub(crate) struct Sock {
+    tcp: TcpStream,
+    link: Arc<Link>,
+}
+
+fn would_block() -> io::Error {
+    io::ErrorKind::WouldBlock.into()
+}
 
 fn timeout_as_would_block(e: io::Error) -> io::Error {
-    if e.kind() == io::ErrorKind::TimedOut { io::ErrorKind::WouldBlock.into() } else { e }
+    if e.kind() == io::ErrorKind::TimedOut { would_block() } else { e }
 }
 
 impl Read for Sock {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.0.read(buf).map_err(timeout_as_would_block)
+        if self.link.stopping() || Instant::now() >= self.link.budget().read_until {
+            return Err(would_block());
+        }
+        self.tcp.read(buf).map_err(timeout_as_would_block)
     }
 }
 
 impl Write for Sock {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf).map_err(timeout_as_would_block)
+        if self.link.write_expired() {
+            return Err(would_block());
+        }
+        self.tcp.write(buf).map_err(timeout_as_would_block)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.0.flush().map_err(timeout_as_would_block)
+        self.tcp.flush().map_err(timeout_as_would_block)
     }
 }
 
@@ -278,7 +324,7 @@ enum ConnectError {
 }
 
 /// Resolves, connects (IPv4 first) and handshakes.
-fn connect(link: &Link, cfg: &DriverConfig) -> Result<Ws, ConnectError> {
+fn connect(link: &Arc<Link>, cfg: &DriverConfig) -> Result<Ws, ConnectError> {
     let request = link
         .url
         .as_str()
@@ -322,13 +368,15 @@ fn connect(link: &Link, cfg: &DriverConfig) -> Result<Ws, ConnectError> {
     let io = |e: io::Error| ConnectError::Retry(format!("socket: {e}"));
     stream.set_nodelay(true).map_err(io)?;
     stream.set_read_timeout(Some(TICK)).map_err(io)?;
-    stream.set_write_timeout(Some(WRITE_TIMEOUT)).map_err(io)?;
+    stream.set_write_timeout(Some(TICK)).map_err(io)?;
 
     let config =
         WebSocketConfig::default().max_message_size(Some(cfg.max_frame)).max_frame_size(Some(cfg.max_frame));
-    let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
-    let mut attempt =
-        tungstenite::client_tls_with_config(request, Sock(stream), Some(config), Some(connector));
+    // Every round reads for at most one TICK; writes share the deadline.
+    let deadline = Instant::now() + cfg.timings.handshake;
+    link.arm(Instant::now() + TICK, deadline);
+    let sock = Sock { tcp: stream, link: Arc::clone(link) };
+    let mut attempt = tungstenite::client_tls_with_config(request, sock, Some(config), Some(connector));
     loop {
         match attempt {
             Ok((ws, _)) => return Ok(ws),
@@ -340,6 +388,7 @@ fn connect(link: &Link, cfg: &DriverConfig) -> Result<Ws, ConnectError> {
                 if Instant::now() >= deadline {
                     return Err(ConnectError::Retry("handshake timed out".into()));
                 }
+                link.arm(Instant::now() + TICK, deadline);
                 attempt = mid.handshake();
             }
         }
@@ -347,7 +396,7 @@ fn connect(link: &Link, cfg: &DriverConfig) -> Result<Ws, ConnectError> {
 }
 
 /// Runs one relay until the pool stops it.
-pub(crate) fn run(link: &Link, cfg: &DriverConfig) {
+pub(crate) fn run(link: &Arc<Link>, cfg: &DriverConfig) {
     let mut backoff = Backoff::new();
     while !link.stopping() {
         link.set_status(RelayStatus::Connecting);
@@ -365,7 +414,7 @@ pub(crate) fn run(link: &Link, cfg: &DriverConfig) {
             Ok(mut ws) => {
                 link.set_status(RelayStatus::Connected);
                 let up = Instant::now();
-                match Session::new(link).serve(&mut ws) {
+                match Session::new(link, cfg.timings).serve(&mut ws) {
                     End::Stop => return,
                     End::Dropped(reason) => {
                         link.set_status(RelayStatus::Dropped(reason));
@@ -388,43 +437,75 @@ enum End {
     Dropped(String),
 }
 
+/// "5 s", or "500 ms" below a whole second.
+fn span(d: Duration) -> String {
+    if d.subsec_nanos() == 0 { format!("{} s", d.as_secs()) } else { format!("{} ms", d.as_millis()) }
+}
+
 /// One connection's bookkeeping.
 struct Session<'a> {
     link: &'a Link,
+    timings: Timings,
     /// The subscriptions sent on this connection.
     sent: BTreeMap<String, Vec<Filter>>,
     subs_gen: Option<u64>,
     awaiting_eose: BTreeMap<String, Instant>,
     awaiting_ok: VecDeque<([u8; 32], Instant)>,
     limiter: Limiter,
-}
-
-/// A frame no Nostr relay would send (not JSON, or not an array headed by
-/// a message type), as opposed to a message we do not know (`AUTH`,
-/// `COUNT`) or one malformed event, which are skipped.
-fn not_nostr(e: &NostrError) -> bool {
-    matches!(e, NostrError::Json | NostrError::TooLarge | NostrError::Malformed("frame"))
+    /// When anything last arrived, and when we pinged since.
+    last_rx: Instant,
+    ping_sent: Option<Instant>,
 }
 
 impl<'a> Session<'a> {
-    fn new(link: &'a Link) -> Session<'a> {
+    fn new(link: &'a Link, timings: Timings) -> Session<'a> {
+        let now = Instant::now();
         Session {
             link,
+            timings,
             sent: BTreeMap::new(),
             subs_gen: None,
             awaiting_eose: BTreeMap::new(),
             awaiting_ok: VecDeque::new(),
-            limiter: Limiter::new(Instant::now()),
+            limiter: Limiter::new(now),
+            last_rx: now,
+            ping_sent: None,
+        }
+    }
+
+    /// Sends one message within the armed write deadline, retrying the
+    /// socket's short timeouts until then. Unless `closing`, a stop
+    /// interrupts it (the closing path sends what is left).
+    fn send(&self, ws: &mut Ws, msg: Message, closing: bool) -> Result<(), String> {
+        // On `WouldBlock`, tungstenite keeps the frame in its buffer.
+        let mut r = ws.write(msg).and_then(|()| ws.flush());
+        loop {
+            match r {
+                Ok(()) => return Ok(()),
+                Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
+                    if self.link.write_expired() {
+                        return Err("send timed out".into());
+                    }
+                    if !closing && self.link.stopping() {
+                        return Err("stopped".into());
+                    }
+                }
+                Err(e) => return Err(format!("send: {e}")),
+            }
+            r = ws.flush();
         }
     }
 
     fn serve(&mut self, ws: &mut Ws) -> End {
         loop {
+            let now = Instant::now();
             if self.link.stopping() {
-                // Best effort: what is queued (a closing note) goes out first.
+                // Best effort, within STOP_FLUSH: what is queued (a
+                // closing note) goes out first.
+                self.link.arm(now, now + STOP_FLUSH);
                 let queued: Vec<Outgoing> = self.link.lock().outbox.drain(..).collect();
                 for o in queued {
-                    if ws.send(Message::text(o.frame)).is_err() {
+                    if self.send(ws, Message::text(o.frame), true).is_err() {
                         break;
                     }
                 }
@@ -432,31 +513,30 @@ impl<'a> Session<'a> {
                 let _ = ws.flush();
                 return End::Stop;
             }
+            self.link.arm(now + TICK, now + WRITE_TIMEOUT);
             if let Err(reason) = self.send_pending(ws) {
+                if self.link.stopping() {
+                    continue;
+                }
                 return End::Dropped(reason);
             }
-            let now = Instant::now();
-            if let Some(sub) = self
-                .awaiting_eose
-                .iter()
-                .find(|(_, t)| now.saturating_duration_since(**t) >= REPLY_TIMEOUT)
-                .map(|(s, _)| s)
-            {
-                return End::Dropped(format!("no EOSE for \"{sub}\" within {} s", REPLY_TIMEOUT.as_secs()));
-            }
-            if self
-                .awaiting_ok
-                .front()
-                .is_some_and(|(_, t)| now.saturating_duration_since(*t) >= REPLY_TIMEOUT)
-            {
-                return End::Dropped(format!("no OK within {} s", REPLY_TIMEOUT.as_secs()));
+            if let Err(reason) = self.check_deadlines(ws) {
+                if self.link.stopping() {
+                    continue;
+                }
+                return End::Dropped(reason);
             }
             let result = match ws.read() {
-                Ok(Message::Text(t)) => self.limit(t.len()).and_then(|()| self.handle(t.as_str())),
-                Ok(Message::Binary(b)) => self.limit(b.len()),
-                Ok(Message::Ping(b) | Message::Pong(b)) => self.limit(b.len()),
-                Ok(Message::Close(_)) => Err("closed by the relay".into()),
-                Ok(Message::Frame(_)) => Ok(()),
+                Ok(m) => {
+                    self.last_rx = Instant::now();
+                    self.ping_sent = None;
+                    match m {
+                        Message::Text(t) => self.limit(t.len()).and_then(|()| self.handle(t.as_str())),
+                        Message::Binary(b) | Message::Ping(b) | Message::Pong(b) => self.limit(b.len()),
+                        Message::Close(_) => Err("closed by the relay".into()),
+                        Message::Frame(_) => Ok(()),
+                    }
+                }
                 Err(tungstenite::Error::Io(e))
                     if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
                 {
@@ -471,12 +551,44 @@ impl<'a> Session<'a> {
         }
     }
 
+    /// The EOSE window (dropping), the OK window (reported, the connection
+    /// kept) and liveness: a ping after `idle_ping` of silence, dropping if
+    /// nothing at all arrives within `ping_answer` of it.
+    fn check_deadlines(&mut self, ws: &mut Ws) -> Result<(), String> {
+        let now = Instant::now();
+        let t = self.timings;
+        if let Some(sub) =
+            self.awaiting_eose.iter().find(|(_, s)| now.saturating_duration_since(**s) >= t.eose)
+        {
+            return Err(format!("no EOSE for \"{}\" within {}", sub.0, span(t.eose)));
+        }
+        while let Some(&(id, sent)) = self.awaiting_ok.front() {
+            if now.saturating_duration_since(sent) < t.ok {
+                break;
+            }
+            self.awaiting_ok.pop_front();
+            let message = format!("no answer within {}", span(t.ok));
+            self.link.push(PoolEvent::Ok { relay: self.link.index, id, accepted: false, message });
+        }
+        match self.ping_sent {
+            Some(at) if now.saturating_duration_since(at) >= t.ping_answer => Err("no answer to ping".into()),
+            None if now.saturating_duration_since(self.last_rx) >= t.idle_ping => {
+                self.ping_sent = Some(now);
+                self.send(ws, Message::Ping(Default::default()), false)
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn limit(&mut self, len: usize) -> Result<(), String> {
         self.limiter.frame(Instant::now(), len)
     }
 
     /// Brings the relay's subscriptions in line with the pool's and sends
-    /// the queued events.
+    /// the queued events. The events are taken off the queue first: if a
+    /// send fails, those not yet sent are lost with the connection (a
+    /// frame that broke a connection is not retried forever; announcements
+    /// are re-published every minute anyway).
     fn send_pending(&mut self, ws: &mut Ws) -> Result<(), String> {
         let (frames, queued) = {
             let mut st = self.link.lock();
@@ -508,11 +620,11 @@ impl<'a> Session<'a> {
                 }
                 ToRelay::Event(_) => {}
             }
-            ws.send(Message::text(encode_to_relay(&f))).map_err(|e| format!("send: {e}"))?;
+            self.send(ws, Message::text(encode_to_relay(&f)), false)?;
         }
         for o in queued {
             self.awaiting_ok.push_back((o.id, now));
-            ws.send(Message::text(o.frame)).map_err(|e| format!("send: {e}"))?;
+            self.send(ws, Message::text(o.frame), false)?;
         }
         Ok(())
     }
@@ -534,6 +646,7 @@ impl<'a> Session<'a> {
                 }
             }
             Ok(FromRelay::Ok { id, accepted, message }) => {
+                // An answer after the OK window was already reported.
                 if let Some(i) = self.awaiting_ok.iter().position(|(a, _)| *a == id) {
                     self.awaiting_ok.remove(i);
                     self.link.push(PoolEvent::Ok { relay: index, id, accepted, message });
@@ -545,7 +658,10 @@ impl<'a> Session<'a> {
                 self.awaiting_eose.remove(&sub);
             }
             Ok(FromRelay::Notice(_)) => {}
-            Err(e) if not_nostr(&e) => return Err(format!("not a Nostr message ({e})")),
+            // Not a relay frame at all (not JSON, or not an array headed by
+            // a type) drops the connection; a type we do not know (`AUTH`,
+            // `COUNT`) or one malformed event is skipped.
+            Err(e) if e.is_frame_error() => return Err(format!("not a Nostr message ({e})")),
             Err(_) => {}
         }
         Ok(())

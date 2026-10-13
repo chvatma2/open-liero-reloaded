@@ -25,7 +25,10 @@ test relay, relay pool, announcements, game list, STUN and invite codes
     `EOSE`, `OK`, `NOTICE`, `CLOSED`). `decode_*` refuse text above
     `MAX_FRAME` (128 KiB) and rely on serde_json's recursion limit (128)
     for nesting. Decoding does not verify signatures: callers call
-    `Event::verify`. Hex fields must be exact length. `OK` and `CLOSED`
+    `Event::verify`. `NostrError::is_frame_error()` tells text that is no
+    relay frame at all (`Json`, `TooLarge`, `NotAFrame`) from a frame we
+    skip (`Unknown` type, `Malformed` field). Hex fields must be exact
+    length. `OK` and `CLOSED`
     without a message are accepted (seen in the wild); unknown filter keys
     are ignored; `#x` filters need a single character `x`. Authors in
     filters are full 32-byte keys (no prefixes). `encode_from_relay` and
@@ -49,8 +52,12 @@ test relay, relay pool, announcements, game list, STUN and invite codes
   the relay listens on 127.0.0.1 only, so a client connecting to `localhost`
   must fall back from `::1`, or connect to `port()` directly), `url()`,
   `port()`, `events()`, `set_misbehaviour(Honest | NeverEose | Garbage |
-  DropAfter(n) | Slow(d))`, `set_time(unix)` (the clock for NIP-40; default
-  the system clock). Verifies events; regular events dedupe by id,
+  DropAfter(n) | Slow(d) | Silent | Drip)` (Silent: no reads, no writes,
+  new connections held without a handshake; Drip: one byte per 40 ms,
+  forever: an endless handshake response on new connections (on the TCP
+  stream, under any TLS), an endless 64 KiB frame on established ones),
+  `set_time(unix)` (the clock for NIP-40; default the system clock).
+  Verifies events; regular events dedupe by id,
   replaceable kinds by (key, kind), addressable by (key, kind, `d`), newest
   wins; ephemeral 20000-29999 only forwarded; expired events are refused on
   publish and not served. REQ: kinds, authors, `#x`, since, limit (per
@@ -59,28 +66,41 @@ test relay, relay pool, announcements, game list, STUN and invite codes
   bounded at 2 s). Tests that keep a subscription must say so: the test
   client's `query` CLOSEs after EOSE, `subscribe` does not.
 - **`pool`** and **`relay`** (its driver): `Pool::start(PoolConfig {
-  relays, extra_roots, max_frame })` runs one driver thread per relay;
+  relays, extra_roots, max_frame })` runs one driver thread per relay
+  (`Pool::start_with(cfg, Timings)` shortens the deadlines for tests);
   `publish`, `subscribe`, `unsubscribe`, `poll` and `statuses` never block
   (they only touch per-relay mutexes the drivers never hold across IO).
   - **Connect:** the URL's host is resolved, IPv4 addresses first, each
     tried with a 5 s timeout; the TLS and WebSocket handshakes then get 5 s
-    in all (`tungstenite::client_tls_with_config` with our rustls
-    `ClientConfig`: aws-lc-rs, Mozilla's roots from `webpki-roots` plus
-    `extra_roots`, never the platform's). `ws://` is allowed. A bad URL is
+    in all (tungstenite's `AttackCheck` also caps the response head at
+    64 KiB and 512 reads, and fails many tiny reads);
+    `client_tls_with_config` with our rustls `ClientConfig`: aws-lc-rs,
+    Mozilla's roots from `webpki-roots` plus
+    `extra_roots`, never the platform's. `ws://` is allowed. A bad URL is
     `Failed` for good; anything else retries after 1, 2, 4 … 60 s (a
     connection up 60 s resets the backoff).
-  - **Serve:** blocking socket, 50 ms read timeout (`TICK`), 5 s write
-    timeout. `Sock` maps `TimedOut` to `WouldBlock` (Windows), on which
-    rustls keeps partial records and tungstenite partial frames, and the
-    handshake resumes. Subscriptions are reconciled from the pool's set
+  - **Serve:** blocking socket, 50 ms (`TICK`) read and write timeouts
+    behind an I/O budget in `Sock`, re-armed at every turn of the loop and
+    every handshake round: reads stop (`WouldBlock`) once one `TICK` is
+    spent or the pool is stopping; writes once the turn's cumulative 5 s
+    send deadline has passed (then `Dropped("send timed out")`). A relay
+    dripping bytes thus cannot hold the driver past a deadline or a stop.
+    `Sock` maps `TimedOut` to `WouldBlock` (Windows), on which rustls keeps
+    partial records and tungstenite partial frames, and the handshake
+    resumes. Subscriptions are reconciled from the pool's set
     (`REQ`/`CLOSE`) and sent again after every reconnect.
+  - **Liveness:** after 30 s with nothing received, a WebSocket ping;
+    nothing at all within 10 s of it is `Dropped("no answer to ping")`.
   - **Dropped** (then backoff): a frame above `max_frame` (clamped to
     `MAX_FRAME`), a frame that is not a Nostr message (not JSON, or not an
     array headed by a type; unknown types such as `AUTH` and malformed
     single events are skipped), more than 200 frames/s or 1 MiB/s
     sustained (token buckets holding 5 s of burst: a `REQ`'s stored events
-    arrive at once), no `EOSE` or `OK` within 5 s of the `REQ`/`EVENT`
-    (`CLOSED` cancels the wait), a close or socket error.
+    arrive at once), no `EOSE` within 10 s of a `REQ` (`CLOSED` cancels the
+    wait), the liveness and send deadlines, a close or socket error.
+  - **No `OK` within 5 s** of an `EVENT` is reported as `PoolEvent::Ok {
+    accepted: false, message: "no answer within 5 s" }`; the connection
+    stays (a later `OK` is ignored).
   - **Events** are verified in the driver (a forged id never shadows the
     real event in the dedupe) and only for subscriptions the connection
     has; `EOSE` and `OK` only answer what was asked. `poll` appends relay
@@ -89,10 +109,14 @@ test relay, relay pool, announcements, game list, STUN and invite codes
   - **Queues:** outgoing at most 256 per relay (oldest dropped; a queued
     replaceable/addressable event is replaced by a newer one for its
     slot); incoming at most 4096 events or 8 MiB per relay between polls
-    (the newest dropped, `dropped_events()`).
-  - **Drop** stops every driver: each sends what is queued (a closing
-    note), closes, and is joined within 2 s in all (one stuck in a connect
-    is detached).
+    (the newest dropped, `dropped_events()`). Queued events leave the
+    queue before they are sent: those of a turn whose send fails, or sent
+    on a connection lost before its `OK`, are lost (not retried after the
+    reconnect; announcements are re-published every minute).
+  - **Drop** stops every driver: each notices within about a `TICK`
+    (even mid-read or mid-send), sends what is queued (a closing note)
+    within 1 s, closes, and is joined within 2 s in all (one stuck in a
+    TCP connect or DNS lookup is detached).
 - Deps: `rustls` (default aws-lc-rs) and `webpki-roots` (workspace pins),
   `tungstenite` with `rustls-tls-webpki-roots` (for `Connector::Rustls`;
   its own default roots are never used). `rcgen =0.14.10` (`aws_lc_rs`
@@ -102,7 +126,8 @@ test relay, relay pool, announcements, game list, STUN and invite codes
 Test: `cargo nextest run -p rl-discovery` (`tests/nostr.rs`: the published
 events verify, signing round-trips, canonical escaping, tampering, frames
 round-trip, fuzzed frames never panic; `tests/test_relay.rs`: the relay;
-`tests/pool.rs`: the pool against the test relay, a flooding relay and
-unreachable addresses: `127.0.0.1`'s closed port and TEST-NET-1
-`192.0.2.1`, never routed; unit tests of the backoff, limiter, queues and
-dedupe in `src`).
+`tests/pool.rs`: the pool against the test relay (silent, dripping,
+slow), a flooding relay and unreachable relays: a listener on
+`127.0.0.1` that never accepts, and TEST-NET-1 `192.0.2.1`, never
+routed; unit tests of the backoff, limiter, queues, dedupe and default
+timings in `src`).

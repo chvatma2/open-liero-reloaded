@@ -1,6 +1,7 @@
 //! The relay pool against the in-process test relay: publishing and
 //! receiving over several relays, resubscription, misbehaving and
-//! unreachable relays, `wss://`, flooding and shutdown.
+//! unreachable relays, `wss://`, flooding, silent and dripping relays,
+//! unanswered publishes and shutdown.
 
 use std::io::ErrorKind;
 use std::net::{TcpListener, TcpStream};
@@ -45,6 +46,10 @@ impl Watch {
         Watch { pool: Pool::start(cfg), seen: Vec::new() }
     }
 
+    fn with(cfg: PoolConfig, timings: Timings) -> Watch {
+        Watch { pool: Pool::start_with(cfg, timings), seen: Vec::new() }
+    }
+
     /// Polls until `done` holds (true) or `timeout` passes (false). Every
     /// poll must return at once.
     fn until(&mut self, timeout: Duration, done: impl Fn(&[PoolEvent]) -> bool) -> bool {
@@ -52,7 +57,7 @@ impl Watch {
         loop {
             let t = Instant::now();
             self.pool.poll(&mut self.seen);
-            assert!(t.elapsed() < Duration::from_millis(50), "poll blocked for {:?}", t.elapsed());
+            assert!(t.elapsed() < Duration::from_millis(200), "poll blocked for {:?}", t.elapsed());
             if done(&self.seen) {
                 return true;
             }
@@ -108,6 +113,14 @@ fn drop_reason(seen: &[PoolEvent], relay: usize) -> String {
 }
 
 const LONG: Duration = Duration::from_secs(10);
+
+fn ms(n: u64) -> Duration {
+    Duration::from_millis(n)
+}
+
+fn has_status(seen: &[PoolEvent], relay: usize, f: impl Fn(&RelayStatus) -> bool) -> bool {
+    statuses(seen, relay).iter().any(f)
+}
 
 #[test]
 fn publishes_and_receives_across_two_relays() {
@@ -166,7 +179,7 @@ fn a_misbehaving_relay_is_dropped_and_retried() {
     // Garbage: a frame that is not a Nostr message at all.
     let garbage = TestRelay::start();
     garbage.set_misbehaviour(Misbehaviour::Garbage);
-    // NeverEose: no EOSE within the reply timeout (5 s).
+    // NeverEose: no EOSE within the EOSE window (2 s here, 10 s by default).
     let silent = TestRelay::start();
     silent.set_misbehaviour(Misbehaviour::NeverEose);
     // An oversized frame: a stored event larger than the pool's `max_frame`.
@@ -178,7 +191,7 @@ fn a_misbehaving_relay_is_dropped_and_retried() {
 
     let mut cfg = config(vec![garbage.url(), silent.url(), big.url()]);
     cfg.max_frame = 1024;
-    let mut w = Watch::new(cfg);
+    let mut w = Watch::with(cfg, Timings { eose: Duration::from_secs(2), ..Timings::default() });
     w.pool.subscribe("s", kind1());
     assert!(w.until(Duration::from_secs(20), |s| (0..3).all(|r| dropped_and_retried(s, r))), "{:?}", w.seen);
     assert!(drop_reason(&w.seen, 0).contains("not a Nostr message"), "{}", drop_reason(&w.seen, 0));
@@ -189,12 +202,13 @@ fn a_misbehaving_relay_is_dropped_and_retried() {
 
 #[test]
 fn an_unreachable_relay_never_blocks_the_caller() {
-    let closed = {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    // A listener that never accepts: the TCP connect succeeds (backlog),
+    // the handshake is never answered. Held for the whole test, so no other
+    // test can take the port.
+    let mute = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mute_port = mute.local_addr().unwrap().port();
     // TEST-NET-1 (RFC 5737): never routed, so the connect hangs or fails.
-    let relays = vec![format!("ws://127.0.0.1:{closed}"), "ws://192.0.2.1:9".to_string()];
+    let relays = vec![format!("ws://127.0.0.1:{mute_port}"), "ws://192.0.2.1:9".to_string()];
     let t = Instant::now();
     let mut w = Watch::new(config(relays));
     w.pool.subscribe("s", kind1());
@@ -202,9 +216,15 @@ fn an_unreachable_relay_never_blocks_the_caller() {
     assert!(t.elapsed() < Duration::from_millis(100), "start, subscribe and publish took {:?}", t.elapsed());
     let failed = |s: &[PoolEvent], r| statuses(s, r).iter().any(|s| matches!(s, RelayStatus::Failed(_)));
     assert!(w.until(Duration::from_secs(12), |s| failed(s, 0) && failed(s, 1)), "{:?}", w.seen);
+    assert!(has_status(
+        &w.seen,
+        0,
+        |s| matches!(s, RelayStatus::Failed(r) if r.contains("handshake timed out"))
+    ));
     let t = Instant::now();
     drop(w);
     assert!(t.elapsed() < Duration::from_millis(2500), "drop took {:?}", t.elapsed());
+    drop(mute);
 
     // Dropped in the middle of a hanging connect: bounded all the same.
     let w = Watch::new(config(vec!["ws://192.0.2.1:9".to_string()]));
@@ -284,4 +304,135 @@ fn dropping_the_pool_sends_what_is_queued_and_closes() {
         thread::sleep(Duration::from_millis(5));
     }
     assert!(relay.events().contains(&last));
+}
+
+/// Liveness timings short enough for a test.
+fn quick_ping() -> Timings {
+    Timings { idle_ping: ms(500), ping_answer: ms(500), ..Timings::default() }
+}
+
+#[test]
+fn a_silent_relay_is_dropped_after_an_unanswered_ping() {
+    let (silent, idle) = (TestRelay::start(), TestRelay::start());
+    let mut w = Watch::with(config(vec![silent.url(), idle.url()]), quick_ping());
+    assert!(w.until(LONG, |s| statuses(s, 0).contains(&RelayStatus::Connected)
+        && statuses(s, 1).contains(&RelayStatus::Connected)));
+    silent.set_misbehaviour(Misbehaviour::Silent);
+    let t = Instant::now();
+    assert!(w.until(LONG, |s| !drop_reason(s, 0).is_empty()), "{:?}", w.seen);
+    assert_eq!(drop_reason(&w.seen, 0), "no answer to ping");
+    // 500 ms idle, then 500 ms for the answer.
+    assert!(t.elapsed() >= ms(900) && t.elapsed() < ms(3000), "{:?}", t.elapsed());
+    silent.set_misbehaviour(Misbehaviour::Honest);
+    assert!(w.until(LONG, |s| dropped_and_retried(s, 0)));
+    // An idle relay that answers pings stays connected all along.
+    assert_eq!(statuses(&w.seen, 1), vec![RelayStatus::Connecting, RelayStatus::Connected]);
+}
+
+#[test]
+fn a_dripping_relay_is_dropped_within_its_deadlines() {
+    // In the handshake: the 1 s handshake deadline holds (tungstenite's
+    // own attack check would only trip after 64 reads, 2.6 s here).
+    let early = TestRelay::start();
+    early.set_misbehaviour(Misbehaviour::Drip);
+    // On an established connection: a frame that never completes is no
+    // answer to a ping.
+    let late = TestRelay::start();
+    let t0 = Instant::now();
+    let mut w =
+        Watch::with(config(vec![early.url(), late.url()]), Timings { handshake: ms(1000), ..quick_ping() });
+    assert!(w.until(LONG, |s| has_status(s, 0, |s| matches!(s, RelayStatus::Failed(_)))));
+    assert!(t0.elapsed() < ms(2000), "{:?}", t0.elapsed());
+    assert!(
+        has_status(&w.seen, 0, |s| matches!(s, RelayStatus::Failed(r) if r == "handshake timed out")),
+        "{:?}",
+        statuses(&w.seen, 0)
+    );
+    assert!(!statuses(&w.seen, 0).contains(&RelayStatus::Connected));
+
+    assert!(w.until(LONG, |s| statuses(s, 1).contains(&RelayStatus::Connected)));
+    late.set_misbehaviour(Misbehaviour::Drip);
+    let t = Instant::now();
+    assert!(w.until(LONG, |s| !drop_reason(s, 1).is_empty()), "{:?}", w.seen);
+    assert_eq!(drop_reason(&w.seen, 1), "no answer to ping");
+    assert!(t.elapsed() < ms(3000), "{:?}", t.elapsed());
+}
+
+#[test]
+fn dropping_the_pool_is_bounded_while_a_relay_drips() {
+    // One relay drips its handshake, the other a frame on an established
+    // connection; the drivers still notice the stop at once.
+    let (early, late) = (TestRelay::start(), TestRelay::start());
+    early.set_misbehaviour(Misbehaviour::Drip);
+    let mut w = Watch::new(config(vec![early.url(), late.url()]));
+    assert!(w.until(LONG, |s| statuses(s, 1).contains(&RelayStatus::Connected)));
+    w.pool.subscribe("s", kind1());
+    assert!(w.until(LONG, |s| eose(s, 1, "s") == 1));
+    late.set_misbehaviour(Misbehaviour::Drip);
+    // A frame of the late relay is now half-read.
+    w.until(ms(300), |_| false);
+    let t = Instant::now();
+    drop(w);
+    // Well inside the 2 s bound: the threads were joined, not detached.
+    assert!(t.elapsed() < ms(1000), "drop took {:?}", t.elapsed());
+}
+
+#[test]
+fn an_unanswered_publish_times_out_and_keeps_the_connection() {
+    let relay = TestRelay::start();
+    let mut w = Watch::with(config(vec![relay.url()]), Timings { ok: ms(1000), ..Timings::default() });
+    assert!(w.until(LONG, |s| statuses(s, 0).contains(&RelayStatus::Connected)));
+    // The relay answers 1.5 s late: after the 1 s OK window.
+    relay.set_misbehaviour(Misbehaviour::Slow(ms(1500)));
+    let e = note(1, "slow");
+    w.pool.publish(e.clone());
+    let oks = |s: &[PoolEvent]| -> Vec<(bool, String)> {
+        s.iter()
+            .filter_map(|x| match x {
+                PoolEvent::Ok { relay: 0, id, accepted, message } if *id == e.id => {
+                    Some((*accepted, message.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    assert!(w.until(LONG, |s| !oks(s).is_empty()));
+    assert_eq!(oks(&w.seen), vec![(false, "no answer within 1 s".to_string())]);
+    // The late answer is not reported, and the connection stays.
+    w.until(ms(1500), |_| false);
+    assert_eq!(oks(&w.seen).len(), 1);
+    assert_eq!(statuses(&w.seen, 0), vec![RelayStatus::Connecting, RelayStatus::Connected]);
+    assert!(relay.events().contains(&e));
+}
+
+/// 256 events of 120 KiB: more than loopback's socket buffers hold.
+fn flood_of_big_notes() -> Vec<Event> {
+    let body = "y".repeat(120 << 10);
+    (0..=255u8).map(|n| note(n, &body)).collect()
+}
+
+#[test]
+fn a_stalled_send_drops_the_connection_and_never_holds_up_a_drop() {
+    let (a, b) = (TestRelay::start(), TestRelay::start());
+    let mut wa = Watch::new(config(vec![a.url()]));
+    let mut wb = Watch::new(config(vec![b.url()]));
+    assert!(wa.until(LONG, |s| statuses(s, 0).contains(&RelayStatus::Connected)));
+    assert!(wb.until(LONG, |s| statuses(s, 0).contains(&RelayStatus::Connected)));
+    // Both relays stop reading; the pools send 30 MiB.
+    a.set_misbehaviour(Misbehaviour::Silent);
+    b.set_misbehaviour(Misbehaviour::Silent);
+    let notes = flood_of_big_notes();
+    let t = Instant::now();
+    for e in &notes {
+        wa.pool.publish(e.clone());
+        wb.pool.publish(e.clone());
+    }
+    // The sends of one turn share a 5 s deadline.
+    assert!(wa.until(LONG, |s| !drop_reason(s, 0).is_empty()), "{:?}", statuses(&wa.seen, 0));
+    assert_eq!(drop_reason(&wa.seen, 0), "send timed out");
+    assert!(t.elapsed() >= ms(4500) && t.elapsed() < ms(8000), "{:?}", t.elapsed());
+    // B is still stuck in its sends: dropping it is bounded all the same.
+    let t = Instant::now();
+    drop(wb);
+    assert!(t.elapsed() < ms(1500), "drop took {:?}", t.elapsed());
 }

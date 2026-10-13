@@ -39,6 +39,34 @@ impl Default for PoolConfig {
     }
 }
 
+/// A driver's deadlines. The defaults are the spec's; tests shorten them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Timings {
+    /// The TLS and WebSocket handshakes together.
+    pub handshake: Duration,
+    /// `EOSE` after a `REQ`; past it, the connection is dropped.
+    pub eose: Duration,
+    /// `OK` after an `EVENT`; past it, the pool reports the event as not
+    /// accepted ("no answer within …") and keeps the connection.
+    pub ok: Duration,
+    /// With nothing received for this long, the driver sends a ping …
+    pub idle_ping: Duration,
+    /// … and drops the connection if nothing arrives within this.
+    pub ping_answer: Duration,
+}
+
+impl Default for Timings {
+    fn default() -> Timings {
+        Timings {
+            handshake: Duration::from_secs(5),
+            eose: Duration::from_secs(10),
+            ok: Duration::from_secs(5),
+            idle_ping: Duration::from_secs(30),
+            ping_answer: Duration::from_secs(10),
+        }
+    }
+}
+
 /// A relay connection's state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RelayStatus {
@@ -149,8 +177,16 @@ fn slot(e: &Event) -> Option<relay::Slot> {
 impl Pool {
     /// Starts one driver per relay; they connect in the background.
     pub fn start(cfg: PoolConfig) -> Pool {
-        let driver =
-            DriverConfig { tls: tls_config(&cfg.extra_roots), max_frame: cfg.max_frame.min(MAX_FRAME) };
+        Pool::start_with(cfg, Timings::default())
+    }
+
+    /// [`Pool::start`] with other deadlines (tests).
+    pub fn start_with(cfg: PoolConfig, timings: Timings) -> Pool {
+        let driver = DriverConfig {
+            tls: tls_config(&cfg.extra_roots),
+            max_frame: cfg.max_frame.min(MAX_FRAME),
+            timings,
+        };
         let mut links = Vec::with_capacity(cfg.relays.len());
         let mut threads = Vec::with_capacity(cfg.relays.len());
         for (index, url) in cfg.relays.into_iter().enumerate() {
@@ -253,6 +289,16 @@ mod tests {
         let mut id = [0; 32];
         id[..4].copy_from_slice(&n.to_le_bytes());
         id
+    }
+
+    #[test]
+    fn the_default_timings_are_the_specs() {
+        let t = Timings::default();
+        let s = Duration::from_secs;
+        assert_eq!(
+            (t.handshake, t.eose, t.ok, t.idle_ping, t.ping_answer),
+            (s(5), s(10), s(5), s(30), s(10))
+        );
     }
 
     #[test]

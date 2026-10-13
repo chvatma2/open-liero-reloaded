@@ -29,6 +29,18 @@ pub enum NostrError {
     Malformed(&'static str),
     #[error("unknown message type")]
     Unknown,
+    /// JSON, but not an array headed by a message type.
+    #[error("not a relay frame")]
+    NotAFrame,
+}
+
+impl NostrError {
+    /// The text is no relay frame at all (not JSON, too large, or not an
+    /// array headed by a message type), as opposed to a frame of a type we
+    /// do not know or with one malformed field.
+    pub fn is_frame_error(&self) -> bool {
+        matches!(self, NostrError::Json | NostrError::TooLarge | NostrError::NotAFrame)
+    }
 }
 
 /// A signed Nostr event.
@@ -321,7 +333,7 @@ fn parse_frame(text: &str) -> Result<Vec<Value>, NostrError> {
     }
     match serde_json::from_str(text).map_err(|_| NostrError::Json)? {
         Value::Array(a) => Ok(a),
-        _ => Err(NostrError::Malformed("frame")),
+        _ => Err(NostrError::NotAFrame),
     }
 }
 
@@ -349,7 +361,7 @@ pub fn decode_from_relay(text: &str) -> Result<FromRelay, NostrError> {
             message: string_at(&a, 2, "message").unwrap_or_default(),
         }),
         Some(_) => Err(NostrError::Unknown),
-        None => Err(NostrError::Malformed("frame")),
+        None => Err(NostrError::NotAFrame),
     }
 }
 
@@ -366,6 +378,6 @@ pub fn decode_to_relay(text: &str) -> Result<ToRelay, NostrError> {
         }
         Some("CLOSE") => Ok(ToRelay::Close { sub: string_at(&a, 1, "subscription")? }),
         Some(_) => Err(NostrError::Unknown),
-        None => Err(NostrError::Malformed("frame")),
+        None => Err(NostrError::NotAFrame),
     }
 }

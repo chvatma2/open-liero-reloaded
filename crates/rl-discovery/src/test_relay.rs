@@ -40,6 +40,34 @@ pub enum Misbehaviour {
     DropAfter(usize),
     /// Waits this long before handling each frame.
     Slow(Duration),
+    /// Stops reading and writing (pings go unanswered); a connection made
+    /// meanwhile is held without a handshake.
+    Silent,
+    /// Writes one byte every 40 ms and never completes: a connection made
+    /// meanwhile gets an endless handshake response (on the TCP stream,
+    /// under any TLS), an established one an endless 64 KiB text frame.
+    /// Nothing is read meanwhile.
+    Drip,
+}
+
+const DRIP_EVERY: Duration = Duration::from_millis(40);
+
+/// Writes `head`, then `a`s, one byte every [`DRIP_EVERY`], until the relay
+/// stops or the peer goes away.
+fn drip<W: Write>(shared: &Shared, w: &mut W, head: &[u8]) {
+    for b in head.iter().copied().chain(std::iter::repeat(b'a')) {
+        if shared.stop.load(Ordering::SeqCst) || w.write_all(&[b]).and_then(|()| w.flush()).is_err() {
+            return;
+        }
+        thread::sleep(DRIP_EVERY);
+    }
+}
+
+/// Holds a connection, doing nothing, while the relay is `Silent`.
+fn hold(shared: &Shared) {
+    while !shared.stop.load(Ordering::SeqCst) && shared.lock().misbehaviour == Misbehaviour::Silent {
+        thread::sleep(Duration::from_millis(15));
+    }
 }
 
 struct Sub {
@@ -304,7 +332,16 @@ fn accept_loop(shared: &Arc<Shared>, listener: &TcpListener, tls: Option<&Arc<ru
 }
 
 /// Handshakes (TLS lazily, inside the WebSocket handshake) and serves.
-fn serve(shared: &Shared, conn: u64, stream: TcpStream, tls: Option<&Arc<rustls::ServerConfig>>) {
+fn serve(shared: &Shared, conn: u64, mut stream: TcpStream, tls: Option<&Arc<rustls::ServerConfig>>) {
+    // Copied out first: the guard must not live through the match.
+    let mis = shared.lock().misbehaviour;
+    match mis {
+        Misbehaviour::Drip => {
+            return drip(shared, &mut stream, b"HTTP/1.1 101 Switching Protocols\r\nX-Drip: ");
+        }
+        Misbehaviour::Silent => return hold(shared),
+        _ => {}
+    }
     let Ok(ctl) = stream.try_clone() else { return };
     let _ = stream.set_nodelay(true);
     let _ = ctl.set_read_timeout(Some(Duration::from_secs(5)));
@@ -336,6 +373,21 @@ fn run<S: Read + Write>(shared: &Shared, conn: u64, mut ws: WebSocket<S>, ctl: &
     let (tx, rx): (Sender<String>, Receiver<String>) = mpsc::channel();
     let mut frames = 0usize;
     'conn: while !shared.stop.load(Ordering::SeqCst) {
+        let mis = shared.lock().misbehaviour;
+        match mis {
+            Misbehaviour::Silent => {
+                hold(shared);
+                continue;
+            }
+            // A server's text frame (unmasked) of 65535 bytes, dripped.
+            // (No close frame after it: the stream is beyond repair.)
+            Misbehaviour::Drip => {
+                drip(shared, ws.get_mut(), &[0x81, 126, 0xff, 0xff]);
+                shared.lock().subs.retain(|s| s.conn != conn);
+                return;
+            }
+            _ => {}
+        }
         while let Ok(text) = rx.try_recv() {
             if !send(&mut ws, text) {
                 break 'conn;

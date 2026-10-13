@@ -175,8 +175,16 @@ fn frames_round_trip() {
 #[test]
 fn bad_frames_are_errors() {
     assert_eq!(decode_from_relay("nope"), Err(NostrError::Json));
-    assert_eq!(decode_from_relay("{}"), Err(NostrError::Malformed("frame")));
-    assert_eq!(decode_from_relay("[]"), Err(NostrError::Malformed("frame")));
+    assert_eq!(decode_from_relay("{}"), Err(NostrError::NotAFrame));
+    assert_eq!(decode_from_relay("[]"), Err(NostrError::NotAFrame));
+    assert_eq!(decode_from_relay("[1,\"x\"]"), Err(NostrError::NotAFrame));
+    // Not a relay frame at all, as opposed to a frame we skip.
+    for e in [NostrError::Json, NostrError::TooLarge, NostrError::NotAFrame] {
+        assert!(e.is_frame_error(), "{e:?}");
+    }
+    for e in [NostrError::Unknown, NostrError::Malformed("event")] {
+        assert!(!e.is_frame_error(), "{e:?}");
+    }
     assert_eq!(decode_from_relay("[\"AUTH\",\"x\"]"), Err(NostrError::Unknown));
     assert_eq!(decode_to_relay("[\"REQ\"]"), Err(NostrError::Malformed("subscription")));
     let big = format!("[\"NOTICE\",\"{}\"]", "a".repeat(MAX_FRAME));
