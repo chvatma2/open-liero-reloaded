@@ -165,6 +165,10 @@ impl Server {
     /// Messages to send now; `room(peer)` is how many bytes the peer's
     /// outbox may take (`QUEUED` minus what it holds, as the caller counts).
     /// A chunk goes only when the room is at least `CONTENT_CHUNK + 64`.
+    /// `Unavailable` and a `Begin` without a chunk (a want at the archive's
+    /// end) pass neither the room nor the buckets: each answers one `Want`,
+    /// so they are bounded by what the peer sends (about 200 bytes out per
+    /// want in), as rl-net bounds that.
     pub fn poll(&mut self, now_us: u64, room: &dyn Fn(PeerId) -> usize, out: &mut Vec<(PeerId, ContentMsg)>) {
         let dt = self.last_us.map_or(0, |last| now_us.saturating_sub(last));
         self.last_us = Some(now_us);
@@ -308,13 +312,25 @@ mod tests {
         let mib = total as f64 / (1 << 20) as f64;
         assert!((9.5..=10.5).contains(&mib), "{mib} MiB in 10 s at 1 MiB/s");
         for p in 1..=3 {
+            // Round-robin: each gets about a third (without it, the first
+            // receiver would take the whole shared rate).
             let each = chunk_bytes(&out, p);
-            assert!(each <= 10 * PEER_RATE, "{each}");
-            // Round-robin: each gets about a third.
             assert!(
                 (each as f64 - total as f64 / 3.0).abs() <= 2.0 * CONTENT_CHUNK as f64,
                 "{each} of {total}"
             );
+        }
+        // A server rate above three receivers' `PEER_RATE`: each is held to
+        // `PEER_RATE` (and gets it).
+        let mut server = Server::new(8 << 20);
+        for (i, c) in ['a', 'b', 'c'].into_iter().enumerate() {
+            server.offer(&hash(c), archive(32 << 20, i as u8));
+            server.receive(i as PeerId + 1, &want(c, 0));
+        }
+        let out = run(&mut server, 0, 10_000_000, 10_000, 1 << 20);
+        for p in 1..=3 {
+            let each = chunk_bytes(&out, p);
+            assert!((95 * PEER_RATE / 10..=10 * PEER_RATE).contains(&each), "{each} in 10 s");
         }
     }
 
@@ -441,11 +457,15 @@ mod tests {
         // With room for one chunk, one chunk a poll.
         let out = run(&mut server, 1_010_000, 1_010_000, 10_000, CHUNK_ROOM);
         assert_eq!(chunk_bytes(&out, 1), CONTENT_CHUNK as u64);
-        // Never more than `QUEUED` a poll, whatever the room.
+        // Never more than `QUEUED` encoded bytes a poll, whatever the room
+        // (the buckets, full, would allow `QUEUED` bytes of chunks).
         let mut server = Server::new(u64::MAX);
         server.offer(&hash('a'), archive(64 * CONTENT_CHUNK, 0));
         server.receive(1, &want('a', 0));
         let out = run(&mut server, 0, 10_000_000, 10_000_000, usize::MAX);
-        assert!(chunk_bytes(&out, 1) <= QUEUED as u64, "{}", chunk_bytes(&out, 1));
+        let chunks = out.iter().filter(|(_, m)| matches!(m, ContentMsg::Chunk { .. })).count();
+        let encoded = chunk_bytes(&out, 1) as usize + chunks * CHUNK_OVERHEAD;
+        assert!(encoded <= QUEUED, "{encoded}");
+        assert_eq!(chunks, QUEUED / (CONTENT_CHUNK + CHUNK_OVERHEAD));
     }
 }

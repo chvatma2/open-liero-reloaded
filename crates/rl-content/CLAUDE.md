@@ -154,6 +154,9 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   It is `begin_install` + `PendingInstall::verify` (needs no cache, so a
   worker verifies without holding the cache's mutex) + `finish_install`.
   `open` reconciles the index with `packs/` (adopts unlisted valid packs, drops the rest).
+  Adoption reads only `pack.ron`, it does not re-verify the content hash:
+  a pack `evict` left partly removed (`stuck`) is adopted again if its
+  manifest survived (known, left for later).
   One cache directory belongs to one open cache (ruling PF11-3): `open`
   holds an exclusive `File::try_lock` on `<dir>/lock` for the cache's life
   and fails with `InstallError::Locked` while another holds it (flock on

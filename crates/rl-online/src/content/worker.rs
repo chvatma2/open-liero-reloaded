@@ -1,6 +1,7 @@
 //! The content worker: one background thread that archives packs to serve,
 //! hashes packs and installs downloads, off the caller's thread.
 
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -79,7 +80,12 @@ impl Worker {
                     if thread_stop.load(Ordering::Relaxed) {
                         break;
                     }
-                    if thread_done.send(run(&cache, job)).is_err() {
+                    // A panic in a parser of untrusted content fails its
+                    // job, not the thread.
+                    let backup = job.clone();
+                    let done = std::panic::catch_unwind(AssertUnwindSafe(|| run(&cache, job)))
+                        .unwrap_or_else(|panic| failed(backup, &panic_message(panic.as_ref())));
+                    if thread_done.send(done).is_err() {
                         break;
                     }
                 }
@@ -117,6 +123,15 @@ impl Drop for Worker {
     }
 }
 
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+    let what = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("unknown");
+    format!("the content worker failed: {what}")
+}
+
 fn failed(job: Job, why: &str) -> Done {
     match job {
         Job::Archive { hash, .. } => Done::Archived { hash, archive: Err(why.into()) },
@@ -125,7 +140,15 @@ fn failed(job: Job, why: &str) -> Done {
     }
 }
 
+/// A `Job::Hash` of this id panics, for the tests.
+#[cfg(test)]
+const PANIC_ID: &str = "test-panic";
+
 fn run(cache: &Mutex<DownloadCache>, job: Job) -> Done {
+    #[cfg(test)]
+    if matches!(&job, Job::Hash { id, .. } if id == PANIC_ID) {
+        panic!("a test panic");
+    }
     match job {
         Job::Archive { hash, dir } => {
             let archive = archive(&hash, DirFs::new(dir));
@@ -163,4 +186,37 @@ fn install(
     let pending = lock()?.begin_install(hash, id, kind, limit).map_err(|e| e.to_string())?;
     let verified = pending.verify();
     lock()?.finish_install(pending, verified).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    fn wait(worker: &Worker, n: usize) -> Vec<Done> {
+        let until = Instant::now() + Duration::from_secs(10);
+        let mut done = vec![];
+        while done.len() < n {
+            assert!(Instant::now() < until, "the worker did not finish: {done:?}");
+            done.extend(worker.take());
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        done
+    }
+
+    #[test]
+    fn a_panicking_job_fails_and_the_worker_goes_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Arc::new(Mutex::new(DownloadCache::open(dir.path()).unwrap()));
+        let worker = Worker::start(cache);
+        worker.submit(Job::Hash { id: PANIC_ID.into(), dir: dir.path().into() });
+        worker.submit(Job::Hash { id: "after".into(), dir: dir.path().into() });
+        let done = wait(&worker, 2);
+        assert!(
+            matches!(&done[0], Done::Hashed { id, hash: Err(e) } if id == PANIC_ID && e.contains("a test panic")),
+            "{done:?}"
+        );
+        // The thread lives on.
+        assert!(matches!(&done[1], Done::Hashed { id, hash: Ok(_) } if id == "after"), "{done:?}");
+    }
 }

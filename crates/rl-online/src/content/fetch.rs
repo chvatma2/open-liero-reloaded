@@ -90,7 +90,8 @@ impl Fetcher {
 
     /// A new list from `source`: returns the missing items (those neither
     /// in `local` nor in the cache; `NO_HASH` is never fetched). A transfer
-    /// the list no longer wants is cancelled (its partial stays); the
+    /// the list no longer wants is cancelled (its partial stays; one listed
+    /// with another size starts afresh); a failed item is tried again; the
     /// missing items above `PROMPT_BYTES` in all wait for `approve`.
     pub fn list(&mut self, source: PeerId, items: &[Item], local: &Content) -> Vec<Item> {
         let old_source = self.source.replace(source);
@@ -109,13 +110,25 @@ impl Fetcher {
         missing.sort_by_key(|i| !i.required); // stable: list order within
         self.cached = cached;
 
-        if let Some(cur) = &self.current
-            && (old_source != Some(source) || !missing.iter().any(|i| i.hash == cur.hash))
-        {
-            if let Some(old) = old_source {
-                self.outbox.push((old, ContentMsg::Cancel { hash: cur.hash.clone() }));
+        // The transfer goes on only for the same item from the same source.
+        // The same hash listed as another item (another size) is fetched
+        // afresh: the partial is of the other one.
+        if let Some(cur) = &self.current {
+            let item = self.downloads.iter().find(|d| d.item.hash == cur.hash).map(|d| &d.item);
+            let listed = missing.iter().find(|i| i.hash == cur.hash);
+            if old_source != Some(source) || listed.is_none() || listed != item {
+                let hash = cur.hash.clone();
+                if let Some(old) = old_source {
+                    self.outbox.push((old, ContentMsg::Cancel { hash: hash.clone() }));
+                }
+                if listed.is_some()
+                    && listed != item
+                    && let Some(mut c) = self.cache()
+                {
+                    c.discard_partial(&hash);
+                }
+                self.current = None;
             }
-            self.current = None;
         }
         let same_source = old_source == Some(source);
         let old = std::mem::take(&mut self.downloads);
@@ -125,9 +138,9 @@ impl Fetcher {
                 let kept = old.iter().find(|d| same_source && d.item == *item);
                 match kept {
                     Some(d) if self.current.as_ref().is_some_and(|c| c.hash == item.hash) => d.clone(),
-                    Some(d) if matches!(d.state, DownloadState::Failed(_) | DownloadState::Unavailable) => {
-                        d.clone()
-                    }
+                    // The source said it will not send it. A failed item is
+                    // tried again, once a list.
+                    Some(d) if d.state == DownloadState::Unavailable => d.clone(),
                     _ => Download { item: item.clone(), have: self.held(item), state: DownloadState::Queued },
                 }
             })
@@ -608,5 +621,49 @@ mod tests {
         // Another source lists it: resumed from 30.
         s.fetcher.list(SRC + 1, &[item('a', ItemKind::Level, 100, true)], &s.local);
         assert_eq!(s.poll(20), vec![(SRC + 1, ContentMsg::Want { hash: sha('a'), offset: 30 })]);
+    }
+
+    #[test]
+    fn a_resent_list_with_another_size_restarts_the_item() {
+        let mut s = setup();
+        s.fetcher.list(SRC, &[item('a', ItemKind::Level, 100, true)], &s.local);
+        s.poll(0);
+        s.send(begin('a', 'f', 100, 0));
+        s.send(chunk('a', 0, 30));
+        // The same hash, another size: another item, fetched afresh.
+        s.fetcher.list(SRC, &[item('a', ItemKind::Level, 120, true)], &s.local);
+        assert!(s.cache.lock().unwrap().partial(&sha('a')).is_none());
+        assert_eq!(s.poll(10), vec![(SRC, ContentMsg::Cancel { hash: sha('a') }), want('a', 0)]);
+        assert_eq!(s.state('a'), DownloadState::Receiving);
+        s.send(begin('a', 'f', 120, 0));
+        s.send(chunk('a', 0, 50));
+        assert_eq!(s.fetcher.downloads()[0].have, 50);
+    }
+
+    #[test]
+    fn a_new_list_retries_a_failed_item_once() {
+        let mut s = setup();
+        let items = [item('a', ItemKind::Level, 100, true)];
+        s.fetcher.list(SRC, &items, &s.local);
+        s.poll(0);
+        s.send(begin('a', 'f', 99, 0));
+        assert!(matches!(s.state('a'), DownloadState::Failed(_)));
+        assert_eq!(s.poll(10), vec![(SRC, ContentMsg::Cancel { hash: sha('a') })]);
+        for round in 0..2 {
+            s.fetcher.list(SRC, &items, &s.local);
+            assert_eq!(s.state('a'), DownloadState::Queued, "{round}");
+            assert_eq!(s.poll(20), vec![want('a', 0)]);
+            s.send(begin('a', 'f', 99, 0));
+            assert!(matches!(s.state('a'), DownloadState::Failed(_)));
+            // Once a list: no more until the next.
+            assert_eq!(s.poll(30), vec![(SRC, ContentMsg::Cancel { hash: sha('a') })]);
+            assert!(s.poll(40).is_empty());
+        }
+        // Unavailable stays so.
+        s.fetcher.list(SRC, &items, &s.local);
+        s.poll(50);
+        s.send(ContentMsg::Unavailable { hash: sha('a') });
+        s.fetcher.list(SRC, &items, &s.local);
+        assert_eq!(s.state('a'), DownloadState::Unavailable);
     }
 }

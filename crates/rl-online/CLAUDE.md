@@ -168,12 +168,16 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     server's rate shared (each holds at most an eighth of a second, at
     least a chunk), round-robin from the receiver after the last served;
     a chunk goes while `room(peer)` (capped at `QUEUED`) is at least
-    `CONTENT_CHUNK + 64`.
+    `CONTENT_CHUNK + 64`. `Unavailable` and a chunkless `Begin` skip the
+    room and the buckets: one per `Want` received, so the peer's own
+    sending bounds them.
   - `fetch.rs`, `Fetcher::new(Arc<Mutex<DownloadCache>>)`: `list(source,
     items, local)` returns the missing items (not in `local` by
     `Content::has`, not in the cache; `NO_HASH` never fetched), required
     first, skins after; a transfer the new list drops gets `Cancel` (its
-    partial stays). Missing bytes above `PROMPT_BYTES` wait for `approve`
+    partial stays; the same hash listed with another size is cancelled,
+    its partial discarded, and fetched afresh); a `Failed` item is tried
+    again at each new list (`Unavailable` stays). Missing bytes above `PROMPT_BYTES` wait for `approve`
     (`waiting_approval`). `poll(now_us, out)` asks for the next item,
     evicting first (`evict` and `trim_partials`, `keep` the list's hashes,
     `CACHE_BYTES`), resuming from a partial of the listed size. `receive`
@@ -187,12 +191,15 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     `Job::Install`; the caller routes `Done::Installed` to `finished`,
     which completes the item, or discards the partial and fetches it once
     more from 0, then `Failed`. No chunk for `SILENCE_US`: asked again
-    once, then `Failed("the host stopped sending")`. `missing_required`,
+    once, then `Failed("the host stopped sending")`. `Verifying` has no
+    timeout (the worker answers every job, a panic too). `missing_required`,
     `installed` (the list's cached packs, for `Content::with_packs`),
     `source_left` (partials stay; the next list resumes).
   - `worker.rs`, `Worker::start(cache)`: one thread (`rl-online-content`)
     running `Job::{Archive, Install, Hash}` in order; `take` returns the
-    `Done`s. An archive is checked against its content hash (a pack
+    `Done`s. A job that panics (a parser of untrusted content) is caught
+    (`catch_unwind`) and fails with the panic's message; the thread goes
+    on. An archive is checked against its content hash (a pack
     changed since it was hashed is not served) and carries its SHA-256
     (`PackArchive`). An install locks the cache only to begin and finish.
     Dropping it stops the thread after its job (joined within 2 s, else
@@ -241,4 +248,6 @@ for 10 s send 9.5-10.5 MiB, a third each; one receiver held to
 `PEER_RATE`), refusals, `Begin` before every transfer and resume, one
 transfer at a time, `Cancel`, the outbox room. `fetch.rs`' unit tests:
 order, `Unavailable`, hostile `Begin`s and chunks, another archive,
-silence, a source leaving.
+silence, a source leaving, a re-sent list with another size, a failed
+item retried once a list. `worker.rs`' unit test: a panicking job
+(a `#[cfg(test)]` hook in `run`) fails and the next job completes.
