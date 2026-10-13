@@ -935,6 +935,46 @@ fn a_tampered_archive_is_refused_and_retried_once() {
     assert!(!in_cache(&net.peers[a], &hash_of(&net, LEVEL)));
 }
 
+/// N33: a spectator lacking the level at a start waits, outside the
+/// match's session: more than the session's 10 s of silence later it is
+/// still there, and once its content is complete it watches.
+#[test]
+fn a_member_waiting_at_the_start_is_not_timed_out() {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 1.0);
+    let a = net.join_all(&["Anna"])[0];
+    let (dir, partial) = partial_content(&[LEVEL]);
+    net.dirs.push(dir);
+    let b = net.join_with(identity(), look("Bert"), partial, None);
+    let b_key = net.peers[b].key;
+    // Its download waits for the player (the prompt).
+    net.peers[b].peer().test_prompt_limit(1000);
+    net.run_until(Duration::from_secs(10), "Bert is told what it lacks", |n| {
+        n.peers[b].has(|e| matches!(e, OnlineEvent::DownloadPrompt { .. }))
+            && member_of(n, b_key).is_some_and(|m| m.missing == [LEVEL.to_string()])
+    });
+    net.peers[b].peer().lobby().set_spectate(true);
+    net.ready(&[a]);
+    net.host().peer().lobby().start(14).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs, Bert waits", |n| {
+        n.host_tick() > 10 && member_of(n, b_key).is_some_and(|m| m.seat == SeatWire::Waiting)
+    });
+    let until = Instant::now() + Duration::from_millis(10_500);
+    while Instant::now() < until {
+        net.poll();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(!net.peers[b].peer().is_closed(), "Bert stays");
+    assert!(member_of(&mut net, b_key).is_some(), "a member still");
+    assert!(!net.host().has(|e| matches!(e, OnlineEvent::Left(_))), "nobody left");
+    net.peers[b].peer().approve_downloads();
+    net.run_until(Duration::from_secs(10), "Bert watches from a state", |n| {
+        n.peers[b].has(|e| matches!(e, OnlineEvent::StateLoaded { .. }))
+    });
+    assert_eq!(net.peers[b].started(), vec![None]);
+    assert!(net.host().peer().lobby().end_match());
+}
+
 /// A spectator joining mid-match without the level waits, downloads at
 /// the match's rate, then watches; the match goes on to its end.
 fn late_spectator_lacking_the_level() -> (Net, usize) {

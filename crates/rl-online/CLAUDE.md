@@ -90,7 +90,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   - **Start** (ruling PF1): `LobbyHost::start`/`force_start` → `build` →
     `start_checksum` = `World::checksum` of the start world →
     `announce_start` (drained at once) → `Session` (`Role::Host`: member
-    peers in the slots `Seat::Player(i)`, the others `Seat::Spectator`);
+    peers in the slots `Seat::Player(i)`, the others `Seat::Spectator`;
+    members waiting for their content are left out, so they never time
+    out, and join through `ContentComplete`);
     `playing(0)` at the first tick. A client builds the same world,
     compares the checksum (`MISMATCH` → `Refused` and it leaves), plays
     its slot with its input delay, or watches; a `Start` while its match
@@ -272,7 +274,9 @@ makes the host's replay; a member's skin the host lacks travels through
 the host to another client; another pack's archive served for the level
 fails after one retry, the client stays, not ready, lacking it; a
 spectator joining mid-match without the level waits, downloads at the
-match's rate, then watches, and nobody is dropped; no cache (`Err`) is a
+match's rate, then watches, and nobody is dropped; a spectator lacking
+the level at a start (its download held by the prompt) is still there
+10.5 s into the match, then watches once complete; no cache (`Err`) is a
 notice and an unwritable one a `Failed` download with the I/O reason;
 content over the prompt waits for `approve_downloads`.
 `tests/matches.rs`: a proptest of starts within rl-proto's bounds (256

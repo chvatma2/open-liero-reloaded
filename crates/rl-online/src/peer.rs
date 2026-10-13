@@ -25,8 +25,8 @@ use rl_netcode::world_sim::TickRecorder;
 use rl_netcode::{Channel, Config, Driver, Event, PeerId, Role, Seat, Session, TickInfo, WorldSim};
 use rl_proto::{
     AdminCommand, Control, LobbyState, Look, MAX_INPUT_DELAY, MatchEndWire, MatchSetupWire, MatchStartWire,
-    Notice, Phase, PublicKey, Refusal, TAG_CONTENT, TAG_NETCODE, TAG_TO_CLIENT, TAG_TO_HOST, Tagged,
-    ToClient, decode_content, decode_control, decode_to_client, decode_to_host, encode_content,
+    Notice, Phase, PublicKey, Refusal, SeatWire, TAG_CONTENT, TAG_NETCODE, TAG_TO_CLIENT, TAG_TO_HOST,
+    Tagged, ToClient, decode_content, decode_control, decode_to_client, decode_to_host, encode_content,
     encode_control, encode_to_client, encode_to_host, tag,
 };
 use rl_sim::{EndReason, Keys, MatchResult, Score, TickEvents, World};
@@ -891,6 +891,10 @@ impl OnlinePeer {
             .state()
             .members
             .iter()
+            // N33: a member waiting for its content is not in the match (it
+            // gets no start, would send nothing and time out); it joins as
+            // a spectator once complete (`ContentComplete`).
+            .filter(|m| m.seat != SeatWire::Waiting)
             .filter_map(|m| {
                 let peer = h.lobby.peer_of(m.id)?;
                 Some((peer, slot_of(m.id).map_or(Seat::Spectator, Seat::Player)))
