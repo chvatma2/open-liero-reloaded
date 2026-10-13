@@ -115,17 +115,12 @@ impl DownloadCache {
         fs::create_dir_all(dir.join("packs")).map_err(|e| io("creating", e))?;
         let _ = fs::remove_dir_all(dir.join("tmp"));
         let parsed = fs::read_to_string(dir.join(INDEX)).ok().and_then(|s| ron::from_str::<Index>(&s).ok());
-        let mut cache = DownloadCache { dir: dir.to_path_buf(), index: Index::default() };
-        match parsed {
-            Some(mut index) => {
-                index.entries.retain(|h, _| valid_hash(h) && cache.pack_path(h).is_dir());
-                cache.index = index;
-            }
-            None => {
-                cache.rebuild();
-                cache.save();
-            }
-        }
+        let mut cache = DownloadCache { dir: dir.to_path_buf(), index: parsed.unwrap_or_default() };
+        // The index only says what was recorded: a pack installed but not
+        // recorded (a crash, a failed write) is adopted, a record without
+        // its pack and anything else in `packs/` is dropped.
+        cache.reconcile();
+        cache.save()?;
         Ok(cache)
     }
 
@@ -145,34 +140,42 @@ impl DownloadCache {
         self.dir.join(format!("{hash}.part.ron"))
     }
 
-    fn rebuild(&mut self) {
-        let mut index = Index::default();
-        if let Ok(rd) = fs::read_dir(self.dir.join("packs")) {
-            for e in rd.filter_map(Result::ok) {
-                let name = e.file_name().to_string_lossy().into_owned();
-                if !valid_hash(&name) {
-                    continue;
+    /// Makes the index match `packs/`: entries without a pack directory are
+    /// dropped, valid packs without an entry adopted (use counter 0), and
+    /// everything else in `packs/` removed.
+    fn reconcile(&mut self) {
+        let packs = self.dir.join("packs");
+        self.index.entries.retain(|h, _| valid_hash(h) && packs.join(h).is_dir());
+        let Ok(rd) = fs::read_dir(self.dir.join("packs")) else { return };
+        for e in rd.filter_map(Result::ok) {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if self.index.entries.contains_key(&name) {
+                continue;
+            }
+            let path = e.path();
+            let manifest = if valid_hash(&name) { read_manifest(&DirFs::new(&path)).ok() } else { None };
+            match manifest {
+                Some(m) => {
+                    let bytes = dir_bytes(&path);
+                    self.index.entries.insert(name, Entry { id: m.id, kind: m.kind, bytes, used: 0 });
                 }
-                if let Ok(m) = read_manifest(&DirFs::new(e.path())) {
-                    index
-                        .entries
-                        .insert(name, Entry { id: m.id, kind: m.kind, bytes: dir_bytes(&e.path()), used: 0 });
+                None => {
+                    let _ = fs::remove_dir_all(&path).or_else(|_| fs::remove_file(&path));
                 }
             }
         }
-        self.index = index;
     }
 
-    /// Writes the index atomically. A failure costs only LRU order or a
-    /// rebuild, so it is not an error.
-    fn save(&self) {
-        let Ok(text) = ron::ser::to_string_pretty(&self.index, ron::ser::PrettyConfig::default()) else {
-            return;
-        };
+    /// Writes the index atomically (a temporary file, then a rename).
+    fn save(&self) -> Result<(), InstallError> {
+        let text = ron::ser::to_string_pretty(&self.index, ron::ser::PrettyConfig::default())
+            .map_err(|e| io("index", e))?;
         let tmp = self.dir.join(format!("{INDEX}.tmp"));
-        if fs::write(&tmp, text).is_ok() && fs::rename(&tmp, self.dir.join(INDEX)).is_err() {
+        fs::write(&tmp, text).map_err(|e| io("index", e))?;
+        fs::rename(&tmp, self.dir.join(INDEX)).map_err(|e| {
             let _ = fs::remove_file(&tmp);
-        }
+            io("index", e)
+        })
     }
 
     /// The directory of the pack with content hash `hash`, marking it
@@ -184,7 +187,7 @@ impl DownloadCache {
         }
         if !path.is_dir() {
             self.index.entries.remove(hash);
-            self.save();
+            let _ = self.save(); // best effort: `open` reconciles
             return None;
         }
         self.index.counter += 1;
@@ -192,7 +195,7 @@ impl DownloadCache {
         if let Some(e) = self.index.entries.get_mut(hash) {
             e.used = used;
         }
-        self.save();
+        let _ = self.save(); // best effort: only the LRU order is at stake
         Some(path)
     }
 
@@ -244,9 +247,10 @@ impl DownloadCache {
             return Err(io("download", "more bytes than the archive has"));
         }
         if !same {
-            let meta = ron::to_string(&PartialMeta { archive: archive.into(), size }).map_err(|e| io("meta", e))?;
-            fs::write(self.meta_path(hash), meta).map_err(|e| io("meta", e))?;
+            let meta =
+                ron::to_string(&PartialMeta { archive: archive.into(), size }).map_err(|e| io("meta", e))?;
             fs::write(&part, []).map_err(|e| io("partial", e))?;
+            fs::write(self.meta_path(hash), meta).map_err(|e| io("meta", e))?;
         }
         let mut f = fs::OpenOptions::new().append(true).open(&part).map_err(|e| io("partial", e))?;
         f.write_all(bytes).map_err(|e| io("partial", e))?;
@@ -299,7 +303,7 @@ impl DownloadCache {
         self.index.counter += 1;
         let used = self.index.counter;
         self.index.entries.insert(hash.into(), Entry { id: id.into(), kind, bytes, used });
-        self.save();
+        self.save()?;
         Ok(dest)
     }
 
@@ -347,11 +351,8 @@ impl DownloadCache {
         if m.kind != kind {
             return Err(InstallError::Kind { wanted: kind, found: m.kind });
         }
-        let errors: Vec<String> = validate(&src)
-            .into_iter()
-            .filter(|d| d.severity == Severity::Error)
-            .map(|d| d.message)
-            .collect();
+        let errors: Vec<String> =
+            validate(&src).into_iter().filter(|d| d.severity == Severity::Error).map(|d| d.message).collect();
         if !errors.is_empty() {
             return Err(InstallError::Invalid(errors.join("; ")));
         }
@@ -382,7 +383,7 @@ impl DownloadCache {
             }
         }
         if !evicted.is_empty() {
-            self.save();
+            let _ = self.save(); // best effort: `open` drops entries without a pack
         }
         evicted
     }
@@ -392,20 +393,26 @@ impl DownloadCache {
         self.index.entries.values().map(|e| e.bytes).sum()
     }
 
-    /// Removes every cached pack and partial download except those in `keep`.
+    /// Removes every cached pack and partial download except those in
+    /// `keep`, including packs the index does not list.
     pub fn clear(&mut self, keep: &[&str]) -> Result<(), InstallError> {
-        let all: Vec<String> = self.index.entries.keys().filter(|h| !keep.contains(&h.as_str())).cloned().collect();
         let mut failed = None;
-        for h in all {
-            match fs::remove_dir_all(self.pack_path(&h)) {
-                Ok(()) => {
-                    self.index.entries.remove(&h);
+        if let Ok(rd) = fs::read_dir(self.dir.join("packs")) {
+            for e in rd.filter_map(Result::ok) {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if keep.contains(&name.as_str()) {
+                    continue;
                 }
-                Err(e) if !self.pack_path(&h).exists() => {
-                    let _ = e;
-                    self.index.entries.remove(&h);
+                let path = e.path();
+                match fs::remove_dir_all(&path).or_else(|_| fs::remove_file(&path)) {
+                    Ok(()) => {
+                        self.index.entries.remove(&name);
+                    }
+                    Err(_) if !path.exists() => {
+                        self.index.entries.remove(&name);
+                    }
+                    Err(e) => failed = Some(io("clearing", e)),
                 }
-                Err(e) => failed = Some(io("clearing", e)),
             }
         }
         if let Ok(rd) = fs::read_dir(&self.dir) {
@@ -417,7 +424,7 @@ impl DownloadCache {
                 }
             }
         }
-        self.save();
+        self.save()?;
         failed.map_or(Ok(()), Err)
     }
 }

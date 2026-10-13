@@ -38,7 +38,8 @@ fn skin_pack(id: &str, shade: u8) -> MemFs {
         mask: vec![MaskKind::Keep; 32 * 18],
     };
     let mut fs = MemFs::new();
-    rl_pack::write_skin(&mut fs, &rl_pack::SkinPack { manifest: manifest(id, PackKind::Skin), skin }).unwrap();
+    rl_pack::write_skin(&mut fs, &rl_pack::SkinPack { manifest: manifest(id, PackKind::Skin), skin })
+        .unwrap();
     fs
 }
 
@@ -103,7 +104,10 @@ fn a_partial_survives_reopening() {
     let a = archive_of(&skin_pack("x", 2));
     let half = a.bytes.len() / 2;
     let mut cache = DownloadCache::open(root.path()).unwrap();
-    assert_eq!(cache.append(&a.hash, &a.sha, a.bytes.len() as u64, 0, &a.bytes[..half]).unwrap(), half as u64);
+    assert_eq!(
+        cache.append(&a.hash, &a.sha, a.bytes.len() as u64, 0, &a.bytes[..half]).unwrap(),
+        half as u64
+    );
     // A write at another offset is refused; nothing changes.
     assert!(cache.append(&a.hash, &a.sha, a.bytes.len() as u64, 1, &a.bytes[1..2]).is_err());
     drop(cache);
@@ -145,10 +149,7 @@ fn install_refuses_what_does_not_verify() {
     let a = archive_of(&level_pack("x"));
     put(&mut cache, &a);
     let e = cache.install(&a.hash, "x", PackKind::Skin, MAX_SKIN_ARCHIVE).unwrap_err();
-    assert!(
-        matches!(e, InstallError::Kind { wanted: PackKind::Skin, found: PackKind::Level }),
-        "{e}"
-    );
+    assert!(matches!(e, InstallError::Kind { wanted: PackKind::Skin, found: PackKind::Level }), "{e}");
     assert_clean(&dir, &a);
 
     // An invalid pack.
@@ -165,8 +166,43 @@ fn install_refuses_what_does_not_verify() {
     assert!(matches!(e, InstallError::Archive(ArchiveError::TooLarge(_))), "{e}");
     assert_clean(&dir, &a);
 
+    // The archive's SHA-256 matches the bytes, but they are another pack:
+    // the content hash is the real defence.
+    let wanted = archive_of(&skin_pack("x", 6));
+    let other = archive_of(&skin_pack("x", 7));
+    let a = Archive { bytes: other.bytes, hash: wanted.hash, sha: other.sha };
+    put(&mut cache, &a);
+    let e = cache.install(&a.hash, "x", PackKind::Skin, MAX_SKIN_ARCHIVE).unwrap_err();
+    assert!(matches!(&e, InstallError::Hash(m) if m.contains("content")), "{e}");
+    assert_clean(&dir, &a);
+
     assert_eq!(cache.total_bytes(), 0);
     assert_eq!(outside(root.path()), 1);
+}
+
+#[test]
+fn a_pack_missing_from_the_index_is_adopted() {
+    let root = tempfile::tempdir().unwrap();
+    let index = root.path().join("index.ron");
+    let mut cache = DownloadCache::open(root.path()).unwrap();
+    let before = std::fs::read(&index).unwrap();
+    let a = archive_of(&skin_pack("x", 50));
+    install(&mut cache, &a, "x");
+    let bytes = cache.total_bytes();
+    drop(cache);
+    // A crash between the rename and the index write; junk in packs/ too.
+    std::fs::write(&index, before).unwrap();
+    std::fs::create_dir(root.path().join("packs/junk")).unwrap();
+    let cache = DownloadCache::open(root.path()).unwrap();
+    assert!(cache.contains(&a.hash));
+    assert_eq!(cache.total_bytes(), bytes);
+    assert!(!root.path().join("packs/junk").exists());
+    drop(cache);
+    std::fs::write(&index, "(counter: 0, entries: {})").unwrap();
+    let mut cache = DownloadCache::open(root.path()).unwrap();
+    cache.clear(&[]).unwrap();
+    assert!(!root.path().join("packs").join(&a.hash).exists());
+    assert_eq!(cache.total_bytes(), 0);
 }
 
 #[test]

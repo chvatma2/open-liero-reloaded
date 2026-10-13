@@ -146,6 +146,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   `limit` (`MAX_SKIN_ARCHIVE` for skins) and its archive SHA-256, decodes
   into `tmp/`, then checks content hash, id, kind and `validate`; any
   failure removes `tmp/` and the partial (an incomplete partial stays).
+  `open` reconciles the index with `packs/` (adopts unlisted valid packs, drops the rest);
+  one cache directory belongs to one process (`open` empties `tmp/`, no lock).
   A hash that is not 64 lowercase hex never names a file.
   `Content::with_packs(&[(id, dir)])` is a copy with those packs laid over
   by id (nothing on disk changes); `Content::has(id, hash)`; `pack_hash`
