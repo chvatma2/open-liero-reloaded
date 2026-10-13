@@ -683,10 +683,29 @@ D1, D2, D3, D6, D8 and D10 are described in `tools/olx-oracle/CLAUDE.md`.
 | D4 | **Cosmetic `rand()` draws are emulated** (dig, rope hook, explosion dirt, blood, bleeding, death, gibs, colour), including the dedicated server's 1024-entry entity pool, which is never freed (a saturating counter reset at match start). | They advance the same generator as gameplay draws. Emulating the dedicated server's count is the only verifiable choice; a real client frees entities and simulates them with `rand()`, which no port can reproduce. Recorded as a deviation. |
 | D5 | **Cosmetic effects get their own generator** in `rl-fx` (M5), never the simulation's. | Spec §5.5. |
 | D6 | **`FindSpot`'s boost `mt19937` instances are reseeded** by `simSetSeed` in the oracle; the sim seeds its copy from the match seed. | Spawns and bonuses need a reproducible position; OLX seeds 5489 once per process. |
-| D7 | **The `VecTimeRecorder::get(0)` quirk is kept.** | It is real-play behaviour; worms are hit at stale positions in OLX too. |
+| D7 | **The `VecTimeRecorder::get(0)` quirk is kept.** *(Amended 2026-10-13, below.)* | It is real-play behaviour; worms are hit at stale positions in OLX too. |
 | D8 | **All worms in a scenario use scripted input** (no bot AI during recording). | Bot AI draws `rand()` and reads the wall clock. |
-| D9 | **Exact-zero health:** the Gusanos `think()` death path is ported (the worm dies next frame, credited to nobody), but its Gusanos particles' `rnd()` use is not; scenarios avoid exact-zero health. | Rare; the Gusanos particle system is out of scope. Recorded as a deviation. |
+| D9 | **Exact-zero health:** the Gusanos `think()` death path is ported (the worm dies next frame, credited to nobody), but its Gusanos particles' `rnd()` use is not; scenarios avoid exact-zero health. *(Amended 2026-10-13, below.)* | Rare; the Gusanos particle system is out of scope. Recorded as a deviation. |
 | D10 | **Other messages of the local connection are delivered between frames too:** every reliable message the server queues for the local client during frame F (bonus spawns and destruction, kill messages, ...) is parsed by the client after frame F, then the shot list (D1), then every reliable message the client queued for the server (bonus grabs, damage reports); none goes over the network. | One frame of latency, as a real local game at one frame per main-loop iteration sees them; over the network they arrived only after a whole `simStep` batch, which made respawn and bonus traces depend on the batching. |
+
+**Amendment to D7 and D9 (2026-10-13).** Both stay OLX's behaviour for the
+oracle and become fixes in play, behind one simulation setting,
+`SimSettings::olx_quirks`: on when the settings come from an OLX trace
+(the oracle, scenarios and what is drawn from them), off in every game
+(local play, bot matches, online matches, replays). Off:
+
+- **D7.** Hit tests and explosions read the worm's newest recorded
+  position, its current one, and a respawn forgets the previous life's
+  positions. The quirk made about one hit test in ten use where the worm
+  was about 1.1 s earlier: worms died to shots that visibly missed, and
+  shots passed through worms.
+- **D9.** The exact-zero death is credited to the worm whose damage left 0
+  health, and plays the death sound, gibs and blood a lethal hit plays;
+  OLX plays none of them for the local player.
+
+The reasons and the OLX sources are in `docs/porting/STATUS.md`
+("Hits test the worm's current position; every death is credited and
+shown").
 
 ## 19. Amendments made while writing plan 5 (2026-10-10)
 

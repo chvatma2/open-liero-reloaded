@@ -114,12 +114,75 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   the server, a frame or more later, from the batched `C2S_REPORTDAMAGE`
   (`ParseReportDamage`), so its `fDamage` is about twice the real damage. It
   only breaks score ties and is not in the trace.
+- **Hits test the worm's current position; every death is credited and
+  shown (2026-10-13; spec §18 D7 and D9, amended).** Three OLX bugs are
+  fixed in play and kept only for the oracle, behind
+  `SimSettings::olx_quirks` (on when the settings come from an OLX trace,
+  `SimSettings::from_olx_features`: the oracle, `rl-scenario`, `rl-cli
+  scenario` and the render goldens drawn from scenarios; off in
+  `SimSettings::lx56` and so in local play, bot matches, online matches
+  and replays, which record it). Every peer of an online match plays it
+  off: it is a constant, not a lobby setting.
+  - **The hit position.** OLX's `DataTimeRecorder::get(framesBack)`
+    (`src/util/VecTimeRecorder.h:37-59`) reads
+    `m_data[(cur + 100 - framesBack % 100) % 100]` while `cur` is the next
+    slot to write, so frames-back 0 is the *oldest* of the 100 entries.
+    `getBest` (`:54-59`), from `CProjectile::ProjWormColl`
+    (`src/common/PhysicsLX56_Projectiles.cpp:52-111`) and
+    `CClient::Explosion` (`src/client/CClient_Game.cpp:320-329`), asks for
+    frames-back 0 about one time in ten (spec §18 D2's clock), so about one
+    hit test in ten used where the worm was about 1.1 s earlier: worms died
+    to shots that visibly missed (the investigation's
+    `classic-dirt-level` 2-bot seed-2 match: a self-kill at tick 4629, the
+    worm 27-33 px from every pellet), and shots passed through worms. In
+    play `get(k)` reads `m_data[(cur + 100 - 1 - k % 100) % 100]` (frames-back
+    0 is the newest), the hit tests and explosions read the newest entry
+    (`PosRecorder::hit_position`: the worm's position after its last
+    physics step, which the projectile step follows; OLX's frames-back
+    would read the entry a step older most of the time), and a respawn
+    fills the recorder with the spawn position, so a new life is never hit
+    where the previous one was. `rl-cli`'s `tests/hits.rs` checks, through
+    `World::hit_audit`, that no hit of seeded bot matches comes from
+    outside the struck worm's current hit geometry (`|dx|, |dy| < 4 +
+    radius`; explosions `d² <= 25`).
+  - **The exact-zero death's credit.** OLX's `CWorm::base_die`
+    (`src/gusanos/base_worm.cpp:623-653`) credits the death to
+    `m_lastHurt`, which classic damage never sets, so killer -1. In play it
+    is credited to the worm whose damage left 0 health
+    (`Worm::last_damager`, set by every damage that lowers health, cleared
+    on respawn).
+  - **The exact-zero death's effects.** OLX plays the death sound, 7 gibs
+    and 50 rounds of blood only in `InjureWorm`'s lethal branch
+    (`CClient_Game.cpp:419-437`) and in a remote client's `ParseWormDown`
+    (`src/client/CClient_Parse.cpp:1817-1860`); `killWorm`'s
+    `SendWormDied` sends the local client nothing
+    (`src/server/CServer_Send.cpp:1122-1135`), so the local player saw an
+    exact-zero death without sound or gibs. In play `die_at_zero_health`
+    plays the lethal hit's effects (and their `rand()` draws) for every
+    death `killWorm` made. Every death path now shows: a lethal hit (from a
+    projectile, an explosion, a beam), a hit on a worm already at 0 health
+    (below 0: killed at once, credited to that hit), and the exact-zero
+    death; a lethal hit after game over plays its effects but kills
+    nobody, as in OLX, and the next frame's zero-health death plays none
+    (no `Kill`), so no death shows twice. `rl-cli`'s `tests/deaths.rs`
+    checks every kill of seeded bot matches.
+  - **No death effect is dropped downstream.** A death's sound and gibs
+    count against `TickEvents`' gameplay quota, not the cosmetic one, so a
+    tick's blood never crowds them out; online play keys a death sound by
+    the worm whose gibs follow it (`rl_present::net::event_keys`), so a
+    correction that re-rolls which of the three sounds it drew plays no
+    second one, and one that kills another worm instead is not deduped
+    away. Kept as OLX: the client's 1024-entity pool (spec §19 E1) drops
+    the gibs and blood of a death when it is already full (in a 4-bot MW
+    1.0 chaos match, 6 of 24 deaths), and the audio voice limits (two of
+    each death sound at once, 256 in all) can skip a death sound.
 - **Exact-zero deaths' Gusanos particles (spec §18 D9).** Three scenarios stay
   pinned in `rl-scenario/tests/oracle.rs`, the only ones that do not match
   bit for bit (each row there carries this reason: bit-exactness is impossible
   without porting the Gusanos particle system, whose `rnd()` draws shift the
   next random respawn spot). A worm left at exactly
-  0 health dies at the start of the next frame, uncredited, as in OLX; the
+  0 health dies at the start of the next frame, uncredited, as in OLX (with
+  `SimSettings::olx_quirks`; play credits it, see above); the
   Gusanos `death.obj` particles OLX then spawns are not simulated. They draw
   from the `FindSpot` stream for as long as they live (597, 544 and 669 draws
   before the next respawn in `weapons/mw-1-0/{assassin-s-shot,flak,plasma-launcher}`),
@@ -577,8 +640,13 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   and simulates them with `rand()`, which no port can reproduce, so a client
   game's draw count differs from the traces.
 - **D7, the `VecTimeRecorder::get(0)` quirk is kept** (see Kept OLX quirks).
+  Amended 2026-10-13: kept for the oracle only (`SimSettings::olx_quirks`);
+  play hit-tests the worm's current position (Deliberate deviations,
+  "Hits test the worm's current position").
 - **D9, exact-zero health** (see above): the death is ported, the Gusanos
-  particles' `rnd()` use is not.
+  particles' `rnd()` use is not. Amended 2026-10-13: in play the death is
+  credited to the last damager and plays the death effects; uncredited and
+  silent only with `SimSettings::olx_quirks` (the oracle).
 
 ## Spec §20 decisions that deviate from OLX (plan 6, M6)
 
@@ -1029,7 +1097,9 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
 - **`VecTimeRecorder::get(0)` is the oldest entry** (spec §18 D7): with the
   pinned clock, a projectile step at exactly the frame time hit-tests worms
   where they were 100 physics steps ago, or at a stale or zero position in
-  their first 100 steps after a spawn.
+  their first 100 steps after a spawn. Since 2026-10-13 kept only with
+  `SimSettings::olx_quirks` (the oracle); play fixes it (Deliberate
+  deviations).
 - **`Attr` assignments skip equal values** (`src/game/Attr.h:194-204`):
   `vPos = v` and `vVelocity = v` of a projectile or worm do nothing when `v`
   compares equal, so a zero keeps its old sign. A reused projectile slot can
@@ -1150,7 +1220,7 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   `sunray-beamer` kill with a full pool). The gib image exists in dedicated
   mode (`explode-kill-respawn`'s 580 draws).
 - **The position recorder survives a respawn** (`clear(vPos)`): `get(0)` is
-  a position from the previous life (D7).
+  a position from the previous life (D7; play empties it since 2026-10-13).
 - **Bleeding:** below 15 hp a worm bleeds in the first sub-step and then every
   2 s, 80 `rand()` calls and 40 entities each time (`bleed`).
 - **Bonuses:** a grab reaches the server one frame later, and its

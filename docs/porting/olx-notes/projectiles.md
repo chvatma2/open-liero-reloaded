@@ -51,6 +51,9 @@ with a `shoot_t` parent) is only summarised where it fixes projectile state.
    `framesBack = ms_back / 11`, so in real play (`ms_back` in about `(0, 21]`)
    the worm hitbox is often the 1.1 s old position. Port the ring buffer
    exactly (100 entries, `cur`, `count`, stale contents survive `clear`).
+   (2026-10-13: `rl-sim` keeps this only for the oracle; play hit-tests
+   the newest entry. See `docs/porting/STATUS.md`, "Hits test the worm's
+   current position".)
 5. **Explosions do not fall off.** Every alive worm with
    `|pos - wPos|^2 <= 25` (float) takes the full `damage`
    (`CClient_Game.cpp:320-329`). Hole size is `clamp((int)damage, 0, 4)`,

@@ -287,7 +287,7 @@ pub(crate) fn kill_worm(h: &mut Harm, victim: i32, killer: i32) -> bool {
 /// With [`SimSettings::olx_quirks`], as OLX: the killer is `m_lastHurt`,
 /// which classic damage never sets, so -1; and no death effects, which OLX
 /// plays only in `InjureWorm`'s lethal branch and in a remote client's
-/// `ParseWormDown` (`CClient_Parse.cpp:1817-1858`), whose `S2C_WORMDOWN`
+/// `ParseWormDown` (`CClient_Parse.cpp:1817-1860`), whose `S2C_WORMDOWN`
 /// `SendWormDied` never sends the local client (`CServer_Send.cpp:1122-1135`).
 /// Without (play, D9 amended 2026-10-13): the killer is the worm's
 /// [`Worm::last_damager`], and a death that `killWorm` made plays the

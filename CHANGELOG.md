@@ -45,6 +45,17 @@ All notable changes to rust-liero are recorded here. The format follows
   above your worm, in place of your name, and stays for 0.75 s after a
   change, as in OLX.
 
+### Fixed — hits and deaths
+
+- Shots hit a worm where it is. About one hit in ten tested where the worm
+  had been a second earlier (an OpenLieroX bug the port had kept on
+  purpose): worms died to shots that visibly missed, and shots passed
+  through worms. The oracle still reproduces OLX's behaviour.
+- A worm left at exactly 0 health now dies with the death sound and the
+  blood explosion, like any other death, and the kill goes to whoever
+  dealt the last damage (OLX credited nobody and showed nothing).
+- Replays recorded before this change no longer play (replay format 2).
+
 ### Changed
 
 - Online play's protocol version is 2: this version and the earlier one
