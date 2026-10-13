@@ -134,7 +134,7 @@ fn a_watcher_follows_any_worm() {
     let a = setup::load_deathmatch(&[dir.as_path()], "Classic", "Dirt Level", "default", &o).unwrap();
     let mut s = Session::new(&a, viewport(), Interpolation::Linear, Audio::silent()).unwrap();
     assert_eq!(s.local(), None);
-    assert!(!s.spectating(), "a local game is watched, not spectated online");
+    assert!(s.spectating(), "nobody plays it");
     let looks = s.present.assets();
     assert!(
         looks.worm(0).local && (1..3).all(|i| !looks.worm(i).local),

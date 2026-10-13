@@ -186,8 +186,9 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   (`Presentation::follow`), the HUD, the big minimap dot, the highlighted scoreboard and results row (`Row::followed`), the
   tally's player kills and `player_deaths`/`player_spawns`. Without one
   the camera and the HUD follow the worm chosen (`follow`, `follow_next`,
-  worm 0 at first); an online spectator's PageUp/PageDown choose it
-  (`Session::spectating`; "Watching <name>" on the HUD). **Per-worm
+  worm 0 at first); the left and right arrows choose it in any game nobody
+  plays (`Session::spectating`, `app::watch_key`: not in a menu, never a
+  played game's; "Watching <name>" on the HUD). **Per-worm
   looks** (`session::WormLook { name, colour, skin }`, one per worm,
   registered in worm order): local play's as above, an online match's the
   lobby's (`setup::load_online` loads every slot's skin once by id from

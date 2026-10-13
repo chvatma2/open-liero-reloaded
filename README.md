@@ -138,6 +138,7 @@ These keys are fixed (they cannot be bound to actions):
 | F2 | debug panel (FPS, frame and tick time, bot think time, entities) |
 | Tab (held) | scoreboard |
 | H | health bars over worms |
+| Left / Right | follow the previous / next worm, in a replay, a spectated game or an online match you watch |
 | PageUp / PageDown | faster / slower, for a replay or a spectated game |
 
 ### Where things are kept
@@ -209,7 +210,8 @@ keeps a small aim error, unlike OLX's). Bots get OLX's preset loadouts; on
 the command line you get random enabled weapons (the menus' matches have
 OLX's weapon selection). After "Game Over" the results appear, F5 plays a
 rematch on the next seed, Esc quits. `--spectate` lets the bots play alone
-(2 to 32) while you watch, at `--speed` and PageUp/PageDown.
+(2 to 32) while you watch, at `--speed` and PageUp/PageDown; Left/Right choose
+the worm the camera follows.
 
 #### Replays
 

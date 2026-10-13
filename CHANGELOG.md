@@ -39,6 +39,13 @@ All notable changes to rust-liero are recorded here. The format follows
   beside the program when there is one, else the one in the working
   directory as before.
 
+### Added — choosing the worm to watch
+
+- Left/Right choose the worm the camera and the HUD follow in any game
+  nobody plays: a replay, a `--spectate` match and an online match you
+  watch (before, only the last, with PageUp/PageDown). PageUp/PageDown
+  change the speed only; online they do nothing.
+
 ### Added — in game
 
 - While the change-weapon key is held, the selected weapon's name shows

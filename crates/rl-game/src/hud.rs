@@ -176,7 +176,7 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
                 Dot {
                     pos: pos2(w.pos.x, w.pos.y),
                     colour: Color32::from_rgb(r, g, b),
-                    big: local == Some(i as i32),
+                    big: local.unwrap_or(followed) == i as i32,
                 }
             })
             .collect(),
@@ -187,10 +187,12 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
         Driver::Match(_) if s.human() => {
             "Shift+arrows weapon   Tab scores   F2 debug   F5 rematch   Esc quit"
         }
-        Driver::Match(_) => "PgUp/PgDn speed   Tab scores   F2 debug   F5 rematch   Esc quit",
-        Driver::Replay(_) => "PgUp/PgDn speed   Tab scores   F2 debug   F5 from the start   Esc quit",
+        Driver::Match(_) => "Arrows follow   PgUp/PgDn speed   Tab scores   F2 debug   F5 rematch   Esc quit",
+        Driver::Replay(_) => {
+            "Arrows follow   PgUp/PgDn speed   Tab scores   F2 debug   F5 from the start   Esc quit"
+        }
         Driver::Online(_) if local.is_some() => "Shift+arrows weapon   Tab scores   F2 debug   Esc quit",
-        Driver::Online(_) => "PgUp/PgDn follow   Tab scores   F2 debug   Esc quit",
+        Driver::Online(_) => "Arrows follow   Tab scores   F2 debug   Esc quit",
     };
     let hint = if menus { hint.replace("Esc quit", "Esc pause") } else { hint.to_string() };
     HudView {

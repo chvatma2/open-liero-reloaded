@@ -644,7 +644,13 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   4×, 16× and max). Sound is thinned: every tick's up to 2×, only each
   frame's last tick's from 4× to 16×, none at max. The menus have no
   spectating yet (the command line's `--spectate`), and replays have no
-  seeking (deferred).
+  seeking (deferred). In every game nobody plays (a replay, `--spectate`,
+  an online match watched) Left/Right choose the worm the camera and the
+  HUD follow, in worm order, round (`Session::spectating`, `watch_key`;
+  `tests/watch.rs`); PageUp/PageDown are the speed's alone, and do nothing
+  online. A replay starts on worm 0: it does not record which worms were
+  bots, and the human is the first worm of every game the menus or the
+  command line make.
 - **Engine stress test** (`rl-cli stress`, plan 7 task 8, the user's
   request): its matches go past OLX's limits on purpose: 32 chaos bots,
   `LoadingTime` 0 (in OLX's range, below any menu default) and, in one

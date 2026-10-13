@@ -491,10 +491,11 @@ impl Session {
         Some((i, weapon.name.clone()))
     }
 
-    /// Whether this is an online match nobody here plays: PageUp and
-    /// PageDown choose the worm followed ([`Session::follow_next`]).
+    /// Whether nobody here plays this game (a replay, bots alone, an
+    /// online match watched): the arrows choose the worm followed
+    /// ([`Session::follow_next`]).
     pub fn spectating(&self) -> bool {
-        matches!(self.driver, Driver::Online(_)) && self.local.is_none()
+        self.local.is_none()
     }
 
     /// The camera and the HUD follow worm `slot`.

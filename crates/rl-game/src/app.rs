@@ -159,6 +159,33 @@ pub fn egui_hears(event: &winit::event::WindowEvent, capturing: bool) -> bool {
     !(capturing && matches!(event, E::KeyboardInput { .. } | E::Ime(_)))
 }
 
+/// What a key does for a watched game.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WatchKey {
+    /// The next (1) or previous (-1) worm followed.
+    Follow(i32),
+    /// The next speed, faster or slower.
+    Speed { faster: bool },
+}
+
+/// What `code` does in a game: the arrows choose the worm followed in a
+/// game nobody here plays (`spectating`: a replay, bots alone, an online
+/// match watched), and are the player's own keys otherwise; PageUp and
+/// PageDown change the speed of a game that can fast-forward (not a
+/// `human` one: an online match runs at the host's pace). Nothing while a
+/// menu holds the game (`in_game` false: the arrows are the menu's).
+pub fn watch_key(code: KeyCode, spectating: bool, human: bool, in_game: bool) -> Option<WatchKey> {
+    match code {
+        KeyCode::ArrowLeft | KeyCode::ArrowRight if spectating && in_game => {
+            Some(WatchKey::Follow(if code == KeyCode::ArrowRight { 1 } else { -1 }))
+        }
+        KeyCode::PageUp | KeyCode::PageDown if !human => {
+            Some(WatchKey::Speed { faster: code == KeyCode::PageUp })
+        }
+        _ => None,
+    }
+}
+
 /// Whether the event loop runs on Wayland.
 fn is_wayland(el: &ActiveEventLoop) -> bool {
     #[cfg(target_os = "linux")]
@@ -828,8 +855,8 @@ impl App {
         Ok(())
     }
 
-    /// PageUp (`faster`) or PageDown: the watched game's next speed; a
-    /// game a person plays stays at 1×.
+    /// PageUp (`faster`) or PageDown: the watched game's next speed (the
+    /// caller, `watch_key`, leaves out a game a person plays: it stays at 1×).
     fn change_speed(&mut self, faster: bool) {
         if self.shell.session().is_none_or(|s| s.human()) {
             return;
@@ -879,14 +906,17 @@ impl App {
             KeyCode::F2 => self.debug = !self.debug,
             // The network overlay (spec §7.3).
             KeyCode::F3 => self.net_overlay = !self.net_overlay,
-            // A watched online match: the next or previous worm followed.
-            KeyCode::PageUp | KeyCode::PageDown if self.shell.session().is_some_and(Session::spectating) => {
-                if let Some(s) = self.shell.session_mut() {
-                    s.follow_next(if code == KeyCode::PageDown { 1 } else { -1 });
+            // A watched game: the arrows choose the worm followed, PageUp
+            // and PageDown the speed (`watch_key`).
+            KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::PageUp | KeyCode::PageDown => {
+                let in_game = self.shell.names_shown();
+                let Some(s) = self.shell.session_mut() else { return Ok(()) };
+                match watch_key(code, s.spectating(), s.human(), in_game) {
+                    Some(WatchKey::Follow(step)) => s.follow_next(step),
+                    Some(WatchKey::Speed { faster }) => self.change_speed(faster),
+                    None => {}
                 }
             }
-            // Fast-forward, for a watched game only (`speed.rs`).
-            KeyCode::PageUp | KeyCode::PageDown => self.change_speed(code == KeyCode::PageUp),
             // OLX's Game.ShowWormHealth toggle.
             KeyCode::KeyH => {
                 if let Some(s) = self.shell.session_mut() {
