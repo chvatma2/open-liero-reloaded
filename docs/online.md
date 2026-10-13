@@ -43,7 +43,8 @@ password. Pick a game and Join; a click on a game measures its ping (the
 time to connect to it, 2 s at most). A game of another version is greyed
 out and says "needs version …". A game that announced no public address
 says "cannot be joined yet". "Block this host" hides a host's games for
-good (Options → Online lists the blocked hosts). Above the list: "No relay
+good (Options → Online lists the blocked hosts; Unblock there lists the
+host again from its next announcement, within a minute). Above the list: "No relay
 reachable" when none answers, "Searching…" until a relay has sent its
 games. A game never gets listed on a note that is forged, old or aimed at
 a private address.
@@ -66,7 +67,9 @@ server's `public_address`), then share the new code.
 
 **Visibility.** Host → "Who can join": **Anyone (Internet)** announces the
 game on the relays and on the LAN; **This network** on the LAN only;
-**Invite only** nowhere (share the code). The game's choice defaults to
+**Invite only** nowhere (share the code: the lobby says "This code has no
+address …" when it carries none, and "Finding the public address…" while
+it is asked, so copy it after that). The game's choice defaults to
 This network. To learn its public address for the announcement and the
 invite, a Public or Invite game asks a STUN server (a Lan game never
 does). A server's `visibility` is `Public` (the default), `Lan` or
@@ -75,25 +78,49 @@ way. The lobby says where the game stands: "Finding the public
 address…", "Announcing on the Internet…", "Listed on the Internet", or
 why not ("Not listed: no relays", "no relay reachable", "no public
 address (forward port N or set it in Options)", "your public address
-setting is not reachable from the Internet").
+setting is not reachable from the Internet": a private, local or IPv6
+public address is never announced on public relays, so your LAN address
+does not leave; a server logs a warning and is not announced either).
 
 **Relays and STUN in Options.** Options → Online has Region, Public
 address (empty: asked from STUN), Relays (`wss://` or `ws://` URLs, at
 most 32), STUN servers (`host:port`) and Blocked hosts. "Reset … to
 defaults" restores the shipped lists; a player who never edits a list
-follows later default lists. Edits apply the next time you open
-Multiplayer or host. A server sets `relays`, `stun`, `region` and
+follows later default lists. Relay edits apply at once: the game drops
+the relays it was connected to and connects to the new list (a game you
+host announces there right away and its invite names them); blocking and
+unblocking apply at once too. STUN and public address edits apply the
+next time you host. A server sets `relays`, `stun`, `region` and
 `public_address` in its config (see `fixtures/server/example.ron`); an empty
 `stun` asks no one.
 
 **Your own relay.** Any Nostr relay that accepts kind 31470 events,
 without payment or authentication, works. Run one, then list its URL in
 Options → Online → Relays on every player's game, and in `relays` in
-`server.ron`; an invite carries one such URL of at most 64 bytes, so the
-joiner's game reaches it too. A relay that only the office can reach
-needs `ws://host:port` (or `wss://`); when every relay in the list is on
-your own network (`localhost`, a private address), the game lists games
-at private addresses as well, which it refuses from public relays.
+`server.ron`; an invite carries one such URL of at most 64 bytes, for
+later use (the joiner's game does not read it yet: NAT traversal, plan
+12b, will). A relay that only the office can reach needs `ws://host:port`
+(or `wss://`); when every relay in the list is on your own network,
+named by `localhost` or a private IP address (`ws://192.168.1.2:7000`),
+the game lists games at private addresses as well, which it refuses from
+public relays. A relay named by a host name (`ws://relay.office.lan`)
+counts as public, since the game cannot tell where it is without looking
+it up: name an office relay by its IP address.
+
+**Privacy.** Opening Multiplayer (the Internet tab is the first;
+`rl-game --join` goes through it too) connects to the relays in Options, 8 public
+relays by default, which then see your IP address; a hosted Public game
+is announced there with its public address. Remove every relay in
+Options → Online to keep the game off the relays entirely (the Internet
+tab then says "No relay reachable"; LAN and Direct work as before). A
+`rl-server` without `visibility` is Public: an older config without it
+now announces the server on the default public relays (set
+`visibility: Lan` or `Invite` to keep it off).
+
+**Passwords.** A game's password is never sent: the joiner proves it
+knows it, only to a host that has first proved its key, and the proof is
+bound to the joiner's key and the connection, so it cannot be replayed
+elsewhere.
 
 **Still needs a forwarded port.** The list and the invite tell you where
 a game is; they do not get through a router. Players outside your LAN

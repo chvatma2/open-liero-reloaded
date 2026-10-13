@@ -15,6 +15,7 @@ cargo run --release -p rl-game -- --replay f.rlrp [--speed 1|2|4|8|16|max]
 cargo run --release -p rl-game -- --spectate --bots 8 [--speed 16]   # bots alone, watched
 cargo run --release -p rl-game -- --host [name] [--port 23400]        # host online, the Lobby opens
 cargo run --release -p rl-game -- --join 192.168.1.20[:23400]         # join online
+cargo run --release -p rl-game -- --join rlx1…                         # join by invite code
 cargo run --release -p rl-game -- --net-sim typical                   # feel a network (spec §9.10)
 ```
 
@@ -263,7 +264,7 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   weapon screen's menu for the lobby's mod (`net::weapon_menu`, decision
   N19, from the peer's content, made again when it changes: a downloaded
   mod counts, `net::WeaponsKey`), the host's LAN
-  announcement (`Announcer`, `Visibility::Lan`; `GameSummary::of_lobby(..).lan()`,
+  announcement (`Announcer`, for `Visibility::Public` and `Lan`; `GameSummary::of_lobby(..).lan()`,
   the level's name from the peer's content); `Chat` ("name: text",
   `LineKind::Chat`), `Notice` and `Left` ("name left") → the lobby's chat
   (`net::CHAT_KEEP` lines) and the HUD log; `MatchStarting` → the last

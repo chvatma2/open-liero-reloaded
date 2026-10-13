@@ -1422,6 +1422,39 @@ Task rulings:
   yet"), as before. If wrong: a hosted game appears for a player who cannot
   join it.
 
+Final review rulings (the plan's final fix pass, 2026-10-14):
+
+- **FR-1 (B-I1):** the password proof is both bound (to the joiner's key
+  and both DTLS fingerprints) and moved into `Prove`, after the host's
+  proof. Binding alone stops the relay; moving alone leaves the relay open
+  when no key is expected (LAN, direct); together an impostor gets no
+  proof to replay, and one that names the expected key gets none at all to
+  guess from. If wrong: one extra field in `Prove` (protocol 2 is
+  unreleased).
+- **FR-2 (A-M1):** a full list (500 games) still refuses new keys rather
+  than evicting incompatible or address-less entries: a flood of valid
+  notes from fresh keys defeats any eviction order, and the spec's defence
+  is signatures, per-key limits, blocking and sinking. The REQ keeps its
+  `limit` of 500 (R4-1): without it a relay holding a flood would burst
+  past the rate buckets and be dropped and reconnected for ever. If wrong:
+  honest hosts stay hidden while a flood fills the list (proof of work,
+  NIP-13, is a later option).
+- **FR-3 (A-M4):** the full-list check now comes before the signature
+  check, but `offer` still re-verifies events the pool's driver already
+  verified: a hostile relay's burst costs about 0.1 s of Schnorr work on
+  the UI thread once, bounded by the pool's rate limits, and `GameList`
+  keeps verifying for callers without a pool. If wrong: a UI hitch under a
+  hostile relay (an `offer_verified` would remove it).
+- **FR-4 (B-M6):** the Internet tab's view is rebuilt only when a note
+  changed the list, but the list is still cloned and laid out in full each
+  frame (up to 500 rows in a `Grid`): `ScrollArea::show_rows` needs fixed
+  column widths, a layout change of its own. If wrong: frames slow under a
+  full hostile list.
+- **FR-5 (B-I2):** unblocking cannot show a game before its next note (up
+  to a minute): the list never keeps a blocked host's notes, and the
+  pool's dedupe drops a stored note it already delivered. If wrong: an
+  unblocked game shows up to a minute late.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

@@ -30,6 +30,44 @@ All notable changes to rust-liero are recorded here. The format follows
   servers (by hand: the relay probe publishes short-lived notes to them).
 - Still needed: players outside your LAN reach a game only through a
   forwarded port (NAT traversal comes with plan 12b).
+- Privacy: opening Multiplayer connects to the relays in Options (8 public
+  relays by default), which see your IP address; remove every relay to
+  stay off them. Upgrading `rl-server`: a config without `visibility` is
+  now Public and announces the server on the default public relays (set
+  `visibility: Lan` or `Invite` to keep it private).
+
+### Fixed — finding games (final review)
+
+- A closed game no longer comes back for up to 3 minutes from a relay that
+  missed its closing note, and a game hosted again right after closing
+  shows at once.
+- Announcements are dated by the wall clock at each note: a host that
+  suspended or whose clock was corrected by NTP after it started is no
+  longer dropped from every list; the game list judges ages the same way.
+- A game's password proof is bound to the joiner and the connection and
+  sent only once the host proved its key: an impostor can no longer relay
+  it into a password-protected game, and an unproven "wrong password" is
+  not believed.
+- Relay edits in Options apply at once, also to the relays kept open after
+  leaving Multiplayer and to a hosted Public game (which stops announcing
+  on removed relays); blocking and unblocking apply at once.
+- An Invite only game says when its code has no address ("This code has no
+  address: forward port N or set the public address in Options").
+- Left/Right follow another worm in `rl-game --spectate` and `--replay`.
+- "Listed on the Internet" no longer lingers after every relay dropped or
+  from a previous hosted game; a private or IPv6 public address is never
+  announced on public relays (the game says so; `rl-server` warns).
+- A failed host proof on a LAN or direct join says "this game could not
+  prove who it is" (nobody was invited).
+- An invite code with a typo in `rlx1` says "damaged" instead of being
+  looked up as a host name; the Internet tab forgets a password typed for
+  another game.
+- `rl-server` checks `stun` entries (`host:port`), holds `relays` to 32,
+  each once; the example config leaves both lists out so a copy follows
+  later defaults.
+- Relay connections: events a relay sends outside our subscription are
+  dropped and the inbox is bounded by memory; reconnects are spread out
+  (±20 %); STUN survives a stale ICMP reset on Windows.
 
 ### Added — content download
 
