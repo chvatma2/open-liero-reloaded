@@ -55,9 +55,17 @@ fn item_kind(kind: PackKind) -> Option<ItemKind> {
 
 /// Whether an item may be fetched and laid over `base`: a required one
 /// always; an optional one (a skin) only if no required item names its id
-/// and `base` has no pack of another kind under it. A member or a host
-/// cannot pass a skin off as a mod, level or theme.
+/// and `base` has no pack under it. A member or a host cannot pass a skin
+/// off as a mod, level or theme, and local packs win (ruling PF11-5:
+/// another `olx-skin-default` never redraws everyone's default skin).
 fn may_take(base: &Content, required: &[&str], item: &Item) -> bool {
+    item.required || (!required.contains(&item.id.as_str()) && base.pack_kind(&item.id).is_none())
+}
+
+/// Whether the host may list an optional item: never under a required
+/// id, nor under one of its packs of another kind (its own skins and the
+/// ones it fetched are listed).
+fn may_list(base: &Content, required: &[&str], item: &Item) -> bool {
     item.required
         || (!required.contains(&item.id.as_str())
             && base.pack_kind(&item.id).is_none_or(|k| k == super::pack_kind(item.kind)))
@@ -126,7 +134,8 @@ struct HostContent {
     /// The list last sent (`None` before the first).
     list: Option<Vec<Item>>,
     /// The list's revision (the lobby's `set_content_revision`): 1 for the
-    /// first, one more for each change.
+    /// first, one more for each change of its required items (a skin
+    /// change keeps it: `Have` names required items only).
     revision: u32,
     /// Members' skins this host lacks, by the member's peer.
     skins: BTreeMap<PeerId, SkinFetch>,
@@ -385,7 +394,10 @@ impl ContentSide {
         match (&mut self.role, msg) {
             (role, msg @ (ContentMsg::Want { .. } | ContentMsg::Cancel { .. })) => {
                 // A transfer asked for from `offset` has sent that much.
-                if let (Role::Host(h), ContentMsg::Want { hash, offset }) = (role, &msg) {
+                // Only for what the list names: a member cannot grow it.
+                if let (Role::Host(h), ContentMsg::Want { hash, offset }) = (role, &msg)
+                    && h.list.iter().flatten().any(|i| i.hash == *hash)
+                {
                     h.sent.entry(from).or_default().insert(hash.clone(), *offset);
                 }
                 self.server.receive(from, &msg)
@@ -710,14 +722,28 @@ impl ContentSide {
             };
             if hash != NO_HASH
                 && !wanted.iter().any(|w| w.2 == hash)
-                && may_take(&self.local.base, &required, &item)
+                && may_list(&self.local.base, &required, &item)
             {
                 wanted.push((ItemKind::Skin, look.skin.clone(), hash, false));
             }
         }
         let Role::Host(h) = &mut self.role else { return };
-        // Skins fetched from members stay only while the list names them.
+        // An offer its member no longer wears is dropped (its new skin may
+        // not be offered: the old offer would bring its skin back every
+        // poll); skins fetched from members stay only while listed.
+        h.skins.retain(|&peer, s| {
+            let id = lobby.member_of(peer);
+            let worn = state.members.iter().any(|m| Some(m.id) == id && m.look.skin_hash == s.item.hash);
+            if !worn && let Some(f) = &mut s.fetcher {
+                f.source_left();
+            }
+            worn
+        });
         h.fetched.retain(|hash, _| wanted.iter().any(|w| !w.3 && w.2 == *hash));
+        // Progress is kept for what the list names only.
+        for sent in h.sent.values_mut() {
+            sent.retain(|hash, _| wanted.iter().any(|w| w.2 == *hash));
+        }
         let mut items = Vec::new();
         let mut ready = true;
         let mut needed = BTreeSet::new();
@@ -768,7 +794,10 @@ impl ContentSide {
             }
         }
         self.local.archives.retain(|hash, _| needed.contains(hash));
-        if h.list.is_some() {
+        // `Have` answers the required items only: a change to the skins
+        // alone keeps the revision (and every member's answer).
+        let required = |l: &[Item]| l.iter().filter(|i| i.required).cloned().collect::<Vec<Item>>();
+        if h.list.as_ref().is_some_and(|old| required(old) != required(&items)) {
             h.revision = h.revision.wrapping_add(1).max(1);
         }
         for m in &state.members {
@@ -1056,50 +1085,222 @@ mod tests {
         assert_eq!(side.content().pack_kind("olx-classic"), Some(PackKind::Mod));
     }
 
+    const HOST_ID: [u8; 32] = [4; 32];
+
+    /// A host's content side for Classic on Dirt Level, its lobby and cache.
+    struct Host {
+        side: ContentSide,
+        lobby: LobbyHost,
+        cache: Arc<Mutex<DownloadCache>>,
+        _tmp: tempfile::TempDir,
+    }
+
+    impl Host {
+        fn new(dir: &Path) -> Host {
+            let content = Content::open(dir).unwrap();
+            let (m, l) = ("olx-classic", "olx-level-dirt-level");
+            let setup = rl_proto::MatchSetupWire {
+                mod_id: m.into(),
+                level_id: l.into(),
+                packs: crate::matches::setup_packs(&content, m, l).unwrap(),
+                rules: crate::matches::rules_wire(&rl_modes::DeathmatchSettings::default()),
+                bonuses: false,
+                loading_time: 100,
+                restrictions: String::new(),
+                bots: vec![],
+            };
+            let cfg = rl_lobby::HostConfig {
+                name: "Office".into(),
+                password: None,
+                max_players: 4,
+                max_spectators: 2,
+                admins: vec![],
+            };
+            let me = Identity::from_secret(HOST_ID).unwrap();
+            let lobby = LobbyHost::new(cfg, me, Some(look()), setup).unwrap();
+            let tmp = tempfile::tempdir().unwrap();
+            let cache = Arc::new(Mutex::new(DownloadCache::open(tmp.path()).unwrap()));
+            let cfg = PeerContent { cache: Ok(Arc::clone(&cache)), upload_rate: HOST_RATE };
+            let side = ContentSide::new(content, cfg, true, Some(look()));
+            Host { side, lobby, cache, _tmp: tmp }
+        }
+
+        fn poll(&mut self) {
+            self.side.poll_host(0, &mut self.lobby, &|_| 0);
+            self.side.take_out();
+        }
+
+        fn h(&self) -> &HostContent {
+            match &self.side.role {
+                Role::Host(h) => h,
+                Role::Client(_) => panic!("a host"),
+            }
+        }
+
+        /// Polls until the first list is out.
+        fn list(&mut self) -> Vec<Item> {
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                self.poll();
+                if let Some(list) = &self.h().list {
+                    return list.clone();
+                }
+                assert!(std::time::Instant::now() < until, "the archives are made");
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+
+        /// Member `n` joins as peer `n` with `look`.
+        fn join(&mut self, n: u8, look: Look) {
+            let me = Identity::from_secret([n; 32]).unwrap();
+            let (peer, nonce) = (PeerId::from(n), [n; 32]);
+            self.lobby.connected(peer, std::net::IpAddr::from([10, 0, 0, n]), 0, nonce);
+            self.lobby.receive(peer, rl_proto::ToHost::Hello { key: me.public(), look, password: None }, 0);
+            let host = Identity::from_secret(HOST_ID).unwrap().public();
+            let signature = me.sign(&rl_lobby::challenge_message(&nonce, &host), [0; 32]);
+            self.lobby.receive(peer, rl_proto::ToHost::Prove { signature }, 0);
+            assert!(self.lobby.member_of(peer).is_some(), "joined");
+        }
+
+        fn look_of(&self, peer: PeerId) -> Look {
+            let id = self.lobby.member_of(peer).unwrap();
+            self.lobby.state().members.iter().find(|m| m.id == id).unwrap().look.clone()
+        }
+    }
+
+    /// A skin pack `id` (the default skin under another id) in `dir`,
+    /// installed in `cache`: its item.
+    fn cached_skin(dir: &Path, cache: &Mutex<DownloadCache>, id: &str) -> Item {
+        let from = content_dir().unwrap().join("olx-skin-default");
+        let to = dir.join(id);
+        std::fs::create_dir_all(&to).unwrap();
+        for e in std::fs::read_dir(&from).unwrap() {
+            let e = e.unwrap();
+            std::fs::copy(e.path(), to.join(e.file_name())).unwrap();
+        }
+        let manifest = std::fs::read_to_string(to.join("pack.ron")).unwrap();
+        std::fs::write(to.join("pack.ron"), manifest.replace("\"olx-skin-default\"", &format!("\"{id}\"")))
+            .unwrap();
+        // Another image too: the content hash does not cover the id.
+        let img = rl_pack::image_io::decode_rgba(&std::fs::read(to.join("skin.png")).unwrap()).unwrap();
+        let mut pixels = img.as_raw().to_vec();
+        pixels[0] ^= 0x55;
+        let img = rl_data::image::RgbaImage::from_raw(img.width(), img.height(), pixels).unwrap();
+        std::fs::write(to.join("skin.png"), rl_pack::image_io::encode_rgba(&img)).unwrap();
+        let fs = rl_vfs::DirFs::new(&to);
+        let hash = rl_pack::content_hash(&fs).unwrap();
+        let archive = PackArchive::new(rl_pack::archive::encode(&fs).unwrap());
+        let size = archive.bytes.len() as u64;
+        let mut c = cache.lock().unwrap();
+        c.append(&hash, &archive.sha, size, 0, &archive.bytes).unwrap();
+        c.install(&hash, id, PackKind::Skin, MAX_SKIN_ARCHIVE).unwrap();
+        Item { kind: ItemKind::Skin, id: id.into(), hash, size, required: false }
+    }
+
+    /// `Want`s for hashes the list does not name leave no trace: the
+    /// progress kept per member is at most the list's items.
+    #[test]
+    fn wants_for_unlisted_hashes_keep_nothing() {
+        let Some(dir) = content_dir() else { return };
+        let mut host = Host::new(&dir);
+        let list = host.list();
+        for i in 0..1000u32 {
+            host.side.receive(7, ContentMsg::Want { hash: format!("{i:064x}"), offset: 5 }, None);
+        }
+        for item in &list {
+            host.side.receive(7, ContentMsg::Want { hash: item.hash.clone(), offset: 0 }, None);
+        }
+        host.poll();
+        let kept = host.h().sent.get(&7).map_or(0, BTreeMap::len);
+        assert!(kept <= list.len(), "{kept} hashes kept for one member");
+    }
+
+    /// A member that changes to a skin it cannot offer leaves its old one
+    /// behind: the host forgets it and its list rests (no rebuild a poll).
+    #[test]
+    fn a_stale_skin_offer_is_dropped() {
+        let Some(dir) = content_dir() else { return };
+        let mut host = Host::new(&dir);
+        host.list();
+        let tmp = tempfile::tempdir().unwrap();
+        let item = cached_skin(tmp.path(), &host.cache, "member-skin");
+        let worn = Look { skin: item.id.clone(), skin_hash: item.hash.clone(), ..look() };
+        host.join(9, worn);
+        let worn = host.look_of(9);
+        host.side.receive(9, ContentMsg::List { revision: 0, items: vec![item.clone()] }, Some(&worn));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !host.h().list.as_ref().is_some_and(|l| l.iter().any(|i| i.hash == item.hash)) {
+            assert!(std::time::Instant::now() < until, "the member's skin is listed");
+            host.poll();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        // Another skin, one it does not offer.
+        let plain = Look { skin: "olx-skin-default".into(), skin_hash: NO_HASH.into(), ..worn };
+        host.lobby.receive(9, rl_proto::ToHost::SetLook(plain), 0);
+        for _ in 0..5 {
+            host.poll();
+        }
+        let built = host.h().built;
+        for _ in 0..10 {
+            host.poll();
+        }
+        assert_eq!(host.h().built, built, "the list is not built again");
+        assert!(!host.h().fetched.contains_key(&item.hash), "forgotten");
+        assert!(host.h().list.as_ref().unwrap().iter().all(|i| i.hash != item.hash), "no longer listed");
+    }
+
+    /// Ruling PF11-5: a skin under an id this peer has a pack of is never
+    /// fetched or laid over, whatever its hash: local packs win.
+    #[test]
+    fn a_local_skin_wins() {
+        let Some(dir) = content_dir() else { return };
+        // A client's list naming another `olx-skin-default`.
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Arc::new(Mutex::new(DownloadCache::open(tmp.path()).unwrap()));
+        let cfg = PeerContent { cache: Ok(cache), upload_rate: HOST_RATE };
+        let mut side = ContentSide::new(Content::open(&dir).unwrap(), cfg, false, Some(look()));
+        let other = Item {
+            kind: ItemKind::Skin,
+            id: "olx-skin-default".into(),
+            hash: "d".repeat(64),
+            size: 900,
+            required: false,
+        };
+        side.receive(HOST, ContentMsg::List { revision: 1, items: vec![other.clone()] }, None);
+        let id = Identity::from_secret([6; 32]).unwrap();
+        let mut lobby = LobbyClient::new(id, look(), None, None);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while matches!(&side.role, Role::Client(c) if c.pending.is_some()) {
+            assert!(std::time::Instant::now() < until, "the list is processed");
+            side.poll_client(0, &mut lobby, &|_| 0);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(side.downloads().is_empty(), "not fetched");
+        // A member offering it to a host: not fetched either.
+        let mut host = Host::new(&dir);
+        host.list();
+        let worn = Look { skin: other.id.clone(), skin_hash: other.hash.clone(), ..look() };
+        host.join(9, worn);
+        let worn = host.look_of(9);
+        host.side.receive(9, ContentMsg::List { revision: 0, items: vec![other.clone()] }, Some(&worn));
+        for _ in 0..5 {
+            host.poll();
+        }
+        assert!(host.side.downloads().is_empty(), "the host keeps its own");
+        assert!(host.h().list.as_ref().unwrap().iter().all(|i| i.hash != other.hash), "not listed");
+    }
+
     /// Carried from Task 4: chunks go to a peer only while its outbox holds
     /// less than `QUEUED`. An outbox that never drains ends up holding
     /// about `QUEUED` of content, never more, however long it waits.
     #[test]
     fn an_outbox_holds_at_most_queued_content() {
         let Some(dir) = content_dir() else { return };
-        let content = Content::open(&dir).unwrap();
-        let (m, l) = ("olx-classic", "olx-level-dirt-level");
-        let setup = rl_proto::MatchSetupWire {
-            mod_id: m.into(),
-            level_id: l.into(),
-            packs: crate::matches::setup_packs(&content, m, l).unwrap(),
-            rules: crate::matches::rules_wire(&rl_modes::DeathmatchSettings::default()),
-            bonuses: false,
-            loading_time: 100,
-            restrictions: String::new(),
-            bots: vec![],
-        };
-        let cfg = rl_lobby::HostConfig {
-            name: "Office".into(),
-            password: None,
-            max_players: 4,
-            max_spectators: 2,
-            admins: vec![],
-        };
-        let me = Identity::from_secret([4; 32]).unwrap();
-        let mut lobby = LobbyHost::new(cfg, me, Some(look()), setup).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let cache = Arc::new(Mutex::new(DownloadCache::open(tmp.path()).unwrap()));
-        let cfg = PeerContent { cache: Ok(cache), upload_rate: HOST_RATE };
-        let mut side = ContentSide::new(content, cfg, true, Some(look()));
+        let mut host = Host::new(&dir);
         let held = std::cell::Cell::new(0usize);
         let buffered = |_| held.get();
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        let list = loop {
-            side.poll_host(0, &mut lobby, &buffered);
-            if let Role::Host(h) = &side.role
-                && let Some(list) = &h.list
-            {
-                break list.clone();
-            }
-            assert!(std::time::Instant::now() < until, "the archives are made");
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        };
+        let list = host.list();
+        let Host { side, lobby, .. } = &mut host;
         // Everything listed: more than the bound.
         let total: u64 = list.iter().map(|i| i.size).sum();
         assert!(
@@ -1110,7 +1311,7 @@ mod tests {
             side.receive(7, ContentMsg::Want { hash: item.hash.clone(), offset: 0 }, None);
         }
         for step in 1..=300u64 {
-            side.poll_host(step * 10_000, &mut lobby, &buffered);
+            side.poll_host(step * 10_000, lobby, &buffered);
             for (peer, msg) in side.take_out() {
                 assert_eq!(peer, 7);
                 held.set(held.get() + rl_proto::encode_content(&msg).len());
@@ -1125,8 +1326,8 @@ mod tests {
             Role::Host(h) => h.sent.get(&7).and_then(|s| s.get(first)).copied(),
             Role::Client(_) => None,
         };
-        assert!(sent(&side).is_some_and(|b| b > 0));
+        assert!(sent(side).is_some_and(|b| b > 0));
         side.receive(7, ContentMsg::Want { hash: first.clone(), offset: 0 }, None);
-        assert_eq!(sent(&side), Some(0));
+        assert_eq!(sent(side), Some(0));
     }
 }
