@@ -181,15 +181,20 @@ fn a_hostile_feed_is_filtered_and_bounded() {
         [1; 32],
     );
     l.offer(&big, now);
+    // Nested within the content limit: it reaches the parser (its
+    // signature is checked), whose recursion limit refuses it.
     let nested = Event::sign(
         &key(3),
         now,
         KIND_ANNOUNCE,
         vec![vec!["d".into(), "rust-liero".into()], vec!["f".into(), format!("{FP:016x}")]],
-        format!("{}{}", "[".repeat(3000), "]".repeat(3000)),
+        format!("{}{}", "[".repeat(2000), "]".repeat(2000)),
         [1; 32],
     );
+    assert!(nested.content.len() <= MAX_CONTENT);
+    let checked = l.verifications();
     l.offer(&nested, now);
+    assert_eq!(l.verifications(), checked + 1, "the nested note reached the parser");
     assert!(l.games().iter().all(|g| g.key != key(2).public() && g.key != key(3).public()));
 
     // 10 000 keys.

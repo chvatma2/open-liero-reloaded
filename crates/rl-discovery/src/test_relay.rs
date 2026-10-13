@@ -62,6 +62,9 @@ pub enum Misbehaviour {
     KeepFor(u64),
     /// Accepts ephemeral events but forwards them to nobody.
     NoForward,
+    /// At the first frame it reads, writes half of a 256-byte text frame
+    /// and closes the connection (a relay that dies mid-frame).
+    HalfFrame,
 }
 
 /// The relay's side of a TCP connection: under [`Misbehaviour::SlowReads`]
@@ -143,24 +146,8 @@ impl Shared {
     }
 }
 
-fn tag_is(tag: &[String], name: char) -> bool {
-    tag.first().is_some_and(|n| {
-        let mut c = n.chars();
-        c.next() == Some(name) && c.next().is_none()
-    })
-}
-
-fn matches(f: &Filter, e: &Event) -> bool {
-    (f.kinds.is_empty() || f.kinds.contains(&e.kind))
-        && (f.authors.is_empty() || f.authors.contains(&e.pubkey))
-        && f.since.is_none_or(|s| e.created_at >= s)
-        && f.tags.iter().all(|(c, vals)| {
-            e.tags.iter().any(|t| tag_is(t, *c) && t.get(1).is_some_and(|v| vals.contains(v)))
-        })
-}
-
 fn matches_any(filters: &[Filter], e: &Event) -> bool {
-    filters.iter().any(|f| matches(f, e))
+    filters.iter().any(|f| f.matches(e))
 }
 
 fn expired(e: &Event, now: u64) -> bool {
@@ -243,7 +230,7 @@ impl State {
         let mut out: Vec<Event> = Vec::new();
         for f in filters {
             let mut hits: Vec<&Event> =
-                self.events.iter().filter(|e| !expired(e, now) && kept(e) && matches(f, e)).collect();
+                self.events.iter().filter(|e| !expired(e, now) && kept(e) && f.matches(e)).collect();
             hits.sort_by(|a, b| (b.created_at, a.id).cmp(&(a.created_at, b.id)));
             hits.truncate(f.limit.map_or(usize::MAX, |l| l as usize));
             for e in hits {
@@ -453,6 +440,15 @@ fn run<S: Read + Write>(shared: &Shared, conn: u64, mut ws: WebSocket<S>, ctl: &
             }
         }
         match ws.read() {
+            Ok(Message::Text(_)) if mis == Misbehaviour::HalfFrame => {
+                let w = ws.get_mut();
+                let _ = w.write_all(&[0x81, 126, 0x01, 0x00]);
+                let _ = w.write_all(&[b'['; 100]);
+                let _ = w.flush();
+                let _ = ctl.shutdown(std::net::Shutdown::Both);
+                shared.lock().subs.retain(|s| s.conn != conn);
+                return;
+            }
             Ok(Message::Text(t)) => {
                 frames += 1;
                 if !handle(shared, conn, &mut ws, &tx, t.as_str(), frames) {

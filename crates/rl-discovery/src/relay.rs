@@ -230,7 +230,7 @@ pub(crate) struct DriverConfig {
     pub timings: Timings,
 }
 
-/// The reconnect delays: 1, 2, 4 … 60 s.
+/// The reconnect delays: 1, 2, 4 … 60 s, each ±20 %.
 #[derive(Debug)]
 pub(crate) struct Backoff {
     next: Duration,
@@ -241,15 +241,26 @@ impl Backoff {
         Backoff { next: BACKOFF_FIRST }
     }
 
+    /// The next delay, jittered by up to 20 % either way so the clients
+    /// of one build do not all reconnect to a recovering relay at once.
     pub fn next_delay(&mut self) -> Duration {
         let d = self.next;
         self.next = (d * 2).min(BACKOFF_MAX);
-        d
+        use std::hash::{BuildHasher, Hasher, RandomState};
+        let mut h = RandomState::new().build_hasher();
+        h.write_u64(d.as_nanos() as u64);
+        jittered(d, h.finish())
     }
 
     pub fn reset(&mut self) {
         self.next = BACKOFF_FIRST;
     }
+}
+
+/// `d` scaled by 0.8 to 1.2 as `r` goes from 0 to `u64::MAX`.
+fn jittered(d: Duration, r: u64) -> Duration {
+    let f = 0.8 + 0.4 * (r as f64 / u64::MAX as f64);
+    d.mul_f64(f)
 }
 
 /// Token buckets for the incoming frame and byte rates.
@@ -443,6 +454,17 @@ pub(crate) fn run(link: &Arc<Link>, cfg: &DriverConfig) {
 enum End {
     Stop,
     Dropped(String),
+}
+
+/// About the memory an event holds: its strings' bytes and headers.
+fn footprint(e: &Event) -> usize {
+    let string = std::mem::size_of::<String>();
+    let tags: usize = e
+        .tags
+        .iter()
+        .map(|t| std::mem::size_of::<Vec<String>>() + t.iter().map(|v| string + v.len()).sum::<usize>())
+        .sum();
+    std::mem::size_of::<Event>() + e.content.len() + tags
 }
 
 /// "5 s", or "500 ms" below a whole second.
@@ -655,8 +677,14 @@ impl<'a> Session<'a> {
                 // Late events of a closed subscription and forgeries are
                 // dropped here, so a forged id never shadows the real event
                 // in the pool's dedupe.
-                if self.sent.contains_key(&sub) && event.verify() {
-                    self.link.push_event(event, text.len());
+                // Only what the filters select (a relay may push anything
+                // under our subscription), counted by its memory: a tag of
+                // 5 wire bytes takes tens in memory (final review A-M5).
+                if self.sent.get(&sub).is_some_and(|fs| fs.iter().any(|f| f.matches(&event)))
+                    && event.verify()
+                {
+                    let size = text.len().max(footprint(&event));
+                    self.link.push_event(event, size);
                 }
             }
             Ok(FromRelay::Eose { sub }) => {
@@ -694,10 +722,25 @@ mod tests {
     #[test]
     fn backoff_doubles_to_a_minute_and_resets() {
         let mut b = Backoff::new();
-        let secs: Vec<u64> = (0..9).map(|_| b.next_delay().as_secs()).collect();
-        assert_eq!(secs, [1, 2, 4, 8, 16, 32, 60, 60, 60]);
+        let within = |d: Duration, base: f64| (base * 0.8..=base * 1.2).contains(&d.as_secs_f64());
+        for base in [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0] {
+            let d = b.next_delay();
+            assert!(within(d, base), "{d:?} for {base} s");
+        }
         b.reset();
-        assert_eq!(b.next_delay(), Duration::from_secs(1));
+        assert!(within(b.next_delay(), 1.0));
+    }
+
+    /// Clients of one build do not all reconnect to a recovering relay at
+    /// the same 1, 2, 4 … 60 s marks: each delay is jittered by up to 20 %
+    /// (final review A-M7).
+    #[test]
+    fn backoff_delays_are_jittered() {
+        let firsts: std::collections::BTreeSet<Duration> =
+            (0..20).map(|_| Backoff::new().next_delay()).collect();
+        assert!(firsts.len() > 1, "20 first delays all {firsts:?}");
+        assert_eq!(jittered(Duration::from_secs(10), 0), Duration::from_secs(8));
+        assert_eq!(jittered(Duration::from_secs(10), u64::MAX), Duration::from_secs(12));
     }
 
     #[test]
@@ -769,5 +812,47 @@ mod tests {
         link.push_event(e.clone(), MAX_INBOX_BYTES);
         link.push_event(e, 1);
         assert_eq!(link.lock().dropped, 11);
+    }
+
+    /// The driver passes on only events its filters select (a relay may
+    /// push any kind under our subscription), and counts each by its
+    /// memory, not its wire bytes: `[""]` tags take 5 bytes on the wire and
+    /// tens in memory (final review A-M5).
+    #[test]
+    fn the_inbox_takes_selected_events_counted_by_memory() {
+        use crate::nostr::{FromRelay, encode_from_relay};
+        let link = Link::new(0, "ws://x".into());
+        let mut s = Session::new(&link, Timings::default());
+        let t = vec!["t".to_string(), "rust-liero".to_string()];
+        s.sent.insert(
+            "s".into(),
+            vec![Filter {
+                kinds: vec![31470],
+                tags: vec![('t', vec!["rust-liero".into()])],
+                ..Filter::default()
+            }],
+        );
+        let id = rl_lobby::Identity::from_secret([5; 32]).unwrap();
+        let frame = |event| encode_from_relay(&FromRelay::Event { sub: "s".into(), event });
+        // Another kind, or untagged: not ours.
+        let other = Event::sign(&id, 1000, 1, vec![t.clone()], "x".into(), [1; 32]);
+        let untagged = Event::sign(&id, 1000, 31470, Vec::new(), "x".into(), [1; 32]);
+        for e in [other, untagged] {
+            s.handle(&frame(e)).unwrap();
+        }
+        assert_eq!(link.lock().inbox_events, 0, "events the filters do not select are dropped");
+        // Selected, with 20 000 empty tags: counted by its memory.
+        let mut tags = vec![t];
+        tags.extend((0..20_000).map(|_| vec![String::new()]));
+        let heavy = frame(Event::sign(&id, 1000, 31470, tags, String::new(), [1; 32]));
+        s.handle(&heavy).unwrap();
+        let st = link.lock();
+        assert_eq!(st.inbox_events, 1);
+        assert!(
+            st.inbox_bytes >= 20_000 * 48,
+            "{} bytes counted for {} on the wire",
+            st.inbox_bytes,
+            heavy.len()
+        );
     }
 }

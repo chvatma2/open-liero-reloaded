@@ -49,7 +49,7 @@ pub enum RelayHint {
     /// An index into [`DEFAULT_RELAYS`] (append-only). `decode` skips an
     /// index beyond this build's list (a newer build's code).
     Default(u8),
-    /// `wss://` or `ws://`, at most 100 bytes.
+    /// `wss://` or `ws://`, at most [`MAX_URL_BYTES`] (64) bytes.
     Url(String),
 }
 

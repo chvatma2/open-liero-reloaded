@@ -200,6 +200,23 @@ fn a_misbehaving_relay_is_dropped_and_retried() {
     assert_eq!(w.events(huge.id), 0);
 }
 
+/// A relay that dies in the middle of a frame (half a frame, then the
+/// connection closes) is dropped and retried, and nothing of the frame
+/// arrives; over `ws://` and `wss://`.
+#[test]
+fn a_relay_dying_mid_frame_is_dropped_and_retried() {
+    let plain = TestRelay::start();
+    plain.set_misbehaviour(Misbehaviour::HalfFrame);
+    let (tls, root) = TestRelay::start_tls();
+    tls.set_misbehaviour(Misbehaviour::HalfFrame);
+    let mut cfg = config(vec![plain.url(), tls.url()]);
+    cfg.extra_roots = vec![root];
+    let mut w = Watch::new(cfg);
+    w.pool.subscribe("s", kind1());
+    assert!(w.until(Duration::from_secs(20), |s| (0..2).all(|r| dropped_and_retried(s, r))), "{:?}", w.seen);
+    assert!(!w.seen.iter().any(|e| matches!(e, PoolEvent::Event { .. })));
+}
+
 #[test]
 fn an_unreachable_relay_never_blocks_the_caller() {
     // A listener that never accepts: the TCP connect succeeds (backlog),

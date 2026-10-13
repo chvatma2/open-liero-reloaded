@@ -35,7 +35,8 @@ host a listed game (`hosting`, `ping`).
     (signs the 32-byte id with the install's BIP-340 key: Nostr's
     `pubkey`/`sig` are exactly x-only BIP-340), `verify()` (recomputes the
     id from the fields, then checks the signature), `tag(name)` and
-    `expiration()` (NIP-40).
+    `expiration()` (NIP-40). `Filter::matches(event)` (kinds, authors,
+    since, `#x` tags; the driver's and the test relay's).
   - `canonical(..)` is written by hand, not with serde_json's escaper:
     NIP-01 escapes `\n \" \\ \r \t \b \f` and writes every other character
     verbatim (raw control characters and DEL included), which differs from
@@ -73,7 +74,9 @@ host a listed game (`hosting`, `ping`).
   must fall back from `::1`, or connect to `port()` directly), `url()`,
   `port()`, `events()`, `set_misbehaviour(Honest | NeverEose | Garbage |
   DropAfter(n) | Slow(d) | Silent | Drip | SlowReads | Refuse(msg) |
-  RefuseKind(k) | KeepFor(secs) | NoForward)` (Refuse: every event gets
+  RefuseKind(k) | KeepFor(secs) | NoForward | HalfFrame)` (HalfFrame: at
+  the first frame read, half a 256-byte text frame, then the connection
+  closes; Refuse: every event gets
   `OK false msg`, such as a paid relay's `restricted: …`; RefuseKind: that
   kind gets `blocked: …`; KeepFor: a stored event is served only while the
   relay's clock is under `created_at + secs`; NoForward: ephemeral events
@@ -103,8 +106,10 @@ host a listed game (`hosting`, `ping`).
     `client_tls_with_config` with our rustls `ClientConfig`: aws-lc-rs,
     Mozilla's roots from `webpki-roots` plus
     `extra_roots`, never the platform's. `ws://` is allowed. A bad URL is
-    `Failed` for good; anything else retries after 1, 2, 4 … 60 s (a
-    connection up 60 s resets the backoff).
+    `Failed` for good; anything else retries after 1, 2, 4 … 60 s, each
+    ±20 % (`RandomState`, so one build's clients do not reconnect to a
+    recovering relay at once; final review A-M7; a connection up 60 s
+    resets the backoff).
   - **Serve:** a non-blocking socket (ruling PF12-4: no `SO_RCVTIMEO`/
     `SO_SNDTIMEO`, whose expiry leaves a Windows socket undefined) behind
     an I/O budget in `Sock`. Each turn of the loop first sends (the
@@ -132,14 +137,17 @@ host a listed game (`hosting`, `ping`).
     accepted: false, message: "no answer within 5 s" }`; the connection
     stays (a later `OK` is ignored).
   - **Events** are verified in the driver (a forged id never shadows the
-    real event in the dedupe) and only for subscriptions the connection
-    has; `EOSE` and `OK` only answer what was asked. `poll` appends relay
+    real event in the dedupe), only for subscriptions the connection has
+    and only when one of its filters selects them (`Filter::matches`: a
+    relay may push any kind under our subscription; final review A-M5); `EOSE` and `OK` only answer what was asked. `poll` appends relay
     by relay in index order, each relay's reports in arrival order, and
     dedupes events by id (an LRU of 4096 ids).
   - **Queues:** outgoing at most 256 per relay (oldest dropped; a queued
     replaceable/addressable event is replaced by a newer one for its
-    slot); incoming at most 4096 events or 8 MiB per relay between polls
-    (the newest dropped, `dropped_events()`). Queued events leave the
+    slot); incoming at most 4096 events or 8 MiB per relay between polls,
+    each event counted by its wire bytes or its memory, whichever is more
+    (`footprint`: a 5-byte `[""]` tag takes tens of bytes in memory; the
+    newest dropped, `dropped_events()`). Queued events leave the
     queue before they are sent: those of a turn whose send fails, or sent
     on a connection lost before its `OK`, are lost (not retried after the
     reconnect; announcements are re-published every minute).
@@ -154,7 +162,9 @@ host a listed game (`hosting`, `ping`).
   `host:port` strings, IPv4 only, ephemeral `0.0.0.0:0` socket, 500 ms x 2
   tries per server, no lookup started past `deadline` (one lookup may
   block longer): run it on a thread. Only a reply from the server's own
-  address with our transaction counts. `StunResponder` (feature `test-relay`;
+  address with our transaction counts; a read failing with
+  `ConnectionReset`/`ConnectionRefused` (Windows' `WSAECONNRESET` from an
+  earlier server's ICMP unreachable) keeps waiting (final review A-M8). `StunResponder` (feature `test-relay`;
   `start`, `start_plain`, `server()`, `answered()`) is the test server.
   Tests use the RFC 5769 section 2.2 response.
 - **`invite`** (N42) and **`defaults`**: `Invite::{encode, decode, relay_urls}`,
@@ -240,7 +250,7 @@ round-trip, fuzzed frames never panic; `tests/test_relay.rs`: the relay;
 invites, the address watch's answers, the publisher's notes and closing)
 and `ping` (an open and a closed port, the bound); `tests/pool.rs`: the pool against the test relay (silent, dripping,
 slow, slow-reading: every frame arrives intact through partial writes,
-over `ws://` and `wss://`), a flooding relay and unreachable relays: a
+over `ws://` and `wss://`; a relay dying mid-frame), a flooding relay and unreachable relays: a
 listener on `127.0.0.1` that never accepts, and TEST-NET-1 `192.0.2.1`, never
 routed; unit tests of the backoff, limiter, queues, dedupe and default
 timings in `src`).

@@ -218,6 +218,23 @@ pub struct Filter {
 }
 
 impl Filter {
+    /// Whether `e` is what this filter selects (NIP-01: every condition
+    /// given holds; `limit` is not a condition).
+    pub fn matches(&self, e: &Event) -> bool {
+        let tag_is = |t: &[String], name: char| {
+            t.first().is_some_and(|n| {
+                let mut c = n.chars();
+                c.next() == Some(name) && c.next().is_none()
+            })
+        };
+        (self.kinds.is_empty() || self.kinds.contains(&e.kind))
+            && (self.authors.is_empty() || self.authors.contains(&e.pubkey))
+            && self.since.is_none_or(|s| e.created_at >= s)
+            && self.tags.iter().all(|(c, vals)| {
+                e.tags.iter().any(|t| tag_is(t, *c) && t.get(1).is_some_and(|v| vals.contains(v)))
+            })
+    }
+
     fn to_value(&self) -> Value {
         let mut o = Map::new();
         if !self.kinds.is_empty() {

@@ -189,8 +189,14 @@ fn bad_frames_are_errors() {
     assert_eq!(decode_to_relay("[\"REQ\"]"), Err(NostrError::Malformed("subscription")));
     let big = format!("[\"NOTICE\",\"{}\"]", "a".repeat(MAX_FRAME));
     assert_eq!(decode_from_relay(&big), Err(NostrError::TooLarge));
-    let deep = format!("[\"NOTICE\",{}{}]", "[".repeat(100_000), "]".repeat(100_000));
-    assert!(decode_from_relay(&deep).is_err());
+    // Nesting within the size limit reaches the parser, whose recursion
+    // limit refuses it (no stack overflow on the driver's thread).
+    let deep = format!("[\"NOTICE\",{}{}]", "[".repeat(60_000), "]".repeat(60_000));
+    assert!(deep.len() <= MAX_FRAME);
+    assert_eq!(decode_from_relay(&deep), Err(NostrError::Json));
+    let deep = format!("[\"REQ\",\"s\",{}{}]", "{\"a\":".repeat(15_000), "1}".repeat(15_000));
+    assert!(deep.len() <= MAX_FRAME);
+    assert!(decode_to_relay(&deep).is_err());
     // A short id or a non-hex pubkey is refused.
     let e = sample();
     let wire = encode_from_relay(&FromRelay::Event { sub: "s".into(), event: e.clone() });

@@ -240,7 +240,7 @@ pub fn parse_announcement(e: &Event) -> Result<(GameSummary, u64), AnnounceError
     Ok((s, fingerprint))
 }
 
-/// When to publish: every minute, at a change (at most every 10 s) and once
+/// When to publish: every minute, at a change (at most every 12 s) and once
 /// when closing. The caller publishes `announcement(..)` when told to.
 #[derive(Debug, Default)]
 pub struct Announcer {

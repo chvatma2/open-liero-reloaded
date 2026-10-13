@@ -1328,8 +1328,8 @@ Task rulings:
 - **R4-1:** the pool's rate limits are token buckets that allow a burst: a
   sustained 200 frames/s and 1 MiB/s, each bucket holding 5 s of burst
   (1000 frames, 5 MiB). **Deviation from a strict per-second window:** a
-  `REQ`'s stored events arrive at once (the list's filter has no `limit`,
-  so up to 500 games), and a strict window would drop such a relay and
+  `REQ`'s stored events arrive at once (the list's filter asks for at most
+  500, `GameList::filter`'s `limit`), and a strict window would drop such a relay and
   reconnect it into the same burst for ever. A sustained flood is still
   dropped (`a_flooding_relay_is_dropped`). If wrong: a relay that bursts
   more than 5 s of budget is dropped and retried.

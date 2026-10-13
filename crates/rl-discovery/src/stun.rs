@@ -4,6 +4,7 @@
 //! socket, not the game socket (plan 12b's ICE uses that one). The socket is
 //! bound to `0.0.0.0:0`, so only IPv4 servers are asked.
 
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
@@ -145,6 +146,7 @@ pub fn public_ip(servers: &[String], deadline: Duration) -> Option<IpAddr> {
                         }
                     }
                     Ok(_) => {}
+                    Err(e) if waits_on(&e) => {}
                     Err(_) => break,
                 }
             }
@@ -154,6 +156,15 @@ pub fn public_ip(servers: &[String], deadline: Duration) -> Option<IpAddr> {
         }
     }
     None
+}
+
+/// Whether a failed `recv_from` still waits for the current server's
+/// answer: on Windows an ICMP port-unreachable caused by an earlier
+/// server's request fails the next read with `WSAECONNRESET`
+/// (`ConnectionReset`; `ConnectionRefused` elsewhere), though this
+/// server's answer may still come. Anything else (a timeout) ends the try.
+fn waits_on(e: &io::Error) -> bool {
+    matches!(e.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionRefused)
 }
 
 #[cfg(feature = "test-relay")]
@@ -261,5 +272,24 @@ mod responder {
         v.extend_from_slice(&(attr.len() as u16).to_be_bytes());
         v.extend_from_slice(&attr);
         v
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// On Windows an ICMP port-unreachable from an earlier server makes the
+    /// next `recv_from` fail with `WSAECONNRESET`: the wait for the current
+    /// server's answer goes on (final review A-M8). A timeout ends it.
+    #[test]
+    fn a_stale_connection_reset_keeps_waiting() {
+        use std::io::ErrorKind;
+        for kind in [ErrorKind::ConnectionReset, ErrorKind::ConnectionRefused] {
+            assert!(waits_on(&io::Error::from(kind)), "{kind:?}");
+        }
+        for kind in [ErrorKind::WouldBlock, ErrorKind::TimedOut, ErrorKind::Other] {
+            assert!(!waits_on(&io::Error::from(kind)), "{kind:?}");
+        }
     }
 }
