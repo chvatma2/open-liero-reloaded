@@ -34,7 +34,9 @@ use anyhow::Context as _;
 use rl_data::manifest::PackKind;
 use rl_vfs::DirFs;
 
-pub use cache::{CACHE_BYTES, DownloadCache, InstallError, MAX_SKIN_ARCHIVE, Partial};
+pub use cache::{
+    CACHE_BYTES, DownloadCache, Eviction, InstallError, MAX_SKIN_ARCHIVE, Partial, PendingInstall,
+};
 pub use catalog::{Catalog, LevelInfo, MAX_THUMB_BYTES, MAX_THUMB_SIDE, ModInfo, PackSource, ThumbRef};
 pub use color::{apply_edits, color_edit, lost_area};
 pub use core_assets::{CORE_PACK_ID, CORE_SPRITES, CorePack};

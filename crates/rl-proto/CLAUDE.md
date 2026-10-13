@@ -41,7 +41,7 @@ control messages, the frame delta codec and the simulation fingerprint.
   seats <= 32 with unique slots; `SlotWire.bot` indexes `setup.bots`;
   input delays <= 3; `MatchEndWire::last_tick` below `u32::MAX`; packs <= 8; bots <= 31; `missing` <= 8; pack, skin, mod
   and level ids ASCII `[a-z0-9-]` (rl-pack's manifest rule), 1..=64 bytes;
-  hashes 64 hex characters; rule floats finite; restrictions <= 256 bytes.
+  hashes 64 lowercase hex; rule floats finite; restrictions <= 256 bytes.
   `Signature` (64 bytes) uses a custom serde tuple (serde stops at 32).
   `valid_name`, `valid_pack_id`, `valid_look`, `valid_setup` and
   `valid_chat` are public so producers (rl-lobby) never send what the

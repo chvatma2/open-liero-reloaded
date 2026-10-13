@@ -138,16 +138,27 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   `fixtures/olx-mini.py`).
 - **Download cache** (`cache.rs`, plan 11 ruling N30): `DownloadCache::open(dir)`
   keeps packs a host sent in `packs/<content hash>/` (`get` touches the
-  LRU use counter, `evict(keep, limit)` drops the least recently used but
-  never `keep`, `CACHE_BYTES` = 1 GiB), `index.ron` (atomic; rebuilt from
-  `packs/*/pack.ron` when bad) and resumable partials `<hash>.part` +
-  `<hash>.part.ron` (`append` only at `offset == have`; `partial`).
+  LRU use counter, saved with the next install, eviction or clear or when
+  the cache drops; `evict(keep, limit)` drops the least recently used but
+  never `keep`, `CACHE_BYTES` = 1 GiB, and reports `Eviction { evicted,
+  stuck }`: a pack it could not remove whole leaves the index too),
+  `index.ron` (atomic; rebuilt from `packs/*/pack.ron` when bad) and
+  resumable partials `<hash>.part` + `<hash>.part.ron` (archive, size and
+  `started`, a use counter; `append` only at `offset == have`; `partial`;
+  `partial_bytes`; `trim_partials(keep, limit)` discards the oldest
+  partials not in `keep` while packs plus partials exceed `limit`).
   `install(hash, id, kind, limit)` checks the partial's size against
   `limit` (`MAX_SKIN_ARCHIVE` for skins) and its archive SHA-256, decodes
   into `tmp/`, then checks content hash, id, kind and `validate`; any
   failure removes `tmp/` and the partial (an incomplete partial stays).
-  `open` reconciles the index with `packs/` (adopts unlisted valid packs, drops the rest);
-  one cache directory belongs to one process (`open` empties `tmp/`, no lock).
+  It is `begin_install` + `PendingInstall::verify` (needs no cache, so a
+  worker verifies without holding the cache's mutex) + `finish_install`.
+  `open` reconciles the index with `packs/` (adopts unlisted valid packs, drops the rest).
+  One cache directory belongs to one open cache (ruling PF11-3): `open`
+  holds an exclusive `File::try_lock` on `<dir>/lock` for the cache's life
+  and fails with `InstallError::Locked` while another holds it (flock on
+  Linux, LockFileEx on Windows: per open file, so a second `open` in the
+  same process is refused too); one process shares one cache behind a mutex.
   A hash that is not 64 lowercase hex never names a file.
   `Content::with_packs(&[(id, dir)])` is a copy with those packs laid over
   by id (nothing on disk changes); `Content::has(id, hash)`; `pack_hash`

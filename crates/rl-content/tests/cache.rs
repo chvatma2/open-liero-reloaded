@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rl_content::{CACHE_BYTES, Content, DownloadCache, InstallError, MAX_SKIN_ARCHIVE};
+use rl_content::{CACHE_BYTES, Content, DownloadCache, Eviction, InstallError, MAX_SKIN_ARCHIVE};
 use rl_data::image::{Rgba, RgbaImage};
 use rl_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
 use rl_data::skin::{FrameLayout, MaskKind, Skin, SkinDef};
@@ -221,13 +221,16 @@ fn eviction_keeps_what_the_lobby_needs() {
     cache.get(&hashes[2]);
     cache.get(&hashes[1]);
     cache.get(&hashes[0]);
-    assert!(cache.evict(&[], CACHE_BYTES).is_empty());
+    // The use counters are saved when the cache closes, not at every `get`.
+    drop(cache);
+    let mut cache = DownloadCache::open(root.path()).unwrap();
+    assert_eq!(cache.evict(&[], CACHE_BYTES), Eviction::default());
     let evicted = cache.evict(&[hashes[2].as_str()], one * 2 + one / 2);
-    assert_eq!(evicted, vec![hashes[1].clone()]);
+    assert_eq!(evicted, Eviction { evicted: vec![hashes[1].clone()], stuck: vec![] });
     assert!(cache.contains(&hashes[2]) && cache.contains(&hashes[0]) && !cache.contains(&hashes[1]));
     assert!(!root.path().join("packs").join(&hashes[1]).exists());
     // Never what is kept, even over the limit.
-    assert_eq!(cache.evict(&[hashes[2].as_str()], 0), vec![hashes[0].clone()]);
+    assert_eq!(cache.evict(&[hashes[2].as_str()], 0).evicted, vec![hashes[0].clone()]);
     assert!(cache.contains(&hashes[2]));
     cache.clear(&[]).unwrap();
     assert_eq!(cache.total_bytes(), 0);
@@ -318,4 +321,92 @@ fn has_compares_the_hash() {
     assert!(content.has("x", &ha)); // memoised
     assert!(!content.has("x", &rl_pack::content_hash(&skin_pack("x", 41)).unwrap()));
     assert!(!content.has("nope", &ha));
+}
+
+#[test]
+fn a_cache_directory_belongs_to_one_open_cache() {
+    let root = tempfile::tempdir().unwrap();
+    let cache = DownloadCache::open(root.path()).unwrap();
+    // A second open, as another process would: the lock is per open file
+    // (flock on Linux, LockFileEx on Windows), so the same process sees it.
+    assert!(matches!(DownloadCache::open(root.path()), Err(InstallError::Locked)));
+    drop(cache);
+    let mut cache = DownloadCache::open(root.path()).unwrap();
+    // Clearing the cache keeps the lock file.
+    cache.clear(&[]).unwrap();
+    assert!(matches!(DownloadCache::open(root.path()), Err(InstallError::Locked)));
+}
+
+#[cfg(unix)]
+#[test]
+fn eviction_reports_what_it_cannot_remove() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let mut cache = DownloadCache::open(root.path()).unwrap();
+    let a = archive_of(&skin_pack("x", 60));
+    let b = archive_of(&skin_pack("x", 61));
+    let pa = install(&mut cache, &a, "x");
+    install(&mut cache, &b, "x");
+    // `a` (the least recently used) holds a directory whose files cannot be removed.
+    let locked = pa.join("sub");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::write(locked.join("f"), b"x").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let protected = std::fs::remove_file(locked.join("f")).is_err();
+    let e = cache.evict(&[], 0);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    if !protected {
+        eprintln!("this user may remove read-only directories' files; skipping");
+        return;
+    }
+    assert_eq!(e, Eviction { evicted: vec![b.hash.clone()], stuck: vec![a.hash.clone()] });
+    // A pack that is partly gone is no longer offered.
+    assert!(!cache.contains(&a.hash));
+    assert_eq!(cache.get(&a.hash), None);
+    assert_eq!(cache.total_bytes(), 0);
+}
+
+#[test]
+fn partials_count_toward_the_budget() {
+    let root = tempfile::tempdir().unwrap();
+    let mut cache = DownloadCache::open(root.path()).unwrap();
+    let parts: Vec<Archive> = (0..3u8).map(|i| archive_of(&skin_pack("x", 70 + i))).collect();
+    for p in &parts {
+        cache.append(&p.hash, &p.sha, p.bytes.len() as u64, 0, &p.bytes[..100]).unwrap();
+    }
+    let installed = archive_of(&skin_pack("x", 80));
+    install(&mut cache, &installed, "x");
+    let packs = cache.total_bytes();
+    assert_eq!(cache.partial_bytes(), 300);
+    assert!(cache.trim_partials(&[], packs + 300).is_empty());
+    // Oldest first, never a kept one: 0 is kept, so 1 goes, then 2.
+    let keep = [parts[0].hash.as_str()];
+    assert_eq!(cache.trim_partials(&keep, packs + 250), vec![parts[1].hash.clone()]);
+    assert_eq!(cache.partial_bytes(), 200);
+    assert_eq!(cache.trim_partials(&keep, 0), vec![parts[2].hash.clone()]);
+    assert!(cache.partial(&parts[0].hash).is_some() && cache.partial(&parts[2].hash).is_none());
+    // The order survives reopening; restarting a partial makes it the newest.
+    let b = &parts[1];
+    cache.append(&b.hash, &b.sha, b.bytes.len() as u64, 0, &b.bytes[..10]).unwrap();
+    let a = &parts[0];
+    cache.append(&a.hash, &a.sha, a.bytes.len() as u64, 0, &a.bytes[..10]).unwrap_err();
+    drop(cache);
+    let mut cache = DownloadCache::open(root.path()).unwrap();
+    assert_eq!(cache.trim_partials(&[], 0), vec![parts[0].hash.clone(), parts[1].hash.clone()]);
+    assert_eq!(cache.partial_bytes(), 0);
+}
+
+#[test]
+fn an_install_verifies_outside_the_cache() {
+    let root = tempfile::tempdir().unwrap();
+    let mut cache = DownloadCache::open(root.path()).unwrap();
+    let a = archive_of(&skin_pack("x", 90));
+    put(&mut cache, &a);
+    let pending =
+        cache.begin_install(&a.hash, "x", rl_data::manifest::PackKind::Skin, MAX_SKIN_ARCHIVE).unwrap();
+    // The verification needs no `&DownloadCache`: a worker runs it unlocked.
+    let verified = pending.verify();
+    let path = cache.finish_install(pending, verified).unwrap();
+    assert_eq!(path, root.path().join("packs").join(&a.hash));
+    assert!(cache.contains(&a.hash) && cache.partial(&a.hash).is_none());
 }

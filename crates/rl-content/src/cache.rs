@@ -11,7 +11,13 @@
 //! `packs/<hash>/`, `<hash>.part` with `<hash>.part.ron` (a partial
 //! download: its archive hash and size) and `tmp/` (an install in progress,
 //! emptied when the cache opens). The LRU order is a stored use counter,
-//! never the wall clock.
+//! never the wall clock; `get`'s touches are saved with the next install,
+//! eviction or clear, or when the cache closes.
+//!
+//! One directory belongs to one open cache (ruling PF11-3): `open` holds an
+//! exclusive advisory lock on `<dir>/lock` while the `DownloadCache` lives,
+//! and a second `open` fails with `InstallError::Locked`. Threads of one
+//! process share one `DownloadCache` behind a mutex.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -47,6 +53,8 @@ pub enum InstallError {
     Invalid(String),
     #[error("the download cache: {0}")]
     Io(String),
+    #[error("the download cache is in use by another game")]
+    Locked,
 }
 
 fn io(what: &str, e: impl std::fmt::Display) -> InstallError {
@@ -66,6 +74,33 @@ pub struct Partial {
 struct PartialMeta {
     archive: String,
     size: u64,
+    /// The use counter when the partial started: older ones are discarded
+    /// first (`trim_partials`).
+    #[serde(default)]
+    started: u64,
+}
+
+/// What `evict` did: the packs it removed, and those it could not remove
+/// whole (dropped from the index all the same).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Eviction {
+    pub evicted: Vec<String>,
+    pub stuck: Vec<String>,
+}
+
+/// A complete partial download being installed: `DownloadCache::begin_install`
+/// makes it, `verify` checks it without the cache (so a worker thread need
+/// not hold the cache's lock while it hashes and unpacks), and
+/// `DownloadCache::finish_install` moves it into the cache.
+#[derive(Debug)]
+pub struct PendingInstall {
+    hash: String,
+    id: String,
+    kind: PackKind,
+    limit: u64,
+    partial: Partial,
+    part: PathBuf,
+    tmp: PathBuf,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -104,18 +139,50 @@ fn dir_bytes(dir: &Path) -> u64 {
 pub struct DownloadCache {
     dir: PathBuf,
     index: Index,
+    /// The index has changes `save` has not written (`get`'s touches).
+    dirty: bool,
+    /// Installs begun, for unique `tmp/` names.
+    installs: u64,
+    /// Holds the directory's lock while the cache lives.
+    _lock: fs::File,
+}
+
+impl Drop for DownloadCache {
+    fn drop(&mut self) {
+        if self.dirty {
+            let _ = self.save(); // best effort: only the LRU order is at stake
+        }
+    }
 }
 
 impl DownloadCache {
-    /// Opens the cache in `dir`, creating it. An install that was cut off
-    /// (`tmp/`) is removed; a missing or unreadable index is rebuilt by
-    /// scanning `packs/` (use counters 0), and entries whose directory is
-    /// gone are dropped.
+    /// Opens the cache in `dir`, creating it, and locks it: `Locked` while
+    /// another `DownloadCache` (another process) has it open. An install
+    /// that was cut off (`tmp/`) is removed; a missing or unreadable index is
+    /// rebuilt by scanning `packs/` (use counters 0), and entries whose
+    /// directory is gone are dropped.
     pub fn open(dir: &Path) -> Result<DownloadCache, InstallError> {
         fs::create_dir_all(dir.join("packs")).map_err(|e| io("creating", e))?;
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join("lock"))
+            .map_err(|e| io("lock", e))?;
+        match lock.try_lock() {
+            Ok(()) => {}
+            Err(fs::TryLockError::WouldBlock) => return Err(InstallError::Locked),
+            Err(fs::TryLockError::Error(e)) => return Err(io("lock", e)),
+        }
         let _ = fs::remove_dir_all(dir.join("tmp"));
         let parsed = fs::read_to_string(dir.join(INDEX)).ok().and_then(|s| ron::from_str::<Index>(&s).ok());
-        let mut cache = DownloadCache { dir: dir.to_path_buf(), index: parsed.unwrap_or_default() };
+        let mut cache = DownloadCache {
+            dir: dir.to_path_buf(),
+            index: parsed.unwrap_or_default(),
+            dirty: false,
+            installs: 0,
+            _lock: lock,
+        };
         // The index only says what was recorded: a pack installed but not
         // recorded (a crash, a failed write) is adopted, a record without
         // its pack and anything else in `packs/` is dropped.
@@ -167,7 +234,8 @@ impl DownloadCache {
     }
 
     /// Writes the index atomically (a temporary file, then a rename).
-    fn save(&self) -> Result<(), InstallError> {
+    fn save(&mut self) -> Result<(), InstallError> {
+        self.dirty = false;
         let text = ron::ser::to_string_pretty(&self.index, ron::ser::PrettyConfig::default())
             .map_err(|e| io("index", e))?;
         let tmp = self.dir.join(format!("{INDEX}.tmp"));
@@ -179,7 +247,7 @@ impl DownloadCache {
     }
 
     /// The directory of the pack with content hash `hash`, marking it
-    /// recently used.
+    /// recently used (saved later: see the module documentation).
     pub fn get(&mut self, hash: &str) -> Option<PathBuf> {
         let path = self.pack_path(hash);
         if !valid_hash(hash) || !self.index.entries.contains_key(hash) {
@@ -187,7 +255,7 @@ impl DownloadCache {
         }
         if !path.is_dir() {
             self.index.entries.remove(hash);
-            let _ = self.save(); // best effort: `open` reconciles
+            self.dirty = true; // `open` reconciles in any case
             return None;
         }
         self.index.counter += 1;
@@ -195,7 +263,7 @@ impl DownloadCache {
         if let Some(e) = self.index.entries.get_mut(hash) {
             e.used = used;
         }
-        let _ = self.save(); // best effort: only the LRU order is at stake
+        self.dirty = true;
         Some(path)
     }
 
@@ -247,8 +315,11 @@ impl DownloadCache {
             return Err(io("download", "more bytes than the archive has"));
         }
         if !same {
+            self.index.counter += 1;
+            self.dirty = true;
             let meta =
-                ron::to_string(&PartialMeta { archive: archive.into(), size }).map_err(|e| io("meta", e))?;
+                ron::to_string(&PartialMeta { archive: archive.into(), size, started: self.index.counter })
+                    .map_err(|e| io("meta", e))?;
             fs::write(&part, []).map_err(|e| io("partial", e))?;
             fs::write(self.meta_path(hash), meta).map_err(|e| io("meta", e))?;
         }
@@ -271,6 +342,8 @@ impl DownloadCache {
     /// `tmp/`, then the content hash, the manifest's `id` and `kind`, and
     /// `rl_pack::validate`. A failure removes the unpacked files and the
     /// partial. A partial that is not yet complete stays (and is an error).
+    /// It is `begin_install`, `PendingInstall::verify` and `finish_install`
+    /// in one.
     pub fn install(
         &mut self,
         hash: &str,
@@ -278,6 +351,19 @@ impl DownloadCache {
         kind: PackKind,
         limit: u64,
     ) -> Result<PathBuf, InstallError> {
+        let pending = self.begin_install(hash, id, kind, limit)?;
+        let verified = pending.verify();
+        self.finish_install(pending, verified)
+    }
+
+    /// The first step of `install`: the partial of `hash` must be complete.
+    pub fn begin_install(
+        &mut self,
+        hash: &str,
+        id: &str,
+        kind: PackKind,
+        limit: u64,
+    ) -> Result<PendingInstall, InstallError> {
         if !valid_hash(hash) {
             return Err(io("install", "not a content hash"));
         }
@@ -287,9 +373,29 @@ impl DownloadCache {
         if p.have < p.size {
             return Err(io("install", format!("incomplete: {} of {} bytes", p.have, p.size)));
         }
-        let tmp = self.dir.join("tmp").join(format!("{hash}-{}", self.index.counter));
-        let result = self.verify_into(hash, &p, id, kind, limit, &tmp).and_then(|bytes| {
-            let dest = self.pack_path(hash);
+        self.installs += 1;
+        Ok(PendingInstall {
+            hash: hash.into(),
+            id: id.into(),
+            kind,
+            limit,
+            partial: p,
+            part: self.part_path(hash),
+            tmp: self.dir.join("tmp").join(format!("{hash}-{}", self.installs)),
+        })
+    }
+
+    /// The last step of `install`: moves the verified pack into the cache,
+    /// or cleans up after a failed verification. Either way the partial is
+    /// gone.
+    pub fn finish_install(
+        &mut self,
+        pending: PendingInstall,
+        verified: Result<u64, InstallError>,
+    ) -> Result<PathBuf, InstallError> {
+        let PendingInstall { hash, id, kind, tmp, .. } = pending;
+        let result = verified.and_then(|bytes| {
+            let dest = self.pack_path(&hash);
             if !dest.is_dir() {
                 fs::rename(&tmp, &dest).map_err(|e| io("installing", e))?;
             }
@@ -298,94 +404,82 @@ impl DownloadCache {
         // What is left of `tmp` (a failure, or a pack that was already here).
         let _ = fs::remove_dir_all(&tmp);
         let _ = fs::remove_dir(self.dir.join("tmp"));
-        self.discard_partial(hash);
+        self.discard_partial(&hash);
         let (dest, bytes) = result?;
         self.index.counter += 1;
         let used = self.index.counter;
-        self.index.entries.insert(hash.into(), Entry { id: id.into(), kind, bytes, used });
+        self.index.entries.insert(hash, Entry { id, kind, bytes, used });
         self.save()?;
         Ok(dest)
     }
 
-    /// Unpacks the partial into `tmp` and verifies it; returns `tmp`'s size.
-    fn verify_into(
-        &self,
-        hash: &str,
-        p: &Partial,
-        id: &str,
-        kind: PackKind,
-        limit: u64,
-        tmp: &Path,
-    ) -> Result<u64, InstallError> {
-        if p.have > p.size || p.have > limit {
-            return Err(ArchiveError::TooLarge(limit).into());
-        }
-        let file = fs::File::open(self.part_path(hash)).map_err(|e| io("partial", e))?;
-        let mut sha = Sha256::new();
-        let mut r = BufReader::new(&file);
-        let mut buf = [0u8; 64 * 1024];
-        loop {
-            let n = r.read(&mut buf).map_err(|e| io("partial", e))?;
-            if n == 0 {
+    /// The bytes the partial downloads hold.
+    pub fn partial_bytes(&self) -> u64 {
+        self.partials().iter().map(|(_, _, have)| have).sum()
+    }
+
+    /// The partial downloads, oldest first: hash, start (use counter) and
+    /// bytes held.
+    fn partials(&self) -> Vec<(String, u64, u64)> {
+        let Ok(rd) = fs::read_dir(&self.dir) else { return Vec::new() };
+        let mut out: Vec<(String, u64, u64)> = rd
+            .filter_map(Result::ok)
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let hash = name.strip_suffix(".part.ron").filter(|h| valid_hash(h))?.to_string();
+                let started = self.read_meta(&hash).map_or(0, |m| m.started);
+                let have = fs::metadata(self.part_path(&hash)).map_or(0, |m| m.len());
+                Some((hash, started, have))
+            })
+            .collect();
+        out.sort_by(|a, b| (a.1, &a.0).cmp(&(b.1, &b.0)));
+        out
+    }
+
+    /// Discards partial downloads not in `keep`, oldest first, while the
+    /// packs and the partials together take more than `limit` bytes;
+    /// returns the discarded hashes.
+    pub fn trim_partials(&mut self, keep: &[&str], limit: u64) -> Vec<String> {
+        let mut total = self.total_bytes().saturating_add(self.partial_bytes());
+        let mut out = Vec::new();
+        for (hash, _, have) in self.partials() {
+            if total <= limit {
                 break;
             }
-            sha.update(&buf[..n]);
+            if keep.contains(&hash.as_str()) {
+                continue;
+            }
+            self.discard_partial(&hash);
+            total = total.saturating_sub(have);
+            out.push(hash);
         }
-        let got = hex::encode(sha.finalize());
-        if got != p.archive {
-            return Err(InstallError::Hash(format!("archive {got}, expected {}", p.archive)));
-        }
-        fs::create_dir_all(tmp).map_err(|e| io("tmp", e))?;
-        let file = fs::File::open(self.part_path(hash)).map_err(|e| io("partial", e))?;
-        let mut sink = DirFs::new(tmp);
-        archive::decode(&mut BufReader::new(file), &mut sink, limit)?;
-        let src = DirFs::new(tmp);
-        let content = content_hash(&src).map_err(|e| InstallError::Invalid(e.to_string()))?;
-        if content != hash {
-            return Err(InstallError::Hash(format!("content {content}, expected {hash}")));
-        }
-        let m = read_manifest(&src).map_err(|e| InstallError::Invalid(e.to_string()))?;
-        if m.id != id {
-            return Err(InstallError::Id { wanted: id.into(), found: m.id });
-        }
-        if m.kind != kind {
-            return Err(InstallError::Kind { wanted: kind, found: m.kind });
-        }
-        let errors: Vec<String> =
-            validate(&src).into_iter().filter(|d| d.severity == Severity::Error).map(|d| d.message).collect();
-        if !errors.is_empty() {
-            return Err(InstallError::Invalid(errors.join("; ")));
-        }
-        Ok(dir_bytes(tmp))
+        out
     }
 
     /// Removes least recently used packs, except those in `keep` (the
     /// content hashes the lobby lists), until at most `limit` bytes remain
-    /// or only kept packs are left; returns the evicted hashes.
-    pub fn evict(&mut self, keep: &[&str], limit: u64) -> Vec<String> {
-        let mut evicted = Vec::new();
-        let mut stuck: Vec<String> = Vec::new();
+    /// or only kept packs are left. A pack that cannot be removed whole is
+    /// `stuck`: it leaves the index all the same, so it is never offered
+    /// half-removed (`open` adopts it again if its manifest survived).
+    pub fn evict(&mut self, keep: &[&str], limit: u64) -> Eviction {
+        let mut out = Eviction::default();
         while self.total_bytes() > limit {
             let victim = self
                 .index
                 .entries
                 .iter()
-                .filter(|(h, _)| !keep.contains(&h.as_str()) && !stuck.contains(h))
+                .filter(|(h, _)| !keep.contains(&h.as_str()))
                 .min_by_key(|(h, e)| (e.used, (*h).clone()))
                 .map(|(h, _)| h.clone());
             let Some(h) = victim else { break };
             let _ = fs::remove_dir_all(self.pack_path(&h));
-            if self.pack_path(&h).exists() {
-                stuck.push(h);
-            } else {
-                self.index.entries.remove(&h);
-                evicted.push(h);
-            }
+            self.index.entries.remove(&h);
+            if self.pack_path(&h).exists() { out.stuck.push(h) } else { out.evicted.push(h) }
         }
-        if !evicted.is_empty() {
-            let _ = self.save(); // best effort: `open` drops entries without a pack
+        if out != Eviction::default() {
+            let _ = self.save(); // best effort: `open` reconciles
         }
-        evicted
+        out
     }
 
     /// The bytes the cached packs take.
@@ -426,5 +520,53 @@ impl DownloadCache {
         }
         self.save()?;
         failed.map_or(Ok(()), Err)
+    }
+}
+
+impl PendingInstall {
+    /// Unpacks the partial into its `tmp/` directory and verifies it (see
+    /// `DownloadCache::install`); returns the unpacked pack's size.
+    pub fn verify(&self) -> Result<u64, InstallError> {
+        let (p, limit, tmp, hash) = (&self.partial, self.limit, self.tmp.as_path(), self.hash.as_str());
+        if p.have > p.size || p.have > limit {
+            return Err(ArchiveError::TooLarge(limit).into());
+        }
+        let file = fs::File::open(&self.part).map_err(|e| io("partial", e))?;
+        let mut sha = Sha256::new();
+        let mut r = BufReader::new(&file);
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            let n = r.read(&mut buf).map_err(|e| io("partial", e))?;
+            if n == 0 {
+                break;
+            }
+            sha.update(&buf[..n]);
+        }
+        let got = hex::encode(sha.finalize());
+        if got != p.archive {
+            return Err(InstallError::Hash(format!("archive {got}, expected {}", p.archive)));
+        }
+        fs::create_dir_all(tmp).map_err(|e| io("tmp", e))?;
+        let file = fs::File::open(&self.part).map_err(|e| io("partial", e))?;
+        let mut sink = DirFs::new(tmp);
+        archive::decode(&mut BufReader::new(file), &mut sink, limit)?;
+        let src = DirFs::new(tmp);
+        let content = content_hash(&src).map_err(|e| InstallError::Invalid(e.to_string()))?;
+        if content != hash {
+            return Err(InstallError::Hash(format!("content {content}, expected {hash}")));
+        }
+        let m = read_manifest(&src).map_err(|e| InstallError::Invalid(e.to_string()))?;
+        if m.id != self.id {
+            return Err(InstallError::Id { wanted: self.id.clone(), found: m.id });
+        }
+        if m.kind != self.kind {
+            return Err(InstallError::Kind { wanted: self.kind, found: m.kind });
+        }
+        let errors: Vec<String> =
+            validate(&src).into_iter().filter(|d| d.severity == Severity::Error).map(|d| d.message).collect();
+        if !errors.is_empty() {
+            return Err(InstallError::Invalid(errors.join("; ")));
+        }
+        Ok(dir_bytes(tmp))
     }
 }
