@@ -44,6 +44,12 @@ impl LobbyClient {
     /// password if it has one, and the host's key when known (an invite
     /// carries it; a direct connection passes `None`): a challenge naming
     /// another key is not answered.
+    ///
+    /// `expected_host` only checks the key the challenge *names*: the host
+    /// never proves it holds that key, so anyone who knows the public key
+    /// can name it. It protects nothing yet. Carried to plan 12: the host
+    /// signs the client's nonce, bound to the DTLS fingerprints of the
+    /// connection, before invites rely on it.
     pub fn new(
         me: Identity,
         look: Look,

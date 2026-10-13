@@ -86,7 +86,8 @@ pub enum ClientEvent {
         banned: bool,
     },
     /// The challenge named another host key than the one expected
-    /// (nothing was sent; close the transport).
+    /// (nothing was sent; close the transport). The named key is not
+    /// proven (see `LobbyClient::new`).
     WrongHost {
         key: rl_proto::PublicKey,
     },

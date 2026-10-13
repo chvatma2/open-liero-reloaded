@@ -797,6 +797,12 @@ execution.
 - **N21:** while an online lobby or match exists the game keeps polling the
   network and ticking when its window is hidden or minimised (no rendering);
   the hidden window's event loop uses `ControlFlow::WaitUntil` every 4 ms.
+  Hidden is detected from the platform's `Occluded` event or a zero window
+  size. Wayland (WSLg, Linux desktops) may report neither for a minimised
+  window, so the game would keep rendering there (and a compositor that
+  throttles a hidden window's frames could stall a host until its clients
+  drop it after 10 s): to be verified in playtest (minimise during
+  `--net-sim` on WSLg and native Wayland); Windows and X11 report it.
 - **N22 (T4-A):** a signalling offer's candidates whose IP differs from the
   TCP peer's are filtered out, not refused (forged candidates cannot aim the
   host at a third party); a NAT'd client joining a forwarded host connects

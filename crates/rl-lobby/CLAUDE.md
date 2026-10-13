@@ -79,7 +79,10 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   - The state never breaks rl-proto's decoders (looks, names, chat, end
     reasons sanitized; setups validated: `LobbyError::InvalidSetup`).
 - **Client** (`client.rs`, `LobbyClient`): `new(.., expected_host)`: a
-  challenge naming another key is not answered (`WrongHost`);
+  challenge naming another key is not answered (`WrongHost`). The host
+  never proves it holds the key it names, so this protects nothing yet
+  (ruling F-B, carried to plan 12: the host signs the client's nonce,
+  bound to the DTLS fingerprints);
   `connected()`, then on `Challenge` sends `Hello` (with the password
   proof when asked) and `Prove` at once; a `Welcome` or `Lobby` without
   this member closes (`Closed`); `ClientEvent`s for the welcome, refusals, lobby
