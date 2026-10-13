@@ -59,3 +59,7 @@
   fixtures/matches/mw-castlestrike-8chaos.ron
 2026-10-13 net-feel: the simulation's hit position and exact-zero deaths changed (OLX VecTimeRecorder off-by-one fixed in play; zero-health deaths credited and shown), so the seeded matches play differently
   fixtures/net/feel.ron
+2026-10-13 bless-regression: a first life's position record is filled with its spawn position, as a respawn's (play only; hits unchanged, the checksum hashes the record)
+  fixtures/matches/classic-dirt-level-8dm.ron
+  fixtures/matches/classic-fossilfacility-4xtreme-kill-limit.ron
+  fixtures/matches/mw-castlestrike-8chaos.ron

@@ -269,10 +269,12 @@ impl Worm {
     /// by `Prepare`, `fLastBlood` by the constructor), with the lives the game's
     /// start gives (`Lives`), except the carving, which [`crate::World::spawn_worm`] does.
     pub fn spawned(id: i32, pos: Vec2, now: AbsTime, s: &SimSettings) -> Self {
-        // Prepare's `clear()`, then Spawn's `clear(vPos)` (`CWorm.cpp:398`, `611`).
+        // Prepare's `clear()`, then Spawn's `clear(vPos)` (`CWorm.cpp:398`,
+        // `611`); without `olx_quirks` every slot is `pos`, as a respawn
+        // leaves it.
         let mut pos_recorder = PosRecorder::default();
         pos_recorder.clear();
-        pos_recorder.clear_to(pos);
+        pos_recorder.respawn_to(pos, s.olx_quirks);
         Self {
             id,
             team: 0,
@@ -370,6 +372,19 @@ mod tests {
             s.lives = lives;
             assert_eq!(Worm::spawned(0, Vec2::ZERO, AbsTime(0), &s).lives, expected, "Lives {lives}");
         }
+    }
+
+    #[test]
+    fn a_first_life_fills_the_recorder_like_a_respawn() {
+        let pos = Vec2::new(5.0, 6.0);
+        let s = SimSettings::lx56();
+        let w = Worm::spawned(0, pos, AbsTime(0), &s);
+        for back in [0, 1, 50, 99] {
+            assert_eq!(w.pos_recorder.get(back, false), pos, "get({back}) on a first life");
+        }
+        // With OLX's quirks, Prepare's and Spawn's clears: one entry, the rest zero.
+        let olx = Worm::spawned(0, pos, AbsTime(0), &SimSettings { olx_quirks: true, ..s });
+        assert_eq!((olx.pos_recorder.get(0, true), olx.pos_recorder.get(1, true)), (Vec2::ZERO, pos));
     }
 
     #[test]
