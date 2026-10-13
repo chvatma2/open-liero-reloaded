@@ -546,6 +546,11 @@ impl Shell {
         }
     }
 
+    /// The download cache every peer shares, or why there is none.
+    pub fn download_cache(&self) -> &SharedCache {
+        &self.cache
+    }
+
     /// Why the download cache may not be cleared now: an online game (its
     /// peers download into it) is on.
     fn clear_refused(&self) -> Option<String> {

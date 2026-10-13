@@ -252,9 +252,11 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       (worker results, offers, fetched skins, peers leaving). A member offers its own
       skin with a one-item `List` (ruling R6-1: id and hash its look's);
       a skin the host lacks is fetched from that member (one fetch per
-      hash; a new fetch from one member at most every
-      `SKIN_FETCH_EVERY_US`, 5 s: an offer waits, and only the look worn
-      then counts), installed, then listed and served to the others. Its own
+      hash; a new fetch from one member's address at most every
+      `SKIN_FETCH_EVERY_US`, 5 s, kept that long after it leaves, and at
+      most `SKIN_FETCHES_PER_MINUTE` (12) for all members together: an
+      offer waits, and only the look worn then counts; a dropped,
+      refused or failed offer's partial is discarded), installed, then listed and served to the others. Its own
       look's skin hash is filled from its content.
     - **Client**: its look's skin hash filled once hashed (in `Hello`
       when it comes first, else a `SetLook`); its skin's archive offered

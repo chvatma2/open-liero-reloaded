@@ -145,8 +145,13 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   `index.ron` (atomic; rebuilt from `packs/*/pack.ron` when bad) and
   resumable partials `<hash>.part` + `<hash>.part.ron` (archive, size and
   `started`, a use counter; `append` only at `offset == have`; `partial`;
-  `partial_bytes`; `trim_partials(keep, limit)` discards the oldest
-  partials not in `keep` while packs plus partials exceed `limit`).
+  `partial_bytes`, their disk charge, `file_charge(have)` plus a block for
+  the meta file each; `trim_partials(keep, limit)` discards the oldest
+  partials not in `keep` while packs plus partials exceed `limit`; at most
+  `MAX_PARTIALS` (32): a new one discards the oldest not kept by a
+  `Keeper`, and is refused with the reason when all are kept; review R1).
+  Partials are an in-memory index built when the cache opens and kept by
+  every append, discard and clear: accounting never scans the directory.
   `install(hash, id, kind, limits)` checks the partial's size against
   `limits.bytes` and its archive SHA-256, decodes into `tmp/` within
   `limits` (`archive_limits(kind)`: `SKIN_LIMITS` for skins, 64 KiB,

@@ -703,6 +703,11 @@ impl LobbyHost {
         self.index(member).and_then(|i| self.members[i].peer)
     }
 
+    /// The address member `member` joined from (none for the host's own).
+    pub fn ip_of(&self, member: u8) -> Option<IpAddr> {
+        self.index(member).and_then(|i| self.members[i].addr)
+    }
+
     pub fn member_of(&self, peer: PeerId) -> Option<u8> {
         match self.links.get(&peer) {
             Some(&Link::Member(id)) => Some(id),

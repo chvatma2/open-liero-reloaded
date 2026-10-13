@@ -35,8 +35,8 @@ use rl_data::manifest::PackKind;
 use rl_vfs::DirFs;
 
 pub use cache::{
-    CACHE_BYTES, DownloadCache, Eviction, InstallError, Keeper, MAX_SKIN_ARCHIVE, Partial, PendingInstall,
-    SKIN_LIMITS, archive_limits,
+    CACHE_BYTES, DownloadCache, Eviction, InstallError, Keeper, MAX_PARTIALS, MAX_SKIN_ARCHIVE, Partial,
+    PendingInstall, SKIN_LIMITS, archive_limits,
 };
 pub use catalog::{Catalog, LevelInfo, MAX_THUMB_BYTES, MAX_THUMB_SIDE, ModInfo, PackSource, ThumbRef};
 pub use color::{apply_edits, color_edit, lost_area};

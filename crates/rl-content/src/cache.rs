@@ -50,6 +50,9 @@ pub fn archive_limits(kind: PackKind) -> Limits {
     }
 }
 
+/// The most partial downloads a cache holds.
+pub const MAX_PARTIALS: usize = 32;
+
 const INDEX: &str = "index.ron";
 
 /// Why a download was not installed.
@@ -84,10 +87,13 @@ pub struct Partial {
     pub have: u64,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct PartialMeta {
     archive: String,
     size: u64,
+    /// The bytes held (the `.part` file's length; not in the meta file).
+    #[serde(skip)]
+    have: u64,
     /// The use counter when the partial started: older ones are discarded
     /// first (`trim_partials`).
     #[serde(default)]
@@ -137,6 +143,13 @@ fn valid_hash(h: &str) -> bool {
     h.len() == 64 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// The disk charge of a partial download holding `have` bytes: its `.part`
+/// file's (`archive::file_charge`) and a block for its small `.part.ron`
+/// (review R1).
+fn partial_charge(have: u64) -> u64 {
+    archive::file_charge(have).saturating_add(archive::BLOCK)
+}
+
 /// The disk charge of what is under `dir`, as the archive charges it
 /// (`archive::file_charge` a regular file, `archive::DIR_CHARGE` and its
 /// contents a directory; symlinks are not followed): what eviction counts.
@@ -163,6 +176,10 @@ pub struct DownloadCache {
     /// `trim_partials` keep their union besides the caller's `keep`.
     keepers: BTreeMap<u64, Vec<String>>,
     next_keeper: u64,
+    /// The partial downloads by hash (review R1): built from the directory
+    /// when the cache opens, then kept by every append, discard and clear,
+    /// so accounting never scans the directory.
+    parts: BTreeMap<String, PartialMeta>,
     /// Holds the directory's lock while the cache lives.
     _lock: fs::File,
 }
@@ -203,12 +220,14 @@ impl DownloadCache {
             installs: 0,
             keepers: BTreeMap::new(),
             next_keeper: 0,
+            parts: BTreeMap::new(),
             _lock: lock,
         };
         // The index only says what was recorded: a pack installed but not
         // recorded (a crash, a failed write) is adopted, a record without
         // its pack and anything else in `packs/` is dropped.
         cache.reconcile();
+        cache.scan_partials();
         cache.save()?;
         Ok(cache)
     }
@@ -313,18 +332,32 @@ impl DownloadCache {
         valid_hash(hash) && self.index.entries.contains_key(hash)
     }
 
-    fn read_meta(&self, hash: &str) -> Option<PartialMeta> {
-        ron::from_str(&fs::read_to_string(self.meta_path(hash)).ok()?).ok()
+    /// Builds the index of the partial downloads from the directory (when
+    /// the cache opens): each valid `<hash>.part.ron` that parses, with its
+    /// `.part`'s length.
+    fn scan_partials(&mut self) {
+        let Ok(rd) = fs::read_dir(&self.dir) else { return };
+        let hashes: Vec<String> = rd
+            .filter_map(Result::ok)
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.strip_suffix(".part.ron").filter(|h| valid_hash(h)).map(str::to_string)
+            })
+            .collect();
+        for hash in hashes {
+            let meta: Option<PartialMeta> =
+                fs::read_to_string(self.meta_path(&hash)).ok().and_then(|t| ron::from_str(&t).ok());
+            if let Some(mut meta) = meta {
+                meta.have = fs::metadata(self.part_path(&hash)).map_or(0, |m| m.len());
+                self.parts.insert(hash, meta);
+            }
+        }
     }
 
     /// The partial download of the pack with content hash `hash`, if any.
     pub fn partial(&self, hash: &str) -> Option<Partial> {
-        if !valid_hash(hash) {
-            return None;
-        }
-        let meta = self.read_meta(hash)?;
-        let have = fs::metadata(self.part_path(hash)).map_or(0, |m| m.len());
-        Some(Partial { archive: meta.archive, size: meta.size, have })
+        let m = self.parts.get(hash)?;
+        Some(Partial { archive: m.archive.clone(), size: m.size, have: m.have })
     }
 
     /// Appends `bytes` at `offset` to the partial download of `hash`, whose
@@ -346,9 +379,10 @@ impl DownloadCache {
         if size > archive::MAX_ARCHIVE {
             return Err(ArchiveError::TooLarge(archive::MAX_ARCHIVE).into());
         }
-        let same = self.read_meta(hash).is_some_and(|m| m.archive == archive && m.size == size);
+        let held = self.parts.get(hash);
+        let same = held.is_some_and(|m| m.archive == archive && m.size == size);
         let part = self.part_path(hash);
-        let have = if same { fs::metadata(&part).map_or(0, |m| m.len()) } else { 0 };
+        let have = if same { held.map_or(0, |m| m.have) } else { 0 };
         if offset != have {
             return Err(io("download", format!("write at {offset}, but {have} bytes are held")));
         }
@@ -357,22 +391,52 @@ impl DownloadCache {
             return Err(io("download", "more bytes than the archive has"));
         }
         if !same {
+            if !self.parts.contains_key(hash) {
+                self.room_for_partial(hash)?;
+            }
             self.index.counter += 1;
             self.dirty = true;
-            let meta =
-                ron::to_string(&PartialMeta { archive: archive.into(), size, started: self.index.counter })
-                    .map_err(|e| io("meta", e))?;
+            let meta = PartialMeta { archive: archive.into(), size, have: 0, started: self.index.counter };
+            let text = ron::to_string(&meta).map_err(|e| io("meta", e))?;
+            // Indexed first: a failed write is still discarded by `trim`.
+            self.parts.insert(hash.to_string(), meta);
             fs::write(&part, []).map_err(|e| io("partial", e))?;
-            fs::write(self.meta_path(hash), meta).map_err(|e| io("meta", e))?;
+            fs::write(self.meta_path(hash), text).map_err(|e| io("meta", e))?;
         }
         let mut f = fs::OpenOptions::new().append(true).open(&part).map_err(|e| io("partial", e))?;
-        f.write_all(bytes).map_err(|e| io("partial", e))?;
+        let written = f.write_all(bytes);
+        let len = f.metadata().map_or(end, |m| m.len());
+        if let Some(m) = self.parts.get_mut(hash) {
+            m.have = len;
+        }
+        written.map_err(|e| io("partial", e))?;
         Ok(end)
+    }
+
+    /// Room for one more partial download (`hash`, not held yet): at
+    /// `MAX_PARTIALS`, the oldest not kept by a `Keeper` is discarded; when
+    /// every one is kept, the new download is refused.
+    fn room_for_partial(&mut self, hash: &str) -> Result<(), InstallError> {
+        while self.parts.len() >= MAX_PARTIALS {
+            let oldest =
+                self.partials().into_iter().map(|(h, _, _)| h).find(|h| h != hash && !self.kept(&[], h));
+            match oldest {
+                Some(h) => self.discard_partial(&h),
+                None => {
+                    return Err(io(
+                        "download",
+                        format!("{MAX_PARTIALS} partial downloads are held, all of them in use"),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Forgets the partial download of `hash`.
     pub fn discard_partial(&mut self, hash: &str) {
         if valid_hash(hash) {
+            self.parts.remove(hash);
             let _ = fs::remove_file(self.part_path(hash));
             let _ = fs::remove_file(self.meta_path(hash));
         }
@@ -456,25 +520,22 @@ impl DownloadCache {
         Ok(dest)
     }
 
-    /// The bytes the partial downloads hold.
+    /// The partial downloads held (at most `MAX_PARTIALS`).
+    pub fn partial_count(&self) -> usize {
+        self.parts.len()
+    }
+
+    /// The partial downloads' disk charge (`partial_charge` each), from
+    /// the index.
     pub fn partial_bytes(&self) -> u64 {
-        self.partials().iter().map(|(_, _, have)| have).sum()
+        self.parts.values().map(|m| partial_charge(m.have)).fold(0, u64::saturating_add)
     }
 
     /// The partial downloads, oldest first: hash, start (use counter) and
-    /// bytes held.
+    /// disk charge; from the index, never the directory.
     fn partials(&self) -> Vec<(String, u64, u64)> {
-        let Ok(rd) = fs::read_dir(&self.dir) else { return Vec::new() };
-        let mut out: Vec<(String, u64, u64)> = rd
-            .filter_map(Result::ok)
-            .filter_map(|e| {
-                let name = e.file_name().to_string_lossy().into_owned();
-                let hash = name.strip_suffix(".part.ron").filter(|h| valid_hash(h))?.to_string();
-                let started = self.read_meta(&hash).map_or(0, |m| m.started);
-                let have = fs::metadata(self.part_path(&hash)).map_or(0, |m| m.len());
-                Some((hash, started, have))
-            })
-            .collect();
+        let mut out: Vec<(String, u64, u64)> =
+            self.parts.iter().map(|(h, m)| (h.clone(), m.started, partial_charge(m.have))).collect();
         out.sort_by(|a, b| (a.1, &a.0).cmp(&(b.1, &b.0)));
         out
     }
@@ -486,7 +547,7 @@ impl DownloadCache {
     pub fn trim_partials(&mut self, keep: &[&str], limit: u64) -> Vec<String> {
         let mut total = self.total_bytes().saturating_add(self.partial_bytes());
         let mut out = Vec::new();
-        for (hash, _, have) in self.partials() {
+        for (hash, _, charge) in self.partials() {
             if total <= limit {
                 break;
             }
@@ -494,7 +555,7 @@ impl DownloadCache {
                 continue;
             }
             self.discard_partial(&hash);
-            total = total.saturating_sub(have);
+            total = total.saturating_sub(charge);
             out.push(hash);
         }
         out
@@ -562,6 +623,7 @@ impl DownloadCache {
                 }
             }
         }
+        self.parts.retain(|h, _| keep.contains(&h.as_str()));
         self.save()?;
         failed.map_or(Ok(()), Err)
     }

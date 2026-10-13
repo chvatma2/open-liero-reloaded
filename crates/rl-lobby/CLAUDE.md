@@ -55,6 +55,8 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     running match's setup stays what the lobby shows). `LobbyError` and
     `NotStartable` display as words for players (`Display`), never their
     Rust names.
+  - `ip_of(member)`: the address it joined from (the content side counts
+    skin fetches by address).
   - `revision()` changes whenever `state()` does (compare it instead of
     cloning the state: the dedicated server's poll).
   - Chat: sanitized and cut to 200 characters; `CHAT_LINES` (5) per

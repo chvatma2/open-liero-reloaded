@@ -301,7 +301,8 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   options' download cache row (`MenuData::download_cache`, kept current
   by `Shell::poll` while the options show: packs and partials, read at
   most every `CACHE_READ_EVERY` (1 s; at once on opening the options),
-  whether Clear may run every frame; its lock tried, never waited for) and its Clear (`clear(&[])`: the menus keep
+  whether Clear may run every frame; its lock tried, never waited for;
+  `Shell::download_cache()` is the shared cache) and its Clear (`clear(&[])`: the menus keep
   nothing), refused while an online game is on (`net` or `--net-sim`'s
   host: "leave the online game first").
   **Hidden window** (decision N21): while `Shell::online_active`,

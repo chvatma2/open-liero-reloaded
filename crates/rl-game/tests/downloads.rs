@@ -322,7 +322,6 @@ fn the_shell_clears_the_download_cache() {
 fn the_options_read_the_cache_at_most_once_a_second() {
     let Some(dir) = content_dir() else { return };
     let data = tempfile::tempdir().unwrap();
-    let cache_dir = Store::open(data.path()).cache_dir().unwrap();
     let mut sh = menus(&dir, Store::open(data.path()), "Anna", 1.0);
     sh.act(UiAction::Open(Screen::Options));
     let start = std::time::Instant::now();
@@ -330,10 +329,9 @@ fn the_options_read_the_cache_at_most_once_a_second() {
     let shown = |sh: &Shell| sh.data.download_cache.clone().expect("a download cache").bytes;
     let before = shown(&sh);
     // A partial download appears.
-    let hash = "a".repeat(64);
-    std::fs::write(cache_dir.join(format!("{hash}.part")), vec![0u8; 1000]).unwrap();
-    std::fs::write(cache_dir.join(format!("{hash}.part.ron")), format!("(archive: \"{hash}\", size: 2000)"))
-        .unwrap();
+    let cache = sh.download_cache().clone().expect("a download cache");
+    cache.lock().unwrap().append(&"a".repeat(64), &"f".repeat(64), 2000, 0, &[0u8; 1000]).unwrap();
+    let charge = rl_pack::archive::file_charge(1000) + rl_pack::archive::BLOCK;
     for _ in 0..10 {
         sh.poll();
     }
@@ -342,5 +340,5 @@ fn the_options_read_the_cache_at_most_once_a_second() {
     }
     std::thread::sleep(Duration::from_millis(1100));
     sh.poll();
-    assert_eq!(shown(&sh), before + 1000, "read again after it");
+    assert_eq!(shown(&sh), before + charge, "read again after it");
 }

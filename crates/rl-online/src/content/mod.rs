@@ -34,6 +34,9 @@ pub const QUEUED: usize = 256 << 10;
 /// A host starts at most one new skin fetch from a member this often
 /// (review C2: a member cycling skins cannot cycle installs).
 pub const SKIN_FETCH_EVERY_US: u64 = 5_000_000;
+/// A host starts at most this many member-skin fetches a minute, all
+/// members together (review R2).
+pub const SKIN_FETCHES_PER_MINUTE: usize = 12;
 /// A source that sends no chunk for this long is asked again once, then
 /// the download fails.
 pub const SILENCE_US: u64 = 10_000_000;

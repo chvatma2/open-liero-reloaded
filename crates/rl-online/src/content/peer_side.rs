@@ -5,7 +5,8 @@
 //! over). Sans-IO: messages leave through `take_out`, time is `now_us`, and
 //! every hash and archive is made on the worker thread, never here.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -17,8 +18,8 @@ use rl_netcode::PeerId;
 use rl_proto::{ContentMsg, Item, ItemKind, Look, MAX_ITEMS, NO_HASH, Phase};
 
 use super::{
-    Done, Download, Fetcher, HOST_RATE, Job, MATCH_RATE, PackArchive, QUEUED, SKIN_FETCH_EVERY_US, SKIN_RATE,
-    Server, Worker,
+    Done, Download, DownloadState, Fetcher, HOST_RATE, Job, MATCH_RATE, PackArchive, QUEUED,
+    SKIN_FETCH_EVERY_US, SKIN_FETCHES_PER_MINUTE, SKIN_RATE, Server, Worker,
 };
 use crate::events::OnlineEvent;
 
@@ -122,6 +123,26 @@ impl Local {
     }
 }
 
+/// Who a member-skin fetch is counted against: the member's address, or
+/// its peer when the lobby has none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum SkinSource {
+    Ip(IpAddr),
+    Peer(PeerId),
+}
+
+/// Ends a member-skin fetch whose offer is dropped (a look change, the
+/// member leaving, a refusal): its transfer stops and its partial goes
+/// (review R1: a skin is at most 64 KiB, not worth resuming).
+fn drop_skin_fetch(cache: Option<&Arc<Mutex<DownloadCache>>>, s: &mut SkinFetch) {
+    if let Some(f) = &mut s.fetcher {
+        f.source_left();
+    }
+    if let Some(mut c) = cache.and_then(|c| c.lock().ok()) {
+        c.discard_partial(&s.item.hash);
+    }
+}
+
 /// A member's skin the host fetches from that member (N31).
 struct SkinFetch {
     /// What the member offered (its one-item `List`).
@@ -143,9 +164,14 @@ struct HostContent {
     revision: u32,
     /// Members' skins this host lacks, by the member's peer.
     skins: BTreeMap<PeerId, SkinFetch>,
-    /// When the last skin fetch from each member started: the next waits
-    /// `SKIN_FETCH_EVERY_US` (review C2).
-    skin_started: BTreeMap<PeerId, u64>,
+    /// When the last skin fetch from each member's address started (its
+    /// peer without one): the next waits `SKIN_FETCH_EVERY_US` (review
+    /// C2), kept that long after the member leaves (review R2: a rejoin
+    /// does not reset it).
+    skin_started: BTreeMap<SkinSource, u64>,
+    /// When the member-skin fetches of the last minute started: at most
+    /// `SKIN_FETCHES_PER_MINUTE`, all members together (review R2).
+    skin_starts: VecDeque<u64>,
     /// Skins fetched from members: (id, directory) by content hash.
     fetched: BTreeMap<String, (String, PathBuf)>,
     /// Archive bytes sent to each peer, by content hash (the end of the
@@ -251,6 +277,7 @@ impl ContentSide {
                 revision: 1,
                 skins: BTreeMap::new(),
                 skin_started: BTreeMap::new(),
+                skin_starts: VecDeque::new(),
                 fetched: BTreeMap::new(),
                 sent: BTreeMap::new(),
                 look,
@@ -441,7 +468,10 @@ impl ContentSide {
                 let same = h.skins.get(&from).is_some_and(|s| s.item == *item);
                 if !same {
                     h.changes += 1;
-                    let fetcher = h.skins.remove(&from).and_then(|s| s.fetcher);
+                    let fetcher = h.skins.remove(&from).and_then(|mut s| {
+                        drop_skin_fetch(self.cache.as_ref(), &mut s);
+                        s.fetcher
+                    });
                     h.skins.insert(from, SkinFetch { item: item.clone(), fetcher, listed: false });
                 }
             }
@@ -457,13 +487,10 @@ impl ContentSide {
     pub(crate) fn peer_left(&mut self, peer: PeerId) {
         self.server.peer_left(peer);
         if let Role::Host(h) = &mut self.role {
-            if let Some(mut s) = h.skins.remove(&peer)
-                && let Some(f) = &mut s.fetcher
-            {
-                f.source_left();
+            if let Some(mut s) = h.skins.remove(&peer) {
+                drop_skin_fetch(self.cache.as_ref(), &mut s);
             }
             h.sent.remove(&peer);
-            h.skin_started.remove(&peer);
             h.changes += 1;
         }
     }
@@ -612,7 +639,7 @@ impl ContentSide {
         self.host_look(lobby);
         let required: Vec<String> = lobby.state().setup.packs.iter().map(|(id, _)| id.clone()).collect();
         let required: Vec<&str> = required.iter().map(String::as_str).collect();
-        self.host_skins(now_us, &required);
+        self.host_skins(now_us, &required, lobby);
         self.host_list(lobby);
         // Members are lacking until their `Have` answers this list (from
         // the first poll: before the first list too).
@@ -665,12 +692,27 @@ impl ContentSide {
     /// new fetch from a member starts at most every
     /// [`SKIN_FETCH_EVERY_US`]: an offer waits, and a later one (its new
     /// look) replaces it meanwhile.
-    fn host_skins(&mut self, now_us: u64, required: &[&str]) {
+    fn host_skins(&mut self, now_us: u64, required: &[&str], lobby: &LobbyHost) {
         let Role::Host(h) = &mut self.role else { return };
         let base = &self.local.base;
-        h.skins.retain(|_, s| may_take(base, required, &s.item));
+        let cache = self.cache.as_ref();
+        h.skins.retain(|_, s| {
+            let take = may_take(base, required, &s.item);
+            if !take {
+                drop_skin_fetch(cache, s);
+            }
+            take
+        });
+        h.skin_started.retain(|_, t| now_us.saturating_sub(*t) < SKIN_FETCH_EVERY_US);
+        while h.skin_starts.front().is_some_and(|&t| now_us.saturating_sub(t) >= 60_000_000) {
+            h.skin_starts.pop_front();
+        }
         let peers: Vec<PeerId> = h.skins.keys().copied().collect();
         for peer in peers {
+            let source = match lobby.member_of(peer).and_then(|m| lobby.ip_of(m)) {
+                Some(ip) => SkinSource::Ip(ip),
+                None => SkinSource::Peer(peer),
+            };
             let Role::Host(h) = &mut self.role else { return };
             let Some(s) = h.skins.get(&peer) else { continue };
             let item = s.item.clone();
@@ -686,7 +728,7 @@ impl ContentSide {
                 continue;
             }
             let waits =
-                h.skin_started.get(&peer).is_some_and(|&t| now_us.saturating_sub(t) < SKIN_FETCH_EVERY_US);
+                h.skin_started.contains_key(&source) || h.skin_starts.len() >= SKIN_FETCHES_PER_MINUTE;
             if !s.listed && waits {
                 continue;
             }
@@ -696,10 +738,19 @@ impl ContentSide {
             let Some(f) = &mut s.fetcher else { continue };
             if !s.listed {
                 s.listed = true;
-                h.skin_started.insert(peer, now_us);
+                h.skin_started.insert(source, now_us);
+                h.skin_starts.push_back(now_us);
                 f.list(peer, std::slice::from_ref(&item), &self.local.base);
             }
             f.poll(now_us, &mut self.out);
+            // Refused or failed: its partial is of no use (review R1).
+            let refused = f.downloads().iter().any(|d| {
+                d.item.hash == item.hash
+                    && matches!(d.state, DownloadState::Failed(_) | DownloadState::Unavailable)
+            });
+            if refused && let Some(mut c) = self.cache.as_ref().and_then(|c| c.lock().ok()) {
+                c.discard_partial(&item.hash);
+            }
             for (id, dir) in f.installed() {
                 if id == item.id && dir.ends_with(&item.hash) && !h.fetched.contains_key(&item.hash) {
                     h.fetched.insert(item.hash.clone(), (id, dir));
@@ -761,11 +812,12 @@ impl ContentSide {
         // An offer its member no longer wears is dropped (its new skin may
         // not be offered: the old offer would bring its skin back every
         // poll); skins fetched from members stay only while listed.
+        let cache = self.cache.as_ref();
         h.skins.retain(|&peer, s| {
             let id = lobby.member_of(peer);
             let worn = state.members.iter().any(|m| Some(m.id) == id && m.look.skin_hash == s.item.hash);
-            if !worn && let Some(f) = &mut s.fetcher {
-                f.source_left();
+            if !worn {
+                drop_skin_fetch(cache, s);
             }
             worn
         });
@@ -1199,6 +1251,36 @@ mod tests {
             assert!(self.lobby.member_of(peer).is_some(), "joined");
         }
 
+        /// A member with key `key` joins as `peer` from `ip`, wearing `look`.
+        fn join_as(&mut self, peer: PeerId, key: u8, ip: [u8; 4], look: Look, now: u64) {
+            let me = Identity::from_secret([key; 32]).unwrap();
+            let nonce = [key; 32];
+            self.lobby.connected(peer, std::net::IpAddr::from(ip), now, nonce);
+            self.lobby.receive(peer, rl_proto::ToHost::Hello { key: me.public(), look, password: None }, now);
+            let host = Identity::from_secret(HOST_ID).unwrap().public();
+            let signature = me.sign(&rl_lobby::challenge_message(&nonce, &host), [0; 32]);
+            self.lobby.receive(peer, rl_proto::ToHost::Prove { signature }, now);
+            assert!(self.lobby.member_of(peer).is_some(), "joined");
+        }
+
+        /// Member `peer` leaves.
+        fn leave(&mut self, peer: PeerId, now: u64) {
+            self.lobby.receive(peer, rl_proto::ToHost::Bye, now);
+            self.side.peer_left(peer);
+        }
+
+        /// Polls at `now`; returns the hashes newly asked of each peer.
+        fn poll_wants(&mut self, now: u64, asked: &mut Vec<(u64, PeerId, String)>) {
+            self.side.poll_host(now, &mut self.lobby, &|_| 0);
+            for (peer, msg) in self.side.take_out() {
+                if let ContentMsg::Want { hash, .. } = msg
+                    && !asked.iter().any(|(_, _, h)| *h == hash)
+                {
+                    asked.push((now, peer, hash));
+                }
+            }
+        }
+
         fn look_of(&self, peer: PeerId) -> Look {
             let id = self.lobby.member_of(peer).unwrap();
             self.lobby.state().members.iter().find(|m| m.id == id).unwrap().look.clone()
@@ -1360,6 +1442,99 @@ mod tests {
         let evicted = host.cache.lock().unwrap().evict(&[], 0);
         assert!(!evicted.evicted.contains(&item.hash), "{evicted:?}");
         assert!(host.cache.lock().unwrap().contains(&item.hash));
+    }
+
+    /// A member's skin offer `k`: a fake hash the host lacks.
+    fn offer(k: u64) -> (Item, Look) {
+        let item = Item {
+            kind: ItemKind::Skin,
+            id: format!("cycle-{k}"),
+            hash: format!("{:064x}", k + 1),
+            size: 1000,
+            required: false,
+        };
+        let worn = Look { skin: item.id.clone(), skin_hash: item.hash.clone(), ..look() };
+        (item, worn)
+    }
+
+    /// Review R1: a member cycling looks and sending a byte of each skin
+    /// leaves at most the current skin's partial, and none once it leaves:
+    /// a member-skin partial goes with its offer.
+    #[test]
+    fn member_skin_partials_go_with_their_offer() {
+        let Some(dir) = content_dir() else { return };
+        let mut host = Host::new(&dir);
+        host.list();
+        host.join(9, look());
+        let mut asked = Vec::new();
+        for k in 0..8u64 {
+            let now = k * (SKIN_FETCH_EVERY_US + 100_000);
+            let (item, worn) = offer(k);
+            host.lobby.receive(9, rl_proto::ToHost::SetLook(worn), now);
+            let worn = host.look_of(9);
+            host.side.receive(9, ContentMsg::List { revision: 0, items: vec![item.clone()] }, Some(&worn));
+            host.poll_wants(now, &mut asked);
+            // The member sends one byte of it.
+            let begin =
+                ContentMsg::Begin { hash: item.hash.clone(), archive: "f".repeat(64), size: 1000, offset: 0 };
+            host.side.receive(9, begin, Some(&worn));
+            let chunk = ContentMsg::Chunk { hash: item.hash.clone(), offset: 0, bytes: vec![1] };
+            host.side.receive(9, chunk, Some(&worn));
+            host.poll_wants(now, &mut asked);
+            assert_eq!(host.cache.lock().unwrap().partial(&item.hash).map(|p| p.have), Some(1), "{k}");
+            assert!(host.cache.lock().unwrap().partial_count() <= 1, "{k}: older skins' partials stay");
+        }
+        host.leave(9, 8 * SKIN_FETCH_EVERY_US);
+        host.poll_wants(8 * SKIN_FETCH_EVERY_US, &mut asked);
+        assert_eq!(host.cache.lock().unwrap().partial_count(), 0, "the member left");
+    }
+
+    /// Review R2: rejoining does not reset the per-member interval (it is
+    /// kept by address), and all members together start at most
+    /// `SKIN_FETCHES_PER_MINUTE` member-skin fetches a minute.
+    #[test]
+    fn rejoining_does_not_pass_the_skin_fetch_budgets() {
+        let Some(dir) = content_dir() else { return };
+        // One address rejoining every second for 20 s.
+        let mut host = Host::new(&dir);
+        host.list();
+        let mut asked = Vec::new();
+        for k in 0..20u64 {
+            let now = k * 1_000_000;
+            let peer = 100 + k as PeerId;
+            let (item, worn) = offer(k);
+            host.join_as(peer, 9, [10, 0, 0, 9], worn, now);
+            let worn = host.look_of(peer);
+            host.side.receive(peer, ContentMsg::List { revision: 0, items: vec![item] }, Some(&worn));
+            host.poll_wants(now, &mut asked);
+            host.leave(peer, now + 500_000);
+            host.poll_wants(now + 500_000, &mut asked);
+        }
+        assert!(
+            asked.len() as u64 <= 20_000_000 / SKIN_FETCH_EVERY_US + 1,
+            "{} fetches: {asked:?}",
+            asked.len()
+        );
+        // Ever new addresses, one a second, for 70 s.
+        let mut host = Host::new(&dir);
+        host.list();
+        let mut asked = Vec::new();
+        for k in 0..70u64 {
+            let now = k * 1_000_000;
+            let peer = 200 + k as PeerId;
+            let (item, worn) = offer(100 + k);
+            host.join_as(peer, 10 + k as u8, [10, 0, 1, k as u8], worn, now);
+            let worn = host.look_of(peer);
+            host.side.receive(peer, ContentMsg::List { revision: 0, items: vec![item] }, Some(&worn));
+            host.poll_wants(now, &mut asked);
+            host.leave(peer, now + 500_000);
+            host.poll_wants(now + 500_000, &mut asked);
+        }
+        assert!(!asked.is_empty());
+        for (t, _, _) in &asked {
+            let in_minute = asked.iter().filter(|(u, _, _)| *u >= *t && *u < t + 60_000_000).count();
+            assert!(in_minute <= SKIN_FETCHES_PER_MINUTE, "{in_minute} fetches in a minute");
+        }
     }
 
     /// Review C2: a member cycling skins makes the host start at most one

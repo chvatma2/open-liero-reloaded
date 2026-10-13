@@ -870,7 +870,8 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   length rounded up to 4 KiB blocks plus a block, a block a directory) of
   at most 512 MiB, charged before each file is written; a skin's archive
   holds at most 16 files of depth 2 and 256 KiB of charge
-  (`SKIN_LIMITS`).
+  (`SKIN_LIMITS`). The charge assumes 4 KiB blocks: on large-cluster file
+  systems (exFAT) the real use can be several times the charge.
 - **N30 - a content-addressed cache.** Downloads live in
   `<cache>/packs/<content hash>/`, one pack directory each, with
   `<cache>/index.ron` (each entry's id, kind, bytes and a use counter).
@@ -898,7 +899,11 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   member-skin fetchers and its own list, a client's fetcher, both peers
   of `--net-sim`) registers its hashes with the shared cache
   (`rl_content::Keeper`), and every eviction keeps their union (final
-  review Minor 2).
+  review Minor 2). Partial downloads are charged as installed packs are
+  (plus a block for the meta file), at most 32 per cache (a new one
+  discards the oldest not kept; when all are kept it is refused), and
+  indexed in memory, so no fetch start scans the directory (final
+  re-review R1).
 - **N31 - skins by hash.** `Look` gains `skin_hash` (64 lowercase hex).
   A client offers its own skin to the host with a one-item content list
   (R6-1; accepted only for its look's id and hash); the host fetches a
@@ -913,7 +918,10 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   every 5 s (an offer waits; only the look then worn counts), and takes
   at most 4 `SetLook`s a second from a member (final review C2); the
   latest look beyond them is held and taken once the window allows, so a
-  member's last look is never lost. The
+  member's last look is never lost. The 5 s interval is kept by the
+  member's address for 5 s after it leaves, all members together start
+  at most 12 skin fetches a minute, and a member-skin partial is
+  discarded when its offer is dropped (final re-review R1, R2). The
   host lists one skin per id, the first member's (final review Minor 1:
   a match loads skins by id, so another of the same id is never shown).
 - **N32 - transfers.** Reliable-channel tag `TAG_CONTENT = 3` carries

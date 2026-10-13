@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use rl_content::{
-    CACHE_BYTES, Content, DownloadCache, Eviction, InstallError, MAX_SKIN_ARCHIVE, SKIN_LIMITS,
+    CACHE_BYTES, Content, DownloadCache, Eviction, InstallError, MAX_PARTIALS, MAX_SKIN_ARCHIVE, SKIN_LIMITS,
 };
 use rl_data::image::{Rgba, RgbaImage};
 use rl_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
@@ -412,12 +412,15 @@ fn partials_count_toward_the_budget() {
     let installed = archive_of(&skin_pack("x", 80));
     install(&mut cache, &installed, "x");
     let packs = cache.total_bytes();
-    assert_eq!(cache.partial_bytes(), 300);
-    assert!(cache.trim_partials(&[], packs + 300).is_empty());
+    // Review R1: a partial is charged as the disk takes it (its file, and
+    // a block for its meta file).
+    let one = archive::file_charge(100) + archive::BLOCK;
+    assert_eq!(cache.partial_bytes(), 3 * one);
+    assert!(cache.trim_partials(&[], packs + 3 * one).is_empty());
     // Oldest first, never a kept one: 0 is kept, so 1 goes, then 2.
     let keep = [parts[0].hash.as_str()];
-    assert_eq!(cache.trim_partials(&keep, packs + 250), vec![parts[1].hash.clone()]);
-    assert_eq!(cache.partial_bytes(), 200);
+    assert_eq!(cache.trim_partials(&keep, packs + 2 * one + one / 2), vec![parts[1].hash.clone()]);
+    assert_eq!(cache.partial_bytes(), 2 * one);
     assert_eq!(cache.trim_partials(&keep, 0), vec![parts[2].hash.clone()]);
     assert!(cache.partial(&parts[0].hash).is_some() && cache.partial(&parts[2].hash).is_none());
     // The order survives reopening; restarting a partial makes it the newest.
@@ -429,6 +432,57 @@ fn partials_count_toward_the_budget() {
     let mut cache = DownloadCache::open(root.path()).unwrap();
     assert_eq!(cache.trim_partials(&[], 0), vec![parts[0].hash.clone(), parts[1].hash.clone()]);
     assert_eq!(cache.partial_bytes(), 0);
+}
+
+/// Review R1: partials are at most `MAX_PARTIALS`: a new one discards the
+/// oldest not kept, and is refused with the reason when every one is
+/// kept. Their charge is counted.
+#[test]
+fn partials_are_bounded_in_number() {
+    let root = tempfile::tempdir().unwrap();
+    let cache = std::sync::Arc::new(std::sync::Mutex::new(DownloadCache::open(root.path()).unwrap()));
+    let hash = |i: usize| format!("{i:064x}");
+    for i in 0..40 {
+        cache.lock().unwrap().append(&hash(i), &hash(1000), 10, 0, &[1]).unwrap();
+    }
+    let c = cache.lock().unwrap();
+    assert_eq!(c.partial_count(), MAX_PARTIALS);
+    assert_eq!(c.partial_bytes(), MAX_PARTIALS as u64 * (archive::file_charge(1) + archive::BLOCK));
+    assert!(c.partial(&hash(0)).is_none(), "the oldest went first");
+    assert!(c.partial(&hash(39)).is_some());
+    let on_disk = std::fs::read_dir(root.path())
+        .unwrap()
+        .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".part"));
+    assert_eq!(on_disk.count(), MAX_PARTIALS);
+    drop(c);
+    // Every one kept: a new download is refused, and says why.
+    let kept: Vec<String> = (8..40).map(hash).collect();
+    let keeper = rl_content::Keeper::new(&cache);
+    keeper.keep(&kept);
+    let e = cache.lock().unwrap().append(&hash(50), &hash(1000), 10, 0, &[1]).unwrap_err();
+    assert!(e.to_string().contains("partial downloads"), "{e}");
+    assert_eq!(cache.lock().unwrap().partial_count(), MAX_PARTIALS);
+}
+
+/// Review R1: partial accounting reads the cache's own index, never the
+/// directory: what changes behind its back (it owns the directory) does
+/// not cost a scan per fetch start.
+#[test]
+fn partial_accounting_reads_the_index() {
+    let root = tempfile::tempdir().unwrap();
+    let mut cache = DownloadCache::open(root.path()).unwrap();
+    cache.append(&"a".repeat(64), &"f".repeat(64), 10, 0, &[1, 2]).unwrap();
+    let charged = cache.partial_bytes();
+    std::fs::write(root.path().join(format!("{}.part", "b".repeat(64))), [0u8; 9000]).unwrap();
+    std::fs::write(root.path().join(format!("{}.part.ron", "b".repeat(64))), "(archive: \"x\", size: 9000)")
+        .unwrap();
+    assert_eq!(cache.partial_bytes(), charged, "no directory scan");
+    assert!(cache.trim_partials(&[], 0).contains(&"a".repeat(64)));
+    assert_eq!(cache.partial_bytes(), 0);
+    drop(cache);
+    // Reopened: the index is built from the directory once.
+    let cache = DownloadCache::open(root.path()).unwrap();
+    assert_eq!(cache.partial_count(), 1);
 }
 
 #[test]
