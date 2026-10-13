@@ -17,7 +17,8 @@ rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
   with `PeerRole::Server`, `LobbyHandle`), `rl-lobby` (fingerprints,
   `NOT_ADMIN`, `DEFAULT_SKIN`), `rl-net` (`EndpointConfig`, LAN
   `Announcer`, `random_bytes`), `rl-discovery` (the summary, `Pool`,
-  `Announcer`, STUN, `Invite`; its `test-relay` feature for the tests), `rl-proto`, `rl-content`, `rl-bots`,
+  `hosting`'s `AddressWatch`, `Publisher` and `invite`, shared with the
+  game; its `test-relay` feature for the tests), `rl-proto`, `rl-content`, `rl-bots`,
   `rl-modes`, `rl-sim`, serde, ron, clap, ctrlc (the binary's stop) and
   anyhow. Not `rl-ui` (egui): the identity file's owner-only writing is replicated in `files.rs`.
 - **`config.rs`**: `Config::parse` (RON, `deny_unknown_fields`, every field
@@ -63,15 +64,9 @@ rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
   `who` the name and `/banip` address of a key, for `/unban`; atomic;
   missing = none; a bad key or over 4 MiB is an error), `hex`,
   `parse_key`.
-- **`finding.rs`** (plan 12a): `AddressWatch` (N40): the configured
-  `public_address` wins; else `stun::public_ip(stun, 3 s)` on a thread at
-  the start and every `ADDRESS_EVERY` (10 minutes), an answer kept only
-  when `list::is_global`; a later round without an answer keeps the
-  address, one answering a non-public address drops it; `poll` returns a
-  log line when the address is first settled or changes. `relay_hints`
-  (default relays by index, plus the first other URL of at most
-  `MAX_URL_BYTES`; `encode` truncates, PF12-6) and `invite(key, relays,
-  addr, port)` (IPv4 only).
+- **Finding** (plan 12a): the address watch, the relay hints, the invite
+  and the notes' publisher are rl-discovery's `hosting` (shared with the
+  game since Task 10; this crate's `finding.rs` moved there).
 - **`lib.rs`, `Server`**: `start(config, content, data_dir, log)` (identity,
   bans into the lobby and the gate, the rotation, `PeerRole::Server` on the
   config's port, LAN `Announcer` for `Public` and `Lan`, a Nostr `Pool` on
@@ -170,5 +165,6 @@ private STUN answer; the address asked again after ten minutes (a new
 invite printed); an old config (`DirectOnly`, no new fields) loads. Unit tests: command parsing, `/unban` targets, hex keys,
 the bans and identity files, the log's rotation (and a rename that
 fails, injected), notices split at 200
-characters, UTC dates, relay hints, IPv4-only invites, the address watch.
+characters, UTC dates (the hints, invites and address watch are tested
+in rl-discovery's `hosting`).
 Cross-build: `cargo build --release --target x86_64-pc-windows-gnu -p rl-server`.

@@ -61,6 +61,7 @@ use std::time::{Duration, Instant};
 use egui::{ColorImage, TextureHandle, TextureOptions};
 use rl_audio::Audio;
 use rl_content::{Content, LoadedSkin, MatchOptions, Player};
+use rl_discovery::defaults::{DEFAULT_RELAYS, DEFAULT_STUN};
 use rl_input::Bindings;
 use rl_lobby::Identity;
 use rl_net::lan::Listener;
@@ -78,13 +79,14 @@ use rl_ui::{
     VideoSettings,
 };
 
+use crate::finding::Internet;
 use crate::net::{self, Net, SharedCache};
 use crate::session::{Driver, Session};
 use crate::setup::{self, Assets, Game, PlayerLook, SandboxOptions};
 use crate::video::{self, Overrides};
 
 mod online;
-pub use online::resolve;
+pub use online::{INVITE_WITHOUT_ADDRESS, resolve};
 
 /// What the shell needs besides the menus' state.
 #[derive(Clone, Debug)]
@@ -179,6 +181,11 @@ pub struct Shell {
     /// When the Options' cache row last read the cache's sizes (`None`
     /// off the Options screen): at most every `CACHE_READ_EVERY`.
     cache_read: Option<Instant>,
+    /// The relays and the game list while the Multiplayer screen shows or
+    /// a hosted game is public (plan 12a).
+    internet: Option<Internet>,
+    /// The Internet game last pinged (the menus' selection).
+    pinged: Option<[u8; 32]>,
 }
 
 /// The Options' download cache row reads the cache's sizes (a directory
@@ -234,7 +241,11 @@ impl Shell {
             replays: Vec::new(),
             cache: Err(String::new()),
             cache_read: None,
+            internet: None,
+            pinged: None,
         };
+        shell.data.default_relays = DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect();
+        shell.data.default_stun = DEFAULT_STUN.iter().map(|s| s.to_string()).collect();
         shell.cache = net::open_download_cache(shell.store.cache_dir());
         if let Err(why) = &shell.cache {
             shell.log([format!("content downloads are off: {why}")]);
@@ -280,6 +291,8 @@ impl Shell {
             replays: Vec::new(),
             cache: Err("a game from the command line downloads nothing".into()),
             cache_read: None,
+            internet: None,
+            pinged: None,
         }
     }
 
@@ -492,10 +505,11 @@ impl Shell {
                 let started = self.start_host(&prefs);
                 self.connected(started.map(|()| true), out);
             }
-            AppCommand::JoinGame { addr, password } => {
-                let started = self.start_client(&addr, password);
+            AppCommand::JoinGame { addr, password, expected_host } => {
+                let started = self.start_client(&addr, password, expected_host);
                 self.connected(started.map(|()| false), out);
             }
+            AppCommand::BlockHost(key) => self.block_host(key),
             AppCommand::Lobby(c) => self.lobby_command(c),
             AppCommand::LeaveOnline => self.leave_online(),
             AppCommand::ClearDownloadCache => self.clear_download_cache(),
@@ -820,6 +834,7 @@ impl Shell {
         }
         self.leave_online();
         self.end();
+        self.close_internet();
         self.wait_for_replays(REPLAY_STOP_WAIT);
         self.flush();
     }

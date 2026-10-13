@@ -491,3 +491,94 @@ fn options_clears_the_download_cache() {
     h.get_by_label("Download cache: none (no cache directory)");
     assert!(h.query_by_label("Clear").is_none());
 }
+
+/// Plan 12a: the Online tab edits the region, the relays and STUN servers
+/// (Remove, Add with a valid entry only, Reset to the game's defaults) and
+/// unblocks a host; each change saved.
+#[test]
+fn options_edit_relays_and_unblock() {
+    let mut settings = Settings::default();
+    settings.online.finding.blocked = vec!["ab".repeat(32), "cd".repeat(32)];
+    let mut h = harness(UiState::new(settings, Profiles::default(), 1));
+    h.state_mut().data.default_relays = vec!["wss://relay.one".into(), "wss://relay.two".into()];
+    h.state_mut().data.default_stun = vec!["stun.one:3478".into()];
+    h.get_by_label("Options").click();
+    h.run();
+    h.get_by_label("Online").click();
+    h.run();
+    // The defaults show while the settings name none.
+    h.get_by_label("wss://relay.one");
+    h.get_by_label("stun.one:3478");
+    assert!(h.get_by_label("Reset relays to defaults").accesskit_node().is_disabled());
+    // Remove the first relay: the list is the player's from now on.
+    h.get_all_by_label("Remove").next().unwrap().click();
+    h.run();
+    assert_eq!(saved(&h).online.finding.relays, Some(vec!["wss://relay.two".to_string()]));
+    // Add one: refused until it is a relay URL.
+    h.get_by_role_and_label(Role::TextInput, "New relay").focus();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "New relay").type_text("relay.example.org");
+    h.run();
+    assert!(h.get_by_label("Add relay").accesskit_node().is_disabled());
+    // Replace the text: select all, then the URL.
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "New relay").type_text("wss://relay.example.org");
+    h.run();
+    h.get_by_label("Add relay").click();
+    h.run();
+    assert_eq!(
+        saved(&h).online.finding.relays,
+        Some(vec!["wss://relay.two".to_string(), "wss://relay.example.org".to_string()])
+    );
+    // Reset: the defaults again.
+    h.get_by_label("Reset relays to defaults").click();
+    h.run();
+    assert_eq!(saved(&h).online.finding.relays, None);
+    h.get_by_label("wss://relay.one");
+    // STUN: none asked at all.
+    let stun_remove = h.get_all_by_label("Remove").count() - 1;
+    h.get_all_by_label("Remove").nth(stun_remove).unwrap().click();
+    h.run();
+    assert_eq!(saved(&h).online.finding.stun, Some(Vec::new()));
+    h.get_by_label("No STUN servers: none is asked.");
+    // The region.
+    h.get_by_label("Region").click();
+    h.run();
+    h.get_by_label("Oceania").click();
+    h.run();
+    assert_eq!(saved(&h).online.finding.region, rl_ui::Region::Oceania);
+    // Unblock the first host.
+    h.get_all_by_label("Unblock").next().unwrap().click();
+    h.run();
+    assert_eq!(saved(&h).online.finding.blocked, ["cd".repeat(32)]);
+    assert_eq!(h.state().ui.settings().online.finding.blocked, ["cd".repeat(32)]);
+}
+
+/// A hand-edited file's finding settings are fixed: bad relays, STUN
+/// servers, addresses and keys dropped, keys lowercased, duplicates gone.
+#[test]
+fn finding_settings_are_sanitized() {
+    let mut f = rl_ui::FindingSettings {
+        region: rl_ui::Region::Asia,
+        relays: Some(vec![
+            "wss://a.example".into(),
+            "https://not.a.relay".into(),
+            " wss://a.example ".into(),
+            "ws://127.0.0.1:7000".into(),
+            "wss://".into(),
+        ]),
+        stun: Some(vec!["stun.example:3478".into(), "nope".into(), "x:0".into()]),
+        public_address: "not an ip".into(),
+        blocked: vec!["AB".repeat(32), "ab".repeat(32), "zz".into()],
+    };
+    let w = f.sanitize();
+    assert_eq!(f.relays, Some(vec!["wss://a.example".to_string(), "ws://127.0.0.1:7000".to_string()]));
+    assert_eq!(f.stun, Some(vec!["stun.example:3478".to_string()]));
+    assert_eq!(f.public_address, "");
+    assert_eq!(f.blocked, ["ab".repeat(32)]);
+    assert_eq!(w.len(), 6, "{w:?}");
+    let mut ok = rl_ui::FindingSettings { public_address: " 81.2.69.142 ".into(), ..Default::default() };
+    assert!(ok.sanitize().is_empty());
+    assert_eq!(ok.public_address, "81.2.69.142");
+}

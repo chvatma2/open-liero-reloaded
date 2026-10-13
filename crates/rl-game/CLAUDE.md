@@ -23,7 +23,8 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `rl-terrain`, `rl-pack`, `rl-online`, `rl-netcode`, `rl-proto`,
   `rl-lobby` (identities, host settings), `rl-net` (endpoint settings,
   LAN announcements), `rl-discovery` (the hosted lobby's summary,
-  `GameSummary::of_lobby`, shared with rl-server), plus winit,
+  `GameSummary::of_lobby`, and `hosting`, shared with rl-server; the
+  relay pool, the game list, pings, invites), plus winit,
   wgpu, gilrs and egui / egui-wgpu / egui-winit 0.36.2 (exact pins). Logs
   are `eprintln!("warning: ...")`, each once.
 - **Menus first** (`main.rs`, `shell.rs`, plan 7 task 2): without a flag
@@ -334,6 +335,40 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   on the saved match, watching; this player joins it over a loopback
   link impaired both ways, `EndpointConfig::impair`; the client readies
   itself and the host starts whenever every player is ready).
+  **Finding games** (`finding.rs`, plan 12a Task 10, N39-N43): the shell
+  owns one `finding::Internet` while the Multiplayer or Host screen shows
+  or a hosted game is Public (`poll_internet`; closed otherwise, its pool
+  dropped on a thread of its own, `relays-closing`, so the UI never waits;
+  at quitting, `close_internet` waits so a closing note leaves): a `Pool`
+  on the settings' relays (`relays_of`: else `DEFAULT_RELAYS`; none: no
+  pool, "No relay reachable"), a `GameList` (the settings' blocked keys;
+  `allow_local` when every relay is local, `local_relays`: one's own or
+  the tests' relay) subscribed (`GAMES_SUB`, `filter_since`) while the
+  screens show, the selected game pinged (`Pinger`, a TCP connect on a
+  thread, only games the list accepted with an address), the view
+  (`internet_entry`: the mod's name from the catalog, the region
+  converted naming every variant) made again only when something changed.
+  `InternetStatus`: `NoRelay` without relays or when none is connected
+  and each failed since the start, `Searching` until the list's first
+  `EOSE`, else `Listed`. `BlockHost` drops the key's games at once.
+  **Joining**: `JoinGame { addr, password, expected_host }`; text that
+  `is_invite` is decoded (`Invite::decode`: "this invite code is
+  damaged", …), its address joined and its key expected; an invite
+  without an address fails with `INVITE_WITHOUT_ADDRESS`; a listed game's
+  Join expects its key (N37: another is `WRONG_HOST`). **Hosting**
+  (`finding::Hosted`, in `Net::hosted`): the LAN announcer for Public and
+  Lan; for Public and Invite an `AddressWatch` (the settings'
+  `public_address`, else their STUN servers, else `DEFAULT_STUN`; Lan asks
+  nothing) and the invite code (`LobbyView::invite`, the host's only);
+  for Public a `Publisher` signing with the install's identity: notes once
+  the address is settled (the summary's region and address from
+  `Hosted`), the closing note when the lobby is left or lost
+  (`close_hosted`), and `LobbyView::listing`: "Finding the public
+  address…", "Not listed: no public address (forward port N or set it in
+  Options)", "Not listed: no relays …", "Not listed: no relay reachable",
+  "Announcing on the Internet…", "Listed on the Internet" (a relay's `OK`
+  for one of our notes). Changes to the relays apply the next time the
+  pool opens.
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the default
   restrictions) feeds `rl_content::build_match`, the same assembly as
@@ -469,6 +504,18 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   the counters; it needs `RL_GPU_TESTS`, content and an adapter, else skips.
 
 Test: `cargo nextest run -p rl-game` (the pure parts; `setup`, `session`,
+`tests/finding.rs` (plan 12a; rl-discovery's in-process `TestRelay`, the
+server in-process (`rl-server` a dev-dependency), no STUN: nothing leaves
+the machine, and `online::menus` sets no relay and no STUN server for
+every other test): `a_listed_server_is_joined_from_the_internet_tab`
+(listed with its name, map, region and address, pinged, an impostor key
+refused, the listed key's lobby, the server's invite in upper case
+joins, blocked), `a_public_game_without_an_address_is_listed_unjoinable`
+(the lobby's lines, the invite without an address, listed "cannot be
+joined yet", the invite refused, a damaged code, a direct join, the
+closing note takes it off the list), `the_internet_tab_without_relays`
+(a closed port: "No relay reachable", no frame over 250 ms, hosting and
+a direct join unaffected; none set: at once),
 `tests/deathmatch.rs` (a Deathmatch to its results, the bots' think
 budget, a recording replayed through a replay session), `tests/menu.rs`
 (starts with missing or broken content, rapid menu actions) and

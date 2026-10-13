@@ -11,7 +11,6 @@
 pub mod admin;
 pub mod config;
 pub mod files;
-pub mod finding;
 pub mod rotation;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,8 +23,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use rl_content::{Content, DownloadCache};
-use rl_discovery::{GameSummary, Hosting, Pool, PoolConfig, PoolEvent, RelayStatus, announcement};
-use rl_lobby::{Identity, NOT_ADMIN, fingerprint};
+use rl_discovery::{AddressWatch, GameSummary, Hosting, Pool, PoolConfig, PoolEvent, Publisher, RelayStatus};
+use rl_lobby::{NOT_ADMIN, fingerprint};
 use rl_net::endpoint::EndpointConfig;
 use rl_net::lan::{Announcer, broadcast_targets};
 use rl_online::replay::MatchRecord;
@@ -36,7 +35,6 @@ use rl_sim::Keys;
 use crate::admin::{Command, Setting, Unban};
 use crate::config::{Config, Visibility};
 use crate::files::{BanList, Who, hex};
-use crate::finding::AddressWatch;
 use crate::rotation::Rotation;
 
 /// A match starts this long after the lobby gathered, forced (players not
@@ -68,15 +66,11 @@ struct Known {
 /// and what each relay last said in the log.
 struct Nostr {
     pool: Pool,
-    announcer: rl_discovery::Announcer,
-    /// Signs the notes: the server's identity.
-    identity: Identity,
+    /// Signs and times the notes (the server's identity).
+    publisher: Publisher,
     /// Each relay's last status or refusal logged (said once until it
     /// changes).
     said: Vec<Option<String>>,
-    /// The last note's `created_at`: the closing note is newer, or relays
-    /// and lists keep the open one (a tie in the second goes by id).
-    last_unix: u64,
     events: Vec<PoolEvent>,
 }
 
@@ -115,9 +109,6 @@ pub struct Server {
     announcer: Option<Announcer>,
     nostr: Option<Nostr>,
     address: AddressWatch,
-    /// The unix time at an instant: notes' `created_at` follows the
-    /// poll's clock from there.
-    clock: (Instant, u64),
     members: BTreeMap<u8, Known>,
     /// The setup the server last gave the lobby; another (an admin's
     /// `Settings` from the game's lobby) is kept for the next match.
@@ -194,6 +185,9 @@ impl Server {
         line(log, format_args!("server {:?} with {which} {fp} (key {})", config.name, hex(&key)));
         line(log, format_args!("bans: {} keys, {} addresses", bans.keys.len(), bans.ips.len()));
         line(log, format_args!("listening on port {} (TCP and UDP)", peer.local_port()));
+        let now = Instant::now();
+        let unix =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let nostr = match config.visibility {
             Visibility::Public if config.relays.is_empty() => {
                 line(log, format_args!("warning: public, but no relays configured: not announced on Nostr"));
@@ -210,8 +204,8 @@ impl Server {
                 );
                 let pool = Pool::start(PoolConfig { relays: config.relays.clone(), ..PoolConfig::default() });
                 let said = vec![None; config.relays.len()];
-                let announcer = rl_discovery::Announcer::new();
-                Some(Nostr { pool, announcer, identity, said, last_unix: 0, events: Vec::new() })
+                let publisher = Publisher::new(identity, now, unix);
+                Some(Nostr { pool, publisher, said, events: Vec::new() })
             }
             Visibility::Lan => {
                 line(log, format_args!("announced on the LAN only"));
@@ -222,17 +216,13 @@ impl Server {
                 None
             }
         };
-        let now = Instant::now();
         let (address, said) = AddressWatch::start(config.public_ip(), &config.stun, now);
         line(log, format_args!("{said}"));
         let next = rotation.next();
         line(log, format_args!("next map: {} on {}", next.mod_id, next.level));
-        let unix =
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let server = Server {
             nostr,
             address,
-            clock: (now, unix),
             lobby: None,
             peer,
             config,
@@ -266,7 +256,7 @@ impl Server {
     /// The server's invite code (decision N42): its key, its relays and
     /// its public address, when known.
     pub fn invite(&self) -> rl_discovery::Invite {
-        finding::invite(self.key, &self.config.relays, self.address.current(), self.local_port())
+        rl_discovery::invite(self.key, &self.config.relays, self.address.current(), self.local_port())
     }
 
     fn say_invite(&self, log: &mut dyn Write) {
@@ -331,14 +321,13 @@ impl Server {
     pub fn shutdown(&mut self, log: &mut dyn Write) {
         self.peer.leave();
         if let Some(mut n) = self.nostr.take() {
-            if n.announcer.closing()
-                && let Some((_, state)) = &self.lobby
-            {
-                let summary = GameSummary { closed: true, ..self.summary(state) };
+            if let Some((_, state)) = &self.lobby {
+                let summary = self.summary(state);
                 let now = self.now.unwrap_or_else(Instant::now);
-                let unix = self.unix(now).max(n.last_unix.saturating_add(1));
-                n.pool.publish(announcement(&n.identity, &summary, rl_proto::FINGERPRINT, unix, aux()));
-                line(log, format_args!("closing note published"));
+                if let Some(note) = n.publisher.closing(now, &summary, aux) {
+                    n.pool.publish(note);
+                    line(log, format_args!("closing note published"));
+                }
             }
             drop(n);
         }
@@ -737,13 +726,11 @@ impl Server {
         if let Some(a) = &mut self.announcer {
             a.tick(now, &summary.lan());
         }
-        let unix = self.unix(now);
         if let Some(n) = &mut self.nostr
             && self.address.settled()
-            && n.announcer.tick(now, &summary)
+            && let Some(note) = n.publisher.tick(now, &summary, aux)
         {
-            n.last_unix = unix;
-            n.pool.publish(announcement(&n.identity, &summary, rl_proto::FINGERPRINT, unix, aux()));
+            n.pool.publish(note);
         }
     }
 
@@ -773,11 +760,6 @@ impl Server {
                 *last = Some(said);
             }
         }
-    }
-
-    /// The unix time at `now` (on the poll's clock, from the start's).
-    fn unix(&self, now: Instant) -> u64 {
-        self.clock.1.saturating_add(now.saturating_duration_since(self.clock.0).as_secs())
     }
 }
 

@@ -1,8 +1,8 @@
 //! The Host screen (plan 10 task 11, spec §7.1): the game's name, who can
-//! join, a password, the most players and the port; Start hosting opens the
-//! lobby.
+//! join (anyone on the Internet, this network, or by invite only: N43), a
+//! password, the most players and the port; Start hosting opens the lobby.
 
-use egui::{ComboBox, DragValue, Slider, TextEdit, Ui};
+use egui::{ComboBox, DragValue, RichText, Slider, TextEdit, Ui};
 
 use super::multiplayer::status;
 use super::{MenuData, footer, form_row, page, primary, section};
@@ -28,13 +28,6 @@ impl View {
     }
 }
 
-fn visibility_name(v: Visibility) -> &'static str {
-    match v {
-        Visibility::Lan => "On this network",
-        Visibility::DirectOnly => "Only by address",
-    }
-}
-
 pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut Vec<UiAction>) {
     let connecting = state.is_connecting();
     let mut start = false;
@@ -53,11 +46,11 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
         });
         form_row(ui, "Who can join", |ui, label| {
             ComboBox::from_id_salt("visibility")
-                .selected_text(visibility_name(p.visibility))
+                .selected_text(p.visibility.label())
                 .width(240.0)
                 .show_ui(ui, |ui| {
-                    for v in [Visibility::Lan, Visibility::DirectOnly] {
-                        ui.selectable_value(&mut p.visibility, v, visibility_name(v));
+                    for v in Visibility::ALL {
+                        ui.selectable_value(&mut p.visibility, v, v.label());
                     }
                 })
                 .response
@@ -78,6 +71,16 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
         });
         form_row(ui, "Port", |ui, label| {
             ui.add(DragValue::new(&mut p.port).range(1..=u16::MAX)).labelled_by(label);
+        });
+        let said = match p.visibility {
+            Visibility::Public => {
+                "Listed on the Internet tab and on this network; the lobby shows its invite code."
+            }
+            Visibility::Lan => "Listed on this network; others join by address.",
+            Visibility::Invite => "Listed nowhere; the lobby shows its invite code to share.",
+        };
+        form_row(ui, "", |ui, _| {
+            ui.label(RichText::new(said).weak());
         });
     });
     if start {

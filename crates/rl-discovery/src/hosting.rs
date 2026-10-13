@@ -1,14 +1,23 @@
-//! Finding the server (plan 12a): its public address (decision N40) and
-//! its invite code (N42).
+//! Hosting a game others can find (plan 12a), shared by the dedicated
+//! server and the game: the public address (decision N40) through
+//! [`AddressWatch`], the invite code (N42) through [`invite`], and the
+//! announcements' signing and timing (N39) through [`Publisher`].
+//!
+//! `AddressWatch` is a driver: it asks STUN on a thread of its own. The
+//! rest is sans-IO (time is an argument).
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
-use rl_discovery::defaults::DEFAULT_RELAYS;
-use rl_discovery::list::is_global;
-use rl_discovery::{Invite, MAX_URL_BYTES, RelayHint};
-use rl_proto::PublicKey;
+use rl_lobby::Identity;
+use rl_proto::{FINGERPRINT, PublicKey};
+
+use crate::announce::{Announcer, GameSummary, announcement};
+use crate::defaults::DEFAULT_RELAYS;
+use crate::invite::{Invite, MAX_URL_BYTES, RelayHint};
+use crate::list::is_global;
+use crate::nostr::Event;
 
 /// The public address is asked again this often (a home server's address
 /// changes).
@@ -16,8 +25,8 @@ pub const ADDRESS_EVERY: Duration = Duration::from_secs(10 * 60);
 /// How long one round of STUN questions may take.
 pub const STUN_DEADLINE: Duration = Duration::from_secs(3);
 
-/// The server's public address: the configured one, or what STUN answers
-/// (on a thread, at the start and every [`ADDRESS_EVERY`]).
+/// A host's public address: the configured one, or what STUN answers (on a
+/// thread, at the start and every [`ADDRESS_EVERY`]).
 pub struct AddressWatch {
     servers: Vec<String>,
     current: Option<IpAddr>,
@@ -114,7 +123,7 @@ impl AddressWatch {
         let servers = self.servers.clone();
         // No thread: the receiver reports a disconnect, read as no answer.
         let _ = std::thread::Builder::new().name("stun".into()).spawn(move || {
-            let _ = tx.send(rl_discovery::public_ip(&servers, STUN_DEADLINE));
+            let _ = tx.send(crate::stun::public_ip(&servers, STUN_DEADLINE));
         });
         self.pending = Some(rx);
     }
@@ -140,14 +149,83 @@ pub fn relay_hints(relays: &[String]) -> Vec<RelayHint> {
     hints
 }
 
-/// The server's invite: its key, its relays, and its public address on
-/// `port` (codes hold IPv4 only).
+/// A host's invite: its key, its relays, and its public address on `port`
+/// (codes hold IPv4 only).
 pub fn invite(key: PublicKey, relays: &[String], addr: Option<IpAddr>, port: u16) -> Invite {
     let addr = match addr {
         Some(ip @ IpAddr::V4(_)) => Some(SocketAddr::new(ip, port)),
         _ => None,
     };
     Invite { key, relays: relay_hints(relays), addr }
+}
+
+/// When and how a hosted game's notes are published (N39): the
+/// [`Announcer`]'s timing, signed by the host's identity, `created_at` on
+/// the caller's clock from a unix time taken once (no wall clock in the
+/// poll), and the closing note newer than the last note (a tie in the
+/// second would let relays and lists keep the open one, as ties go by id).
+pub struct Publisher {
+    identity: Identity,
+    announcer: Announcer,
+    /// The unix time at an instant: `created_at` follows the caller's clock
+    /// from there.
+    clock: (Instant, u64),
+    /// The last note's `created_at`.
+    last_unix: Option<u64>,
+}
+
+impl Publisher {
+    /// Notes signed by `identity`; `now_unix` is the unix time at `now`.
+    pub fn new(identity: Identity, now: Instant, now_unix: u64) -> Publisher {
+        Publisher { identity, announcer: Announcer::new(), clock: (now, now_unix), last_unix: None }
+    }
+
+    /// The unix time at `now`, on the caller's clock.
+    pub fn unix(&self, now: Instant) -> u64 {
+        self.clock.1.saturating_add(now.saturating_duration_since(self.clock.0).as_secs())
+    }
+
+    /// The note of `summary` to publish now, if one is due (every minute,
+    /// at a change after 12 s); `aux` gives the signature's randomness.
+    pub fn tick(
+        &mut self,
+        now: Instant,
+        summary: &GameSummary,
+        aux: impl FnOnce() -> [u8; 32],
+    ) -> Option<Event> {
+        if !self.announcer.tick(now, summary) {
+            return None;
+        }
+        let unix = self.unix(now);
+        self.last_unix = Some(unix);
+        Some(announcement(&self.identity, summary, FINGERPRINT, unix, aux()))
+    }
+
+    /// Once, when a note was published: the closing note of `summary`
+    /// (`closed: true`), at least a second newer than the last note.
+    pub fn closing(
+        &mut self,
+        now: Instant,
+        summary: &GameSummary,
+        aux: impl FnOnce() -> [u8; 32],
+    ) -> Option<Event> {
+        if !self.announcer.closing() {
+            return None;
+        }
+        let unix = self.unix(now).max(self.last_unix.unwrap_or(0).saturating_add(1));
+        let summary = GameSummary { closed: true, ..summary.clone() };
+        Some(announcement(&self.identity, &summary, FINGERPRINT, unix, aux()))
+    }
+
+    /// A note was published (and no closing note yet).
+    pub fn published(&self) -> bool {
+        self.last_unix.is_some()
+    }
+
+    /// The key the notes are signed with.
+    pub fn key(&self) -> PublicKey {
+        self.identity.public()
+    }
 }
 
 #[cfg(test)]
@@ -187,7 +265,7 @@ mod tests {
         assert_eq!(invite([1; 32], &[], Some(v6), 7).addr, None);
         let code =
             invite([1; 32], &DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect::<Vec<_>>(), Some(v4), 7);
-        assert_eq!(Invite::decode(&code.encode()).unwrap().relays.len(), rl_discovery::MAX_DEFAULT_HINTS);
+        assert_eq!(Invite::decode(&code.encode()).unwrap().relays.len(), crate::invite::MAX_DEFAULT_HINTS);
     }
 
     #[test]
@@ -213,5 +291,54 @@ mod tests {
         assert!(w.learnt(Some(private), false).unwrap().contains("not a public address"));
         assert_eq!(w.current(), None);
         assert_eq!(w.learnt(Some(private), false), None);
+    }
+
+    fn summary() -> GameSummary {
+        GameSummary {
+            v: rl_proto::PROTOCOL_VERSION,
+            name: "Den".into(),
+            mode: "deathmatch".into(),
+            map: "olx-level-dirt-level".into(),
+            map_name: "Dirt Level".into(),
+            mod_id: "olx-classic".into(),
+            mod_hash: rl_proto::NO_HASH.into(),
+            players: 1,
+            max_players: 8,
+            spectators: 0,
+            max_spectators: 4,
+            password: false,
+            region: crate::Region::Europe,
+            playing: false,
+            addr: None,
+            port: 23400,
+            closed: false,
+        }
+    }
+
+    #[test]
+    fn the_publisher_signs_due_notes_and_closes_once_newer() {
+        let id = Identity::from_secret([7; 32]).unwrap();
+        let t0 = Instant::now();
+        let mut p = Publisher::new(id.clone(), t0, 1_000_000);
+        assert_eq!(p.key(), id.public());
+        assert!(!p.published());
+        let s = summary();
+        let first = p.tick(t0, &s, || [1; 32]).expect("the first note at once");
+        assert!(first.verify() && first.pubkey == id.public());
+        assert_eq!(first.created_at, 1_000_000);
+        assert!(p.published());
+        assert!(p.tick(t0 + Duration::from_secs(5), &s, || unreachable!("not due")).is_none());
+        let later = p.tick(t0 + Duration::from_secs(60), &s, || [2; 32]).expect("the minute's note");
+        assert_eq!(later.created_at, 1_000_060, "on the caller's clock");
+        // Closing in the same second: one newer.
+        let close = p.closing(t0 + Duration::from_secs(60), &s, || [3; 32]).expect("a closing note");
+        assert_eq!(close.created_at, 1_000_061);
+        let (closed, _) = crate::parse_announcement(&close).unwrap();
+        assert!(closed.closed);
+        assert!(p.closing(t0 + Duration::from_secs(61), &s, || [4; 32]).is_none(), "once");
+        assert!(p.tick(t0 + Duration::from_secs(200), &s, || [5; 32]).is_none(), "nothing after closing");
+        // Nothing published: nothing to close.
+        let mut q = Publisher::new(id, t0, 5);
+        assert!(q.closing(t0, &s, || [6; 32]).is_none());
     }
 }

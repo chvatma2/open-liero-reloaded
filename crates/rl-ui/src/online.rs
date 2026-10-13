@@ -4,7 +4,7 @@
 //! (`rl-game`) converts the lobby's own types into these views and the
 //! [`LobbyCommand`]s back.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use rl_input::KeyCode;
 use rl_sim::MAX_SLOTS;
@@ -62,14 +62,189 @@ impl std::fmt::Debug for Password {
     }
 }
 
-/// How a game is announced.
+/// Who can join a hosted game (decision N43).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Visibility {
+    /// Announced on the Internet (Nostr) and on the local network.
+    Public,
     /// Announced on the local network (and joinable by address).
     #[default]
     Lan,
-    /// Joinable only by address.
-    DirectOnly,
+    /// Announced nowhere: joined by its invite code or address (plan 10's
+    /// `DirectOnly` reads as this).
+    #[serde(alias = "DirectOnly")]
+    Invite,
+}
+
+impl Visibility {
+    pub const ALL: [Visibility; 3] = [Visibility::Public, Visibility::Lan, Visibility::Invite];
+
+    /// The Host screen's words.
+    pub fn label(self) -> &'static str {
+        match self {
+            Visibility::Public => "Anyone (Internet)",
+            Visibility::Lan => "This network",
+            Visibility::Invite => "Invite only",
+        }
+    }
+}
+
+/// The region a host says it is in (`rl_discovery::Region`, mirrored: this
+/// crate stays free of networking; `rl-game` converts, naming every
+/// variant).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Region {
+    Europe,
+    NorthAmericaEast,
+    NorthAmericaWest,
+    SouthAmerica,
+    Asia,
+    Oceania,
+    Africa,
+    /// Also what a region this version does not know reads as.
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+impl Region {
+    pub const ALL: [Region; 8] = [
+        Region::Unknown,
+        Region::Europe,
+        Region::NorthAmericaEast,
+        Region::NorthAmericaWest,
+        Region::SouthAmerica,
+        Region::Asia,
+        Region::Oceania,
+        Region::Africa,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Region::Europe => "Europe",
+            Region::NorthAmericaEast => "North America (east)",
+            Region::NorthAmericaWest => "North America (west)",
+            Region::SouthAmerica => "South America",
+            Region::Asia => "Asia",
+            Region::Oceania => "Oceania",
+            Region::Africa => "Africa",
+            Region::Unknown => "Not said",
+        }
+    }
+}
+
+/// The most relays, or STUN servers, the options keep.
+pub const MAX_SERVERS: usize = 32;
+/// The longest relay URL or STUN server kept, in bytes.
+pub const SERVER_BYTES: usize = 200;
+/// The most blocked hosts kept.
+pub const MAX_BLOCKED: usize = 1000;
+
+/// Whether `url` can be a relay: `wss://` or `ws://` and a host, at most
+/// [`SERVER_BYTES`], no whitespace or control character.
+pub fn valid_relay(url: &str) -> bool {
+    let rest = url.strip_prefix("wss://").or_else(|| url.strip_prefix("ws://"));
+    rest.is_some_and(|r| !r.is_empty() && !r.starts_with('/'))
+        && url.len() <= SERVER_BYTES
+        && !url.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+/// Whether `server` can be a STUN server: `host:port`, at most
+/// [`SERVER_BYTES`], no whitespace or control character.
+pub fn valid_stun(server: &str) -> bool {
+    let port =
+        server.rsplit_once(':').filter(|(h, _)| !h.is_empty()).and_then(|(_, p)| p.parse::<u16>().ok());
+    port.is_some_and(|p| p != 0)
+        && server.len() <= SERVER_BYTES
+        && !server.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+/// A host's key as the options keep it: 64 lowercase hex characters.
+pub fn key_hex(key: &[u8; 32]) -> String {
+    key.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `hex` as a key (64 hex characters, any case).
+pub fn parse_key_hex(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 || !hex.is_ascii() {
+        return None;
+    }
+    let mut key = [0; 32];
+    for (i, b) in key.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()?;
+    }
+    Some(key)
+}
+
+/// Finding games on the Internet (plan 12a; the options' Online tab).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FindingSettings {
+    /// The region this player's hosted games say.
+    pub region: Region,
+    /// The Nostr relays (`wss://` or `ws://`); `None`: the game's
+    /// defaults (`MenuData::default_relays`), which may grow.
+    pub relays: Option<Vec<String>>,
+    /// The STUN servers (`host:port`) asked for the public address; `None`:
+    /// the defaults.
+    pub stun: Option<Vec<String>>,
+    /// The public address announced instead of asking STUN (empty: ask).
+    pub public_address: String,
+    /// Hosts whose games the Internet tab hides: their keys, 64 lowercase
+    /// hex characters.
+    pub blocked: Vec<String>,
+}
+
+impl FindingSettings {
+    /// Fixes what a hand-edited file may hold: bad entries dropped (one
+    /// warning each), duplicates and the excess beyond the limits dropped.
+    pub fn sanitize(&mut self) -> Vec<String> {
+        let mut w = Vec::new();
+        let mut list = |name: &str, list: &mut Option<Vec<String>>, ok: fn(&str) -> bool| {
+            let Some(l) = list else { return };
+            let mut kept: Vec<String> = Vec::new();
+            for s in l.drain(..) {
+                let s = s.trim().to_string();
+                if !ok(&s) {
+                    w.push(format!("online.finding.{name}: {s:?} is not one: dropped"));
+                } else if !kept.contains(&s) {
+                    kept.push(s);
+                }
+            }
+            if kept.len() > MAX_SERVERS {
+                w.push(format!("online.finding.{name}: over {MAX_SERVERS}: the rest dropped"));
+                kept.truncate(MAX_SERVERS);
+            }
+            *l = kept;
+        };
+        list("relays", &mut self.relays, valid_relay);
+        list("stun", &mut self.stun, valid_stun);
+        let address = self.public_address.trim();
+        if !address.is_empty() && address.parse::<IpAddr>().is_err() {
+            w.push(format!("online.finding.public_address {address:?} is not an IP address: none"));
+            self.public_address.clear();
+        } else {
+            self.public_address = address.to_string();
+        }
+        let mut blocked: Vec<String> = Vec::new();
+        for k in self.blocked.drain(..) {
+            match parse_key_hex(k.trim()) {
+                Some(key) => {
+                    let hex = key_hex(&key);
+                    if !blocked.contains(&hex) {
+                        blocked.push(hex);
+                    }
+                }
+                None => w.push(format!("online.finding.blocked: {k:?} is not a key: dropped")),
+            }
+        }
+        if blocked.len() > MAX_BLOCKED {
+            w.push(format!("online.finding.blocked: over {MAX_BLOCKED}: the oldest dropped"));
+            blocked.drain(..blocked.len() - MAX_BLOCKED);
+        }
+        self.blocked = blocked;
+        w
+    }
 }
 
 /// The Host screen's choices.
@@ -139,6 +314,8 @@ pub struct OnlineSettings {
     /// The key that opens the chat in an online match (spec §7.2: T,
     /// configurable). A key the game keeps (`GAME_KEYS`) is not one.
     pub chat_key: KeyCode,
+    /// Finding games on the Internet: region, relays, STUN, blocked hosts.
+    pub finding: FindingSettings,
 }
 
 /// The chat key by default (spec §7.2).
@@ -151,6 +328,7 @@ impl Default for OnlineSettings {
             host: HostPrefs::default(),
             port: DEFAULT_PORT,
             chat_key: CHAT_KEY,
+            finding: FindingSettings::default(),
         }
     }
 }
@@ -170,6 +348,7 @@ impl OnlineSettings {
             w.push(format!("online.chat_key {:?} is the game's ({what}): {CHAT_KEY:?}", self.chat_key));
             self.chat_key = CHAT_KEY;
         }
+        w.extend(self.finding.sanitize());
         w
     }
 }
@@ -184,6 +363,80 @@ pub struct LanEntry {
     /// A password is needed.
     pub password: bool,
     pub addr: SocketAddr,
+}
+
+/// A ping as the Internet tab shows it (`rl_discovery::Ping`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PingView {
+    #[default]
+    Unknown,
+    Measuring,
+    Ms(u32),
+    NoAnswer,
+}
+
+impl PingView {
+    pub fn text(self) -> String {
+        match self {
+            PingView::Unknown => String::new(),
+            PingView::Measuring => "…".into(),
+            PingView::Ms(ms) => format!("{ms} ms"),
+            PingView::NoAnswer => "no answer".into(),
+        }
+    }
+}
+
+/// A game announced on the Internet (the app converts the game list's).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InternetEntry {
+    /// The host's key (what Join expects, and what Block hides).
+    pub key: [u8; 32],
+    pub name: String,
+    /// The level's name.
+    pub map: String,
+    /// The mod's name (its id when this game does not have it).
+    pub mod_name: String,
+    pub players: u8,
+    pub max_players: u8,
+    pub ping: PingView,
+    pub region: Region,
+    /// A password is needed.
+    pub password: bool,
+    /// Where it listens; `None`: it has no public address yet, so it
+    /// cannot be joined yet.
+    pub addr: Option<SocketAddr>,
+    /// For a game of another version, "needs version …" (greyed out).
+    pub incompatible: Option<String>,
+    /// A match is under way (joiners watch it first).
+    pub playing: bool,
+}
+
+/// The Internet tab's state (the app keeps it current while the
+/// Multiplayer screen shows).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InternetStatus {
+    /// No relay is connected and each has failed (or none is set).
+    NoRelay,
+    /// Waiting for a relay's stored games (its first `EOSE`).
+    #[default]
+    Searching,
+    /// The games are listed.
+    Listed,
+}
+
+/// What the Internet tab lists.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InternetView {
+    pub status: InternetStatus,
+    pub games: Vec<InternetEntry>,
+}
+
+/// What an Internet game's Join says when it cannot join.
+pub const CANNOT_JOIN_YET: &str = "cannot be joined yet";
+
+/// The text of the Direct tab's field is an invite code (`rlx1`, any case).
+pub fn is_invite(text: &str) -> bool {
+    text.trim().get(..4).is_some_and(|p| p.eq_ignore_ascii_case("rlx1"))
 }
 
 /// The lobby as the player in it sees it.
@@ -207,6 +460,10 @@ pub struct LobbyView {
     /// The content this game lacks is this many bytes, over the prompt:
     /// nothing downloads until the player says Download (or leaves).
     pub prompt: Option<u64>,
+    /// The hosted game's invite code (Copy puts it on the clipboard).
+    pub invite: Option<String>,
+    /// Whether a public game is listed on the Internet, or why not.
+    pub listing: Option<String>,
 }
 
 /// One download of the lobby's list (plan 11).

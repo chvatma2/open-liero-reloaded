@@ -78,8 +78,11 @@ pub struct Net {
     pub joined: bool,
     /// The host says this client's inputs are late (spec §3.2).
     pub lagging: bool,
-    /// LAN announcements while hosting a LAN game.
+    /// LAN announcements while hosting a Public or LAN game.
     pub announcer: Option<Announcer>,
+    /// What a hosted game does to be found (plan 12a): its address, its
+    /// invite, a Public game's notes.
+    pub hosted: Option<crate::finding::Hosted>,
     /// The hosted game has a password (the LAN announcement says so).
     pub password: bool,
     /// The hosted game's most players (the LAN announcement's).
@@ -129,6 +132,7 @@ impl Net {
             joined: false,
             lagging: false,
             announcer: None,
+            hosted: None,
             password: false,
             max_players: 0,
             announce: None,
@@ -213,6 +217,8 @@ pub fn lobby_view(
         can_start,
         downloads,
         prompt,
+        invite: None,
+        listing: None,
     }
 }
 

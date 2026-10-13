@@ -401,9 +401,12 @@ use rl_ui::{HostPrefs, Profiles, Screen, Settings, Store, UiAction, UiState, Vis
 
 /// A shell of the menus over `dir` playing as `name`, with Classic on Dirt
 /// Level saved as its match (no bot, a `minutes` time limit), no LAN
-/// (tests use no fixed port) and hosting on an ephemeral port.
+/// (tests use no fixed port), hosting on an ephemeral port, and no relay
+/// or STUN server (nothing leaves the machine).
 pub(crate) fn menus(dir: &std::path::Path, store: Store, name: &str, minutes: f32) -> Shell {
     let mut settings = Settings::default();
+    settings.online.finding.relays = Some(Vec::new());
+    settings.online.finding.stun = Some(Vec::new());
     let m = &mut settings.gameplay.match_prefs;
     m.mod_id = MOD.into();
     m.level_id = LEVEL.into();
@@ -463,7 +466,7 @@ pub(crate) fn frames_until(
 pub(crate) fn host(sh: &mut Shell) {
     sh.act(UiAction::Open(Screen::Multiplayer));
     sh.act(UiAction::Open(Screen::Host));
-    sh.act(UiAction::Host(HostPrefs { visibility: Visibility::DirectOnly, ..HostPrefs::default() }));
+    sh.act(UiAction::Host(HostPrefs { visibility: Visibility::Invite, ..HostPrefs::default() }));
 }
 
 pub(crate) fn join(sh: &mut Shell, port: u16) {
@@ -769,16 +772,17 @@ fn flags_are_not_remembered() {
     let Some(dir) = content_dir() else { return };
     let data = tempfile::tempdir().unwrap();
     let mut sh = menus(&dir, Store::open(data.path()), "Anna", 1.0);
+    let online = sh.ui.settings().online.clone();
     sh.host_from_flag(Some("Flagged".into()));
     assert_eq!(sh.ui.screen(), Screen::Lobby);
     frames_until("the lobby shows", Duration::from_secs(3), &mut [&mut sh], |s| s[0].data.lobby.is_some());
     assert_eq!(sh.data.lobby.as_ref().unwrap().name, "Flagged");
-    assert_eq!(sh.ui.settings().online, rl_ui::OnlineSettings::default());
+    assert_eq!(sh.ui.settings().online, online);
     let mut v = sh.ui.settings().video.clone();
     v.ui_scale = 1.5;
     sh.act(UiAction::SetVideo(v));
     sh.flush();
     let saved = Store::open(data.path()).load_settings().value;
     assert_eq!(saved.video.ui_scale, 1.5, "the options' change is saved");
-    assert_eq!(saved.online, rl_ui::OnlineSettings::default(), "the flag's choices are not");
+    assert_eq!(saved.online, online, "the flag's choices are not");
 }

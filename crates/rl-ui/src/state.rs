@@ -13,7 +13,12 @@
 //!   become `AppCommand::Lobby(LobbyCommand)`, the weapon screen opened
 //!   from it answers with `Loadout`, and Back or `LeaveLobby` leaves
 //!   (`LeaveOnline`, to Multiplayer). The download prompt's Download is
-//!   `ApproveDownloads`, its Leave leaves (plan 11).
+//!   `ApproveDownloads`, its Leave leaves (plan 11). Finding games (plan
+//!   12a): the Internet tab's Join is `JoinListed` (a `JoinGame` that
+//!   expects the listed key), its "Block this host" `BlockHost` (the app's
+//!   list hides it at once; the key is saved); the Direct tab's Join takes
+//!   an address or an invite code alike (the app tells them apart); the
+//!   options' Online tab sets the finding settings (`SetFinding`, saved).
 //! - **Online matches** (plan 10 task 12): while a lobby is up the app
 //!   reports `MatchStarted` when the host's match starts (from any
 //!   screen: InGame, no weapon selection, it was the lobby's). Esc opens
@@ -52,7 +57,7 @@ use rl_input::Bindings;
 use rl_sim::MAX_SLOTS;
 
 use crate::match_prefs::MatchPrefs;
-use crate::online::{HostPrefs, LobbyCommand, Password};
+use crate::online::{FindingSettings, HostPrefs, LobbyCommand, Password, key_hex};
 use crate::profiles::Profiles;
 use crate::settings::{AudioSettings, Settings, VideoSettings};
 
@@ -149,14 +154,27 @@ pub enum UiAction {
     ImportFinished,
     /// The Host screen's Start hosting.
     Host(HostPrefs),
-    /// The Multiplayer screen's Join: `host[:port]` as typed and the
-    /// password (none when empty).
+    /// The Multiplayer screen's Direct Join: `host[:port]` or an invite
+    /// code (`rlx1…`) as typed, and the password (none when empty).
     Join {
         addr: String,
         password: Option<Password>,
     },
     /// A game on the network was clicked.
     JoinLan(SocketAddr),
+    /// The Internet tab's Join: the listed game at `addr`, whose host must
+    /// prove it holds `key`.
+    JoinListed {
+        addr: SocketAddr,
+        key: [u8; 32],
+        password: Option<Password>,
+    },
+    /// The Internet tab's "Block this host": its games are hidden from now
+    /// on (remembered in `settings.online.finding.blocked`).
+    BlockHost([u8; 32]),
+    /// The options' Online tab: region, relays, STUN servers, the public
+    /// address, blocked hosts.
+    SetFinding(FindingSettings),
     LobbyReady(bool),
     LobbySpectate(bool),
     LobbyChat(String),
@@ -231,12 +249,17 @@ pub enum AppCommand {
     /// Host a game with these choices, then report [`UiAction::LobbyJoined`]
     /// or [`UiAction::OnlineFailed`].
     HostGame(HostPrefs),
-    /// Join the game at `addr` (`host[:port]` as typed; the port defaults
-    /// to `settings.online.port`), then report as for `HostGame`.
+    /// Join the game at `addr` (`host[:port]` as typed, the port defaulting
+    /// to `settings.online.port`, or an invite code: `is_invite`), then
+    /// report as for `HostGame`. With `expected_host`, a host whose key is
+    /// another is refused.
     JoinGame {
         addr: String,
         password: Option<Password>,
+        expected_host: Option<[u8; 32]>,
     },
+    /// Hide this host's games from the Internet tab now.
+    BlockHost([u8; 32]),
     /// What the player asks of the lobby they are in.
     Lobby(LobbyCommand),
     /// Leave the lobby, or give up hosting or joining.
@@ -571,8 +594,25 @@ impl UiState {
                 Vec::new()
             }
             UiAction::Host(prefs) => self.host(prefs),
-            UiAction::Join { addr, password } => self.join_at(addr, password, true),
-            UiAction::JoinLan(addr) => self.join_at(addr.to_string(), None, false),
+            UiAction::Join { addr, password } => self.join_at(addr, password, true, None),
+            UiAction::JoinLan(addr) => self.join_at(addr.to_string(), None, false, None),
+            UiAction::JoinListed { addr, key, password } => {
+                self.join_at(addr.to_string(), password, false, Some(key))
+            }
+            UiAction::BlockHost(key) => {
+                if self.screen != Screen::Multiplayer {
+                    return Vec::new();
+                }
+                let hex = key_hex(&key);
+                let mut out = vec![AppCommand::BlockHost(key)];
+                if !self.settings.online.finding.blocked.contains(&hex) {
+                    let mut f = self.settings.online.finding.clone();
+                    f.blocked.push(hex);
+                    out.extend(self.set_finding(f));
+                }
+                out
+            }
+            UiAction::SetFinding(f) => self.set_finding(f),
             UiAction::LobbyJoined => {
                 if self.connecting.take().is_some() {
                     self.online = true;
@@ -656,9 +696,25 @@ impl UiState {
         out
     }
 
-    /// Join a game (the Multiplayer screen): an address typed is remembered,
-    /// one clicked in the LAN list is not.
-    fn join_at(&mut self, addr: String, password: Option<Password>, remember: bool) -> Vec<AppCommand> {
+    /// The finding settings, sanitized; saved when they changed.
+    fn set_finding(&mut self, mut f: FindingSettings) -> Vec<AppCommand> {
+        f.sanitize();
+        if self.settings.online.finding == f {
+            return Vec::new();
+        }
+        self.settings.online.finding = f;
+        vec![self.save_settings()]
+    }
+
+    /// Join a game (the Multiplayer screen): an address or invite typed is
+    /// remembered, a game clicked in a list is not.
+    fn join_at(
+        &mut self,
+        addr: String,
+        password: Option<Password>,
+        remember: bool,
+        expected_host: Option<[u8; 32]>,
+    ) -> Vec<AppCommand> {
         let addr: String = addr.trim().chars().take(crate::online::ADDRESS_CHARS).collect();
         if self.screen != Screen::Multiplayer || self.is_connecting() || addr.is_empty() {
             return Vec::new();
@@ -666,7 +722,7 @@ impl UiState {
         self.message = None;
         self.connecting = Some(Screen::Multiplayer);
         let password = password.filter(|p| !p.is_empty());
-        let mut out = vec![AppCommand::JoinGame { addr: addr.clone(), password }];
+        let mut out = vec![AppCommand::JoinGame { addr: addr.clone(), password, expected_host }];
         if remember && self.settings.online.last_address != addr {
             self.settings.online.last_address = addr;
             out.push(self.save_settings());

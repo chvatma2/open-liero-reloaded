@@ -53,6 +53,10 @@ tempfile.workspace = true
 rl-vfs.workspace = true
 # The tests set a client's prompt bytes (`OnlinePeer::test_prompt_limit`).
 rl-online = { workspace = true, features = ["test-hooks"] }
+# Finding games end to end (plan 12a): the dedicated server in-process,
+# announcing to rl-discovery's in-process test relay.
+rl-discovery = { workspace = true, features = ["test-relay"] }
+rl-server.workspace = true
 
 [[test]]
 name = "integration"

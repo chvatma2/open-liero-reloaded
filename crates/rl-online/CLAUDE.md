@@ -31,7 +31,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   player, the dedicated server's, `look` unused; `Client { addr,
   password, expected_host }`: a host whose key is not `expected_host`, or
   whose `HostProof` fails, ends it with `Refused(WRONG_HOST)`, "this is not
-  the game you were invited to"; `content_cfg`:
+  the game you were invited to"; a client not welcomed `JOIN_DEADLINE`
+  (10 s) after its link opened ends with `Disconnected(NO_ANSWER)`, "the
+  game did not answer" (a host that never sends `Challenge`, `HostProof`
+  or `Welcome`: the link's keepalives alone never time it out); `content_cfg`:
   `PeerContent`, below); `poll(now, local_keys, on_tick) ->
   Vec<OnlineEvent>`; `content()` (what matches and replays load from),
   `downloads()`, `download_prompt()` (the bytes waiting for approval, as
@@ -302,7 +305,10 @@ server, while it has confirmed a checksum tick it has not simulated, ends
 at the last tick it simulated with every checksum up to there, and every
 client's record and replay equal the server's (`MatchEndWire::last_tick`);
 a client expecting another host key is refused (`WRONG_HOST`), one
-expecting the host's joins.
+expecting the host's joins; a host that opens the link and stays silent
+is given up `JOIN_DEADLINE` after the link opened, not before
+(`a_silent_host_is_given_up`: a bare `rl_net` endpoint, one virtual
+clock, no content needed).
 Content (each peer a cache in a temporary directory; `common::
 partial_content` copies the match's packs but some, `with_test_skin`
 adds a skin pack of another hash): a client without the level, or the mod,

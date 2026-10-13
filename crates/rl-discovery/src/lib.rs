@@ -5,9 +5,11 @@
 
 pub mod announce;
 pub mod defaults;
+pub mod hosting;
 mod invite;
 pub mod list;
 pub mod nostr;
+pub mod ping;
 pub mod pool;
 mod relay;
 pub mod stun;
@@ -15,12 +17,14 @@ pub mod stun;
 pub use announce::{
     AnnounceError, Announcer, GameSummary, Hosting, Region, announcement, parse_announcement,
 };
+pub use hosting::{AddressWatch, Publisher, invite, relay_hints};
 pub use invite::{Invite, InviteError, MAX_CODE, MAX_DEFAULT_HINTS, MAX_URL_BYTES, MAX_URL_HINTS, RelayHint};
 pub use list::{GameList, ListedGame, Ping};
 pub use nostr::{
     Event, Filter, FromRelay, KIND_ANNOUNCE, KIND_HANDSHAKE, MAX_CONTENT, MAX_FRAME, NostrError, ToRelay,
     canonical, decode_from_relay, decode_to_relay, encode_from_relay, encode_to_relay,
 };
+pub use ping::Pinger;
 pub use pool::{Pool, PoolConfig, PoolEvent, RelayStatus, Timings};
 pub use stun::{binding_request, parse_binding_response, public_ip};
 

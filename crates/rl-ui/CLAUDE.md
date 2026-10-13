@@ -105,7 +105,10 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   the profile playing), replays (`replays.rs`, each file's header problem
   shown), options (`options.rs`, 720 wide: Video (with the HUD layout),
   Audio, Keys and Online tabs,
-  centred; Online: "Download cache: N MB" and Clear from
+  centred; Online (scrolling): "Finding games" (Region, Public address),
+  Relays and STUN servers (each row's Remove, "New relay"/"Add relay",
+  "Reset relays to defaults"; the same for STUN), Blocked hosts (Unblock),
+  each change one `SetFinding`; then "Download cache: N MB" and Clear from
   `MenuData::download_cache` (`DownloadCacheView`: the app's bytes and
   whether Clear may run, else why, the disabled button's hover; `Err`:
   none, and why) → `UiAction::ClearDownloadCache`, which only the options
@@ -142,11 +145,13 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   (`pressed_once`); in the options Esc first closes an open dialog.
 - **Online screens** (`online.rs`, `screens/{multiplayer,host,lobby}.rs`,
   plan 10 task 11): plain views, no networking (this crate stays free of
-  `rl-net`/`rl-lobby`; `rl-game` converts): `LobbyView`/`MemberView`
+  `rl-net`/`rl-lobby`/`rl-discovery`; `rl-game` converts): `LobbyView`/`MemberView`
   (`seat` is `SEAT_SPECTATOR` or a player's; `phase` is `PHASE_LOBBY` or a
-  match under way), `LanEntry`, `HostPrefs` (`Visibility::{Lan,
-  DirectOnly}`, 2..=32 players, port; `settings.online` remembers the
-  last address and the host's choices), `LobbyCommand`. The state machine:
+  match under way), `LanEntry`, `HostPrefs` (`Visibility::{Public, Lan,
+  Invite}`, N43, "Anyone (Internet)", "This network", "Invite only";
+  plan 10's `DirectOnly` reads as `Invite`; 2..=32 players, port;
+  `settings.online` remembers the last address and the host's choices),
+  `LobbyCommand`. The state machine:
   Main > Multiplayer > Host; `Host(prefs)` / `Join` / `JoinLan` emit
   `HostGame` / `JoinGame` and wait (`is_connecting`) for the app's
   `LobbyJoined` (opens Lobby) or `OnlineFailed(why)` (back, red message);
@@ -161,8 +166,30 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   member: `LobbyForceStart`), else "Waiting for the host"; a Back while
   `phase != PHASE_LOBBY` first asks "Leave the match?" in the widget
   (`lobby::intercept_back`). A locked LAN entry copies its address to the
-  Direct form instead of joining. Tests: `tests/online.rs`; a freshly
+  Direct tab instead of joining. Tests: `tests/online.rs`; a freshly
   opened page needs `settle` (two extra frames) before a pointer click.
+  **Finding games** (plan 12a Task 10): the Multiplayer screen (900 wide)
+  has three tabs: **Internet** (`MenuData::internet`, an `InternetView`
+  the app keeps current: `InternetStatus::{NoRelay, Searching, Listed}`,
+  "No relay reachable", "Searching…", "No games found"; a grid of
+  `InternetEntry`: name (selects: `MenuData::selected_game`, which the app
+  pings), map, mod, players, ping (`PingView`), region, a lock; another
+  version greyed with "needs version …", no address `CANNOT_JOIN_YET`;
+  the selected game's "Game password", Join (`JoinListed { addr, key,
+  password }` → `JoinGame { expected_host: Some(key) }`, not remembered;
+  disabled with its reason on hover) and "Block this host" (`BlockHost`
+  → `AppCommand::BlockHost`, the hex key saved in
+  `online.finding.blocked`)), **LAN** (today's list) and **Direct**
+  ("Address or invite code": `Join` as before, `is_invite` text, `rlx1`
+  any case, said to be an invite; the app decodes it). `FindingSettings`
+  (`online.finding`): `region` (`Region`, rl-discovery's mirrored), `relays`
+  and `stun` (`None`: the app's defaults, `MenuData::default_relays`/
+  `default_stun`; `valid_relay`, `valid_stun`, at most `MAX_SERVERS`),
+  `public_address` (empty: STUN), `blocked` (64 lowercase hex,
+  `key_hex`/`parse_key_hex`, at most `MAX_BLOCKED`); `sanitize` drops bad
+  entries, one warning each; `SetFinding` saves. The lobby shows
+  `LobbyView::invite` with Copy (`ctx.copy_text`) and `listing` (a Public
+  game's line) in an "Invite" section over the setup, the host's only.
   **Online matches** (plan 10 task 12): while online the app's
   `MatchStarted` (from any screen) is `Game::Online` in game, no weapon
   selection (the lobby's); Esc opens the match's menu ("Menu", the match
@@ -305,7 +332,11 @@ last part compares with `rl_scene::SceneAssets` when `RL_CONTENT_DIR` is
 set; `tests/options.rs`: rebinding never leaves an action unreachable, the
 rebinding flow and the other sections through the widgets, game keys never
 bound, the capture swallowing its key, the download cache's Clear (disabled
-with its reason; none); `tests/ingame.rs`: the HUD layout,
+with its reason; none), `options_edit_relays_and_unblock`, the finding
+settings sanitized; `tests/online.rs` also `tabs_and_direct_invite`,
+`internet_games_join_by_key_and_block`, `the_internet_tab_says_no_relay_reachable`,
+`the_lobby_shows_the_invite_and_copies_it`, `the_host_chooses_who_can_join`;
+`tests/ingame.rs`: the HUD layout,
 the weapon selection, the pause menu, Esc/F5 repeats, the results;
 `tests/import.rs`: `import_runs_off_the_ui_thread_and_reports` on
 `fixtures/olx-mini`, and the screen's flow; `tests/hud_snapshots.rs`

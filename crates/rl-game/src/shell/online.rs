@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use rl_audio::Audio;
 use rl_content::Content;
-use rl_discovery::{GameSummary, Hosting, Region};
+use rl_discovery::{GameSummary, Hosting, Invite};
 use rl_lobby::{HostConfig, Identity};
 use rl_net::endpoint::EndpointConfig;
 use rl_net::lan::{Announcer, Listener, broadcast_targets};
@@ -20,9 +20,10 @@ use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{LAN_PORT, LobbyState, Look, MatchStartWire};
 use rl_sim::Keys;
 use rl_ui::hud::{LineKind, LogLine};
-use rl_ui::{HostPrefs, LobbyCommand, Password, Screen, UiAction, Visibility};
+use rl_ui::{HostPrefs, InternetView, LobbyCommand, Password, Screen, UiAction, Visibility, is_invite};
 
 use super::{MAX_SPECTATORS, NET_SIM_BOTS, Outcome, Playing, Shell};
+use crate::finding::{Hosted, Internet, relays_of};
 use crate::net::{self, Net, NetView};
 use crate::online::OnlineDriver;
 use crate::session::{Driver, Session};
@@ -253,6 +254,7 @@ impl Shell {
     pub(super) fn start_host(&mut self, prefs: &HostPrefs) -> anyhow::Result<()> {
         self.leave_net();
         let (id, look) = self.me()?;
+        let signer = id.clone();
         let content = self.open_content()?;
         let m = &self.ui.settings().gameplay.match_prefs;
         let packs = setup_packs(&content, &m.mod_id, &m.level_id)?;
@@ -283,26 +285,47 @@ impl Shell {
         n.setup_packs = Some((key, packs));
         n.password = !prefs.password.is_empty();
         n.max_players = prefs.max_players;
-        if self.lan && prefs.visibility == Visibility::Lan {
+        if self.lan && matches!(prefs.visibility, Visibility::Public | Visibility::Lan) {
             match broadcast_targets().first().map(|t| Announcer::new(*t)) {
                 Some(Ok(a)) => n.announcer = Some(a),
                 Some(Err(e)) => self.log([format!("cannot announce the game on the LAN: {e}")]),
                 None => {}
             }
         }
+        let now = Instant::now();
+        let finding = &self.ui.settings().online.finding;
+        let (hosted, said) = Hosted::start(prefs.visibility, finding, signer, now, unix_now());
+        if let Some(said) = said {
+            println!("rl-game: {said}");
+        }
+        n.hosted = Some(hosted);
         self.net = Some(n);
         Ok(())
     }
 
     /// Joining from the Multiplayer screen: `addr` is `host[:port]` as
-    /// typed (the port defaults to the options' or `--port`).
-    pub(super) fn start_client(&mut self, addr: &str, password: Option<Password>) -> anyhow::Result<()> {
+    /// typed (the port defaults to the options' or `--port`), or an invite
+    /// code (`rlx1…`: its address, its key expected, N42). With
+    /// `expected_host` (an invite's, a listed game's), a host of another
+    /// key is refused (N37).
+    pub(super) fn start_client(
+        &mut self,
+        addr: &str,
+        password: Option<Password>,
+        expected_host: Option<[u8; 32]>,
+    ) -> anyhow::Result<()> {
         self.leave_net();
-        let default_port = self.port.filter(|&p| p != 0).unwrap_or(self.ui.settings().online.port);
-        let to = resolve(addr, default_port)?;
+        let (to, expected_host) = if is_invite(addr) {
+            let invite = Invite::decode(addr)?;
+            let Some(to) = invite.addr else { anyhow::bail!("{INVITE_WITHOUT_ADDRESS}") };
+            (to, Some(invite.key))
+        } else {
+            let default_port = self.port.filter(|&p| p != 0).unwrap_or(self.ui.settings().online.port);
+            (resolve(addr, default_port)?, expected_host)
+        };
         let (id, look) = self.me()?;
         let content = self.open_content()?;
-        let role = PeerRole::Client { addr: to, password: password.map(|p| p.0), expected_host: None };
+        let role = PeerRole::Client { addr: to, password: password.map(|p| p.0), expected_host };
         let endpoint = EndpointConfig { port: 0, impair: self.impair, ..EndpointConfig::default() };
         let peer = OnlinePeer::start(role, endpoint, id, look, content, None, self.peer_content())?;
         println!("rl-game: joining {to}");
@@ -424,6 +447,7 @@ impl Shell {
         if self.plays_online() {
             self.end();
         }
+        self.close_hosted();
         if let Some(p) = self.net.take().and_then(|n| n.peer) {
             self.release(p);
         }
@@ -482,6 +506,7 @@ impl Shell {
     fn lost(&mut self, why: String, out: &mut Vec<Outcome>) {
         eprintln!("rl-game: online: {why}");
         self.end();
+        self.close_hosted();
         if let Some(p) = self.net.take().and_then(|n| n.peer) {
             self.release(p);
         }
@@ -507,6 +532,7 @@ impl Shell {
         self.poll_replays();
         self.poll_lan(now);
         self.poll_sim_host(now);
+        self.poll_internet(now);
         if self.net.is_none() {
             return out;
         }
@@ -521,6 +547,7 @@ impl Shell {
             },
         };
         self.on_net_events(events, &mut out);
+        self.poll_hosted(now);
         let Some(n) = &mut self.net else { return out };
         if let Some((a, info)) = n.announcer.as_mut().zip(n.announce.as_ref()) {
             a.tick(now, info);
@@ -625,16 +652,26 @@ impl Shell {
             // The level's name from the peer's content (`weapons` holds it).
             let level = &state.setup.level_id;
             let map_name = n.weapons.as_ref().and_then(|w| w.0.content.pack_name(level)).unwrap_or_default();
+            let (region, addr) = n
+                .hosted
+                .as_ref()
+                .map_or((rl_discovery::Region::Unknown, None), |h| (h.region, h.address.current()));
             let hosting = Hosting {
                 port,
                 max_players: n.max_players,
                 max_spectators: MAX_SPECTATORS,
                 password: n.password,
-                region: Region::Unknown,
-                addr: None,
+                region,
+                addr,
                 map_name: map_name.into(),
             };
-            n.announce = Some(GameSummary::of_lobby(state, &hosting).lan());
+            let summary = GameSummary::of_lobby(state, &hosting);
+            n.announce = Some(summary.lan());
+            if let Some(h) = &mut n.hosted {
+                h.summary = Some(summary);
+                // The lobby view is made again: its invite lines too.
+                h.shown = (None, None);
+            }
         }
         let can_start = if host {
             can.map_err(|e| net::start_reason(&e, state))
@@ -784,6 +821,108 @@ impl Shell {
             .collect();
     }
 
+    /// The relays while the game needs them (plan 12a): the Multiplayer
+    /// (or Host) screen shows, or a hosted game is public. Opened with the
+    /// settings' relays (else the defaults), closed off the UI thread; the
+    /// game list subscribed while the screens show, the selected game
+    /// pinged, the Internet tab's view kept current.
+    fn poll_internet(&mut self, now: Instant) {
+        let browsing = matches!(self.ui.screen(), Screen::Multiplayer | Screen::Host);
+        let public = self
+            .net
+            .as_ref()
+            .and_then(|n| n.hosted.as_ref())
+            .is_some_and(|h| h.visibility == Visibility::Public);
+        if !browsing && !public {
+            if let Some(i) = self.internet.take() {
+                i.close(false);
+            }
+            self.pinged = None;
+            self.data.internet = InternetView::default();
+            return;
+        }
+        let finding = &self.ui.settings().online.finding;
+        let internet = self
+            .internet
+            .get_or_insert_with(|| Internet::open(relays_of(finding), &finding.blocked, now, unix_now()));
+        internet.browse(browsing, now);
+        internet.poll(now);
+        if self.data.selected_game != self.pinged {
+            self.pinged = self.data.selected_game;
+            if let Some(key) = self.pinged {
+                internet.ping(key);
+            }
+        }
+        if let Some(view) = internet.view(&self.data.catalog) {
+            self.data.internet = view;
+        }
+    }
+
+    /// The Internet tab's "Block this host": its games go from the list now
+    /// (the settings remember the key).
+    pub(super) fn block_host(&mut self, key: [u8; 32]) {
+        if let Some(i) = &mut self.internet {
+            i.block(key);
+            if let Some(view) = i.view(&self.data.catalog) {
+                self.data.internet = view;
+            }
+        }
+        if self.data.selected_game == Some(key) {
+            self.data.selected_game = None;
+        }
+    }
+
+    /// A hosted game's finding (plan 12a): its public address learnt (said
+    /// once, and when it changes), a Public game's notes published once the
+    /// address is settled (the first carries it), and the lobby's invite
+    /// and listing lines kept current.
+    fn poll_hosted(&mut self, now: Instant) {
+        let port = self.local_port().unwrap_or(0);
+        let key = self.identity.as_ref().map(Identity::public);
+        let Some(h) = self.net.as_mut().and_then(|n| n.hosted.as_mut()) else { return };
+        if let Some(said) = h.address.poll(now) {
+            println!("rl-game: {said}");
+            if let Some(s) = &mut h.summary {
+                s.addr = h.address.current();
+            }
+        }
+        if h.address.settled()
+            && let (Some(p), Some(summary), Some(i)) = (&mut h.publisher, &h.summary, &mut self.internet)
+            && let Some(note) = p.tick(now, summary, aux)
+        {
+            i.publish(note);
+        }
+        let invite = key.and_then(|k| h.invite(k, port));
+        let listing = h.listing(self.internet.as_ref(), port);
+        if h.shown != (invite.clone(), listing.clone()) {
+            h.shown = (invite.clone(), listing.clone());
+            if let Some(l) = &mut self.data.lobby {
+                l.invite = invite;
+                l.listing = listing;
+            }
+        }
+    }
+
+    /// A hosted Public game ends: its closing note goes to the relays (the
+    /// pool, closed when no longer needed, sends it first).
+    fn close_hosted(&mut self) {
+        let Some(mut h) = self.net.as_mut().and_then(|n| n.hosted.take()) else { return };
+        let now = Instant::now();
+        if let (Some(p), Some(summary), Some(i)) = (&mut h.publisher, &h.summary, &mut self.internet)
+            && let Some(note) = p.closing(now, summary, aux)
+        {
+            i.publish(note);
+        }
+    }
+
+    /// At exit: the relays let go, waiting (at most 2 s) so a closing
+    /// note leaves.
+    pub(super) fn close_internet(&mut self) {
+        if let Some(i) = self.internet.take() {
+            i.close(true);
+        }
+    }
+
     /// `--net-sim`'s host: polled; it starts whenever every player is ready.
     fn poll_sim_host(&mut self, now: Instant) {
         let Some(h) = &mut self.sim_host else { return };
@@ -799,6 +938,22 @@ impl Shell {
             }
         }
     }
+}
+
+/// Why an invite code without an address is not joined (N40: its host
+/// had no public address; plan 12b reaches such hosts).
+pub const INVITE_WITHOUT_ADDRESS: &str = "this invite has no address: the game cannot be joined yet";
+
+/// The unix time now: notes' `created_at` and the list's ages follow the
+/// frames' clock from here.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// A signature's randomness (BIP-340 `aux`; zeros, still safe, when the
+/// system has none).
+fn aux() -> [u8; 32] {
+    rl_net::random_bytes::<32>().unwrap_or([0; 32])
 }
 
 /// A fresh identity (a key the store does not keep).

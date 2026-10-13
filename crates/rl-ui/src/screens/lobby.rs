@@ -5,7 +5,9 @@
 //! content or its download's percent, and the host's kick, ban and move
 //! buttons), the content downloads (plan 11: name, kind, progress,
 //! state) and the chat; below, Start and "Force start" for the host, else
-//! "Waiting for the host". Ready is disabled while this player lacks
+//! "Waiting for the host". The host's invite code (Copy) and, for a
+//! public game, whether it is listed on the Internet, over the setup
+//! (plan 12a). Ready is disabled while this player lacks
 //! required content. Content over the prompt asks "Download" or "Leave"
 //! first. Back leaves the lobby, after a confirmation when a match runs.
 
@@ -193,6 +195,10 @@ fn setup(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mut Vec<UiAct
     let before = view.setup.clone();
     let mut p = before.clone();
     ScrollArea::vertical().id_salt("lobby setup").auto_shrink([false, false]).show(ui, |ui| {
+        if view.invite.is_some() || view.listing.is_some() {
+            section(ui, "Invite", |ui, _| invite(ui, view));
+            ui.add_space(SECTION_GAP);
+        }
         section(ui, "Your weapons", |ui, _| {
             ui.horizontal(|ui| {
                 if ui.button("Random").clicked() {
@@ -224,6 +230,22 @@ fn setup(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mut Vec<UiAct
     });
     if view.host && p != before {
         out.push(UiAction::LobbySetup(p));
+    }
+}
+
+/// The hosted game's invite code with its Copy (egui's clipboard), and
+/// whether a public game is listed on the Internet.
+fn invite(ui: &mut Ui, view: &LobbyView) {
+    if let Some(code) = &view.invite {
+        ui.horizontal(|ui| {
+            if ui.button("Copy").on_hover_text("Puts the invite code on the clipboard").clicked() {
+                ui.ctx().copy_text(code.clone());
+            }
+            ui.add(egui::Label::new(RichText::new(code).monospace().size(12.0)).wrap());
+        });
+    }
+    if let Some(listing) = &view.listing {
+        ui.label(RichText::new(listing).weak());
     }
 }
 

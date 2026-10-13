@@ -8,9 +8,13 @@ use egui_kittest::kittest::{NodeT, Queryable};
 use rl_content::{Catalog, LevelInfo, ModInfo};
 use rl_ui::screens::{self, MenuData};
 use rl_ui::{
-    AppCommand, DownloadView, HostPrefs, LanEntry, LobbyCommand, LobbyView, MatchPrefs, MemberView,
-    PHASE_LOBBY, Profiles, SEAT_SPECTATOR, Screen, Settings, UiAction, UiState, Visibility,
+    AppCommand, DownloadView, HostPrefs, InternetEntry, InternetStatus, InternetView, LanEntry, LobbyCommand,
+    LobbyView, MatchPrefs, MemberView, PHASE_LOBBY, Password, PingView, Profiles, Region, SEAT_SPECTATOR,
+    Screen, Settings, UiAction, UiState, Visibility, key_hex,
 };
+
+/// The Direct tab's field.
+const ADDRESS: &str = "Address or invite code";
 
 pub fn catalog() -> Catalog {
     Catalog {
@@ -60,6 +64,8 @@ pub fn lobby_view(host: bool) -> LobbyView {
         can_start: Err("Guest is not ready".into()),
         downloads: Vec::new(),
         prompt: None,
+        invite: None,
+        listing: None,
     }
 }
 
@@ -140,10 +146,11 @@ fn typing_an_address_and_joining_emits_join_game() {
     let mut h = harness();
     h.state_mut().ui.update(UiAction::Open(Screen::Multiplayer));
     settle(&mut h);
-    h.get_by_label("Searching…");
-    h.get_by_role_and_label(Role::TextInput, "Address").focus();
+    h.get_by_label("Direct").click();
     settle(&mut h);
-    h.get_by_role_and_label(Role::TextInput, "Address").type_text("192.168.1.5:23400");
+    h.get_by_role_and_label(Role::TextInput, ADDRESS).focus();
+    settle(&mut h);
+    h.get_by_role_and_label(Role::TextInput, ADDRESS).type_text("192.168.1.5:23400");
     settle(&mut h);
     h.get_by_role_and_label(Role::PasswordInput, "Password").focus();
     settle(&mut h);
@@ -153,7 +160,7 @@ fn typing_an_address_and_joining_emits_join_game() {
     settle(&mut h);
     let cmds = &h.state().commands;
     assert!(
-        matches!(&cmds[..], [AppCommand::JoinGame { addr, password: Some(p) }, AppCommand::SaveSettings(s)]
+        matches!(&cmds[..], [AppCommand::JoinGame { addr, password: Some(p), expected_host: None }, AppCommand::SaveSettings(s)]
             if addr == "192.168.1.5:23400" && p.as_str() == "hunter2" && s.online.last_address == addr.as_str()),
         "{cmds:?}"
     );
@@ -178,7 +185,9 @@ fn the_last_address_is_remembered_and_failures_show() {
     );
     h.state_mut().ui.update(UiAction::Open(Screen::Multiplayer));
     settle(&mut h);
-    assert_eq!(h.get_by_role_and_label(Role::TextInput, "Address").value().as_deref(), Some("10.0.0.7"));
+    h.get_by_label("Direct").click();
+    settle(&mut h);
+    assert_eq!(h.get_by_role_and_label(Role::TextInput, ADDRESS).value().as_deref(), Some("10.0.0.7"));
     h.state_mut().ui.update(UiAction::Join { addr: "10.0.0.7".into(), password: None });
     h.state_mut().ui.update(UiAction::OnlineFailed("Wrong password".into()));
     settle(&mut h);
@@ -212,16 +221,24 @@ fn a_lan_entry_click_joins_and_a_locked_one_asks_for_the_password() {
     ];
     h.state_mut().ui.update(UiAction::Open(Screen::Multiplayer));
     settle(&mut h);
+    h.get_by_label("LAN").click();
+    settle(&mut h);
     h.get_by_label_contains("Private").click();
     settle(&mut h);
     assert!(h.state().commands.is_empty(), "{:?}", h.state().commands);
+    // The Direct tab, its address filled in, asks for the password.
     assert_eq!(
-        h.get_by_role_and_label(Role::TextInput, "Address").value().as_deref(),
+        h.get_by_role_and_label(Role::TextInput, ADDRESS).value().as_deref(),
         Some("192.168.1.10:23400")
     );
+    h.get_by_label("LAN").click();
+    settle(&mut h);
     h.get_by_label_contains("Open game").click();
     settle(&mut h);
-    assert_eq!(h.state().commands, [AppCommand::JoinGame { addr: addr.to_string(), password: None }]);
+    assert_eq!(
+        h.state().commands,
+        [AppCommand::JoinGame { addr: addr.to_string(), password: None, expected_host: None }]
+    );
 }
 
 #[test]
@@ -534,7 +551,7 @@ fn the_chat_draft_survives_the_weapon_screen_and_a_moot_dialog_closes() {
 fn passwords_are_neither_printed_nor_saved() {
     let p = HostPrefs { password: "s3cret".into(), ..HostPrefs::default() };
     assert!(!format!("{p:?}").contains("s3cret"));
-    let cmd = AppCommand::JoinGame { addr: "a".into(), password: Some("s3cret".into()) };
+    let cmd = AppCommand::JoinGame { addr: "a".into(), password: Some("s3cret".into()), expected_host: None };
     assert!(!format!("{cmd:?}").contains("s3cret"));
     let ron = ron::to_string(&Settings {
         online: rl_ui::OnlineSettings { host: p, ..Default::default() },
@@ -784,4 +801,191 @@ fn ready_is_disabled_while_content_is_missing() {
     h.get_by_label("Ready").click();
     settle(&mut h);
     assert_eq!(lobby_commands(&h), [&LobbyCommand::Ready(true)]);
+}
+
+// ---- Finding games (plan 12a) ----
+
+fn entry(key: u8, name: &str) -> InternetEntry {
+    InternetEntry {
+        key: [key; 32],
+        name: name.into(),
+        map: "Dirt Level".into(),
+        mod_name: "Liero v1.0".into(),
+        players: 2,
+        max_players: 8,
+        ping: PingView::Unknown,
+        region: Region::Europe,
+        password: false,
+        addr: Some(format!("81.2.69.{key}:23400").parse().unwrap()),
+        incompatible: None,
+        playing: false,
+    }
+}
+
+/// The three tabs: Internet first (searching, then its games), LAN, and
+/// Direct, whose one field takes an invite code as well as an address
+/// (any case; the app tells them apart and the code is remembered).
+#[test]
+fn tabs_and_direct_invite() {
+    let mut h = harness();
+    h.state_mut().ui.update(UiAction::Open(Screen::Multiplayer));
+    settle(&mut h);
+    // Internet: searching until a relay sent its games.
+    h.get_by_label("Searching…");
+    assert!(h.query_by_label(ADDRESS).is_none(), "the Direct field is in its own tab");
+    h.state_mut().data.internet =
+        InternetView { status: InternetStatus::Listed, games: vec![entry(1, "Office DM")] };
+    settle(&mut h);
+    h.get_by_label("Office DM");
+    h.get_by_label("Europe");
+    // LAN: today's list.
+    h.get_by_label("LAN").click();
+    settle(&mut h);
+    h.get_by_label("Searching…");
+    assert!(h.query_by_label("Office DM").is_none());
+    // Direct: an invite code in upper case.
+    h.get_by_label("Direct").click();
+    settle(&mut h);
+    let code = "RLX1QQQSYQCYQ5RQWZQFPG9SCRGWPUGPZYSNSQQQQQQQQQQQQ";
+    h.get_by_role_and_label(Role::TextInput, ADDRESS).focus();
+    settle(&mut h);
+    h.get_by_role_and_label(Role::TextInput, ADDRESS).type_text(code);
+    settle(&mut h);
+    h.get_by_label_contains("An invite code");
+    h.get_by_role_and_label(Role::Button, "Join").click();
+    settle(&mut h);
+    let cmds = &h.state().commands;
+    assert!(
+        matches!(&cmds[..], [AppCommand::JoinGame { addr, password: None, expected_host: None }, AppCommand::SaveSettings(s)]
+            if addr == code && s.online.last_address == code),
+        "{cmds:?}"
+    );
+    assert!(rl_ui::is_invite(" rlx1abc") && rl_ui::is_invite("Rlx1") && !rl_ui::is_invite("rlx"));
+    assert!(!rl_ui::is_invite("192.168.1.5"));
+}
+
+/// The Internet list: a game of another version greyed with its version,
+/// one without an address "cannot be joined yet" (Join disabled, its
+/// reason on hover), a locked one asks for its password; Join expects the
+/// listed key; "Block this host" hides it for good (saved as hex).
+#[test]
+fn internet_games_join_by_key_and_block() {
+    let mut h = harness();
+    h.state_mut().ui.update(UiAction::Open(Screen::Multiplayer));
+    let mut locked = entry(1, "Locked");
+    locked.password = true;
+    locked.ping = PingView::Ms(42);
+    let mut old = entry(2, "Old game");
+    old.incompatible = Some("needs version 2-abcdef".into());
+    let mut unjoinable = entry(3, "Behind a router");
+    unjoinable.addr = None;
+    let games = vec![locked.clone(), old, unjoinable];
+    h.state_mut().data.internet = InternetView { status: InternetStatus::Listed, games };
+    settle(&mut h);
+    h.get_by_label("42 ms");
+    h.get_by_label("needs version 2-abcdef");
+    h.get_by_label("cannot be joined yet");
+    // The unjoinable one: selected, Join stays disabled.
+    h.get_by_label("Behind a router").click();
+    settle(&mut h);
+    assert_eq!(h.state().data.selected_game, Some([3; 32]), "the app pings the selection");
+    let join = h.get_by_role_and_label(Role::Button, "Join");
+    assert!(join.accesskit_node().is_disabled());
+    join.hover();
+    settle(&mut h);
+    h.get_by_label_contains("it has no public address");
+    // Another version: disabled too.
+    h.get_by_label("Old game").click();
+    settle(&mut h);
+    assert!(h.get_by_role_and_label(Role::Button, "Join").accesskit_node().is_disabled());
+    // The locked one: its password, then Join expecting its key.
+    h.get_by_label("Locked").click();
+    settle(&mut h);
+    h.get_by_role_and_label(Role::PasswordInput, "Game password").focus();
+    settle(&mut h);
+    h.get_by_role_and_label(Role::PasswordInput, "Game password").type_text("hunter2");
+    settle(&mut h);
+    h.get_by_role_and_label(Role::Button, "Join").click();
+    settle(&mut h);
+    let cmds = h.state().commands.clone();
+    let [AppCommand::JoinGame { addr, password: Some(p), expected_host: Some(k) }] = &cmds[..] else {
+        panic!("{cmds:?}")
+    };
+    assert_eq!((addr.as_str(), p.as_str(), *k), ("81.2.69.1:23400", "hunter2", [1; 32]));
+    assert_eq!(h.state().ui.settings().online.last_address, "", "a listed game is not remembered");
+    // Give up, then block it.
+    h.state_mut().ui.update(UiAction::Back);
+    h.state_mut().commands.clear();
+    h.get_by_label("Block this host").click();
+    settle(&mut h);
+    let cmds = &h.state().commands;
+    assert!(
+        matches!(&cmds[..], [AppCommand::BlockHost(k), AppCommand::SaveSettings(s)]
+            if *k == [1; 32] && s.online.finding.blocked == [key_hex(&[1; 32])]),
+        "{cmds:?}"
+    );
+    // Blocking twice saves nothing more.
+    let again = h.state_mut().ui.update(UiAction::BlockHost([1; 32]));
+    assert_eq!(again, [AppCommand::BlockHost([1; 32])]);
+    let _ = Password::default();
+}
+
+/// No relay connected: the Internet tab says so.
+#[test]
+fn the_internet_tab_says_no_relay_reachable() {
+    let mut h = harness();
+    h.state_mut().ui.update(UiAction::Open(Screen::Multiplayer));
+    h.state_mut().data.internet = InternetView { status: InternetStatus::NoRelay, games: Vec::new() };
+    settle(&mut h);
+    h.get_by_label("No relay reachable");
+    assert!(h.query_by_label("Searching…").is_none());
+    h.state_mut().data.internet.status = InternetStatus::Listed;
+    settle(&mut h);
+    h.get_by_label("No games found");
+}
+
+/// The host's lobby shows its invite code, Copy puts it on the clipboard,
+/// and a public game's listing line.
+#[test]
+fn the_lobby_shows_the_invite_and_copies_it() {
+    let mut h = harness();
+    let mut v = lobby_view(true);
+    v.invite = Some("rlx1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn".into());
+    v.listing = Some("Listed on the Internet".into());
+    in_lobby(h.state_mut(), v);
+    settle(&mut h);
+    h.get_by_label("rlx1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn");
+    h.get_by_label("Listed on the Internet");
+    h.get_by_label("Copy").click();
+    h.step();
+    let copied = h.output().platform_output.commands.iter().any(
+        |c| matches!(c, egui::OutputCommand::CopyText(t) if t == "rlx1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn"),
+    );
+    assert!(copied, "{:?}", h.output().platform_output.commands);
+    // A client's lobby has none.
+    let mut h = lobby(false);
+    settle(&mut h);
+    assert!(h.query_by_label("Copy").is_none());
+}
+
+/// The Host screen's three choices of who can join.
+#[test]
+fn the_host_chooses_who_can_join() {
+    let mut h = harness();
+    h.state_mut().ui.update(UiAction::Open(Screen::Multiplayer));
+    h.state_mut().ui.update(UiAction::Open(Screen::Host));
+    settle(&mut h);
+    h.get_by_label("Who can join").click();
+    settle(&mut h);
+    h.get_by_label("Invite only");
+    h.get_by_label("Anyone (Internet)").click();
+    settle(&mut h);
+    h.get_by_label("Start hosting").click();
+    settle(&mut h);
+    let cmds = &h.state().commands;
+    let [AppCommand::HostGame(p), ..] = &cmds[..] else { panic!("{cmds:?}") };
+    assert_eq!(p.visibility, Visibility::Public);
+    // Plan 10's word reads as Invite.
+    let old: HostPrefs = ron::from_str("(visibility: DirectOnly)").unwrap();
+    assert_eq!(old.visibility, Visibility::Invite);
 }

@@ -13,6 +13,7 @@ pub mod app;
 pub mod autoplay;
 pub mod clock;
 pub mod drive;
+pub mod finding;
 pub mod gpu;
 pub mod hud;
 pub mod latency;

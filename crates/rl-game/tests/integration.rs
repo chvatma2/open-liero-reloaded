@@ -7,6 +7,7 @@
 
 mod deathmatch;
 mod downloads;
+mod finding;
 mod import;
 mod ingame;
 mod menu;

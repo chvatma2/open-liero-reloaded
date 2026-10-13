@@ -70,6 +70,12 @@ pub const MISMATCH: &str = "your simulation differs from the host's: version or 
 /// Why a client leaves a host that is not the one expected, or that does
 /// not prove its key over the connection's DTLS fingerprints (N37).
 pub const WRONG_HOST: &str = "this is not the game you were invited to";
+/// A client gives up a host that has not welcomed it this long after the
+/// link opened (a host that never sends `Challenge`, `HostProof` or
+/// `Welcome`: the link's keepalives alone never time it out).
+pub const JOIN_DEADLINE: Duration = Duration::from_secs(10);
+/// Why a client gave up after [`JOIN_DEADLINE`].
+pub const NO_ANSWER: &str = "the game did not answer";
 
 /// Which end of online play a peer is.
 pub enum PeerRole {
@@ -136,6 +142,9 @@ impl HostSide {
 
 struct ClientSide {
     lobby: LobbyClient,
+    /// When the link opened, until the host's `Welcome`
+    /// ([`JOIN_DEADLINE`]).
+    waiting_since: Option<Instant>,
 }
 
 enum Side {
@@ -260,7 +269,10 @@ impl OnlinePeer {
                 cfg.limits.max_reliable_bytes_per_s =
                     cfg.limits.max_reliable_bytes_per_s.max(HOST_RELIABLE_BYTES_PER_S);
                 let lobby = LobbyClient::new(me, look, password, expected_host);
-                (Endpoint::connect(cfg, addr)?, Side::Client(Box::new(ClientSide { lobby })))
+                (
+                    Endpoint::connect(cfg, addr)?,
+                    Side::Client(Box::new(ClientSide { lobby, waiting_since: None })),
+                )
             }
         };
         Ok(OnlinePeer {
@@ -321,6 +333,7 @@ impl OnlinePeer {
             if let Side::Host(h) = &mut self.side {
                 h.lobby.tick(self.now_us);
             }
+            self.join_deadline(now);
             self.host_lobby_events(now);
             self.content_tasks();
             self.advance(now, local_keys, on_tick);
@@ -518,7 +531,10 @@ impl OnlinePeer {
             },
             Side::Client(c) => match e {
                 NetEvent::Connected { .. } => match self.endpoint.endpoint().dtls_fingerprints(HOST) {
-                    Some(fps) => c.lobby.connected(fps),
+                    Some(fps) => {
+                        c.waiting_since = Some(now);
+                        c.lobby.connected(fps);
+                    }
                     // An open link always has them.
                     None => self.end_with(OnlineEvent::Disconnected("the connection is not secured".into())),
                 },
@@ -643,6 +659,15 @@ impl OnlinePeer {
         self.game = None;
         self.closed = true;
         self.stats = NetStats::default();
+    }
+
+    /// A client not welcomed [`JOIN_DEADLINE`] after its link opened gives
+    /// up ([`NO_ANSWER`]).
+    fn join_deadline(&mut self, now: Instant) {
+        let Side::Client(c) = &self.side else { return };
+        if c.waiting_since.is_some_and(|t| now.saturating_duration_since(t) >= JOIN_DEADLINE) {
+            self.end_with(OnlineEvent::Disconnected(NO_ANSWER.into()));
+        }
     }
 
     /// A client's end: the event, then every connection closed.
@@ -829,6 +854,9 @@ impl OnlinePeer {
     fn on_client_event(&mut self, e: ClientEvent, now: Instant) {
         match e {
             ClientEvent::Welcome { .. } => {
+                if let Side::Client(c) = &mut self.side {
+                    c.waiting_since = None;
+                }
                 if let Side::Client(c) = &self.side
                     && let Some(state) = c.lobby.state().cloned()
                 {

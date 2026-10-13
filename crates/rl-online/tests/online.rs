@@ -1240,3 +1240,50 @@ fn big_downloads_wait_for_the_prompt() {
         reported_state(&n.peers[a], LEVEL) == Some(DownloadState::Done)
     });
 }
+
+/// A host that opens the link and then says nothing (no `Challenge`,
+/// `HostProof` or `Welcome`): the client gives up `JOIN_DEADLINE` after
+/// the link opened, "the game did not answer", and not before. Both ends
+/// run on one virtual clock, the link's keepalives flowing.
+#[test]
+fn a_silent_host_is_given_up() {
+    use rl_net::endpoint::{Endpoint, NetEvent};
+    use rl_online::peer::{JOIN_DEADLINE, NO_ANSWER};
+
+    let gate: rl_net::endpoint::Gate = Box::new(|_, _| Ok(()));
+    let mut host = Endpoint::host(endpoint(), gate).unwrap();
+    let addr = SocketAddr::from(([127, 0, 0, 1], host.local_port()));
+    let empty = TempDir::new().unwrap();
+    let content = Content::open(empty.path()).unwrap();
+    let role = PeerRole::Client { addr, password: None, expected_host: None };
+    let cfg = PeerContent::without_downloads("a test");
+    let mut client =
+        OnlinePeer::start(role, endpoint(), identity(), look("Anna"), content, None, cfg).unwrap();
+    let mut now = Instant::now();
+    let mut opened = None;
+    let mut ended = None;
+    let mut net = Vec::new();
+    let real = Instant::now();
+    while ended.is_none() && real.elapsed() < Duration::from_secs(20) {
+        host.poll(now, &mut net);
+        if opened.is_none() && net.iter().any(|e| matches!(e, NetEvent::Connected { .. })) {
+            opened = Some(now);
+        }
+        net.clear();
+        for e in client.poll(now, &mut || Keys(0), &mut |_, _, _| {}) {
+            if let OnlineEvent::Disconnected(why) | OnlineEvent::Refused(why) = e {
+                ended = Some((now, why));
+            }
+        }
+        std::thread::sleep(Duration::from_millis(1));
+        // Real time while the link comes up, then 50 ms steps.
+        now = if opened.is_some() { now + Duration::from_millis(50) } else { Instant::now().max(now) };
+    }
+    let opened = opened.expect("the link opened");
+    let (at, why) = ended.expect("the client gave up");
+    assert_eq!(why, NO_ANSWER);
+    assert_eq!(NO_ANSWER, "the game did not answer");
+    let waited = at.saturating_duration_since(opened);
+    assert!(waited >= JOIN_DEADLINE && waited < JOIN_DEADLINE + Duration::from_secs(1), "{waited:?}");
+    assert!(client.is_closed());
+}

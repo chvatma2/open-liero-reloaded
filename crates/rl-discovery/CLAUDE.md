@@ -186,10 +186,29 @@ test relay, relay pool, announcements, game list, STUN and invite codes
   sorts compatible first, then ping (measured, unknown/measuring, no answer),
   name, key. `filter()` has no `since` (no clock); `filter_since(now)` does.
 
+- **`hosting`** (plan 12a Task 10: shared by rl-server and rl-game, moved
+  from rl-server's `finding.rs`): `AddressWatch` (N40, a driver: the
+  configured address wins; else `stun::public_ip(stun, STUN_DEADLINE 3 s)`
+  on a thread at the start and every `ADDRESS_EVERY` (10 minutes), an
+  answer kept only when `is_global`; a later round without an answer
+  keeps the address, one answering a non-public address drops it; `poll`
+  returns a log line when the address is first settled or changes),
+  `relay_hints` (default relays by index, plus the first other URL of at
+  most `MAX_URL_BYTES`), `invite(key, relays, addr, port)` (IPv4 only),
+  and `Publisher` (sans-IO: the `Announcer`'s timing, notes signed by the
+  host's identity, `created_at` on the caller's clock from a unix time
+  taken once, `tick(now, summary, aux)` → the note when due,
+  `closing(..)` once, at least a second newer than the last note).
+- **`ping`** (N41, a driver): `Pinger::ping(key, addr)` times a TCP
+  connect on a thread (`PING_TIMEOUT` 2 s → `Ping::NoAnswer`), one per key
+  and at most `MAX_PINGS` (4) at once; `poll` collects the answers.
+
 Test: `cargo nextest run -p rl-discovery` (`tests/announce.rs` and `tests/list.rs`: announcements and the game list; `tests/nostr.rs`: the published
 events verify, signing round-trips, canonical escaping, tampering, frames
 round-trip, fuzzed frames never panic; `tests/test_relay.rs`: the relay;
-`tests/stun.rs`: STUN; `tests/pool.rs`: the pool against the test relay (silent, dripping,
+`tests/stun.rs`: STUN; unit tests of `hosting` (hints, IPv4-only
+invites, the address watch's answers, the publisher's notes and closing)
+and `ping` (an open and a closed port, the bound); `tests/pool.rs`: the pool against the test relay (silent, dripping,
 slow, slow-reading: every frame arrives intact through partial writes,
 over `ws://` and `wss://`), a flooding relay and unreachable relays: a
 listener on `127.0.0.1` that never accepts, and TEST-NET-1 `192.0.2.1`, never

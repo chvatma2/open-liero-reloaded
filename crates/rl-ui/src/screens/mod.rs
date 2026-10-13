@@ -41,7 +41,7 @@ use rl_sim::{Keys, MAX_SLOTS};
 use crate::hud::LogLine;
 use crate::hud::Results;
 use crate::import::ImportProgress;
-use crate::online::{DownloadCacheView, LanEntry, LobbyView};
+use crate::online::{DownloadCacheView, InternetView, LanEntry, LobbyView};
 use crate::replays::ReplayFile;
 use crate::skin_preview::{PreviewKey, PreviewTextures};
 use crate::state::{Screen, UiAction, UiState};
@@ -91,6 +91,15 @@ pub struct MenuData {
     pub import: ImportProgress,
     /// The games announced on the network (the app keeps it current).
     pub lan_games: Vec<LanEntry>,
+    /// The games announced on the Internet (the app keeps it current
+    /// while the Multiplayer screen shows).
+    pub internet: InternetView,
+    /// The Internet game the player selected (the app measures its ping).
+    pub selected_game: Option<[u8; 32]>,
+    /// The game's relays and STUN servers when the settings name none (the
+    /// options show them; their Reset returns to them).
+    pub default_relays: Vec<String>,
+    pub default_stun: Vec<String>,
     /// The lobby the player is in (the app updates it every frame).
     pub lobby: Option<LobbyView>,
     /// The lobby's chat, oldest first.
@@ -141,6 +150,10 @@ impl MenuData {
             packs_dir: None,
             import: ImportProgress::default(),
             lan_games: Vec::new(),
+            internet: InternetView::default(),
+            selected_game: None,
+            default_relays: Vec::new(),
+            default_stun: Vec::new(),
             lobby: None,
             chat: Vec::new(),
             online_status: None,

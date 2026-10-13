@@ -1,6 +1,7 @@
 //! The menus' page frame: every sub-screen (local play, the options and
-//! each of their tabs, profiles, replays, import, about) draws one column
-//! centred in the window, whatever its size, with its title centred above
+//! each of their tabs, the Multiplayer screen's tabs, profiles, replays,
+//! import, about) draws one column centred in the window, whatever its
+//! size, with its title centred above
 //! and Back at the column's left edge; nothing hugs a corner of a big
 //! screen.
 
@@ -79,8 +80,8 @@ fn widgets(h: &Harness<'static, App>) -> Vec<(String, Rect)> {
 }
 
 /// The screens to check: each opened from the main menu, then the
-/// options' tabs clicked.
-const SCREENS: [(Screen, Option<&str>); 13] = [
+/// options' and the Multiplayer screen's tabs clicked.
+const SCREENS: [(Screen, Option<&str>); 15] = [
     (Screen::LocalPlay, None),
     (Screen::Options, None),
     (Screen::Options, Some("Audio")),
@@ -92,6 +93,8 @@ const SCREENS: [(Screen, Option<&str>); 13] = [
     (Screen::About, None),
     (Screen::Options, Some("Video")),
     (Screen::Multiplayer, None),
+    (Screen::Multiplayer, Some("LAN")),
+    (Screen::Multiplayer, Some("Direct")),
     (Screen::Host, None),
     (Screen::Lobby, None),
 ];

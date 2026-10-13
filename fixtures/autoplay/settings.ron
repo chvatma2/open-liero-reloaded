@@ -1,10 +1,13 @@
 // The settings `xtask e2e` starts the game with (copied into a fresh data
 // directory): the smallest window, a short Deathmatch against two bots on
-// Dirt Level, so the scripted match reaches its results quickly.
+// Dirt Level, so the scripted match reaches its results quickly; no Nostr
+// relay and no STUN server, so the Multiplayer screen reaches nothing
+// beyond the machine.
 (
     version: 1,
     settings: (
         video: (window: W1280x720, fullscreen: false),
+        online: (finding: (relays: Some([]), stun: Some([]))),
         gameplay: (
             match_prefs: (
                 mod_id: "olx-classic",

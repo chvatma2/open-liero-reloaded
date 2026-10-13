@@ -3927,6 +3927,7 @@ dependencies = [
  "rl-render",
  "rl-replay",
  "rl-scene",
+ "rl-server",
  "rl-sim",
  "rl-terrain",
  "rl-ui",
