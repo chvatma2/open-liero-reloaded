@@ -86,5 +86,5 @@ WSL2's default NAT networking hides the Linux side from your LAN, so a host
 or server run inside WSL2 is not reachable by other machines and does not
 see LAN announcements. Either set `networkingMode=mirrored` in
 `%UserProfile%\.wslconfig` under `[wsl2]` and run `wsl --shutdown`, or play
-with the Windows build (`cargo xtask windows` cross-compiles `rl-game`
-and `rl-server`) for real games.
+with the Windows build (`cargo xtask windows` cross-compiles `rl-cli` and
+`rl-game`) for real games.
