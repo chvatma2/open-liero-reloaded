@@ -42,7 +42,8 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   - Seats: players take the lowest free slot below `max_players`; when
     full, spectators (members ≤ `max_players + max_spectators` ≤ 48). A
     joiner during a match is `Waiting` while a seat is free for the next
-    match. While gathering, members who want to play (not spectating by
+    match (a waiting member holds a seat only if it wants to play, not a
+    spectator made to wait for its content). While gathering, members who want to play (not spectating by
     choice) take free seats in join order (`reseat`). Names are sanitized
     and made unique ignoring case with " (n)" (cut to 20 characters).
   - Ready: said ready with nothing `missing`; `Ready(true)` with missing

@@ -753,10 +753,16 @@ impl LobbyHost {
         if self.members.len() >= cap {
             return None;
         }
+        // A waiting member holds a seat for the next match only if it
+        // wants to play (a spectator made to wait for its content does not).
         let seated = self
             .members
             .iter()
-            .filter(|m| matches!(m.seat, SeatWire::Player { .. } | SeatWire::Waiting))
+            .filter(|m| match m.seat {
+                SeatWire::Player { .. } => true,
+                SeatWire::Waiting => m.wants_play,
+                SeatWire::Spectator => false,
+            })
             .count();
         if seated >= usize::from(self.cfg.max_players) {
             Some(SeatWire::Spectator)

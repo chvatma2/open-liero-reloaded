@@ -1404,3 +1404,24 @@ fn download_progress_is_published_and_coalesced() {
     net.host.set_download(99, Some(5));
     consistent(&net);
 }
+
+/// A spectator by choice made `Waiting` at a start (it lacked content)
+/// holds no seat for the next match: a mid-match joiner still waits for
+/// one.
+#[test]
+fn a_waiting_spectator_holds_no_seat() {
+    let mut net = lobby_with(HostConfig { max_players: 3, ..cfg() }, 0);
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    net.client(a).set_ready(true);
+    net.client(b).set_spectate(true);
+    net.client(b).have(vec!["olx-skin-x".into()]);
+    net.settle();
+    net.start(1, 2).unwrap();
+    net.host.playing(0);
+    net.settle();
+    assert_eq!(seat(&net, b), SeatWire::Waiting);
+    let c = join(&mut net, 3, "Cid");
+    assert_eq!(seat(&net, c), SeatWire::Waiting, "a seat is free for the next match");
+    consistent(&net);
+}
