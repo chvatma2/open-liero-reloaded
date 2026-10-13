@@ -274,6 +274,11 @@ impl Worm {
     /// (`src/common/CWorm.cpp:300-330`, `591-650`; `fTimeofDeath` is set
     /// by `Prepare`, `fLastBlood` by the constructor), with the lives the game's
     /// start gives (`Lives`), except the carving, which [`crate::World::spawn_worm`] does.
+    // Not inlined: a spawn is rare, and this constructor (the whole
+    // position record filled, the struct built in place) inlined into the
+    // tick's spawn paths cost `tick_32_worms` about 7 % in interleaved
+    // runs, with no spawn in the measured tick.
+    #[inline(never)]
     pub fn spawned(id: i32, pos: Vec2, now: AbsTime, s: &SimSettings) -> Self {
         // Prepare's `clear()`, then Spawn's `clear(vPos)` (`CWorm.cpp:398`,
         // `611`); without `olx_quirks` every slot is `pos`, as a respawn
