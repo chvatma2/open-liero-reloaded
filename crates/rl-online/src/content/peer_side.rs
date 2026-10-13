@@ -141,9 +141,29 @@ struct HostContent {
     look_set: Option<Look>,
     /// Hashes whose archive failed, said once.
     said: BTreeSet<String>,
+    /// Counts what changes the list besides the lobby (worker results,
+    /// offers, fetched skins, peers leaving); with the lobby's revision,
+    /// when the list was built last.
+    changes: u64,
+    built: Option<(u64, u64)>,
     /// Tests: pack id → the other pack whose archive is served for it.
+    #[cfg(feature = "test-hooks")]
     tamper: BTreeMap<String, String>,
     upload_rate: u64,
+}
+
+impl HostContent {
+    /// The pack whose archive is served for pack `id`: none but in tests
+    /// (`serve_instead`).
+    fn served_for(&self, id: &str) -> Option<&String> {
+        #[cfg(feature = "test-hooks")]
+        return self.tamper.get(id);
+        #[cfg(not(feature = "test-hooks"))]
+        {
+            let _ = id;
+            None
+        }
+    }
 }
 
 struct ClientContent {
@@ -218,6 +238,9 @@ impl ContentSide {
                 look,
                 look_set: None,
                 said: BTreeSet::new(),
+                changes: 0,
+                built: None,
+                #[cfg(feature = "test-hooks")]
                 tamper: BTreeMap::new(),
                 upload_rate: cfg.upload_rate,
             }))
@@ -334,6 +357,7 @@ impl ContentSide {
     pub(crate) fn serve_instead(&mut self, id: &str, other: &str) {
         if let Role::Host(h) = &mut self.role {
             h.tamper.insert(id.into(), other.into());
+            h.changes += 1;
         }
     }
 
@@ -359,7 +383,11 @@ impl ContentSide {
     /// member's (messages of other peers are not passed in).
     pub(crate) fn receive(&mut self, from: PeerId, msg: ContentMsg, look: Option<&Look>) {
         match (&mut self.role, msg) {
-            (_, msg @ (ContentMsg::Want { .. } | ContentMsg::Cancel { .. })) => {
+            (role, msg @ (ContentMsg::Want { .. } | ContentMsg::Cancel { .. })) => {
+                // A transfer asked for from `offset` has sent that much.
+                if let (Role::Host(h), ContentMsg::Want { hash, offset }) = (role, &msg) {
+                    h.sent.entry(from).or_default().insert(hash.clone(), *offset);
+                }
                 self.server.receive(from, &msg)
             }
             (Role::Client(c), ContentMsg::List { revision, items }) if from == HOST => {
@@ -385,6 +413,7 @@ impl ContentSide {
                 }
                 let same = h.skins.get(&from).is_some_and(|s| s.item == *item);
                 if !same {
+                    h.changes += 1;
                     let fetcher = h.skins.remove(&from).and_then(|s| s.fetcher);
                     h.skins.insert(from, SkinFetch { item: item.clone(), fetcher, listed: false });
                 }
@@ -407,6 +436,7 @@ impl ContentSide {
                 f.source_left();
             }
             h.sent.remove(&peer);
+            h.changes += 1;
         }
     }
 
@@ -422,7 +452,13 @@ impl ContentSide {
     /// The worker's results: hashes remembered, archives kept, installs
     /// routed to their fetcher.
     fn results(&mut self) {
-        for done in self.local.worker.take() {
+        let done = self.local.worker.take();
+        if let Role::Host(h) = &mut self.role
+            && !done.is_empty()
+        {
+            h.changes += 1;
+        }
+        for done in done {
             match &done {
                 Done::Hashed { id, hash } => {
                     let dir = self.local.hashing.remove(id);
@@ -625,8 +661,9 @@ impl ContentSide {
             }
             f.poll(now_us, &mut self.out);
             for (id, dir) in f.installed() {
-                if id == item.id && dir.ends_with(&item.hash) {
+                if id == item.id && dir.ends_with(&item.hash) && !h.fetched.contains_key(&item.hash) {
                     h.fetched.insert(item.hash.clone(), (id, dir));
+                    h.changes += 1;
                 }
             }
         }
@@ -639,6 +676,14 @@ impl ContentSide {
     /// the worker could not make is listed with size 0: refused when
     /// asked for). A changed list goes to every member.
     fn host_list(&mut self, lobby: &LobbyHost) {
+        // Built again only when the lobby or what the list is made of changed.
+        if let Role::Host(h) = &mut self.role {
+            let now = (lobby.revision(), h.changes);
+            if h.built == Some(now) {
+                return;
+            }
+            h.built = Some(now);
+        }
         let state = lobby.state();
         let mut wanted: Vec<(ItemKind, String, String, bool)> = Vec::new();
         for (id, hash) in &state.setup.packs {
@@ -678,7 +723,7 @@ impl ContentSide {
         let mut needed = BTreeSet::new();
         for (kind, id, hash, required) in wanted {
             // Where this host has it, and what it serves for it.
-            let (src_id, src_hash) = match h.tamper.get(&id) {
+            let (src_id, src_hash) = match h.served_for(&id) {
                 Some(other) => match state.setup.packs.iter().find(|(i, _)| i == other) {
                     Some((i, hh)) => (i.clone(), hh.clone()),
                     None => (id.clone(), hash.clone()),
@@ -1073,5 +1118,15 @@ mod tests {
             assert!(held.get() <= QUEUED, "{} bytes held at {step}", held.get());
         }
         assert!(held.get() > QUEUED - 2 * rl_proto::CONTENT_CHUNK, "it filled the outbox: {}", held.get());
+        // A transfer asked for again from 0 (a failed verification): its
+        // progress (`Member::download`) starts again too.
+        let first = &list[0].hash;
+        let sent = |side: &ContentSide| match &side.role {
+            Role::Host(h) => h.sent.get(&7).and_then(|s| s.get(first)).copied(),
+            Role::Client(_) => None,
+        };
+        assert!(sent(&side).is_some_and(|b| b > 0));
+        side.receive(7, ContentMsg::Want { hash: first.clone(), offset: 0 }, None);
+        assert_eq!(sent(&side), Some(0));
     }
 }

@@ -4,6 +4,7 @@
 //! notice without it); every wait is bounded, every test under 20 s.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -977,7 +978,9 @@ fn a_member_waiting_at_the_start_is_not_timed_out() {
 
 /// A spectator joining mid-match without the level waits, downloads at
 /// the match's rate, then watches; the match goes on to its end.
-fn late_spectator_lacking_the_level() -> (Net, usize) {
+/// Returns the net, the spectator, and how long it waited from its
+/// `Waiting` seat to its start.
+fn late_spectator_lacking_the_level() -> (Net, usize, Duration) {
     let mut net = Net::new(content().unwrap(), 0.1);
     let a = net.join_all(&["Anna"])[0];
     net.ready(&[a]);
@@ -988,10 +991,13 @@ fn late_spectator_lacking_the_level() -> (Net, usize) {
     net.run_until(Duration::from_secs(10), "it waits", |n| {
         member_of(n, key).is_some_and(|m| m.seat == SeatWire::Waiting)
     });
+    let waiting = Instant::now();
+    net.run_until(Duration::from_secs(10), "it starts watching", |n| !n.peers[b].started().is_empty());
+    let waited = waiting.elapsed();
     net.run_until(Duration::from_secs(16), "the match ends everywhere", |n| {
         n.peers.iter().all(|p| p.has(ended))
     });
-    (net, b)
+    (net, b, waited)
 }
 
 #[test]
@@ -999,7 +1005,7 @@ fn a_spectator_lacking_content_waits_then_spectates() {
     if content().is_none() {
         return;
     }
-    let (net, b) = late_spectator_lacking_the_level();
+    let (net, b, _) = late_spectator_lacking_the_level();
     let events = &net.peers[b].events;
     // Reports are coalesced: `Done` may come after the start, but the
     // download was under way before it.
@@ -1025,8 +1031,14 @@ fn downloads_during_a_match_keep_it_alive() {
     if content().is_none() {
         return;
     }
-    let (net, b) = late_spectator_lacking_the_level();
+    let (net, b, waited) = late_spectator_lacking_the_level();
     assert_eq!(reported_state(&net.peers[b], LEVEL), Some(DownloadState::Done));
+    // Sent at the match's rate (`MATCH_RATE`), not the lobby's: the
+    // host's bucket holds at most a chunk to start with.
+    let size = reported(&net.peers[b]).iter().find(|d| d.item.id == LEVEL).unwrap().item.size;
+    let least =
+        size.saturating_sub(rl_proto::CONTENT_CHUNK as u64) as f64 / rl_online::content::MATCH_RATE as f64;
+    assert!(waited.as_secs_f64() >= least, "{size} bytes in {waited:?}: faster than the match's rate");
     for p in &net.peers {
         assert!(
             !p.has(|e| matches!(
@@ -1065,18 +1077,27 @@ fn an_unwritable_cache_is_reported() {
     let locked = [cache_dir.path().join("packs"), cache_dir.path().join("tmp")];
     std::fs::create_dir_all(&locked[1]).unwrap();
     // The cache removes an empty `tmp/`: only what is there is changed.
-    let set_readonly = |on: bool| {
-        for d in locked.iter().filter(|d| d.is_dir()) {
-            let mut perm = std::fs::metadata(d).unwrap().permissions();
+    fn set_readonly(dirs: &[PathBuf], on: bool) {
+        for d in dirs.iter().filter(|d| d.is_dir()) {
+            let Ok(meta) = std::fs::metadata(d) else { continue };
+            let mut perm = meta.permissions();
             #[allow(clippy::permissions_set_readonly_false)]
             perm.set_readonly(on);
-            std::fs::set_permissions(d, perm).unwrap();
+            let _ = std::fs::set_permissions(d, perm);
         }
-    };
-    set_readonly(true);
+    }
+    /// Writable again when the test ends, even by a panic (else the
+    /// temporary directory cannot be removed).
+    struct Unlock(Vec<PathBuf>);
+    impl Drop for Unlock {
+        fn drop(&mut self) {
+            set_readonly(&self.0, false);
+        }
+    }
+    set_readonly(&locked, true);
+    let _unlock = Unlock(locked.to_vec());
     if std::fs::write(locked[0].join("probe"), b"").is_ok() {
         eprintln!("this user writes to read-only directories (root?): skipping the unwritable cache");
-        set_readonly(false);
         return;
     }
     let b = net.join_with(identity(), look("Bert"), partial, Some(peer_content(&cache)));
@@ -1099,7 +1120,6 @@ fn an_unwritable_cache_is_reported() {
         let m = member_of(&mut net, key).unwrap();
         assert!(!m.ready && m.missing == [LEVEL.to_string()], "not ready, lacking the level");
     }
-    set_readonly(false);
 }
 
 /// Content above the prompt's bytes waits for the player.

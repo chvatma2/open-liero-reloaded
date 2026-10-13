@@ -79,7 +79,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     set mirrored from `Kick { ban: true }` when the lobby banned the
     address, and from `ban_ip`/`unban_ip`). `Connected` → `connected` with
     a fresh nonce. Lobby messages leave at most every `LOBBY_DRAIN`
-    (250 ms; a start, an end, a kick and a mid-match join at once). A
+    (250 ms; a start, an end, a kick, a join (its welcome before the
+    content list) and a mid-match join at once). A
     `Kick` or `Close` closes the peer once its messages are delivered
     (`CLOSE_LINGER`, 1 s at most) and is `peer_lost` in the match.
     An admin's `Settings` is taken when the host has its mod, level and
@@ -230,7 +231,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       id of another kind (`may_take`), neither in offers, lists nor
       overlays; fetched skins the list no longer names are forgotten. Served at `upload_rate`, `MATCH_RATE` while the phase is
       `Starting`/`Playing`. `Member::download` from the archive bytes sent
-      to each member of what its `Have` names. A member offers its own
+      to each member of what its `Have` names (queued, not delivered; a
+      `Want` from an offset starts its count there). The list is built
+      again only when the lobby's revision or what it is made of changed
+      (worker results, offers, fetched skins, peers leaving). A member offers its own
       skin with a one-item `List` (ruling R6-1: id and hash its look's);
       a skin the host lacks is fetched from that member (one fetch per
       hash), installed, then listed and served to the others. Its own
@@ -282,7 +286,8 @@ is never fetched or listed, and the host's match still builds; another
 pack's archive served for the level
 fails after one retry, the client stays, not ready, lacking it; a
 spectator joining mid-match without the level waits, downloads at the
-match's rate, then watches, and nobody is dropped; a spectator lacking
+match's rate (no faster than `MATCH_RATE` allows), then watches, and
+nobody is dropped; a spectator lacking
 the level at a start (its download held by the prompt) is still there
 10.5 s into the match, then watches once complete; no cache (`Err`) is a
 notice and an unwritable one a `Failed` download with the I/O reason;
