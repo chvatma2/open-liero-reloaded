@@ -15,15 +15,18 @@ serde_json.workspace = true
 sha2.workspace = true
 hex.workspace = true
 thiserror.workspace = true
-# The test relay (feature `test-relay`). rustls 0.23.45 (2026-09-14) with its
-# default aws-lc-rs provider; rcgen is the version already in the lockfile.
-# Task 4 makes rustls a normal dependency for the client.
-rustls = { version = "=0.23.45", optional = true }
+# Relay connections (`ws://` and `wss://`): rustls with the aws-lc-rs
+# provider and webpki-roots (workspace pins); tungstenite's rustls feature
+# lets `client_tls_with_config` take our rustls `ClientConfig`.
+rustls.workspace = true
+webpki-roots.workspace = true
+tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
+# The test relay's certificates (feature `test-relay`): the version already
+# in the lockfile.
 rcgen = { version = "=0.14.10", optional = true, default-features = false, features = ["aws_lc_rs"] }
-tungstenite = { workspace = true, optional = true }
 
 [features]
-test-relay = ["dep:rustls", "dep:rcgen", "dep:tungstenite"]
+test-relay = ["dep:rcgen"]
 
 [dev-dependencies]
 proptest.workspace = true

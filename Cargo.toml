@@ -83,8 +83,14 @@ directories = "=6.0.0"
 # Needs no system C libraries, but dimpl's `rcgen` builds aws-lc-sys from C
 # source (cc/cmake); the mingw cross-build handles it (ruling T1-C).
 str0m = { version = "=0.24.0", default-features = false, features = ["rust-crypto"] }
-# Signalling over a WebSocket (plan 10, spec §5.1): no TLS.
+# Signalling over a WebSocket (plan 10, spec §5.1): no TLS. rl-discovery's
+# relay pool turns on its rustls feature for `wss://` (plan 12a).
 tungstenite = "=0.30.0"
+# TLS for Nostr relays (plan 12a): rustls 0.23.45 (2026-09-14) with its default
+# aws-lc-rs provider, and Mozilla's roots from webpki-roots 1.0.9 (2026-07-18),
+# never the platform's, so every OS trusts the same roots.
+rustls = "=0.23.45"
+webpki-roots = "=1.0.9"
 # OS randomness for the native peers (plan 10).
 getrandom = "=0.4.3"
 # The dedicated server stops cleanly on Ctrl+C, SIGTERM and a closed

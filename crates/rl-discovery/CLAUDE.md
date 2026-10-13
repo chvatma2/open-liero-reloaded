@@ -5,10 +5,11 @@ test relay, relay pool, announcements, game list, STUN and invite codes
 (later tasks).
 
 - **Layer 5, std.** Depends on rl-proto (`PublicKey`, `Signature`), rl-lobby
-  (`Identity`, `verify`), serde_json, sha2, hex, thiserror. The core is
+  (`Identity`, `verify`), serde_json, sha2, hex, thiserror, and for the
+  relay drivers rustls, webpki-roots and tungstenite. The core is
   sans-IO (no sockets, no threads, no clock: time is an argument) because
   plan 13 builds parts of this crate for WASM. Sockets and threads belong
-  only to drivers added later.
+  only to drivers (`relay`).
 - **`nostr`** (decision N38: no Nostr library). The NIP-01 subset we use:
   - `Event` with `sign(identity, created_at, kind, tags, content, aux)`
     (signs the 32-byte id with the install's BIP-340 key: Nostr's
@@ -57,11 +58,51 @@ test relay, relay pool, announcements, game list, STUN and invite codes
   limited to `MAX_FRAME`. One thread per connection; drop stops it (joins
   bounded at 2 s). Tests that keep a subscription must say so: the test
   client's `query` CLOSEs after EOSE, `subscribe` does not.
-- Deps: `rustls =0.23.45` (default aws-lc-rs), `rcgen =0.14.10`
-  (`aws_lc_rs` only, no pem) and `tungstenite`, all optional behind
-  `test-relay`. The crate's own dev-dependency on itself turns the feature
-  on for its tests.
+- **`pool`** and **`relay`** (its driver): `Pool::start(PoolConfig {
+  relays, extra_roots, max_frame })` runs one driver thread per relay;
+  `publish`, `subscribe`, `unsubscribe`, `poll` and `statuses` never block
+  (they only touch per-relay mutexes the drivers never hold across IO).
+  - **Connect:** the URL's host is resolved, IPv4 addresses first, each
+    tried with a 5 s timeout; the TLS and WebSocket handshakes then get 5 s
+    in all (`tungstenite::client_tls_with_config` with our rustls
+    `ClientConfig`: aws-lc-rs, Mozilla's roots from `webpki-roots` plus
+    `extra_roots`, never the platform's). `ws://` is allowed. A bad URL is
+    `Failed` for good; anything else retries after 1, 2, 4 … 60 s (a
+    connection up 60 s resets the backoff).
+  - **Serve:** blocking socket, 50 ms read timeout (`TICK`), 5 s write
+    timeout. `Sock` maps `TimedOut` to `WouldBlock` (Windows), on which
+    rustls keeps partial records and tungstenite partial frames, and the
+    handshake resumes. Subscriptions are reconciled from the pool's set
+    (`REQ`/`CLOSE`) and sent again after every reconnect.
+  - **Dropped** (then backoff): a frame above `max_frame` (clamped to
+    `MAX_FRAME`), a frame that is not a Nostr message (not JSON, or not an
+    array headed by a type; unknown types such as `AUTH` and malformed
+    single events are skipped), more than 200 frames/s or 1 MiB/s
+    sustained (token buckets holding 5 s of burst: a `REQ`'s stored events
+    arrive at once), no `EOSE` or `OK` within 5 s of the `REQ`/`EVENT`
+    (`CLOSED` cancels the wait), a close or socket error.
+  - **Events** are verified in the driver (a forged id never shadows the
+    real event in the dedupe) and only for subscriptions the connection
+    has; `EOSE` and `OK` only answer what was asked. `poll` appends relay
+    by relay in index order, each relay's reports in arrival order, and
+    dedupes events by id (an LRU of 4096 ids).
+  - **Queues:** outgoing at most 256 per relay (oldest dropped; a queued
+    replaceable/addressable event is replaced by a newer one for its
+    slot); incoming at most 4096 events or 8 MiB per relay between polls
+    (the newest dropped, `dropped_events()`).
+  - **Drop** stops every driver: each sends what is queued (a closing
+    note), closes, and is joined within 2 s in all (one stuck in a connect
+    is detached).
+- Deps: `rustls` (default aws-lc-rs) and `webpki-roots` (workspace pins),
+  `tungstenite` with `rustls-tls-webpki-roots` (for `Connector::Rustls`;
+  its own default roots are never used). `rcgen =0.14.10` (`aws_lc_rs`
+  only, no pem) is optional behind `test-relay`. The crate's own
+  dev-dependency on itself turns the feature on for its tests.
 
 Test: `cargo nextest run -p rl-discovery` (`tests/nostr.rs`: the published
 events verify, signing round-trips, canonical escaping, tampering, frames
-round-trip, fuzzed frames never panic; `tests/test_relay.rs`: the relay).
+round-trip, fuzzed frames never panic; `tests/test_relay.rs`: the relay;
+`tests/pool.rs`: the pool against the test relay, a flooding relay and
+unreachable addresses: `127.0.0.1`'s closed port and TEST-NET-1
+`192.0.2.1`, never routed; unit tests of the backoff, limiter, queues and
+dedupe in `src`).
