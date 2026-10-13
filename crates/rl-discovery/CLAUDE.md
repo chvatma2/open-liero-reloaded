@@ -138,9 +138,11 @@ test relay, relay pool, announcements, game list, STUN and invite codes
   0.12 crate's own Bech32m limit is 1023, so the 90 limit is simply not
   applied), text without the `rlx1` prefix is `NotInvite`, any checksum or
   case failure `Damaged`, version above 1 `Newer` (checked before parsing),
-  version 0, bad postcard, trailing bytes or bad hints `Invalid`. The 200
-  limit binds before the 100-byte URL limit (a code with a 100-byte URL does
-  not fit). `DEFAULT_RELAYS` is append-only (indices are wire format);
+  version 0, bad postcard, trailing bytes or bad hints `Invalid`. Hints (PF12-6): at most
+  3 `Default` (in range) and 1 `Url` (`wss://`/`ws://`, at most 64 bytes);
+  the worst case is 191 characters, within `MAX_CODE`. `encode` is
+  infallible and truncates: it drops bad hints, then those beyond the
+  limits (first win), so its code always decodes. `DEFAULT_RELAYS` is append-only (indices are wire format);
   both default lists are placeholders until plan 12a Task 8.
 - Deps: `rustls` (default aws-lc-rs) and `webpki-roots` (workspace pins),
   `tungstenite` with `rustls-tls-webpki-roots` (for `Connector::Rustls`;

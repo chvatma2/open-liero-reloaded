@@ -109,32 +109,113 @@ fn newer_versions_are_named() {
     assert!(matches!(Invite::decode(&code(&p)), Err(InviteError::Invalid)));
 }
 
+/// A version-1 payload with the given raw relay bytes (postcard: count, then
+/// per hint the variant, and for a URL its length and bytes), no address.
+fn raw(relays: &[u8]) -> String {
+    let mut p = vec![1u8];
+    p.extend_from_slice(&[7; 32]);
+    p.extend_from_slice(relays);
+    p.push(0);
+    code(&p)
+}
+
+fn url_bytes(u: &str) -> Vec<u8> {
+    let mut v = vec![1, u.len() as u8];
+    v.extend_from_slice(u.as_bytes());
+    v
+}
+
 #[test]
 fn hints_are_validated() {
-    let bad = [
-        sample(false, vec![RelayHint::Default(DEFAULT_RELAYS.len() as u8)]),
-        sample(false, vec![RelayHint::Url("https://relay.example".into())]),
-        sample(false, vec![RelayHint::Url(format!("wss://{}", "a".repeat(100)))]),
-        sample(false, vec![RelayHint::Url("wss://a".into()); 3]),
+    let n = DEFAULT_RELAYS.len() as u8;
+    let two_urls = [vec![2], url_bytes("wss://a"), url_bytes("wss://b")].concat();
+    let long = [vec![1], url_bytes(&format!("wss://{}", "a".repeat(59)))].concat(); // 65 bytes
+    let bad: Vec<Vec<u8>> = vec![
+        vec![1, 0, n],
+        vec![4, 0, 0, 0, 1, 0, 2],
+        [vec![1], url_bytes("https://relay.example")].concat(),
+        long,
+        two_urls,
     ];
-    for inv in bad {
-        assert!(matches!(Invite::decode(&inv.encode()), Err(InviteError::Invalid)), "{inv:?}");
+    for r in bad {
+        assert!(matches!(Invite::decode(&raw(&r)), Err(InviteError::Invalid)), "{r:?}");
     }
-    // The 200-character limit binds before the 100-byte one: a lone URL
-    // of 75 bytes still fits (no address, no default hints).
-    let ok = sample(false, vec![RelayHint::Url(format!("wss://{}", "a".repeat(69)))]);
-    assert!(ok.encode().len() <= 200);
-    assert_eq!(Invite::decode(&ok.encode()).unwrap(), ok);
+    let ok64 = [vec![1], url_bytes(&format!("wss://{}", "a".repeat(58)))].concat();
+    assert!(Invite::decode(&raw(&ok64)).is_ok());
+    assert!(Invite::decode(&raw(&[vec![4, 0, 0, 0, 1, 0, 1, 0, 2], url_bytes("ws://a")].concat())).is_err()); // 4 defaults
+    assert!(Invite::decode(&raw(&[vec![4, 0, 0, 0, 1, 0, 2], url_bytes("ws://a")].concat())).is_ok());
+}
+
+#[test]
+fn the_worst_case_fits() {
+    let inv = sample(
+        true,
+        vec![
+            RelayHint::Default(0),
+            RelayHint::Default(1),
+            RelayHint::Default(2),
+            RelayHint::Url(format!("wss://{}", "a".repeat(58))),
+        ],
+    );
+    let text = inv.encode();
+    assert!(text.len() <= 200, "{} chars", text.len());
+    assert_eq!(Invite::decode(&text).unwrap(), inv);
+}
+
+#[test]
+fn encode_keeps_hints_within_limits() {
+    let n = DEFAULT_RELAYS.len() as u8;
+    let inv = sample(
+        true,
+        vec![
+            RelayHint::Url("https://bad".into()),
+            RelayHint::Default(n),
+            RelayHint::Url(format!("wss://{}", "a".repeat(99))),
+            RelayHint::Default(0),
+            RelayHint::Url("wss://first.example".into()),
+            RelayHint::Url("wss://second.example".into()),
+            RelayHint::Default(1),
+            RelayHint::Default(2),
+            RelayHint::Default(3),
+        ],
+    );
+    let got = Invite::decode(&inv.encode()).unwrap();
+    assert_eq!(
+        got.relays,
+        vec![
+            RelayHint::Default(0),
+            RelayHint::Url("wss://first.example".into()),
+            RelayHint::Default(1),
+            RelayHint::Default(2)
+        ]
+    );
 }
 
 #[test]
 fn decode_refuses_over_200_characters() {
-    let long = sample(true, vec![RelayHint::Url(format!("wss://{}", "a".repeat(95))); 2]);
-    assert!(long.encode().len() > 200);
-    assert!(matches!(Invite::decode(&long.encode()), Err(InviteError::Invalid)));
+    let mut p = vec![1u8];
+    p.extend_from_slice(&[7; 32]);
+    p.push(60);
+    p.extend_from_slice(&[0, 0].repeat(60));
+    p.push(0);
+    let text = code(&p);
+    assert!(text.len() > 200);
+    assert!(matches!(Invite::decode(&text), Err(InviteError::Invalid)));
 }
 
 proptest! {
+    #[test]
+    fn encode_always_decodes(
+        hints in proptest::collection::vec(
+            prop_oneof![any::<u8>().prop_map(RelayHint::Default), ".{0,120}".prop_map(RelayHint::Url)], 0..8),
+        addr in any::<bool>(),
+    ) {
+        let inv = sample(addr, hints);
+        let text = inv.encode();
+        prop_assert!(text.len() <= 200);
+        prop_assert!(Invite::decode(&text).is_ok());
+    }
+
     #[test]
     fn arbitrary_text_never_panics(s in ".{0,300}", bytes in proptest::collection::vec(any::<u8>(), 0..150)) {
         let _ = Invite::decode(&s);

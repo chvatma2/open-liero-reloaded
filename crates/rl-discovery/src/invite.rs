@@ -24,8 +24,15 @@ use crate::defaults::DEFAULT_RELAYS;
 pub const MAX_CODE: usize = 200;
 const VERSION: u8 = 1;
 const HRP: &str = "rlx";
-const MAX_URL_HINTS: usize = 2;
-const MAX_URL_BYTES: usize = 100;
+/// At most this many `Url` hints.
+pub const MAX_URL_HINTS: usize = 1;
+/// A `Url` hint is at most this many bytes.
+pub const MAX_URL_BYTES: usize = 64;
+/// At most this many `Default` hints.
+pub const MAX_DEFAULT_HINTS: usize = 3;
+// Worst case: version 1 + key 32 + relays (count 1 + 3 x 2 + 1 x (2 + 64))
+// + address (1 + 4 + 2) = 113 bytes = 181 base32 characters, plus the
+// 4-character prefix and the 6-character checksum: 191 <= MAX_CODE.
 
 /// A game's invite: its key, where to find it on Nostr, and where it listens.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,14 +73,45 @@ struct Wire {
     addr: Option<([u8; 4], u16)>,
 }
 
+fn hint_ok(h: &RelayHint) -> bool {
+    match h {
+        RelayHint::Default(i) => usize::from(*i) < DEFAULT_RELAYS.len(),
+        RelayHint::Url(u) => u.len() <= MAX_URL_BYTES && (u.starts_with("wss://") || u.starts_with("ws://")),
+    }
+}
+
 impl Invite {
-    /// The code. An IPv6 address is not representable and is left out.
+    /// The code, which `decode` always takes. `encode` is infallible, so it
+    /// keeps hints within the limits: it drops out-of-range `Default`s and
+    /// bad `Url`s (wrong scheme or over [`MAX_URL_BYTES`]), then the hints
+    /// beyond [`MAX_DEFAULT_HINTS`] / [`MAX_URL_HINTS`] (the first win). An
+    /// IPv6 address is not representable and is left out.
     pub fn encode(&self) -> String {
+        let (mut defaults, mut urls) = (0, 0);
+        let relays: Vec<RelayHint> = self
+            .relays
+            .iter()
+            .filter(|h| match h {
+                RelayHint::Default(_) => {
+                    hint_ok(h) && {
+                        defaults += 1;
+                        defaults <= MAX_DEFAULT_HINTS
+                    }
+                }
+                RelayHint::Url(_) => {
+                    hint_ok(h) && {
+                        urls += 1;
+                        urls <= MAX_URL_HINTS
+                    }
+                }
+            })
+            .cloned()
+            .collect();
         let addr = match self.addr {
             Some(SocketAddr::V4(a)) => Some((a.ip().octets(), a.port())),
             _ => None,
         };
-        let wire = Wire { version: VERSION, key: self.key, relays: self.relays.clone(), addr };
+        let wire = Wire { version: VERSION, key: self.key, relays, addr };
         let bytes = postcard::to_allocvec(&wire).unwrap_or_default();
         match Hrp::parse(HRP) {
             Ok(hrp) => bech32::encode::<Bech32m>(hrp, &bytes).unwrap_or_default(),
@@ -101,19 +139,9 @@ impl Invite {
         if !rest.is_empty() {
             return Err(InviteError::Invalid);
         }
-        let mut urls = 0;
-        for hint in &wire.relays {
-            match hint {
-                RelayHint::Default(i) if usize::from(*i) < DEFAULT_RELAYS.len() => {}
-                RelayHint::Url(u)
-                    if u.len() <= MAX_URL_BYTES && (u.starts_with("wss://") || u.starts_with("ws://")) =>
-                {
-                    urls += 1;
-                }
-                _ => return Err(InviteError::Invalid),
-            }
-        }
-        if urls > MAX_URL_HINTS {
+        let defaults = wire.relays.iter().filter(|h| matches!(h, RelayHint::Default(_))).count();
+        let urls = wire.relays.len() - defaults;
+        if !wire.relays.iter().all(hint_ok) || defaults > MAX_DEFAULT_HINTS || urls > MAX_URL_HINTS {
             return Err(InviteError::Invalid);
         }
         let addr = wire.addr.map(|(ip, port)| SocketAddr::from((Ipv4Addr::from(ip), port)));
