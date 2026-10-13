@@ -516,7 +516,7 @@ fn proj_worm_coll(p: &mut Projectile, pos: Vec2, ctx: &mut ProjCtx) -> i32 {
             let current = sx.wrapping_sub(cx).wrapping_abs() < rx.wrapping_add(WORM_SIZE)
                 && sy.wrapping_sub(cy).wrapping_abs() < ry.wrapping_add(WORM_SIZE);
             let id = w.id;
-            ctx.draws.hits.projectile(current);
+            ctx.draws.hits.projectile(id, current);
             return id;
         }
     }

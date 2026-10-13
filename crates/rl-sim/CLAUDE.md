@@ -154,7 +154,11 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
 
 Bench: `benches/tick.rs` (divan, `cargo xtask bench`): a tick with OLX's
 pool full (3000 bouncing pellets of a mod made there) and a tick of 32
-walking worms; no content needed.
+walking worms; no content needed. `tick_32_worms` is sensitive to code
+layout (`Worm`'s size, asserted at 992 bytes, and inlining: a constructor
+the tick never calls once cost it 7 %, hence `#[inline(never)]` on
+`Worm::spawned`): A/B a change against its parent in interleaved runs
+before blaming it.
 
 Test: `cargo nextest run -p rl-sim`. The oracle test needs imported content;
 `cargo xtask check` sets `RL_CONTENT_DIR`.

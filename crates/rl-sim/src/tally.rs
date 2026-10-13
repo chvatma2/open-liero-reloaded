@@ -101,6 +101,8 @@ pub struct HitAudit {
     pub projectile_stale: u64,
     pub explosion_hits: u64,
     pub explosion_stale: u64,
+    /// The worm the last stale hit struck (`None` before any).
+    pub last_stale_worm: Option<i32>,
 }
 
 impl PartialEq for HitAudit {
@@ -111,13 +113,41 @@ impl PartialEq for HitAudit {
 }
 
 impl HitAudit {
-    pub(crate) fn projectile(&mut self, current: bool) {
+    /// A projectile struck `worm`, from within its current hit geometry
+    /// or not.
+    pub(crate) fn projectile(&mut self, worm: i32, current: bool) {
         self.projectile_hits = self.projectile_hits.saturating_add(1);
         self.projectile_stale = self.projectile_stale.saturating_add(u64::from(!current));
+        self.stale_on(worm, current);
     }
 
-    pub(crate) fn explosion(&mut self, current: bool) {
+    /// An explosion injured `worm`, from within 5 px of it or not.
+    pub(crate) fn explosion(&mut self, worm: i32, current: bool) {
         self.explosion_hits = self.explosion_hits.saturating_add(1);
         self.explosion_stale = self.explosion_stale.saturating_add(u64::from(!current));
+        self.stale_on(worm, current);
+    }
+
+    fn stale_on(&mut self, worm: i32, current: bool) {
+        if !current {
+            self.last_stale_worm = Some(worm);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HitAudit;
+
+    #[test]
+    fn the_audit_names_the_worm_of_the_last_stale_hit() {
+        let mut a = HitAudit::default();
+        a.projectile(1, true);
+        assert_eq!(a.last_stale_worm, None, "a current hit is not stale");
+        a.projectile(2, false);
+        a.explosion(3, true);
+        assert_eq!(a.last_stale_worm, Some(2));
+        a.explosion(0, false);
+        assert_eq!((a.projectile_stale, a.explosion_stale, a.last_stale_worm), (1, 1, Some(0)));
     }
 }

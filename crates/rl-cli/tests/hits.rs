@@ -89,12 +89,14 @@ fn mw_hits_test_the_worms_current_position() {
 /// pellets at tick 4629, about 30 px from every one of them); in play that
 /// phantom kill does not happen, and no hit is stale.
 ///
-/// The control finds the kill itself: the first kill in a tick whose hit
-/// audit counted a stale hit, whatever tick a later blessed change to the
-/// bots or the simulation moves it to. If a change leaves this match with
-/// no such kill, the control says so, not this fix: pick another seed or
-/// length where `play(.., true, ..)` shows one (print each tick's
-/// `world.hit_audit()` and `Kill` events) and update `spec` below.
+/// The control finds the phantom kill itself, whatever tick a later
+/// blessed change to the bots or the simulation moves it to: the first
+/// lethal hit (a `Kill` right after a `Damage` to its victim) on the worm
+/// a stale hit struck in that tick (`HitAudit::last_stale_worm`). If a
+/// change leaves this match with no such kill, the control says so, not
+/// this fix: pick another seed or length where `play(.., true, ..)` shows
+/// one (print each tick's `world.hit_audit()` and `Kill` events) and update
+/// `spec` below.
 #[test]
 fn the_phantom_self_kill_of_the_investigation_is_gone() {
     let Some(c) = content() else { return };
@@ -108,23 +110,28 @@ fn the_phantom_self_kill_of_the_investigation_is_gone() {
     let mut before = 0;
     let mut phantom = None;
     play(&c, &spec, true, |tick, world, out| {
-        let now = stale(world.hit_audit());
-        if phantom.is_none() && now > before {
-            phantom = out.iter().find_map(|e| match e.kind {
-                EventKind::Kill { victim, killer } => Some((tick, victim, killer)),
+        let a = world.hit_audit();
+        if phantom.is_none() && stale(a) > before {
+            let ev = out.as_slice();
+            phantom = ev.windows(2).find_map(|p| match (p[0].kind, p[1].kind) {
+                (EventKind::Damage { worm, .. }, EventKind::Kill { victim, killer })
+                    if worm == victim && a.last_stale_worm == Some(victim) =>
+                {
+                    Some((tick, victim, killer))
+                }
                 _ => None,
             });
         }
-        before = now;
+        before = stale(a);
     });
     let Some((tick, victim, killer)) = phantom else {
         panic!(
-            "the control (OLX's quirks on) has no kill by a stale hit in {} ticks of this match any more: \
+            "the control (OLX's quirks on) has no lethal stale hit in {} ticks of this match any more: \
              the match changed, not the fix; choose another one (see this test's doc comment)",
             spec.ticks
         );
     };
-    eprintln!("with OLX's quirks: worm {victim} killed by {killer} at tick {tick}, by a stale hit");
+    eprintln!("with OLX's quirks: worm {victim} killed by {killer} at tick {tick}, by a stale hit on it");
 
     let mut m = Match::new(&c, &spec, &Options::default()).unwrap();
     let mut again = false;

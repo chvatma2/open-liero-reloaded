@@ -211,7 +211,7 @@ pub(crate) fn explosion(ctx: &mut Blast, time: AbsTime, pos: Vec2, damage: f32, 
         if (pos - wp).length2() <= 25.0 {
             let id = w.id;
             let current = (pos - w.pos).length2() <= 25.0;
-            ctx.draws.hits.explosion(current);
+            ctx.draws.hits.explosion(id, current);
             injure_worm(&mut ctx.harm(), id, damage, owner);
         }
     }

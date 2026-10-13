@@ -291,7 +291,8 @@ assets other than its own, a pack level's and a generated one's.
 hit or explosion injury comes from outside the struck worm's current hit
 geometry (`World::hit_audit`), some do with `SimSettings::olx_quirks` on,
 and the investigation's phantom kill (Classic, Dirt Level, 2 bots, seed
-2: the control finds the first kill by a stale hit, tick 4629 in 2026-10;
+2: the control finds the first lethal hit on the worm a stale hit struck
+in that tick, `HitAudit::last_stale_worm`, tick 4629 in 2026-10;
 a match that no longer has one fails the control, saying so) happens only
 with it on. `tests/deaths.rs` (check):
 every kill of seeded bot matches, by a lethal hit or at exactly 0 health,
