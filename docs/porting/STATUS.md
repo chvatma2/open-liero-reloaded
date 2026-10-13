@@ -40,8 +40,8 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Colour terrain (spec §19 E7): carve (back pixels, brown rim), `PlaceDirt` (`FrontTile`), `PlaceGreenDirt` (OLX's shades), beam holes, blood and gib stains, dirty rectangles | `src/common/CMap.cpp:1005-1340`, `2355-2373`, `src/client/Entity.cpp:355-390`, `src/client/GfxPrimitives.cpp` (`DrawImageStretch2`) | `rl-terrain::ColorMap`, `rl-content::{color_edit, apply_edits}` | done (plan 5 task 2) | `rl-terrain` colour tests; `rl-content/tests/color.rs` (`color_map_agrees_with_material_after_a_match`, 3000 ticks); golden `fixtures/render/dig-color.png` (`rl-scenario/tests/render_golden.rs`) |
 | Presentation (spec §19 E1-E4): camera (hard lock, clamp, shake, dead worm, respawn), skin frames (the facing-left mirror one column off), crosshair, muzzle flash, old-style health bar, rope, laser sights, beams, projectile frames (animation, special angle, angle, rotation with the `RotIncrement` bump), bonuses (blinking), layer order; interpolation (E2) | `src/client/CViewport.cpp:118-472`, `src/common/CWorm.cpp:1016-1300`, `src/client/CGameSkin.cpp:584-600`, `src/client/CNinjaRope.cpp:132-180`, `src/common/CProjectile.cpp:227-300`, `src/common/CBonus.cpp:49-76`, `src/client/Entity.cpp:30-157`, `305-314`, `src/client/GfxPrimitives.cpp:1795-2520`, `src/gusanos/viewport.cpp:105-253` | `rl-scene` | done (plan 5 task 3) | `camera_locks_clamps_and_shakes_like_olx`, `skin_frame_matches_olx_table`, `projectile_frames_match_olx`, `interpolation_never_blends_reused_slots_or_respawns`, `draw_list_order_matches_olx_layers`, `beams_and_laser_sights_live_two_entity_passes`; scene snapshots (`rl-scene/tests/snapshots`) |
 | Renderer (spec §8.2, §19 E3): art-scale world pass (terrain, instanced sprites from one atlas, world-pixel lines), upscale (integer nearest, sharp bilinear), offscreen PNGs; OLX's corner-rule colour key for sprites | `src/client/GfxPrimitives.cpp:116-150` (`SetColorKey`); OLX blits with SDL onto a 2× screen | `rl-render`, `rl-data::image`, `rl-cli render` | done (plan 5 task 5) | `dirty_rect_upload_equals_full_upload`, `upscale_filters_are_selectable`, `missing_assets_use_placeholders`, `srgb_targets_show_the_same_colours`; goldens `fixtures/render/frame-*.png` (`rl-cli/tests/render_golden.rs`, `cargo xtask full`) |
-| Cosmetic entities (spec §19 E1, E8): the 1024-slot pool, per-sub-step physics and animation, stains, blood drips, gib spins and colours, drawing and clipping | `src/client/Entity.cpp:161-468`, `include/FastVector.h`, `src/common/CWorm.cpp:671-757`, `src/common/CMap.cpp:338-352` | `rl-fx` | done (plan 5 task 4) | `blood_falls_and_stains_like_olx`, `explosion_frames_and_invisible_start`, `gibs_use_the_victims_colour`, `entity_cap_drops_new_ones`, `animations_live_as_long_as_olx`, `fx_never_touches_sim_randomness`, `colour_edits_follow_the_sim_like_apply_edits` |
-| Sound (spec §8.4, §19 E1, E12): positional mix (gain 0.7, inverse distance clamped, reference 50, rolloff 2, listener 20 px out at the view centre), THROW and PICKUP at the listener with gain 1.0, voice limits, live voices re-mixed as the listener moves, silence without a device | `src/sound/sound_sample_openal.cpp:206-270`, `src/sound/sfx.cpp:120-134`, `src/sound/sfxdriver_openal.cpp:43-92`, `src/game/Sounds.cpp:25-30`, `src/common/CGameScript.cpp:1185-1205` | `rl-audio` | done (plan 5 task 6) | `positional_gain_matches_olx_openal_defaults`, `voice_limits`, `silent_when_no_device`, `plays_events_on_a_mock_device`, `decodes_every_mod_sound`; `device_check` example (`cargo xtask full`) |
+| Cosmetic entities (spec §19 E1, E8): the pool (OLX's 1024 slots with `olx_quirks`; 16384 with a death reserve in play since 2026-10-13, see Deliberate deviations), per-sub-step physics and animation, stains, blood drips, gib spins and colours, drawing and clipping | `src/client/Entity.cpp:161-468`, `include/FastVector.h`, `src/common/CWorm.cpp:671-757`, `src/common/CMap.cpp:338-352` | `rl-fx` | done (plan 5 task 4) | `blood_falls_and_stains_like_olx`, `explosion_frames_and_invisible_start`, `gibs_use_the_victims_colour`, `entity_cap_drops_new_ones`, `animations_live_as_long_as_olx`, `fx_never_touches_sim_randomness`, `colour_edits_follow_the_sim_like_apply_edits` |
+| Sound (spec §8.4, §19 E1, E12): positional mix (gain 0.7, inverse distance clamped, reference 50, rolloff 2, listener 20 px out at the view centre), THROW and PICKUP at the listener with gain 1.0, voice limits (a death sound steals since 2026-10-13, see Deliberate deviations), live voices re-mixed as the listener moves, silence without a device | `src/sound/sound_sample_openal.cpp:206-270`, `src/sound/sfx.cpp:120-134`, `src/sound/sfxdriver_openal.cpp:43-92`, `src/game/Sounds.cpp:25-30`, `src/common/CGameScript.cpp:1185-1205` | `rl-audio` | done (plan 5 task 6) | `positional_gain_matches_olx_openal_defaults`, `voice_limits`, `silent_when_no_device`, `plays_events_on_a_mock_device`, `decodes_every_mod_sound`; `device_check` example (`cargo xtask full`) |
 | Input devices (spec §8.5, §19 E5): OLX's player 1 keyboard and gamepad defaults, trigger and stick thresholds, presses and releases latched between ticks | `src/client/Options.cpp:45-73`, `src/client/CInput.cpp:200-226` | `rl-input` | done (plan 5 task 6) | `default_bindings_match_olx`, `gamepad_maps_to_keys`, `tap_between_ticks_is_latched`, `tick_latch_sees_every_press_and_release` |
 | Game loop and sandbox (spec §8.6, §19 E10-E12): fixed 100 Hz tick, interpolated frames, catch-up cap, window surface states, WSL GPU defaults, F5 restart from assets loaded once, overlay | `src/game/Game.cpp:897-959` (the frame clock it drives) | `rl-game` | done (plan 5 task 7) | `loop_never_runs_more_than_n_catchup_ticks`, `surface_survives_resize_and_outdated`, `sandbox_setup_spawns_targets`, `session_plays_and_restarts_from_loaded_assets`; scripted runs in a WSLg window on all 4 levels × 2 mods |
 | Long sessions (plan 5 review focus 5): 60 000 ticks (10 minutes) of the sandbox with chaos keys, `rl-fx`, mock audio and an offscreen render every 10th tick | — | `rl-game/tests/soak.rs` | done (plan 5 task 8) | `soak_sandbox_10_minutes_headless` (`cargo xtask full`, about 15 s): cosmetic entities, projectiles, entity count, audio voices, popups, instance buffer, atlas and terrain texture stay bounded, no panic |
@@ -159,23 +159,62 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     (`src/server/CServer_Send.cpp:1122-1135`), so the local player saw an
     exact-zero death without sound or gibs. In play `die_at_zero_health`
     plays the lethal hit's effects (and their `rand()` draws) for every
-    death `killWorm` made. Every death path now shows: a lethal hit (from a
-    projectile, an explosion, a beam), a hit on a worm already at 0 health
-    (below 0: killed at once, credited to that hit), and the exact-zero
-    death; a lethal hit after game over plays its effects but kills
-    nobody, as in OLX, and the next frame's zero-health death plays none
-    (no `Kill`), so no death shows twice. `rl-cli`'s `tests/deaths.rs`
-    checks every kill of seeded bot matches.
-  - **No death effect is dropped downstream.** A death's sound and gibs
-    count against `TickEvents`' gameplay quota, not the cosmetic one, so a
-    tick's blood never crowds them out; online play keys a death sound by
-    the worm whose gibs follow it (`rl_present::net::event_keys`), so a
-    correction that re-rolls which of the three sounds it drew plays no
-    second one, and one that kills another worm instead is not deduped
-    away. Kept as OLX: the client's 1024-entity pool (spec §19 E1) drops
-    the gibs and blood of a death when it is already full (in a 4-bot MW
-    1.0 chaos match, 6 of 24 deaths), and the audio voice limits (two of
-    each death sound at once, 256 in all) can skip a death sound.
+    death. Every death path now shows: a lethal hit (from a projectile, an
+    explosion, a beam), a hit on a worm already at 0 health (below 0:
+    killed at once, credited to that hit), and the exact-zero death. After
+    the game over `killWorm` kills nobody: a lethal hit then plays its
+    effects and leaves the worm alive at 0, as in OLX, and its next-frame
+    death plays none (`Worm::death_shown`), so no death shows twice; a
+    worm left at exactly 0 then vanishes with its effects (OLX: silently).
+    `rl-cli`'s `tests/deaths.rs` checks every kill of seeded bot matches.
+  - **No death effect is dropped downstream** (amended the same day after
+    review). A death's sound, 7 gibs and 150 blood events are pushed as
+    the death's where they are emitted (`TickEvents::death`,
+    `Draws::death_entity`, marked `Event::death`) and count against
+    `TickEvents`' gameplay quota, not the cosmetic one, so a tick's other
+    cosmetics never crowd them out. Online play shows a death's events
+    once per worm and life (`NetPresenter`, the life counting the worm's
+    spawns as last simulated), whatever tick a correction moves the death
+    to and whichever of the three sounds it drew. The entity pool keeps a
+    reserve for deaths and a death sound steals a voice: the two entries
+    below.
+- **More cosmetic entities in play (2026-10-13; spec §19 E1, amended).**
+  OLX's client keeps at most 1024 cosmetic entities (`MAX_ENTITIES`,
+  `include/Entity.h:30`; `FastVector<entity_t, MAX_ENTITIES>`,
+  `src/client/Entity.cpp:31-32`) and drops new ones beyond it; in a 4-bot
+  MW 1.0 chaos match 6 of 24 deaths found it full of blood and showed no
+  gibs. The user's ruling: OLX's count was a baseline to recreate, not a
+  limit to keep, and graphics fidelity will rise. In play (`rl_fx::Fx::for_match`
+  without `olx_quirks`) the pool holds `PLAY_ENTITIES` (16384), allocated
+  once at match start (about 1 MB), and its last `DEATH_RESERVE` (1024)
+  slots take only a death's gibs and blood (`Event::death`): other
+  spawns and blood drips stop at 15360, so a death always shows (157
+  entities; the reserve holds six at once). The hard cap stays, with
+  OLX's drop-when-full beyond it, for hostile mods. With `olx_quirks`
+  (scenarios, render goldens) the pool is OLX's 1024 with no reserve. The
+  simulation's own entity counter (`rl-sim`'s `rng.rs` `MAX_ENTITIES`,
+  the dedicated server's pool that gates the gibs' draws) is unchanged.
+  Cost (`cargo xtask envelope --only fx`, 16 chaos bots on Castle Strike,
+  2026-10-13): a match peaks at 7572 entities; `present` p50/p99 26.6/54.0 µs
+  and the draw-list build 37.1/82.6 µs against 8.8/19.7 and 11.5/26.7 µs
+  with 1024, the tick unchanged. The heavy replay (MW 1.0, 32 chaos bots,
+  a 20 000 pool; `envelope --only gpu`, offscreen on the RTX 5070 Ti)
+  takes about 1 ms more CPU a frame: tick and frame p99 at 1080p-4K
+  2.7-4.9 ms against 2.2-3.2 ms before (DX12 3.3-4.9, Vulkan 2.7-2.9,
+  WSL's GL 4.8-5.0), the GPU's own time +5 %; every native path still
+  holds 144 Hz (6.9 ms). On the software renderer (llvmpipe) the stress
+  run's 1440p frame p50 rose 10-29 % (6.0-6.3 ms to 6.5-7.8 ms).
+- **A death sound steals a voice (2026-10-13).** OLX skips a sound
+  beyond its `maxplaying` (two of each death sound,
+  `src/game/Sounds.cpp:25-30`, `src/sound/sfx.cpp:120-134`) or when no
+  OpenAL source is free, so deaths close together could go unheard. The
+  user's ruling: every death plays its sound. `rl_audio::Voices::admit`
+  answers start, steal or skip: a death sound at its own limit takes the
+  place of the oldest voice of that sound; at the global limit (256) the
+  oldest of that sound, else the oldest voice that is not a death's
+  (push order, deterministic). `Audio::play` stops the taken voice with
+  a 5 ms fade. Every other sound is skipped as in OLX. Audio never runs
+  in the oracle, so it applies always.
 - **Exact-zero deaths' Gusanos particles (spec §18 D9).** Three scenarios stay
   pinned in `rl-scenario/tests/oracle.rs`, the only ones that do not match
   bit for bit (each row there carries this reason: bit-exactness is impossible
@@ -395,7 +434,9 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     direction; the remake pans by the direction's left-right component
     `dx / d` with kira's constant-power law. Gains are OpenAL's exactly.
   - *Global voice limit:* OLX's only global limit is OpenAL's source count;
-    the remake skips a start beyond 256 voices (OpenAL Soft's default).
+    the remake skips a start beyond 256 voices (OpenAL Soft's default),
+    except a death sound's, which steals one (Deliberate deviations,
+    2026-10-13).
   - A voice that ended counts against its sound's limit until the next
     tick's play call, as OLX's copies count until the next `Sfx::think`.
   - The announcer, team-score and menu sounds are not played (the sim does
@@ -1220,7 +1261,8 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   `sunray-beamer` kill with a full pool). The gib image exists in dedicated
   mode (`explode-kill-respawn`'s 580 draws).
 - **The position recorder survives a respawn** (`clear(vPos)`): `get(0)` is
-  a position from the previous life (D7; play empties it since 2026-10-13).
+  a position from the previous life (D7; since 2026-10-13 play fills every
+slot with the spawn position, a first life's too).
 - **Bleeding:** below 15 hp a worm bleeds in the first sub-step and then every
   2 s, 80 `rand()` calls and 40 entities each time (`bleed`).
 - **Bonuses:** a grab reaches the server one frame later, and its

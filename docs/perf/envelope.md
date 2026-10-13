@@ -311,5 +311,5 @@ Load: heavy-spikeballs fills OLX's 3000-projectile pool (`MAX_PROJECTILES`); hea
 | Worms | 32 (`MAX_WORMS`, `include/Consts.h:34`) | 32 (`rl_sim::MAX_WORMS`) |
 | Projectiles | 3000 (`MAX_PROJECTILES`, `include/CProjectile.h:36`) | 3000 by default, up to 65 536 (`MatchSetup::MAX_POOL_CAPACITY`) |
 | Map side | 4096 (12-bit worm positions) | 4096 for imported levels (`rl-import-lxl`) |
-| Effects | 1024 (`MAX_ENTITIES`, `include/Entity.h:30`) | 1024 (`rl_fx::MAX_ENTITIES`; `Fx::with_capacity` in benches) |
+| Effects | 1024 (`MAX_ENTITIES`, `include/Entity.h:30`) | 16 384 in play, 1024 of them kept for deaths (`rl_fx::PLAY_ENTITIES`, `DEATH_RESERVE`); OLX's 1024 with `olx_quirks` (`rl_fx::MAX_ENTITIES`); `Fx::with_capacity` in benches |
 | Colour image | — | 256 MiB (`MAX_COLOR_MAP_BYTES`), art scale at most 8 |

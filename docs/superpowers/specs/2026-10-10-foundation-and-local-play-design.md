@@ -701,11 +701,18 @@ oracle and become fixes in play, behind one simulation setting,
   shots passed through worms.
 - **D9.** The exact-zero death is credited to the worm whose damage left 0
   health, and plays the death sound, gibs and blood a lethal hit plays;
-  OLX plays none of them for the local player.
+  OLX plays none of them for the local player. After review, the same
+  day: also after the game over, and no part of a death is dropped on
+  its way to the screen and the speakers. Its events are marked as the
+  death's and never crowded out of a tick's events; online play shows
+  each death once per worm and life; the entity pool keeps room for
+  deaths and a death sound takes the place of an older voice (§19 E1,
+  amended below).
 
 The reasons and the OLX sources are in `docs/porting/STATUS.md`
 ("Hits test the worm's current position; every death is credited and
-shown").
+shown", "More cosmetic entities in play", "A death sound steals a
+voice").
 
 ## 19. Amendments made while writing plan 5 (2026-10-10)
 
@@ -716,7 +723,7 @@ take precedence. The OLX behaviours behind them are in
 
 | # | Decision | Reason |
 |---|---|---|
-| E1 | **Faithful to OLX `d1ad953f`** wherever a choice is visible in play: <ul><li>hard-locked camera, staying on the dead worm and snapping on respawn;</li><li>shake as a random offset for 0.2 s, clamped inward;</li><li>no shadows;</li><li>OLX's colours, frames and entity physics;</li><li>large explosions start invisible;</li><li>the 1024-entity cap;</li><li>THROW and PICKUP play globally at gain 1.0, other sounds positionally.</li></ul> | The user wants the old feel; this OLX build is the reference. |
+| E1 | **Faithful to OLX `d1ad953f`** wherever a choice is visible in play: <ul><li>hard-locked camera, staying on the dead worm and snapping on respawn;</li><li>shake as a random offset for 0.2 s, clamped inward;</li><li>no shadows;</li><li>OLX's colours, frames and entity physics;</li><li>large explosions start invisible;</li><li>the 1024-entity cap <em>(amended 2026-10-13: kept only with <code>SimSettings::olx_quirks</code>; in play 16 384 entities, the last 1024 only for a death's gibs and blood, and a death sound at its voice limit takes the oldest voice's place, the user's ruling: OLX's counts were a baseline to recreate, and fidelity will rise; see <code>docs/porting/STATUS.md</code>)</em>;</li><li>THROW and PICKUP play globally at gain 1.0, other sounds positionally.</li></ul> | The user wants the old feel; this OLX build is the reference. |
 | E2 | **Rendering interpolates** between the last two ticks (spec §8.2), with an option to draw the latest state like OLX. | High-refresh displays. |
 | E3 | **No antialiasing in the world pass:** the rope, beams and laser sight are exact 1-world-px lines at art scale. The upscale filter is selectable: integer-nearest, sharp-bilinear (default), or a pixel-art upscaler later. | Crisp pixels at any size. |
 | E4 | **Field of view:** 240 world px of visible height (fork layout); width from the aspect ratio, clamped to `max_aspect` 16:9. **Amended (the user's ruling after the v0.1 playtest):** the game's view is fixed at 427 × 192 world px (`Viewport::GAME`: 16:9's width, the 80 % of 240 above the HUD bar) for every window and HUD layout, drawn in the window's centred 16:9 frame above a bar of 20 % of its height; `from_aspect` stays for tools and goldens. | Spec §8.1; matches this OLX fork. The amendment: a competitive multiplayer game shows everyone the same area; OLX 0.58's local game showed 320 × 191 above its bar (`CClient.cpp:1712`). |

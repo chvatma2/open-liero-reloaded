@@ -45,6 +45,16 @@ All notable changes to rust-liero are recorded here. The format follows
   above your worm, in place of your name, and stays for 0.75 s after a
   change, as in OLX.
 
+### Changed — more effects on screen
+
+- Up to 16 384 effects (blood, gibs, dirt, smoke, explosions) at once
+  instead of OpenLieroX's 1024, so busy fights no longer lose their
+  blood and gibs. The last 1024 are kept for deaths, so a death's blood
+  explosion always shows. The room is set aside once when a match
+  starts. A 16-bot chaos match peaks at about 7 600 effects; with 32
+  bots firing everything a frame takes up to about 1-2 ms more on the
+  CPU, well within 144 Hz.
+
 ### Fixed — hits and deaths
 
 - Shots hit a worm where it is. About one hit in ten tested where the worm
@@ -53,7 +63,14 @@ All notable changes to rust-liero are recorded here. The format follows
   through worms. The oracle still reproduces OLX's behaviour.
 - A worm left at exactly 0 health now dies with the death sound and the
   blood explosion, like any other death, and the kill goes to whoever
-  dealt the last damage (OLX credited nobody and showed nothing).
+  dealt the last damage (OLX credited nobody and showed nothing). This
+  holds in the seconds after the game over too.
+- Every death shows in full: its blood is never dropped when a busy
+  moment fills the effects, and online a correction that moves a death
+  to another moment no longer shows it twice.
+- Every death is heard: when two of the same death sound already play,
+  the oldest makes way (a 5 ms fade) instead of the new one being
+  skipped.
 - Replays recorded before this change no longer play (replay format 2).
 
 ### Changed
