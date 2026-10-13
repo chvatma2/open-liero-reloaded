@@ -16,6 +16,9 @@ serde_json.workspace = true
 sha2.workspace = true
 hex.workspace = true
 thiserror.workspace = true
+# Invite codes (N42): bech32m; the payload is postcard.
+bech32.workspace = true
+postcard.workspace = true
 # Relay connections (`ws://` and `wss://`): rustls with the aws-lc-rs
 # provider and webpki-roots (workspace pins); tungstenite's rustls feature
 # lets `client_tls_with_config` take our rustls `ClientConfig`.

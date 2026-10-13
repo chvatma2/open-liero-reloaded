@@ -131,6 +131,17 @@ test relay, relay pool, announcements, game list, STUN and invite codes
   block longer): run it on a thread. `StunResponder` (feature `test-relay`;
   `start`, `start_plain`, `server()`, `answered()`) is the test server.
   Tests use the RFC 5769 section 2.2 response.
+- **`invite`** (N42) and **`defaults`**: `Invite::{encode, decode, relay_urls}`,
+  `rlx1…` bech32m of a postcard `Wire` (version byte 1, key, `RelayHint`s,
+  IPv4 addr as 4 bytes + port). `decode` trims, takes all upper case (not
+  mixed), refuses text over `MAX_CODE` (200) as `Invalid` (the `bech32`
+  0.12 crate's own Bech32m limit is 1023, so the 90 limit is simply not
+  applied), text without the `rlx1` prefix is `NotInvite`, any checksum or
+  case failure `Damaged`, version above 1 `Newer` (checked before parsing),
+  version 0, bad postcard, trailing bytes or bad hints `Invalid`. The 200
+  limit binds before the 100-byte URL limit (a code with a 100-byte URL does
+  not fit). `DEFAULT_RELAYS` is append-only (indices are wire format);
+  both default lists are placeholders until plan 12a Task 8.
 - Deps: `rustls` (default aws-lc-rs) and `webpki-roots` (workspace pins),
   `tungstenite` with `rustls-tls-webpki-roots` (for `Connector::Rustls`;
   its own default roots are never used). `rcgen =0.14.10` (`aws_lc_rs`

@@ -4,6 +4,8 @@
 //! threads.
 
 pub mod announce;
+pub mod defaults;
+mod invite;
 pub mod list;
 pub mod nostr;
 pub mod pool;
@@ -11,6 +13,7 @@ mod relay;
 pub mod stun;
 
 pub use announce::{AnnounceError, Announcer, GameSummary, Region, announcement, parse_announcement};
+pub use invite::{Invite, InviteError, MAX_CODE, RelayHint};
 pub use list::{GameList, ListedGame, Ping};
 pub use nostr::{
     Event, Filter, FromRelay, KIND_ANNOUNCE, KIND_HANDSHAKE, MAX_CONTENT, MAX_FRAME, NostrError, ToRelay,
