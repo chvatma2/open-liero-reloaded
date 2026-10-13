@@ -22,6 +22,9 @@ pub enum Refusal {
     Malformed,
     /// The lobby's password proof was missing or wrong.
     Password,
+    /// The host has no connection ids left (it never reuses one); it must
+    /// restart.
+    Exhausted,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +65,7 @@ mod tests {
             Signal::Answer { sdp: "v=0".to_string() },
             Signal::Refused { reason: Refusal::Banned },
             Signal::Refused { reason: Refusal::Password },
+            Signal::Refused { reason: Refusal::Exhausted },
         ] {
             assert_eq!(decode_signal(&encode_signal(&s)), Ok(s));
         }

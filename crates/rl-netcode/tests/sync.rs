@@ -14,7 +14,7 @@ use rl_proto::{
 };
 use rl_sim::Keys;
 
-fn plan(id: u16, seat: Seat, profile: Profile, join_tick: Option<u32>) -> PeerPlan {
+fn plan(id: u32, seat: Seat, profile: Profile, join_tick: Option<u32>) -> PeerPlan {
     PeerPlan {
         id,
         seat,

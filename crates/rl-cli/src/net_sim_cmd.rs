@@ -63,7 +63,7 @@ struct NetSpecArgs {
     ticks: u32,
     /// `peer:from_tick:until_tick`: nothing passes between host and peer (repeatable).
     #[arg(long = "outage", value_parser = parse_outage)]
-    outages: Vec<(u16, u32, u32)>,
+    outages: Vec<(u32, u32, u32)>,
     #[arg(long, default_value_t = 0)]
     net_seed: u64,
     /// easy, medium, hard, xtreme or mixed (default).
@@ -92,11 +92,11 @@ impl From<NetSpecArgs> for NetSpec {
     }
 }
 
-fn parse_outage(s: &str) -> Result<(u16, u32, u32), String> {
+fn parse_outage(s: &str) -> Result<(u32, u32, u32), String> {
     let parts: Vec<&str> = s.split(':').collect();
     let [p, a, b] = parts[..] else { return Err("expected peer:from_tick:until_tick".into()) };
     let num = |x: &str| x.parse::<u32>().map_err(|e| e.to_string());
-    Ok((p.parse::<u16>().map_err(|e| e.to_string())?, num(a)?, num(b)?))
+    Ok((p.parse::<u32>().map_err(|e| e.to_string())?, num(a)?, num(b)?))
 }
 
 fn parse_seeds(s: &str) -> Result<Range<u32>, String> {

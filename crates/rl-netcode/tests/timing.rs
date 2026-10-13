@@ -5,7 +5,7 @@ use rl_netcode::netsim::Profile;
 use rl_netcode::toy::ToyFactory;
 use rl_netcode::{Event, Seat, input_delay};
 
-fn plan(id: u16, slot: u8, profile: Profile, ppm: i32) -> PeerPlan {
+fn plan(id: u32, slot: u8, profile: Profile, ppm: i32) -> PeerPlan {
     PeerPlan {
         id,
         seat: Seat::Player(slot),
@@ -44,7 +44,7 @@ fn drift_is_corrected() {
     // Clocks 0.5 % fast and slow: without adjustment they would drift 30 ticks a minute apart.
     let sc = scenario(1, vec![plan(1, 2, Profile::GOOD, 5_000), plan(2, 3, Profile::GOOD, -5_000)], 6_000);
     let r = run(&sc);
-    for p in [1u16, 2] {
+    for p in [1u32, 2] {
         assert_eq!(r.stats[&HOST].fills, 0, "nobody's input was filled");
         let m = r.stats[&p].margin.unwrap();
         assert!((0..=3).contains(&m), "peer {p} margin {m}");
@@ -107,7 +107,7 @@ fn a_frozen_host_stalls_its_clients_who_recover() {
     };
     let r = run(&sc);
     assert!(r.dropped.is_empty(), "dropped {:?}", r.dropped);
-    for p in [1u16, 2] {
+    for p in [1u32, 2] {
         let stalls: Vec<u32> = r.events[&p]
             .iter()
             .filter_map(|e| match e {

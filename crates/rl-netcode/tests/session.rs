@@ -18,7 +18,7 @@ fn scenario(seed: u64, profile: Profile, clients: u8, spectators: u8) -> Scenari
     let mut peers = Vec::new();
     for c in 0..clients {
         peers.push(PeerPlan {
-            id: 1 + c as u16,
+            id: 1 + c as u32,
             seat: Seat::Player(2 + c),
             profile,
             clock_ppm: 0,
@@ -30,7 +30,7 @@ fn scenario(seed: u64, profile: Profile, clients: u8, spectators: u8) -> Scenari
     }
     for s in 0..spectators {
         peers.push(PeerPlan {
-            id: 100 + s as u16,
+            id: 100 + s as u32,
             seat: Seat::Spectator,
             profile,
             clock_ppm: 0,

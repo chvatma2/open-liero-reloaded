@@ -1228,6 +1228,7 @@ fn refusal_text(r: Refusal) -> &'static str {
         Refusal::Busy => "you are in this lobby already",
         Refusal::Malformed => "the host refused the handshake",
         Refusal::Password => "wrong password",
+        Refusal::Exhausted => "the host ran out of connection ids and must restart",
     }
 }
 

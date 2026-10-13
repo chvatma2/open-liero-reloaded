@@ -68,13 +68,15 @@ announcements.
     `limits.max_signal_bytes` close it). Checks in order: decodes as an
     offer (else `Refused { Malformed }`), `PROTOCOL_VERSION` and the
     fingerprint (`Version`), `max_peers` counting connecting links
-    (`Full`), peer ids left (`Busy`), the `gate` (its reason), the SDP
+    (`Full`), peer ids left (`Exhausted`: ids are `u32`, unreachable in
+    practice), the `gate` (its reason), the SDP
     (`Malformed`). The offer's `a=candidate` lines whose IP is not the
     TCP peer's are dropped first (ruling T4-A): the host never sends checks
     to an address the joiner may not hold (reflection), and a joiner behind
     NAT (its private candidate dropped) still connects through the
     peer-reflexive candidate its checks reveal; str0m takes an offer with
-    no candidate left. Test hook `offer_ip_override` (hidden). Accepted:
+    no candidate left. Test hooks `offer_ip_override`, `first_peer_id`
+    (hidden). Accepted:
     `Link::answerer` with the candidate (the TCP connection's local IP, the
     UDP port; decision N16), `Signal::Answer`, the WebSocket kept until the
     link opens; any further frame drops the joiner. At most 64 connections
@@ -93,7 +95,8 @@ announcements.
     offer (candidate: the TCP local IP, the UDP port), the answer or
     `NetEvent::Refused`. A failure before the link opens is
     `Disconnected { peer: HOST }` without `Connected`.
-  - **Peers**: host side 1, 2, 3, … in the order links open, never reused;
+  - **Peers**: host side 1, 2, 3, … in the order links open, never reused
+    (`PeerId` is `u32` and never goes on the wire);
     the client's peer is `HOST` (0). `Connected { addr }` is the remote end
     of the signalling connection. A local `close` (and dropping the
     endpoint) tells the peer at once and reports nothing.

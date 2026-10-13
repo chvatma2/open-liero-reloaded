@@ -187,6 +187,28 @@ fn a_full_host_refuses_the_next_client() {
     assert_eq!(net.host.peers().count(), 1);
 }
 
+/// Peer ids are never reused: a public host that has seen 65 535 links
+/// still takes the next joiner (ids are `u32`, never on the wire).
+#[test]
+fn a_host_past_65535_links_still_accepts() {
+    let mut net = Net::new(EndpointConfig { first_peer_id: Some(65_533), ..config() });
+    let mut ids = Vec::new();
+    for _ in 0..4 {
+        ids.push(net.join_and_wait(config()).1);
+    }
+    assert_eq!(ids.iter().map(|&id| u64::from(id)).collect::<Vec<_>>(), [65_533, 65_534, 65_535, 65_536]);
+}
+
+/// Exhausted ids (unreachable at `u32` in practice) have their own refusal.
+#[test]
+fn a_host_out_of_peer_ids_says_so() {
+    let mut net = Net::new(EndpointConfig { first_peer_id: Some(PeerId::MAX - 1), ..config() });
+    assert_eq!(net.join_and_wait(config()).1, PeerId::MAX - 1);
+    let c = net.join(config());
+    net.run_until(Duration::from_secs(10), "the refusal", |n| !n.clients[c].1.is_empty());
+    assert_eq!(net.clients[c].1, [NetEvent::Refused { why: Refusal::Exhausted }]);
+}
+
 #[test]
 fn the_gate_refuses_with_its_reason() {
     let mut cfg = config();

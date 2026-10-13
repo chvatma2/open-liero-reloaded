@@ -33,7 +33,7 @@ pub use sync::PEER_STREAM_KEEP;
 pub use world_sim::WorldSim;
 
 /// A peer's address within one session.
-pub type PeerId = u16;
+pub type PeerId = u32;
 
 /// The two data channels of every connection (spec §2.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

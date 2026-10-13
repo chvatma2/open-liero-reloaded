@@ -1081,7 +1081,7 @@ proptest! {
         let cfg = HostConfig { max_players, max_spectators, admins: vec![key(1)], ..cfg() };
         let mut host = LobbyHost::new(cfg, ident(HOST), Some(look("Host")), setup(0)).unwrap();
         let mut now = 0u64;
-        let mut nonces: BTreeMap<u16, [u8; 32]> = BTreeMap::new();
+        let mut nonces: BTreeMap<u32, [u8; 32]> = BTreeMap::new();
         let mut serial = 0u8;
         for (i, op) in ops.into_iter().enumerate() {
             let op = if crowd_at == Some(i) { Op::Crowd } else { op };
@@ -1089,7 +1089,7 @@ proptest! {
                 Op::Join(p, _) | Op::Connect(p) => {
                     serial = serial.wrapping_add(1);
                     let nonce = [serial; 32];
-                    let peer = u16::from(p);
+                    let peer = u32::from(p);
                     host.connected(peer, ip(p), now, nonce);
                     nonces.insert(peer, nonce);
                     if let Op::Join(p, look) = op {
@@ -1102,7 +1102,7 @@ proptest! {
                 Op::Crowd => {
                     for p in 0..PEERS {
                         serial = serial.wrapping_add(1);
-                        let (peer, nonce, me) = (u16::from(p), [serial; 32], ident(p + 1));
+                        let (peer, nonce, me) = (u32::from(p), [serial; 32], ident(p + 1));
                         host.connected(peer, ip(p), now, nonce);
                         host.receive(peer, ToHost::Hello { key: me.public(), look: long_look(p), password: None }, now);
                         let signature = me.sign(&challenge_message(&nonce, &key(HOST)), [0; 32]);
@@ -1111,13 +1111,13 @@ proptest! {
                         host.receive(peer, ToHost::Have { missing }, now);
                     }
                 }
-                Op::Disconnect(p) => host.disconnected(u16::from(p)),
-                Op::Send(p, m) => host.receive(u16::from(p), m, now),
+                Op::Disconnect(p) => host.disconnected(u32::from(p)),
+                Op::Send(p, m) => host.receive(u32::from(p), m, now),
                 Op::Kick(m, b) => host.kick(m, b),
                 Op::Move(m, b) => host.move_seat(m, b),
                 Op::Setup(bots, long) => host.set_setup(if long { long_setup(bots) } else { setup(bots) }).unwrap(),
                 Op::Start(force) => {
-                    let rtts = BTreeMap::from([(1u16, 900u32), (2, 0)]);
+                    let rtts = BTreeMap::from([(1u32, 900u32), (2, 0)]);
                     let started = if force { host.force_start(1, &rtts) } else { host.start(1, &rtts) };
                     if let Ok(mut w) = started {
                         w.start_checksum = 5;

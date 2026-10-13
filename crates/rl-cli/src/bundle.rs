@@ -20,7 +20,7 @@ pub const BUNDLE_VERSION: u16 = 1;
 pub struct DesyncBundle {
     /// How to rebuild the start world (plan 10 replaces this by the lobby's match setup).
     pub spec: NetSpec,
-    pub peer: u16,
+    pub peer: u32,
     /// `rl_proto::FINGERPRINT` of the build that recorded it.
     pub fingerprint: u64,
     /// The recording machine, such as `x86_64-linux`.

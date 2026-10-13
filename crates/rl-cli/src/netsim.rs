@@ -54,7 +54,7 @@ pub struct NetSpec {
     pub ticks: u32,
     /// `(peer, from tick, until tick)`: nothing passes between host and peer.
     #[serde(default)]
-    pub outages: Vec<(u16, u32, u32)>,
+    pub outages: Vec<(u32, u32, u32)>,
     #[serde(default)]
     pub net_seed: u64,
     /// The bots' difficulty (`easy`, `medium`, `hard`, `xtreme`); `mixed` by default.
@@ -65,7 +65,7 @@ pub struct NetSpec {
     /// worm's health is set in that peer's world alone, as it was after its
     /// last confirmed tick (a desync for the harness to repair).
     #[serde(default)]
-    pub faults: Vec<(u16, u32, u8, f32)>,
+    pub faults: Vec<(u32, u32, u8, f32)>,
 }
 
 impl NetSpec {

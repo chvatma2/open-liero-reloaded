@@ -15,7 +15,7 @@ control messages, the frame delta codec and the simulation fingerprint.
   `StateBegin`, `StateChunk`, `Bye`, `StateLoaded`, `StateRefused`.
 - **Signalling** (`signal.rs`, WebSocket, one postcard message per frame,
   `MAX_SIGNAL`): `Signal::{Offer, Answer, Refused}`, `Refusal` (`Version`,
-  `Full`, `Banned`, `Busy`, `Malformed`, `Password`: also the lobby's
+  `Full`, `Banned`, `Busy`, `Malformed`, `Password`, `Exhausted`: also the lobby's
   `ToClient::Refused`); sdp <= 8 KiB.
 - **Lobby** (`lobby.rs`, reliable channel, `MAX_LOBBY` = 60 KiB: a full
   lobby at every bound is about 40 KB, `worst_case_messages_fit`): `ToHost`,

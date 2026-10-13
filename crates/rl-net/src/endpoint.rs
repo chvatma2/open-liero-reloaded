@@ -78,6 +78,10 @@ pub struct EndpointConfig {
     /// of its own (a client behind NAT, as the host sees it).
     #[doc(hidden)]
     pub offer_ip_override: Option<IpAddr>,
+    /// Tests only: a host's first peer id instead of 1 (a host that has
+    /// seen many links).
+    #[doc(hidden)]
+    pub first_peer_id: Option<PeerId>,
 }
 
 impl Default for EndpointConfig {
@@ -92,6 +96,7 @@ impl Default for EndpointConfig {
             impair_seed: 0,
             fingerprint_override: None,
             offer_ip_override: None,
+            first_peer_id: None,
         }
     }
 }
@@ -327,7 +332,8 @@ impl Endpoint {
     /// refuses each valid offer.
     pub fn host(cfg: EndpointConfig, gate: Gate) -> io::Result<Endpoint> {
         let (listener, udp, port) = bind_both(cfg.port)?;
-        Ok(Endpoint::new(cfg, udp, port, Role::Host { listener, gate, next_id: 1, incoming: Vec::new() }))
+        let next_id = cfg.first_peer_id.unwrap_or(1).max(1);
+        Ok(Endpoint::new(cfg, udp, port, Role::Host { listener, gate, next_id, incoming: Vec::new() }))
     }
 
     /// A client of the host whose signalling (TCP) address is `host`. The
@@ -546,9 +552,10 @@ impl Endpoint {
             return self.refuse(conn, Refusal::Full, now);
         }
         let Role::Host { gate, next_id, .. } = &mut self.role else { return };
-        // Ids are never reused: refuse once they run out.
-        if *next_id as usize + self.pending.len() >= PeerId::MAX as usize {
-            return self.refuse(conn, Refusal::Busy, now);
+        // Ids are never reused: refuse once they run out (4 billion links:
+        // unreachable in practice).
+        if u64::from(*next_id) + self.pending.len() as u64 >= u64::from(PeerId::MAX) {
+            return self.refuse(conn, Refusal::Exhausted, now);
         }
         if let Err(why) = gate(&addr, &signal) {
             return self.refuse(conn, why, now);

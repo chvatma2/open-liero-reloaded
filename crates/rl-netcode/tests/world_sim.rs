@@ -162,7 +162,7 @@ impl Factory<WorldSim> for Worlds<'_> {
 #[test]
 fn the_world_plays_over_the_network_with_a_late_spectator() {
     let Some(c) = content() else { return };
-    let plan = |id: u16, seat, join_tick| PeerPlan {
+    let plan = |id: u32, seat, join_tick| PeerPlan {
         id,
         seat,
         profile: Profile::TYPICAL,
@@ -289,7 +289,7 @@ fn colour_maps_follow_rollbacks_and_loads() {
     let Some(c) = content() else { return };
     let level = c.load_level(DIRT_LEVEL).unwrap();
     let theme = c.load_theme(&level.theme).unwrap();
-    let plan = |id: u16, seat, join_tick| PeerPlan {
+    let plan = |id: u32, seat, join_tick| PeerPlan {
         id,
         seat,
         profile: Profile::BAD,
@@ -399,7 +399,7 @@ fn final_timeline(c: &Content, host_log: &[[u8; 32]], ticks: u32) -> Vec<Confirm
 #[test]
 fn tick_records_follow_rollbacks() {
     let Some(c) = content() else { return };
-    let plan = |id: u16, seat| PeerPlan {
+    let plan = |id: u32, seat| PeerPlan {
         id,
         seat,
         profile: Profile::BAD,
@@ -434,7 +434,7 @@ fn tick_records_follow_rollbacks() {
     let want = final_timeline(&c, &r.host_log, sc.ticks);
     assert!(want.iter().any(|t| !t.events.is_empty()), "something happened");
     let records = records.borrow();
-    for peer in [0u16, 1, 2, 3, 4] {
+    for peer in [0u32, 1, 2, 3, 4] {
         let got = &records.confirmed[&peer];
         assert!(got.len() >= sc.ticks as usize, "peer {peer}: {} records", got.len());
         for (i, t) in got.iter().enumerate() {
