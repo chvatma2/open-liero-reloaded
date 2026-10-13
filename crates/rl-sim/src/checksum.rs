@@ -170,7 +170,7 @@ impl World {
 
 impl Checksum for Draws {
     fn hash(&self, h: &mut Fnv) {
-        let Draws { rand, mt, ents, events: _, rot_bumped, spawn_work: _, actions: _ } = self;
+        let Draws { rand, mt, ents, events: _, rot_bumped, spawn_work: _, actions: _, hits: _ } = self;
         rand.visit_state(|w| h.u64(w));
         mt.visit_state(|w| h.u64(w));
         h.u32(*ents);

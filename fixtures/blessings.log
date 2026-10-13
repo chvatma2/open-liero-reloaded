@@ -49,3 +49,7 @@
   fixtures/bench/envelope/amd-ryzen-5-7600x-6-core-processor-12cpus.ron
 2026-10-12 net-feel: stalls count episodes
   fixtures/net/feel.ron
+2026-10-13 bless-regression: hits test the worm's current position (OLX VecTimeRecorder off-by-one fixed in play)
+  fixtures/matches/classic-dirt-level-8dm.ron
+  fixtures/matches/classic-fossilfacility-4xtreme-kill-limit.ron
+  fixtures/matches/mw-castlestrike-8chaos.ron

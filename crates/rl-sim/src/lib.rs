@@ -72,6 +72,6 @@ pub use setup::{MAX_SLOTS, MatchSetup, SetupError, WormSetup};
 pub use shots::{MAX_SHOOTINGS, RoundTrip, Shot, encode_decode, spawn_time};
 pub use snapshot::{RestoreError, Snapshot};
 pub use state::{StateError, WorldState};
-pub use tally::{ACTION_KINDS, ActionTally, projectile_actions};
+pub use tally::{ACTION_KINDS, ActionTally, HitAudit, projectile_actions};
 pub use world::{CLOCK_OFFSET_MS, MAX_WORMS, World};
 pub use worm::{Dir, Loadout, PosRecorder, Slot, Worm, WormState};

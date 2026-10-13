@@ -208,7 +208,7 @@ impl World {
             spare: _,
             setup_worms,
         } = self;
-        let Draws { rand, mt, ents, events: _, rot_bumped, spawn_work: _, actions: _ } = draws;
+        let Draws { rand, mt, ents, events: _, rot_bumped, spawn_work: _, actions: _, hits: _ } = draws;
         let Referee { mode, commands: _, over, over_frame, game_over_sent } = referee;
         WorldState {
             width: terrain.width(),

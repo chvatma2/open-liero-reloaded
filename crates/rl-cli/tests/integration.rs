@@ -16,6 +16,7 @@ mod common;
 mod cli;
 mod corpus;
 mod feel;
+mod hits;
 mod matches;
 mod net_repro;
 mod nostr_probe;

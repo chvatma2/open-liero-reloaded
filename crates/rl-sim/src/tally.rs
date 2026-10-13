@@ -1,6 +1,7 @@
 //! What a match's projectiles did, counted for coverage reports (spec
-//! §7.1: every action kind the mods use must be triggered). Not state: it
-//! never makes two worlds unequal, and the checksum leaves it out.
+//! §7.1: every action kind the mods use must be triggered), and where
+//! their worm hits landed, for the hit invariant. Not state: neither ever
+//! makes two worlds unequal, and the checksum leaves them out.
 
 use rl_data::mod_def::{ActionKind, ProjectileDef};
 
@@ -84,4 +85,39 @@ impl ActionTally {
 pub fn projectile_actions(def: &ProjectileDef) -> impl Iterator<Item = ActionKind> + '_ {
     let timer = def.timer.action.as_ref().filter(|_| timer_has_action(&def.timer)).map(|a| a.kind);
     timer.into_iter().chain([def.hit.kind, def.player_hit.kind])
+}
+
+/// The worm hits of projectiles (`CProjectile::ProjWormColl`) and
+/// explosions (`CClient::Explosion`'s injuries), each checked against the
+/// struck worm's position at that moment (`Worm::pos`, which the newest
+/// recorded entry equals): `stale` counts the hits whose source was outside
+/// the hit geometry of that position (a projectile: `|dx|` or `|dy|` not
+/// below `4 + radius`, in whole pixels as the test truncates them; an
+/// explosion: farther than 5 px). With [`crate::SimSettings::olx_quirks`]
+/// off a hit is never stale. For tests over whole matches; not state.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HitAudit {
+    pub projectile_hits: u64,
+    pub projectile_stale: u64,
+    pub explosion_hits: u64,
+    pub explosion_stale: u64,
+}
+
+impl PartialEq for HitAudit {
+    /// Always equal: an audit is not state.
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl HitAudit {
+    pub(crate) fn projectile(&mut self, current: bool) {
+        self.projectile_hits = self.projectile_hits.saturating_add(1);
+        self.projectile_stale = self.projectile_stale.saturating_add(u64::from(!current));
+    }
+
+    pub(crate) fn explosion(&mut self, current: bool) {
+        self.explosion_hits = self.explosion_hits.saturating_add(1);
+        self.explosion_stale = self.explosion_stale.saturating_add(u64::from(!current));
+    }
 }

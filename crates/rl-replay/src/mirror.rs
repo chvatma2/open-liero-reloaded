@@ -86,6 +86,7 @@ mirror!(SettingsW <-> SimSettings {
     bonus_frequency: f32,
     bonus_life: f32,
     bonus_health_to_weapon_chance: f32,
+    olx_quirks: bool,
 });
 
 mirror!(SlotW <-> Slot { weapon: i32, charge: f32, reloading: bool, last_fire: f32 });

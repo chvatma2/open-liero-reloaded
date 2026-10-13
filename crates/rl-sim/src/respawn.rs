@@ -60,10 +60,10 @@ impl Worm {
     /// `CWorm::Spawn` at `pos`, except the carving: full health, at rest,
     /// aiming level to the right, rope cleared, input cleared
     /// (`clearInput`), and every weapon slot full and ready with its weapon
-    /// kept. The position recorder is cleared to `pos` but keeps its old
-    /// entries (`clear(vPos)`, spec §18 D7). Lives, kills, the dirt count,
-    /// `fLastBlood` and the factors stay.
-    pub(crate) fn respawn(&mut self, pos: Vec2, now: AbsTime) {
+    /// kept. The position recorder is cleared to `pos` (`clear(vPos)`),
+    /// keeping its old entries only with `olx_quirks` (spec §18 D7).
+    /// Lives, kills, the dirt count, `fLastBlood` and the factors stay.
+    pub(crate) fn respawn(&mut self, pos: Vec2, now: AbsTime, olx_quirks: bool) {
         self.pos = pos;
         self.vel = Vec2::ZERO;
         self.health = 100.0;
@@ -75,7 +75,7 @@ impl Worm {
         self.face = Dir::Right;
         self.move_dir = Dir::Right;
         self.last_input_time = now;
-        self.pos_recorder.clear_to(pos);
+        self.pos_recorder.respawn_to(pos, olx_quirks);
         self.rope.clear();
         self.frame = 0.0;
         self.on_ground = false;
@@ -158,7 +158,7 @@ fn spawn_worm(w: &mut Worm, keys: &mut Latches, sp: &mut Spawner) -> bool {
     if pos.x == -1.0 && pos.y == -1.0 {
         pos = find_spot(sp.terrain, &mut sp.draws.mt);
     }
-    w.respawn(pos, sp.now);
+    w.respawn(pos, sp.now, sp.settings.olx_quirks);
     keys.reset();
     let ev = &mut sp.draws.events;
     ev.push(EventKind::Spawned { worm: w.id });

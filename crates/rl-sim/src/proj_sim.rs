@@ -443,7 +443,7 @@ fn final_worm_check(
     frame_old_pos: Vec2,
     frame_old_vel: Vec2,
     cur: Col,
-    ctx: &ProjCtx,
+    ctx: &mut ProjCtx,
 ) -> Col {
     let kind = pi.def.player_hit.kind;
     if kind == ActionKind::Nothing {
@@ -472,9 +472,9 @@ fn final_worm_check(
 }
 
 /// `CProjectile::ProjWormColl` (`:52-111`): the first alive worm (in id
-/// order) whose recorded position (`getBest`, with the `get(0)` quirk) is
-/// within 4 px. LX56 projectiles have no radius here.
-fn proj_worm_coll(p: &mut Projectile, pos: Vec2, ctx: &ProjCtx) -> i32 {
+/// order) whose recorded position (`getBest`; the `get(0)` quirk only with
+/// `olx_quirks`) is within 4 px. LX56 projectiles have no radius here.
+fn proj_worm_coll(p: &mut Projectile, pos: Vec2, ctx: &mut ProjCtx) -> i32 {
     let (sx, sy) = (c_int(pos.x), c_int(pos.y));
     let (mut rx, mut ry) = p.radius;
     if rx <= 2 {
@@ -495,7 +495,7 @@ fn proj_worm_coll(p: &mut Projectile, pos: Vec2, ctx: &ProjCtx) -> i32 {
         if (prevent_self_shooting || !ctx.settings.self_hit) && is_owner {
             continue;
         }
-        let wp = w.pos_recorder.get_best(ctx.physics_dt.0, ms_back);
+        let wp = w.pos_recorder.hit_position(ctx.physics_dt.0, ms_back, ctx.settings.olx_quirks);
         let (wx, wy) = (c_int(wp.x), c_int(wp.y));
         const WORM_SIZE: i32 = 4;
         if sx.wrapping_sub(wx).wrapping_abs() < rx.wrapping_add(WORM_SIZE)
@@ -512,7 +512,12 @@ fn proj_worm_coll(p: &mut Projectile, pos: Vec2, ctx: &ProjCtx) -> i32 {
             } else if sy > wy.wrapping_add(2) {
                 p.collision_side |= COL_BOTTOM;
             }
-            return w.id;
+            let (cx, cy) = (c_int(w.pos.x), c_int(w.pos.y));
+            let current = sx.wrapping_sub(cx).wrapping_abs() < rx.wrapping_add(WORM_SIZE)
+                && sy.wrapping_sub(cy).wrapping_abs() < ry.wrapping_add(WORM_SIZE);
+            let id = w.id;
+            ctx.draws.hits.projectile(current);
+            return id;
         }
     }
     -1

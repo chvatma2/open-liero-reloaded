@@ -34,7 +34,7 @@ pub use record::Recorder;
 /// [`Replay::decode`] reads. Bump it whenever the encoding changes (a field
 /// of the setup, the settings, the mode or the key columns): while no
 /// replay is published, other versions are refused, not migrated.
-pub const FORMAT_VERSION: u16 = 1;
+pub const FORMAT_VERSION: u16 = 2;
 
 /// The first bytes of every replay file.
 pub const MAGIC: [u8; 4] = *b"RLRP";

@@ -73,9 +73,13 @@ impl Loadout {
 /// (`src/util/VecTimeRecorder.h:21-62`): the worm's position after each
 /// physics step, which projectile hit tests and explosions read.
 ///
-/// `cur` is the next slot to write, so [`get(0)`](Self::get) is the
-/// *oldest* slot (100 pushes ago, or whatever an earlier life or the zeroed
-/// start left there), not the newest: OLX's quirk, kept (spec §18 D7).
+/// `cur` is the next slot to write, so OLX's `get(0)` is the *oldest*
+/// slot (100 pushes ago, or whatever an earlier life or the zeroed start
+/// left there), not the newest. [`get`](Self::get) and
+/// [`get_best`](Self::get_best) keep that quirk only with
+/// [`SimSettings::olx_quirks`] (the oracle; spec §18 D7, amended
+/// 2026-10-13); without, frames-back 0 is the newest entry, and play's
+/// hit tests read it ([`hit_position`](Self::hit_position)).
 ///
 /// Serialised as [`RecorderWire`] (serde has no impl for 100-element arrays).
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -106,6 +110,17 @@ impl PosRecorder {
         self.push(v);
     }
 
+    /// `CWorm::Spawn`'s `clear(vPos)` (`src/common/CWorm.cpp:611`). With
+    /// `olx_quirks` the old life's entries stay, for `get(0)`'s off-by-one
+    /// to read; without, every slot becomes `v`, so no read can reach a
+    /// position of the previous life.
+    pub fn respawn_to(&mut self, v: Vec2, olx_quirks: bool) {
+        if !olx_quirks {
+            self.data = [v; Self::FRAMES];
+        }
+        self.clear_to(v);
+    }
+
     /// `push_back`.
     pub fn push(&mut self, v: Vec2) {
         self.data[self.cur] = v;
@@ -115,9 +130,26 @@ impl PosRecorder {
         }
     }
 
-    /// `get(framesBack)`: `m_data[(cur + 100 - framesBack % 100) % 100]`.
-    pub fn get(&self, frames_back: usize) -> Vec2 {
-        self.data[(self.cur + Self::FRAMES - frames_back % Self::FRAMES) % Self::FRAMES]
+    /// `get(framesBack)`, `frames_back` pushes before the newest entry.
+    /// With `olx_quirks` OLX's index, `m_data[(cur + 100 - framesBack %
+    /// 100) % 100]`, which is one slot too far back: `get(0)` is the
+    /// oldest slot (spec §18 D7). Without, `m_data[(cur + 100 - 1 -
+    /// framesBack % 100) % 100]`: `get(0)` is the newest.
+    pub fn get(&self, frames_back: usize, olx_quirks: bool) -> Vec2 {
+        let back = frames_back % Self::FRAMES + usize::from(!olx_quirks);
+        self.data[(self.cur + 2 * Self::FRAMES - back) % Self::FRAMES]
+    }
+
+    /// Where a projectile hit test (`ProjWormColl`) or an explosion sees
+    /// the worm. With `olx_quirks`, OLX's `getBest(msPerFrame, msBack)`,
+    /// `msBack` measured from the wall clock pinned 10 ms ahead (spec §18
+    /// D2), so frames-back is mostly 1 and sometimes 0, which the
+    /// off-by-one turns into the newest entry or the oldest. Without, the
+    /// newest entry: the worm's current position, which the projectile's
+    /// step in the same sub-step follows (OLX's frames-back would read the
+    /// entry a sub-step older most of the time, a pixel or two off).
+    pub fn hit_position(&self, ms_per_frame: u64, ms_back: u64, olx_quirks: bool) -> Vec2 {
+        if olx_quirks { self.get_best(ms_per_frame, ms_back, true) } else { self.get(0, false) }
     }
 
     /// Whether the indices are ones `push` and `clear` reach, so `get`
@@ -130,12 +162,12 @@ impl PosRecorder {
     }
 
     /// `getBest(millisecsPerFrame, millisecsBack)`.
-    pub fn get_best(&self, ms_per_frame: u64, ms_back: u64) -> Vec2 {
+    pub fn get_best(&self, ms_per_frame: u64, ms_back: u64, olx_quirks: bool) -> Vec2 {
         let frames_back = (ms_back / ms_per_frame.max(1)).min(usize::MAX as u64) as usize;
         if frames_back < self.count {
-            self.get(frames_back)
+            self.get(frames_back, olx_quirks)
         } else if self.count > 0 {
-            self.get(self.count - 1)
+            self.get(self.count - 1, olx_quirks)
         } else {
             self.data[(self.cur + Self::FRAMES - 1) % Self::FRAMES]
         }
@@ -331,24 +363,63 @@ mod tests {
         let mut r = PosRecorder::default();
         r.clear_to(Vec2::new(1.0, 0.0));
         // One push: get(0) is the slot about to be written, still (0, 0).
-        assert_eq!((r.get(0), r.get(1)), (Vec2::ZERO, Vec2::new(1.0, 0.0)));
+        assert_eq!((r.get(0, true), r.get(1, true)), (Vec2::ZERO, Vec2::new(1.0, 0.0)));
         for i in 2..=100 {
             r.push(Vec2::new(i as f32, 0.0));
         }
         // Full: get(0) is the oldest entry, 100 pushes back; get(1) the newest.
         assert_eq!(
-            (r.get(0), r.get(1), r.get(99)),
+            (r.get(0, true), r.get(1, true), r.get(99, true)),
             (Vec2::new(1.0, 0.0), Vec2::new(100.0, 0.0), Vec2::new(2.0, 0.0))
         );
         // getBest: 0-10 ms back is get(0), 11-21 ms get(1); past the entries, the oldest.
-        assert_eq!(r.get_best(11, 10), Vec2::new(1.0, 0.0));
-        assert_eq!(r.get_best(11, 11), Vec2::new(100.0, 0.0));
-        assert_eq!(r.get_best(11, 5000), r.get(99));
+        assert_eq!(r.get_best(11, 10, true), Vec2::new(1.0, 0.0));
+        assert_eq!(r.get_best(11, 11, true), Vec2::new(100.0, 0.0));
+        assert_eq!(r.get_best(11, 5000, true), r.get(99, true));
         // clear() keeps the contents: after a respawn get(0) is a stale position.
-        r.clear_to(Vec2::new(7.0, 0.0));
-        assert_eq!((r.get(0), r.get(1)), (Vec2::new(2.0, 0.0), Vec2::new(7.0, 0.0)));
-        assert_eq!(r.get_best(11, 30), Vec2::new(2.0, 0.0), "one entry: get(count - 1) is get(0), stale too");
+        r.respawn_to(Vec2::new(7.0, 0.0), true);
+        assert_eq!((r.get(0, true), r.get(1, true)), (Vec2::new(2.0, 0.0), Vec2::new(7.0, 0.0)));
+        assert_eq!(
+            r.get_best(11, 30, true),
+            Vec2::new(2.0, 0.0),
+            "one entry: get(count - 1) is get(0), stale too"
+        );
         r.clear();
-        assert_eq!(r.get_best(11, 0), Vec2::new(7.0, 0.0), "no entries: the last written slot");
+        assert_eq!(r.get_best(11, 0, true), Vec2::new(7.0, 0.0), "no entries: the last written slot");
+    }
+
+    #[test]
+    fn without_olx_quirks_get0_is_the_newest_and_a_respawn_forgets_the_old_life() {
+        let mut r = PosRecorder::default();
+        r.clear_to(Vec2::new(1.0, 0.0));
+        assert_eq!(r.get(0, false), Vec2::new(1.0, 0.0), "one push: get(0) is it");
+        for i in 2..=100 {
+            r.push(Vec2::new(i as f32, 0.0));
+        }
+        // Full: get(k) is k pushes before the newest.
+        assert_eq!(
+            (r.get(0, false), r.get(1, false), r.get(99, false)),
+            (Vec2::new(100.0, 0.0), Vec2::new(99.0, 0.0), Vec2::new(1.0, 0.0))
+        );
+        // getBest: 0-10 ms back is the newest, 11-21 ms one before; past the entries, the oldest.
+        assert_eq!(r.get_best(11, 10, false), Vec2::new(100.0, 0.0));
+        assert_eq!(r.get_best(11, 11, false), Vec2::new(99.0, 0.0));
+        assert_eq!(r.get_best(11, 5000, false), Vec2::new(1.0, 0.0));
+        // A respawn forgets the old life: every read is the spawn position.
+        r.respawn_to(Vec2::new(7.0, 0.0), false);
+        for back in [0, 1, 50, 99] {
+            assert_eq!(r.get(back, false), Vec2::new(7.0, 0.0), "get({back})");
+        }
+        for ms in [0, 10, 30, 5000] {
+            assert_eq!(r.get_best(11, ms, false), Vec2::new(7.0, 0.0), "getBest {ms} ms");
+        }
+        r.push(Vec2::new(8.0, 0.0));
+        assert_eq!((r.get(0, false), r.get(1, false)), (Vec2::new(8.0, 0.0), Vec2::new(7.0, 0.0)));
+        // Hit tests read the newest entry whatever the pinned clock says;
+        // with the quirks, OLX's `getBest`.
+        for ms in [0, 10, 11, 21, 5000] {
+            assert_eq!(r.hit_position(11, ms, false), Vec2::new(8.0, 0.0), "{ms} ms");
+            assert_eq!(r.hit_position(11, ms, true), r.get_best(11, ms, true), "{ms} ms");
+        }
     }
 }

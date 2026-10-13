@@ -83,7 +83,11 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
 - **Projectiles** (`proj_sim.rs`): after all worms in each sub-step, every
   projectile catches up its own clock in slot order (children in higher
   slots run in the same pass). Hit tests read the worm's `PosRecorder`
-  (`worm.rs`, OLX's `get(0)` quirk kept). What events do is `actions.rs`;
+  (`worm.rs`, `hit_position`: the newest entry; OLX's `get(0)` quirk only
+  with `SimSettings::olx_quirks`, which an oracle trace's settings turn
+  on; spec §18 D7 as amended). `World::hit_audit` (`tally.rs`, not state)
+  counts the worm hits from outside the struck worm's current hit
+  geometry, for `rl-cli`'s `tests/hits.rs`. What events do is `actions.rs`;
   their map and health effects (explosions, carving, dirt, green dirt, dirt
   counts) are `effects.rs`.
   Projectile `pos`/`vel` assignments that OLX makes through `Attr::operator=`

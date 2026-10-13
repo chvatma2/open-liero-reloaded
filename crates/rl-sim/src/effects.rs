@@ -207,9 +207,11 @@ pub(crate) fn explosion(ctx: &mut Blast, time: AbsTime, pos: Vec2, damage: f32, 
         if !w.alive {
             continue;
         }
-        let wp = w.pos_recorder.get_best(ctx.physics_dt.0, ms_back);
+        let wp = w.pos_recorder.hit_position(ctx.physics_dt.0, ms_back, ctx.settings.olx_quirks);
         if (pos - wp).length2() <= 25.0 {
             let id = w.id;
+            let current = (pos - w.pos).length2() <= 25.0;
+            ctx.draws.hits.explosion(current);
             injure_worm(&mut ctx.harm(), id, damage, owner);
         }
     }

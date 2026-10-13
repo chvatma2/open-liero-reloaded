@@ -154,9 +154,11 @@ fn respawn_keeps_weapons_and_refills_them() {
     let second = Vec2::new(rnd() as f32, rnd() as f32);
     assert!(first.y > 197.0);
     assert_eq!((r.pos, w.mt_calls()), (second, 4));
-    // The recorder keeps its old entries (`clear(vPos)`): get(0) is stale (D7).
-    assert_eq!(r.pos_recorder.get(1), r.pos);
-    assert_ne!(r.pos_recorder.get(0), Vec2::ZERO);
+    // Without OLX's quirks the respawn forgets the old life's positions
+    // (D7, amended 2026-10-13): every read is the spawn position.
+    for back in [0, 1, 99] {
+        assert_eq!(r.pos_recorder.get(back, false), r.pos);
+    }
 }
 
 #[test]

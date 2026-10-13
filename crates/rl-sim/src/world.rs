@@ -27,7 +27,7 @@ use crate::respawn::{SPAWN_HOLE, Spawner, find_spot, simulate_respawns};
 use crate::rng::Draws;
 use crate::setup::Spare;
 use crate::shots::{MAX_SHOOTINGS, ShootList, Shot, ShotCtx, encode_decode, process_shot, spawn_time};
-use crate::tally::ActionTally;
+use crate::tally::{ActionTally, HitAudit};
 use crate::worm::Worm;
 
 /// OLX `MAX_WORMS` (`include/Consts.h:34`).
@@ -222,6 +222,13 @@ impl World {
     /// only here are equal and hash alike.
     pub fn actions_triggered(&self) -> &ActionTally {
         &self.draws.actions
+    }
+
+    /// The worm hits of projectiles and explosions since the world was
+    /// made, and how many came from outside the struck worm's current hit
+    /// geometry. Not state, like [`World::actions_triggered`].
+    pub fn hit_audit(&self) -> HitAudit {
+        self.draws.hits
     }
 
     /// `CMap::FindSpot` (`src/common/CMap.cpp:2381-2396`) with the world's

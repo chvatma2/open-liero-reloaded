@@ -87,13 +87,28 @@ pub struct SimSettings {
     pub bonus_life: f32,
     /// `BonusHealthToWeaponChance`: the chance that a spawned bonus is a weapon.
     pub bonus_health_to_weapon_chance: f32,
+    /// OLX `d1ad953f`'s hit bug, which play fixes (spec §18 D7, amended
+    /// 2026-10-13; `docs/porting/STATUS.md`). On, as in OLX: projectile hit
+    /// tests and explosions read the worm's position recorder through
+    /// `VecTimeRecorder::get`'s off-by-one, so frames-back 0 is the
+    /// *oldest* entry (about 1.1 s old, or an earlier life's), and a
+    /// respawn keeps the old entries.
+    ///
+    /// Off (play): hits test the newest recorded position, and a respawn
+    /// forgets the old life's.
+    /// [`SimSettings::from_olx_features`] (an oracle trace's header: the
+    /// oracle, scenarios and what is drawn from them) turns it on;
+    /// [`SimSettings::lx56`] and every game leave it off.
+    pub olx_quirks: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SettingsError(pub String);
 
 impl SimSettings {
-    /// OLX's "LieroX 0.56" values with the Classic mod (as in the oracle trace headers).
+    /// OLX's "LieroX 0.56" values with the Classic mod (as in the oracle
+    /// trace headers), without OLX's hit bug
+    /// ([`SimSettings::olx_quirks`] off, as every game plays).
     pub fn lx56() -> Self {
         Self {
             lx56_physics_fps: 84,
@@ -146,6 +161,7 @@ impl SimSettings {
             bonus_frequency: 30.0,
             bonus_life: 60.0,
             bonus_health_to_weapon_chance: 0.5,
+            olx_quirks: false,
         }
     }
 
@@ -203,7 +219,8 @@ impl SimSettings {
         Ok(())
     }
 
-    /// Reads the settings from OLX feature values (a trace header's `features`).
+    /// Reads the settings from OLX feature values (a trace header's
+    /// `features`), with [`SimSettings::olx_quirks`] on: a trace is OLX's play.
     /// Fails if a needed feature is missing or malformed, or if OLX had a mode
     /// on that this simulation does not implement (wrap-around maps, Gusanos
     /// worm physics, worm or projectile friction, non-LX56 aim), or a value is outside
@@ -284,6 +301,8 @@ impl SimSettings {
             bonus_frequency: num("BonusFrequency")?,
             bonus_life: num("BonusLife")?,
             bonus_health_to_weapon_chance: num("BonusHealthToWeaponChance")?,
+            // A trace is OLX's play, bugs included.
+            olx_quirks: true,
         };
         settings.validate()?;
         Ok(settings)
@@ -360,8 +379,10 @@ mod tests {
     }
 
     #[test]
-    fn olx_header_gives_the_lx56_defaults() {
-        assert_eq!(SimSettings::from_olx_features(&olx_header()), Ok(SimSettings::lx56()));
+    fn olx_header_gives_the_lx56_defaults_with_olx_quirks() {
+        let olx = SimSettings { olx_quirks: true, ..SimSettings::lx56() };
+        assert_eq!(SimSettings::from_olx_features(&olx_header()), Ok(olx));
+        assert!(!SimSettings::lx56().olx_quirks, "play fixes OLX's hit bug");
     }
 
     #[test]
