@@ -354,8 +354,11 @@ fn a_host_and_two_clients_play_a_short_match() {
     // The same replay everywhere, and it plays.
     let bytes: Vec<&Vec<u8>> = net.peers.iter().map(|p| p.replays()[0]).collect();
     assert!(bytes.iter().all(|b| rl_online::replay::same_match(b, bytes[0])), "equal replays");
+    // Each replay's viewer is its peer's own slot (the clients' slots follow
+    // the order they were welcomed in, which varies).
     let viewers: Vec<_> = bytes.iter().map(|b| Replay::decode(b).unwrap().setup.viewer).collect();
-    assert_eq!(viewers, [Some(0), Some(1), Some(2)], "each peer's own slot");
+    let own: Vec<_> = net.peers.iter().flat_map(Peer::started).collect();
+    assert_eq!(viewers, own, "each peer's own slot");
     let replay = Replay::decode(bytes[0]).unwrap();
     assert_eq!(replay.ticks() as usize, r.rows.len());
     net.content().play_replay(&replay).unwrap();
