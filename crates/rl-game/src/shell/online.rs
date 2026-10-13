@@ -23,7 +23,7 @@ use rl_ui::hud::{LineKind, LogLine};
 use rl_ui::{HostPrefs, InternetView, LobbyCommand, Password, Screen, UiAction, Visibility, is_invite};
 
 use super::{MAX_SPECTATORS, NET_SIM_BOTS, Outcome, Playing, Shell};
-use crate::finding::{Hosted, Internet, relays_of};
+use crate::finding::{Hosted, Internet, RELAY_LINGER, relays_of};
 use crate::net::{self, Net, NetView};
 use crate::online::OnlineDriver;
 use crate::session::{Driver, Session};
@@ -834,14 +834,27 @@ impl Shell {
             .and_then(|n| n.hosted.as_ref())
             .is_some_and(|h| h.visibility == Visibility::Public);
         if !browsing && !public {
-            if let Some(i) = self.internet.take() {
-                i.close(false);
+            // Kept `RELAY_LINGER` (unsubscribed, still drained), then closed.
+            let Some(i) = &mut self.internet else { return };
+            let left = *self.internet_left.get_or_insert(now);
+            i.browse(false, now);
+            i.poll(now);
+            if now.saturating_duration_since(left) >= RELAY_LINGER {
+                if let Some(i) = self.internet.take() {
+                    i.close(false);
+                }
+                self.internet_left = None;
+                self.pinged = None;
+                self.data.selected_game = None;
+                self.data.internet = InternetView::default();
             }
-            self.pinged = None;
-            self.data.internet = InternetView::default();
             return;
         }
+        self.internet_left = None;
         let finding = &self.ui.settings().online.finding;
+        if self.internet.is_none() {
+            self.relay_pools += 1;
+        }
         let internet = self
             .internet
             .get_or_insert_with(|| Internet::open(relays_of(finding), &finding.blocked, now, unix_now()));
@@ -913,6 +926,17 @@ impl Shell {
         {
             i.publish(note);
         }
+    }
+
+    /// The relays are connected (needed now, or lingering).
+    pub fn relays_open(&self) -> bool {
+        self.internet.is_some()
+    }
+
+    /// How many times the relays were connected to (tests: a visit within
+    /// `RELAY_LINGER` reuses them).
+    pub fn relay_pools_opened(&self) -> u32 {
+        self.relay_pools
     }
 
     /// At exit: the relays let go, waiting (at most 2 s) so a closing

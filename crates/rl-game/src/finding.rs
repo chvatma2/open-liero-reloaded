@@ -28,6 +28,15 @@ pub const GAMES_SUB: &str = "games";
 const EXPIRE_EVERY: Duration = Duration::from_secs(1);
 /// The ids of our own notes remembered (to tell their `OK`s apart).
 const OURS: usize = 16;
+/// The relays stay connected this long after the game stopped needing them
+/// (the Multiplayer screen left): a visit within it reuses them instead of
+/// reconnecting to every relay.
+pub const RELAY_LINGER: Duration = Duration::from_secs(30);
+/// A Public game's lobby line when the configured public address cannot be
+/// reached from the Internet (private, local, or IPv6, which invites and
+/// joiners do not use).
+pub const UNREACHABLE_ADDRESS: &str =
+    "Not listed: your public address setting is not reachable from the Internet";
 
 /// The relays `settings` name, else the game's defaults.
 pub fn relays_of(settings: &FindingSettings) -> Vec<String> {
@@ -236,9 +245,9 @@ impl Internet {
         }
         if self.expired.is_none_or(|t| now.saturating_duration_since(t) >= EXPIRE_EVERY) {
             self.expired = Some(now);
-            let before = self.list.games().len();
+            let before = self.list.len();
             self.list.expire(unix);
-            self.changed |= self.list.games().len() != before;
+            self.changed |= self.list.len() != before;
         }
     }
 
@@ -339,6 +348,8 @@ pub struct Hosted {
     pub publisher: Option<Publisher>,
     pub relays: Vec<String>,
     pub region: rl_discovery::Region,
+    /// The address is the settings' `public_address`, not STUN's.
+    pub configured: bool,
     /// The lobby's summary as last seen.
     pub summary: Option<GameSummary>,
     /// The invite and listing lines last shown.
@@ -359,7 +370,8 @@ impl Hosted {
         let configured = settings.public_address.trim().parse::<IpAddr>().ok();
         let asks = matches!(visibility, Visibility::Public | Visibility::Invite);
         let stun = if asks { stun_of(settings) } else { Vec::new() };
-        let (address, said) = AddressWatch::start(configured.filter(|_| asks), &stun, now);
+        let configured = configured.filter(|_| asks);
+        let (address, said) = AddressWatch::start(configured, &stun, now);
         let publisher = (visibility == Visibility::Public).then(|| Publisher::new(identity, now, now_unix));
         let hosted = Hosted {
             visibility,
@@ -367,6 +379,7 @@ impl Hosted {
             publisher,
             relays: relays_of(settings),
             region: region(settings.region),
+            configured: configured.is_some(),
             summary: None,
             shown: (None, None),
         };
@@ -389,6 +402,8 @@ impl Hosted {
             "Finding the public address…".to_string()
         } else if self.address.current().is_none() {
             format!("Not listed: no public address (forward port {port} or set it in Options)")
+        } else if self.configured && self.address.current().is_some_and(|ip| ip.is_ipv6() || !is_global(ip)) {
+            UNREACHABLE_ADDRESS.to_string()
         } else if internet.is_none_or(|i| i.relays().is_empty()) {
             "Not listed: no relays (set them in Options)".to_string()
         } else if internet.is_some_and(Internet::accepted) {
@@ -421,6 +436,33 @@ mod tests {
         for r in Region::ALL {
             assert_eq!(ui_region(region(r)), r);
         }
+    }
+
+    /// A configured public address that the Internet cannot reach (private,
+    /// local, or IPv6, which neither invites nor joiners use) is said in the
+    /// lobby, never "Listed on the Internet".
+    #[test]
+    fn an_unreachable_configured_address_is_said() {
+        let id = Identity::from_secret([7; 32]).unwrap();
+        let now = Instant::now();
+        let line = |addr: &str| {
+            let f = FindingSettings {
+                public_address: addr.into(),
+                relays: Some(Vec::new()),
+                stun: Some(Vec::new()),
+                ..FindingSettings::default()
+            };
+            let (h, _) = Hosted::start(Visibility::Public, &f, id.clone(), now, 1_000);
+            h.listing(None, 23400).unwrap()
+        };
+        for bad in ["192.168.1.5", "127.0.0.1", "2a00:1450::1"] {
+            assert_eq!(line(bad), UNREACHABLE_ADDRESS, "{bad}");
+        }
+        assert_eq!(
+            UNREACHABLE_ADDRESS,
+            "Not listed: your public address setting is not reachable from the Internet"
+        );
+        assert!(line("81.2.69.142").starts_with("Not listed: no relays"));
     }
 
     #[test]

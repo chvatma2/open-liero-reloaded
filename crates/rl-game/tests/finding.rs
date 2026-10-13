@@ -239,3 +239,38 @@ fn the_internet_tab_without_relays() {
     frame(&mut [&mut none], Instant::now(), &mut |_| Keys(0));
     assert_eq!(none.data.internet.status, InternetStatus::NoRelay);
 }
+
+/// The relays outlive the Multiplayer screen by `RELAY_LINGER` (30 s): a
+/// visit within it reuses the pool (no reconnecting to every relay), the
+/// pool closes after it and the selection goes with it.
+#[test]
+fn the_relays_linger_after_the_multiplayer_screen() {
+    let relay = TestRelay::start();
+    let empty = tempfile::tempdir().unwrap();
+    let mut sh = menus(empty.path(), Store::in_memory(), "Anna", 1.0);
+    use_relays(&mut sh, &[relay.url()]);
+    let t0 = Instant::now();
+    let at = |s: u64| t0 + Duration::from_secs(s);
+    sh.act(UiAction::Open(Screen::Multiplayer));
+    frame(&mut [&mut sh], at(0), &mut |_| Keys(0));
+    assert_eq!(sh.relay_pools_opened(), 1);
+    sh.data.selected_game = Some([5; 32]);
+    sh.act(UiAction::Back);
+    assert_eq!(sh.ui.screen(), Screen::Main);
+    frame(&mut [&mut sh], at(10), &mut |_| Keys(0));
+    assert!(sh.relays_open(), "lingering");
+    assert_eq!(sh.data.selected_game, Some([5; 32]));
+    sh.act(UiAction::Open(Screen::Multiplayer));
+    frame(&mut [&mut sh], at(11), &mut |_| Keys(0));
+    assert_eq!(sh.relay_pools_opened(), 1, "the visit reuses the pool");
+    sh.act(UiAction::Back);
+    frame(&mut [&mut sh], at(12), &mut |_| Keys(0));
+    frame(&mut [&mut sh], at(41), &mut |_| Keys(0));
+    assert!(sh.relays_open(), "29 s after leaving");
+    frame(&mut [&mut sh], at(43), &mut |_| Keys(0));
+    assert!(!sh.relays_open(), "closed 30 s after leaving");
+    assert_eq!(sh.data.selected_game, None, "the selection goes with the pool");
+    sh.act(UiAction::Open(Screen::Multiplayer));
+    frame(&mut [&mut sh], at(44), &mut |_| Keys(0));
+    assert_eq!(sh.relay_pools_opened(), 2);
+}

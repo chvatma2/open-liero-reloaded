@@ -268,6 +268,15 @@ impl GameList {
         self.prune_seen(now_unix);
     }
 
+    /// How many games are listed (compatible or not).
+    pub fn len(&self) -> usize {
+        self.games.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.games.is_empty()
+    }
+
     /// Hides a key's games from now on.
     pub fn block(&mut self, key: PublicKey) {
         if !self.blocked.contains(&key) {

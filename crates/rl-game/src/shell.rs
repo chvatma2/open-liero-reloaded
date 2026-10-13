@@ -186,6 +186,10 @@ pub struct Shell {
     internet: Option<Internet>,
     /// The Internet game last pinged (the menus' selection).
     pinged: Option<[u8; 32]>,
+    /// When the relays stopped being needed (they linger, `RELAY_LINGER`).
+    internet_left: Option<Instant>,
+    /// Relay pools opened so far.
+    relay_pools: u32,
 }
 
 /// The Options' download cache row reads the cache's sizes (a directory
@@ -243,6 +247,8 @@ impl Shell {
             cache_read: None,
             internet: None,
             pinged: None,
+            internet_left: None,
+            relay_pools: 0,
         };
         shell.data.default_relays = DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect();
         shell.data.default_stun = DEFAULT_STUN.iter().map(|s| s.to_string()).collect();
@@ -293,6 +299,8 @@ impl Shell {
             cache_read: None,
             internet: None,
             pinged: None,
+            internet_left: None,
+            relay_pools: 0,
         }
     }
 

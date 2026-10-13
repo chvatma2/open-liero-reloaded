@@ -337,7 +337,10 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   itself and the host starts whenever every player is ready).
   **Finding games** (`finding.rs`, plan 12a Task 10, N39-N43): the shell
   owns one `finding::Internet` while the Multiplayer or Host screen shows
-  or a hosted game is Public (`poll_internet`; closed otherwise, its pool
+  or a hosted game is Public (`poll_internet`; otherwise it lingers
+  `RELAY_LINGER` (30 s, unsubscribed, still drained: a visit within it
+  reuses the pool, `relay_pools_opened`, `relays_open`), then closes and
+  clears `selected_game`, its pool
   dropped on a thread of its own, `relays-closing`, so the UI never waits;
   at quitting, `close_internet` waits so a closing note leaves): a `Pool`
   on the settings' relays (`relays_of`: else `DEFAULT_RELAYS`; none: no
@@ -365,7 +368,8 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `Hosted`), the closing note when the lobby is left or lost
   (`close_hosted`), and `LobbyView::listing`: "Finding the public
   address…", "Not listed: no public address (forward port N or set it in
-  Options)", "Not listed: no relays …", "Not listed: no relay reachable",
+  Options)", `UNREACHABLE_ADDRESS` (a configured address that is private,
+  local or IPv6; never "Listed" then), "Not listed: no relays …", "Not listed: no relay reachable",
   "Announcing on the Internet…", "Listed on the Internet" (a relay's `OK`
   for one of our notes). Changes to the relays apply the next time the
   pool opens.
@@ -516,6 +520,8 @@ joined yet", the invite refused, a damaged code, a direct join, the
 closing note takes it off the list), `the_internet_tab_without_relays`
 (a closed port: "No relay reachable", no frame over 250 ms, hosting and
 a direct join unaffected; none set: at once),
+`the_relays_linger_after_the_multiplayer_screen` (a fake clock: reused
+within 30 s, closed after, the selection cleared),
 `tests/deathmatch.rs` (a Deathmatch to its results, the bots' think
 budget, a recording replayed through a replay session), `tests/menu.rs`
 (starts with missing or broken content, rapid menu actions) and

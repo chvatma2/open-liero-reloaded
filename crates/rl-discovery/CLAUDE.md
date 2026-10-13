@@ -182,7 +182,7 @@ test relay, relay pool, announcements, game list, STUN and invite codes
   500 games (new keys refused when full) and 4096 remembered keys (when full
   the oldest unlisted one is evicted). Announced addresses must be global
   (`list::is_global`, v4-mapped unwrapped) unless `allow_local(true)`. Refusals
-  that need no signature check (stale, inside the gap) come first. `games()`
+  that need no signature check (stale, inside the gap) come first. `len()`/`is_empty()`; `games()`
   sorts compatible first, then ping (measured, unknown/measuring, no answer),
   name, key. `filter()` has no `since` (no clock); `filter_since(now)` does.
 

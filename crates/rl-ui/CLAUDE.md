@@ -106,7 +106,10 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   shown), options (`options.rs`, 720 wide: Video (with the HUD layout),
   Audio, Keys and Online tabs,
   centred; Online (scrolling): "Finding games" (Region, Public address),
-  Relays and STUN servers (each row's Remove, "New relay"/"Add relay",
+  Relays and STUN servers (each row's Remove, "New relay"/"Add relay"
+  with why it cannot add, in red beside it and on Add's hover: "needs
+  wss:// or ws://", "needs host:port", "already listed", "the list is
+  full",
   "Reset relays to defaults"; the same for STUN), Blocked hosts (Unblock),
   each change one `SetFinding`; then "Download cache: N MB" and Clear from
   `MenuData::download_cache` (`DownloadCacheView`: the app's bytes and

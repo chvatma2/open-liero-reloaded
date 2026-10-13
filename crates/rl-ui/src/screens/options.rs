@@ -265,9 +265,14 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
     ui.add_space(10.0);
     let relays = f.relays.clone().unwrap_or_else(|| data.default_relays.clone());
     section(ui, "Relays", |ui, _| {
-        if let Some(list) =
-            server_list(ui, "relay", &relays, &mut v.new_relay, valid_relay, "wss://relay.example.org")
-        {
+        if let Some(list) = server_list(
+            ui,
+            "relay",
+            &relays,
+            &mut v.new_relay,
+            (valid_relay, "needs wss:// or ws://"),
+            "wss://relay.example.org",
+        ) {
             f.relays = Some(list);
         }
         if ui.add_enabled(f.relays.is_some(), Button::new("Reset relays to defaults")).clicked() {
@@ -277,9 +282,14 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
     ui.add_space(10.0);
     let stun = f.stun.clone().unwrap_or_else(|| data.default_stun.clone());
     section(ui, "STUN servers", |ui, _| {
-        if let Some(list) =
-            server_list(ui, "STUN server", &stun, &mut v.new_stun, valid_stun, "stun.example.org:3478")
-        {
+        if let Some(list) = server_list(
+            ui,
+            "STUN server",
+            &stun,
+            &mut v.new_stun,
+            (valid_stun, "needs host:port"),
+            "stun.example.org:3478",
+        ) {
             f.stun = Some(list);
         }
         if ui.add_enabled(f.stun.is_some(), Button::new("Reset STUN servers to defaults")).clicked() {
@@ -293,14 +303,36 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
     }
 }
 
+/// Why a new server cannot be added to `list` (`None`: it can, or
+/// nothing is typed yet); `needs` says what a valid one looks like.
+fn refusal(
+    list: &[String],
+    typed: &str,
+    valid: fn(&str) -> bool,
+    needs: &'static str,
+) -> Option<&'static str> {
+    if list.len() >= crate::online::MAX_SERVERS {
+        Some("the list is full")
+    } else if typed.is_empty() {
+        None
+    } else if !valid(typed) {
+        Some(needs)
+    } else if list.iter().any(|s| s == typed) {
+        Some("already listed")
+    } else {
+        None
+    }
+}
+
 /// An editable list of servers: each with Remove, then a field and Add
-/// (enabled for a valid new one). The new list, when it changed.
+/// (enabled for a new valid one; else why not beside it and on Add's
+/// hover). The new list, when it changed.
 fn server_list(
     ui: &mut Ui,
     what: &str,
     list: &[String],
     new: &mut String,
-    valid: fn(&str) -> bool,
+    (valid, needs): (fn(&str) -> bool, &'static str),
     hint: &str,
 ) -> Option<Vec<String>> {
     let mut changed = None;
@@ -321,9 +353,18 @@ fn server_list(
         let label = ui.label(format!("New {what}"));
         let r = ui.add(TextEdit::singleline(new).hint_text(hint).desired_width(300.0)).labelled_by(label.id);
         let typed = new.trim().to_string();
-        let ok = valid(&typed) && !list.contains(&typed) && list.len() < crate::online::MAX_SERVERS;
+        let why = refusal(list, &typed, valid, needs);
+        let ok = why.is_none() && !typed.is_empty();
         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-        if (ui.add_enabled(ok, Button::new(format!("Add {what}"))).clicked() || enter) && ok {
+        let add = ui.add_enabled(ok, Button::new(format!("Add {what}")));
+        let add = match why {
+            Some(why) => add.on_disabled_hover_text(why),
+            None => add,
+        };
+        if let Some(why) = why {
+            ui.label(RichText::new(why).color(egui::Color32::from_rgb(255, 110, 90)));
+        }
+        if (add.clicked() || enter) && ok {
             let mut l = list.to_vec();
             l.push(typed);
             changed = Some(l);
@@ -344,7 +385,7 @@ fn blocked(ui: &mut Ui, f: &mut FindingSettings) {
             if ui.small_button("Unblock").on_hover_text(k).clicked() {
                 unblock = Some(i);
             }
-            ui.label(RichText::new(format!("{}…", &k[..k.len().min(16)])).monospace());
+            ui.label(RichText::new(format!("{}…", k.get(..16).unwrap_or(k))).monospace());
         });
     }
     if let Some(i) = unblock {

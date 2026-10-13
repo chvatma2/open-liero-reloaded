@@ -46,13 +46,15 @@ fn a_listed_game_is_compatible_and_replaced_by_its_next_note() {
 #[test]
 fn a_closed_game_leaves_the_list() {
     let mut l = GameList::new(FP);
+    assert!(l.is_empty());
     let h = key(0);
     l.offer(&note(&h, &named("One"), FP, 1000), 1000);
-    assert_eq!(l.games().len(), 1);
+    assert_eq!((l.games().len(), l.len()), (1, 1));
     // The closing note is accepted at once, despite the rate limit.
     let closed = GameSummary { closed: true, ..named("One") };
     l.offer(&note(&h, &closed, FP, 1001), 1001);
-    assert!(l.games().is_empty());
+    assert!(l.games().is_empty() && l.is_empty());
+    assert_eq!(l.len(), 0);
     // A replayed older note does not bring it back.
     l.offer(&note(&h, &named("One"), FP, 1000), 1020);
     assert!(l.games().is_empty());

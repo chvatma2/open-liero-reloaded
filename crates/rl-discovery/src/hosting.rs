@@ -217,7 +217,8 @@ impl Publisher {
         Some(announcement(&self.identity, &summary, FINGERPRINT, unix, aux()))
     }
 
-    /// A note was published (and no closing note yet).
+    /// Whether a note was published, so a closing note is due at the end
+    /// (it stays true once the closing note went out too).
     pub fn published(&self) -> bool {
         self.last_unix.is_some()
     }

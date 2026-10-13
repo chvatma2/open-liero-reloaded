@@ -519,6 +519,19 @@ fn options_edit_relays_and_unblock() {
     h.run();
     h.get_by_role_and_label(Role::TextInput, "New relay").type_text("relay.example.org");
     h.run();
+    let add = h.get_by_label("Add relay");
+    assert!(add.accesskit_node().is_disabled());
+    h.get_by_label("needs wss:// or ws://");
+    add.hover();
+    h.run();
+    assert_eq!(h.get_all_by_label("needs wss:// or ws://").count(), 2, "beside the field and on hover");
+    // One already listed.
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "New relay").type_text("wss://relay.two");
+    h.run();
+    // Beside the field (and on Add's hover, the pointer still there).
+    assert!(h.get_all_by_label("already listed").count() >= 1);
     assert!(h.get_by_label("Add relay").accesskit_node().is_disabled());
     // Replace the text: select all, then the URL.
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
@@ -542,6 +555,12 @@ fn options_edit_relays_and_unblock() {
     h.run();
     assert_eq!(saved(&h).online.finding.stun, Some(Vec::new()));
     h.get_by_label("No STUN servers: none is asked.");
+    h.get_by_role_and_label(Role::TextInput, "New STUN server").focus();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "New STUN server").type_text("stun.example.org");
+    h.run();
+    h.get_by_label("needs host:port");
+    assert!(h.get_by_label("Add STUN server").accesskit_node().is_disabled());
     // The region.
     h.get_by_label("Region").click();
     h.run();
@@ -553,6 +572,21 @@ fn options_edit_relays_and_unblock() {
     h.run();
     assert_eq!(saved(&h).online.finding.blocked, ["cd".repeat(32)]);
     assert_eq!(h.state().ui.settings().online.finding.blocked, ["cd".repeat(32)]);
+}
+
+/// A full list of relays takes no more, and says why.
+#[test]
+fn a_full_relay_list_says_so() {
+    let mut settings = Settings::default();
+    settings.online.finding.relays =
+        Some((0..rl_ui::MAX_SERVERS).map(|i| format!("wss://relay{i}.example")).collect());
+    let mut h = harness(UiState::new(settings, Profiles::default(), 1));
+    h.get_by_label("Options").click();
+    h.run();
+    h.get_by_label("Online").click();
+    h.run();
+    h.get_by_label("the list is full");
+    assert!(h.get_by_label("Add relay").accesskit_node().is_disabled());
 }
 
 /// A hand-edited file's finding settings are fixed: bad relays, STUN

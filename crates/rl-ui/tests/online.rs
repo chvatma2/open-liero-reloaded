@@ -9,8 +9,8 @@ use rl_content::{Catalog, LevelInfo, ModInfo};
 use rl_ui::screens::{self, MenuData};
 use rl_ui::{
     AppCommand, DownloadView, HostPrefs, InternetEntry, InternetStatus, InternetView, LanEntry, LobbyCommand,
-    LobbyView, MatchPrefs, MemberView, PHASE_LOBBY, Password, PingView, Profiles, Region, SEAT_SPECTATOR,
-    Screen, Settings, UiAction, UiState, Visibility, key_hex,
+    LobbyView, MatchPrefs, MemberView, PHASE_LOBBY, PingView, Profiles, Region, SEAT_SPECTATOR, Screen,
+    Settings, UiAction, UiState, Visibility, key_hex,
 };
 
 /// The Direct tab's field.
@@ -927,7 +927,6 @@ fn internet_games_join_by_key_and_block() {
     // Blocking twice saves nothing more.
     let again = h.state_mut().ui.update(UiAction::BlockHost([1; 32]));
     assert_eq!(again, [AppCommand::BlockHost([1; 32])]);
-    let _ = Password::default();
 }
 
 /// No relay connected: the Internet tab says so.
