@@ -293,9 +293,10 @@ geometry (`World::hit_audit`), some do with `SimSettings::olx_quirks` on,
 and the investigation's phantom self-kill (Classic, Dirt Level, 2 bots,
 seed 2, tick 4629) happens only with it on. `tests/deaths.rs` (check):
 every kill of seeded bot matches, by a lethal hit or at exactly 0 health,
-comes with its death sound and the victim's 7 gibs right after it, the
-presentation spawns them (unless OLX's 1024-entity pool is full), and
-exact-zero deaths are credited.
+comes with its death sound, the victim's 7 gibs and 50 rounds of blood
+right after it (`Event::death`), the presentation spawns every one of
+them (`Fx::death_spawns`, none dropped: play's pool keeps a death
+reserve), and exact-zero deaths are credited.
 `tests/state_transfer.rs` (check) loads every 5th state of 40 s chaos
 matches (16 bots, MW 1.0 and Classic on Castle Strike) into another world:
 `World::load_state`'s checks are never stricter than play.

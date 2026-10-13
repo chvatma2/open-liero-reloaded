@@ -2,8 +2,10 @@
 //! matches, each kill, by a lethal hit or at exactly 0 health, comes with
 //! one death sound and the victim's 7 gibs right after it in the tick's
 //! events, and the presentation (`Presentation::on_tick`, as local play
-//! feeds it) spawns those gibs. An exact-zero death is credited to the
-//! worm whose damage left 0 health.
+//! feeds it) spawns every entity of every death (its gibs and blood,
+//! `Event::death`), counted as they spawn (`Fx::death_spawns`), never one
+//! dropped. An exact-zero death is credited to the worm whose damage left
+//! 0 health.
 
 use crate::common;
 
@@ -11,7 +13,6 @@ use common::*;
 use rl_cli::assets::LevelAssets;
 use rl_cli::runner::{Match, Options};
 use rl_cli::spec::{MatchSpec, Personality};
-use rl_fx::Kind;
 use rl_present::{PresentSetup, Presentation, default_colour};
 use rl_scene::{SceneOptions, Viewport};
 use rl_sim::{CosmeticKind, Event, EventKind, SoundId};
@@ -24,8 +25,8 @@ struct Deaths {
     zero: usize,
     /// Of those, credited to nobody.
     zero_uncredited: usize,
-    /// Deaths whose gibs OLX's full entity pool could not take.
-    pool_full: usize,
+    /// The deaths' gibs and blood the entities took.
+    spawned: u64,
 }
 
 fn is_death_sound(e: &Event) -> bool {
@@ -58,13 +59,25 @@ fn deaths(c: &rl_content::Content, spec: &MatchSpec) -> Deaths {
     for tick in 0..spec.ticks {
         m.advance();
         let (w, ev) = (m.world(), m.events().as_slice());
+        let spawned = present.fx.death_spawns();
         present.on_tick(w, m.events());
+        // Every death's gibs and blood reach the entities, whatever else
+        // fills the pool (its death reserve), counted as they spawn.
+        let parts =
+            ev.iter().filter(|e| e.death && matches!(e.kind, EventKind::SpawnCosmetic { .. })).count();
+        let took = present.fx.death_spawns() - spawned;
+        assert_eq!(took, parts as u64, "{} tick {tick}: the deaths' entities spawned", spec.stem());
+        assert_eq!(present.fx.death_drops(), 0, "{} tick {tick}: no death's entity dropped", spec.stem());
+        d.spawned += took;
         let mut died = Vec::new();
         for (i, e) in ev.iter().enumerate() {
             if let EventKind::Kill { victim, killer } = e.kind {
                 let at = format!("{} tick {tick}: worm {victim}'s death", spec.stem());
                 assert!(ev.get(i + 1).is_some_and(is_death_sound), "{at}: its sound");
                 assert!((i + 2..i + 9).all(|j| ev.get(j).is_some_and(|e| is_gib(e, victim))), "{at}: 7 gibs");
+                let blood = ev[i + 9..].iter().take_while(|e| e.death && !is_death_sound(e)).count();
+                assert_eq!(blood, 150, "{at}: 50 rounds of blood");
+                assert!(ev[i + 1..i + 9 + blood].iter().all(|e| e.death), "{at}: marked as the death's");
                 let by_hit =
                     i > 0 && matches!(ev[i - 1].kind, EventKind::Damage { worm, .. } if worm == victim);
                 if by_hit {
@@ -78,17 +91,6 @@ fn deaths(c: &rl_content::Content, spec: &MatchSpec) -> Deaths {
         }
         let sounds = ev.iter().filter(|e| is_death_sound(e)).count();
         assert_eq!(sounds, died.len(), "{} tick {tick}: a death sound per kill", spec.stem());
-        // The gibs reach the entities, unless OLX's 1024-entity pool
-        // (spec §19 E1) is full: then OLX drops them too.
-        let full = present.fx.len() == present.fx.capacity();
-        for &v in &died {
-            let gibs = present.fx.entities().filter(|(_, e)| e.kind == Kind::Gib { worm: v }).count();
-            let want = 7 * died.iter().filter(|&&x| x == v).count();
-            if gibs < want {
-                assert!(full, "{} tick {tick}: worm {v}'s gibs spawned: {gibs} of {want}", spec.stem());
-                d.pool_full += 1;
-            }
-        }
     }
     d
 }
@@ -116,8 +118,9 @@ fn every_death_plays_its_sound_and_spawns_its_gibs() {
         all.hits += d.hits;
         all.zero += d.zero;
         all.zero_uncredited += d.zero_uncredited;
-        all.pool_full += d.pool_full;
+        all.spawned += d.spawned;
     }
     assert!(all.hits > 0 && all.zero > 0, "both death paths covered: {all:?}");
+    assert_eq!(all.spawned, 157 * (all.hits + all.zero) as u64, "7 gibs and 150 blood a death: {all:?}");
     assert_eq!(all.zero_uncredited, 0, "exact-zero deaths are the last damager's kills: {all:?}");
 }
