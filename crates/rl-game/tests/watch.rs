@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use rl_audio::Audio;
-use rl_game::app::{WatchKey, watch_key};
+use rl_game::app::{WatchKey, game_has_screen, watch_key};
 use rl_game::hud::{self, Frame};
 use rl_game::session::Session;
 use rl_game::setup::{self, Assets, DeathmatchOptions};
@@ -150,4 +150,18 @@ fn the_keys_choose_the_worm_or_the_speed() {
     assert_eq!(key(PageDown, online_watched), None);
     assert_eq!(key(PageUp, played), None);
     assert_eq!(key(KeyCode::KeyH, replay), None);
+}
+
+/// A command-line game (`--spectate`, `--replay`: no menus) always has the
+/// screen, though the menus' state stays on the main menu, so the arrows
+/// follow there too; with the menus, only while their panels do not hold
+/// the game (final review B-I4).
+#[test]
+fn the_arrows_follow_in_command_line_games() {
+    // (menus, names shown by the menus' state)
+    assert!(game_has_screen(false, false), "--spectate / --replay");
+    assert!(game_has_screen(true, true), "a menu game being played");
+    assert!(!game_has_screen(true, false), "a menu panel holds the game");
+    let spectate = watch_key(KeyCode::ArrowRight, true, false, game_has_screen(false, false));
+    assert_eq!(spectate, Some(WatchKey::Follow(1)));
 }

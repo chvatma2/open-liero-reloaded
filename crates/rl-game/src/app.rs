@@ -168,6 +168,13 @@ pub enum WatchKey {
     Speed { faster: bool },
 }
 
+/// Whether the game has the screen (its keys, the worms' names): always in
+/// a command-line game (no menus; its menus' state stays on the main menu),
+/// else while the menus' panels do not hold it (`Shell::names_shown`).
+pub fn game_has_screen(menus: bool, names_shown: bool) -> bool {
+    !menus || names_shown
+}
+
 /// What `code` does in a game: the arrows choose the worm followed in a
 /// game nobody here plays (`spectating`: a replay, bots alone, an online
 /// match watched), and are the player's own keys otherwise; PageUp and
@@ -746,7 +753,7 @@ impl App {
             time,
             speed: speed_shown,
             selecting: self.shell.selecting(),
-            names: !self.cfg.menus || self.shell.names_shown(),
+            names: game_has_screen(self.cfg.menus, self.shell.names_shown()),
             changing: self.shell.data.held.0 & rl_sim::Keys::CHANGE != 0,
             arrangement: self.shell.ui.settings().video.hud_layout,
             net: self.net_overlay.then(|| self.shell.net_view()).flatten(),
@@ -909,7 +916,7 @@ impl App {
             // A watched game: the arrows choose the worm followed, PageUp
             // and PageDown the speed (`watch_key`).
             KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::PageUp | KeyCode::PageDown => {
-                let in_game = self.shell.names_shown();
+                let in_game = game_has_screen(self.cfg.menus, self.shell.names_shown());
                 let Some(s) = self.shell.session_mut() else { return Ok(()) };
                 match watch_key(code, s.spectating(), s.human(), in_game) {
                     Some(WatchKey::Follow(step)) => s.follow_next(step),

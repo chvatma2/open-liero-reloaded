@@ -188,7 +188,9 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   the camera and the HUD follow the worm chosen (`follow`, `follow_next`,
   worm 0 at first); the left and right arrows choose it in any game nobody
   plays (`Session::spectating`, `app::watch_key`: not in a menu, never a
-  played game's; "Watching <name>" on the HUD). **Per-worm
+  played game's; "Watching <name>" on the HUD; `app::game_has_screen`: a
+  command-line `--spectate` or `--replay` always has the screen, though
+  its menus' state stays on the main menu, final review B-I4). **Per-worm
   looks** (`session::WormLook { name, colour, skin }`, one per worm,
   registered in worm order): local play's as above, an online match's the
   lobby's (`setup::load_online` loads every slot's skin once by id from
