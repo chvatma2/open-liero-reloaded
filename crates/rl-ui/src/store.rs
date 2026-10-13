@@ -45,6 +45,10 @@ pub const IDENTITY_VERSION: u32 = 1;
 pub const REPLAYS_DIR: &str = "replays";
 /// Imported packs (spec §9.4), layered over the bundled ones.
 pub const PACKS_DIR: &str = "packs";
+/// Downloaded content in the cache directory (plan 11, ruling N30).
+pub const DOWNLOADS_DIR: &str = "downloads";
+/// A data directory's own cache directory ([`Store::open`]).
+pub const CACHE_DIR: &str = "cache";
 /// A settings or profiles file larger than this is bad (they are a few KB).
 pub const MAX_FILE_BYTES: usize = 1 << 20;
 /// Backups `<name>.bak`, `<name>.1.bak` .. `<name>.<MAX_BACKUPS - 1>.bak`.
@@ -73,6 +77,9 @@ impl std::fmt::Debug for Secret {
 pub struct Store {
     /// `None`: nothing is read or written.
     dir: Option<PathBuf>,
+    /// The cache directory (the platform's, or `<dir>/cache`); `None` in
+    /// memory.
+    cache: Option<PathBuf>,
     /// Bad files that could not be moved aside: never overwritten.
     kept: Vec<PathBuf>,
     /// Files of a newer game: left untouched, nothing saved to them.
@@ -135,16 +142,22 @@ mod hex_secret {
 
 impl Store {
     /// The files in `dir`, which is made when the first file is saved.
+    /// Its cache directory is `<dir>/cache` (a data directory of its own:
+    /// `--data-dir`, the tests).
     pub fn open(dir: impl Into<PathBuf>) -> Store {
-        Store { dir: Some(dir.into()), kept: Vec::new(), newer: Vec::new() }
+        let dir = dir.into();
+        Store { cache: Some(dir.join(CACHE_DIR)), dir: Some(dir), kept: Vec::new(), newer: Vec::new() }
     }
 
     /// The platform data directory (`directories`' `ProjectDirs` for
-    /// "rust-liero": `~/.local/share/rust-liero` on Linux), or, when the
+    /// "rust-liero": `~/.local/share/rust-liero` on Linux; its cache
+    /// directory `~/.cache/rust-liero`), or, when the
     /// platform has none, [`Store::in_memory`] and a warning.
     pub fn platform() -> (Store, Option<String>) {
         match directories::ProjectDirs::from("", "", "rust-liero") {
-            Some(d) => (Store::open(d.data_dir()), None),
+            Some(d) => {
+                (Store { cache: Some(d.cache_dir().to_path_buf()), ..Store::open(d.data_dir()) }, None)
+            }
             None => {
                 (Store::in_memory(), Some("no data directory: settings and profiles are not saved".into()))
             }
@@ -164,6 +177,13 @@ impl Store {
     /// Where replays are saved (§21 G2), if there is a data directory.
     pub fn replays_dir(&self) -> Option<PathBuf> {
         self.dir.as_ref().map(|d| d.join(REPLAYS_DIR))
+    }
+
+    /// Where downloaded content is kept (plan 11, ruling N30): the cache
+    /// directory's `downloads/` (`ProjectDirs::cache_dir()/downloads`);
+    /// `None` in memory.
+    pub fn cache_dir(&self) -> Option<PathBuf> {
+        self.cache.as_ref().map(|d| d.join(DOWNLOADS_DIR))
     }
 
     /// Where the Import screen writes packs (spec §9.4), if there is a

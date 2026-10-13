@@ -332,6 +332,12 @@ impl ContentSide {
         }
     }
 
+    /// The missing bytes waiting for the player's approval (a client's
+    /// content over the prompt), as of the last poll.
+    pub(crate) fn prompt(&self) -> Option<u64> {
+        self.prompted
+    }
+
     /// The player lets the content over the prompt download.
     pub(crate) fn approve(&mut self) {
         if let Role::Client(c) = &mut self.role

@@ -8,8 +8,8 @@ use egui_kittest::kittest::{NodeT, Queryable};
 use rl_content::{Catalog, LevelInfo, ModInfo};
 use rl_ui::screens::{self, MenuData};
 use rl_ui::{
-    AppCommand, HostPrefs, LanEntry, LobbyCommand, LobbyView, MatchPrefs, MemberView, PHASE_LOBBY, Profiles,
-    SEAT_SPECTATOR, Screen, Settings, UiAction, UiState, Visibility,
+    AppCommand, DownloadView, HostPrefs, LanEntry, LobbyCommand, LobbyView, MatchPrefs, MemberView,
+    PHASE_LOBBY, Profiles, SEAT_SPECTATOR, Screen, Settings, UiAction, UiState, Visibility,
 };
 
 pub fn catalog() -> Catalog {
@@ -41,6 +41,7 @@ fn member(id: u8, name: &str, seat: &str, ready: bool) -> MemberView {
         seat: seat.into(),
         ready,
         missing: Vec::new(),
+        download: None,
         ping_ms: Some(23),
         admin: id == 0,
     }
@@ -57,6 +58,8 @@ pub fn lobby_view(host: bool) -> LobbyView {
         members: vec![member(0, "Martin", "Player 1", true), member(1, "Guest", "Player 2", false)],
         setup: MatchPrefs::default(),
         can_start: Err("Guest is not ready".into()),
+        downloads: Vec::new(),
+        prompt: None,
     }
 }
 
@@ -697,4 +700,79 @@ fn online_results_lead_back_to_the_lobby() {
     settle(&mut h);
     assert_eq!(h.state().ui.screen(), Screen::Lobby);
     assert_eq!(h.state().commands, [AppCommand::EndMatch]);
+}
+
+fn download(name: &str, kind: &str, have: u64, size: u64, state: &str) -> DownloadView {
+    DownloadView { name: name.into(), kind: kind.into(), have, size, state: state.into() }
+}
+
+/// Plan 11: the lobby lists the downloads under the members, one row each
+/// (name, kind, a progress bar, the state); a member downloading shows its
+/// percent instead of what it lacks; content over the prompt asks first:
+/// Download lets it come, Leave leaves the lobby.
+#[test]
+fn lobby_shows_downloads_and_the_prompt() {
+    let mut h = harness();
+    let mut v = lobby_view(false);
+    v.downloads = vec![
+        download("olx-level-dirt-level", "level", 32768, 131_072, "downloading"),
+        download("olx-theme-dirt", "theme", 0, 2048, "queued"),
+        download("test-skin", "skin", 0, 900, "failed: the host stopped sending"),
+    ];
+    v.members[1].missing = vec!["olx-level-dirt-level".into()];
+    v.members[1].download = Some(45);
+    v.members[0].missing = vec!["olx-skin-x".into()];
+    v.prompt = Some(73_400_000);
+    in_lobby(h.state_mut(), v);
+    settle(&mut h);
+    h.get_by_label("Downloads");
+    for text in ["olx-level-dirt-level", "level", "olx-theme-dirt", "theme", "queued", "downloading", "skin"]
+    {
+        h.get_by_label(text);
+    }
+    h.get_by_label("failed: the host stopped sending");
+    assert_eq!(h.get_all_by_role(Role::ProgressIndicator).count(), 3, "a progress bar a row");
+    h.get_by_label("downloading 45%");
+    h.get_by_label("missing: olx-skin-x");
+    assert!(h.query_by_label("missing: olx-level-dirt-level").is_none(), "the percent instead");
+    // The prompt.
+    h.get_by_label("This game needs 73.4 MB of content from the host.");
+    h.get_by_role_and_label(Role::Button, "Download").click();
+    settle(&mut h);
+    assert_eq!(lobby_commands(&h), [&LobbyCommand::ApproveDownloads]);
+    h.state_mut().commands.clear();
+    h.get_by_role_and_label(Role::Button, "Leave").click();
+    settle(&mut h);
+    assert_eq!(h.state().commands, [AppCommand::LeaveOnline]);
+    assert_eq!(h.state().ui.screen(), Screen::Multiplayer);
+    // Outside the lobby the prompt's answers do nothing.
+    assert!(h.state_mut().ui.update(UiAction::LobbyDownload(true)).is_empty());
+    assert!(h.state_mut().ui.update(UiAction::LobbyDownload(false)).is_empty());
+    assert_eq!(rl_ui::megabytes(312_400_000), "312 MB");
+}
+
+/// A player lacking required content cannot say ready: the box is
+/// disabled ("get the missing content first") until it has it.
+#[test]
+fn ready_is_disabled_while_content_is_missing() {
+    let mut h = harness();
+    let mut v = lobby_view(false);
+    v.members[1].missing = vec!["olx-level-dirt-level".into()];
+    in_lobby(h.state_mut(), v);
+    settle(&mut h);
+    assert!(h.get_by_label("Ready").accesskit_node().is_disabled());
+    h.get_by_label("Ready").click();
+    settle(&mut h);
+    assert!(lobby_commands(&h).is_empty(), "{:?}", h.state().commands);
+    h.get_by_label("Ready").hover();
+    settle(&mut h);
+    h.get_by_label("get the missing content first");
+    // The host's own missing list is not this player's.
+    h.state_mut().data.lobby.as_mut().unwrap().members[1].missing.clear();
+    h.state_mut().data.lobby.as_mut().unwrap().members[0].missing = vec!["olx-skin-x".into()];
+    settle(&mut h);
+    assert!(!h.get_by_label("Ready").accesskit_node().is_disabled());
+    h.get_by_label("Ready").click();
+    settle(&mut h);
+    assert_eq!(lobby_commands(&h), [&LobbyCommand::Ready(true)]);
 }

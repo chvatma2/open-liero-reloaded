@@ -31,7 +31,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   player, the dedicated server's, `look` unused; `Client`; `content_cfg`:
   `PeerContent`, below); `poll(now, local_keys, on_tick) ->
   Vec<OnlineEvent>`; `content()` (what matches and replays load from),
-  `downloads()`, `approve_downloads()`;
+  `downloads()`, `download_prompt()` (the bytes waiting for approval, as
+  of the last poll), `approve_downloads()`;
   `lobby()` (`LobbyHandle`: ready, spectate, look, loadout, chat,
   setup, kick, move_seat (the host's), start, force_start, can_start
   (the host's answer; `NotHost`, `Running`), state, me; the host's alone:

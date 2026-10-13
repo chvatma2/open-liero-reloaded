@@ -394,3 +394,18 @@ fn identity_file_and_backup_are_private() {
     // Debug never prints the secret.
     assert_eq!(format!("{:?}", Secret([9; 32])), "Secret(..)");
 }
+
+/// Plan 11: downloads go to the platform's cache directory's
+/// `downloads/` (`<dir>/cache/downloads` for a data directory of one's
+/// own, `--data-dir` and the tests); in memory there is none.
+#[test]
+fn the_download_cache_has_its_own_directory() {
+    assert_eq!(Store::in_memory().cache_dir(), None);
+    let tmp = tempfile::tempdir().unwrap();
+    assert_eq!(Store::open(tmp.path()).cache_dir(), Some(tmp.path().join("cache").join("downloads")));
+    let (platform, _) = Store::platform();
+    if let (Some(data), Some(cache)) = (platform.dir(), platform.cache_dir()) {
+        assert!(cache.ends_with("downloads"), "{}", cache.display());
+        assert!(!cache.starts_with(data.join("packs")), "never among the imported packs");
+    }
+}

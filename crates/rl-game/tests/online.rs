@@ -25,10 +25,10 @@ use rl_proto::{Look, MatchSetupWire, SeatWire};
 use rl_scene::{DrawList, Interpolation, Viewport};
 use rl_sim::{EventKind, Keys, Score};
 
-const MOD: &str = "olx-classic";
-const LEVEL: &str = "olx-level-dirt-level";
+pub(crate) const MOD: &str = "olx-classic";
+pub(crate) const LEVEL: &str = "olx-level-dirt-level";
 
-fn content_dir() -> Option<PathBuf> {
+pub(crate) fn content_dir() -> Option<PathBuf> {
     let dir = std::env::var_os("RL_CONTENT_DIR").map(PathBuf::from).filter(|d| d.is_dir());
     if dir.is_none() {
         eprintln!("RL_CONTENT_DIR not set; skipping");
@@ -36,12 +36,12 @@ fn content_dir() -> Option<PathBuf> {
     dir
 }
 
-fn viewport() -> Viewport {
+pub(crate) fn viewport() -> Viewport {
     Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0)
 }
 
 /// The player's keys at tick `t`: walk about, jump and shoot now and then.
-fn player_keys(t: u64) -> Keys {
+pub(crate) fn player_keys(t: u64) -> Keys {
     let walk = if (t / 200).is_multiple_of(2) { Keys::RIGHT } else { Keys::LEFT };
     let jump = if t.is_multiple_of(97) { Keys::JUMP } else { 0 };
     let fire = if (t / 50).is_multiple_of(3) { Keys::FIRE } else { 0 };
@@ -281,7 +281,7 @@ fn an_online_match_runs_headless() {
     let (start, my_slot, rest) = started.unwrap();
     assert_eq!(my_slot, Some(1), "the host plays slot 0, the client slot 1, then the bot");
 
-    let a = setup::load_online(&[dir.as_path()], &start, my_slot).unwrap();
+    let a = setup::load_online(client.content(), &start, my_slot).unwrap();
     let driver = OnlineDriver::new(client, &start);
     let mut s = Session::online(&a, driver, viewport(), Interpolation::Linear, Audio::silent()).unwrap();
     let left = s.present_events(rest);
@@ -402,7 +402,7 @@ use rl_ui::{HostPrefs, Profiles, Screen, Settings, Store, UiAction, UiState, Vis
 /// A shell of the menus over `dir` playing as `name`, with Classic on Dirt
 /// Level saved as its match (no bot, a `minutes` time limit), no LAN
 /// (tests use no fixed port) and hosting on an ephemeral port.
-fn menus(dir: &std::path::Path, store: Store, name: &str, minutes: f32) -> Shell {
+pub(crate) fn menus(dir: &std::path::Path, store: Store, name: &str, minutes: f32) -> Shell {
     let mut settings = Settings::default();
     let m = &mut settings.gameplay.match_prefs;
     m.mod_id = MOD.into();
@@ -425,7 +425,11 @@ fn menus(dir: &std::path::Path, store: Store, name: &str, minutes: f32) -> Shell
 
 /// One frame of each shell at `now` (their keys from `keys`), as the
 /// app's loop does them.
-fn frame(shells: &mut [&mut Shell], now: Instant, keys: &mut dyn FnMut(usize) -> Keys) -> Vec<Outcome> {
+pub(crate) fn frame(
+    shells: &mut [&mut Shell],
+    now: Instant,
+    keys: &mut dyn FnMut(usize) -> Keys,
+) -> Vec<Outcome> {
     let mut out = Vec::new();
     for (i, sh) in shells.iter_mut().enumerate() {
         out.extend(sh.net_frame(now, &mut || keys(i)));
@@ -436,7 +440,7 @@ fn frame(shells: &mut [&mut Shell], now: Instant, keys: &mut dyn FnMut(usize) ->
 }
 
 /// Frames on the real clock until `done`; panics after `limit` with `what`.
-fn frames_until(
+pub(crate) fn frames_until(
     what: &str,
     limit: Duration,
     shells: &mut [&mut Shell],
@@ -456,18 +460,18 @@ fn frames_until(
 }
 
 /// Hosts from the Host screen as the menus do.
-fn host(sh: &mut Shell) {
+pub(crate) fn host(sh: &mut Shell) {
     sh.act(UiAction::Open(Screen::Multiplayer));
     sh.act(UiAction::Open(Screen::Host));
     sh.act(UiAction::Host(HostPrefs { visibility: Visibility::DirectOnly, ..HostPrefs::default() }));
 }
 
-fn join(sh: &mut Shell, port: u16) {
+pub(crate) fn join(sh: &mut Shell, port: u16) {
     sh.act(UiAction::Open(Screen::Multiplayer));
     sh.act(UiAction::Join { addr: format!("127.0.0.1:{port}"), password: None });
 }
 
-fn members(sh: &Shell) -> usize {
+pub(crate) fn members(sh: &Shell) -> usize {
     sh.data.lobby.as_ref().map_or(0, |l| l.members.len())
 }
 
@@ -489,7 +493,7 @@ fn host_and_client(dir: &std::path::Path, minutes: f32, data: Option<&std::path:
 
 /// Both in the lobby, the host adds a bot, both ready, the host starts:
 /// both in game.
-fn start_match(h: &mut Shell, c: &mut Shell) {
+pub(crate) fn start_match(h: &mut Shell, c: &mut Shell) {
     let mut setup = h.data.lobby.as_ref().unwrap().setup.clone();
     setup.bots = 1;
     h.act(UiAction::LobbySetup(setup));
@@ -508,7 +512,7 @@ fn start_match(h: &mut Shell, c: &mut Shell) {
 }
 
 /// The confirmed tick and scores the HUD shows.
-fn confirmed(sh: &Shell) -> Option<(u32, Vec<Score>)> {
+pub(crate) fn confirmed(sh: &Shell) -> Option<(u32, Vec<Score>)> {
     let Driver::Online(d) = &sh.session()?.driver else { return None };
     Some((d.confirmed_tick()?, d.confirmed_scores().to_vec()))
 }

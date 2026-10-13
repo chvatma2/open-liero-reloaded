@@ -12,7 +12,8 @@
 //!   waiting gives up: `LeaveOnline`). In the Lobby the `Lobby*` actions
 //!   become `AppCommand::Lobby(LobbyCommand)`, the weapon screen opened
 //!   from it answers with `Loadout`, and Back or `LeaveLobby` leaves
-//!   (`LeaveOnline`, to Multiplayer).
+//!   (`LeaveOnline`, to Multiplayer). The download prompt's Download is
+//!   `ApproveDownloads`, its Leave leaves (plan 11).
 //! - **Online matches** (plan 10 task 12): while a lobby is up the app
 //!   reports `MatchStarted` when the host's match starts (from any
 //!   screen: InGame, no weapon selection, it was the lobby's). Esc opens
@@ -34,7 +35,9 @@
 //!   are chosen again) and whose Save replay keeps the match's replay.
 //!   Restart (F5) plays the game again in place: a Deathmatch's rematch
 //!   (same weapons), the sandbox or a replay from the start.
-//! - **Options** apply and save only what changed.
+//! - **Options** apply and save only what changed; their Clear of the
+//!   download cache is `ClearDownloadCache` (the app refuses it while an
+//!   online game is on).
 //! - **Import** (plan 7 task 7): the Import screen's Import starts one
 //!   import (`StartImport`; the path remembered in the settings) until
 //!   the app reports `ImportFinished`; another press does nothing. The
@@ -173,8 +176,12 @@ pub enum UiAction {
     LobbyForceStart,
     /// This player's weapons by mod id (none: random).
     LobbyLoadout(Option<[i32; MAX_SLOTS]>),
+    /// The lobby's download prompt: Download (`true`) or Leave.
+    LobbyDownload(bool),
     /// Back from the lobby, or its confirmed leave.
     LeaveLobby,
+    /// The options' Clear of the download cache.
+    ClearDownloadCache,
     /// The app: hosting or joining failed, or the lobby was lost.
     OnlineFailed(String),
     /// The app: the lobby is up (hosted, or joined and accepted).
@@ -234,6 +241,9 @@ pub enum AppCommand {
     Lobby(LobbyCommand),
     /// Leave the lobby, or give up hosting or joining.
     LeaveOnline,
+    /// Empty the download cache (the options; never while an online game
+    /// is on: the app refuses then).
+    ClearDownloadCache,
     Quit,
 }
 
@@ -610,6 +620,13 @@ impl UiState {
             UiAction::LobbyStart => self.lobby(LobbyCommand::Start),
             UiAction::LobbyForceStart => self.lobby(LobbyCommand::ForceStart),
             UiAction::LobbyLoadout(w) => self.lobby(LobbyCommand::Loadout(w)),
+            UiAction::LobbyDownload(true) => self.lobby(LobbyCommand::ApproveDownloads),
+            UiAction::LobbyDownload(false) if self.screen == Screen::Lobby => self.leave_online(),
+            UiAction::LobbyDownload(false) => Vec::new(),
+            UiAction::ClearDownloadCache if self.screen == Screen::Options => {
+                vec![AppCommand::ClearDownloadCache]
+            }
+            UiAction::ClearDownloadCache => Vec::new(),
         }
     }
 

@@ -201,6 +201,43 @@ pub struct LobbyView {
     pub setup: MatchPrefs,
     /// Whether the host may start now, else why not.
     pub can_start: Result<(), String>,
+    /// The content downloads: a client's from its host (a host's: its
+    /// members' skins), one row each.
+    pub downloads: Vec<DownloadView>,
+    /// The content this game lacks is this many bytes, over the prompt:
+    /// nothing downloads until the player says Download (or leaves).
+    pub prompt: Option<u64>,
+}
+
+/// One download of the lobby's list (plan 11).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DownloadView {
+    /// The pack's id.
+    pub name: String,
+    /// "mod", "level", "theme" or "skin".
+    pub kind: String,
+    /// Bytes received of `size`.
+    pub have: u64,
+    pub size: u64,
+    /// `queued`, `downloading`, `checking`, `done`, `failed: <why>` or
+    /// `not available`.
+    pub state: String,
+}
+
+/// The options' download cache row (the app keeps it current).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DownloadCacheView {
+    /// The bytes it holds.
+    pub bytes: u64,
+    /// Whether Clear may run now, else why not (an online game is on).
+    pub clear: Result<(), String>,
+}
+
+/// `bytes` in megabytes (10^6) for the player: one decimal below 100 MB
+/// ("73.4 MB"), whole above ("312 MB").
+pub fn megabytes(bytes: u64) -> String {
+    let mb = bytes as f64 / 1e6;
+    if mb < 100.0 { format!("{mb:.1} MB") } else { format!("{mb:.0} MB") }
 }
 
 /// One member of a lobby.
@@ -216,6 +253,8 @@ pub struct MemberView {
     pub ready: bool,
     /// Content (mods, levels, skins) this member lacks.
     pub missing: Vec<String>,
+    /// Percent of the missing content received, while it downloads.
+    pub download: Option<u8>,
     pub ping_ms: Option<u16>,
     pub admin: bool,
 }
@@ -247,4 +286,6 @@ pub enum LobbyCommand {
     ForceStart,
     /// This player's weapons by mod id, or random.
     Loadout(Option<[i32; MAX_SLOTS]>),
+    /// The player lets the content over the prompt download.
+    ApproveDownloads,
 }

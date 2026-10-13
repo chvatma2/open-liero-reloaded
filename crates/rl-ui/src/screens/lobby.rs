@@ -2,17 +2,20 @@
 //! setup, the Local Play panels (editable for the host, read-only and
 //! greyed for the others) and this player's weapons; on the right the
 //! members (name, key fingerprint, colour, seat, ready, ping, missing
-//! content, and the host's kick, ban and move buttons) and the chat;
-//! below, Start and "Force start" for the host, else "Waiting for the
-//! host". Back leaves the lobby, after a confirmation when a match runs.
+//! content or its download's percent, and the host's kick, ban and move
+//! buttons), the content downloads (plan 11: name, kind, progress,
+//! state) and the chat; below, Start and "Force start" for the host, else
+//! "Waiting for the host". Ready is disabled while this player lacks
+//! required content. Content over the prompt asks "Download" or "Leave"
+//! first. Back leaves the lobby, after a confirmation when a match runs.
 
-use egui::{Button, Color32, Key, RichText, ScrollArea, Sense, TextEdit, Ui, vec2};
+use egui::{Button, Color32, Key, ProgressBar, RichText, ScrollArea, Sense, TextEdit, Ui, vec2};
 
 use super::local_play::{level_combo, level_grid, mod_picker, olx_match, personality_combo, rules};
 use super::{MenuData, columns, footer, message, page, primary, section, tall_section};
 use crate::hud::LineKind;
 use crate::match_prefs::{MAX_BOTS, MatchPrefs};
-use crate::online::{CHAT_CHARS, LobbyView, MemberView, PHASE_LOBBY};
+use crate::online::{CHAT_CHARS, DownloadView, LobbyView, MemberView, PHASE_LOBBY, megabytes};
 use crate::state::{Screen, UiAction, UiState};
 use crate::theme;
 
@@ -22,6 +25,8 @@ const RED: Color32 = Color32::from_rgb(255, 110, 90);
 
 /// What the Force start button says, enabled.
 pub const FORCE_HINT: &str = "Players who are not ready, or lack the content, watch this match.";
+/// Why Ready is disabled.
+pub const READY_MISSING: &str = "get the missing content first";
 
 /// The screen's own state.
 #[derive(Default)]
@@ -120,6 +125,28 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     if data.lobby_ui.confirm_ban.is_some() {
         ban_dialog(ui.ctx(), &mut data.lobby_ui, out);
     }
+    if let Some(bytes) = view.prompt {
+        download_prompt(ui.ctx(), bytes, out);
+    }
+}
+
+/// The content over the prompt (plan 11): download it, or leave.
+fn download_prompt(ctx: &egui::Context, bytes: u64, out: &mut Vec<UiAction>) {
+    egui::Window::new("Download content?")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
+        .show(ctx, |ui| {
+            ui.label(format!("This game needs {} of content from the host.", megabytes(bytes)));
+            ui.horizontal(|ui| {
+                if ui.button("Download").clicked() {
+                    out.push(UiAction::LobbyDownload(true));
+                }
+                if ui.button("Leave").clicked() {
+                    out.push(UiAction::LobbyDownload(false));
+                }
+            });
+        });
 }
 
 fn ban_dialog(ctx: &egui::Context, v: &mut View, out: &mut Vec<UiAction>) {
@@ -242,7 +269,9 @@ fn members_and_chat(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mu
         let me = view.members.iter().find(|m| m.id == view.me);
         ui.horizontal(|ui| {
             let mut ready = me.is_some_and(|m| m.ready);
-            if ui.checkbox(&mut ready, "Ready").changed() {
+            let lacking = me.is_some_and(|m| !m.missing.is_empty());
+            let r = ui.add_enabled(!lacking, egui::Checkbox::new(&mut ready, "Ready"));
+            if r.on_disabled_hover_text(READY_MISSING).changed() {
                 out.push(UiAction::LobbyReady(ready));
             }
             let mut spectate = me.is_some_and(MemberView::is_spectator);
@@ -251,6 +280,20 @@ fn members_and_chat(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mu
             }
         });
     });
+    if !view.downloads.is_empty() {
+        ui.add_space(SECTION_GAP);
+        section(ui, "Downloads", |ui, _| {
+            ScrollArea::vertical()
+                .id_salt("lobby downloads")
+                .max_height(120.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for d in &view.downloads {
+                        download(ui, d);
+                    }
+                });
+        });
+    }
     ui.add_space(SECTION_GAP);
     tall_section(ui, "Chat", |ui, title| {
         let h = (ui.available_height() - 36.0).max(40.0);
@@ -310,7 +353,9 @@ fn member(ui: &mut Ui, view: &LobbyView, m: &MemberView, v: &mut View, out: &mut
             } else {
                 RichText::new("not ready").weak()
             });
-            if !m.missing.is_empty() {
+            if let Some(pct) = m.download {
+                ui.label(RichText::new(format!("downloading {pct}%")).color(theme::ACCENT));
+            } else if !m.missing.is_empty() {
                 ui.label(RichText::new(format!("missing: {}", m.missing.join(", "))).color(RED));
             }
         });
@@ -330,5 +375,21 @@ fn member(ui: &mut Ui, view: &LobbyView, m: &MemberView, v: &mut View, out: &mut
             });
         }
         ui.add_space(4.0);
+    });
+}
+
+/// One download's row: name, kind, a progress bar and the state.
+fn download(ui: &mut Ui, d: &DownloadView) {
+    ui.horizontal(|ui| {
+        ui.label(&d.name);
+        ui.label(RichText::new(&d.kind).small().weak());
+        let done = if d.size == 0 { 0.0 } else { (d.have as f64 / d.size as f64).clamp(0.0, 1.0) as f32 };
+        ui.add(ProgressBar::new(done).desired_width(120.0).show_percentage());
+        let colour = if d.state.starts_with("failed") || d.state == "not available" {
+            RED
+        } else {
+            Color32::from_gray(190)
+        };
+        ui.label(RichText::new(&d.state).color(colour));
     });
 }

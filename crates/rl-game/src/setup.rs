@@ -4,11 +4,13 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::Context as _;
 use rl_bots::{BotConfig, Difficulty};
 use rl_content::{
-    Content, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme, MatchOptions, Player, SandboxSetup, SpawnSpec,
+    Content, DownloadCache, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme, MatchOptions, Player,
+    SandboxSetup, SpawnSpec,
 };
 use rl_data::manifest::PackKind;
 use rl_modes::DeathmatchSettings;
@@ -148,7 +150,9 @@ pub struct PlayerLook {
 /// Everything a session draws and plays, loaded once: a restart (F5)
 /// builds a new world from it without decoding any image or sound again.
 pub struct Assets {
-    pub content: Content,
+    /// What it was loaded from (an online match's: its peer's content,
+    /// downloads laid over; shared, never copied).
+    pub content: Arc<Content>,
     pub m: LoadedMod,
     pub level: LoadedLevel,
     pub theme: LoadedTheme,
@@ -174,7 +178,7 @@ pub struct Assets {
 /// The packs `mod_id`, `level_id` (with its theme) and skin `skin` (a
 /// name or id; the default skin when missing), resolved and loaded.
 fn open(
-    content: Content,
+    content: Arc<Content>,
     mod_id: String,
     level_id: String,
     skin: &str,
@@ -225,7 +229,7 @@ pub fn load(
     let content = Content::open_layers(roots)?;
     let (mod_id, level_id) = resolve(&content, mod_name, level)?;
     let setup = sandbox_setup(&SandboxOptions { mod_id: mod_id.clone(), level_id: level_id.clone(), ..o });
-    open(content, mod_id, level_id, skin, Game::Sandbox(setup))
+    open(Arc::new(content), mod_id, level_id, skin, Game::Sandbox(setup))
 }
 
 /// A Deathmatch against bots on the packs `--mod` and `--level` name.
@@ -240,7 +244,7 @@ pub fn load_deathmatch(
     let (mod_id, level_id) = resolve(&content, mod_name, level)?;
     let packs = content.replay_packs(&mod_id, &level_id)?;
     let options = Box::new(match_options(o, &mod_id, &level_id));
-    open(content, mod_id, level_id, skin, Game::Deathmatch { options, packs })
+    open(Arc::new(content), mod_id, level_id, skin, Game::Deathmatch { options, packs })
 }
 
 /// The Deathmatch `o` describes (the menus' local play), its packs by id.
@@ -249,16 +253,20 @@ pub fn load_match(roots: &[&Path], o: &MatchOptions, skin: &str) -> anyhow::Resu
     let content = Content::open_layers(roots)?;
     let packs = content.replay_packs(&o.mod_id, &o.level_id)?;
     let options = Box::new(o.clone());
-    open(content, o.mod_id.clone(), o.level_id.clone(), skin, Game::Deathmatch { options, packs })
+    open(Arc::new(content), o.mod_id.clone(), o.level_id.clone(), skin, Game::Deathmatch { options, packs })
 }
 
 /// The online match `start` describes (`rl_online`'s `MatchStarting`),
-/// played as slot `my_slot` (`None`: watching): its mod, level and theme,
-/// and every slot's skin by id, once each (a skin this install lacks is
-/// the default skin, with a warning; plan 11 downloads it). The peer
-/// already checked the packs and built the world from the same content.
-pub fn load_online(roots: &[&Path], start: &MatchStartWire, my_slot: Option<u8>) -> anyhow::Result<Assets> {
-    let content = Content::open_layers(roots)?;
+/// played as slot `my_slot` (`None`: watching), from `content`, the peer's
+/// (`OnlinePeer::content`: this install's packs with the downloads laid
+/// over, the match's world was built from it): its mod, level and theme,
+/// and every slot's skin by id, once each (a skin still missing is the
+/// default skin, with a warning). The peer already checked the packs.
+pub fn load_online(
+    content: Arc<Content>,
+    start: &MatchStartWire,
+    my_slot: Option<u8>,
+) -> anyhow::Result<Assets> {
     let s = &start.setup;
     let mine = my_slot.and_then(|i| start.slots.get(usize::from(i))).map_or(DEFAULT_SKIN, |w| &w.look.skin);
     let game = Game::Online { start: Box::new(start.clone()), my_slot };
@@ -307,12 +315,49 @@ pub fn read_replay_file(file: &Path) -> anyhow::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// `content` with the packs of `packs` it lacks (or has with another
+/// content hash) laid over from the download cache `cache` by content
+/// hash (`Content::with_packs`; plan 11): a replay of a match on
+/// downloaded content plays back. A pack in neither stays missing (the
+/// caller's `check_replay_packs` names it).
+pub fn with_cached_packs(
+    content: Content,
+    packs: &Packs,
+    cache: Option<&Mutex<DownloadCache>>,
+) -> anyhow::Result<Content> {
+    let Some(cache) = cache else { return Ok(content) };
+    let mut laid = Vec::new();
+    for r in [&packs.mod_pack, &packs.level, &packs.theme] {
+        if content.has(&r.id, &r.hash) {
+            continue;
+        }
+        let dir = cache.lock().unwrap_or_else(PoisonError::into_inner).get(&r.hash);
+        if let Some(dir) = dir {
+            laid.push((r.id.clone(), dir));
+        }
+    }
+    if laid.is_empty() {
+        return Ok(content);
+    }
+    // Hashed again by `check_replay_packs`: a cached pack changed on disk
+    // since its install is refused like a local one.
+    content.with_packs(&laid).context("the downloaded packs")
+}
+
 /// The replay in file `file` (read by [`read_replay_file`]), on the packs
-/// it names (refused when they are missing or differ from the recorded ones).
-pub fn load_replay(roots: &[&Path], file: &Path, skin: &str) -> anyhow::Result<Assets> {
+/// it names: this install's, else the download cache's by content hash
+/// ([`with_cached_packs`]); refused when they are missing or differ from
+/// the recorded ones.
+pub fn load_replay(
+    roots: &[&Path],
+    file: &Path,
+    skin: &str,
+    cache: Option<&Mutex<DownloadCache>>,
+) -> anyhow::Result<Assets> {
     let bytes = read_replay_file(file).with_context(|| format!("{}", file.display()))?;
     let replay = Replay::decode(&bytes).with_context(|| format!("{}", file.display()))?;
     let content = Content::open_layers(roots)?;
+    let content = with_cached_packs(content, &replay.setup.packs, cache)?;
     content.check_replay_packs(&replay.setup).with_context(|| format!("{}", file.display()))?;
     let p = &replay.setup.packs;
     let (mod_id, level_id) = (p.mod_pack.id.clone(), p.level.id.clone());
@@ -322,7 +367,7 @@ pub fn load_replay(roots: &[&Path], file: &Path, skin: &str) -> anyhow::Result<A
         file.display(),
         p.theme.id
     );
-    open(content, mod_id, level_id, skin, Game::Replay(Box::new(replay)))
+    open(Arc::new(content), mod_id, level_id, skin, Game::Replay(Box::new(replay)))
 }
 
 impl Assets {
@@ -472,7 +517,7 @@ mod tests {
         let file = file.to_path_buf();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let r = load_replay(&[], &file, "default").err().map(|e| format!("{e:#}"));
+            let r = load_replay(&[], &file, "default", None).err().map(|e| format!("{e:#}"));
             let _ = tx.send(r.unwrap_or_default());
         });
         rx.recv_timeout(std::time::Duration::from_secs(10)).ok()

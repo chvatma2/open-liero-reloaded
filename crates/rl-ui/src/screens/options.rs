@@ -8,6 +8,8 @@
 //!   one change every 250 ms, however fast the player clicks).
 //! - **Audio:** the master volume (OLX's sound volume) and the effects'.
 //! - **Keys** (`keys.rs`).
+//! - **Online:** the download cache's size and its Clear (plan 11; the
+//!   app disables it while an online game is on).
 //!
 //! The match (OLX's game settings) is set up in local play, before each
 //! game, and remembered there: it has no tab here.
@@ -17,6 +19,7 @@
 use egui::{Button, ComboBox, RichText, Slider, Ui, vec2};
 
 use super::{MenuData, form_row, keys, page, section};
+use crate::online::megabytes;
 use crate::settings::{FrameRate, HudArrangement, UI_SCALE_RANGE, UpscaleFilter, WindowPreset};
 use crate::state::{UiAction, UiState};
 
@@ -26,16 +29,18 @@ enum Tab {
     Video,
     Audio,
     Keys,
+    Online,
 }
 
 impl Tab {
-    const ALL: [Tab; 3] = [Tab::Video, Tab::Audio, Tab::Keys];
+    const ALL: [Tab; 4] = [Tab::Video, Tab::Audio, Tab::Keys, Tab::Online];
 
     fn label(self) -> &'static str {
         match self {
             Tab::Video => "Video",
             Tab::Audio => "Audio",
             Tab::Keys => "Keys",
+            Tab::Online => "Online",
         }
     }
 }
@@ -80,6 +85,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
         Tab::Keys => section(ui, "Keyboard and gamepad", |ui, _| {
             keys::show(ui, state, &mut data.capture, &mut v.keys, out)
         }),
+        Tab::Online => section(ui, "Downloaded content", |ui, _| downloads(ui, data, out)),
     }
     if v.tab != Tab::Keys {
         data.capture = None;
@@ -177,5 +183,30 @@ fn audio(ui: &mut Ui, state: &UiState, out: &mut Vec<UiAction>) {
     volume(ui, &mut a.sfx, "Effects volume");
     if a != *before {
         out.push(UiAction::SetAudio(a));
+    }
+}
+
+/// The download cache's size and its Clear (it keeps nothing: the menus
+/// have no match), disabled with the reason while an online game is on.
+fn downloads(ui: &mut Ui, data: &MenuData, out: &mut Vec<UiAction>) {
+    ui.spacing_mut().item_spacing.y = 10.0;
+    match &data.download_cache {
+        Ok(c) => {
+            ui.horizontal(|ui| {
+                ui.label(format!("Download cache: {}", megabytes(c.bytes)));
+                let clear = ui.add_enabled(c.clear.is_ok(), Button::new("Clear"));
+                let clear = match &c.clear {
+                    Err(why) => clear.on_disabled_hover_text(why),
+                    Ok(()) => clear,
+                };
+                if clear.clicked() {
+                    out.push(UiAction::ClearDownloadCache);
+                }
+            });
+            ui.label(RichText::new("Content downloaded from the games you joined.").weak());
+        }
+        Err(why) => {
+            ui.label(format!("Download cache: none ({why})"));
+        }
     }
 }

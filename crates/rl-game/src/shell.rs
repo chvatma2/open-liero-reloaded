@@ -43,9 +43,19 @@
 //! connection, a kick or a refusal leaves the match view at once (the
 //! peer dropped its match) and returns to Multiplayer; `ReplayReady` is
 //! saved with the automatic replays and `DesyncBundle` in `desyncs/`.
+//!
+//! **Downloads** (plan 11): the shell opens one download cache at startup
+//! (`Store::cache_dir`, else `-2` .. `-4` while other games hold it:
+//! `net::open_download_cache`) and shares it with every peer it starts
+//! (`--net-sim`'s host and client too). The lobby lists the downloads and
+//! asks before content over the prompt; a match loads from its peer's
+//! content (the downloads laid over); a replay's packs come from this
+//! install, else from the cache by content hash. The options show the
+//! cache's size and clear it, never while an online game is on.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::PoisonError;
 use std::time::Duration;
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
@@ -63,9 +73,12 @@ use rl_ui::import::{ImportJob, ImportProgress};
 use rl_ui::screens::MenuData;
 use rl_ui::skin_preview::{self, PreviewKey, PreviewTextures};
 use rl_ui::weapon_select::{WeaponMenu, WeaponSelect};
-use rl_ui::{AppCommand, AudioSettings, Profiles, Screen, Settings, Store, UiAction, UiState, VideoSettings};
+use rl_ui::{
+    AppCommand, AudioSettings, DownloadCacheView, Profiles, Screen, Settings, Store, UiAction, UiState,
+    VideoSettings,
+};
 
-use crate::net::Net;
+use crate::net::{self, Net, SharedCache};
 use crate::session::{Driver, Session};
 use crate::setup::{self, Assets, Game, PlayerLook, SandboxOptions};
 use crate::video::{self, Overrides};
@@ -161,6 +174,8 @@ pub struct Shell {
     impair: Option<Profile>,
     /// Replays of online matches whose peer is gone, still being made.
     replays: Vec<PendingReplay>,
+    /// The download cache every peer shares (plan 11, ruling PF11-3).
+    cache: SharedCache,
 }
 
 /// How long quitting waits for an online match's replay to be made.
@@ -210,7 +225,12 @@ impl Shell {
             port: None,
             impair: None,
             replays: Vec::new(),
+            cache: Err(String::new()),
         };
+        shell.cache = net::open_download_cache(shell.store.cache_dir());
+        if let Err(why) = &shell.cache {
+            shell.log([format!("content downloads are off: {why}")]);
+        }
         shell.list_content();
         let audio = shell.ui.settings().audio.clone();
         shell.set_volume(&audio);
@@ -250,6 +270,7 @@ impl Shell {
             port: None,
             impair: None,
             replays: Vec::new(),
+            cache: Err("a game from the command line downloads nothing".into()),
         }
     }
 
@@ -468,6 +489,7 @@ impl Shell {
             }
             AppCommand::Lobby(c) => self.lobby_command(c),
             AppCommand::LeaveOnline => self.leave_online(),
+            AppCommand::ClearDownloadCache => self.clear_download_cache(),
             AppCommand::Quit => out.push(Outcome::Quit),
         }
     }
@@ -476,6 +498,9 @@ impl Shell {
     /// again); then loads the game asked for in an earlier frame, if any,
     /// and reports to the menus whether it started.
     pub fn poll(&mut self) -> Vec<Outcome> {
+        if self.ui.screen() == Screen::Options {
+            self.show_download_cache();
+        }
         let mut out = self.poll_import();
         let Some(launch) = self.pending.take() else { return out };
         out.extend(self.launch_reported(launch));
@@ -502,6 +527,42 @@ impl Shell {
                 self.act(UiAction::MatchFailed(why))
             }
         }
+    }
+
+    /// Why the download cache may not be cleared now: an online game (its
+    /// peers download into it) is on.
+    fn clear_refused(&self) -> Option<String> {
+        (self.net.is_some() || self.sim_host.is_some()).then(|| "leave the online game first".to_string())
+    }
+
+    /// The options' download cache row: its size (packs and partial
+    /// downloads) and whether Clear may run. A cache busy on a peer's
+    /// thread keeps the last row.
+    fn show_download_cache(&mut self) {
+        let clear = self.clear_refused().map_or(Ok(()), Err);
+        self.data.download_cache = match &self.cache {
+            Ok(c) => match c.try_lock() {
+                Ok(c) => Ok(DownloadCacheView { bytes: c.total_bytes() + c.partial_bytes(), clear }),
+                Err(_) => return,
+            },
+            Err(why) => Err(why.clone()),
+        };
+    }
+
+    /// The options' Clear: every download goes (the menus have no match
+    /// to keep); refused while an online game is on.
+    fn clear_download_cache(&mut self) {
+        if let Some(why) = self.clear_refused() {
+            self.log([format!("the download cache is not cleared: {why}")]);
+            return;
+        }
+        let Ok(cache) = &self.cache else { return };
+        let cleared = cache.lock().unwrap_or_else(PoisonError::into_inner).clear(&[]);
+        match cleared {
+            Ok(()) => println!("rl-game: download cache cleared"),
+            Err(e) => eprintln!("warning: clearing the download cache: {e}"),
+        }
+        self.show_download_cache();
     }
 
     /// Logs, once each, what the menus found wrong this frame (an
@@ -537,7 +598,9 @@ impl Shell {
                 };
                 setup::load(&root, &m.mod_id, &m.level_id, &profile.skin_id, o)?
             }
-            Launch::Replay(path) => setup::load_replay(&root, &path, &profile.skin_id)?,
+            Launch::Replay(path) => {
+                setup::load_replay(&root, &path, &profile.skin_id, self.cache.as_deref().ok())?
+            }
         };
         assets.player = Some(PlayerLook { name: profile.name, colour: profile.colour });
         self.log(std::mem::take(&mut assets.warnings));

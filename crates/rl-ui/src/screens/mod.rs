@@ -41,7 +41,7 @@ use rl_sim::{Keys, MAX_SLOTS};
 use crate::hud::LogLine;
 use crate::hud::Results;
 use crate::import::ImportProgress;
-use crate::online::{LanEntry, LobbyView};
+use crate::online::{DownloadCacheView, LanEntry, LobbyView};
 use crate::replays::ReplayFile;
 use crate::skin_preview::{PreviewKey, PreviewTextures};
 use crate::state::{Screen, UiAction, UiState};
@@ -100,6 +100,9 @@ pub struct MenuData {
     /// The in-game chat's line while its field is open (`T` online; the
     /// app sends no key to the game meanwhile).
     pub ingame_chat: Option<String>,
+    /// The options' download cache row (the app keeps it current while the
+    /// options show); `Err(why)`: there is none.
+    pub download_cache: Result<DownloadCacheView, String>,
     /// A text field had the focus as the last frame ended.
     typing: bool,
     /// The weapon selection in progress.
@@ -142,6 +145,7 @@ impl MenuData {
             chat: Vec::new(),
             online_status: None,
             ingame_chat: None,
+            download_cache: Err("there is no download cache".into()),
             typing: false,
             select: None,
             thumbs: BTreeMap::new(),

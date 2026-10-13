@@ -171,7 +171,7 @@ fn replay_session_matches_recorded_checksums() {
     let file = tmp.path().join("match.rlrp");
     std::fs::write(&file, replay.encode()).unwrap();
 
-    let a = setup::load_replay(&[dir.as_path()], &file, "default").unwrap();
+    let a = setup::load_replay(&[dir.as_path()], &file, "default", None).unwrap();
     let vp = Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
     let mut r = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
     assert_eq!((r.names.of(0), r.names.of(1)), ("Worm 1".into(), "Worm 2".into()));
@@ -195,7 +195,7 @@ fn replay_session_matches_recorded_checksums() {
     let mut bad = replay.clone();
     bad.row_mut(50)[0] = Keys(Keys::JUMP | Keys::FIRE | Keys::LEFT);
     std::fs::write(&file, bad.encode()).unwrap();
-    let a = setup::load_replay(&[dir.as_path()], &file, "default").unwrap();
+    let a = setup::load_replay(&[dir.as_path()], &file, "default", None).unwrap();
     let mut r = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
     for _ in 0..800 {
         r.tick(Keys(0));

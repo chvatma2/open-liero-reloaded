@@ -3887,6 +3887,7 @@ dependencies = [
  "rl-sim",
  "rl-terrain",
  "rl-ui",
+ "rl-vfs",
  "ron",
  "serde",
  "serde_json",

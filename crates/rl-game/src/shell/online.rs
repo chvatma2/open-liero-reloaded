@@ -13,6 +13,7 @@ use rl_lobby::{HostConfig, Identity};
 use rl_net::endpoint::EndpointConfig;
 use rl_net::lan::{Announcer, Listener, broadcast_targets};
 use rl_netcode::netsim::Profile;
+use rl_online::content::HOST_RATE;
 use rl_online::matches::setup_packs;
 use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{LAN_PORT, LobbyState, Look, MatchStartWire};
@@ -102,7 +103,8 @@ impl Shell {
         }
     }
 
-    fn peer_mut(&mut self) -> Option<&mut OnlinePeer> {
+    /// The online game's peer (its match's while one plays), if any.
+    pub fn peer_mut(&mut self) -> Option<&mut OnlinePeer> {
         if self.net.as_ref().is_some_and(|n| n.peer.is_some()) {
             return self.net.as_mut().and_then(|n| n.peer.as_mut());
         }
@@ -174,7 +176,7 @@ impl Shell {
             look,
             content,
             Some(setup),
-            no_downloads(),
+            self.peer_content(),
         )?;
         host.lobby().set_spectate(true);
         let port = host.local_port();
@@ -198,6 +200,13 @@ impl Shell {
         self.unsaved_settings = unsaved;
         self.ui.restore_online(online);
         out
+    }
+
+    /// How a peer gets and serves content: the one download cache
+    /// (ruling PF11-4: every peer of this game shares it, `--net-sim`'s
+    /// two too; `Err(why)`: downloads are off) at the host's rate.
+    fn peer_content(&self) -> PeerContent {
+        PeerContent { cache: self.cache.clone(), upload_rate: HOST_RATE }
     }
 
     /// The content for a peer: the menus' roots, opened again (the peer
@@ -258,9 +267,16 @@ impl Shell {
         };
         let port = self.port.unwrap_or(prefs.port);
         let endpoint = EndpointConfig { port, impair: self.impair, ..EndpointConfig::default() };
-        let peer =
-            OnlinePeer::start(PeerRole::Host(cfg), endpoint, id, look, content, Some(setup), no_downloads())
-                .map_err(|e| anyhow::anyhow!("cannot host on port {port}: {e}"))?;
+        let peer = OnlinePeer::start(
+            PeerRole::Host(cfg),
+            endpoint,
+            id,
+            look,
+            content,
+            Some(setup),
+            self.peer_content(),
+        )
+        .map_err(|e| anyhow::anyhow!("cannot host on port {port}: {e}"))?;
         println!("rl-game: hosting on port {}", peer.local_port());
         let mut n = Net::new(peer, true);
         n.setup_packs = Some((key, packs));
@@ -287,7 +303,7 @@ impl Shell {
         let content = self.open_content()?;
         let role = PeerRole::Client { addr: to, password: password.map(|p| p.0) };
         let endpoint = EndpointConfig { port: 0, impair: self.impair, ..EndpointConfig::default() };
-        let peer = OnlinePeer::start(role, endpoint, id, look, content, None, no_downloads())?;
+        let peer = OnlinePeer::start(role, endpoint, id, look, content, None, self.peer_content())?;
         println!("rl-game: joining {to}");
         self.net = Some(Net::new(peer, false));
         Ok(())
@@ -317,9 +333,19 @@ impl Shell {
         }
     }
 
-    /// What the lobby's player asked (`LobbyCommand`); a refusal shows as
-    /// the lobby's status.
+    /// What the lobby's player asked (`LobbyCommand`; the download
+    /// prompt's Download lets the content come); a refusal shows as the
+    /// lobby's status.
     pub(super) fn lobby_command(&mut self, c: LobbyCommand) {
+        if c == LobbyCommand::ApproveDownloads {
+            if let Some(peer) = self.peer_mut() {
+                peer.approve_downloads();
+            }
+            if let Some(l) = &mut self.data.lobby {
+                l.prompt = None;
+            }
+            return;
+        }
         let seed = match c {
             LobbyCommand::Start | LobbyCommand::ForceStart => self.ui.take_seed(),
             _ => 0,
@@ -375,6 +401,8 @@ impl Shell {
                 lobby.set_loadout(w);
                 Ok(())
             }
+            // Carried out above (the peer's, not its lobby's).
+            LobbyCommand::ApproveDownloads => Ok(()),
         };
         self.data.online_status = result.err();
     }
@@ -545,9 +573,13 @@ impl Shell {
                 OnlineEvent::Refused(why) | OnlineEvent::Disconnected(why) => return self.lost(why, out),
                 OnlineEvent::ReplayReady(bytes) => self.save_online_replay(&bytes),
                 OnlineEvent::DesyncBundle(bytes) => self.save_bundle(&bytes),
-                // The lobby's download rows and prompt come with Task 7 (this
-                // game has no download cache yet).
-                OnlineEvent::Downloads(_) | OnlineEvent::DownloadPrompt { .. } => {}
+                OnlineEvent::Downloads(list) => {
+                    if let Some(n) = &mut self.net {
+                        n.downloads = list.iter().map(net::download_view).collect();
+                    }
+                    self.show_downloads();
+                }
+                OnlineEvent::DownloadPrompt { .. } => self.show_downloads(),
                 // The match's presentation, polled without a match view (a
                 // view that failed to start): nothing to show it on.
                 OnlineEvent::StateLoaded { .. }
@@ -558,21 +590,36 @@ impl Shell {
         }
     }
 
+    /// The lobby's download rows and prompt (plan 11): the downloads as
+    /// last reported, the prompt as the peer has it now.
+    fn show_downloads(&mut self) {
+        let prompt = self.peer().and_then(OnlinePeer::download_prompt);
+        let (Some(n), Some(l)) = (&self.net, &mut self.data.lobby) else { return };
+        l.downloads.clone_from(&n.downloads);
+        l.prompt = prompt;
+    }
+
     /// The lobby changed: its view (and the client's welcome: the Lobby
-    /// opens; the peer tells the host the packs it lacks), the weapon
-    /// screen's menu for its mod, the LAN announcement.
+    /// opens), the weapon screen's menu for its mod (from the peer's
+    /// content: a downloaded mod counts), the LAN announcement.
     fn show_lobby(&mut self, state: &LobbyState, out: &mut Vec<Outcome>) {
         let Some(peer) = self.peer_mut() else { return };
         let port = peer.local_port();
+        let (content, prompt) = (peer.content(), peer.download_prompt());
         let lobby = peer.lobby();
         let (me, can) = (lobby.me(), lobby.can_start());
         let Some(n) = &mut self.net else { return };
-        let key = (state.setup.mod_id.clone(), state.setup.restrictions.clone());
+        let key = net::WeaponsKey {
+            mod_id: state.setup.mod_id.clone(),
+            restrictions: state.setup.restrictions.clone(),
+            content,
+        };
         if n.weapons.as_ref().is_none_or(|w| w.0 != key) {
-            let menu = self.content.as_ref().and_then(|c| net::weapon_menu(c, &key.0, &key.1));
+            let menu = net::weapon_menu(&key.content, &key.mod_id, &key.restrictions);
             n.weapons = Some((key, menu));
         }
         let host = n.host;
+        let downloads = n.downloads.clone();
         if host {
             n.announce = Some(net::announcement(state, port, n.max_players, n.password));
         }
@@ -596,7 +643,7 @@ impl Shell {
         if self.play.is_none() {
             self.data.weapons = weapons;
         }
-        self.data.lobby = me.map(|me| net::lobby_view(state, me, host, can_start));
+        self.data.lobby = me.map(|me| net::lobby_view(state, me, host, can_start, downloads, prompt));
         if welcomed {
             self.data.chat.clear();
             for c in self.ui.update(UiAction::LobbyJoined) {
@@ -633,9 +680,7 @@ impl Shell {
         }
         let Some(peer) = self.net.as_mut().and_then(|n| n.peer.take()) else { return after };
         self.launches += 1;
-        let roots = self.roots();
-        let root: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
-        let mut assets = match setup::load_online(&root, &start, my_slot) {
+        let mut assets = match setup::load_online(peer.content(), &start, my_slot) {
             Ok(a) => a,
             Err(e) => {
                 self.release(peer);
@@ -744,12 +789,6 @@ impl Shell {
 }
 
 /// A fresh identity (a key the store does not keep).
-/// Downloads are wired into the game by plan 11's Task 7 (the cache in
-/// the store's cache directory); until then a peer has none.
-fn no_downloads() -> PeerContent {
-    PeerContent::without_downloads("this game has no download cache yet")
-}
-
 fn fresh_identity() -> anyhow::Result<Identity> {
     for _ in 0..8 {
         if let Some(id) = Identity::from_secret(rl_net::random_bytes::<32>()?) {

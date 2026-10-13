@@ -49,6 +49,9 @@ egui-winit.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+rl-vfs.workspace = true
+# The tests set a client's prompt bytes (`OnlinePeer::test_prompt_limit`).
+rl-online = { workspace = true, features = ["test-hooks"] }
 
 [[test]]
 name = "integration"

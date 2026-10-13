@@ -2,25 +2,28 @@
 //! of an online game besides its match ([`Net`]), the conversions between
 //! the lobby's wire types (`rl-proto`, `rl-lobby`) and the menus' plain
 //! views (`rl_ui::{LobbyView, MemberView, MatchPrefs, LanEntry}`), the
-//! network overlay's numbers ([`NetMeter`], [`NetView`]) and the desync
-//! bundles' files ([`save_bundle`]).
+//! network overlay's numbers ([`NetMeter`], [`NetView`]), the desync
+//! bundles' files ([`save_bundle`]) and the download cache
+//! ([`open_download_cache`], plan 11).
 
 use std::collections::VecDeque;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rl_bots::{BotConfig, Difficulty, LoadoutPolicy, Personality};
-use rl_content::Content;
+use rl_content::{Content, DownloadCache, InstallError};
 use rl_lobby::NotStartable;
 use rl_net::lan::{Announcer, LanGame};
+use rl_online::content::{Download, DownloadState};
 use rl_online::matches::{bot_config, bot_wire, deathmatch, rules_wire, setup_packs};
 use rl_online::{NetStats, OnlinePeer, StartError};
-use rl_proto::{LanAnnounce, LobbyState, Look, MatchSetupWire, Member, Phase, SeatWire};
+use rl_proto::{ItemKind, LanAnnounce, LobbyState, Look, MatchSetupWire, Member, Phase, SeatWire};
 use rl_ui::weapon_select::WeaponMenu;
 use rl_ui::{
-    BotLevel, BotLoadout, BotPersonality, LanEntry, LobbyView, MatchPrefs, MemberView, PHASE_LOBBY,
-    RulePrefs, SEAT_SPECTATOR,
+    BotLevel, BotLoadout, BotPersonality, DownloadView, LanEntry, LobbyView, MatchPrefs, MemberView,
+    PHASE_LOBBY, RulePrefs, SEAT_SPECTATOR,
 };
 
 use crate::setup::DEFAULT_SKIN;
@@ -36,9 +39,33 @@ const SAMPLE_EVERY: Duration = Duration::from_millis(100);
 pub const HIDDEN_FRAME: Duration = Duration::from_millis(4);
 /// Where desync bundles go in the data directory.
 pub const DESYNCS_DIR: &str = "desyncs";
+/// Download cache directories tried, the first and `-2` to `-N`, while
+/// another game holds the one before (ruling PF11-3).
+pub const CACHE_DIRS: u32 = 4;
+
+/// A download cache shared by the game's peers (ruling PF11-4), or why
+/// there is none.
+pub type SharedCache = Result<Arc<Mutex<DownloadCache>>, String>;
 
 /// A mod's and a level's pack ids.
 pub type ModLevel = (String, String);
+
+/// What the lobby's weapon menu was made of: the mod, its restrictions
+/// and the peer's content (it changes as downloads land).
+#[derive(Clone)]
+pub struct WeaponsKey {
+    pub mod_id: String,
+    pub restrictions: String,
+    pub content: Arc<Content>,
+}
+
+impl PartialEq for WeaponsKey {
+    fn eq(&self, o: &WeaponsKey) -> bool {
+        self.mod_id == o.mod_id
+            && self.restrictions == o.restrictions
+            && Arc::ptr_eq(&self.content, &o.content)
+    }
+}
 
 /// What the shell keeps of an online game: its peer (while no match holds
 /// it: a match's is its session's `OnlineDriver`), whether it hosts, and
@@ -62,8 +89,11 @@ pub struct Net {
     /// The host's setup packs (with their content hashes) of the mod and
     /// level last set: a lobby edit of the rules does not hash them again.
     pub setup_packs: Option<(ModLevel, Vec<(String, String)>)>,
-    /// The lobby's weapon choice: its mod and restrictions, and the menu.
-    pub weapons: Option<((String, String), Option<WeaponMenu>)>,
+    /// The lobby's weapon choice: its mod and restrictions, the content it
+    /// was made from (the peer's: a downloaded mod counts), and the menu.
+    pub weapons: Option<(WeaponsKey, Option<WeaponMenu>)>,
+    /// The content downloads as last reported (`OnlineEvent::Downloads`).
+    pub downloads: Vec<DownloadView>,
     /// The overlay's rollback depths.
     pub meter: NetMeter,
     /// `--net-sim`: ready whenever the lobby gathers.
@@ -104,6 +134,7 @@ impl Net {
             announce: None,
             setup_packs: None,
             weapons: None,
+            downloads: Vec::new(),
             meter: NetMeter::default(),
             auto_ready: false,
         }
@@ -135,6 +166,7 @@ pub fn member_view(m: &Member) -> MemberView {
         },
         ready: m.ready,
         missing: m.missing.clone(),
+        download: m.download,
         ping_ms: m.ping_ms,
         admin: m.admin,
     }
@@ -161,8 +193,16 @@ pub fn start_reason(e: &StartError, state: &LobbyState) -> String {
 }
 
 /// The lobby as player `me` sees it (`host`: it hosts; `can_start`: the
-/// host's answer, a client's "Waiting for the host").
-pub fn lobby_view(state: &LobbyState, me: u8, host: bool, can_start: Result<(), String>) -> LobbyView {
+/// host's answer, a client's "Waiting for the host"; `downloads` and the
+/// download `prompt`: the peer's, plan 11).
+pub fn lobby_view(
+    state: &LobbyState,
+    me: u8,
+    host: bool,
+    can_start: Result<(), String>,
+    downloads: Vec<DownloadView>,
+    prompt: Option<u64>,
+) -> LobbyView {
     LobbyView {
         name: state.name.clone(),
         me,
@@ -171,7 +211,46 @@ pub fn lobby_view(state: &LobbyState, me: u8, host: bool, can_start: Result<(), 
         members: state.members.iter().map(member_view).collect(),
         setup: prefs_of(&state.setup),
         can_start,
+        downloads,
+        prompt,
     }
+}
+
+/// One content download as the lobby lists it.
+pub fn download_view(d: &Download) -> DownloadView {
+    let kind = match d.item.kind {
+        ItemKind::Mod => "mod",
+        ItemKind::Level => "level",
+        ItemKind::Theme => "theme",
+        ItemKind::Skin => "skin",
+    };
+    let state = match &d.state {
+        DownloadState::Queued => "queued".to_string(),
+        DownloadState::Receiving => "downloading".to_string(),
+        DownloadState::Verifying => "checking".to_string(),
+        DownloadState::Done => "done".to_string(),
+        DownloadState::Failed(why) => format!("failed: {why}"),
+        DownloadState::Unavailable => "not available".to_string(),
+    };
+    DownloadView { name: d.item.id.clone(), kind: kind.into(), have: d.have, size: d.item.size, state }
+}
+
+/// The game's download cache (ruling PF11-3): `dir` (`Store::cache_dir`),
+/// else, while another game holds it (`InstallError::Locked`), `dir-2` to
+/// `dir-`[`CACHE_DIRS`]. `Err(why)` without a directory or when none
+/// opens: downloads are off and the lobby says why.
+pub fn open_download_cache(dir: Option<PathBuf>) -> SharedCache {
+    let Some(dir) = dir else { return Err("there is no cache directory".into()) };
+    let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    for i in 1..=CACHE_DIRS {
+        let d = if i == 1 { dir.clone() } else { dir.with_file_name(format!("{name}-{i}")) };
+        match DownloadCache::open(&d) {
+            Ok(c) => return Ok(Arc::new(Mutex::new(c))),
+            Err(InstallError::Locked) => continue,
+            Err(e) => return Err(format!("{}: {e}", d.display())),
+        }
+    }
+    Err(format!("{CACHE_DIRS} download caches in {} are in use by other games", dir.display()))
 }
 
 fn level_of(d: Difficulty) -> BotLevel {
@@ -426,6 +505,54 @@ mod tests {
         m.sample(t0 + Duration::from_millis(6800), &hist(&[(2, 99), (9, 1), (4, 1), (3, 1)]));
         assert_eq!((m.last_depth, m.p99()), (Some(3), Some(3)));
         assert!(m.samples.len() <= 52, "{} samples kept", m.samples.len());
+    }
+
+    /// Ruling PF11-3: a cache directory another game holds is skipped
+    /// for `-2` .. `-4`; then there is none, saying why; no directory is
+    /// no cache.
+    #[test]
+    fn a_cache_held_by_another_game_moves_to_the_next_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("downloads");
+        let held: Vec<_> = (0..CACHE_DIRS).map(|_| open_download_cache(Some(dir.clone())).unwrap()).collect();
+        let dirs: Vec<PathBuf> = held.iter().map(|c| c.lock().unwrap().dir().to_path_buf()).collect();
+        let names = ["downloads", "downloads-2", "downloads-3", "downloads-4"];
+        assert_eq!(dirs, names.map(|n| tmp.path().join(n)));
+        let Err(why) = open_download_cache(Some(dir.clone())) else { panic!("a fifth cache") };
+        assert!(why.contains("in use by other games"), "{why}");
+        drop(held);
+        let again = open_download_cache(Some(dir.clone())).unwrap();
+        assert_eq!(again.lock().unwrap().dir(), dir, "the first again once free");
+        assert!(open_download_cache(None).is_err_and(|why| why.contains("no cache directory")));
+    }
+
+    #[test]
+    fn downloads_show_their_kind_and_state_in_words() {
+        let item = |kind| rl_proto::Item {
+            kind,
+            id: "olx-level-x".into(),
+            hash: "0".repeat(64),
+            size: 1000,
+            required: true,
+        };
+        let d = |kind, state| download_view(&Download { item: item(kind), have: 250, state });
+        let v = d(ItemKind::Level, DownloadState::Receiving);
+        assert_eq!((v.name.as_str(), v.kind.as_str(), v.have, v.size), ("olx-level-x", "level", 250, 1000));
+        let states = [
+            (DownloadState::Queued, "queued"),
+            (DownloadState::Receiving, "downloading"),
+            (DownloadState::Verifying, "checking"),
+            (DownloadState::Done, "done"),
+            (DownloadState::Failed("the host stopped sending".into()), "failed: the host stopped sending"),
+            (DownloadState::Unavailable, "not available"),
+        ];
+        for (state, text) in states {
+            assert_eq!(d(ItemKind::Skin, state).state, text);
+        }
+        let kinds = [(ItemKind::Mod, "mod"), (ItemKind::Theme, "theme"), (ItemKind::Skin, "skin")];
+        for (kind, text) in kinds {
+            assert_eq!(d(kind, DownloadState::Done).kind, text);
+        }
     }
 
     #[test]

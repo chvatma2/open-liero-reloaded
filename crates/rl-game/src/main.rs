@@ -261,7 +261,10 @@ fn direct(args: &Args, audio: rl_audio::Audio, cfg: ShellConfig, flags: &Overrid
     );
     anyhow::ensure!(!args.spectate || mode == Mode::Deathmatch, "--spectate watches a Deathmatch of bots");
     let assets = if let Some(file) = &args.replay {
-        setup::load_replay(&[args.content.as_path()], file, &args.skin)?
+        // Its packs from `--content`, else from the download cache by
+        // content hash (a match on downloaded content, plan 11).
+        let cache = rl_game::net::open_download_cache(store(args).0.cache_dir()).ok();
+        setup::load_replay(&[args.content.as_path()], file, &args.skin, cache.as_deref())?
     } else if mode == Mode::Deathmatch {
         let o = DeathmatchOptions {
             seed: args.seed,
@@ -336,13 +339,19 @@ fn video_flags(m: &ArgMatches, args: &Args) -> Overrides {
     }
 }
 
+/// The data directory's files (`--data-dir`, else the platform's), and a
+/// warning when there is none.
+fn store(args: &Args) -> (rl_ui::Store, Option<String>) {
+    match &args.data_dir {
+        Some(dir) => (rl_ui::Store::open(dir), None),
+        None => rl_ui::Store::platform(),
+    }
+}
+
 /// The menus, with the settings and profiles of the data directory; the
 /// video `flags` on top of the saved options (not saved).
 fn menus(args: &Args, audio: rl_audio::Audio, mut cfg: ShellConfig, flags: Overrides) -> Shell {
-    let (mut store, warning) = match &args.data_dir {
-        Some(dir) => (rl_ui::Store::open(dir), None),
-        None => rl_ui::Store::platform(),
-    };
+    let (mut store, warning) = store(args);
     let mut settings = store.load_settings();
     let profiles = store.load_profiles();
     for w in warning.into_iter().chain(settings.warnings).chain(profiles.warnings) {

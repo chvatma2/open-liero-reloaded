@@ -25,9 +25,9 @@ pub use match_prefs::{
     MatchPrefs, RulePrefs, TIME_LIMIT_RANGE,
 };
 pub use online::{
-    ADDRESS_CHARS, CHAT_CHARS, CHAT_KEY, DEFAULT_PORT, HostPrefs, LanEntry, LobbyCommand, LobbyView,
-    MAX_PLAYERS, MIN_PLAYERS, MemberView, OnlineSettings, PASSWORD_CHARS, PHASE_LOBBY, Password,
-    SEAT_SPECTATOR, Visibility,
+    ADDRESS_CHARS, CHAT_CHARS, CHAT_KEY, DEFAULT_PORT, DownloadCacheView, DownloadView, HostPrefs, LanEntry,
+    LobbyCommand, LobbyView, MAX_PLAYERS, MIN_PLAYERS, MemberView, OnlineSettings, PASSWORD_CHARS,
+    PHASE_LOBBY, Password, SEAT_SPECTATOR, Visibility, megabytes,
 };
 pub use profiles::{
     CPU_COLOURS, DEFAULT_WEAPONS, MAX_NAME_CHARS, MAX_PROFILES, NEW_COLOURS, NameError, PROFILES_VERSION,
@@ -39,6 +39,6 @@ pub use settings::{
 };
 pub use state::{AppCommand, Game, Screen, UiAction, UiState};
 pub use store::{
-    IDENTITY_FILE, IDENTITY_VERSION, Loaded, PACKS_DIR, PROFILES_FILE, REPLAYS_DIR, SETTINGS_FILE, Secret,
-    Store,
+    CACHE_DIR, DOWNLOADS_DIR, IDENTITY_FILE, IDENTITY_VERSION, Loaded, PACKS_DIR, PROFILES_FILE, REPLAYS_DIR,
+    SETTINGS_FILE, Secret, Store,
 };

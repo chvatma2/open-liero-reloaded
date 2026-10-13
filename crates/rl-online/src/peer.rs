@@ -419,6 +419,13 @@ impl OnlinePeer {
         self.content.downloads()
     }
 
+    /// The missing bytes waiting for [`OnlinePeer::approve_downloads`] (a
+    /// client's content over the prompt, [`OnlineEvent::DownloadPrompt`]),
+    /// as of the last poll; `None` once approved or below the prompt.
+    pub fn download_prompt(&self) -> Option<u64> {
+        self.content.prompt()
+    }
+
     /// The player lets the content over the prompt download
     /// ([`OnlineEvent::DownloadPrompt`]).
     pub fn approve_downloads(&mut self) {

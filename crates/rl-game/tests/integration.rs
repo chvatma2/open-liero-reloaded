@@ -6,6 +6,7 @@
 //! - `soak`: the GPU tier (`check::GPU_TESTS`).
 
 mod deathmatch;
+mod downloads;
 mod import;
 mod ingame;
 mod menu;

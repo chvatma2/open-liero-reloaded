@@ -187,8 +187,9 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   (`Session::spectating`; "Watching <name>" on the HUD). **Per-worm
   looks** (`session::WormLook { name, colour, skin }`, one per worm,
   registered in worm order): local play's as above, an online match's the
-  lobby's (`setup::load_online` loads every slot's skin once by id,
-  `Assets::skins`; one this install lacks is the default skin).
+  lobby's (`setup::load_online` loads every slot's skin once by id from
+  the peer's content, downloads laid over, `Assets::skins`; one still
+  missing is the default skin).
   `restart` (F5) builds the world from the assets loaded once: the
   sandbox again, a Deathmatch's rematch (seed + rematch number; the
   previous match's replay is handed back to save), a replay from the
@@ -252,13 +253,15 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   screen has the keys), else `OnlinePeer::poll`. Events: `Lobby` →
   `MenuData::lobby` (`net::lobby_view`: `PHASE_LOBBY` while gathering or
   showing results, `SEAT_SPECTATOR`, the host's `can_start` reason, a
-  client's "Waiting for the host"), a client's missing packs (`have`,
-  checked when the setup's packs change), the weapon screen's menu for
-  the lobby's mod (`net::weapon_menu`, decision N19), the host's LAN
+  client's "Waiting for the host"; the peer sends its `Have` itself), the
+  weapon screen's menu for the lobby's mod (`net::weapon_menu`, decision
+  N19, from the peer's content, made again when it changes: a downloaded
+  mod counts, `net::WeaponsKey`), the host's LAN
   announcement (`Announcer`, `Visibility::Lan`); `Chat` ("name: text",
   `LineKind::Chat`), `Notice` and `Left` ("name left") → the lobby's chat
   (`net::CHAT_KEEP` lines) and the HUD log; `MatchStarting` → the last
-  match's view ends, `setup::load_online`, `Session::try_online` (a
+  match's view ends, `setup::load_online` (from `OnlinePeer::content`,
+  the content the match was built from), `Session::try_online` (a
   failure hands the peer back to say goodbye) with the
   events after it, `MatchStarted` (InGame), `Outcome::Started`;
   `MatchEnded` → the results if they did not show yet; `Results`' Back →
@@ -277,6 +280,25 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   start take `UiState::take_seed`; a refusal shows as
   `MenuData::online_status`. Leaving (`LeaveOnline`, the match menu's
   Leave the game, quitting) says goodbye (`OnlinePeer::leave`).
+  **Downloads** (plan 11): `Shell::new` opens one `DownloadCache` in
+  `Store::cache_dir()` (`net::open_download_cache`: while another game
+  holds it, `InstallError::Locked`, `downloads-2` to `-4`; `Err(why)`
+  without one, logged once: downloads off, the peer's notice in the lobby
+  says why) and every peer it starts gets it (`PeerContent { cache,
+  upload_rate: HOST_RATE }`, `--net-sim`'s host and client the same one,
+  ruling PF11-4). `Downloads` → `Net::downloads` (`net::download_view`:
+  `queued`, `downloading`, `checking`, `done`, `failed: <why>`, `not
+  available`) and `LobbyView::downloads`; the prompt is
+  `OnlinePeer::download_prompt` (`DownloadPrompt` refreshes it), its
+  Download `approve_downloads`, its Leave leaves. A replay's packs
+  (`setup::load_replay`, the Replays screen's and `--replay`'s) come from
+  the roots, else from the cache by content hash (`with_cached_packs`,
+  `Content::with_packs`), then `check_replay_packs` as before. The
+  options' download cache row (`MenuData::download_cache`, kept current
+  by `Shell::poll` while the options show: packs and partials, its lock
+  tried, never waited for) and its Clear (`clear(&[])`: the menus keep
+  nothing), refused while an online game is on (`net` or `--net-sim`'s
+  host: "leave the online game first").
   **Hidden window** (decision N21): while `Shell::online_active`,
   `about_to_wait` runs `App::hidden_frame` (the network and the match's
   ticks, no drawing) every `net::HIDDEN_FRAME` (4 ms, `WaitUntil`: not a
@@ -453,7 +475,15 @@ lobby and leaving; chat in game reaching the other's HUD log; the
 hidden window's `App::hidden_frame` ticking the match; `--net-sim
 typical`'s setup playing and starting the next match; leaving right
 after the end keeps both replays; the flags not remembered; LAN off:
-`Shell::set_lan(false)`; each under 20 s), `tests/ingame.rs` (the weapon selection, the pause and a
+`Shell::set_lan(false)`; each under 20 s), `tests/downloads.rs` (a
+joiner whose content lacks Dirt Level downloads it in the lobby into its
+`Store::open` cache and plays the match from it; over the prompt
+(`OnlinePeer::test_prompt_limit` through `Shell::peer_mut`: rl-online's
+`test-hooks` in the dev-dependencies) it waits, queued, until Download;
+a replay of that level,
+the level only in the cache, plays back from the Replays screen and is
+refused, naming it, without; the options' Clear, refused while a match
+is online, empties the cache), `tests/ingame.rs` (the weapon selection, the pause and a
 valid replay, the results against the world's scores), `tests/options.rs`
 (video through the paced requests,
 a window made again keeps the game ticking, volumes live, the saved window with the flags on top) play the imported

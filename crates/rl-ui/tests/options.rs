@@ -10,8 +10,8 @@ use rl_input::{
 };
 use rl_ui::screens::{self, MenuData};
 use rl_ui::{
-    AppCommand, AudioSettings, FrameRate, HudArrangement, Profile, Profiles, Screen, Settings, Store,
-    UiAction, UiState, UpscaleFilter, VideoSettings, WindowPreset,
+    AppCommand, AudioSettings, DownloadCacheView, FrameRate, HudArrangement, Profile, Profiles, Screen,
+    Settings, Store, UiAction, UiState, UpscaleFilter, VideoSettings, WindowPreset,
 };
 
 const KB: Device = Device::Keyboard;
@@ -451,4 +451,43 @@ fn options_rebind_the_chat_key() {
     assert_eq!(h.state().ui.settings().online.chat_key, KeyCode::KeyY);
     assert!(matches!(h.state().commands.last(), Some(AppCommand::SaveSettings(_))));
     assert_eq!(*h.state().ui.bindings(), Bindings::olx(), "the action keys are untouched");
+}
+
+fn clears(h: &Harness<'static, App>) -> usize {
+    h.state().commands.iter().filter(|c| **c == AppCommand::ClearDownloadCache).count()
+}
+
+/// Plan 11: the Online tab's "Download cache: N MB" and its Clear, which
+/// the app disables while an online game is on (a hover says why); no
+/// cache says why.
+#[test]
+fn options_clears_the_download_cache() {
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
+    h.state_mut().data.download_cache = Ok(DownloadCacheView { bytes: 312_400_000, clear: Ok(()) });
+    // Only the options clear.
+    assert!(h.state_mut().ui.update(UiAction::ClearDownloadCache).is_empty());
+    h.get_by_label("Options").click();
+    h.run();
+    h.get_by_label("Online").click();
+    h.run();
+    h.get_by_label("Download cache: 312 MB");
+    h.get_by_role_and_label(Role::Button, "Clear").click();
+    h.run();
+    assert_eq!(clears(&h), 1);
+    let busy = Err("leave the online game first".to_string());
+    h.state_mut().data.download_cache = Ok(DownloadCacheView { bytes: 0, clear: busy });
+    h.run();
+    h.get_by_label("Download cache: 0.0 MB");
+    let clear = h.get_by_role_and_label(Role::Button, "Clear");
+    assert!(clear.accesskit_node().is_disabled());
+    clear.click();
+    h.run();
+    assert_eq!(clears(&h), 1, "disabled while online");
+    h.get_by_role_and_label(Role::Button, "Clear").hover();
+    h.run();
+    h.get_by_label("leave the online game first");
+    h.state_mut().data.download_cache = Err("no cache directory".into());
+    h.run();
+    h.get_by_label("Download cache: none (no cache directory)");
+    assert!(h.query_by_label("Clear").is_none());
 }

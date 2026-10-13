@@ -104,8 +104,12 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   its error, colour sliders, searchable skins, the preview; it opens on
   the profile playing), replays (`replays.rs`, each file's header problem
   shown), options (`options.rs`, 720 wide: Video (with the HUD layout),
-  Audio, Keys tabs,
-  centred; the match is set up in local play only, which remembers it in
+  Audio, Keys and Online tabs,
+  centred; Online: "Download cache: N MB" and Clear from
+  `MenuData::download_cache` (`DownloadCacheView`: the app's bytes and
+  whether Clear may run, else why, the disabled button's hover; `Err`:
+  none, and why) → `UiAction::ClearDownloadCache`, which only the options
+  turn into `AppCommand::ClearDownloadCache`; the match is set up in local play only, which remembers it in
   `settings.gameplay`; the UI
   scale applies when its slider is released; `keys.rs`: per action its
   keys and gamepad inputs, each removable but the last of its device, "+"
@@ -177,6 +181,16 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   (`show`'s typing check covers InGame); the match's menu closes it.
   The Keys tab rebinds it (`UiAction::SetChatKey`, refusing `GAME_KEYS`).
   A read-only lobby (a client) shows the time limit as text, not a slider.
+  **Downloads** (plan 11): `LobbyView::downloads` (`DownloadView`: name,
+  kind, `have`/`size`, the state in words) is a "Downloads" list under the
+  members (a progress bar a row); a member row shows `downloading N%`
+  (`MemberView::download`) instead of its missing content; Ready is
+  disabled ("get the missing content first") while this player's
+  `missing` is not empty; `LobbyView::prompt` (bytes) asks "This game
+  needs N MB of content from the host." with Download
+  (`LobbyDownload(true)` → `LobbyCommand::ApproveDownloads`) and Leave
+  (`LobbyDownload(false)`: leaves as Back does). `megabytes(bytes)`:
+  "73.4 MB", "312 MB".
 - **Import job** (`import.rs`, plan 7 task 7): `ImportJob::spawn(path,
   packs)` runs `rl_content::import::discover` and `import` (no prune,
   revision `LOCAL_REVISION`) on a thread named `olx-import` and returns at
@@ -253,7 +267,9 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   The app uploads the frames (`PreviewTextures`): no GPU handle here.
 - **Store** (`store.rs`, Review Focus 1): `Store::platform()` (the
   `ProjectDirs` data directory, else `in_memory` and a warning;
-  `replays_dir()`, `packs_dir()`: `packs/`, the imports),
+  `replays_dir()`, `packs_dir()`: `packs/`, the imports; `cache_dir()`:
+  `ProjectDirs::cache_dir()/downloads`, a `Store::open(dir)`'s
+  `<dir>/cache/downloads`, none in memory: plan 11's download cache),
   `Store::open(dir)`, `load_*` (`Loaded { value, warnings }`) and
   `save_*`. Versioned RON (`SETTINGS_VERSION`, `PROFILES_VERSION`), every
   struct `#[serde(default)]`, atomic writes (temporary file, sync,
@@ -285,7 +301,8 @@ centred below,
 last part compares with `rl_scene::SceneAssets` when `RL_CONTENT_DIR` is
 set; `tests/options.rs`: rebinding never leaves an action unreachable, the
 rebinding flow and the other sections through the widgets, game keys never
-bound, the capture swallowing its key; `tests/ingame.rs`: the HUD layout,
+bound, the capture swallowing its key, the download cache's Clear (disabled
+with its reason; none); `tests/ingame.rs`: the HUD layout,
 the weapon selection, the pause menu, Esc/F5 repeats, the results;
 `tests/import.rs`: `import_runs_off_the_ui_thread_and_reports` on
 `fixtures/olx-mini`, and the screen's flow; `tests/hud_snapshots.rs`
