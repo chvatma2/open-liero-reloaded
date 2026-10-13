@@ -134,9 +134,6 @@ pub struct Internet {
     /// Per relay: connected now; failed (or dropped) since the start.
     connected: Vec<bool>,
     failed: Vec<bool>,
-    /// The unix time at an instant: `created_at`s are judged on the
-    /// caller's clock from there.
-    clock: (Instant, u64),
     expired: Option<Instant>,
     /// Our notes' ids, and whether a relay accepted one.
     ours: Vec<[u8; 32]>,
@@ -148,8 +145,7 @@ pub struct Internet {
 
 impl Internet {
     /// Connects to `relays` (none: no pool), hiding `blocked` hosts.
-    /// `now_unix` is the unix time at `now`.
-    pub fn open(relays: Vec<String>, blocked: &[String], now: Instant, now_unix: u64) -> Internet {
+    pub fn open(relays: Vec<String>, blocked: &[String]) -> Internet {
         let mut list = GameList::new(FINGERPRINT);
         list.allow_local(local_relays(&relays));
         for k in blocked.iter().filter_map(|k| parse_key_hex(k)) {
@@ -167,7 +163,6 @@ impl Internet {
             eose: false,
             connected: vec![false; n],
             failed: vec![false; n],
-            clock: (now, now_unix),
             expired: None,
             ours: Vec::new(),
             accepted: false,
@@ -181,24 +176,18 @@ impl Internet {
         &self.relays
     }
 
-    /// The unix time at `now`, on the caller's clock.
-    pub fn unix(&self, now: Instant) -> u64 {
-        self.clock.1.saturating_add(now.saturating_duration_since(self.clock.0).as_secs())
-    }
-
     /// Subscribes to the game list (the Multiplayer screen shows), or ends
-    /// the subscription.
-    pub fn browse(&mut self, on: bool, now: Instant) {
+    /// the subscription. `now_unix` is the wall-clock time now.
+    pub fn browse(&mut self, on: bool, now_unix: u64) {
         if on == self.browsing {
             return;
         }
         self.browsing = on;
         self.eose = false;
         self.changed = true;
-        let since = self.unix(now);
         if let Some(pool) = &mut self.pool {
             if on {
-                pool.subscribe(GAMES_SUB, vec![GameList::filter_since(since)]);
+                pool.subscribe(GAMES_SUB, vec![GameList::filter_since(now_unix)]);
             } else {
                 pool.unsubscribe(GAMES_SUB);
             }
@@ -207,8 +196,11 @@ impl Internet {
 
     /// What the relays and the pings reported: games offered to the list,
     /// the list's first `EOSE`, the relays' states, our notes' verdicts.
-    pub fn poll(&mut self, now: Instant) {
-        let unix = self.unix(now);
+    /// `now_unix` is the wall-clock time now, read by the caller at each
+    /// poll: notes are judged by it (a monotonic clock anchored once falls
+    /// behind after a suspend; final review B-M9).
+    pub fn poll(&mut self, now: Instant, now_unix: u64) {
+        let unix = now_unix;
         if let Some(pool) = &mut self.pool {
             pool.poll(&mut self.events);
         }
@@ -358,21 +350,23 @@ pub struct Hosted {
 
 impl Hosted {
     /// A hosted game of `visibility` (the address asked for a Public or
-    /// Invite game only); `identity` signs a Public game's notes. The line
-    /// saying where the address comes from, if one is asked.
+    /// Invite game only); `identity` signs a Public game's notes, the first
+    /// dated `after` at the earliest (a closing note of the same key just
+    /// left: [`Publisher::new`]). The line saying where the address comes
+    /// from, if one is asked.
     pub fn start(
         visibility: Visibility,
         settings: &FindingSettings,
         identity: Identity,
         now: Instant,
-        now_unix: u64,
+        after: Option<u64>,
     ) -> (Hosted, Option<String>) {
         let configured = settings.public_address.trim().parse::<IpAddr>().ok();
         let asks = matches!(visibility, Visibility::Public | Visibility::Invite);
         let stun = if asks { stun_of(settings) } else { Vec::new() };
         let configured = configured.filter(|_| asks);
         let (address, said) = AddressWatch::start(configured, &stun, now);
-        let publisher = (visibility == Visibility::Public).then(|| Publisher::new(identity, now, now_unix));
+        let publisher = (visibility == Visibility::Public).then(|| Publisher::new(identity, after));
         let hosted = Hosted {
             visibility,
             address,
@@ -452,7 +446,7 @@ mod tests {
                 stun: Some(Vec::new()),
                 ..FindingSettings::default()
             };
-            let (h, _) = Hosted::start(Visibility::Public, &f, id.clone(), now, 1_000);
+            let (h, _) = Hosted::start(Visibility::Public, &f, id.clone(), now, None);
             h.listing(None, 23400).unwrap()
         };
         for bad in ["192.168.1.5", "127.0.0.1", "2a00:1450::1"] {
@@ -467,9 +461,44 @@ mod tests {
 
     #[test]
     fn no_relays_is_no_relay_reachable() {
-        let now = Instant::now();
-        let i = Internet::open(Vec::new(), &[], now, 1_000);
+        let i = Internet::open(Vec::new(), &[]);
         assert_eq!(i.status(), InternetStatus::NoRelay);
         assert!(!i.reachable());
+    }
+
+    /// The list judges notes by the wall clock the caller reads at each
+    /// poll, not by a monotonic clock anchored when the pool opened: after
+    /// a suspend (the monotonic clock stood still) current notes are taken
+    /// (final review B-M9).
+    #[test]
+    fn the_list_follows_the_wall_clock_across_a_suspend() {
+        let host = Identity::from_secret([9; 32]).unwrap();
+        let summary = |name: &str| GameSummary {
+            v: rl_proto::PROTOCOL_VERSION,
+            name: name.into(),
+            mode: "deathmatch".into(),
+            map: "olx-level-dirt-level".into(),
+            map_name: "Dirt Level".into(),
+            mod_id: "olx-classic".into(),
+            mod_hash: rl_proto::NO_HASH.into(),
+            players: 1,
+            max_players: 8,
+            spectators: 0,
+            max_spectators: 4,
+            password: false,
+            region: rl_discovery::Region::Europe,
+            playing: false,
+            addr: Some("81.2.69.142".parse().unwrap()),
+            port: 23400,
+            closed: false,
+        };
+        let t0 = Instant::now();
+        let mut i = Internet::open(Vec::new(), &[]);
+        i.browse(true, 1_000_000);
+        // Ten minutes asleep: the monotonic clock moved 60 s, the wall 660 s.
+        let note = rl_discovery::announcement(&host, &summary("Den"), FINGERPRINT, 1_000_660, [1; 32]);
+        i.events.push(PoolEvent::Event { relay: 0, event: note });
+        i.poll(t0 + Duration::from_secs(60), 1_000_660);
+        assert_eq!(i.games().len(), 1, "a current note is listed");
     }
 }

@@ -190,6 +190,9 @@ pub struct Shell {
     internet_left: Option<Instant>,
     /// Relay pools opened so far.
     relay_pools: u32,
+    /// The `created_at` of the last closing note this game published (a
+    /// game hosted again dates its first note after it).
+    closed_note: Option<u64>,
 }
 
 /// The Options' download cache row reads the cache's sizes (a directory
@@ -249,6 +252,7 @@ impl Shell {
             pinged: None,
             internet_left: None,
             relay_pools: 0,
+            closed_note: None,
         };
         shell.data.default_relays = DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect();
         shell.data.default_stun = DEFAULT_STUN.iter().map(|s| s.to_string()).collect();
@@ -301,6 +305,7 @@ impl Shell {
             pinged: None,
             internet_left: None,
             relay_pools: 0,
+            closed_note: None,
         }
     }
 

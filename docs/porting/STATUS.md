@@ -1210,6 +1210,14 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
   R5-3). On close the host publishes a note with `"closed": true` and an
   expiry 10 s ahead, `created_at` at least a second newer than its last
   note (a same-second tie would let a relay keep the open note, R9-5).
+  `created_at` is the wall clock read at each note (final review A-I2: it
+  was the unix time at start plus the monotonic clock's elapsed time, so a
+  suspend or an NTP step after the start dated every note expired at
+  birth); the game list's ages in rl-game use the wall clock read at each
+  poll too. A game hosted again right after its closing note dates its
+  first note 10 s after that note (final review A-M6: relays keep the
+  newest note of a slot and lists refuse one older than the tombstone, so
+  it stayed hidden up to a minute).
   One builder, `GameSummary::of_lobby`, serves rl-server and rl-game and
   also gives the LAN broadcast (`.lan()`); players and spectators are held
   to their maximums (R9-1, R9-8).

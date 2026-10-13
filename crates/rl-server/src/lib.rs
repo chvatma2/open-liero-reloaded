@@ -186,8 +186,6 @@ impl Server {
         line(log, format_args!("bans: {} keys, {} addresses", bans.keys.len(), bans.ips.len()));
         line(log, format_args!("listening on port {} (TCP and UDP)", peer.local_port()));
         let now = Instant::now();
-        let unix =
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let nostr = match config.visibility {
             Visibility::Public if config.relays.is_empty() => {
                 line(log, format_args!("warning: public, but no relays configured: not announced on Nostr"));
@@ -204,7 +202,7 @@ impl Server {
                 );
                 let pool = Pool::start(PoolConfig { relays: config.relays.clone(), ..PoolConfig::default() });
                 let said = vec![None; config.relays.len()];
-                let publisher = Publisher::new(identity, now, unix);
+                let publisher = Publisher::new(identity, None);
                 Some(Nostr { pool, publisher, said, events: Vec::new() })
             }
             Visibility::Lan => {
@@ -323,8 +321,7 @@ impl Server {
         if let Some(mut n) = self.nostr.take() {
             if let Some((_, state)) = &self.lobby {
                 let summary = self.summary(state);
-                let now = self.now.unwrap_or_else(Instant::now);
-                if let Some(note) = n.publisher.closing(now, &summary, aux) {
+                if let Some(note) = n.publisher.closing(unix_now(), &summary, aux) {
                     n.pool.publish(note);
                     line(log, format_args!("closing note published"));
                 }
@@ -728,7 +725,7 @@ impl Server {
         }
         if let Some(n) = &mut self.nostr
             && self.address.settled()
-            && let Some(note) = n.publisher.tick(now, &summary, aux)
+            && let Some(note) = n.publisher.tick(now, unix_now(), &summary, aux)
         {
             n.pool.publish(note);
         }
@@ -873,6 +870,13 @@ fn chunks(head: &str, items: &[String]) -> Vec<String> {
     }
     lines.push(cur);
     lines
+}
+
+/// The wall-clock unix time now, read at each note: its `created_at`
+/// (never anchored to the monotonic clock, which stands still while the
+/// machine sleeps and ignores NTP steps; final review A-I2).
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 /// A signature's randomness (BIP-340 `aux`; zeros, still safe, when the

@@ -294,7 +294,10 @@ impl Shell {
         }
         let now = Instant::now();
         let finding = &self.ui.settings().online.finding;
-        let (hosted, said) = Hosted::start(prefs.visibility, finding, signer, now, unix_now());
+        // A game hosted again right after its closing note: the first note
+        // a gap after it, so relays and lists take it at once.
+        let after = self.closed_note.map(|c| c.saturating_add(rl_discovery::list::MIN_NOTE_GAP));
+        let (hosted, said) = Hosted::start(prefs.visibility, finding, signer, now, after);
         if let Some(said) = said {
             println!("rl-game: {said}");
         }
@@ -837,8 +840,8 @@ impl Shell {
             // Kept `RELAY_LINGER` (unsubscribed, still drained), then closed.
             let Some(i) = &mut self.internet else { return };
             let left = *self.internet_left.get_or_insert(now);
-            i.browse(false, now);
-            i.poll(now);
+            i.browse(false, unix_now());
+            i.poll(now, unix_now());
             if now.saturating_duration_since(left) >= RELAY_LINGER {
                 if let Some(i) = self.internet.take() {
                     i.close(false);
@@ -855,11 +858,11 @@ impl Shell {
         if self.internet.is_none() {
             self.relay_pools += 1;
         }
-        let internet = self
-            .internet
-            .get_or_insert_with(|| Internet::open(relays_of(finding), &finding.blocked, now, unix_now()));
-        internet.browse(browsing, now);
-        internet.poll(now);
+        let internet =
+            self.internet.get_or_insert_with(|| Internet::open(relays_of(finding), &finding.blocked));
+        let unix = unix_now();
+        internet.browse(browsing, unix);
+        internet.poll(now, unix);
         if self.data.selected_game != self.pinged {
             self.pinged = self.data.selected_game;
             if let Some(key) = self.pinged {
@@ -901,7 +904,7 @@ impl Shell {
         }
         if h.address.settled()
             && let (Some(p), Some(summary), Some(i)) = (&mut h.publisher, &h.summary, &mut self.internet)
-            && let Some(note) = p.tick(now, summary, aux)
+            && let Some(note) = p.tick(now, unix_now(), summary, aux)
         {
             i.publish(note);
         }
@@ -920,10 +923,10 @@ impl Shell {
     /// pool, closed when no longer needed, sends it first).
     fn close_hosted(&mut self) {
         let Some(mut h) = self.net.as_mut().and_then(|n| n.hosted.take()) else { return };
-        let now = Instant::now();
         if let (Some(p), Some(summary), Some(i)) = (&mut h.publisher, &h.summary, &mut self.internet)
-            && let Some(note) = p.closing(now, summary, aux)
+            && let Some(note) = p.closing(unix_now(), summary, aux)
         {
+            self.closed_note = Some(note.created_at);
             i.publish(note);
         }
     }
@@ -968,8 +971,9 @@ impl Shell {
 /// had no public address; plan 12b reaches such hosts).
 pub const INVITE_WITHOUT_ADDRESS: &str = "this invite has no address: the game cannot be joined yet";
 
-/// The unix time now: notes' `created_at` and the list's ages follow the
-/// frames' clock from here.
+/// The wall-clock unix time now, read at each use: notes' `created_at` and
+/// the list's ages (never anchored to the frames' monotonic clock, which
+/// stands still while the machine sleeps).
 fn unix_now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }

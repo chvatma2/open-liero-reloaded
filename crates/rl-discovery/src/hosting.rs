@@ -160,59 +160,62 @@ pub fn invite(key: PublicKey, relays: &[String], addr: Option<IpAddr>, port: u16
 }
 
 /// When and how a hosted game's notes are published (N39): the
-/// [`Announcer`]'s timing, signed by the host's identity, `created_at` on
-/// the caller's clock from a unix time taken once (no wall clock in the
-/// poll), and the closing note newer than the last note (a tie in the
-/// second would let relays and lists keep the open one, as ties go by id).
+/// [`Announcer`]'s timing, signed by the host's identity, `created_at` the
+/// wall-clock time the caller reads at each note (a monotonic clock
+/// anchored once falls behind after a suspend or an NTP step, and every
+/// note would be born expired: final review A-I2), and the closing note
+/// newer than the last note (a tie in the second would let relays and
+/// lists keep the open one, as ties go by id).
 pub struct Publisher {
     identity: Identity,
     announcer: Announcer,
-    /// The unix time at an instant: `created_at` follows the caller's clock
-    /// from there.
-    clock: (Instant, u64),
+    /// The earliest `created_at` of the first note (after a closing note
+    /// of the same key).
+    floor: u64,
     /// The last note's `created_at`.
     last_unix: Option<u64>,
 }
 
 impl Publisher {
-    /// Notes signed by `identity`; `now_unix` is the unix time at `now`.
-    pub fn new(identity: Identity, now: Instant, now_unix: u64) -> Publisher {
-        Publisher { identity, announcer: Announcer::new(), clock: (now, now_unix), last_unix: None }
-    }
-
-    /// The unix time at `now`, on the caller's clock.
-    pub fn unix(&self, now: Instant) -> u64 {
-        self.clock.1.saturating_add(now.saturating_duration_since(self.clock.0).as_secs())
+    /// Notes signed by `identity`. `after` is the earliest date of the
+    /// first note: a game hosted again right after its closing note dates
+    /// its first note after it (relays keep the newest note of a slot, and
+    /// lists refuse a note older than the tombstone; final review A-M6).
+    pub fn new(identity: Identity, after: Option<u64>) -> Publisher {
+        Publisher { identity, announcer: Announcer::new(), floor: after.unwrap_or(0), last_unix: None }
     }
 
     /// The note of `summary` to publish now, if one is due (every minute,
-    /// at a change after 12 s); `aux` gives the signature's randomness.
+    /// at a change after 12 s); `now_unix` is the wall-clock time now,
+    /// `aux` gives the signature's randomness.
     pub fn tick(
         &mut self,
         now: Instant,
+        now_unix: u64,
         summary: &GameSummary,
         aux: impl FnOnce() -> [u8; 32],
     ) -> Option<Event> {
         if !self.announcer.tick(now, summary) {
             return None;
         }
-        let unix = self.unix(now);
+        let unix = if self.last_unix.is_none() { now_unix.max(self.floor) } else { now_unix };
         self.last_unix = Some(unix);
         Some(announcement(&self.identity, summary, FINGERPRINT, unix, aux()))
     }
 
     /// Once, when a note was published: the closing note of `summary`
-    /// (`closed: true`), at least a second newer than the last note.
+    /// (`closed: true`), dated `now_unix` but at least a second newer than
+    /// the last note.
     pub fn closing(
         &mut self,
-        now: Instant,
+        now_unix: u64,
         summary: &GameSummary,
         aux: impl FnOnce() -> [u8; 32],
     ) -> Option<Event> {
         if !self.announcer.closing() {
             return None;
         }
-        let unix = self.unix(now).max(self.last_unix.unwrap_or(0).saturating_add(1));
+        let unix = now_unix.max(self.last_unix.unwrap_or(0).saturating_add(1));
         let summary = GameSummary { closed: true, ..summary.clone() };
         Some(announcement(&self.identity, &summary, FINGERPRINT, unix, aux()))
     }
@@ -320,26 +323,68 @@ mod tests {
     fn the_publisher_signs_due_notes_and_closes_once_newer() {
         let id = Identity::from_secret([7; 32]).unwrap();
         let t0 = Instant::now();
-        let mut p = Publisher::new(id.clone(), t0, 1_000_000);
+        let mut p = Publisher::new(id.clone(), None);
         assert_eq!(p.key(), id.public());
         assert!(!p.published());
         let s = summary();
-        let first = p.tick(t0, &s, || [1; 32]).expect("the first note at once");
+        let first = p.tick(t0, 1_000_000, &s, || [1; 32]).expect("the first note at once");
         assert!(first.verify() && first.pubkey == id.public());
         assert_eq!(first.created_at, 1_000_000);
         assert!(p.published());
-        assert!(p.tick(t0 + Duration::from_secs(5), &s, || unreachable!("not due")).is_none());
-        let later = p.tick(t0 + Duration::from_secs(60), &s, || [2; 32]).expect("the minute's note");
-        assert_eq!(later.created_at, 1_000_060, "on the caller's clock");
+        assert!(p.tick(t0 + Duration::from_secs(5), 1_000_005, &s, || unreachable!("not due")).is_none());
+        let later =
+            p.tick(t0 + Duration::from_secs(60), 1_000_060, &s, || [2; 32]).expect("the minute's note");
+        assert_eq!(later.created_at, 1_000_060, "on the wall clock given");
         // Closing in the same second: one newer.
-        let close = p.closing(t0 + Duration::from_secs(60), &s, || [3; 32]).expect("a closing note");
+        let close = p.closing(1_000_060, &s, || [3; 32]).expect("a closing note");
         assert_eq!(close.created_at, 1_000_061);
         let (closed, _) = crate::parse_announcement(&close).unwrap();
         assert!(closed.closed);
-        assert!(p.closing(t0 + Duration::from_secs(61), &s, || [4; 32]).is_none(), "once");
-        assert!(p.tick(t0 + Duration::from_secs(200), &s, || [5; 32]).is_none(), "nothing after closing");
+        assert!(p.closing(1_000_061, &s, || [4; 32]).is_none(), "once");
+        assert!(
+            p.tick(t0 + Duration::from_secs(200), 1_000_200, &s, || [5; 32]).is_none(),
+            "nothing after closing"
+        );
         // Nothing published: nothing to close.
-        let mut q = Publisher::new(id, t0, 5);
-        assert!(q.closing(t0, &s, || [6; 32]).is_none());
+        let mut q = Publisher::new(id, None);
+        assert!(q.closing(5, &s, || [6; 32]).is_none());
+    }
+
+    /// The notes are dated by the wall clock the caller reads at each
+    /// note, not by a monotonic clock anchored once: after a suspend (the
+    /// monotonic clock stood still) or an NTP step, the next note is
+    /// current, never born expired (final review A-I2).
+    #[test]
+    fn notes_follow_the_wall_clock_across_a_suspend() {
+        let id = Identity::from_secret([7; 32]).unwrap();
+        let t0 = Instant::now();
+        let mut p = Publisher::new(id, None);
+        let s = summary();
+        p.tick(t0, 1_000_000, &s, || [1; 32]).unwrap();
+        // Ten minutes asleep: the monotonic clock moved 60 s, the wall 660 s.
+        let woke = p.tick(t0 + Duration::from_secs(60), 1_000_660, &s, || [2; 32]).unwrap();
+        assert_eq!(woke.created_at, 1_000_660);
+        assert!(woke.expiration().is_some_and(|x| x > 1_000_660), "not born expired");
+        // The wall clock stepped back a little: the closing note still beats
+        // the last note.
+        let close = p.closing(1_000_650, &s, || [3; 32]).unwrap();
+        assert_eq!(close.created_at, 1_000_661);
+    }
+
+    /// A game hosted again right after its closing note dates its first
+    /// note `floor` at the earliest (final review A-M6): relays keep the
+    /// newest note of a slot, and lists refuse one older than the
+    /// tombstone.
+    #[test]
+    fn a_game_hosted_again_dates_its_first_note_after_the_floor() {
+        let id = Identity::from_secret([7; 32]).unwrap();
+        let t0 = Instant::now();
+        let s = summary();
+        let mut p = Publisher::new(id.clone(), Some(1_000_011));
+        let first = p.tick(t0, 1_000_001, &s, || [1; 32]).unwrap();
+        assert_eq!(first.created_at, 1_000_011);
+        let later = p.tick(t0 + Duration::from_secs(60), 1_000_061, &s, || [2; 32]).unwrap();
+        assert_eq!(later.created_at, 1_000_061, "the wall clock again once past the floor");
+        assert_eq!(Publisher::new(id, Some(5)).tick(t0, 9, &s, || [3; 32]).unwrap().created_at, 9);
     }
 }

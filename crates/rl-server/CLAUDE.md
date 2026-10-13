@@ -92,8 +92,9 @@ beside the executable, else in the working directory).
   the public address on the local port; the LAN gets `summary.lan()` every
   poll, Nostr an `announcement` signed with the server's identity when
   the `Announcer` says (every minute, at a change after 12 s), not before
-  the address is settled; `created_at` is the start's unix time plus the
-  poll clock's elapsed time. Relay statuses (not `Connecting`) and refused
+  the address is settled; `created_at` is the wall clock read at each note
+  (`unix_now`; final review A-I2: a monotonic clock anchored at the start
+  dated every note expired after a suspend or an NTP step). Relay statuses (not `Connecting`) and refused
   notes are logged once per relay until they change. Each poll (the lobby copied
   only when `LobbyHandle::revision` changed): the peer's events
   (chat logged, a `/` line run as a command for that member id: admins by
