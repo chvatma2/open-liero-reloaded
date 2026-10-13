@@ -42,9 +42,16 @@ struct Rec {
     seat: SeatWire,
     /// Wants a player seat (false: spectates by choice).
     wants_play: bool,
-    /// Said it is ready; ready on the wire only with nothing missing.
+    /// Said it is ready; ready on the wire only with its content known
+    /// complete.
     said_ready: bool,
     missing: Vec<String>,
+    /// The content list its last `Have` answered.
+    have_revision: Option<u32>,
+    /// Its last `Have` answered the host's current content list (always,
+    /// without one: `LobbyHost::set_content_revision` was never called;
+    /// the host's own player always).
+    known: bool,
     /// The download progress shown (`Member::download`).
     download: Option<u8>,
     /// A progress held back by the coalescing, shown at `download_at +
@@ -64,8 +71,14 @@ struct Rec {
 }
 
 impl Rec {
+    /// Its content is not known complete: its `Have` for the current list
+    /// is missing, or named something.
+    fn lacking(&self) -> bool {
+        !self.known || !self.missing.is_empty()
+    }
+
     fn ready(&self) -> bool {
-        self.said_ready && self.missing.is_empty()
+        self.said_ready && !self.lacking()
     }
 
     fn wire(&self) -> Member {
@@ -133,6 +146,9 @@ pub struct LobbyHost {
     events: Vec<HostEvent>,
     /// The latest time the host was given.
     now_us: u64,
+    /// The content list's revision (`set_content_revision`; `None`: no
+    /// content layer, every `Have` counts).
+    content_revision: Option<u32>,
 }
 
 /// One address's recent wrong password proofs.
@@ -203,6 +219,7 @@ impl LobbyHost {
             out: Vec::new(),
             events: Vec::new(),
             now_us: 0,
+            content_revision: None,
         };
         if let Some(look) = me {
             let id = host.alloc_id().unwrap_or(0);
@@ -216,6 +233,8 @@ impl LobbyHost {
                 wants_play: true,
                 said_ready: true,
                 missing: Vec::new(),
+                have_revision: None,
+                known: true,
                 download: None,
                 download_next: None,
                 download_at: None,
@@ -364,7 +383,22 @@ impl LobbyHost {
     /// The members whose required content is incomplete (their last
     /// `Have` named something missing), in join order.
     pub fn lacking(&self) -> Vec<u8> {
-        self.members.iter().filter(|m| !m.missing.is_empty()).map(|m| m.id).collect()
+        self.members.iter().filter(|m| m.lacking()).map(|m| m.id).collect()
+    }
+
+    /// The host's content list is now `revision` (the online layer's
+    /// `ContentMsg::List`): a member is lacking until its `Have` answers
+    /// it, so it is not ready and sits a start out meanwhile. A change a
+    /// start depends on.
+    pub fn set_content_revision(&mut self, revision: u32) {
+        if self.content_revision == Some(revision) {
+            return;
+        }
+        self.content_revision = Some(revision);
+        for m in self.members.iter_mut().filter(|m| m.peer.is_some()) {
+            m.known = m.have_revision == Some(revision);
+        }
+        self.publish();
     }
 
     /// Changes whenever [`LobbyHost::state`] does: compare it instead of
@@ -516,7 +550,7 @@ impl LobbyHost {
         let mut moved = false;
         for m in self.members.iter_mut().filter(|m| seated(m) && !m.ready()) {
             // Lacking content: sits the match out (N33), else watches.
-            m.seat = if m.missing.is_empty() { SeatWire::Spectator } else { SeatWire::Waiting };
+            m.seat = if m.lacking() { SeatWire::Waiting } else { SeatWire::Spectator };
             moved = true;
         }
         if moved {
@@ -588,7 +622,7 @@ impl LobbyHost {
         // N33: a member lacking content sits the match out: no start, no
         // state, still connected. It spectates once complete.
         for m in &mut self.members {
-            m.awaiting_content = !m.missing.is_empty();
+            m.awaiting_content = m.lacking();
             if m.awaiting_content {
                 m.seat = SeatWire::Waiting;
             }
@@ -788,6 +822,8 @@ impl LobbyHost {
             wants_play: true,
             said_ready: false,
             missing: Vec::new(),
+            have_revision: None,
+            known: self.content_revision.is_none(),
             download: None,
             download_next: None,
             download_at: None,
@@ -894,8 +930,14 @@ impl LobbyHost {
                     self.relay(id, text);
                 }
             }
-            ToHost::Have { missing } => {
+            ToHost::Have { revision, missing } => {
+                // An answer to another list than the current one.
+                if self.content_revision.is_some_and(|r| r != revision) {
+                    return;
+                }
                 let m = &mut self.members[i];
+                m.have_revision = Some(revision);
+                m.known = true;
                 if !missing.is_empty() {
                     m.said_ready = false;
                 } else {

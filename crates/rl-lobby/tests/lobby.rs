@@ -586,7 +586,7 @@ fn missing_content_prevents_ready() {
     let mut net = lobby();
     let a = join(&mut net, 1, "Ann");
     let a_id = id_of(&net, a);
-    net.client(a).have(vec!["olx-skin-x".into()]);
+    net.client(a).have(0, vec!["olx-skin-x".into()]);
     net.client(a).set_ready(true);
     net.settle();
     assert_eq!(member(&net, a).missing, vec!["olx-skin-x".to_string()]);
@@ -594,7 +594,7 @@ fn missing_content_prevents_ready() {
     assert!(got(&net, a, &ClientEvent::Notice(Notice::Message(MISSING_CONTENT.into()))));
     assert_eq!(net.host.can_start(), Err(NotStartable::NotReady(vec![a_id])));
     // Content arriving does not make a player ready by itself.
-    net.client(a).have(vec![]);
+    net.client(a).have(0, vec![]);
     net.settle();
     assert!(!member(&net, a).ready);
     net.client(a).set_ready(true);
@@ -602,11 +602,11 @@ fn missing_content_prevents_ready() {
     assert!(member(&net, a).ready);
     assert_eq!(net.host.can_start(), Ok(()));
     // Losing content clears ready.
-    net.client(a).have(vec!["olx-skin-y".into()]);
+    net.client(a).have(0, vec!["olx-skin-y".into()]);
     net.settle();
     assert!(!member(&net, a).ready);
     // Invalid ids are dropped by the client, the rest is bounded.
-    net.client(a).have((0..20).map(|i| format!("p{i}")).chain(["Bad/Id".into()]).collect());
+    net.client(a).have(0, (0..20).map(|i| format!("p{i}")).chain(["Bad/Id".into()]).collect());
     net.settle();
     assert_eq!(member(&net, a).missing.len(), MAX_MISSING);
     consistent(&net);
@@ -890,7 +890,7 @@ fn a_forced_start_seats_only_the_ready() {
     let b = join(&mut net, 2, "Bob");
     let c = join(&mut net, 3, "Cid");
     net.client(a).set_ready(true);
-    net.client(c).have(vec!["olx-skin-x".into()]);
+    net.client(c).have(0, vec!["olx-skin-x".into()]);
     net.settle();
     let (a_id, b_id, c_id) = (id_of(&net, a), id_of(&net, b), id_of(&net, c));
     assert_eq!(net.host.can_start(), Err(NotStartable::NotReady(vec![b_id, c_id])));
@@ -1000,7 +1000,7 @@ fn state_changes_are_coalesced() {
         net.client(b).set_look(look(&format!("Bob {i}")));
     }
     net.client(b).set_ready(true);
-    net.client(b).have(vec![]);
+    net.client(b).have(0, vec![]);
     net.client(b).set_spectate(false);
     net.settle();
     assert_eq!(lobbies(&net), before + 1);
@@ -1122,6 +1122,8 @@ enum Op {
     Playing(u32),
     Ended,
     Wait(u64),
+    /// The content list's revision changes.
+    Revision(u32),
 }
 
 fn to_host() -> impl Strategy<Value = ToHost> {
@@ -1152,8 +1154,8 @@ fn to_host() -> impl Strategy<Value = ToHost> {
         any::<bool>().prop_map(ToHost::Spectate),
         Just(ToHost::Loadout(Some([1, 2, 3, 4, 5]))),
         "[a-z ]{0,200}".prop_map(ToHost::Chat),
-        prop::collection::vec("[a-z]{1,8}|[a-z0-9-]{64}", 0..=MAX_MISSING)
-            .prop_map(|missing| ToHost::Have { missing }),
+        (0u32..3, prop::collection::vec("[a-z]{1,8}|[a-z0-9-]{64}", 0..=MAX_MISSING))
+            .prop_map(|(revision, missing)| ToHost::Have { revision, missing }),
         (0u8..PEERS).prop_map(|k| ToHost::Admin(AdminCommand::Kick(key(k + 1)))),
         (0u8..PEERS).prop_map(|k| ToHost::Admin(AdminCommand::Ban(key(k + 1)))),
         Just(ToHost::Admin(AdminCommand::Next)),
@@ -1197,6 +1199,7 @@ fn op() -> impl Strategy<Value = Op> {
         1 => any::<u32>().prop_map(Op::Playing),
         1 => Just(Op::Ended),
         1 => (0u64..12_000_000).prop_map(Op::Wait),
+        1 => (0u32..3).prop_map(Op::Revision),
     ]
 }
 
@@ -1242,7 +1245,7 @@ proptest! {
                         let signature = me.sign(&challenge_message(&nonce, &key(HOST)), [0; 32]);
                         host.receive(peer, ToHost::Prove { signature }, now);
                         let missing = (0..MAX_MISSING).map(|i| format!("{i}{}", "m".repeat(MAX_ID - 1))).collect();
-                        host.receive(peer, ToHost::Have { missing }, now);
+                        host.receive(peer, ToHost::Have { revision: 0, missing }, now);
                     }
                 }
                 Op::Disconnect(p) => host.disconnected(u32::from(p)),
@@ -1270,6 +1273,7 @@ proptest! {
                     now += us;
                     host.tick(now);
                 }
+                Op::Revision(r) => host.set_content_revision(r),
             }
             // A broadcast is a run of one message to many peers: check it once.
             let mut last = None;
@@ -1304,7 +1308,7 @@ fn a_spectator_lacking_content_waits_at_the_start() {
     net.client(a).set_ready(true);
     net.client(b).set_spectate(true);
     net.client(c).set_spectate(true);
-    net.client(b).have(vec!["olx-skin-x".into()]);
+    net.client(b).have(0, vec!["olx-skin-x".into()]);
     net.settle();
     assert_eq!(net.host.lacking(), vec![id_of(&net, b)]);
     let wire = net.start(1, 2).unwrap();
@@ -1323,7 +1327,7 @@ fn force_start_makes_lacking_players_wait() {
     let b = join(&mut net, 2, "Bob");
     let c = join(&mut net, 3, "Cid");
     net.client(a).set_ready(true);
-    net.client(c).have(vec!["olx-skin-x".into()]);
+    net.client(c).have(0, vec!["olx-skin-x".into()]);
     net.settle();
     let rtts = net.rtts();
     let wire = net.host.force_start(4, &rtts).unwrap();
@@ -1358,14 +1362,14 @@ fn a_mid_match_joiner_spectates_once_complete() {
         |net: &Net| net.host_events.iter().filter(|e| **e == HostEvent::ContentComplete(b_id)).count();
     assert!(net.host_events.contains(&HostEvent::Joined(b_id)));
     assert_eq!(complete(&net), 0, "nothing reported yet");
-    net.client(b).have(vec!["olx-skin-x".into()]);
+    net.client(b).have(0, vec!["olx-skin-x".into()]);
     net.settle();
     assert_eq!(complete(&net), 0, "still lacking");
     assert_eq!(seat(&net, b), SeatWire::Waiting);
-    net.client(b).have(vec![]);
+    net.client(b).have(0, vec![]);
     net.settle();
     assert_eq!(complete(&net), 1);
-    net.client(b).have(vec![]);
+    net.client(b).have(0, vec![]);
     net.settle();
     assert_eq!(complete(&net), 1, "reported once");
     consistent(&net);
@@ -1376,7 +1380,7 @@ fn download_progress_is_published_and_coalesced() {
     let mut net = lobby();
     let a = join(&mut net, 1, "Ann");
     let a_id = id_of(&net, a);
-    net.client(a).have(vec!["olx-skin-x".into()]);
+    net.client(a).have(0, vec!["olx-skin-x".into()]);
     net.settle();
     let progress = |net: &Net| member_by_id(net, a_id).download;
     let before = net.host.revision();
@@ -1398,7 +1402,7 @@ fn download_progress_is_published_and_coalesced() {
     // Over 100 is cut; complete content clears it.
     net.host.set_download(a_id, Some(250));
     assert_eq!(progress(&net), Some(100));
-    net.client(a).have(vec![]);
+    net.client(a).have(0, vec![]);
     net.settle();
     assert_eq!(progress(&net), None);
     net.host.set_download(99, Some(5));
@@ -1415,7 +1419,7 @@ fn a_waiting_spectator_holds_no_seat() {
     let b = join(&mut net, 2, "Bob");
     net.client(a).set_ready(true);
     net.client(b).set_spectate(true);
-    net.client(b).have(vec!["olx-skin-x".into()]);
+    net.client(b).have(0, vec!["olx-skin-x".into()]);
     net.settle();
     net.start(1, 2).unwrap();
     net.host.playing(0);
@@ -1423,5 +1427,42 @@ fn a_waiting_spectator_holds_no_seat() {
     assert_eq!(seat(&net, b), SeatWire::Waiting);
     let c = join(&mut net, 3, "Cid");
     assert_eq!(seat(&net, c), SeatWire::Waiting, "a seat is free for the next match");
+    consistent(&net);
+}
+
+/// A member is lacking until its `Have` answers the host's current content
+/// list (`set_content_revision`): before its first, and after a setup change
+/// until the new list's. A `Have` for another list is ignored.
+#[test]
+fn a_member_is_lacking_until_its_have_answers_the_current_list() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let a_id = id_of(&net, a);
+    net.host.set_content_revision(1);
+    net.client(a).set_ready(true);
+    net.settle();
+    assert!(!member_by_id(&net, a_id).ready, "no `Have` yet");
+    assert_eq!(net.host.lacking(), vec![a_id]);
+    assert!(matches!(net.start(1, 2), Err(NotStartable::NotReady(_))));
+    net.client(a).have(1, vec![]);
+    net.settle();
+    assert!(member_by_id(&net, a_id).ready, "said ready, content known complete");
+    assert!(net.host.lacking().is_empty());
+    // The setup changes: a new list.
+    let mut other = setup(0);
+    other.level_id = "olx-level-castlestrike".into();
+    net.host.set_setup(other).unwrap();
+    net.host.set_content_revision(2);
+    net.client(a).set_ready(true);
+    net.settle();
+    assert!(!member_by_id(&net, a_id).ready, "the new list is not answered");
+    net.client(a).have(1, vec![]);
+    net.settle();
+    assert!(!member_by_id(&net, a_id).ready, "an answer to the old list is ignored");
+    assert!(matches!(net.start(1, 2), Err(NotStartable::NotReady(_))));
+    net.client(a).have(2, vec![]);
+    net.settle();
+    assert!(member_by_id(&net, a_id).ready);
+    assert!(net.start(1, 2).is_ok());
     consistent(&net);
 }

@@ -75,7 +75,7 @@ fn samples() -> Vec<Vec<u8>> {
         ToHost::Hello { key: [7; 32], look: look(), password: Some([1; 32]) },
         ToHost::Prove { signature: [9; 64] },
         ToHost::Chat("hello there".into()),
-        ToHost::Have { missing: vec!["olx-skin-a".into(), "olx-skin-b".into()] },
+        ToHost::Have { revision: 2, missing: vec!["olx-skin-a".into(), "olx-skin-b".into()] },
         ToHost::Admin(AdminCommand::Settings(setup())),
         ToHost::Admin(AdminCommand::Kick([1; 32])),
     ] {
@@ -109,7 +109,10 @@ fn samples() -> Vec<Vec<u8>> {
         required,
     };
     for m in [
-        ContentMsg::List(vec![item(ItemKind::Mod, "a", true), item(ItemKind::Skin, "b", false)]),
+        ContentMsg::List {
+            revision: 3,
+            items: vec![item(ItemKind::Mod, "a", true), item(ItemKind::Skin, "b", false)],
+        },
         ContentMsg::Want { hash: "a".repeat(64), offset: 10 },
         ContentMsg::Begin { hash: "a".repeat(64), archive: "b".repeat(64), size: 100, offset: 10 },
         ContentMsg::Chunk { hash: "a".repeat(64), offset: 0, bytes: vec![1, 2, 3] },

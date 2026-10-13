@@ -1453,13 +1453,6 @@ impl LobbyHandle<'_> {
         self.act(|h| h.chat(text), |c| c.chat(text));
     }
 
-    /// The pack ids this client lacks (the host has every pack). The peer
-    /// tells the host itself after every content list (plan 11); this is
-    /// the game's older report, until it goes (Task 7).
-    pub fn have(&mut self, missing: Vec<String>) {
-        self.act(|_| {}, |c| c.have(missing.clone()));
-    }
-
     /// The next match's setup: the host's own, an admin client's request.
     pub fn set_setup(&mut self, setup: MatchSetupWire) -> Result<(), LobbyError> {
         let mut result = Ok(());

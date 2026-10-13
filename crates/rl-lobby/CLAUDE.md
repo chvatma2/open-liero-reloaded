@@ -86,7 +86,12 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     match as spectators and get seats back at the next gathering; nobody
     moves when the ready players alone cannot start.
   - Content (N33): `lacking()` lists the members whose last `Have` named
-    something missing. At a start (`announce_start`; `force_start` for
+    something missing, or that have not answered the current content list:
+    `set_content_revision(r)` (the online layer's `ContentMsg::List`
+    revision) makes every member lacking until its `Have { revision: r }`
+    (one for another revision is ignored; without a revision every
+    `Have` counts). A lacking member is not ready (a `Ready(true)` while
+    only unanswered is kept and counts once answered). At a start (`announce_start`; `force_start` for
     players) a lacking member is `SeatWire::Waiting`: no `Start`, still
     connected, seated again at the next gathering. A member welcomed during
     a match is waiting too. Either way `HostEvent::ContentComplete(id)`

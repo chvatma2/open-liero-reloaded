@@ -32,7 +32,7 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   `PeerContent`, below); `poll(now, local_keys, on_tick) ->
   Vec<OnlineEvent>`; `content()` (what matches and replays load from),
   `downloads()`, `approve_downloads()`;
-  `lobby()` (`LobbyHandle`: ready, spectate, look, loadout, chat, have,
+  `lobby()` (`LobbyHandle`: ready, spectate, look, loadout, chat,
   setup, kick, move_seat (the host's), start, force_start, can_start
   (the host's answer; `NotHost`, `Running`), state, me; the host's alone:
   `end_match` (ends the running match now, as at its end, the confirmed
@@ -223,7 +223,12 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       goes out until every required item is archived (one that cannot be
       is listed with size 0 and refused when asked). A changed list goes
       to every member, the current one to each joiner after its
-      `Welcome`. Served at `upload_rate`, `MATCH_RATE` while the phase is
+      `Welcome`; each list has a revision (1, then one more per change)
+      given to the lobby (`set_content_revision`), so a member is lacking
+      (not ready, waiting at a start) until its `Have` answers the
+      current list. Optional items never reuse a required id or a pack
+      id of another kind (`may_take`), neither in offers, lists nor
+      overlays; fetched skins the list no longer names are forgotten. Served at `upload_rate`, `MATCH_RATE` while the phase is
       `Starting`/`Playing`. `Member::download` from the archive bytes sent
       to each member of what its `Have` names. A member offers its own
       skin with a one-item `List` (ruling R6-1: id and hash its look's);
@@ -233,8 +238,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     - **Client**: its look's skin hash filled once hashed (in `Hello`
       when it comes first, else a `SetLook`); its skin's archive offered
       to the host and served at `SKIN_RATE` (that hash only). A host's
-      `List` goes to its `Fetcher` (its own content and the cache), then
-      `Have { missing: missing_required }` after every list and whenever
+      `List` goes to its `Fetcher` (its own content and the cache; its
+      optional items that `may_take` refuses are dropped), then `Have {
+      revision, missing: missing_required }` after every list and whenever
       that changes; installs are routed to `Fetcher::finished`.
   - `worker.rs`, `Worker::start(cache)` (`None`: installs fail): one thread (`rl-online-content`)
     running `Job::{Archive, Install, Hash}` in order; `take` returns the
@@ -271,7 +277,9 @@ partial_content` copies the match's packs but some, `with_test_skin`
 adds a skin pack of another hash): a client without the level, or the mod,
 downloads it (reports coalesced, ending in `Done`), is ready, plays and
 makes the host's replay; a member's skin the host lacks travels through
-the host to another client; another pack's archive served for the level
+the host to another client; a member's skin pack under the level's id
+is never fetched or listed, and the host's match still builds; another
+pack's archive served for the level
 fails after one retry, the client stays, not ready, lacking it; a
 spectator joining mid-match without the level waits, downloads at the
 match's rate, then watches, and nobody is dropped; a spectator lacking
@@ -306,5 +314,6 @@ silence, a source leaving, a re-sent list with another size, a failed
 item retried once a list. `worker.rs`' unit test: a panicking job
 (a `#[cfg(test)]` hook in `run`) fails and the next job completes.
 `peer_side.rs`' unit tests: a list waits for the worker's hashes (nothing
-hashed on the caller's thread); an outbox that never drains holds at most
+hashed on the caller's thread); a list's optional items under a required
+id or a local pack of another kind are refused; an outbox that never drains holds at most
 `QUEUED` of content.

@@ -559,7 +559,7 @@ impl Shell {
     }
 
     /// The lobby changed: its view (and the client's welcome: the Lobby
-    /// opens), the packs a client lacks told to the host, the weapon
+    /// opens; the peer tells the host the packs it lacks), the weapon
     /// screen's menu for its mod, the LAN announcement.
     fn show_lobby(&mut self, state: &LobbyState, out: &mut Vec<Outcome>) {
         let Some(peer) = self.peer_mut() else { return };
@@ -567,13 +567,6 @@ impl Shell {
         let lobby = peer.lobby();
         let (me, can) = (lobby.me(), lobby.can_start());
         let Some(n) = &mut self.net else { return };
-        let missing = match &self.content {
-            Some(c) if !n.host && n.checked_packs.as_ref() != Some(&state.setup.packs) => {
-                n.checked_packs = Some(state.setup.packs.clone());
-                Some(net::missing_packs(c, &state.setup))
-            }
-            _ => None,
-        };
         let key = (state.setup.mod_id.clone(), state.setup.restrictions.clone());
         if n.weapons.as_ref().is_none_or(|w| w.0 != key) {
             let menu = self.content.as_ref().and_then(|c| net::weapon_menu(c, &key.0, &key.1));
@@ -597,11 +590,6 @@ impl Shell {
         let auto_ready = n.auto_ready
             && state.phase == rl_proto::Phase::Gathering
             && mine.is_some_and(|m| !m.ready && matches!(m.seat, rl_proto::SeatWire::Player { .. }));
-        if let Some(missing) = missing
-            && let Some(peer) = self.peer_mut()
-        {
-            peer.lobby().have(missing);
-        }
         if auto_ready && let Some(peer) = self.peer_mut() {
             peer.lobby().set_ready(true);
         }

@@ -197,11 +197,11 @@ impl LobbyClient {
         }
     }
 
-    /// The setup's pack ids this client lacks (invalid ids dropped, at most
-    /// `MAX_MISSING`).
-    pub fn have(&mut self, missing: Vec<String>) {
+    /// The pack ids this client lacks of the host's content list
+    /// `revision` (invalid ids dropped, at most `MAX_MISSING`).
+    pub fn have(&mut self, revision: u32, missing: Vec<String>) {
         let missing = missing.into_iter().filter(|m| valid_pack_id(m)).take(MAX_MISSING).collect();
-        self.send(ToHost::Have { missing });
+        self.send(ToHost::Have { revision, missing });
     }
 
     /// An admin command (the host refuses it from a non-admin key); a

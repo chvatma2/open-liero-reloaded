@@ -125,6 +125,9 @@ struct SkinFetch {
 struct HostContent {
     /// The list last sent (`None` before the first).
     list: Option<Vec<Item>>,
+    /// The list's revision (the lobby's `set_content_revision`): 1 for the
+    /// first, one more for each change.
+    revision: u32,
     /// Members' skins this host lacks, by the member's peer.
     skins: BTreeMap<PeerId, SkinFetch>,
     /// Skins fetched from members: (id, directory) by content hash.
@@ -145,10 +148,12 @@ struct HostContent {
 
 struct ClientContent {
     fetcher: Option<Fetcher>,
-    /// The host's list, waiting for this peer's hashes of its packs.
-    pending: Option<Vec<Item>>,
-    /// The list processed last.
+    /// The host's list (revision, items), waiting for this peer's hashes
+    /// of its packs.
+    pending: Option<(u32, Vec<Item>)>,
+    /// The list processed last, and its revision.
     items: Vec<Item>,
+    revision: u32,
     /// Without downloads: the required ids missing from the last list.
     lacking: Vec<String>,
     /// The missing ids last told the host (`None` before the first list).
@@ -206,6 +211,7 @@ impl ContentSide {
         let role = if host {
             Role::Host(Box::new(HostContent {
                 list: None,
+                revision: 1,
                 skins: BTreeMap::new(),
                 fetched: BTreeMap::new(),
                 sent: BTreeMap::new(),
@@ -226,6 +232,7 @@ impl ContentSide {
                 fetcher: cache.clone().map(Fetcher::new),
                 pending: None,
                 items: Vec::new(),
+                revision: 0,
                 lacking: Vec::new(),
                 told: None,
                 have_due: false,
@@ -355,7 +362,9 @@ impl ContentSide {
             (_, msg @ (ContentMsg::Want { .. } | ContentMsg::Cancel { .. })) => {
                 self.server.receive(from, &msg)
             }
-            (Role::Client(c), ContentMsg::List(items)) if from == HOST => c.pending = Some(items),
+            (Role::Client(c), ContentMsg::List { revision, items }) if from == HOST => {
+                c.pending = Some((revision, items))
+            }
             (Role::Client(c), msg) => {
                 if let Some(f) = &mut c.fetcher {
                     f.receive(from, &msg, &self.local.worker);
@@ -363,7 +372,7 @@ impl ContentSide {
             }
             // A member offers its own skin (ruling R6-1): the one item must
             // be the skin its look names.
-            (Role::Host(h), ContentMsg::List(items)) => {
+            (Role::Host(h), ContentMsg::List { items, .. }) => {
                 let Some(look) = look else { return };
                 let [item] = items.as_slice() else { return };
                 if item.kind != ItemKind::Skin
@@ -406,7 +415,7 @@ impl ContentSide {
         if let Role::Host(h) = &self.role
             && let Some(list) = &h.list
         {
-            self.out.push((peer, ContentMsg::List(list.clone())));
+            self.out.push((peer, ContentMsg::List { revision: h.revision, items: list.clone() }));
         }
     }
 
@@ -541,6 +550,11 @@ impl ContentSide {
         let required: Vec<&str> = required.iter().map(String::as_str).collect();
         self.host_skins(now_us, &required);
         self.host_list(lobby);
+        // Members are lacking until their `Have` answers this list (from
+        // the first poll: before the first list too).
+        if let Role::Host(h) = &self.role {
+            lobby.set_content_revision(h.revision);
+        }
         let fetched: Vec<(Item, PathBuf)> = match &self.role {
             Role::Host(h) => h
                 .fetched
@@ -709,9 +723,12 @@ impl ContentSide {
             }
         }
         self.local.archives.retain(|hash, _| needed.contains(hash));
+        if h.list.is_some() {
+            h.revision = h.revision.wrapping_add(1).max(1);
+        }
         for m in &state.members {
             if let Some(peer) = lobby.peer_of(m.id) {
-                self.out.push((peer, ContentMsg::List(items.clone())));
+                self.out.push((peer, ContentMsg::List { revision: h.revision, items: items.clone() }));
             }
         }
         h.list = Some(items);
@@ -823,7 +840,7 @@ impl ContentSide {
         c.offer = offer;
         if lobby.joined() && c.offer.is_some() && c.offer_sent != c.offer {
             c.offer_sent = c.offer.clone();
-            self.out.push((HOST, ContentMsg::List(c.offer.iter().cloned().collect())));
+            self.out.push((HOST, ContentMsg::List { revision: 0, items: c.offer.iter().cloned().collect() }));
         }
     }
 
@@ -832,7 +849,7 @@ impl ContentSide {
     /// waits for it).
     fn process_list(&mut self) {
         let Role::Client(c) = &self.role else { return };
-        let Some(items) = c.pending.clone() else { return };
+        let Some((revision, items)) = c.pending.clone() else { return };
         let mut settled = true;
         for it in items.iter().filter(|i| i.hash != NO_HASH) {
             settled &= self.local.hash_settled(&it.id);
@@ -869,6 +886,7 @@ impl ContentSide {
             }
         }
         c.items = items;
+        c.revision = revision;
         c.have_due = true;
     }
 
@@ -882,7 +900,7 @@ impl ContentSide {
         };
         let changed = c.told.as_ref().is_some_and(|t| *t != missing);
         if (c.have_due || changed) && lobby.joined() {
-            lobby.have(missing.clone());
+            lobby.have(c.revision, missing.clone());
             c.told = Some(missing);
             c.have_due = false;
         }
@@ -929,7 +947,7 @@ mod tests {
             size: 10,
             required: true,
         };
-        side.receive(HOST, ContentMsg::List(vec![item]), None);
+        side.receive(HOST, ContentMsg::List { revision: 1, items: vec![item] }, None);
         let id = Identity::from_secret([3; 32]).unwrap();
         let mut lobby = LobbyClient::new(id, look(), None, None);
         let room = |_| 0;
@@ -978,7 +996,7 @@ mod tests {
             skin("olx-classic", 'b'),
             skin("not-here", 'c'),
         ];
-        side.receive(HOST, ContentMsg::List(items), None);
+        side.receive(HOST, ContentMsg::List { revision: 1, items }, None);
         let id = Identity::from_secret([5; 32]).unwrap();
         let mut lobby = LobbyClient::new(id, look(), None, None);
         let until = std::time::Instant::now() + std::time::Duration::from_secs(10);

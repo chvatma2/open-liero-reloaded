@@ -109,8 +109,10 @@ pub enum ToHost {
     Spectate(bool),
     Loadout(Option<[i32; 5]>),
     Chat(String),
-    /// Pack ids this client lacks.
+    /// Pack ids this client lacks of the host's content list `revision`
+    /// (`ContentMsg::List`); 0 before any.
     Have {
+        revision: u32,
         missing: Vec<String>,
     },
     Admin(AdminCommand),
@@ -400,7 +402,7 @@ pub fn decode_to_host(b: &[u8]) -> Result<ToHost, ProtoError> {
     let ok = match &m {
         ToHost::Hello { look, .. } | ToHost::SetLook(look) => valid_look(look),
         ToHost::Chat(t) => valid_chat(t),
-        ToHost::Have { missing } => valid_missing(missing),
+        ToHost::Have { missing, .. } => valid_missing(missing),
         ToHost::Admin(AdminCommand::Settings(s)) => valid_setup(s),
         _ => true,
     };
@@ -523,7 +525,7 @@ mod tests {
         to_host_round(ToHost::Spectate(false));
         to_host_round(ToHost::Loadout(Some([1, -2, 3, 4, 5])));
         to_host_round(ToHost::Chat("hello".to_string()));
-        to_host_round(ToHost::Have { missing: vec!["olx-skin-a".to_string()] });
+        to_host_round(ToHost::Have { revision: 3, missing: vec!["olx-skin-a".to_string()] });
         to_host_round(ToHost::Admin(AdminCommand::Kick([3; 32])));
         to_host_round(ToHost::Admin(AdminCommand::Settings(setup())));
         to_host_round(ToHost::Bye);
@@ -587,7 +589,7 @@ mod tests {
 
     #[test]
     fn pack_id_with_slash_is_refused() {
-        let m = ToHost::Have { missing: vec!["a/b".to_string()] };
+        let m = ToHost::Have { revision: 0, missing: vec!["a/b".to_string()] };
         assert_eq!(decode_to_host(&encode_to_host(&m)), Err(ProtoError::Invalid));
         let mut s = setup();
         s.packs[0].0 = "../x".to_string();
@@ -601,10 +603,10 @@ mod tests {
     #[test]
     fn missing_is_bounded() {
         let ids = |n: usize| (0..n).map(|i| alloc::format!("p{i}")).collect::<Vec<_>>();
-        to_host_round(ToHost::Have { missing: ids(MAX_MISSING) });
-        let m = ToHost::Have { missing: ids(MAX_MISSING + 1) };
+        to_host_round(ToHost::Have { revision: u32::MAX, missing: ids(MAX_MISSING) });
+        let m = ToHost::Have { revision: 0, missing: ids(MAX_MISSING + 1) };
         assert_eq!(decode_to_host(&encode_to_host(&m)), Err(ProtoError::Invalid));
-        let m = ToHost::Have { missing: vec!["a".repeat(MAX_ID + 1)] };
+        let m = ToHost::Have { revision: 0, missing: vec!["a".repeat(MAX_ID + 1)] };
         assert_eq!(decode_to_host(&encode_to_host(&m)), Err(ProtoError::Invalid));
     }
 
@@ -794,9 +796,16 @@ mod tests {
         assert!(encode_to_client(&ToClient::Start(start.clone())).len() <= MAX_LOBBY);
         to_client_round(ToClient::Start(start));
         to_host_round(ToHost::Admin(AdminCommand::Settings(worst_setup())));
+        let have = ToHost::Have {
+            revision: u32::MAX,
+            missing: (0..MAX_MISSING).map(|j| alloc::format!("{j}{}", "x".repeat(MAX_ID - 1))).collect(),
+        };
+        assert!(encode_to_host(&have).len() <= MAX_LOBBY);
+        to_host_round(have);
         // Content: a full list (longest ids, largest sizes) and a full chunk.
-        let list = ContentMsg::List(
-            (0..MAX_ITEMS)
+        let list = ContentMsg::List {
+            revision: u32::MAX,
+            items: (0..MAX_ITEMS)
                 .map(|i| Item {
                     kind: ItemKind::Theme,
                     id: alloc::format!("{i:02}{}", "i".repeat(MAX_ID - 2)),
@@ -805,7 +814,7 @@ mod tests {
                     required: true,
                 })
                 .collect(),
-        );
+        };
         let chunk =
             ContentMsg::Chunk { hash: "f".repeat(64), offset: u64::MAX, bytes: vec![0xff; CONTENT_CHUNK] };
         for m in [list, chunk] {

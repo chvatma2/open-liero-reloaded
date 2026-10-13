@@ -59,8 +59,6 @@ pub struct Net {
     pub max_players: u8,
     /// The LAN announcement of the lobby as last seen.
     pub announce: Option<LanAnnounce>,
-    /// The setup's packs this client checked last (`LobbyHandle::have`).
-    pub checked_packs: Option<Vec<(String, String)>>,
     /// The host's setup packs (with their content hashes) of the mod and
     /// level last set: a lobby edit of the rules does not hash them again.
     pub setup_packs: Option<(ModLevel, Vec<(String, String)>)>,
@@ -104,7 +102,6 @@ impl Net {
             password: false,
             max_players: 0,
             announce: None,
-            checked_packs: None,
             setup_packs: None,
             weapons: None,
             meter: NetMeter::default(),
@@ -251,19 +248,6 @@ pub fn setup_of(p: &MatchPrefs, packs: Vec<(String, String)>, host_colour: [u8; 
         restrictions: p.restrictions.clone(),
         bots,
     }
-}
-
-/// The packs of `setup` this install lacks, or has with other contents.
-pub fn missing_packs(content: &Content, setup: &MatchSetupWire) -> Vec<String> {
-    setup
-        .packs
-        .iter()
-        .filter(|(id, hash)| {
-            let ours = content.pack_kind(id).and_then(|kind| content.pack_hash(id, kind).ok());
-            ours.as_deref() != Some(hash.as_str())
-        })
-        .map(|(id, _)| id.clone())
-        .collect()
 }
 
 /// The weapon screen's menu for a lobby's mod and restrictions (the

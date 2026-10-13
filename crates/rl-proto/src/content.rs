@@ -47,10 +47,11 @@ pub struct Item {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContentMsg {
-    /// The match's content (host to client), whole, on every change; a
-    /// client's own skin, one item (client to host: the archive size the
+    /// The match's content (host to client), whole, on every change, under
+    /// a new `revision` (a client's `ToHost::Have` answers it); a client's
+    /// own skin, one item (client to host, revision 0: the archive size the
     /// host's fetch checks, rl-online's ruling R6-1).
-    List(Vec<Item>),
+    List { revision: u32, items: Vec<Item> },
     /// Send the archive of `hash` from byte `offset`.
     Want { hash: String, offset: u64 },
     /// The archive follows: its size and its SHA-256 (hex), from `offset`.
@@ -71,7 +72,7 @@ pub fn valid_hash(h: &str) -> bool {
 /// A message within the wire's bounds.
 pub fn valid_content(m: &ContentMsg) -> bool {
     match m {
-        ContentMsg::List(items) => {
+        ContentMsg::List { items, .. } => {
             items.len() <= MAX_ITEMS
                 && items.iter().enumerate().all(|(i, it)| {
                     valid_pack_id(&it.id)
@@ -119,6 +120,10 @@ mod tests {
         Item { kind, id: alloc::format!("pack-{c}"), hash: h(c), size, required }
     }
 
+    fn list(items: Vec<Item>) -> ContentMsg {
+        ContentMsg::List { revision: 7, items }
+    }
+
     fn round(m: ContentMsg) {
         let b = encode_content(&m);
         assert_eq!(b[0], TAG_CONTENT);
@@ -133,13 +138,13 @@ mod tests {
 
     #[test]
     fn valid_messages_round_trip() {
-        round(ContentMsg::List(vec![
+        round(list(vec![
             item(ItemKind::Mod, 'a', 1 << 20, true),
             item(ItemKind::Level, 'b', 5, true),
             item(ItemKind::Theme, 'c', 0, true),
             item(ItemKind::Skin, 'd', MAX_SKIN_BYTES, false),
         ]));
-        round(ContentMsg::List(vec![]));
+        round(ContentMsg::List { revision: u32::MAX, items: vec![] });
         round(ContentMsg::Want { hash: h('a'), offset: u64::MAX });
         round(ContentMsg::Begin { hash: h('a'), archive: h('b'), size: MAX_ARCHIVE_BYTES, offset: 7 });
         round(ContentMsg::Chunk { hash: h('a'), offset: 9, bytes: vec![1; CONTENT_CHUNK] });
@@ -159,13 +164,13 @@ mod tests {
         refused(ContentMsg::Begin { hash: h('a'), archive: "x".into(), size: 10, offset: 0 });
         let mut twice = item(ItemKind::Level, 'a', 1, true);
         twice.id = "other".into();
-        refused(ContentMsg::List(vec![item(ItemKind::Mod, 'a', 1, true), twice]));
-        refused(ContentMsg::List(vec![item(ItemKind::Skin, 'a', 1, true)]));
-        refused(ContentMsg::List(vec![item(ItemKind::Skin, 'a', MAX_SKIN_BYTES + 1, false)]));
-        refused(ContentMsg::List(vec![item(ItemKind::Mod, 'a', MAX_ARCHIVE_BYTES + 1, true)]));
+        refused(list(vec![item(ItemKind::Mod, 'a', 1, true), twice]));
+        refused(list(vec![item(ItemKind::Skin, 'a', 1, true)]));
+        refused(list(vec![item(ItemKind::Skin, 'a', MAX_SKIN_BYTES + 1, false)]));
+        refused(list(vec![item(ItemKind::Mod, 'a', MAX_ARCHIVE_BYTES + 1, true)]));
         let mut bad_id = item(ItemKind::Mod, 'a', 1, true);
         bad_id.id = "Bad Id".into();
-        refused(ContentMsg::List(vec![bad_id]));
+        refused(list(vec![bad_id]));
         let many = (0..=MAX_ITEMS)
             .map(|i| Item {
                 kind: ItemKind::Mod,
@@ -175,7 +180,7 @@ mod tests {
                 required: true,
             })
             .collect();
-        refused(ContentMsg::List(many));
+        refused(list(many));
     }
 
     #[test]

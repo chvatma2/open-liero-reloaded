@@ -28,8 +28,11 @@ control messages, the frame delta codec and the simulation fingerprint.
   `ContentMsg::{List, Want, Begin, Chunk, Unavailable, Cancel}` both ways
   (`encode_content` with the tag, `decode_content` without; `valid_content`);
   `MAX_CONTENT` (`CONTENT_CHUNK` + 256) bounds one message (a worst-case
-  64-item `List` fits). `Item { kind, id, hash, size, required }`; a list
-  has no hash twice, skins are <= 64 KiB and never required.
+  64-item `List` fits). `List { revision, items }`: `ToHost::Have {
+  revision, missing }` answers that revision (a client's one-item skin
+  offer to the host is revision 0). `Item { kind, id, hash, size,
+  required }`; a list has no hash twice, skins are <= 64 KiB and never
+  required.
   `MAX_ARCHIVE_BYTES` restates rl-pack's `MAX_ARCHIVE`. `valid_hash` is 64
   lowercase hex; `NO_HASH` is valid and means unknown. `Look::skin_hash`
   and `Member::download` (percent) are new; `PROTOCOL_VERSION` is 2.
