@@ -11,6 +11,9 @@ checksums.
 rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
 ```
 
+Without `--content`: `rl_content::default_content_dir` (`content/packs`
+beside the executable, else in the working directory).
+
 - **Layer 6, std; a library plus the binary** (plan 10 ruling PF2:
   `rl-cli`'s real-transport tests run the server in-process; `xtask/layers.ron`
   pairs `rl-cli` with `rl-server`). Depends on `rl-online` (`OnlinePeer`

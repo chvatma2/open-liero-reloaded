@@ -71,7 +71,8 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   default colours). Weapon selection's Done arms the local slot.
   The menus list and play `--content` with the data directory's `packs/`
   over it (`Content::open_layers`, spec §9.4; the command line's games
-  use `--content` alone). **Import** (plan 7 task 7): `StartImport`
+  use `--content` alone; without the flag `rl_content::default_content_dir`:
+  `content/packs` beside the executable, else in the working directory). **Import** (plan 7 task 7): `StartImport`
   spawns an `rl_ui::import::ImportJob` (one at a time; without a data
   directory the screen says so), `Shell::poll` feeds its reports to
   `MenuData::import` every frame, and when it ends lists the content again

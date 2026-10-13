@@ -28,13 +28,20 @@ struct Args {
     /// The server's config (RON; see fixtures/server/example.ron).
     #[arg(long)]
     config: PathBuf,
-    /// The content directory (mods, levels, skins).
-    #[arg(long, default_value = "content/packs")]
+    /// The content directory (mods, levels, skins): `content/packs` beside
+    /// this program when there is one, else in the working directory.
+    #[arg(long, default_value_os_t = default_content())]
     content: PathBuf,
     /// Where the server keeps its identity, bans, log and desync bundles
     /// (default: the config file's directory).
     #[arg(long)]
     data_dir: Option<PathBuf>,
+}
+
+/// `content/packs` beside the executable (an unpacked release), else in
+/// the working directory (the repository).
+fn default_content() -> PathBuf {
+    rl_content::default_content_dir(std::env::current_exe().ok().as_deref())
 }
 
 fn main() -> anyhow::Result<()> {

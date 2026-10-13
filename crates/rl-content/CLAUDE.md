@@ -190,6 +190,10 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   `remember_hash(id, dir, hash)` fills it from a hash computed elsewhere
   (rl-online's worker thread; ignored unless `dir` is `id`'s directory).
 - `Content::pack_dir(id)`, `pack_kind(id)`, `pack_origin(id)`.
+- `default_content_dir(exe)` (`locate.rs`): `rl-game`'s and `rl-server`'s
+  `--content` default, `CONTENT_DIR` (`content/packs`) beside the
+  executable when it is a directory there (an unpacked release zip), else
+  relative to the working directory.
 - Pack ids of OLX imports: `olx_mod_id("MW 1.0")`, `olx_level_id("CastleStrike.lxl")`.
 
 Test: `cargo nextest run -p rl-content` (`loads_every_manifest_item` and the

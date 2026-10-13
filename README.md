@@ -79,7 +79,7 @@ Useful flags (`rl-game --help` lists them all):
 | `--replay f.rlrp` | watch a replay |
 | `--mode deathmatch ...`, `--record f.rlrp` | a command-line Deathmatch without the menus (below), saving its replay |
 | `--data-dir <dir>` | settings, profiles, replays and imported packs here instead of the platform's directory |
-| `--content <dir>` | the imported content (default `content/packs`) |
+| `--content <dir>` | the imported content (default `content/packs` beside `rl-game`, else in the working directory) |
 | `--no-sound` | open no audio device |
 
 ### The menus

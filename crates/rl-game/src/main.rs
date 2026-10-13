@@ -126,8 +126,9 @@ struct Args {
     /// Bonuses spawn and fall (OLX's Bonuses option).
     #[arg(long)]
     bonuses: bool,
-    /// Imported content (packs written by `rl-cli import`).
-    #[arg(long, default_value = "content/packs")]
+    /// Imported content (packs written by `rl-cli import`): `content/packs`
+    /// beside this program when there is one, else in the working directory.
+    #[arg(long, default_value_os_t = default_content())]
     content: PathBuf,
     /// Borderless fullscreen.
     #[arg(long)]
@@ -215,6 +216,12 @@ struct Args {
     /// The port to host on (TCP and UDP) and to join when the address has none.
     #[arg(long)]
     port: Option<u16>,
+}
+
+/// `content/packs` beside the executable (an unpacked release), else in
+/// the working directory (the repository).
+fn default_content() -> PathBuf {
+    rl_content::default_content_dir(std::env::current_exe().ok().as_deref())
 }
 
 /// A `--net-sim` profile by name.

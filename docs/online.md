@@ -79,6 +79,9 @@ once your content is complete.
 rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
 ```
 
+Without `--content` the server uses the `content/packs` beside it (an
+unpacked release zip), else the one in the working directory.
+
 `fixtures/server/example.ron` documents every field:
 
 - `name`, `visibility` (`Lan`: announced on the LAN, or `DirectOnly`),
