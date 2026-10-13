@@ -164,6 +164,33 @@ fn a_hit_at_zero_health_kills_once() {
 }
 
 #[test]
+fn after_the_game_over_every_death_shows_once() {
+    // Kills stop at the game over (`killWorm` ignores them), but a worm that
+    // reaches 0 health still dies as it would: a lethal hit plays its death
+    // effects at once (OLX) and leaves the worm alive at 0, so its
+    // next-frame death plays none; in play a worm left at exactly 0 then
+    // vanishes with its effects (with OLX's quirks, without).
+    for olx_quirks in [false, true] {
+        let s = SimSettings { olx_quirks, ..SimSettings::lx56() };
+        let mut ws = worms(3, &s);
+        let mut d = draws();
+        (ws[1].health, ws[2].health) = (5.0, 5.0);
+        {
+            let h = &mut harm(&s, &mut ws, &mut d);
+            h.referee.over = Some(crate::MatchResult { winner: 0, reason: crate::EndReason::LastStanding });
+            injure_worm(h, 1, 5.0, 0);
+            injure_worm(h, 2, 6.0, 0);
+            assert!(h.worms[2].alive, "a lethal hit after the end kills nobody");
+            die_at_zero_health(h, T0);
+            die_at_zero_health(h, T0);
+            assert!(!h.worms[1].alive && !h.worms[2].alive, "olx_quirks {olx_quirks}");
+        }
+        let deaths = if olx_quirks { 1 } else { 2 };
+        assert_eq!(death_events(&d.events), (vec![], deaths, 7 * deaths), "olx_quirks {olx_quirks}");
+    }
+}
+
+#[test]
 fn no_death_count_at_score_zero() {
     // `CWorm::addDeath`/`addSuicide` (CWorm.cpp:1434-1449): without
     // AllowNegativeScore, nothing is counted at a score of 0 or less.

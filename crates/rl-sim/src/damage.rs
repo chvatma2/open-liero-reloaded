@@ -182,7 +182,9 @@ pub(crate) fn injure_worm(h: &mut Harm, id: i32, damage: f32, owner: i32) {
     h.draws.events.push(EventKind::Damage { worm: id, amount: damage, by: owner, dealt: real });
     h.mode(|m, ctx| m.on_damage(id, owner, real, ctx));
     if dies {
-        kill_worm(h, id, owner);
+        if !kill_worm(h, id, owner) {
+            h.worms[vi].death_shown = true;
+        }
         death_effects(h.draws, id, pos);
     }
     if damage > 0.0 {
@@ -292,8 +294,10 @@ pub(crate) fn kill_worm(h: &mut Harm, victim: i32, killer: i32) -> bool {
 /// `ParseWormDown` (`CClient_Parse.cpp:1817-1860`), whose `S2C_WORMDOWN`
 /// `SendWormDied` never sends the local client (`CServer_Send.cpp:1122-1135`).
 /// Without (play, D9 amended 2026-10-13): the killer is the worm's
-/// [`Worm::last_damager`], and a death that `killWorm` made plays the
-/// lethal hit's sound, gibs and blood.
+/// [`Worm::last_damager`], and the death plays the lethal hit's sound, gibs
+/// and blood, also when `killWorm` ignores it after the game over, unless a
+/// lethal hit that killed nobody already played them
+/// ([`Worm::death_shown`]).
 pub(crate) fn die_at_zero_health(h: &mut Harm, wall_clock: AbsTime) {
     let olx = h.settings.olx_quirks;
     for i in 0..h.worms.len() {
@@ -301,9 +305,10 @@ pub(crate) fn die_at_zero_health(h: &mut Harm, wall_clock: AbsTime) {
         if w.alive && w.health <= 0.0 {
             w.alive = false;
             w.time_of_death = wall_clock;
-            let (id, pos) = (w.id, w.pos);
+            let (id, pos, shown) = (w.id, w.pos, w.death_shown);
             let killer = if olx { -1 } else { i32::from(w.last_damager) };
-            if kill_worm(h, id, killer) && !olx {
+            kill_worm(h, id, killer);
+            if !olx && !shown {
                 death_effects(h.draws, id, pos);
             }
             h.worms[i].rope.clear();

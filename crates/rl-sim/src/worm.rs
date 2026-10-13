@@ -254,6 +254,12 @@ pub struct Worm {
     /// damage never sets. Without [`SimSettings::olx_quirks`] an
     /// exact-zero-health death is credited to it. A respawn clears it.
     pub last_damager: i8,
+    /// This life's death effects have played without a kill: a lethal hit
+    /// after the game over (or on a worm out of lives) plays them and leaves
+    /// the worm alive at 0 health, so its next-frame death
+    /// ([`crate::damage`]'s `die_at_zero_health`) plays none. A respawn
+    /// clears it.
+    pub death_shown: bool,
 }
 
 // `Worm` is 992 bytes, a multiple of 32: one more field that breaks that
@@ -313,6 +319,7 @@ impl Worm {
             last_air_jump_time: AbsTime(0),
             pos_recorder,
             last_damager: -1,
+            death_shown: false,
         }
     }
 

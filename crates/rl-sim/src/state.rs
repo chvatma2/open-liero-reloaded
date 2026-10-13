@@ -462,6 +462,7 @@ fn worm_finite(w: &Worm) -> bool {
         // `PosRecorder::is_valid` checks its entries.
         pos_recorder: _,
         last_damager: _,
+        death_shown: _,
     } = w;
     let NinjaRope {
         released: _,

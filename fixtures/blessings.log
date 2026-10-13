@@ -63,3 +63,7 @@
   fixtures/matches/classic-dirt-level-8dm.ron
   fixtures/matches/classic-fossilfacility-4xtreme-kill-limit.ron
   fixtures/matches/mw-castlestrike-8chaos.ron
+2026-10-13 bless-regression: a worm left at exactly 0 health after the game over dies with its death effects (play only; Worm::death_shown is hashed)
+  fixtures/matches/classic-dirt-level-8dm.ron
+  fixtures/matches/classic-fossilfacility-4xtreme-kill-limit.ron
+  fixtures/matches/mw-castlestrike-8chaos.ron

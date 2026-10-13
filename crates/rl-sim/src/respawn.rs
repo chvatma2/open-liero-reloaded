@@ -78,6 +78,7 @@ impl Worm {
         self.last_input_time = now;
         self.pos_recorder.respawn_to(pos, olx_quirks);
         self.last_damager = -1;
+        self.death_shown = false;
         self.rope.clear();
         self.frame = 0.0;
         self.on_ground = false;

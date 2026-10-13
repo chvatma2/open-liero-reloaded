@@ -220,6 +220,7 @@ impl Checksum for Worm {
             last_air_jump_time,
             pos_recorder,
             last_damager,
+            death_shown,
         } = self;
         h.i32(*id);
         h.bytes(&[*team]);
@@ -256,6 +257,7 @@ impl Checksum for Worm {
         h.time(*last_air_jump_time);
         pos_recorder.hash(h);
         h.i32(i32::from(*last_damager));
+        h.bool(*death_shown);
     }
 }
 

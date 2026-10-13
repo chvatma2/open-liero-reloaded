@@ -98,7 +98,9 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   does. A worm left at exactly 0 health dies at the start of the next
   frame (`die_at_zero_health`): in play credited to its `last_damager`
   (the owner of the damage that left 0, cleared on respawn) with the
-  lethal hit's death sound, gibs and blood (`death_effects`); with
+  lethal hit's death sound, gibs and blood (`death_effects`; after the
+  game over too, unless a lethal hit that killed nobody already played
+  them, `Worm::death_shown`); with
   `SimSettings::olx_quirks`, as OLX, uncredited and without them (spec
   §18 D9 as amended). A death's sound, gibs and blood are pushed as the
   death's where they are emitted (`TickEvents::death`,
