@@ -70,6 +70,24 @@ struct Rec {
     chat: VecDeque<u64>,
     /// When its last look changes were taken (at most `LOOK_CHANGES`).
     looks: VecDeque<u64>,
+    /// Its latest look beyond them, taken by `tick` once the window
+    /// allows (the last of a dragged colour slider is the one chosen).
+    look_held: Option<Look>,
+}
+
+impl Rec {
+    /// Whether a look change may be taken at `now_us` (the window's
+    /// changes are counted when it is).
+    fn look_change_allowed(&mut self, now_us: u64) -> bool {
+        while self.looks.front().is_some_and(|&t| now_us.saturating_sub(t) >= LOOK_WINDOW_US) {
+            self.looks.pop_front();
+        }
+        if self.looks.len() >= LOOK_CHANGES {
+            return false;
+        }
+        self.looks.push_back(now_us);
+        true
+    }
 }
 
 impl Rec {
@@ -246,6 +264,7 @@ impl LobbyHost {
                 ping_ms: None,
                 chat: VecDeque::new(),
                 looks: VecDeque::new(),
+                look_held: None,
             });
             host.me = Some(id);
         }
@@ -315,6 +334,17 @@ impl LobbyHost {
         }
         if self.phase == Phase::Results && now_us.saturating_sub(self.results_since) >= RESULTS_US {
             self.gather();
+        }
+        // Held looks, once their member's window allows.
+        let mut taken = Vec::new();
+        for m in &mut self.members {
+            if m.look_held.is_some() && m.look_change_allowed(now_us) {
+                taken.extend(m.look_held.take().map(|look| (m.id, look)));
+            }
+        }
+        for (id, look) in taken {
+            self.set_look(id, &look);
+            self.publish();
         }
     }
 
@@ -838,6 +868,7 @@ impl LobbyHost {
             ping_ms: None,
             chat: VecDeque::new(),
             looks: VecDeque::new(),
+            look_held: None,
         });
         self.set_look(id, look);
         self.publish();
@@ -896,17 +927,16 @@ impl LobbyHost {
             }
             ToHost::SetLook(look) => {
                 // Each change rebuilds the content list and may start a
-                // skin fetch: beyond the window's changes, ignored.
-                let window = &mut self.members[i].looks;
-                while window.front().is_some_and(|&t| now_us.saturating_sub(t) >= LOOK_WINDOW_US) {
-                    window.pop_front();
+                // skin fetch: beyond the window's changes, only the latest
+                // is held, and `tick` takes it once the window allows.
+                let m = &mut self.members[i];
+                if m.look_change_allowed(now_us) {
+                    m.look_held = None;
+                    self.set_look(id, &look);
+                    self.publish();
+                } else {
+                    m.look_held = Some(look);
                 }
-                if window.len() >= LOOK_CHANGES {
-                    return;
-                }
-                window.push_back(now_us);
-                self.set_look(id, &look);
-                self.publish();
             }
             ToHost::Ready(ready) => {
                 if self.phase != Phase::Gathering {

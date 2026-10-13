@@ -911,7 +911,9 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   be fetched draws as the default skin. Mod, level and theme are
   *required*. A host starts at most one new skin fetch from a member
   every 5 s (an offer waits; only the look then worn counts), and takes
-  at most 4 `SetLook`s a second from a member (final review C2). The
+  at most 4 `SetLook`s a second from a member (final review C2); the
+  latest look beyond them is held and taken once the window allows, so a
+  member's last look is never lost. The
   host lists one skin per id, the first member's (final review Minor 1:
   a match loads skins by id, so another of the same id is never shown).
 - **N32 - transfers.** Reliable-channel tag `TAG_CONTENT = 3` carries

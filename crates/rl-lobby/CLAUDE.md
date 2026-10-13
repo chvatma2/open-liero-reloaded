@@ -62,8 +62,10 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     the sender. Relayed as `Chat` to all and `HostEvent::Chat`. A dedicated
     server's `chat` is a `Notice::Message`.
   - Looks: `LOOK_CHANGES` (4) `SetLook`s per `LOOK_WINDOW_US` (1 s) per
-    member, beyond: ignored (each rebuilds the host's content list and may
-    start a skin fetch; plan 11 review C2).
+    member are taken (each rebuilds the host's content list and may
+    start a skin fetch; plan 11 review C2); beyond them only the latest is
+    held (`look_held`) and `tick` takes it once the window allows, so the
+    member's last look always wins (a dragged colour slider).
   - Kick/ban: the host (`kick`) or an admin key (`AdminCommand::Kick/Ban`);
     the host is never kicked; a ban stores the key for the lobby's life
     (spec §5.2, ruling T13-B: by key); `ban_with_address` (the host's,

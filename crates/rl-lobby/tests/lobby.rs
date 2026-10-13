@@ -528,23 +528,42 @@ fn chat_is_cut_and_rate_limited() {
 }
 
 /// Plan 11 review (Minor 3, C2): at most `LOOK_CHANGES` look changes per
-/// member within `LOOK_WINDOW_US`; more are ignored (each rebuilds the
-/// host's content list and can start a skin fetch).
+/// member within `LOOK_WINDOW_US` are taken (each rebuilds the host's
+/// content list and can start a skin fetch). The latest look beyond them
+/// is held and taken once the window allows: a colour slider dragged
+/// through 20 looks in 100 ms ends on the 20th, in a few changes.
 #[test]
-fn look_changes_are_rate_limited() {
+fn look_changes_are_rate_limited_and_the_latest_wins() {
     let mut net = lobby();
     let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let a_id = id_of(&net, a);
+    let seen_before = net.peers[b].received.len();
     let coloured = |i: u8| Look { colour: [i, 0, 0], ..look("Ann") };
-    for i in 0..10 {
+    for i in 1..=20 {
         net.send_raw(a, ToHost::SetLook(coloured(i)));
+        net.run(5_000);
     }
+    let last = LOOK_CHANGES as u8;
+    assert_eq!(member(&net, a).look.colour, [last, 0, 0], "the first {LOOK_CHANGES} at once");
+    net.run(LOOK_WINDOW_US + 100_000);
     net.settle();
-    let last = LOOK_CHANGES as u8 - 1;
-    assert_eq!(member(&net, a).look.colour, [last, 0, 0], "the first {LOOK_CHANGES} only");
-    net.run(LOOK_WINDOW_US);
+    assert_eq!(member(&net, a).look.colour, [20, 0, 0], "the latest, once the window allows");
+    // The looks the others saw: the window's few, then the latest.
+    let mut shown: Vec<[u8; 3]> = Vec::new();
+    for m in &net.peers[b].received[seen_before..] {
+        if let ToClient::Lobby(state) = m
+            && let Some(m) = state.members.iter().find(|m| m.id == a_id)
+            && shown.last() != Some(&m.look.colour)
+        {
+            shown.push(m.look.colour);
+        }
+    }
+    assert!(shown.len() <= LOOK_CHANGES + 1, "{shown:?}");
+    assert_eq!(shown.last(), Some(&[20, 0, 0]));
     net.send_raw(a, ToHost::SetLook(coloured(42)));
     net.settle();
-    assert_eq!(member(&net, a).look.colour, [42, 0, 0], "a window later");
+    assert_eq!(member(&net, a).look.colour, [42, 0, 0], "a window later, at once");
     consistent(&net);
 }
 
