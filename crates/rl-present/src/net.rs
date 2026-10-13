@@ -149,6 +149,8 @@ pub struct NetPresenter {
     shakes: Vec<Event>,
     /// Cosmetic events handed to the entities so far.
     spawned: u64,
+    /// Advances that left the colour terrain drifted ([`NetPresenter::drifts`]).
+    drifts: u64,
 }
 
 impl NetPresenter {
@@ -172,8 +174,9 @@ impl NetPresenter {
     /// scene's history and marks are not touched here: they are read
     /// inside the advance, where the world is as of each tick.
     ///
-    /// In debug builds it asserts the colour terrain's material is the
-    /// world's afterwards ([`Presentation::terrain_drift`]).
+    /// In debug builds it checks the colour terrain's material is the
+    /// world's afterwards ([`Presentation::terrain_drift`]): a drift is
+    /// counted ([`NetPresenter::drifts`]) and logged once, not a panic.
     pub fn apply(
         &mut self,
         present: &mut Presentation,
@@ -223,11 +226,17 @@ impl NetPresenter {
             present.step_fx(&fx(&self.kept, 0));
             present.scene.camera.shake_for(&self.shakes, world.time());
         }
-        debug_assert!(
-            (self.next == 0 && restored.is_empty()) || !present.terrain_drift(world),
-            "tick {}: the colour terrain shows terrain the world no longer has",
-            self.next
-        );
+        if cfg!(debug_assertions) && !(self.next == 0 && restored.is_empty()) && present.terrain_drift(world)
+        {
+            self.drifts += 1;
+            if self.drifts == 1 {
+                eprintln!(
+                    "error: tick {}: the colour terrain shows terrain the world no longer has \
+                     (counted in NetPresenter::drifts; logged once)",
+                    self.next
+                );
+            }
+        }
     }
 
     /// Ticks below `tick` are confirmed (`Session::confirmed`): no
@@ -241,6 +250,12 @@ impl NetPresenter {
     /// new tick, and those with a new key of a re-simulated one.
     pub fn spawned(&self) -> u64 {
         self.spawned
+    }
+
+    /// Advances after which the colour terrain had drifted from the
+    /// world's (checked in debug builds only: the whole map is compared).
+    pub fn drifts(&self) -> u64 {
+        self.drifts
     }
 
     /// The state after `loaded_tick` loaded (`Event::StateLoaded`): the

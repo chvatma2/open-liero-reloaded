@@ -103,6 +103,9 @@ pub struct Server {
     /// The running (or last) match's worm names by slot.
     start_names: Vec<String>,
     seeds: u32,
+    /// The lobby as of its revision (`LobbyHandle::revision`): copied only
+    /// when it changed, not every poll.
+    lobby: Option<(u64, LobbyState)>,
 }
 
 impl Server {
@@ -157,6 +160,7 @@ impl Server {
         let next = rotation.next();
         line(log, format_args!("next map: {} on {}", next.mod_id, next.level));
         Ok(Server {
+            lobby: None,
             peer,
             config,
             key,
@@ -212,13 +216,16 @@ impl Server {
             self.bans_checked = Some(now);
             self.save_bans(log);
         }
-        // One copy of the lobby a poll (a setup `fill` changes shows in the
-        // next poll's announcement).
-        let Some(state) = self.state() else { return };
+        // The lobby copied only when its revision changed (a setup `fill`
+        // changes shows in the next poll).
+        let Some(revision) = self.peer.lobby().revision() else { return };
+        let cached = self.lobby.take().filter(|(r, _)| *r == revision);
+        let Some((revision, state)) = cached.or_else(|| self.state().map(|s| (revision, s))) else { return };
         self.track_members(&state, log);
         self.fill(&state, log);
         self.maybe_start(&state, now, log);
         self.announce(&state, now);
+        self.lobby = Some((revision, state));
     }
 
     /// Says goodbye to everyone (`Bye`) and closes every connection.

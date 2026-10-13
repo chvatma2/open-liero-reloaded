@@ -23,9 +23,14 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   `outgoing()` drain goes to every member (also flushed right before a
   `Notice(Joined)`, so the others know the member it names).
   - Join: `connected(peer, ip, now, nonce)` sends `Challenge` (a banned IP:
-    `Refused(Banned)`); `Hello` is checked for bans (`Banned`), a key
-    already in the lobby or the host's (`Busy`), room (`Full`) and the
-    password proof (`Password`); `Prove` must verify over
+    `Refused(Banned)`; an IP held off for guessing: `Refused(Throttled)`);
+    `Hello` is checked for bans (`Banned`), a key already in the lobby or
+    the host's (`Busy`), room (`Full`) and the password proof
+    (`Password`; `PASSWORD_TRIES` (3) wrong proofs from one IP within
+    `PASSWORD_WINDOW_US` (60 s) hold it off for `PASSWORD_LOCKOUT_US`
+    (60 s); the empty password's proof is no guess; at most
+    `PASSWORD_ADDRESSES` (1024) addresses remembered, the oldest
+    forgotten); `Prove` must verify over
     `challenge_message(nonce, host key)` (else `Malformed`); then
     `Welcome` to the joiner, `Lobby` to the others, `Notice(Joined)` to
     all. Anything else before the proof, a second `Hello`, or no proof
@@ -44,6 +49,10 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     it, a setup change clears every member's but the host's (the host
     starts ready) unless only its bots changed (ruling T13-C: a server's
     fill bots, Add/Remove bot), and so does the return to gathering.
+    `set_setup` outside gathering is `LobbyError::NotGathering` (the
+    running match's setup stays what the lobby shows).
+  - `revision()` changes whenever `state()` does (compare it instead of
+    cloning the state: the dedicated server's poll).
   - Chat: sanitized and cut to 200 characters; `CHAT_LINES` (5) per
     `CHAT_WINDOW_US` (5 s) per member, beyond: dropped and `SLOW_DOWN` to
     the sender. Relayed as `Chat` to all and `HostEvent::Chat`. A dedicated
@@ -88,7 +97,8 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   this member closes (`Closed`); `ClientEvent`s for the welcome, refusals, lobby
   changes, chat, notices, start, end, kicks and closing. Actions are sent
   only once joined; `leave()` sends `Bye`.
-- **Harness** (`harness.rs`, `Net`): the host and clients in one process,
+- **Harness** (`harness.rs`, `Net`; behind the `test-hooks` feature,
+  enabled by this crate's own dev-dependency): the host and clients in one process,
   messages tagged and encoded through rl-proto, a fixed one-way delay
   (what arrives at one instant is delivered before the drain: one poll),
   virtual time (`settle`, `run`), raw peers for forged messages

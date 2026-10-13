@@ -227,6 +227,7 @@ fn rollbacks_play_each_sound_once_and_keep_the_terrain() {
         peer.net.apply(&mut peer.present, peer.sim.world(), &restored, &ticked, &mut sounds);
         // (b) the colour image's material is the world's after every advance.
         assert!(!peer.present.terrain_drift(peer.sim.world()), "tick {}: drift", peer.current);
+        assert_eq!(peer.net.drifts(), 0, "tick {}: the presenter saw no drift", peer.current);
         // (a) the sounds whose key is new, in order, never one twice.
         let (mut want, mut new_spawns) = (Vec::new(), 0);
         for (k, e) in keyed(&ticked) {
@@ -419,4 +420,35 @@ fn event_keys_ignore_floats_and_count_equal_events() {
         event_keys(9, &[ev(0, gib(2))])[0],
         "a cosmetic's worm counts"
     );
+}
+
+/// A drifted colour terrain after an advance (a presentation bug) is
+/// counted and logged, not a panic: debug builds keep playing.
+#[test]
+fn a_drift_is_counted_not_a_panic() {
+    let Some(c) = content() else { return };
+    let p = packs(&c);
+    let mut w = world(&c);
+    let mut present = presentation(&c, &p, &w);
+    let mut net = NetPresenter::new();
+    let mut events = rl_sim::TickEvents::new();
+    w.tick(&[Keys(0); WORMS], &mut events);
+    let tick = |tick, events: &rl_sim::TickEvents| TickedTick {
+        tick,
+        resim: false,
+        substeps: 1,
+        lost: None,
+        events: events.iter().copied().collect(),
+    };
+    net.apply(&mut present, &w, &[], &[tick(0, &events)], &mut Vec::new());
+    assert_eq!(net.drifts(), 0);
+    // Dirt where a worm stands, which the world never placed.
+    let at = w.worms()[0].pos;
+    present.color_mut().apply(rl_terrain::ColorEdit::Dirt { hole: 0, x: at.x as i32, y: at.y as i32 });
+    w.tick(&[Keys(0); WORMS], &mut events);
+    net.apply(&mut present, &w, &[], &[tick(1, &events)], &mut Vec::new());
+    assert!(present.terrain_drift(&w));
+    if cfg!(debug_assertions) {
+        assert_eq!(net.drifts(), 1, "counted (checked in debug builds)");
+    }
 }

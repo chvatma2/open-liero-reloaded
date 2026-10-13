@@ -48,7 +48,8 @@ rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
   the data directory.
 
 The data directory (the config file's own by default) holds
-`server-identity.ron`, the bans file, `server.log` and `desyncs/` bundles.
+`server-identity.ron`, the bans file, `server.log` (rotated at 10 MiB:
+`server.log.1` and `.2` keep the older lines) and `desyncs/` bundles.
 Ctrl+C, SIGTERM or typing `quit` stops it cleanly.
 
 **Your admin key.** The game shows only an 8-character fingerprint, but the

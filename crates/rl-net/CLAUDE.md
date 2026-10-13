@@ -79,8 +79,10 @@ announcements.
     to an address the joiner may not hold (reflection), and a joiner behind
     NAT (its private candidate dropped) still connects through the
     peer-reflexive candidate its checks reveal; str0m takes an offer with
-    no candidate left. Test hooks `offer_ip_override`, `first_peer_id`
-    (hidden). Accepted:
+    no candidate left. Test hooks (`EndpointConfig`'s `fingerprint_override`,
+    `offer_ip_override`, `answer_addr_override`, `first_peer_id`) exist only
+    with the `test-hooks` feature, enabled by this crate's own
+    dev-dependency (never in a shipped build). Accepted:
     `Link::answerer` with the candidate (the TCP connection's local IP, the
     UDP port; decision N16), `Signal::Answer`, the WebSocket kept until the
     link opens; any further frame drops the joiner. At most 64 connections
@@ -97,7 +99,11 @@ announcements.
   - **Client** (`Endpoint::connect(cfg, host)`): the TCP connect runs on
     its own thread (`connect_timeout`, 5 s), then the client handshake, the
     offer (candidate: the TCP local IP, the UDP port), the answer or
-    `NetEvent::Refused`. A failure before the link opens is
+    `NetEvent::Refused`. The answer's `a=candidate` lines whose IP is not
+    the host's (the TCP address) are dropped, as the host does with offers
+    (ruling T4-A): a host cannot aim its joiners' checks at a third party;
+    the link still opens through the host's own checks (peer-reflexive).
+    A failure before the link opens is
     `Disconnected { peer: HOST }` without `Connected`.
   - **Peers**: host side 1, 2, 3, … in the order links open, never reused
     (`PeerId` is `u32` and never goes on the wire);
@@ -164,6 +170,8 @@ link, 1000 reliable messages through
 `bad`, the 10 s timeouts — the longest test, about 10 s — and hostile
 peers: pings in a tight loop, 20 offers from one IP (the second address
 is the machine's non-loopback IP, skipped with a notice without one), an
-offer naming another IP, a client "behind NAT" connecting peer-reflexive,
+offer naming another IP, an answer naming a decoy address the client never
+sends to, a client "behind NAT" connecting peer-reflexive, a host's ids past
+65 535 and exhausted,
 raw junk from a connected peer's address).
 Cross-build: `cargo build --release --target x86_64-pc-windows-gnu -p rl-net`.

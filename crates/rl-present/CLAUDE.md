@@ -47,8 +47,9 @@ wired in the frame loop's order **once**, so each mode that draws a world
   final terrain first, then each tick: a tick never shown runs as in local
   play (all spawns, edits, entity passes, sounds); a shown one runs no entity
   pass, all its terrain edits, and only the cosmetics, sounds and camera
-  shakes whose `EventKey` is new. Debug builds assert no `terrain_drift`
-  after it. `confirmed(tick)` prunes keys below `Session::confirmed`;
+  shakes whose `EventKey` is new. Debug builds check `terrain_drift`
+  after it: a drift is counted (`drifts()`) and logged once, not a panic
+  (tests assert `drifts() == 0`). `confirmed(tick)` prunes keys below `Session::confirmed`;
   `reset(tick)` (with `Presentation::state_loaded`) on
   `Event::StateLoaded { tick }`, before or after that poll's `apply`: it
   keeps the keys after the state, so ticks run again after it play no sound

@@ -1,12 +1,12 @@
 //! The server's files in its data directory: its identity
-//! (`server-identity.ron`, owner-only like the game's `identity.ron`) and
-//! the bans file.
+//! (`server-identity.ron`, owner-only like the game's `identity.ron`), the
+//! bans file and the rotating log (`server.log`).
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write as _};
 use std::net::IpAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
 use rl_lobby::Identity;
@@ -190,6 +190,79 @@ fn create_file(path: &Path, private: bool) -> io::Result<fs::File> {
     options.create(true).truncate(true).open(path)
 }
 
+/// The log file rotates past this size.
+pub const LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
+/// Old log files kept: `server.log.1` (the newer), `server.log.2`.
+pub const LOG_KEEP: usize = 2;
+
+/// An appending log file that rotates past `max` bytes (at a line start),
+/// keeping `keep` old files (`<path>.1` the newest). Writing never fails:
+/// a full disk must not stop the server (the terminal still has the log).
+pub struct RotatingLog {
+    path: PathBuf,
+    file: Option<fs::File>,
+    size: u64,
+    max: u64,
+    keep: usize,
+    line_start: bool,
+}
+
+impl RotatingLog {
+    pub fn open(path: &Path, max: u64, keep: usize) -> io::Result<RotatingLog> {
+        let file = fs::OpenOptions::new().create(true).append(true).open(path)?;
+        let size = file.metadata()?.len();
+        Ok(RotatingLog { path: path.to_path_buf(), file: Some(file), size, max, keep, line_start: true })
+    }
+
+    /// `<path>.<n>` (`n` from 1).
+    fn old(&self, n: usize) -> PathBuf {
+        let mut name = self.path.clone().into_os_string();
+        name.push(format!(".{n}"));
+        PathBuf::from(name)
+    }
+
+    /// `<path>` becomes `<path>.1`, `.1` becomes `.2`, … the oldest beyond
+    /// `keep` is removed; a fresh `<path>` is opened.
+    fn rotate(&mut self) {
+        self.file = None;
+        if self.keep == 0 {
+            let _ = fs::remove_file(&self.path);
+        } else {
+            let _ = fs::remove_file(self.old(self.keep));
+            for n in (1..self.keep).rev() {
+                let _ = fs::rename(self.old(n), self.old(n + 1));
+            }
+            let _ = fs::rename(&self.path, self.old(1));
+        }
+        self.file = fs::OpenOptions::new().create(true).append(true).open(&self.path).ok();
+        self.size = self.file.as_ref().and_then(|f| f.metadata().ok()).map_or(0, |m| m.len());
+    }
+}
+
+impl io::Write for RotatingLog {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.line_start && self.size > 0 && self.size + buf.len() as u64 > self.max {
+            self.rotate();
+        }
+        if let Some(f) = &mut self.file
+            && f.write_all(buf).is_ok()
+        {
+            self.size += buf.len() as u64;
+        }
+        if let Some(&last) = buf.last() {
+            self.line_start = last == b'\n';
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if let Some(f) = &mut self.file {
+            let _ = f.flush();
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +308,31 @@ mod tests {
         assert_eq!(a.public(), b.public());
         fs::write(dir.path().join(IDENTITY_FILE), "(version: 1, secret: \"00\")").unwrap();
         assert!(load_identity(dir.path()).is_err(), "a damaged identity stops the server");
+    }
+
+    #[test]
+    fn the_log_rotates_keeping_two_old_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.log");
+        let read = |name: &str| fs::read_to_string(dir.path().join(name)).unwrap_or_default();
+        let mut log = RotatingLog::open(&path, 100, 2).unwrap();
+        let lines: Vec<String> = (0..12).map(|i| format!("line {i:02} {}\n", "x".repeat(23))).collect();
+        for l in &lines {
+            // A line in two writes is never split between files.
+            let (a, b) = l.split_at(5);
+            log.write_all(a.as_bytes()).unwrap();
+            log.write_all(b.as_bytes()).unwrap();
+        }
+        drop(log);
+        // 32-byte lines, 100 bytes a file: 3 lines each, the oldest gone.
+        assert_eq!(read("server.log"), lines[9..].concat());
+        assert_eq!(read("server.log.1"), lines[6..9].concat());
+        assert_eq!(read("server.log.2"), lines[3..6].concat());
+        assert!(!dir.path().join("server.log.3").exists());
+        // Reopened, it counts what the file holds.
+        let mut log = RotatingLog::open(&path, 100, 2).unwrap();
+        log.write_all(lines[0].as_bytes()).unwrap();
+        assert_eq!(read("server.log"), lines[0].clone());
+        assert_eq!(read("server.log.1"), lines[9..].concat());
     }
 }

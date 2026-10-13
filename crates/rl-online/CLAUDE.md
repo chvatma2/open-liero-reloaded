@@ -45,7 +45,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   match's world as last presented, kept at its end: the host's after the
   presented advance, a client's at `Ended`, before the poll's unpresented
   advance; cleared at the next start); `stats` (`NetStats`, per second);
-  `last_record` (the finished match's `MatchRecord`); `leave`.
+  `last_record` (the finished match's `MatchRecord`); `leave`;
+  `LobbyHandle::revision` (the host's `LobbyHost::revision`).
+  `test_seed_override` exists only with the `test-hooks` feature (this
+  crate's own dev-dependency).
   - **Reliable sends are never dropped** (`outbox.rs`, `Outbox`): every
     reliable message (the session's, the lobby's) waits in a per-peer FIFO
     backlog fed into the endpoint while its `buffered` for that peer is

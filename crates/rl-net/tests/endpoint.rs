@@ -692,6 +692,30 @@ fn a_client_behind_nat_connects_through_its_reflexive_address() {
     assert_eq!(net.host.peers().map(|p| p.0).collect::<Vec<_>>(), [id]);
 }
 
+/// A host's answer naming another address than its own (here a decoy on
+/// 127.0.0.2) is filtered like an offer (ruling T4-A): the client never
+/// sends checks there, and connects through the host's own checks.
+#[test]
+fn a_hosts_answer_cannot_aim_the_client_elsewhere() {
+    let decoy = std::net::UdpSocket::bind("127.0.0.2:0").unwrap();
+    decoy.set_nonblocking(true).unwrap();
+    let elsewhere = decoy.local_addr().unwrap();
+    let mut net = Net::new(EndpointConfig { answer_addr_override: Some(elsewhere), ..config() });
+    let (c, id) = net.join_and_wait(config());
+    net.clients[c].0.send(HOST, Channel::Reliable, b"hello");
+    net.run_until(Duration::from_secs(10), "the echo", |n| {
+        n.echo();
+        !messages(&n.clients[c].1, Channel::Reliable).is_empty()
+    });
+    assert_eq!(net.host.peers().map(|p| p.0).collect::<Vec<_>>(), [id]);
+    let mut buf = [0u8; 2048];
+    let mut got = 0;
+    while decoy.recv_from(&mut buf).is_ok() {
+        got += 1;
+    }
+    assert_eq!(got, 0, "datagrams sent to the address the answer named");
+}
+
 /// A connected peer's address that floods raw datagrams no link can use
 /// (undecryptable DTLS) is dropped for its limits; others stay.
 #[test]

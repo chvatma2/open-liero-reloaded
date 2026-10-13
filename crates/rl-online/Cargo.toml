@@ -23,8 +23,14 @@ anyhow.workspace = true
 serde = { workspace = true, features = ["std"] }
 postcard.workspace = true
 
+[features]
+# Test-only API (OnlinePeer::test_seed_override): enabled by this crate's
+# own tests, never by a build that ships.
+test-hooks = []
+
 [dev-dependencies]
 proptest.workspace = true
+rl-online = { workspace = true, features = ["test-hooks"] }
 
 [[test]]
 name = "integration"

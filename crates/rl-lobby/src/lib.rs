@@ -7,6 +7,7 @@
 extern crate alloc;
 
 mod client;
+#[cfg(feature = "test-hooks")]
 pub mod harness;
 mod host;
 pub mod identity;

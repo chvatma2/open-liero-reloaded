@@ -54,7 +54,8 @@ rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
 - **`lib.rs`, `Server`**: `start(config, content, data_dir, log)` (identity,
   bans into the lobby and the gate, the rotation, `PeerRole::Server` on the
   config's port, LAN `Announcer` for `Lan`), `poll(now, log)`, `shutdown`
-  (`Bye` to everyone), `local_port`, `key`. Each poll: the peer's events
+  (`Bye` to everyone), `local_port`, `key`. Each poll (the lobby copied
+  only when `LobbyHandle::revision` changed): the peer's events
   (chat logged, a `/` line run as a command for that member id: admins by
   the lobby's `admin` flag, others get `NOT_ADMIN`; names matched ignoring
   case; admins (and the asker) cannot be kicked or banned,
@@ -84,8 +85,10 @@ rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
   poll; `last_record` is the last finished match's `MatchRecord` (`rl-cli`'s
   real-transport verdict, spec §9.4, compares every client's with it).
 - **`main.rs`**: clap; the data directory defaults to the config file's;
-  the log goes to stdout and `<data>/server.log`, each line stamped with
-  the UTC time. **Stopping** (ruling T13-A): Ctrl+C, SIGTERM or closing
+  the log goes to stdout and `<data>/server.log` (`files::RotatingLog`:
+  past `LOG_MAX_BYTES`, 10 MiB, at a line start, `server.log` becomes
+  `server.log.1`, `.1` `.2`; `LOG_KEEP` 2 old files), each line stamped
+  with the UTC time. **Stopping** (ruling T13-A): Ctrl+C, SIGTERM or closing
   the console (Windows), through `ctrlc` 3.5.2 (`termination`), or `quit`
   (`stop`, `exit`) typed on the terminal: each sets `STOP`, and `run`
   shuts down with `Bye` to everyone.
@@ -108,5 +111,6 @@ skipped once per entry, then no more starts; non-admins refused with
 `NOT_ADMIN`, `/players` and `/help` for anyone; `/settings` and `/next`;
 `run` stopping on its flag with `Bye`; the example and e2e configs parse and their
 rotations are in the committed packs. Unit tests: command parsing, `/unban` targets, hex keys,
-the bans and identity files, notices split at 200 characters, UTC dates.
+the bans and identity files, the log's rotation, notices split at 200
+characters, UTC dates.
 Cross-build: `cargo build --release --target x86_64-pc-windows-gnu -p rl-server`.

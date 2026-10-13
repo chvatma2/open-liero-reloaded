@@ -257,6 +257,63 @@ fn a_wrong_password_is_refused() {
     consistent(&net);
 }
 
+/// Guessing the password: after `PASSWORD_TRIES` (3) wrong proofs from an
+/// IP within `PASSWORD_WINDOW_US` (a minute), that IP's joins are refused
+/// (`Refusal::Throttled`) for `PASSWORD_LOCKOUT_US` (a minute); other
+/// addresses are not touched, and no password (the empty one's proof) is
+/// no guess.
+#[test]
+fn password_guessers_are_held_off_for_a_minute() {
+    let mut net = lobby_with(HostConfig { password: Some("secret".into()), ..cfg() }, 0);
+    let joiner = |net: &mut Net, i: u8, pw: Option<&str>, from: u8| {
+        let c = net.join(LobbyClient::new(ident(i), look("Ann"), pw.map(Into::into), None), ip(from));
+        net.settle();
+        c
+    };
+    let none = joiner(&mut net, 1, None, 1);
+    assert!(got(&net, none, &ClientEvent::Refused(Refusal::Password)));
+    for _ in 0..PASSWORD_TRIES - 1 {
+        let c = joiner(&mut net, 1, Some("guess"), 1);
+        assert!(got(&net, c, &ClientEvent::Refused(Refusal::Password)));
+    }
+    // Two wrong guesses and a missing proof: the right one still works.
+    let right = joiner(&mut net, 1, Some("secret"), 1);
+    assert!(
+        matches!(net.peers[right].events[0], ClientEvent::Welcome { .. }),
+        "{:?}",
+        net.peers[right].events
+    );
+    let c = joiner(&mut net, 2, Some("guess"), 1);
+    assert!(got(&net, c, &ClientEvent::Refused(Refusal::Password)), "the third wrong guess");
+    let held = joiner(&mut net, 3, Some("secret"), 1);
+    assert!(got(&net, held, &ClientEvent::Refused(Refusal::Throttled)), "held off, even with the password");
+    assert!(!net.peers[held].received.iter().any(|m| matches!(m, ToClient::Challenge { .. })));
+    let other = joiner(&mut net, 4, Some("secret"), 2);
+    assert!(matches!(net.peers[other].events[0], ClientEvent::Welcome { .. }), "another address joins");
+    net.run(PASSWORD_LOCKOUT_US - 1_000_000);
+    let still = joiner(&mut net, 3, Some("secret"), 1);
+    assert!(got(&net, still, &ClientEvent::Refused(Refusal::Throttled)));
+    net.run(1_000_000);
+    let back = joiner(&mut net, 3, Some("secret"), 1);
+    assert!(matches!(net.peers[back].events[0], ClientEvent::Welcome { .. }), "after a minute");
+    consistent(&net);
+}
+
+/// Guesses spread over more than a minute never hold anyone off.
+#[test]
+fn slow_password_mistakes_are_forgiven() {
+    let mut net = lobby_with(HostConfig { password: Some("secret".into()), ..cfg() }, 0);
+    for _ in 0..2 * PASSWORD_TRIES {
+        let c = net.join(LobbyClient::new(ident(1), look("Ann"), Some("typo".into()), None), ip(1));
+        net.settle();
+        assert!(got(&net, c, &ClientEvent::Refused(Refusal::Password)));
+        net.run(PASSWORD_WINDOW_US / 2 + 1_000);
+    }
+    let right = net.join(LobbyClient::new(ident(1), look("Ann"), Some("secret".into()), None), ip(1));
+    net.settle();
+    assert!(matches!(net.peers[right].events[0], ClientEvent::Welcome { .. }));
+}
+
 #[test]
 fn banned_keys_and_ips_are_refused() {
     let mut net = lobby();
@@ -389,6 +446,26 @@ fn setup_changes_clear_ready() {
     assert_eq!(net.host.set_setup(bad), Err(LobbyError::InvalidSetup));
     assert!(member(&net, a).ready);
     assert_eq!(net.host.state().setup, changed);
+    consistent(&net);
+}
+
+/// The setup changes only while the lobby gathers: during a match (and its
+/// results) the running match's setup stays what the lobby shows (an
+/// admin's `/settings` on a server targets the next rotation entry).
+#[test]
+fn the_setup_cannot_change_outside_gathering() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    net.client(a).set_ready(true);
+    net.settle();
+    net.start(1, 2).unwrap();
+    let mut changed = setup(0);
+    changed.rules.lives = 3;
+    assert_eq!(net.host.set_setup(changed.clone()), Err(LobbyError::NotGathering), "starting");
+    net.host.playing(0);
+    assert_eq!(net.host.set_setup(changed.clone()), Err(LobbyError::NotGathering), "playing");
+    assert_eq!(net.host.state().setup, setup(0));
+    net.settle();
     consistent(&net);
 }
 
@@ -850,6 +927,28 @@ fn a_dedicated_server_with_bots_only_does_not_start() {
     assert_eq!(net.host_events.iter().filter(|e| **e == HostEvent::StartRequested).count(), 1);
 }
 
+/// `revision` changes with every change of the state and only then (a
+/// dedicated server compares it instead of cloning the state each poll).
+#[test]
+fn the_revision_follows_the_state() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    net.settle();
+    let (rev, state) = (net.host.revision(), net.host.state().clone());
+    net.run(1_000_000);
+    net.host.tick(net.now_us);
+    assert_eq!(net.host.revision(), rev, "nothing changed");
+    net.host.set_ping(net.peers[a].peer, 77);
+    assert_ne!(net.host.revision(), rev, "a ping is a change");
+    let rev = net.host.revision();
+    net.host.set_ping(net.peers[a].peer, 77);
+    assert_eq!(net.host.revision(), rev, "the same ping is not");
+    net.client(a).set_ready(true);
+    net.settle();
+    assert_ne!(net.host.revision(), rev, "ready is a change");
+    assert_ne!(net.host.state(), &state);
+}
+
 #[test]
 fn pings_show_in_the_lobby() {
     let mut net = lobby();
@@ -1115,7 +1214,11 @@ proptest! {
                 Op::Send(p, m) => host.receive(u32::from(p), m, now),
                 Op::Kick(m, b) => host.kick(m, b),
                 Op::Move(m, b) => host.move_seat(m, b),
-                Op::Setup(bots, long) => host.set_setup(if long { long_setup(bots) } else { setup(bots) }).unwrap(),
+                Op::Setup(bots, long) => {
+                    let gathering = host.state().phase == Phase::Gathering;
+                    let set = host.set_setup(if long { long_setup(bots) } else { setup(bots) });
+                    assert_eq!(set.is_ok(), gathering, "{set:?}");
+                }
                 Op::Start(force) => {
                     let rtts = BTreeMap::from([(1u32, 900u32), (2, 0)]);
                     let started = if force { host.force_start(1, &rtts) } else { host.start(1, &rtts) };

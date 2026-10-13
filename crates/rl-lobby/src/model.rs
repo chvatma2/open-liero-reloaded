@@ -19,6 +19,15 @@ pub const CHAT_LINES: usize = 5;
 pub const CHAT_WINDOW_US: u64 = 5_000_000;
 /// How long the host stays in `Phase::Results` before gathering again.
 pub const RESULTS_US: u64 = 5_000_000;
+/// This many wrong password proofs from one IP address within
+/// [`PASSWORD_WINDOW_US`] hold that address off for [`PASSWORD_LOCKOUT_US`]
+/// (`Refusal::Throttled`): guessing the password takes a minute per 3 tries.
+pub const PASSWORD_TRIES: usize = 3;
+pub const PASSWORD_WINDOW_US: u64 = 60_000_000;
+pub const PASSWORD_LOCKOUT_US: u64 = 60_000_000;
+/// At most this many addresses' wrong proofs are remembered (the oldest
+/// forgotten first).
+pub const PASSWORD_ADDRESSES: usize = 1024;
 /// The skin of a look whose skin id is not a pack id (rl-game's default).
 pub const DEFAULT_SKIN: &str = "olx-skin-default";
 /// Notices to one member.
@@ -119,6 +128,8 @@ pub enum NotStartable {
 pub enum LobbyError {
     /// The match setup breaks the wire's bounds (rl-proto's `valid_setup`).
     InvalidSetup,
+    /// The setup changes only while the lobby gathers.
+    NotGathering,
 }
 
 /// Whether `c` may stand inside a name.

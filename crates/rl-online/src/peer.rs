@@ -112,8 +112,8 @@ struct HostSide {
     challenged: BTreeMap<PeerId, Instant>,
     last_drain: Option<Instant>,
     last_ping: Option<Instant>,
-    /// The lobby last reported to the caller.
-    reported: Option<LobbyState>,
+    /// The lobby's revision last reported to the caller.
+    reported: Option<u64>,
 }
 
 impl HostSide {
@@ -392,9 +392,9 @@ impl OnlinePeer {
         self.shut();
     }
 
-    /// Tests only: a client builds the host's start with this seed instead
-    /// (a world that differs from the host's).
-    #[doc(hidden)]
+    /// Tests only (`test-hooks`): a client builds the host's start with
+    /// this seed instead (a world that differs from the host's).
+    #[cfg(feature = "test-hooks")]
     pub fn test_seed_override(&mut self, seed: Option<u32>) {
         self.test_seed = seed;
     }
@@ -682,9 +682,9 @@ impl OnlinePeer {
             self.drain_lobby(now);
         }
         let Side::Host(h) = &mut self.side else { return };
-        if h.reported.as_ref() != Some(h.lobby.state()) {
+        if h.reported != Some(h.lobby.revision()) {
             let state = h.lobby.state().clone();
-            h.reported = Some(state.clone());
+            h.reported = Some(h.lobby.revision());
             self.learn_names(&state);
             self.events.push(OnlineEvent::Lobby(state));
         }
@@ -1249,6 +1249,7 @@ fn refusal_text(r: Refusal) -> &'static str {
         Refusal::Malformed => "the host refused the handshake",
         Refusal::Password => "wrong password",
         Refusal::Exhausted => "the host ran out of connection ids and must restart",
+        Refusal::Throttled => "too many wrong passwords: try again in a minute",
     }
 }
 
@@ -1263,6 +1264,15 @@ impl LobbyHandle<'_> {
         match &self.peer.side {
             Side::Host(h) => Some(h.lobby.state()),
             Side::Client(c) => c.lobby.state(),
+        }
+    }
+
+    /// The host's lobby revision: it changes whenever [`LobbyHandle::state`]
+    /// does (`LobbyHost::revision`; `None` on a client).
+    pub fn revision(&self) -> Option<u64> {
+        match &self.peer.side {
+            Side::Host(h) => Some(h.lobby.revision()),
+            Side::Client(_) => None,
         }
     }
 

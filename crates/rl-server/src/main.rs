@@ -1,10 +1,11 @@
 //! `rl-server --config <file.ron> [--content <dir>] [--data-dir <dir>]`:
 //! the dedicated server (networking spec §7.4). Logs every event to the
-//! terminal and to `<data>/server.log`, each line stamped with the UTC
+//! terminal and to `<data>/server.log` (rotated past 10 MiB, two old files
+//! kept), each line stamped with the UTC
 //! time. Ctrl+C, SIGTERM, closing its console (Windows) or typing `quit`
 //! stops it cleanly: everyone gets `Bye`.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs;
 use std::io::{self, BufRead as _, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,6 +15,7 @@ use anyhow::Context as _;
 use clap::Parser;
 use rl_content::Content;
 use rl_server::config::Config;
+use rl_server::files::{LOG_KEEP, LOG_MAX_BYTES, RotatingLog};
 
 /// The log file, in the data directory.
 const LOG_FILE: &str = "server.log";
@@ -49,10 +51,7 @@ fn main() -> anyhow::Result<()> {
     for w in content.warnings() {
         eprintln!("warning: {w}");
     }
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(data_dir.join(LOG_FILE))
+    let file = RotatingLog::open(&data_dir.join(LOG_FILE), LOG_MAX_BYTES, LOG_KEEP)
         .with_context(|| format!("opening {}", data_dir.join(LOG_FILE).display()))?;
     let mut log = Stamped { file, line_start: true };
     // Ruling T13-A: the handler only sets the flag the loop reads.
@@ -79,9 +78,9 @@ fn console() {
 }
 
 /// The log: each line, stamped with the UTC time, to the terminal and the
-/// log file.
+/// log file (rotated past 10 MiB, two old files kept).
 struct Stamped {
-    file: File,
+    file: RotatingLog,
     line_start: bool,
 }
 

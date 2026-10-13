@@ -25,6 +25,8 @@ pub enum Refusal {
     /// The host has no connection ids left (it never reuses one); it must
     /// restart.
     Exhausted,
+    /// Too many wrong passwords from this address: try again in a minute.
+    Throttled,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +68,7 @@ mod tests {
             Signal::Refused { reason: Refusal::Banned },
             Signal::Refused { reason: Refusal::Password },
             Signal::Refused { reason: Refusal::Exhausted },
+            Signal::Refused { reason: Refusal::Throttled },
         ] {
             assert_eq!(decode_signal(&encode_signal(&s)), Ok(s));
         }

@@ -3943,6 +3943,7 @@ version = "0.1.0"
 dependencies = [
  "k256",
  "proptest",
+ "rl-lobby",
  "rl-netcode",
  "rl-proto",
  "sha2 0.11.0",
@@ -3976,6 +3977,7 @@ version = "0.1.0"
 dependencies = [
  "getrandom 0.4.3",
  "proptest",
+ "rl-net",
  "rl-netcode",
  "rl-proto",
  "str0m",
@@ -4008,6 +4010,7 @@ dependencies = [
  "rl-modes",
  "rl-net",
  "rl-netcode",
+ "rl-online",
  "rl-proto",
  "rl-replay",
  "rl-sim",

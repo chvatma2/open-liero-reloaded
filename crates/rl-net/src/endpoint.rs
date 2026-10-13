@@ -71,18 +71,24 @@ pub struct EndpointConfig {
     /// Every outgoing datagram passes this profile's network (spec §9.4).
     pub impair: Option<Profile>,
     pub impair_seed: u64,
-    /// Tests only: the simulation fingerprint to send and expect instead of
-    /// `rl_proto::FINGERPRINT`.
-    #[doc(hidden)]
+    /// Tests only (`test-hooks`): the simulation fingerprint to send and
+    /// expect instead of `rl_proto::FINGERPRINT`.
+    #[cfg(feature = "test-hooks")]
     pub fingerprint_override: Option<u64>,
-    /// Tests only: a client's offer names this IP in its candidates instead
-    /// of its own (a client behind NAT, as the host sees it).
-    #[doc(hidden)]
+    /// Tests only (`test-hooks`): a client's offer names this IP in its
+    /// candidates instead of its own (a client behind NAT, as the host sees
+    /// it).
+    #[cfg(feature = "test-hooks")]
     pub offer_ip_override: Option<IpAddr>,
-    /// Tests only: a host's first peer id instead of 1 (a host that has
-    /// seen many links).
-    #[doc(hidden)]
+    /// Tests only (`test-hooks`): a host's first peer id instead of 1 (a
+    /// host that has seen many links).
+    #[cfg(feature = "test-hooks")]
     pub first_peer_id: Option<PeerId>,
+    /// Tests only (`test-hooks`): a host's answer names this address in
+    /// its candidates instead of its own (a host pointing its joiners
+    /// elsewhere).
+    #[cfg(feature = "test-hooks")]
+    pub answer_addr_override: Option<SocketAddr>,
 }
 
 impl Default for EndpointConfig {
@@ -95,9 +101,14 @@ impl Default for EndpointConfig {
             limits: Limits::default(),
             impair: None,
             impair_seed: 0,
+            #[cfg(feature = "test-hooks")]
             fingerprint_override: None,
+            #[cfg(feature = "test-hooks")]
             offer_ip_override: None,
+            #[cfg(feature = "test-hooks")]
             first_peer_id: None,
+            #[cfg(feature = "test-hooks")]
+            answer_addr_override: None,
         }
     }
 }
@@ -272,14 +283,19 @@ fn keep_candidates_of(sdp: &str, ip: IpAddr) -> String {
 }
 
 /// `sdp` with the address of every `a=candidate` line replaced by `ip`
-/// (the test hook `offer_ip_override`).
-fn rewrite_candidates(sdp: &str, ip: IpAddr) -> String {
+/// (and the port by `port`; the test hooks `offer_ip_override`,
+/// `answer_addr_override`).
+#[cfg(any(test, feature = "test-hooks"))]
+fn rewrite_candidates(sdp: &str, ip: IpAddr, port: Option<u16>) -> String {
     sdp.split_inclusive('\n')
         .map(|line| match line.strip_prefix("a=candidate:") {
             Some(candidate) => {
                 let mut fields: Vec<String> = candidate.split(' ').map(str::to_owned).collect();
                 if let Some(field) = fields.get_mut(4) {
                     *field = ip.to_string();
+                }
+                if let (Some(field), Some(port)) = (fields.get_mut(5), port) {
+                    *field = port.to_string();
                 }
                 format!("a=candidate:{}", fields.join(" "))
             }
@@ -334,7 +350,10 @@ impl Endpoint {
     /// refuses each valid offer.
     pub fn host(cfg: EndpointConfig, gate: Gate) -> io::Result<Endpoint> {
         let (listener, udp, port) = bind_both(cfg.port)?;
+        #[cfg(feature = "test-hooks")]
         let next_id = cfg.first_peer_id.unwrap_or(1).max(1);
+        #[cfg(not(feature = "test-hooks"))]
+        let next_id = 1;
         Ok(Endpoint::new(cfg, udp, port, Role::Host { listener, gate, next_id, incoming: Vec::new() }))
     }
 
@@ -357,7 +376,11 @@ impl Endpoint {
     }
 
     fn fingerprint(&self) -> u64 {
-        self.cfg.fingerprint_override.unwrap_or(FINGERPRINT)
+        #[cfg(feature = "test-hooks")]
+        if let Some(f) = self.cfg.fingerprint_override {
+            return f;
+        }
+        FINGERPRINT
     }
 
     fn is_client(&self) -> bool {
@@ -536,9 +559,11 @@ impl Endpoint {
         stream.set_nonblocking(true)?;
         let _ = stream.set_nodelay(true);
         let local = SocketAddr::new(stream.local_addr()?.ip(), self.port);
+        #[cfg_attr(not(feature = "test-hooks"), allow(unused_mut))]
         let (link, mut sdp) = Link::offerer(&[local], now);
+        #[cfg(feature = "test-hooks")]
         if let Some(ip) = self.cfg.offer_ip_override {
-            sdp = rewrite_candidates(&sdp, ip);
+            sdp = rewrite_candidates(&sdp, ip, None);
         }
         let mut ws = SignalConn::connect(stream, host, self.cfg.limits.max_signal_bytes);
         ws.send(encode_signal(&Signal::Offer {
@@ -575,9 +600,14 @@ impl Endpoint {
         // Only candidates on the signalling connection's IP (ruling T4-A).
         let sdp = keep_candidates_of(sdp, addr.ip());
         let local = SocketAddr::new(local, self.port);
-        let Ok((link, answer)) = Link::answerer(&[local], &sdp, now) else {
+        #[cfg_attr(not(feature = "test-hooks"), allow(unused_mut))]
+        let Ok((link, mut answer)) = Link::answerer(&[local], &sdp, now) else {
             return self.refuse(conn, Refusal::Malformed, now);
         };
+        #[cfg(feature = "test-hooks")]
+        if let Some(a) = self.cfg.answer_addr_override {
+            answer = rewrite_candidates(&answer, a.ip(), Some(a.port()));
+        }
         conn.send(encode_signal(&Signal::Answer { sdp: answer }));
         let peer = self.new_peer(addr, local, link, conn, now);
         self.pending.push(peer);
@@ -652,7 +682,12 @@ impl Endpoint {
                     return self.fail_setup(peer, Why::Malformed, now, events);
                 }
                 match decode_signal(&frame) {
-                    Ok(Signal::Answer { sdp }) if peer.link.accept_answer(&sdp).is_ok() => {
+                    // Only candidates on the host's signalling IP (as the
+                    // host does with offers, ruling T4-A): a host cannot aim
+                    // its joiners' checks at a third party.
+                    Ok(Signal::Answer { sdp })
+                        if peer.link.accept_answer(&keep_candidates_of(&sdp, peer.addr.ip())).is_ok() =>
+                    {
                         peer.answered = true
                     }
                     Ok(Signal::Refused { reason }) => {
@@ -772,7 +807,7 @@ mod tests {
     #[test]
     fn the_test_hook_rewrites_every_candidate() {
         let ip: IpAddr = "10.9.9.9".parse().unwrap();
-        let rewritten = rewrite_candidates(SDP, ip);
+        let rewritten = rewrite_candidates(SDP, ip, None);
         assert_eq!(rewritten.matches("a=candidate:").count(), 3);
         assert_eq!(keep_candidates_of(&rewritten, ip), rewritten);
         assert!(rewritten.contains("a=candidate:3 1 udp 2130706431 10.9.9.9 50000 typ host\r\n"));

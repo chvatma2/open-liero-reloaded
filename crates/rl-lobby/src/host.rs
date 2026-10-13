@@ -114,8 +114,32 @@ pub struct LobbyHost {
     /// a start made at the current generation.
     generation: u64,
     started_at: Option<u64>,
+    /// Counts the changes of `state` ([`LobbyHost::revision`]).
+    revision: u64,
+    /// Wrong password proofs by address ([`PASSWORD_TRIES`]).
+    guesses: BTreeMap<IpAddr, Guesses>,
     out: Vec<(PeerId, ToClient)>,
     events: Vec<HostEvent>,
+}
+
+/// One address's recent wrong password proofs.
+#[derive(Default)]
+struct Guesses {
+    /// When the wrong proofs within the last [`PASSWORD_WINDOW_US`] came.
+    at: Vec<u64>,
+    /// Joins are refused until then.
+    held_until: Option<u64>,
+}
+
+impl Guesses {
+    fn held(&self, now_us: u64) -> bool {
+        self.held_until.is_some_and(|t| now_us < t)
+    }
+
+    /// The last time this entry matters to.
+    fn last(&self) -> u64 {
+        self.at.last().copied().unwrap_or(0).max(self.held_until.unwrap_or(0))
+    }
 }
 
 impl LobbyHost {
@@ -161,6 +185,8 @@ impl LobbyHost {
             dirty: false,
             generation: 0,
             started_at: None,
+            revision: 0,
+            guesses: BTreeMap::new(),
             out: Vec::new(),
             events: Vec::new(),
         };
@@ -199,6 +225,10 @@ impl LobbyHost {
             self.refuse(peer, Refusal::Banned);
             return;
         }
+        if self.guesses.get(&addr).is_some_and(|g| g.held(now_us)) {
+            self.refuse(peer, Refusal::Throttled);
+            return;
+        }
         self.links.insert(peer, Link::Pending(Pending { addr, nonce, since_us: now_us, hello: None }));
         let challenge = ToClient::Challenge {
             nonce,
@@ -212,7 +242,7 @@ impl LobbyHost {
     pub fn receive(&mut self, peer: PeerId, msg: ToHost, now_us: u64) {
         match self.links.get(&peer) {
             None => {}
-            Some(Link::Pending(_)) => self.receive_pending(peer, msg),
+            Some(Link::Pending(_)) => self.receive_pending(peer, msg, now_us),
             Some(&Link::Member(id)) => self.receive_member(peer, id, msg, now_us),
         }
     }
@@ -265,6 +295,12 @@ impl LobbyHost {
         }
     }
 
+    /// Changes whenever [`LobbyHost::state`] does: compare it instead of
+    /// the state.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     /// Drains the events.
     pub fn events(&mut self) -> Vec<HostEvent> {
         core::mem::take(&mut self.events)
@@ -274,7 +310,12 @@ impl LobbyHost {
 
     /// The next match's setup. A change clears every other member's ready
     /// (they re-confirm what they agreed to); the same setup changes nothing.
+    /// Refused outside gathering (`NotGathering`): a running match's setup
+    /// stays what the lobby shows.
     pub fn set_setup(&mut self, setup: MatchSetupWire) -> Result<(), LobbyError> {
+        if self.phase != Phase::Gathering {
+            return Err(LobbyError::NotGathering);
+        }
         if !valid_setup(&setup) {
             return Err(LobbyError::InvalidSetup);
         }
@@ -561,7 +602,7 @@ impl LobbyHost {
 
     // ---- joining ----
 
-    fn receive_pending(&mut self, peer: PeerId, msg: ToHost) {
+    fn receive_pending(&mut self, peer: PeerId, msg: ToHost, now_us: u64) {
         let Some(Link::Pending(p)) = self.links.get(&peer) else { return };
         let (addr, nonce, hello) = (p.addr, p.nonce, p.hello.clone());
         match (msg, hello) {
@@ -572,6 +613,11 @@ impl LobbyHost {
                 if let Some(pw) = &self.cfg.password
                     && password != Some(password_proof(&nonce, pw))
                 {
+                    // A client without a password proves the empty one: that
+                    // is no guess (the game asks for the password next).
+                    if password.is_some_and(|p| p != password_proof(&nonce, "")) {
+                        self.wrong_password(addr, now_us);
+                    }
                     return self.refuse(peer, Refusal::Password);
                 }
                 if let Some(Link::Pending(p)) = self.links.get_mut(&peer) {
@@ -654,6 +700,26 @@ impl LobbyHost {
         self.flush_except(Some(peer));
         self.broadcast(&ToClient::Notice(Notice::Joined(id)));
         self.events.push(HostEvent::Joined(id));
+    }
+
+    /// A wrong password proof from `addr`: the [`PASSWORD_TRIES`]th within
+    /// [`PASSWORD_WINDOW_US`] holds the address off for
+    /// [`PASSWORD_LOCKOUT_US`]. At most [`PASSWORD_ADDRESSES`] are
+    /// remembered: a new one forgets the one heard from longest ago.
+    fn wrong_password(&mut self, addr: IpAddr, now_us: u64) {
+        if !self.guesses.contains_key(&addr) && self.guesses.len() >= PASSWORD_ADDRESSES {
+            let oldest = self.guesses.iter().min_by_key(|(_, g)| g.last()).map(|(&ip, _)| ip);
+            if let Some(ip) = oldest {
+                self.guesses.remove(&ip);
+            }
+        }
+        let g = self.guesses.entry(addr).or_default();
+        g.at.retain(|&t| now_us.saturating_sub(t) < PASSWORD_WINDOW_US);
+        g.at.push(now_us);
+        if g.at.len() >= PASSWORD_TRIES {
+            g.at.clear();
+            g.held_until = Some(now_us.saturating_add(PASSWORD_LOCKOUT_US));
+        }
     }
 
     fn refuse(&mut self, peer: PeerId, why: Refusal) {
@@ -872,12 +938,16 @@ impl LobbyHost {
 
     /// Rebuilds the state and notes the lobby becoming startable.
     fn refresh(&mut self) {
-        self.state = LobbyState {
+        let state = LobbyState {
             name: self.cfg.name.clone(),
             phase: self.phase,
             setup: self.setup.clone(),
             members: self.members.iter().map(Rec::wire).collect(),
         };
+        if state != self.state {
+            self.state = state;
+            self.revision += 1;
+        }
         let startable = self.can_start().is_ok();
         if startable && !self.startable {
             self.events.push(HostEvent::StartRequested);

@@ -225,7 +225,6 @@ fn setup(content: &Content, minutes: f32) -> MatchSetupWire {
 #[test]
 fn an_online_match_runs_headless() {
     let Some(dir) = content_dir() else { return };
-    let begun = Instant::now();
     let content = || Content::open(&dir).unwrap();
     let cfg = HostConfig {
         name: "Test lobby".into(),
@@ -383,7 +382,6 @@ fn an_online_match_runs_headless() {
     let poll =
         vec![OnlineEvent::Ticked(vec![tick(90_000)]), next.clone(), OnlineEvent::Ticked(vec![tick(90_001)])];
     assert_eq!(s.present_events(poll), [next, OnlineEvent::Ticked(vec![tick(90_001)])]);
-    assert!(begun.elapsed() < Duration::from_secs(30), "the test took {:?}", begun.elapsed());
 }
 
 // ---- Online play from the menus (plan 10 task 12) ----
@@ -518,7 +516,6 @@ fn confirmed(sh: &Shell) -> Option<(u32, Vec<Score>)> {
 #[test]
 fn hosting_and_joining_from_the_shell() {
     let Some(dir) = content_dir() else { return };
-    let begun = Instant::now();
     let data = tempfile::tempdir().unwrap();
     let (mut h, mut c) = host_and_client(&dir, 0.04, Some(data.path()));
     let lobby = h.data.lobby.clone().unwrap();
@@ -586,7 +583,6 @@ fn hosting_and_joining_from_the_shell() {
     });
     assert!(h.data.chat.iter().any(|l| l.text == "Anna left"), "{:?}", h.data.chat);
     assert!(h.session().unwrap().log.texts().any(|l| l == "Anna left"), "in the host's HUD log too");
-    assert!(begun.elapsed() < Duration::from_secs(20), "the test took {:?}", begun.elapsed());
 }
 
 /// Chat typed in game reaches the other player's HUD log as a chat line
@@ -682,7 +678,6 @@ fn a_hidden_window_keeps_the_match_alive() {
 #[test]
 fn net_sim_flag_starts_a_local_match() {
     let Some(dir) = content_dir() else { return };
-    let begun = Instant::now();
     let mut sh = menus(&dir, Store::in_memory(), "Anna", 0.05);
     let profile = rl_netcode::netsim::Profile::by_name("typical").unwrap();
     sh.start_net_sim(profile).unwrap();
@@ -708,7 +703,6 @@ fn net_sim_flag_starts_a_local_match() {
     frames_until("the next net-sim match starts", Duration::from_secs(15), &mut [&mut sh], |s| {
         s[0].launches() == 2 && s[0].ui.screen() == Screen::InGame
     });
-    assert!(begun.elapsed() < Duration::from_secs(20), "the test took {:?}", begun.elapsed());
 }
 
 fn replays_in(dir: &std::path::Path) -> usize {

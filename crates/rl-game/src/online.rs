@@ -299,6 +299,7 @@ mod tests {
             assert_eq!(presenter.spawned() - spawned, spawns as u64, "every effect after the state spawned");
             assert!(!s.present.fx.is_empty(), "the load came first: its clearing kept the new effects");
             assert!(!s.present.terrain_drift(&s.world));
+            assert_eq!(presenter.drifts(), 0);
             outcomes.push((s.present.fx.len(), sounds.len()));
         }
         assert_eq!(outcomes[0], outcomes[1], "the same presentation whatever the events' order");

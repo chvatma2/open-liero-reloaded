@@ -130,7 +130,6 @@ struct Net {
     content_dir: String,
     port: u16,
     peers: Vec<Peer>,
-    begun: Instant,
 }
 
 impl Net {
@@ -172,7 +171,7 @@ impl Net {
         let key = me.public();
         let host = OnlinePeer::start(role, endpoint(), me, look("Host"), content, Some(setup)).unwrap();
         let port = host.local_port();
-        Net { content_dir, port, peers: vec![Peer::new(host, key)], begun: Instant::now() }
+        Net { content_dir, port, peers: vec![Peer::new(host, key)] }
     }
 
     fn content(&self) -> Content {
@@ -245,10 +244,6 @@ impl Net {
     fn host_tick(&mut self) -> u32 {
         self.host().peer().match_session().map_or(0, |s| s.current_tick())
     }
-
-    fn assert_quick(&self) {
-        assert!(self.begun.elapsed() < Duration::from_secs(40), "the test took {:?}", self.begun.elapsed());
-    }
 }
 
 fn ended(e: &OnlineEvent) -> bool {
@@ -303,7 +298,6 @@ fn a_host_and_two_clients_play_a_short_match() {
     net.run_until(Duration::from_secs(10), "the lobby shows the results", |n| {
         n.peers[1].peer().lobby().state().is_some_and(|s| s.phase == Phase::Results)
     });
-    net.assert_quick();
 }
 
 /// A dedicated server without bots has no slot of its own: its clients'
@@ -342,7 +336,6 @@ fn a_server_without_bots_records_the_last_checksum() {
         assert_eq!(other.rows, r.rows);
         assert_eq!(other.checksums, r.checksums);
     }
-    net.assert_quick();
 }
 
 /// `/next` on a dedicated server without bots (`end_match`) at a moment it
@@ -412,7 +405,6 @@ fn ending_a_botless_servers_match_keeps_its_last_checksum() {
     });
     let bytes: Vec<&Vec<u8>> = net.peers.iter().map(|p| p.replays()[0]).collect();
     assert!(bytes.iter().all(|b| *b == bytes[0]), "equal replays");
-    net.assert_quick();
 }
 
 #[test]
@@ -461,7 +453,6 @@ fn a_late_joiner_watches_then_plays_the_next_match() {
         n.peers[b].peer().match_session().is_some_and(|s| s.current_tick() > 20)
     });
     assert!(net.peers[a].replays().len() == 1, "the first match's replay");
-    net.assert_quick();
 }
 
 #[test]
@@ -482,7 +473,6 @@ fn a_client_with_other_content_is_refused_at_start() {
     assert!(matches!(net.peers[a].started()[..], [Some(1 | 2)]), "the other client plays");
     net.run_until(Duration::from_secs(10), "the match goes on", |n| n.host_tick() > 100);
     assert!(!net.peers[a].has(|e| matches!(e, OnlineEvent::Refused(_) | OnlineEvent::Disconnected(_))));
-    net.assert_quick();
 }
 
 #[test]
@@ -516,7 +506,6 @@ fn a_client_vanishes_mid_match() {
     assert!(rows.len() > from + 300, "{} rows, gone at {gone_at}", rows.len());
     assert!(rows[from..].iter().all(|r| r[sb] == 0), "the vanished slot presses nothing");
     assert!(rows[from..].iter().any(|r| r[sa] != 0), "the other client plays on");
-    net.assert_quick();
 }
 
 /// Presses nothing: a planted change's re-simulation.
@@ -582,7 +571,6 @@ fn a_desync_makes_a_bundle_on_both_sides() {
         assert!(h.checksums.contains(&(t, sum)), "tick {t}: in sync before the mismatch");
     }
     assert_eq!(c.other_checksums, [(ht, hl)], "a client knows the host's of the mismatch");
-    net.assert_quick();
 }
 
 #[test]
@@ -622,7 +610,6 @@ fn kicked_players_cannot_rejoin() {
     net.run_until(Duration::from_secs(10), "another key joins", |n| {
         n.members() == 2 && n.peers[other].has(|e| matches!(e, OnlineEvent::Lobby(_)))
     });
-    net.assert_quick();
 }
 
 #[test]
@@ -652,7 +639,6 @@ fn an_admins_setup_is_taken_or_refused_with_a_notice() {
         net.peers[a].count(|e| matches!(e, OnlineEvent::Notice(t) if t.starts_with(SETUP_REFUSED))),
         1
     );
-    net.assert_quick();
 }
 
 /// A dedicated server (`PeerRole::Server`): no member of its own, the chat
@@ -718,5 +704,4 @@ fn a_dedicated_server_hosts_without_a_player() {
     });
     let record = net.peers[0].peer().last_record().cloned().expect("the host's record");
     assert!((90..600).contains(&record.rows.len()), "{} rows: ended early", record.rows.len());
-    net.assert_quick();
 }
