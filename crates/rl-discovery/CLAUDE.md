@@ -122,6 +122,15 @@ test relay, relay pool, announcements, game list, STUN and invite codes
     (even mid-read or mid-send), sends what is queued (a closing note)
     and the Close frame within 1 s, and is joined within 2 s in all (one
     stuck in a TCP connect or DNS lookup is detached).
+- **`stun`** (N40): `binding_request(txn)`, `parse_binding_response(bytes, &txn)`
+  (XOR-MAPPED-ADDRESS, MAPPED-ADDRESS only when no XOR one; v4 and v6; the
+  address as given, no filtering: callers use `list::is_global`; bounded,
+  integrity and fingerprint unchecked) and `public_ip(servers, deadline)`:
+  `host:port` strings, IPv4 only, ephemeral `0.0.0.0:0` socket, 500 ms x 2
+  tries per server, never longer than `deadline` after resolution (DNS may
+  block longer): run it on a thread. `StunResponder` (feature `test-relay`;
+  `start`, `start_plain`, `server()`, `answered()`) is the test server.
+  Tests use the RFC 5769 section 2.2 response.
 - Deps: `rustls` (default aws-lc-rs) and `webpki-roots` (workspace pins),
   `tungstenite` with `rustls-tls-webpki-roots` (for `Connector::Rustls`;
   its own default roots are never used). `rcgen =0.14.10` (`aws_lc_rs`
@@ -149,7 +158,7 @@ test relay, relay pool, announcements, game list, STUN and invite codes
 Test: `cargo nextest run -p rl-discovery` (`tests/announce.rs` and `tests/list.rs`: announcements and the game list; `tests/nostr.rs`: the published
 events verify, signing round-trips, canonical escaping, tampering, frames
 round-trip, fuzzed frames never panic; `tests/test_relay.rs`: the relay;
-`tests/pool.rs`: the pool against the test relay (silent, dripping,
+`tests/stun.rs`: STUN; `tests/pool.rs`: the pool against the test relay (silent, dripping,
 slow, slow-reading: every frame arrives intact through partial writes,
 over `ws://` and `wss://`), a flooding relay and unreachable relays: a
 listener on `127.0.0.1` that never accepts, and TEST-NET-1 `192.0.2.1`, never
