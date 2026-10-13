@@ -12,6 +12,7 @@
 //! The oracle loads mods strictly ([`Content::sim_mod`]): OLX's client
 //! knows every projectile image's frame count, so a missing one is an error.
 
+mod cache;
 mod catalog;
 mod color;
 mod core_assets;
@@ -27,11 +28,13 @@ mod sounds;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::Context as _;
 use rl_data::manifest::PackKind;
 use rl_vfs::DirFs;
 
+pub use cache::{CACHE_BYTES, DownloadCache, InstallError, MAX_SKIN_ARCHIVE, Partial};
 pub use catalog::{Catalog, LevelInfo, MAX_THUMB_BYTES, MAX_THUMB_SIDE, ModInfo, PackSource, ThumbRef};
 pub use color::{apply_edits, color_edit, lost_area};
 pub use core_assets::{CORE_PACK_ID, CORE_SPRITES, CorePack};
@@ -75,6 +78,10 @@ pub struct Content {
     origins: BTreeMap<String, Option<rl_data::manifest::Origin>>,
     core: CorePack,
     warnings: Vec<String>,
+    /// Content hashes by pack directory ([`Content::pack_hash`]). Content is
+    /// opened per session, so a pack changed on disk meanwhile is hashed
+    /// stale until the next open.
+    hashes: Mutex<BTreeMap<PathBuf, String>>,
 }
 
 impl Content {
@@ -189,7 +196,7 @@ impl Content {
                 CorePack::empty()
             }
         };
-        Ok(Content { packs, names, origins, core, warnings })
+        Ok(Content { packs, names, origins, core, warnings, hashes: Mutex::default() })
     }
 
     /// Problems found when opening: unreadable packs, duplicate ids, and the
@@ -236,5 +243,38 @@ impl Content {
             Some((k, _)) => anyhow::bail!("pack {id} is a {k:?} pack, not {kind:?}"),
             None => anyhow::bail!("no {kind:?} pack {id}"),
         }
+    }
+}
+
+impl Content {
+    /// A copy whose packs `packs` (id → pack directory) hide this content's
+    /// packs of the same id, as a new top layer. Each directory's manifest
+    /// must be pack `id`; the core pack cannot be overlaid. Nothing on disk
+    /// changes, and `self` stays as it is.
+    pub fn with_packs(&self, packs: &[(String, PathBuf)]) -> anyhow::Result<Content> {
+        let mut out = Content {
+            packs: self.packs.clone(),
+            names: self.names.clone(),
+            origins: self.origins.clone(),
+            core: self.core.clone(),
+            warnings: self.warnings.clone(),
+            hashes: Mutex::new(self.hashes.lock().map(|m| m.clone()).unwrap_or_default()),
+        };
+        for (id, dir) in packs {
+            let m = rl_pack::read_manifest(&DirFs::new(dir))
+                .with_context(|| format!("pack {id} in {}", dir.display()))?;
+            anyhow::ensure!(m.id == *id, "{} is pack {}, not {id}", dir.display(), m.id);
+            anyhow::ensure!(m.kind != PackKind::Core, "the core pack cannot be overlaid");
+            out.names.insert(m.id.clone(), m.name);
+            out.origins.insert(m.id.clone(), m.origin);
+            out.packs.insert(m.id, (m.kind, dir.clone()));
+        }
+        Ok(out)
+    }
+
+    /// Whether this content has pack `id` with content hash `hash`
+    /// ([`Content::pack_hash`], memoised per pack directory).
+    pub fn has(&self, id: &str, hash: &str) -> bool {
+        self.packs.get(id).is_some_and(|(kind, _)| self.pack_hash(id, *kind).is_ok_and(|h| h == hash))
     }
 }

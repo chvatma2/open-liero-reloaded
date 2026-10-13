@@ -10,10 +10,20 @@ use rl_sim::World;
 use crate::{Content, LoadedLevel, LoadedMod, LoadedTheme};
 
 impl Content {
-    /// The content hash of pack `id` of `kind` (`rl_pack::content_hash`).
+    /// The content hash of pack `id` of `kind` (`rl_pack::content_hash`),
+    /// memoised per pack directory for this `Content`'s life (staleness
+    /// within a session is accepted).
     pub fn pack_hash(&self, id: &str, kind: PackKind) -> anyhow::Result<String> {
         let src = self.pack(id, kind)?;
-        rl_pack::content_hash(&src).with_context(|| format!("hashing {kind:?} pack {id}"))
+        let key = src.root().to_path_buf();
+        if let Some(h) = self.hashes.lock().ok().and_then(|m| m.get(&key).cloned()) {
+            return Ok(h);
+        }
+        let hash = rl_pack::content_hash(&src).with_context(|| format!("hashing {kind:?} pack {id}"))?;
+        if let Ok(mut m) = self.hashes.lock() {
+            m.insert(key, hash.clone());
+        }
+        Ok(hash)
     }
 
     /// The packs of a match of mod `mod_id` on level `level_id` (and the

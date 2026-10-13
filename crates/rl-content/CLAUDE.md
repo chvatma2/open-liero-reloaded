@@ -13,7 +13,7 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
 (sprites by name, game sounds, `colours.cfg`) and `new_world(&SandboxSetup)`.
 
 - **Layer 4, uses `std`.** Depends on `rl-sim`, `rl-modes`, `rl-bots`,
-  `rl-replay`, `rl-pack`, `rl-terrain`, `rl-data`, `rl-vfs`, the
+  `rl-replay`, `rl-pack`, `sha2`, `hex`, `rl-terrain`, `rl-data`, `rl-vfs`, the
   importers (`rl-import-lgs`, `rl-import-lxl`, `rl-import-gfx`), `anyhow`,
   `serde` and `ron`.
   `rl-scenario` (same layer) uses it.
@@ -136,6 +136,20 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   `discover_until(path, stop)` stops with `Cancelled`.
   `tests/import.rs` runs on `fixtures/olx-mini` (made by
   `fixtures/olx-mini.py`).
+- **Download cache** (`cache.rs`, plan 11 ruling N30): `DownloadCache::open(dir)`
+  keeps packs a host sent in `packs/<content hash>/` (`get` touches the
+  LRU use counter, `evict(keep, limit)` drops the least recently used but
+  never `keep`, `CACHE_BYTES` = 1 GiB), `index.ron` (atomic; rebuilt from
+  `packs/*/pack.ron` when bad) and resumable partials `<hash>.part` +
+  `<hash>.part.ron` (`append` only at `offset == have`; `partial`).
+  `install(hash, id, kind, limit)` checks the partial's size against
+  `limit` (`MAX_SKIN_ARCHIVE` for skins) and its archive SHA-256, decodes
+  into `tmp/`, then checks content hash, id, kind and `validate`; any
+  failure removes `tmp/` and the partial (an incomplete partial stays).
+  A hash that is not 64 lowercase hex never names a file.
+  `Content::with_packs(&[(id, dir)])` is a copy with those packs laid over
+  by id (nothing on disk changes); `Content::has(id, hash)`; `pack_hash`
+  is memoised per pack directory for the `Content`'s life.
 - `Content::pack_dir(id)`, `pack_kind(id)`, `pack_origin(id)`.
 - Pack ids of OLX imports: `olx_mod_id("MW 1.0")`, `olx_level_id("CastleStrike.lxl")`.
 

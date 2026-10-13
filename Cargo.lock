@@ -3801,6 +3801,7 @@ name = "rl-content"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hex",
  "rl-bots",
  "rl-data",
  "rl-import-gfx",
@@ -3815,6 +3816,7 @@ dependencies = [
  "rl-vfs",
  "ron",
  "serde",
+ "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.21",
 ]
