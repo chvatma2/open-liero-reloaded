@@ -3,7 +3,7 @@
 //! debug info) for Linux and for Windows (mingw-w64, as `winbuild`), each
 //! staged under one folder `rust-liero-<version>/` with the content, the
 //! docs and an example server config (the mingw DLLs only when an exe
-//! imports them), and zipped into `target/dist/rust-liero-<version>-
+//! imports them), and zipped into `target/release-zips/rust-liero-<version>-
 //! <platform>.zip`: deflate, entries in byte order, fixed times and modes
 //! (0755 for the executables), so the same inputs give the same zip.
 //!
@@ -27,8 +27,11 @@ use crate::{e2e, root, winbuild};
 
 /// The workspace version (xtask's is the workspace's).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-/// The Cargo profile of the zips' builds.
+/// The Cargo profile of the zips' builds (its output: `target/dist`).
 pub const PROFILE: &str = "dist";
+/// Where the zips go, under `target/`: apart from cargo's output, so
+/// `tidy` sweeps that and never this (`tidy::KEPT`).
+pub const ZIP_DIR: &str = "release-zips";
 /// The programs a zip holds (`.exe` on Windows).
 pub const EXES: [&str; 2] = ["rl-game", "rl-server"];
 /// Documents copied from the repository, at the same path in the folder.
@@ -545,7 +548,7 @@ pub fn command(verify: bool) -> anyhow::Result<bool> {
         );
         let build = build(platform).map_err(anyhow::Error::msg)?;
         let folder = stage(platform, &build, &staging.join(platform.suffix())).map_err(anyhow::Error::msg)?;
-        let zip = target.join(PROFILE).join(zip_name(VERSION, platform));
+        let zip = target.join(ZIP_DIR).join(zip_name(VERSION, platform));
         write_zip(&folder, &executables(platform), &zip).map_err(anyhow::Error::msg)?;
         zips.push((platform, zip));
     }

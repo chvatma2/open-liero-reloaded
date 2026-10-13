@@ -39,7 +39,7 @@ modernized for current displays.
 6. **Never panic on content.** Inputs from mods, levels and packs are untrusted.
 7. **Keep output deterministic.** Use no `HashMap` iteration in output, and no wall clock in logic.
 8. **Commits:** small, imperative subject (`rl-pack: validate projectile cycles`).
-9. **Release zips:** `cargo xtask dist` builds and runs `target/dist/rust-liero-<version>-{linux,windows}-x64.zip`.
+9. **Release zips:** `cargo xtask dist` builds and runs `target/release-zips/rust-liero-<version>-{linux,windows}-x64.zip`.
 
 ## Oracle
 

@@ -286,8 +286,8 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
 ## Building a release zip
 
 `cargo xtask dist` builds portable zips for Linux and Windows in one run:
-`target/dist/rust-liero-<version>-linux-x64.zip` and
-`target/dist/rust-liero-<version>-windows-x64.zip`. Each holds one folder,
+`target/release-zips/rust-liero-<version>-linux-x64.zip` and
+`target/release-zips/rust-liero-<version>-windows-x64.zip`. Each holds one folder,
 `rust-liero-<version>/`, with `rl-game` and `rl-server` (`.exe` on
 Windows, built in the `dist` profile: release without symbols), the
 content in `content/packs/`, this README, the license, the changelog,

@@ -132,7 +132,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   both; `rl-game.exe --demo` writes its shots under the stage's `target/`. Nothing is left running; the
   stage stays for the next run.
 - `dist [--no-verify]` (`dist.rs`): the portable release zips,
-  `target/dist/rust-liero-<version>-{linux,windows}-x64.zip` (`VERSION`:
+  `target/release-zips/rust-liero-<version>-{linux,windows}-x64.zip` (`ZIP_DIR`; `VERSION`:
   xtask's, the workspace's; `zip_name`, `folder`). `rl-game` and
   `rl-server` are built with `cargo build --profile dist` (workspace
   `Cargo.toml`: release, `strip`, no debug info, panics unwinding),
@@ -144,8 +144,9 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   without `import-report.ron` (`copy_content`). `write_zip` (the `zip`
   crate, deflate only): files in byte order of their path, dated
   1980-01-01, mode 0755 for `executables` and 0644 for the rest, so the
-  same inputs give the same bytes (tested). The zips sit beside cargo's
-  own `dist` profile output in `target/dist/`. Verification (unless
+  same inputs give the same bytes (tested). The zips are kept apart
+  from cargo's `dist` profile output (`target/dist/`, swept by `tidy` as
+  any profile). Verification (unless
   `--no-verify`): the Linux zip is unpacked into a fresh temporary
   directory, `rl-game --help` run from another directory must show the
   content beside it as `--content`'s default, and `rl-server` (config
@@ -316,9 +317,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   several crates, `syn` 2 and 3, a crate's builds for two feature sets are
   all live at once. Removing a live build only costs a rebuild. Only
   regular files and directories inside `target/` go, never through a
-  symbolic link; `content/packs`, `target/olx` and `target/dist` (the
-  `dist` profile's output with the release zips, `tidy::KEPT`: never
-  entered, its stale builds stay) are never touched.
+  symbolic link; `content/packs`, `target/olx` and `target/release-zips` (the
+  release zips, `tidy::KEPT`: never entered) are never touched.
   Builds of targets that no longer exist (a removed test file) are the
   newest of their key and stay until `cargo clean`. `check` runs the
   sweep first when `target/` exceeds 20 GB (`tidy::SWEEP_BYTES`, GiB; a

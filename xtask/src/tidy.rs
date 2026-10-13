@@ -9,8 +9,8 @@
 //! directory of a cargo profile under `target/`, the newest build of each
 //! artifact and removes the older ones, and in every `incremental/` the
 //! newest sessions of each crate. Only files and directories inside
-//! `target/` are removed; never `content/packs`, `target/olx`, `target/dist`
-//! (the release zips, [`KEPT`]) or anything
+//! `target/` are removed; never `content/packs`, `target/olx`,
+//! `target/release-zips` (the release zips, [`KEPT`]) or anything
 //! a symbolic link points to.
 
 use std::collections::BTreeMap;
@@ -77,9 +77,9 @@ fn first_link(_: &std::fs::Metadata, _: &mut std::collections::BTreeSet<(u64, u6
     true
 }
 
-/// Directories of `target/` the sweep never enters: `dist`, the `dist`
-/// profile's output, holds the release zips (`cargo xtask dist`).
-pub const KEPT: [&str; 1] = ["dist"];
+/// Directories of `target/` the sweep never enters: the release zips
+/// (`cargo xtask dist`, `dist::ZIP_DIR`).
+pub const KEPT: [&str; 1] = ["release-zips"];
 
 /// The cargo profile directories under `target` (`target/debug`,
 /// `target/<triple>/release`, a custom target directory's, ...): the
@@ -678,34 +678,30 @@ mod tests {
     }
 
     #[test]
-    fn never_touches_the_release_zips_directory() {
-        // `target/dist` is the `dist` profile's output and holds the zips
-        // `cargo xtask dist` wrote: kept whole, stale builds and all.
+    fn sweeps_dist_builds_but_never_the_release_zips() {
+        // `target/dist` is only the `dist` profile's build output, swept as
+        // any profile's; the zips `cargo xtask dist` writes are in
+        // `target/release-zips`, never entered (even if it looked like a profile).
         let t = tempfile::tempdir().unwrap();
         let target = t.path().join("target");
         let reg = "/r/index.crates.io-1949cf8c6b5b557f";
-        for profile in ["dist", "x86_64-pc-windows-gnu/dist"] {
+        for profile in ["dist", "x86_64-pc-windows-gnu/dist", "release-zips"] {
             let p = target.join(profile);
             std::fs::create_dir_all(p.join(".fingerprint")).unwrap();
             build(&p, "a", "0000000000000001", &[".rlib"], &format!("{reg}/a-1.0.0/src/lib.rs"), None, 0);
             build(&p, "a", "0000000000000002", &[".rlib"], &format!("{reg}/a-1.0.1/src/lib.rs"), None, 7200);
-            file(&p, "incremental/rl_game-1abc/s-old-a-x/f", 0, "x");
-            file(&p, "incremental/rl_game-1abc/s-old-a-x.lock", 0, "");
-            file(&p, "incremental/rl_game-2def/s-new-b-y/f", 7200, "x");
-            file(&p, "incremental/rl_game-2def/s-new-b-y.lock", 7200, "");
         }
-        let zip = target.join("dist/rust-liero-0.1.0-linux-x64.zip");
+        let zip = target.join("release-zips/rust-liero-0.1.0-linux-x64.zip");
         std::fs::write(&zip, "zip").unwrap();
-        assert_eq!(names(&target, profile_dirs(&target)), ["x86_64-pc-windows-gnu/dist"]);
+        assert_eq!(names(&target, profile_dirs(&target)), ["dist", "x86_64-pc-windows-gnu/dist"]);
         sweep(&target, WINDOW);
-        let dist = target.join("dist");
-        assert!(dist.join("deps/liba-0000000000000001.rlib").exists());
-        assert!(dist.join("incremental/rl_game-1abc/s-old-a-x/f").exists());
+        for profile in ["dist", "x86_64-pc-windows-gnu/dist"] {
+            let deps = target.join(profile).join("deps");
+            assert!(!deps.join("liba-0000000000000001.rlib").exists(), "{profile}");
+            assert!(deps.join("liba-0000000000000002.rlib").exists(), "{profile}");
+        }
         assert!(zip.exists());
-        // Another target's dist builds are swept as any profile's.
-        let cross = target.join("x86_64-pc-windows-gnu/dist/deps");
-        assert!(!cross.join("liba-0000000000000001.rlib").exists());
-        assert!(cross.join("liba-0000000000000002.rlib").exists());
+        assert!(target.join("release-zips/deps/liba-0000000000000001.rlib").exists());
     }
 
     #[test]

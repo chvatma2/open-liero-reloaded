@@ -31,7 +31,7 @@ All notable changes to rust-liero are recorded here. The format follows
 ### Added — release zips
 
 - `cargo xtask dist` builds portable zips for Linux and Windows,
-  `target/dist/rust-liero-<version>-<platform>.zip`: `rl-game`,
+  `target/release-zips/rust-liero-<version>-<platform>.zip`: `rl-game`,
   `rl-server`, the content, the docs and an example server config in one
   folder, to unpack and run anywhere. It unpacks and runs each zip to
   check it (`--no-verify` skips that).
