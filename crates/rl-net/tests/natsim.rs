@@ -190,6 +190,10 @@ fn a_hole_punched_link_releases_its_allocation() {
 fn a_dead_relay_ends_the_link() {
     let (mut net, client, path) = join_relayed(NatKind::PortRestricted, NatKind::Symmetric);
     assert_eq!(path, Some(Path::Relayed));
+    // Past RELEASE_AFTER: the allocation in use is kept, the link stays relayed.
+    net.run_until(Duration::from_secs(10), |_| false);
+    assert_eq!(net.connected(client), Some(Path::Relayed));
+    assert!(matches!(net.core(client).relays()[0].1, rl_net::relayed::RelayState::Allocated(_)));
     net.kill(a("198.51.100.9:3478"));
     assert!(net.run_until(Duration::from_secs(30), |n| {
         n.events(client).iter().any(|e| matches!(e, rl_net::endpoint::NetEvent::Disconnected { .. }))

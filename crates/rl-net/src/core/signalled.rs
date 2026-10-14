@@ -16,6 +16,18 @@ impl Core {
                 self.hosts.push(h);
             }
         }
+        let own = self.own_addresses();
+        self.relays.set_own(own);
+    }
+
+    /// Our own candidate addresses (base, hosts, server-reflexive, mapped):
+    /// a relay naming one as its relayed address is refused.
+    pub(super) fn own_addresses(&self) -> Vec<SocketAddr> {
+        let mut own = self.hosts.clone();
+        own.extend(self.base);
+        own.extend(self.probe.srflx());
+        own.extend(self.mapped);
+        own
     }
 
     /// STUN servers asked from this socket now and every STUN_EVERY (two answers give NatBehaviour).
@@ -37,6 +49,8 @@ impl Core {
     /// at it), or `None`.
     pub fn set_mapped(&mut self, mapped: Option<SocketAddr>) {
         self.mapped = mapped;
+        let own = self.own_addresses();
+        self.relays.set_own(own);
     }
 
     /// Our candidates now; `srflx` is the latest STUN answer (a changed

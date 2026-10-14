@@ -8,9 +8,14 @@ use std::time::{Duration, Instant};
 
 use proptest::prelude::*;
 use proptest::test_runner::Config;
-use rl_net::turn::{TurnCore, TurnLimits, TurnServer, TurnServerConfig};
+use rl_net::candidates::TurnSpec;
+use rl_net::core::{Core, CoreConfig};
+use rl_net::relayed::RelayState;
+use rl_net::turn::{TurnCore, TurnLimits, TurnOut, TurnServer, TurnServerConfig};
 use turn_client_proto::api::{Transmit, TurnClientApi, TurnConfig, TurnEvent, TurnRecvRet};
 use turn_client_proto::stun::Instant as TurnInstant;
+use turn_client_proto::types::prelude::DelayedTransmitBuild;
+use turn_client_proto::types::transmit::DelayedMessage;
 use turn_client_proto::types::{TransportType, TurnCredentials};
 use turn_client_proto::udp::TurnClientUdp;
 
@@ -29,6 +34,7 @@ fn server(limits: TurnLimits) -> TurnServer {
         user: USER.into(),
         pass: PASS.into(),
         limits,
+        allow_local: true,
     })
     .expect("a relay on 127.0.0.1")
 }
@@ -240,50 +246,285 @@ fn binding_requests_are_answered() {
     );
 }
 
-/// A core at 198.51.100.9:3478 with one allocation (relay port 49160) for
-/// a client at 203.0.113.20:50000, made in memory; the client's datagrams.
-fn allocated_core() -> (TurnCore, Vec<Vec<u8>>) {
-    let t0 = Instant::now();
-    let server: SocketAddr = "198.51.100.9:3478".parse().unwrap();
-    let client_addr: SocketAddr = "203.0.113.20:50000".parse().unwrap();
-    let mut core = TurnCore::new(server, server.ip(), USER, PASS, TurnLimits::generous(), t0);
-    let mut client =
-        TurnClientUdp::allocate(client_addr, server, TurnConfig::new(TurnCredentials::new(USER, PASS)));
-    let mut sent = Vec::new();
-    let mut out = Vec::new();
-    for ms in 0..500u64 {
-        let now = t0 + Duration::from_millis(ms);
-        let t = TurnInstant::from_nanos(ms as i64 * 1_000_000);
-        let _ = client.poll(t);
-        while let Some(tx) = client.poll_transmit(t) {
-            sent.push(tx.data.as_ref().to_vec());
-            core.receive(client_addr, tx.data.as_ref(), now);
-        }
-        for req in core.take_allocation_requests() {
-            core.allocated(req, Some(49160), now);
-        }
-        core.poll(now, &mut out);
-        for o in out.drain(..) {
-            let _ =
-                client.recv(Transmit::new(o.bytes.as_slice(), TransportType::Udp, server, client_addr), t);
-        }
-        while let Some(e) = client.poll_event() {
-            if let TurnEvent::AllocationCreated(..) = e {
-                let peer: SocketAddr = "203.0.113.30:40000".parse().unwrap();
-                client.create_permission(TransportType::Udp, peer.ip(), t).unwrap();
-                client.bind_channel(TransportType::Udp, peer, t).unwrap();
-            }
+#[test]
+fn a_relay_listens_on_ipv4_only() {
+    let cfg = TurnServerConfig {
+        listen: "[::1]:0".parse().unwrap(),
+        public: local(),
+        ports: 0..=0,
+        user: USER.into(),
+        pass: PASS.into(),
+        limits: TurnLimits::generous(),
+        allow_local: true,
+    };
+    let err = TurnServer::start(cfg).err().expect("refused");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+fn a(s: &str) -> SocketAddr {
+    s.parse().unwrap()
+}
+
+/// A `TurnCore` and a sans-IO `turn_client_proto` client on an in-memory
+/// wire, a 1 ms virtual clock; relay ports from 49160 up.
+struct Wire {
+    core: TurnCore,
+    client: TurnClientUdp,
+    server: SocketAddr,
+    me: SocketAddr,
+    t0: Instant,
+    ms: u64,
+    next_port: u16,
+    events: Vec<TurnEvent>,
+    /// The client's datagrams, and data relayed to the client and to peers.
+    sent: Vec<Vec<u8>>,
+    received: Vec<(SocketAddr, Vec<u8>)>,
+    to_peers: Vec<TurnOut>,
+}
+
+impl Wire {
+    fn new(server: &str, me: &str, limits: TurnLimits, allow_local: bool) -> Wire {
+        let (server, me) = (a(server), a(me));
+        let t0 = Instant::now();
+        let mut core = TurnCore::new(server, server.ip(), USER, PASS, limits, t0);
+        core.set_allow_local(allow_local);
+        let client = TurnClientUdp::allocate(me, server, TurnConfig::new(TurnCredentials::new(USER, PASS)));
+        Wire {
+            core,
+            client,
+            server,
+            me,
+            t0,
+            ms: 0,
+            next_port: 49160,
+            events: Vec::new(),
+            sent: Vec::new(),
+            received: Vec::new(),
+            to_peers: Vec::new(),
         }
     }
-    assert_eq!(core.allocations(), 1);
-    (core, sent)
+
+    fn now(&self) -> Instant {
+        self.t0 + Duration::from_millis(self.ms)
+    }
+
+    fn t(&self) -> TurnInstant {
+        TurnInstant::from_nanos(self.ms as i64 * 1_000_000)
+    }
+
+    /// The client's datagram to the core now.
+    fn deliver(&mut self, bytes: Vec<u8>) {
+        let now = self.now();
+        self.core.receive(self.me, &bytes, now);
+        self.sent.push(bytes);
+    }
+
+    fn step(&mut self) {
+        self.ms += 1;
+        let (now, t) = (self.now(), self.t());
+        let _ = self.client.poll(t);
+        while let Some(tx) = self.client.poll_transmit(t) {
+            self.deliver(tx.data.as_ref().to_vec());
+        }
+        for req in self.core.take_allocation_requests() {
+            self.core.allocated(req, Some(self.next_port), now);
+            self.next_port += 1;
+        }
+        let mut out = Vec::new();
+        self.core.poll(now, &mut out);
+        for o in out {
+            if o.to == self.me {
+                let ret = self
+                    .client
+                    .recv(Transmit::new(o.bytes.as_slice(), TransportType::Udp, self.server, self.me), t);
+                if let TurnRecvRet::PeerData(d) = ret {
+                    self.received.push((d.peer, d.data().to_vec()));
+                }
+            } else {
+                self.to_peers.push(o);
+            }
+        }
+        while let Some(e) = self.client.poll_event() {
+            self.events.push(e);
+        }
+    }
+
+    /// Steps until `done` (at most 5 virtual seconds).
+    fn until(&mut self, mut done: impl FnMut(&Wire) -> bool) -> bool {
+        for _ in 0..5000 {
+            if done(self) {
+                return true;
+            }
+            self.step();
+        }
+        done(self)
+    }
+
+    fn allocate(&mut self) -> SocketAddr {
+        assert!(self.until(|w| w.events.iter().any(|e| matches!(e, TurnEvent::AllocationCreated(..)))));
+        self.client.relayed_addresses().next().unwrap().1
+    }
+
+    /// Asks for a permission to `ip`: whether the relay granted it.
+    fn permit(&mut self, ip: &str) -> bool {
+        let ip: IpAddr = ip.parse().unwrap();
+        self.client.create_permission(TransportType::Udp, ip, self.t()).unwrap();
+        assert!(self.until(|w| w.events.iter().any(|e| matches!(e,
+            TurnEvent::PermissionCreated(_, i) | TurnEvent::PermissionCreateFailed(_, i) if *i == ip))));
+        self.events.iter().any(|e| matches!(e, TurnEvent::PermissionCreated(_, i) if *i == ip))
+    }
+
+    /// A Send indication to `peer`, built by hand (the client sends only to permitted peers).
+    fn send_indication(&mut self, peer: SocketAddr, bytes: &[u8]) {
+        let msg = DelayedMessage::for_server(peer, bytes).build();
+        self.deliver(msg);
+    }
+}
+
+#[test]
+fn a_public_relay_refuses_local_peers() {
+    let mut w = Wire::new("11.0.0.9:3478", "11.0.0.20:50000", TurnLimits::generous(), false);
+    w.allocate();
+    for ip in ["127.0.0.1", "192.168.1.5", "169.254.1.1", "224.0.0.1", "10.1.2.3", "11.0.0.9"] {
+        assert!(!w.permit(ip), "{ip} refused");
+    }
+    assert!(w.permit("8.8.4.4"), "a global peer is permitted");
+    // A channel to a local peer is refused too, and a Send indication to one dropped.
+    let lan = a("192.168.1.5:9");
+    w.client.bind_channel(TransportType::Udp, lan, w.t()).unwrap();
+    assert!(
+        w.until(|w| w.events.iter().any(|e| matches!(e, TurnEvent::ChannelCreateFailed(_, p) if *p == lan)))
+    );
+    w.send_indication(lan, b"to the LAN");
+    w.send_indication(a("127.0.0.53:53"), b"to loopback");
+    w.step();
+    assert!(w.to_peers.is_empty(), "nothing reaches a local address: {:?}", w.to_peers);
+}
+
+#[test]
+fn a_stranger_cannot_drain_a_players_down_budget() {
+    let mut w = Wire::new("11.0.0.9:3478", "11.0.0.20:50000", TurnLimits::default(), false);
+    let relayed = w.allocate();
+    assert!(w.permit("8.8.4.4"));
+    let now = w.now();
+    for _ in 0..200 {
+        w.core.receive_relayed(relayed.port(), a("9.9.9.9:1"), &[1u8; 1024], now);
+    }
+    w.core.receive_relayed(relayed.port(), a("8.8.4.4:5000"), b"from the peer", now);
+    w.step();
+    assert_eq!(w.received, vec![(a("8.8.4.4:5000"), b"from the peer".to_vec())]);
+    assert_eq!(w.core.dropped(), 0, "a stranger's datagrams are not over a limit, just not relayed");
+}
+
+#[test]
+fn an_allocation_holds_at_most_16_permissions() {
+    let mut w = Wire::new("11.0.0.9:3478", "11.0.0.20:50000", TurnLimits::generous(), false);
+    w.allocate();
+    for i in 1..=16 {
+        assert!(w.permit(&format!("8.8.8.{i}")), "permission {i}");
+    }
+    assert!(!w.permit("8.8.8.17"), "a 17th is refused");
+}
+
+#[test]
+fn spoofed_sources_and_oversized_requests_cost_nothing() {
+    let mut w = Wire::new("11.0.0.9:3478", "11.0.0.20:50000", TurnLimits::generous(), false);
+    w.step();
+    let initial = w.sent[0].clone();
+    let now = w.now();
+    let mut out = Vec::new();
+    for i in 0..10_000u32 {
+        let from = SocketAddr::new(IpAddr::V4((0x0b00_0000 + i).into()), 40000);
+        w.core.receive(from, &initial, now);
+        w.core.poll(now, &mut out);
+    }
+    assert_eq!(out.len(), 10_000, "each is answered (401)");
+    assert!(w.core.tracked_ips() <= 4096, "{} IPs tracked", w.core.tracked_ips());
+    assert_eq!(w.core.allocations(), 0);
+    // A request over 1500 bytes is dropped unread.
+    let mut big = initial.clone();
+    let pad = 1600usize;
+    big.extend_from_slice(&0x8022u16.to_be_bytes());
+    big.extend_from_slice(&(pad as u16).to_be_bytes());
+    big.resize(big.len() + pad, b'x');
+    let len = (big.len() - 20) as u16;
+    big[2..4].copy_from_slice(&len.to_be_bytes());
+    let dropped = w.core.dropped();
+    w.core.receive(a("11.0.0.21:1"), &big, now);
+    w.core.poll(now, &mut out);
+    assert_eq!(out.len(), 10_000, "no answer");
+    assert_eq!(w.core.dropped(), dropped + 1);
+}
+
+/// A client `Core` at `base` allocating on a relay that claims `relayed_ip`
+/// and hands out port `port`; the relay's state once settled.
+fn relay_claiming(base: &str, relayed_ip: &str, port: u16) -> (RelayState, Vec<SocketAddr>) {
+    let (base, server) = (a(base), a("11.0.0.9:3478"));
+    let t0 = Instant::now();
+    let mut turn = TurnCore::new(server, relayed_ip.parse().unwrap(), USER, PASS, TurnLimits::generous(), t0);
+    turn.set_allow_local(true);
+    let mut core = Core::new(CoreConfig::client(), t0);
+    core.set_base(base, vec![base]);
+    core.allocate(&[TurnSpec { addr: server, user: USER.into(), pass: PASS.into() }], t0);
+    for ms in 0..3000u64 {
+        let now = t0 + Duration::from_millis(ms);
+        let mut out = Vec::new();
+        core.poll(now, &mut out, &mut Vec::new());
+        for d in out {
+            turn.receive(base, &d.bytes, now);
+        }
+        for req in turn.take_allocation_requests() {
+            turn.allocated(req, Some(port), now);
+        }
+        let mut outs = Vec::new();
+        turn.poll(now, &mut outs);
+        for o in outs {
+            core.receive(server, &o.bytes, now);
+        }
+        if core.relays()[0].1 != RelayState::Allocating {
+            break;
+        }
+    }
+    (core.relays()[0].1.clone(), core.local().relayed)
+}
+
+#[test]
+fn a_relay_naming_our_own_or_a_local_address_is_refused() {
+    let (state, relayed) = relay_claiming("11.0.0.20:50000", "11.0.0.20", 50000);
+    assert!(matches!(state, RelayState::Failed(_)), "our base as the relayed address: {state:?}");
+    assert!(relayed.is_empty());
+    let (state, _) = relay_claiming("11.0.0.20:50000", "10.0.0.9", 49160);
+    assert!(matches!(state, RelayState::Failed(_)), "a private relayed address: {state:?}");
+    let (state, relayed) = relay_claiming("11.0.0.20:50000", "11.0.0.9", 49160);
+    assert_eq!(state, RelayState::Allocated(a("11.0.0.9:49160")), "an honest relay");
+    assert_eq!(relayed, vec![a("11.0.0.9:49160")]);
+}
+
+/// A core with one allocation for the client at 203.0.113.20:50000 (local
+/// addresses allowed), a permission and a channel to 203.0.113.30:40000,
+/// data sent both ways; the client's datagrams.
+fn allocated_core() -> (TurnCore, Vec<Vec<u8>>) {
+    let mut w = Wire::new("198.51.100.9:3478", "203.0.113.20:50000", TurnLimits::generous(), true);
+    w.allocate();
+    let peer = a("203.0.113.30:40000");
+    assert!(w.permit("203.0.113.30"));
+    w.send_indication(peer, b"unbound");
+    w.client.bind_channel(TransportType::Udp, peer, w.t()).unwrap();
+    assert!(w.until(|w| w.events.iter().any(|e| matches!(e, TurnEvent::ChannelCreated(..)))));
+    let tx = w.client.send_to(TransportType::Udp, peer, b"bound".as_slice(), w.t()).unwrap().unwrap().build();
+    w.deliver(tx.data);
+    w.step();
+    assert_eq!(w.to_peers.len(), 2, "both relayed");
+    assert_eq!(w.core.allocations(), 1);
+    (w.core, w.sent)
 }
 
 proptest! {
     #![proptest_config(Config { cases: 256, failure_persistence: None, ..Config::default() })]
 
-    /// Garbage, and the client's own datagrams damaged, to the listening
-    /// port and the relay port, from the client, a peer and strangers.
+    /// Garbage, and the client's own datagrams (requests, a Send
+    /// indication, ChannelData) damaged, to the listening port and the
+    /// relay port, from the client, a peer and strangers.
     #[test]
     fn arbitrary_datagrams_never_panic_the_server(
         inputs in proptest::collection::vec(
@@ -293,13 +534,13 @@ proptest! {
     ) {
         let (mut core, sent) = allocated_core();
         let t0 = Instant::now();
-        let client: SocketAddr = "203.0.113.20:50000".parse().unwrap();
-        let peer: SocketAddr = "203.0.113.30:40000".parse().unwrap();
-        let stranger: SocketAddr = "192.0.2.77:1234".parse().unwrap();
+        let client = a("203.0.113.20:50000");
+        let peer = a("203.0.113.30:40000");
+        let stranger = a("192.0.2.77:1234");
         let mut out = Vec::new();
         for (i, (kind, which, at, byte, junk)) in inputs.into_iter().enumerate() {
-            let now = t0 + Duration::from_millis(600 + i as u64 * 7);
-            // A real datagram with one byte changed and junk appended, or junk alone.
+            let now = t0 + Duration::from_millis(6000 + i as u64 * 7);
+            // A real datagram with one byte changed (and junk appended), or junk alone.
             let mut bytes = sent[which.index(sent.len())].clone();
             let at = at.index(bytes.len());
             bytes[at] = byte;
@@ -310,7 +551,7 @@ proptest! {
                 }
                 1 => core.receive(stranger, &junk, now),
                 2 => core.receive_relayed(49160, peer, &junk, now),
-                _ => core.receive_relayed(49161, stranger, &bytes, now),
+                _ => core.receive(client, &bytes, now),
             }
             core.poll(now, &mut out);
             for req in core.take_allocation_requests() {
@@ -320,6 +561,7 @@ proptest! {
         }
         // Past every lifetime: the allocations end without a panic.
         core.poll(t0 + Duration::from_secs(4000), &mut out);
+        prop_assert_eq!(core.allocations(), 0);
         let _ = core.released();
     }
 }

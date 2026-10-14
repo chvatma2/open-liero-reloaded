@@ -1,42 +1,71 @@
-//! TURN relays (decision N52, spec §5.3): the sans-IO relay core
-//! ([`TurnCore`], wrapping `turn_server_proto`'s UDP server) with its
-//! limits per client IP, and its socket driver ([`TurnServer`], a thread
-//! with the listening socket and one UDP socket per allocation).
+//! TURN relays (decision N52, spec §5.3; ruling TR-2): our own sans-IO
+//! relay core ([`TurnCore`], the UDP subset of RFC 8656 that our client
+//! and browsers' WebRTC use) with its limits per client IP, and its socket
+//! driver ([`TurnServer`], `driver.rs`).
 //!
-//! A volunteer relay must not become a free general proxy: every client
-//! IP gets a few allocations and about 32 KiB/s each way. Over a limit the
-//! datagram is dropped and counted, never the client (a relay has no
-//! session to drop). A relay also answers STUN binding requests (itself:
-//! turn-server-proto 0.7.2 addresses its binding answer to its own
-//! listening address).
+//! A volunteer relay must not become a free general proxy, nor a way into
+//! its operator's network:
+//! - every client IP gets a few allocations and about 32 KiB/s each way;
+//!   over a limit the datagram is dropped and counted, never the client
+//!   (a relay has no session to drop);
+//! - peers must be global addresses, not the relay's own (TR-1), unless
+//!   `allow_local` (N62: office and LAN setups, tests);
+//! - every table is bounded and indexed; an unauthenticated source costs
+//!   no memory (a stateless nonce), and only request sources get an IP
+//!   entry.
+//!
+//! Supported: Binding; Allocate (REQUESTED-TRANSPORT UDP, LIFETIME,
+//! DONT-FRAGMENT accepted and ignored); Refresh (0 deletes); CreatePermission;
+//! ChannelBind; Send and Data indications; ChannelData. Long-term
+//! credentials (realm [`REALM`], MESSAGE-INTEGRITY with HMAC-SHA1; our nonce
+//! does not offer RFC 8489's SHA-256 upgrade, so clients use SHA-1).
 
-use std::collections::BTreeMap;
-use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
-use std::ops::RangeInclusive;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
+use std::collections::{BTreeMap, BTreeSet};
+use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
-use rl_proto::stun::{binding_request_transaction, binding_response};
-use turn_server_proto::api::{SocketAllocateError, Transmit, TurnServerApi, TurnServerPollRet};
-use turn_server_proto::server::TurnServer as Proto;
-use turn_server_proto::stun::Instant as ProtoInstant;
-use turn_server_proto::types::prelude::DelayedTransmitBuild;
-use turn_server_proto::types::{AddressFamily, TransportType};
+use hmac::{Hmac, KeyInit, Mac};
+use md5::{Digest, Md5};
+use rl_proto::is_global;
+use sha1::Sha1;
+
+use self::msg::{Builder, Class, Msg};
+
+mod driver;
+mod msg;
+
+pub use driver::{TurnServer, TurnServerConfig, TurnStats};
 
 /// The realm of every rust-liero relay (N52: the credentials are public).
 pub const REALM: &str = "rust-liero";
 
 /// At most this many client IPs are tracked; a new one evicts the one
-/// idle longest (holding no allocation, when one exists).
+/// idle longest among those holding no allocation.
 const MAX_IPS: usize = 4096;
 /// A token bucket holds this many seconds of its rate.
 const BURST_SECS: u128 = 2;
 const NANOS: u128 = 1_000_000_000;
-/// One library poll loop's bound (it returns one action at a time).
-const MAX_ACTIONS: usize = 1024;
+/// A request (anything but data) above this is dropped unread.
+const MAX_REQUEST: usize = 1500;
+/// Per allocation.
+const MAX_PERMISSIONS: usize = 16;
+const MAX_CHANNELS: usize = 16;
+/// XOR-PEER-ADDRESS attributes one CreatePermission may carry.
+const MAX_PEERS_PER_REQUEST: usize = 8;
+/// RFC 8656 §2, §9, §12: lifetimes.
+const PERMISSION_LIFETIME: Duration = Duration::from_secs(300);
+const CHANNEL_LIFETIME: Duration = Duration::from_secs(600);
+const DEFAULT_LIFETIME: u32 = 600;
+const MAX_LIFETIME: u32 = 3600;
+/// A nonce is valid in the period it was made in and the next.
+const NONCE_PERIOD: u64 = 600;
+/// The channel numbers RFC 5766 allows (RFC 8656 narrows them to 0x4fff;
+/// clients built on 5766 use the whole range).
+const CHANNELS: std::ops::RangeInclusive<u16> = 0x4000..=0x7fff;
+/// Attributes every authenticated request may carry (USERNAME, MESSAGE-
+/// INTEGRITY, REALM, NONCE, MESSAGE-INTEGRITY-SHA256, PASSWORD-ALGORITHM,
+/// USERHASH).
+const AUTH_ATTRIBUTES: [u16; 7] = [0x0006, 0x0008, 0x0014, 0x0015, 0x001c, 0x001d, 0x001e];
 
 /// What a relay allows (N52).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,46 +161,150 @@ struct IpState {
     last: Instant,
 }
 
-/// An allocation the library asked for, waiting for the driver's port.
-struct Asked {
-    transport: TransportType,
-    listen: SocketAddr,
-    client: SocketAddr,
-    allocation_transport: TransportType,
-    family: AddressFamily,
+/// The client IPs, and those holding no allocation by when they were last
+/// seen (the eviction order).
+#[derive(Default)]
+struct Ips {
+    states: BTreeMap<IpAddr, IpState>,
+    idle: BTreeSet<(Instant, IpAddr)>,
 }
 
-/// The relay without sockets: `turn_server_proto`'s UDP server and the
-/// limits per client IP (N52).
+impl Ips {
+    /// The state of request source `ip`, seen `now`: made (evicting the
+    /// longest idle one when full) if new; `None` when every tracked IP
+    /// holds an allocation.
+    fn touch(&mut self, ip: IpAddr, limits: &TurnLimits, now: Instant) -> Option<&mut IpState> {
+        if !self.states.contains_key(&ip) {
+            if self.states.len() >= MAX_IPS {
+                let (_, oldest) = self.idle.pop_first()?;
+                self.states.remove(&oldest);
+            }
+            self.states.insert(
+                ip,
+                IpState {
+                    allocations: 0,
+                    up: Bucket::full(limits.per_ip_bytes_per_s, now),
+                    down: Bucket::full(limits.per_ip_bytes_per_s, now),
+                    requests: Bucket::full(limits.per_ip_requests_per_s, now),
+                    last: now,
+                },
+            );
+            self.idle.insert((now, ip));
+        }
+        let state = self.states.get_mut(&ip)?;
+        if state.last < now {
+            if state.allocations == 0 {
+                self.idle.remove(&(state.last, ip));
+                self.idle.insert((now, ip));
+            }
+            state.last = now;
+        }
+        Some(state)
+    }
+
+    /// One allocation more (or less) for `ip`.
+    fn count(&mut self, ip: IpAddr, more: bool) {
+        let Some(state) = self.states.get_mut(&ip) else { return };
+        if more {
+            if state.allocations == 0 {
+                self.idle.remove(&(state.last, ip));
+            }
+            state.allocations += 1;
+        } else if state.allocations > 0 {
+            state.allocations -= 1;
+            if state.allocations == 0 {
+                self.idle.insert((state.last, ip));
+            }
+        }
+    }
+}
+
+/// An allocation waiting for the driver's port.
+struct Pending {
+    client: SocketAddr,
+    transaction: [u8; 12],
+    lifetime: u32,
+}
+
+/// A bound allocation of one client 5-tuple.
+struct Allocation {
+    port: u16,
+    /// The Allocate that made it (a retransmission gets the same answer).
+    transaction: [u8; 12],
+    lifetime: u32,
+    expires: Instant,
+    /// Peer IPs and when their permission ends.
+    permissions: BTreeMap<IpAddr, Instant>,
+    /// Channel numbers, their peers and when they end; and back.
+    channels: BTreeMap<u16, (SocketAddr, Instant)>,
+    peers: BTreeMap<SocketAddr, u16>,
+}
+
+impl Allocation {
+    fn prune(&mut self, now: Instant) {
+        self.permissions.retain(|_, until| *until > now);
+        let peers = &mut self.peers;
+        self.channels.retain(|_, (peer, until)| {
+            let keep = *until > now;
+            if !keep {
+                peers.remove(peer);
+            }
+            keep
+        });
+    }
+
+    fn permitted(&self, ip: IpAddr, now: Instant) -> bool {
+        self.permissions.get(&ip).is_some_and(|until| *until > now)
+    }
+}
+
+/// An error answer: code and reason (RFC 8489 §14.8, RFC 8656 §18).
+type Refusal = (u16, &'static str);
+const BAD_REQUEST: Refusal = (400, "Bad Request");
+const UNAUTHORIZED: Refusal = (401, "Unauthorized");
+const FORBIDDEN: Refusal = (403, "Forbidden");
+const ALLOCATION_MISMATCH: Refusal = (437, "Allocation Mismatch");
+const STALE_NONCE: Refusal = (438, "Stale Nonce");
+const FAMILY_NOT_SUPPORTED: Refusal = (440, "Address Family not Supported");
+const UNSUPPORTED_TRANSPORT: Refusal = (442, "Unsupported Transport Protocol");
+const PEER_FAMILY_MISMATCH: Refusal = (443, "Peer Address Family Mismatch");
+const QUOTA_REACHED: Refusal = (486, "Allocation Quota Reached");
+const INSUFFICIENT_CAPACITY: Refusal = (508, "Insufficient Capacity");
+
+/// The relay without sockets (RFC 8656 over UDP): allocations, their
+/// permissions and channels, and the limits per client IP (N52).
 pub struct TurnCore {
-    proto: Proto,
     listen: SocketAddr,
     public: IpAddr,
+    user: String,
+    /// The long-term key, MD5(user ":" realm ":" pass) (RFC 8489 §9.2.2).
+    key: [u8; 16],
     limits: TurnLimits,
-    /// The library's time zero.
+    allow_local: bool,
+    /// Signs nonces (stateless: an HMAC of the source and the period).
+    secret: [u8; 32],
     epoch: Instant,
-    ips: BTreeMap<IpAddr, IpState>,
-    /// Admitted allocations not yet handed to the driver, and handed ones
-    /// waiting for its `allocated`.
+    ips: Ips,
+    allocations: BTreeMap<SocketAddr, Allocation>,
+    by_port: BTreeMap<u16, SocketAddr>,
+    expiries: BTreeSet<(Instant, SocketAddr)>,
+    pending: BTreeMap<u64, Pending>,
+    pending_clients: BTreeMap<SocketAddr, u64>,
     requests: Vec<AllocationRequest>,
-    asked: BTreeMap<u64, Asked>,
     next_id: u64,
-    /// Relay ports and their client's IP.
-    relays: BTreeMap<u16, IpAddr>,
+    /// Data indications' transaction ids.
+    next_indication: u64,
     released: Vec<u16>,
     out: Vec<TurnOut>,
     dropped: u64,
     relayed_bytes: u64,
 }
 
-/// Whether a datagram to the listening port is relayed data (ChannelData,
-/// or a STUN Send indication), not a request.
-fn is_data(bytes: &[u8]) -> bool {
-    bytes.first().is_some_and(|b| b & 0xc0 == 0x40) || bytes.get(..2) == Some(&[0x00, 0x16])
-}
-
 impl TurnCore {
     /// Listens on `listen`; relayed addresses are `public` with the port the driver allocated.
+    /// Peers must be global and not the relay's own addresses
+    /// ([`TurnCore::set_allow_local`] lifts it); the nonce key comes from
+    /// the system's randomness ([`TurnCore::set_secret`] sets it).
     pub fn new(
         listen: SocketAddr,
         public: IpAddr,
@@ -180,19 +313,34 @@ impl TurnCore {
         limits: TurnLimits,
         now: Instant,
     ) -> TurnCore {
-        let mut proto = Proto::new(TransportType::Udp, listen, REALM.to_owned());
-        proto.add_user(user.to_owned(), pass.to_owned());
+        let mut key = [0u8; 16];
+        key.copy_from_slice(&Md5::digest(format!("{user}:{REALM}:{pass}").as_bytes()));
+        let secret = crate::random_bytes::<32>().unwrap_or_else(|_| {
+            // Without system randomness: the clock, unpredictable enough
+            // for nonces that only spare the relay a table.
+            let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+            let mut s = [0u8; 32];
+            s[..16].copy_from_slice(&t.as_nanos().to_le_bytes());
+            s
+        });
         TurnCore {
-            proto,
             listen,
             public,
+            user: user.to_owned(),
+            key,
             limits,
+            allow_local: false,
+            secret,
             epoch: now,
-            ips: BTreeMap::new(),
+            ips: Ips::default(),
+            allocations: BTreeMap::new(),
+            by_port: BTreeMap::new(),
+            expiries: BTreeSet::new(),
+            pending: BTreeMap::new(),
+            pending_clients: BTreeMap::new(),
             requests: Vec::new(),
-            asked: BTreeMap::new(),
             next_id: 0,
-            relays: BTreeMap::new(),
+            next_indication: 0,
             released: Vec::new(),
             out: Vec::new(),
             dropped: 0,
@@ -200,164 +348,398 @@ impl TurnCore {
         }
     }
 
-    /// The library's time for `now`.
-    fn time(&self, now: Instant) -> ProtoInstant {
-        let nanos = now.saturating_duration_since(self.epoch).as_nanos();
-        ProtoInstant::from_nanos(i64::try_from(nanos).unwrap_or(i64::MAX))
+    /// N62: relay to private, loopback and the relay's own addresses too
+    /// (office and LAN setups, tests).
+    pub fn set_allow_local(&mut self, allow: bool) {
+        self.allow_local = allow;
     }
 
-    /// The state of client IP `ip`, made (and the table kept bounded) if new.
-    fn ip(&mut self, ip: IpAddr, now: Instant) -> &mut IpState {
-        if !self.ips.contains_key(&ip) && self.ips.len() >= MAX_IPS {
-            let idle = |s: &IpState| (s.allocations > 0, s.last);
-            if let Some(oldest) = self.ips.iter().min_by_key(|(_, s)| idle(s)).map(|(&k, _)| k) {
-                self.ips.remove(&oldest);
-            }
+    /// The nonce key (a seeded one keeps a simulation's bytes repeatable).
+    pub fn set_secret(&mut self, secret: [u8; 32]) {
+        self.secret = secret;
+    }
+
+    /// Whether a peer at `ip` is refused (TR-1): IPv4 only, global and not
+    /// ours, unless `allow_local`.
+    fn forbidden(&self, ip: IpAddr) -> bool {
+        if ip.is_unspecified() {
+            return true;
         }
-        let l = self.limits;
-        let state = self.ips.entry(ip).or_insert_with(|| IpState {
-            allocations: 0,
-            up: Bucket::full(l.per_ip_bytes_per_s, now),
-            down: Bucket::full(l.per_ip_bytes_per_s, now),
-            requests: Bucket::full(l.per_ip_requests_per_s, now),
-            last: now,
-        });
-        state.last = state.last.max(now);
-        state
+        !self.allow_local && (!is_global(ip) || ip == self.public || ip == self.listen.ip())
+    }
+
+    fn push(&mut self, from_port: u16, to: SocketAddr, bytes: Vec<u8>) {
+        // Never to ourselves.
+        if to != self.listen && !to.ip().is_unspecified() {
+            self.out.push(TurnOut { from_port, to, bytes });
+        }
+    }
+
+    /// The nonce for `from` in period `period`: the period and an HMAC of
+    /// the source and the period, in hex.
+    fn nonce(&self, from: SocketAddr, period: u64) -> String {
+        let mut mac = Hmac::<Sha1>::new_from_slice(&self.secret).expect("HMAC takes any key");
+        match from.ip() {
+            IpAddr::V4(a) => mac.update(&a.octets()),
+            IpAddr::V6(a) => mac.update(&a.octets()),
+        }
+        mac.update(&from.port().to_be_bytes());
+        mac.update(&period.to_be_bytes());
+        let tag = mac.finalize().into_bytes();
+        let mut s = format!("{period:016x}");
+        for b in &tag[..10] {
+            s.push_str(&format!("{b:02x}"));
+        }
+        s
+    }
+
+    fn period(&self, now: Instant) -> u64 {
+        now.saturating_duration_since(self.epoch).as_secs() / NONCE_PERIOD
+    }
+
+    fn nonce_ok(&self, nonce: &[u8], from: SocketAddr, now: Instant) -> bool {
+        let current = self.period(now);
+        let Some(period) = nonce
+            .get(..16)
+            .and_then(|p| std::str::from_utf8(p).ok())
+            .and_then(|p| u64::from_str_radix(p, 16).ok())
+        else {
+            return false;
+        };
+        (period == current || period + 1 == current) && self.nonce(from, period).as_bytes() == nonce
+    }
+
+    /// An error answer to request `m` from `from`: signed when the request
+    /// was authenticated; 401 and 438 carry REALM and a fresh NONCE.
+    fn refuse(&mut self, m: &Msg<'_>, from: SocketAddr, (code, reason): Refusal, signed: bool, now: Instant) {
+        let mut b = Builder::new(Class::Error, m.method, m.transaction).error(code, reason);
+        if code == 401 || code == 438 {
+            let nonce = self.nonce(from, self.period(now));
+            b = b.attr(msg::REALM, REALM.as_bytes()).attr(msg::NONCE, nonce.as_bytes());
+        }
+        if signed {
+            b = b.integrity(&self.key);
+        }
+        let bytes = b.fingerprint().finish();
+        self.push(self.listen.port(), from, bytes);
+    }
+
+    /// A signed success answer to `m` with `attrs` added.
+    fn answer(&mut self, m: &Msg<'_>, from: SocketAddr, attrs: impl FnOnce(Builder) -> Builder) {
+        let b = attrs(Builder::new(Class::Success, m.method, m.transaction));
+        let bytes = b.integrity(&self.key).fingerprint().finish();
+        self.push(self.listen.port(), from, bytes);
     }
 
     /// A datagram to the listening port.
     pub fn receive(&mut self, from: SocketAddr, bytes: &[u8], now: Instant) {
-        let limits = self.limits;
-        let data = is_data(bytes);
-        let state = self.ip(from.ip(), now);
-        if !data && !state.requests.take(limits.per_ip_requests_per_s, 1, now) {
+        if bytes.first().is_some_and(|b| b & 0xc0 == 0x40) {
+            return self.client_data(from, bytes, now);
+        }
+        let send = bytes.get(..2) == Some(&[0x00, 0x16]);
+        if !send && bytes.len() > MAX_REQUEST {
             self.dropped += 1;
             return;
         }
-        if let Some(transaction) = binding_request_transaction(bytes) {
-            // The library's answer would go to the listening address itself.
-            let bytes = binding_response(&transaction, from, true);
-            self.out.push(TurnOut { from_port: self.listen.port(), to: from, bytes });
-            return;
-        }
-        let t = self.time(now);
-        if let Some(build) = self.proto.recv(Transmit::new(bytes, TransportType::Udp, from, self.listen), t) {
-            if build.from != self.listen {
-                // Relayed to a peer: the client's upward bytes.
-                let payload = build.data.len() as u64;
-                let state = self.ip(from.ip(), now);
-                if !state.up.take(limits.per_ip_bytes_per_s, payload, now) {
+        let Some(m) = Msg::parse(bytes) else { return };
+        match m.class {
+            Class::Indication if m.method == msg::SEND => self.send_indication(from, &m, now),
+            Class::Request => {
+                let limits = self.limits;
+                let admitted = self
+                    .ips
+                    .touch(from.ip(), &limits, now)
+                    .is_some_and(|s| s.requests.take(limits.per_ip_requests_per_s, 1, now));
+                if !admitted {
                     self.dropped += 1;
                     return;
                 }
-                self.relayed_bytes += payload;
+                self.request(from, &m, now);
             }
-            let tx = build.build();
-            self.out.push(TurnOut { from_port: tx.from.port(), to: tx.to, bytes: tx.data });
+            _ => {}
         }
-        self.drain(now);
+    }
+
+    fn request(&mut self, from: SocketAddr, m: &Msg<'_>, now: Instant) {
+        let known: &[u16] = match m.method {
+            msg::BINDING => {
+                let bytes = Builder::new(Class::Success, msg::BINDING, m.transaction)
+                    .xor_addr(msg::XOR_MAPPED_ADDRESS, from)
+                    .fingerprint()
+                    .finish();
+                return self.push(self.listen.port(), from, bytes);
+            }
+            msg::ALLOCATE => {
+                &[msg::REQUESTED_TRANSPORT, msg::LIFETIME, msg::DONT_FRAGMENT, msg::REQUESTED_ADDRESS_FAMILY]
+            }
+            msg::REFRESH => &[msg::LIFETIME, msg::REQUESTED_ADDRESS_FAMILY],
+            msg::CREATE_PERMISSION => &[msg::XOR_PEER_ADDRESS],
+            msg::CHANNEL_BIND => &[msg::CHANNEL_NUMBER, msg::XOR_PEER_ADDRESS],
+            _ => return,
+        };
+        // Long-term credentials (RFC 8489 §9.2.4).
+        if !m.has_integrity() {
+            return self.refuse(m, from, UNAUTHORIZED, false, now);
+        }
+        let (Some(user), Some(realm), Some(nonce)) =
+            (m.attr(msg::USERNAME), m.attr(msg::REALM), m.attr(msg::NONCE))
+        else {
+            return self.refuse(m, from, BAD_REQUEST, false, now);
+        };
+        if user != self.user.as_bytes() || realm != REALM.as_bytes() || !m.integrity_ok(&self.key) {
+            return self.refuse(m, from, UNAUTHORIZED, false, now);
+        }
+        if !self.nonce_ok(nonce, from, now) {
+            return self.refuse(m, from, STALE_NONCE, false, now);
+        }
+        let unknown: Vec<u16> =
+            m.types().filter(|t| *t < 0x8000 && !known.contains(t) && !AUTH_ATTRIBUTES.contains(t)).collect();
+        if !unknown.is_empty() {
+            let list: Vec<u8> = unknown.iter().flat_map(|t| t.to_be_bytes()).collect();
+            let bytes = Builder::new(Class::Error, m.method, m.transaction)
+                .error(420, "Unknown Attribute")
+                .attr(msg::UNKNOWN_ATTRIBUTES, &list)
+                .integrity(&self.key)
+                .fingerprint()
+                .finish();
+            return self.push(self.listen.port(), from, bytes);
+        }
+        let result = match m.method {
+            msg::ALLOCATE => self.allocate(from, m, now),
+            msg::REFRESH => self.refresh(from, m, now),
+            msg::CREATE_PERMISSION => self.create_permission(from, m, now),
+            _ => self.channel_bind(from, m, now),
+        };
+        if let Err(refusal) = result {
+            self.refuse(m, from, refusal, true, now);
+        }
+    }
+
+    fn allocate(&mut self, from: SocketAddr, m: &Msg<'_>, now: Instant) -> Result<(), Refusal> {
+        if let Some(a) = self.allocations.get(&from) {
+            if a.transaction != m.transaction {
+                return Err(ALLOCATION_MISMATCH);
+            }
+            // A retransmission: the same answer.
+            let (port, lifetime) = (a.port, a.lifetime);
+            self.allocated_answer(m.transaction, from, port, lifetime);
+            return Ok(());
+        }
+        if self.pending_clients.contains_key(&from) {
+            return Ok(()); // Answered once the port comes.
+        }
+        let transport = m.attr(msg::REQUESTED_TRANSPORT).ok_or(BAD_REQUEST)?;
+        if transport.first() != Some(&17) {
+            return Err(UNSUPPORTED_TRANSPORT);
+        }
+        if m.attr(msg::REQUESTED_ADDRESS_FAMILY).is_some_and(|f| f.first() != Some(&0x01))
+            || !self.public.is_ipv4()
+        {
+            return Err(FAMILY_NOT_SUPPORTED);
+        }
+        if self.allocations.len() + self.pending.len() >= self.limits.capacity {
+            return Err(INSUFFICIENT_CAPACITY);
+        }
+        let limits = self.limits;
+        let state = self.ips.touch(from.ip(), &limits, now).ok_or(INSUFFICIENT_CAPACITY)?;
+        if state.allocations >= limits.per_ip_allocations {
+            return Err(QUOTA_REACHED);
+        }
+        self.ips.count(from.ip(), true);
+        let lifetime = lifetime(m).unwrap_or(DEFAULT_LIFETIME).clamp(DEFAULT_LIFETIME, MAX_LIFETIME);
+        let id = self.next_id;
+        self.next_id += 1;
+        self.pending.insert(id, Pending { client: from, transaction: m.transaction, lifetime });
+        self.pending_clients.insert(from, id);
+        self.requests.push(AllocationRequest { client: from, id });
+        Ok(())
+    }
+
+    fn allocated_answer(&mut self, transaction: [u8; 12], client: SocketAddr, port: u16, lifetime: u32) {
+        let relayed = SocketAddr::new(self.public, port);
+        let bytes = Builder::new(Class::Success, msg::ALLOCATE, transaction)
+            .xor_addr(msg::XOR_RELAYED_ADDRESS, relayed)
+            .u32(msg::LIFETIME, lifetime)
+            .xor_addr(msg::XOR_MAPPED_ADDRESS, client)
+            .integrity(&self.key)
+            .fingerprint()
+            .finish();
+        self.push(self.listen.port(), client, bytes);
+    }
+
+    fn refresh(&mut self, from: SocketAddr, m: &Msg<'_>, now: Instant) -> Result<(), Refusal> {
+        if !self.allocations.contains_key(&from) {
+            return Err(ALLOCATION_MISMATCH);
+        }
+        let requested = lifetime(m).unwrap_or(DEFAULT_LIFETIME);
+        if requested == 0 {
+            self.release(from);
+            self.answer(m, from, |b| b.u32(msg::LIFETIME, 0));
+            return Ok(());
+        }
+        let lifetime = requested.clamp(DEFAULT_LIFETIME, MAX_LIFETIME);
+        if let Some(a) = self.allocations.get_mut(&from) {
+            self.expiries.remove(&(a.expires, from));
+            a.expires = now + Duration::from_secs(u64::from(lifetime));
+            a.lifetime = lifetime;
+            self.expiries.insert((a.expires, from));
+        }
+        self.answer(m, from, |b| b.u32(msg::LIFETIME, lifetime));
+        Ok(())
+    }
+
+    /// The peer address of `m`, judged (RFC 8656 §9.2, §11.2).
+    fn peer(&self, value: &[u8], m: &Msg<'_>) -> Result<SocketAddr, Refusal> {
+        let peer = msg::decode_xor(value, &m.transaction).ok_or(BAD_REQUEST)?;
+        if !peer.is_ipv4() {
+            return Err(PEER_FAMILY_MISMATCH);
+        }
+        if self.forbidden(peer.ip()) {
+            return Err(FORBIDDEN);
+        }
+        Ok(peer)
+    }
+
+    fn create_permission(&mut self, from: SocketAddr, m: &Msg<'_>, now: Instant) -> Result<(), Refusal> {
+        let mut ips = BTreeSet::new();
+        for value in m.attrs(msg::XOR_PEER_ADDRESS) {
+            ips.insert(self.peer(value, m)?.ip());
+            if ips.len() > MAX_PEERS_PER_REQUEST {
+                return Err(BAD_REQUEST);
+            }
+        }
+        if ips.is_empty() {
+            return Err(BAD_REQUEST);
+        }
+        let a = self.allocations.get_mut(&from).ok_or(ALLOCATION_MISMATCH)?;
+        a.prune(now);
+        let new = ips.iter().filter(|ip| !a.permissions.contains_key(ip)).count();
+        if a.permissions.len() + new > MAX_PERMISSIONS {
+            return Err(INSUFFICIENT_CAPACITY);
+        }
+        for ip in ips {
+            a.permissions.insert(ip, now + PERMISSION_LIFETIME);
+        }
+        self.answer(m, from, |b| b);
+        Ok(())
+    }
+
+    fn channel_bind(&mut self, from: SocketAddr, m: &Msg<'_>, now: Instant) -> Result<(), Refusal> {
+        let number = m.attr(msg::CHANNEL_NUMBER).filter(|v| v.len() == 4).ok_or(BAD_REQUEST)?;
+        let number = u16::from_be_bytes([number[0], number[1]]);
+        let peer = self.peer(m.attr(msg::XOR_PEER_ADDRESS).ok_or(BAD_REQUEST)?, m)?;
+        if !CHANNELS.contains(&number) || peer.port() == 0 {
+            return Err(BAD_REQUEST);
+        }
+        let a = self.allocations.get_mut(&from).ok_or(ALLOCATION_MISMATCH)?;
+        a.prune(now);
+        let bound = a.channels.get(&number).map(|(p, _)| *p);
+        if bound.is_some_and(|p| p != peer) || a.peers.get(&peer).is_some_and(|n| *n != number) {
+            return Err(BAD_REQUEST);
+        }
+        if bound.is_none() && a.channels.len() >= MAX_CHANNELS {
+            return Err(INSUFFICIENT_CAPACITY);
+        }
+        if !a.permissions.contains_key(&peer.ip()) && a.permissions.len() >= MAX_PERMISSIONS {
+            return Err(INSUFFICIENT_CAPACITY);
+        }
+        a.channels.insert(number, (peer, now + CHANNEL_LIFETIME));
+        a.peers.insert(peer, number);
+        a.permissions.insert(peer.ip(), now + PERMISSION_LIFETIME);
+        self.answer(m, from, |b| b);
+        Ok(())
+    }
+
+    /// Takes `bytes` from `ip`'s bucket, up (`true`) or down; counts a drop.
+    fn charge(&mut self, ip: IpAddr, up: bool, bytes: usize, now: Instant) -> bool {
+        let rate = self.limits.per_ip_bytes_per_s;
+        let ok = self.ips.states.get_mut(&ip).is_some_and(|s| {
+            let bucket = if up { &mut s.up } else { &mut s.down };
+            bucket.take(rate, bytes as u64, now)
+        });
+        if !ok {
+            self.dropped += 1;
+        }
+        ok
+    }
+
+    /// A Send indication: to a permitted, allowed peer from the allocation's port.
+    fn send_indication(&mut self, from: SocketAddr, m: &Msg<'_>, now: Instant) {
+        let (Some(peer), Some(data)) = (m.xor_addr(msg::XOR_PEER_ADDRESS), m.attr(msg::DATA_ATTR)) else {
+            return;
+        };
+        self.relay_up(from, peer, data, now);
+    }
+
+    /// ChannelData from a client: to its channel's peer.
+    fn client_data(&mut self, from: SocketAddr, bytes: &[u8], now: Instant) {
+        let Some((number, payload)) = msg::parse_channel_data(bytes) else { return };
+        let Some(a) = self.allocations.get(&from) else { return };
+        let Some(&(peer, until)) = a.channels.get(&number) else { return };
+        if until > now {
+            self.relay_up(from, peer, payload, now);
+        }
+    }
+
+    fn relay_up(&mut self, from: SocketAddr, peer: SocketAddr, data: &[u8], now: Instant) {
+        let Some(a) = self.allocations.get(&from) else { return };
+        if !peer.is_ipv4() || peer.port() == 0 || self.forbidden(peer.ip()) || !a.permitted(peer.ip(), now) {
+            return;
+        }
+        let port = a.port;
+        if self.charge(from.ip(), true, data.len(), now) {
+            self.relayed_bytes += data.len() as u64;
+            self.push(port, peer, data.to_vec());
+        }
     }
 
     /// A datagram to relay port `port` from a peer.
     pub fn receive_relayed(&mut self, port: u16, from: SocketAddr, bytes: &[u8], now: Instant) {
-        let Some(&owner) = self.relays.get(&port) else { return };
-        let limits = self.limits;
-        let state = self.ip(owner, now);
-        if !state.down.take(limits.per_ip_bytes_per_s, bytes.len() as u64, now) {
-            self.dropped += 1;
+        let Some(&client) = self.by_port.get(&port) else { return };
+        let Some(a) = self.allocations.get(&client) else { return };
+        if !from.is_ipv4() || self.forbidden(from.ip()) || !a.permitted(from.ip(), now) {
             return;
         }
-        let t = self.time(now);
-        let relay = SocketAddr::new(self.public, port);
-        if let Some(build) = self.proto.recv(Transmit::new(bytes, TransportType::Udp, from, relay), t) {
-            self.relayed_bytes += bytes.len() as u64;
-            let tx = build.build();
-            self.out.push(TurnOut { from_port: tx.from.port(), to: tx.to, bytes: tx.data });
+        let channel =
+            a.peers.get(&from).copied().filter(|n| a.channels.get(n).is_some_and(|(_, t)| *t > now));
+        // Charged only once the permission passed (review I2).
+        if !self.charge(client.ip(), false, bytes.len(), now) {
+            return;
         }
+        let datagram = match channel {
+            Some(n) => msg::channel_data(n, bytes),
+            None => {
+                self.next_indication += 1;
+                let mut transaction = [0u8; 12];
+                transaction[..8].copy_from_slice(&self.next_indication.to_be_bytes());
+                Builder::new(Class::Indication, msg::DATA, transaction)
+                    .xor_addr(msg::XOR_PEER_ADDRESS, from)
+                    .attr(msg::DATA_ATTR, bytes)
+                    .finish()
+            }
+        };
+        self.relayed_bytes += bytes.len() as u64;
+        self.push(self.listen.port(), client, datagram);
     }
 
-    /// Steps the library at `now` (expiries, allocations ending) and hands
-    /// out the datagrams to send.
+    /// Ends allocations past their lifetime and hands out the datagrams to send.
     pub fn poll(&mut self, now: Instant, out: &mut Vec<TurnOut>) {
-        self.drain(now);
+        while let Some(&(at, client)) = self.expiries.first() {
+            if at > now {
+                break;
+            }
+            self.release(client);
+        }
         out.append(&mut self.out);
     }
 
-    /// Runs the library's actions and takes its datagrams.
-    fn drain(&mut self, now: Instant) {
-        let t = self.time(now);
-        for _ in 0..MAX_ACTIONS {
-            match self.proto.poll(t) {
-                TurnServerPollRet::WaitUntil(_) => break,
-                TurnServerPollRet::AllocateSocket {
-                    transport,
-                    listen_addr,
-                    client_addr,
-                    allocation_transport,
-                    family,
-                } => {
-                    let asked = Asked {
-                        transport,
-                        listen: listen_addr,
-                        client: client_addr,
-                        allocation_transport,
-                        family,
-                    };
-                    self.admit(asked, now);
-                }
-                TurnServerPollRet::SocketClose { listen_addr, .. } => self.close(listen_addr.port()),
-                // A UDP server makes no TCP connections.
-                TurnServerPollRet::TcpConnect { .. } | TurnServerPollRet::TcpClose { .. } => {}
-            }
-        }
-        while let Some(tx) = self.proto.poll_transmit(t) {
-            self.out.push(TurnOut { from_port: tx.from.port(), to: tx.to, bytes: tx.data });
-        }
-    }
-
-    /// An allocation the library asks for: refused when the relay or the
-    /// client's IP is full (the library answers 508), else handed to the
-    /// driver.
-    fn admit(&mut self, asked: Asked, now: Instant) {
-        let family = if self.public.is_ipv4() { AddressFamily::IPV4 } else { AddressFamily::IPV6 };
-        let refusal = if asked.family != family || asked.allocation_transport != TransportType::Udp {
-            Some(SocketAllocateError::AddressFamilyNotSupported)
-        } else if self.relays.len() + self.asked.len() >= self.limits.capacity
-            || self.ip(asked.client.ip(), now).allocations >= self.limits.per_ip_allocations
-        {
-            Some(SocketAllocateError::InsufficientCapacity)
-        } else {
-            None
-        };
-        if let Some(why) = refusal {
-            let t = self.time(now);
-            self.proto.allocated_socket(
-                asked.transport,
-                asked.listen,
-                asked.client,
-                asked.allocation_transport,
-                asked.family,
-                Err(why),
-                t,
-            );
-            return;
-        }
-        self.ip(asked.client.ip(), now).allocations += 1;
-        let id = self.next_id;
-        self.next_id += 1;
-        self.requests.push(AllocationRequest { client: asked.client, id });
-        self.asked.insert(id, asked);
-    }
-
-    /// An allocation ended: its port goes back to the driver.
-    fn close(&mut self, port: u16) {
-        if let Some(ip) = self.relays.remove(&port) {
-            if let Some(s) = self.ips.get_mut(&ip) {
-                s.allocations = s.allocations.saturating_sub(1);
-            }
-            self.released.push(port);
-        }
+    /// Ends `client`'s allocation: its port goes back to the driver.
+    fn release(&mut self, client: SocketAddr) {
+        let Some(a) = self.allocations.remove(&client) else { return };
+        self.by_port.remove(&a.port);
+        self.expiries.remove(&(a.expires, client));
+        self.ips.count(client.ip(), false);
+        self.released.push(a.port);
     }
 
     /// Allocations the limits admitted, waiting for a port (refused ones never appear: TurnCore answers them).
@@ -367,32 +749,36 @@ impl TurnCore {
 
     /// The driver's answer: `Some(port)` bound, `None` no port free (the client gets 508).
     pub fn allocated(&mut self, req: AllocationRequest, port: Option<u16>, now: Instant) {
-        let Some(asked) = self.asked.remove(&req.id) else { return };
+        let Some(p) = self.pending.remove(&req.id) else { return };
+        self.pending_clients.remove(&p.client);
         // A port already relaying is no answer (a driver's mistake).
-        let port = port.filter(|p| !self.relays.contains_key(p) && *p != self.listen.port());
-        let result = match port {
-            Some(p) => {
-                self.relays.insert(p, asked.client.ip());
-                Ok(SocketAddr::new(self.public, p))
-            }
-            None => {
-                if let Some(s) = self.ips.get_mut(&asked.client.ip()) {
-                    s.allocations = s.allocations.saturating_sub(1);
-                }
-                Err(SocketAllocateError::InsufficientCapacity)
-            }
+        let port =
+            port.filter(|port| !self.by_port.contains_key(port) && *port != self.listen.port() && *port != 0);
+        let Some(port) = port else {
+            self.ips.count(p.client.ip(), false);
+            let bytes = Builder::new(Class::Error, msg::ALLOCATE, p.transaction)
+                .error(INSUFFICIENT_CAPACITY.0, INSUFFICIENT_CAPACITY.1)
+                .integrity(&self.key)
+                .fingerprint()
+                .finish();
+            return self.push(self.listen.port(), p.client, bytes);
         };
-        let t = self.time(now);
-        self.proto.allocated_socket(
-            asked.transport,
-            asked.listen,
-            asked.client,
-            asked.allocation_transport,
-            asked.family,
-            result,
-            t,
+        let expires = now + Duration::from_secs(u64::from(p.lifetime));
+        self.allocations.insert(
+            p.client,
+            Allocation {
+                port,
+                transaction: p.transaction,
+                lifetime: p.lifetime,
+                expires,
+                permissions: BTreeMap::new(),
+                channels: BTreeMap::new(),
+                peers: BTreeMap::new(),
+            },
         );
-        self.drain(now);
+        self.by_port.insert(port, p.client);
+        self.expiries.insert((expires, p.client));
+        self.allocated_answer(p.transaction, p.client, port, p.lifetime);
     }
 
     /// Relay ports whose allocation ended since the last call (the driver closes them).
@@ -402,10 +788,15 @@ impl TurnCore {
 
     /// Allocations bound to a port.
     pub fn allocations(&self) -> usize {
-        self.relays.len()
+        self.allocations.len()
     }
 
-    /// Datagrams over a limit.
+    /// Client IPs tracked (at most 4096).
+    pub fn tracked_ips(&self) -> usize {
+        self.ips.states.len()
+    }
+
+    /// Datagrams over a limit (and requests too large to read).
     pub fn dropped(&self) -> u64 {
         self.dropped
     }
@@ -416,170 +807,16 @@ impl TurnCore {
     }
 }
 
-/// A [`TurnServer`]'s setup.
-#[derive(Clone, Debug)]
-pub struct TurnServerConfig {
-    /// Port 0: an ephemeral port (`local_addr` tells).
-    pub listen: SocketAddr,
-    pub public: IpAddr,
-    /// Relay ports; `0..=0`: an OS-assigned ephemeral port per allocation (tests).
-    pub ports: RangeInclusive<u16>,
-    pub user: String,
-    pub pass: String,
-    pub limits: TurnLimits,
-}
-
-/// What a running relay did.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TurnStats {
-    pub allocations: usize,
-    pub dropped: u64,
-    pub relayed_bytes: u64,
-}
-
-/// A relay on real sockets: a thread with the listening socket and one
-/// UDP socket per allocation, driving a [`TurnCore`]. Dropping it stops
-/// the thread (within about a millisecond's sleep) and joins it.
-pub struct TurnServer {
-    local: SocketAddr,
-    stop: Arc<AtomicBool>,
-    stats: Arc<Mutex<TurnStats>>,
-    thread: Option<JoinHandle<()>>,
-}
-
-/// At most this many datagrams are read from one socket per turn of the loop.
-const READS_PER_TURN: usize = 256;
-/// The loop sleeps this long when a turn found nothing to do.
-const IDLE_SLEEP: Duration = Duration::from_millis(1);
-
-/// A relay socket for an allocation: a free port of `ports` on `ip`, or
-/// an OS-assigned one for `0..=0`.
-fn bind_relay(
-    ip: IpAddr,
-    ports: &RangeInclusive<u16>,
-    taken: &BTreeMap<u16, UdpSocket>,
-) -> Option<(u16, UdpSocket)> {
-    let socket = if *ports == (0..=0) {
-        UdpSocket::bind((ip, 0)).ok()?
-    } else {
-        ports
-            .clone()
-            .filter(|p| *p != 0 && !taken.contains_key(p))
-            .find_map(|p| UdpSocket::bind((ip, p)).ok())?
-    };
-    socket.set_nonblocking(true).ok()?;
-    let port = socket.local_addr().ok()?.port();
-    (!taken.contains_key(&port)).then_some((port, socket))
-}
-
-impl TurnServer {
-    pub fn start(cfg: TurnServerConfig) -> io::Result<TurnServer> {
-        let listen = UdpSocket::bind(cfg.listen)?;
-        listen.set_nonblocking(true)?;
-        let local = listen.local_addr()?;
-        let stop = Arc::new(AtomicBool::new(false));
-        let stats = Arc::new(Mutex::new(TurnStats::default()));
-        let core = TurnCore::new(local, cfg.public, &cfg.user, &cfg.pass, cfg.limits, Instant::now());
-        let (thread_stop, thread_stats) = (stop.clone(), stats.clone());
-        let thread = std::thread::Builder::new()
-            .name("turn-server".into())
-            .spawn(move || run(core, listen, cfg.ports, thread_stop, thread_stats))?;
-        Ok(TurnServer { local, stop, stats, thread: Some(thread) })
-    }
-
-    /// The listening address (the bound port when `listen`'s was 0).
-    pub fn local_addr(&self) -> SocketAddr {
-        self.local
-    }
-
-    pub fn stats(&self) -> TurnStats {
-        self.stats.lock().map(|s| *s).unwrap_or_default()
-    }
-}
-
-impl Drop for TurnServer {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
-
-/// The relay's thread: reads every socket, steps the core, binds and
-/// closes relay sockets, sends.
-fn run(
-    mut core: TurnCore,
-    listen: UdpSocket,
-    ports: RangeInclusive<u16>,
-    stop: Arc<AtomicBool>,
-    stats: Arc<Mutex<TurnStats>>,
-) {
-    let listen_port = core.listen.port();
-    let ip = match core.listen.ip() {
-        ip if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        ip => ip,
-    };
-    let mut relays: BTreeMap<u16, UdpSocket> = BTreeMap::new();
-    let mut buf = vec![0u8; 65_536];
-    let mut out = Vec::new();
-    while !stop.load(Ordering::Relaxed) {
-        let now = Instant::now();
-        let mut busy = false;
-        for _ in 0..READS_PER_TURN {
-            let Ok((n, from)) = listen.recv_from(&mut buf) else { break };
-            core.receive(from, &buf[..n], now);
-            busy = true;
-        }
-        for (&port, socket) in &relays {
-            for _ in 0..READS_PER_TURN {
-                let Ok((n, from)) = socket.recv_from(&mut buf) else { break };
-                core.receive_relayed(port, from, &buf[..n], now);
-                busy = true;
-            }
-        }
-        for req in core.take_allocation_requests() {
-            let bound = bind_relay(ip, &ports, &relays);
-            let port = bound.map(|(port, socket)| {
-                relays.insert(port, socket);
-                port
-            });
-            core.allocated(req, port, now);
-        }
-        core.poll(now, &mut out);
-        for o in out.drain(..) {
-            let socket = if o.from_port == listen_port { Some(&listen) } else { relays.get(&o.from_port) };
-            if let Some(socket) = socket {
-                let _ = socket.send_to(&o.bytes, o.to);
-            }
-            busy = true;
-        }
-        for port in core.released() {
-            relays.remove(&port);
-        }
-        if let Ok(mut s) = stats.lock() {
-            *s = TurnStats {
-                allocations: core.allocations(),
-                dropped: core.dropped(),
-                relayed_bytes: core.relayed_bytes(),
-            };
-        }
-        if !busy {
-            std::thread::sleep(IDLE_SLEEP);
-        }
-    }
+/// A request's LIFETIME in seconds.
+fn lifetime(m: &Msg<'_>) -> Option<u32> {
+    let v = m.attr(msg::LIFETIME)?;
+    Some(u32::from_be_bytes(v.try_into().ok()?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use turn_client_proto::api::{TurnClientApi, TurnConfig, TurnEvent, TurnRecvRet};
-    use turn_client_proto::types::TurnCredentials;
-    use turn_client_proto::udp::TurnClientUdp;
-
-    fn a(s: &str) -> SocketAddr {
-        s.parse().unwrap()
-    }
+    use std::net::Ipv4Addr;
 
     #[test]
     fn a_bucket_holds_two_seconds_and_refills() {
@@ -597,82 +834,40 @@ mod tests {
     #[test]
     fn the_ip_table_is_bounded_and_keeps_allocating_ips() {
         let t0 = Instant::now();
-        let mut core = TurnCore::new(
-            a("198.51.100.9:3478"),
-            a("198.51.100.9:0").ip(),
-            "u",
-            "p",
-            TurnLimits::default(),
-            t0,
-        );
-        core.ip(a("10.0.0.1:1").ip(), t0).allocations = 1;
+        let limits = TurnLimits::default();
+        let mut ips = Ips::default();
+        let holder: IpAddr = Ipv4Addr::new(10, 0, 0, 1).into();
+        ips.touch(holder, &limits, t0);
+        ips.count(holder, true);
         for i in 0..MAX_IPS as u32 + 10 {
             let ip = IpAddr::V4(Ipv4Addr::from(0x0b00_0000 + i));
-            core.ip(ip, t0 + Duration::from_millis(u64::from(i) + 1));
+            ips.touch(ip, &limits, t0 + Duration::from_millis(u64::from(i) + 1));
         }
-        assert_eq!(core.ips.len(), MAX_IPS);
-        assert!(core.ips.contains_key(&a("10.0.0.1:1").ip()), "an IP holding an allocation stays");
-        assert!(!core.ips.contains_key(&IpAddr::V4(Ipv4Addr::from(0x0b00_0000))), "the oldest idle one went");
+        assert_eq!(ips.states.len(), MAX_IPS);
+        assert_eq!(ips.idle.len(), MAX_IPS - 1, "the index holds every idle IP");
+        assert!(ips.states.contains_key(&holder), "an IP holding an allocation stays");
+        assert!(
+            !ips.states.contains_key(&IpAddr::V4(Ipv4Addr::from(0x0b00_0000))),
+            "the oldest idle one went"
+        );
+        ips.count(holder, false);
+        assert!(ips.idle.contains(&(t0, holder)), "idle again");
     }
 
-    /// A sans-IO client and a core on a wire without delay: the client
-    /// allocates, the driver's port answers, and data relays both ways.
     #[test]
-    fn a_client_allocates_in_memory_and_its_ip_is_counted() {
+    fn nonces_are_bound_to_the_source_and_expire() {
         let t0 = Instant::now();
-        let server = a("198.51.100.9:3478");
-        let (client_addr, peer) = (a("203.0.113.20:50000"), a("203.0.113.30:40000"));
-        let mut core = TurnCore::new(server, server.ip(), "u", "p", TurnLimits::default(), t0);
-        let mut client =
-            TurnClientUdp::allocate(client_addr, server, TurnConfig::new(TurnCredentials::new("u", "p")));
-        let mut relayed = None;
-        let mut out = Vec::new();
-        for ms in 0..2000u64 {
-            let now = t0 + Duration::from_millis(ms);
-            let t = ProtoInstant::from_nanos(i64::try_from(ms * 1_000_000).unwrap());
-            let _ = client.poll(t);
-            while let Some(tx) = client.poll_transmit(t) {
-                core.receive(client_addr, tx.data.as_ref(), now);
-            }
-            for req in core.take_allocation_requests() {
-                assert_eq!(req.client, client_addr);
-                core.allocated(req, Some(49160), now);
-            }
-            core.poll(now, &mut out);
-            for o in out.drain(..) {
-                if o.to == client_addr {
-                    let ret = client
-                        .recv(Transmit::new(o.bytes.as_slice(), TransportType::Udp, server, client_addr), t);
-                    if let TurnRecvRet::PeerData(d) = ret {
-                        assert_eq!((d.peer, d.data()), (peer, &b"down"[..]));
-                        relayed = relayed.map(|(r, _)| (r, true));
-                    }
-                } else {
-                    assert_eq!((o.from_port, o.to, o.bytes.as_slice()), (49160, peer, &b"up"[..]));
-                    core.receive_relayed(49160, peer, b"down", now);
-                }
-            }
-            while let Some(e) = client.poll_event() {
-                match e {
-                    TurnEvent::AllocationCreated(_, addr) => {
-                        relayed = Some((addr, false));
-                        client.create_permission(TransportType::Udp, peer.ip(), t).unwrap();
-                    }
-                    TurnEvent::PermissionCreated(..) => {
-                        let tx =
-                            client.send_to(TransportType::Udp, peer, b"up".as_slice(), t).unwrap().unwrap();
-                        let tx = tx.build();
-                        core.receive(client_addr, &tx.data, now);
-                    }
-                    _ => {}
-                }
-            }
-            if relayed.is_some_and(|(_, down)| down) {
-                break;
-            }
-        }
-        assert_eq!(relayed, Some((a("198.51.100.9:49160"), true)));
-        assert_eq!((core.allocations(), core.ip(client_addr.ip(), t0).allocations), (1, 1));
-        assert_eq!(core.relayed_bytes(), 6);
+        let a: SocketAddr = "11.0.0.20:50000".parse().unwrap();
+        let core =
+            TurnCore::new("11.0.0.9:3478".parse().unwrap(), a.ip(), "u", "p", TurnLimits::default(), t0);
+        let n = core.nonce(a, 0);
+        assert!(core.nonce_ok(n.as_bytes(), a, t0));
+        assert!(
+            core.nonce_ok(n.as_bytes(), a, t0 + Duration::from_secs(NONCE_PERIOD + 1)),
+            "the next period"
+        );
+        assert!(!core.nonce_ok(n.as_bytes(), a, t0 + Duration::from_secs(2 * NONCE_PERIOD)), "stale");
+        assert!(!core.nonce_ok(n.as_bytes(), "11.0.0.20:50001".parse().unwrap(), t0), "another source");
+        assert!(!core.nonce_ok(b"zz", a, t0));
     }
 }

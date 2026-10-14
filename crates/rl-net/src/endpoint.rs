@@ -240,6 +240,7 @@ fn core_config(cfg: &EndpointConfig, host: bool) -> CoreConfig {
         impair: cfg.impair,
         impair_seed: cfg.impair_seed,
         stun_seed: stun_seed(),
+        allow_local: false,
         #[cfg(feature = "test-hooks")]
         fingerprint_override: cfg.fingerprint_override,
         #[cfg(feature = "test-hooks")]

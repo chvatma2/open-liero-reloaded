@@ -160,7 +160,14 @@ impl Net {
 
     /// Relay ports from at.port() + 1 upward on the same IP; TurnLimits::default().
     pub fn turn_server(&mut self, at: SocketAddr) -> TurnSpec {
-        let core = TurnCore::new(at, at.ip(), TURN_USER, TURN_PASS, TurnLimits::default(), self.now);
+        let mut core = TurnCore::new(at, at.ip(), TURN_USER, TURN_PASS, TurnLimits::default(), self.now);
+        // natsim's networks are documentation and private addresses.
+        core.set_allow_local(true);
+        let mut secret = [0u8; 32];
+        for chunk in secret.chunks_mut(8) {
+            chunk.copy_from_slice(&self.rng.next_u64().to_le_bytes());
+        }
+        core.set_secret(secret);
         self.turns.push(Turn { at, core, ports: BTreeSet::new(), dead: false });
         TurnSpec { addr: at, user: TURN_USER.into(), pass: TURN_PASS.into() }
     }
@@ -189,7 +196,13 @@ impl Net {
 
     fn node(&mut self, cfg: CoreConfig, behind: Option<NatId>, at: SocketAddr) -> NodeId {
         // Each node's seeds come from the net's.
-        let cfg = CoreConfig { impair_seed: self.rng.next_u64(), stun_seed: self.rng.next_u64(), ..cfg };
+        // natsim's networks are documentation and private addresses (N62).
+        let cfg = CoreConfig {
+            impair_seed: self.rng.next_u64(),
+            stun_seed: self.rng.next_u64(),
+            allow_local: true,
+            ..cfg
+        };
         let mut core = Core::new(cfg, self.now);
         core.set_base(at, vec![at]);
         self.nodes.push(Node { core, at, behind, events: Vec::new(), connected: false });

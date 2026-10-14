@@ -8,18 +8,21 @@ announcements.
   `netsim::LinkModel`, `Rng`), rl-proto (`Signal`, `Path`, the STUN codec,
   the limits' sizes), str0m,
   tungstenite (`=0.30.0`, default features: no TLS), getrandom
-  (`=0.4.3`, `random_bytes`: the native peers' randomness) and
-  turn-client-proto / turn-server-proto (`=0.7.2`, default features:
-  `std`; N52). Real clocks and sockets live only in this crate's socket
+  (`=0.4.3`, `random_bytes`: the native peers' randomness),
+  turn-client-proto (`=0.7.2`, default features: `std`; N52: `Core`'s
+  TURN client) and, for our own relay server (ruling TR-2), md-5
+  (`=0.11.0`), sha1 (`=0.11.0`), hmac (`=0.13.0`) and crc32fast
+  (`=1.5.2`). Real clocks and sockets live only in this crate's socket
   drivers, `endpoint` and `turn::TurnServer` (and the binaries); `link`,
   `core` and `turn::TurnCore` are sans-IO, and `endpoint::poll` takes the
   time.
-- **TURN crates' pins.** `Cargo.lock` holds their transitive crates under
-  two weeks old back (`cargo update -p <crate> --precise <ver>`):
-  stun-proto 2.0.2 (2.0.3), stun-types 2.0.2 (2.0.3), turn-types 0.7.2
-  (0.7.3). `cargo tree -p rl-net -e normal` shows them. The server pulls
-  pnet_packet 0.35 (ICMP parsing) and rand 0.9 (its nonces, OS
-  randomness).
+- **TURN client pins.** `Cargo.lock` holds turn-client-proto's
+  transitive crates under two weeks old back (`cargo update -p <crate>
+  --precise <ver>`): stun-proto 2.0.2 (2.0.3), stun-types 2.0.2 (2.0.3),
+  turn-types 0.7.2 (0.7.3). `cargo tree -p rl-net -e normal` shows them.
+  turn-server-proto is not used (ruling TR-2): its auth layer kept a
+  nonce per source address forever, its permissions grew without bound,
+  it relayed to any peer, and it addressed binding answers to itself.
 - **str0m pinned exactly** (`=0.24.0`, decision N15), `default-features =
   false, features = ["rust-crypto"]`: the default features pull the
   `examples` web server and select aws-lc-rs as the crypto backend.
@@ -154,7 +157,12 @@ announcements.
     allocations) from the base with one `turn_client_proto`
     `TurnClientUdp` each (`TurnConfig::new(TurnCredentials::new(user,
     pass))`); `relays()` lists each server's `RelayState` (`Allocating`,
-    `Allocated(relayed)`, `Failed(why)`, `Released`). `gathered` also
+    `Allocated(relayed)`, `Failed(why)`, `Released`). A relayed address
+    equal to one of our own candidates (base, hosts, server-reflexive,
+    mapped), or not global unless `CoreConfig::allow_local` (N62; natsim
+    sets it), fails and is deleted: a hostile relay cannot capture our
+    direct traffic. Permissions and relayed sends go only to peers a
+    relay accepts (global, unless `allow_local`). `gathered` also
     waits for every allocation to settle, or `TURN_WAIT` (2 s). Allocated
     addresses are `local().relayed` and relayed candidates `(relayed,
     base)` of links made afterwards, inside the `MAX_CANDIDATES` budget
@@ -183,28 +191,49 @@ announcements.
   (`prflx` with `srflx`); `classify(local, remote, ours, theirs)`:
   `Relayed` (either side's address a relay), `MappedPort` (the remote's
   mapped hint), `Direct` (a remote host candidate), else `HolePunched`.
-- **`turn`** (N52, spec §5.3): `TurnCore` wraps
-  `turn_server_proto::server::TurnServer` (UDP, realm `REALM`
-  `"rust-liero"`, one user) without sockets: `receive` (the listening
-  port), `receive_relayed(port, ..)` (a relay port), `poll` (`TurnOut {
-  from_port, to, bytes }`), and the driver's ports through
-  `take_allocation_requests` / `allocated(req, Some(port) | None)` /
-  `released()`: relayed addresses are `public:port`. `TurnLimits`
-  (default 32 allocations, 4 per client IP, 32 KiB/s relayed payload per
-  IP each way, 20 requests/s; `generous()` for tests sharing 127.0.0.1):
-  a full relay or IP is refused (`InsufficientCapacity`, 508), the byte
-  and request buckets hold 2 s, and a datagram over one is dropped and
-  counted (`dropped`), never the client. ChannelData and Send
-  indications are data, everything else to the listening port a
-  request. At most 4096 client IPs are tracked (the longest idle without
-  an allocation evicted). `TurnCore` answers STUN binding requests itself
-  (`rl_proto::stun`): turn-server-proto 0.7.2 (and 0.7.3) addresses its
-  binding answer to its own listening address. The library's time is
-  nanoseconds since the core's creation. `TurnServer::start(cfg)` runs
-  it on a thread (`listen` port 0: ephemeral, `local_addr`; one
-  non-blocking UDP socket per allocation, a free port of `ports`, or an
-  OS-assigned one for `0..=0`); `stats()` (allocations, dropped,
-  relayed bytes); dropping it stops and joins the thread.
+- **`turn`** (N52, spec §5.3, ruling TR-2): `TurnCore` is our own
+  sans-IO relay, the UDP subset of RFC 8656 that turn-client-proto and
+  browsers use: Binding; Allocate (REQUESTED-TRANSPORT UDP, LIFETIME
+  clamped to 600-3600 s, DONT-FRAGMENT accepted and ignored,
+  REQUESTED-ADDRESS-FAMILY IPv4); Refresh (0 deletes); CreatePermission
+  (at most 8 peers per request); ChannelBind (0x4000-0x7fff); Send and
+  Data indications; ChannelData (unpadded). Long-term credentials: realm
+  `REALM` `"rust-liero"`, one user, MESSAGE-INTEGRITY HMAC-SHA1 under
+  MD5(user:realm:pass) on every authenticated answer, FINGERPRINT on
+  every answer; a stateless nonce (the period and an HMAC of the source
+  address and the period under a per-relay random key, `set_secret`;
+  valid for its 10-minute period and the next, then 438), so an
+  unauthenticated source costs no memory. Unknown comprehension-required
+  attributes → 420; 437 for a 5-tuple's wrong allocation; 440, 442, 443;
+  486 per-IP quota, 508 capacity. The codec is `turn/msg.rs` (fuzzed).
+  - **Peers (TR-1):** IPv4, global (`rl_proto::is_global`) and not the
+    relay's public or listening address, unless `set_allow_local(true)`
+    (`TurnServerConfig::allow_local`, N62); CreatePermission and
+    ChannelBind to others → 403, Send/ChannelData and peers' datagrams
+    from them dropped.
+  - **Bounds:** every table is a map: allocations by client 5-tuple and
+    by port, expiries indexed by time, at most 16 permissions and 16
+    channels per allocation; requests above 1500 B are dropped unread;
+    at most 4096 client IPs, an entry only for a request source (never
+    for data), the longest idle without an allocation evicted through a
+    last-seen index (O(log n)).
+  - **Limits** (`TurnLimits`: default 32 allocations, 4 per client IP,
+    32 KiB/s relayed payload per IP each way, 20 requests/s; `generous()`
+    for tests sharing 127.0.0.1): buckets holding 2 s; a datagram over one
+    is dropped and counted (`dropped`), never the client; the down bucket
+    is charged only once the peer's permission passed (a stranger cannot
+    drain it). Ports come from the driver: `take_allocation_requests` /
+    `allocated(req, Some(port) | None)` / `released()`; relayed
+    addresses are `public:port`; nothing is sent to the listening address.
+  - **`TurnServer::start(cfg)`** (`turn/driver.rs`): IPv4 `listen` and
+    `public` only (TR-3: per-IP limits; else `InvalidInput`); port 0:
+    ephemeral, `local_addr`. One reader thread per socket (the listening
+    one, one per allocation: a free port of `ports`, or OS-assigned for
+    `0..=0`) blocks in `recv_from` (200 ms timeout; any error but a
+    timeout is read past, Windows' ICMP resets included) and feeds a
+    bounded channel; the core's thread waits on it (100 ms tick), so an
+    idle relay sleeps. `stats()` (allocations, dropped, relayed bytes);
+    dropping it stops and joins every thread (within about 200 ms).
 - **`natsim`** (feature `test-hooks`, N56): `Net` runs `Core`s behind
   virtual NATs (full cone, address-restricted, port-restricted:
   endpoint-independent mapping keeping the internal port if free;
@@ -217,7 +246,9 @@ announcements.
   Nostr will carry), `run_until`, `connected` (the client's path),
   `events`, `renumber`. `turn_server(at)` runs a `TurnCore` (default
   limits, relay ports from `at.port() + 1` up on its IP) and returns its
-  `TurnSpec`; `kill(at)` silences it; `turn_dropped(at)`.
+  `TurnSpec` (local peers allowed, a nonce key from the net's seed);
+  `kill(at)` silences it; `turn_dropped(at)`. Nodes' cores have
+  `allow_local` (documentation and private addresses).
 - **`endpoint::Endpoint`**: the socket driver of a `Core`: the UDP socket,
   the TCP listener and `SignalConn`s (mapped by `SetupId`), the per-IP
   caps, the gate, the connect thread, lingering closes, and the SDP
@@ -338,11 +369,16 @@ heard checks, reflexive candidates surviving ten host addresses, the
 interest, a mapped port, the same LAN, NAT detection, STUN keeping a
 mapping alive, a renumbered router, symmetric NATs through a relay, a
 hole-punched link releasing its allocation, a dead relay ending the
-link, gathering bounded by `TURN_WAIT`; `tests/turn.rs`: a `TurnServer`
-on 127.0.0.1 with plain sockets through `turn_client_proto` (relaying
-both ways, unbound and through a channel; the per-IP limits; a full
-relay; binding answers) and `TurnCore` fuzzed; unit tests in `turn.rs`
-(the bucket, the IP table, an allocation in memory); `tests/candidates.rs`: reading,
+link (kept relayed past `RELEASE_AFTER` first), gathering bounded by
+`TURN_WAIT`; `tests/turn.rs`: a `TurnServer` on 127.0.0.1 with plain
+sockets through `turn_client_proto` (relaying both ways, unbound and
+through a channel; the per-IP limits; a full relay; binding answers;
+IPv4 only), and in memory against a sans-IO client: local peers refused,
+a stranger not draining a player's down budget, 16 permissions, spoofed
+sources and oversized requests costing nothing, a `Core` refusing a
+relay that names our base or a private address, `TurnCore` fuzzed with
+requests, Send and ChannelData; unit tests in `turn.rs` (the bucket, the
+IP table, nonces) and `turn/msg.rs` (the codec, fuzzed); `tests/candidates.rs`: reading,
 sanitizing (fuzzed) and classifying candidates;
 `tests/link.rs`: in memory on a
 virtual clock, 32 s in well under 1 s of wall time, and irregular

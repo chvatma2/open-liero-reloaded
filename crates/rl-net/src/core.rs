@@ -138,6 +138,10 @@ pub struct CoreConfig {
     /// Seeds the STUN transaction ids (the endpoint takes it from the
     /// system's randomness, so an off-path party cannot guess them).
     pub stun_seed: u64,
+    /// N62: accept a TURN relayed address that is not global, and ask
+    /// relays for permissions to non-global peers (office and LAN setups,
+    /// tests); otherwise they are refused.
+    pub allow_local: bool,
     /// Tests only (`test-hooks`): the simulation fingerprint to send and
     /// expect instead of `rl_proto::FINGERPRINT`.
     #[cfg(feature = "test-hooks")]
@@ -164,6 +168,7 @@ impl CoreConfig {
             impair: None,
             impair_seed: 0,
             stun_seed: 0,
+            allow_local: false,
             #[cfg(feature = "test-hooks")]
             fingerprint_override: None,
             #[cfg(feature = "test-hooks")]
@@ -346,6 +351,7 @@ impl Core {
         let next_id = 1;
         let rng = Rng::new(cfg.impair_seed);
         let probe = StunProbe::new(cfg.stun_seed);
+        let cfg_allow_local = cfg.allow_local;
         Core {
             cfg,
             pending: Vec::new(),
@@ -358,7 +364,7 @@ impl Core {
             hosts: Vec::new(),
             mapped: None,
             probe,
-            relays: Relays::new(now),
+            relays: Relays::new(cfg_allow_local, now),
             rng,
             stray: 0,
             now,
@@ -490,6 +496,9 @@ impl Core {
     /// Others are counted, [`Core::stray_datagrams`].
     pub fn receive(&mut self, from: SocketAddr, bytes: &[u8], now: Instant) {
         if self.probe.receive(from, bytes, now) {
+            // The server-reflexive address may have changed.
+            let own = self.own_addresses();
+            self.relays.set_own(own);
             return;
         }
         match self.relays.receive(from, bytes, now) {

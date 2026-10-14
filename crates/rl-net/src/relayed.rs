@@ -25,6 +25,8 @@ use turn_client_proto::stun::Instant as TurnInstant;
 use turn_client_proto::types::{TransportType, TurnCredentials};
 use turn_client_proto::udp::TurnClientUdp;
 
+use rl_proto::is_global;
+
 use crate::candidates::TurnSpec;
 use crate::core::{Datagram, SetupId};
 
@@ -72,18 +74,27 @@ struct Relay {
 }
 
 impl Relay {
-    /// Takes the client's events: the allocation made or refused.
-    fn events(&mut self) {
+    /// Takes the client's events: the allocation made or refused. A
+    /// relayed address that is one of ours (`own`), or not global (unless
+    /// `allow_local`), is refused and the allocation deleted: a hostile
+    /// relay must not capture our direct traffic.
+    fn events(&mut self, own: &[SocketAddr], allow_local: bool, now: TurnInstant) {
         let Some(client) = &mut self.client else { return };
         while let Some(event) = client.poll_event() {
             match event {
                 TurnEvent::AllocationCreated(TransportType::Udp, addr)
                     if self.state == RelayState::Allocating =>
                 {
-                    if addr.is_ipv4() && !addr.ip().is_unspecified() && addr.port() != 0 {
+                    let usable = addr.is_ipv4()
+                        && !addr.ip().is_unspecified()
+                        && addr.port() != 0
+                        && !own.contains(&addr)
+                        && (allow_local || is_global(addr.ip()));
+                    if usable {
                         self.addr = Some(addr);
                         self.state = RelayState::Allocated(addr);
                     } else {
+                        let _ = client.delete(now);
                         self.state = RelayState::Failed(format!("the relay gave an unusable address {addr}"));
                     }
                 }
@@ -120,6 +131,10 @@ pub(crate) enum Outgoing {
 /// The core's allocations.
 pub(crate) struct Relays {
     relays: Vec<Relay>,
+    /// Our own candidate addresses, never a relayed one.
+    own: Vec<SocketAddr>,
+    /// N62: local relayed addresses and peers allowed.
+    allow_local: bool,
     /// The clients' time zero.
     epoch: Instant,
     /// When the latest `allocate` was called (`TURN_WAIT`).
@@ -127,8 +142,19 @@ pub(crate) struct Relays {
 }
 
 impl Relays {
-    pub(crate) fn new(now: Instant) -> Relays {
-        Relays { relays: Vec::new(), epoch: now, started: None }
+    pub(crate) fn new(allow_local: bool, now: Instant) -> Relays {
+        Relays { relays: Vec::new(), own: Vec::new(), allow_local, epoch: now, started: None }
+    }
+
+    /// Our own candidate addresses changed.
+    pub(crate) fn set_own(&mut self, own: Vec<SocketAddr>) {
+        self.own = own;
+    }
+
+    /// Whether relays may be asked to reach `ip` (they refuse non-global
+    /// peers, TR-1, unless local ones are allowed).
+    fn reachable(&self, ip: IpAddr) -> bool {
+        ip.is_ipv4() && (self.allow_local || is_global(ip))
     }
 
     fn time(&self, now: Instant) -> TurnInstant {
@@ -219,7 +245,7 @@ impl Relays {
                 },
                 TurnRecvRet::Handled | TurnRecvRet::PeerIcmp { .. } => Received::Consumed,
             };
-            r.events();
+            r.events(&self.own, self.allow_local, t);
             return received;
         }
         Received::NotOurs
@@ -228,9 +254,10 @@ impl Relays {
     /// Asks every allocation for permissions to the peer IPs `ips` (IPv4).
     pub(crate) fn permit(&mut self, ips: impl IntoIterator<Item = IpAddr> + Clone, now: Instant) {
         let t = self.time(now);
+        let allow_local = self.allow_local;
         for r in &mut self.relays {
             let (RelayState::Allocated(_), Some(client)) = (&r.state, &mut r.client) else { continue };
-            for ip in ips.clone().into_iter().filter(IpAddr::is_ipv4) {
+            for ip in ips.clone().into_iter().filter(|ip| ip.is_ipv4() && (allow_local || is_global(*ip))) {
                 if r.permitted.len() < MAX_PEERS && r.permitted.insert(ip) {
                     // Already pending or made (by a channel): nothing to do.
                     let _ = client.create_permission(TransportType::Udp, ip, t);
@@ -243,7 +270,11 @@ impl Relays {
     /// relayed address.
     pub(crate) fn send(&mut self, from: SocketAddr, to: SocketAddr, bytes: &[u8], now: Instant) -> Outgoing {
         let t = self.time(now);
+        let reachable = self.reachable(to.ip());
         let Some(r) = self.relays.iter_mut().find(|r| r.addr == Some(from)) else { return Outgoing::Direct };
+        if !reachable {
+            return Outgoing::Dropped;
+        }
         let (RelayState::Allocated(_), Some(client)) = (&r.state, &mut r.client) else {
             return Outgoing::Dropped;
         };
@@ -296,10 +327,11 @@ impl Relays {
                     TurnPollRet::AllocateTcpSocket { .. } | TurnPollRet::TcpClose { .. } => {}
                 }
             }
+            r.events(&self.own, self.allow_local, t);
+            let Some(client) = &mut r.client else { continue };
             while let Some(tx) = client.poll_transmit(t) {
                 out.push(Datagram { to: tx.to, bytes: tx.data.as_ref().to_vec(), setup: RELAY_SETUP });
             }
-            r.events();
             if closed {
                 r.client = None;
                 r.state = match &r.state {
