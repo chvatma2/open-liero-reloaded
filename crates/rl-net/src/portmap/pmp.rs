@@ -6,7 +6,7 @@ use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::time::{Duration, Instant};
 
-use super::{Ctx, Grant, MapError, Method, PMP_DEADLINE, PMP_LIFETIME, Router, try_router};
+use super::{Ctx, Grant, MapError, Method, PMP_DEADLINE, PMP_GRACE, PMP_LIFETIME, Router, try_router};
 
 /// The NAT-PMP external address request (RFC 6886 §3.2): version 0, op 0.
 pub fn pmp_external_request() -> [u8; 2] {
@@ -284,7 +284,10 @@ pub(crate) fn run(ctx: Ctx) {
         Ok(SocketAddr::V4(a)) => *a.ip(),
         _ => *ctx.req.local.ip(),
     };
-    let deadline = ctx.started + PMP_DEADLINE;
+    // PMP_DEADLINE from when the thread could begin: `ctx.deadline` holds
+    // any RH-1 wait for an earlier deletion of the port, and the grace
+    // `poll` adds (final review A-M2).
+    let deadline = ctx.deadline.checked_sub(PMP_GRACE).unwrap_or(ctx.deadline);
     let lifetime = ctx.req.lifetime_or(PMP_LIFETIME);
     let mut pcp = Pcp {
         sock: &sock,

@@ -37,6 +37,10 @@ pub enum Misbehaviour {
     RenewSilent,
     /// garbage in every SSDP, HTTP and PCP/NAT-PMP answer
     Garbage,
+    /// PCP requests go unanswered (an old router dropping a version it does
+    /// not know), and so do the first two NAT-PMP requests: a NAT-PMP
+    /// mapping takes about 2.5 s from the first PCP request.
+    SlowPmp,
     /// Everything is answered but `AddPortMapping`, whose answer drips one
     /// byte every 100 ms and never ends (`dripping()` counts them open).
     SoapDrip,
@@ -455,6 +459,13 @@ fn serve_pmp(inner: &Inner, sock: &UdpSocket) {
 fn answer_pmp(inner: &Inner, req: &[u8], source: Ipv4Addr) -> Option<Vec<u8>> {
     let cfg = &inner.cfg;
     let epoch = inner.epoch().to_be_bytes();
+    if cfg.m == Misbehaviour::SlowPmp {
+        let mut table = inner.table();
+        if *req.first()? == 2 || table.silenced < 2 {
+            table.silenced = table.silenced.saturating_add(u8::from(*req.first()? == 0));
+            return None;
+        }
+    }
     match *req.first()? {
         2 if cfg.pcp => answer_pcp(inner, req),
         // RFC 6887 §9: a NAT-PMP-only server answers PCP with version 0, UNSUPP_VERSION.

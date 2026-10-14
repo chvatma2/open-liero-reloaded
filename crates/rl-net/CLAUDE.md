@@ -443,7 +443,8 @@ for tests.
     `OtherUdpPort` (the first new UDP mapping 1000 ports away),
     `PcpRefuses`, `PrivateExternal` (10.0.0.1), `RenewRefused` (and the
     mapping dropped), `RenewSilent` (the first renewal's three requests
-    unanswered), `TcpRefused` (UPnP 606 for TCP), `Garbage` (a non-UTF-8
+    unanswered), `SlowPmp` (PCP unanswered, and NAT-PMP's first two
+    requests), `TcpRefused` (UPnP 606 for TCP), `Garbage` (a non-UTF-8
     SSDP datagram first, then one with a junk line; truncated XML; PCP
     with a wrong nonce; NAT-PMP truncated), `SoapDrip` (`AddPortMapping`
     drips a byte every 100 ms; `dripping()`), `HugeBody` (an endless
@@ -695,7 +696,9 @@ an exact request never shifting, extra ports mapped exactly by the
 winner for each protocol (a held one failing alone, `close` confirming
 every deletion), `close` waiting for a late router and a failed `local`
 failing its extras, a new mapper of a port being deleted waiting for that
-deletion (`a_new_mapper_waits_for_the_ports_deletion`, `LateDelete`), a failed `local`
+deletion (`a_new_mapper_waits_for_the_ports_deletion`, `LateDelete`),
+and PCP and NAT-PMP keeping their whole deadline after that wait
+(`SlowPmp`, final review A-M2), a failed `local`
 failing its extras, a renewal reporting the router's new external
 address for each protocol, the extras' too (FR12b-2), mappings deleted on drop, no gateway
 and no UPnP failing within 5 s, a test build refusing a real router,

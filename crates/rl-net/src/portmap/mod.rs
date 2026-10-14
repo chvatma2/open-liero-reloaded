@@ -202,8 +202,6 @@ impl Shared {
 pub(crate) struct Ctx {
     req: MapRequest,
     worker: Worker,
-    /// When the mapper started.
-    started: Instant,
     /// The last instant this thread may win.
     deadline: Instant,
     shared: Arc<Shared>,
@@ -680,7 +678,6 @@ impl PortMapper {
             let ctx = Ctx {
                 req: req.clone(),
                 worker,
-                started: now,
                 deadline: mapper.deadlines[worker as usize],
                 shared: Arc::clone(&shared),
                 tx: tx.clone(),

@@ -582,6 +582,33 @@ fn a_new_mapper_waits_for_the_ports_deletion() {
     assert!(new.close());
 }
 
+/// Final review A-M2: after waiting for an earlier deletion of its port
+/// (ruling RH-1, up to `DROP_WAIT`), PCP and NAT-PMP still get their whole
+/// `PMP_DEADLINE`, as UPnP does: a router ignoring PCP and losing NAT-PMP's
+/// first two requests (about 2.5 s) still maps after a 1 s wait.
+#[test]
+fn pcp_and_nat_pmp_keep_their_deadline_after_a_wait() {
+    let ssdp = silent();
+    // An earlier mapper of the port and two extras, on a router answering
+    // each deletion 300 ms late: its close holds the port for the whole
+    // DROP_WAIT.
+    let late = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::LateDelete);
+    let mut old_req = request(&late, 23670, true);
+    old_req.gateway = None;
+    old_req.extra = vec![23671, 23672];
+    let mut old = PortMapper::start(old_req);
+    mapped(&settle(&mut old, Duration::from_secs(5)));
+    let closing = std::thread::spawn(move || old.close());
+    std::thread::sleep(Duration::from_millis(50));
+    let slow = FakeGateway::start(false, true, false, EXTERNAL, Misbehaviour::SlowPmp);
+    let mut req = request(&slow, 23670, true);
+    req.ssdp = ssdp.local_addr().unwrap();
+    let mut new = PortMapper::start(req);
+    let state = settle(&mut new, Duration::from_secs(6));
+    assert_eq!(mapped(&state).0, Method::NatPmp, "{state:?}");
+    let _ = closing.join();
+}
+
 #[test]
 fn mappings_are_deleted_on_drop() {
     let ssdp = silent();
