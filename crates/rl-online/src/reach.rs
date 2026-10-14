@@ -322,6 +322,10 @@ pub(crate) struct Listener {
 impl Listener {
     /// Listens on `cfg`'s relays for handshakes addressed to `me`.
     pub(crate) fn start(cfg: PoolConfig, me: Identity) -> io::Result<Listener> {
+        #[cfg(test)]
+        if FAIL_START.with(std::cell::Cell::get) {
+            return Err(io::Error::other("no thread (a test)"));
+        }
         let (offer_tx, offers) = mpsc::channel();
         let (skew_tx, skews) = mpsc::channel();
         let (answers, answer_rx) = mpsc::channel();
@@ -363,6 +367,12 @@ impl Drop for Listener {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: the listener's thread cannot start.
+    static FAIL_START: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// The offers of `queued` taken less than [`OFFER_STALE`] before `now`.
@@ -409,7 +419,10 @@ impl HostReach {
         if pool == self.pool {
             return Ok(());
         }
+        // Nothing listens until the new listener started: a failed start
+        // leaves no relays recorded, so the next call tries again (B-M5).
         self.listener = None;
+        self.pool = None;
         self.listener = pool.clone().map(|p| Listener::start(p, self.me.clone())).transpose()?;
         self.pool = pool;
         Ok(())
@@ -587,6 +600,26 @@ mod tests {
 
     fn reach(mapping: MappingState, nat: NatBehaviour) -> Reach {
         Reach { base: None, srflx: None, nat, mapping, relays: Vec::new(), open: None }
+    }
+
+    /// Final review B-M5: a listener that could not start on new relays
+    /// leaves none recorded, so listening on the old ones again starts it
+    /// (before, "the same relays" was answered and the host stayed deaf).
+    #[test]
+    fn a_failed_restart_does_not_hold_the_old_relays() {
+        let me = Identity::from_secret([3; 32]).unwrap();
+        let closed = |port: u16| PoolConfig {
+            relays: vec![format!("ws://127.0.0.1:{port}")],
+            ..PoolConfig::default()
+        };
+        let listen = HostListen { pool: Some(closed(9)), public_address: None };
+        let mut h = HostReach::start(listen, &me).unwrap();
+        assert!(h.listener.is_some());
+        FAIL_START.with(|f| f.set(true));
+        assert!(h.listen_on(Some(closed(10))).is_err());
+        FAIL_START.with(|f| f.set(false));
+        h.listen_on(Some(closed(9))).unwrap();
+        assert!(h.listener.is_some(), "listening on the old relays again");
     }
 
     /// Ruling N47-a (final review C-I1): a machine with no NAT (a VPS) is

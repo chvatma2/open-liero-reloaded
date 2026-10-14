@@ -390,7 +390,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   <open>" instead, N47-a), the configured address's, a symmetric NAT's,
   the listener's, in that order). `HostReach` (crate-private):
   `start(listen, me)`, `listen_on(pool)` (another listener on other
-  relays), `answer(ep, now)`, `now(ep)`, `changed(ep)` (a
+  relays; a listener that cannot start leaves no relays recorded, so the
+  next call starts one, final review B-M5), `answer(ep, now)`, `now(ep)`, `changed(ep)` (a
   report when the lines, `settled` or `direct` changed), `stop`.
   `Listener` (crate-private): a
   thread `rl-online listen` owning the `Pool` and the `Inbox` (whose
@@ -481,7 +482,8 @@ through the new relay alone, then none: `Listening::Off`). `join.rs`' and `reach
 exactly, a host without NAT joined directly at its own address with its
 "No router" line (N47-a), the relays' order, refusals told from a slow relay or a
 transient one, the answer's port, `direct`, `settled`, the listener's
-status, stale offers skipped. `peer.rs`: a join through Nostr expects
+status, stale offers skipped, a failed listener restart not holding the
+old relays (B-M5). `peer.rs`: a join through Nostr expects
 its host's key.
 `tests/matches.rs`: a proptest of starts within rl-proto's bounds (256
 cases, about 30 build) never panics `build`; a slot both member and bot,
