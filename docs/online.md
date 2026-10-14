@@ -303,9 +303,11 @@ A relay reaches games hosted behind its own public address (the
 server's own game, or a player hosting on its LAN) only through the
 router: the router must send the relay's packets for its own public
 address back inside (hairpin NAT, which most home routers do and some
-do not). Without it, a relay helps only games hosted on other networks:
-run it on a third network, or on the joiner's side. On a machine with
-no NAT (a VPS), its own game is always reachable.
+do not). The same holds for a player joining from the relay's own LAN:
+it reaches the relay at its public address. Without hairpin NAT, a
+relay helps only players on other networks than its own: run it on a
+third network. On a machine with no NAT (a VPS), its own game is always
+reachable.
 
 **Ports.** UDP **3478** (TURN) and UDP **49160-49191** (one per player
 relayed) must reach the machine, on the same port numbers outside.
