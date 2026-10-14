@@ -234,7 +234,12 @@ fn net_client(args: &[&str], timeout: &str, content: &str) -> (bool, String, Str
 
 /// `--invite` (N46): the code of an Invite server with an address (its
 /// public address, with `allow_local`) and the test relay as its hint
-/// joins directly first; `--lobby-only` ends once in the lobby.
+/// joins directly first; `--lobby-only` ends once in the lobby. Only the
+/// direct path is taken here: a join through the relays from the CLI
+/// (a relay-only invite, `--key`, a listed game without an address) is
+/// unit-tested in its resolution and first runs in the Docker NAT tests
+/// (its candidates would leave loopback). Leaving says goodbye: the server
+/// sees the leave at once, not after a timeout.
 #[test]
 fn net_client_joins_by_invite_through_a_test_relay() {
     let Some(dir) = content_dir() else { return };
@@ -249,6 +254,11 @@ fn net_client_joins_by_invite_through_a_test_relay() {
     assert!(ok, "net-client failed:\n{stdout}\n{stderr}\nthe server's log:\n{}", server.log.text());
     assert!(stdout.lines().any(|l| l == "path: direct"), "{stdout}");
     assert!(server.log.text().contains("join: Cli ("), "{}", server.log.text());
+    let left = Instant::now();
+    while !server.log.text().contains("leave Cli [") {
+        assert!(left.elapsed() < Duration::from_secs(2), "the leave at once:\n{}", server.log.text());
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// `--listed` (N46): a Public server's game found by its name on the

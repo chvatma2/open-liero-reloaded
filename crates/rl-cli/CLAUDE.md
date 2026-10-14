@@ -146,7 +146,10 @@ The headless command-line tool. Its commands:
   (`rl_online::join::path_tag`: direct, open port, punched, relayed) and
   the host's end on stderr; `--lobby-only` exits 0 once in the lobby (no
   ready, no match). Leaving waits at most 1 s (`SHUTDOWN_WAIT`) for the
-  endpoint's shutdown (`OnlinePeer::shutdown`, ruling NT-2). It joins, readies whenever the lobby gathers and it
+  endpoint's shutdown (`OnlinePeer::shutdown`, ruling NT-2; a client maps
+  no port today, so it ends at once, untested). The tests here join
+  directly only; a join through the relays from the CLI first runs in
+  the Docker NAT tests (`cargo xtask net-nat`). It joins, readies whenever the lobby gathers and it
   wants another match (or asks to watch, `--spectate`), plays with a bot on
   its slot (`Bot::new` for its slot and the start's seed, thinking in
   `on_tick` on the world each newest tick leaves: a re-simulation of an
@@ -165,8 +168,10 @@ The headless command-line tool. Its commands:
   the Docker NAT tests' WAN infrastructure): rl-discovery's
   `TestRelay::start_on` (honest) and `StunResponder::reflecting` (answers
   each binding with its observed source) as processes. The first stdout
-  line is `nostr relay: ws://<addr>:<port>` (loopback for an unspecified
-  address) or `stun server: <addr>:<port>`; then they serve until killed.
+  line is `nostr relay: ws://<addr>:<port>` or `stun server:
+  <addr>:<port>`, loopback for an unspecified address (`local`; a caller
+  listening on every interface, as in Docker, names the reachable
+  address itself); then they serve until killed.
   Loopback by default (tests and e2e send only to 127.0.0.0/8). The
   feature enables `rl-discovery/test-relay`; a build without it has no
   such commands, and no release build has it (`xtask dist` does not build

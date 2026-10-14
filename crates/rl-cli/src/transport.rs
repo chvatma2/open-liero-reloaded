@@ -332,7 +332,8 @@ pub fn run_bot_client(
         std::thread::sleep(CLIENT_POLL);
     }
     // Ruling NT-2: the endpoint shut down, its mapping (if any) deleted,
-    // waited for at most `SHUTDOWN_WAIT`.
+    // waited for at most `SHUTDOWN_WAIT`. A client's endpoint maps no port
+    // today, so the wait ends at once; it holds should one ever map.
     peer.shutdown().wait(Instant::now() + SHUTDOWN_WAIT);
     Ok(run)
 }

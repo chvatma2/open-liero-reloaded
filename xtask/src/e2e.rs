@@ -19,7 +19,8 @@
 //! back to the lobby, leaving and quitting. It also needs the bot client
 //! to finish its match and leave by itself, the server to stop cleanly on
 //! SIGTERM, the server's log to show the three joins, the chat line and a
-//! match's start and end, and the helpers' output to be clean. The helpers
+//! match's start and end, the relay to run until then and stop on SIGTERM,
+//! and the helpers' output to be clean. The helpers
 //! are killed whatever happens.
 //!
 //! Rendering is forced onto Mesa's software rasteriser, so the run is the
@@ -477,8 +478,16 @@ fn online(x: &Xvfb, content: &Path, settings: &str, out: &Path) -> Result<Online
     // then the relay (which runs until killed).
     let bot_status = bot.end(false, Duration::from_secs(15));
     let server_status = server.end(true, Duration::from_secs(15));
-    relay.end(true, Duration::from_secs(5));
+    // The relay serves until killed: it must still run, then stop on SIGTERM.
+    let relay_ran = matches!(relay.child.try_wait(), Ok(None));
+    let relay_status = relay.end(true, Duration::from_secs(5));
     let fail = |why: &str| Err(helpers(why.to_string(), &server, &bot, &relay));
+    if !relay_ran {
+        return fail("the relay exited before the run's end");
+    }
+    if relay_status.is_none() {
+        return fail("the relay did not stop on SIGTERM: killed");
+    }
     match bot_status {
         Some(s) if s.success() => {}
         Some(s) => return fail(&format!("the bot client exited with {s}")),

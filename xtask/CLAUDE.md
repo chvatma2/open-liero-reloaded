@@ -84,7 +84,9 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 - `e2e` (`e2e.rs`, also `cargo xtask e2e [--offline]`): builds `rl-game`
   and `rl-server` (dev profile), and `rl-cli --features nat-tools` in a
   cargo run of its own (one run would give the others rl-discovery's
-  test relay too), starts Xvfb on the first display from `:90` without a
+  test relay too; `target/debug/rl-cli` is then the feature build, and
+  `dist`'s plain `cargo build -p rl-cli` and this step rebuild it in turn
+  in `full`: harmless, each builds right before its use), starts Xvfb on the first display from `:90` without a
   lock file (`-displayfd` says when it is ready; stopped with SIGTERM so
   its lock goes; WSLg mounts `/tmp/.X11-unix` read-only, Xvfb then listens
   on the abstract socket), and plays `fixtures/autoplay/menus.ron` with
@@ -118,8 +120,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   the lobby's 2 members again, a chat line, Ready, the match with keys
   held, its results, Back to lobby, Back, Quit. Besides the game's checks
   it needs the bot client to exit 0 by itself after its match, the server
-  to stop cleanly on SIGTERM ("server stopped"), the relay to be ended
-  (SIGTERM), the server's log (stamps removed) to show three joins (the
+  to stop cleanly on SIGTERM ("server stopped"), the relay to run until
+  then and stop on SIGTERM (not killed), the server's log (stamps removed) to show three joins (the
   bot's, the game's typed and listed), the chat line, a match start and
   end, and no `bad_lines` in any helper's output (`Helper`: output in
   `<name>.out`/`.err` files, killed when dropped, so a failing run leaves
