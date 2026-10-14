@@ -9,6 +9,7 @@ mod candidates;
 mod core_wire;
 mod endpoint;
 mod fuzz;
+mod ice;
 mod lan;
 mod natsim;
 mod portmap;

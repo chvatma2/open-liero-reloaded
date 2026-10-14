@@ -12,12 +12,16 @@ announcements.
   turn-client-proto (`=0.7.2`, default features: `std`; N52: `Core`'s
   TURN client), for our own relay server (ruling TR-2) md-5
   (`=0.11.0`), sha1 (`=0.11.0`), hmac (`=0.13.0`) and crc32fast
-  (`=1.5.2`). Port mapping needs no crate (ruling PM-1: igd-next was
+  (`=1.5.2`), and netdev (`=0.46.3`, `default-features = false,
+  features = ["gateway"]`: `get_default_interface` and
+  `Interface::gateway` exist only with it; not the Apple and Android
+  extras) for `local`. Port mapping needs no crate (ruling PM-1: igd-next was
   dropped — it parsed a LAN device's XML recursively, a stack-overflow
   abort at ~35 KB of nesting, read unbounded bodies and used environment
   proxies). Real clocks and sockets
   live only in this crate's socket drivers, `endpoint`,
-  `turn::TurnServer` and `portmap::PortMapper` (and the binaries); `link`,
+  `turn::TurnServer`, `portmap::PortMapper` and `local` (the OS's
+  addresses) (and the binaries); `link`,
   `core`, `turn::TurnCore` and `portmap::pmp`'s codec are sans-IO, and
   `endpoint::poll` takes the time.
 - **TURN client pins.** `Cargo.lock` holds turn-client-proto's
@@ -143,7 +147,11 @@ announcements.
     reported peers only (when signalled links reach the endpoint,
     rl-online's close-all over `peers()` misses one still waiting; the
     endpoint's drop closes it). Test hook `CoreConfig::suppress_stats`
-    (`test-hooks`) ignores str0m's stats, to test the fallback.
+    (`test-hooks`) ignores str0m's stats, to test the fallback; test hook
+    `CoreConfig::relay_only` gives signalled links only their relayed
+    candidates (no host or server-reflexive one reaches str0m, so it
+    cannot pair a host candidate peer-reflexively: on 127.0.0.1 the path
+    really is `Relayed`).
   - **STUN on the game socket** (`probe.rs`, N48): each round asks the
     servers (IPv4, at most 4) with binding requests from the core's
     socket, once more after 500 ms if unanswered, at `stun` and every
@@ -406,11 +414,18 @@ announcements.
   `TurnSpec` (local peers allowed, a nonce key from the net's seed);
   `kill(at)` silences it; `turn_dropped(at)`. Nodes' cores have
   `allow_local` (documentation and private addresses).
+- **`local`** (N48, N51): `base_addresses(toward)`: the default
+  interface's IPv4 addresses (at most 2; not unspecified, multicast or
+  broadcast) and its gateway (netdev: a netlink dump on Linux, which can
+  take ~350 ms, so the endpoint calls it on a thread); else the source
+  address the OS picks toward `toward` (a `connect`ed UDP socket: nothing
+  is sent); else 127.0.0.1.
 - **`endpoint::Endpoint`**: the socket driver of a `Core`: the UDP socket,
   the TCP listener and `SignalConn`s (mapped by `SetupId`), the per-IP
   caps, the gate, the connect thread, lingering closes, and the SDP
   rewrites T4-A (`keep_candidates_of`) and F-G (`rewrite_candidates`),
-  which are about the TCP connection. `poll`'s order: signalling (accepts,
+  which are about the TCP connection. `poll`'s order: gathering (the DNS
+  thread's findings, the port mapper), signalling (accepts,
   offers, the connect), the socket's datagrams into `Core::receive`, each
   setup's signalling, `Core::poll` (its datagrams `send_to`), lingering
   closes. One non-blocking UDP socket
@@ -470,6 +485,48 @@ announcements.
   - **Timeouts**: a link must open within `SETUP_TIMEOUT` (10 s) of its
     offer; an open link silent for `SILENCE_TIMEOUT` (10 s) or lost by ICE
     is `Disconnected { Timeout }`.
+  - **ICE** (plan 12b, N48-N51; `EndpointConfig::ice`, `IceConfig`; the
+    default asks nothing, so a caller that passes no settings is
+    unchanged): `stun` (`host:port`, IPv4, the first 4 that resolve),
+    `turn` (`TurnServerSpec`, a signalled client's, the first 2 that
+    resolve), `port_mapping` (a host's), `allow_local` (N62: the core's
+    relays and the mapping's `usable`); test hooks `base_override`,
+    `relay_only` (a client's), `gateway` (a `FakeGateway`'s PCP/NAT-PMP
+    address) and `ssdp`. A host and a signalled client start a thread,
+    `rl-net dns`, that sends what it finds in order: the base
+    (`local::default_interface` at once; without one,
+    `base_addresses(first STUN server)` after the names resolve), the STUN
+    servers, then the TURN servers; `poll` hands them to `Core::set_base`
+    (every IP on our port, the first the base), `Core::stun` and
+    `Core::allocate` (signalled clients only: a host never allocates).
+    With `base_override` the base is set at once. A TCP client
+    (`connect`) gathers nothing. A host with `port_mapping` starts a
+    `PortMapper` (TCP and UDP, the base and our port, the gateway; under
+    the hooks the fake's) once its base is known; `poll` takes its states
+    (`reach().mapping`) and hands the usable mapping's external address
+    to `Core::set_mapped` (`mapped()`). The endpoint's drop hands the
+    mapper to a thread, `rl-net unmap` (its drop waits up to `DROP_WAIT`
+    for the router: never on the game's UI thread). `poll` calls
+    `Core::poll` every time, so the TURN clients' timers and the STUN
+    rounds run whether or not the socket is readable.
+  - **Signalled client** (`Endpoint::signalled(cfg)`): UDP on `cfg.port`,
+    no TCP. `gathered()`: the DNS thread done and `Core::gathered`, or
+    `GATHER_DEADLINE` (2 s) after the endpoint was made (at the time last
+    given to `poll`, `offer` or `take_reply`). `offer(now)`: `None` until
+    gathered; then `Core::offer_ice` (the peer's address unknown,
+    0.0.0.0:0, until its datagrams come) as a `Signal::Offer`, made once
+    and returned again by later calls. `take_reply(reply, mapped_hint,
+    now)`: the first reply only — an `Answer` goes to
+    `accept_answer_ice` (one it refuses ends the setup, `Disconnected {
+    HOST, Malformed }`), `Refused` is `NetEvent::Refused` alone, anything
+    else `Malformed`; its events come with the next `poll`.
+  - **Host, signalled** (`answer_signalled(offer, mapped_hint, now)`):
+    `Core::answer_ice` (PF12b-2's pending table, `SIGNALLED_SETUP_TIMEOUT`;
+    both re-exported here with `MAX_SIGNALLED_PENDING`); no gate (a
+    signalled offer has no address); a non-host endpoint answers
+    `Refused { Malformed }`. `mapped()`, `reach()` (`Reach`: base,
+    srflx, `nat`, `mapping` — `Off` without a mapper —, `relays`) and
+    `path(peer)` serve every endpoint.
 - **Limits** (`limits.rs`, spec §5.4), per peer, on what it sends us: a
   token bucket holding one second, `max_datagrams_per_s` (400) messages on
   the unreliable channel, `max_reliable_bytes_per_s` (256 KiB) reliable
@@ -558,12 +615,25 @@ unauthenticated answer, the amplification pinned, the relay-wide cap on
 unauthenticated answers, forged requests not starving a client's signed
 ones, a live client keeping its allocation, permission and channel for
 32 virtual minutes past nonce expiry against a spoofer draining both
-unproven budgets, oversized datagrams dropped; unit tests in `turn.rs`
+unproven budgets, oversized datagrams dropped; unit tests in `local.rs` (a base always found, the source toward
+loopback), in `turn.rs`
 (the bucket, the IP table, nonces, a stale tag proven only for its own
 source, a proven source answered outside the unproven budget, an IP's
 two buckets keeping its rate, a hostile nonce, any nonce on a signed
 request, fuzzed) and `turn/msg.rs` (the codec, fuzzed); `tests/candidates.rs`: reading,
 sanitizing (fuzzed) and classifying candidates;
+`tests/ice.rs`: endpoints on 127.0.0.1 with `base_override` — a
+signalled client and a host connecting `Direct` (both `Connected`
+addresses the pair's remote ends, a message each way), through a local
+`TurnServer` with `relay_only` (`Relayed` at both ends, 1000 reliable
+messages in order, relayed bytes counted), STUN to the `TurnServer`
+learning `srflx` = the base (`Open`), a host mapping its port on a
+`FakeGateway` (UPnP; `mapped()` the fake's 203.0.113.7, no client
+connected: its checks to that TEST-NET address would leave through the
+real router; the drop returns at once and the mapping goes), eight
+silent offers pending and a ninth, live, connecting (PF12b-2), the TCP
+path unchanged, and gathering against silent STUN and TURN ports
+ending within `GATHER_DEADLINE` + 100 ms of the endpoint's making;
 `tests/link.rs`: in memory on a
 virtual clock, 32 s in well under 1 s of wall time, and irregular
 polling without a FORWARD-TSN/SACK storm; over localhost UDP:

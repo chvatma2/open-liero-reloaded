@@ -7,20 +7,35 @@
 //! links connect over UDP. Each side's only host candidate is the IP its
 //! signalling connection uses with its UDP port (decision N16).
 //! [`Endpoint::poll`] never blocks: it does what the sockets allow now.
+//!
+//! Signalled setups (plan 12b, N48-N51) carry their SDP elsewhere (Nostr):
+//! [`Endpoint::signalled`] makes a client that gathers its candidates
+//! (STUN, TURN) on the game socket and offers them all; a host answers
+//! such offers with [`Endpoint::answer_signalled`], learns its reflexive
+//! address by STUN too and asks its router to open its port.
 
 use std::collections::BTreeMap;
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::net::{
+    IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream, ToSocketAddrs, UdpSocket,
+};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use rl_netcode::netsim::Profile;
 use rl_netcode::{Channel, PeerId};
-use rl_proto::{PROTOCOL_VERSION, Refusal, Signal, decode_signal, encode_signal};
+use rl_proto::{PROTOCOL_VERSION, Path, Refusal, Signal, decode_signal, encode_signal};
 
+use crate::candidates::TurnSpec;
 use crate::core::{Core, CoreConfig, CoreEvent, Datagram, SetupId};
-pub use crate::core::{HOST, MAX_QUEUED, NetEvent, PeerStats, SETUP_TIMEOUT, SILENCE_TIMEOUT, Why};
+pub use crate::core::{
+    HOST, MAX_QUEUED, MAX_SIGNALLED_PENDING, NetEvent, PeerStats, SETUP_TIMEOUT, SIGNALLED_SETUP_TIMEOUT,
+    SILENCE_TIMEOUT, Why,
+};
 pub use crate::limits::Limits;
+use crate::portmap::{MapRequest, MappingState, PortMapper};
+use crate::probe::NatBehaviour;
+use crate::relayed::RelayState;
 use crate::signal::SignalConn;
 
 /// The host's default TCP and UDP port (spec §5.1).
@@ -41,6 +56,70 @@ pub const MAX_PER_IP: usize = 8;
 const MAX_ACCEPTS_PER_POLL: usize = 64;
 /// At most this many datagrams are taken in one poll.
 const MAX_DATAGRAMS_PER_POLL: usize = 1024;
+/// A signalled client offers once gathered, or this long after it was made
+/// at the latest (N45: no trickle ICE).
+pub const GATHER_DEADLINE: Duration = Duration::from_secs(2);
+/// At most this many STUN servers are resolved (the core asks at most 4).
+const MAX_STUN: usize = 4;
+/// At most this many TURN servers are used (N48).
+const MAX_TURN: usize = 2;
+
+/// A TURN server for a signalled client's allocations: `host:port` (a name
+/// is resolved on the endpoint's DNS thread) and long-term credentials.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TurnServerSpec {
+    pub addr: String,
+    pub user: String,
+    pub pass: String,
+}
+
+/// What an endpoint gathers for signalled setups (N48, N51). The default
+/// asks nothing: no STUN or TURN server, no port mapping.
+#[derive(Clone, Debug, Default)]
+pub struct IceConfig {
+    /// STUN servers, `host:port`, resolved on a thread (IPv4, the first 4
+    /// that resolve); `[]` asks none.
+    pub stun: Vec<String>,
+    /// A signalled client's TURN servers; the first 2 that resolve are
+    /// used. A host never allocates.
+    pub turn: Vec<TurnServerSpec>,
+    /// A host asks its router to open its port (TCP and UDP).
+    pub port_mapping: bool,
+    /// N62: relayed addresses, relay permissions and mappings may be
+    /// non-global (office and LAN setups, tests).
+    pub allow_local: bool,
+    /// Tests only (`test-hooks`): the base address (and only host
+    /// candidate) instead of the default interface's.
+    #[cfg(feature = "test-hooks")]
+    pub base_override: Option<Ipv4Addr>,
+    /// Tests only (`test-hooks`): a client's links get only relayed
+    /// candidates.
+    #[cfg(feature = "test-hooks")]
+    pub relay_only: bool,
+    /// Tests only (`test-hooks`): the gateway's PCP/NAT-PMP address (a
+    /// `FakeGateway`'s) instead of the default gateway's port 5351.
+    #[cfg(feature = "test-hooks")]
+    pub gateway: Option<SocketAddr>,
+    /// Tests only (`test-hooks`): where the SSDP search goes (a
+    /// `FakeGateway`'s) instead of the multicast group.
+    #[cfg(feature = "test-hooks")]
+    pub ssdp: Option<SocketAddr>,
+}
+
+/// How this endpoint can be reached: its candidates, its router's NAT
+/// behaviour, the port mapping and the TURN allocations.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Reach {
+    /// The base: the first host candidate (once known).
+    pub base: Option<SocketAddr>,
+    /// The server-reflexive address STUN reported (the latest).
+    pub srflx: Option<SocketAddr>,
+    pub nat: NatBehaviour,
+    /// `Off` without port mapping (and on a client).
+    pub mapping: MappingState,
+    /// Each TURN server asked and where its allocation stands.
+    pub relays: Vec<(SocketAddr, RelayState)>,
+}
 
 /// The host's admission check for a valid offer from the signalling
 /// connection's remote address (bans by IP, Task 6/13). It runs after the
@@ -76,6 +155,8 @@ pub struct EndpointConfig {
     /// elsewhere).
     #[cfg(feature = "test-hooks")]
     pub answer_addr_override: Option<SocketAddr>,
+    /// Signalled setups' candidates (default: nothing asked).
+    pub ice: IceConfig,
 }
 
 impl Default for EndpointConfig {
@@ -98,6 +179,7 @@ impl Default for EndpointConfig {
             first_peer_id: None,
             #[cfg(feature = "test-hooks")]
             answer_addr_override: None,
+            ice: IceConfig::default(),
         }
     }
 }
@@ -133,6 +215,35 @@ enum Role {
         /// The TCP connect running on its own thread, and when we started waiting.
         connecting: Option<(Receiver<io::Result<TcpStream>>, Option<Instant>)>,
     },
+    /// A client whose signalling the caller carries (Nostr).
+    Signalled {
+        /// The offer's setup and the offer, once made.
+        offer: Option<(SetupId, Signal)>,
+        /// The host's reply was taken.
+        replied: bool,
+    },
+}
+
+/// What the endpoint's DNS thread found, in this order.
+enum Found {
+    /// The host candidates' IPs (base first) and the default gateway.
+    Base(Vec<Ipv4Addr>, Option<Ipv4Addr>),
+    /// The STUN servers' addresses.
+    Stun(Vec<SocketAddr>),
+    /// The TURN servers' addresses and credentials.
+    Turn(Vec<TurnSpec>),
+}
+
+/// Gathering's driver state: the DNS thread, the port mapper.
+struct Gathering {
+    /// When the endpoint was made: gathering ends by `GATHER_DEADLINE`.
+    started: Instant,
+    /// The DNS thread's findings, until it ends.
+    found: Option<Receiver<Found>>,
+    /// The host's port mapping, once its base is known.
+    mapper: Option<PortMapper>,
+    /// Its latest state (`Off` without one).
+    mapping: MappingState,
 }
 
 /// One end of online play: a host and its peers, or a client and its host.
@@ -148,6 +259,11 @@ pub struct Endpoint {
     setups: BTreeMap<SetupId, Setup>,
     /// Signalling connections closing.
     lingering: Vec<(SignalConn, Instant)>,
+    /// STUN, TURN and the port mapping.
+    gathering: Gathering,
+    /// Events of calls that take no event list (`take_reply`), reported
+    /// by the next `poll`.
+    queued: Vec<CoreEvent>,
     /// The latest time `poll` was given.
     now: Instant,
 }
@@ -240,28 +356,106 @@ fn core_config(cfg: &EndpointConfig, host: bool) -> CoreConfig {
         impair: cfg.impair,
         impair_seed: cfg.impair_seed,
         stun_seed: stun_seed(),
-        allow_local: false,
+        allow_local: cfg.ice.allow_local,
         #[cfg(feature = "test-hooks")]
         fingerprint_override: cfg.fingerprint_override,
         #[cfg(feature = "test-hooks")]
         first_peer_id: cfg.first_peer_id,
         #[cfg(feature = "test-hooks")]
         suppress_stats: false,
+        #[cfg(feature = "test-hooks")]
+        relay_only: cfg.ice.relay_only && !host,
     }
 }
 
+/// `name` (`host:port`) resolved to its first IPv4 address.
+fn resolve(name: &str) -> Option<SocketAddr> {
+    name.to_socket_addrs().ok()?.find(SocketAddr::is_ipv4)
+}
+
+/// Resolves the STUN servers and `turn` on a thread named `rl-net dns`,
+/// and finds the base unless `base` is false: the default interface's at
+/// once, else (it has none) the source address toward the first STUN
+/// server once resolved. A name that does not resolve is skipped; the
+/// channel closes when the thread is done.
+fn start_dns(stun: Vec<String>, turn: Vec<TurnServerSpec>, base: bool) -> io::Result<Receiver<Found>> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new().name("rl-net dns".into()).spawn(move || {
+        // A send fails only once the endpoint is gone: nothing to do then.
+        let interface = if base { crate::local::default_interface() } else { None };
+        let late_base = base && interface.is_none();
+        if let Some((ips, gateway)) = interface {
+            let _ = tx.send(Found::Base(ips, gateway));
+        }
+        let stun: Vec<SocketAddr> = stun.iter().filter_map(|name| resolve(name)).take(MAX_STUN).collect();
+        if late_base {
+            let (ips, gateway) = crate::local::base_addresses(stun.first().copied());
+            let _ = tx.send(Found::Base(ips, gateway));
+        }
+        let _ = tx.send(Found::Stun(stun));
+        let turn: Vec<TurnSpec> = turn
+            .into_iter()
+            .filter_map(|t| Some(TurnSpec { addr: resolve(&t.addr)?, user: t.user, pass: t.pass }))
+            .take(MAX_TURN)
+            .collect();
+        let _ = tx.send(Found::Turn(turn));
+    })?;
+    Ok(rx)
+}
+
 impl Endpoint {
-    fn new(cfg: EndpointConfig, udp: UdpSocket, port: u16, role: Role) -> Endpoint {
+    /// The endpoint around its socket: the core, and gathering started (a
+    /// TCP client gathers nothing).
+    fn new(cfg: EndpointConfig, udp: UdpSocket, port: u16, role: Role) -> io::Result<Endpoint> {
         let now = Instant::now();
-        let core = Core::new(core_config(&cfg, matches!(role, Role::Host { .. })), now);
-        Endpoint { cfg, udp, port, role, core, setups: BTreeMap::new(), lingering: Vec::new(), now }
+        let host = matches!(role, Role::Host { .. });
+        let core = Core::new(core_config(&cfg, host), now);
+        let gathers = !matches!(role, Role::Client { .. });
+        #[cfg(feature = "test-hooks")]
+        let base_override = cfg.ice.base_override.filter(|_| gathers);
+        #[cfg(not(feature = "test-hooks"))]
+        let base_override: Option<Ipv4Addr> = None;
+        let turn = if matches!(role, Role::Signalled { .. }) { cfg.ice.turn.clone() } else { Vec::new() };
+        let wants_base = gathers && base_override.is_none();
+        let found = if wants_base || (gathers && (!cfg.ice.stun.is_empty() || !turn.is_empty())) {
+            Some(start_dns(cfg.ice.stun.clone(), turn, wants_base)?)
+        } else {
+            None
+        };
+        let gathering = Gathering { started: now, found, mapper: None, mapping: MappingState::Off };
+        let mut endpoint = Endpoint {
+            cfg,
+            udp,
+            port,
+            role,
+            core,
+            setups: BTreeMap::new(),
+            lingering: Vec::new(),
+            gathering,
+            queued: Vec::new(),
+            now,
+        };
+        if let Some(ip) = base_override {
+            endpoint.set_base(vec![ip], None);
+        }
+        Ok(endpoint)
     }
 
     /// A host on `cfg.port` (TCP and UDP, all interfaces); `gate` admits or
-    /// refuses each valid offer.
+    /// refuses each valid offer. It finds its base, asks `cfg.ice.stun`
+    /// and, with `cfg.ice.port_mapping`, its router to open the port.
     pub fn host(cfg: EndpointConfig, gate: Gate) -> io::Result<Endpoint> {
         let (listener, udp, port) = bind_both(cfg.port)?;
-        Ok(Endpoint::new(cfg, udp, port, Role::Host { listener, gate, incoming: Vec::new() }))
+        Endpoint::new(cfg, udp, port, Role::Host { listener, gate, incoming: Vec::new() })
+    }
+
+    /// A client for a signalled (Nostr) join: binds UDP on `cfg.port`,
+    /// finds its base, asks `cfg.ice.stun` and allocates on `cfg.ice.turn`
+    /// (the first 2). [`Endpoint::offer`] once [`Endpoint::gathered`].
+    pub fn signalled(cfg: EndpointConfig) -> io::Result<Endpoint> {
+        let udp = bind_udp(cfg.port)?;
+        let port = udp.local_addr()?.port();
+        Endpoint::new(cfg, udp, port, Role::Signalled { offer: None, replied: false })
     }
 
     /// A client of the host whose signalling (TCP) address is `host`. The
@@ -274,7 +468,7 @@ impl Endpoint {
         std::thread::Builder::new().name("rl-net connect".into()).spawn(move || {
             let _ = tx.send(TcpStream::connect_timeout(&host, CONNECT_TIMEOUT));
         })?;
-        Ok(Endpoint::new(cfg, udp, port, Role::Client { host, connecting: Some((rx, None)) }))
+        Endpoint::new(cfg, udp, port, Role::Client { host, connecting: Some((rx, None)) })
     }
 
     /// The UDP port (on a host, the TCP port too).
@@ -287,7 +481,8 @@ impl Endpoint {
     pub fn poll(&mut self, now: Instant, events: &mut Vec<NetEvent>) {
         self.now = self.now.max(now);
         let now = self.now;
-        let mut core_events = Vec::new();
+        let mut core_events = std::mem::take(&mut self.queued);
+        self.poll_gathering(now);
         self.poll_signalling(now, events);
         self.receive(now);
         self.poll_setups(events, &mut core_events);
@@ -355,6 +550,152 @@ impl Endpoint {
         self.core.stray_datagrams()
     }
 
+    /// Gathering is done (the names resolved, STUN answered or
+    /// `STUN_WAIT` passed, every TURN allocation settled or `TURN_WAIT`
+    /// passed), or `GATHER_DEADLINE` passed since the endpoint was made,
+    /// at the time `poll` was last given.
+    pub fn gathered(&self) -> bool {
+        let g = &self.gathering;
+        self.now >= g.started + GATHER_DEADLINE || (g.found.is_none() && self.core.gathered(self.now))
+    }
+
+    /// A signalled client's offer, once [`Endpoint::gathered`]:
+    /// `Signal::Offer` with every candidate (a client sends no mapped
+    /// hint). The link is made at the first call; later calls return the
+    /// same offer. `None` before, and on other endpoints.
+    pub fn offer(&mut self, now: Instant) -> Option<Signal> {
+        self.now = self.now.max(now);
+        if !self.gathered() {
+            return None;
+        }
+        let Role::Signalled { offer, .. } = &mut self.role else { return None };
+        if let Some((_, signal)) = offer {
+            return Some(signal.clone());
+        }
+        // The peer's address is not known before its datagrams come.
+        let (setup, sdp) = self.core.offer_ice((Ipv4Addr::UNSPECIFIED, 0).into(), self.now);
+        let signal = Signal::Offer { protocol: PROTOCOL_VERSION, fingerprint: self.core.fingerprint(), sdp };
+        *offer = Some((setup, signal.clone()));
+        Some(signal)
+    }
+
+    /// A signalled client takes the host's reply to its offer (the first
+    /// one; later ones are ignored) and the host's mapped hint: an
+    /// `Answer` starts ICE (one that does not parse ends the setup,
+    /// `Disconnected { HOST, Malformed }`); a `Refused` ends it with
+    /// `NetEvent::Refused`. The events come with the next `poll`.
+    pub fn take_reply(&mut self, reply: &Signal, mapped_hint: Option<SocketAddr>, now: Instant) {
+        self.now = self.now.max(now);
+        let Role::Signalled { offer: Some((setup, _)), replied } = &mut self.role else { return };
+        if std::mem::replace(replied, true) {
+            return;
+        }
+        let setup = *setup;
+        match reply {
+            Signal::Answer { sdp } if self.core.accept_answer_ice(setup, sdp, mapped_hint).is_ok() => {}
+            Signal::Refused { reason } => {
+                self.queued.push(CoreEvent::Net(NetEvent::Refused { why: *reason }));
+                // Refused is all the client hears.
+                self.core.cancel(setup, Why::Refused, &mut Vec::new());
+            }
+            _ => self.core.cancel(setup, Why::Malformed, &mut self.queued),
+        }
+    }
+
+    /// Host: answers a signalled offer (`Core::answer_ice`: admitted, then
+    /// sanitized, with every local candidate; when `MAX_SIGNALLED_PENDING`
+    /// setups are pending, the oldest that has heard no connectivity check
+    /// is evicted, PF12b-2, and `Refused { Busy }` comes only when every
+    /// one has). `mapped_hint` is the joiner's mapped address. No gate:
+    /// a signalled offer has no address to judge. Other endpoints refuse
+    /// (`Malformed`).
+    pub fn answer_signalled(
+        &mut self,
+        offer: &Signal,
+        mapped_hint: Option<SocketAddr>,
+        now: Instant,
+    ) -> Signal {
+        self.now = self.now.max(now);
+        if !matches!(self.role, Role::Host { .. }) {
+            return Signal::Refused { reason: Refusal::Malformed };
+        }
+        self.core.answer_ice(offer, mapped_hint, self.now)
+    }
+
+    /// Host: the router mapping's external address, when usable (a global
+    /// IP, or `allow_local`): the mapped hint of answers, and N47's
+    /// advertised address (with `tcp`, see [`Endpoint::reach`]).
+    pub fn mapped(&self) -> Option<SocketAddr> {
+        usable_mapping(&self.gathering.mapping)
+    }
+
+    /// How this endpoint can be reached now.
+    pub fn reach(&self) -> Reach {
+        let local = self.core.local();
+        Reach {
+            base: local.base,
+            srflx: local.srflx,
+            nat: self.core.nat(),
+            mapping: self.gathering.mapping.clone(),
+            relays: self.core.relays(),
+        }
+    }
+
+    /// The path of a connected peer's link (N49): its selected pair's
+    /// class, following ICE; `Direct` for a TCP-signalled link.
+    pub fn path(&self, peer: PeerId) -> Option<Path> {
+        self.core.path(peer)
+    }
+
+    /// Takes what the DNS thread found (the base, STUN and TURN servers)
+    /// to the core, and the port mapper's news.
+    fn poll_gathering(&mut self, now: Instant) {
+        while let Some(rx) = &self.gathering.found {
+            match rx.try_recv() {
+                Ok(Found::Base(ips, gateway)) => self.set_base(ips, gateway),
+                Ok(Found::Stun(servers)) if !servers.is_empty() => self.core.stun(servers, now),
+                Ok(Found::Turn(servers)) if !servers.is_empty() => self.core.allocate(&servers, now),
+                Ok(_) => {}
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => self.gathering.found = None,
+            }
+        }
+        if let Some(state) = self.gathering.mapper.as_mut().and_then(PortMapper::poll) {
+            self.core.set_mapped(usable_mapping(&state));
+            self.gathering.mapping = state;
+        }
+    }
+
+    /// The host candidates (`ips` on our port, the first the base) go to
+    /// the core; a host with `port_mapping` starts mapping the base's
+    /// port at `gateway`.
+    fn set_base(&mut self, ips: Vec<Ipv4Addr>, gateway: Option<Ipv4Addr>) {
+        let port = self.port;
+        let hosts: Vec<SocketAddr> = ips.iter().map(|&ip| SocketAddr::from((ip, port))).collect();
+        let Some(&base) = hosts.first() else { return };
+        self.core.set_base(base, hosts);
+        if !matches!(self.role, Role::Host { .. })
+            || !self.cfg.ice.port_mapping
+            || self.gathering.mapper.is_some()
+        {
+            return;
+        }
+        let mut req = MapRequest::new(SocketAddrV4::new(ips[0], port), true, gateway);
+        req.allow_local = self.cfg.ice.allow_local;
+        #[cfg(feature = "test-hooks")]
+        {
+            if let Some(SocketAddr::V4(g)) = self.cfg.ice.gateway {
+                req.gateway = Some(*g.ip());
+                req.pmp_port = g.port();
+            }
+            if let Some(ssdp) = self.cfg.ice.ssdp {
+                req.ssdp = ssdp;
+            }
+        }
+        self.gathering.mapper = Some(PortMapper::start(req));
+        self.gathering.mapping = MappingState::Trying;
+    }
+
     /// Host: accepts TCP connections and takes their offers. Client:
     /// finishes the TCP connect and sends the offer.
     fn poll_signalling(&mut self, now: Instant, events: &mut Vec<NetEvent>) {
@@ -402,16 +743,17 @@ impl Endpoint {
                     Err(TryRecvError::Disconnected) => Err(io::Error::other("the connect thread ended")),
                 };
                 *connecting = None;
-                if let Err(e) = result.and_then(|stream| self.offer(stream, host, now)) {
+                if let Err(e) = result.and_then(|stream| self.send_offer(stream, host, now)) {
                     let why = if e.kind() == io::ErrorKind::TimedOut { Why::Timeout } else { Why::Closed };
                     events.push(NetEvent::Disconnected { peer: HOST, why });
                 }
             }
+            Role::Signalled { .. } => {}
         }
     }
 
     /// Client: the link and its offer over the new signalling connection.
-    fn offer(&mut self, stream: TcpStream, host: SocketAddr, now: Instant) -> io::Result<()> {
+    fn send_offer(&mut self, stream: TcpStream, host: SocketAddr, now: Instant) -> io::Result<()> {
         stream.set_nonblocking(true)?;
         let _ = stream.set_nodelay(true);
         let local = SocketAddr::new(stream.local_addr()?.ip(), self.port);
@@ -581,12 +923,27 @@ impl Endpoint {
     }
 }
 
+/// The external address of a usable mapping.
+fn usable_mapping(state: &MappingState) -> Option<SocketAddr> {
+    match state {
+        MappingState::Mapped { external, usable: true, .. } => Some(SocketAddr::V4(*external)),
+        _ => None,
+    }
+}
+
 impl Drop for Endpoint {
-    /// Tells every peer the link is closed.
+    /// Tells every peer the link is closed, and deletes the port mapping
+    /// on a thread of its own (the mapper's drop waits up to `DROP_WAIT`
+    /// for the router: never on the caller's, the game's UI thread).
     fn drop(&mut self) {
         let mut out = Vec::new();
         self.core.close_all(&mut out);
         send_datagrams(&self.udp, &mut self.core, &mut out);
+        if let Some(mapper) = self.gathering.mapper.take() {
+            // If the thread cannot start, the closure (and the mapper) is
+            // dropped here: a wait of at most a second.
+            let _ = std::thread::Builder::new().name("rl-net unmap".into()).spawn(move || drop(mapper));
+        }
     }
 }
 

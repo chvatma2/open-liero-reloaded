@@ -80,7 +80,8 @@ impl Core {
     /// it), and the relayed addresses allocated (on the base).
     /// They fit the far side's `sanitize` (at most `MAX_CANDIDATES`): the
     /// reflexive and relayed ones first, then the host candidates, base
-    /// first, as many as are left room.
+    /// first, as many as are left room. Under the `relay_only` test hook,
+    /// only the relayed ones.
     pub(super) fn link_candidates(&self) -> LinkCandidates {
         let mut c = LinkCandidates::default();
         if let Some(base) = self.base {
@@ -90,6 +91,11 @@ impl Core {
                 }
             }
             c.relayed = self.relays.addresses().into_iter().map(|addr| (addr, base)).collect();
+        }
+        #[cfg(feature = "test-hooks")]
+        if self.cfg.relay_only {
+            c.srflx.clear();
+            return c;
         }
         let room = MAX_CANDIDATES.saturating_sub(c.srflx.len() + c.relayed.len());
         c.host = self.hosts.iter().copied().take(room).collect();

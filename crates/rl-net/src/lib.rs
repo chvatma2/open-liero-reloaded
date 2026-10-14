@@ -9,6 +9,7 @@ mod impair;
 pub mod lan;
 pub mod limits;
 pub mod link;
+pub mod local;
 #[cfg(feature = "test-hooks")]
 pub mod natsim;
 pub mod portmap;

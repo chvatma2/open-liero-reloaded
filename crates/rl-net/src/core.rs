@@ -154,6 +154,11 @@ pub struct CoreConfig {
     /// has a selected pair (`Connected`'s 1.5 s fallback).
     #[cfg(feature = "test-hooks")]
     pub suppress_stats: bool,
+    /// Tests only (`test-hooks`): signalled links get only the relayed
+    /// candidates (no host or server-reflexive one is added to str0m), so
+    /// on 127.0.0.1 a path really is `Relayed`.
+    #[cfg(feature = "test-hooks")]
+    pub relay_only: bool,
 }
 
 impl CoreConfig {
@@ -175,6 +180,8 @@ impl CoreConfig {
             first_peer_id: None,
             #[cfg(feature = "test-hooks")]
             suppress_stats: false,
+            #[cfg(feature = "test-hooks")]
+            relay_only: false,
         }
     }
 

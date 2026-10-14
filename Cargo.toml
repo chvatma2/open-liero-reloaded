@@ -110,6 +110,10 @@ hmac = "=0.13.0"
 sha1 = "=0.11.0"
 md-5 = "=0.11.0"
 crc32fast = "=1.5.2"
+# The default interface's addresses and gateway (plan 12b, N48, N51): an
+# exact pin; only `gateway` (`get_default_interface`, `Interface::gateway`),
+# not the Apple and Android extras.
+netdev = { version = "=0.46.3", default-features = false, features = ["gateway"] }
 # Identity keys (plan 10, spec §5.2): BIP-340 Schnorr over secp256k1, no_std.
 k256 = { version = "=0.14.0", default-features = false, features = ["schnorr"] }
 
