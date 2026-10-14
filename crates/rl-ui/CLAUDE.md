@@ -184,8 +184,11 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   **Finding games** (plan 12a Task 10): the Multiplayer screen (900 wide)
   has three tabs: **Internet** (`MenuData::internet`, an `InternetView`
   the app keeps current: `InternetStatus::{NoRelay, Searching, Listed}`,
-  "No relay reachable", "Searching…", "No games found"; a list of
-  `InternetEntry`, each on two lines so it fits 320 points (no grid): the
+  "No relay reachable", "Searching…", "No games found"; an aligned
+  grid with headers of `InternetEntry` when its columns (each its widest
+  text, up to a cap, truncated with a hover) fit `ui.available_width()`
+  (`table_widths`; the page is 1100 wide), else each game on two lines so
+  it fits 320 points: the
   name (truncated, its hover has all; a lock before it), then map, mod,
   players, ping and region wrapping; the tab scrolls in a window too
   short for it; the name (selects: `MenuData::selected_game`, which the app
@@ -390,7 +393,7 @@ failure, the Multiplayer and Options tab rows, the Online tab reached by
 a click and every widget of it in the window: `form_name` takes at most
 40 % of a narrow column, the Online tab's fields `fit` it, its server
 rows wrap), `the_internet_table_fits_and_a_game_can_be_joined` (the
-same sizes and 4K: long names, "8/8 +24 bots (playing)", every region;
+same sizes and 4K, headers on wide screens, two lines on narrow: long names, "8/8 +24 bots (playing)", every region;
 every widget in the window, a game selected and joined);
 `tests/ingame.rs`: the HUD layout,
 the weapon selection, the pause menu, Esc/F5 repeats, the results;

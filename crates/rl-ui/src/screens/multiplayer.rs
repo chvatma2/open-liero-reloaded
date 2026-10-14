@@ -2,7 +2,8 @@
 //! tabs:
 //!
 //! - **Internet:** the games announced on the Nostr relays (the app's game
-//!   list), each on two lines so that it fits a narrow window: the name
+//!   list), an aligned table with headers when its columns fit the
+//!   width, else each game on two lines so that it fits a narrow window: the name
 //!   (truncated, a lock before it for a password), then map, mod, players
 //!   (the seats taken of the seats, the bots apart: "1/8 +3 bots"; bots
 //!   take no seat), ping and region, wrapping. A click selects a game (the app measures its ping); Join
@@ -21,13 +22,13 @@
 //! "Host a game" below, and while a join waits, its step (the app's
 //! `MenuData::joining`) or "Connecting…".
 
-use egui::{Button, Color32, Key, RichText, ScrollArea, TextEdit, Ui, vec2};
+use egui::{Button, Color32, Grid, Key, RichText, ScrollArea, TextEdit, Ui, vec2};
 
 use super::{MenuData, footer, form_row, message, page, primary, section, tab_row};
 use crate::online::{ADDRESS_CHARS, InternetEntry, InternetStatus, PASSWORD_CHARS, Password, is_invite};
 use crate::state::{Screen, UiAction, UiState};
 
-const WIDTH: f32 = 900.0;
+const WIDTH: f32 = 1100.0;
 /// A tab's button.
 const TAB: egui::Vec2 = vec2(130.0, 34.0);
 const GREY: Color32 = Color32::from_gray(120);
@@ -131,12 +132,28 @@ fn internet(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<Ui
     let mut selected = data.selected_game;
     ScrollArea::vertical().id_salt("internet games").max_height(300.0).auto_shrink([false, true]).show(
         ui,
-        |ui| {
-            for (i, g) in games.iter().enumerate() {
-                if i > 0 {
-                    ui.separator();
+        |ui| match table_widths(ui, &games) {
+            Some(widths) => {
+                Grid::new("internet table").num_columns(7).striped(true).spacing(vec2(GAP, 6.0)).show(
+                    ui,
+                    |ui| {
+                        for (h, w) in HEADERS.iter().zip(widths) {
+                            cell(ui, w, |ui| ui.label(RichText::new(*h).strong()));
+                        }
+                        ui.end_row();
+                        for g in &games {
+                            table_row(ui, g, &widths, &mut selected);
+                        }
+                    },
+                );
+            }
+            None => {
+                for (i, g) in games.iter().enumerate() {
+                    if i > 0 {
+                        ui.separator();
+                    }
+                    row(ui, g, &mut selected);
                 }
-                row(ui, g, &mut selected);
             }
         },
     );
@@ -186,6 +203,93 @@ fn internet(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<Ui
     }
 }
 
+const HEADERS: [&str; 7] = ["Name", "Map", "Mod", "Players", "Ping", "Region", ""];
+/// The table's gap between columns.
+const GAP: f32 = 14.0;
+/// The widest the name, map, mod and ping columns grow (longer text is
+/// truncated, its hover has all of it); players and region fit their text.
+const CAPS: [f32; 7] = [220.0, 150.0, 120.0, f32::INFINITY, 130.0, f32::INFINITY, f32::INFINITY];
+
+/// The ping column's text of a game.
+fn ping_text(g: &InternetEntry) -> String {
+    match (&g.incompatible, g.addr) {
+        (Some(v), _) => v.clone(),
+        (None, None) => VIA_RELAYS.into(),
+        (None, Some(_)) => g.ping.text(),
+    }
+}
+
+/// A game's seven cells' texts.
+fn cells_of(g: &InternetEntry) -> [String; 7] {
+    let playing = if g.playing { " (playing)" } else { "" };
+    [
+        g.name.clone(),
+        g.map.clone(),
+        g.mod_name.clone(),
+        format!("{}{playing}", g.players_text()),
+        ping_text(g),
+        g.region.label().into(),
+        if g.password { "🔒".into() } else { String::new() },
+    ]
+}
+
+/// The columns' widths when the table fits `ui.available_width()` (each
+/// column its widest text, headers and every game's, up to its cap), else
+/// `None`: the games take two lines each (`row`).
+fn table_widths(ui: &Ui, games: &[InternetEntry]) -> Option<[f32; 7]> {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let measure = |t: &str| ui.painter().layout_no_wrap(t.to_string(), font.clone(), Color32::WHITE).size().x;
+    let pad = 2.0 * ui.spacing().button_padding.x;
+    let mut widths = HEADERS.map(|h| if h.is_empty() { 0.0 } else { measure(h) * 1.1 });
+    for g in games {
+        for (i, t) in cells_of(g).iter().enumerate() {
+            let extra = if i == 0 { pad } else { 0.0 };
+            widths[i] = widths[i].max(measure(t) + extra);
+        }
+    }
+    for (w, cap) in widths.iter_mut().zip(CAPS) {
+        *w = w.min(cap).ceil();
+    }
+    let total = widths.iter().sum::<f32>() + GAP * 6.0;
+    (total <= ui.available_width()).then_some(widths)
+}
+
+/// A table cell `w` wide.
+fn cell<R>(ui: &mut Ui, w: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.allocate_ui_with_layout(vec2(w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_width(w);
+        add(ui)
+    })
+    .inner
+}
+
+/// One game as a row of the aligned table.
+fn table_row(ui: &mut Ui, g: &InternetEntry, widths: &[f32; 7], selected: &mut Option<[u8; 32]>) {
+    let grey = g.incompatible.is_some();
+    let text = |s: String| if grey { RichText::new(s).color(GREY) } else { RichText::new(s) };
+    let cells = cells_of(g);
+    cell(ui, widths[0], |ui| {
+        let b = Button::selectable(*selected == Some(g.key), text(cells[0].clone()))
+            .truncate()
+            .min_size(vec2(widths[0], 0.0));
+        if ui.add(b).on_hover_text(&g.name).clicked() {
+            *selected = Some(g.key);
+        }
+    });
+    for i in 1..6 {
+        cell(ui, widths[i], |ui| {
+            let r = ui.add(egui::Label::new(text(cells[i].clone())).truncate());
+            if i == 4 && g.incompatible.is_none() && g.addr.is_none() {
+                r.on_hover_text("No address to measure: joined through the Nostr relays.");
+            } else {
+                r.on_hover_text(&cells[i]);
+            }
+        });
+    }
+    cell(ui, widths[6], |ui| ui.label(cells[6].clone()));
+    ui.end_row();
+}
+
 /// One game of the Internet list, on two lines so that it fits whatever
 /// the width (ruling UI-1: 427 points at UI scale 3, 320 on a 4:3
 /// desktop): its name, which selects it, truncated (the hover has all of
@@ -210,12 +314,7 @@ fn row(ui: &mut Ui, g: &InternetEntry, selected: &mut Option<[u8; 32]>) {
         ui.label(text(g.mod_name.clone()));
         let playing = if g.playing { " (playing)" } else { "" };
         ui.label(text(format!("{}{playing}", g.players_text())));
-        let ping = match (&g.incompatible, g.addr) {
-            (Some(v), _) => v.clone(),
-            (None, None) => VIA_RELAYS.into(),
-            (None, Some(_)) => g.ping.text(),
-        };
-        let r = ui.label(text(ping));
+        let r = ui.label(text(ping_text(g)));
         if g.incompatible.is_none() && g.addr.is_none() {
             r.on_hover_text("No address to measure: joined through the Nostr relays.");
         }

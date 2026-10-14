@@ -351,6 +351,19 @@ fn the_internet_table_fits_and_a_game_can_be_joined() {
         for (name, r) in widgets(&harness) {
             assert!(r.left() >= -0.5 && r.right() <= w + 0.5, "{name:?} at {r:?} leaves the window: {at}");
         }
+        // The aligned table with its headers on wide screens, the two-line
+        // form (no headers) on narrow ones; in between either.
+        let points = w / ppp;
+        let headers = harness.query_by_label("Players").is_some();
+        if points >= 1700.0 {
+            assert!(headers, "{at}: the table has its headers");
+            for h in ["Name", "Map", "Mod", "Ping", "Region"] {
+                harness.get_by_label(h);
+            }
+        }
+        if points <= 640.0 {
+            assert!(!headers, "{at}: the games take two lines each");
+        }
         // Select the first game by its name's start; Join and Block appear.
         harness.get_by_label_contains("Game 0 with").click();
         harness.run();
