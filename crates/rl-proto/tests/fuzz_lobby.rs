@@ -48,6 +48,7 @@ fn lobby() -> LobbyState {
                 ping_ms: Some(5),
                 admin: i == 0,
                 download: Some(40),
+                path: [None, Some(Path::HolePunched), Some(Path::Relayed)][i as usize],
             })
             .collect(),
     }

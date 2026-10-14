@@ -5,6 +5,8 @@
 #[path = "../src/fingerprint_impl.rs"]
 mod fingerprint_impl;
 
+mod addr;
 mod fingerprint;
 mod fuzz;
 mod fuzz_lobby;
+mod stun;

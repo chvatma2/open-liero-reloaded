@@ -18,7 +18,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::net::SocketAddr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rl_netcode::Channel;
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
@@ -44,6 +44,18 @@ const INPUTS_ROOM: usize = 16 * 1024;
 /// How often one `poll` feeds the time again while str0m asks for immediate
 /// attention (a timeout not after `now`, e.g. opening channels).
 const MAX_SPINS: usize = 16;
+/// How often str0m reports its stats, the selected candidate pair among
+/// them (N49).
+const STATS_EVERY: Duration = Duration::from_secs(1);
+
+/// A link's local ICE candidates, all on the one UDP socket: host
+/// addresses, and server-reflexive and relayed ones as `(address, base)`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LinkCandidates {
+    pub host: Vec<SocketAddr>,
+    pub srflx: Vec<(SocketAddr, SocketAddr)>,
+    pub relayed: Vec<(SocketAddr, SocketAddr)>,
+}
 
 /// Which end of the offer/answer exchange a link is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -185,6 +197,9 @@ pub struct Link {
     /// The DTLS fingerprints, offer side's then answer side's, once the
     /// handshake has verified the peer's certificate.
     fingerprints: Option<([u8; 32], [u8; 32])>,
+    /// The candidate pair ICE selected, (local, remote), from str0m's
+    /// latest stats.
+    selected: Option<(SocketAddr, SocketAddr)>,
 }
 
 /// A SHA-256 certificate fingerprint as bytes (`None` for another hash).
@@ -193,9 +208,9 @@ fn sha256(fp: &str0m::config::Fingerprint) -> Option<[u8; 32]> {
 }
 
 impl Link {
-    fn new(side: Side, local: &[SocketAddr], now: Instant) -> Link {
+    fn new(side: Side, c: &LinkCandidates, now: Instant) -> Link {
         let mut link = Link {
-            rtc: RtcConfig::new().build(now),
+            rtc: RtcConfig::new().set_stats_interval(Some(STATS_EVERY)).build(now),
             side,
             state: State::Connecting,
             pending: None,
@@ -209,13 +224,17 @@ impl Link {
             timeout: now,
             now,
             fingerprints: None,
+            selected: None,
         };
-        for &addr in local {
-            // An address no candidate can have (unspecified, multicast) is skipped.
-            if let Ok(candidate) = Candidate::host(addr, "udp") {
-                link.rtc.add_local_candidate(candidate);
-                link.drain();
-            }
+        let host = c.host.iter().map(|&addr| Candidate::host(addr, "udp"));
+        let srflx = c.srflx.iter().map(|&(addr, base)| Candidate::server_reflexive(addr, base, "udp"));
+        let relayed = c.relayed.iter().map(|&(addr, base)| Candidate::relayed(addr, base, "udp"));
+        // An address no candidate can have (unspecified, multicast) is
+        // skipped; str0m drops a redundant one (a reflexive address equal
+        // to its base).
+        for candidate in host.chain(srflx).chain(relayed).flatten() {
+            link.rtc.add_local_candidate(candidate);
+            link.drain();
         }
         link
     }
@@ -223,7 +242,13 @@ impl Link {
     /// A link that offers the connection from the local UDP addresses
     /// `local` (its host candidates), and the SDP offer to send the peer.
     pub fn offerer(local: &[SocketAddr], now: Instant) -> (Link, String) {
-        let mut link = Link::new(Side::Offerer, local, now);
+        Link::offerer_with(&LinkCandidates { host: local.to_vec(), ..LinkCandidates::default() }, now)
+    }
+
+    /// A link that offers the connection from the candidates `c` (all in
+    /// the SDP offer), and the offer to send the peer.
+    pub fn offerer_with(c: &LinkCandidates, now: Instant) -> (Link, String) {
+        let mut link = Link::new(Side::Offerer, c, now);
         let mut api = link.rtc.sdp_api();
         let inputs = api.add_channel_with_config(config(Channel::Unreliable));
         let control = api.add_channel_with_config(config(Channel::Reliable));
@@ -237,8 +262,14 @@ impl Link {
     /// A link that answers the peer's SDP `offer` from the local UDP
     /// addresses `local`, and the SDP answer to send back.
     pub fn answerer(local: &[SocketAddr], offer: &str, now: Instant) -> Result<(Link, String), LinkError> {
+        Link::answerer_with(&LinkCandidates { host: local.to_vec(), ..LinkCandidates::default() }, offer, now)
+    }
+
+    /// A link that answers the peer's SDP `offer` from the candidates `c`
+    /// (all in the SDP answer), and the answer to send back.
+    pub fn answerer_with(c: &LinkCandidates, offer: &str, now: Instant) -> Result<(Link, String), LinkError> {
         let offer = SdpOffer::from_sdp_string(offer).map_err(sdp_error)?;
-        let mut link = Link::new(Side::Answerer, local, now);
+        let mut link = Link::new(Side::Answerer, c, now);
         let answer = link.rtc.sdp_api().accept_offer(offer).map_err(sdp_error)?;
         link.drain();
         // Negotiated channels are not in the SDP: the answerer adds the same ones.
@@ -273,6 +304,13 @@ impl Link {
     /// man in the middle, presenting its own certificates, fails them.
     pub fn dtls_fingerprints(&self) -> Option<([u8; 32], [u8; 32])> {
         self.fingerprints
+    }
+
+    /// str0m's selected candidate pair (local, remote) from its stats,
+    /// every second (`None` before ICE selects one). The local address is
+    /// the candidate's base, or a relayed candidate's relay address.
+    pub fn selected_pair(&self) -> Option<(SocketAddr, SocketAddr)> {
+        self.selected
     }
 
     /// Whether the datagram `bytes` from `from` to the local `to` belongs to
@@ -421,6 +459,11 @@ impl Link {
             Event::ChannelClose(id) if self.channel_of(id).is_some() => self.fail(Ended::Peer),
             Event::IceConnectionStateChange(IceConnectionState::Disconnected) => self.fail(Ended::Lost),
             Event::Closed => self.fail(Ended::Peer),
+            Event::PeerStats(stats) => {
+                if let Some(pair) = stats.selected_candidate_pair {
+                    self.selected = Some((pair.local.addr, pair.remote.addr));
+                }
+            }
             _ => {}
         }
     }

@@ -141,6 +141,7 @@ fn member(id: u8, seat: rl_proto::SeatWire) -> rl_proto::Member {
         ping_ms: None,
         admin: false,
         download: None,
+        path: None,
     }
 }
 

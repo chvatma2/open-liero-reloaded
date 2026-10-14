@@ -222,6 +222,15 @@ fn rewrite_candidates(sdp: &str, ip: IpAddr, port: Option<u16>) -> String {
         .collect()
 }
 
+/// The STUN transaction ids' seed: the system's randomness (std's
+/// randomly keyed hasher if it fails).
+fn stun_seed() -> u64 {
+    crate::random_bytes::<8>().map(u64::from_le_bytes).unwrap_or_else(|_| {
+        use std::hash::{BuildHasher, RandomState};
+        RandomState::new().hash_one(0u8)
+    })
+}
+
 /// The core's configuration of an endpoint's.
 fn core_config(cfg: &EndpointConfig, host: bool) -> CoreConfig {
     CoreConfig {
@@ -230,6 +239,7 @@ fn core_config(cfg: &EndpointConfig, host: bool) -> CoreConfig {
         limits: cfg.limits,
         impair: cfg.impair,
         impair_seed: cfg.impair_seed,
+        stun_seed: stun_seed(),
         #[cfg(feature = "test-hooks")]
         fingerprint_override: cfg.fingerprint_override,
         #[cfg(feature = "test-hooks")]

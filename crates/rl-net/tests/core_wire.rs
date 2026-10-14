@@ -185,3 +185,89 @@ fn a_cancelled_setup_tells_the_peer_with_the_next_poll() {
     host.poll(now, &mut Vec::new(), &mut eh);
     assert!(eh.contains(&CoreEvent::Net(NetEvent::Disconnected { peer: 1, why: Why::Closed })), "{eh:?}");
 }
+
+/// A signalled offer from a client core at `at` to the host core.
+fn signalled_offer(
+    client: &mut Core,
+    at: SocketAddr,
+    host_at: SocketAddr,
+    now: Instant,
+) -> (u64, rl_proto::Signal) {
+    client.set_base(at, vec![at]);
+    let (setup, sdp) = client.offer_ice(host_at, now);
+    let offer = rl_proto::Signal::Offer {
+        protocol: rl_proto::PROTOCOL_VERSION,
+        fingerprint: rl_proto::FINGERPRINT,
+        sdp,
+    };
+    (setup, offer)
+}
+
+/// PF12b-2: with `MAX_SIGNALLED_PENDING` signalled setups pending, a new
+/// offer evicts the oldest one whose peer sent no connectivity check; only
+/// when every one has is it refused `Busy`.
+#[test]
+fn a_full_pending_table_evicts_a_silent_setup() {
+    use rl_net::core::MAX_SIGNALLED_PENDING;
+    use rl_proto::{Refusal, Signal};
+    let t0 = Instant::now();
+    let host_at: SocketAddr = "10.0.0.1:23400".parse().unwrap();
+    let mut host = Core::new(CoreConfig::host(), t0);
+    host.set_base(host_at, vec![host_at]);
+    // Eight silent offerers: answered, never heard from again.
+    for i in 0..MAX_SIGNALLED_PENDING {
+        let at: SocketAddr = format!("10.0.1.{}:50000", i + 1).parse().unwrap();
+        let mut spare = Core::new(CoreConfig::client(), t0);
+        let (_, offer) = signalled_offer(&mut spare, at, host_at, t0);
+        assert!(matches!(host.answer_ice(&offer, None, t0), Signal::Answer { .. }));
+    }
+    assert_eq!(host.pending(), MAX_SIGNALLED_PENDING);
+    // A ninth, live, takes a silent one's place and connects.
+    let client_at: SocketAddr = "10.0.2.1:50000".parse().unwrap();
+    let mut client = Core::new(CoreConfig::client(), t0);
+    let (setup, offer) = signalled_offer(&mut client, client_at, host_at, t0);
+    let Signal::Answer { sdp } = host.answer_ice(&offer, None, t0) else { panic!("refused") };
+    client.accept_answer_ice(setup, &sdp, None).expect("accepted");
+    assert_eq!(host.pending(), MAX_SIGNALLED_PENDING);
+    let (mut eh, mut ec) = (Vec::new(), Vec::new());
+    let mut now = t0;
+    while !(connected(&eh) && connected(&ec)) {
+        now += Duration::from_millis(5);
+        assert!(now < t0 + Duration::from_secs(10), "no connection; host {eh:?} client {ec:?}");
+        exchange(&mut client, client_at, &mut host, host_at, now, &mut ec, &mut eh);
+    }
+    assert_eq!(eh.iter().filter(|e| matches!(e, CoreEvent::SetupFailed { .. })).count(), 1, "{eh:?}");
+    assert_eq!(host.pending(), MAX_SIGNALLED_PENDING - 1);
+    // Eight live offerers whose checks reach the host (its answers never
+    // reach them) fill the table, evicting the seven silent setups left.
+    let mut live = Vec::new();
+    for i in 0..MAX_SIGNALLED_PENDING {
+        let at: SocketAddr = format!("10.0.3.{}:50000", i + 1).parse().unwrap();
+        let mut c = Core::new(CoreConfig::client(), now);
+        let (setup, offer) = signalled_offer(&mut c, at, host_at, now);
+        let Signal::Answer { sdp } = host.answer_ice(&offer, None, now) else { panic!("refused {i}") };
+        c.accept_answer_ice(setup, &sdp, None).expect("accepted");
+        live.push((c, at));
+    }
+    assert_eq!(host.pending(), MAX_SIGNALLED_PENDING);
+    let end = now + Duration::from_secs(1);
+    let mut out = Vec::new();
+    while now < end {
+        now += Duration::from_millis(5);
+        for (c, at) in &mut live {
+            c.poll(now, &mut out, &mut Vec::new());
+            for d in out.drain(..) {
+                if d.to == host_at {
+                    host.receive(*at, &d.bytes, now);
+                }
+            }
+        }
+        host.poll(now, &mut out, &mut Vec::new());
+        out.clear();
+    }
+    assert_eq!(host.pending(), MAX_SIGNALLED_PENDING);
+    // Every pending setup has heard a check: a tenth is refused.
+    let mut late = Core::new(CoreConfig::client(), now);
+    let (_, offer) = signalled_offer(&mut late, "10.0.4.1:50000".parse().unwrap(), host_at, now);
+    assert_eq!(host.answer_ice(&offer, None, now), Signal::Refused { reason: Refusal::Busy });
+}

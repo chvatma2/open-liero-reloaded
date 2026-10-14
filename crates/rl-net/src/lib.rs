@@ -2,12 +2,16 @@
 //! channels over the sans-IO str0m stack, signalling over a WebSocket, LAN
 //! announcements. Layer 5, std.
 
+pub mod candidates;
 pub mod core;
 pub mod endpoint;
 mod impair;
 pub mod lan;
 pub mod limits;
 pub mod link;
+#[cfg(feature = "test-hooks")]
+pub mod natsim;
+pub mod probe;
 mod signal;
 
 /// `N` bytes from the operating system's random source (identity keys,

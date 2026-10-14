@@ -12,8 +12,8 @@ use core::net::IpAddr;
 use rl_netcode::{PeerId, input_delay};
 use rl_proto::{
     AdminCommand, LobbyState, Look, MAX_INPUT_DELAY, MAX_PLAYERS, MAX_SPECTATORS, MatchEndWire,
-    MatchSetupWire, MatchStartWire, Member, Notice, Phase, PublicKey, Refusal, SeatWire, SlotWire, ToClient,
-    ToHost, valid_setup,
+    MatchSetupWire, MatchStartWire, Member, Notice, Path, Phase, PublicKey, Refusal, SeatWire, SlotWire,
+    ToClient, ToHost, valid_setup,
 };
 
 use crate::identity::{
@@ -24,6 +24,8 @@ use crate::model::*;
 /// A peer whose transport is open but who has not proven its key yet.
 struct Pending {
     addr: IpAddr,
+    /// How the transport reaches the joiner (`Member::path`).
+    path: Path,
     nonce: [u8; 32],
     /// The link's DTLS fingerprints as the host saw them (both proofs sign them).
     fingerprints: DtlsFingerprints,
@@ -43,6 +45,8 @@ struct Rec {
     /// `None`: the host's own player.
     peer: Option<PeerId>,
     addr: Option<IpAddr>,
+    /// How its link reaches the host (`None`: the host's own player).
+    path: Option<Path>,
     key: PublicKey,
     look: Look,
     seat: SeatWire,
@@ -118,6 +122,7 @@ impl Rec {
             ping_ms: self.ping_ms,
             admin: self.admin,
             download: self.download,
+            path: self.path,
         }
     }
 }
@@ -253,6 +258,7 @@ impl LobbyHost {
                 id,
                 peer: None,
                 addr: None,
+                path: None,
                 key: host.key.public(),
                 look: sanitize_look(&look),
                 seat: SeatWire::Player { slot: 0 },
@@ -280,14 +286,16 @@ impl LobbyHost {
 
     // ---- the transport ----
 
-    /// The transport opened `peer` from `addr`: send the challenge (or
-    /// refuse a banned address). `nonce` must be fresh randomness;
+    /// The transport opened `peer` from `addr`, reaching it by `path`
+    /// (shown as `Member::path`): send the challenge (or refuse a banned
+    /// address). `nonce` must be fresh randomness;
     /// `fingerprints` are the link's DTLS fingerprints, which the joiner's
     /// proof and the host's (`HostProof`) sign.
     pub fn connected(
         &mut self,
         peer: PeerId,
         addr: IpAddr,
+        path: Path,
         now_us: u64,
         nonce: [u8; 32],
         fingerprints: DtlsFingerprints,
@@ -304,7 +312,7 @@ impl LobbyHost {
             self.refuse(peer, Refusal::Throttled);
             return;
         }
-        let pending = Pending { addr, nonce, fingerprints, since_us: now_us, hello: None };
+        let pending = Pending { addr, path, nonce, fingerprints, since_us: now_us, hello: None };
         self.links.insert(peer, Link::Pending(Box::new(pending)));
         let challenge = ToClient::Challenge {
             nonce,
@@ -776,7 +784,8 @@ impl LobbyHost {
 
     fn receive_pending(&mut self, peer: PeerId, msg: ToHost, now_us: u64) {
         let Some(Link::Pending(p)) = self.links.get(&peer) else { return };
-        let (addr, nonce, fingerprints, hello) = (p.addr, p.nonce, p.fingerprints, p.hello.clone());
+        let (addr, path, nonce, fingerprints, hello) =
+            (p.addr, p.path, p.nonce, p.fingerprints, p.hello.clone());
         match (msg, hello) {
             (ToHost::Hello { key, look, nonce: client_nonce }, None) => {
                 // Checked at each attempt, not only when the link opened:
@@ -820,7 +829,7 @@ impl LobbyHost {
                 if let Err(r) = self.may_join(&key, addr) {
                     return self.refuse(peer, r);
                 }
-                self.admit(peer, addr, key, &look);
+                self.admit(peer, addr, path, key, &look);
             }
             (ToHost::Bye, _) => {
                 self.links.remove(&peer);
@@ -873,7 +882,7 @@ impl LobbyHost {
         }
     }
 
-    fn admit(&mut self, peer: PeerId, addr: IpAddr, key: PublicKey, look: &Look) {
+    fn admit(&mut self, peer: PeerId, addr: IpAddr, path: Path, key: PublicKey, look: &Look) {
         let (Some(seat), Some(id)) = (self.admit_seat(), self.alloc_id()) else {
             return self.refuse(peer, Refusal::Full);
         };
@@ -882,6 +891,7 @@ impl LobbyHost {
             id,
             peer: Some(peer),
             addr: Some(addr),
+            path: Some(path),
             key,
             look: Look { name: String::new(), ..look.clone() },
             seat,

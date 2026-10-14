@@ -11,11 +11,14 @@ extern crate alloc;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
+pub mod addr;
 mod content;
 mod frames;
 mod lan;
 mod lobby;
 mod signal;
+pub mod stun;
+pub use addr::is_global;
 pub use content::*;
 pub use frames::{decode_frames, encode_frames};
 pub use lan::*;

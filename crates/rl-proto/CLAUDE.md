@@ -41,6 +41,18 @@ control messages, the frame delta codec and the simulation fingerprint.
   lowercase hex; `NO_HASH` is valid and means unknown. `Look::skin_hash`
   and `Member::download` (percent) are new; `PROTOCOL_VERSION` is 2.
 - **LAN** (`lan.rs`): `LanAnnounce` on UDP `LAN_PORT` (23401), `MAX_LAN`.
+- **Paths** (N49, N61): `Path { Direct, MappedPort, HolePunched, Relayed }`,
+  how a link reaches its peer (rl-net classifies ICE's selected pair);
+  `Member::path` (appended; `None` for the host's own player).
+- **STUN and addresses** (N57, moved from rl-discovery; `core::net`):
+  `stun::{binding_request, parse_binding_response, binding_response,
+  is_stun, binding_request_transaction}` (RFC 5389 binding codec, bounded,
+  never panics; `is_stun`: first two bits 0, the magic cookie, a length
+  that is a multiple of 4 and matches) and `is_global` (`addr.rs`, also
+  re-exported at the root: hand-written v4/v6 ranges, v4-mapped and
+  v4-compatible unwrapped). rl-discovery re-exports both; rl-net's ICE
+  gathering and natsim use them. They are under `src`, so the fingerprint
+  covers them.
 - **Bounds** (violation = `ProtoError::Invalid`): names 1..=`MAX_NAME` (20)
   characters, no control, bidi, zero-width or separator code points, no edge
   whitespace; chat, notice and end reason <= `MAX_CHAT` (200) characters
@@ -72,4 +84,5 @@ control messages, the frame delta codec and the simulation fingerprint.
   only reads its files, never depends on it. `tests/fingerprint.rs`
   recomputes it over the list.
 
-Test: `cargo nextest run -p rl-proto`.
+Test: `cargo nextest run -p rl-proto` (`tests/stun.rs`: the RFC 5769
+vector, `is_stun`, fuzzed responses; `tests/addr.rs`: `is_global`'s ranges).

@@ -3,7 +3,15 @@
 //! clocks. The caller hands it the datagrams it receives and the time, and
 //! sends the [`Datagram`]s [`Core::poll`] hands out; signalling (carrying
 //! the SDP strings) is the caller's too. [`crate::endpoint::Endpoint`] is
-//! its socket driver; tests drive it on a virtual wire.
+//! its socket driver; tests drive it on a virtual wire and behind virtual
+//! NATs (`natsim`).
+//!
+//! Two kinds of setup share the socket: TCP-signalled ones (`offer`,
+//! `answer`: the host candidate is the signalling connection's local IP,
+//! decision N16) and signalled ones (`offer_ice`, `answer_ice`: every
+//! local candidate of [`Core::local`], decisions N48-N50), whose
+//! datagrams are all taken as arriving at the base. STUN rounds on the
+//! same socket learn the server-reflexive candidate ([`Core::stun`]).
 
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -11,11 +19,14 @@ use std::time::{Duration, Instant};
 
 use rl_netcode::netsim::Profile;
 use rl_netcode::{Channel, PeerId, Rng};
-use rl_proto::{FINGERPRINT, PROTOCOL_VERSION, Refusal, Signal};
+use rl_proto::stun::binding_request_transaction;
+use rl_proto::{FINGERPRINT, PROTOCOL_VERSION, Path, Refusal, Signal};
 
+use crate::candidates::{LocalCandidates, RemoteCandidates, classify, remote_candidates, sanitize};
 use crate::impair::Impair;
 use crate::limits::{Limits, PeerLimits};
-use crate::link::{Ended, Link, LinkError, LinkEvent, Transmit};
+use crate::link::{Ended, Link, LinkCandidates, LinkError, LinkEvent, Transmit};
+use crate::probe::{NatBehaviour, StunProbe};
 
 /// A client's only peer: the host.
 pub const HOST: PeerId = 0;
@@ -29,13 +40,27 @@ pub const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
 /// An open link that hears nothing for this long is dropped (`Why::Timeout`);
 /// ICE keeps a live link's datagrams coming every few seconds.
 pub const SILENCE_TIMEOUT: Duration = Duration::from_secs(10);
+/// A signalled setup must open within this (TCP-signalled ones keep SETUP_TIMEOUT, 10 s).
+pub const SIGNALLED_SETUP_TIMEOUT: Duration = Duration::from_secs(15);
+/// At most this many signalled setups connect at once; when full, PF12b-2 evicts a silent one.
+pub const MAX_SIGNALLED_PENDING: usize = 8;
+/// A signalled link that opened before str0m's stats named its selected
+/// pair waits at most this long for them before `Connected` (stats come
+/// every second).
+const CONNECTED_WAIT: Duration = Duration::from_millis(1500);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NetEvent {
-    /// The link to `peer` is open; `addr` is the remote end of its
-    /// signalling connection.
+    /// The link to `peer` is open. `addr` is the remote end of its
+    /// signalling connection (a signalled link: the remote address of its
+    /// selected candidate pair, else the caller's hint). `path` is how it
+    /// goes (N49): the selected pair's class when the link opened, or at
+    /// str0m's first stats at most 1.5 s later (`HolePunched` if none
+    /// came); always `Direct` for a TCP-signalled link.
     Connected {
         peer: PeerId,
         addr: SocketAddr,
+        path: Path,
     },
     Message {
         peer: PeerId,
@@ -104,6 +129,9 @@ pub struct CoreConfig {
     /// Every outgoing datagram passes this profile's network (spec §9.4).
     pub impair: Option<Profile>,
     pub impair_seed: u64,
+    /// Seeds the STUN transaction ids (the endpoint takes it from the
+    /// system's randomness, so an off-path party cannot guess them).
+    pub stun_seed: u64,
     /// Tests only (`test-hooks`): the simulation fingerprint to send and
     /// expect instead of `rl_proto::FINGERPRINT`.
     #[cfg(feature = "test-hooks")]
@@ -125,6 +153,7 @@ impl CoreConfig {
             limits: Limits::default(),
             impair: None,
             impair_seed: 0,
+            stun_seed: 0,
             #[cfg(feature = "test-hooks")]
             fingerprint_override: None,
             #[cfg(feature = "test-hooks")]
@@ -157,8 +186,9 @@ pub enum CoreEvent {
     /// connection).
     Opened { setup: SetupId, peer: PeerId },
     /// Setup `setup` did not open: `Timeout` past `SETUP_TIMEOUT` (or ICE
-    /// lost it), `Closed` by the link, or the limit a connecting peer broke
-    /// (`Limits`). Not reported for the caller's own [`Core::cancel`].
+    /// lost it, or a full pending table evicted it, PF12b-2), `Closed` by
+    /// the link, or the limit a connecting peer broke (`Limits`). Not
+    /// reported for the caller's own [`Core::cancel`].
     SetupFailed { setup: SetupId, why: Why },
 }
 
@@ -167,10 +197,26 @@ struct Peer {
     /// Assigned when the link opens.
     id: Option<PeerId>,
     /// The peer's address as the caller names it: the remote end of the
-    /// signalling connection.
+    /// signalling connection (signalled: the hint, then the selected
+    /// pair's remote address once `Connected`).
     addr: SocketAddr,
-    /// Our host candidate for this link: where its datagrams arrive.
+    /// Our host candidate for this link: where its datagrams arrive (a
+    /// signalled link's arrive at the base).
     local: SocketAddr,
+    /// Set up by `offer_ice` / `answer_ice` (N48), not over TCP.
+    signalled: bool,
+    /// Its peer sent an ICE connectivity check while connecting (PF12b-2).
+    checked: bool,
+    /// The peer's candidates as its SDP names them, for `classify`.
+    theirs: RemoteCandidates,
+    /// When the link opened.
+    opened: Option<Instant>,
+    /// `Connected` was reported; until then its events wait in `held`.
+    reported: bool,
+    held: Vec<NetEvent>,
+    /// The selected pair last classified, and its path.
+    pair: Option<(SocketAddr, SocketAddr)>,
+    path: Option<Path>,
     link: Link,
     /// The link must open by then.
     deadline: Instant,
@@ -195,12 +241,37 @@ pub struct Core {
     next_setup: SetupId,
     /// Last datagrams of links the caller cancelled, sent by the next poll.
     outbox: Vec<Datagram>,
+    /// Events of calls that take no event list (`answer_ice`'s eviction),
+    /// reported by the next poll.
+    events: Vec<CoreEvent>,
+    /// Where every signalled link's datagrams are taken as arriving.
+    base: Option<SocketAddr>,
+    /// The host candidates signalled links offer, `base` first.
+    hosts: Vec<SocketAddr>,
+    /// The router mapping's external address.
+    mapped: Option<SocketAddr>,
+    probe: StunProbe,
     /// Forks each link's impairment.
     rng: Rng,
     /// Datagrams no link accepted.
     stray: u64,
     /// The latest time `poll` was given.
     now: Instant,
+}
+
+/// The first of a TCP-signalled link's host candidates: where its
+/// datagrams are taken as arriving.
+fn first(local: &[SocketAddr]) -> SocketAddr {
+    local.first().copied().unwrap_or((Ipv4Addr::UNSPECIFIED, 0).into())
+}
+
+/// Hands out `event` about an open peer, or keeps it until `Connected`.
+fn emit(peer: &mut Peer, events: &mut Vec<CoreEvent>, event: NetEvent) {
+    if peer.reported {
+        events.push(CoreEvent::Net(event));
+    } else {
+        peer.held.push(event);
+    }
 }
 
 /// The link's transmits as datagrams of `peer`.
@@ -237,6 +308,7 @@ impl Core {
         #[cfg(not(feature = "test-hooks"))]
         let next_id = 1;
         let rng = Rng::new(cfg.impair_seed);
+        let probe = StunProbe::new(cfg.stun_seed);
         Core {
             cfg,
             pending: Vec::new(),
@@ -244,6 +316,11 @@ impl Core {
             next_id,
             next_setup: 0,
             outbox: Vec::new(),
+            events: Vec::new(),
+            base: None,
+            hosts: Vec::new(),
+            mapped: None,
+            probe,
             rng,
             stray: 0,
             now,
@@ -282,7 +359,7 @@ impl Core {
     /// `addr`; the SDP offer to carry to it.
     pub fn offer(&mut self, local: &[SocketAddr], addr: SocketAddr, now: Instant) -> (SetupId, String) {
         let (link, sdp) = Link::offerer(local, now);
-        (self.add(addr, local, link, now), sdp)
+        (self.add(addr, first(local), link, now, None), sdp)
     }
 
     /// Client: the peer's answer to setup `setup`'s offer.
@@ -304,20 +381,163 @@ impl Core {
         now: Instant,
     ) -> Result<(SetupId, String), Refusal> {
         let (link, answer) = Link::answerer(local, offer_sdp, now).map_err(|_| Refusal::Malformed)?;
-        Ok((self.add(addr, local, link, now), answer))
+        Ok((self.add(addr, first(local), link, now, None), answer))
     }
 
-    fn add(&mut self, addr: SocketAddr, local: &[SocketAddr], link: Link, now: Instant) -> SetupId {
+    /// The socket's candidates: `base` is where every datagram is taken as arriving; `hosts` (base first) are offered.
+    pub fn set_base(&mut self, base: SocketAddr, hosts: Vec<SocketAddr>) {
+        self.base = Some(base);
+        self.hosts = vec![base];
+        for h in hosts {
+            if !self.hosts.contains(&h) {
+                self.hosts.push(h);
+            }
+        }
+    }
+
+    /// STUN servers asked from this socket now and every STUN_EVERY (two answers give NatBehaviour).
+    pub fn stun(&mut self, servers: Vec<SocketAddr>, now: Instant) {
+        self.probe.start(servers, now);
+    }
+
+    /// The router mapping's external address (a server-reflexive candidate
+    /// at it), or `None`.
+    pub fn set_mapped(&mut self, mapped: Option<SocketAddr>) {
+        self.mapped = mapped;
+    }
+
+    /// Our candidates now; `srflx` is the latest STUN answer (a changed
+    /// router address is offered from the next round on).
+    pub fn local(&self) -> LocalCandidates {
+        LocalCandidates {
+            base: self.base,
+            host: self.hosts.clone(),
+            srflx: self.probe.srflx(),
+            mapped: self.mapped,
+            relayed: Vec::new(),
+        }
+    }
+
+    pub fn nat(&self) -> NatBehaviour {
+        self.probe.nat(self.base)
+    }
+
+    /// STUN answered (or STUN_WAIT passed) — and, from Task 3, TURN too.
+    pub fn gathered(&self, now: Instant) -> bool {
+        self.probe.gathered(now)
+    }
+
+    /// What a signalled link offers: the host candidates, and the
+    /// server-reflexive and mapped addresses on the base (unless equal to
+    /// it).
+    fn link_candidates(&self) -> LinkCandidates {
+        let mut c = LinkCandidates { host: self.hosts.clone(), ..LinkCandidates::default() };
+        if let Some(base) = self.base {
+            for addr in [self.probe.srflx(), self.mapped].into_iter().flatten() {
+                if addr != base && addr.is_ipv4() && !c.srflx.iter().any(|&(a, _)| a == addr) {
+                    c.srflx.push((addr, base));
+                }
+            }
+        }
+        c
+    }
+
+    /// Client, signalled: an offerer link with every local candidate.
+    pub fn offer_ice(&mut self, peer_hint: SocketAddr, now: Instant) -> (SetupId, String) {
+        let (link, sdp) = Link::offerer_with(&self.link_candidates(), now);
+        let base = self.base.unwrap_or((Ipv4Addr::UNSPECIFIED, 0).into());
+        (self.add(peer_hint, base, link, now, Some(RemoteCandidates::default())), sdp)
+    }
+
+    /// Client: the host's answer and its mapped hint (no F-G rewrite).
+    /// The answer is sanitized as an offer is (N50).
+    pub fn accept_answer_ice(
+        &mut self,
+        setup: SetupId,
+        answer: &str,
+        mapped_hint: Option<SocketAddr>,
+    ) -> Result<(), LinkError> {
+        let answer = sanitize(answer);
+        let Some(p) = self.pending.iter_mut().find(|p| p.setup == setup) else {
+            return Err(LinkError::Closed);
+        };
+        p.link.accept_answer(&answer)?;
+        p.theirs = remote_candidates(&answer, mapped_hint);
+        Ok(())
+    }
+
+    /// Host, signalled: admit, sanitize, an answerer link with every local candidate; Answer or Refused.
+    /// With MAX_SIGNALLED_PENDING setups pending, the oldest one that has received no ICE connectivity
+    /// check (STUN binding request) from its peer is closed to make room (PF12b-2); if every one has, Refused { Busy }.
+    /// The evicted setup's `SetupFailed { why: Timeout }` comes with the next poll.
+    pub fn answer_ice(&mut self, offer: &Signal, mapped_hint: Option<SocketAddr>, now: Instant) -> Signal {
+        let refused = |reason| Signal::Refused { reason };
+        if let Err(why) = self.admit(offer) {
+            return refused(why);
+        }
+        let Signal::Offer { sdp, .. } = offer else { return refused(Refusal::Malformed) };
+        let signalled = self.pending.iter().filter(|p| p.signalled).count();
+        let victim = if signalled >= MAX_SIGNALLED_PENDING {
+            // Setup ids grow: the smallest is the oldest.
+            let silent = self.pending.iter().filter(|p| p.signalled && !p.checked).min_by_key(|p| p.setup);
+            match silent {
+                Some(p) => Some(p.setup),
+                None => return refused(Refusal::Busy),
+            }
+        } else {
+            None
+        };
+        let sdp = sanitize(sdp);
+        let Ok((link, answer)) = Link::answerer_with(&self.link_candidates(), &sdp, now) else {
+            return refused(Refusal::Malformed);
+        };
+        if let Some(i) = victim.and_then(|v| self.pending.iter().position(|p| p.setup == v)) {
+            let peer = self.pending.remove(i);
+            let (mut out, mut events) = (std::mem::take(&mut self.outbox), std::mem::take(&mut self.events));
+            self.fail_setup(peer, Why::Timeout, now, &mut out, &mut events);
+            (self.outbox, self.events) = (out, events);
+        }
+        let base = self.base.unwrap_or((Ipv4Addr::UNSPECIFIED, 0).into());
+        let addr = (Ipv4Addr::UNSPECIFIED, 0).into();
+        self.add(addr, base, link, now, Some(remote_candidates(&sdp, mapped_hint)));
+        Signal::Answer { sdp: answer }
+    }
+
+    /// The path of an open (reported) peer's link: its selected pair's
+    /// class, re-classified as the pair changes (`Direct` for a
+    /// TCP-signalled link).
+    pub fn path(&self, peer: PeerId) -> Option<Path> {
+        self.open.get(&peer).filter(|p| p.reported).and_then(|p| p.path)
+    }
+
+    /// A connecting link; `theirs` is `Some` for a signalled one.
+    fn add(
+        &mut self,
+        addr: SocketAddr,
+        local: SocketAddr,
+        link: Link,
+        now: Instant,
+        theirs: Option<RemoteCandidates>,
+    ) -> SetupId {
         let setup = self.next_setup;
         self.next_setup += 1;
         let impair = self.cfg.impair.map(|p| Impair::new(p, self.rng.fork()));
+        let signalled = theirs.is_some();
         self.pending.push(Peer {
             setup,
             id: None,
             addr,
-            local: local.first().copied().unwrap_or((Ipv4Addr::UNSPECIFIED, 0).into()),
+            local,
+            signalled,
+            checked: false,
+            theirs: theirs.unwrap_or_default(),
+            opened: None,
+            reported: false,
+            held: Vec::new(),
+            pair: None,
+            path: None,
             link,
-            deadline: now + SETUP_TIMEOUT,
+            deadline: now + if signalled { SIGNALLED_SETUP_TIMEOUT } else { SETUP_TIMEOUT },
             heard: now,
             broke: None,
             limits: PeerLimits::new(&self.cfg.limits, now),
@@ -348,14 +568,21 @@ impl Core {
         }
     }
 
-    /// Hands a received datagram to the link that accepts it (others are
-    /// counted, [`Core::stray_datagrams`]).
+    /// Hands a received datagram to the STUN probe when it answers one of
+    /// its requests, else to the link that accepts it, as arriving at the
+    /// base (a TCP-signalled link: at its own host candidate, N16). Others
+    /// are counted, [`Core::stray_datagrams`].
     pub fn receive(&mut self, from: SocketAddr, bytes: &[u8], now: Instant) {
+        if self.probe.receive(from, bytes, now) {
+            return;
+        }
+        let base = self.base;
+        let to = |p: &Peer| if p.signalled { base.unwrap_or(p.local) } else { p.local };
         let peer = self
             .pending
             .iter_mut()
             .chain(self.open.values_mut())
-            .find(|p| p.link.accepts(from, p.local, bytes));
+            .find(|p| p.link.accepts(from, to(p), bytes));
         match peer {
             Some(p) if p.broke.is_none() => {
                 p.stats.datagrams_received += 1;
@@ -365,7 +592,11 @@ impl Core {
                     return;
                 }
                 p.heard = now;
-                p.link.receive(from, p.local, bytes, now);
+                if p.id.is_none() && binding_request_transaction(bytes).is_some() {
+                    p.checked = true;
+                }
+                let to = to(p);
+                p.link.receive(from, to, bytes, now);
             }
             Some(_) => {}
             None => self.stray += 1,
@@ -378,6 +609,8 @@ impl Core {
         self.now = self.now.max(now);
         let now = self.now;
         out.append(&mut self.outbox);
+        events.append(&mut self.events);
+        self.probe.poll(now, out);
         let pending = std::mem::take(&mut self.pending);
         let open = std::mem::take(&mut self.open);
         for peer in pending.into_iter().chain(open.into_values()) {
@@ -422,6 +655,7 @@ impl Core {
         if let Some(why) = peer.broke {
             match peer.id {
                 Some(id) => {
+                    self.report(&mut peer, events);
                     events.push(CoreEvent::Net(NetEvent::Disconnected { peer: id, why }));
                     finish(peer, now, out);
                 }
@@ -441,14 +675,20 @@ impl Core {
                         HOST
                     };
                     peer.id = Some(id);
-                    events.push(CoreEvent::Net(NetEvent::Connected { peer: id, addr: peer.addr }));
+                    peer.opened = Some(now);
+                    // The driver lingers the signalling at once; a
+                    // signalled link's `Connected` waits for its path.
                     events.push(CoreEvent::Opened { setup: peer.setup, peer: id });
+                    if !peer.signalled {
+                        self.report(&mut peer, events);
+                    }
                 }
                 LinkEvent::Message { channel, bytes } => {
                     let Some(id) = peer.id else { continue };
                     match peer.limits.on_message(now, channel == Channel::Reliable, bytes.len()) {
-                        Ok(()) => events.push(CoreEvent::Net(NetEvent::Message { peer: id, channel, bytes })),
+                        Ok(()) => emit(&mut peer, events, NetEvent::Message { peer: id, channel, bytes }),
                         Err(why) => {
+                            self.report(&mut peer, events);
                             events.push(CoreEvent::Net(NetEvent::Disconnected { peer: id, why }));
                             finish(peer, now, out);
                             return None;
@@ -461,7 +701,10 @@ impl Core {
                         Ended::Peer | Ended::Failed(_) => Why::Closed,
                     };
                     match peer.id {
-                        Some(id) => events.push(CoreEvent::Net(NetEvent::Disconnected { peer: id, why })),
+                        Some(id) => {
+                            self.report(&mut peer, events);
+                            events.push(CoreEvent::Net(NetEvent::Disconnected { peer: id, why }));
+                        }
                         None => {
                             if !self.cfg.host {
                                 events.push(CoreEvent::Net(NetEvent::Disconnected { peer: HOST, why }));
@@ -473,8 +716,19 @@ impl Core {
                 }
             }
         }
+        if let Some(opened) = peer.opened {
+            let pair = peer.link.selected_pair();
+            if !peer.reported && (pair.is_some() || now >= opened + CONNECTED_WAIT) {
+                self.report(&mut peer, events);
+            } else if peer.reported && peer.signalled && pair.is_some() && pair != peer.pair {
+                // ICE moved to another pair: the path follows.
+                peer.pair = pair;
+                peer.path = Some(self.classify(&peer));
+            }
+        }
         match peer.id {
             Some(id) if now.saturating_duration_since(peer.heard) >= SILENCE_TIMEOUT => {
+                self.report(&mut peer, events);
                 events.push(CoreEvent::Net(NetEvent::Disconnected { peer: id, why: Why::Timeout }));
                 finish(peer, now, out);
                 None
@@ -485,6 +739,34 @@ impl Core {
             }
             _ => Some(peer),
         }
+    }
+
+    /// The path of a peer's link: its selected pair's class (N49), or
+    /// `HolePunched` without one; `Direct` for a TCP-signalled link.
+    fn classify(&self, peer: &Peer) -> Path {
+        match (peer.signalled, peer.pair) {
+            (false, _) => Path::Direct,
+            (true, Some((local, remote))) => classify(local, remote, &self.local(), &peer.theirs),
+            (true, None) => Path::HolePunched,
+        }
+    }
+
+    /// Reports an opened peer `Connected` (once) with its path, then the
+    /// events that waited for it.
+    fn report(&self, peer: &mut Peer, events: &mut Vec<CoreEvent>) {
+        let Some(id) = peer.id else { return };
+        if peer.reported {
+            return;
+        }
+        peer.reported = true;
+        peer.pair = peer.link.selected_pair();
+        let path = self.classify(peer);
+        peer.path = Some(path);
+        if let (true, Some((_, remote))) = (peer.signalled, peer.pair) {
+            peer.addr = remote;
+        }
+        events.push(CoreEvent::Net(NetEvent::Connected { peer: id, addr: peer.addr, path }));
+        events.extend(peer.held.drain(..).map(CoreEvent::Net));
     }
 
     /// A connection that did not come up: the client hears why, the host
@@ -557,9 +839,9 @@ impl Core {
         }
     }
 
-    /// The open peers, by id, with their addresses.
+    /// The open peers reported `Connected`, by id, with their addresses.
     pub fn peers(&self) -> impl Iterator<Item = (PeerId, SocketAddr)> + '_ {
-        self.open.iter().map(|(&id, p)| (id, p.addr))
+        self.open.iter().filter(|(_, p)| p.reported).map(|(&id, p)| (id, p.addr))
     }
 
     /// The DTLS fingerprints of an open peer's link, offer side's then

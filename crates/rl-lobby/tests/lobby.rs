@@ -131,6 +131,27 @@ fn seat(net: &Net, c: usize) -> SeatWire {
     member(net, c).seat
 }
 
+/// `Member::path` shows how each member's link reaches the host (the
+/// transport's `Connected { path }`); the host's own player has none.
+#[test]
+fn a_members_path_is_shown() {
+    let mut host = LobbyHost::new(cfg(), ident(HOST), Some(look("Host")), setup(0)).unwrap();
+    let nonce = [3; 32];
+    host.connected(1, ip(1), Path::Relayed, 0, nonce, FINGERPRINTS);
+    let me = ident(1);
+    host.receive(1, ToHost::Hello { key: me.public(), look: look("Ann"), nonce: [0; 32] }, 0);
+    let signature = me.sign(&challenge_message(&nonce, &key(HOST), &FINGERPRINTS), [0; 32]);
+    host.receive(1, ToHost::Prove { signature, password: None }, 0);
+    let members = host.state().members.clone();
+    let path = |k| members.iter().find(|m| m.key == key(k)).map(|m| m.path);
+    assert_eq!(path(1), Some(Some(Path::Relayed)), "{members:?}");
+    assert_eq!(path(HOST), Some(None));
+    // The harness's links are direct.
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    assert_eq!(member(&net, a).path, Some(Path::Direct));
+}
+
 #[test]
 fn three_players_and_a_spectator_gather_ready_and_start() {
     let mut net = lobby_with(HostConfig { max_players: 4, max_spectators: 2, ..cfg() }, 0);
@@ -1125,6 +1146,7 @@ fn a_client_leaves_a_host_that_breaks_the_protocol() {
                 ping_ms: None,
                 admin: false,
                 download: None,
+                path: None,
             })
             .collect(),
     };
@@ -1432,7 +1454,7 @@ proptest! {
                     serial = serial.wrapping_add(1);
                     let nonce = [serial; 32];
                     let peer = u32::from(p);
-                    host.connected(peer, ip(p), now, nonce, FINGERPRINTS);
+                    host.connected(peer, ip(p), Path::Direct, now, nonce, FINGERPRINTS);
                     nonces.insert(peer, nonce);
                     if let Op::Join(p, look) = op {
                         let me = ident(p + 1);
@@ -1445,7 +1467,7 @@ proptest! {
                     for p in 0..PEERS {
                         serial = serial.wrapping_add(1);
                         let (peer, nonce, me) = (u32::from(p), [serial; 32], ident(p + 1));
-                        host.connected(peer, ip(p), now, nonce, FINGERPRINTS);
+                        host.connected(peer, ip(p), Path::Direct, now, nonce, FINGERPRINTS);
                         host.receive(peer, ToHost::Hello { key: me.public(), look: long_look(p), nonce: [0; 32] }, now);
                         let signature = me.sign(&challenge_message(&nonce, &key(HOST), &FINGERPRINTS), [0; 32]);
                         host.receive(peer, ToHost::Prove { signature, password: None }, now);

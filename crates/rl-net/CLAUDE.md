@@ -5,7 +5,8 @@ channels over the sans-IO str0m stack, signalling over a WebSocket, LAN
 announcements.
 
 - **Layer 5, std; not wasm.** Depends on rl-netcode (`Channel`, `PeerId`,
-  `netsim::LinkModel`), rl-proto (`Signal`, the limits' sizes), str0m,
+  `netsim::LinkModel`, `Rng`), rl-proto (`Signal`, `Path`, the STUN codec,
+  the limits' sizes), str0m,
   tungstenite (`=0.30.0`, default features: no TLS) and getrandom
   (`=0.4.3`, `random_bytes`: the native peers' randomness). Real clocks and
   sockets live only in this crate's socket driver, `endpoint` (and the
@@ -24,7 +25,13 @@ announcements.
 - **`link::Link`**: one peer connection, sans-IO. The offerer makes the SDP
   offer (`Link::offerer`), the answerer answers it (`Link::answerer`), the
   offerer takes the answer (`accept_answer`); the caller carries both
-  strings. Host candidates are the `local` UDP addresses (decision N16).
+  strings. Host candidates are the `local` UDP addresses (decision N16);
+  `offerer_with` / `answerer_with` take `LinkCandidates` (host addresses,
+  server-reflexive and relayed `(address, base)` pairs: str0m's
+  `Candidate::host`, `server_reflexive`, `relayed`, added before the SDP
+  is made). str0m reports its stats every second
+  (`set_stats_interval(1 s)`); `selected_pair()` is the latest stats'
+  selected candidate pair (local base or relay address, remote address).
   Time is `std::time::Instant`, always an argument (the netcode's `now_us`
   is converted by the endpoint). `accepts` demultiplexes a shared socket;
   `receive` takes a datagram (non-WebRTC bytes are ignored); `poll` feeds
@@ -86,6 +93,65 @@ announcements.
   refused (`Core::sent`), counted in the stats of the datagram's setup:
   setup-time datagrams count, as before the split; without the reports the
   stats count no sends.
+  - **Signalled setups** (plan 12b, N48-N50; Nostr carries their SDP from
+    Task 7): `set_base(base, hosts)` (every signalled link's datagrams are
+    taken as arriving at `base`; TCP-signalled links keep their own host
+    candidate, N16), `stun(servers, now)`, `set_mapped`, `local()`
+    (`LocalCandidates`), `nat()`, `gathered(now)`; `offer_ice(hint, now)`
+    and `accept_answer_ice(setup, answer, mapped_hint)` on a client
+    (the answer is sanitized too; no F-G rewrite), `answer_ice(offer,
+    mapped_hint, now) -> Signal` on a host (`admit`, then the pending
+    table, then `sanitize` and the answerer link with every local
+    candidate). They must open within `SIGNALLED_SETUP_TIMEOUT` (15 s).
+    At most `MAX_SIGNALLED_PENDING` (8) connect at once: a new offer then
+    evicts the oldest whose peer has sent no ICE connectivity check (a
+    STUN binding request reaching its link), or is `Refused { Busy }`
+    when every one has (PF12b-2); the eviction's `SetupFailed { Timeout }`
+    comes with the next `poll` (calls without an event list queue theirs
+    in `Core`, like `outbox`). Offers carry the host candidates, the
+    server-reflexive and the mapped address on the base (not when equal
+    to it); `srflx` follows STUN's latest answer, so a renumbered router's
+    new address is offered from its next round.
+  - **Paths** (N49): `NetEvent::Connected { path }` and `path(peer)`. A
+    TCP-signalled link is `Direct`, reported at `Open`. A signalled link
+    is classified (`candidates::classify`) from its selected pair against
+    `local()` and the peer's SDP candidates plus its mapped hint, and
+    re-classified when the pair changes; its `Connected` waits for
+    str0m's first stats naming a pair, at most 1.5 s after `Open`
+    (`HolePunched` without one), its `addr` becomes the pair's remote
+    address, and its messages wait until then (`Opened` still comes at
+    `Open`: the driver lingers the signalling). `peers()` lists reported
+    peers only.
+  - **STUN on the game socket** (`probe.rs`, N48): each round asks the
+    servers (IPv4, at most 4) with binding requests from the core's
+    socket, once more after 500 ms if unanswered, at `stun` and every
+    `STUN_EVERY` (25 s, which keeps the router's mapping alive);
+    `gathered` once the first round is answered or `STUN_WAIT` (1 s)
+    passed. `receive` gives a datagram to the probe first when it answers
+    an outstanding request from the server asked. `srflx` is the first
+    answering server's answer (the next one's if it falls silent for a
+    round); two answers of a round give `NatBehaviour` (`Open` when
+    `srflx` is the base, `Preserving`, `Symmetric`). Transaction ids come
+    from `CoreConfig::stun_seed` (the endpoint seeds it from the system's
+    randomness). The probe's datagrams belong to no setup.
+- **`candidates`** (N48-N50): `LocalCandidates`, `RemoteCandidates`,
+  `TurnSpec` (Task 3), `MAX_CANDIDATES` (8). `sanitize(sdp)` keeps at most
+  8 `a=candidate` lines that are UDP, IPv4, unicast (not unspecified,
+  multicast or broadcast), with a port and a known `typ` (fields split on
+  single spaces, as str0m parses them; no mDNS name, TCP or IPv6), other
+  lines as they are; `remote_candidates` reads only those lines, by type
+  (`prflx` with `srflx`); `classify(local, remote, ours, theirs)`:
+  `Relayed` (either side's address a relay), `MappedPort` (the remote's
+  mapped hint), `Direct` (a remote host candidate), else `HolePunched`.
+- **`natsim`** (feature `test-hooks`, N56): `Net` runs `Core`s behind
+  virtual NATs (full cone, address-restricted, port-restricted:
+  endpoint-independent mapping keeping the internal port if free;
+  symmetric: a seeded random port per destination; their filters), with
+  router `forward`s, 120 s idle expiry, no hairpinning (nodes behind one
+  NAT reach each other's private addresses directly), STUN servers, 10 ms
+  per hop and a 1 ms virtual clock; `gather`, `signal` (the signalling
+  Nostr will carry), `run_until`, `connected` (the client's path),
+  `events`, `renumber`.
 - **`endpoint::Endpoint`**: the socket driver of a `Core`: the UDP socket,
   the TCP listener and `SignalConn`s (mapped by `SetupId`), the per-IP
   caps, the gate, the connect thread, lingering closes, and the SDP
@@ -143,8 +209,8 @@ announcements.
     `Disconnected { peer: HOST }` without `Connected`.
   - **Peers**: host side 1, 2, 3, … in the order links open, never reused
     (`PeerId` is `u32` and never goes on the wire);
-    the client's peer is `HOST` (0). `Connected { addr }` is the remote end
-    of the signalling connection. `dtls_fingerprints(peer)`: an open
+    the client's peer is `HOST` (0). `Connected { addr, path }`: the
+    remote end of the signalling connection, `Path::Direct`. `dtls_fingerprints(peer)`: an open
     peer's link's. A local `close` (and dropping the
     endpoint) tells the peer at once and reports nothing.
   - **Timeouts**: a link must open within `SETUP_TIMEOUT` (10 s) of its
@@ -199,7 +265,12 @@ announcements.
 Test: `cargo nextest run -p rl-net` (`tests/core_wire.rs`: two `Core`s
 on an in-memory wire and a virtual clock, a setup timing out, `admit`,
 setup-time datagrams and a refused one in the stats, a cancelled setup's
-last datagrams closing the host's open link;
+last datagrams closing the host's open link, a full signalled pending
+table evicting a silent setup and refusing `Busy` once every one has
+heard checks; `tests/natsim.rs`: hole punching through every NAT pair of
+interest, a mapped port, the same LAN, NAT detection, STUN keeping a
+mapping alive, a renumbered router; `tests/candidates.rs`: reading,
+sanitizing (fuzzed) and classifying candidates;
 `tests/link.rs`: in memory on a
 virtual clock, 32 s in well under 1 s of wall time, and irregular
 polling without a FORWARD-TSN/SACK storm; over localhost UDP:

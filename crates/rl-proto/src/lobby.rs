@@ -195,6 +195,20 @@ pub struct Member {
     pub admin: bool,
     /// Percent of the required content received, while downloading.
     pub download: Option<u8>,
+    /// How the member's link reaches the host (`None`: the host itself).
+    pub path: Option<Path>,
+}
+
+/// How a link reaches its peer (decision N49), from the candidate pair
+/// ICE selected: `Direct` to a host candidate, `MappedPort` to the peer's
+/// router mapping, `HolePunched` through NATs (server- or peer-reflexive),
+/// `Relayed` through a TURN relay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Path {
+    Direct,
+    MappedPort,
+    HolePunched,
+    Relayed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -491,6 +505,7 @@ mod tests {
             ping_ms: Some(12),
             admin: id == 0,
             download: None,
+            path: if id == 0 { None } else { Some(Path::MappedPort) },
         }
     }
 
@@ -786,6 +801,7 @@ mod tests {
                     ping_ms: Some(u16::MAX),
                     admin: true,
                     download: Some(100),
+                    path: Some(Path::Relayed),
                 })
                 .collect(),
         };

@@ -29,7 +29,10 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   changes are coalesced: `state()` is always current, and one `Lobby` per
   `outgoing()` drain goes to every member (also flushed right before a
   `Notice(Joined)`, so the others know the member it names).
-  - Join: `connected(peer, ip, now, nonce, fingerprints)` sends `Challenge` (a banned IP:
+  - Join: `connected(peer, ip, path, now, nonce, fingerprints)` (`path`:
+    how the transport reaches the joiner, rl-net's `Connected { path }`,
+    kept as the member's `Member::path`; the host's own player has `None`)
+    sends `Challenge` (a banned IP:
     `Refused(Banned)`; an IP held off for guessing: `Refused(Throttled)`);
     `Hello` is checked for the guessing hold again (`Throttled`: links
     opened before it get no more guesses), bans (`Banned`), a key already

@@ -18,8 +18,8 @@ use core::net::IpAddr;
 
 use rl_netcode::PeerId;
 use rl_proto::{
-    MatchStartWire, TAG_TO_CLIENT, TAG_TO_HOST, Tagged, ToClient, ToHost, decode_to_client, decode_to_host,
-    encode_to_client, encode_to_host, tag,
+    MatchStartWire, Path, TAG_TO_CLIENT, TAG_TO_HOST, Tagged, ToClient, ToHost, decode_to_client,
+    decode_to_host, encode_to_client, encode_to_host, tag,
 };
 
 use crate::client::LobbyClient;
@@ -103,7 +103,7 @@ impl Net {
         let peer = PeerId::try_from(i + 1).unwrap_or(PeerId::MAX);
         self.peers.push(NetPeer { peer, addr, client, received: Vec::new(), events: Vec::new(), open: true });
         let nonce = self.fresh();
-        self.host.connected(peer, addr, self.now_us, nonce, FINGERPRINTS);
+        self.host.connected(peer, addr, Path::Direct, self.now_us, nonce, FINGERPRINTS);
         if let Some(c) = &mut self.peers[i].client {
             c.connected(seen);
         }

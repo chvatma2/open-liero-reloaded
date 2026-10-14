@@ -156,17 +156,19 @@ host a listed game (`hosting`, `ping`).
     and the Close frame within 1 s, and is joined within 2 s in all (one
     stuck in a TCP connect or DNS lookup is detached).
 - **`stun`** (N40): `binding_request(txn)`, `parse_binding_response(bytes, &txn)`
-  (XOR-MAPPED-ADDRESS, MAPPED-ADDRESS only when no XOR one; v4 and v6; the
-  address as given, no filtering: callers use `list::is_global`; bounded,
-  integrity and fingerprint unchecked) and `public_ip(servers, deadline)`:
+  re-export `rl_proto::stun`'s codec (moved there, N57, with its tests:
+  XOR-MAPPED-ADDRESS, MAPPED-ADDRESS only when no XOR one; v4 and v6; the
+  address as given, no filtering: callers use `list::is_global`, itself a
+  re-export of `rl_proto::is_global`; bounded, integrity and fingerprint
+  unchecked), and `public_ip(servers, deadline)`:
   `host:port` strings, IPv4 only, ephemeral `0.0.0.0:0` socket, 500 ms x 2
   tries per server, no lookup started past `deadline` (one lookup may
   block longer): run it on a thread. Only a reply from the server's own
   address with our transaction counts; a read failing with
   `ConnectionReset`/`ConnectionRefused` (Windows' `WSAECONNRESET` from an
   earlier server's ICMP unreachable) keeps waiting (final review A-M8). `StunResponder` (feature `test-relay`;
-  `start`, `start_plain`, `server()`, `answered()`) is the test server.
-  Tests use the RFC 5769 section 2.2 response.
+  `start`, `start_plain`, `server()`, `answered()`) is the test server;
+  `stun::response` (same feature) is `rl_proto::stun::binding_response`.
 - **`invite`** (N42) and **`defaults`**: `Invite::{encode, decode, relay_urls}`,
   `rlx1…` bech32m of a postcard `Wire` (version byte 1, key, `RelayHint`s,
   IPv4 addr as 4 bytes + port). `decode` trims, takes all upper case (not
@@ -251,7 +253,7 @@ host a listed game (`hosting`, `ping`).
 Test: `cargo nextest run -p rl-discovery` (`tests/announce.rs` and `tests/list.rs`: announcements and the game list; `tests/nostr.rs`: the published
 events verify, signing round-trips, canonical escaping, tampering, frames
 round-trip, fuzzed frames never panic; `tests/test_relay.rs`: the relay;
-`tests/stun.rs`: STUN; `tests/invite.rs`: invite codes (round trips, hints, damage, proptest `encode_always_decodes`); unit tests of `hosting` (hints, IPv4-only
+`tests/stun.rs`: `public_ip` and the codec's re-exports; `tests/invite.rs`: invite codes (round trips, hints, damage, proptest `encode_always_decodes`); unit tests of `hosting` (hints, IPv4-only
 invites, the address watch's answers, the publisher's notes and closing)
 and `ping` (an open and a closed port, the bound); `tests/pool.rs`: the pool against the test relay (silent, dripping,
 slow, slow-reading: every frame arrives intact through partial writes,

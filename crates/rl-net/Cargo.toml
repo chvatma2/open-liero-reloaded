@@ -16,8 +16,9 @@ tungstenite.workspace = true
 getrandom.workspace = true
 
 [features]
-# Test-only API (EndpointConfig's overrides): enabled by this crate's own
-# tests and other crates' dev-dependencies, never by a build that ships.
+# Test-only API (EndpointConfig's overrides, the virtual NAT network
+# `natsim`): enabled by this crate's own tests and other crates'
+# dev-dependencies, never by a build that ships.
 test-hooks = []
 
 [dev-dependencies]

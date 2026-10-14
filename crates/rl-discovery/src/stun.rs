@@ -1,97 +1,22 @@
 //! The host's public address through STUN (RFC 5389, decision N40).
 //!
 //! Only the IP is wanted, so the binding request goes from an ephemeral UDP
-//! socket, not the game socket (plan 12b's ICE uses that one). The socket is
-//! bound to `0.0.0.0:0`, so only IPv4 servers are asked.
+//! socket, not the game socket (rl-net's ICE gathering uses that one). The
+//! socket is bound to `0.0.0.0:0`, so only IPv4 servers are asked. The
+//! binding codec lives in `rl_proto::stun` (decision N57) and is
+//! re-exported here.
 
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
-const COOKIE: [u8; 4] = [0x21, 0x12, 0xa4, 0x42];
-const BINDING_REQUEST: u16 = 0x0001;
-const BINDING_SUCCESS: u16 = 0x0101;
-const ATTR_MAPPED: u16 = 0x0001;
-const ATTR_XOR_MAPPED: u16 = 0x0020;
+pub use rl_proto::stun::{binding_request, parse_binding_response};
+
 /// The largest datagram read; a binding response is well under 100 bytes.
 const MAX_DATAGRAM: usize = 548;
 /// Time and tries per server.
 const TRY_TIMEOUT: Duration = Duration::from_millis(500);
 const TRIES: u32 = 2;
-
-/// A binding request (RFC 5389 §6, §7.2.1): the 20-byte header, no attributes.
-pub fn binding_request(transaction: [u8; 12]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(20);
-    v.extend_from_slice(&BINDING_REQUEST.to_be_bytes());
-    v.extend_from_slice(&0u16.to_be_bytes());
-    v.extend_from_slice(&COOKIE);
-    v.extend_from_slice(&transaction);
-    v
-}
-
-/// The mapped address of a binding success response to `transaction`:
-/// XOR-MAPPED-ADDRESS, or MAPPED-ADDRESS when there is no XOR one. The
-/// address is returned as given (the caller judges whether it is usable).
-/// Bounded and never panics: wrong type, cookie, transaction, a truncated
-/// or overlong message or a malformed attribute yield `None`. The integrity
-/// and fingerprint attributes are not checked.
-pub fn parse_binding_response(bytes: &[u8], transaction: &[u8; 12]) -> Option<SocketAddr> {
-    if bytes.len() < 20 || bytes.len() > MAX_DATAGRAM {
-        return None;
-    }
-    if u16::from_be_bytes([bytes[0], bytes[1]]) != BINDING_SUCCESS {
-        return None;
-    }
-    let len = usize::from(u16::from_be_bytes([bytes[2], bytes[3]]));
-    if len % 4 != 0 || bytes.len() != 20 + len || bytes[4..8] != COOKIE || bytes[8..20] != transaction[..] {
-        return None;
-    }
-    let mut body = &bytes[20..];
-    let mut plain = None;
-    while !body.is_empty() {
-        if body.len() < 4 {
-            return None;
-        }
-        let ty = u16::from_be_bytes([body[0], body[1]]);
-        let alen = usize::from(u16::from_be_bytes([body[2], body[3]]));
-        let padded = alen.checked_add(3)? & !3;
-        let value = body.get(4..4 + alen)?;
-        body = body.get(4 + padded..)?;
-        match ty {
-            ATTR_XOR_MAPPED => return decode_address(value, true, transaction),
-            ATTR_MAPPED if plain.is_none() => plain = Some(decode_address(value, false, transaction)),
-            _ => {}
-        }
-    }
-    plain.flatten()
-}
-
-/// An address attribute value: reserved byte, family, port, address.
-fn decode_address(v: &[u8], xor: bool, transaction: &[u8; 12]) -> Option<SocketAddr> {
-    let mask = |i: usize| -> u8 { if i < 4 { COOKIE[i] } else { transaction[i - 4] } };
-    let mut port = u16::from_be_bytes([*v.get(2)?, *v.get(3)?]);
-    if xor {
-        port ^= u16::from_be_bytes([COOKIE[0], COOKIE[1]]);
-    }
-    let addr = match *v.get(1)? {
-        1 if v.len() == 8 => {
-            let mut o = [0u8; 4];
-            for (i, b) in o.iter_mut().enumerate() {
-                *b = v[4 + i] ^ if xor { mask(i) } else { 0 };
-            }
-            IpAddr::V4(Ipv4Addr::from(o))
-        }
-        2 if v.len() == 20 => {
-            let mut o = [0u8; 16];
-            for (i, b) in o.iter_mut().enumerate() {
-                *b = v[4 + i] ^ if xor { mask(i) } else { 0 };
-            }
-            IpAddr::V6(Ipv6Addr::from(o))
-        }
-        _ => return None,
-    };
-    Some(SocketAddr::new(addr, port))
-}
 
 /// A transaction id that differs per call and process (std's randomly keyed
 /// hasher; no randomness crate and no clock).
@@ -173,6 +98,8 @@ pub use responder::{StunResponder, response};
 #[cfg(feature = "test-relay")]
 mod responder {
     use super::*;
+    use rl_proto::stun::binding_request_transaction;
+    pub use rl_proto::stun::binding_response as response;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::thread::{self, JoinHandle};
@@ -210,12 +137,7 @@ mod responder {
                 let mut buf = [0u8; 1500];
                 while !s.load(Ordering::Relaxed) {
                     let Ok((len, from)) = socket.recv_from(&mut buf) else { continue };
-                    let req = &buf[..len];
-                    if len != 20 || req[..2] != BINDING_REQUEST.to_be_bytes() || req[4..8] != COOKIE {
-                        continue;
-                    }
-                    let mut t = [0u8; 12];
-                    t.copy_from_slice(&req[8..20]);
+                    let Some(t) = binding_request_transaction(&buf[..len]) else { continue };
                     let _ = socket.send_to(&response(&t, mapped, xor), from);
                     a.fetch_add(1, Ordering::Relaxed);
                 }
@@ -241,37 +163,6 @@ mod responder {
                 let _ = t.join();
             }
         }
-    }
-
-    /// A binding success response carrying `mapped` (also for tests of the parser).
-    pub fn response(t: &[u8; 12], mapped: SocketAddr, xor: bool) -> Vec<u8> {
-        let mask = |i: usize| -> u8 {
-            if !xor {
-                0
-            } else if i < 4 {
-                COOKIE[i]
-            } else {
-                t[i - 4]
-            }
-        };
-        let (family, ip): (u8, Vec<u8>) = match mapped.ip() {
-            IpAddr::V4(a) => (1, a.octets().to_vec()),
-            IpAddr::V6(a) => (2, a.octets().to_vec()),
-        };
-        let port = if xor { mapped.port() ^ 0x2112 } else { mapped.port() };
-        let mut attr = vec![0, family];
-        attr.extend_from_slice(&port.to_be_bytes());
-        attr.extend(ip.iter().enumerate().map(|(i, b)| b ^ mask(i)));
-        let ty = if xor { ATTR_XOR_MAPPED } else { ATTR_MAPPED };
-        let mut v = Vec::new();
-        v.extend_from_slice(&BINDING_SUCCESS.to_be_bytes());
-        v.extend_from_slice(&((attr.len() + 4) as u16).to_be_bytes());
-        v.extend_from_slice(&COOKIE);
-        v.extend_from_slice(t);
-        v.extend_from_slice(&ty.to_be_bytes());
-        v.extend_from_slice(&(attr.len() as u16).to_be_bytes());
-        v.extend_from_slice(&attr);
-        v
     }
 }
 

@@ -490,10 +490,12 @@ impl OnlinePeer {
         let now_us = self.now_us;
         match &mut self.side {
             Side::Host(h) => match e {
-                NetEvent::Connected { peer, addr } => {
+                NetEvent::Connected { peer, addr, path } => {
                     h.addrs.insert(peer, addr);
                     match (random_bytes::<32>(), self.endpoint.endpoint().dtls_fingerprints(peer)) {
-                        (Ok(nonce), Some(fps)) => h.lobby.connected(peer, addr.ip(), now_us, nonce, fps),
+                        (Ok(nonce), Some(fps)) => {
+                            h.lobby.connected(peer, addr.ip(), path, now_us, nonce, fps)
+                        }
                         _ => self.drop_peer(peer),
                     }
                 }

@@ -1245,7 +1245,14 @@ mod tests {
         fn join(&mut self, n: u8, look: Look) {
             let me = Identity::from_secret([n; 32]).unwrap();
             let (peer, nonce) = (PeerId::from(n), [n; 32]);
-            self.lobby.connected(peer, std::net::IpAddr::from([10, 0, 0, n]), 0, nonce, FPS);
+            self.lobby.connected(
+                peer,
+                std::net::IpAddr::from([10, 0, 0, n]),
+                rl_proto::Path::Direct,
+                0,
+                nonce,
+                FPS,
+            );
             self.lobby.receive(peer, rl_proto::ToHost::Hello { key: me.public(), look, nonce }, 0);
             let host = Identity::from_secret(HOST_ID).unwrap().public();
             let signature = me.sign(&rl_lobby::challenge_message(&nonce, &host, &FPS), [0; 32]);
@@ -1257,7 +1264,7 @@ mod tests {
         fn join_as(&mut self, peer: PeerId, key: u8, ip: [u8; 4], look: Look, now: u64) {
             let me = Identity::from_secret([key; 32]).unwrap();
             let nonce = [key; 32];
-            self.lobby.connected(peer, std::net::IpAddr::from(ip), now, nonce, FPS);
+            self.lobby.connected(peer, std::net::IpAddr::from(ip), rl_proto::Path::Direct, now, nonce, FPS);
             self.lobby.receive(peer, rl_proto::ToHost::Hello { key: me.public(), look, nonce }, now);
             let host = Identity::from_secret(HOST_ID).unwrap().public();
             let signature = me.sign(&rl_lobby::challenge_message(&nonce, &host, &FPS), [0; 32]);
