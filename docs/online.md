@@ -213,7 +213,9 @@ Under the invite code, a Public or Invite game shows a listing line (see
 | "No relay reachable: only LAN and direct joins work" | every relay failed; they are retried |
 
 An Invite game whose code has an address shows no listing line;
-otherwise it says "This code joins through the relays".
+otherwise it says "This code joins through the relays", or, with no
+relays either, "This code has no address and no relays: it joins nothing
+(set relays in Options)".
 
 Each join through the relays also leaves a line in the host's lobby
 (at most one of each kind every 5 s; the next says "(N more since)"):
@@ -388,36 +390,58 @@ How to read it:
 A playtest of the whole chain: two PCs on two different home networks
 (for example, at two homes, or one on a phone's hotspot), with no ports
 forwarded by hand. Use the release zips and play on Windows or native
-Linux (not WSL2, see "WSL2 and Windows").
+Linux (not WSL2, see "WSL2 and Windows"). Both PCs' clocks must be right
+(set automatically): joins through the relays fail when they differ by
+more than a minute.
 
-1. **On the host PC**, start `rl-game` from a terminal (on Windows its
-   console window opens beside it) and keep that output. Allow the
-   firewall prompt on private and public networks. Multiplayer → Host,
+**Commands.** Unpack the zip, open a terminal in its folder
+(`rust-liero-<version>`), and start the programs from there:
+
+| | Linux (a terminal) | Windows (PowerShell) |
+|---|---|---|
+| the game, keeping its output | `./rl-game \| tee rl-game.txt` | `.\rl-game.exe \| Tee-Object -FilePath rl-game.txt` |
+| the network check | `./rl-server --nat-check > nat-check-host.txt` | `.\rl-server.exe --nat-check > nat-check-host.txt` |
+
+On the joining PC, name the check's file `nat-check-joiner.txt`. (In
+cmd.exe, `rl-game.exe` and `rl-server.exe --nat-check > nat-check-host.txt`
+work as written. Windows PowerShell 5.1 writes the `>` file as UTF-16:
+harmless, but open it with an editor rather than `type`.)
+
+1. **On the host PC**, start the game as above. Allow the firewall
+   prompt on private and public networks. Multiplayer → Host a game,
    Who can join: **Invite only**, Start hosting.
-2. **Wait** until the lobby stops saying "Checking how players can reach
-   you…" (at most 5 s), then **Copy** the invite code and send it to the
-   other player by any chat.
-3. **On the joining PC**, start `rl-game` the same way, then Multiplayer
-   → Direct, paste the code and Join. The waiting text shows each step.
-4. **Read both lobbies' lines**, and note them in the test report:
-   - The host's lines under the code: did the router open the port
-     ("Port 23400 is open on your router (…)")? Is either router
-     symmetric? How many relays take joins?
-   - The host's member list: the joiner's tag, one of `direct` /
-     `open port` / `punched` / `relayed`.
-   - The joiner's "Connection" line. It agrees with the tag, except that
-     a join by the open port's address reads "connected directly to …".
-5. **If the join fails**, note the joiner's message (the table above).
-   Then run `rl-server --nat-check` on both PCs, from the unpacked zip:
-   `rl-server --nat-check > nat-check-host.txt` on the host, and
-   `rl-server --nat-check > nat-check-joiner.txt` on the joiner. Keep
-   both files, with both `rl-game` outputs. Then try the fixes under "No
-   network path".
+2. **Wait** until the lobby's Invite section stops saying "Checking how
+   players can reach you…" (at most 5 s), then **Copy** the invite code
+   and send it to the other player by any chat.
+3. **On the joining PC**, start the game the same way, then Multiplayer
+   → Direct, paste the code into "Address or invite code" and Join. The
+   waiting text shows each step.
+4. **Read both lobbies**, and note what they say in the test report:
+   - The host's Invite section, under the code: did the router open the
+     port ("Port 23400 is open on your router (…)", or "No router: …")?
+     Does it say the host's router is symmetric ("Your router changes
+     ports for every destination (symmetric NAT): …")? How many relays
+     take joins ("Taking joins through N of M relays")? (The joiner's
+     router shows only in the joiner's network check, step 5.)
+   - The host's chat log: "A player asked to join through the relays:
+     answered", or the other join lines under "What the host's lobby
+     says".
+   - The host's member list: the joiner's tag beside its ping, one of
+     `direct` / `open port` / `punched` / `relayed`.
+   - The joiner's "Connection" section. It agrees with the tag, except
+     that a join by the open port's address reads "connected directly to
+     …".
+5. **If the join fails**, note the joiner's message (the table under
+   "When a join fails") and the host's join lines. Then run the network
+   check on both PCs (the command above): its `NAT:` line is
+   each router's kind, its `relay …:` lines each relay's clock against
+   that PC's. Keep both files with both `rl-game.txt` outputs, then try
+   the fixes under "No network path".
 
 To exercise hole punching even when the host's router opens the port,
-untick "Open the game's port on my router" in Options → Online on the
-host and host again: the lobby then says "Port mapping is off …", and the
-joiner's tag should be `punched`.
+untick "Open the game's port on my router (UPnP/NAT-PMP/PCP)" in Options
+→ Online on the host and host again: the lobby then says "Port mapping
+is off: …", and the joiner's tag should be `punched`.
 
 ## Missing content
 
