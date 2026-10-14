@@ -6,6 +6,76 @@ All notable changes to rust-liero are recorded here. The format follows
 
 ## Unreleased
 
+### Added — through routers
+
+- Two players behind ordinary home routers play each other with no manual
+  port forwarding. See "Through routers" in `docs/online.md`.
+- **Port mapping:** a hosted Internet or Invite only game, and an
+  `rl-server` (Public or Invite), asks the router to open its port (UPnP,
+  NAT-PMP or PCP, TCP and UDP on one port), renews it and deletes it at
+  exit. A double NAT or carrier-grade NAT is told apart (the port opens,
+  but the router's own address is not public). Options → Online: "Open
+  the game's port on my router (UPnP/NAT-PMP/PCP)", on by default.
+- **Joins without an address:** a listed game without a public address
+  is joinable (its ping says "via relays"), and so is an invite code
+  without one: the joiner asks the host through the Nostr relays (an
+  encrypted, short-lived handshake signed with a fresh key per join), and
+  ICE finds a path: the host's open port, hole punching through both
+  routers, or a TURN relay. A game with an address is tried directly
+  first, then through the relays. The waiting text names each step.
+- **TURN relays:** `rl-server --relay` runs a volunteer TURN relay and
+  announces it on the server's Nostr relays; joiners use announced relays
+  when nothing else connects, the nearest region and the least loaded
+  first. Options → Online → "TURN relays" takes your own
+  (`user:pass@host:port`; the first two are used, before announced ones).
+- **`rl-server --nat-check`** prints what stands between the machine and
+  the players: its addresses, each STUN server's answer and the kind of
+  NAT, a test mapping on the router, the Nostr relays and the TURN relays
+  announced on them.
+- **The lobby says how players get in:** the host's lobby lists its
+  reachability under the invite code ("Port 23400 is open on your router
+  (UPnP): players join directly at …", "Your router did not open port
+  23400 (…): players connect by hole punching or a TURN relay", a
+  symmetric NAT,
+  "Taking joins through 5 of 8 relays"), each member shows its path
+  ("direct", "open port", "punched", "relayed"), and a joiner sees
+  "Connection: connected by hole punching through both routers" and the
+  like. `rl-server` logs the same as `reach: …` lines and each join's
+  path (`join: … via punched …`). A failed join names the step that
+  failed and the fix ("no network path to the game: hole punching failed
+  and no TURN relay could be used. The host can open port …").
+- `rl-cli net-client` joins by `--invite`, `--key` or `--listed "<name>"`
+  as well as `--join`, with `--relay`, `--stun`, `--turn`,
+  `--allow-local` and `--lobby-only`, and prints `path: <tag>`.
+- Developers: `cargo xtask net-nat` runs joins across Docker routers
+  (port-restricted, symmetric, UPnP, PCP, NAT-PMP) in `full`; `rl-cli
+  nostr-relay` and `rl-cli stun-server` (feature `nat-tools`) serve
+  tests.
+- **Server operators:**
+  - New config keys: `port_mapping` (default `true`: a Public or Invite
+    server asks the router to open its port, and with `--relay` the
+    relay's ports), `allow_local` (default `false`: accept private and
+    local addresses where public ones are expected, for an office or LAN
+    setup) and `relay` (a TURN relay's `port`, `ports`, `capacity`,
+    `user_kib_s`, `allocations_per_ip`; `--relay` uses the defaults). See
+    `fixtures/server/example.ron`. Set `port_mapping: false` if the server
+    must not touch the router.
+  - A Public or Invite server now listens on its Nostr relays for joins
+    (a second connection to each relay); a Lan server does not. An empty
+    `relays` keeps it off Nostr.
+  - The address in a note or invite is now the router mapping's or
+    `public_address`, never the one STUN learned: a server behind a
+    manual port forward should set `public_address`, or players join
+    through the relays.
+  - A relay limits each player's IP to 32 KiB/s each way, 4 allocations
+    and 20 requests a second (`user_kib_s`, `allocations_per_ip`), relays
+    only to public addresses (not to the operator's LAN, unless
+    `allow_local`), and ends every allocation after 6 hours, so a player
+    relayed longer than that loses the link and joins again. It needs a
+    public IPv4 address: `public_address`, a router that maps UDP 3478
+    and 49160-49191 exactly, or no NAT; otherwise it logs "relay: not
+    announced" and does not start. Its credentials are public by design.
+
 ### Added — finding games
 
 - Multiplayer has three tabs: **Internet** (games announced on public Nostr
@@ -29,7 +99,9 @@ All notable changes to rust-liero are recorded here. The format follows
 - `rl-cli nostr-probe` and `rl-cli stun-probe` measure public relays and STUN
   servers (by hand: the relay probe publishes short-lived notes to them).
 - Still needed: players outside your LAN reach a game only through a
-  forwarded port (NAT traversal comes with plan 12b).
+  forwarded port (NAT traversal comes with plan 12b: lifted by "Added —
+  through routers" above, which also makes games without a public address
+  joinable).
 - Privacy: opening Multiplayer connects to the relays in Options (8 public
   relays by default), which see your IP address; remove every relay to
   stay off them. Upgrading `rl-server`: a config without `visibility` is

@@ -1232,7 +1232,10 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
   the list shows it as "cannot be joined yet" (plan 12b adds handshakes)
   and its invite carries no address (the lobby says "Not listed: no public
   address (forward port N or set it in Options)"). STUN is only about the
-  address: ICE candidates stay as in N16 until plan 12b.
+  address: ICE candidates stay as in N16 until plan 12b. **Amended by plan
+  12b (N47):** STUN no longer gives the advertised address; a note's or
+  an invite's address is a usable router mapping or `public_address`, and
+  STUN finds only an ICE candidate (see "Through routers decisions").
 - **N41 - the game list.** `GameList` verifies every event (id and
   signature), keeps the newest note per key, drops expired notes and closed
   games, shows games of another fingerprint greyed out ("needs version X"),
@@ -1260,7 +1263,8 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
   HRP is "damaged"; a newer version is "newer". Joining by code uses the
   address and expects the code's key (N37). A code without an address
   cannot be joined: "this invite has no address: the game cannot be joined
-  yet".
+  yet". **Amended by plan 12b (N46):** such a code joins through the
+  relays.
 - **N43 - visibility.** `Visibility { Public, Lan, Invite }`. Public is
   announced on Nostr and broadcast on the LAN; Lan is broadcast on the LAN
   only; Invite is neither, and its invite code is shown in the lobby (with
@@ -1272,7 +1276,9 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
   STUN runs for every server visibility, since every server prints its
   invite and the invite needs the address (R9-2): a Lan or Invite server
   contacts the STUN servers at its start and every 10 minutes. The game asks
-  STUN for Public and Invite games only, never for Lan (R10-4). LAN
+  STUN for Public and Invite games only, never for Lan (R10-4). (Amended by
+  plan 12b, N47 and N48: STUN now runs on the game socket every 25 s for
+  ICE, and no longer gives the invite's address.) LAN
   announcements keep the old broadcast, with counts now held to the
   maximums.
 
@@ -1368,7 +1374,10 @@ Task rulings:
   pair. **R9-2:** STUN runs for every visibility (see N43). **R9-3:** the
   server prints `invite code: rlx1…` once the address is settled
   (immediately when configured or when there are no STUN servers, else at
-  the first answer, at most ~3 s) and again whenever it changes. **R9-4:**
+  the first answer, at most ~3 s) and again whenever it changes. (Amended
+  by plan 12b, N47: the invite waits for the reachability to settle, at
+  most 5 s; one without an address reads `invite code (joins through the
+  relays): rlx1…`.) **R9-4:**
   see N40. **R9-5:** the closing note is forced newer (see N39).
   **R9-6:** `/invite` is admins-only in a Lan or Invite game. **R9-7:** an
   unknown `region` in a config reads as `Unknown`. **R9-8:** the server's
@@ -1394,7 +1403,13 @@ Task rulings:
   "Listed" counts only this hosted game's notes (B-M1). An Invite game's
   line is about its code (B-I3): "Finding the public address…", then
   "This code has no address: forward port N or set the public address in
-  Options" when it carries none. **R10-6:**
+  Options" when it carries none. **Amended by plan 12b (Task 9, N46,
+  N47):** "Finding the public address…" became "Checking how players can
+  reach you…"; "Not listed: no public address …" is gone (a Public game is
+  listed with or without an address); an Invite game's code without an
+  address says "This code joins through the relays" (or "This code has no
+  address and no relays: it joins nothing (set relays in Options)"); the
+  current lines are under "Through routers decisions". **R10-6:**
   Options → Online has a "Public address" field (checked as an IP) next to
   Region, Relays, STUN servers and Blocked hosts; a relay or STUN entry
   that cannot be added says why ("needs wss:// or ws://", "needs
@@ -1454,6 +1469,584 @@ Final review rulings (the plan's final fix pass, 2026-10-14):
   to a minute): the list never keeps a blocked host's notes, and the
   pool's dedupe drops a stored note it already delivered. If wrong: an
   unblocked game shows up to a minute late.
+
+## Through routers decisions (plan 12b)
+
+Decided in `docs/superpowers/plans/2026-10-14-plan-12b-through-routers.md`
+("Decisions this plan makes", N44-N62, PL12b-1 to PL12b-3) and by rulings
+during its execution: PL12b-0, PF12b-1 to PF12b-5 (pre-flight), TR-1 to
+TR-4 (the TURN relay), PM-1 and PM-2 (port mapping), NT-1 and NT-2 (tests
+and exit), RH-1 (re-hosting) and UI-1 (Options). Where a ruling changed a
+decision, the decision below says so and gives its final form. "If wrong"
+is the cost of the decision being wrong.
+
+- **N44 - handshake encryption.** NIP-44 v2 (`rl_discovery::nip44`):
+  secp256k1 ECDH x-coordinate, HKDF-SHA256 extract with salt `nip44-v2`,
+  a per-message HKDF expand to 76 bytes, ChaCha20 (counter 0) and
+  HMAC-SHA256 over nonce and ciphertext, checked in constant time. It is
+  checked against the official vectors, fetched once from
+  `paulmillr/nip44` (`nip44.vectors.json`, last changed in 1f8dba17,
+  2023-12-19). The committed file
+  `crates/rl-discovery/tests/fixtures/nip44.vectors.json` has SHA-256
+  `269ed0f69e4c192512cc779e78c555090cebc7c785b609e338a62afc3ce25040`, the
+  checksum NIP-44's "Tests" section gives (nostr-protocol/nips `44.md` at
+  733a0471). The joiner signs and encrypts with a fresh random key per
+  join (`Asker::new` draws again on an invalid secret; after 16 invalid
+  draws in a row it has no key and sends nothing), so relays cannot link
+  joins to players; the lobby's proofs (N37) still prove the player's
+  real key over the data channel. The host answers with its own key.
+  Only NIP-44's 2-byte length prefix is read: its newer 6-byte prefix (for
+  plaintexts of 64 KiB and more) decrypts as an error, and our content is
+  at most 16 KiB. If wrong: a handshake that other Nostr clients cannot
+  read, which nothing needs.
+- **N45 - handshake wire.** Kind 21470, tags `["p", <recipient hex>]` and
+  `["expiration", <now + 60>]`; content NIP-44 of `{"v":1,
+  "session":"<32 hex>","signal":<rl_proto::Signal>,"mapped":"<ip:port>"|
+  null}`, at most `MAX_HANDSHAKE_CONTENT` (16 KiB). An offer or answer
+  that would not fit is never sent: the join expires, and the host
+  answers `Refused(Malformed)` instead. `mapped` is always `null` from our
+  joiners (only a host holds a mapping, N47).
+  - **Joiner** (`Asker`): it subscribes for the answer first and sends its
+    offer after that subscription's first `EOSE` (at most 2 s), then every
+    `RESEND` (2 s), each time to every relay; `NO_REPLY` after
+    `ANSWER_DEADLINE` (10 s). No trickle ICE: it gathers for at most
+    `GATHER_DEADLINE` (2 s) first.
+  - **Host** (`Inbox`): cheap checks first (size, kind, `p`, a date within
+    `MAX_SKEW`, 60 s, either way). For a key with a live session, an
+    event id already seen is ignored without a signature check, and a
+    session takes at most 5 signed resends (counted after the signature,
+    so forgeries in a joiner's name spend none); a repeat gets the cached
+    reply. For a new key: the signature, ECDH and decryption, the `Offer`
+    and its SDP size, and only then a rate token (`OFFER_RATE` 10 a
+    second, `OFFER_BURST` 20). One session per key, kept
+    `SESSION_MEMORY` (2 minutes) from its offer or reply, at most
+    `MAX_SESSIONS` (4096; the oldest goes). The inbox runs on rl-online's
+    listener thread, never the game's UI thread.
+  - **Token after decryption** (Task 7 review, Important 1): the plan took
+    the token before decryption, so a flood of signed but undecryptable
+    events from fresh keys starved honest joiners. Now junk spends no
+    token; its cost (a signature check, an ECDH, a ChaCha20 and an HMAC
+    per event) is bounded by the pool's per-relay limits (200 frames a
+    second) and stays on the listener thread. **Residual:** valid offers
+    from fresh keys still share the 10 a second budget; PF12b-2 and the
+    joiner's resends soften it.
+  - **Over-limit input is dropped, not the sender** (pre-flight fix 29):
+    an over-limit or hostile event is dropped and counted
+    (`Inbox::ignored`). Its sender cannot be dropped, since its key is
+    ephemeral. This deviates from spec §5.4's "a peer breaking a limit is
+    dropped".
+  - If wrong: up to 2 s more per Nostr join (no trickle); a flood of valid
+    offers from fresh keys delays honest joiners.
+- **PF12b-2 - a full pending table evicts a silent setup.** When the
+  signalled-pending table (`MAX_SIGNALLED_PENDING`, 8) is full and a new
+  valid offer arrives, the oldest pending signalled setup that has heard
+  no ICE connectivity check from its peer (a check str0m accepted: ufrag
+  and integrity) is closed (`SetupFailed { Timeout }`), and the new offer
+  takes its place. Only when every pending setup has heard a check is the
+  offer refused `Busy`, which a joiner shows as `BUSY` ("the game is busy
+  with other joins: try again in a moment"). Honest joiners send checks
+  within about 1 s of the answer, so valid but silent offers from fresh
+  keys cannot lock one out. Pinned by `a_flood_of_offers_leaves_room_for_
+  an_honest_joiner` (an 8 s flood of 100 junk events and 5 silent valid
+  offers a second; the honest joiner connects during it). If wrong: a
+  slow honest joiner is evicted during a flood and retries.
+- **N46 - join order** (as amended by PF12b-3).
+  - A typed address or a LAN game: direct only (plan 10). A typed name is
+    looked up on a thread (`rl-game resolve`), never on the frame.
+  - A listed game or an invite with an address: direct first, then
+    through Nostr if the link never opened (a `Disconnected` before
+    `Connected`, not a `Refused`).
+  - Without an address: Nostr only. A listed game without one is joinable
+    (the Internet tab's ping column says "via relays").
+  - The joiner's relays (`join_relays`, PF12b-3): the invite's hints
+    first, then its own list, each once, at most `MAX_JOIN_RELAYS` (8).
+    The host listens on all of its relays, so any relay that carried its
+    note reaches it; notes carry no handshake hints (PL12b-2).
+  - With neither an address nor relays: `NO_WAY_TO_JOIN` ("this game has
+    no address, and there are no relays to join it through …").
+  - Failure texts (`rl_online::join`): `NO_RELAYS` (every relay failed
+    before an answer), `RELAYS_REFUSED` (every reachable relay refused the
+    join's events by a NIP-01 policy prefix such as `blocked:` or
+    `restricted:`; `rate-limited:`, `error:` and `duplicate:` do not
+    count; added so a web-of-trust relay's refusal is not blamed on the
+    host), `NO_REPLY`, `BUSY`, and after the host's answer `no_path(port,
+    relay)` ("no network path to the game: hole punching failed and no
+    TURN relay could be used …", or "… not even through the TURN relay
+    …"), after `SIGNALLED_SETUP_TIMEOUT` (15 s).
+  - If wrong: a stale address costs at most `CONNECT_TIMEOUT` (5 s)
+    before Nostr is tried.
+- **N47 - what an address in a note or invite means.** It is present only
+  when the host is directly reachable: `Reachability::direct()` is a
+  usable router mapping that forwards TCP and UDP on one external port
+  (F-G) with a global external IP, else the configured `public_address`
+  on the game's port (the mapping is taken first). The port is then the
+  external one (`Hosting::public_port`); the LAN announcement keeps the
+  local port (`Hosting::lan`). A STUN-learned address is only an ICE
+  candidate, never advertised: this replaces N40's use of STUN, and
+  `AddressWatch` is gone (Task 9). The first note and the invite wait for
+  `Reachability::settled()` (the router answered or gave up, and the
+  first STUN round settled), at most `SETTLE_WAIT` (5 s), in rl-server
+  and in the game; the invite is printed again whenever `direct()`
+  changes. A Public game without an address is announced all the same
+  and joined through the relays. If wrong: a manual forward without
+  `public_address` joins through Nostr and ICE, which needs hole punching
+  or a TURN relay.
+- **N48 - ICE candidates.**
+  - **Host:** the default interface's IPv4 addresses, at most 2
+    (`netdev =0.46.3` with feature `gateway`; else the OS's source address
+    toward the first STUN server; else 127.0.0.1). A signalled setup made
+    before that lookup ended takes `local::quick_base` at once (the
+    source address toward 192.0.2.1 by a `connect`, nothing sent), so no
+    SDP goes out without candidates. Every candidate shares the one UDP
+    socket; datagrams reach str0m as arriving at the first (the base).
+  - **Server-reflexive:** STUN binding requests from the game socket to
+    the first 4 configured servers that resolve to IPv4 (the plan said the
+    first two that answer), at the start and every `STUN_EVERY` (25 s,
+    which keeps the router's mapping alive), each retried once after
+    500 ms. Two answers with different ports mean a symmetric NAT;
+    an answer equal to the base means no NAT (`NatBehaviour`).
+  - **Mapped:** a server-reflexive candidate at the mapping's external
+    address.
+  - **Relayed:** the joiner only, at most 2 TURN allocations (IPv4). The
+    host never allocates: a relay's per-user limit (32 KiB/s) fits one
+    client's traffic (spec §3.1: at most 24 KB/s), not a host's. An
+    allocation no open link uses is released 5 s after a link is
+    `Connected` on another path (`RELEASE_AFTER`). A relay that names our
+    own address, or a non-global one (without `allow_local`), as its
+    relayed address is refused and released (Task 3 review), so direct
+    traffic is never wrapped.
+  - **Budget** (Task 2 review, I-1): an SDP keeps at most `MAX_CANDIDATES`
+    (8), so server-reflexive, mapped and relayed candidates come first and
+    host candidates fill what is left, base first.
+  - If wrong: a host behind a symmetric NAT whose joiner reaches no TURN
+    relay fails; friends on a shared VPN connect over public paths (other
+    interfaces are not offered).
+- **N49 - path names.** `rl_proto::Path { Direct, MappedPort,
+  HolePunched, Relayed }`, from str0m's selected pair
+  (`set_stats_interval(1 s)`), classified by `candidates::classify`:
+  Relayed when either side's selected address is a TURN relay; MappedPort
+  when the remote's address is its mapped hint; Direct for a remote host
+  candidate; HolePunched otherwise. A signalled link's `Connected` waits
+  for the first stats naming a pair, at most 1.5 s after the link opened
+  (then HolePunched, with the source of the last datagram the link took as
+  the address, never 0.0.0.0: Task 2 review). A TCP-signalled link is
+  `Connected` at once: Direct for the joiner; for the host MappedPort when
+  it holds a mapping that forwards TCP and the joiner's address is global
+  (or `allow_local`), else Direct (Task 5 review, I1: no task held this
+  part of N49 until then). A client's path follows ICE afterwards
+  (`OnlinePeer::connection`). Tags (`path_tag`): "direct", "open port",
+  "punched", "relayed"; the client's line (`path_text`): "connected
+  directly to …", "connected through the host's open port …", "connected
+  by hole punching through both routers", "connected through the TURN
+  relay …". If wrong: the host may label a mapped-port ICE join
+  "hole-punched".
+- **N50 - signalled offers' candidates.** With no TCP connection, T4-A
+  (keep only the TCP peer's IP) cannot apply. A signalled offer keeps at
+  most 8 `a=candidate` lines that are UDP, IPv4, unicast, not unspecified,
+  multicast or broadcast, with a port and a known type
+  (`candidates::sanitize`, fuzzed). The joiner sanitizes the host's answer
+  the same way (Task 2: a hostile host could aim checks at a third party
+  too). The host's checks are ICE-paced and bounded by
+  `MAX_SIGNALLED_PENDING`. If wrong: a hostile joiner can aim a few STUN
+  checks at a third party.
+- **N51 - port mapping** (as amended by PM-1, PM-2, RH-1 and NT-2).
+  - **Protocols:** NAT-PMP (RFC 6886), PCP (RFC 6887) and UPnP-IGD, all
+    hand-written in `rl_net::portmap` (PM-1 replaced igd-next; see below).
+    PCP, falling back to NAT-PMP after any PCP failure (refusal,
+    `UNSUPP_VERSION` or silence), on port 5351 of the default gateway, on
+    one thread, races UPnP (SSDP, then HTTP) on another; each has its own
+    deadline (PCP and NAT-PMP 3 s, UPnP 4 s) and the first mapping wins
+    (the loser deletes what it mapped). A router offering both therefore
+    shows PCP.
+  - **Ports:** the game's port, TCP and UDP on the same external port
+    (F-G): the local port first, then +1 … +7. A relay's ports are exact
+    (`MapRequest::exact`/`extra`): never shifted; one that cannot be
+    mapped exactly is reported.
+  - **Lifetimes:** PCP and NAT-PMP 2 h, UPnP 3600 s, renewed at half; a
+    router answering 725 (`OnlyPermanentLeasesSupported`) gets lease 0
+    (not renewed). A renewal that gets no answer is retried halfway to
+    the mapping's end; a refused one drops the mapping and says so.
+  - **Exit:** mappings are deleted within `DROP_WAIT` (1 s); see NT-2 for
+    who waits.
+  - **Useless mapping:** an external IP that is not global
+    (`rl_proto::is_global`), without `allow_local`, means a double NAT or
+    carrier-grade NAT: reported (`MappingState::Mapped { usable: false }`)
+    and never advertised.
+  - **State:** a mapping host is `Trying` from the endpoint's start (Task
+    11 review: it showed "Port mapping is off" for a moment first), and
+    `Failed` when the mapper can never start.
+  - **Tests never reach a router:** with `test-hooks`, `PortMapper::start`
+    refuses a gateway or SSDP address that is not loopback, before any
+    socket exists.
+  - If wrong: a router quirk our client misses leaves hole punching and
+    relays.
+- **N52 - TURN relays** (as amended by TR-1 to TR-4, PF12b-4 and the Task 8
+  session cap).
+  - **Code:** the client is `turn-client-proto =0.7.2` (sans-IO, inside
+    `Core`); the server is our own (`rl_net::turn`, TR-2), not
+    turn-server-proto.
+  - **Who runs them:** the project runs no TURN server and ships no TURN
+    list (public TURN services need paid credentials). Volunteers run
+    `rl-server --relay`, which announces a kind-31471 note `{v, addr,
+    port, region, capacity, load, user, pass}` with public long-term
+    credentials (realm `rust-liero`, fresh each start, 16 hex characters
+    each), at once and every 60 s (expiry 180 s), and a closing note
+    (capacity 0, expiry 10 s) at shutdown. Players may add their own TURN
+    servers (`user:pass@host:port`, Options → Online → TURN relays, at
+    most 8; `rl-cli --turn`), for joining. rl-server's config has no TURN
+    list (PF12b-4: a host never allocates).
+  - **Limits per client IP:** 32 KiB/s relayed each way (a bucket holding
+    2 s), 4 allocations, 20 requests a second (split 15 for requests from
+    a proven source, 5 for the rest: TR-2's fix rounds); at most 16
+    permissions and 16 channels per allocation, at most 8 peers per
+    CreatePermission, LIFETIME clamped to 600-3600 s, requests at most
+    1500 B, any datagram at most 4096 B, 4096 IPs tracked. Each allocation
+    ends `MAX_SESSION` (6 h) after it was made, refreshes included (Task 8,
+    the Task 3 review: 8 IPs × 4 allocations could hold a default relay
+    forever; a relayed player still connected then loses the link and
+    joins again). Over a limit, the datagram or request is dropped and
+    counted, not the client: a relay has no session to drop, a deviation
+    from spec §5.4's "a peer breaking a limit is dropped".
+  - **Capacity and ports:** 32 allocations by default on relay ports
+    49160-49191, UDP listening port 3478. With port mapping, one
+    `PortMapper` maps the listening port and each relay port exactly
+    (PM-2). The relay starts only once the router answered for every port
+    and its public IPv4 is known: `public_address`, else the listening
+    port's usable exact mapping's external IP, else the server-reflexive
+    IP when the NAT is `Open`; otherwise it logs "relay: not announced: no
+    public address …" and never starts (its random credentials would serve
+    no one). When the router maps, only the relay ports it mapped exactly
+    are handed out (Task 8 review, I1), and the announced capacity is at
+    most their count; with no mapping (a manual forward) the whole range
+    is.
+  - **Choice ("the nearest few"):** the joiner's own servers first (at
+    most 2), then announced relays (`TurnList::pick`): the joiner's region
+    first, then the least loaded (load/capacity compared exactly), never a
+    full one; at most 2 allocations in all. The joiner collects notes
+    until 1 s after the first `EOSE`, at most 4 s. No latency probe.
+  - If wrong: until volunteers run relays, pairs that hole punching cannot
+    join (a symmetric NAT against anything but an open port) cannot
+    connect; content downloads through a relay run at about 32 KiB/s; a
+    match on one relay ends after 6 h.
+- **N53 - kind 31471** (addressable, `d` and `t` = `rust-liero-turn`,
+  `v` checked) for TURN relay notes. `TurnList` validates like the game
+  list: addresses global unless `allow_local`, never unspecified,
+  multicast or broadcast; credentials 1-64 printable ASCII; capacity at
+  most 4096; one note per key per 10 s; at most 64 relays; a closing note
+  is exempt from the gap and leaves a tombstone, which outlives a flood
+  of closing notes (never-listed keys are evicted first). The kinds
+  check is below ("Measured"). If wrong: a kind change before release.
+- **N54 - the host listens on Nostr.** Public and Invite games and
+  servers listen on their relays with a pool of their own, on a thread
+  (`rl-online listen`) that owns the pool and the `Inbox`; LAN games and
+  Lan servers do not. Offers wait unbounded for the peer's poll (the
+  inbox's rate bounds them) and one older than `OFFER_STALE` (8 s) is
+  skipped. Relay edits in the game's Options move the listener at once
+  (`OnlinePeer::listen_on`, Task 9). If wrong: a public host keeps two
+  connections per relay (the announcing pool and the listening pool).
+- **N55 - same-layer pair** `("rl-online", "rl-discovery")`: rl-online
+  drives the handshake pool, so rl-game, rl-server and rl-cli share one
+  join and one listener. If wrong: a pair to unwind.
+- **N56 - `Endpoint` splits into a sans-IO `Core` and its socket driver**,
+  and `natsim` (feature `test-hooks`) runs `Core`s behind virtual NATs on
+  a virtual clock in `check`. NAT models in RFC 4787 terms: full cone,
+  address-restricted, port-restricted, symmetric; a 120 s idle mapping
+  lifetime, no hairpinning, 10 ms per hop, seeded port choice, and each
+  node's STUN and impairment seeds drawn from the network's. str0m still
+  draws ICE credentials, DTLS certificates and SCTP state from the OS, so
+  the bytes differ from run to run but the outcomes do not (the Task 2
+  review's reasoning: delivery does not depend on content). If wrong:
+  test infrastructure to maintain.
+- **N57 - the STUN binding codec and `is_global` move to `rl-proto`**
+  (`rl_proto::stun`, `rl_proto::is_global`, `core::net`); rl-discovery
+  re-exports them. If wrong: none beyond a wider rl-proto.
+- **N58 - the Docker NAT tests** (`cargo xtask net-nat`, in `full`; as
+  carried out in Task 11).
+  - **Image:** `FROM <ID>:<VERSION_ID>` of the host's `/etc/os-release`
+    (Debian-like only: the packages come from apt), plus `iproute2`,
+    `nftables` and `miniupnpd-nftables`. Here `ubuntu:26.04`, 196 MB.
+  - **Networks:** internal macvlan networks (`docker network create -d
+    macvlan --internal`), not bridges: with `br_netfilter` on, Docker's
+    rules drop every bridged packet an internal bridge's router forwards.
+    WAN 203.0.113.0/24.
+  - **Routers:** A port-restricted cone (`masquerade`), B symmetric
+    (`masquerade fully-random`), C UPnP-IGD only, D NAT-PMP and PCP, E
+    NAT-PMP only (PCP requests dropped by their version byte), each
+    dropping unsolicited WAN input as home routers do (without it, an
+    early ICE check confirmed a conntrack entry and broke hole punching
+    between two cone routers). One method per router so both UPnP and PCP
+    are exercised (D alone would always show PCP). miniupnpd needs
+    `ext_ip` for a 203.0.113.x WAN.
+  - **Binaries:** `e2e`'s dev builds of `rl-server` and `rl-cli
+    --features nat-tools` (libc only, so they run in the image), mounted
+    read-only. Our processes run with `allow_local` (N62).
+  - **Scenarios** (9): `direct`, `upnp`, `pcp`, `nat-pmp`,
+    `hole-punching`, `relay`, `no-relay`, `finding`, `nat-check`; each
+    path is asserted at both ends (the joiner's `path:` line, the host's
+    `via` tag). About 85-100 s warm.
+  - **Skips** (`skip net-nat (<why>)`): no Docker, a non-Debian
+    `/etc/os-release`, no content, a Docker that cannot make macvlan
+    networks (the daemon's own message), a base image that cannot be
+    pulled, apt offline or lacking a package, `--offline` without the
+    image. A broken Dockerfile or script fails.
+  - **Cleanup:** every container ends by itself (`RL_NAT_LIFE`, 120 s);
+    Ctrl+C removes containers and networks (xtask's `ctrlc` handler, only
+    during a run); names carry xtask's process id; a machine-wide lock
+    serialises runs.
+  - If wrong: a host whose distribution lacks an official image, or a
+    rootless Docker, skips the step.
+- **N59 - a relayed member's IP ban is a key ban.** Its address is the
+  relay's: banning it would ban the relay for everyone.
+  `LobbyHost::ban_with_address(member, by: Option<u8>)` tells the admin
+  who asked (`by`; `None`: the host's own, or a server command) "reached
+  through a TURN relay: banned by key only". rl-server's `/banip` keeps no
+  IP for such a member, so the bans file never holds a relay's address
+  across a restart. If wrong: a relayed troublemaker returns with a new
+  key (bans are soft anyway).
+- **N60 - `rl-server --nat-check`.** Reports, in order: the base
+  addresses and gateway; each configured STUN server's answer and `NAT:
+  <nat_text>` ("no NAT", "a NAT that keeps ports (hole punching works)",
+  "symmetric NAT", "not known yet"); the router (a random UDP port of
+  49152-65535 mapped exactly, its result, then "router: the mapping is
+  deleted" only when the router confirmed it); each Nostr relay's status
+  and the TURN notes on them; `nat-check done`. Exit 0. Without
+  `--config` it uses the defaults (8 relays, 5 STUN servers). It ships in
+  the release zips (it is `rl-server`); it uses public servers only when
+  run by hand. If wrong: a report that misleads a playtester; it changes
+  nothing.
+- **N61 - protocol stays 2:** `Member` gains `path: Option<Path>`
+  (appended; `None` for the host's own player); `Signal` is unchanged.
+- **N62 - `allow_local`.** rl-server's config `allow_local: bool`, `rl-cli
+  --allow-local`, `TurnServerConfig::allow_local` and
+  `CoreConfig::allow_local`: lists, TURN notes, mappings, a relay's peers
+  and relayed addresses, and the server's own advertised address accept
+  non-global addresses (PF12-5's switch, extended to everything that
+  judges an address). For office and LAN setups and the Docker tests. The
+  game keeps PF12-8's automatic rule. If wrong: a misconfigured public
+  server steers players at private addresses.
+
+Plan rulings:
+
+- **PL12b-0:** the plan's decisions N44-N62 were accepted without asking
+  the user: each lies within the spec (U9 volunteer TURN relays, §5.3's
+  order, §1.2's no central server). If wrong: one decision reworked,
+  visible here.
+- **PL12b-1:** 12 tasks; the `rl-net` refactor (Task 1) came first, so
+  every later transport feature landed in sans-IO code with natsim
+  tests. If wrong: none now.
+- **PL12b-2:** relay URLs are not added to announcements. Any relay that
+  carried a note reaches its host (N46). This deviates from spec §6.1's
+  "handshake hints" (the spec points here). If wrong: a joiner whose
+  relays share none with the host's fails with `NO_REPLY`; an invite's
+  hints cover the usual case.
+- **PL12b-3:** spec §9.7's "a browser host" scenario moves to plan 13 (no
+  browser build yet). If wrong: none.
+
+Pre-flight rulings:
+
+- **PF12b-1:** the pre-flight scan's 29 fixes were applied to the plan
+  before Task 1, among them: `is_global` moved to rl-proto; tests use
+  documentation externals only with `allow_local`; every test host sets
+  `port_mapping: false` or aims at a `FakeGateway`; relay ports are never
+  shifted; `relay_only` adds only relayed candidates; the signalled setup
+  timeout lives in `Core`; `TurnList::pick(region, 2 - own)` saturates;
+  the probe sends a 16 KiB event; nat-tools' test runs in `check`. If
+  wrong: plan rework only.
+- **PF12b-2:** see above, after N45.
+- **PF12b-3:** invite hints first, then the player's own relays, cut to 8,
+  everywhere (an invite's hints are the relays the host is known to use).
+  If wrong: one of the player's own relays dropped from a join.
+- **PF12b-4:** no TURN servers in rl-server's config (the host never
+  allocates, N48). If wrong: a later config field.
+- **PF12b-5:** no test maps a real router port or sends SSDP to the
+  multicast group: every test host sets `port_mapping: false` or targets
+  a `FakeGateway` through `test-hooks`; TURN tests use ephemeral ports and
+  generous limits. If wrong: none.
+
+Task rulings:
+
+- **TR-1:** a TURN relay refuses peers that are not global
+  (`rl_proto::is_global`: loopback, private, link-local, multicast,
+  unspecified, documentation, CGNAT …) and its own listening and public
+  addresses (403; IPv6 peers 443), unless `allow_local` (N62): a public
+  relay with public credentials must never reach its operator's network.
+  If wrong: an office relay needs `allow_local`.
+- **TR-2:** our own UDP-only TURN server core replaces turn-server-proto:
+  the RFC 8656 subset our client and browsers use (Allocate, Refresh,
+  CreatePermission, ChannelBind, Send and Data indications, ChannelData,
+  Binding), long-term credentials (HMAC-SHA1 under MD5(user:realm:pass);
+  no SHA-256), FINGERPRINT, every table bounded. The library kept a nonce
+  per source address forever, grew its permission tables without bound,
+  relayed to any peer and addressed binding answers to itself. The nonce
+  is stateless: 16 hex digits, a wrapping u16 10-minute period and a
+  48-bit HMAC tag of the source IP, port and period under a per-relay
+  random key, valid in its period and the next; a tag of ours for the
+  exact source up to 8 periods old still proves that source (it gets a
+  fresh nonce, 438, outside the unproven budgets), so a spoofed flood
+  cannot starve a live client's renewals. Requests take a token before
+  any integrity check: a proven source from its IP's larger bucket,
+  anything else from the smaller. If wrong: about 1000 lines of
+  security-sensitive code to maintain; turn-client-proto and the interop
+  tests pin compliance.
+- **TR-3:** the relay listens on IPv4 only (an IPv6 `listen` or `public`
+  is refused), per N48's IPv4-only candidates. If wrong: no IPv6
+  relaying.
+- **TR-4:** reflection is accepted at 1.6× (a 20 B Binding gets 32 B;
+  turn-client-proto's first 40 B Allocate a 64 B 401) and 2.3× (a bare
+  28 B Allocate), under a relay-wide cap of 64 KiB/s (a bucket of 2 s)
+  on every answer to an unproven source. Only an unsigned Allocate with
+  REQUESTED-TRANSPORT gets a 401 (64 B: no reason text, no FINGERPRINT);
+  other unsigned requests get nothing. An RFC 401 cannot be smaller than
+  about 52 B, and refusing our client's first Allocate breaks TURN;
+  public STUN servers reflect alike. If wrong: a relay reflects at most
+  64 KiB/s at a victim set.
+- **PM-1:** our own UPnP-IGD client replaces igd-next: SSDP M-SEARCH with
+  `MX: 1`, three search targets and resends within a 2 s window, bad
+  replies skipped, a `LOCATION` host that must equal the sender and be
+  non-global, at most 4 devices (the default gateway's first); a
+  proxy-free HTTP/1.1 client (no DNS, no redirects, heads at most 8 KiB,
+  bodies 64 KiB, `Content-Length`, chunked or close framing, deadlines
+  between every read); a flat, linear scan of the description for
+  WANIPConnection:1/2 or WANPPPConnection:1 `controlURL`s; SOAP
+  `GetExternalIPAddress`, `AddPortMapping` (description `rust-liero`)
+  and `DeletePortMapping` in the namespace found. igd-next parsed a LAN
+  device's XML recursively (a 35 KB nested description overflowed the
+  stack: an uncatchable abort), read bodies without a cap, followed
+  `HTTP_PROXY`/`ALL_PROXY` and could panic on a `Duration` underflow. A
+  LAN device must never crash or exhaust the game. If wrong: about 450
+  lines to maintain, and router quirks igd-next handled must be covered
+  by tests (chunked bodies, PPP and URLBase descriptions are).
+- **PM-2:** one `PortMapper` request carries a list of ports
+  (`MapRequest::extra`): one discovery and one session per protocol map
+  the relay's 33 ports, each exact, renewed and deleted on its own
+  (`PortMapper::extras`), instead of 33 mappers and 66 threads. If wrong:
+  a port mapping API change.
+- **NT-1:** tests send only to 127.0.0.0/8. A `FakeGateway` whose mapping
+  a client uses reports external 127.0.0.2 with `allow_local` on both
+  sides; documentation addresses only go to code that never sends to
+  them. The planned TCP connect to 192.0.2.1:9 (a router that does not
+  hairpin) became rl-net's `connect_stall` test hook: the connect sends
+  nothing and fails after `CONNECT_TIMEOUT`. If wrong: none.
+- **NT-2:** `Endpoint::shutdown(self) -> Shutdown` never blocks: it closes
+  every link and hands the mapper to a thread that deletes the mappings
+  and waits for the router's confirmation (`PortMapper::close`);
+  `Shutdown::wait(until)` (at most 1 s) says whether the router
+  confirmed, `Shutdown::poll` the same without waiting.
+  `OnlinePeer::shutdown` wraps it. rl-server waits at exit (and warns
+  when the router did not confirm), rl-cli's bot client waits, and the
+  game waits at most `UNMAP_WAIT` (1 s) after its window closed, off the
+  frame; the game also prunes the shutdowns of games it left. Dropping
+  the endpoint stays the fallback (nobody waits). If wrong: up to 1 s
+  longer exit.
+- **RH-1:** a new hosting never maps a port while an earlier shutdown of
+  that port is still deleting: a process-wide set of ports being deleted
+  (`begin_delete`, on the caller's thread before the mapper's thread
+  starts) makes a new `PortMapper`'s threads wait for it, at most
+  `DROP_WAIT`, on their own threads. Re-hosting at once on the same port
+  is a normal playtest action. If wrong: up to 1 s before a re-host's
+  mapping.
+- **UI-1:** the Options and Multiplayer tab rows fit at every offered
+  window size and UI scale (`screens::tab_row`: equal shares in a narrow
+  column), and the Online tab fits down to 320 points (borderless 4:3 at
+  UI scale 3): its form labels take at most 40 % of a narrow column, its
+  fields shrink, its server rows wrap, and the port mapping switch sits
+  on its own line. A tab that cannot be reached is a bug. If wrong: a
+  layout change.
+
+Review findings that changed behaviour beyond the plan:
+
+- The game ran its network frame only while an online game existed
+  (since plan 10), so in the real binary the Internet tab and the LAN
+  list never filled and a typed host name hung on "Looking up …"; tests
+  called the frame directly. One predicate, `Shell::network_live`, now
+  gates the app's frame and the tests' (Task 9 review, Critical 1). A
+  hidden window wakes every 4 ms only with a live online game, every
+  60 ms for the lists, lookups and lingering relays, else never.
+- TURN passwords are never printed: `FindingSettings` and
+  `TurnServerSpec` have redacting `Debug`s, and warnings never quote a
+  TURN entry.
+- rl-server's `/banip` on a relayed member wrote the relay's IP to the
+  bans file, which after a restart banned the relay for everyone (N59).
+
+Measured:
+
+- **Relay probe, 2026-10-14** (`rl-cli nostr-probe`, run once by hand on
+  the 8 default relays from WSL2: a fresh key, neutral content, a
+  3-minute wait). It adds a kind-31471 note, read back at once and after
+  the wait, and a 16 KiB kind-21470 event (`MAX_HANDSHAKE_CONTENT`) to
+  plan 12a's probe (N38).
+
+  | relay | connect ms | OK ms | accepts 31470 | 31470 now/later | accepts 31471 | 31471 now/later | forwards 16 KiB 21470 | free | verdict | notes |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | wss://relay.damus.io | - | - | - | - | - | - | - | - | FAIL | connect: HTTP 503 Service Unavailable |
+  | wss://nos.lol | 131 | 40 | yes | yes/yes | yes | yes/yes | yes | yes | pass | |
+  | wss://relay.primal.net | 212 | 50 | yes | yes/yes | yes | yes/yes | yes | yes | pass | |
+  | wss://relay.snort.social | 253 | 60 | yes | yes/yes | yes | yes/yes | yes | yes | pass | ephemeral OK: "will not be stored" |
+  | wss://offchain.pub | 494 | 151 | yes | yes/yes | yes | yes/yes | no | yes | FAIL | "Policy violated and pubkey is not in our web of trust." |
+  | wss://nostr.oxtr.dev | 141 | 50 | yes | yes/yes | yes | yes/yes | yes | yes | pass | |
+  | wss://relay.nostr.net | 202 | 50 | yes | yes/yes | yes | yes/yes | yes | yes | pass | |
+  | wss://nostr.bitcoiner.social | 585 | 221 | yes | yes/yes | yes | yes/yes | no | yes | FAIL | "Policy violated and pubkey is not in our web of trust." |
+
+  Every relay that connected kept kind 31471 for the 3 minutes; 5 of 8
+  forwarded the 16 KiB handshake. offchain.pub and nostr.bitcoiner.social
+  refuse events from keys outside their web of trust: every joiner's key
+  is fresh (N44), so they will likely never carry a handshake (in plan
+  12a both forwarded a small ephemeral event from a fresh key; one run
+  cannot tell size, key or a policy change apart). damus answered 503 at
+  the time. None was removed: `DEFAULT_RELAYS` is append-only, the host
+  listens on all 8, and a refusal is told apart (`RELAYS_REFUSED`). Re-run
+  the probe before a release.
+- **Kinds registry re-check, 2026-10-14:** registry-of-kinds
+  `schema.yaml` at d18576cc (2026-10-02) and the NIPs README kinds table
+  at 6631b3eb list none of 31470, 31471 and 21470; in 21000-21999 only
+  21000-21003 and 21059 are taken. The 31400-31499 range is not empty, as
+  plan 12a's check said (PL12-2): 31436 ("Gopherhole Document") is
+  listed. It touches none of our kinds.
+- **NIP-44 vectors:** SHA-256 `269ed0f6…3ce25040` (in full under N44).
+- **Docker NAT scenarios** (Task 11, warm, on WSL2): direct 4.1 s, upnp
+  5.0-5.2 s, pcp 5.2 s, nat-pmp 6.7-6.8 s, hole-punching 6.1-6.3 s, relay
+  22.0 s (a match played), no-relay 19.6 s (the `no_path` text), finding
+  7.1 s (listed without an address, relayed), nat-check 5.4 s ("NAT:
+  symmetric NAT").
+
+Plan 12a decisions amended (by pointer; their text above is kept as
+decided): N40's STUN address, N42's "a code without an address cannot be
+joined", N43's and R9-2's "STUN for the address", R9-3's invite timing
+and R10-5's lobby lines are replaced by N47 and N46 here. The lobby's
+lines now: "Checking how players can reach you…" while the reachability
+settles; a Public game is listed with or without an address ("Not listed:
+no public address (forward port N or set it in Options)" is gone); an
+Invite game says nothing when its code has an address, else "This code
+joins through the relays", or "This code has no address and no relays:
+it joins nothing (set relays in Options)"; below them the reachability's
+lines (`Reachability::lines`: the router, the configured address, a
+symmetric NAT, the listener).
+
+Open items (deferred minors):
+
+- The TURN relay's listening socket and its relay sockets share one
+  1024-entry queue: a listening-port flood that outruns the core can
+  drop relayed game data (only near gigabit rates).
+- When a signalled setup took the quick base before the DNS thread's
+  base came, the later base's other host addresses are not offered.
+- Valid offers from fresh keys share the inbox's 10 a second budget
+  (N45's residual).
+- A relay's ports are deleted one after another at exit: 32 ports on a
+  router needing about 100 ms per call can pass `DROP_WAIT` (1 s), and
+  the rest expire with their lease (the log says the router did not
+  confirm). Extras' renewal and many-port deletion are untested.
+- If a relay's listening-port mapping fails, its extras are not asked,
+  and with `public_address` set the whole relay range is handed out (the
+  manual-forward case). The relay port set is fixed at start: an extra
+  whose renewal later fails is still handed out.
+- rl-cli's NT-2 exit wait is untested (a client maps no port).
+- A mapping whose answer was lost (silence, garbage) is not deleted; it
+  lasts its lease (2 h at most) and points at our own port only.
+- The Video tab's rows overflow at 384 and 320 points (UI scale 3,
+  borderless 16:10 and 4:3), older than this plan.
+- The benchmark gate (side task, d75269a): a regression of exactly about
+  15 % can pass when one window measures under +10 %, and Windows-side
+  load is invisible to `/proc/stat`.
 
 ## Kept OLX quirks
 

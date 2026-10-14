@@ -1,8 +1,12 @@
 # rl-net
 
-Real transport for online play (networking spec §2.1, §5.1): WebRTC data
-channels over the sans-IO str0m stack, signalling over a WebSocket, LAN
-announcements.
+Real transport for online play (networking spec §2.1, §5.1, §5.3): WebRTC
+data channels over the sans-IO str0m stack, signalling over a WebSocket,
+LAN announcements; plan 12b: a sans-IO `Core` under the socket driver,
+ICE through routers (host, server-reflexive and relayed candidates, STUN
+on the game socket, the path each link took), port mapping (PCP, NAT-PMP,
+UPnP-IGD), our own TURN relay server and `natsim`, a virtual NAT network
+for tests.
 
 - **Layer 5, std; not wasm.** Depends on rl-netcode (`Channel`, `PeerId`,
   `netsim::LinkModel`, `Rng`), rl-proto (`Signal`, `Path`, the STUN codec,
@@ -568,8 +572,8 @@ announcements.
     lands late never removes the new game's mapping.
     `TurnServerSpec`'s `Debug` hides the password (`•••`;
     `a_turn_servers_password_is_not_printed`).
-    rl-server (Task 8) and the game (Task 9) wait on it at exit through
-    `OnlinePeer::shutdown`; rl-cli is to (Task 10). Dropping the endpoint
+    rl-server, the game (after its window closed) and rl-cli's bot client
+    wait on it at exit through `OnlinePeer::shutdown`. Dropping the endpoint
     is the fallback: the same thread, nobody waits (a process exiting
     at once may cut it short). `poll` calls
     `Core::poll` every time, so the TURN clients' timers and the STUN

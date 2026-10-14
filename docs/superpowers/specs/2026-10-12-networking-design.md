@@ -1,7 +1,7 @@
 # Networking: Design
 
 - **Date:** 2026-10-12
-- **Status:** Approved 2026-10-12; plan 9 implemented; plan 10 implemented; plan 11 implemented; plan 12a implemented
+- **Status:** Approved 2026-10-12; plan 9 implemented; plan 10 implemented; plan 11 implemented; plan 12a implemented; plan 12b implemented
 - **Builds on:** `2026-10-10-foundation-and-local-play-design.md` (§12.2, the
   networking constraints), `2026-10-11-performance-envelope-design.md` (the
   rollback headroom).
@@ -258,6 +258,9 @@ In order:
   fingerprint, password flag, self-chosen region, handshake hints. It
   carries an expiry 3 minutes ahead and is re-published every minute, so
   a dead game vanishes.
+  Plan 12b: announcements carry no handshake hints; the host listens on
+  all of its relays, so any relay that carries its note reaches it
+  (STATUS PL12b-2, N46).
 - **Relays:** a default list of about 8 relays from different operators,
   chosen in plan 12 by measured behaviour (accept the kinds, keep notes
   for minutes, no payment); editable in the options; anyone, the user
@@ -464,7 +467,7 @@ in-process host, in `check`.
 | 9 | `rl-proto`, `rl-netcode` (§3) with the snapshot undo journal, world encoding, the simulated network (§9.1), feel numbers (§9.2), fuzzing (§9.3), cross-platform determinism (§9.5), desync bundles (§9.6), `rl-cli net-sim` and `net-repro`. |
 | 10 | `rl-net` with WebRTC (spike first, §2.1), direct and LAN play, the lobby and menus (§7), chat, spectators, bots, kick and ban, `rl-server` (§7.4), real-transport tests (§9.4), `--net-sim` and the overlay. |
 | 11 | Content download (§8). |
-| 12 | Split into 12a (finding games: the Nostr list, invite codes, host-key proof, STUN address; implemented), 12b (through routers) and 12c (host migration, `net-soak`) (STATUS PL12-1). `rl-discovery`: Nostr announcements and handshakes, invite codes, port mapping, hole punching, volunteer relays (§5-6), host migration (§3.7), the Docker NAT tests (§9.7), `net-soak`. |
+| 12 | Split into 12a (finding games: the Nostr list, invite codes, host-key proof, STUN address; implemented), 12b (through routers: Nostr handshakes, ICE, port mapping, TURN relays, the Docker NAT tests; implemented; §9.7's browser host moved to plan 13, STATUS PL12b-3) and 12c (host migration, `net-soak`) (STATUS PL12-1). `rl-discovery`: Nostr announcements and handshakes, invite codes, port mapping, hole punching, volunteer relays (§5-6), host migration (§3.7), the Docker NAT tests (§9.7), `net-soak`. |
 | 13 | The browser build (§10), including hosting and local play, and its tests (§9.8). |
 
 ## 12. Risks

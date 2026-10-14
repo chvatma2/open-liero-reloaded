@@ -291,7 +291,11 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   limits (first win), so its code always decodes. `DEFAULT_RELAYS` is append-only (indices are wire format;
   `defaults`' test pins the released prefix). Both lists were chosen by
   `rl-cli nostr-probe`/`stun-probe` on 2026-10-13 (plan 12a Task 8; the
-  table is in STATUS.md N38).
+  table is in STATUS.md N38). The 2026-10-14 probe (plan 12b Task 6: kind
+  31471 kept, a 16 KiB kind 21470 forwarded) is in STATUS.md's "Through
+  routers decisions": offchain.pub and nostr.bitcoiner.social refuse
+  events from keys outside their web of trust, so they carry no
+  handshakes (every joiner's key is fresh).
 - Deps: `rustls` (default aws-lc-rs) and `webpki-roots` (workspace pins),
   `tungstenite` with `rustls-tls-webpki-roots` (for `Connector::Rustls`;
   its own default roots are never used). `rcgen =0.14.10` (`aws_lc_rs`

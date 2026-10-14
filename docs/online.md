@@ -2,7 +2,8 @@
 
 rust-liero plays over WebRTC data channels (TCP for the handshake, UDP for
 the game), both on port **23400** by default. Everything below is the same
-on Linux and Windows.
+on Linux and Windows. Players behind ordinary home routers need no port
+forwarding: see "Through routers".
 
 ## Host from the menus
 
@@ -42,7 +43,8 @@ the notes). The list shows each game's name, map, mod, players
 password. Pick a game and Join; a click on a game measures its ping (the
 time to connect to it, 2 s at most). A game of another version is greyed
 out and says "needs version …". A game that announced no public address
-says "cannot be joined yet". "Block this host" hides a host's games for
+says "via relays" instead of a ping: Join asks it through the relays (see
+"Through routers"). "Block this host" hides a host's games for
 good (Options → Online lists the blocked hosts; Unblock there lists the
 host again from its next announcement, within a minute). Above the list: "No relay
 reachable" when none answers, "Searching…" until a relay has sent its
@@ -58,49 +60,59 @@ case). The host's lobby shows it with a Copy button, and a server prints
 Public game, admins otherwise). Send the code by any chat. The joiner pastes it into Direct (or
 `rl-game --join rlx1…`) and Joins: the code holds the host's key, address
 and a few relay hints, and the game only joins a host with that key ("this
-is not the game you were invited to" otherwise). An invite without an
-address means the host does not know its public address (no STUN answer, no
-`public_address`): the code says which game, but the joiner gets "this
-invite has no address: the game cannot be joined yet". Fix it on the host
-(forward the port and set the public address in Options → Online, or the
-server's `public_address`), then share the new code.
+is not the game you were invited to" otherwise). A code carries an
+address only when players can reach the host directly: its router opened
+the port, or a public address is set (Options → Online, or the server's
+`public_address`). Without one, the code joins through its relay hints
+and the joiner's own relays (see "Through routers"); a game with neither
+an address nor relays cannot be joined ("this game has no address, and
+there are no relays to join it through").
 
 **Visibility.** Host → "Who can join": **Anyone (Internet)** announces the
 game on the relays and on the LAN; **This network** on the LAN only;
-**Invite only** nowhere (share the code: the lobby says "This code has no
-address …" when it carries none, and "Finding the public address…" while
-it is asked, so copy it after that). The game's choice defaults to
-This network. To learn its public address for the announcement and the
-invite, a Public or Invite game asks a STUN server (a Lan game never
-does). A server's `visibility` is `Public` (the default), `Lan` or
-`Invite` and it asks STUN in all three, since it prints an invite either
-way. The lobby says where the game stands: "Finding the public
-address…", "Announcing on the Internet…", "Listed on the Internet", or
-why not ("Not listed: no relays", "no relay reachable", "no public
-address (forward port N or set it in Options)", "your public address
-setting is not reachable from the Internet": a private, local or IPv6
-public address is never announced on public relays, so your LAN address
-does not leave; a server logs a warning and is not announced either).
+**Invite only** nowhere (share the code: the lobby says "Checking how
+players can reach you…" for up to 5 s while the router and the STUN
+servers are asked, so copy the code after that; then "This code joins
+through the relays" when it carries no address). The game's choice
+defaults to This network. A Public or Invite game asks its router to open
+its port, asks STUN servers how its router behaves, and takes joins
+through its relays; a Lan game does none of that. A server's
+`visibility` is `Public` (the default), `Lan` or `Invite`; a Lan server
+maps no port and takes no joins through the relays. The lobby says where
+the game stands: "Checking how players can reach you…", "Announcing on
+the Internet…", "Listed on the Internet", or why not ("Not listed: no
+relays (set them in Options)", "Not listed: no relay reachable", "Not
+listed: your public address setting is not reachable from the Internet":
+a private, local or IPv6 public address is never announced on public
+relays, so your LAN address does not leave; a server logs a warning and
+is not announced either). A Public game without a public address is
+listed all the same and joined through the relays. Under that line the
+lobby shows how players reach the game (see "Through routers").
 
 **Relays and STUN in Options.** Options → Online has Region, Public
-address (empty: asked from STUN), Relays (`wss://` or `ws://` URLs, at
-most 32), STUN servers (`host:port`) and Blocked hosts. "Reset … to
-defaults" restores the shipped lists; a player who never edits a list
-follows later default lists. Relay edits apply at once: the game drops
-the relays it was connected to and connects to the new list (a game you
-host announces there right away and its invite names them); blocking and
-unblocking apply at once too. STUN and public address edits apply the
-next time you host. A server sets `relays`, `stun`, `region` and
-`public_address` in its config (see `fixtures/server/example.ron`); an empty
-`stun` asks no one.
+address (only when you forwarded the port yourself; empty: the port your
+router opens, else joins through the relays), "Open the game's port on
+my router (UPnP/NAT-PMP/PCP)" (on by default), Relays (`wss://` or
+`ws://` URLs, at most 32), STUN servers (`host:port`), TURN relays
+(`user:pass@host:port`, your own, at most 8; see "Through routers") and
+Blocked hosts. "Reset … to defaults" restores the shipped lists; a player
+who never edits a list follows later default lists. Relay edits apply at
+once: the game drops the relays it was connected to and connects to the
+new list (a game you host announces there right away, takes joins there
+and its invite names them); blocking and unblocking apply at once too.
+STUN, port mapping and public address edits apply the next time you
+host. A server sets `relays`, `stun`, `region`, `public_address`,
+`port_mapping` and `allow_local` in its config (see
+`fixtures/server/example.ron`); an empty `stun` asks no one.
 
-**Your own relay.** Any Nostr relay that accepts kind 31470 events,
-without payment or authentication, works. Run one, then list its URL in
-Options → Online → Relays on every player's game, and in `relays` in
-`server.ron`; an invite carries one such URL of at most 64 bytes, for
-later use (the joiner's game does not read it yet: NAT traversal, plan
-12b, will). A relay that only the office can reach needs `ws://host:port`
-(or `wss://`); when every relay in the list is on your own network,
+**Your own relay.** Any Nostr relay that accepts kind 31470 and 31471
+events and forwards kind 21470 (short-lived handshakes from keys it has
+never seen), without payment or authentication, works. Run one, then list
+its URL in Options → Online → Relays on every player's game, and in
+`relays` in `server.ron`; an invite carries one such URL of at most 64
+bytes, and a joiner asks the host through the code's relays before its
+own. A relay that only the office can reach needs `ws://host:port` (or
+`wss://`); when every relay in the list is on your own network,
 named by `localhost` or a private IP address (`ws://192.168.1.2:7000`),
 the game lists games at private addresses as well, which it refuses from
 public relays. A relay named by a host name (`ws://relay.office.lan`)
@@ -115,17 +127,265 @@ Options → Online to keep the game off the relays entirely (the Internet
 tab then says "No relay reachable"; LAN and Direct work as before). A
 `rl-server` without `visibility` is Public: an older config without it
 now announces the server on the default public relays (set
-`visibility: Lan` or `Invite` to keep it off).
+`visibility: Lan` or `Invite` to keep it off). A hosted Public or Invite
+game also stays connected to its relays to take joins. A join through the
+relays is encrypted to the host's key and signed with a key made for that
+join alone, so the relays cannot tell which player joins; they still see
+the joiner's IP address. A TURN relay, when one is used, sees both
+players' addresses and carries the match's traffic (encrypted, as every
+connection is).
 
 **Passwords.** A game's password is never sent: the joiner proves it
 knows it, only to a host that has first proved its key, and the proof is
 bound to the joiner's key and the connection, so it cannot be replayed
 elsewhere.
 
-**Still needs a forwarded port.** The list and the invite tell you where
-a game is; they do not get through a router. Players outside your LAN
-still need the port forwarded as in "Open the port" until plan 12b (NAT
-traversal) lands.
+**Getting through routers.** The list and the invite tell you where a
+game is; "Through routers" says how a join then gets through the two
+routers between you.
+
+## Through routers
+
+Two players behind ordinary home routers can play each other with no
+manual port forwarding. A join finds a path on its own, and both sides
+see which one it found.
+
+### The paths
+
+A join tries these, and the first that connects wins. The host's lobby
+tags each member with its path, and the joiner's lobby shows it under
+"Connection".
+
+| path | tag | how | the joiner's line |
+|---|---|---|---|
+| direct | `direct` | the host's address is reachable as it is: the same LAN, a typed address, a forwarded port, a host with no NAT | "connected directly to 1.2.3.4:23400" |
+| open port | `open port` | the host's router opened the game's port (UPnP, NAT-PMP or PCP) | "connected directly to …" (by the address in the code) or "connected through the host's open port …" |
+| hole punching | `punched` | both sides send to each other's public address at once, through both routers | "connected by hole punching through both routers" |
+| TURN relay | `relayed` | a volunteer relay carries the traffic: the last resort, about 32 KiB/s each way, ample for a match | "connected through the TURN relay 1.2.3.4:3478" |
+
+**The join's order.**
+
+- A typed address and a LAN game are joined directly, as before.
+- A listed game or an invite with an address is tried directly first.
+  When that link never opens (5 s), the join goes through the Nostr
+  relays.
+- A game without an address goes through the relays at once.
+
+Through the relays, the joiner:
+
+1. connects to the code's relays and then its own (8 at most);
+2. looks for its own paths: its public address from the STUN servers,
+   and a TURN relay (your own from Options first, else ones announced on
+   the relays, your region and the least busy first; 2 at most);
+3. sends the host an encrypted offer, again every 2 s;
+4. connects on whatever path the two sides' candidates allow.
+
+The waiting text names each step: "Reaching the game directly…",
+"Connecting to the relays…", "Looking for paths through your router…",
+"Asking the game through the relays…", "Connecting…".
+
+**When hole punching works.** It works between most home routers. It
+fails when one router gives every destination another port (a
+"symmetric NAT", common on mobile networks and some ISPs' routers) and
+the other side has no open port. Such a pair needs the host's open port
+or a TURN relay. The project runs no TURN relay of its own: volunteers
+run them (`rl-server --relay`, below), or you add your own in Options →
+Online → TURN relays. Until someone runs one, such pairs cannot connect.
+
+### What the host's lobby says
+
+Under the invite code, a Public or Invite game shows a listing line (see
+"Visibility") and then how players reach it:
+
+| line | meaning |
+|---|---|
+| "Asking your router to open port 23400…" | waiting for the router's answer (at most about 4 s) |
+| "Port 23400 is open on your router (UPnP): players join directly at 1.2.3.4:23400" | the router opened the port (or NAT-PMP, PCP); the invite and the listing carry this address |
+| "Your router opened port 23400 (…), but its own address 100.64.1.2 is not public (double NAT or carrier-grade NAT): players connect by hole punching or a TURN relay" | a second router or the ISP sits in between; the opened port does not help |
+| "Your router did not open port 23400 (…): players connect by hole punching or a TURN relay" | UPnP, NAT-PMP and PCP are off on the router, or it refused; the reason is in brackets |
+| "Port mapping is off: players connect by hole punching or a TURN relay" | Options' "Open the game's port on my router" is off (or a server's `port_mapping: false`) |
+| "Players join directly at 1.2.3.4:23400 (your public address setting)" | the Public address in Options (a server's `public_address`) |
+| "Your router changes ports for every destination (symmetric NAT): hole punching will fail; players need the open port or a TURN relay" | see "When hole punching works" |
+| "Taking joins through 5 of 8 relays" | joiners can ask the game through that many relays |
+| "Connecting to the relays…" | not connected to any relay yet |
+| "No relay reachable: only LAN and direct joins work" | every relay failed; they are retried |
+
+An Invite game whose code has an address shows no listing line;
+otherwise it says "This code joins through the relays". A server logs the
+same lines as `reach: …`, its invite as `invite code: rlx1…` (with an
+address) or `invite code (joins through the relays): rlx1…`, and each
+join as `join: <name> (<fingerprint>) from <ip> via <tag> key <key>`.
+`rl-game` prints them on its console too (`rl-game: reach: …`).
+
+### When a join fails
+
+The joiner's Multiplayer screen says why:
+
+| message | what to do |
+|---|---|
+| "could not reach any Nostr relay: check your Internet connection, or the relays in Options → Online" | no relay answered: check the connection, or put relays back (Reset relays to defaults) |
+| "the relays refused this join's handshake (some take events only from keys they know): try other relays in Options → Online" | every relay refused it; add relays that take events from new keys |
+| "the game did not answer through the relays (it may have closed, or its relays differ from yours)" | is the game still hosted? Do you share a relay with the host? An invite names the host's relays; a listed game is found on yours |
+| "the game is busy with other joins: try again in a moment" | the host is answering 8 other joins; try again |
+| "no network path to the game: hole punching failed and no TURN relay could be used. The host can open port N (TCP and UDP) on their router (UPnP, or port forwarding) or use a dedicated server; anyone can run a TURN relay (rl-server --relay)" | see below |
+| "no network path to the game, not even through the TURN relay …: try again, or ask the host to open port N on their router" | the relay was found but did not connect; try again, or open the port |
+| "this game has no address, and there are no relays to join it through (set relays in Options → Online)" | put relays back in Options |
+
+**"No network path".** Hole punching failed and no TURN relay was used.
+Fix one of these:
+
+1. On the host, let the router open the port: turn on UPnP (or NAT-PMP or
+   PCP) in the router's settings, keep "Open the game's port on my
+   router" on, and host again. The lobby should then say "Port 23400 is
+   open on your router".
+2. Or forward TCP **and** UDP 23400 on the host's router to the host
+   (see "Open the port"), set the Public address in Options → Online, and
+   host again.
+3. Or host on a dedicated server with a public address.
+4. Or get a TURN relay: someone with an open port runs `rl-server
+   --relay`, or you add one you run in Options → Online → TURN relays.
+5. Run `rl-server --nat-check` on both machines (below) to see which
+   side is the problem.
+
+### Windows Firewall
+
+The first time `rl-game` (or `rl-server`) opens its port, Windows asks
+whether to allow it on the network. Allow it on **private and public**
+networks: Windows calls many home networks "public". Hole punching and
+relays work without that permission, since Windows lets in the replies to
+what the game sent out. An open port needs it: a joiner's connection to
+the router's opened or forwarded port arrives unasked, and the firewall
+drops it. If you once clicked Cancel, allow `rl-game` in Windows Security
+→ Firewall & network protection → "Allow an app through firewall".
+
+### Run a TURN relay
+
+```
+rl-server --config server.ron --relay
+```
+
+A relay lets players whose routers cannot meet play through it. It
+announces itself on the config's Nostr relays (the defaults if the config
+names none), and joiners find it there. It runs beside the server's game
+(`visibility: Invite` keeps that game unlisted).
+
+**Ports.** UDP **3478** (TURN) and UDP **49160-49191** (one per player
+relayed) must reach the machine, on the same port numbers outside.
+`port_mapping: true` (the default) asks the router to open each of them
+exactly. Otherwise forward them by hand, set `public_address` to the
+machine's public IPv4 address, and allow them through the firewall. A
+machine with no NAT needs neither. Change them with `relay: Some((port:
+3478, ports: (49160, 49191), capacity: 32, user_kib_s: 32,
+allocations_per_ip: 4))`; `capacity` is at most the number of ports.
+
+**What the log says:**
+
+- `relay: waiting for the public address`
+- `relay: port 3478 mapped (UPnP) at 1.2.3.4:3478`
+- `relay: 32 of 32 relay ports mapped`
+- `relay: TURN on port 3478, relay ports 49160-49191, announced as 1.2.3.4:3478`
+- then `relay: N allocations` as players come and go.
+
+It does not start with `relay: not announced: no public address (set
+public_address, or enable port mapping)`, `relay: not started: the router
+mapped none of its relay ports exactly` or `relay: not started: no Nostr
+relays to announce it on`. A port the router would not open exactly is
+named (`relay: port P not mapped: …`) and left out; the relay then takes
+fewer players.
+
+**Limits.** Each player's IP gets at most 32 KiB/s each way, 4
+allocations and 20 requests a second, and an allocation lasts at most 6
+hours, so the relay cannot serve as a free proxy. A full relay with 32
+players carries about 1 MiB/s each way. It relays only to public
+addresses, never into your own network (`allow_local: true` lifts that
+for an office relay). Its credentials are public by design: anyone may
+use it within those limits. It sees the IP addresses of the players it
+relays.
+
+### Check the network: `rl-server --nat-check`
+
+```
+rl-server --nat-check [--config server.ron]
+```
+
+It prints what stands between this machine and the players, then exits.
+It uses the config's STUN servers and relays, or the defaults without
+`--config`. It asks the public STUN servers and the Nostr relays, and
+opens and closes one port on the router. For example:
+
+```
+nat-check: what stands between this machine and the players
+base address: 192.168.1.20
+gateway: 192.168.1.1
+STUN stun.cloudflare.com:3478: 203.0.113.7:51234
+STUN stun.l.google.com:19302: 203.0.113.7:51234
+NAT: a NAT that keeps ports (hole punching works)
+router: asking it to open UDP port 53211
+router: port 53211 opened (UPnP) at 203.0.113.7:53211
+router: the mapping is deleted
+relay wss://relay.damus.io: connected
+relay wss://nos.lol: connected
+…
+TURN notes: 1
+TURN relay 198.51.100.4:3478 (Europe, 3 of 32 in use)
+nat-check done
+```
+
+How to read it:
+
+- **`NAT:`**
+  - `no NAT`: the machine has a public address.
+  - `a NAT that keeps ports (hole punching works)`: hole punching works.
+  - `symmetric NAT`: hole punching fails unless the other side has an
+    open port, so this side needs the open port or a TURN relay.
+  - `not known yet`: fewer than two STUN servers answered.
+- **`router:`**
+  - `opened`: port mapping works.
+  - `but its address … is not public`: a double NAT or carrier-grade
+    NAT.
+  - `not opened: …` or `no answer within 5 s`: UPnP, NAT-PMP and PCP are
+    off or refused.
+  - `deleting the mapping: the router did not confirm it`: the router
+    may keep the test mapping until it expires.
+- **`relay …:`** `connected`, or why not.
+- **`TURN notes: 0`**: no volunteer relay is announced, so a symmetric
+  pair cannot connect.
+
+### Two PCs across home routers
+
+A playtest of the whole chain: two PCs on two different home networks
+(for example, at two homes, or one on a phone's hotspot), with no ports
+forwarded by hand. Use the release zips and play on Windows or native
+Linux (not WSL2, see "WSL2 and Windows").
+
+1. **On the host PC**, start `rl-game` from a terminal (on Windows its
+   console window opens beside it) and keep that output. Allow the
+   firewall prompt on private and public networks. Multiplayer → Host,
+   Who can join: **Invite only**, Start hosting.
+2. **Wait** until the lobby stops saying "Checking how players can reach
+   you…" (at most 5 s), then **Copy** the invite code and send it to the
+   other player by any chat.
+3. **On the joining PC**, start `rl-game` the same way, then Multiplayer
+   → Direct, paste the code and Join. The waiting text shows each step.
+4. **Read both lobbies' lines**, and note them in the test report:
+   - The host's lines under the code: did the router open the port
+     ("Port 23400 is open on your router (…)")? Is either router
+     symmetric? How many relays take joins?
+   - The host's member list: the joiner's tag, one of `direct` /
+     `open port` / `punched` / `relayed`.
+   - The joiner's "Connection" line. It agrees with the tag, except that
+     a join by the open port's address reads "connected directly to …".
+5. **If the join fails**, note the joiner's message (the table above).
+   Then run `rl-server --nat-check` on both PCs, from the unpacked zip:
+   `rl-server --nat-check > nat-check-host.txt` on the host, and
+   `rl-server --nat-check > nat-check-joiner.txt` on the joiner. Keep
+   both files, with both `rl-game` outputs. Then try the fixes under "No
+   network path".
+
+To exercise hole punching even when the host's router opens the port,
+untick "Open the game's port on my router" in Options → Online on the
+host and host again: the lobby then says "Port mapping is off …", and the
+joiner's tag should be `punched`.
 
 ## Missing content
 
@@ -173,18 +433,28 @@ once your content is complete.
 ## Dedicated server
 
 ```
-rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
+rl-server --config server.ron [--content content/packs] [--data-dir <dir>] [--relay]
+rl-server --nat-check [--config server.ron]
 ```
 
 Without `--content` the server uses the `content/packs` beside it (an
-unpacked release zip), else the one in the working directory.
+unpacked release zip), else the one in the working directory. `--relay`
+also runs a volunteer TURN relay, and `--nat-check` checks the network
+and exits (see "Through routers").
 
 `fixtures/server/example.ron` documents every field:
 
 - `name`, `visibility` (`Public`: announced on the Nostr relays and the
   LAN, the default; `Lan`: the LAN only; `Invite`: not announced; the old
   `DirectOnly` reads as `Invite`), `password`, `port` (TCP and UDP);
-- `relays`, `stun`, `region`, `public_address` (see "Finding games");
+- `relays`, `stun`, `region`, `public_address` (see "Finding games"); a
+  Public or Invite server also takes joins through its `relays`;
+- `port_mapping` (default `true`: a Public or Invite server asks the
+  router to open its port, and with `--relay` the relay's ports; deleted
+  at exit), `allow_local` (default `false`: accept private and local
+  addresses where public ones are expected, for an office or LAN setup
+  with its own relays) and `relay` (a TURN relay's ports and limits; see
+  "Run a TURN relay");
 - `max_players` (1 to 32), `max_spectators` (at most 16), `fill_bots` (bots
   fill empty seats up to this many), `min_players`, `start_when_ready`
   (otherwise a match starts 60 s after the lobby gathers; players not ready
@@ -224,13 +494,16 @@ or banned. Bans are soft: a banned player can return with a new key.
 
 ## Open the port
 
-Players outside your LAN need TCP **and** UDP 23400 (or your `port`)
-forwarded to the host on the **same** external port, and allowed through
-its firewall: a joiner sends its game traffic to the address and port it
-dialled. This also holds for a server in Docker or on a cloud VM: publish
-or open both protocols on one port. A player behind their own NAT connects
-through the forwarded host; STUN only learns your public address for the
-list and the invite, and no relay carries game traffic yet.
+Usually not needed: the game asks the router to open its port itself, and
+hole punching or a TURN relay covers most of the rest (see "Through
+routers"). Forward by hand when the router has UPnP, NAT-PMP and PCP off
+and a joiner gets "no network path". Forward TCP **and** UDP 23400 (or
+your `port`) to the host on the **same** external port, and allow them
+through its firewall: a joiner sends its game traffic to the address and
+port it dialled. Then set the Public address in Options → Online (a
+server's `public_address`): a forwarded port is not found by itself, and
+without it players join through the relays. This also holds for a server
+in Docker or on a cloud VM: publish or open both protocols on one port.
 
 ## Testing a bad network
 
