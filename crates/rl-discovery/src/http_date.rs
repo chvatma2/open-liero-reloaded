@@ -3,6 +3,8 @@
 //! (ruling FR12b-3: `rl-server --nat-check` prints how far each relay's
 //! clock is from this PC's). Sans-IO; parsing never panics.
 
+/// Formatting is the test relay's (and the tests').
+#[cfg(any(test, feature = "test-relay"))]
 const DAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
 const MONTHS: [&str; 12] =
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -20,6 +22,7 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 }
 
 /// The date of a day since 1970-01-01 (`civil_from_days`).
+#[cfg(any(test, feature = "test-relay"))]
 fn civil_from_days(z: i64) -> (i64, i64, i64) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);
@@ -33,6 +36,7 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
 }
 
 /// `unix` (seconds) as an IMF-fixdate.
+#[cfg(any(test, feature = "test-relay"))]
 pub fn format(unix: u64) -> String {
     let secs = i64::try_from(unix).unwrap_or(i64::MAX / 2);
     let (days, rest) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
