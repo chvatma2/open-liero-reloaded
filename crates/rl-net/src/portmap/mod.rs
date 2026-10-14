@@ -160,6 +160,9 @@ enum Report {
     },
     /// The winner's renewal was refused: the mapping is gone.
     Dropped(String),
+    /// A renewal read another external address (an ISP renumbered the
+    /// router, ruling FR12b-2): the mapping's address now.
+    Moved(SocketAddrV4),
     /// An extra port (`MapRequest::extra`): mapped by the winner, or why not.
     Extra {
         port: u16,
@@ -297,6 +300,10 @@ pub(crate) trait Router {
     fn unmap(&mut self, udp: bool, internal: u16, external: u16) -> bool;
     /// The external IPv4 address the mappings are on.
     fn external_ip(&self) -> Option<Ipv4Addr>;
+    /// After a renewal: reads the external address again where the
+    /// renewal's answers do not carry it (NAT-PMP asks, UPnP calls
+    /// `GetExternalIPAddress`); a failure keeps the last one (FR12b-2).
+    fn refresh_external(&mut self, _ctx: &Ctx) {}
     /// Starts a renewal round: its own deadline for the retries.
     fn renewing(&mut self) {}
 }
@@ -435,7 +442,7 @@ fn try_router(r: &mut dyn Router, ctx: &Ctx) -> Result<(), String> {
         return Ok(());
     }
     let extras = map_extras(r, ctx, ip);
-    hold(r, ctx, pair, extras);
+    hold(r, ctx, pair, extras, ip);
     Ok(())
 }
 
@@ -470,8 +477,10 @@ fn map_extras(r: &mut dyn Router, ctx: &Ctx, ip: Ipv4Addr) -> Vec<Pair> {
 /// The winner: renews at half the lifetime. A refused renewal reports the
 /// mapping dropped; a silent one is tried again halfway to the mapping's
 /// end (RFC 6886 §3.3 retries too), and only when the mapping has run out
-/// is it reported dropped. Deletes the mappings when the mapper is dropped.
-fn hold(r: &mut dyn Router, ctx: &Ctx, pair: Pair, mut extras: Vec<Pair>) {
+/// is it reported dropped. A renewal reads the external address again,
+/// and reports it when it changed from `ip` (ruling FR12b-2), the extras'
+/// too. Deletes the mappings when the mapper is dropped.
+fn hold(r: &mut dyn Router, ctx: &Ctx, pair: Pair, mut extras: Vec<Pair>, mut ip: Ipv4Addr) {
     let half = |lifetime: u32| (Duration::from_secs(lifetime.into()) / 2).max(Duration::from_secs(1));
     let first = extras.iter().fold(pair.lifetime, |l, e| shorter(l, e.lifetime));
     let mut ends = (first != 0).then(|| Instant::now() + Duration::from_secs(first.into()));
@@ -510,6 +519,15 @@ fn hold(r: &mut dyn Router, ctx: &Ctx, pair: Pair, mut extras: Vec<Pair>) {
                         }
                     }
                 });
+                r.renewing();
+                r.refresh_external(ctx);
+                if let Some(now_ip) = r.external_ip().filter(|&a| a != ip && !a.is_unspecified()) {
+                    ip = now_ip;
+                    let _ = ctx.tx.send(Report::Moved(SocketAddrV4::new(ip, pair.port)));
+                    for e in &extras {
+                        ctx.extra(e.internal, Ok((r.method(), SocketAddrV4::new(ip, e.port))));
+                    }
+                }
                 let now = Instant::now();
                 ends = (lifetime != 0).then(|| now + Duration::from_secs(lifetime.into()));
                 next = (lifetime != 0).then(|| now + half(lifetime));
@@ -706,6 +724,12 @@ impl PortMapper {
                 }
                 Ok(Report::Failed { worker, why }) => {
                     self.failures[worker as usize].get_or_insert(why);
+                }
+                Ok(Report::Moved(moved)) => {
+                    let usable = self.allow_local || rl_proto::is_global(IpAddr::V4(*moved.ip()));
+                    if let MappingState::Mapped { external, usable: u, .. } = &mut self.state {
+                        (*external, *u) = (moved, usable);
+                    }
                 }
                 Ok(Report::Dropped(why)) => {
                     self.state = MappingState::Failed(format!("the router dropped the mapping: {why}"));

@@ -381,7 +381,8 @@ impl Router for Pcp<'_> {
         if r.lifetime == 0 || r.external.port() == 0 || r.external.ip().is_unspecified() {
             return Err(MapError::Fatal("an empty grant".into()));
         }
-        self.external.get_or_insert(*r.external.ip());
+        // Every answer names the address now (a renewal's too, FR12b-2).
+        self.external = Some(*r.external.ip());
         Ok(Grant { port: r.external.port(), lifetime: r.lifetime })
     }
 
@@ -415,7 +416,7 @@ struct NatPmp<'a> {
 impl NatPmp<'_> {
     /// Asks the gateway's external address (RFC 6886 §3.2).
     fn external_address(&mut self, ctx: &Ctx) -> Result<(), String> {
-        let going = || ctx.live();
+        let going = going(self.renewal, ctx);
         let r =
             exchange(
                 self.sock,
@@ -479,6 +480,14 @@ impl Router for NatPmp<'_> {
 
     fn external_ip(&self) -> Option<Ipv4Addr> {
         self.external
+    }
+
+    /// NAT-PMP's map answers carry no address: ask it again (FR12b-2).
+    fn refresh_external(&mut self, ctx: &Ctx) {
+        let last = self.external;
+        if self.external_address(ctx).is_err() {
+            self.external = last;
+        }
     }
 
     fn renewing(&mut self) {

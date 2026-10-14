@@ -48,9 +48,11 @@ const LOAD_EVERY: Duration = Duration::from_secs(1);
 pub(crate) struct MapTarget {
     pub(crate) base: Ipv4Addr,
     pub(crate) gateway: Option<Ipv4Addr>,
-    /// Tests: the fake's PCP/NAT-PMP port and SSDP socket.
+    /// Tests: the fake's PCP/NAT-PMP port and SSDP socket, and the
+    /// mappings' lifetime.
     pub(crate) pmp_port: Option<u16>,
     pub(crate) ssdp: Option<SocketAddr>,
+    pub(crate) lifetime: Option<Duration>,
 }
 
 /// The ports the relay asked its router to open (UDP, exact): the first
@@ -123,6 +125,12 @@ pub(crate) struct Relay {
     pass: String,
     maps: Maps,
     phase: Phase,
+    /// The public address is the listening port's mapping's: it follows
+    /// the router's external address (ruling FR12b-2).
+    follows_mapping: bool,
+    /// The last note's `created_at`, kept across a restart (notes never go
+    /// back in time).
+    last_created: u64,
 }
 
 /// The relay's mappings being deleted (the mapper's `close` on a thread).
@@ -191,8 +199,13 @@ impl Relay {
                 let found =
                     std::thread::Builder::new().name("rl-server relay base".into()).spawn(move || {
                         let (ips, gateway) = rl_net::local::base_addresses(None);
-                        let target =
-                            ips.first().map(|&base| MapTarget { base, gateway, pmp_port: None, ssdp: None });
+                        let target = ips.first().map(|&base| MapTarget {
+                            base,
+                            gateway,
+                            pmp_port: None,
+                            ssdp: None,
+                            lifetime: None,
+                        });
                         let _ = tx.send(target);
                     });
                 if found.is_ok() { Maps::Finding(rx) } else { Maps::None }
@@ -209,6 +222,8 @@ impl Relay {
             pass,
             maps,
             phase: Phase::Waiting,
+            follows_mapping: false,
+            last_created: 0,
         })
     }
 
@@ -247,6 +262,7 @@ impl Relay {
                 }
             }
         }
+        self.follow_mapping(log);
         let Phase::Running(r) = &mut self.phase else { return None };
         if r.load_checked.is_none_or(|t| now.saturating_duration_since(t) >= LOAD_EVERY) {
             r.load_checked = Some(now);
@@ -260,7 +276,13 @@ impl Relay {
             return None;
         }
         let load = r.load.unwrap_or(0);
-        let created = r.noted.map_or(0, |(_, c)| c).max(unix_now());
+        let created = match r.noted {
+            Some((_, c)) => c.max(unix_now()),
+            // The first note of this start: after any earlier start's.
+            None if self.last_created > 0 => unix_now().max(self.last_created + 1),
+            None => unix_now(),
+        };
+        self.last_created = created;
         r.noted = Some((now, created));
         let (public, port, capacity) = (r.public, r.server.local_addr().port(), r.capacity);
         let note = self.note(public, port, capacity, load);
@@ -317,6 +339,7 @@ impl Relay {
                 MappingState::Mapped { external, usable: true, .. }
                     if m.first == self.cfg.port && external.port() == self.cfg.port =>
                 {
+                    self.follows_mapping = true;
                     return Some(usable(*external.ip()));
                 }
                 _ => {}
@@ -421,6 +444,23 @@ impl Relay {
         }
     }
 
+    /// A relay running on its mapping's address restarts on the router's
+    /// new external address (an ISP renumbered it, ruling FR12b-2): its
+    /// relayed addresses are `public:<port>`, fixed at the start, and the
+    /// old ones reach nobody. The next poll announces it.
+    fn follow_mapping(&mut self, log: &mut dyn std::io::Write) {
+        let (Phase::Running(r), Maps::Asked(m)) = (&self.phase, &self.maps) else { return };
+        let MappingState::Mapped { external, usable: true, .. } = m.mapper.state() else { return };
+        let ip = *external.ip();
+        if !self.follows_mapping || ip == r.public {
+            return;
+        }
+        // The old server goes first: the new one listens on its port.
+        self.phase = Phase::Waiting;
+        line(log, format_args!("relay: the router's address is now {ip}: restarted"));
+        self.start(ip, log);
+    }
+
     /// Asks the router for the ports once the base address is known, and
     /// says each port that cannot be mapped exactly (never shifted: the
     /// relay reports `public:<local port>`).
@@ -495,6 +535,7 @@ impl Relay {
         if let Some(ssdp) = target.ssdp {
             req.ssdp = ssdp;
         }
+        req.lifetime = target.lifetime;
         Some(Mapping { first, mapper: PortMapper::start(req), said: BTreeSet::new(), settled: false })
     }
 
@@ -557,6 +598,7 @@ mod tests {
             gateway: Some(Ipv4Addr::LOCALHOST),
             pmp_port: Some(gw.pmp().port()),
             ssdp: Some(gw.ssdp()),
+            lifetime: None,
         };
         let mut log = Vec::new();
         let id = Identity::from_secret([7; 32]).unwrap();
@@ -593,6 +635,56 @@ mod tests {
         assert_eq!(closing.capacity, 0);
         assert!(unmapping.wait(Instant::now() + Duration::from_secs(2)), "confirmed");
         assert!(gw.mappings().is_empty(), "{:?}", gw.mappings());
+    }
+
+    /// Ruling FR12b-2: a relay announced at its listening port's mapped
+    /// address follows the router's new external address (an ISP
+    /// renumbering it; renewals every second here): restarted on it, and
+    /// announced there at once.
+    #[test]
+    fn a_relay_follows_its_routers_new_address() {
+        let (before, after) = (Ipv4Addr::new(127, 0, 0, 2), Ipv4Addr::new(127, 0, 0, 3));
+        let gw = FakeGateway::start(true, false, false, before, Misbehaviour::Honest);
+        // A free UDP port to listen on (the mapping is exact: its port).
+        let port =
+            std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).unwrap().local_addr().unwrap().port();
+        let cfg = RelayConfig { port, ports: (0, 0), ..RelayConfig::default() };
+        let target = MapTarget {
+            base: Ipv4Addr::LOCALHOST,
+            gateway: None,
+            pmp_port: Some(gw.pmp().port()),
+            ssdp: Some(gw.ssdp()),
+            lifetime: Some(Duration::from_secs(2)),
+        };
+        let mut log = Vec::new();
+        let id = Identity::from_secret([7; 32]).unwrap();
+        let mut relay =
+            Relay::new(cfg, id, Region::Europe, true, None, Some(Some(target)), &mut log).unwrap();
+        let begun = Instant::now();
+        let mut no_reach = || None;
+        let mut notes = Vec::new();
+        let mut moved = false;
+        loop {
+            assert!(begun.elapsed() < Duration::from_secs(10), "{}", log_text(&log));
+            if let Some(note) = relay.poll(Instant::now(), &mut no_reach, &mut log) {
+                notes.push(rl_discovery::parse_turn_note(&note).unwrap().addr);
+            }
+            if !moved && !notes.is_empty() {
+                gw.set_external(after);
+                moved = true;
+            }
+            if notes.last() == Some(&after) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(notes, [before, after]);
+        let text = log_text(&log);
+        assert!(text.contains(&format!("relay: the router's address is now {after}: restarted")), "{text}");
+        assert!(text.contains(&format!("announced as {after}:{port}")), "{text}");
+        assert_eq!(relay.local_addr().map(|a| a.port()), Some(port));
+        let (_, unmapping) = relay.shutdown(&mut log);
+        assert!(unmapping.wait(Instant::now() + Duration::from_secs(2)), "confirmed");
     }
 
     #[test]

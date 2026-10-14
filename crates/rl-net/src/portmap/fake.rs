@@ -184,7 +184,6 @@ struct Config {
     upnp: bool,
     pmp: bool,
     pcp: bool,
-    external: Ipv4Addr,
     m: Misbehaviour,
     /// `serving`'s answer to every SSDP and HTTP request.
     answer: Option<Vec<u8>>,
@@ -194,6 +193,8 @@ struct Config {
 
 struct Inner {
     cfg: Config,
+    /// Its external address (`set_external` changes it).
+    external: Mutex<Ipv4Addr>,
     table: Mutex<Table>,
     description: Mutex<Description>,
     chunked: AtomicBool,
@@ -220,7 +221,7 @@ impl Inner {
         if self.cfg.m == Misbehaviour::PrivateExternal {
             Ipv4Addr::new(10, 0, 0, 1)
         } else {
-            self.cfg.external
+            *self.external.lock().unwrap_or_else(|e| e.into_inner())
         }
     }
 
@@ -284,7 +285,8 @@ impl FakeGateway {
         let http_addr = http.local_addr().expect("the HTTP server's address");
         let answer = answer.map(|a| replace(&a, b"$HTTP", http_addr.to_string().as_bytes()));
         let inner = Arc::new(Inner {
-            cfg: Config { upnp, pmp, pcp, external, m, answer, http: http_addr, started: Instant::now() },
+            cfg: Config { upnp, pmp, pcp, m, answer, http: http_addr, started: Instant::now() },
+            external: Mutex::new(external),
             table: Mutex::new(Table::default()),
             description: Mutex::new(Description::WanIp),
             chunked: AtomicBool::new(false),
@@ -340,6 +342,12 @@ impl FakeGateway {
             .collect();
         all.sort_by_key(|&(m, udp, port, internal)| (rank(m), udp, port, internal));
         all
+    }
+
+    /// Its external address becomes `ip` (an ISP renumbering it): the
+    /// mappings stay, every answer names `ip` from now on.
+    pub fn set_external(&self, ip: Ipv4Addr) {
+        *self.inner.external.lock().unwrap_or_else(|e| e.into_inner()) = ip;
     }
 
     /// Another client holds `external` for both protocols: UPnP refuses it

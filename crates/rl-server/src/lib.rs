@@ -959,6 +959,7 @@ fn ice(config: &Config) -> IceConfig {
             ice.gateway = Some(pmp);
         }
         ice.ssdp = Some(g.ssdp);
+        ice.mapping_lifetime = g.lifetime;
     }
     ice
 }
@@ -974,7 +975,13 @@ fn map_target(config: &Config) -> Option<MapTarget> {
             IpAddr::V4(ip) => Some(ip),
             IpAddr::V6(_) => None,
         };
-        return Some(MapTarget { base: g.base, gateway, pmp_port: Some(g.pmp.port()), ssdp: Some(g.ssdp) });
+        return Some(MapTarget {
+            base: g.base,
+            gateway,
+            pmp_port: Some(g.pmp.port()),
+            ssdp: Some(g.ssdp),
+            lifetime: g.lifetime,
+        });
     }
     let _ = config;
     None

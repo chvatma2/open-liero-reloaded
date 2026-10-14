@@ -204,13 +204,15 @@ impl RelayConfig {
 /// Tests only (feature `test-hooks`): where the port mapping asks (a
 /// `FakeGateway`'s PCP/NAT-PMP and SSDP sockets) and the base address
 /// (the only host candidate; 127.0.0.1 keeps every datagram on the
-/// machine, test rule NT-1).
+/// machine, test rule NT-1); `lifetime`: the mappings' (the game's and
+/// the relay's), renewed at half of it, instead of the protocols' defaults.
 #[cfg(feature = "test-hooks")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct TestGateway {
     pub pmp: SocketAddr,
     pub ssdp: SocketAddr,
     pub base: Ipv4Addr,
+    pub lifetime: Option<std::time::Duration>,
 }
 
 /// The default of `upload_kib_s`: `rl_online`'s `HOST_RATE`, 4 MiB/s.

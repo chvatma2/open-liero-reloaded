@@ -95,8 +95,12 @@ fn server_config(relay: &str, public: bool) -> Config {
     );
     let mut cfg = Config::parse(&text).unwrap();
     let closed = SocketAddr::from((Ipv4Addr::LOCALHOST, 9));
-    cfg.test_gateway =
-        Some(rl_server::config::TestGateway { pmp: closed, ssdp: closed, base: Ipv4Addr::LOCALHOST });
+    cfg.test_gateway = Some(rl_server::config::TestGateway {
+        pmp: closed,
+        ssdp: closed,
+        base: Ipv4Addr::LOCALHOST,
+        lifetime: None,
+    });
     cfg
 }
 

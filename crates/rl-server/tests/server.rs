@@ -1175,6 +1175,7 @@ fn nostr_config(relay: &TestRelay, admins: &[PublicKey]) -> Config {
         pmp: SocketAddr::from(([127, 0, 0, 1], 9)),
         ssdp: SocketAddr::from(([127, 0, 0, 1], 9)),
         base: Ipv4Addr::LOCALHOST,
+        lifetime: None,
     });
     cfg
 }
@@ -1215,7 +1216,8 @@ fn a_mapped_server_announces_its_mapped_address() {
     let mut cfg = nostr_config(&relay, &[]);
     cfg.visibility = Visibility::Public;
     cfg.port_mapping = true;
-    cfg.test_gateway = Some(TestGateway { pmp: gw.pmp(), ssdp: gw.ssdp(), base: Ipv4Addr::LOCALHOST });
+    cfg.test_gateway =
+        Some(TestGateway { pmp: gw.pmp(), ssdp: gw.ssdp(), base: Ipv4Addr::LOCALHOST, lifetime: None });
     let mut rig = Rig::new(dir, cfg);
     let (key, port) = (rig.server().key(), rig.server().local_port());
     let mut browser = Browser::new(&relay);
@@ -1235,6 +1237,42 @@ fn a_mapped_server_announces_its_mapped_address() {
     assert_eq!(printed_invite(&log).unwrap().addr, Some(SocketAddr::from((external, udp))));
     rig.server.take().unwrap().shutdown(&mut rig.log);
     assert!(gw.mappings().is_empty(), "deleted at the stop: {:?}", gw.mappings());
+}
+
+/// Ruling FR12b-2 (final review A-I2): the router's external address
+/// changes (an ISP renumbering it; the mapping renewed every second here):
+/// the server's log, its invite and its listing follow the new address.
+#[test]
+fn a_mapped_server_follows_its_routers_new_address() {
+    let Some(dir) = content_dir() else { return };
+    let relay = TestRelay::start();
+    let (external, moved) = (Ipv4Addr::new(203, 0, 113, 7), Ipv4Addr::new(203, 0, 113, 8));
+    let gw = FakeGateway::start(true, false, false, external, Misbehaviour::Honest);
+    let mut cfg = nostr_config(&relay, &[]);
+    cfg.visibility = Visibility::Public;
+    cfg.port_mapping = true;
+    cfg.test_gateway = Some(TestGateway {
+        pmp: gw.pmp(),
+        ssdp: gw.ssdp(),
+        base: Ipv4Addr::LOCALHOST,
+        lifetime: Some(Duration::from_secs(2)),
+    });
+    let mut rig = Rig::new(dir, cfg);
+    let key = rig.server().key();
+    let mut browser = Browser::new(&relay);
+    browser.list.allow_local(true);
+    rig.run_until(Duration::from_secs(10), "listed at the mapped address", |_| {
+        browser.game(key).is_some_and(|g| g.summary.addr == Some(IpAddr::V4(external)))
+    });
+    gw.set_external(moved);
+    rig.run_until(Duration::from_secs(16), "listed at the new address", |_| {
+        browser.game(key).is_some_and(|g| g.summary.addr == Some(IpAddr::V4(moved)))
+    });
+    let log = rig.log_text();
+    assert_eq!(printed_invite(&log).unwrap().addr.map(|a| a.ip()), Some(IpAddr::V4(moved)), "{log}");
+    let port = rig.server().local_port();
+    let said = format!("reach: Port {port} is open on your router (UPnP): players join directly at {moved}:");
+    assert!(log.contains(&said), "{log}");
 }
 
 /// A relay server's config: `nostr_config` with a configured address and
@@ -1395,7 +1433,8 @@ fn a_relayed_member_is_banned_by_key_only_across_a_restart() {
 fn mapped_config(gw: &FakeGateway, mut cfg: Config) -> Config {
     cfg.port_mapping = true;
     cfg.allow_local = true;
-    cfg.test_gateway = Some(TestGateway { pmp: gw.pmp(), ssdp: gw.ssdp(), base: Ipv4Addr::LOCALHOST });
+    cfg.test_gateway =
+        Some(TestGateway { pmp: gw.pmp(), ssdp: gw.ssdp(), base: Ipv4Addr::LOCALHOST, lifetime: None });
     cfg
 }
 

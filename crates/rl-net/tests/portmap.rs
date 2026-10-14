@@ -760,3 +760,47 @@ proptest! {
         prop_assert_eq!(rl_net::portmap::worker_panics(), 0);
     }
 }
+
+/// Ruling FR12b-2 (final review A-I2): a router whose external address
+/// changes (an ISP renumbering it) keeps the mapping; each renewal reads
+/// the address again (PCP from its answer, NAT-PMP by asking, UPnP by
+/// `GetExternalIPAddress`), and the mapper reports it, the extra ports too.
+#[test]
+fn a_renewal_reports_a_changed_external_address() {
+    let ssdp = silent();
+    let moved = Ipv4Addr::new(198, 51, 100, 9);
+    for (i, (upnp, pmp, pcp, method)) in [
+        (true, false, false, Method::Upnp),
+        (false, true, false, Method::NatPmp),
+        (false, false, true, Method::Pcp),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let port = 23640 + 10 * i as u16;
+        let fake = FakeGateway::start(upnp, pmp, pcp, EXTERNAL, Misbehaviour::Honest);
+        let mut req = request(&fake, port, true);
+        if upnp {
+            req.gateway = None;
+        } else {
+            req.ssdp = ssdp.local_addr().unwrap();
+        }
+        req.extra = vec![port + 5];
+        req.lifetime = Some(Duration::from_secs(2));
+        let mut mapper = PortMapper::start(req);
+        let state = settle(&mut mapper, Duration::from_secs(5));
+        assert_eq!(mapped(&state), (method, SocketAddrV4::new(EXTERNAL, port), true, true), "{method}");
+        fake.set_external(moved);
+        let end = Instant::now() + Duration::from_secs(4);
+        let mut now_at = None;
+        while Instant::now() < end && now_at.is_none() {
+            if let Some(s) = mapper.poll() {
+                now_at = Some(mapped(&s).1);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(now_at, Some(SocketAddrV4::new(moved, port)), "{method}: the renewal's address");
+        let extra = &mapper.extras()[0].1;
+        assert_eq!(mapped(extra).1, SocketAddrV4::new(moved, port + 5), "{method}: the extra port");
+    }
+}

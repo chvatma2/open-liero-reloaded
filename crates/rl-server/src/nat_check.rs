@@ -320,7 +320,7 @@ mod tests {
     use rl_net::turn::{RelayPorts, TurnLimits, TurnServer, TurnServerConfig};
 
     fn hooks(gw: &FakeGateway) -> TestGateway {
-        TestGateway { pmp: gw.pmp(), ssdp: gw.ssdp(), base: Ipv4Addr::LOCALHOST }
+        TestGateway { pmp: gw.pmp(), ssdp: gw.ssdp(), base: Ipv4Addr::LOCALHOST, lifetime: None }
     }
 
     fn report(config: &Config, gw: &FakeGateway) -> String {

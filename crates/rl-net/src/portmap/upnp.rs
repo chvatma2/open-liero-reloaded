@@ -912,6 +912,19 @@ impl Router for Upnp {
         Some(self.external)
     }
 
+    /// `GetExternalIPAddress` again (FR12b-2); no usable answer keeps the
+    /// last address.
+    fn refresh_external(&mut self, ctx: &Ctx) {
+        let going = || !ctx.stopped();
+        if let Ok(content) = soap(&self.control, "GetExternalIPAddress", &[], self.deadline, &going)
+            && let Some(ip) =
+                element_text(&content, "NewExternalIPAddress").and_then(|t| t.parse::<Ipv4Addr>().ok())
+            && !ip.is_unspecified()
+        {
+            self.external = ip;
+        }
+    }
+
     fn renewing(&mut self) {
         self.renewal = true;
         self.deadline = Instant::now() + UPNP_DEADLINE;

@@ -119,6 +119,10 @@ pub struct IceConfig {
     /// `FakeGateway`'s) instead of the multicast group.
     #[cfg(feature = "test-hooks")]
     pub ssdp: Option<SocketAddr>,
+    /// Tests only (`test-hooks`): the port mapping's lifetime (renewed at
+    /// half of it) instead of the protocols' defaults.
+    #[cfg(feature = "test-hooks")]
+    pub mapping_lifetime: Option<Duration>,
 }
 
 /// How this endpoint can be reached: its candidates, its router's NAT
@@ -784,6 +788,7 @@ impl Endpoint {
             if let Some(ssdp) = self.cfg.ice.ssdp {
                 req.ssdp = ssdp;
             }
+            req.lifetime = self.cfg.ice.mapping_lifetime;
         }
         self.gathering.mapper = Some(PortMapper::start(req));
         self.gathering.mapping = MappingState::Trying;

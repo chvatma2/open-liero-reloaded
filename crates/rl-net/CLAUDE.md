@@ -345,7 +345,12 @@ for tests.
     method ends).
   - **Lifetimes:** 2 h (PCP, NAT-PMP), 3600 s (UPnP; 725 → lease 0, never
     renewed), or the request's; the winner renews at half the granted
-    lifetime. A refused renewal deletes the rest and becomes
+    lifetime. Each renewal reads the external address again (ruling
+    FR12b-2: an ISP renumbering the router keeps its forwarding rules):
+    PCP from its answers, NAT-PMP by asking (op 0), UPnP by
+    `GetExternalIPAddress` (`Router::refresh_external`; a failure keeps
+    the last); a new one is reported (`Report::Moved`) and `poll` returns
+    the `Mapped` state with it (`usable` judged again), the extras' too. A refused renewal deletes the rest and becomes
     `Failed("the router dropped the mapping: <method>: …")`; a silent one
     is tried again halfway to the mapping's end while more than 2 s are
     left (RFC 6886 §3.3), and only then reported dropped.
@@ -451,6 +456,7 @@ for tests.
     (`DeletePortMapping` takes effect and answers `LATE` after the
     request, on a thread of its own, while `AddPortMapping` answers at
     once: ruling RH-1's re-host race). `hold(port)`: another client's port.
+    `set_external(ip)`: its external address from now on (FR12b-2).
     `serving(answer)` (fuzzing) answers SSDP (its first 1400 bytes) and
     HTTP with `answer` (`$HTTP` → its HTTP address).
 - **`natsim`** (feature `test-hooks`, N56): `Net` runs `Core`s behind
@@ -553,7 +559,8 @@ for tests.
     resolve), `port_mapping` (a host's), `allow_local` (N62: the core's
     relays and the mapping's `usable`); test hooks `base_override`,
     `relay_only` (a client's), `gateway` (a `FakeGateway`'s PCP/NAT-PMP
-    address, `SocketAddrV4`) and `ssdp`. A host and a signalled client
+    address, `SocketAddrV4`), `ssdp` and `mapping_lifetime` (the
+    mapping's, renewed at half of it). A host and a signalled client
     start a thread, `rl-net dns`, that sends the base
     (`local::default_interface` at once; without one,
     `base_addresses(first STUN server)` after the names resolve), then
@@ -689,7 +696,8 @@ winner for each protocol (a held one failing alone, `close` confirming
 every deletion), `close` waiting for a late router and a failed `local`
 failing its extras, a new mapper of a port being deleted waiting for that
 deletion (`a_new_mapper_waits_for_the_ports_deletion`, `LateDelete`), a failed `local`
-failing its extras, mappings deleted on drop, no gateway
+failing its extras, a renewal reporting the router's new external
+address for each protocol, the extras' too (FR12b-2), mappings deleted on drop, no gateway
 and no UPnP failing within 5 s, a test build refusing a real router,
 `HTTP_PROXY` ignored (a child process of the test binary runs with the
 proxy variables set; the proxy must see no connection, and the child

@@ -58,8 +58,9 @@ beside the executable, else in the working directory).
   allocation each; any with `(0, 0)`), the rest ≥ 1). No TURN server list (ruling
   PF12b-4: a host never allocates, N48). Test hook (feature
   `test-hooks`, `#[serde(skip)]`) `test_gateway: Option<TestGateway {
-  pmp, ssdp, base }>`: the port mapping aimed at a `FakeGateway`, the base
-  pinned (NT-1: 127.0.0.1). `stun` now feeds the game socket's ICE
+  pmp, ssdp, base, lifetime }>`: the port mapping aimed at a `FakeGateway`, the base
+  pinned (NT-1: 127.0.0.1), the mappings' lifetime (`None`: the
+  protocols'). `stun` now feeds the game socket's ICE
   (server-reflexive candidate, `NatBehaviour`), never an advertised
   address (N47). `fixtures/server/example.ron` documents every field (its
   admin key is a placeholder no one holds).
@@ -130,7 +131,10 @@ beside the executable, else in the working directory).
   (the server's identity, region, capacity, load = allocations,
   `ANNOUNCE_TTL`) at once and every `REPUBLISH` (60 s), `created_at` never
   going back; `"relay: {n} allocations"` at each change (looked at every
-  second). `shutdown`: the closing note (capacity 0, `CLOSE_TTL`, one
+  second). A relay whose address is its listening port's mapping's
+  follows the router's new external address (ruling FR12b-2): `"relay:
+  the router's address is now {ip}: restarted"`, the TURN server started
+  again on it and announced at once (`created_at` after the last note's). `shutdown`: the closing note (capacity 0, `CLOSE_TTL`, one
   second after the last), the server dropped, and an `Unmapping` (the
   mapper's `close` on a thread; `wait(until)` true once the router
   confirmed every deletion).
@@ -293,7 +297,9 @@ mapping gone after a clean stop; NT-2 (review I2): a `LateUpnp` router
 (deletion effective 300 ms late) and no Nostr pool, the mapping gone the
 moment `shutdown` returns (RED without the wait); the invite printed at
 `SETTLE_WAIT` without an address while the (`LateUpnp`) router is busy,
-then again with the mapped address; `--relay` (`public_address`
+then again with the mapped address; a router whose external address
+changes (renewals every second): the listing, the invite and the
+`reach:` line follow it (FR12b-2); `--relay` (`public_address`
 127.0.0.1, ephemeral ports, generous limits) picked from a `TurnList`
 (the server's key, its port, 16-hex credentials), a `relay_only` client
 joining through it (`Relayed`, `via relayed`, relayed bytes, `relay: 1
@@ -305,7 +311,8 @@ relay's checks (capacity against the port count), `allow_local`'s public
 address; only exactly-mapped relay ports handed out (one mapper, a held
 port said and not shifted, the TURN server on port 0 given the other
 three, capacity 3 announced, the closing note, every deletion confirmed),
-port runs in words; `--nat-check`'s report with a `TurnServer` as STUN (`NAT: no
+port runs in words; a relay on its mapping's address restarted and
+announced on the router's new address (FR12b-2); `--nat-check`'s report with a `TurnServer` as STUN (`NAT: no
 NAT`), a `FakeGateway` (the mapping made, said not public, deleted), a
 `TestRelay` with a TURN note, two `StunResponder`s seeing different
 ports (`NAT: symmetric NAT`), a `LateUpnp` router's deletion confirmed
