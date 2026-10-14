@@ -8,7 +8,7 @@ use rl_terrain::Area;
 
 use crate::content::Download;
 use crate::join::JoinStep;
-use crate::reach::Reachability;
+use crate::reach::{Reachability, RelayJoin};
 
 /// What happened during one [`crate::OnlinePeer::poll`], in order.
 #[derive(Clone, Debug, PartialEq)]
@@ -77,6 +77,10 @@ pub enum OnlineEvent {
     /// A host's reachability changed (its lines, whether it settled, its
     /// direct address): the lobby's lines, the server's log, its notes.
     Reachability(Reachability),
+    /// A host's join through the relays was answered, refused, did not
+    /// connect, or was dated off this PC's clock (ruling FR12b-3);
+    /// `join.line(more)` is its lobby and log line.
+    RelayJoin { join: RelayJoin, more: u32 },
     /// A client's link to its host opened, by `path` (N49); `remote` is
     /// the host's end, or for `Relayed` the TURN relay's address (the
     /// server its allocation is on, ruling FR12b-4). Once.

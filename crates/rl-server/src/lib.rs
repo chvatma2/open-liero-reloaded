@@ -482,6 +482,8 @@ impl Server {
             OnlineEvent::MatchEnded(end) => self.ended(&end, log),
             OnlineEvent::DesyncBundle(bytes) => self.save_bundle(&bytes, log),
             OnlineEvent::Reachability(r) => self.reached(r, log),
+            // FR12b-3: what became of a join through the relays.
+            OnlineEvent::RelayJoin { join, more } => line(log, format_args!("relays: {}", join.line(more))),
             _ => {}
         }
     }

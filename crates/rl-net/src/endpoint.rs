@@ -1043,7 +1043,8 @@ impl Endpoint {
     }
 
     /// Turns the core's events into the endpoint's: an opened setup's
-    /// signalling lingers, a failed one's is dropped.
+    /// signalling lingers, a failed one's is dropped (a host's signalled
+    /// one is `JoinFailed`).
     fn on_core_events(&mut self, core_events: Vec<CoreEvent>, now: Instant, events: &mut Vec<NetEvent>) {
         for event in core_events {
             match event {
@@ -1053,8 +1054,12 @@ impl Endpoint {
                         self.linger(ws, now);
                     }
                 }
-                CoreEvent::SetupFailed { setup, .. } => {
-                    self.setups.remove(&setup);
+                CoreEvent::SetupFailed { setup, why } => {
+                    // A host's setups without signalling connection are
+                    // the signalled ones (FR12b-3: reported).
+                    if self.setups.remove(&setup).is_none() && matches!(self.role, Role::Host { .. }) {
+                        events.push(NetEvent::JoinFailed { why });
+                    }
                 }
             }
         }

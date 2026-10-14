@@ -211,11 +211,29 @@ Under the invite code, a Public or Invite game shows a listing line (see
 | "No relay reachable: only LAN and direct joins work" | every relay failed; they are retried |
 
 An Invite game whose code has an address shows no listing line;
-otherwise it says "This code joins through the relays". A server logs the
-same lines as `reach: …`, its invite as `invite code: rlx1…` (with an
-address) or `invite code (joins through the relays): rlx1…`, and each
-join as `join: <name> (<fingerprint>) from <ip> via <tag> key <key>`.
-`rl-game` prints them on its console too (`rl-game: reach: …`).
+otherwise it says "This code joins through the relays".
+
+Each join through the relays also leaves a line in the host's lobby
+(at most one of each kind every 5 s; the next says "(N more since)"):
+
+| line | meaning |
+|---|---|
+| "A player asked to join through the relays: answered" | the offer arrived and was answered; the two sides now look for a path |
+| "A player asked to join through the relays: refused, busy with other joins" | 8 other joins were connecting |
+| "A player asked to join through the relays: refused (another game version)" | or another reason in brackets |
+| "A join through the relays was answered but did not connect within 15 s: no network path" | the joiner sees "no network path…" (below) |
+| "Ignored a join through the relays dated 120 s ahead of this PC's clock: check both PCs' clocks" | (or behind) one of the two clocks is off by more than a minute: set both PCs' clocks automatically |
+
+No line at all after the joiner's "Asking the game through the
+relays…" means the offer never arrived: the two sides share no relay,
+or the relays refused it.
+
+A server logs the reach lines as `reach: …`, the join lines as
+`relays: …`, its invite as `invite code: rlx1…` (with an address) or
+`invite code (joins through the relays): rlx1…`, and each join as
+`join: <name> (<fingerprint>) from <ip> via <tag> key <key>`. `rl-game`
+prints the reach and join lines on its console too (`rl-game: reach: …`,
+`rl-game: relays: …`).
 
 ### When a join fails
 
@@ -225,7 +243,7 @@ The joiner's Multiplayer screen says why:
 |---|---|
 | "could not reach any Nostr relay: check your Internet connection, or the relays in Options → Online" | no relay answered: check the connection, or put relays back (Reset relays to defaults) |
 | "the relays refused this join's handshake (some take events only from keys they know): try other relays in Options → Online" | every relay refused it; add relays that take events from new keys |
-| "the game did not answer through the relays (it may have closed, or its relays differ from yours)" | is the game still hosted? Do you share a relay with the host? An invite names the host's relays; a listed game is found on yours |
+| "the game did not answer through the relays (it may have closed, its relays may differ from yours, or one of the two PCs' clocks is off by more than a minute)" | is the game still hosted? Do you share a relay with the host? An invite names the host's relays; a listed game is found on yours. Are both PCs' clocks right (set automatically)? The host's lobby says "Ignored a join … dated …" when they are not |
 | "the game is busy with other joins: try again in a moment" | the host is answering 8 other joins; try again |
 | "no network path to the game: hole punching failed and no TURN relay could be used. The host can open port N (TCP and UDP) on their router (UPnP, or port forwarding) or use a dedicated server; anyone can run a TURN relay (rl-server --relay)" | see below |
 | "no network path to the game, not even through the TURN relay …: try again, or ask the host to open port N on their router" | the relay was found but did not connect; try again, or open the port |
@@ -331,8 +349,8 @@ NAT: a NAT that keeps ports (hole punching works)
 router: asking it to open UDP port 53211
 router: port 53211 opened (UPnP) at 203.0.113.7:53211
 router: the mapping is deleted
-relay wss://relay.damus.io: connected
-relay wss://nos.lol: connected
+relay wss://relay.damus.io: connected, its clock agrees with this PC's
+relay wss://nos.lol: connected, its clock 2 s ahead of this PC's
 …
 TURN notes: 1
 TURN relay 198.51.100.4:3478 (Europe, 3 of 32 in use)
@@ -355,7 +373,11 @@ How to read it:
     off or refused.
   - `deleting the mapping: the router did not confirm it`: the router
     may keep the test mapping until it expires.
-- **`relay …:`** `connected`, or why not.
+- **`relay …:`** `connected` and how far its clock is from this PC's
+  (from its `Date` header; nothing said when it sends none), or why not.
+  A `clock: this PC's clock differs from a relay's by more than a
+  minute …` line follows when one is: joins through the relays fail when
+  two PCs' clocks differ by more than a minute.
 - **`TURN notes: 0`**: no volunteer relay is announced, so a symmetric
   pair cannot connect.
 

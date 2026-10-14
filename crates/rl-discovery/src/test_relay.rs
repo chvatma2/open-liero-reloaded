@@ -426,16 +426,27 @@ fn serve(shared: &Shared, conn: u64, mut stream: TcpStream, tls: Option<&Arc<rus
     let _ = ctl.set_write_timeout(Some(Duration::from_secs(5)));
     let config = WebSocketConfig::default().max_message_size(Some(MAX_FRAME)).max_frame_size(Some(MAX_FRAME));
     let stream = Trickle { tcp: stream, shared, reads: 0 };
+    // The handshake's `Date` is the relay's clock, as a real server's.
+    let date = crate::http_date::format(shared.lock().clock());
+    // The callback's type is tungstenite's (its `Err` is a whole response).
+    #[allow(clippy::result_large_err)]
+    let dated = move |_: &tungstenite::handshake::server::Request,
+                      mut response: tungstenite::handshake::server::Response| {
+        if let Ok(v) = date.parse() {
+            response.headers_mut().insert("date", v);
+        }
+        Ok(response)
+    };
     match tls {
         None => {
-            if let Ok(ws) = tungstenite::accept_with_config(stream, Some(config)) {
+            if let Ok(ws) = tungstenite::accept_hdr_with_config(stream, dated, Some(config)) {
                 run(shared, conn, ws, &ctl);
             }
         }
         Some(cfg) => {
             let Ok(sc) = rustls::ServerConnection::new(Arc::clone(cfg)) else { return };
             let stream = rustls::StreamOwned::new(sc, stream);
-            if let Ok(ws) = tungstenite::accept_with_config(stream, Some(config)) {
+            if let Ok(ws) = tungstenite::accept_hdr_with_config(stream, dated, Some(config)) {
                 run(shared, conn, ws, &ctl);
             }
         }

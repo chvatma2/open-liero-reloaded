@@ -150,7 +150,11 @@ beside the executable, else in the working directory).
   `close`d: "router: the mapping is deleted" only when the router
   confirmed it, else "the router did not confirm it within 1 s"); the relays (a
   `Pool` subscribed to `TurnList::filter`; each one's status once all
-  answered or `deadline`, then `"TURN notes: n"` and each open relay's
+  answered or `deadline`, each connected one with its clock against this
+  PC's (`Pool::clocks`, the handshake's `Date`: "connected, its clock
+  agrees with this PC's" within a second, else "N s ahead of|behind this
+  PC's"; ruling FR12b-3), a `"clock: …"` warning when one is more than
+  `MAX_SKEW` off, then `"TURN notes: n"` and each open relay's
   address, region and load); `"nat-check done"`. Errors only when `out`
   fails. The binary passes `NAT_CHECK_WAIT` (5 s). Public servers only
   when run by hand: the tests aim it at in-process fakes.
@@ -186,7 +190,9 @@ beside the executable, else in the working directory).
   and port, else `public_address` on the local port; never STUN's),
   `relay_addr()` and `relay_stats()` (the TURN server's, once it runs).
   Each `OnlineEvent::Reachability` is kept and every new line of its
-  `lines()` logged once, `"reach: …"`. The invite is printed once
+  `lines()` logged once, `"reach: …"`; each `OnlineEvent::RelayJoin` is
+  `"relays: {line}"` (ruling FR12b-3: answered, refused, not connected,
+  dated off the clock). The invite is printed once
   `Reachability::settled()` (the router answered or gave up, and STUN's
   first round) or `SETTLE_WAIT` (5 s) after the start, and again whenever
   `direct()` changes: `"invite code: rlx1…"` with an address, `"invite

@@ -32,7 +32,7 @@ use rl_net::turn::{RelayPorts, TurnLimits, TurnServer, TurnServerConfig};
 use rl_online::join::{Join, JoinStep, NO_RELAYS, NO_REPLY, NostrJoin, RELAYS_REFUSED, no_path};
 use rl_online::matches::{bot_wire, rules_wire, setup_packs};
 use rl_online::reach::{HostListen, Listening};
-use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
+use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole, RelayJoin};
 use rl_proto::{FINGERPRINT, Look, MatchSetupWire, PROTOCOL_VERSION, Path, PublicKey, SeatWire, Signal};
 use rl_sim::Keys;
 
@@ -318,6 +318,8 @@ fn a_client_joins_through_nostr_without_an_address() {
     let member = state.members.iter().find(|m| m.key == ckey).expect("the client's member");
     assert_eq!(member.path, Some(Path::Direct));
     assert!(net.peers[c].ended_with().is_none());
+    // The host said it answered (FR12b-3).
+    assert_eq!(relay_joins(&net.peers[h]), [RelayJoin::Answered]);
 }
 
 /// A host whose relays were edited listens on the new ones
@@ -465,7 +467,11 @@ fn a_relay_that_never_forwards_is_survived() {
 fn a_join_without_a_path_says_what_to_do() {
     let Some(content) = content() else { return };
     let relay = TestRelay::start();
-    let (mut net, h, key) = host_on(content, pool(&[&relay]));
+    let mut net = Net::new();
+    let setup = setup(&content, 0.1);
+    let three = IceConfig { setup_timeout: Some(Duration::from_secs(3)), ..ice() };
+    let h = net.host(content, setup, three, HostListen { pool: Some(pool(&[&relay])), public_address: None });
+    let key = net.peers[h].key;
     let join = Join { direct: None, nostr: Some(nostr(key, pool(&[&relay]))) };
     let pathless = IceConfig { relay_only: true, setup_timeout: Some(Duration::from_secs(3)), ..ice() };
     let c = net.client(self::content().unwrap(), join, pathless, Some(key));
@@ -474,6 +480,11 @@ fn a_join_without_a_path_says_what_to_do() {
     assert_eq!(net.peers[c].ended_with(), Some(no_path(port, None)));
     assert!(net.peers[c].steps().contains(&JoinStep::Connecting), "the host answered");
     assert!(net.peers[c].connected().is_none());
+    // The host said so too (FR12b-3).
+    net.run_until(Duration::from_secs(2), "the host's line", |n| {
+        relay_joins(&n.peers[h]).contains(&RelayJoin::NotConnected)
+    });
+    assert_eq!(relay_joins(&net.peers[h]), [RelayJoin::Answered, RelayJoin::NotConnected]);
 }
 
 /// A host refusing the offer (another simulation fingerprint): the join
@@ -482,7 +493,7 @@ fn a_join_without_a_path_says_what_to_do() {
 fn a_refused_join_says_why() {
     let Some(content) = content() else { return };
     let relay = TestRelay::start();
-    let (mut net, _, key) = host_on(content, pool(&[&relay]));
+    let (mut net, h, key) = host_on(content, pool(&[&relay]));
     let join = Join { direct: None, nostr: Some(nostr(key, pool(&[&relay]))) };
     let other = EndpointConfig { fingerprint_override: Some(FINGERPRINT ^ 1), ..endpoint(ice()) };
     let c = net.client_with(self::content().unwrap(), join, other, Some(key));
@@ -491,6 +502,43 @@ fn a_refused_join_says_why() {
     assert!(p.has(|e| matches!(e, OnlineEvent::Refused(_))), "{:?}", p.ended_with());
     assert_eq!(p.ended_with().as_deref(), Some("the host plays another version"));
     assert!(!p.steps().contains(&JoinStep::Connecting), "{:?}", p.steps());
+    assert_eq!(relay_joins(&net.peers[h]), [RelayJoin::Refused(rl_proto::Refusal::Version)]);
+}
+
+/// The lines the host said about joins through the relays (FR12b-3).
+fn relay_joins(p: &Peer) -> Vec<RelayJoin> {
+    p.events
+        .iter()
+        .filter_map(|(_, e)| match e {
+            OnlineEvent::RelayJoin { join, .. } => Some(join.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Ruling FR12b-3 (final review B-I1): a joiner whose clock is 2 minutes
+/// ahead (its handshake dated so) is never answered; the host says why,
+/// naming the clocks, and the joiner's text names them too.
+#[test]
+fn a_joiner_whose_clock_is_off_is_told_on_both_sides() {
+    let Some(content) = content() else { return };
+    let relay = TestRelay::start();
+    let (mut net, h, key) = host_on(content, pool(&[&relay]));
+    let join = Join { direct: None, nostr: Some(nostr(key, pool(&[&relay]))) };
+    let c = net.client(self::content().unwrap(), join, ice(), Some(key));
+    net.peers[c].p.test_clock_offset(120);
+    net.run_until(Duration::from_secs(16), "the join gives up", |n| n.peers[c].ended_with().is_some());
+    assert_eq!(net.peers[c].ended_with().as_deref(), Some(NO_REPLY));
+    assert!(NO_REPLY.contains("clock"), "{NO_REPLY}");
+    let said = relay_joins(&net.peers[h]);
+    let skew = said.iter().find_map(|j| match j {
+        RelayJoin::Skewed { by } => Some(*by),
+        _ => None,
+    });
+    assert!(skew.is_some_and(|by| (115..=125).contains(&by)), "{said:?}");
+    let line = RelayJoin::Skewed { by: skew.unwrap() }.line(0);
+    assert!(line.contains("ahead of this PC's clock: check both PCs' clocks"), "{line}");
+    assert!(!said.contains(&RelayJoin::Answered), "{said:?}");
 }
 
 #[test]

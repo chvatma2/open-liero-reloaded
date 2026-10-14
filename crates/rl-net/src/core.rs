@@ -90,6 +90,15 @@ pub enum NetEvent {
     Refused {
         why: Refusal,
     },
+    /// Host side: a join through signalling (an answered signalled offer,
+    /// `answer_signalled`) did not open: `Timeout` (not within
+    /// `SIGNALLED_SETUP_TIMEOUT`, or evicted from a full pending table,
+    /// PF12b-2), `Closed` or `Limits`. Its peer was never reported. A TCP
+    /// join's failure is not reported (ruling FR12b-3: the host says what
+    /// became of joins through the relays).
+    JoinFailed {
+        why: Why,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

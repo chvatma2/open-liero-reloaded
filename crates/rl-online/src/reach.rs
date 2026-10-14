@@ -20,12 +20,13 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use rl_discovery::handshake::{IN_THE_FUTURE, TOO_OLD};
 use rl_discovery::{Inbound, Inbox, Pool, PoolConfig, PoolEvent, RelayStatus, Request};
 use rl_lobby::Identity;
 use rl_net::endpoint::{Endpoint, Reach};
 use rl_net::portmap::MappingState;
 use rl_net::probe::NatBehaviour;
-use rl_proto::Signal;
+use rl_proto::{Refusal, Signal};
 
 use crate::join::unix_now;
 
@@ -153,6 +154,79 @@ impl Reachability {
     }
 }
 
+/// What became of one join through the relays, as the host says it (ruling
+/// FR12b-3: its lobby and log, so a failed join leaves a trace on both
+/// PCs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RelayJoin {
+    /// An offer was answered.
+    Answered,
+    /// An offer was refused (`Busy`: every pending join is live, PF12b-2).
+    Refused(Refusal),
+    /// An answered join did not connect (`Endpoint`'s `JoinFailed`): no
+    /// network path within 15 s, or it made room for newer joins.
+    NotConnected,
+    /// Handshake events dated `by` seconds from this machine's clock
+    /// (ahead when positive) were ignored: one of the two clocks is off by
+    /// more than a minute.
+    Skewed { by: i64 },
+}
+
+impl RelayJoin {
+    /// The lobby's and the log's line; `more`: how many more of its kind
+    /// were not said since the last (at most one line a kind every
+    /// [`NOTE_EVERY`]).
+    pub fn line(&self, more: u32) -> String {
+        let asked = "A player asked to join through the relays";
+        let mut text = match self {
+            RelayJoin::Answered => format!("{asked}: answered"),
+            RelayJoin::Refused(Refusal::Busy) => format!("{asked}: refused, busy with other joins"),
+            RelayJoin::Refused(r) => format!("{asked}: refused ({})", refusal_words(*r)),
+            RelayJoin::NotConnected => {
+                "A join through the relays was answered but did not connect within 15 s: no network path"
+                    .into()
+            }
+            RelayJoin::Skewed { by } => format!(
+                "Ignored a join through the relays dated {} s {} this PC's clock: check both PCs' clocks",
+                by.unsigned_abs(),
+                if *by > 0 { "ahead of" } else { "behind" }
+            ),
+        };
+        if more > 0 {
+            text.push_str(&format!(" ({more} more since)"));
+        }
+        text
+    }
+
+    /// Its kind, for the throttle.
+    fn kind(&self) -> u8 {
+        match self {
+            RelayJoin::Answered => 0,
+            RelayJoin::Refused(_) => 1,
+            RelayJoin::NotConnected => 2,
+            RelayJoin::Skewed { .. } => 3,
+        }
+    }
+}
+
+/// A refusal in the host's words.
+fn refusal_words(r: Refusal) -> &'static str {
+    match r {
+        Refusal::Version => "another game version",
+        Refusal::Full => "the game is full",
+        Refusal::Banned => "banned",
+        Refusal::Busy => "busy with other joins",
+        Refusal::Malformed => "a malformed offer",
+        Refusal::Password => "a wrong password",
+        Refusal::Exhausted => "no connection ids left: restart the game",
+        Refusal::Throttled => "too many wrong passwords",
+    }
+}
+
+/// At most one line of each [`RelayJoin`] kind this often (a flood of
+/// offers is counted, not said one by one).
+pub const NOTE_EVERY: Duration = Duration::from_secs(5);
+
 /// What a pool's relays did, from its `Status` events: connected now, ever
 /// connected, ever failed to connect.
 #[derive(Clone, Debug)]
@@ -228,6 +302,9 @@ struct Answered {
 pub(crate) struct Listener {
     /// Each new offer, with when the inbox took it.
     offers: Receiver<(Request, Instant)>,
+    /// Handshakes ignored for their date: how far off this machine's clock
+    /// (seconds, ahead when positive; at most one every `NOTE_EVERY`).
+    skews: Receiver<i64>,
     answers: Sender<Answered>,
     status: Arc<Mutex<Listening>>,
     stop: Arc<AtomicBool>,
@@ -237,14 +314,22 @@ impl Listener {
     /// Listens on `cfg`'s relays for handshakes addressed to `me`.
     pub(crate) fn start(cfg: PoolConfig, me: Identity) -> io::Result<Listener> {
         let (offer_tx, offers) = mpsc::channel();
+        let (skew_tx, skews) = mpsc::channel();
         let (answers, answer_rx) = mpsc::channel();
         let status = Arc::new(Mutex::new(Relays::new(cfg.relays.len()).listening()));
         let stop = Arc::new(AtomicBool::new(false));
         let (s, st) = (Arc::clone(&status), Arc::clone(&stop));
+        let to = ToPeer { offers: offer_tx, skews: skew_tx };
         thread::Builder::new()
             .name("rl-online listen".into())
-            .spawn(move || listen(cfg, me, &offer_tx, &answer_rx, &s, &st))?;
-        Ok(Listener { offers, answers, status, stop })
+            .spawn(move || listen(cfg, me, &to, &answer_rx, &s, &st))?;
+        Ok(Listener { offers, skews, answers, status, stop })
+    }
+
+    /// The handshakes ignored for their date since the last call, as how
+    /// far off this machine's clock they were.
+    pub(crate) fn skews(&mut self) -> Vec<i64> {
+        self.skews.try_iter().collect()
     }
 
     /// The new offers at `now`, in order, but those older than
@@ -288,6 +373,9 @@ pub(crate) struct HostReach {
     /// lines, whether it settled, its direct address.
     seen: Option<Reachability>,
     reported: Option<(Vec<String>, bool, Option<SocketAddr>)>,
+    /// Per `RelayJoin` kind: when one was last said, and how many were not
+    /// said since (FR12b-3's throttle).
+    said: [(Option<Instant>, u32); 4],
 }
 
 impl HostReach {
@@ -301,6 +389,7 @@ impl HostReach {
             public_address: listen.public_address,
             seen: None,
             reported: None,
+            said: [(None, 0); 4],
         })
     }
 
@@ -318,13 +407,36 @@ impl HostReach {
     }
 
     /// The listener's offers, answered by `ep` (`answer_signalled` with the
-    /// joiner's mapped hint), the answers handed back with `ep`'s mapping.
-    pub(crate) fn answer(&mut self, ep: &mut Endpoint, now: Instant) {
+    /// joiner's mapped hint), the answers handed back with `ep`'s mapping;
+    /// what to say of them, and of handshakes dated off the clock, is
+    /// added to `notes` (FR12b-3).
+    pub(crate) fn answer(&mut self, ep: &mut Endpoint, now: Instant, notes: &mut Vec<(RelayJoin, u32)>) {
         let Some(listener) = &mut self.listener else { return };
+        let mut said = Vec::new();
         for req in listener.offers(now) {
             let signal = ep.answer_signalled(&req.signal, req.mapped, now);
+            said.push(match &signal {
+                Signal::Refused { reason } => RelayJoin::Refused(*reason),
+                _ => RelayJoin::Answered,
+            });
             listener.answer(req, signal, ep.mapped());
         }
+        said.extend(listener.skews().into_iter().map(|by| RelayJoin::Skewed { by }));
+        for join in said {
+            self.note(join, now, notes);
+        }
+    }
+
+    /// `join` said, unless one of its kind was said less than
+    /// [`NOTE_EVERY`] ago (then it is counted, and said with the next).
+    pub(crate) fn note(&mut self, join: RelayJoin, now: Instant, notes: &mut Vec<(RelayJoin, u32)>) {
+        let (last, more) = &mut self.said[usize::from(join.kind())];
+        if last.is_some_and(|t| now.saturating_duration_since(t) < NOTE_EVERY) {
+            *more += 1;
+            return;
+        }
+        *last = Some(now);
+        notes.push((join, std::mem::take(more)));
     }
 
     /// The reachability of `ep` now.
@@ -362,17 +474,28 @@ impl HostReach {
     }
 }
 
+/// What the listener thread hands the peer: new offers, and how far off
+/// the clock ignored handshakes were dated.
+struct ToPeer {
+    offers: Sender<(Request, Instant)>,
+    skews: Sender<i64>,
+}
+
 /// The listener thread: subscribes to the inbox's filter (again every
 /// [`RESUBSCRIBE`]), passes new offers to the peer, publishes repeats'
-/// cached replies and the peer's answers, and keeps the status.
+/// cached replies and the peer's answers, keeps the status, and says a
+/// handshake dated more than a minute off this machine's clock (at most
+/// one every [`NOTE_EVERY`], FR12b-3).
 fn listen(
     cfg: PoolConfig,
     me: Identity,
-    offers: &Sender<(Request, Instant)>,
+    to: &ToPeer,
     answers: &Receiver<Answered>,
     status: &Mutex<Listening>,
     stop: &AtomicBool,
 ) {
+    let offers = &to.offers;
+    let mut skew_said: Option<Instant> = None;
     let mut relays = Relays::new(cfg.relays.len());
     let mut pool = Pool::start(cfg);
     let mut inbox = Inbox::new(me);
@@ -412,12 +535,25 @@ fn listen(
         pool.poll(&mut events);
         for e in events.drain(..) {
             match e {
-                PoolEvent::Event { event, .. } => match inbox.offer(&event, now, unix_now()) {
-                    // A send fails only once the peer is gone.
-                    Inbound::Offer(req) => drop(offers.send((req, now))),
-                    Inbound::Repeat(reply) => pool.publish(reply),
-                    Inbound::Ignored(_) => {}
-                },
+                PoolEvent::Event { event, .. } => {
+                    let unix = unix_now();
+                    match inbox.offer(&event, now, unix) {
+                        // A send fails only once the peer is gone.
+                        Inbound::Offer(req) => drop(offers.send((req, now))),
+                        Inbound::Repeat(reply) => pool.publish(reply),
+                        Inbound::Ignored(why)
+                            if (why == TOO_OLD || why == IN_THE_FUTURE)
+                                && skew_said
+                                    .is_none_or(|t| now.saturating_duration_since(t) >= NOTE_EVERY) =>
+                        {
+                            skew_said = Some(now);
+                            let by = i64::try_from(event.created_at).unwrap_or(i64::MAX)
+                                - i64::try_from(unix).unwrap_or(i64::MAX);
+                            let _ = to.skews.send(by);
+                        }
+                        Inbound::Ignored(_) => {}
+                    }
+                }
                 PoolEvent::Status { relay, status } => relays.status(relay, &status),
                 PoolEvent::Eose { .. } | PoolEvent::Ok { .. } => {}
             }

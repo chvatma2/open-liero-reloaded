@@ -415,7 +415,10 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   on the invite (`LobbyView::invite`, the host's only) and, for Public, in
   the notes (`Hosted::announced`: IPv4, and not a private one on public
   relays, final review B-M2; with its external port); its lines are
-  `LobbyView::reach` under `listing`. A Public game's `Publisher` signs
+  `LobbyView::reach` under `listing`. Each `OnlineEvent::RelayJoin`
+  (ruling FR12b-3: what became of a join through the relays) is a line
+  in the host's lobby log (`chat_line`) and `rl-game: relays: …` on the
+  console. A Public game's `Publisher` signs
   with the install's identity: notes once the reachability settled, at
   most `SETTLE_WAIT` (5 s) after hosting (`created_at` the wall clock; the
   first note dated 10 s after this game's last closing note,

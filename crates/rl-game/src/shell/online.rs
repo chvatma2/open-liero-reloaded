@@ -690,6 +690,13 @@ impl Shell {
                     self.data.joining = Some(step.to_string());
                 }
                 OnlineEvent::Reachability(r) => self.reached(r),
+                // FR12b-3: what became of a join through the relays, in
+                // the host's lobby and on its console.
+                OnlineEvent::RelayJoin { join, more } => {
+                    let text = join.line(more);
+                    println!("rl-game: relays: {text}");
+                    self.chat_line(LogLine::event(text));
+                }
                 OnlineEvent::Connected { path, remote } => {
                     println!("rl-game: {}", path_text(path, remote));
                     self.poll_connection();

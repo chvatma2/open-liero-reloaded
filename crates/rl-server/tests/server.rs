@@ -1201,6 +1201,8 @@ fn an_invite_server_without_an_address_is_joined_through_nostr() {
     assert!(log.contains("from 127.0.0.1 via direct key "), "{log}");
     assert!(log.contains("reach: Port mapping is off: "), "{log}");
     assert!(log.contains("reach: Taking joins through 1 of 1 relays"), "{log}");
+    // FR12b-3: what became of the join through the relays.
+    assert!(log.contains("relays: A player asked to join through the relays: answered"), "{log}");
 }
 
 /// N47, N51: a public server whose router (a `FakeGateway` speaking UPnP

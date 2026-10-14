@@ -38,7 +38,7 @@ use crate::events::{NetStats, OnlineEvent};
 use crate::join::{BUSY, Join, Joiner, Lost};
 use crate::matches::{self, HostBots};
 use crate::outbox::{Outbox, Part};
-use crate::reach::{HostListen, HostReach, Reachability};
+use crate::reach::{HostListen, HostReach, Reachability, RelayJoin};
 use crate::replay::{MatchRecord, PendingReplay};
 
 mod lobby_handle;
@@ -582,6 +582,17 @@ impl OnlinePeer {
         self.content.set_prompt_bytes(bytes);
     }
 
+    /// Tests only (`test-hooks`): a client joining through Nostr dates its
+    /// handshake `secs` off the system's clock (a PC whose clock is wrong).
+    #[cfg(feature = "test-hooks")]
+    pub fn test_clock_offset(&mut self, secs: i64) {
+        if let Side::Client(c) = &mut self.side
+            && let Some(j) = &mut c.joiner
+        {
+            j.set_clock(secs);
+        }
+    }
+
     /// Tests only (`test-hooks`): a client builds the host's start with
     /// this seed instead (a world that differs from the host's).
     #[cfg(feature = "test-hooks")]
@@ -649,6 +660,12 @@ impl OnlinePeer {
                 },
                 NetEvent::Disconnected { peer, .. } => self.forget_peer(peer),
                 NetEvent::Refused { .. } => {}
+                NetEvent::JoinFailed { .. } => {
+                    let mut notes = Vec::new();
+                    h.reach.note(RelayJoin::NotConnected, now, &mut notes);
+                    self.events
+                        .extend(notes.into_iter().map(|(join, more)| OnlineEvent::RelayJoin { join, more }));
+                }
             },
             Side::Client(c) => match e {
                 NetEvent::Connected { addr, path, .. } => {
@@ -724,6 +741,8 @@ impl OnlinePeer {
                     let text = if nostr && why == Refusal::Busy { BUSY } else { refusal_text(why) };
                     self.end_with(OnlineEvent::Refused(text.into()));
                 }
+                // A host's only.
+                NetEvent::JoinFailed { .. } => {}
             },
         }
     }
@@ -830,10 +849,13 @@ impl OnlinePeer {
         }
     }
 
-    /// A host's listener's offers, answered by the endpoint (N54).
+    /// A host's listener's offers, answered by the endpoint (N54), and
+    /// what it says of them (FR12b-3).
     fn listen_tasks(&mut self, now: Instant) {
         let (Side::Host(h), Some(ep)) = (&mut self.side, self.endpoint.endpoint_mut()) else { return };
-        h.reach.answer(ep, now);
+        let mut notes = Vec::new();
+        h.reach.answer(ep, now, &mut notes);
+        self.events.extend(notes.into_iter().map(|(join, more)| OnlineEvent::RelayJoin { join, more }));
     }
 
     /// A host's reachability, when its lines, whether it settled or its

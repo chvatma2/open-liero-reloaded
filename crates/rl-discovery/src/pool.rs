@@ -256,6 +256,13 @@ impl Pool {
         self.links.iter().map(|l| (l.url.clone(), l.lock().status.clone())).collect()
     }
 
+    /// Each relay's clock minus this machine's, in seconds, from the `Date`
+    /// header of its last WebSocket handshake (`None` before one, or
+    /// without the header): FR12b-3's clock check, `rl-server --nat-check`.
+    pub fn clocks(&self) -> Vec<Option<i64>> {
+        self.links.iter().map(|l| l.lock().clock).collect()
+    }
+
     /// Events dropped because a relay delivered more than 4096 (or 8 MiB)
     /// between two polls.
     pub fn dropped_events(&self) -> u64 {

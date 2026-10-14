@@ -232,6 +232,9 @@ fn a_public_game_without_an_address_is_joined_through_the_relays() {
     let tags: Vec<_> = h.data.lobby.as_ref().unwrap().members.iter().map(|m| m.path.clone()).collect();
     assert_eq!(tags, [None, Some("direct".to_string())], "the host has no path, its joiner's is direct");
     assert_eq!(c.data.lobby.as_ref().unwrap().reach, Vec::<String>::new(), "a client has no reach lines");
+    // FR12b-3: the host's lobby says it answered the join through the relays.
+    let answered = "A player asked to join through the relays: answered";
+    assert!(h.data.chat.iter().any(|l| l.text == answered), "{:?}", h.data.chat);
     c.act(UiAction::LeaveLobby);
     // The listed game joins through the relays too.
     c.act(UiAction::JoinListed { addr: None, key: invite.key, password: None });

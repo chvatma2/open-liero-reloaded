@@ -269,7 +269,9 @@ fn filters_select_the_handshakes_addressed_to_us() {
     let mut asker = Asker::new(host.public(), offer(), t0, unix, &mut rand);
     let sent = asker.poll(t0, unix, &mut rand).unwrap();
     assert!(inbox.filter(unix).matches(&sent));
-    assert_eq!(inbox.filter(unix).since, Some(unix - 60));
+    // Ten minutes back: a joiner whose clock is behind is seen, then said
+    // (FR12b-3); `offer` still ignores it.
+    assert_eq!(inbox.filter(unix).since, Some(unix - 600));
     let mut inbox = inbox;
     let Inbound::Offer(req) = inbox.offer(&sent, t0, unix) else { panic!() };
     let reply = inbox.reply(&req, Signal::Answer { sdp: "x".into() }, None, t0, unix, &mut rand);

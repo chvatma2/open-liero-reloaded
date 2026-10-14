@@ -16,6 +16,7 @@ use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs as _, UdpSocket};
 use std::time::{Duration, Instant};
 
+use rl_discovery::handshake::MAX_SKEW;
 use rl_discovery::list::is_global;
 use rl_discovery::turn_note::{TurnList, parse_turn_note};
 use rl_discovery::{Pool, PoolConfig, PoolEvent, RelayStatus, binding_request, parse_binding_response};
@@ -289,11 +290,27 @@ fn relays(config: &Config, deadline: Duration, out: &mut dyn Write) -> anyhow::R
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    for (url, s) in config.relays.iter().zip(&status) {
-        match s {
-            Some(s) => writeln!(out, "relay {url}: {s}")?,
-            None => writeln!(out, "relay {url}: no answer within {} s", deadline.as_secs_f32())?,
+    // Each relay's clock against this PC's (its handshake's `Date`): joins
+    // through the relays fail when two PCs' clocks differ by more than a
+    // minute (FR12b-3).
+    let clocks = pool.clocks();
+    let mut off = false;
+    for ((url, s), clock) in config.relays.iter().zip(&status).zip(clocks) {
+        match (s.as_deref(), clock) {
+            (Some("connected"), Some(by)) => {
+                off |= by.unsigned_abs() > MAX_SKEW;
+                writeln!(out, "relay {url}: connected, {}", clock_words(by))?;
+            }
+            (Some(s), _) => writeln!(out, "relay {url}: {s}")?,
+            (None, _) => writeln!(out, "relay {url}: no answer within {} s", deadline.as_secs_f32())?,
         }
+    }
+    if off {
+        writeln!(
+            out,
+            "clock: this PC's clock differs from a relay's by more than a minute: joins through the relays fail \
+             when two PCs' clocks differ by that much; set this PC's clock"
+        )?;
     }
     let open: Vec<&rl_discovery::TurnNote> =
         notes.values().map(|(_, n)| n).filter(|n| n.capacity > 0).collect();
@@ -307,6 +324,15 @@ fn relays(config: &Config, deadline: Duration, out: &mut dyn Write) -> anyhow::R
         )?;
     }
     Ok(())
+}
+
+/// A relay's clock against this PC's, `by` seconds (ahead when positive).
+fn clock_words(by: i64) -> String {
+    match by {
+        -1..=1 => "its clock agrees with this PC's".into(),
+        by if by > 0 => format!("its clock {by} s ahead of this PC's"),
+        by => format!("its clock {} s behind this PC's", by.unsigned_abs()),
+    }
 }
 
 #[cfg(test)]
@@ -367,9 +393,12 @@ mod tests {
         })
         .unwrap();
         let gw = FakeGateway::start(true, true, true, Ipv4Addr::new(203, 0, 113, 7), Misbehaviour::Honest);
+        // A relay whose clock is 2 minutes ahead (FR12b-3).
+        let ahead = TestRelay::start();
+        ahead.set_time(unix_now() + 120);
         let config = Config {
             stun: vec![turn.local_addr().to_string()],
-            relays: vec![relay.url()],
+            relays: vec![relay.url(), ahead.url()],
             ..Config::default()
         };
         let text = report(&config, &gw);
@@ -382,13 +411,20 @@ mod tests {
             "opened (",
             "router: but its address 203.0.113.7 is not public",
             "router: the mapping is deleted\n",
-            &format!("relay {}: connected\n", relay.url()),
+            &format!("relay {}: connected, its clock agrees with this PC's\n", relay.url()),
+            "clock: this PC's clock differs from a relay's by more than a minute: joins through the relays fail \
+             when two PCs' clocks differ by that much; set this PC's clock\n",
             "TURN notes: 1\n",
             "TURN relay 81.2.69.142:3478 (Europe, 3 of 32 in use)\n",
             "nat-check done\n",
         ] {
             assert!(text.contains(want), "{want:?} in:\n{text}");
         }
+        let ahead_line = format!("relay {}: connected, its clock ", ahead.url());
+        let by = text.lines().find_map(|l| {
+            l.strip_prefix(&ahead_line)?.strip_suffix(" s ahead of this PC's")?.parse::<i64>().ok()
+        });
+        assert!(by.is_some_and(|by| (118..=121).contains(&by)), "{text}");
         assert!(gw.mappings().is_empty(), "deleted: {:?}", gw.mappings());
 
         // Two servers, two mapped ports: a symmetric NAT. No relays.

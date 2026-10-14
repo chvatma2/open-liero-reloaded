@@ -97,6 +97,9 @@ pub(crate) struct LinkState {
     inbox_events: usize,
     inbox_bytes: usize,
     pub dropped: u64,
+    /// The relay's clock minus this machine's, in seconds, from its last
+    /// handshake's `Date` header (FR12b-3).
+    pub clock: Option<i64>,
 }
 
 pub(crate) struct Link {
@@ -127,6 +130,7 @@ impl Link {
                 inbox: VecDeque::new(),
                 inbox_events: 0,
                 inbox_bytes: 0,
+                clock: None,
                 dropped: 0,
             }),
             stop: AtomicBool::new(false),
@@ -397,7 +401,17 @@ fn connect(link: &Arc<Link>, cfg: &DriverConfig) -> Result<Ws, ConnectError> {
     let mut attempt = tungstenite::client_tls_with_config(request, sock, Some(config), Some(connector));
     loop {
         match attempt {
-            Ok((ws, _)) => return Ok(ws),
+            Ok((ws, response)) => {
+                // The relay's clock against ours (its `Date`, if any).
+                let date = response.headers().get("date").and_then(|v| v.to_str().ok());
+                link.lock().clock = date.and_then(crate::http_date::parse).map(|relay| {
+                    let ours = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_secs());
+                    i64::try_from(relay).unwrap_or(i64::MAX).saturating_sub(i64::try_from(ours).unwrap_or(0))
+                });
+                return Ok(ws);
+            }
             Err(HandshakeError::Failure(e)) => return Err(ConnectError::Retry(format!("handshake: {e}"))),
             Err(HandshakeError::Interrupted(mid)) => {
                 if link.stopping() {

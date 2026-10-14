@@ -105,6 +105,21 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     answer_signalled(&req.signal, req.mapped, now)` (`req.mapped` is
     always `None` from our joiners: a joiner maps no port, N47) and hands
     the answer and `Endpoint::mapped()` back to be sealed and published.
+    **What became of each join through the relays** (ruling FR12b-3):
+    `reach::RelayJoin` (`Answered`, `Refused(reason)`, `NotConnected`:
+    the endpoint's `JoinFailed`, `Skewed { by }`: the listener thread
+    saw a handshake ignored as `TOO_OLD`/`IN_THE_FUTURE`, `by` its date
+    minus the clock, at most one every `NOTE_EVERY`), as
+    `OnlineEvent::RelayJoin { join, more }`: at most one of each kind
+    every `NOTE_EVERY` (5 s), `more` counting those not said since;
+    `RelayJoin::line(more)` is the lobby's and the log's line ("A player
+    asked to join through the relays: answered", "…: refused, busy with
+    other joins", "…: refused (<reason>)", "A join through the relays
+    was answered but did not connect within 15 s: no network path",
+    "Ignored a join through the relays dated N s ahead of|behind this
+    PC's clock: check both PCs' clocks", then " (N more since)").
+    Test hook `OnlinePeer::test_clock_offset(secs)` (`test-hooks`): a
+    joiner's handshake dated off the clock.
     The host's `HostEvent::Notice` (N59's `RELAYED_BAN`) is an
     `OnlineEvent::Notice`; `LobbyHandle::ban_with_address(member)` is the
     host's own (`by: None`), `ban_with_address_by(member, by)` an admin's.
@@ -379,7 +394,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   published, answers sealed with `Inbox::reply` and published; dropping
   it stops the thread, which drops its pool itself.
 - **`events.rs`**: `OnlineEvent` (plan 12b: `Joining(JoinStep)`,
-  `Reachability(Reachability)`, `Connected { path, remote }`), `NetStats` (round trip, input delay, the
+  `Reachability(Reachability)`, `Connected { path, remote }`,
+  `RelayJoin { join, more }`), `NetStats` (round trip, input delay, the
   last second's deepest rollback, a client's datagram loss, corrections
   per second, stall episodes).
 
@@ -434,7 +450,11 @@ match to equal confirmed inputs and checksums); a lost offer sent again
 survived; a host's answer with no path (`relay_only`, no TURN server,
 rl-net's `setup_timeout` hook at 3 s) is `no_path(port, None)`; a
 refused offer (another fingerprint) says why and never `Connecting`;
-`NO_REPLY` 10 s ± 1 s after `Asking`; `RELAYS_REFUSED`
+`NO_REPLY` 10 s ± 1 s after `Asking` (it names the clocks); a joiner
+whose clock is 2 minutes ahead (`test_clock_offset(120)`) ends with
+`NO_REPLY` while its host says `Skewed { by: ~120 }` (FR12b-3); the
+host's `Answered`, `Refused(Version)` and `NotConnected` lines in the
+join, refusal and no-path tests; `RELAYS_REFUSED`
 (`RefuseKind(21470)`); `NO_RELAYS` (a closed port, within 6 s); a
 direct failure falling back to Nostr; a same-LAN joiner whose router does
 not hairpin (rl-net's `connect_stall` hook: the connect fails after

@@ -104,9 +104,10 @@ impl std::fmt::Display for JoinStep {
 /// Every relay failed before the host answered.
 pub const NO_RELAYS: &str =
     "could not reach any Nostr relay: check your Internet connection, or the relays in Options → Online";
-/// The host's answer did not come within `ANSWER_DEADLINE`.
-pub const NO_REPLY: &str =
-    "the game did not answer through the relays (it may have closed, or its relays differ from yours)";
+/// The host's answer did not come within `ANSWER_DEADLINE` (FR12b-3: a
+/// clock off by more than a minute on either PC fails so too).
+pub const NO_REPLY: &str = "the game did not answer through the relays (it may have closed, its relays may differ \
+     from yours, or one of the two PCs' clocks is off by more than a minute)";
 /// Every relay that could be reached refused this join's handshake events
 /// (some take events only from keys they know, NIP-01's `blocked:` or
 /// `restricted:`): not the host's doing.
@@ -244,6 +245,9 @@ struct Nostr {
     answered: Option<u16>,
     /// The TURN relay an allocation was made on.
     relayed: Option<SocketAddr>,
+    /// Seconds added to the system's clock for the handshake's dates (a
+    /// test hook's skewed clock; 0).
+    clock: i64,
 }
 
 impl Nostr {
@@ -274,7 +278,13 @@ impl Nostr {
             verdicts: vec![Verdict::None; n],
             answered: None,
             relayed: None,
+            clock: 0,
         }
+    }
+
+    /// The unix time the handshake's events are dated by.
+    fn unix(&self) -> u64 {
+        unix_now().saturating_add_signed(self.clock)
     }
 
     /// Every relay either refused the join's events or could never be
@@ -293,7 +303,7 @@ impl Nostr {
         events: &mut Vec<OnlineEvent>,
     ) -> Result<(), String> {
         let started = *self.started.get_or_insert(now);
-        let unix = unix_now();
+        let unix = self.unix();
         let mut got = Vec::new();
         if let Some(pool) = &mut self.pool {
             pool.poll(&mut got);
@@ -442,6 +452,8 @@ pub(crate) struct Joiner {
     cfg: EndpointConfig,
     nostr: Option<NostrJoin>,
     stage: Stage,
+    /// The handshake's clock offset (`set_clock`, a test hook; 0).
+    clock: i64,
 }
 
 /// Why a join's link was lost before it opened.
@@ -462,15 +474,25 @@ impl Joiner {
         match join {
             Join { direct: Some(addr), nostr } => {
                 let ep = Endpoint::connect(cfg.clone(), addr)?;
-                Ok((Joiner { cfg, nostr, stage: Stage::Direct }, Some(ep), JoinStep::Direct))
+                Ok((Joiner { cfg, nostr, stage: Stage::Direct, clock: 0 }, Some(ep), JoinStep::Direct))
             }
             Join { direct: None, nostr: Some(n) } => {
                 let stage = Stage::Nostr(Box::new(Nostr::start(n)));
-                Ok((Joiner { cfg, nostr: None, stage }, None, JoinStep::Relays))
+                Ok((Joiner { cfg, nostr: None, stage, clock: 0 }, None, JoinStep::Relays))
             }
             Join { direct: None, nostr: None } => {
                 Err(io::Error::new(io::ErrorKind::InvalidInput, "a join needs an address or a host key"))
             }
+        }
+    }
+
+    /// Dates the handshake's events `secs` off the system's clock (tests:
+    /// a joiner whose clock is wrong).
+    #[cfg(feature = "test-hooks")]
+    pub(crate) fn set_clock(&mut self, secs: i64) {
+        self.clock = secs;
+        if let Stage::Nostr(n) = &mut self.stage {
+            n.clock = secs;
         }
     }
 
@@ -499,7 +521,9 @@ impl Joiner {
                 Some(n) => {
                     // The direct endpoint goes (a client's has no mapping).
                     drop(outbox.take_endpoint());
-                    self.stage = Stage::Nostr(Box::new(Nostr::start(n)));
+                    let mut nostr = Nostr::start(n);
+                    nostr.clock = self.clock;
+                    self.stage = Stage::Nostr(Box::new(nostr));
                     events.push(OnlineEvent::Joining(JoinStep::Relays));
                     Lost::FellBack
                 }
@@ -577,7 +601,8 @@ mod tests {
         );
         assert_eq!(
             NO_REPLY,
-            "the game did not answer through the relays (it may have closed, or its relays differ from yours)"
+            "the game did not answer through the relays (it may have closed, its relays may differ from yours, or \
+             one of the two PCs' clocks is off by more than a minute)"
         );
     }
 

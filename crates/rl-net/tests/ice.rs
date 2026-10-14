@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use rl_net::endpoint::{
     Endpoint, EndpointConfig, GATHER_DEADLINE, HOST, IceConfig, MAX_SIGNALLED_PENDING, NetEvent,
-    TurnServerSpec,
+    TurnServerSpec, Why,
 };
 use rl_net::link::{Link, LinkCandidates};
 use rl_net::portmap::DROP_WAIT;
@@ -376,11 +376,29 @@ fn the_signalled_pending_table_is_bounded() {
         let answer = host.ep.answer_signalled(&silent_offer(at), None, Instant::now());
         assert!(matches!(answer, Signal::Answer { .. }), "{answer:?}");
     }
-    // The ninth, a live joiner: a silent setup is evicted for it (PF12b-2).
+    // The ninth, a live joiner: a silent setup is evicted for it (PF12b-2),
+    // and the host hears of it (FR12b-3: a join through the relays that
+    // did not connect).
     let mut client = Side::new(signalled(ice()));
     signal(&mut host, &mut client);
     wait_connected(&mut host, &mut client);
     assert_eq!(client.connected().unwrap().2, Path::Direct);
+    let failed: Vec<_> = host.events.iter().filter(|e| matches!(e, NetEvent::JoinFailed { .. })).collect();
+    assert_eq!(failed, [&NetEvent::JoinFailed { why: Why::Timeout }]);
+}
+
+/// FR12b-3: an answered signalled offer that never opens (its joiner
+/// silent) is reported to the host when its time is up; a TCP join's
+/// failure is not.
+#[test]
+fn a_signalled_join_that_never_opens_is_reported() {
+    let mut host = Side::new(host(IceConfig { setup_timeout: Some(Duration::from_millis(500)), ..ice() }));
+    let quiet = silent();
+    let answer = host.ep.answer_signalled(&silent_offer(quiet.local_addr().unwrap()), None, Instant::now());
+    assert!(matches!(answer, Signal::Answer { .. }), "{answer:?}");
+    run_until(&mut [&mut host], Duration::from_secs(3), "the join's failure", |s| {
+        s[0].events.contains(&NetEvent::JoinFailed { why: Why::Timeout })
+    });
 }
 
 #[test]

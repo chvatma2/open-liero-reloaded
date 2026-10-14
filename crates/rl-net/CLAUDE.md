@@ -557,6 +557,10 @@ for tests.
     `MappedPort` through its TCP mapping, N49). `dtls_fingerprints(peer)`: an open
     peer's link's. A local `close` (and dropping the
     endpoint) tells the peer at once and reports nothing.
+  - **A failed join through signalling** (ruling FR12b-3): a host's
+    signalled setup that does not open (`SIGNALLED_SETUP_TIMEOUT`, an
+    eviction, a close, a limit) is `NetEvent::JoinFailed { why }`, so the
+    host can say so; a TCP join's failure stays silent.
   - **Timeouts**: a link must open within `SETUP_TIMEOUT` (10 s) of its
     offer; an open link silent for `SILENCE_TIMEOUT` (10 s) or lost by ICE
     is `Disconnected { Timeout }`.
@@ -762,7 +766,9 @@ address `MappedPort` at the host and `Direct` at the joiner, a drop
 that returns at once though the router answers deletions 250 ms late
 (`SlowDelete`) with the mapping gone within `DROP_WAIT`, `shutdown`'s
 `wait` returning only once it is deleted, eight
-silent offers pending and a ninth, live, connecting (PF12b-2), the TCP
+silent offers pending and a ninth, live, connecting (PF12b-2; the
+evicted one `JoinFailed { Timeout }`), a silent signalled join reported
+`JoinFailed` at its (hooked) timeout (FR12b-3), the TCP
 path unchanged, and gathering against silent STUN and TURN ports
 ending within `GATHER_DEADLINE` + 100 ms of the endpoint's making;
 `tests/link.rs`: in memory on a

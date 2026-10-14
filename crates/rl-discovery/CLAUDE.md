@@ -99,7 +99,11 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   `expiration` (+60 s), content the NIP-44 encryption of
   `{"v":1,"session":"<32 hex>","signal":<rl_proto::Signal>,"mapped":"<ip:port>"|null}`.
   `MAX_HANDSHAKE_CONTENT` 16 KiB, `RESEND` 2 s, `ANSWER_DEADLINE` 10 s,
-  `MAX_SKEW` 60 s, `SESSION_MEMORY` 120 s, `MAX_SESSIONS` 4096.
+  `MAX_SKEW` 60 s, `SESSION_MEMORY` 120 s, `MAX_SESSIONS` 4096,
+  `CLOCK_SEEN` 600 s (the host's subscription reaches that far back, so a
+  joiner whose clock is behind is seen and said, ruling FR12b-3); an
+  event dated more than `MAX_SKEW` off is `Ignored(TOO_OLD)` or
+  `Ignored(IN_THE_FUTURE)` (public: rl-online says how far off).
   - `Asker` (the joiner): `new` draws a fresh key from `rand` (an invalid
     secret is drawn again, up to 16 draws; a source that gives none is
     broken: the asker then has no key (`key()` all zeros), sends nothing and
@@ -130,7 +134,7 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
     `MAX_HANDSHAKE_CONTENT` is sent as `Refused(Malformed)`. `ignored()`
     counts hostile or over-limit events, not `duplicate` (each relay's
     copy) nor `being answered` (a resend before the reply).
-    `filter(now)`: kind 21470, `#p` us, since now - 60.
+    `filter(now)`: kind 21470, `#p` us, since now - `CLOCK_SEEN`.
   - **Cost:** `Inbox::offer` re-verifies signatures the pool's drivers
     already checked (a forgery never arrives through a `Pool`) and decrypts
     every event addressed to us before the bucket, so its cost is bounded
@@ -226,6 +230,13 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
     tungstenite partial frames and unflushed output, and the handshake
     resumes. Subscriptions are reconciled from the pool's set
     (`REQ`/`CLOSE`) and sent again after every reconnect.
+  - **Clocks** (ruling FR12b-3): each handshake's `Date` header
+    (`http_date`, crate-private: RFC 9110's IMF-fixdate, read and
+    written, fuzzed) against the system's clock at its arrival is the
+    relay's clock offset, `Pool::clocks()` (seconds, the relay ahead when
+    positive; `None` before a handshake or without the header):
+    `rl-server --nat-check` prints it. The test relay dates its handshake
+    by its clock (`set_time`).
   - **Liveness:** after 30 s with nothing received, a WebSocket ping;
     nothing at all within 10 s of it is `Dropped("no answer to ping")`.
   - **Dropped** (then backoff): a frame above `max_frame` (clamped to
@@ -384,5 +395,6 @@ and `ping` (an open and a closed port, the bound); `tests/pool.rs`: the pool aga
 slow, slow-reading: every frame arrives intact through partial writes,
 over `ws://` and `wss://`; a relay dying mid-frame), a flooding relay and unreachable relays: a
 listener on `127.0.0.1` that never accepts, and TEST-NET-1 `192.0.2.1`, never
-routed; unit tests of the backoff, limiter, queues, dedupe and default
-timings in `src`).
+routed; a relay's clock read from its handshake (one 2 minutes ahead);
+unit tests of the backoff, limiter, queues, dedupe and default
+timings in `src`, and of `http_date`).

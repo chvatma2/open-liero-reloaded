@@ -489,3 +489,22 @@ fn a_relay_that_reads_slowly_gets_every_frame_intact() {
         assert_eq!(statuses(&w.seen, r), vec![RelayStatus::Connecting, RelayStatus::Connected]);
     }
 }
+
+/// FR12b-3: each relay's clock against this machine's, from its
+/// handshake's `Date` header (the test relay dates it by its clock).
+#[test]
+fn a_relays_clock_is_read_from_its_handshake() {
+    let (right, ahead) = (TestRelay::start(), TestRelay::start());
+    let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    ahead.set_time(unix + 120);
+    let pool = Pool::start(config(vec![right.url(), ahead.url()]));
+    assert_eq!(pool.clocks(), [None, None], "none before a handshake");
+    let begun = Instant::now();
+    while pool.clocks().iter().any(Option::is_none) {
+        assert!(begun.elapsed() < Duration::from_secs(5), "both handshakes");
+        thread::sleep(ms(5));
+    }
+    let clocks = pool.clocks();
+    assert!(clocks[0].is_some_and(|c| c.abs() <= 1), "{clocks:?}");
+    assert!(clocks[1].is_some_and(|c| (118..=121).contains(&c)), "{clocks:?}");
+}

@@ -19,4 +19,4 @@ pub use content::PeerContent;
 pub use events::{NetStats, OnlineEvent};
 pub use join::{Join, JoinStep, NostrJoin};
 pub use peer::{LobbyHandle, OnlinePeer, PeerRole, Shutdown, StartError};
-pub use reach::{HostListen, Listening, Reachability};
+pub use reach::{HostListen, Listening, Reachability, RelayJoin};

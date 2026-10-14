@@ -45,6 +45,14 @@ pub const ANSWER_DEADLINE: Duration = Duration::from_secs(10);
 /// Handshake events dated further than this from now (either way) are
 /// ignored, in seconds; also their expiration, ahead of `created_at`.
 pub const MAX_SKEW: u64 = 60;
+/// The host's subscription takes handshakes dated up to this far back
+/// (10 minutes), so it sees, and can say (ruling FR12b-3), a joiner whose
+/// clock is behind; `offer` ignores any dated more than `MAX_SKEW` off.
+pub const CLOCK_SEEN: u64 = 600;
+/// `Inbound::Ignored`'s reasons for an event dated more than `MAX_SKEW`
+/// before or after this machine's clock: one of the two clocks is off.
+pub const TOO_OLD: &str = "too old";
+pub const IN_THE_FUTURE: &str = "in the future";
 /// How long the host remembers a session and its reply.
 pub const SESSION_MEMORY: Duration = Duration::from_secs(120);
 /// Most sessions remembered; when full the oldest is dropped.
@@ -160,10 +168,10 @@ fn cheap(e: &Event, me: &str, now_unix: u64) -> Result<(), &'static str> {
         return Err("not for us");
     }
     if e.created_at.saturating_add(MAX_SKEW) < now_unix {
-        return Err("too old");
+        return Err(TOO_OLD);
     }
     if e.created_at > now_unix.saturating_add(MAX_SKEW) {
-        return Err("in the future");
+        return Err(IN_THE_FUTURE);
     }
     Ok(())
 }
@@ -199,12 +207,13 @@ impl Inbox {
         Inbox { me, me_hex, sessions: BTreeMap::new(), tokens: OFFER_BURST * TOKEN, filled: None, ignored: 0 }
     }
 
-    /// The subscription: handshakes tagged with our key, since a minute ago.
+    /// The subscription: handshakes tagged with our key, since
+    /// `CLOCK_SEEN` ago (those older than a minute are ignored, but said).
     pub fn filter(&self, now_unix: u64) -> Filter {
         Filter {
             kinds: vec![KIND_HANDSHAKE],
             tags: vec![('p', vec![self.me_hex.clone()])],
-            since: Some(now_unix.saturating_sub(MAX_SKEW)),
+            since: Some(now_unix.saturating_sub(CLOCK_SEEN)),
             ..Filter::default()
         }
     }
