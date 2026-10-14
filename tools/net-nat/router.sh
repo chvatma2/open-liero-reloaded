@@ -7,11 +7,14 @@
 #   symmetric  masquerade fully-random: a new port per destination
 #   upnp       cone, plus miniupnpd with UPnP-IGD only
 #   pcp        cone, plus miniupnpd with NAT-PMP and PCP only
+#   pmp        as pcp, but PCP requests (version byte 2) are dropped: a
+#              NAT-PMP-only router (miniupnpd switches both together)
 # (rl-net asks every method at once and keeps the first mapping: PCP
 # answers before UPnP's search ends, so a router offering both would
 # never show UPnP.)
 # Prints "router ready" once it routes (and miniupnpd listens), then
-# runs until stopped.
+# runs until stopped or for RL_NAT_LIFE seconds (default 120): a run
+# that was interrupted leaves no router running for long.
 set -eu
 kind=$1
 wan_ip=$2
@@ -33,7 +36,7 @@ lan_net=$(ip -o -4 route show dev "$lan" scope link | awk '{ print $1; exit }')
 
 case "$kind" in
     symmetric) masquerade="masquerade fully-random" ;;
-    cone | upnp | pcp) masquerade="masquerade" ;;
+    cone | upnp | pcp | pmp) masquerade="masquerade" ;;
     *)
         echo "router: unknown kind $kind" >&2
         exit 1
@@ -47,12 +50,19 @@ esac
 # their conntrack entry is never confirmed. Accepted (to a closed port),
 # it would be, and an outbound flow to that peer would then be masqueraded
 # to another port: hole punching would fail where a real router lets it.
+# A NAT-PMP-only router drops PCP: the first payload byte (after the
+# 8-byte UDP header) is the version, 2 for PCP and 0 for NAT-PMP.
+pcp_rule=""
+if [ "$kind" = pmp ]; then
+    pcp_rule="iifname \"$lan\" udp dport 5351 @th,64,8 2 drop"
+fi
 nft -f - <<NFT
 table inet filter {
     chain input {
         type filter hook input priority 0; policy drop;
         ct state established,related accept
         iif "lo" accept
+        $pcp_rule
         iifname "$lan" accept
     }
     chain forward {
@@ -79,7 +89,7 @@ table inet filter {
 }
 NFT
 
-if [ "$kind" = upnp ] || [ "$kind" = pcp ]; then
+if [ "$kind" = upnp ] || [ "$kind" = pcp ] || [ "$kind" = pmp ]; then
     if [ "$kind" = upnp ]; then
         upnp=yes pcp=no port=1900
     else
@@ -101,5 +111,5 @@ if [ "$kind" = upnp ] || [ "$kind" = pcp ]; then
     done
 fi
 echo "router ready: $kind, WAN $wan $wan_ip, LAN $lan $lan_ip ($lan_net)"
-# Until stopped (docker stop: --init forwards SIGTERM).
-while :; do sleep 3600; done
+# Until stopped (docker stop: --init forwards SIGTERM) or its lifetime ends.
+sleep "${RL_NAT_LIFE:-120}"

@@ -217,7 +217,7 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
         let content = envs.iter().find(|(k, _)| *k == "RL_CONTENT_DIR").map(|(_, v)| v.clone());
         step("e2e", &mut || crate::e2e::run(content.as_deref()));
         let t = Instant::now();
-        finish("net-nat", t, crate::nat::step());
+        finish("net-nat", t, crate::nat::step(offline));
         step("bench", &mut || crate::bench::bench_step(&envs, false));
         step("stress", &mut || crate::bench::stress_step(content.as_deref(), false));
         step("net-feel", &mut || crate::net::feel_step(content.as_deref()));

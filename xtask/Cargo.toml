@@ -26,6 +26,8 @@ hex.workspace = true
 # pure-Rust backend, which rl-pack's png and rl-oracle turn on).
 zip.workspace = true
 tempfile.workspace = true
+# `net-nat`: Ctrl+C removes its containers and networks before exiting.
+ctrlc.workspace = true
 
 [lints]
 workspace = true

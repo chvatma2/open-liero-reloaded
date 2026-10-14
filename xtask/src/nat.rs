@@ -3,23 +3,27 @@
 //! masquerade, `masquerade fully-random`, miniupnpd) between isolated LANs
 //! and a test WAN on documentation addresses (203.0.113.0/24), a Nostr
 //! relay, a STUN server and a TURN relay (`rl-server --relay`) on the WAN,
-//! and our host-built release binaries playing each scenario of
-//! [`SCENARIOS`]: a direct join, port mapping (UPnP; PCP or NAT-PMP), hole
-//! punching, the TURN relay, its absence, finding a listed game, and
-//! `rl-server --nat-check`. Every network is `--internal` with a dummy
-//! parent (macvlan): nothing reaches the host, its router or the Internet.
-//! The image build (`tools/net-nat/Dockerfile`, FROM the host's own
-//! distribution, so the binaries run unchanged) is the only network use,
-//! and its image is cached by tag. Topology and timings:
-//! `tools/net-nat/CLAUDE.md`.
+//! and our host-built binaries playing each scenario of [`SCENARIOS`]: a
+//! direct join, port mapping (UPnP, PCP, NAT-PMP), hole punching, the TURN
+//! relay, its absence, finding a listed game, and `rl-server --nat-check`.
+//! Every network is `--internal` with a dummy parent (macvlan): nothing
+//! reaches the host, its router or the Internet. The image build
+//! (`tools/net-nat/Dockerfile`, FROM the host's own distribution, so the
+//! binaries run unchanged) is the only network use, and its image is
+//! cached by tag. Every container lives at most [`LIFE`] seconds of its
+//! own, and Ctrl+C removes them: an interrupted run leaves nothing running
+//! for long. Topology and timings: `tools/net-nat/CLAUDE.md`.
 
+use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Once;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 
-use crate::{olx_timing, oracle, root};
+use crate::{e2e, olx_timing, oracle, root};
 
 /// The image's build context.
 pub const TOOL_DIR: &str = "tools/net-nat";
@@ -31,25 +35,36 @@ pub const REPO: &str = "rl-nat";
 pub const OUT: &str = "target/net-nat";
 /// The content mounted at `/rl/content`.
 pub const CONTENT: &str = "content/packs";
-/// The label of every container and network: leftovers of an interrupted
-/// run are removed by it.
+/// The binaries mounted at `/rl/bin`: `e2e`'s dev builds
+/// ([`e2e::build_binaries`]), so `full` builds them once.
+pub const BIN: &str = "target/debug";
+/// The label key of every container and network (its value: the run's
+/// id); a scenario's containers also carry `rl-nat.scenario`.
 const LABEL: &str = "rl-nat";
 /// Each scenario's bound, from its first container to its verdict.
 pub const LIMIT: Duration = Duration::from_secs(60);
+/// Every container's own lifetime in seconds (`RL_NAT_LIFE`, `timeout`):
+/// past [`LIMIT`] and the host's stop, so a run that was killed leaves
+/// nothing running for long.
+pub const LIFE: u32 = 120;
+/// With `--keep`: an hour to look at the kept containers.
+pub const KEEP_LIFE: u32 = 3600;
 /// A joiner gives up after this (its `--timeout`), inside [`LIMIT`].
 const JOINER_TIMEOUT: &str = "40";
 /// How often logs and states are looked at.
 const POLL: Duration = Duration::from_millis(200);
 /// Lines of each container's log a failure prints.
 const TAIL: usize = 40;
+/// How long a run waits for another one (the machine-wide lock) at most.
+const LOCK_WAIT: Duration = Duration::from_secs(600);
 /// The WAN's Nostr relay (in the infrastructure container, with the STUN server).
 pub const RELAY_URL: &str = "ws://203.0.113.10:7777";
 /// Our STUN servers: the infrastructure's and the TURN relay's binding answers.
 pub const STUN: [&str; 2] = ["203.0.113.10:3479", "203.0.113.20:3478"];
 /// The listed game's name (`finding`).
 const LISTED_NAME: &str = "nat finding";
-/// The WAN: the routers' outsides and the infrastructure.
-pub const WAN: (&str, &str) = ("rl-nat-wan", "203.0.113.0/24");
+/// The WAN's subnet: the routers' outsides and the infrastructure.
+pub const WAN_SUBNET: &str = "203.0.113.0/24";
 
 /// A home network behind its router.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,22 +77,20 @@ pub enum Lan {
     C,
     /// Cone, plus miniupnpd's NAT-PMP and PCP.
     D,
+    /// Cone, plus miniupnpd with PCP requests dropped: NAT-PMP only.
+    E,
 }
 
 impl Lan {
-    pub const ALL: [Lan; 4] = [Lan::A, Lan::B, Lan::C, Lan::D];
+    pub const ALL: [Lan; 5] = [Lan::A, Lan::B, Lan::C, Lan::D, Lan::E];
 
-    /// 1 to 4: the subnet's second byte and the router's WAN address' 10x.
+    /// 1 to 5: the subnet's second byte and the router's WAN address' 10x.
     fn n(self) -> u8 {
         self as u8 + 1
     }
 
-    fn letter(self) -> char {
-        ['a', 'b', 'c', 'd'][self as usize]
-    }
-
-    pub fn network(self) -> String {
-        format!("rl-nat-{}", self.letter())
+    fn letter(self) -> &'static str {
+        ["a", "b", "c", "d", "e"][self as usize]
     }
 
     pub fn subnet(self) -> String {
@@ -89,26 +102,19 @@ impl Lan {
         self.addr(2)
     }
 
-    /// The router's WAN address, 203.0.113.101 to .104.
+    /// The router's WAN address, 203.0.113.101 to .105.
     pub fn router_wan(self) -> String {
         format!("203.0.113.{}", 100 + self.n())
     }
 
     /// `router.sh`'s kind.
     pub fn kind(self) -> &'static str {
-        ["cone", "symmetric", "upnp", "pcp"][self as usize]
+        ["cone", "symmetric", "upnp", "pcp", "pmp"][self as usize]
     }
 
     fn addr(self, host: u8) -> String {
         format!("10.{}.0.{host}", self.n())
     }
-}
-
-/// Every network: name and subnet.
-pub fn networks() -> Vec<(String, String)> {
-    let mut all = vec![(WAN.0.to_string(), WAN.1.to_string())];
-    all.extend(Lan::ALL.iter().map(|l| (l.network(), l.subnet())));
-    all
 }
 
 /// The config file a server reads (`target/net-nat/configs/<name>.ron`).
@@ -212,8 +218,10 @@ pub struct Expect {
     pub stderr: &'static [&'static str],
     /// The host's log holds one of each group.
     pub host_log: &'static [&'static [&'static str]],
-    /// The TURN relay's log holds each.
-    pub relay_log: &'static [&'static str],
+    /// The TURN relay logged at least one allocation (`relay: <n>
+    /// allocations`, n ≥ 1: it logs the count when it changes, once a
+    /// second, so two allocations may show as 2 alone).
+    pub relay_allocates: bool,
     /// The host's last invite line, when it matters.
     pub code: Option<Code>,
     /// The host is stopped (SIGTERM) after the joiner and must exit 0.
@@ -225,7 +233,7 @@ const EXPECT: Expect = Expect {
     stdout: &[],
     stderr: &[],
     host_log: &[],
-    relay_log: &[],
+    relay_allocates: false,
     code: None,
     host_stops: false,
 };
@@ -242,7 +250,7 @@ pub struct Scenario {
 /// The scenarios, in the order they run (spec §9.7; its "browser host"
 /// is plan 13's, ruling PL12b-3). Each path is checked on both ends: the
 /// joiner's `path:` line and the host's `via` (N49).
-pub const SCENARIOS: [Scenario; 8] = [
+pub const SCENARIOS: [Scenario; 9] = [
     Scenario {
         name: "direct",
         host: Host::Public,
@@ -266,13 +274,18 @@ pub const SCENARIOS: [Scenario; 8] = [
         joiner: Some(Joiner { lan: Lan::A, way: Way::Invite, flags: &["--lobby-only"] }),
         expect: Expect {
             stdout: &["path: direct"],
-            host_log: &[
-                &[
-                    "reach: Port 23400 is open on your router (PCP)",
-                    "reach: Port 23400 is open on your router (NAT-PMP)",
-                ],
-                &["via open port"],
-            ],
+            host_log: &[&["reach: Port 23400 is open on your router (PCP)"], &["via open port"]],
+            code: Some(Code::Address),
+            ..EXPECT
+        },
+    },
+    Scenario {
+        name: "nat-pmp",
+        host: Host::Server(Lan::E, Config::Mapped),
+        joiner: Some(Joiner { lan: Lan::A, way: Way::Invite, flags: &["--lobby-only"] }),
+        expect: Expect {
+            stdout: &["path: direct"],
+            host_log: &[&["reach: Port 23400 is open on your router (NAT-PMP)"], &["via open port"]],
             code: Some(Code::Address),
             ..EXPECT
         },
@@ -295,7 +308,7 @@ pub const SCENARIOS: [Scenario; 8] = [
         expect: Expect {
             stdout: &["path: relayed", "match 1:"],
             host_log: &[&["via relayed"], &["match end"]],
-            relay_log: &["relay: 1 allocations"],
+            relay_allocates: true,
             code: Some(Code::Relays),
             host_stops: true,
             ..EXPECT
@@ -349,7 +362,10 @@ pub fn base_image(os_release: &str) -> Result<String, String> {
     };
     let id = field("ID").filter(|v| !v.is_empty()).ok_or("/etc/os-release names no ID")?;
     let version = field("VERSION_ID").filter(|v| !v.is_empty()).ok_or_else(|| {
-        format!("/etc/os-release names no VERSION_ID ({id} without a release): no image of the same release to build on")
+        format!(
+            "/etc/os-release names no VERSION_ID ({id} without a release): no image of the same release to \
+             build on"
+        )
     })?;
     let like = format!("{id} {}", field("ID_LIKE").unwrap_or_default());
     if !like.split_whitespace().any(|w| w == "debian" || w == "ubuntu") {
@@ -375,6 +391,45 @@ pub fn image_tag(files: &[(&str, &[u8])], base: &str) -> String {
     format!("{REPO}:{}", &hex::encode(h.finalize())[..12])
 }
 
+/// Why a failed image build is a skip (N58: a host whose image cannot be
+/// built skips), from `docker build --progress=plain`'s output: apt could
+/// not reach the mirrors (offline), or the release lacks a package. Any
+/// other failure (a broken Dockerfile or script) is `None`: a failure.
+pub fn build_skip(base: &str, log: &str) -> Option<String> {
+    let offline =
+        ["Temporary failure resolving", "Failed to fetch", "Could not resolve", "Network is unreachable"];
+    if offline.iter().any(|w| log.contains(w)) {
+        return Some(format!(
+            "apt cannot reach {base}'s mirrors to build the image (offline?): it is built once, with network \
+             access, then cached"
+        ));
+    }
+    let missing = log.lines().find_map(|l| {
+        let rest = l.split_once("E: Unable to locate package ").map(|(_, p)| p).or_else(|| {
+            let (before, _) = l.split_once(" has no installation candidate")?;
+            before.rsplit_once("Package ").map(|(_, p)| p)
+        })?;
+        Some(rest.trim().trim_matches(|c| c == '\'' || c == '"').to_string())
+    })?;
+    Some(format!(
+        "{base} has no package {missing} (the image needs iproute2, nftables and miniupnpd-nftables from apt)"
+    ))
+}
+
+/// Why a failed network creation is a skip: this Docker cannot make
+/// macvlan networks (rootless Docker, a kernel without the module, some
+/// Docker Desktop setups). Any other failure is `None`.
+pub fn network_skip(err: &str) -> Option<String> {
+    let lower = err.to_lowercase();
+    (lower.contains("macvlan") || lower.contains("not supported") || lower.contains("plugin not found")).then(|| {
+        format!(
+            "Docker cannot create macvlan networks ({}): the tests need rootful Docker with the macvlan module \
+             (`sudo modprobe macvlan`)",
+            err.lines().last().unwrap_or(err).trim()
+        )
+    })
+}
+
 /// The last invite code `rl-server` logged, and whether it carries an
 /// address (`invite code: rlx1…`, not `invite code (joins through the
 /// relays): rlx1…`).
@@ -388,6 +443,14 @@ pub fn invite_code(log: &str) -> Option<(String, bool)> {
         let code = code.split_whitespace().next()?;
         code.starts_with("rlx1").then(|| (code.to_string(), with_address))
     })
+}
+
+/// The most allocations the TURN relay's log shows (`relay: <n> allocations`).
+pub fn allocations(log: &str) -> u32 {
+    log.lines()
+        .filter_map(|l| l.split_once("relay: ")?.1.strip_suffix(" allocations")?.trim().parse().ok())
+        .max()
+        .unwrap_or(0)
 }
 
 /// The last `n` lines of `text`.
@@ -435,10 +498,8 @@ pub fn verdict(expect: &Expect, seen: &Seen) -> Vec<String> {
             ));
         }
     }
-    for want in expect.relay_log {
-        if !seen.relay_log.contains(want) {
-            wrong.push(format!("the relay's log lacks {want:?}"));
-        }
+    if expect.relay_allocates && allocations(&seen.relay_log) == 0 {
+        wrong.push("the relay's log shows no allocation (\"relay: <n> allocations\")".into());
     }
     if let Some(code) = expect.code {
         match invite_code(&seen.host_log) {
@@ -471,7 +532,8 @@ pub enum Ready {
 /// One container of a scenario.
 #[derive(Clone, Debug)]
 pub struct Unit {
-    /// `rl-nat-<role>`.
+    /// Its role (`infra`, `relay`, `router-a`, `host`, `joiner`, ...):
+    /// the container is `rl-nat-<run>-<role>`.
     pub role: String,
     /// Units start in stages; a stage starts once the last is ready.
     pub stage: u8,
@@ -481,47 +543,101 @@ pub struct Unit {
     pub ready: Ready,
 }
 
-/// Where things are on this machine.
-pub struct Paths {
+/// One run: its id (in every container's and network's name and label,
+/// so two runs never share a name), the containers' lifetime, and where
+/// things are on this machine.
+pub struct Run {
+    pub id: String,
+    pub life: u32,
     pub bin: PathBuf,
     pub content: PathBuf,
     pub configs: PathBuf,
     pub image: String,
 }
 
+impl Run {
+    pub fn container(&self, role: &str) -> String {
+        format!("{LABEL}-{}-{role}", self.id)
+    }
+
+    /// The WAN's network (`wan`) or a LAN's (its letter).
+    pub fn network(&self, net: &str) -> String {
+        format!("{LABEL}-{}-{net}", self.id)
+    }
+
+    pub fn lan(&self, lan: Lan) -> String {
+        self.network(lan.letter())
+    }
+
+    /// Every network: name and subnet.
+    pub fn networks(&self) -> Vec<(String, String)> {
+        let mut all = vec![(self.network("wan"), WAN_SUBNET.to_string())];
+        all.extend(Lan::ALL.iter().map(|l| (self.lan(*l), l.subnet())));
+        all
+    }
+
+    /// `docker network create`'s arguments for one network: macvlan,
+    /// `--internal` and no `parent`, so Docker gives it a dummy parent of
+    /// its own (nothing on it reaches the host or beyond), labelled with
+    /// the run. Not a bridge: with `br_netfilter`, Docker's rules for an
+    /// internal bridge drop every bridged packet addressed outside its
+    /// subnet, which is all of a router's traffic.
+    pub fn network_args(&self, name: &str, subnet: &str) -> Vec<String> {
+        let label = format!("{LABEL}={}", self.id);
+        ["network", "create", "-d", "macvlan", "--internal", "--label", &label, "--subnet", subnet, name]
+            .map(String::from)
+            .to_vec()
+    }
+}
+
 /// The containers of `sc`, in stages: the WAN's infrastructure (Nostr
 /// relay and STUN server); the TURN relay, the routers of the LANs used
 /// and the public server; the host; the joiner. Every one joins only our
-/// networks (never Docker's default bridge) and carries [`LABEL`].
-pub fn units(sc: &Scenario, paths: &Paths) -> Vec<Unit> {
-    let mounts = || -> Vec<String> {
-        let bin = |name: &str| format!("{}:/rl/bin/{name}:ro", paths.bin.join(name).display());
+/// networks (never Docker's default bridge), carries the run's labels and
+/// ends by itself within `run.life` seconds (`RL_NAT_LIFE` for the
+/// scripts, `timeout` around our binaries).
+pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
+    let strings = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+    let life = run.life.to_string();
+    let mounts = {
+        let bin = |name: &str| format!("{}:/rl/bin/{name}:ro", run.bin.join(name).display());
         vec![
-            "-v".into(),
+            "-v".to_string(),
             bin("rl-server"),
             "-v".into(),
             bin("rl-cli"),
             "-v".into(),
-            format!("{}:/rl/content:ro", paths.content.display()),
+            format!("{}:/rl/content:ro", run.content.display()),
             "-v".into(),
-            format!("{}:/rl/config:ro", paths.configs.display()),
+            format!("{}:/rl/config:ro", run.configs.display()),
         ]
     };
-    let unit = |role: &str, stage: u8, nets: &[(String, String)], extra: &[&str], cmd: Vec<String>, ready| {
-        let mut args: Vec<String> =
-            vec!["--name".into(), format!("rl-nat-{role}"), "--label".into(), format!("{LABEL}={}", sc.name)];
-        args.push("--init".into());
-        for (net, ip) in nets {
-            args.push("--network".into());
-            args.push(format!("name={net},ip={ip}"));
-        }
-        args.extend(extra.iter().map(|s| s.to_string()));
-        args.push(paths.image.clone());
-        args.extend(cmd);
-        Unit { role: role.into(), stage, args, ready }
+    let unit =
+        |role: &str, stage: u8, nets: &[(String, String)], extra: &[String], cmd: Vec<String>, ready| {
+            let mut args = strings(&["--name", &run.container(role), "--label"]);
+            args.push(format!("{LABEL}={}", run.id));
+            args.push("--label".into());
+            args.push(format!("{LABEL}.scenario={}", sc.name));
+            args.extend(strings(&["--init", "-e", &format!("RL_NAT_LIFE={life}")]));
+            for (net, ip) in nets {
+                args.push("--network".into());
+                args.push(format!("name={net},ip={ip}"));
+            }
+            args.extend(extra.iter().cloned());
+            args.push(run.image.clone());
+            args.extend(cmd);
+            Unit { role: role.into(), stage, args, ready }
+        };
+    // Our binaries on the WAN, bounded: SIGTERM at the end of their life,
+    // SIGKILL 5 s later (in a LAN, `node.sh` does the same); the exit
+    // status stays the binary's (`--preserve-status`: a host stopped
+    // with SIGTERM still exits 0, not timeout's 124).
+    let bounded = |cmd: Vec<String>| {
+        let mut all = strings(&["timeout", "--preserve-status", "-k", "5", &life]);
+        all.extend(cmd);
+        all
     };
-    let wan = |ip: &str| vec![(WAN.0.to_string(), ip.to_string())];
-    let strings = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+    let wan = |ip: &str| vec![(run.network("wan"), ip.to_string())];
     let server = |config: Config| {
         let config = format!("/rl/config/{}", config.file());
         strings(&[
@@ -539,25 +655,19 @@ pub fn units(sc: &Scenario, paths: &Paths) -> Vec<Unit> {
         all.extend(cmd);
         all
     };
-    let with_mounts = |extra: &[&str]| {
-        let mut all = mounts();
-        all.extend(extra.iter().map(|s| s.to_string()));
-        all
-    };
-    let node_opts = with_mounts(&["--cap-add", "NET_ADMIN"]);
-    let node_opts: Vec<&str> = node_opts.iter().map(String::as_str).collect();
-    let wan_opts = mounts();
-    let wan_opts: Vec<&str> = wan_opts.iter().map(String::as_str).collect();
+    let mut node_opts = mounts.clone();
+    node_opts.extend(strings(&["--cap-add", "NET_ADMIN"]));
 
     let mut out = vec![unit(
         "infra",
         0,
         &wan("203.0.113.10"),
-        &wan_opts,
+        &mounts,
         strings(&[
             "sh",
             "-c",
-            "/rl/bin/rl-cli nostr-relay --listen 0.0.0.0:7777 & exec /rl/bin/rl-cli stun-server --listen 0.0.0.0:3479",
+            "timeout --preserve-status -k 5 \"$RL_NAT_LIFE\" /rl/bin/rl-cli nostr-relay --listen 0.0.0.0:7777 & \
+             exec timeout --preserve-status -k 5 \"$RL_NAT_LIFE\" /rl/bin/rl-cli stun-server --listen 0.0.0.0:3479",
         ]),
         Ready::Lines(vec!["nostr relay:", "stun server:"]),
     )];
@@ -567,8 +677,8 @@ pub fn units(sc: &Scenario, paths: &Paths) -> Vec<Unit> {
         "relay",
         1,
         &wan("203.0.113.20"),
-        &wan_opts,
-        relay_cmd,
+        &mounts,
+        bounded(relay_cmd),
         Ready::Lines(vec!["relay: TURN on port"]),
     ));
     let host_lan = match sc.host {
@@ -582,8 +692,8 @@ pub fn units(sc: &Scenario, paths: &Paths) -> Vec<Unit> {
         out.push(unit(
             &format!("router-{}", lan.letter()),
             1,
-            &[(WAN.0.to_string(), lan.router_wan()), (lan.network(), lan.router())],
-            &["--cap-add", "NET_ADMIN", "--sysctl", "net.ipv4.ip_forward=1"],
+            &[(run.network("wan"), lan.router_wan()), (run.lan(lan), lan.router())],
+            &strings(&["--cap-add", "NET_ADMIN", "--sysctl", "net.ipv4.ip_forward=1"]),
             strings(&["/rl-nat/router.sh", lan.kind(), &lan.router_wan(), &lan.router()]),
             Ready::Lines(vec!["router ready"]),
         ));
@@ -593,14 +703,14 @@ pub fn units(sc: &Scenario, paths: &Paths) -> Vec<Unit> {
             "public",
             1,
             &wan("203.0.113.30"),
-            &wan_opts,
-            server(Config::Public),
+            &mounts,
+            bounded(server(Config::Public)),
             Ready::Invite(None),
         )),
         Host::Server(lan, config) => out.push(unit(
             "host",
             2,
-            &[(lan.network(), lan.addr(10))],
+            &[(run.lan(lan), lan.addr(10))],
             &node_opts,
             on_lan(lan, server(config)),
             Ready::Invite(sc.expect.code.filter(|c| *c == Code::Address)),
@@ -608,7 +718,7 @@ pub fn units(sc: &Scenario, paths: &Paths) -> Vec<Unit> {
         Host::NatCheck(lan) => out.push(unit(
             "host",
             2,
-            &[(lan.network(), lan.addr(10))],
+            &[(run.lan(lan), lan.addr(10))],
             &node_opts,
             on_lan(
                 lan,
@@ -650,13 +760,45 @@ pub fn units(sc: &Scenario, paths: &Paths) -> Vec<Unit> {
         out.push(unit(
             "joiner",
             3,
-            &[(j.lan.network(), j.lan.addr(20))],
+            &[(run.lan(j.lan), j.lan.addr(20))],
             &node_opts,
             on_lan(j.lan, cmd),
             Ready::Exit,
         ));
     }
     out
+}
+
+/// Set by Ctrl+C (SIGINT, SIGTERM, SIGHUP) while a run is active: its
+/// waits stop, its guards remove the containers and networks, then the
+/// process exits 130.
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+/// A run is active (outside one, or at a second Ctrl+C, the signal exits at once).
+static ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Installs the handler once per process (`ctrlc`, as `rl-server`).
+fn watch_interrupts() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let handler = || {
+            if ACTIVE.load(Ordering::SeqCst) && !INTERRUPTED.swap(true, Ordering::SeqCst) {
+                eprintln!(
+                    "net-nat: interrupted: removing its containers and networks (again to exit at once)"
+                );
+            } else {
+                std::process::exit(130);
+            }
+        };
+        if let Err(e) = ctrlc::set_handler(handler) {
+            eprintln!(
+                "warning: no Ctrl+C handler ({e}): an interrupted run's containers end within {LIFE} s"
+            );
+        }
+    });
+}
+
+fn interrupted() -> Result<(), String> {
+    if INTERRUPTED.load(Ordering::SeqCst) { Err("interrupted".into()) } else { Ok(()) }
 }
 
 /// `docker <args>`: its stdout, or why it failed.
@@ -674,8 +816,8 @@ fn docker(args: &[&str]) -> Result<String, String> {
 }
 
 /// A container's stdout and stderr so far (empty when it is gone).
-fn logs(role: &str) -> (String, String) {
-    match Command::new("docker").args(["logs", &format!("rl-nat-{role}")]).output() {
+fn logs(container: &str) -> (String, String) {
+    match Command::new("docker").args(["logs", container]).output() {
         Ok(o) => {
             (String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned())
         }
@@ -684,18 +826,16 @@ fn logs(role: &str) -> (String, String) {
 }
 
 /// A container's exit status, once it exited.
-fn exited(role: &str) -> Option<i64> {
-    let state =
-        docker(&["inspect", "-f", "{{.State.Running}} {{.State.ExitCode}}", &format!("rl-nat-{role}")])
-            .ok()?;
+fn exited(container: &str) -> Option<i64> {
+    let state = docker(&["inspect", "-f", "{{.State.Running}} {{.State.ExitCode}}", container]).ok()?;
     let (running, code) = state.trim().split_once(' ')?;
     (running == "false").then(|| code.parse().ok()).flatten()
 }
 
-/// Removes every container labelled [`LABEL`] (a scenario's, or an
-/// interrupted run's).
-fn remove_containers() {
-    if let Ok(ids) = docker(&["ps", "-aq", "--filter", &format!("label={LABEL}")]) {
+/// Removes every container whose label `filter` matches (`rl-nat`: any
+/// run's; `rl-nat=<id>`: one run's).
+fn remove_containers(filter: &str) {
+    if let Ok(ids) = docker(&["ps", "-aq", "--filter", &format!("label={filter}")]) {
         let ids: Vec<&str> = ids.split_whitespace().collect();
         if !ids.is_empty() {
             let mut args = vec!["rm", "-f"];
@@ -707,10 +847,10 @@ fn remove_containers() {
     }
 }
 
-/// Removes every network labelled [`LABEL`] (containers first).
-fn remove_networks() {
-    remove_containers();
-    if let Ok(ids) = docker(&["network", "ls", "-q", "--filter", &format!("label={LABEL}")]) {
+/// Removes the containers, then the networks, whose label `filter` matches.
+fn remove_networks(filter: &str) {
+    remove_containers(filter);
+    if let Ok(ids) = docker(&["network", "ls", "-q", "--filter", &format!("label={filter}")]) {
         for id in ids.split_whitespace() {
             if let Err(e) = docker(&["network", "rm", id]) {
                 eprintln!("warning: {e}");
@@ -719,52 +859,80 @@ fn remove_networks() {
     }
 }
 
-/// The networks for one run, removed (with any container left) when
-/// dropped unless kept.
-struct Networks {
-    keep: bool,
-}
-
-impl Networks {
-    /// Our networks: `--internal` macvlan networks, each on a dummy parent
-    /// of its own (Docker makes one for an internal macvlan network
-    /// without a `parent`). Not bridges: Docker's rules for an internal
-    /// bridge drop every bridged packet addressed outside its subnet
-    /// (`br_netfilter`), which is all of a router's traffic. Nothing on
-    /// them reaches the host or beyond.
-    fn create(keep: bool) -> Result<Networks, String> {
-        remove_networks();
-        let made = Networks { keep };
-        for (name, subnet) in networks() {
-            docker(&[
-                "network",
-                "create",
-                "-d",
-                "macvlan",
-                "--internal",
-                "--label",
-                LABEL,
-                "--subnet",
-                &subnet,
-                &name,
-            ])?;
+/// The machine-wide lock (`<temp>/rl-nat.lock`): one run at a time, as
+/// the runs share subnets (Docker refuses overlapping ones) and the
+/// leftover cleanup. Waits for another run at most [`LOCK_WAIT`].
+fn lock() -> Result<File, String> {
+    let path = std::env::temp_dir().join("rl-nat.lock");
+    let file = File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let until = Instant::now() + LOCK_WAIT;
+    let mut said = false;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(TryLockError::WouldBlock) if Instant::now() < until => {
+                if !said {
+                    println!("     net-nat: waiting for another net-nat run ({})", path.display());
+                    said = true;
+                }
+                interrupted()?;
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            Err(TryLockError::WouldBlock) => {
+                return Err(format!(
+                    "another net-nat run held {} for {} s",
+                    path.display(),
+                    LOCK_WAIT.as_secs()
+                ));
+            }
+            Err(TryLockError::Error(e)) => return Err(format!("locking {}: {e}", path.display())),
         }
-        Ok(made)
     }
 }
 
-impl Drop for Networks {
+/// The networks of one run, removed (with any container left) when
+/// dropped unless kept.
+struct Networks<'a> {
+    run: &'a Run,
+    keep: bool,
+}
+
+impl<'a> Networks<'a> {
+    /// Every network of `run`. `Ok(Err(why))`: this Docker cannot make
+    /// macvlan networks (a skip).
+    fn create(run: &'a Run, keep: bool) -> Result<Result<Networks<'a>, String>, String> {
+        let made = Networks { run, keep };
+        for (name, subnet) in run.networks() {
+            let args = run.network_args(&name, &subnet);
+            if let Err(e) = docker(&args.iter().map(String::as_str).collect::<Vec<_>>()) {
+                return match network_skip(&e) {
+                    Some(why) => Ok(Err(why)),
+                    None => Err(e),
+                };
+            }
+        }
+        Ok(Ok(made))
+    }
+}
+
+impl Drop for Networks<'_> {
     fn drop(&mut self) {
         if !self.keep {
-            remove_networks();
+            remove_networks(&format!("{LABEL}={}", self.run.id));
         }
     }
 }
 
 /// A scenario's containers: their logs saved to its directory and the
-/// containers removed (unless kept) when dropped, so a failing or
-/// panicking scenario leaves nothing running.
+/// containers removed (unless kept) when dropped, so a failing,
+/// interrupted or panicking scenario leaves nothing running.
 struct Containers<'a> {
+    run: &'a Run,
     dir: &'a Path,
     roles: Vec<String>,
     keep: bool,
@@ -773,7 +941,7 @@ struct Containers<'a> {
 impl Containers<'_> {
     fn save_logs(&self) {
         for role in &self.roles {
-            let (out, err) = logs(role);
+            let (out, err) = logs(&self.run.container(role));
             let _ = std::fs::write(self.dir.join(format!("{role}.out")), out);
             let _ = std::fs::write(self.dir.join(format!("{role}.err")), err);
         }
@@ -783,7 +951,7 @@ impl Containers<'_> {
     fn tails(&self) -> String {
         let mut text = String::new();
         for role in &self.roles {
-            let (out, err) = logs(role);
+            let (out, err) = logs(&self.run.container(role));
             for (stream, s) in [("stdout", out), ("stderr", err)] {
                 if !s.trim().is_empty() {
                     text.push_str(&format!(
@@ -801,7 +969,7 @@ impl Drop for Containers<'_> {
     fn drop(&mut self) {
         self.save_logs();
         if !self.keep {
-            remove_containers();
+            remove_containers(&format!("{LABEL}={}", self.run.id));
         }
     }
 }
@@ -809,24 +977,24 @@ impl Drop for Containers<'_> {
 /// Plays one scenario: its units stage by stage, each waited for until
 /// [`LIMIT`] from the start, then the host stopped when asked, and the
 /// verdict. `Err`: why it failed and the containers' log tails.
-fn play(sc: &Scenario, paths: &Paths, dir: &Path, keep: bool) -> Result<(), String> {
-    remove_containers();
+fn play(sc: &Scenario, run: &Run, dir: &Path, keep: bool) -> Result<(), String> {
+    remove_containers(&format!("{LABEL}={}", run.id));
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let deadline = Instant::now() + LIMIT;
-    let mut started = Containers { dir, roles: Vec::new(), keep };
-    let result = run_units(sc, &units(sc, paths), deadline, &mut started).and_then(|()| {
+    let mut started = Containers { run, dir, roles: Vec::new(), keep };
+    let result = run_units(sc, run, &units(sc, run), deadline, &mut started).and_then(|()| {
         let mut seen = Seen::default();
-        let main = if sc.joiner.is_some() { "joiner" } else { "host" };
-        seen.exit = exited(main);
-        (seen.stdout, seen.stderr) = logs(main);
+        let main = run.container(if sc.joiner.is_some() { "joiner" } else { "host" });
+        seen.exit = exited(&main);
+        (seen.stdout, seen.stderr) = logs(&main);
         if sc.expect.host_stops {
-            let _ = docker(&["stop", "-t", "5", "rl-nat-host"]);
-            seen.host_exit = exited("host");
+            let host = run.container("host");
+            let _ = docker(&["stop", "-t", "5", &host]);
+            seen.host_exit = exited(&host);
         }
-        let host = if sc.host == Host::Public { "public" } else { "host" };
-        seen.host_log = logs(host).0;
-        seen.relay_log = logs("relay").0;
+        seen.host_log = logs(&run.container(if sc.host == Host::Public { "public" } else { "host" })).0;
+        seen.relay_log = logs(&run.container("relay")).0;
         let wrong = verdict(&sc.expect, &seen);
         if wrong.is_empty() { Ok(()) } else { Err(wrong.join("; ")) }
     });
@@ -836,6 +1004,7 @@ fn play(sc: &Scenario, paths: &Paths, dir: &Path, keep: bool) -> Result<(), Stri
 /// Starts `units` stage by stage, waiting for each to be ready.
 fn run_units(
     sc: &Scenario,
+    run: &Run,
     units: &[Unit],
     deadline: Instant,
     started: &mut Containers,
@@ -844,6 +1013,7 @@ fn run_units(
     for stage in 0..=units.iter().map(|u| u.stage).max().unwrap_or(0) {
         let now: Vec<&Unit> = units.iter().filter(|u| u.stage == stage).collect();
         for u in &now {
+            interrupted()?;
             if u.args.iter().any(|a| a == "{invite}") && invite.is_none() {
                 return Err(format!("{}: no invite code to join with", sc.name));
             }
@@ -852,11 +1022,11 @@ fn run_units(
                 ("{invite}", Some(code)) => code.as_str(),
                 _ => a.as_str(),
             }));
-            docker(&args)?;
             started.roles.push(u.role.clone());
+            docker(&args)?;
         }
         for u in &now {
-            let found = wait_ready(u, deadline)?;
+            let found = wait_ready(u, &run.container(&u.role), deadline)?;
             if found.is_some() {
                 invite = found;
             }
@@ -865,10 +1035,12 @@ fn run_units(
     Ok(())
 }
 
-/// Waits until `u` is ready; an invite code when it was waited for.
-fn wait_ready(u: &Unit, deadline: Instant) -> Result<Option<String>, String> {
+/// Waits until `u` (the container `name`) is ready; an invite code when
+/// it was waited for.
+fn wait_ready(u: &Unit, name: &str, deadline: Instant) -> Result<Option<String>, String> {
     loop {
-        let (out, _) = logs(&u.role);
+        interrupted()?;
+        let (out, _) = logs(name);
         match &u.ready {
             Ready::Lines(lines) if lines.iter().all(|l| out.contains(l)) => return Ok(None),
             Ready::Invite(code) => {
@@ -878,11 +1050,11 @@ fn wait_ready(u: &Unit, deadline: Instant) -> Result<Option<String>, String> {
                     return Ok(Some(c));
                 }
             }
-            Ready::Exit if exited(&u.role).is_some() => return Ok(None),
+            Ready::Exit if exited(name).is_some() => return Ok(None),
             _ => {}
         }
         if !matches!(u.ready, Ready::Exit)
-            && let Some(code) = exited(&u.role)
+            && let Some(code) = exited(name)
         {
             return Err(format!("{} exited with {code} before it was ready", u.role));
         }
@@ -924,29 +1096,11 @@ fn prerequisites(root: &Path) -> Result<String, String> {
     Ok(base)
 }
 
-/// The binaries, in release: `rl-server`, and `rl-cli` with its dev
-/// tools (`nat-tools`) in a cargo run of its own (cargo leaves
-/// `rl-cli/nat-tools` off when both packages are built in one run, and
-/// rl-server then needs no test relay).
-fn build(root: &Path) -> Result<(), String> {
-    for args in [&["-p", "rl-server"][..], &["-p", "rl-cli", "--features", "nat-tools"]] {
-        let out = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-            .args(["build", "--release", "--quiet"])
-            .args(args)
-            .current_dir(root)
-            .output()
-            .map_err(|e| format!("cannot run cargo: {e}"))?;
-        if !out.status.success() {
-            return Err(tail(&String::from_utf8_lossy(&out.stderr), 200));
-        }
-    }
-    Ok(())
-}
-
 /// The image for `base`, built when its tag is missing (the only network
 /// use: the base and the packages), then the superseded `rl-nat` images
-/// pruned. `Ok(Err(why))`: the base cannot be had (a skip).
-fn ensure_image(root: &Path, base: &str) -> Result<Result<String, String>, String> {
+/// pruned. `Ok(Err(why))`: a skip (N58): offline without the image, a
+/// base that cannot be pulled, apt offline or a package missing.
+fn ensure_image(root: &Path, base: &str, offline: bool) -> Result<Result<String, String>, String> {
     let mut files = Vec::new();
     for f in TOOL_FILES {
         let path = root.join(TOOL_DIR).join(f);
@@ -954,6 +1108,11 @@ fn ensure_image(root: &Path, base: &str) -> Result<Result<String, String>, Strin
     }
     let tag = image_tag(&files.iter().map(|(n, d)| (*n, d.as_slice())).collect::<Vec<_>>(), base);
     if docker(&["image", "inspect", &tag]).is_err() {
+        if offline {
+            return Ok(Err(format!(
+                "--offline, and the image {tag} is not built yet (it needs the network once)"
+            )));
+        }
         if docker(&["image", "inspect", base]).is_err()
             && let Err(e) = docker(&["pull", base])
         {
@@ -962,50 +1121,88 @@ fn ensure_image(root: &Path, base: &str) -> Result<Result<String, String>, Strin
         println!("     net-nat: building {tag} FROM {base}");
         let built = Instant::now();
         let context = root.join(TOOL_DIR);
-        docker(&[
-            "build",
-            "-q",
-            "-t",
-            &tag,
-            "--build-arg",
-            &format!("BASE={base}"),
-            &context.to_string_lossy(),
-        ])
-        .map_err(|e| format!("building {tag}: {e}"))?;
+        let out = Command::new("docker")
+            .args(["build", "--progress=plain", "-t", &tag, "--build-arg", &format!("BASE={base}")])
+            .arg(&context)
+            .output()
+            .map_err(|e| format!("running docker: {e}"))?;
+        if !out.status.success() {
+            let log = String::from_utf8_lossy(&out.stderr);
+            return match build_skip(base, &log) {
+                Some(why) => Ok(Err(why)),
+                None => Err(format!("building {tag}:\n{}", tail(&log, TAIL))),
+            };
+        }
         println!("     net-nat: built {tag} in {:.1} s", built.elapsed().as_secs_f32());
     }
     oracle::prune_old(&tag, false);
     Ok(Ok(tag))
 }
 
-/// Runs the scenarios (`only`, else all): prerequisites, build, image,
-/// configs and networks, then each scenario. `verbose` prints a line per
-/// scenario. `Err`: what failed, every failing scenario's report.
-pub fn run(only: &[String], keep: bool, verbose: bool) -> Result<Outcome, String> {
+/// Runs the scenarios (`only`, else all): prerequisites, the binaries,
+/// the image, the lock, configs and networks, then each scenario.
+/// `verbose` prints a line per scenario. `Err`: what failed, every
+/// failing scenario's report. Interrupted, it removes what it made and
+/// exits 130.
+pub fn run(only: &[String], keep: bool, offline: bool, verbose: bool) -> Result<Outcome, String> {
     let scenarios = select(only)?;
     let root = root();
     let base = match prerequisites(&root) {
         Ok(base) => base,
         Err(why) => return Ok(Outcome::Skipped(why)),
     };
-    build(&root)?;
-    let image = match ensure_image(&root, &base)? {
+    watch_interrupts();
+    ACTIVE.store(true, Ordering::SeqCst);
+    let result = run_locked(&root, &base, &scenarios, keep, offline, verbose);
+    ACTIVE.store(false, Ordering::SeqCst);
+    if INTERRUPTED.load(Ordering::SeqCst) {
+        eprintln!("net-nat: interrupted; its containers and networks are removed");
+        std::process::exit(130);
+    }
+    result
+}
+
+fn run_locked(
+    root: &Path,
+    base: &str,
+    scenarios: &[&Scenario],
+    keep: bool,
+    offline: bool,
+    verbose: bool,
+) -> Result<Outcome, String> {
+    e2e::build_binaries(root)?;
+    interrupted()?;
+    let image = match ensure_image(root, base, offline)? {
         Ok(tag) => tag,
         Err(why) => return Ok(Outcome::Skipped(why)),
     };
+    let _lock = lock()?;
+    // Anything labelled `rl-nat` now is an interrupted run's (the lock is ours).
+    remove_networks(LABEL);
     let out = root.join(OUT);
     let configs = out.join("configs");
     std::fs::create_dir_all(&configs).map_err(|e| format!("{}: {e}", configs.display()))?;
     for c in Config::ALL {
         std::fs::write(configs.join(c.file()), c.text()).map_err(|e| format!("{}: {e}", c.file()))?;
     }
-    let paths = Paths { bin: root.join("target/release"), content: root.join(CONTENT), configs, image };
-    let _networks = Networks::create(keep)?;
+    let run = Run {
+        id: std::process::id().to_string(),
+        life: if keep { KEEP_LIFE } else { LIFE },
+        bin: root.join(BIN),
+        content: root.join(CONTENT),
+        configs,
+        image,
+    };
+    let _networks = match Networks::create(&run, keep)? {
+        Ok(n) => n,
+        Err(why) => return Ok(Outcome::Skipped(why)),
+    };
     let mut failed = Vec::new();
-    for sc in &scenarios {
+    for sc in scenarios {
         let t = Instant::now();
-        let result = play(sc, &paths, &out.join(sc.name), keep);
+        let result = play(sc, &run, &out.join(sc.name), keep);
         let secs = t.elapsed().as_secs_f32();
+        interrupted()?;
         match result {
             Ok(()) if verbose => println!("     net-nat: {} passed in {secs:.1} s", sc.name),
             Ok(()) => {}
@@ -1015,17 +1212,17 @@ pub fn run(only: &[String], keep: bool, verbose: bool) -> Result<Outcome, String
     if failed.is_empty() { Ok(Outcome::Passed(scenarios.len())) } else { Err(failed.join("\n")) }
 }
 
-/// `cargo xtask net-nat [--keep] [--only <scenario>]...`.
-pub fn command(only: &[String], keep: bool) -> anyhow::Result<bool> {
+/// `cargo xtask net-nat [--keep] [--offline] [--only <scenario>]...`.
+pub fn command(only: &[String], keep: bool, offline: bool) -> anyhow::Result<bool> {
     select(only).map_err(anyhow::Error::msg)?;
     let t = Instant::now();
-    match run(only, keep, true) {
+    match run(only, keep, offline, true) {
         Ok(Outcome::Skipped(why)) => {
             println!("skip net-nat ({why})");
             Ok(true)
         }
         Ok(Outcome::Passed(n)) => {
-            println!("ok   net-nat ({n} scenarios, {:.1}s)", t.elapsed().as_secs_f32());
+            println!("ok   net-nat ({}, {:.1}s)", scenarios(n), t.elapsed().as_secs_f32());
             Ok(true)
         }
         Err(why) => {
@@ -1036,15 +1233,20 @@ pub fn command(only: &[String], keep: bool) -> anyhow::Result<bool> {
 }
 
 /// `full`'s step: every scenario; `Ok` with the `ok` line's detail
-/// (`8 scenarios, `), after a `skip` line when a prerequisite is missing.
-pub fn step() -> Result<String, String> {
-    match run(&[], false, false)? {
+/// (`9 scenarios, `), after a `skip` line when a prerequisite is missing.
+pub fn step(offline: bool) -> Result<String, String> {
+    match run(&[], false, offline, false)? {
         Outcome::Skipped(why) => {
             println!("skip net-nat ({why})");
             Ok(String::new())
         }
-        Outcome::Passed(n) => Ok(format!("{n} scenarios, ")),
+        Outcome::Passed(n) => Ok(format!("{}, ", scenarios(n))),
     }
+}
+
+/// `1 scenario`, `9 scenarios`.
+fn scenarios(n: usize) -> String {
+    format!("{n} scenario{}", if n == 1 { "" } else { "s" })
 }
 
 /// `tidy`: removes superseded `rl-nat` images (none when the current tag
@@ -1069,6 +1271,10 @@ pub fn prune() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scenario(name: &str) -> &'static Scenario {
+        SCENARIOS.iter().find(|s| s.name == name).unwrap()
+    }
 
     #[test]
     fn base_image_from_os_release() {
@@ -1101,78 +1307,155 @@ mod tests {
         let names: Vec<&str> = SCENARIOS.iter().map(|s| s.name).collect();
         assert_eq!(
             names,
-            ["direct", "upnp", "pcp", "hole-punching", "relay", "no-relay", "finding", "nat-check"]
+            [
+                "direct",
+                "upnp",
+                "pcp",
+                "nat-pmp",
+                "hole-punching",
+                "relay",
+                "no-relay",
+                "finding",
+                "nat-check"
+            ]
         );
-        assert_eq!(select(&[]).unwrap().len(), 8);
+        assert_eq!(select(&[]).unwrap().len(), 9);
         let two = select(&["relay".into(), "direct".into()]).unwrap();
         assert_eq!(two.iter().map(|s| s.name).collect::<Vec<_>>(), ["direct", "relay"], "in table order");
         let why = select(&["browser".into()]).unwrap_err();
         assert!(why.contains("browser") && why.contains("hole-punching"), "{why}");
     }
 
-    fn paths() -> Paths {
-        Paths {
-            bin: "/repo/target/release".into(),
+    fn run(life: u32) -> Run {
+        Run {
+            id: "4242".into(),
+            life,
+            bin: "/repo/target/debug".into(),
             content: "/repo/content/packs".into(),
             configs: "/repo/target/net-nat/configs".into(),
             image: "rl-nat:0123456789ab".into(),
         }
     }
 
-    /// Nothing leaves: every container joins only our networks, at an
-    /// address of their subnets, never Docker's default bridge or the
-    /// host's network, and carries the label its cleanup goes by.
+    /// Nothing leaves: every container joins only the run's networks, at
+    /// an address of their subnets, never Docker's default bridge or the
+    /// host's network, carries the labels its cleanup goes by, and ends by
+    /// itself within its lifetime.
     #[test]
-    fn every_container_stays_on_our_networks() {
-        let nets = networks();
-        for sc in &SCENARIOS {
-            let units = units(sc, &paths());
-            assert!(units.iter().any(|u| u.role == "infra") && units.iter().any(|u| u.role == "relay"));
-            for u in &units {
-                let at = |flag: &str| {
-                    u.args.windows(2).filter(|w| w[0] == flag).map(|w| w[1].clone()).collect::<Vec<_>>()
-                };
-                assert_eq!(at("--label"), [format!("rl-nat={}", sc.name)], "{} {}", sc.name, u.role);
-                let attached = at("--network");
-                assert!(!attached.is_empty(), "{} {}", sc.name, u.role);
-                for a in attached {
-                    let (name, ip) = a.strip_prefix("name=").unwrap().split_once(",ip=").unwrap();
-                    let (_, subnet) = nets.iter().find(|(n, _)| n == name).expect("one of ours");
-                    let prefix = subnet.trim_end_matches(".0/24");
-                    assert!(ip.starts_with(&format!("{prefix}.")), "{ip} in {subnet}");
+    fn every_container_stays_on_our_networks_and_ends_by_itself() {
+        for life in [LIFE, KEEP_LIFE] {
+            let run = run(life);
+            let nets = run.networks();
+            for sc in &SCENARIOS {
+                let units = units(sc, &run);
+                assert!(units.iter().any(|u| u.role == "infra") && units.iter().any(|u| u.role == "relay"));
+                for u in &units {
+                    let what = format!("{} {}", sc.name, u.role);
+                    // Docker's options: everything before the image.
+                    let image = u.args.iter().position(|a| a == &run.image).unwrap();
+                    let at = |flag: &str| {
+                        u.args[..image]
+                            .windows(2)
+                            .filter(|w| w[0] == flag)
+                            .map(|w| w[1].clone())
+                            .collect::<Vec<_>>()
+                    };
+                    assert_eq!(at("--name"), [format!("rl-nat-4242-{}", u.role)], "{what}");
+                    assert_eq!(
+                        at("--label"),
+                        ["rl-nat=4242".to_string(), format!("rl-nat.scenario={}", sc.name)]
+                    );
+                    assert_eq!(at("-e"), [format!("RL_NAT_LIFE={life}")], "{what}");
+                    let attached = at("--network");
+                    assert!(!attached.is_empty(), "{what}");
+                    for a in attached {
+                        let (name, ip) = a.strip_prefix("name=").unwrap().split_once(",ip=").unwrap();
+                        let (_, subnet) = nets.iter().find(|(n, _)| n == name).expect("one of the run's");
+                        let prefix = subnet.trim_end_matches(".0/24");
+                        assert!(ip.starts_with(&format!("{prefix}.")), "{ip} in {subnet}");
+                    }
+                    assert!(!u.args.iter().any(|a| {
+                        a == "--privileged"
+                            || a == "--net"
+                            || a.starts_with("--net=")
+                            || a.starts_with("--network=")
+                    }));
+                    let mounts = at("-v");
+                    assert!(mounts.iter().all(|m| m.ends_with(":ro")), "read-only mounts: {mounts:?}");
+                    // The command after the image is bounded: node.sh and
+                    // router.sh by RL_NAT_LIFE, the rest by `timeout`.
+                    let cmd = &u.args[image + 1..];
+                    let life = life.to_string();
+                    match cmd[0].as_str() {
+                        "/rl-nat/node.sh" | "/rl-nat/router.sh" => {}
+                        "timeout" => {
+                            assert_eq!(cmd[1..5], ["--preserve-status", "-k", "5", life.as_str()], "{what}")
+                        }
+                        "sh" => {
+                            assert_eq!(cmd[1], "-c");
+                            for program in cmd[2].split('&') {
+                                let p = program.trim().trim_start_matches("exec ");
+                                assert!(
+                                    p.starts_with("timeout --preserve-status -k 5 \"$RL_NAT_LIFE\" "),
+                                    "{what}: {p}"
+                                );
+                            }
+                        }
+                        other => panic!("{what}: an unbounded command {other}"),
+                    }
                 }
-                assert!(!u.args.iter().any(|a| {
-                    a == "--privileged"
-                        || a == "--net"
-                        || a.starts_with("--net=")
-                        || a.starts_with("--network=")
-                }));
-                let mounts = at("-v");
-                assert!(mounts.iter().all(|m| m.ends_with(":ro")), "read-only mounts: {mounts:?}");
+                let joiner = units.iter().find(|u| u.role == "joiner");
+                assert_eq!(joiner.is_some(), sc.joiner.is_some());
+                if let Some(j) = joiner {
+                    assert!(j.args.iter().any(|a| a == "--allow-local") && j.ready == Ready::Exit);
+                    assert_eq!(
+                        j.args.iter().any(|a| a == "{invite}"),
+                        sc.joiner.unwrap().way == Way::Invite,
+                        "{}",
+                        sc.name
+                    );
+                    assert!(units.iter().any(|u| u.role == "host" || u.role == "public"));
+                }
+                let routers: Vec<&str> =
+                    units.iter().filter(|u| u.role.starts_with("router-")).map(|u| u.role.as_str()).collect();
+                let mut deduped = routers.clone();
+                deduped.dedup();
+                assert_eq!(routers, deduped, "each router once");
             }
-            let joiner = units.iter().find(|u| u.role == "joiner");
-            assert_eq!(joiner.is_some(), sc.joiner.is_some());
-            if let Some(j) = joiner {
-                assert!(j.args.iter().any(|a| a == "--allow-local") && j.ready == Ready::Exit);
-                assert_eq!(
-                    j.args.iter().any(|a| a == "{invite}"),
-                    sc.joiner.unwrap().way == Way::Invite,
-                    "{}",
-                    sc.name
-                );
-                assert!(units.iter().any(|u| u.role == "host" || u.role == "public"));
-            }
-            // The routers of the LANs used, each once.
-            let routers: Vec<&str> =
-                units.iter().filter(|u| u.role.starts_with("router-")).map(|u| u.role.as_str()).collect();
-            let mut deduped = routers.clone();
-            deduped.dedup();
-            assert_eq!(routers, deduped);
         }
-        let upnp = units(&SCENARIOS[1], &paths());
+        let upnp = units(scenario("upnp"), &run(LIFE));
         let host = upnp.iter().find(|u| u.role == "host").unwrap();
         assert_eq!(host.ready, Ready::Invite(Some(Code::Address)), "the code with the mapped address");
         assert!(host.args.windows(2).any(|w| w == ["/rl-nat/node.sh", "10.3.0.2"]));
+        let pmp = units(scenario("nat-pmp"), &run(LIFE));
+        let router = pmp.iter().find(|u| u.role == "router-e").unwrap();
+        assert!(router.args.windows(2).any(|w| w == ["/rl-nat/router.sh", "pmp"]));
+    }
+
+    /// The isolation rests on these: macvlan, `--internal`, no `parent`
+    /// option (Docker then makes a dummy parent), our subnets only, named
+    /// and labelled by the run.
+    #[test]
+    fn the_networks_are_internal_macvlan_without_a_parent() {
+        let run = run(LIFE);
+        let nets = run.networks();
+        let subnets: Vec<&str> = nets.iter().map(|(_, s)| s.as_str()).collect();
+        assert_eq!(
+            subnets,
+            ["203.0.113.0/24", "10.1.0.0/24", "10.2.0.0/24", "10.3.0.0/24", "10.4.0.0/24", "10.5.0.0/24"]
+        );
+        for (name, subnet) in &nets {
+            assert!(name.starts_with("rl-nat-4242-"), "{name}");
+            let args = run.network_args(name, subnet);
+            assert_eq!(args[..5], ["network", "create", "-d", "macvlan", "--internal"]);
+            assert!(args.windows(2).any(|w| w == ["--label", "rl-nat=4242"]));
+            assert!(args.windows(2).any(|w| w[0] == "--subnet" && w[1] == *subnet));
+            assert_eq!(args.last(), Some(name));
+            assert!(
+                !args.iter().any(|a| a == "-o" || a.starts_with("--opt") || a.contains("parent")),
+                "{args:?}"
+            );
+        }
     }
 
     #[test]
@@ -1192,38 +1475,96 @@ mod tests {
 
     #[test]
     fn the_verdict_names_what_is_missing() {
-        let relay = &SCENARIOS[4].expect;
+        let relay = &scenario("relay").expect;
         let mut seen = Seen {
             exit: Some(0),
             stdout: "path: relayed\nmatch 1: olx-classic\n".into(),
             host_log: "x invite code (joins through the relays): rlx1a\njoin: b via relayed\nmatch end (time limit)\n"
                 .into(),
-            relay_log: "relay: 1 allocations\n".into(),
+            relay_log: "t relay: TURN on port 3478\nt relay: 2 allocations\nt relay: 0 allocations\n".into(),
             host_exit: Some(0),
             ..Seen::default()
         };
-        assert!(verdict(relay, &seen).is_empty(), "{:?}", verdict(relay, &seen));
+        assert!(
+            verdict(relay, &seen).is_empty(),
+            "two allocations at once count: {:?}",
+            verdict(relay, &seen)
+        );
         seen.exit = None;
         seen.host_exit = Some(137);
-        seen.relay_log.clear();
+        seen.relay_log = "t relay: 0 allocations\n".into();
         let wrong = verdict(relay, &seen).join("; ");
         assert!(
-            wrong.contains("did not exit") && wrong.contains("137") && wrong.contains("relay's log"),
+            wrong.contains("did not exit") && wrong.contains("137") && wrong.contains("no allocation"),
             "{wrong}"
         );
-        let pcp = &SCENARIOS[2].expect;
+        let pcp = &scenario("pcp").expect;
         let mapped = Seen {
             exit: Some(0),
             stdout: "path: direct\n".into(),
             host_log:
-                "reach: Port 23400 is open on your router (NAT-PMP): x\ninvite code: rlx1b\nvia open port\n"
+                "reach: Port 23400 is open on your router (PCP): x\ninvite code: rlx1b\nvia open port\n"
                     .into(),
             ..Seen::default()
         };
-        assert!(verdict(pcp, &mapped).is_empty(), "either method");
+        assert!(verdict(pcp, &mapped).is_empty());
+        let pmp = &scenario("nat-pmp").expect;
+        let wrong = verdict(pmp, &mapped).join("; ");
+        assert!(wrong.contains("(NAT-PMP)"), "PCP is not NAT-PMP: {wrong}");
         let unmapped = Seen { host_log: "invite code (joins through the relays): rlx1c\n".into(), ..mapped };
         let wrong = verdict(pcp, &unmapped).join("; ");
-        assert!(wrong.contains("(PCP)\" or") && wrong.contains("lacks an address"), "{wrong}");
+        assert!(wrong.contains("(PCP)") && wrong.contains("lacks an address"), "{wrong}");
+    }
+
+    #[test]
+    fn allocations_are_read_from_the_relay_log() {
+        assert_eq!(allocations(""), 0);
+        assert_eq!(
+            allocations(
+                "2026-10-14 15:37:38 relay: 1 allocations\n2026-10-14 15:37:54 relay: 0 allocations\n"
+            ),
+            1
+        );
+        assert_eq!(allocations("relay: 3 allocations\nrelay: 2 allocations\n"), 3);
+        assert_eq!(
+            allocations("relay: TURN on port 3478, relay ports 49160-49191\nrelay: x allocations\n"),
+            0
+        );
+    }
+
+    /// N58: a host whose image cannot be built skips, when apt is offline
+    /// or the release lacks a package (the lines measured here with
+    /// `docker build --progress=plain`); any other failure fails.
+    #[test]
+    fn image_build_failures_that_skip() {
+        let offline = "#6 7.350 W: Failed to fetch http://archive.ubuntu.com/ubuntu/dists/resolute/InRelease  \
+                       Temporary failure resolving 'archive.ubuntu.com'\n#6 7.364 E: Unable to locate package iproute2\n";
+        let why = build_skip("ubuntu:26.04", offline).unwrap();
+        assert!(
+            why.contains("mirrors") && why.contains("ubuntu:26.04"),
+            "offline before a missing package: {why}"
+        );
+        let missing = "#6 6.763 E: Unable to locate package miniupnpd-nftables\n";
+        let why = build_skip("ubuntu:20.04", missing).unwrap();
+        assert!(why.contains("ubuntu:20.04 has no package miniupnpd-nftables"), "{why}");
+        let candidate = "#6 E: Package 'miniupnpd-nftables' has no installation candidate\n";
+        assert!(build_skip("debian:11", candidate).unwrap().contains("no package miniupnpd-nftables"));
+        let broken = "#8 ERROR: failed to compute cache key: \"/router.sh\": not found\n";
+        assert_eq!(build_skip("ubuntu:26.04", broken), None, "a broken Dockerfile fails");
+    }
+
+    #[test]
+    fn network_failures_that_skip() {
+        let why = network_skip(
+            "`docker network create` failed: Error response from daemon: plugin \"macvlan\" not found",
+        )
+        .unwrap();
+        assert!(why.contains("macvlan") && why.contains("modprobe"), "{why}");
+        assert!(network_skip("failed to create the macvlan port: operation not supported").is_some());
+        assert_eq!(
+            network_skip("Error response from daemon: Pool overlaps with other one on this address space"),
+            None
+        );
     }
 
     #[test]

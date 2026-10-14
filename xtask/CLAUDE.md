@@ -18,7 +18,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `rl-cli`'s `render_golden` and `gpu_bench` (plan 8's `gpu-bench` on the
   software adapter), `rl-game`'s `soak`, `rl-ui`'s `hud_snapshots`) and the
   audio step, then `e2e`, `net-nat`, `bench`, `stress` and `net-feel`.
-  Each step prints `ok   <name> (<s>s)` (`net-nat`: `ok   net-nat (8
+  Each step prints `ok   <name> (<s>s)` (`net-nat`: `ok   net-nat (9
   scenarios, <s>s)`, `run_with`'s `finish` with a detail) or `FAIL` and
   its output.
 - `bench` (`bench.rs`, also `cargo xtask bench [--offline]`, spec §21 G8):
@@ -84,7 +84,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `--bless` writes the baseline (note `NOTE`) only when the absolute rules
   pass (else the netcode has a problem to fix, not the gate) and logs the
   reason in `fixtures/blessings.log`. About 40 s once built.
-- `e2e` (`e2e.rs`, also `cargo xtask e2e [--offline]`): builds `rl-game`
+- `e2e` (`e2e.rs`, also `cargo xtask e2e [--offline]`): builds
+  (`build_binaries`, shared with `net-nat`) `rl-game`
   and `rl-server` (dev profile), and `rl-cli --features nat-tools` in a
   cargo run of its own (one run would give the others rl-discovery's
   test relay too; `target/debug/rl-cli` is then the feature build, and
@@ -131,49 +132,70 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   nothing running; a failure's report includes all three). Skipped
   without Xvfb or content; each game killed after 240 s. Both runs about
   27 s (local 10 s, online 16 s) once built.
-- `net-nat [--keep] [--only <scenario>]...` (`nat.rs`, plan 12b Task 11,
-  spec §9.7, ruling N58; also `full`'s step after `e2e`, `nat::step`):
-  the Docker NAT tests; topology, scenarios and timings in
-  `tools/net-nat/CLAUDE.md`. Prerequisites (`prerequisites`; each
-  missing one is `skip net-nat (<why and the fix>)`, a pass):
-  `olx_timing::docker_missing`, `/etc/os-release` with `ID` and
-  `VERSION_ID` of a Debian-like distribution (`base_image`), the content
-  (`content/packs`). Then `build`: `rl-server` and `rl-cli --features
-  nat-tools` in release, in two cargo runs (one run with
-  `--features rl-cli/nat-tools` leaves the feature off: tried; and
-  rl-server needs no test relay), so `full`'s `stress` rebuilds release
-  `rl-cli` without it (about a minute), harmless. `ensure_image`:
-  `rl-nat:<image_tag>` (SHA-256 of `TOOL_FILES` and the base) built when
-  missing (`docker build --build-arg BASE=<ID>:<VERSION_ID>`; a base that
-  cannot be pulled is a skip, a failing build a failure), then
-  `oracle::prune_old` removes the other `rl-nat` tags. The configs
-  (`Config::text`) go to `target/net-nat/configs/`; the networks
-  (`Networks::create`: `networks()`, macvlan `--internal`, label
-  `rl-nat`; anything labelled `rl-nat` from an interrupted run removed
-  first) live for the run and go when it ends (`Drop`) unless `--keep`.
-  Each of `SCENARIOS` (`select`: `--only`, table order, an unknown name
-  an error) is `play`ed: `units` (the pure plan: per container its
-  stage, `docker run` arguments, every one on our networks only with the
-  `rl-nat=<scenario>` label, and `Ready`: lines, an invite code
-  (`invite_code`, with an address when `Code::Address`), or its exit),
-  started stage by stage (`run_units`; the joiner's `{invite}` replaced
-  by the host's code) and waited for (`wait_ready`, until `LIMIT`, 60 s,
-  from the scenario's start; a container exiting before it is ready
-  fails), then the host stopped with SIGTERM when `host_stops`, and
-  `verdict` (pure: `Expect` against `Seen`: exit status, stdout and
-  stderr lines, the host's log (one of each group), the relay's log, the
+- `net-nat [--keep] [--offline] [--only <scenario>]...` (`nat.rs`, plan
+  12b Task 11, spec §9.7, ruling N58; also `full`'s step after `e2e`,
+  `nat::step(offline)`): the Docker NAT tests; topology, scenarios,
+  lifetimes and timings in `tools/net-nat/CLAUDE.md`. Prerequisites
+  (`prerequisites`; each missing one is `skip net-nat (<why and the
+  fix>)`, a pass): `olx_timing::docker_missing`, `/etc/os-release` with
+  `ID` and `VERSION_ID` of a Debian-like distribution (`base_image`),
+  the content (`content/packs`). The binaries are `e2e`'s dev builds
+  (`e2e::build_binaries`: `rl-game` and `rl-server`, then `rl-cli
+  --features nat-tools` in a cargo run of its own, as feature
+  unification would give the others rl-discovery's test relay; both
+  steps run exactly these, so `full` builds them once), mounted from
+  `target/debug`. `ensure_image`: `rl-nat:<image_tag>` (SHA-256 of
+  `TOOL_FILES` and the base) built when missing (`docker build
+  --progress=plain --build-arg BASE=<ID>:<VERSION_ID>`), then
+  `oracle::prune_old` removes the other `rl-nat` tags; skips (N58):
+  `--offline` without the image, a base that cannot be pulled, and
+  `build_skip` (apt offline: `Failed to fetch`, `Temporary failure
+  resolving`; a missing package: `Unable to locate package`, `has no
+  installation candidate`); any other build failure fails. Then the
+  machine-wide `lock` (`<temp>/rl-nat.lock`, at most 10 min), the
+  removal of anything labelled `rl-nat` (an interrupted run's), the
+  configs (`Config::text`) in `target/net-nat/configs/`, and a `Run`
+  (id: the process id, in every name and the label `rl-nat=<id>`;
+  `life`: `LIFE` 120 s, `KEEP_LIFE` 3600 with `--keep`) whose networks
+  (`Run::networks`, `network_args`: macvlan `--internal`, no parent;
+  `network_skip`: a Docker without macvlan skips) live for the run and
+  go when it ends (`Networks`' `Drop`) unless `--keep`. Each of
+  `SCENARIOS` (`select`: `--only`, table order, an unknown name an
+  error) is `play`ed: `units` (the pure plan: per container its stage,
+  `docker run` arguments (`--name rl-nat-<id>-<role>`, the labels
+  `rl-nat=<id>` and `rl-nat.scenario=<name>`, `-e RL_NAT_LIFE`, our
+  networks only, the command bounded by `node.sh`, `router.sh` or
+  `timeout --preserve-status -k 5 <life>`) and `Ready`: lines, an
+  invite code (`invite_code`, with an address when `Code::Address`), or
+  its exit), started stage by stage (`run_units`; the joiner's
+  `{invite}` replaced by the host's code) and waited for (`wait_ready`,
+  until `LIMIT`, 60 s, from the scenario's start; a container exiting
+  before it is ready fails), then the host stopped with SIGTERM when
+  `host_stops`, and `verdict` (pure: `Expect` against `Seen`: exit
+  status, stdout and stderr lines, the host's log (one of each group),
+  the relay's `allocations` (at least one, when `relay_allocates`), the
   invite's kind, the host's exit). `Containers` saves every log to
-  `target/net-nat/<scenario>/` and removes the containers when dropped
-  (unless `--keep`), so a failing or panicking scenario leaves nothing
-  running; a failure prints the last 40 lines of each container. The
-  command prints `     net-nat: <scenario> passed in <s> s` per
-  scenario. Unit tests: `base_image_from_os_release`,
+  `target/net-nat/<scenario>/` and removes the run's containers when
+  dropped (unless `--keep`), so a failing or panicking scenario leaves
+  nothing running; a failure prints the last 40 lines of each
+  container. **Ctrl+C** (`watch_interrupts`: `ctrlc`, installed once,
+  only acting while a run is `ACTIVE`; otherwise, or a second time, it
+  exits 130 at once): the waits return `interrupted`, the guards remove
+  the containers and networks, and the process exits 130 (in `full` too:
+  no later step runs). The command prints `     net-nat: <scenario>
+  passed in <s> s` per scenario. Unit tests: `base_image_from_os_release`,
   `invite_code_is_read_from_the_log`,
   `scenario_names_are_unique_and_selectable`,
   `image_tag_changes_with_the_scripts`,
-  `every_container_stays_on_our_networks` (labels, networks and their
-  subnets, read-only mounts, no host network), `configs_are_ron_on_our_servers_only`,
-  `the_verdict_names_what_is_missing`. About 75 s here once built.
+  `every_container_stays_on_our_networks_and_ends_by_itself` (names,
+  labels, `RL_NAT_LIFE`, networks and their subnets, read-only mounts,
+  no host network, every command bounded, for `LIFE` and `KEEP_LIFE`),
+  `the_networks_are_internal_macvlan_without_a_parent`,
+  `configs_are_ron_on_our_servers_only`,
+  `the_verdict_names_what_is_missing`,
+  `allocations_are_read_from_the_relay_log`,
+  `image_build_failures_that_skip`, `network_failures_that_skip`. About
+  84 s here once built.
 - `windows` (`winbuild.rs`, plan 8): the native Windows build run from
   WSL, for `envelope --gpu windows`. `missing()` says why it cannot run
   here (no `cmd.exe` or `WSLInterop`/`WSLInterop-late` not enabled, no

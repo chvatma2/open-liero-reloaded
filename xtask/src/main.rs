@@ -131,15 +131,18 @@ enum Command {
         reason: Option<String>,
     },
     /// The Docker NAT tests (plan 12b, spec §9.7; also a step of `full`): home routers
-    /// (cone, symmetric, UPnP, PCP) on isolated networks, a Nostr relay, STUN and a TURN
+    /// (cone, symmetric, UPnP, PCP, NAT-PMP) on isolated networks, a Nostr relay, STUN and a TURN
     /// relay; direct joins, port mapping, hole punching, relays, finding and --nat-check.
     /// Skipped with a notice without Docker.
     NetNat {
-        /// Leave the networks and the last scenario's containers for inspection.
+        /// Leave the networks and the last scenario's containers (for an hour) for inspection.
         #[arg(long)]
         keep: bool,
-        /// Only these scenarios (repeatable): direct, upnp, pcp, hole-punching, relay,
-        /// no-relay, finding, nat-check.
+        /// Do not download: without the image already built, the step is skipped.
+        #[arg(long)]
+        offline: bool,
+        /// Only these scenarios (repeatable): direct, upnp, pcp, nat-pmp, hole-punching,
+        /// relay, no-relay, finding, nat-check.
         #[arg(long)]
         only: Vec<String>,
     },
@@ -228,7 +231,7 @@ fn main() -> ExitCode {
             envelope::run(&envelope::Opts { quick, only, gpu, bless: reason.filter(|_| bless), report, from })
         }
         Command::NetFeel { bless, reason } => net::run(reason.as_deref().filter(|_| bless)),
-        Command::NetNat { keep, only } => nat::command(&only, keep),
+        Command::NetNat { keep, offline, only } => nat::command(&only, keep, offline),
         Command::InstallHooks => install_hooks().map(|()| true),
         Command::OracleRecord { check, names } => oracle::run(&names, check),
         Command::OracleGenWeapons => oracle_gen::run(),

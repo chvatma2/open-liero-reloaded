@@ -141,6 +141,27 @@ pub fn bad_lines(stderr: &str) -> Vec<&str> {
         .collect()
 }
 
+/// The dev builds `e2e` and `net-nat` run (`target/debug`): `rl-game` and
+/// `rl-server`, then `rl-cli` with its dev tools (`nostr-relay`,
+/// `stun-server`) in a cargo run of its own: in one run, feature
+/// unification would give rl-game and rl-server rl-discovery's test relay
+/// too. Both steps build exactly these, so in `full` the second finds
+/// them built (no feature flips between them).
+pub fn build_binaries(root: &Path) -> Result<(), String> {
+    for args in [&["-p", "rl-game", "-p", "rl-server"][..], &["-p", "rl-cli", "--features", "nat-tools"]] {
+        let build = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+            .args(["build", "--quiet"])
+            .args(args)
+            .current_dir(root)
+            .output()
+            .map_err(|e| format!("cannot run cargo: {e}"))?;
+        if !build.status.success() {
+            return Err(String::from_utf8_lossy(&build.stderr).into_owned());
+        }
+    }
+    Ok(())
+}
+
 /// Runs both scripts, the local one then the online one; `content` is the
 /// imported content directory.
 pub fn run(content: Option<&Path>) -> Result<(), String> {
@@ -149,20 +170,7 @@ pub fn run(content: Option<&Path>) -> Result<(), String> {
         println!("skip e2e (no OLX content: --offline)");
         return Ok(());
     };
-    // rl-cli on its own, with its dev tools (`nostr-relay`): one build
-    // with the feature would give rl-game and rl-server rl-discovery's
-    // test relay too.
-    for args in [&["-p", "rl-game", "-p", "rl-server"][..], &["-p", "rl-cli", "--features", "nat-tools"]] {
-        let build = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-            .args(["build", "--quiet"])
-            .args(args)
-            .current_dir(&root)
-            .output()
-            .map_err(|e| format!("cannot run cargo: {e}"))?;
-        if !build.status.success() {
-            return Err(String::from_utf8_lossy(&build.stderr).into_owned());
-        }
-    }
+    build_binaries(&root)?;
     let Some(x) = xvfb()? else {
         println!("skip e2e (Xvfb is not installed)");
         return Ok(());

@@ -2,10 +2,15 @@
 
 The Docker NAT tests (plan 12b Task 11, networking spec §9.7, ruling N58):
 home routers in containers between isolated LANs and a test WAN, and our
-own release binaries joining across them. `cargo xtask net-nat [--keep]
-[--only <scenario>]...` runs them (`xtask/src/nat.rs`); `cargo xtask full`
-runs them after `e2e`. Without Docker, a readable `/etc/os-release` or the
-content, it prints `skip net-nat (<why and the fix>)` and passes.
+own host-built (dev) binaries joining across them. `cargo xtask net-nat
+[--keep] [--offline] [--only <scenario>]...` runs them (`xtask/src/nat.rs`); `cargo xtask full`
+runs them after `e2e`. It prints `skip net-nat (<why and the fix>)` and
+passes without Docker, a Debian-like `/etc/os-release` or the content;
+when this Docker cannot make macvlan networks (rootless Docker, no
+`macvlan` module); and when the image cannot be built (N58): the base
+cannot be pulled, apt cannot reach the mirrors, the release lacks a
+package, or `--offline` (`full --offline`) and the image is not built
+yet. A broken Dockerfile or script fails.
 
 ## Files
 
@@ -21,11 +26,16 @@ content, it prints `skip net-nat (<why and the fix>)` and passes.
 - `router.sh <kind> <wan ip> <lan ip>`: finds the two interfaces by
   address, sets nftables (table `inet filter`: forward from the LAN out,
   replies back, miniupnpd's chains; postrouting `masquerade`, or
-  `masquerade fully-random` for `symmetric`; input dropped from the WAN)
-  and, for `upnp` and `pcp`, starts miniupnpd from `miniupnpd.conf.in`;
-  prints `router ready: ...` once miniupnpd listens.
+  `masquerade fully-random` for `symmetric`; input dropped from the WAN;
+  for `pmp`, PCP requests dropped: `udp dport 5351 @th,64,8 2`, the
+  version byte, 2 for PCP and 0 for NAT-PMP, as miniupnpd switches both
+  together) and, for `upnp`, `pcp` and `pmp`, starts miniupnpd from
+  `miniupnpd.conf.in`; prints `router ready: ...` once miniupnpd
+  listens, then lives `RL_NAT_LIFE` seconds (120; 3600 with `--keep`).
 - `node.sh <router lan ip> <command...>`: `ip route replace default via
-  <router>`, then execs the command (our binaries, in a LAN).
+  <router>`, then execs the command (our binaries, in a LAN) under
+  `timeout --preserve-status -k 5 $RL_NAT_LIFE` (the exit status stays
+  the binary's: a host stopped with SIGTERM exits 0).
 - `miniupnpd.conf.in`: the WAN and LAN interfaces, `ext_ip` (the WAN
   address), `ext_allow_private_ipv4=yes` (203.0.113.0/24 is reserved to
   miniupnpd), `secure_mode=yes`, `allow 1024-65535 <the LAN> 1024-65535`
@@ -34,7 +44,9 @@ content, it prints `skip net-nat (<why and the fix>)` and passes.
 ## Topology
 
 Every network is `docker network create -d macvlan --internal --label
-rl-nat`: Docker gives an internal macvlan network a dummy parent
+rl-nat=<run> --subnet <subnet> rl-nat-<run>-<net>` (`Run::network_args`,
+unit-tested; `<run>` is xtask's process id, in every container's and
+network's name): Docker gives an internal macvlan network a dummy parent
 interface of its own, so nothing on it reaches the host, the user's
 router or the Internet, and no container has a default route but the one
 `node.sh` sets. Not bridges: with `br_netfilter` (Docker turns it on),
@@ -43,11 +55,12 @@ outside its subnet, which is all of a router's traffic.
 
 | network | subnet | router (WAN, LAN) | NAT |
 |---|---|---|---|
-| `rl-nat-wan` | 203.0.113.0/24 | — | — |
-| `rl-nat-a` | 10.1.0.0/24 | A 203.0.113.101, 10.1.0.2 | port-restricted cone (`masquerade`) |
-| `rl-nat-b` | 10.2.0.0/24 | B 203.0.113.102, 10.2.0.2 | symmetric (`masquerade fully-random`) |
-| `rl-nat-c` | 10.3.0.0/24 | C 203.0.113.103, 10.3.0.2 | cone + miniupnpd, UPnP-IGD only |
-| `rl-nat-d` | 10.4.0.0/24 | D 203.0.113.104, 10.4.0.2 | cone + miniupnpd, NAT-PMP and PCP only |
+| `wan` | 203.0.113.0/24 | — | — |
+| `a` | 10.1.0.0/24 | A 203.0.113.101, 10.1.0.2 | port-restricted cone (`masquerade`) |
+| `b` | 10.2.0.0/24 | B 203.0.113.102, 10.2.0.2 | symmetric (`masquerade fully-random`) |
+| `c` | 10.3.0.0/24 | C 203.0.113.103, 10.3.0.2 | cone + miniupnpd, UPnP-IGD only |
+| `d` | 10.4.0.0/24 | D 203.0.113.104, 10.4.0.2 | cone + miniupnpd, NAT-PMP and PCP (PCP answers first) |
+| `e` | 10.5.0.0/24 | E 203.0.113.105, 10.5.0.2 | cone + miniupnpd, PCP dropped: NAT-PMP only |
 
 On the WAN: `infra` at 203.0.113.10 (`rl-cli nostr-relay --listen
 0.0.0.0:7777` and `rl-cli stun-server --listen 0.0.0.0:3479`), `relay` at
@@ -58,11 +71,24 @@ second STUN server) and, for `direct`, `public` at .30 (Public,
 `.20`. Every config (written to `target/net-nat/configs/`) and every
 joiner uses relay `ws://203.0.113.10:7777`, STUN `203.0.113.10:3479` and
 `203.0.113.20:3478` (the relay server: the first only), and `allow_local`
-(N62). The binaries (`target/release/rl-server`, `rl-cli` with
-`nat-tools`), `content/packs` and the configs are mounted read-only at
-`/rl/bin`, `/rl/content` and `/rl/config`. Routers run with `--cap-add
-NET_ADMIN --sysctl net.ipv4.ip_forward=1`, nodes with `--cap-add
-NET_ADMIN`, everything with `--init` (SIGTERM reaches our processes).
+(N62). The binaries (`target/debug/rl-server` and `rl-cli` with
+`nat-tools`: `e2e`'s dev builds, `e2e::build_binaries`, so `full` builds
+them once and never flips release `rl-cli`'s features), `content/packs`
+and the configs are mounted read-only at `/rl/bin`, `/rl/content` and
+`/rl/config`. Routers run with `--cap-add NET_ADMIN --sysctl
+net.ipv4.ip_forward=1`, nodes with `--cap-add NET_ADMIN`, everything
+with `--init` (SIGTERM reaches our processes) and `-e RL_NAT_LIFE`; our
+binaries on the WAN run under the same `timeout` as `node.sh`'s.
+
+**Lifetimes.** Every container ends by itself within `RL_NAT_LIFE`
+seconds (`LIFE`, 120: past the 60 s scenario bound and the host's stop),
+so a run that was killed leaves nothing running for long (its stopped
+containers and networks are removed by the next run). Ctrl+C (SIGINT,
+SIGTERM, SIGHUP, through `ctrlc`) stops the waits, removes the run's
+containers and networks and exits 130; a second Ctrl+C exits at once.
+One run at a time: a machine-wide lock, `<temp>/rl-nat.lock` (the runs
+share subnets, which Docker will not overlap), waited for at most 10
+min; holding it, a run removes anything labelled `rl-nat` first.
 
 Two details a real router has and the test needs:
 - **Input dropped from the WAN.** A packet that reaches the router itself
@@ -73,7 +99,8 @@ Two details a real router has and the test needs:
 - **One method per mapping router.** rl-net asks PCP, NAT-PMP and UPnP at
   once and keeps the first mapping; PCP answers long before UPnP's search
   ends, so a router offering all three would always show PCP. C offers
-  UPnP alone, D NAT-PMP and PCP.
+  UPnP alone, D NAT-PMP and PCP (PCP wins), E drops PCP so the client
+  falls back to NAT-PMP (about 2 s later).
 
 ## Scenarios
 
@@ -88,24 +115,24 @@ output.
 |---|---|---|---|---|
 | `direct` | `public` | LAN A, `--join 203.0.113.30:23400 --lobby-only` | exit 0, `path: direct`, host `via direct` | 4.1 s |
 | `upnp` | Invite in LAN C, `port_mapping: true` | LAN A, `--invite <code> --lobby-only` | `reach: Port 23400 is open on your router (UPnP)`, the code has an address, `path: direct`, host `via open port` | 5.0 s |
-| `pcp` | Invite in LAN D, `port_mapping: true` | LAN A, `--invite --lobby-only` | `(PCP)` or `(NAT-PMP)`, the code has an address, `path: direct`, `via open port` | 5.1 s |
+| `pcp` | Invite in LAN D, `port_mapping: true` | LAN A, `--invite --lobby-only` | `(PCP)`, the code has an address, `path: direct`, `via open port` | 5.2 s |
+| `nat-pmp` | Invite in LAN E, `port_mapping: true` | LAN A, `--invite --lobby-only` | `(NAT-PMP)`, the code has an address, `path: direct`, `via open port` | 6.8 s |
 | `hole-punching` | Invite in LAN A, no mapping | LAN C, `--invite --lobby-only --no-nostr-turn` | the code has no address, `path: punched`, `via punched` | 6.2 s |
-| `relay` | Invite in LAN A | LAN B (symmetric), `--invite --matches 1` (a 0.2-minute match with one server bot) | `path: relayed`, `match 1:`, `via relayed`, `match end`, the relay's `relay: 1 allocations`, both exit 0 (the host on SIGTERM) | 22.1 s |
+| `relay` | Invite in LAN A | LAN B (symmetric), `--invite --matches 1` (a 0.2-minute match with one server bot) | `path: relayed`, `match 1:`, `via relayed`, `match end`, the relay's `relay: <n ≥ 1> allocations` (`allocations`), both exit 0 (the host on SIGTERM) | 22.0 s |
 | `no-relay` | Invite in LAN A | LAN B, `--invite --no-nostr-turn` | exit 1, stderr `no network path to the game` | 19.7 s |
 | `finding` | Public in LAN A, no mapping (listed without an address) | LAN B, `--listed "nat finding" --lobby-only` | `path: relayed`, `via relayed` | 7.0 s |
 | `nat-check` | `rl-server --nat-check` in LAN B | — | `NAT: symmetric NAT` | 5.4 s |
 
 A browser host is plan 13's (ruling PL12b-3).
 
-Times measured here (WSL2, Docker 29.1.3, 2026-10-14): all eight about
-75 s once built; the image 196 MB (51 MB content), built in 12 s from a
-pulled base; the two release builds about a minute when `full`'s other
-steps rebuilt `rl-cli` without `nat-tools`.
+Times measured here (WSL2, Docker 29.1.3, 2026-10-14): all nine about
+84 s once built (the dev binaries); the image 196 MB (51 MB content),
+built in 12 s from a pulled base.
 
 ## By hand
 
-- `--keep` leaves the networks and the last scenario's containers:
-  `docker exec -it rl-nat-router-a nft list ruleset`, `docker logs
-  rl-nat-host`. The next run removes them (and anything an interrupted
-  run left) by the label `rl-nat` first.
+- `--keep` leaves the networks and the last scenario's containers (for
+  an hour): `docker exec -it rl-nat-<run>-router-a nft list ruleset`,
+  `docker logs rl-nat-<run>-host`. The next run removes them (and
+  anything an interrupted run left) by the label `rl-nat` first.
 - `--only relay --only finding` runs those (in table order).

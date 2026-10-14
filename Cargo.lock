@@ -6517,6 +6517,7 @@ dependencies = [
  "anyhow",
  "cargo_metadata",
  "clap",
+ "ctrlc",
  "hex",
  "prettyplease",
  "quote",
