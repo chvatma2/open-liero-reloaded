@@ -149,6 +149,8 @@ impl Net {
     }
 
     fn node(&mut self, cfg: CoreConfig, behind: Option<NatId>, at: SocketAddr) -> NodeId {
+        // Each node's seeds come from the net's.
+        let cfg = CoreConfig { impair_seed: self.rng.next_u64(), stun_seed: self.rng.next_u64(), ..cfg };
         let mut core = Core::new(cfg, self.now);
         core.set_base(at, vec![at]);
         self.nodes.push(Node { core, at, behind, events: Vec::new(), connected: false });
@@ -443,6 +445,24 @@ mod tests {
         // The forward's own address maps to its port; another takes the next.
         assert_eq!(net.map_out(nat, a("192.168.1.13:23400"), a("198.51.100.1:3478")), Some(23401));
         assert_eq!(net.map_out(nat, a("192.168.1.12:23400"), a("198.51.100.1:3478")), Some(23400));
+    }
+
+    /// Each node's core takes its seeds from the net's: two nodes' STUN
+    /// transactions differ.
+    #[test]
+    fn nodes_are_seeded_apart() {
+        let mut net = Net::new(1);
+        let server = net.stun_server(a("198.51.100.1:3478"));
+        let (x, y) = (net.client(None, a("203.0.113.1:5000")), net.client(None, a("203.0.113.2:5000")));
+        let now = net.now();
+        let mut requests = Vec::new();
+        for n in [x, y] {
+            net.core(n).stun(vec![server], now);
+            let mut out = Vec::new();
+            net.core(n).poll(now, &mut out, &mut Vec::new());
+            requests.push(out.remove(0).bytes);
+        }
+        assert_ne!(requests[0][8..20], requests[1][8..20]);
     }
 
     #[test]

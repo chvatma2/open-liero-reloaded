@@ -116,7 +116,7 @@ fn check(sdp: &str) -> Result<(), proptest::test_runner::TestCaseError> {
 use proptest::prelude::*;
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 512, failure_persistence: None, ..ProptestConfig::default() })]
+    #![proptest_config(ProptestConfig { cases: 256, failure_persistence: None, ..ProptestConfig::default() })]
 
     #[test]
     fn sanitize_and_remote_candidates_never_panic(

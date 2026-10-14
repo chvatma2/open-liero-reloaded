@@ -100,6 +100,8 @@ fn stun_messages_are_recognised() {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, failure_persistence: None, ..ProptestConfig::default() })]
+
     #[test]
     fn responses_never_panic(bytes in proptest::collection::vec(any::<u8>(), 0..700), flip in 0usize..80, val in any::<u8>()) {
         let _ = parse_binding_response(&bytes, &RFC_TXN);

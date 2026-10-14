@@ -94,7 +94,7 @@ announcements.
   setup-time datagrams count, as before the split; without the reports the
   stats count no sends.
   - **Signalled setups** (plan 12b, N48-N50; Nostr carries their SDP from
-    Task 7): `set_base(base, hosts)` (every signalled link's datagrams are
+    Task 7; `core/signalled.rs`): `set_base(base, hosts)` (every signalled link's datagrams are
     taken as arriving at `base`; TCP-signalled links keep their own host
     candidate, N16), `stun(servers, now)`, `set_mapped`, `local()`
     (`LocalCandidates`), `nat()`, `gathered(now)`; `offer_ice(hint, now)`
@@ -108,9 +108,11 @@ announcements.
     STUN binding request reaching its link), or is `Refused { Busy }`
     when every one has (PF12b-2); the eviction's `SetupFailed { Timeout }`
     comes with the next `poll` (calls without an event list queue theirs
-    in `Core`, like `outbox`). Offers carry the host candidates, the
+    in `Core`, like `outbox`). Offers and answers carry the
     server-reflexive and the mapped address on the base (not when equal
-    to it); `srflx` follows STUN's latest answer, so a renumbered router's
+    to it), then as many host candidates (base first) as fit
+    `MAX_CANDIDATES` in all, so the far side's `sanitize` never cuts the
+    reflexive ones (review I-1); `srflx` follows STUN's latest answer, so a renumbered router's
     new address is offered from its next round.
   - **Paths** (N49): `NetEvent::Connected { path }` and `path(peer)`. A
     TCP-signalled link is `Direct`, reported at `Open`. A signalled link
@@ -119,15 +121,20 @@ announcements.
     re-classified when the pair changes; its `Connected` waits for
     str0m's first stats naming a pair, at most 1.5 s after `Open`
     (`HolePunched` without one), its `addr` becomes the pair's remote
-    address, and its messages wait until then (`Opened` still comes at
-    `Open`: the driver lingers the signalling). `peers()` lists reported
-    peers only.
+    address (without a pair, the latest source its link took a datagram
+    from: never 0.0.0.0, which the lobby's IP bans key on; it follows the
+    pair as ICE moves), and its messages wait until then (`Opened` still
+    comes at `Open`: the driver lingers the signalling). `peers()` lists
+    reported peers only (when signalled links reach the endpoint,
+    rl-online's close-all over `peers()` misses one still waiting; the
+    endpoint's drop closes it). Test hook `CoreConfig::suppress_stats`
+    (`test-hooks`) ignores str0m's stats, to test the fallback.
   - **STUN on the game socket** (`probe.rs`, N48): each round asks the
     servers (IPv4, at most 4) with binding requests from the core's
     socket, once more after 500 ms if unanswered, at `stun` and every
     `STUN_EVERY` (25 s, which keeps the router's mapping alive);
     `gathered` once the first round is answered or `STUN_WAIT` (1 s)
-    passed. `receive` gives a datagram to the probe first when it answers
+    passed (at once when `stun` was never called or given no server). `receive` gives a datagram to the probe first when it answers
     an outstanding request from the server asked. `srflx` is the first
     answering server's answer (the next one's if it falls silent for a
     round); two answers of a round give `NatBehaviour` (`Open` when
@@ -149,7 +156,8 @@ announcements.
   symmetric: a seeded random port per destination; their filters), with
   router `forward`s, 120 s idle expiry, no hairpinning (nodes behind one
   NAT reach each other's private addresses directly), STUN servers, 10 ms
-  per hop and a 1 ms virtual clock; `gather`, `signal` (the signalling
+  per hop and a 1 ms virtual clock; each node's `impair_seed` and
+  `stun_seed` come from `Net::new`'s seed; `gather`, `signal` (the signalling
   Nostr will carry), `run_until`, `connected` (the client's path),
   `events`, `renumber`.
 - **`endpoint::Endpoint`**: the socket driver of a `Core`: the UDP socket,
@@ -267,7 +275,8 @@ on an in-memory wire and a virtual clock, a setup timing out, `admit`,
 setup-time datagrams and a refused one in the stats, a cancelled setup's
 last datagrams closing the host's open link, a full signalled pending
 table evicting a silent setup and refusing `Busy` once every one has
-heard checks; `tests/natsim.rs`: hole punching through every NAT pair of
+heard checks, reflexive candidates surviving ten host addresses, the
+1.5 s `Connected` fallback with a real address, `gathered` without STUN; `tests/natsim.rs`: hole punching through every NAT pair of
 interest, a mapped port, the same LAN, NAT detection, STUN keeping a
 mapping alive, a renumbered router; `tests/candidates.rs`: reading,
 sanitizing (fuzzed) and classifying candidates;

@@ -271,3 +271,121 @@ fn a_full_pending_table_evicts_a_silent_setup() {
     let (_, offer) = signalled_offer(&mut late, "10.0.4.1:50000".parse().unwrap(), host_at, now);
     assert_eq!(host.answer_ice(&offer, None, now), Signal::Refused { reason: Refusal::Busy });
 }
+
+/// A core with 10 host addresses that STUN answered and a router mapped.
+fn crowded(cfg: CoreConfig, t0: Instant) -> (Core, SocketAddr, SocketAddr, SocketAddr) {
+    let base: SocketAddr = "192.168.1.10:23400".parse().unwrap();
+    let server: SocketAddr = "198.51.100.1:3478".parse().unwrap();
+    let srflx: SocketAddr = "203.0.113.10:40000".parse().unwrap();
+    let mapped: SocketAddr = "203.0.113.10:23400".parse().unwrap();
+    let mut core = Core::new(cfg, t0);
+    let hosts = (0..10).map(|i| format!("10.9.{i}.1:23400").parse().unwrap()).collect();
+    core.set_base(base, hosts);
+    core.stun(vec![server], t0);
+    let mut out = Vec::new();
+    core.poll(t0, &mut out, &mut Vec::new());
+    let request = out.iter().find(|d| d.to == server).expect("a binding request");
+    let transaction: [u8; 12] = request.bytes[8..20].try_into().unwrap();
+    core.receive(server, &rl_proto::stun::binding_response(&transaction, srflx, true), t0);
+    assert_eq!(core.local().srflx, Some(srflx));
+    core.set_mapped(Some(mapped));
+    (core, base, srflx, mapped)
+}
+
+/// The far side's `sanitize` keeps 8 candidates: an offer or answer from
+/// a machine with many interfaces still carries its server-reflexive and
+/// mapped candidates (review I-1), and the base among its hosts.
+#[test]
+fn reflexive_candidates_survive_many_host_addresses() {
+    use rl_net::candidates::{MAX_CANDIDATES, remote_candidates, sanitize};
+    let t0 = Instant::now();
+    let check = |sdp: &str, base, srflx, mapped| {
+        let kept = sanitize(sdp);
+        let r = remote_candidates(&kept, None);
+        assert!(r.srflx.contains(&srflx) && r.srflx.contains(&mapped), "{sdp}");
+        assert!(r.host.contains(&base), "{sdp}");
+        assert_eq!(r.host.len() + r.srflx.len() + r.relay.len(), MAX_CANDIDATES);
+    };
+    let (mut client, base, srflx, mapped) = crowded(CoreConfig::client(), t0);
+    let host_at: SocketAddr = "198.51.100.9:23400".parse().unwrap();
+    let (_, offer) = client.offer_ice(host_at, t0);
+    check(&offer, base, srflx, mapped);
+    let (mut host, base, srflx, mapped) = crowded(CoreConfig::host(), t0);
+    let mut joiner = Core::new(CoreConfig::client(), t0);
+    let (_, offer) = signalled_offer(&mut joiner, "10.0.2.1:50000".parse().unwrap(), host_at, t0);
+    let rl_proto::Signal::Answer { sdp } = host.answer_ice(&offer, None, t0) else { panic!("refused") };
+    check(&sdp, base, srflx, mapped);
+}
+
+/// The first `Connected` event in `events`, as (peer, addr, path).
+fn connected_event(events: &[CoreEvent]) -> Option<(u32, SocketAddr, rl_proto::Path)> {
+    events.iter().find_map(|e| match e {
+        CoreEvent::Net(NetEvent::Connected { peer, addr, path }) => Some((*peer, *addr, *path)),
+        _ => None,
+    })
+}
+
+/// Without str0m's stats (a test hook), a signalled link reports
+/// `Connected` 1.5 s after it opened, `HolePunched`, with the address its
+/// datagrams came from (never 0.0.0.0, which the lobby's IP bans key
+/// on); a TCP-signalled link reports `Direct` at once.
+#[test]
+fn without_stats_connected_comes_after_the_wait_with_a_real_address() {
+    use rl_proto::{Path, Signal};
+    let t0 = Instant::now();
+    let host_at: SocketAddr = "10.0.0.1:23400".parse().unwrap();
+    let client_at: SocketAddr = "10.0.0.2:50000".parse().unwrap();
+    let quiet = |cfg: CoreConfig| CoreConfig { suppress_stats: true, ..cfg };
+    // Signalled.
+    let mut host = Core::new(quiet(CoreConfig::host()), t0);
+    host.set_base(host_at, vec![host_at]);
+    let mut client = Core::new(quiet(CoreConfig::client()), t0);
+    let (setup, offer) = signalled_offer(&mut client, client_at, host_at, t0);
+    let Signal::Answer { sdp } = host.answer_ice(&offer, None, t0) else { panic!("refused") };
+    client.accept_answer_ice(setup, &sdp, None).expect("accepted");
+    let (mut eh, mut ec) = (Vec::new(), Vec::new());
+    let (mut opened, mut now) = (None, t0);
+    while !(connected(&eh) && connected(&ec)) {
+        now += Duration::from_millis(5);
+        assert!(now < t0 + Duration::from_secs(10), "no connection; host {eh:?} client {ec:?}");
+        exchange(&mut client, client_at, &mut host, host_at, now, &mut ec, &mut eh);
+        if opened.is_none() && eh.iter().any(|e| matches!(e, CoreEvent::Opened { .. })) {
+            opened = Some(now);
+            assert!(!connected(&eh), "Connected waits for the path");
+        }
+    }
+    let waited = now - opened.expect("opened");
+    assert!(waited >= Duration::from_millis(1490), "{waited:?}");
+    assert_eq!(connected_event(&eh), Some((1, client_at, Path::HolePunched)));
+    assert_eq!(connected_event(&ec), Some((HOST, host_at, Path::HolePunched)));
+    assert_eq!(host.path(1), Some(Path::HolePunched));
+    assert_eq!(host.peers().collect::<Vec<_>>(), [(1, client_at)]);
+    // TCP-signalled.
+    let mut host = Core::new(quiet(CoreConfig::host()), t0);
+    let mut client = Core::new(quiet(CoreConfig::client()), t0);
+    let (setup, offer) = client.offer(&[client_at], host_at, t0);
+    let (_, answer) = host.answer(&[host_at], &offer, client_at, t0).expect("answered");
+    client.accept_answer(setup, &answer).expect("accepted");
+    let (mut eh, mut ec) = (Vec::new(), Vec::new());
+    let mut now = t0;
+    while !connected(&eh) {
+        now += Duration::from_millis(5);
+        assert!(now < t0 + Duration::from_secs(10), "no connection; host {eh:?}");
+        exchange(&mut client, client_at, &mut host, host_at, now, &mut ec, &mut eh);
+        if eh.iter().any(|e| matches!(e, CoreEvent::Opened { .. })) {
+            assert!(connected(&eh), "a TCP-signalled link is Connected as it opens");
+        }
+    }
+    assert_eq!(connected_event(&eh), Some((1, client_at, Path::Direct)));
+}
+
+/// A core never asked to STUN has nothing to gather (review M-6).
+#[test]
+fn without_stun_a_core_is_gathered() {
+    let t0 = Instant::now();
+    assert!(Core::new(CoreConfig::client(), t0).gathered(t0));
+    let mut asked = Core::new(CoreConfig::client(), t0);
+    asked.stun(vec!["198.51.100.1:3478".parse().unwrap()], t0);
+    assert!(!asked.gathered(t0));
+    assert!(asked.gathered(t0 + rl_net::probe::STUN_WAIT));
+}

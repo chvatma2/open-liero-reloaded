@@ -244,6 +244,8 @@ fn core_config(cfg: &EndpointConfig, host: bool) -> CoreConfig {
         fingerprint_override: cfg.fingerprint_override,
         #[cfg(feature = "test-hooks")]
         first_peer_id: cfg.first_peer_id,
+        #[cfg(feature = "test-hooks")]
+        suppress_stats: false,
     }
 }
 

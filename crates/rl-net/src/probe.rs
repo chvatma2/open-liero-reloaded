@@ -90,7 +90,8 @@ impl StunProbe {
             round: None,
             next: None,
             first: None,
-            first_done: false,
+            // Nothing asked, nothing to wait for.
+            first_done: true,
             primary: None,
             srflx: None,
             nat: NatBehaviour::Unknown,
