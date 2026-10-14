@@ -25,7 +25,7 @@ use rl_netcode::world_sim::TickRecorder;
 use rl_netcode::{Channel, Config, Driver, Event, PeerId, Role, Seat, Session, TickInfo, WorldSim};
 use rl_proto::{
     AdminCommand, Control, LobbyState, Look, MAX_INPUT_DELAY, MatchEndWire, MatchSetupWire, MatchStartWire,
-    Notice, Phase, PublicKey, Refusal, SeatWire, TAG_CONTENT, TAG_NETCODE, TAG_TO_CLIENT, TAG_TO_HOST,
+    Notice, Path, Phase, PublicKey, Refusal, SeatWire, TAG_CONTENT, TAG_NETCODE, TAG_TO_CLIENT, TAG_TO_HOST,
     Tagged, ToClient, ToHost, decode_content, decode_control, decode_to_client, decode_to_host,
     encode_content, encode_control, encode_to_client, encode_to_host, tag,
 };
@@ -35,8 +35,10 @@ use crate::bundle::{GameBundle, MAX_BUNDLES_PER_MATCH};
 use crate::content::peer_side::ContentSide;
 use crate::content::{Download, PeerContent};
 use crate::events::{NetStats, OnlineEvent};
+use crate::join::{BUSY, Join, Joiner, Lost};
 use crate::matches::{self, HostBots};
 use crate::outbox::{Outbox, Part};
+use crate::reach::{HostListen, Listener, Listening, Reachability};
 use crate::replay::{MatchRecord, PendingReplay};
 
 /// The host sends its lobby's messages at most this often: changes in
@@ -89,16 +91,34 @@ pub const NO_ANSWER: &str = "the game did not answer";
 
 /// Which end of online play a peer is.
 pub enum PeerRole {
-    /// Hosts a lobby on the endpoint's port.
-    Host(HostConfig),
+    /// Hosts a lobby on the endpoint's port, listening on Nostr as
+    /// `listen` says (N54).
+    Host { lobby: HostConfig, listen: HostListen },
     /// Hosts a lobby with no local player (a dedicated server): the look
     /// given to [`OnlinePeer::start`] is not used, and the host plays only
     /// its bots.
-    Server(HostConfig),
-    /// Joins the host whose signalling (TCP) address is `addr`; with
+    Server { lobby: HostConfig, listen: HostListen },
+    /// Joins a host as `join` says (N46: its address, then Nostr); with
     /// `expected_host` (an invite's key), only a host proving that key
-    /// (`WRONG_HOST` otherwise). Every host proves the key it names.
-    Client { addr: SocketAddr, password: Option<String>, expected_host: Option<PublicKey> },
+    /// (`WRONG_HOST` otherwise). A join through Nostr expects its host's
+    /// key without it. Every host proves the key it names.
+    Client { join: Join, password: Option<String>, expected_host: Option<PublicKey> },
+}
+
+/// A peer shutting down (ruling NT-2): its endpoint's mapping is being
+/// deleted on a thread.
+#[must_use = "wait on it before the process exits, or the router may keep the mapping"]
+pub struct Shutdown {
+    endpoint: Option<rl_net::endpoint::Shutdown>,
+}
+
+impl Shutdown {
+    /// Waits until the port mapping is deleted (at most
+    /// `rl_net::portmap::DROP_WAIT`, 1 s) or `until`, whichever comes first.
+    /// `true` when it was deleted, or there was none.
+    pub fn wait(self, until: Instant) -> bool {
+        self.endpoint.is_none_or(|s| s.wait(until))
+    }
 }
 
 /// Why the host could not start a match.
@@ -139,6 +159,15 @@ struct HostSide {
     last_ping: Option<Instant>,
     /// The lobby's revision last reported to the caller.
     reported: Option<u64>,
+    /// Takes joins through Nostr (N54).
+    listener: Option<Listener>,
+    /// The configured public address (`Reachability::configured`).
+    public_address: Option<IpAddr>,
+    /// The reachability last looked at, and what the last
+    /// `OnlineEvent::Reachability` said: its lines, whether it settled,
+    /// its direct address.
+    reach_seen: Option<Reachability>,
+    reach_reported: Option<(Vec<String>, bool, Option<SocketAddr>)>,
 }
 
 impl HostSide {
@@ -157,6 +186,10 @@ struct ClientSide {
     /// When the link opened, until the host's `Welcome`
     /// ([`JOIN_DEADLINE`]).
     waiting_since: Option<Instant>,
+    /// The join, until the link opens.
+    joiner: Option<Box<Joiner>>,
+    /// How the link reaches the host, once open.
+    connection: Option<(Path, SocketAddr)>,
 }
 
 enum Side {
@@ -244,18 +277,20 @@ impl OnlinePeer {
         let invalid = |what: String| io::Error::new(io::ErrorKind::InvalidInput, what);
         let my_key = me.public();
         let content = match &role {
-            PeerRole::Host(_) => ContentSide::new(content, content_cfg, true, Some(look.clone())),
-            PeerRole::Server(_) => ContentSide::new(content, content_cfg, true, None),
+            PeerRole::Host { .. } => ContentSide::new(content, content_cfg, true, Some(look.clone())),
+            PeerRole::Server { .. } => ContentSide::new(content, content_cfg, true, None),
             PeerRole::Client { .. } => ContentSide::new(content, content_cfg, false, Some(look.clone())),
         };
         let hosting = match role {
-            PeerRole::Host(cfg) => Ok((cfg, Some(look))),
-            PeerRole::Server(cfg) => Ok((cfg, None)),
-            PeerRole::Client { addr, password, expected_host } => Err((addr, password, expected_host, look)),
+            PeerRole::Host { lobby, listen } => Ok((lobby, listen, Some(look))),
+            PeerRole::Server { lobby, listen } => Ok((lobby, listen, None)),
+            PeerRole::Client { join, password, expected_host } => Err((join, password, expected_host, look)),
         };
+        let mut events = Vec::new();
         let (endpoint, side) = match hosting {
-            Ok((cfg, look)) => {
+            Ok((cfg, listen, look)) => {
                 let setup = setup.ok_or_else(|| invalid("a host needs a match setup".into()))?;
+                let listener = listen.pool.map(|pool| Listener::start(pool, me.clone())).transpose()?;
                 let lobby = LobbyHost::new(cfg, me, look, setup)
                     .map_err(|e: LobbyError| invalid(format!("the match setup: {e}")))?;
                 let banned = Arc::new(Mutex::new(BTreeSet::new()));
@@ -273,23 +308,36 @@ impl OnlinePeer {
                     last_drain: None,
                     last_ping: None,
                     reported: None,
+                    listener,
+                    public_address: listen.public_address,
+                    reach_seen: None,
+                    reach_reported: None,
                 };
-                (Endpoint::host(endpoint, gate)?, Side::Host(Box::new(side)))
+                (Some(Endpoint::host(endpoint, gate)?), Side::Host(Box::new(side)))
             }
-            Err((addr, password, expected_host, look)) => {
+            Err((join, password, expected_host, look)) => {
                 let mut cfg = endpoint;
                 cfg.limits.max_reliable_bytes_per_s =
                     cfg.limits.max_reliable_bytes_per_s.max(HOST_RELIABLE_BYTES_PER_S);
+                // A join through Nostr knows its host's key (N37's proof and
+                // the encrypted answer both bind it).
+                let expected_host = expected_host.or(join.nostr.as_ref().map(|n| n.host));
                 let expected = expected_host.is_some();
+                let (joiner, endpoint, step) = Joiner::start(join, cfg)?;
+                events.push(OnlineEvent::Joining(step));
                 let lobby = LobbyClient::new(me, look, password, expected_host);
-                (
-                    Endpoint::connect(cfg, addr)?,
-                    Side::Client(Box::new(ClientSide { lobby, expected, waiting_since: None })),
-                )
+                let client = ClientSide {
+                    lobby,
+                    expected,
+                    waiting_since: None,
+                    joiner: Some(Box::new(joiner)),
+                    connection: None,
+                };
+                (endpoint, Side::Client(Box::new(client)))
             }
         };
         Ok(OnlinePeer {
-            endpoint: Outbox::new(endpoint),
+            endpoint: endpoint.map_or_else(Outbox::empty, Outbox::new),
             side,
             content,
             my_key,
@@ -302,16 +350,51 @@ impl OnlinePeer {
             ended_world: None,
             names: BTreeMap::new(),
             closing: BTreeMap::new(),
-            events: Vec::new(),
+            events,
             stats: NetStats::default(),
             closed: false,
             test_seed: None,
         })
     }
 
-    /// The endpoint's UDP port (a host's TCP port too).
+    /// The endpoint's UDP port (a host's TCP port too); 0 while a join
+    /// through Nostr has no endpoint yet.
     pub fn local_port(&self) -> u16 {
-        self.endpoint.endpoint().local_port()
+        self.endpoint.endpoint().map_or(0, Endpoint::local_port)
+    }
+
+    /// A host's reachability now (its router, STUN, the configured address,
+    /// its listener); `None` on a client.
+    pub fn reachability(&self) -> Option<Reachability> {
+        let Side::Host(h) = &self.side else { return None };
+        let ep = self.endpoint.endpoint()?;
+        Some(Reachability {
+            port: ep.local_port(),
+            configured: h.public_address,
+            reach: ep.reach(),
+            listening: h.listener.as_ref().map_or(Listening::Off, Listener::listening),
+            stun_settled: ep.gathered(),
+        })
+    }
+
+    /// A client's path to its host and the host's end (or the TURN
+    /// relay's), once its link opened; the path follows ICE.
+    pub fn connection(&self) -> Option<(Path, SocketAddr)> {
+        let Side::Client(c) = &self.side else { return None };
+        let (path, remote) = c.connection?;
+        let ep = self.endpoint.endpoint();
+        let now = ep.and_then(|ep| ep.path(HOST)).unwrap_or(path);
+        let remote = ep.and_then(|ep| ep.peers().next()).map_or(remote, |(_, addr)| addr);
+        Some((now, remote))
+    }
+
+    /// Leaves (as [`OnlinePeer::leave`]), stops listening and shuts the
+    /// endpoint down (ruling NT-2): never blocks. Wait on the [`Shutdown`]
+    /// (at most 1 s) before the process exits, so the router deletes the
+    /// port mapping (N51). Take the replay first ([`OnlinePeer::take_replay`]).
+    pub fn shutdown(mut self) -> Shutdown {
+        self.leave();
+        Shutdown { endpoint: self.endpoint.take_endpoint().map(Endpoint::shutdown) }
     }
 
     pub fn is_host(&self) -> bool {
@@ -337,6 +420,8 @@ impl OnlinePeer {
         self.now = Some(now);
         self.now_us = now.saturating_duration_since(epoch).as_micros() as u64;
         if !self.closed {
+            self.join_tasks(now);
+            self.listen_tasks(now);
             let mut net = Vec::new();
             self.endpoint.poll(now, &mut net);
             for e in net {
@@ -354,6 +439,7 @@ impl OnlinePeer {
             self.overflowed();
             self.close_lingering(now);
             self.update_stats(now);
+            self.report_reachability();
         }
         self.collect_replay();
         std::mem::take(&mut self.events)
@@ -492,7 +578,8 @@ impl OnlinePeer {
             Side::Host(h) => match e {
                 NetEvent::Connected { peer, addr, path } => {
                     h.addrs.insert(peer, addr);
-                    match (random_bytes::<32>(), self.endpoint.endpoint().dtls_fingerprints(peer)) {
+                    let fps = self.endpoint.endpoint().and_then(|ep| ep.dtls_fingerprints(peer));
+                    match (random_bytes::<32>(), fps) {
                         (Ok(nonce), Some(fps)) => {
                             h.lobby.connected(peer, addr.ip(), path, now_us, nonce, fps)
                         }
@@ -545,14 +632,24 @@ impl OnlinePeer {
                 NetEvent::Refused { .. } => {}
             },
             Side::Client(c) => match e {
-                NetEvent::Connected { .. } => match self.endpoint.endpoint().dtls_fingerprints(HOST) {
-                    Some(fps) => {
-                        c.waiting_since = Some(now);
-                        c.lobby.connected(fps);
+                NetEvent::Connected { addr, path, .. } => {
+                    match self.endpoint.endpoint().and_then(|ep| ep.dtls_fingerprints(HOST)) {
+                        Some(fps) => {
+                            c.waiting_since = Some(now);
+                            c.lobby.connected(fps);
+                            // The join is done: its pool goes (on a thread).
+                            c.joiner = None;
+                            if c.connection.is_none() {
+                                self.events.push(OnlineEvent::Connected { path, remote: addr });
+                            }
+                            c.connection = Some((path, addr));
+                        }
+                        // An open link always has them.
+                        None => {
+                            self.end_with(OnlineEvent::Disconnected("the connection is not secured".into()))
+                        }
                     }
-                    // An open link always has them.
-                    None => self.end_with(OnlineEvent::Disconnected("the connection is not secured".into())),
-                },
+                }
                 NetEvent::Message { channel: Channel::Unreliable, bytes, .. } => {
                     if let Some(g) = &mut self.game {
                         g.session.receive(HOST, Channel::Unreliable, &bytes, now_us);
@@ -561,8 +658,10 @@ impl OnlinePeer {
                 NetEvent::Message { channel: Channel::Reliable, bytes, .. } => match tag(&bytes) {
                     Some(Tagged::Netcode(b)) => {
                         if let Some(g) = &mut self.game {
-                            if let Ok(Control::StateBegin { len, .. }) = decode_control(b) {
-                                self.endpoint.endpoint_mut().allow_burst(HOST, len as usize);
+                            if let Ok(Control::StateBegin { len, .. }) = decode_control(b)
+                                && let Some(ep) = self.endpoint.endpoint_mut()
+                            {
+                                ep.allow_burst(HOST, len as usize);
                             }
                             g.session.receive(HOST, Channel::Reliable, b, now_us);
                         }
@@ -580,11 +679,30 @@ impl OnlinePeer {
                     _ => self.end_with(OnlineEvent::Disconnected("the host sent a malformed message".into())),
                 },
                 NetEvent::Disconnected { why, .. } => {
+                    // Before the link opened: the join may go on (N46) or
+                    // say what failed.
+                    let lost = match &mut c.joiner {
+                        Some(j) if c.connection.is_none() => {
+                            j.lost(why, &mut self.endpoint, &mut self.events)
+                        }
+                        _ => Lost::Usual,
+                    };
+                    let text = match lost {
+                        Lost::FellBack => return,
+                        Lost::Text(text) => text,
+                        Lost::Usual => why_text(why).into(),
+                    };
                     c.lobby.disconnected();
                     let _ = c.lobby.events();
-                    self.end_with(OnlineEvent::Disconnected(why_text(why).into()));
+                    self.end_with(OnlineEvent::Disconnected(text));
                 }
-                NetEvent::Refused { why } => self.end_with(OnlineEvent::Refused(refusal_text(why).into())),
+                NetEvent::Refused { why } => {
+                    // Through Nostr, `Busy` is the host's pending setups
+                    // (PF12b-2), not this key in its lobby.
+                    let nostr = c.joiner.as_ref().is_some_and(|j| j.through_nostr());
+                    let text = if nostr && why == Refusal::Busy { BUSY } else { refusal_text(why) };
+                    self.end_with(OnlineEvent::Refused(text.into()));
+                }
             },
         }
     }
@@ -670,10 +788,51 @@ impl OnlinePeer {
         for peer in peers {
             self.endpoint.close(peer);
         }
+        // The listener's and the joiner's pools go on threads of their own.
+        match &mut self.side {
+            Side::Host(h) => h.listener = None,
+            Side::Client(c) => c.joiner = None,
+        }
         self.closing.clear();
         self.game = None;
         self.closed = true;
         self.stats = NetStats::default();
+    }
+
+    /// A client's join through Nostr (before its link opens): its steps,
+    /// and its end when one fails.
+    fn join_tasks(&mut self, now: Instant) {
+        let Side::Client(c) = &mut self.side else { return };
+        let Some(j) = &mut c.joiner else { return };
+        if let Err(why) = j.poll(now, &mut self.endpoint, &mut self.events) {
+            self.end_with(OnlineEvent::Disconnected(why));
+        }
+    }
+
+    /// A host's listener's offers, answered by the endpoint (N54).
+    fn listen_tasks(&mut self, now: Instant) {
+        let Side::Host(h) = &mut self.side else { return };
+        let (Some(listener), Some(ep)) = (&mut h.listener, self.endpoint.endpoint_mut()) else { return };
+        for req in listener.offers() {
+            let signal = ep.answer_signalled(&req.signal, req.mapped, now);
+            listener.answer(req, signal, ep.mapped());
+        }
+    }
+
+    /// A host's reachability, when its lines, whether it settled or its
+    /// direct address changed.
+    fn report_reachability(&mut self) {
+        let Some(r) = self.reachability() else { return };
+        let Side::Host(h) = &mut self.side else { return };
+        if h.reach_seen.as_ref() == Some(&r) {
+            return;
+        }
+        h.reach_seen = Some(r.clone());
+        let said = (r.lines(), r.settled(), r.direct());
+        if h.reach_reported.as_ref() != Some(&said) {
+            h.reach_reported = Some(said);
+            self.events.push(OnlineEvent::Reachability(r));
+        }
     }
 
     /// A client not welcomed [`JOIN_DEADLINE`] after its link opened gives
@@ -781,6 +940,7 @@ impl OnlinePeer {
                 HostEvent::Admin { from, cmd: AdminCommand::Settings(setup) } => {
                     self.admin_setup(from, setup)
                 }
+                HostEvent::Notice(text) => self.events.push(OnlineEvent::Notice(text)),
                 HostEvent::Admin { .. } | HostEvent::StartRequested => {}
             }
         }
@@ -1051,7 +1211,9 @@ impl OnlinePeer {
                 }
             }
             Event::StateSent { peer, bytes, .. } if host => {
-                self.endpoint.endpoint_mut().allow_burst(peer, bytes)
+                if let Some(ep) = self.endpoint.endpoint_mut() {
+                    ep.allow_burst(peer, bytes)
+                }
             }
             Event::PeerTimedOut { peer } | Event::RepairFailed { peer } | Event::JoinRefused { peer }
                 if host =>
@@ -1592,10 +1754,18 @@ impl LobbyHandle<'_> {
         self.act(|h| h.ban_ip(ip), |_| {});
     }
 
-    /// Kicks a member and bans its key and its address (the host's; a
-    /// server's `/banip`).
+    /// Kicks a member and bans its key and its address (the host's own
+    /// Ban button). A member reached through a TURN relay is banned by key
+    /// only (N59), and `OnlineEvent::Notice` says so.
     pub fn ban_with_address(&mut self, member: u8) {
-        self.act(|h| h.ban_with_address(member), |_| {});
+        self.ban_with_address_by(member, None);
+    }
+
+    /// As [`LobbyHandle::ban_with_address`], asked by the admin `by` (a
+    /// server's `/banip`; `None`: the host's own or a server command): N59's
+    /// notice goes to that admin.
+    pub fn ban_with_address_by(&mut self, member: u8, by: Option<u8>) {
+        self.act(|h| h.ban_with_address(member, by), |_| {});
     }
 
     /// Lifts a key's ban (the host's); whether it was banned.
@@ -1688,7 +1858,7 @@ mod tests {
     fn peer(c: Content) -> OnlinePeer {
         let me = Identity::from_secret([7; 32]).unwrap();
         let role = PeerRole::Client {
-            addr: SocketAddr::from(([127, 0, 0, 1], 9)),
+            join: Join::direct(SocketAddr::from(([127, 0, 0, 1], 9))),
             password: None,
             expected_host: None,
         };
@@ -1701,6 +1871,8 @@ mod tests {
         let Some(c) = content() else { return };
         let r = record(&c);
         let mut p = peer(c);
+        assert_eq!(p.events, vec![OnlineEvent::Joining(crate::join::JoinStep::Direct)]);
+        p.events.clear();
         p.make_replay(Some(r.clone()));
         p.make_replay(Some(r.clone()));
         p.make_replay(Some(r.clone()));

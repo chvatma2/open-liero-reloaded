@@ -99,11 +99,21 @@ impl Net {
     }
 
     fn open(&mut self, client: Option<LobbyClient>, addr: IpAddr, seen: DtlsFingerprints) -> usize {
+        self.open_via(client, addr, seen, Path::Direct)
+    }
+
+    fn open_via(
+        &mut self,
+        client: Option<LobbyClient>,
+        addr: IpAddr,
+        seen: DtlsFingerprints,
+        path: Path,
+    ) -> usize {
         let i = self.peers.len();
         let peer = PeerId::try_from(i + 1).unwrap_or(PeerId::MAX);
         self.peers.push(NetPeer { peer, addr, client, received: Vec::new(), events: Vec::new(), open: true });
         let nonce = self.fresh();
-        self.host.connected(peer, addr, Path::Direct, self.now_us, nonce, FINGERPRINTS);
+        self.host.connected(peer, addr, path, self.now_us, nonce, FINGERPRINTS);
         if let Some(c) = &mut self.peers[i].client {
             c.connected(seen);
         }
@@ -115,6 +125,12 @@ impl Net {
     /// passes (`settle`, `run`).
     pub fn join(&mut self, client: LobbyClient, addr: IpAddr) -> usize {
         self.open(Some(client), addr, FINGERPRINTS)
+    }
+
+    /// As `join`, the transport reaching the client by `path` (a relayed
+    /// member comes from its TURN relay's address).
+    pub fn join_via(&mut self, client: LobbyClient, addr: IpAddr, path: Path) -> usize {
+        self.open_via(Some(client), addr, FINGERPRINTS, path)
     }
 
     /// As `join`, the client seeing the DTLS fingerprints `seen` while the

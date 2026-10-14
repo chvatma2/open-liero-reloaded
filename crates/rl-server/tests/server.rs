@@ -21,7 +21,7 @@ use rl_discovery::{
 use rl_lobby::{Identity, NOT_ADMIN};
 use rl_net::endpoint::EndpointConfig;
 use rl_online::content::DownloadState;
-use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
+use rl_online::{Join, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{Look, Phase, PublicKey, SeatWire};
 use rl_server::config::{Config, Visibility};
 use rl_server::files::{IDENTITY_FILE, hex};
@@ -216,7 +216,7 @@ impl Rig {
     /// A client of its own look, content and download cache.
     fn join_with(&mut self, me: Identity, look: Look, content: Content, downloads: PeerContent) -> usize {
         let addr = SocketAddr::from(([127, 0, 0, 1], self.server().local_port()));
-        let role = PeerRole::Client { addr, password: None, expected_host: None };
+        let role = PeerRole::Client { join: Join::direct(addr), password: None, expected_host: None };
         self.join_role(me, look, content, downloads, role)
     }
 
@@ -633,7 +633,7 @@ fn run_stops_on_its_flag_and_says_bye() {
     };
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let cfg = EndpointConfig { port: 0, ..EndpointConfig::default() };
-    let role = PeerRole::Client { addr, password: None, expected_host: None };
+    let role = PeerRole::Client { join: Join::direct(addr), password: None, expected_host: None };
     let mut p =
         OnlinePeer::start(role, cfg, identity(), look("Anna"), content(&dir), None, no_downloads()).unwrap();
     let mut events = Vec::new();
@@ -935,8 +935,11 @@ fn the_invite_joins_the_server() {
 
     // Joining by the code: its address, expecting its key.
     let join = |rig: &mut Rig, me: Identity, name: &str, invite: &Invite| {
-        let role =
-            PeerRole::Client { addr: invite.addr.unwrap(), password: None, expected_host: Some(invite.key) };
+        let role = PeerRole::Client {
+            join: Join::direct(invite.addr.unwrap()),
+            password: None,
+            expected_host: Some(invite.key),
+        };
         let c = content(&rig.content_dir);
         rig.join_role(me, look(name), c, no_downloads(), role)
     };

@@ -85,10 +85,16 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     member's last look always wins (a dragged colour slider).
   - Kick/ban: the host (`kick`) or an admin key (`AdminCommand::Kick/Ban`);
     the host is never kicked; a ban stores the key for the lobby's life
-    (spec §5.2, ruling T13-B: by key); `ban_with_address` (the host's,
-    a server's `/banip`) also bans the member's IP (`banned`, `banned_ip`
-    for the endpoint's gate; `banned_keys`/`banned_ips` list them,
-    `ban_key`/`ban_ip` add a bans file's, `unban_key`/`unban_ip` lift them).
+    (spec §5.2, ruling T13-B: by key); `ban_with_address(member, by)` (the
+    host's, a server's `/banip`; `by`: the acting admin's member id, `None`
+    for the host's own Ban button or a server command) also bans the
+    member's IP (`banned`, `banned_ip` for the endpoint's gate;
+    `banned_keys`/`banned_ips` list them, `ban_key`/`ban_ip` add a bans
+    file's, `unban_key`/`unban_ip` lift them). N59: a member whose `path`
+    is `Relayed` comes from its TURN relay's address, so only its key is
+    banned, and `RELAYED_BAN` ("reached through a TURN relay: banned by
+    key only") goes to `by` as a `Notice::Message`, or with `None` as
+    `HostEvent::Notice` (rl-online's `OnlineEvent::Notice`).
     `Next`/`Settings` from an admin are `HostEvent::Admin`; non-admins get
     `NOT_ADMIN`.
   - Start (ruling PF1): `can_start` (gathering, at least one player —
@@ -153,7 +159,8 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   (what arrives at one instant is delivered before the drain: one poll),
   virtual time (`settle`, `run`), raw peers for forged messages
   (`join_raw`, `send_raw`), every link's DTLS fingerprints `FINGERPRINTS`
-  (`join_seeing`: a client seeing others, a man in the middle),
+  (`join_seeing`: a client seeing others, a man in the middle;
+  `join_via`: a link reached by another `Path`, such as `Relayed`),
   `disconnect`, and the match layer's `start`.
 
 Test: `cargo nextest run -p rl-lobby` (`tests/lobby.rs`: one test per rule

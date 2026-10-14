@@ -10,6 +10,9 @@ autotests = false
 
 [dependencies]
 rl-net.workspace = true
+# The joiner's and the host's Nostr handshakes (N45, N54; same-layer pair
+# N55): the relay pool, `Inbox`/`Asker`, TURN notes.
+rl-discovery.workspace = true
 rl-netcode.workspace = true
 rl-proto.workspace = true
 rl-lobby.workspace = true
@@ -39,6 +42,10 @@ test-hooks = ["rl-net/test-hooks"]
 proptest.workspace = true
 tempfile.workspace = true
 rl-online = { workspace = true, features = ["test-hooks"] }
+# `TestRelay` for the joins through Nostr (`tests/through.rs`).
+rl-discovery = { workspace = true, features = ["test-relay"] }
+# `IceConfig::{base_override, relay_only, gateway, ssdp}` and `FakeGateway`.
+rl-net = { workspace = true, features = ["test-hooks"] }
 
 [[test]]
 name = "integration"

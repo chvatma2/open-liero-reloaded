@@ -73,6 +73,10 @@
         ("rl-lobby", "rl-netcode"),
         // Online play drives the real transport's endpoint.
         ("rl-online", "rl-net"),
+        // Online play drives the Nostr handshakes too (ruling N55): the
+        // joiner's relay pool and `Asker`, the host's `Inbox`, TURN notes;
+        // one join and one listener for the game, the server and rl-cli.
+        ("rl-online", "rl-discovery"),
         // The real-transport tests run the dedicated server in-process
         // (plan 10 ruling PF2).
         ("rl-cli", "rl-server"),

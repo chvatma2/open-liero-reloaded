@@ -538,9 +538,23 @@ impl LobbyHost {
     }
 
     /// Kicks a member (not the host's own) and bans its key and its
-    /// address for the lobby's life.
-    pub fn ban_with_address(&mut self, member: u8) {
-        self.kick_as(member, Ban::KeyAndAddress);
+    /// address for the lobby's life. `by` is the admin who asked (`None`:
+    /// the host's own action, or a dedicated server's command).
+    ///
+    /// N59: a member reached through a TURN relay (`Path::Relayed`) comes
+    /// from the relay's address, and banning it would ban the relay for
+    /// everyone: its key alone is banned, and [`RELAYED_BAN`] goes to `by`
+    /// as a notice, or with `None` as `HostEvent::Notice`.
+    pub fn ban_with_address(&mut self, member: u8, by: Option<u8>) {
+        let Some(i) = self.index(member).filter(|_| Some(member) != self.me) else { return };
+        if self.members[i].path != Some(Path::Relayed) {
+            return self.kick_as(member, Ban::KeyAndAddress);
+        }
+        self.kick_as(member, Ban::Key);
+        match by.and_then(|admin| self.index(admin)).and_then(|a| self.members[a].peer) {
+            Some(peer) => self.out.push((peer, ToClient::Notice(Notice::Message(RELAYED_BAN.into())))),
+            None => self.events.push(HostEvent::Notice(RELAYED_BAN.into())),
+        }
     }
 
     fn kick_as(&mut self, member: u8, ban: Ban) {

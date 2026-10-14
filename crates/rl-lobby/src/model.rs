@@ -41,6 +41,9 @@ pub const SLOW_DOWN: &str = "slow down";
 pub const NOT_ADMIN: &str = "only admins can do that";
 pub const NOT_THE_HOST: &str = "the host cannot be kicked";
 pub const MISSING_CONTENT: &str = "get the missing content first";
+/// What the admin (or host) who asked to ban a relayed member's address is
+/// told (N59): the address is the TURN relay's, so only the key is banned.
+pub const RELAYED_BAN: &str = "reached through a TURN relay: banned by key only";
 
 /// The host's lobby settings (spec §7.2, §7.4).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,6 +87,9 @@ pub enum HostEvent {
     /// An admin's `Next` or `Settings`, for the owner to act on (the lobby
     /// does `Kick` and `Ban` itself).
     Admin { from: u8, cmd: AdminCommand },
+    /// Something for the host's own log (no member asked): N59's
+    /// [`RELAYED_BAN`] for the host's own ban or a server command.
+    Notice(String),
 }
 
 /// What a client reports to its owner.

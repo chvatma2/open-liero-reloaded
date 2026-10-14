@@ -16,7 +16,7 @@ use rl_net::lan::{Announcer, Listener, broadcast_targets};
 use rl_netcode::netsim::Profile;
 use rl_online::content::HOST_RATE;
 use rl_online::matches::setup_packs;
-use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
+use rl_online::{HostListen, Join, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{LAN_PORT, LobbyState, Look, MatchStartWire};
 use rl_sim::Keys;
 use rl_ui::hud::{LineKind, LogLine};
@@ -172,7 +172,7 @@ impl Shell {
             skin_hash: rl_proto::NO_HASH.into(),
         };
         let mut host = OnlinePeer::start(
-            PeerRole::Host(cfg),
+            PeerRole::Host { lobby: cfg, listen: HostListen::off() },
             endpoint,
             fresh_identity()?,
             look,
@@ -271,7 +271,7 @@ impl Shell {
         let port = self.port.unwrap_or(prefs.port);
         let endpoint = EndpointConfig { port, impair: self.impair, ..EndpointConfig::default() };
         let peer = OnlinePeer::start(
-            PeerRole::Host(cfg),
+            PeerRole::Host { lobby: cfg, listen: HostListen::off() },
             endpoint,
             id,
             look,
@@ -333,7 +333,8 @@ impl Shell {
         };
         let (id, look) = self.me()?;
         let content = self.open_content()?;
-        let role = PeerRole::Client { addr: to, password: password.map(|p| p.0), expected_host };
+        let role =
+            PeerRole::Client { join: Join::direct(to), password: password.map(|p| p.0), expected_host };
         let endpoint = EndpointConfig { port: 0, impair: self.impair, ..EndpointConfig::default() };
         let peer = OnlinePeer::start(role, endpoint, id, look, content, None, self.peer_content())?;
         println!("rl-game: joining {to}");
@@ -622,6 +623,9 @@ impl Shell {
                 | OnlineEvent::Restored(_)
                 | OnlineEvent::Ticked(_)
                 | OnlineEvent::Confirmed(_) => {}
+                // Joins through Nostr, paths and reachability: shown by
+                // plan 12b's Task 9.
+                OnlineEvent::Joining(_) | OnlineEvent::Reachability(_) | OnlineEvent::Connected { .. } => {}
             }
         }
     }

@@ -1,10 +1,14 @@
 //! What an online peer reports to the game, and its connection's numbers.
 
+use std::net::SocketAddr;
+
 use rl_netcode::world_sim::{ConfirmedTick, TickedTick};
-use rl_proto::{LobbyState, MatchEndWire, MatchStartWire};
+use rl_proto::{LobbyState, MatchEndWire, MatchStartWire, Path};
 use rl_terrain::Area;
 
 use crate::content::Download;
+use crate::join::JoinStep;
+use crate::reach::Reachability;
 
 /// What happened during one [`crate::OnlinePeer::poll`], in order.
 #[derive(Clone, Debug, PartialEq)]
@@ -68,6 +72,14 @@ pub enum OnlineEvent {
     /// ([`crate::content::PROMPT_BYTES`]): nothing downloads until
     /// [`crate::OnlinePeer::approve_downloads`] (or the player leaves).
     DownloadPrompt { bytes: u64 },
+    /// A client's join moved to this step (N46): the waiting text.
+    Joining(JoinStep),
+    /// A host's reachability changed (its lines, whether it settled, its
+    /// direct address): the lobby's lines, the server's log, its notes.
+    Reachability(Reachability),
+    /// A client's link to its host opened, by `path` (N49); `remote` is
+    /// the host's end (or the TURN relay's). Once.
+    Connected { path: Path, remote: SocketAddr },
 }
 
 /// The connection's numbers for the overlay, over the last second of a

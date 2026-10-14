@@ -20,7 +20,7 @@ use rl_modes::DeathmatchSettings;
 use rl_net::endpoint::EndpointConfig;
 use rl_netcode::world_sim::TickedTick;
 use rl_online::matches::{bot_wire, rules_wire, setup_packs};
-use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
+use rl_online::{HostListen, Join, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{Look, MatchSetupWire, SeatWire};
 use rl_scene::{DrawList, Interpolation, Viewport};
 use rl_sim::{EventKind, Keys, Score};
@@ -234,7 +234,7 @@ fn an_online_match_runs_headless() {
         admins: Vec::new(),
     };
     let mut host = OnlinePeer::start(
-        PeerRole::Host(cfg),
+        PeerRole::Host { lobby: cfg, listen: HostListen::off() },
         endpoint(),
         identity(),
         look("Host", [200, 80, 40]),
@@ -244,7 +244,7 @@ fn an_online_match_runs_headless() {
     )
     .unwrap();
     let addr = SocketAddr::from(([127, 0, 0, 1], host.local_port()));
-    let role = PeerRole::Client { addr, password: None, expected_host: None };
+    let role = PeerRole::Client { join: Join::direct(addr), password: None, expected_host: None };
     let mut client = OnlinePeer::start(
         role,
         endpoint(),

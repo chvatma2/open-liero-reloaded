@@ -40,9 +40,11 @@ pub enum Part {
     StateChunk,
 }
 
-/// The endpoint and the reliable messages waiting to enter it.
+/// The endpoint and the reliable messages waiting to enter it. A client
+/// joining through Nostr has no endpoint until it gathers (`Outbox::empty`):
+/// meanwhile nothing is sent and nothing happens.
 pub struct Outbox {
-    endpoint: Endpoint,
+    endpoint: Option<Endpoint>,
     backlog: BTreeMap<PeerId, Backlog>,
     overflowed: Vec<PeerId>,
 }
@@ -70,15 +72,33 @@ impl Backlog {
 
 impl Outbox {
     pub fn new(endpoint: Endpoint) -> Outbox {
-        Outbox { endpoint, backlog: BTreeMap::new(), overflowed: Vec::new() }
+        Outbox { endpoint: Some(endpoint), backlog: BTreeMap::new(), overflowed: Vec::new() }
     }
 
-    pub fn endpoint(&self) -> &Endpoint {
-        &self.endpoint
+    /// An outbox without an endpoint yet.
+    pub fn empty() -> Outbox {
+        Outbox { endpoint: None, backlog: BTreeMap::new(), overflowed: Vec::new() }
     }
 
-    pub fn endpoint_mut(&mut self) -> &mut Endpoint {
-        &mut self.endpoint
+    pub fn endpoint(&self) -> Option<&Endpoint> {
+        self.endpoint.as_ref()
+    }
+
+    pub fn endpoint_mut(&mut self) -> Option<&mut Endpoint> {
+        self.endpoint.as_mut()
+    }
+
+    /// Puts `endpoint` in (a joiner's, once made); the backlogs start empty.
+    pub fn set_endpoint(&mut self, endpoint: Endpoint) {
+        self.backlog.clear();
+        self.endpoint = Some(endpoint);
+    }
+
+    /// Takes the endpoint out (a failed direct attempt, a shutdown), with
+    /// the backlogs.
+    pub fn take_endpoint(&mut self) -> Option<Endpoint> {
+        self.backlog.clear();
+        self.endpoint.take()
     }
 
     /// One message to `peer` (ignored for a peer not open): unreliable ones
@@ -86,7 +106,11 @@ impl Outbox {
     /// reliable ones through the backlog.
     pub fn send(&mut self, peer: PeerId, channel: Channel, bytes: &[u8]) {
         match channel {
-            Channel::Unreliable => self.endpoint.send(peer, channel, bytes),
+            Channel::Unreliable => {
+                if let Some(ep) = &mut self.endpoint {
+                    ep.send(peer, channel, bytes)
+                }
+            }
             Channel::Reliable => self.push(peer, bytes.to_vec(), Part::Message),
         }
     }
@@ -105,7 +129,7 @@ impl Outbox {
     }
 
     fn push(&mut self, peer: PeerId, message: Vec<u8>, part: Part) {
-        if self.endpoint.stats(peer).is_none() {
+        if self.endpoint.as_ref().and_then(|ep| ep.stats(peer)).is_none() {
             return;
         }
         let b = self.backlog.entry(peer).or_default();
@@ -140,15 +164,17 @@ impl Outbox {
     /// `peer` does not read: closed, its backlog dropped, reported once.
     fn overflow(&mut self, peer: PeerId) {
         self.backlog.remove(&peer);
-        self.endpoint.close(peer);
+        if let Some(ep) = &mut self.endpoint {
+            ep.close(peer);
+        }
         self.overflowed.push(peer);
     }
 
     /// Moves `peer`'s backlog into the endpoint while it holds less than
     /// [`FEED_BELOW`] for it.
     fn feed(&mut self, peer: PeerId) {
-        let Some(b) = self.backlog.get_mut(&peer) else { return };
-        while self.endpoint.buffered(peer, Channel::Reliable) < FEED_BELOW
+        let (Some(b), Some(endpoint)) = (self.backlog.get_mut(&peer), &mut self.endpoint) else { return };
+        while endpoint.buffered(peer, Channel::Reliable) < FEED_BELOW
             && let Some((message, state)) = b.queue.pop_front()
         {
             if state {
@@ -156,7 +182,7 @@ impl Outbox {
             } else {
                 b.ordinary -= message.len();
             }
-            self.endpoint.send(peer, Channel::Reliable, &message);
+            endpoint.send(peer, Channel::Reliable, &message);
         }
         if b.queue.is_empty() && b.chunks_left == 0 {
             self.backlog.remove(&peer);
@@ -173,8 +199,13 @@ impl Outbox {
     /// Feeds the backlogs, polls the endpoint, feeds again (what the poll
     /// delivered made room). A disconnected peer's backlog is dropped.
     pub fn poll(&mut self, now: Instant, events: &mut Vec<NetEvent>) {
+        if self.endpoint.is_none() {
+            return;
+        }
         self.feed_all();
-        self.endpoint.poll(now, events);
+        if let Some(endpoint) = &mut self.endpoint {
+            endpoint.poll(now, events);
+        }
         for e in events.iter() {
             if let NetEvent::Disconnected { peer, .. } = e {
                 self.backlog.remove(peer);
@@ -186,13 +217,15 @@ impl Outbox {
     /// The reliable bytes waiting for `peer`: the backlog and the endpoint's.
     pub fn buffered(&self, peer: PeerId) -> usize {
         self.backlog.get(&peer).map_or(0, |b| b.ordinary + b.state)
-            + self.endpoint.buffered(peer, Channel::Reliable)
+            + self.endpoint.as_ref().map_or(0, |ep| ep.buffered(peer, Channel::Reliable))
     }
 
     /// Closes the link to `peer` and drops its backlog.
     pub fn close(&mut self, peer: PeerId) {
         self.backlog.remove(&peer);
-        self.endpoint.close(peer);
+        if let Some(ep) = &mut self.endpoint {
+            ep.close(peer);
+        }
     }
 
     /// Peers closed because their backlog would have passed
@@ -203,7 +236,7 @@ impl Outbox {
     }
 
     pub fn peers(&self) -> impl Iterator<Item = (PeerId, SocketAddr)> + '_ {
-        self.endpoint.peers()
+        self.endpoint.iter().flat_map(Endpoint::peers)
     }
 }
 
@@ -259,7 +292,7 @@ mod tests {
         const BYTES: usize = 10 * 1000 * 1000;
         let (mut host, peer, mut client) = pair();
         client.allow_burst(HOST, 2 * BYTES);
-        host.endpoint_mut().allow_burst(peer, 2 * BYTES);
+        host.endpoint_mut().unwrap().allow_burst(peer, 2 * BYTES);
         let state: Vec<u8> = (0..BYTES as u32).map(|i| (i * 7 % 251) as u8).collect();
         // Lobby states meanwhile, before and after it.
         host.send_tagged(peer, 1, &[1; 60_000]);
@@ -292,7 +325,7 @@ mod tests {
         }
         assert_eq!(lobby, [1, 2]);
         assert!(got == state, "the state arrives whole and in order");
-        assert_eq!(host.endpoint().stats(peer).unwrap().sends_dropped, 0);
+        assert_eq!(host.endpoint().unwrap().stats(peer).unwrap().sends_dropped, 0);
         while host.buffered(peer) > 0 {
             assert!(begun.elapsed() < Duration::from_secs(30), "acknowledged within 30 s");
             host.poll(Instant::now(), &mut he);

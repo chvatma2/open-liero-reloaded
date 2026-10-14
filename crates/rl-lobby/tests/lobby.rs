@@ -253,7 +253,7 @@ fn bans_given_by_key_or_address_are_refused_and_listed() {
     let c = join(&mut net, 3, "Cid");
     assert!(matches!(net.peers[c].events[0], ClientEvent::Welcome { .. }));
     // A ban with the address joins both lists, in order.
-    net.host.ban_with_address(id_of(&net, c));
+    net.host.ban_with_address(id_of(&net, c), None);
     net.settle();
     assert!(got(&net, c, &ClientEvent::Kicked { banned: true }));
     let mut keys = vec![key(1), key(3)];
@@ -265,6 +265,46 @@ fn bans_given_by_key_or_address_are_refused_and_listed() {
     assert!(!net.host.unban_key(&key(3)) && !net.host.unban_ip(ip(3)), "once");
     let back = join(&mut net, 3, "Cid");
     assert!(matches!(net.peers[back].events[0], ClientEvent::Welcome { .. }));
+    consistent(&net);
+}
+
+/// N59: a member reached through a TURN relay comes from the relay's
+/// address, so banning "its" address would ban the relay for everyone: its
+/// key alone is banned, and whoever asked is told (an admin by a notice,
+/// the host's own button or a server command by a `HostEvent`).
+#[test]
+fn a_relayed_member_is_banned_by_key_only() {
+    let mut net = lobby_with(HostConfig { admins: vec![key(2)], ..cfg() }, 0);
+    let admin = join(&mut net, 2, "Bob");
+    let relayed = net.join_via(LobbyClient::new(ident(1), look("Ann"), None, None), ip(7), Path::Relayed);
+    net.settle();
+    let (admin_id, ann) = (id_of(&net, admin), id_of(&net, relayed));
+    assert_eq!(member(&net, relayed).path, Some(Path::Relayed));
+    net.host.ban_with_address(ann, Some(admin_id));
+    net.settle();
+    assert!(got(&net, relayed, &ClientEvent::Kicked { banned: true }));
+    assert!(net.host.banned(&key(1)));
+    assert!(!net.host.banned_ip(ip(7)), "the relay's address stays open");
+    let told = ClientEvent::Notice(Notice::Message(RELAYED_BAN.into()));
+    assert!(got(&net, admin, &told), "the admin is told");
+    assert!(!net.host_events.contains(&HostEvent::Notice(RELAYED_BAN.into())));
+    assert_eq!(RELAYED_BAN, "reached through a TURN relay: banned by key only");
+
+    // Another player through the same relay joins; the host's own button.
+    let cid = net.join_via(LobbyClient::new(ident(3), look("Cid"), None, None), ip(7), Path::Relayed);
+    net.settle();
+    assert!(matches!(net.peers[cid].events[0], ClientEvent::Welcome { .. }), "the relay is not banned");
+    net.host.ban_with_address(id_of(&net, cid), None);
+    net.settle();
+    assert!(net.host.banned(&key(3)) && !net.host.banned_ip(ip(7)));
+    assert!(net.host_events.contains(&HostEvent::Notice(RELAYED_BAN.into())), "the host is told");
+    assert_eq!(net.peers[admin].events.iter().filter(|e| **e == told).count(), 1, "the admin once");
+
+    // A direct member's ban still takes its address.
+    let dan = join(&mut net, 4, "Dan");
+    net.host.ban_with_address(id_of(&net, dan), Some(admin_id));
+    net.settle();
+    assert!(net.host.banned(&key(4)) && net.host.banned_ip(ip(4)));
     consistent(&net);
 }
 
@@ -443,7 +483,7 @@ fn banned_keys_and_ips_are_refused() {
     assert!(matches!(net.peers[other].events[0], ClientEvent::Welcome { .. }));
     // Banned with the address: another key from it is refused at once.
     let c_id = id_of(&net, other);
-    net.host.ban_with_address(c_id);
+    net.host.ban_with_address(c_id, None);
     net.settle();
     assert!(net.host.banned(&key(3)) && net.host.banned_ip(ip(3)));
     let from_there = net.join(LobbyClient::new(ident(4), look("Dan"), None, None), ip(3));

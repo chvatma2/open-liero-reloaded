@@ -18,7 +18,7 @@ use rl_online::bundle::GameBundle;
 use rl_online::content::{Download, DownloadState};
 use rl_online::matches::{bot_wire, rules_wire, setup_packs};
 use rl_online::peer::{MISMATCH, SETUP_REFUSED, WRONG_HOST};
-use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
+use rl_online::{HostListen, Join, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{Look, MatchSetupWire, Phase, PublicKey, SeatWire};
 use rl_replay::Replay;
 use rl_sim::Keys;
@@ -160,7 +160,7 @@ impl Net {
             max_spectators: 4,
             admins,
         };
-        Net::hosted(content, minutes, PeerRole::Host(cfg))
+        Net::hosted(content, minutes, PeerRole::Host { lobby: cfg, listen: HostListen::off() })
     }
 
     /// A dedicated server's lobby: no local player (`PeerRole::Server`).
@@ -172,7 +172,7 @@ impl Net {
             max_spectators: 4,
             admins: vec![],
         };
-        Net::hosted(content, minutes, PeerRole::Server(cfg))
+        Net::hosted(content, minutes, PeerRole::Server { lobby: cfg, listen: HostListen::off() })
     }
 
     fn hosted(content: Content, minutes: f32, role: PeerRole) -> Net {
@@ -228,7 +228,7 @@ impl Net {
     ) -> usize {
         let key = me.public();
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
-        let role = PeerRole::Client { addr, password: None, expected_host };
+        let role = PeerRole::Client { join: Join::direct(addr), password: None, expected_host };
         let mut own = None;
         let cfg = cfg.unwrap_or_else(|| {
             let (dir, cache) = cache();
@@ -385,7 +385,8 @@ fn a_server_without_bots_records_the_last_checksum() {
         max_spectators: 4,
         admins: vec![],
     };
-    let mut net = Net::hosted_with(content, setup, PeerRole::Server(cfg));
+    let mut net =
+        Net::hosted_with(content, setup, PeerRole::Server { lobby: cfg, listen: HostListen::off() });
     let clients = net.join_all(&["Anna", "Bert"]);
     net.ready(&clients);
     net.host().peer().lobby().start(5).unwrap();
@@ -423,7 +424,8 @@ fn ending_a_botless_servers_match_keeps_its_last_checksum() {
         max_spectators: 4,
         admins: vec![],
     };
-    let mut net = Net::hosted_with(content, setup, PeerRole::Server(cfg));
+    let mut net =
+        Net::hosted_with(content, setup, PeerRole::Server { lobby: cfg, listen: HostListen::off() });
     let clients = net.join_all(&["Anna", "Bert"]);
     net.ready(&clients);
     net.host().peer().lobby().start(6).unwrap();
@@ -1260,7 +1262,7 @@ fn a_silent_host_is_given_up() {
     let addr = SocketAddr::from(([127, 0, 0, 1], host.local_port()));
     let empty = TempDir::new().unwrap();
     let content = Content::open(empty.path()).unwrap();
-    let role = PeerRole::Client { addr, password: None, expected_host: None };
+    let role = PeerRole::Client { join: Join::direct(addr), password: None, expected_host: None };
     let cfg = PeerContent::without_downloads("a test");
     let mut client =
         OnlinePeer::start(role, endpoint(), identity(), look("Anna"), content, None, cfg).unwrap();

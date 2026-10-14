@@ -28,7 +28,7 @@ use rl_lobby::{NOT_ADMIN, fingerprint};
 use rl_net::endpoint::EndpointConfig;
 use rl_net::lan::{Announcer, broadcast_targets};
 use rl_online::replay::MatchRecord;
-use rl_online::{OnlineEvent, OnlinePeer, PeerRole, StartError};
+use rl_online::{HostListen, OnlineEvent, OnlinePeer, PeerRole, StartError};
 use rl_proto::{LobbyState, Look, MAX_CHAT, MatchEndWire, MatchStartWire, Phase, PublicKey, SeatWire};
 use rl_sim::Keys;
 
@@ -149,7 +149,7 @@ impl Server {
         let setup = rotation.setup(config.fill_bots);
         let identity = me.clone();
         let endpoint = EndpointConfig { port: config.port, ..EndpointConfig::default() };
-        let role = PeerRole::Server(config.host_config()?);
+        let role = PeerRole::Server { lobby: config.host_config()?, listen: HostListen::off() };
         let unused = Look {
             name: config.name.clone(),
             colour: [0; 3],
