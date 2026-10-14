@@ -11,4 +11,5 @@ mod endpoint;
 mod fuzz;
 mod lan;
 mod natsim;
+mod portmap;
 mod turn;

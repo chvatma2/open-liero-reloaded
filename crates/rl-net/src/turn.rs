@@ -105,7 +105,11 @@ pub struct TurnLimits {
     /// Relayed payload bytes per second per client IP, each direction
     /// (a bucket holding 2 s).
     pub per_ip_bytes_per_s: u32,
-    /// STUN/TURN requests per second per client IP (a bucket holding 2 s).
+    /// STUN/TURN requests per second per client IP, split three to one
+    /// between two buckets each holding 2 s: requests from a proven source
+    /// (a nonce of ours for its exact address) take from the larger, all
+    /// others from the smaller (a quarter, rounded down). Each bucket gets
+    /// at least 1 a second, so 0 or 1 still lets an IP send 2 a second.
     pub per_ip_requests_per_s: u32,
 }
 

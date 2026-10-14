@@ -10,12 +10,19 @@ announcements.
   tungstenite (`=0.30.0`, default features: no TLS), getrandom
   (`=0.4.3`, `random_bytes`: the native peers' randomness),
   turn-client-proto (`=0.7.2`, default features: `std`; N52: `Core`'s
-  TURN client) and, for our own relay server (ruling TR-2), md-5
+  TURN client), for our own relay server (ruling TR-2) md-5
   (`=0.11.0`), sha1 (`=0.11.0`), hmac (`=0.13.0`) and crc32fast
-  (`=1.5.2`). Real clocks and sockets live only in this crate's socket
-  drivers, `endpoint` and `turn::TurnServer` (and the binaries); `link`,
-  `core` and `turn::TurnCore` are sans-IO, and `endpoint::poll` takes the
-  time.
+  (`=1.5.2`), and igd-next (`=0.17.1`, N51: UPnP-IGD; no features, its
+  `default = []` — there is no `io_sync` feature, the sync API and its
+  attohttpc client without TLS are always on). Real clocks and sockets
+  live only in this crate's socket drivers, `endpoint`,
+  `turn::TurnServer` and `portmap::PortMapper` (and the binaries); `link`,
+  `core`, `turn::TurnCore` and `portmap::pmp`'s codec are sans-IO, and
+  `endpoint::poll` takes the time.
+- **igd-next's crates.** No pin-back was needed: every crate it brought
+  into `Cargo.lock` was at least two weeks old on 2026-10-14 (the newest,
+  yoke-derive 0.8.4, 2026-09-30): attohttpc 0.30.1, url 2.5.8, idna 1.1.0,
+  xmltree 0.10.3 and the icu_*/zerovec family.
 - **TURN client pins.** `Cargo.lock` holds turn-client-proto's
   transitive crates under two weeks old back (`cargo update -p <crate>
   --precise <ver>`): stun-proto 2.0.2 (2.0.3), stun-types 2.0.2 (2.0.3),
@@ -212,8 +219,9 @@ announcements.
     gets the first 401; other unsigned requests, and signed ones lacking
     USERNAME/REALM/NONCE, get nothing. A signed request whose nonce is not
     ours for its source (or older than 80 minutes) gets 438 only if its
-    integrity holds, else nothing. 401 and 438 are as small as RFC 8489 allows (ERROR-CODE
-    without a reason, REALM, NONCE, no FINGERPRINT: 64 B), Binding answers
+    integrity holds, else nothing. 401 and 438 are as small as RFC 8489
+    allows (ERROR-CODE without a reason, REALM, NONCE, no FINGERPRINT:
+    64 B), Binding answers
     XOR-MAPPED-ADDRESS only (32 B): 1.6× a 20 B Binding or
     turn-client-proto's 40 B first Allocate, 2.3× a bare 28 B Allocate.
     All answers to unproven sources share a relay-wide bucket of
@@ -262,6 +270,71 @@ announcements.
     thread waits on it (100 ms tick), so an idle relay sleeps.
     `stats()` (allocations, dropped, relayed bytes); dropping it stops
     and joins every thread (within about 200 ms).
+- **`portmap`** (N51, spec §5.3 step 1): the host asks its router to
+  open its port. `PortMapper::start(MapRequest)` never blocks: two
+  threads, `rl-net pcp` (PCP, then NAT-PMP after any PCP failure: a
+  refusal, a version-0 `UNSUPP_VERSION`, silence) and `rl-net upnp`
+  (igd-next: SSDP search 2 s, then `get_external_ip`, `add_port`),
+  each with its deadline (`PMP_DEADLINE` 3 s, `UPNP_DEADLINE` 4 s:
+  `poll` gives up on a thread past it, under the board's lock, so it can
+  no longer win). The first mapping wins (`Ctx::claim`); the other thread
+  deletes what it mapped and ends. `poll` drains a channel and returns
+  the state when it changed (`Trying`, `Mapped { method, external, tcp,
+  usable }`, `Failed(why per method)`); `usable` is
+  `rl_proto::is_global` of the external IP or `allow_local` (N62).
+  - **Ports** (`map_pair`, shared by the three protocols through the
+    `Router` trait): the local port, then +1 … +7 (none with `exact`,
+    whose granted port must be the local one, else the mapping is
+    deleted and the method fails). With `tcp`, TCP first, then UDP at
+    TCP's port; a UDP grant on another port is deleted and asked once
+    more, else both go and the next port is tried; with no pair, UDP
+    alone (`tcp: false`). PCP's `CANNOT_PROVIDE_EXTERNAL` and UPnP's
+    718/724 try the next port; any other failure ends the method.
+  - **Lifetimes:** 2 h (PCP, NAT-PMP), 3600 s (UPnP; 725 → lease 0, never
+    renewed), or the request's; the winner renews at half the granted
+    lifetime, and a failed renewal deletes the rest and becomes
+    `Failed("the router dropped the mapping: <method>: …")`.
+  - **`pmp`**: the RFC 6886/6887 codec (`pmp_map_request`, `parse_pmp`,
+    `pcp_map_request`, `parse_pcp`: the answer must echo our nonce; an
+    answer of another version reads as its version and result only) and
+    the thread. A UDP socket connected to `gateway:pmp_port` (only its
+    datagrams arrive); each request is sent with waits of 250, 500 and
+    1000 ms, clipped to the deadline; a closed port (ICMP) fails at once.
+    A random nonce per protocol, kept for renewals and the deletion.
+    `gateway: None` skips both, and says so.
+  - **`upnp`**: igd-next's sync API, `SearchOptions { broadcast_address:
+    req.ssdp, timeout and single_search_timeout 2 s }`. Its SOAP requests
+    have no deadline of their own (attohttpc's 30 s defaults) and read
+    whole bodies: `poll` bounds the wait, the thread may linger. Its
+    search can panic (a `Duration` subtraction racing its deadline), so
+    the thread runs under `catch_unwind`. Router words in failures pass
+    `tidy` (printable, 160 chars).
+  - **Drop** sets the board's stop, wakes the threads, and waits at most
+    `DROP_WAIT` (1 s) for those that asked for a mapping (`touched`) to
+    delete it (PCP/NAT-PMP: lifetime 0, two sends 200 ms apart; UPnP:
+    `remove_port`); a thread still searching, or stuck in HTTP, is
+    detached.
+  - **Tests never reach a real router.** Every request names its
+    gateway, `pmp_port` and `ssdp`; with `test-hooks` (any test build of
+    the workspace), `start` refuses a request whose `ssdp` or gateway is
+    not loopback (`Failed`, no datagram sent): the defaults
+    (`MapRequest::new`: 5351, `SSDP` 239.255.255.250:1900) are
+    unreachable from tests by construction. A binary that must map a
+    real router (Docker tests) is built without `test-hooks`.
+  - **`fake::FakeGateway`** (feature `test-hooks`): a router on
+    127.0.0.1 on threads — SSDP (`LOCATION:
+    http://127.0.0.1:<port>/desc.xml`), a tiny HTTP server (a
+    `WANIPConnection:1` description and SCPD; SOAP
+    `GetExternalIPAddress`, `AddPortMapping`, `DeletePortMapping`) and
+    one UDP socket for PCP and NAT-PMP (a NAT-PMP-only fake answers PCP
+    with version 0 `UNSUPP_VERSION`). `Misbehaviour`: `HttpSilent`,
+    `OtherUdpPort` (the first new UDP mapping 1000 ports away),
+    `PcpRefuses`, `PrivateExternal` (10.0.0.1), `RenewRefused` (and the
+    mapping dropped), `Garbage` (SSDP with a junk line, truncated XML,
+    PCP with a wrong nonce, NAT-PMP truncated). `hold(port)`: another
+    client's port. `serving(answer)` (fuzzing) answers SSDP and HTTP with
+    `answer` (`$HTTP` → its HTTP address), each SSDP answer followed by
+    an empty datagram so igd-next's search ends at once.
 - **`natsim`** (feature `test-hooks`, N56): `Net` runs `Core`s behind
   virtual NATs (full cone, address-restricted, port-restricted:
   endpoint-independent mapping keeping the internal port if free;
@@ -398,9 +471,17 @@ interest, a mapped port, the same LAN, NAT detection, STUN keeping a
 mapping alive, a renumbered router, symmetric NATs through a relay, a
 hole-punched link releasing its allocation, a dead relay ending the
 link (kept relayed past `RELEASE_AFTER` first), gathering bounded by
-`TURN_WAIT`; `tests/turn.rs`: a `TurnServer` on 127.0.0.1 with plain
-sockets through `turn_client_proto` (relaying both ways, unbound and
-through a channel; the per-IP limits; a full relay; binding answers;
+`TURN_WAIT`; `tests/portmap.rs`: `FakeGateway`s on 127.0.0.1 —
+UPnP mapping TCP and UDP on one port, PCP first and NAT-PMP as the
+fallback, every `Misbehaviour` reported
+(`fake_gateway_misbehaviours_are_reported::*`), an exact request never
+shifting, mappings deleted on drop, no gateway and no UPnP failing
+within 5 s, a test build refusing a real router, NAT-PMP/PCP answers
+and UPnP answers fuzzed (the latter through `serving`); unit tests in
+`portmap/pmp.rs` (RFC layouts, the nonce, a version-0 answer);
+`tests/turn.rs`: a `TurnServer` on 127.0.0.1 with plain sockets
+through `turn_client_proto` (relaying both ways, unbound and through a
+channel; the per-IP limits; a full relay; binding answers;
 IPv4 only), and in memory against a sans-IO client: local peers refused,
 a stranger not draining a player's down budget, 16 permissions, spoofed
 sources and oversized requests costing nothing, a `Core` refusing a

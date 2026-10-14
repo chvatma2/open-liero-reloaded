@@ -11,6 +11,7 @@ pub mod limits;
 pub mod link;
 #[cfg(feature = "test-hooks")]
 pub mod natsim;
+pub mod portmap;
 pub mod probe;
 pub mod relayed;
 mod signal;
