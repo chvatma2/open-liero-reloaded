@@ -39,7 +39,9 @@ Multiplayer has three tabs.
 **Internet.** The games announced on public Nostr relays (no master
 server: hosts publish a signed note about their game and the game reads
 the notes). The list shows each game's name, map, mod, players
-(`(playing)` while a match runs), ping, region and a lock when it has a
+(the seats taken of the seats, then its bots apart, such as "1/8 +3
+bots": bots take no seat, so a game is full only when its seats are;
+`(playing)` while a match runs), ping, region and a lock when it has a
 password. Pick a game and Join; a click on a game measures its ping (the
 time to connect to it, 2 s at most). A game of another version is greyed
 out and says "needs version …". A game that announced no public address
@@ -51,7 +53,8 @@ reachable" when none answers, "Searching…" until a relay has sent its
 games. A game never gets listed on a note that is forged, old or aimed at
 a private address.
 
-**LAN** lists the games announced on your network. **Direct** takes an
+**LAN** lists the games announced on your network, their players
+counted as on the Internet tab. **Direct** takes an
 address or an invite code.
 
 **Invite codes.** A code starts with `rlx1` (letters and digits, in one

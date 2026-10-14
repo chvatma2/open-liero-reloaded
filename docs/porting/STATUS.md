@@ -1203,8 +1203,8 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
   shorter idle ping is the remedy.
 - **N39 - the announcement.** The content is JSON (`serde_json`, at most
   4 KiB): `{v, name, mode, map, map_name, mod, mod_hash, players,
-  max_players, spectators, max_spectators, password, region, playing,
-  addr, port}`. Tags: `["d","rust-liero"]`, `["t","rust-liero"]`,
+  max_players, bots, spectators, max_spectators, password, region,
+  playing, addr, port}`. Tags: `["d","rust-liero"]`, `["t","rust-liero"]`,
   `["f","<fingerprint, 16 hex>"]`, `["expiration","<unix+180>"]`. A note is
   re-published every 60 s and when the lobby changes (at most every 12 s,
   R5-3). On close the host publishes a note with `"closed": true` and an
@@ -1220,7 +1220,18 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
   it stayed hidden up to a minute).
   One builder, `GameSummary::of_lobby`, serves rl-server and rl-game and
   also gives the LAN broadcast (`.lan()`); players and spectators are held
-  to their maximums (R9-1, R9-8).
+  to their maximums (R9-1, R9-8). **Amended 2026-10-15** (the user's report
+  of 2026-10-15: "4/8 players" listed for one player who added three
+  bots, misleading joiners, since bots take no seat: rl-lobby's
+  `admit_seat` counts members alone against `max_players`, and only the
+  32-worm total limits bots): `players` counts the seated members only,
+  and the new `bots` (the setup's bots, at most `MAX_PLAYERS`;
+  `#[serde(default)]`, so an older note reads as none) counts the bots
+  apart, in the note and in `LanAnnounce` (appended; postcard is
+  positional, so an older build's LAN datagram does not decode, as its
+  fingerprint already differs). Both lists show "1/8 +3 bots" ("1/8"
+  without bots), and a game is full when its seats are: bots never fill
+  one.
 - **N40 - the public address.** A host learns its public IP from the
   configured `public_address`, else a STUN binding request (RFC 5389) to
   the first answering server of the STUN list (IPv4 only, 2 tries of
