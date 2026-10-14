@@ -184,8 +184,11 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   **Finding games** (plan 12a Task 10): the Multiplayer screen (900 wide)
   has three tabs: **Internet** (`MenuData::internet`, an `InternetView`
   the app keeps current: `InternetStatus::{NoRelay, Searching, Listed}`,
-  "No relay reachable", "Searching…", "No games found"; a grid of
-  `InternetEntry`: name (selects: `MenuData::selected_game`, which the app
+  "No relay reachable", "Searching…", "No games found"; a list of
+  `InternetEntry`, each on two lines so it fits 320 points (no grid): the
+  name (truncated, its hover has all; a lock before it), then map, mod,
+  players, ping and region wrapping; the tab scrolls in a window too
+  short for it; the name (selects: `MenuData::selected_game`, which the app
   pings), map, mod, players (`players_text()`: the seats taken of the
   seats, the bots apart, "1/8 +3 bots", "1/8 +1 bot", "1/8" without; the
   user's report of 2026-10-15: bots take no seat), ping (`PingView`), region, a lock; another
@@ -386,7 +389,9 @@ borderless fullscreen on 16:10 and 4:3 desktops at UI scale 3, 384 and
 failure, the Multiplayer and Options tab rows, the Online tab reached by
 a click and every widget of it in the window: `form_name` takes at most
 40 % of a narrow column, the Online tab's fields `fit` it, its server
-rows wrap);
+rows wrap), `the_internet_table_fits_and_a_game_can_be_joined` (the
+same sizes and 4K: long names, "8/8 +24 bots (playing)", every region;
+every widget in the window, a game selected and joined);
 `tests/ingame.rs`: the HUD layout,
 the weapon selection, the pause menu, Esc/F5 repeats, the results;
 `tests/import.rs`: `import_runs_off_the_ui_thread_and_reports` on

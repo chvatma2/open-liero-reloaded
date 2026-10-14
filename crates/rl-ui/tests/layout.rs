@@ -301,3 +301,72 @@ fn the_longest_join_texts_and_turn_options_fit() {
         inside(&harness, "anna:•••@turn.example.org:3478");
     }
 }
+
+/// The Internet tab's games at every size above (and 4K): long names, the
+/// widest players text, every region; each widget stays in the window, and
+/// a game can be selected and joined.
+#[test]
+fn the_internet_table_fits_and_a_game_can_be_joined() {
+    use rl_ui::{InternetEntry, InternetStatus, InternetView, PingView, Region};
+    let fullscreen = |w: f32, h: f32| (w, h, rl_ui::theme::pixels_per_point(h, 3.0));
+    for (w, h, ppp) in [
+        (1280.0, 720.0, 1.0),
+        (1280.0, 720.0, 2.0),
+        (1280.0, 720.0, 3.0),
+        (3440.0, 1440.0, 2.0),
+        (3840.0, 2160.0, 2.0),
+        fullscreen(1920.0, 1200.0),
+        fullscreen(1024.0, 768.0),
+    ] {
+        let at = format!("{w}x{h} at {ppp} pixels a point");
+        let games: Vec<InternetEntry> = Region::ALL
+            .iter()
+            .enumerate()
+            .map(|(i, region)| InternetEntry {
+                key: [i as u8 + 1; 32],
+                name: format!("Game {i} with a very long name that nobody could ever fit in a column"),
+                map: "A level whose name is long too".into(),
+                mod_name: "Liero v1.0 extended edition".into(),
+                players: 8,
+                max_players: 8,
+                bots: 24,
+                ping: if i % 2 == 0 { PingView::Ms(123) } else { PingView::NoAnswer },
+                region: *region,
+                password: i % 3 == 0,
+                addr: (i != 1).then(|| format!("81.2.69.{i}:23400").parse().unwrap()),
+                incompatible: (i == 2).then(|| "needs version 0.12.3-beta".to_string()),
+                playing: true,
+            })
+            .collect();
+        // The one to join: not full, with an address, of this version.
+        let mut games = games;
+        games[0].players = 3;
+        games[0].password = false;
+        let mut harness = harness(egui::vec2(w / ppp, h / ppp), ppp);
+        reach(&mut harness, Screen::Multiplayer);
+        harness.state_mut().data.internet = InternetView { status: InternetStatus::Listed, games };
+        harness.run();
+        harness.step();
+        harness.step();
+        for (name, r) in widgets(&harness) {
+            assert!(r.left() >= -0.5 && r.right() <= w + 0.5, "{name:?} at {r:?} leaves the window: {at}");
+        }
+        // Select the first game by its name's start; Join and Block appear.
+        harness.get_by_label_contains("Game 0 with").click();
+        harness.run();
+        harness.step();
+        for (n, r) in widgets(&harness) {
+            assert!(r.left() >= -0.5 && r.right() <= w + 0.5, "{n:?} at {r:?} leaves the window: {at}");
+        }
+        harness.get_by_label("Block this host");
+        // A window too short for the list scrolls to the button.
+        harness.get_by_role_and_label(Role::Button, "Join").scroll_to_me();
+        harness.run();
+        harness.step();
+        harness.get_by_role_and_label(Role::Button, "Join").click();
+        harness.run();
+        let sent = harness.state().commands.iter().any(|c| matches!(c, AppCommand::JoinGame { .. }));
+        let cmds = &harness.state().commands;
+        assert!(sent, "{at}: Join sent no JoinListed: {cmds:?}");
+    }
+}

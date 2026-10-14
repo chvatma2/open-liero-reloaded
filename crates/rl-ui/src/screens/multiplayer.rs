@@ -2,13 +2,14 @@
 //! tabs:
 //!
 //! - **Internet:** the games announced on the Nostr relays (the app's game
-//!   list): name, map, mod, players (the seats taken of the seats, the
-//!   bots apart: "1/8 +3 bots"; bots take no seat), ping, region and a lock for a
-//!   password. A click selects a game (the app measures its ping); Join
+//!   list), each on two lines so that it fits a narrow window: the name
+//!   (truncated, a lock before it for a password), then map, mod, players
+//!   (the seats taken of the seats, the bots apart: "1/8 +3 bots"; bots
+//!   take no seat), ping and region, wrapping. A click selects a game (the app measures its ping); Join
 //!   joins it, expecting its key; "Block this host" hides its games for
 //!   good. A game of another version is greyed out ("needs version …");
 //!   one without an address (plan 12b, N46) is joined through the relays,
-//!   its ping column "via relays". Above the list, "No relay reachable" or
+//!   its ping "via relays". Above the list, "No relay reachable" or
 //!   "Searching…" until a relay sent its games.
 //! - **LAN:** the games announced on the local network (a click joins; a
 //!   locked one asks for its password in the Direct tab; players as on
@@ -20,7 +21,7 @@
 //! "Host a game" below, and while a join waits, its step (the app's
 //! `MenuData::joining`) or "Connecting…".
 
-use egui::{Button, Color32, Grid, Key, RichText, ScrollArea, TextEdit, Ui, vec2};
+use egui::{Button, Color32, Key, RichText, ScrollArea, TextEdit, Ui, vec2};
 
 use super::{MenuData, footer, form_row, message, page, primary, section, tab_row};
 use crate::online::{ADDRESS_CHARS, InternetEntry, InternetStatus, PASSWORD_CHARS, Password, is_invite};
@@ -99,11 +100,16 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
         }
     });
     ui.add_space(10.0);
-    match data.multiplayer.tab {
+    // A window too short for the tab (320 × 240 points: 4:3 at UI scale 3)
+    // scrolls it, so Join stays reachable.
+    ScrollArea::vertical().id_salt("multiplayer body").auto_shrink([false, false]).show(ui, |ui| match data
+        .multiplayer
+        .tab
+    {
         Tab::Internet => section(ui, "On the Internet", |ui, _| internet(ui, connecting, data, out)),
         Tab::Lan => section(ui, "On this network", |ui, _| lan(ui, connecting, data, out)),
         Tab::Direct => section(ui, "Join by address or invite", |ui, _| direct(ui, connecting, data, out)),
-    }
+    });
 }
 
 /// The games on the relays, the selected one's Join and Block.
@@ -126,18 +132,12 @@ fn internet(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<Ui
     ScrollArea::vertical().id_salt("internet games").max_height(300.0).auto_shrink([false, true]).show(
         ui,
         |ui| {
-            Grid::new("internet table").num_columns(7).striped(true).spacing(vec2(14.0, 6.0)).show(
-                ui,
-                |ui| {
-                    for h in ["Name", "Map", "Mod", "Players", "Ping", "Region", ""] {
-                        ui.label(RichText::new(h).strong());
-                    }
-                    ui.end_row();
-                    for g in &games {
-                        row(ui, g, &mut selected);
-                    }
-                },
-            );
+            for (i, g) in games.iter().enumerate() {
+                if i > 0 {
+                    ui.separator();
+                }
+                row(ui, g, &mut selected);
+            }
         },
     );
     data.selected_game = selected;
@@ -186,29 +186,41 @@ fn internet(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<Ui
     }
 }
 
-/// One game of the Internet list: its name selects it.
+/// One game of the Internet list, on two lines so that it fits whatever
+/// the width (ruling UI-1: 427 points at UI scale 3, 320 on a 4:3
+/// desktop): its name, which selects it, truncated (the hover has all of
+/// it) after a lock for a password; below it the map, mod, players, ping
+/// and region, wrapping.
 fn row(ui: &mut Ui, g: &InternetEntry, selected: &mut Option<[u8; 32]>) {
     let grey = g.incompatible.is_some();
     let text = |s: String| if grey { RichText::new(s).color(GREY) } else { RichText::new(s) };
-    if ui.selectable_label(*selected == Some(g.key), text(g.name.clone())).clicked() {
-        *selected = Some(g.key);
-    }
-    ui.label(text(g.map.clone()));
-    ui.label(text(g.mod_name.clone()));
-    let playing = if g.playing { " (playing)" } else { "" };
-    ui.label(text(format!("{}{playing}", g.players_text())));
-    let ping = match (&g.incompatible, g.addr) {
-        (Some(v), _) => v.clone(),
-        (None, None) => VIA_RELAYS.into(),
-        (None, Some(_)) => g.ping.text(),
-    };
-    let r = ui.label(text(ping));
-    if g.incompatible.is_none() && g.addr.is_none() {
-        r.on_hover_text("No address to measure: joined through the Nostr relays.");
-    }
-    ui.label(text(g.region.label().into()));
-    ui.label(if g.password { "🔒" } else { "" });
-    ui.end_row();
+    ui.horizontal(|ui| {
+        if g.password {
+            ui.label("🔒");
+        }
+        let name = Button::selectable(*selected == Some(g.key), text(g.name.clone()))
+            .truncate()
+            .min_size(vec2(ui.available_width(), 0.0));
+        if ui.add(name).on_hover_text(&g.name).clicked() {
+            *selected = Some(g.key);
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.label(text(g.map.clone()));
+        ui.label(text(g.mod_name.clone()));
+        let playing = if g.playing { " (playing)" } else { "" };
+        ui.label(text(format!("{}{playing}", g.players_text())));
+        let ping = match (&g.incompatible, g.addr) {
+            (Some(v), _) => v.clone(),
+            (None, None) => VIA_RELAYS.into(),
+            (None, Some(_)) => g.ping.text(),
+        };
+        let r = ui.label(text(ping));
+        if g.incompatible.is_none() && g.addr.is_none() {
+            r.on_hover_text("No address to measure: joined through the Nostr relays.");
+        }
+        ui.label(text(g.region.label().into()));
+    });
 }
 
 /// The games on this network: a click joins (a locked one asks for its
