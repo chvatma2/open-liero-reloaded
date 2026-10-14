@@ -7,7 +7,8 @@
 - Every client keeps a **standby endpoint** (a host endpoint, closed until it takes over) so it can be reached when its turn comes.
 - When the host is silent for 2 s (or says goodbye), peers stop advancing and join the first live successor, directly or through the Nostr relays.
 - The successor collects every peer's final inputs, takes the longest, sends each peer what it lacks, restarts the bots and resumes.
-- A host whose own game stalled long enough for its peers to give up on it steps down, so a match never splits in two.
+- The game polls its online peer from a network pump thread whenever its UI thread has not done so for 20 ms (a dragged window, a match loading), so a busy window never looks like a dead host.
+- A host whose whole machine stalled long enough for its peers to give up on it steps down, so a match never splits in two.
 - `rl-cli net-soak` and `cargo xtask net-soak [--minutes N]` run seeded net-sim cases (profiles changing mid-run, outages, host crashes, departures and freezes, spectators arriving) and real-transport cases until the time is up.
 
 **Architecture:**
@@ -19,6 +20,7 @@
 - **`rl-lobby`**: the succession list (from the members' `Standby` reports), and the **migrated lobby** a successor builds from the old lobby's state: it takes back the match's members by key and nobody else.
 - **`rl-online`** drives it over real connections: the standby endpoint, the joins to successors (direct, then Nostr), the promotion to host (lobby, listener, content side, bots), the host-lost replay and the stalled host's step-down.
 - **`rl-cli`**: net-sim migration cases (the real simulation), the real-transport migration matches, `net-client`'s migration, and `net-soak`.
+- **`rl-game`**: a network pump thread, `rl-game net` (ruling PF12c-2), keeps every online peer polled while the UI thread is busy.
 - **`rl-game`/`rl-ui`**: the in-match migration lines, "You are now hosting", the new host's lobby, the Host lost screen.
 - **`xtask`**: `cargo xtask net-soak`; a `migration` scenario in the Docker NAT tests.
 
@@ -39,40 +41,42 @@ Not here: the browser (plan 13).
   - "The new host collects from every peer its furthest confirmed final inputs (identical where they overlap, since they came from one source), takes the longest, sends each peer what it lacks, and resumes. Bots move to the new host and restart their thinking."
   - "Target: the match continues within 3 s. If no successor is reachable within 10 s, peers return to a local "host lost" screen with the replay saved."
   - "A dedicated server that crashes is migrated away from in the same way."
-- **Spec §3.2:** "What the host forwards for (player, tick) is final: it is the single source of truth." After a migration the new host is that source; nothing it confirms may contradict a value any peer confirmed before.
+- **Spec §3.2:** "What the host forwards for (player, tick) is final: it is the single source of truth." After a migration the new host is that source: every final input a surviving peer held before the migration is kept. A reporter whose report was cut or came late is repaired by the desync path (N67); an exited host's last rows that reached nobody are not part of the match.
 - **Spec §9.1:** "once the network settles, every peer's confirmed checksums are identical and equal to an offline replay of the final inputs"; invariants "no two peers confirm different final inputs" and "migration keeps the match". "`check` runs a few hundred seeds (seconds); `full` thousands." A failure writes `target/failures/net-<seed>.ron`, replayed by `rl-cli net-sim --from <file>`.
 - **Spec §9.10:** "`cargo xtask net-soak [--minutes N]`: long runs of §9.1 and §9.4 with changing profiles, disconnects and host departures, for overnight runs."
-- **Determinism:** the simulation is untouched (match goldens, oracle and render goldens do not move). Every peer's confirmed inputs and checksums agree across a migration, and the old host's confirmed inputs are a prefix of the new host's. `BTreeMap`/`BTreeSet` only in anything that orders output.
+- **Determinism:** the simulation is untouched (match goldens, oracle and render goldens do not move). Every surviving peer's confirmed inputs and checksums agree across a migration; every final input a survivor held at the migration is in the new host's log; an exited host's confirmed rows agree with it up to what survivors held. `BTreeMap`/`BTreeSet` only in anything that orders output. No wall clock in logic, except N70's suspend check (a wall-clock gap counted only beyond the monotonic gap plus `HOST_SILENT_US`).
 - **Nothing in `cargo xtask check` or any test touches the public internet or the machine's real router (ruling NT-1: tests send only to 127.0.0.0/8).**
   - Standby endpoints never map a port (`IceConfig::port_mapping` is forced off for them), and every test's standby has `stun: []`.
+  - Every test endpoint that gathers ICE candidates (a standby answering signalled offers, a joiner through the relays) sets `IceConfig::base_override: Some(127.0.0.1)` (rl-online's `tests/through.rs` pattern; rl-game through `Shell::ice`, so `Shell::test_ice` applies): no connectivity check goes to the machine's LAN addresses.
   - Tests use 127.0.0.1 successors, in-process `TestRelay`s and the netcode's virtual network. The Docker NAT tests (`cargo xtask net-nat`) belong to `full` and stay inside their `--internal` networks.
   - Labels such as `10.0.0.n` or `93.184.216.34` appear only in sans-IO tests that send nothing.
 - **Personal data never leaves:** no email, name or other personal detail in any message, test event or log beyond what the lobby already shows. A member's LAN address and standby port reach only the other members of its match, and only when the host saw it on a private network (N64).
 - **Layers (`xtask/layers.ron`) unchanged:** no new crate and no new pair. `rl-proto`, `rl-netcode` and `rl-lobby` stay `#![no_std]` + `alloc` and build for `wasm32-unknown-unknown`. One integration-test binary per crate (`autotests = false`): new test files are `mod`s of `tests/integration.rs`; rl-lobby's single `tests/lobby.rs` takes its new tests in place.
 - **Dependencies:** none added. The Docker step needs Docker only (`sudo apt install docker.io`, then `sudo usermod -aG docker $USER`). `cargo xtask api` summarises workspace crates: read `target/api/<crate>.txt`, never guess a signature.
-- **Sans-IO first:** every migration rule (timing, successor choice, the merge) is in `rl-netcode` and takes time as an argument. Sockets, threads and relays stay in rl-net, rl-discovery and rl-online's drivers. **Nothing blocks the game's UI thread:** endpoints, joins and listeners start without waiting; old endpoints shut down on threads (ruling NT-2's pattern).
-- **Bounded state:** every list a peer receives is capped on the wire (succession ≤ `MAX_MEMBERS`, reports ≤ `MAX_REPORT_FRAMES`); every retry has a period and a deadline; at most `MAX_MIGRATIONS` per match.
+- **Sans-IO first:** every migration rule (timing, successor choice, the merge) is in `rl-netcode` and takes time as an argument. Sockets, threads and relays stay in rl-net, rl-discovery and rl-online's drivers. **Nothing blocks the game's UI thread:** endpoints, joins and listeners start without waiting; old endpoints shut down on threads (ruling NT-2's pattern). **And a busy UI thread never silences the network:** the pump (Task 5) polls every online peer when the UI has not for 20 ms.
+- **Bounded state:** every list a peer receives is capped on the wire (succession ≤ `MAX_MEMBERS`, reports ≤ `MAX_REPORT_FRAMES`); a member changes its `Standby` at most once per `STANDBY_WINDOW_US`; every retry has a period and a deadline; at most `MAX_MIGRATIONS` per match; the pump's event queue is bounded.
+- **Existing tests keep their meaning:** a test that is not about migration uses `MigrationConfig::off()` (no standby, so no `can_host` entry and no step-down); the real-transport, stress and feel runs keep `off()` except their migration cases.
 - **Protocol stays 2:** new messages and refusals are appended variants. The simulation fingerprint changes with rl-netcode's and rl-proto's sources, as always.
 - **Never panic on network input** (spec §5.4): every new decoder and handler is fuzzed with proptest (`cases: 256, failure_persistence: None`).
-- **Commits:** run `cargo xtask check` before every commit (`--offline` without network). Run `cargo xtask e2e` in Task 8 and `cargo xtask net-nat --only migration` in Task 9, the tasks that touch those areas. **`cargo xtask full` runs once, at the end of the plan (Task 11), never mid-plan (user rule, 2026-10-15).** Commit on `main`, never push. Trailers:
+- **Commits:** run `cargo xtask check` before every commit (`--offline` without network). Run `cargo xtask e2e` in Tasks 5 and 9 and `cargo xtask net-nat --only migration` in Task 10, the tasks that touch those areas. **`cargo xtask full` runs once, at the end of the plan (Task 12), never mid-plan (user rule, 2026-10-15).** Commit on `main`, never push. Trailers:
   ```
   Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
   Claude-Session: https://claude.ai/code/session_019821i4KFSbhZ4mHYULrhEV
   ```
 
-## Decisions this plan makes (recorded as STATUS.md rulings in Task 11)
+## Decisions this plan makes (recorded as STATUS.md rulings in Task 12)
 
 The spec leaves these open; each is decided here.
 
 - **N63 – the standby endpoint.** A successor must be reachable when its turn comes, but a client has no listening socket.
   - Every client (player or spectator) opens a **standby endpoint** when it is welcomed: `Endpoint::host` on port 0 (TCP and UDP), port mapping forced off, its STUN servers as configured (so its server-reflexive candidate is ready). Its gate refuses every offer with `Refusal::NotHost` until this peer takes over.
-  - It reports `ToHost::Standby { port, relays }` after each `Welcome` (relays: its first 2 Nostr relays, the ones it listens on once it hosts).
+  - It reports `ToHost::Standby { port, relays }` after each `Welcome` (relays: its first 2 Nostr relays, the ones it listens on once it hosts). The host takes at most one change per member per `STANDBY_WINDOW_US` (5 s); a later one is held and taken by `tick`, as `SetLook`'s are.
   - A client whose standby cannot bind (or that has none: `MigrationConfig::standby = None`) cannot host, but still follows a migration (N79).
   - **Cost if wrong:** one more listening socket per client while it is online.
 - **N64 – the succession list.**
   - **Order:** the match's players in join order, then its spectators in join order, then members waiting for the next match (followers only).
   - **`can_host`:** a `Standby` arrived and the member holds a world (a player, or a spectator from the start).
-  - **Direct address:** only when the host saw the member at a non-global IPv4 address (`!rl_proto::is_global`: the same LAN), with the standby port, and only for ports ≥ 1024. Anyone else is reached through Nostr.
+  - **Direct address:** only when the host saw the member at a non-global IPv4 address (`!rl_proto::is_global`: the same LAN) and the member's path is not `Relayed` (N59: a relayed member's address is its TURN relay's), with the standby port, and only for ports ≥ 1024. Anyone else is reached through Nostr.
   - **Relays:** at most 2 per entry, each a `ws://` or `wss://` URL of at most 128 bytes.
   - **When:** `ToClient::Succession` goes out with the match's `Start` and whenever it changes during a match, coalesced like `Lobby`.
   - **Cost if wrong:** a successor on another network is never tried directly (its join takes the relays' few seconds).
@@ -80,8 +84,10 @@ The spec leaves these open; each is decided here.
   - `HOST_SILENT_US` = 2 s (spec): nothing from the host for 2 s while the peer itself kept advancing.
   - Each `can_host` successor has a **window** of `WINDOW_US` = 5 s, in order, from the moment the migration began.
   - `GIVE_UP_US` = 10 s after the migration began: host lost. The spec's "within 10 s" counts from the start of the migration, so a host is lost at most 12 s after its last message.
-  - A `NotHost` refusal is tried again after `RETRY_US` (250 ms) within the window; a successor that answered as a host (**contact**) is kept past its window until `GIVE_UP_US`.
-  - "Peers stop advancing" means they are **suspended where they are** (at most `MAX_PREDICTION` past their confirmed tick): no tick runs and nothing is rolled back until the resume, and the last predicted frame stays on screen.
+  - A `NotHost` refusal is tried again after `RETRY_US` (250 ms) within the window; a successor that answered as a host (**contact**) is kept past its window until `GIVE_UP_US`. Contact past a window lasts only with a **committed** successor: one that has not committed by its window's end closes its gate (its pending joins fail: `lost_contact`) and follows the later windows (pre-flight D8).
+  - A peer whose attempt was welcomed (it committed to the new host) drops its `Migration`: from then only the new host's `Resume`, or the new host's own silence (a further migration), ends its wait (spec: "no successor **reachable**").
+  - "Peers stop advancing" means they are **suspended where they are** (at most `MAX_PREDICTION` past their confirmed tick): no new tick runs until the resume; an owed rollback or a loaded state still re-simulates up to the current tick; the last frame stays on screen. A suspended session still sends a frame-less keepalive datagram every 250 ms and every reliable control, so a collecting new host never looks silent to its rejoined peers.
+  - **Residual race (to STATUS):** a peer that contacts a successor in the last moment of its window can still see that successor close; it then goes on to the next window. Two successors can each commit only if their peers reached them in disjoint windows with each failing to reach the other, which needs a network partition between peers; the harness models no such partition.
   - **Cost if wrong:** only two successors fit in 10 s; when both die with the host, the third is never tried.
 - **N66 – "the match continues within 3 s".** Read as: from the moment the peers find the host gone to the new host's resume, on LAN, good and typical links, when every other peer survives. It is gated in the harness (≤ 3 s), and in rl-online's loopback test (≤ 3.5 s, real clocks). A departed peer the new host still waits for costs up to its window (5 s). **Cost if wrong:** a stricter reading (3 s from the host's last message) cannot be met with the spec's own 2 s detection on anything but LAN.
 - **N67 – the merge.**
@@ -96,15 +102,22 @@ The spec leaves these open; each is decided here.
   - **Cost if wrong:** a peer with a cut report shows a correction (a repair) after the resume.
 - **N68 – collection.**
   - The successor **commits** (drops its old host and becomes the host) at the first proven rejoin, or at once when it expects nobody.
-  - It **resumes** when every expected peer (the match's players and spectators but itself) reported, or at the end of its window.
-  - A successor that nobody rejoined by `GIVE_UP_US`, while it expected someone, gives up (host lost).
+  - **Expected peers** are the succession entries holding a slot or a spectator seat from the start, other than itself (`LobbyHost::away_in_match`, and the harness alike); followers (mid-match spectators, waiting members) are never waited for.
+  - It **resumes** when every expected peer rejoined and reported. The window's end stops the wait only for peers not yet back: it still waits for the reports of peers already rejoined (one round trip).
+  - A successor that nobody rejoined by its window's end, while it expected someone, closes its gate and follows the later windows (D8); with none left it gives up at `GIVE_UP_US` (host lost).
   - **Cost if wrong:** a 1-vs-host match continues for the lone survivor against bots (spec: "the match continues").
 - **N69 – the old host speaks again.** A peer that has not committed returns to its old host (`HostHeard`), unless its attempt has contact with a hosting successor; a successor that has not committed closes its standby again. **Cost if wrong:** a peer whose own link blipped for 2-5 s rejoins its host instead of the match moving; a peer in contact with a successor follows it.
 - **N70 – a stalled host steps down.** A host whose own polls stop for `STEP_DOWN_US` (1.5 s, less than `HOST_SILENT_US`, so jitter cannot make its peers think it silent while it thinks itself fine) leaves the match: `Bye` to every peer, so they migrate at once. This applies when its succession has a `can_host` entry.
-  - The gap is measured on both the monotonic and the wall clock (a suspended machine's monotonic clock stands still on Linux).
+  - The gap is measured between two polls of the peer, from whichever thread: in the game, the network pump (PF12c-2) polls whenever the UI thread has not for 20 ms, so a dragged window or a long match load never counts; only a whole-machine stall does (a suspend, an overloaded VPS).
+  - The monotonic gap counts. A wall-clock gap counts only when it exceeds the monotonic gap by more than `HOST_SILENT_US` (a suspend long enough for the peers to have moved, when the monotonic clock stood still); backward wall-clock steps are ignored, so an NTP step never moves a match (pre-flight C3).
   - A game host shows the Host lost screen ("Your game stopped for N s…"). A dedicated server logs it and opens its lobby again.
   - It does not rejoin the match.
-  - **Cost if wrong:** a host whose window was dragged for 1.5 s (Windows) loses that match.
+  - **Cost if wrong:** a host whose machine stalled for 1.5 s loses that match.
+- **PF12c-2 – the network pump** (controller ruling, recorded with N70).
+  - rl-game holds each online peer (host and client alike, `--net-sim`'s host too) behind a shared lock, polled by a thread `rl-game net` whenever the UI thread has not polled it for `PUMP_AFTER` (20 ms).
+  - Meanwhile the local player's keys are `Keys(0)` and bots still think; the pump's events wait in a bounded queue (`PUMP_QUEUE`) for the UI.
+  - N70's stall is measured on that thread's cadence, so it fires only for whole-machine stalls.
+  - **Cost if wrong:** a lock shared between two threads to maintain.
 - **N71 – migration happens only during a match** (from `Start` until the host's `Ended`). A host lost in the lobby or during the results ends the game as before ("the connection to the host was lost"). **Cost if wrong:** a group whose host quits between matches must host again.
 - **N72 – the migrated game is closed.**
   - It takes back the succession's members by key, with their member ids, seats and admin marks, and nobody else (`Refusal::Closed`).
@@ -114,16 +127,16 @@ The spec leaves these open; each is decided here.
 - **N73 – the joins to a successor.**
   - **Direct first:** when the entry has a direct address, with `MIGRATION_CONNECT_TIMEOUT` (1 s). A failed direct connect is not tried again within the window.
   - **Then through Nostr:** the entry's relays first, then the peer's own, cut to 8 (`join_relays`), with the successor's key expected (N37's proofs).
-  - **The successor** listens on its own relays from the moment it opens its standby; one without relays (a LAN game) listens on none.
-  - **Cost if wrong:** up to 1 s more on a stale direct address.
-- **N74 – repeated migrations.** Former hosts are skipped in a later migration. At most `MAX_MIGRATIONS` (4) per match; past that, host lost. **Cost if wrong:** a fifth migration in one match ends it.
+  - **The successor** listens on its own relays from the moment its standby's gate opens (its turn), and stops if it cancels; one without relays (a LAN game) listens on none. Its relay connections add about 1-2 s to a migration through Nostr.
+  - **Cost if wrong:** up to 1 s more on a stale direct address; 1-2 s more through the relays than a listener kept open all match.
+- **N74 – repeated migrations.** At most `MAX_MIGRATIONS` (4) per match; past that, host lost. (A former host is never in a later succession: it left, or stepped down and does not rejoin, so no "skip former hosts" rule is needed; ruling PF12c-3.) **Cost if wrong:** a fifth migration in one match ends it.
 - **N75 – bots restart** at the new host: fresh `Bot`s for the bot slots of the `MatchStartWire`, on the world as it stands, with a new (empty, lazy) area cache. Only the host thinks for bots, so this changes nobody's simulation. **Cost if wrong:** bots forget their routes once per migration.
 - **N76 – the host's `Bye`, or its link closing, during a match starts the migration at once** (no 2 s wait). **Cost if wrong:** none known.
 - **N77 – net-soak.**
   - **Command:** `cargo xtask net-soak [--minutes N] [--seed S]` (default 10 minutes) runs `rl-cli net-soak` in release.
-  - **Cases:** seeded random net-sim cases on the real simulation: both mods, the 4 bundled levels, 2-16 worms, 1-7 clients, 0-2 spectators, 0-3 profile changes, 0-2 outages, a host crash, departure or freeze in half of them, a spectator arriving. Every 5th run is a real-transport case on 127.0.0.1 with a server freeze or departure.
+  - **Cases:** seeded random net-sim cases on the real simulation: both mods, the 4 bundled levels, 2-16 worms, 1-7 clients, 0-2 spectators, 0-3 profile changes, 0-2 outages, a host crash, departure or freeze in half of them, a spectator arriving. Every 5th run is a real-transport case on 127.0.0.1, half of them with a server freeze or departure (the other half a clean control run).
   - **Failures:** to `target/failures/` (net-sim cases as `NetCase`s, replayable with `rl-cli net-sim --from`), at most 32, then it stops.
-  - **Not in `full`.** `full` gains the migration cases of `net_sim`'s and `transport`'s full tiers (about 2 minutes, measured in Task 11).
+  - **Not in `full`.** `full` gains the migration cases of `net_sim`'s and `transport`'s full tiers (about 2 minutes, measured in Task 12).
   - **Cost if wrong:** soak-only bugs surface overnight, not in `full`.
 - **N78 – protocol stays 2** (appended variants; plan 12b's reasoning: unreleased online play). **No new dependency.**
 - **N79 – a peer that cannot host** (no standby) follows a migration but is never a successor.
@@ -134,19 +147,20 @@ The spec leaves these open; each is decided here.
   - **Host lost:** a "Host lost" screen with the reason and the Replays and Back buttons; the replay is the peer's confirmed inputs, saved like any online match's.
 
 **Plan rulings:**
-- **PL12c-1:** 11 tasks. The wire (Task 1) and the sans-IO netcode with its harness (Tasks 2-3) come first, so every rule has a seeded test before any socket is involved.
-- **PL12c-2:** spec §9.7's scenarios gain `migration` (Task 9), the only test of a successor reached across routers.
+- **PL12c-1:** 12 tasks. The wire (Task 1) and the sans-IO netcode with its harness (Tasks 2-3) come first, so every rule has a seeded test before any socket is involved.
+- **PL12c-2:** spec §9.7's scenarios gain `migration` (Task 10), the only test of a successor reached across routers.
 
 ## Review Focus
 
 1. **A host that freezes for 1-3 s:** a dragged window on Windows, a laptop lid, a Wi-Fi roam, a loaded VPS.
-   - **Expected:** the match never splits. Below `STEP_DOWN_US` nothing happens. Past it the host steps down, its peers migrate, and its player is told why.
+   - **Expected:** the match never splits. A busy or dragged window costs nothing (the pump keeps the peer polled). A whole-machine stall below `STEP_DOWN_US` costs nothing either; past it the host steps down, its peers migrate, and its player is told why.
    - **Pinned by:**
      - Task 3's `a_host_frozen_past_the_step_down_threshold_hands_over` and `a_host_frozen_briefly_keeps_hosting`;
-     - Task 5's `a_stalled_host_steps_down_and_the_match_moves`.
+     - Task 5's `a_host_whose_frames_stop_keeps_hosting` and `a_client_whose_frames_stop_stays_joined` (extended in Task 9 with migration on);
+     - Task 6's `a_stalled_host_steps_down_and_the_match_moves`.
 2. **One client's, or the successor's, own link blips for 2-5 s while the host is fine.**
    - **Expected:** the blipped peer returns to its old host (`HostHeard`). The successor never takes the match alone, and nobody else moves.
-   - **Pinned by** Task 3's `a_client_outage_does_not_move_the_match` and `a_successor_outage_does_not_take_the_match`, and Task 5's `a_successors_own_outage_does_not_take_the_match` (real links).
+   - **Pinned by** Task 3's `a_client_outage_does_not_move_the_match` and `a_successor_outage_does_not_take_the_match`, and Task 6's `a_successors_own_outage_does_not_take_the_match` (real links).
 3. **A hostile or broken host or peer abusing the migration wire:**
    - a succession naming LAN victims, privileged ports or 48 junk relays;
    - a report with conflicting, gapped or oversize frames;
@@ -157,19 +171,19 @@ The spec leaves these open; each is decided here.
    - **Pinned by:**
      - Task 1's fuzzers;
      - Task 2's `a_conflicting_report_is_ignored_and_counted`, `migration_messages_from_a_non_host_are_ignored` and `migration_controls_never_panic`;
-     - Task 4's `standby_reports_are_bounded`;
-     - Task 6's `a_hostile_succession_is_bounded`.
+     - Task 4's `standby_changes_during_a_match_are_bounded`;
+     - Task 7's `a_hostile_succession_is_bounded`.
 4. **The successor is dead too, or unreachable** (crashed with the host, or behind a symmetric NAT with no TURN).
    - **Expected:** the next successor's window, then host lost 10 s after the migration began, with the replay saved; nobody waits for ever.
    - **Pinned by:**
      - Task 3's `the_second_successor_takes_over_when_the_first_is_dead` and `nobody_reachable_is_host_lost_after_ten_seconds`;
-     - Task 5's `nobody_to_take_over_is_host_lost_with_a_replay`;
-     - Task 8's `the_host_lost_screen_shows_and_the_replay_is_saved`.
+     - Task 6's `nobody_to_take_over_is_host_lost_with_a_replay`;
+     - Task 9's `the_host_lost_screen_shows_and_the_replay_is_saved`.
 5. **A late peer** (slow relays, an outage during the collection), **or a second migration in the same match.**
-   - **Expected:** the late peer watches from a state and plays the next match; a second migration skips the former host; checksums agree throughout.
+   - **Expected:** the late peer watches from a state and plays the next match; a second migration moves the match again, and a fifth in one match is host lost; checksums agree throughout.
    - **Pinned by:**
-     - Task 3's `a_late_peer_watches_from_a_state` and `a_second_migration_skips_the_former_host`;
-     - Task 6's `a_late_rejoiner_watches_from_a_state` and `a_second_migration_moves_the_match_again`.
+     - Task 3's `a_late_peer_watches_from_a_state`, `a_second_migration_moves_the_match_again` and `the_fifth_migration_in_a_match_is_host_lost`;
+     - Task 7's `a_late_rejoiner_watches_from_a_state` and `a_second_migration_moves_the_match_again`.
 
 ---
 
@@ -181,11 +195,13 @@ The spec leaves these open; each is decided here.
 | `crates/rl-netcode/src/session.rs`, `src/session/migrate.rs` (new) | Host silence, suspension, take-over, rejoins, the merge, resume, rehost (Task 2). |
 | `crates/rl-netcode/src/migration.rs` (new), `src/harness.rs`, `src/toy.rs` | The timing constants and the `Migration` state machine; the harness's exits, freezes, migrations and profile changes (Task 3). |
 | `crates/rl-lobby/src/{host.rs, client.rs, model.rs, harness.rs}`, `src/host/migrated.rs` (new) | Standby records, the succession list, the migrated lobby (Task 4). |
-| `crates/rl-net/src/{endpoint.rs, core.rs}` | `EndpointConfig::connect_timeout`, `NetEvent::Answered` (Task 5). |
-| `crates/rl-online/src/{migration.rs (new), peer.rs, peer/migrate.rs (new), matches.rs, events.rs, join.rs}` | `MigrationConfig`, the standby, the joins to successors, the promotion, host lost, step-down (Tasks 5, 6). |
-| `crates/rl-cli/src/{netsim.rs, net_sim_cmd.rs, transport.rs, net_client_cmd.rs, soak.rs (new), main.rs}`, `crates/rl-server/src/lib.rs` | net-sim migration, real-transport migration, `net-client`, `net-soak`, the server's log lines (Tasks 7, 10). |
-| `crates/rl-ui/src/{state.rs, screens/host_lost.rs (new), screens/mod.rs, online.rs}`, `crates/rl-game/src/{shell/online.rs, net.rs, overlay.rs}` | The migration lines, the new host's lobby, the Host lost screen (Task 8). |
-| `xtask/src/{net.rs, main.rs, nat.rs}`, `tools/net-nat/CLAUDE.md` | `cargo xtask net-soak`, the `migration` NAT scenario (Tasks 9, 10). |
+| `crates/rl-online/src/lib.rs` | A static assert that `OnlinePeer: Send` (Task 5). |
+| `crates/rl-game/src/{net.rs, net/pump.rs (new), shell/online.rs, online.rs}` | The network pump (Task 5). |
+| `crates/rl-net/src/{endpoint.rs, core.rs, impair.rs}` | `EndpointConfig::connect_timeout`, `NetEvent::Answered`, a timed receive-and-send blackout (test hook) (Task 6). |
+| `crates/rl-online/src/{migration.rs (new), peer.rs, peer/migrate.rs (new), matches.rs, events.rs, join.rs}` | `MigrationConfig`, the standby, the joins to successors, the promotion, host lost, step-down (Tasks 6, 7). |
+| `crates/rl-cli/src/{netsim.rs, net_sim_cmd.rs, transport.rs, net_client_cmd.rs, soak.rs (new), main.rs}`, `crates/rl-server/src/lib.rs` | net-sim migration, real-transport migration, `net-client`, `net-soak`, the server's log lines (Tasks 8, 11). |
+| `crates/rl-ui/src/{state.rs, screens/host_lost.rs (new), screens/mod.rs, online.rs}`, `crates/rl-game/src/{shell/online.rs, net.rs, overlay.rs}` | The migration lines, the new host's lobby, the Host lost screen (Task 9). |
+| `xtask/src/{net.rs, main.rs, nat.rs}`, `tools/net-nat/CLAUDE.md` | `cargo xtask net-soak`, the `migration` NAT scenario (Tasks 10, 11). |
 
 ---
 
@@ -197,7 +213,7 @@ The spec leaves these open; each is decided here.
 
 **Interfaces:**
 - Consumes: `Frame`, `encode_frames`/`decode_frames`, `PublicKey`, `MAX_CONTROL`, `MAX_LOBBY`, `MAX_MEMBERS`, `MAX_SLOTS`, `is_global`.
-- Produces (Tasks 2-8):
+- Produces (Tasks 2-9):
   ```rust
   // rl_proto (lib.rs)
   /// Most ticks of final inputs one `Control::Report` carries (30 s).
@@ -262,8 +278,8 @@ Context:
   - `Report`: `frames.len()` ≤ `MAX_REPORT_FRAMES`; `own.len()` ≤ `MAX_REPORT_OWN`; `first + frames.len()` and `own_first + own.len()` do not overflow; each frame's `changed ⊆ known` and `keys.len() == changed.count_ones()` (as `decode_frames` checks).
   - `Standby`: port ≥ `MIN_STANDBY_PORT`; relays per `valid_relay_url`, at most 2.
   - `Succession`: `valid_succession`.
-- **Size:** a worst-case `Succession` (48 entries, each with a direct address and 2 relays of 128 bytes) must fit `MAX_LOBBY`; a worst-case `Report` encoded by Task 2's trimming must fit `MAX_CONTROL`. Pin both with tests, as `worst_case_messages_fit` does.
-- `ToHost::Standby` is a lobby message like `Ready`: rl-lobby's per-member rate limits apply (Task 4).
+- **Size:** a worst-case `Succession` (48 entries, each with a direct address and 2 relays of 128 bytes) must fit `MAX_LOBBY`; Task 1 pins it below (`a_worst_case_succession_fits_and_round_trips`, relays of exactly `MAX_RELAY_URL` bytes). The worst-case `Report` (32 slots changing every tick over 3000 ticks is about 120 KB) needs Task 2's trimming to fit `MAX_CONTROL`: Task 2 pins it (`a_worst_case_report_is_trimmed_to_fit`).
+- `ToHost::Standby` changes are taken at most once per member per `STANDBY_WINDOW_US` by the host (Task 4), as `SetLook`'s are: the decoder bounds one message, the lobby bounds how often it counts.
 
 - [ ] **Step 1: Write the failing tests** `crates/rl-proto/tests/migration.rs`:
 
@@ -309,12 +325,18 @@ fn migration_controls_out_of_bounds_are_refused() {
     assert_eq!(decode_control(&encode_control(&Control::Report(long))), Err(ProtoError::Invalid));
 }
 
+/// A relay URL of exactly `MAX_RELAY_URL` bytes, unique per `n` and `i`.
+fn long_relay(n: u8, i: u8) -> String {
+    let head = format!("wss://{n}-{i}.example/");
+    format!("{head}{}", "r".repeat(MAX_RELAY_URL - head.len()))
+}
+
 fn successor(n: u8) -> SuccessorWire {
     SuccessorWire {
         member: n,
         key: [n; 32],
         direct: Some(([10, 0, 0, n], 40_000 + n as u16)),
-        relays: vec![format!("wss://{}.example/{}", n, "r".repeat(100)), "ws://relay.example".into()],
+        relays: vec![long_relay(n, 0), long_relay(n, 1)],
         can_host: true,
     }
 }
@@ -323,7 +345,7 @@ fn successor(n: u8) -> SuccessorWire {
 fn a_worst_case_succession_fits_and_round_trips() {
     let list: Vec<SuccessorWire> = (0..MAX_MEMBERS as u8).map(successor).collect();
     for s in &list {
-        assert!(s.relays.iter().all(|r| r.len() <= MAX_RELAY_URL && valid_relay_url(r)));
+        assert!(s.relays.iter().all(|r| r.len() == MAX_RELAY_URL && valid_relay_url(r)));
     }
     let bytes = encode_to_client(&ToClient::Succession(list.clone()));
     assert!(bytes.len() <= MAX_LOBBY, "{} bytes", bytes.len());
@@ -386,13 +408,17 @@ fn the_new_refusals_round_trip() {
 
 **Interfaces:**
 - Consumes: Task 1's `Control::{Collect, Report, Resume}`, `InputsReport`, `MAX_REPORT_FRAMES`, `MAX_REPORT_OWN`.
-- Produces (Tasks 3, 5, 6, 7):
+- Produces (Tasks 3, 6, 7, 8):
   ```rust
   // rl_netcode::migration (this task: the constants)
   /// Spec §3.7: a client or spectator whose host sent nothing for this long, while it kept advancing, finds it gone.
   pub const HOST_SILENT_US: u64 = 2_000_000;
   /// N70: a host whose own polls stopped this long steps down (below HOST_SILENT_US, so jitter cannot split the match).
   pub const STEP_DOWN_US: u64 = 1_500_000;
+  /// A suspended session's frame-less keepalive datagram period (pre-flight A6: a collecting new host never looks silent).
+  pub const KEEPALIVE_US: u64 = 250_000;
+  /// The report of what this peer knows (N67): frames for ticks `first..upto` (`value`, `base` as `encode_frames` takes them), the span halved from its end until the encoded `Control::Report` fits `MAX_CONTROL` and `MAX_REPORT_FRAMES` (the earliest ticks matter); `own` cut to `MAX_REPORT_OWN`.
+  pub fn fit_report(ack: u32, first: u32, upto: u32, slots: usize, value: &dyn Fn(u32, usize) -> Option<u8>, base: &dyn Fn(usize) -> Option<u8>, own_first: u32, own: Vec<u8>) -> InputsReport;
   // rl_netcode::Event gains:
   /// Client or spectator: nothing from its host for `HOST_SILENT_US` while this peer kept advancing (once per silence).
   HostSilent,
@@ -405,7 +431,7 @@ fn the_new_refusals_round_trip() {
   pub report_conflicts: u64,  // reported final inputs that differed from ours (ignored)
   impl<S: Simulation> Session<S> {
       pub fn is_host(&self) -> bool;
-      /// Stops advancing: no new tick, no datagram (the migration began). Rollbacks owed and states arriving are still taken.
+      /// Stops advancing (the migration began): no new tick and no input frames. A frame-less keepalive datagram every `KEEPALIVE_US` and every reliable control still go; an owed rollback or a loaded state still re-simulates up to the current tick; states arriving are still taken.
       pub fn suspend(&mut self);
       pub fn suspended(&self) -> bool;
       /// The old host is back before any rehost (N69): advancing again, the pace restarting at `now_us` (the pause is not caught up).
@@ -425,11 +451,11 @@ fn the_new_refusals_round_trip() {
 
 Context (decisions N67, N69, N76):
 - **Host silence.** A client or spectator pushes `HostSilent` once when `now - heard_us(host) ≥ HOST_SILENT_US`, measured only over time the peer itself advanced: a gap of more than `HOST_SILENT_US / 2` between two of its own `advance` calls restarts the silence clock at the later one. A frozen client that wakes up does not blame its host for its own sleep. A datagram from the host after `HostSilent` (and before `rehost`) pushes `HostHeard` once. A `Control::Bye` from the host stays `PeerLeft { peer: host }`; the driver starts the migration on either (N76).
-- **Suspended:** `advance` runs no new tick and queues no datagram, and pushes no `Stalled` (a migration is no stall: the feel gates count stalls). It still runs an owed rollback or a loaded state's re-simulation, and still confirms checksums.
+- **Suspended:** `advance` runs no new tick and queues no input frames, and pushes no `Stalled` (a migration is no stall: the feel gates count stalls). It sends a frame-less keepalive datagram (a client's `ClientInputs` without keys, a host's `HostInputs` without frames) every `KEEPALIVE_US` to its host or rejoined peers, so a new host collecting reports for up to its window (5 s) never looks silent; a rejoined peer's silence clock keeps running, so a new host that really dies while collecting starts a further migration (N74). It still runs an owed rollback or a loaded state's re-simulation up to the current tick, still confirms checksums, and still sends every reliable control (`Collect`, `Report`, checksums).
 - **Collect / Report** (the new host's `known[s]` = its `known_upto(s)`):
   - The reporter answers with the frames from `first = min(known)` to its own horizon. Each slot carries its final values (`None` where it lacks them; the encoder's `base` is its value at `first - 1`).
   - It also carries its own provisional inputs from its slot's `known_upto` (at most `MAX_REPORT_OWN`).
-  - When the encoded control exceeds `MAX_CONTROL` or `MAX_REPORT_FRAMES`, it halves the span from the end until it fits (the earliest ticks matter: N67).
+  - When the encoded control exceeds `MAX_CONTROL` or `MAX_REPORT_FRAMES`, it halves the span from the end until it fits (the earliest ticks matter: N67): `migration::fit_report`.
   - At the new host, frames decode with `base(s)` = its own value at `first - 1` (known for every slot, since `first` is the least prefix) and are taken in tick order: `New` extends, `Same` is fine, `Conflict` is ignored and counted.
   - Provisional own inputs wait until `resume`, then extend that slot's prefix only.
   - A `Report` from a peer that never rejoined, or a second one from the same peer, changes nothing.
@@ -440,7 +466,7 @@ Context (decisions N67, N69, N76):
   - The awaited player slots whose peer did not rejoin, and the old host's own player's slot, become abandoned: recorded as lost players, so the existing `fill` makes them `Keys(0)` from their first unknown tick (N6).
   - Every rejoined peer's acknowledged frontier is its report's `ack`, so the host's datagrams start there ("sends each peer what it lacks").
   - Each rejoined peer gets `Resume { tick: R }`; `Event::Resumed { tick: R }` and `Stats::migrations += 1` here.
-  - At a client, `Resume` from its host unsuspends it: the pace restarts at `max(current, R)` and `now`; its time sync starts as after a jump (margins stale until fresh samples); `Event::Resumed`. `Collect`/`Resume` from anyone but its current host are ignored.
+  - At a client, `Resume` from its host unsuspends it: the pace restarts at `max(current, R)` and `now`; its time sync starts as after a jump (margins stale until fresh samples); `Event::Resumed`. `Collect`/`Resume` from anyone but its current (rehosted) host are ignored, and so is a `Resume` whose tick is more than `MAX_AHEAD` (6000 ticks, the session's existing bound on inputs ahead) past its current tick: a hostile or broken host cannot push its timeline to `u32::MAX`.
 - **The new host's own slot** keeps the match's input delay for the rest of the match (decision N2: a delay changed mid-match leaves a tick with two inputs or none). Its keys still go to its provisional buffer `d` ticks ahead and become final when simulated.
 - **Spectators** take part: they report (no own inputs), and a spectator may take over (its local slots are the bots alone).
 - **Never panic on any of these messages** (spec §5.4); unknown senders are ignored, not `Malformed`.
@@ -456,10 +482,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::prelude::*;
 use rl_netcode::harness::Factory;
-use rl_netcode::migration::HOST_SILENT_US;
+use rl_netcode::migration::{HOST_SILENT_US, fit_report};
 use rl_netcode::toy::ToyFactory;
 use rl_netcode::{Channel, Config, Driver, Event, PeerId, Role, Seat, Session, ToySim, input_delay};
-use rl_proto::{Control, Frame, InputsReport, encode_control, encode_frames};
+use rl_proto::{
+    Control, Datagram, Frame, InputsReport, MAX_CONTROL, MAX_REPORT_FRAMES, MAX_REPORT_OWN, decode_control,
+    decode_datagram, encode_control, encode_frames,
+};
 use rl_sim::Keys;
 
 const H: PeerId = 0; // the first host: slot 0 its player, slot 1 its bot
@@ -480,6 +509,8 @@ struct Mesh {
     cut: BTreeMap<(PeerId, PeerId), u64>,
     now_ms: u64,
     wire: Vec<(u64, PeerId, PeerId, Channel, Vec<u8>)>,
+    /// Every message sent (not cut), with the time: (ms, from, to, channel, bytes).
+    sent: Vec<(u64, PeerId, PeerId, Channel, Vec<u8>)>,
     events: BTreeMap<PeerId, Vec<(u64, Event)>>,
 }
 
@@ -507,6 +538,7 @@ impl Mesh {
             cut: BTreeMap::new(),
             now_ms: 0,
             wire: Vec::new(),
+            sent: Vec::new(),
             events: BTreeMap::new(),
         }
     }
@@ -547,6 +579,7 @@ impl Mesh {
                 if self.cut.get(&(id, to)).is_some_and(|&from| now >= from) {
                     continue;
                 }
+                self.sent.push((now, id, to, ch, b.clone()));
                 self.wire.push((now + self.one_way_ms, id, to, ch, b));
             }
         }
@@ -628,15 +661,28 @@ fn a_peers_own_sleep_is_not_its_hosts_silence() {
 }
 
 #[test]
-fn a_suspended_session_runs_no_tick_sends_nothing_and_never_stalls() {
+fn a_suspended_session_runs_no_tick_sends_no_inputs_and_never_stalls() {
     let mut m = Mesh::new(20, 3);
     m.run_ms(1_000);
     m.s.get_mut(&B).unwrap().suspend();
     assert!(m.s[&B].suspended());
-    let (tick, sent) = (m.s[&B].current_tick(), m.s[&B].stats().datagrams_out);
+    let (tick, from_ms) = (m.s[&B].current_tick(), m.now_ms);
     m.run_ms(1_000);
     assert_eq!(m.s[&B].current_tick(), tick);
-    assert_eq!(m.s[&B].stats().datagrams_out, sent);
+    // Only frame-less keepalives: about 4 a second, none carrying a key.
+    let datagrams: Vec<&Vec<u8>> = m
+        .sent
+        .iter()
+        .filter(|(t, from, _, ch, _)| *t > from_ms && *from == B && *ch == Channel::Unreliable)
+        .map(|(.., b)| b)
+        .collect();
+    assert!((3..=5).contains(&datagrams.len()), "{} datagrams in 1 s", datagrams.len());
+    for b in datagrams {
+        match decode_datagram(b, SLOTS as usize) {
+            Ok(Datagram::Client(c)) => assert!(c.keys.is_empty(), "no input frames"),
+            other => panic!("not a keepalive: {other:?}"),
+        }
+    }
     assert_eq!(m.count(B, |e| matches!(e, Event::Stalled { .. })), 0);
     m.s.get_mut(&B).unwrap().unsuspend(m.now_ms * 1000);
     m.run_ms(200);
@@ -693,6 +739,54 @@ fn the_successor_takes_what_a_peer_knows_and_both_converge() {
     assert_eq!(a.stats().migrations, 1);
     assert_eq!(b.stats().migrations, 1);
     assert_eq!(a.stats().report_conflicts, 0);
+}
+
+#[test]
+fn a_collecting_new_host_never_looks_silent() {
+    let mut m = Mesh::new(10, 9);
+    m.run_ms(2_000);
+    m.alive.insert(H, false);
+    m.until(2_500, "silence", |m| m.first(B, |e| *e == Event::HostSilent).is_some());
+    m.migrate_to_a();
+    m.until(1_000, "B's report", |m| m.s[&A].awaiting_reports().is_empty());
+    // A waits 3 s more before it resumes (a dead expected peer holds its collection open).
+    m.run_ms(3_000);
+    assert_eq!(m.count(B, |e| *e == Event::HostSilent), 1, "the new host's keepalives keep B from a second migration");
+    m.s.get_mut(&A).unwrap().resume(m.now_ms * 1000);
+    m.until(1_000, "B resumes", |m| m.first(B, |e| matches!(e, Event::Resumed { .. })).is_some());
+}
+
+#[test]
+fn a_worst_case_report_is_trimmed_to_fit() {
+    // 32 slots, every slot changing every tick, 3000 ticks: about 120 KB untrimmed.
+    let value = |t: u32, s: usize| Some(((t as usize + s) % 2) as u8 + 1);
+    let upto = 1_000 + MAX_REPORT_FRAMES as u32;
+    let report = fit_report(1_000, 1_000, upto, 32, &value, &|_| Some(0), 1_000, vec![1; MAX_REPORT_OWN + 10]);
+    let bytes = encode_control(&Control::Report(report.clone()));
+    assert!(bytes.len() <= MAX_CONTROL, "{} bytes", bytes.len());
+    assert!(report.frames.len() >= 100 && report.frames.len() < MAX_REPORT_FRAMES, "kept {} ticks", report.frames.len());
+    assert_eq!(report.own.len(), MAX_REPORT_OWN);
+    let Ok(Control::Report(back)) = decode_control(&bytes) else { panic!("it decodes") };
+    let mut got = Vec::new();
+    rl_proto::decode_frames(back.first, &back.frames, 32, &|_| Some(0), &mut |t, s, v| got.push((t, s, v))).unwrap();
+    assert_eq!(got.first(), Some(&(1_000, 0, value(1_000, 0).unwrap())), "the earliest ticks are kept");
+    assert!(got.iter().all(|&(t, s, v)| Some(v) == value(t, s)));
+    // A short report is not trimmed.
+    let short = fit_report(0, 1_000, 1_010, 32, &value, &|_| Some(0), 1_000, vec![]);
+    assert_eq!(short.frames.len(), 10);
+}
+
+#[test]
+fn a_far_resume_is_ignored() {
+    let mut m = Mesh::new(10, 10);
+    m.run_ms(1_000);
+    m.alive.insert(H, false);
+    m.until(2_500, "silence", |m| m.first(B, |e| *e == Event::HostSilent).is_some());
+    m.migrate_to_a();
+    let us = m.now_ms * 1000;
+    let far = m.s[&B].current_tick() + 6_001;
+    m.s.get_mut(&B).unwrap().receive(A, Channel::Reliable, &encode_control(&Control::Resume { tick: far }), us);
+    assert!(m.s[&B].suspended(), "a Resume 6001 ticks ahead is ignored");
 }
 
 #[test]
@@ -772,7 +866,7 @@ proptest! {
     #![proptest_config(ProptestConfig { cases: 256, failure_persistence: None, ..ProptestConfig::default() })]
 
     #[test]
-    fn migration_controls_never_panic_or_change_confirmed_inputs(
+    fn migration_controls_never_panic(
         to_host in prop::collection::vec(control(), 1..12),
         to_client in prop::collection::vec(control(), 1..12),
     ) {
@@ -799,7 +893,7 @@ proptest! {
 ```
 
 - [ ] **Step 2: Run `cargo nextest run -p rl-netcode migration`, expect FAIL** (no such API).
-- [ ] **Step 3: Implement** in `session/migrate.rs` (the session's fields it needs are `pub(crate)`). The existing tests must pass unchanged: `HostSilent` is a new event, and the harness and drivers ignore it until Tasks 3 and 5.
+- [ ] **Step 3: Implement** in `session/migrate.rs` (the session's fields it needs are `pub(crate)`). The existing tests must pass unchanged: `HostSilent` is a new event, and the harness and drivers ignore it until Tasks 3 and 6.
 - [ ] **Step 4: Run `cargo nextest run -p rl-netcode`, expect PASS; `cargo build --target wasm32-unknown-unknown -p rl-netcode`; `cargo xtask check`.**
 - [ ] **Step 5: Update `crates/rl-netcode/CLAUDE.md`** (a "Migration (session)" paragraph: silence, suspension, take-over, the merge rules N67, resume, rehost). **Commit** `rl-netcode: the session's host migration (silence, take-over, merge, resume)`.
 
@@ -813,7 +907,7 @@ proptest! {
 
 **Interfaces:**
 - Consumes: Task 2's session API and constants.
-- Produces (Tasks 5-7, 10):
+- Produces (Tasks 6-8, 11):
   ```rust
   // rl_netcode::migration
   pub const WINDOW_US: u64 = 5_000_000;
@@ -824,7 +918,7 @@ proptest! {
   pub enum Step {
       /// Keep an attempt to join successor `i` (an index into the order) going.
       Try(usize),
-      /// This peer's turn: it is the successor (stays so until the driver drops the migration).
+      /// This peer's turn: it is the successor, during its window, and for good once it `committed` (pre-flight D8: one not committed by its window's end closes its gate and follows the later windows).
       Host,
       /// No successor's turn now (the windows ran out): wait for `GiveUp`.
       Wait,
@@ -835,18 +929,21 @@ proptest! {
   #[derive(Clone, Debug)]
   pub struct Migration { /* can_host, me, began_us, contact: Option<usize>, hosting: bool */ }
   impl Migration {
-      /// `can_host[i]`: entry `i` of the succession may host now (the driver passes `false` for former hosts and followers); `me`: this peer's entry, if any.
+      /// `can_host[i]`: entry `i` of the succession may host (the driver passes `false` for followers); `me`: this peer's entry, if any.
       pub fn new(can_host: Vec<bool>, me: Option<usize>, now_us: u64) -> Migration;
-      /// The `k`-th entry that may host has the window [began + k·WINDOW_US, began + (k+1)·WINDOW_US). A contacted successor is kept until GIVE_UP_US; once `Host`, always `Host`.
+      /// The `k`-th entry that may host has the window [began + k·WINDOW_US, began + (k+1)·WINDOW_US). A contacted successor is kept until GIVE_UP_US (the successor itself breaks the contact if it closes); `Host` lasts the window, or for good once `committed`.
       pub fn step(&mut self, now_us: u64) -> Step;
+      /// This peer, the successor, committed (its first rejoin, or nobody expected): `Host` for good.
+      pub fn committed(&mut self);
       /// Successor `i` answered as a host (N65's contact).
       pub fn contact(&mut self, i: usize);
       /// The attempt to `i` failed after contact: back to the windows.
       pub fn lost_contact(&mut self, i: usize);
       pub fn began_us(&self) -> u64;
-      /// When the current window ends (the successor's collection deadline, N68).
+      /// When the current window ends (the deadline for peers not yet back, N68).
       pub fn window_end(&self, now_us: u64) -> u64;
   }
+  // A peer whose attempt was welcomed (it committed to a new host) drops its `Migration` (pre-flight A9).
   // rl_netcode::harness
   #[derive(Clone, Copy, Debug, PartialEq, Eq)]
   pub enum ExitHow { Crash, Leave }
@@ -891,20 +988,22 @@ proptest! {
 Context:
 - **`Migration` rules** (N65, N68, N74):
   - Windows count only `can_host` entries, in order.
-  - `step` returns `GiveUp` from `began + GIVE_UP_US`, unless `Host`.
-  - An entry whose window comes and is `me` gives `Host`.
+  - `step` returns `GiveUp` from `began + GIVE_UP_US`, unless committed.
+  - An entry whose window comes and is `me` gives `Host` for that window; after `committed`, for good. An uncommitted successor at its window's end goes on to the next window's successor (D8).
   - A contacted successor stays `Try(i)` until `GIVE_UP_US`, or until `lost_contact(i)`.
   - Past the last window comes `Wait`.
+  - `MAX_MIGRATIONS` is the driver's count, per match.
 - **The harness drives migrations as rl-online will** (when `Scenario::migration` is `Some`; with `None`, everything stays as today, so the plan-9 tests keep their meaning):
-  - **The succession:** players in `peers` order, then spectators present from the start (`can_host`), then joined spectators (followers). Former hosts are skipped.
+  - **The succession:** players in `peers` order, then spectators present from the start (`can_host`), then joined spectators (followers). A new host's succession is the same order without itself (as rl-lobby's: the host is no successor); `MAX_MIGRATIONS` counts per peer per match.
   - **The start:** a peer begins its `Migration` at its `HostSilent` or `PeerLeft { peer: host }` and `suspend`s. When the host was the first host and `host_human` is set, that slot is abandoned.
   - **Attempts** (virtual time, deterministic, using the peer's own `profile`):
     - a successor that is `Host` and alive: contact after one ping, rejoined after three pings (or `slow_joins`' time);
     - a successor alive but not hosting: refused after one ping, tried again `RETRY_US` later;
     - a dead successor, or one across a link in an outage: no answer, until the window moves on.
-  - **A rejoin:** `Network::connect(peer, successor, profile)`, the peer's `rehost(successor)`, the successor's `rejoined(peer, seat)` (its commit and `take_over` with the bot slots on the first one, and `host_driver` replacing its driver).
-  - **The new host** resumes when `awaiting_reports()` is empty and every expected peer rejoined, or at `window_end`.
-  - **Expected peers** are every other succession entry with a world (players and spectators from the start). The new host cannot know who died with the old host, so the harness does not tell it: a dead one costs the wait until `window_end`, as in real play.
+  - **A rejoin:** `Network::connect(peer, successor, profile)`, the peer's `rehost(successor)` (it drops its `Migration`), the successor's `rejoined(peer, seat)` (its commit, `Migration::committed` and `take_over` with the bot slots on the first one, and `host_driver` replacing its driver).
+  - **An uncommitted successor at its window's end** closes: attempts in flight to it fail (`lost_contact`), and it follows the next window like any peer (D8).
+  - **The new host** resumes when every expected peer rejoined and every rejoined peer reported. At `window_end` it stops waiting for peers not yet back, but still waits for the reports of those already rejoined (C1).
+  - **Expected peers** are every other succession entry holding a slot or a spectator seat from the start (the same set as rl-lobby's `away_in_match`). The new host cannot know who died with the old host, so the harness does not tell it: a dead one costs the wait until `window_end`, as in real play.
   - **Late peers:** a peer reaching the new host after its resume gets `rejoined() == false`; the harness then gives it a new `Role::Joining` session and the host's `add_spectator` (N72), as a spectator joining mid-match.
   - **The old host coming back:** if its datagrams reach a peer that has not committed and has no contact, that peer `unsuspend`s and drops its migration (N69).
   - **Step-down:** a host whose frame gap (virtual time between two of its frames, a `host_freeze` included) reaches `STEP_DOWN_US`, and whose succession has a `can_host` entry, `leave`s and is gone (N70).
@@ -912,7 +1011,8 @@ Context:
 - **Profile changes and outages** apply to the link between the peer and whoever hosts at that moment; an outage covers links made during it.
 - **The run ends** when the current host is past `ticks + settle_ticks` and every remaining peer is `done`, or when no host remains and every peer is lost or exited (then `run` still returns `Ok`).
 - **The verdict** compares every surviving peer with the **last** host's log:
-  - every exited peer's confirmed rows are a prefix of it (no two peers confirm different inputs);
+  - at each migration the harness records every surviving peer's final inputs (per slot, its known prefix); every one of them must be in the last host's log (no final value a survivor held is lost);
+  - an exited host's confirmed rows are compared only up to, per slot, the furthest prefix a survivor held: its last frames may have reached nobody (a lost datagram is never repeated once its host is gone), and those values are not part of the match (pre-flight B3);
   - no `Inconsistent`, `Malformed` or `Desync` but corrupted peers' (as today);
   - a late peer is checked from its loaded state (as a joined spectator is).
 - `HOST` stays the first host's id. `Report::host_log` is the last host's.
@@ -938,12 +1038,22 @@ mod tests {
     }
 
     #[test]
-    fn its_own_window_makes_a_peer_the_host_for_good() {
+    fn a_successor_hosts_its_window_and_for_good_once_committed() {
         let mut m = Migration::new(vec![true, true], Some(1), 0);
         assert_eq!(m.step(4 * S), Step::Try(0));
         assert_eq!(m.step(5 * S), Step::Host);
-        assert_eq!(m.step(60 * S), Step::Host);
         assert_eq!(m.window_end(5 * S), 10 * S);
+        m.committed();
+        assert_eq!(m.step(60 * S), Step::Host, "committed: the host for good, no give-up");
+    }
+
+    #[test]
+    fn an_uncommitted_successor_closes_at_its_windows_end() {
+        let mut m = Migration::new(vec![true, true, true], Some(0), 0);
+        assert_eq!(m.step(0), Step::Host);
+        assert_eq!(m.step(5 * S - 1), Step::Host);
+        assert_eq!(m.step(5 * S), Step::Try(1), "nobody came: it follows the next window (D8)");
+        assert_eq!(m.step(10 * S), Step::GiveUp);
     }
 
     #[test]
@@ -1074,9 +1184,11 @@ fn nobody_reachable_is_host_lost_after_ten_seconds() {
 #[test]
 fn a_host_frozen_past_the_step_down_threshold_hands_over() {
     let mut sc = mscenario(7, Profile::GOOD, 2);
-    sc.host_freeze = Some((600, 600 + (STEP_DOWN_US / 10_000) as u32 + 50));
+    // 1.7 s: past the step-down, below HOST_SILENT_US: only the step-down can move the match.
+    sc.host_freeze = Some((600, 600 + (STEP_DOWN_US / 10_000) as u32 + 20));
     let r = run_checked(&sc);
     assert!(r.exited.contains(&HOST), "the host stepped down");
+    assert!(r.events[&1].iter().all(|e| *e != Event::HostSilent), "the peers followed its Bye, not a silence");
     assert_eq!(r.hosts, vec![HOST, 1]);
 }
 
@@ -1125,7 +1237,7 @@ fn a_late_peer_watches_from_a_state() {
 }
 
 #[test]
-fn a_second_migration_skips_the_former_host() {
+fn a_second_migration_moves_the_match_again() {
     let mut sc = mscenario(12, Profile::TYPICAL, 3);
     sc.ticks = 2_500;
     sc.exits.push(Exit { peer: HOST, tick: 400, how: ExitHow::Crash });
@@ -1133,6 +1245,20 @@ fn a_second_migration_skips_the_former_host() {
     let r = run_checked(&sc);
     assert_eq!(r.hosts, vec![HOST, 1, 2]);
     assert_eq!(r.migrations.len(), 2);
+}
+
+#[test]
+fn the_fifth_migration_in_a_match_is_host_lost() {
+    // N74: six clients; the host, then each new host, crashes in turn.
+    let mut sc = mscenario(16, Profile::LAN, 6);
+    sc.ticks = 4_000;
+    for (k, peer) in [HOST, 1, 2, 3, 4].into_iter().enumerate() {
+        sc.exits.push(Exit { peer, tick: 300 + 600 * k as u32, how: ExitHow::Crash });
+    }
+    let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+    let r = harness::run(&sc, &mut f).unwrap();
+    assert_eq!(r.hosts, vec![HOST, 1, 2, 3, 4], "four migrations");
+    assert_eq!(r.host_lost, [5, 6, 100].into(), "the fifth is host lost");
 }
 
 #[test]
@@ -1182,7 +1308,7 @@ fn migration_runs_are_deterministic() {
 
 **Interfaces:**
 - Consumes: Task 1's `ToHost::Standby`, `ToClient::Succession`, `SuccessorWire`, `valid_succession`, `Refusal::Closed`, `MIN_STANDBY_PORT`, `is_global`.
-- Produces (Tasks 5, 6):
+- Produces (Tasks 6, 7):
   ```rust
   impl LobbyClient {
       /// Reports this member's standby endpoint (sent now if joined, else after the welcome; again after every welcome).
@@ -1193,20 +1319,25 @@ fn migration_runs_are_deterministic() {
   impl LobbyHost {
       /// The succession order now (N64): players of the match in join order, then its spectators, then waiting members.
       pub fn succession(&self) -> Vec<SuccessorWire>;
-      /// A successor's lobby (N72), built from the old lobby's `state` and `succession`: `key` must be a member's in both (else `LobbyError::NotASuccessor`). That member is the host's own (ready, admin); the old host's member is gone; every other succession member is kept with its id, look, seat and admin mark, away until it rejoins; the phase is the state's. No password; strangers are refused `Closed`.
-      pub fn migrated(key: Identity, state: &LobbyState, succession: &[SuccessorWire]) -> Result<LobbyHost, LobbyError>;
+      /// A successor's lobby (N72), built from the old lobby's `state` and `succession` with `cfg` (the wire carries no `HostConfig`: the online layer gives the state's name, `max_players` = the match's player slots, `max_spectators` = `MAX_SPECTATORS`, the admins from the members' marks, no password). `key` must be a member's in both (else `LobbyError::NotASuccessor`). That member is the host's own (ready, admin), keeping its seat: a spectator successor hosts as a spectator for the rest of the match and is seated at the next gathering like any member who wants to play. The old host's member is gone; every other succession member is kept with its id, look, seat and admin mark, away until it rejoins; the phase is the state's. Strangers are refused `Closed`.
+      pub fn migrated(key: Identity, state: &LobbyState, succession: &[SuccessorWire], cfg: HostConfig) -> Result<LobbyHost, LobbyError>;
       /// Members of a migrated lobby that have not rejoined.
       pub fn away(&self) -> Vec<u8>;
+      /// The away members the new host waits for (N68): those holding a slot of the match, or a spectator seat from its start; not followers (mid-match spectators, waiting members).
+      pub fn away_in_match(&self) -> Vec<u8>;
       /// The resume (N68): away members leave (`Notice(Left)`, `HostEvent::Left`); their keys may still join, as mid-match joiners.
       pub fn drop_away(&mut self);
   }
   // HostEvent gains: Rejoined(u8): an away member proved its key on a new link (its slot is the match's still).
   // LobbyError gains: NotASuccessor.
+  // rl_lobby::model
+  /// A member's standby change is taken at most once per this window; a later one is held and taken by `tick` (N63, as `LOOK_WINDOW_US`).
+  pub const STANDBY_WINDOW_US: u64 = 5_000_000;
   ```
 
 Context:
-- **Standby records:** one per member, the latest wins (rl-net's per-peer rate limits bound how many arrive, spec §5.4; the host stores no more than one each, and a change sends one `Succession` per drain at most). Waiting members and members without a world are followers (`can_host: false`).
-- **`direct`** (N64): `Some((ip, port))` when the member's address is IPv4, `!is_global(ip)` and `port ≥ MIN_STANDBY_PORT`.
+- **Standby records:** one per member. A change is taken at most once per `STANDBY_WINDOW_US`; a later one is held (the latest wins) and taken by `tick` once the window allows, as `SetLook`'s are. So a member alternating its port during a match makes the host send at most one `Succession` per window, not one per `LOBBY_DRAIN` (a whole list to every member, pre-flight A2). Waiting members and members without a world are followers (`can_host: false`).
+- **`direct`** (N64): `Some((ip, port))` when the member's address is IPv4, `!is_global(ip)`, its `path` is not `Relayed` (N59: its address is the TURN relay's), and `port ≥ MIN_STANDBY_PORT`.
 - **Sending:** `Succession` goes to every member with the `Start` (in `announce_start`'s drain, after `Start`), and whenever `succession()` changes while `Starting` or `Playing` (coalesced into the next `outgoing()` drain, like `Lobby`). Never while gathering.
 - **Rejoins** (N72): a `Hello` whose key is an away member's goes through the same proofs (challenge, `HostProof`, `Prove`; a migrated lobby has no password). It is welcomed with the member's old id and the current state, then `HostEvent::Rejoined(id)` and `Notice(Joined(id))`. A key in the succession but already dropped by `drop_away` joins as a new member (waiting during the match). A key not in the succession is `Refused(Closed)`. The migrated lobby keeps ids unique: `next_id` starts past the highest kept id, and the running match's ids stay reserved (`in_match`).
 - **Never panic** on hostile `Standby` (the decoder bounds it; the host stores at most one per member).
@@ -1268,24 +1399,37 @@ fn the_succession_is_sent_with_the_start_and_on_change_only() {
 }
 
 #[test]
-fn standby_reports_are_bounded() {
+fn standby_changes_during_a_match_are_bounded() {
     let mut net = lobby_with(HostConfig { max_players: 3, ..cfg() }, 1);
-    // A member seen at a global address gets no direct entry.
+    // A member seen at a global address, and one reached through a relay, get no direct entry.
     let g = net.join(LobbyClient::new(ident(7), look("Gus"), None, None), IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)));
+    let r = net.join_via(LobbyClient::new(ident(8), look("Rex"), None, None), ip(8), Path::Relayed);
     net.settle();
-    net.client(g).standby(40_007, vec![]);
-    net.client(g).set_ready(true);
-    net.settle();
-    for _ in 0..200 {
-        net.send_raw_from(g, ToHost::Standby { port: 40_008, relays: vec!["wss://b.example".into()] });
+    for (c, port) in [(g, 40_007), (r, 40_008)] {
+        net.client(c).standby(port, vec![]);
+        net.client(c).set_ready(true);
     }
     net.settle();
     net.start(7, 0).unwrap();
+    net.host.playing(1);
     net.settle();
     let list = net.host.succession();
-    assert_eq!(list.len(), 1);
-    assert_eq!(list[0].direct, None);
-    assert!(valid_succession(&list));
+    assert_eq!(list.len(), 2);
+    assert!(list.iter().all(|s| s.direct.is_none()), "{list:?}");
+    // During the match, Gus alternates its port 200 times within 2 s.
+    let sent = |net: &Net, c: usize| net.peers[c].received.iter().filter(|m| matches!(m, ToClient::Succession(_))).count();
+    let before = sent(&net, r);
+    for i in 0..200u16 {
+        net.send_raw(g, ToHost::Standby { port: 41_000 + i % 2, relays: vec!["wss://b.example".into()] });
+        net.run(10_000);
+    }
+    net.settle();
+    assert!(sent(&net, r) - before <= 2, "{} successions in one window", sent(&net, r) - before);
+    // The latest is taken once the window allows.
+    net.run(STANDBY_WINDOW_US);
+    net.settle();
+    assert_eq!(net.host.succession()[0].relays, vec!["wss://b.example".to_string()]);
+    assert!(valid_succession(&net.host.succession()));
     assert!(net.errors.is_empty(), "{:?}", net.errors);
 }
 
@@ -1296,10 +1440,12 @@ fn a_migrated_lobby_takes_back_its_members_by_key() {
     let list = net.host.succession();
     let (ann, bob, cid) = (id_of(&net, a), id_of(&net, b), id_of(&net, c));
     // Ann takes over.
-    let mut next = Net::new(LobbyHost::migrated(ident(1), &state, &list).unwrap(), DELAY_US);
+    let cfg = HostConfig { name: state.name.clone(), password: None, max_players: 3, max_spectators: 16, admins: vec![] };
+    let mut next = Net::new(LobbyHost::migrated(ident(1), &state, &list, cfg.clone()).unwrap(), DELAY_US);
     assert_eq!(next.host.state().phase, state.phase);
     assert!(next.host.state().members.iter().all(|m| m.key != key(HOST)), "the old host is gone");
     assert_eq!(next.host.away(), vec![bob, cid]);
+    assert_eq!(next.host.away_in_match(), vec![bob, cid], "Bob holds a slot, Cid a spectator seat from the start");
     let nb = next.join(LobbyClient::new(ident(2), look("Bob"), None, Some(key(1))), ip(2));
     next.settle();
     assert!(next.host_events.contains(&HostEvent::Rejoined(bob)));
@@ -1317,12 +1463,13 @@ fn a_migrated_lobby_takes_back_its_members_by_key() {
     next.settle();
     assert_eq!(member(&next, nc).seat, SeatWire::Waiting);
     assert!(!next.host_events.contains(&HostEvent::Rejoined(cid)));
-    assert!(LobbyHost::migrated(ident(9), &state, &list).is_err(), "not a successor");
+    assert!(next.host.away().is_empty());
+    assert!(LobbyHost::migrated(ident(9), &state, &list, cfg).is_err(), "not a successor");
     consistent(&next);
 }
 ```
 
-  Add the helpers these tests use: `Net::send_raw_from(c, msg)` in `harness.rs` (a member's own message after its welcome, encoded and delivered like its client's) and `member_by_id_in(state, id)` in the test file. Extend the module's proptest (random messages and host actions) with `Standby` messages, and with `drop_away`/rejoins on a migrated lobby, keeping every sent message decodable.
+  Add the helper `member_by_id_in(state, id)` in the test file; a member's raw message is the harness's existing `Net::send_raw(c, msg)`. Extend the module's proptest (random messages and host actions) with `Standby` messages, and with `drop_away`/rejoins on a migrated lobby, keeping every sent message decodable.
 - [ ] **Step 2: Run `cargo nextest run -p rl-lobby`, expect FAIL.**
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run `cargo nextest run -p rl-lobby`, expect PASS; `cargo build --target wasm32-unknown-unknown -p rl-lobby`; `cargo xtask check`.**
@@ -1330,16 +1477,99 @@ fn a_migrated_lobby_takes_back_its_members_by_key() {
 
 ---
 
-### Task 5: `rl-online`: migration over direct links
+### Task 5: `rl-game`: the network pump (ruling PF12c-2)
 
 **Files:**
-- Modify: `crates/rl-net/src/{endpoint.rs, core.rs}` (`EndpointConfig::connect_timeout`, `NetEvent::Answered`) and its CLAUDE.md; `crates/rl-online/src/{lib.rs, peer.rs, events.rs, matches.rs, join.rs}`; every `PeerRole::Client { .. }` in the workspace (rl-online's tests, `crates/rl-cli/src/transport.rs`, `crates/rl-cli/src/net_client_cmd.rs`, `crates/rl-game/src/shell/online.rs` and rl-game's tests) gains `migration`
+- Create: `crates/rl-game/src/net/pump.rs` (`PeerHandle`, `Pump`)
+- Modify:
+  - `crates/rl-online/src/lib.rs` (a static assert that `OnlinePeer: Send`);
+  - `crates/rl-game/src/{net.rs, online.rs, shell/online.rs, shell/joining.rs}`: the peer behind a `PeerHandle` (`Net::peer`, `OnlineDriver`, `--net-sim`'s host), the pump started with each peer and stopped at its release, `start_online` loading while the pump runs;
+  - `crates/rl-game/tests/online.rs`;
+  - `crates/rl-game/CLAUDE.md` (the network pump; decision N21's hidden window is unchanged: the pump covers a busy UI thread, `hidden_frame` a hidden window).
+- Test: `crates/rl-game/tests/online.rs`, unit tests in `net/pump.rs`
+
+**Interfaces:**
+- Consumes: `OnlinePeer::poll(now, local_keys, on_tick)`, `OnlineEvent`, `Shell::net_frame`, `App::network_frame`.
+- Produces (Tasks 6, 9):
+  ```rust
+  // rl_game::net::pump
+  /// The UI thread has not polled a peer for this long: the pump polls it.
+  pub const PUMP_AFTER: Duration = Duration::from_millis(20);
+  /// At most this many of the pump's events wait for the UI (beyond: the oldest `Ticked`/`Restored` go first, then the oldest `Confirmed`; each loss counted and logged once).
+  pub const PUMP_QUEUE: usize = 4_096;
+  /// An online peer shared by the UI thread and the pump.
+  #[derive(Clone)]
+  pub struct PeerHandle { /* Arc<Mutex<OnlinePeer>>, the UI's last poll (an atomic), the pump's queue */ }
+  impl PeerHandle {
+      pub fn new(peer: OnlinePeer) -> PeerHandle;
+      /// The UI thread's poll: as `OnlinePeer::poll`, the pump's queued events first, then this poll's; marks the UI's poll time.
+      pub fn poll(&self, now: Instant, local_keys: &mut dyn FnMut() -> Keys, on_tick: &mut dyn FnMut(&World, &TickEvents, TickInfo)) -> PolledEvents;
+      /// Anything else on the peer (lobby actions, state, stats): the lock, held for the closure only.
+      pub fn with<R>(&self, f: impl FnOnce(&mut OnlinePeer) -> R) -> R;
+      /// The peer back (the pump stopped first): for `release` and `shutdown`.
+      pub fn into_peer(self, pump: Pump) -> OnlinePeer;
+  }
+  /// What a UI poll returns: the events, and whether the pump ran ticks since the last UI poll (the presentation then resyncs as after a loaded state: its colour map rebuilt from the terrain, `NetPresenter::reset`).
+  pub struct PolledEvents { pub events: Vec<OnlineEvent>, pub pumped: bool }
+  /// The thread `rl-game net`: wakes every `PUMP_AFTER / 2`, polls the peer when the UI has not for `PUMP_AFTER` (the local player's keys `Keys(0)`, no `on_tick`; bots think inside the peer as always), queues its events. Stopping joins it within one poll.
+  pub struct Pump { /* JoinHandle, stop flag */ }
+  impl Pump {
+      pub fn start(handle: &PeerHandle) -> std::io::Result<Pump>;
+  }
+  ```
+
+Context (PF12c-2, D5, N70):
+- **Why:** the game's network, netcode and bots run only in UI frames (`App::frame` → `App::network_frame` → `Shell::net_frame`), and rl-net has no I/O thread. A dragged window (Windows' modal move loop), a long match load (`start_online` loads mod, level, skins and sounds on the UI thread) or a slow frame silences a host's datagrams. After 2 s its peers migrate away from a healthy host, and N70 would make the host step down on its own window. With the pump, only a whole-machine stall silences a peer.
+- **Every online peer** gets one: a host's, a client's, and `--net-sim`'s in-process host. The pump starts when the peer is made and stops before the peer is released (`release`, `lost`, quitting).
+- **The lock:**
+  - The UI thread holds it for one poll (as today's call); the pump for one poll; lobby actions for their call.
+  - Neither thread waits on anything else while holding it.
+  - The UI never blocks for longer than one pump poll (a few ms): pin it with `the_ui_waits_at_most_one_pump_poll`.
+- **While the pump polls:**
+  - the local player's keys are `Keys(0)`, the input latch untouched, no `on_tick` (nothing is drawn);
+  - bots think inside the peer, as always;
+  - `Lagging`, lobby, chat and connection events are queued like the rest.
+- **The presentation after pumped ticks:** `PolledEvents::pumped` makes the next frame resync as after a loaded state. The pump drops `Ticked` and `Restored` events (they are presentation only), and the colour map is rebuilt from the terrain. `Confirmed` ticks are queued, so the HUD log, the scores and the end are never lost (bounded by `PUMP_QUEUE`).
+- **`start_online`:** it takes the content it needs from the peer (`PeerHandle::with`, a cheap `Arc` clone) and loads without holding the lock, so the pump keeps the match's network alive during the load.
+- **`OnlinePeer: Send`:** pin it with a compile-time assert in rl-online (`const _: () = { fn send<T: Send>() {} let _ = send::<OnlinePeer>; };`): no `Rc` may enter its stack.
+- **Nothing else changes:** rl-online and the netcode are untouched; the peer cannot tell which thread polled it.
+
+- [ ] **Step 1: Write the failing tests.**
+  - **Unit tests** (`net/pump.rs`, a fake poller standing in for `OnlinePeer` behind the same handle type: make `PeerHandle` generic over a `Poll` trait that `OnlinePeer` implements, so the unit tests need no sockets):
+    - `the_pump_polls_only_when_the_ui_does_not` (a UI polling every 5 ms for 1 s: the pump polls 0 times; then no UI poll for 300 ms: the pump polls about 300 / 10 times, each `PUMP_AFTER` after the UI's last);
+    - `the_pumps_queue_is_bounded` (10 000 pumped events: at most `PUMP_QUEUE` wait, the `Ticked` ones dropped first, every `Confirmed` kept while room remains, the loss counted);
+    - `the_ui_waits_at_most_one_pump_poll` (a fake poll taking 5 ms: the UI's `poll` returns within 5 ms plus its own);
+    - `stopping_the_pump_joins_it` (within 100 ms; the handle's `into_peer` then has the peer back).
+  - **App path** (`tests/online.rs`, two `Shell`s, a host on port 0 and a client, a 0.2-minute match with one bot, every frame through `App::network_frame` as the app runs them, real clock; no migration exists yet, and Task 9 runs both again with it on):
+    - `a_host_whose_frames_stop_keeps_hosting`:
+      - setup: the match running; the test then runs no frame of the host's app for 3 s, while the client's frames go on;
+      - expected: the client's confirmed tick (`Shell::match_session`'s `confirmed()`) advances by at least 250 ticks during those 3 s; the host's frames resume, and the match reaches its results with equal confirmed scores on both;
+      - RED without the pump: the host sends nothing for 3 s, so the client's confirmed tick stands still.
+    - `a_client_whose_frames_stop_stays_joined`:
+      - setup: the client's app runs no frame for 3 s;
+      - expected: the host's `Stats::fills` grows by fewer than 50 during them (the pump keeps sending the client's `Keys(0)` in time), the client is not dropped, and its HUD never showed "Connection problem";
+      - RED without the pump: about 300 fills.
+    - `a_match_load_does_not_silence_the_host` (a host whose `start_online` is slowed by a test hook `Shell::test_slow_load(Duration::from_millis(2_500))`: the client's confirmed tick advances during the load).
+- [ ] **Step 2: Run `cargo nextest run -p rl-game -p rl-online`, expect FAIL.**
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run, expect PASS; `cargo xtask check`; `cargo xtask e2e` (the online autoplay run goes through the pump's handle).**
+- [ ] **Step 5: Update `crates/rl-game/CLAUDE.md` and `crates/rl-online/CLAUDE.md` (the `Send` assert). Commit** `rl-game: a network pump keeps online peers polled while the UI is busy`.
+
+---
+
+### Task 6: `rl-online`: migration over direct links
+
+**Files:**
+- Modify:
+  - `crates/rl-net/src/{endpoint.rs, core.rs, impair.rs}` (`EndpointConfig::connect_timeout`, `NetEvent::Answered`, a timed blackout under `test-hooks` that drops every datagram both ways: outgoing in the impairment stage, incoming in `Endpoint::poll` before `Core::receive`) and its CLAUDE.md;
+  - `crates/rl-online/src/{lib.rs, peer.rs, peer/lobby_handle.rs, events.rs, matches.rs, join.rs}`;
+  - every `PeerRole::Client { .. }` in the workspace gains `migration` (`MigrationConfig::off()` everywhere in this task, D7): `crates/rl-online/src/peer.rs` (its unit tests), `crates/rl-online/tests/{online.rs, through.rs}`, `crates/rl-cli/src/transport.rs`, `crates/rl-game/src/shell/joining.rs`, `crates/rl-game/tests/online.rs`, `crates/rl-server/tests/server.rs`.
 - Create: `crates/rl-online/src/migration.rs` (`MigrationConfig`, `MigrationStep`, the texts), `crates/rl-online/src/peer/migrate.rs` (the client's migration driver and the promotion)
 - Test: `crates/rl-online/tests/migration.rs` (a `mod migration;` of `tests/integration.rs`), `crates/rl-net` unit tests
 
 **Interfaces:**
 - Consumes: Tasks 2-4 (session API, `Migration`, constants, lobby API); `Joiner`, `Outbox`, `HostReach`, `ContentSide`, `HostBots`.
-- Produces (Tasks 6-8):
+- Produces (Tasks 7-9):
   ```rust
   // rl_net::endpoint
   pub struct EndpointConfig { /* … */ pub connect_timeout: Duration /* default CONNECT_TIMEOUT */ }
@@ -1386,13 +1616,18 @@ fn a_migrated_lobby_takes_back_its_members_by_key() {
   pub fn restart_bots(start: &MatchStartWire, world: &World) -> anyhow::Result<HostBots>;
   // rl_online::OnlinePeer gains:
   pub fn standby_port(&self) -> Option<u16>;
+  /// Tests only (`test-hooks`): every endpoint of this peer (its link, its standby, an attempt's) drops every datagram both ways until `until`.
+  pub fn test_outage(&mut self, until: Instant);
+  // rl_online::LobbyHandle gains:
+  /// The succession order: a host's `LobbyHost::succession`, a client's `LobbyClient::succession` (rl-server logs it; tests read it).
+  pub fn succession(&self) -> Vec<SuccessorWire>;
   ```
 
-Context (N63-N76; this task: direct links only, Task 6 adds Nostr):
+Context (N63-N76; this task: direct links only, Task 7 adds Nostr):
 - **Standby** (N63): on `Welcome`, a client with `migration.enabled` and `standby: Some` opens `Endpoint::host` (port 0, port mapping off, `max_peers` `MAX_MEMBERS`), whose gate refuses `NotHost` until it hosts (a shared `AtomicBool`; the lobby's banned set behind it once it hosts). It then sends `LobbyClient::standby(port, first 2 relays)`. A bind failure is a log line and no standby (N79). The standby is polled every poll and closed at `shutdown`.
-- **Start** (client, during a match only, N71): the session's `HostSilent`, its `PeerLeft { peer: HOST }`, or the endpoint's `Disconnected { HOST }`.
+- **Start** (client, during a match only, N71): the session's `HostSilent`, its `PeerLeft { peer: HOST }`, the endpoint's `Disconnected { HOST }`, or the lobby client's `Closed` (a leaving or stepping-down host's lobby `Bye` may be handled before the session's in the same poll; during `Starting`/`Playing` with migration enabled it starts the migration and does not end the peer, pre-flight A7).
   - The session is suspended, and the old endpoint is kept (still polled, its messages still fed to the session: `HostHeard`).
-  - A `Migration` starts from `LobbyClient::succession()`: `can_host` as listed, `false` for former hosts; `me` = this member's entry; `MAX_MIGRATIONS` counted per match.
+  - A `Migration` starts from `LobbyClient::succession()`: `can_host` as listed; `me` = this member's entry; `MAX_MIGRATIONS` counted per match.
   - `OnlineEvent::Migrating(Finding)`.
   - With `migration.enabled` false, or no succession, it ends as before (`Disconnected`).
 - **`Try(i)`:** one attempt at a time (a `Joiner` with `Join { direct: entry.direct, nostr: None }` and `connect_timeout: MIGRATION_CONNECT_TIMEOUT`, `expected_host: entry.key`, a fresh `LobbyClient`).
@@ -1402,32 +1637,34 @@ Context (N63-N76; this task: direct links only, Task 6 adds Nostr):
   - When the step moves on, the attempt is dropped (its endpoint shut down off the thread).
   - `Migrating(Moving(name))`.
 - **Rejoin (commit):** at the attempt's `Welcome` (the new link's lobby):
+  - The peer drops its `Migration` (A9): from now only the new host's `Resume`, or the new host's own silence (a further migration), ends its wait; no `GiveUp`.
   - The old endpoint is shut down on a thread, and the attempt's endpoint becomes the outbox's.
-  - The `LobbyClient` is replaced; `session.rehost(HOST, now)` follows.
+  - The `LobbyClient` is replaced; `session.rehost(HOST, now_us)` follows.
   - The content side takes the new host as its source (`Fetcher::source_left`, then its lists).
   - The standby is sent again (`standby()` after every welcome).
   - At `Resumed`: `OnlineEvent::Migrated { host, me: false }` and `Connected { path, remote }` for the new link.
-- **`Host`** (this peer's turn): its standby's gate opens and `Migrating(TakingOver)` is reported. It commits at the first `HostEvent::Rejoined` of a `LobbyHost::migrated` built from its client lobby's state and succession, or at once when it expects nobody (N68). The commit:
+- **`Host`** (this peer's turn): its standby's gate opens and `Migrating(TakingOver)` is reported. It commits (`Migration::committed`) at the first `HostEvent::Rejoined` of a `LobbyHost::migrated` built from its client lobby's state and succession and a `HostConfig` (the state's name, `max_players` = the match's player slots, `max_spectators` = `MAX_SPECTATORS`, the admins from the members' marks, no password; A13), or at once when it expects nobody (N68). Not committed by its window's end, it closes its gate again (its pending setups fail) and follows the next window (D8). The commit:
   - shuts the old endpoint down and makes the standby the outbox's endpoint;
-  - turns the side into a `HostSide` (the migrated lobby, an empty ban set, `HostReach` with `HostListen { pool: migration.relays, public_address: None }`, which Task 6 completes);
+  - turns the side into a `HostSide` (the migrated lobby, an empty ban set, `HostReach` with `HostListen { pool: migration.relays, public_address: None }`, which Task 7 completes);
   - makes the content side a host's (same content and cache), whose list goes to each rejoined member after its welcome;
-  - calls `session.take_over(bot slots)` and sets `Game.bots = restart_bots(..)`;
-  - calls `session.rejoined(peer, seat)` for each rejoined member, with `seat` from the `MatchStartWire` (the member's slot, else `Spectator`), after its welcome is drained (so `Collect` follows `Welcome` on the ordered channel).
-- **Resume:** when `awaiting_reports()` is empty and `away()` is empty, or at `window_end`, it calls `drop_away()`, `session.resume`, `lobby.playing(tick)`, then `OnlineEvent::Migrated { host: my name, me: true }`. From then on it is an ordinary host: it sends the succession and the end, and makes its replay.
+  - calls `session.take_over(bot slots, now_us)` and sets `Game.bots = restart_bots(..)`;
+  - calls `session.rejoined(peer, seat, now_us)` for each rejoined member, with `seat` from the `MatchStartWire` (the member's slot, else `Spectator`), after its welcome is drained (so `Collect` follows `Welcome` on the ordered channel).
+- **Resume:** when `away_in_match()` is empty (A10: the same set the harness waits for) and `awaiting_reports()` is empty. At `window_end` it stops waiting for `away_in_match()` but still waits for the reports of peers already rejoined (one round trip; C1). Then it calls `drop_away()`, `session.resume(now_us)`, `lobby.playing(tick)`, then `OnlineEvent::Migrated { host: my name, me: true }`. From then on it is an ordinary host: it sends the succession and the end, and makes its replay.
 - **Cancel** (N69): `HostHeard` before the commit, with no contact, closes the attempt (or the standby's gate and the listener), `unsuspend`s, keeps the old endpoint, and reports no event beyond a log line.
 - **Host lost:**
-  - `GiveUp`, or a host that nobody rejoined by `GIVE_UP_US` while expecting someone, ends the peer. Its replay comes from its confirmed rows (`record_of(session, start, frontier)`, the existing `make_replay`), then `OnlineEvent::HostLost(HOST_LOST)` and `ReplayReady` later.
+  - `GiveUp` (an uncommitted successor's too, after its closed window and the later ones) ends the peer. Its replay comes from its confirmed rows (`record_of(session, start, frontier)`, the existing `make_replay`), then `OnlineEvent::HostLost(HOST_LOST)` and `ReplayReady` later.
   - A spectator that joined mid-match has no rows from tick 0 and makes none (as today).
 - **Step-down** (N70):
-  - **When:** each poll on a host during a match measures the gap since its previous poll on the monotonic clock and on `SystemTime` (the larger counts). A gap ≥ `STEP_DOWN_US`, with a `can_host` entry in its succession, steps it down. The check comes first in `poll`, before anything is received or sent, so its peers never hear it again but for the `Bye`.
+  - **When:** each poll on a host during a match measures the gap since its previous poll, from whichever thread polled (in the game the pump polls whenever the UI has not for 20 ms, Task 5, so only a whole-machine stall makes a gap). The monotonic gap counts; a wall-clock (`SystemTime`) gap counts only when it exceeds the monotonic gap by more than `HOST_SILENT_US` (a suspend whose monotonic clock stood still), and a backward wall-clock step never counts (C3). A gap ≥ `STEP_DOWN_US`, with a `can_host` entry in its succession, steps it down. The check comes first in `poll`, before anything is received or sent, so its peers never hear it again but for the `Bye`.
   - **What:** `session.leave()` (Bye to every peer, transmitted at once), every member's link closed after `CLOSE_LINGER`, and the lobby back to gathering without them.
   - **Game host:** `HostLost(stepped_down(secs))` and its replay.
   - **Server role:** the same event (rl-server logs it), and its lobby stays open.
 - **Never block:** endpoints start without waiting (rl-net's connect thread), old ones shut down on threads; `restart_bots` builds an empty area cache.
+- **Existing tests** (D7): every client this task touches outside `tests/migration.rs` uses `MigrationConfig::off()`: no standby, no `can_host` entry, so no host steps down on a slow poll in a loaded test run. Tasks 8 and 9 give rl-cli and the game their real configurations.
 
 - [ ] **Step 1: Write the failing tests.**
-  - **rl-net:** `answered_comes_before_connected` (a direct join's client sees `Answered`, then `Connected`); `the_connect_timeout_is_the_configs` (a connect to a held, silent loopback port with `connect_timeout: 300 ms` ends within 300-800 ms; rl-net's `connect_stall` hook).
-  - **rl-online, `crates/rl-online/tests/migration.rs`:** reuse `tests/online.rs`'s `Net`/`Peer` (move them to `tests/common/net.rs`, a `pub mod` of `common`, so both modules share them). Add a `frozen: bool` to `Peer` (`Net::poll` skips a frozen peer: alive, sockets open, silent), `Net::join_with_migration(name, MigrationConfig)`, and `Net::host_index()` (the peer whose `is_host()` holds now). Clients use `MigrationConfig::direct()` (port 0, no STUN: NT-1). Each test under 20 s, every wait bounded:
+  - **rl-net:** `answered_comes_before_connected` (a direct join's client sees `Answered`, then `Connected`); `the_connect_timeout_is_the_configs` (a connect to a held, silent loopback port with `connect_timeout: 300 ms` ends within 300-800 ms; rl-net's `connect_stall` hook); `a_blackout_drops_both_ways_until_it_ends` (two loopback endpoints: during the blackout neither receives a message, after it both do).
+  - **rl-online, `crates/rl-online/tests/migration.rs`:** reuse `tests/online.rs`'s `Net`/`Peer` (move them to `tests/common/net.rs`, a `pub mod` of `common`, so both modules share them). Add a `frozen: bool` to `Peer` (`Net::poll` skips a frozen peer: alive, sockets open, silent), `Net::join_with_migration(name, MigrationConfig)` (it waits until that client is welcomed, so join order, and thus the succession, is the call order: B5), `Net::outage(i, d)` (`test_outage`) and `Net::host_index()` (the peer whose `is_host()` holds now). Clients use `MigrationConfig::direct()` (port 0, no STUN: NT-1). Matches last 0.1 minutes; each test is bounded at 30 s, every wait bounded:
 
 ```rust
 //! Host migration over real connections on 127.0.0.1 (spec §3.7): the
@@ -1444,9 +1681,9 @@ fn migrated(e: &OnlineEvent) -> bool {
     matches!(e, OnlineEvent::Migrated { .. })
 }
 
-/// A host and two clients (Anna joins first: the first successor) start a 0.15-minute match.
+/// A host and two clients (Anna is welcomed before Bert joins: the first successor) start a 0.1-minute match.
 fn started(content: rl_content::Content) -> (Net, [usize; 2]) {
-    let mut net = Net::new(content, 0.15);
+    let mut net = Net::new(content, 0.1);
     let a = net.join_with_migration("Anna", MigrationConfig::direct());
     let b = net.join_with_migration("Bert", MigrationConfig::direct());
     net.run_until(Duration::from_secs(10), "both joined", |n| n.members() == 3);
@@ -1460,9 +1697,10 @@ fn started(content: rl_content::Content) -> (Net, [usize; 2]) {
 fn a_frozen_host_hands_the_match_to_the_first_player() {
     let Some(content) = content() else { return };
     let (mut net, [a, b]) = started(content);
-    let host_rows = net.host().peer().match_session().unwrap().frontier();
     net.peers[0].frozen = true;
     let froze = Instant::now();
+    // What both survivors confirmed at the freeze (the host's last advance may never have left it, B5).
+    let held = [a, b].map(|i| net.peers[i].peer().match_session().unwrap().frontier()).into_iter().min().unwrap();
     net.run_until(Duration::from_secs(8), "both resume under Anna", |n| {
         n.peers[a].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
             && n.peers[b].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Anna"))
@@ -1478,13 +1716,13 @@ fn a_frozen_host_hands_the_match_to_the_first_player() {
     let rb = net.peers[b].peer().last_record().cloned().unwrap();
     assert_eq!(ra.rows, rb.rows);
     assert_eq!(ra.checksums, rb.checksums);
-    // The frozen host's confirmed inputs are a prefix of the match (spec §3.2: final is final).
+    // Every input the survivors held at the freeze is kept, as the frozen host had it (spec §3.2: final is final).
     let old = net.peers[0].p.as_ref().unwrap().match_session().unwrap();
-    for t in 0..host_rows {
+    for t in 0..held {
         assert_eq!(Some(ra.rows[t as usize]), old.input_log().row(t), "tick {t}");
     }
     // The old host's player stands still after the migration; the bot (slot 3) still plays.
-    let after = &ra.rows[host_rows as usize + 300..];
+    let after = &ra.rows[held as usize + 300..];
     assert!(after.iter().all(|row| row[0] == 0));
     assert!(after.iter().any(|row| row[3] != 0), "the bot moved to Anna");
     assert!(!net.peers[a].has(|e| matches!(e, OnlineEvent::DesyncBundle(_))));
@@ -1531,7 +1769,7 @@ fn a_stalled_host_steps_down_and_the_match_moves() {
 #[test]
 fn nobody_to_take_over_is_host_lost_with_a_replay() {
     let Some(content) = content() else { return };
-    let mut net = Net::new(content, 0.5);
+    let mut net = Net::new(content, 0.5); // longer than the 12 s give-up
     let a = net.join_with_migration("Anna", MigrationConfig::direct());
     let b = net.join_with_migration("Bert", MigrationConfig { standby: None, ..MigrationConfig::direct() });
     net.run_until(Duration::from_secs(10), "both joined", |n| n.members() == 3);
@@ -1543,7 +1781,7 @@ fn nobody_to_take_over_is_host_lost_with_a_replay() {
     let froze = Instant::now();
     net.run_until(Duration::from_secs(14), "Bert gives up", |n| n.peers[b].has(|e| *e == OnlineEvent::HostLost(HOST_LOST.into())));
     let took = froze.elapsed();
-    assert!(took >= Duration::from_secs(12) && took < Duration::from_millis(13_000), "{took:?}");
+    assert!(took >= Duration::from_millis(11_900) && took < Duration::from_millis(13_000), "{took:?}");
     net.run_until(Duration::from_secs(5), "its replay", |n| n.peers[b].has(replay_ready));
 }
 
@@ -1563,27 +1801,27 @@ fn a_successors_own_outage_does_not_take_the_match() {
 }
 ```
 
-  `Net::outage(i, d)` uses a test hook `OnlinePeer::test_outage(until: Instant)` (feature `test-hooks`): the peer's endpoints drop every datagram both ways until then (rl-net's impairment stage already sits on the socket path: extend `Impair` with a timed blackout). The last test must fail if `HostHeard` does not cancel: without it, Anna stays suspended.
+  `Net::outage(i, d)` uses the test hook `OnlinePeer::test_outage(until)`: every endpoint of the peer drops every datagram both ways until then (rl-net's blackout: `impair.rs` for outgoing datagrams, which is outgoing only today, and `Endpoint::poll` for incoming ones). The last test must fail if `HostHeard` does not cancel: without it, Anna stays suspended.
 
 - [ ] **Step 2: Run `cargo nextest run -p rl-online migration -p rl-net`, expect FAIL.**
-- [ ] **Step 3: Implement.** Update every `PeerRole::Client` construction:
-  - `MigrationConfig::direct()` in rl-online's existing tests;
-  - `off()` in any test that expects a host leaving mid-match to end its clients (find them by running the suite);
-  - rl-cli and rl-game get their real configs in Tasks 7 and 8: until then `MigrationConfig::direct()`.
-- [ ] **Step 4: Run `cargo nextest run -p rl-online -p rl-net -p rl-cli -p rl-game`, expect PASS; `cargo xtask check`.**
+- [ ] **Step 3: Implement.** Every existing `PeerRole::Client` construction (the list under Files) gets `MigrationConfig::off()` (D7); rl-cli and the game get their real configurations in Tasks 8 and 9.
+- [ ] **Step 4: Run `cargo nextest run -p rl-online -p rl-net -p rl-cli -p rl-game -p rl-server`, expect PASS; `cargo xtask check`.**
 - [ ] **Step 5: Update `crates/rl-online/CLAUDE.md` and `crates/rl-net/CLAUDE.md`. Commit** `rl-online: host migration over direct links`.
 
 ---
 
-### Task 6: `rl-online`: migration through the relays, late rejoiners, repeated migrations
+### Task 7: `rl-online`: migration through the relays, late rejoiners, repeated migrations
 
 **Files:**
 - Modify: `crates/rl-online/src/{peer/migrate.rs, reach.rs, join.rs, migration.rs}`, `crates/rl-online/CLAUDE.md`
 - Test: `crates/rl-online/tests/migration.rs` (appended)
 
 **Interfaces:**
-- Consumes: Task 5; plan 12b's `NostrJoin`, `join_relays`, `HostReach`, `TestRelay` (`rl-discovery/test-relay`, already a dev-dependency).
-- Produces: `OnlinePeer::test_ignore_direct()` (feature `test-hooks`: this peer's joins to successors skip direct addresses, so a loopback test exercises the relays).
+- Consumes: Task 6; plan 12b's `NostrJoin`, `join_relays`, `HostReach`, `TestRelay` (`rl-discovery/test-relay`, already a dev-dependency).
+- Produces (feature `test-hooks`):
+  - `OnlinePeer::test_ignore_direct()`: this peer's joins to successors skip direct addresses, so a loopback test exercises the relays;
+  - `OnlinePeer::test_delay_rejoin(d: Duration)`: once an attempt's link to a successor opens, this peer sends its `Hello` only `d` later (a slow path), so a test can make a peer late while it keeps contact;
+  - `rl_online::migration::Planner` (crate-public, `#[doc(hidden)] pub` for the unit test): the attempt planner, its connects and pools behind a `Connector` trait, so a test counts them with a fake.
 
 Context (N73, N72, N74):
 - **Relays:** a client whose `migration.relays` is `Some` listens on them from the moment its standby's gate opens (`HostReach::start` with `HostListen { pool: relays, public_address: None }`; its answers through `Endpoint::answer_signalled` on the standby), and stops at a cancel.
@@ -1592,22 +1830,23 @@ Context (N73, N72, N74):
   - Without relays on either side: direct only.
   - The joiner's answer (JoinStep `Connecting`) is contact.
 - **Late rejoiners** (N72): a client whose attempt is welcomed after the new host's resume is welcomed as `Waiting`. It drops its old `Game` (its session) and becomes a mid-match joiner: `ContentComplete` → `Start` → `Role::Joining`, then it watches from a state. Its old slot stays `Keys(0)`.
-- **Repeated migrations** (N74): former hosts get `can_host: false`. The peer counts migrations per match; past `MAX_MIGRATIONS` it is host lost.
+- **Repeated migrations** (N74): a later migration uses the new host's succession (it lists everyone but itself). The peer counts migrations per match; past `MAX_MIGRATIONS` it is host lost.
 - **Hostile successions** (Review Focus 3): direct ports below `MIN_STANDBY_PORT` cannot arrive (the decoder refuses them). A failed direct connect is not retried in its window, and each window has at most one attempt at a time. Relays per entry are capped at 2, and a join's pool at 8 (`join_relays`).
 
-- [ ] **Step 1: Write the failing tests** (appended to `tests/migration.rs`; a `TestRelay` on 127.0.0.1; `allow_local: true`; no STUN):
+- [ ] **Step 1: Write the failing tests** (appended to `tests/migration.rs`; a `TestRelay` on 127.0.0.1; `allow_local: true`; no STUN; `base_override: Some(127.0.0.1)` on both `standby.ice` and `migration.ice`, as `tests/through.rs` does, so no ICE check reaches the machine's LAN addresses (C4); clients joined in order, each welcomed before the next joins (B5)):
   - `a_successor_is_reached_through_the_relays`:
     - setup: Anna's and Bert's `MigrationConfig { relays: Some(pool on the test relay), allow_local: true, ..direct() }`; Bert has `test_ignore_direct()`;
     - expected: after the host freezes, Bert's `Joining` steps go `Relays`, then `Asking`, and it is welcomed by Anna; both resume within 2 s + 6 s; the records match at the end; Anna reports `ListenRelay { status: "connected" }` only after the freeze (she listens only once her turn comes), and Bert's path line names the new link.
   - `a_late_rejoiner_watches_from_a_state`:
-    - setup: Bert's endpoint is blacked out from 0.2 s before the freeze until 7 s after it (`test_outage`); Anna resumes without Bert at her window's end;
-    - expected: Bert later rejoins as `Waiting`, then watches (a `StateLoaded`), and the next match's start gives it a seat; Anna's record shows Bert's slot `0` from the resume.
+    - setup: three clients, Anna, Bert and Cid (direct links); Bert has `test_delay_rejoin(Duration::from_secs(6))`. The host freezes: Cid rejoins Anna at once (Anna commits), Bert has contact but sends its `Hello` 6 s later, so Anna resumes without it at her window's end;
+    - expected: Bert is welcomed as `Waiting`, then watches (a `StateLoaded`), and the next match's start gives it a seat; Anna's record shows Bert's slot `0` from the resume; Bert never reports `HostLost`.
   - `a_second_migration_moves_the_match_again`:
     - setup: three clients; the host freezes, then Anna (the new host) freezes 4 s after the resume;
-    - expected: Bert hosts; the third client follows; the records of Bert and the third client agree; Anna was skipped as a former host in the second succession (`Migrating(Moving("Bert"))` first, never "Anna").
-  - `a_hostile_succession_is_bounded` (a unit test of `peer/migrate.rs`'s attempt planner with a fake clock):
-    - setup: a succession of 48 entries with direct addresses on a loopback port where a TCP listener refuses every connection, and 2 relays each pointing to a closed loopback port;
-    - expected over 10 s: at most one direct connect per window per entry, at most 8 relays in a pool, no attempt past `GIVE_UP_US`, and `HostLost`.
+    - expected: the third client's second migration goes to Bert (`Migrating(Moving("Bert"))` after the first `Migrated`), Bert hosts, the third client follows, and their records agree; Anna's succession, read with `LobbyHandle::succession()` before her freeze, does not list Anna (the host is no successor).
+  - `a_hostile_succession_is_bounded` (a unit test of the `Planner` with a fake `Connector` and a fake clock: no socket):
+    - setup: a succession of 48 entries, each with a direct address and 2 relays; the fake refuses every direct connect and never answers through the relays;
+    - expected over 10 s: at most one direct connect per window per entry, at most 8 relays in a pool, no attempt past `GIVE_UP_US`, and `HostLost`;
+    - plus one real check on 127.0.0.1: an entry whose direct address is a closed loopback port costs one connect, refused at once, within its window.
 - [ ] **Step 2: Run `cargo nextest run -p rl-online migration`, expect FAIL.**
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run `cargo nextest run -p rl-online`, expect PASS; `cargo xtask check`.**
@@ -1615,7 +1854,7 @@ Context (N73, N72, N74):
 
 ---
 
-### Task 7: `rl-cli` and `rl-server`: migration in net-sim, real transport and `net-client`
+### Task 8: `rl-cli` and `rl-server`: migration in net-sim, real transport and `net-client`
 
 **Files:**
 - Modify:
@@ -1626,8 +1865,8 @@ Context (N73, N72, N74):
 - Test: as listed
 
 **Interfaces:**
-- Consumes: Tasks 3, 5, 6 (`Scenario`'s new fields, `Factory::host_driver`, `MigrationConfig`, `OnlineEvent::{Migrating, Migrated, HostLost}`, `matches::restart_bots`).
-- Produces (Task 10):
+- Consumes: Tasks 3, 6, 7 (`Scenario`'s new fields, `Factory::host_driver`, `MigrationConfig`, `OnlineEvent::{Migrating, Migrated, HostLost}`, `matches::restart_bots`).
+- Produces (Task 11):
   ```rust
   // rl_cli::netsim::NetSpec gains (all #[serde(default)], so kept cases load):
   /// `(peer, host tick, "crash" | "leave")`: peers leaving (peer 0 the host).
@@ -1643,21 +1882,23 @@ Context (N73, N72, N74):
   pub enum ServerExitHow { Freeze, Leave }
   #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
   pub struct ServerExit { pub after_s: f32 /* after the first match started */, pub how: ServerExitHow }
-  // TransportSpec gains `pub server_exit: Option<ServerExit>` (default None); ClientRun gains
+  // TransportSpec gains `pub server_exit: Option<ServerExit>` (default None) and `pub migration: bool` (default false: the clients use `MigrationConfig::off()`, D7; true: `direct()`); ClientSpec gains `pub migration: MigrationConfig`; ClientRun gains
   pub migrated: Vec<String>,          // "Anna hosts", in order
   pub host_lost: Option<String>,
   ```
   `net-sim` gains `--exit peer:tick:crash|leave` (repeatable), `--host-freeze from:until`, `--profile-change tick:peer:profile` (repeatable) and `--migration`. `net-client` gains `--no-standby`; its standby asks the `--stun` servers, and it listens on the `--relay`s once it hosts. It prints `migrated: <name> hosts` (or `migrated: hosting`) and `host lost: <why>` (exit 1).
 
 Context:
-- **net-sim** (`netsim.rs`): `WorldFactory::host_driver` keeps the peer's own bot and restarts the others with `matches::restart_bots` semantics (a fresh area cache on the current world). In net-sim every worm is a bot, so `host_human` is `None`. The scenario's succession is the clients in order, then the spectators. A failure still writes `target/failures/net-<stem>.ron`.
+- **net-sim** (`netsim.rs`): `WorldFactory::host_driver` keeps the peer's own bot and restarts the others with `matches::restart_bots` semantics (a fresh area cache on the current world). In net-sim every worm is a bot, so `host_human` is `None`. The scenario's succession is the clients in order, then the spectators. A failure still writes `target/failures/net-<stem>.ron`. It prints one line per migration, `migrated: <from> -> <to> at tick <t> (<ms> ms after the host was found gone)`, and `host lost: <peers>`.
 - **Transport** (`transport.rs`): the server thread's observer freezes it (`ServerExit::Freeze`: it stops polling and stays alive until the run ends, holding its sockets: a hung host) or sets `stop` (`Leave`: `Server::shutdown` says `Bye`), `after_s` after the first match started.
-  - Clients use `MigrationConfig::direct()` (loopback).
+  - Clients use `MigrationConfig::direct()` (loopback) in the migration cases (`TransportSpec::migration`), `off()` in every other transport, stress and feel run (D7: no new failure mode for the gates).
+  - The clients join concurrently, so which one succeeds is not fixed: the verdict names no successor.
   - The verdict, with a server exit:
     - every client finished its match under the successor;
     - their confirmed rows, checksums and replays agree;
     - the server's confirmed rows before the exit are a prefix (taken from the observer's last view);
     - no desync bundle.
+- **net-client:** its migration is on by default (`MigrationConfig` from its flags: a standby on port 0 asking `--stun`, `--relay`s as its relays, `--allow-local`, its region); `--no-standby` makes it a follower.
 - **rl-server:** it logs `succession: <n> players can take over` once per match start (from `LobbyHandle`'s succession). On `HostLost(stepped_down)` it logs `stalled for <s> s: the match moved to the next player; the lobby is open again`. The server sends succession lists and steps down through rl-online; nothing else changes.
 
 - [ ] **Step 1: Write the failing tests:**
@@ -1669,27 +1910,27 @@ Context:
     - `a_frozen_server_hands_its_match_to_a_client` (3 clients, `good`, 0.3-minute match, freeze 8 s in);
     - `a_leaving_server_hands_its_match_to_a_client` (`bad`);
     - each about 25 s.
-  - `tests/cli.rs`: `net_sim_flags_parse_and_write_a_replayable_case` (`--exit 0:300:crash` with a planted fault writes a case that `--from` replays to the same failure; a malformed `--exit` is an error). `net_client`'s unit tests: `--no-standby` and the printed lines.
+  - `tests/cli.rs`: `net_sim_migration_flags_run_and_replay` (`net-sim --exit 0:300:crash --ticks 800` prints `ok` and a `migrated` line naming peer 1; the same spec saved as a `NetCase` and run with `--from` prints the same summary; `--exit 0:300:explode`, `--host-freeze 5` and `--profile-change 1:2` are errors naming the flag). `net_client`'s unit tests: `--no-standby` and the printed lines.
   - `crates/rl-server/tests/server.rs`: `the_server_logs_its_succession` (two loopback clients, `MigrationConfig::direct()`: the log line counts 2).
 - [ ] **Step 2: Run `cargo nextest run -p rl-cli --test net_sim --test integration -p rl-server`, expect FAIL.**
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run `cargo nextest run -p rl-cli -p rl-server`, expect PASS. Also run the full-tier tests once by hand, timed: `RL_FULL_TESTS=1 cargo nextest run -p rl-cli --test net_sim net_migration_grid` and `RL_FULL_TESTS=1 cargo nextest run -p rl-cli --test transport a_` (record the times for Task 11). Then `cargo xtask check`.**
+- [ ] **Step 4: Run `cargo nextest run -p rl-cli -p rl-server`, expect PASS. Also run the full-tier tests once by hand, timed: `RL_FULL_TESTS=1 cargo nextest run -p rl-cli --test net_sim net_migration_grid` and `RL_FULL_TESTS=1 cargo nextest run -p rl-cli --test transport a_` (record the times for Task 12). Then `cargo xtask check`.**
 - [ ] **Step 5: Update the CLAUDE.md of rl-cli and rl-server. Commit** `rl-cli: migration in net-sim, real transport and net-client`.
 
 ---
 
-### Task 8: The game: migration lines, the new host's lobby, the Host lost screen
+### Task 9: The game: migration lines, the new host's lobby, the Host lost screen
 
 **Files:**
 - Modify:
   - `crates/rl-ui/src/{state.rs, screens/mod.rs, online.rs}`, `crates/rl-ui/tests/online.rs`;
-  - `crates/rl-game/src/{shell/online.rs, net.rs, overlay.rs}`, `crates/rl-game/tests/online.rs`;
+  - `crates/rl-game/src/{shell/online.rs, shell/joining.rs, net.rs, overlay.rs}`, `crates/rl-game/tests/{online.rs, finding.rs}` (their shared Shell builder, `online::menus`);
   - the CLAUDE.md of rl-ui and rl-game.
 - Create: `crates/rl-ui/src/screens/host_lost.rs`
 - Test: `crates/rl-ui/tests/online.rs` (kittest), `crates/rl-game/tests/online.rs`
 
 **Interfaces:**
-- Consumes: Task 5's events and `MigrationConfig`; the settings' relays, STUN, TURN and region (`relays_of`, `turn_of`, `local_relays`, `Shell::test_ice`).
+- Consumes: Task 6's events and `MigrationConfig`; the settings' relays, STUN, TURN and region (`relays_of`, `turn_of`, `local_relays`, `Shell::test_ice`).
 - Produces:
   ```rust
   // rl_ui
@@ -1697,11 +1938,13 @@ Context:
   pub enum UiAction { /* … */ HostLost(String) /* the app reports it: the screen opens with the reason */ }
   // MenuData gains `pub host_lost: Option<String>`; the screen shows "Host lost", the reason, "The match's replay is saved in Replays.", buttons "Replays" (the Replays screen) and "Back" (Multiplayer).
   pub const MIGRATED_LISTING: &str = "Taken over from the host: only this match's players can join";
-  // rl_game::Shell (test-hooks): pub fn test_no_standby(&mut self) — its next client never hosts (N79).
+  // rl_game::Shell (test-hooks):
+  pub fn test_no_standby(&mut self);              // its next client never hosts (N79)
+  pub fn test_migration(&mut self, on: bool);     // off: its next client uses `MigrationConfig::off()` (D7)
   ```
 
 Context (N81):
-- **The client's config:** `MigrationConfig { standby: Some(EndpointConfig { port: 0, ice: IceConfig { stun: settings', port_mapping: false, allow_local, .. }, .. }), relays: the settings' relays (none: `None`), ice: the join's (STUN, the player's TURN), region, turn_from_nostr: true, allow_local: local_relays, enabled: true }`, built like the joins' (`shell/joining.rs`). Tests: `online::menus` sets no relay, no STUN and no port mapping, so the standby is loopback-only (NT-1).
+- **The client's config:** `MigrationConfig { standby: Some(EndpointConfig { port: 0, ice: the shell's ICE for an endpoint (`Shell::ice`: the settings' STUN, `port_mapping: false`, `allow_local`; in tests `Shell::test_ice` pins `base_override` to 127.0.0.1, C4), .. }), relays: the settings' relays (none: `None`), ice: the join's (through `Shell::ice` too: STUN, the player's TURN), region, turn_from_nostr: true, allow_local: local_relays, enabled: true }`, built in `shell/joining.rs` beside the joins'. Tests: `online::menus` sets no relay, no STUN and no port mapping, so the standby is loopback-only (NT-1), and calls `test_migration(false)` (D7); the tests below turn it on.
 - **In the match:**
   - `Migrating(step)` sets the HUD's top line (where "Connection problem" shows), cleared at `Migrated`.
   - `Migrated { host, me }` logs "<host> is now hosting" or "You are now hosting" in the HUD log and on the console (`rl-game: migration: …`).
@@ -1715,12 +1958,13 @@ Context (N81):
     - `a_migrated_lobby_shows_host_controls` (a `LobbyView { host: true, listing: Some(MIGRATED_LISTING) }`: Start is there, the listing text is visible).
   - **rl-game** (`tests/online.rs`, through `Shell::net_frame` and `App::network_frame` as the app runs them):
     - `a_frozen_server_hands_the_match_to_the_first_player`:
-      - setup: an in-process `rl-server` (port 0, `port_mapping: false`, no STUN, one bot) and two `Shell`s joining it; the server's poll thread stops (frozen) 3 s into the match;
+      - setup: an in-process `rl-server` (port 0, `port_mapping: false`, no STUN, one bot) and two `Shell`s with `test_migration(true)`; Shell A is welcomed before Shell B joins (so A is the first successor, B5); the test stops polling the server (`Server::poll`, frozen) 3 s into the match;
       - expected: Shell A's HUD line reads "The host is gone: you are taking over the game…", then its log says "You are now hosting"; Shell B's log says "<A's name> is now hosting"; both reach the results with equal confirmed scores; both replays are saved and equal; A's lobby view is the host's;
       - bounded: under 25 s.
     - `the_host_lost_screen_shows_and_the_replay_is_saved`:
-      - setup: the server and Shell A frozen; Shell B with `test_no_standby()`;
+      - setup: as above (A welcomed before B joins); the server and Shell A frozen (Shell A: no frame and its pump stopped through a test hook `Shell::test_stop_pump`, so it is silent like a crashed game); Shell B with `test_no_standby()`;
       - expected: B's screen becomes `Screen::HostLost` within 2 s + 10 s + 1 s, with `HOST_LOST`; a replay file appears in its data directory's `replays/`.
+    - Task 5's `a_host_whose_frames_stop_keeps_hosting` and `a_client_whose_frames_stop_stays_joined`, run again with `test_migration(true)` on both Shells (ruling PF12c-2): during the 3 s without frames, no `Migrating` event at the other Shell, no step-down at the host (`HostLost` never), and the match ends normally. RED without the pump: the peers migrate away after 2 s, or the host steps down.
   - **Then `cargo xtask e2e`** (the autoplay online run must still pass: the game's client now opens a standby; nothing else changes).
 - [ ] **Step 2: Run `cargo nextest run -p rl-ui -p rl-game`, expect FAIL.**
 - [ ] **Step 3: Implement.**
@@ -1729,14 +1973,14 @@ Context (N81):
 
 ---
 
-### Task 9: The Docker NAT tests: a migration across routers
+### Task 10: The Docker NAT tests: a migration across routers
 
 **Files:**
 - Modify: `xtask/src/nat.rs` (a `migration` scenario; the scenario count), `tools/net-nat/CLAUDE.md`, `xtask/CLAUDE.md`
 - Test: `nat.rs`'s unit tests; the scenario itself
 
 **Interfaces:**
-- Consumes: Task 7's `net-client` (`migrated:` lines, its standby asking `--stun`, listening on `--relay` once it hosts), plan 12b's topology (`rl-nat-wan`, LANs A-D, the WAN relay and STUN at 203.0.113.10, the TURN relay at 203.0.113.20).
+- Consumes: Task 8's `net-client` (`migrated:` lines, its standby asking `--stun`, listening on `--relay` once it hosts), plan 12b's topology (`rl-nat-wan`, LANs A-D, the WAN relay and STUN at 203.0.113.10, the TURN relay at 203.0.113.20).
 - Produces: `cargo xtask net-nat --only migration`; `full`'s `net-nat` step runs it with the others.
 
 Context (PL12c-2):
@@ -1744,6 +1988,7 @@ Context (PL12c-2):
   - an `rl-server` Invite in LAN A (one fill bot, a 0.5-minute match that starts when 2 players are ready);
   - `net-client --bot --name succ` in LAN C;
   - `net-client --bot --name other` in LAN B (symmetric NAT; TURN notes used, no `--no-nostr-turn`), both `--invite <code> --relay ws://203.0.113.10:7777 --stun 203.0.113.10:3479 --allow-local --matches 1`.
+  - The runner starts `other` only after `succ` printed that it is in the lobby, so `succ` joined first and is the first successor (B5).
   - Once both print a start, the runner waits 8 s, then `docker kill`s the server's container: a crash, silence.
 - **Expect:**
   - `succ` prints `migrated: hosting`; `other` prints `migrated: succ hosts`;
@@ -1755,20 +2000,20 @@ Context (PL12c-2):
 
 - [ ] **Step 1: Write the failing unit tests** in `nat.rs`: `the_migration_scenario_is_listed_and_selectable`; `checksum_lines_are_compared` (the parser that collects `checksum <tick> <hex>` lines from two outputs and names the first difference).
 - [ ] **Step 2: Run `cargo nextest run -p xtask nat`, expect FAIL.**
-- [ ] **Step 3: Implement**, then run `cargo xtask net-nat --only migration` (Docker is installed here). A failure is a real finding about Tasks 5-7: fix it there, with a test in rl-online or the harness that reproduces it.
+- [ ] **Step 3: Implement**, then run `cargo xtask net-nat --only migration` (Docker is installed here). A failure is a real finding about Tasks 6-8: fix it there, with a test in rl-online or the harness that reproduces it.
 - [ ] **Step 4: `cargo xtask net-nat --only migration` passes; `cargo xtask check`.**
 - [ ] **Step 5: Update `tools/net-nat/CLAUDE.md` (the scenario, its timing) and `xtask/CLAUDE.md`. Commit** `xtask: a host migration across routers in the Docker NAT tests`.
 
 ---
 
-### Task 10: `net-soak`
+### Task 11: `net-soak`
 
 **Files:**
-- Create: `crates/rl-cli/src/soak.rs`, `crates/rl-cli/tests/net_soak.rs` (a `mod net_soak;` of `tests/integration.rs`)
-- Modify: `crates/rl-cli/src/{lib.rs, main.rs}`, `xtask/src/{net.rs, main.rs}`, the CLAUDE.md of rl-cli and xtask, `README.md` (the commands list, if it lists xtask's)
+- Create: `crates/rl-cli/src/soak.rs`, `crates/rl-cli/tests/net_soak.rs` (a `mod net_soak;` of `tests/integration.rs`), `crates/rl-cli/tests/net_soak_memory.rs` (its own `[[test]] name = "net_soak_memory"`: it reads the process's memory, process-global state, CLAUDE.md rule 2; `xtask check` falls back to `cargo test`'s shared process without nextest)
+- Modify: `crates/rl-cli/{Cargo.toml, src/lib.rs, src/main.rs, src/transport.rs}`, `xtask/src/{net.rs, main.rs}`, the CLAUDE.md of rl-cli and xtask, `README.md` (the commands list, if it lists xtask's)
 
 **Interfaces:**
-- Consumes: Task 7's `NetSpec` fields, `netsim::{run, write_failure}`, `transport::{TransportSpec, ServerExit, run_transport}`; `rl_netcode::Rng`.
+- Consumes: Task 8's `NetSpec` fields, `netsim::{run, write_failure}`, `transport::{TransportSpec, ServerExit, run_transport}`; `rl_netcode::Rng`.
 - Produces:
   ```rust
   // rl_cli::soak
@@ -1800,7 +2045,8 @@ Context (PL12c-2):
   /// `run` with the cases from `cases(n, seed)` (tests).
   pub fn run_cases(cfg: &SoakConfig, cases: &mut dyn FnMut(u32, u64) -> SoakCase, out: &mut dyn Write) -> anyhow::Result<SoakSummary>;
   ```
-  `TransportSpec` and `ServerExit` derive `Serialize`/`Deserialize` (if they do not yet), so a transport failure keeps its spec as RON.
+  `TransportSpec` and `ServerExit` derive `Serialize`/`Deserialize`, so a transport failure keeps its spec as RON. `TransportSpec::difficulty` (an `rl_bots::Difficulty`, which has no serde, and rl-bots gains no dependency) is serialized by name through a `#[serde(with = "difficulty_name")]` module in rl-cli (`easy`, `medium`, `hard`, `xtreme`, as `--difficulty` reads them).
+  A case that cannot run is kept by soak's own writer (`soak::write_error_case(dir, &NetSpec, &error)`: a `NetCase` whose note names the error), since `netsim::write_failure` keeps only failed verdicts.
   `rl-cli net-soak [--minutes 10] [--seed 1] [--transport-every 5] [--runs N] [--content DIR] [--failures DIR]` exits 1 when a case failed. `cargo xtask net-soak [--minutes N] [--seed S] [--offline]` builds rl-cli in release and runs it on `content/packs` with `--failures target/failures`, streaming its output; it is **not** a `full` step (N77).
 
 Context:
@@ -1812,27 +2058,29 @@ Context:
   - 1500-6000 ticks.
 
   `case(seed)` is a pure function: the same seed, the same case.
-- **Bounded:** each case's report is dropped before the next. Failures are files (at most `MAX_FAILURES`, then the soak stops with a summary). A real-transport failure keeps its spec (RON) and the server's log in `target/failures/soak-transport-<seed>/`. Nothing else accumulates (no per-run state kept), so an overnight run's memory stays flat. Pin it: `tests/net_soak.rs` runs the same short case 8 times and compares the process's `VmRSS` after the 2nd and the 8th (Linux; skipped elsewhere), within 16 MiB.
-- **Nothing leaves the machine:** net-sim is virtual; transport cases run on 127.0.0.1 with `MigrationConfig::direct()`.
+- **Bounded:** each case's report is dropped before the next. Failures are files (at most `MAX_FAILURES`, then the soak stops with a summary). A real-transport failure keeps its spec (RON) and the server's log in `target/failures/soak-transport-<seed>/`. Nothing else accumulates (no per-run state kept), so an overnight run's memory stays flat. Pin it: `tests/net_soak_memory.rs` runs the same short case 8 times and compares the process's `VmRSS` after the 2nd and the 8th (Linux; skipped elsewhere), within 16 MiB.
+- **Nothing leaves the machine:** net-sim is virtual; transport cases run on 127.0.0.1, `TransportSpec::migration` on (`MigrationConfig::direct()`) in the cases with a server exit, off in the clean control runs.
 
 - [ ] **Step 1: Write the failing tests** `crates/rl-cli/tests/net_soak.rs`:
   - `cases_are_deterministic_and_within_bounds` (`case(s) == case(s)` for 200 seeds, each `NetSpec::scenario()` is `Ok`, at least one of each exit kind among them, every profile named);
   - `a_short_soak_runs_and_reports` (`runs: Some(3)`, `transport_every: 0`, cases shortened to 600 ticks through a `#[doc(hidden)] pub fn case_short(seed)`, every line printed, the summary `3 runs`, no failure);
   - `a_failing_case_is_kept_and_counted` (`run_cases` with `runs: Some(4)` and a case function whose third case names a mod that does not exist: the soak goes on with the fourth; the failures directory holds that case as a `NetCase` naming the error; the summary counts 1 failure; with `max_failures: 1` it stops right after it, `runs` = 3);
-  - `memory_stays_flat_over_cases` (as above).
+  - `memory_stays_flat_over_cases` (in `tests/net_soak_memory.rs`, as above);
+  - `a_transport_spec_round_trips_through_ron` (with a server exit and a difficulty);
   - `xtask`'s unit test: `net_soak_args_are_parsed` (`--minutes 0.5 --seed 9` reach rl-cli's command line).
-- [ ] **Step 2: Run `cargo nextest run -p rl-cli --test integration net_soak -p xtask`, expect FAIL.**
+- [ ] **Step 2: Run `cargo nextest run -p rl-cli --test integration --test net_soak_memory -p xtask`, expect FAIL.**
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run, expect PASS. Then run `cargo xtask net-soak --minutes 3` once: every case passes, or each failure is a finding fixed in its task with a kept case (`cargo xtask bless-regression --from target/failures/net-*.ron --reason "<why>"`). Then `cargo xtask check`.**
 - [ ] **Step 5: Update the CLAUDE.md of rl-cli and xtask. Commit** `rl-cli: net-soak; xtask: cargo xtask net-soak`.
 
 ---
 
-### Task 11: Records, and the plan's one `full` run
+### Task 12: Records, and the plan's one `full` run
 
 **Files:**
 - `docs/porting/STATUS.md`: a new section "Host migration decisions (plan 12c)" holding:
-  - N63-N81 and PL12c-1, PL12c-2, as decided here and as amended by rulings during execution;
+  - N63-N81, PL12c-1, PL12c-2 and the pre-flight rulings PF12c-2 (the network pump, beside N70, with its cost: a lock shared between two threads) and PF12c-3 (no "former hosts skipped" rule), as decided here and as amended by rulings during execution;
+  - N65's residual race (a successor closing at its window's end while a late peer reaches it; two successors committing only under a partition between peers, which the harness does not model);
   - the measured times: a migration's resume after detection per profile (harness), the loopback rl-online test's, and the added `full` time.
 - `CHANGELOG.md` (Unreleased, "Added — host migration"):
   - a match goes on when its host crashes, leaves or freezes;
@@ -1841,9 +2089,9 @@ Context:
   - `rl-cli net-sim --exit/--host-freeze/--profile-change`, `net-client --no-standby`, `cargo xtask net-soak`.
 - `docs/online.md`, a section "When the host leaves":
   - what the players see;
-  - how long it takes (LAN about 2.5 s, through the relays up to about 8 s);
+  - how long it takes (LAN about 2.5 s; through the relays up to about 10 s, the successor's relay connections included);
   - who takes over (the first player who joined, then the next);
-  - why a host whose game froze for 1.5 s loses that match (N70);
+  - that a dragged or busy window no longer costs the match (the network pump keeps the game online); only a stalled machine does: a host whose whole PC stopped for 1.5 s loses that match (N70);
   - that the migrated game takes back only its players (N72);
   - "Host lost" and where its replay is;
   - the playtest recipe:
