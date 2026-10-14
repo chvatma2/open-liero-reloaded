@@ -171,11 +171,14 @@ pub fn nat_text(nat: NatBehaviour) -> &'static str {
 }
 
 /// A join's relays (N46, ruling PF12b-3): the invite's `hints` first, then
-/// the player's `own`, each once, at most [`MAX_JOIN_RELAYS`].
+/// the player's `own`, each once (a trailing `/` names the same relay, as
+/// rl-server's config reads it: final review B-M6), at most
+/// [`MAX_JOIN_RELAYS`].
 pub fn join_relays(hints: &[String], own: &[String]) -> Vec<String> {
+    let same = |a: &str, b: &str| a.trim_end_matches('/') == b.trim_end_matches('/');
     let mut relays: Vec<String> = Vec::new();
     for r in hints.iter().chain(own) {
-        if relays.len() < MAX_JOIN_RELAYS && !relays.contains(r) {
+        if relays.len() < MAX_JOIN_RELAYS && !relays.iter().any(|k| same(k, r)) {
             relays.push(r.clone());
         }
     }
@@ -632,6 +635,9 @@ mod tests {
             s(&["wss://b", "wss://a", "wss://c", "wss://d", "wss://e", "wss://f", "wss://g", "wss://h"])
         );
         assert_eq!(join_relays(&[], &s(&["wss://x", "wss://x"])), s(&["wss://x"]));
+        // Final review B-M6: a trailing `/` names the same relay (as the
+        // server's config reads it): one slot, the first spelling.
+        assert_eq!(join_relays(&s(&["wss://x/"]), &s(&["wss://x", "wss://y"])), s(&["wss://x/", "wss://y"]));
     }
 
     #[test]

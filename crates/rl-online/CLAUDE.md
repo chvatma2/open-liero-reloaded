@@ -351,7 +351,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   turn_from_nostr, allow_local }`, `Join { direct, nostr }`
   (`Join::direct(addr)`), `JoinStep` (`Display`: the waiting texts),
   `join_relays(hints, own)` (ruling PF12b-3: the invite's hints first,
-  then the player's own, each once, at most `MAX_JOIN_RELAYS` 8; the
+  then the player's own, each once — a trailing `/` naming the same
+  relay, final review B-M6 —, at most `MAX_JOIN_RELAYS` 8; the
   joiner cuts its pool's list the same way), the texts `NO_RELAYS`,
   `NO_REPLY`, `RELAYS_REFUSED` (every relay refused the join's events by
   NIP-01 policy, `blocked:`/`restricted:`/`invalid:` … but not the
