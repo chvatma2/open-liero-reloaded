@@ -21,6 +21,7 @@ pub fn summary() -> GameSummary {
         mod_hash: "ab".repeat(32),
         players: 2,
         max_players: 8,
+        bots: 3,
         spectators: 0,
         max_spectators: 4,
         password: false,
@@ -74,6 +75,7 @@ fn malformed_announcements_are_refused() {
         resign(&base, |_, c| *c = format!("{}{}", c, " ".repeat(MAX_CONTENT))),
         bad_content("\"players\":2", "\"players\":9"),
         bad_content("\"max_players\":8", "\"max_players\":33"),
+        bad_content("\"bots\":3", "\"bots\":33"),
         bad_content("\"max_spectators\":4", "\"max_spectators\":17"),
         bad_content("Office", ""),
         bad_content("Office", "an unreasonably long game name"),
@@ -195,6 +197,33 @@ fn hosting() -> Hosting {
     }
 }
 
+/// The user's report of 2026-10-15 (N39 amended): one player who added
+/// three bots is "1/8 +3 bots", not "4/8": bots take no seat a joiner
+/// could have, so `players` counts seated members alone and `bots` the
+/// bots, on Nostr and on the LAN.
+#[test]
+fn bots_take_no_seat_in_the_count() {
+    let mut state = lobby(rl_proto::Phase::Gathering, 3);
+    state.members.truncate(1);
+    let s = GameSummary::of_lobby(&state, &hosting());
+    assert_eq!((s.players, s.max_players, s.bots, s.spectators), (1, 8, 3, 0));
+    let lan = hosting().lan(&s);
+    assert_eq!((lan.players, lan.max_players, lan.bots), (1, 8, 3));
+    let e = announcement(&host(), &s, 1, 1000, [1; 32]);
+    assert!(e.content.contains("\"bots\":3"), "{}", e.content);
+    assert_eq!(parse_announcement(&e).unwrap().0, s);
+}
+
+/// A note written before `bots` existed reads as one without bots.
+#[test]
+fn a_note_without_bots_reads_as_none() {
+    let base = announcement(&host(), &summary(), 7, 1000, [1; 32]);
+    let old = resign(&base, |_, c| *c = c.replace("\"bots\":3,", ""));
+    assert!(!old.content.contains("bots"), "{}", old.content);
+    let s = parse_announcement(&old).unwrap().0;
+    assert_eq!((s.players, s.bots), (2, 0));
+}
+
 /// Plan 12b Task 8 (N47): a note names the router mapping's external port
 /// (`public_port`) when the host has one; its LAN announcement keeps the
 /// local port.
@@ -221,9 +250,10 @@ fn one_builder_summarizes_a_lobby_for_nostr_and_the_lan() {
             map_name: "Dirt Level".into(),
             mod_id: "olx-classic".into(),
             mod_hash: "ab".repeat(32),
-            // Two seated members and three bots; the waiting member watches.
-            players: 5,
+            // Two seated members (bots take no seat); the waiting member watches.
+            players: 2,
             max_players: 8,
+            bots: 3,
             spectators: 2,
             max_spectators: 4,
             password: true,
@@ -244,13 +274,14 @@ fn one_builder_summarizes_a_lobby_for_nostr_and_the_lan() {
             fingerprint: rl_proto::FINGERPRINT,
             name: "Office".into(),
             port: 23400,
-            players: 5,
+            players: 2,
             max_players: 8,
             spectators: 2,
             mod_id: "olx-classic".into(),
             level_id: "olx-level-dirt-level".into(),
             password: true,
             playing: false,
+            bots: 3,
         }
     );
     let playing = GameSummary::of_lobby(&lobby(rl_proto::Phase::Playing { tick: 9 }, 0), &hosting());
@@ -261,10 +292,11 @@ fn one_builder_summarizes_a_lobby_for_nostr_and_the_lan() {
 
 #[test]
 fn the_builder_keeps_its_notes_valid() {
-    // More worms than seats, more watchers than places: held to the maximums.
-    let small = Hosting { max_players: 2, max_spectators: 1, ..hosting() };
+    // More seated than seats, more watchers than places: held to the
+    // maximums; bots take no seat, so they are never cut to it.
+    let small = Hosting { max_players: 1, max_spectators: 1, ..hosting() };
     let s = GameSummary::of_lobby(&lobby(rl_proto::Phase::Gathering, 3), &small);
-    assert_eq!((s.players, s.spectators), (2, 1));
+    assert_eq!((s.players, s.bots, s.spectators), (1, 3, 1));
     // A blank or bad display name falls back to the level's id; a long one is cut.
     for bad in ["", "  ", "Dirt\u{0}Level"] {
         let s = GameSummary::of_lobby(

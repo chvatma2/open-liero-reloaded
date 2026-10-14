@@ -202,6 +202,7 @@ mod tests {
             mod_hash: rl_proto::NO_HASH.into(),
             players: 1,
             max_players: 8,
+            bots: 0,
             spectators: 0,
             max_spectators: 4,
             password: false,

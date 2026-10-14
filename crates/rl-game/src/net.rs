@@ -400,6 +400,7 @@ pub fn lan_entry(g: &LanGame, level_name: impl Fn(&str) -> Option<String>) -> La
         map: level_name(&g.info.level_id).unwrap_or_else(|| g.info.level_id.clone()),
         players: g.info.players,
         max_players: g.info.max_players,
+        bots: g.info.bots,
         password: g.info.password,
         addr: g.addr,
     }

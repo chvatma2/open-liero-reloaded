@@ -317,8 +317,11 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   `GameSummary::of_lobby(&LobbyState, &Hosting)`, the one summary of a
   hosted lobby for rl-server and rl-game (plan 12a Task 9: here, since
   `LobbyState` and `LanAnnounce` are rl-proto's, with no new same-layer
-  pair): players = seated members + bots, spectators = the other members,
-  each held to its maximum, `playing` from `Starting` to `Playing`, mode
+  pair): players = seated members, spectators = the other members, each
+  held to its maximum, `bots` = the setup's bots apart (at most
+  `MAX_PLAYERS`; N39 amended after the user's report of 2026-10-15: bots
+  take no seat, so "4/8" for one player and three bots misled joiners;
+  `#[serde(default)]`: an older note has none), `playing` from `Starting` to `Playing`, mode
   "deathmatch", the mod's hash from the setup's packs (else `NO_HASH`),
   `map_name` cut to 40 characters (blank or invalid: the level id);
   `addr` is the address players join directly (N47: a usable router
@@ -329,7 +332,8 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   local `port` whatever the note names (rl-server and the game since Task
   8's review). `announcement(..)`
   (tags `d`, `t`, `f` = 16 lowercase hex, `expiration` +180 s, +10 s when
-  `closed`), `parse_announcement` (validates names, ids and counts, no address policy; refuses
+  `closed`), `parse_announcement` (validates names, ids and counts:
+  `players <= max_players <= MAX_PLAYERS`, `bots <= MAX_PLAYERS`; no address policy; refuses
   a missing or malformed `f`; does not verify the signature) and the sans-IO
   `Announcer` (every 60 s, at a change after 12 s, `closing()` once, only
   after a first publish).

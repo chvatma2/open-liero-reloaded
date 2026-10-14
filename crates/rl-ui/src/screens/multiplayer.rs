@@ -2,7 +2,8 @@
 //! tabs:
 //!
 //! - **Internet:** the games announced on the Nostr relays (the app's game
-//!   list): name, map, mod, players, ping, region and a lock for a
+//!   list): name, map, mod, players (the seats taken of the seats, the
+//!   bots apart: "1/8 +3 bots"; bots take no seat), ping, region and a lock for a
 //!   password. A click selects a game (the app measures its ping); Join
 //!   joins it, expecting its key; "Block this host" hides its games for
 //!   good. A game of another version is greyed out ("needs version …");
@@ -10,7 +11,9 @@
 //!   its ping column "via relays". Above the list, "No relay reachable" or
 //!   "Searching…" until a relay sent its games.
 //! - **LAN:** the games announced on the local network (a click joins; a
-//!   locked one asks for its password in the Direct tab).
+//!   locked one asks for its password in the Direct tab; players as on
+//!   the Internet tab). A game is full when its seats are: bots never
+//!   fill one.
 //! - **Direct:** an address or an invite code (`rlx1…`, any case; the app
 //!   tells them apart) and a password (the last one typed remembered).
 //!
@@ -144,7 +147,7 @@ fn internet(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<Ui
     }
     let Some(g) = selected.and_then(|k| games.iter().find(|g| g.key == k)) else { return };
     ui.add_space(8.0);
-    let full = g.players >= g.max_players;
+    let full = g.is_full();
     let why_not = match &g.incompatible {
         Some(v) => Some(v.clone()),
         None if full => Some("This game is full.".into()),
@@ -193,7 +196,7 @@ fn row(ui: &mut Ui, g: &InternetEntry, selected: &mut Option<[u8; 32]>) {
     ui.label(text(g.map.clone()));
     ui.label(text(g.mod_name.clone()));
     let playing = if g.playing { " (playing)" } else { "" };
-    ui.label(text(format!("{}/{}{playing}", g.players, g.max_players)));
+    ui.label(text(format!("{}{playing}", g.players_text())));
     let ping = match (&g.incompatible, g.addr) {
         (Some(v), _) => v.clone(),
         (None, None) => VIA_RELAYS.into(),
@@ -218,8 +221,8 @@ fn lan(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<UiActio
     ScrollArea::vertical().id_salt("lan games").max_height(300.0).auto_shrink([false, true]).show(ui, |ui| {
         for g in games {
             let lock = if g.password { "  🔒" } else { "" };
-            let text = format!("{}   {}   {}/{}{lock}", g.name, g.map, g.players, g.max_players);
-            let full = g.players >= g.max_players;
+            let text = format!("{}   {}   {}{lock}", g.name, g.map, g.players_text());
+            let full = g.is_full();
             let button =
                 Button::new(RichText::new(text).size(16.0)).min_size(egui::vec2(ui.available_width(), 30.0));
             let r = ui.add_enabled(!connecting && !full, button);

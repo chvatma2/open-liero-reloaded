@@ -918,13 +918,14 @@ impl Browser {
 
 /// A public server is listed; STUN's answer is only an ICE candidate
 /// (N47): without a mapping or a configured address its note and invite
-/// carry no address, and players join through its relays.
+/// carry no address, and players join through its relays. Its fill bots
+/// take no seat: "0/8 +3 bots" (the user's report of 2026-10-15).
 #[test]
 fn a_public_server_is_listed() {
     let Some(dir) = content_dir() else { return };
     let relay = TestRelay::start();
     let stun = StunResponder::start(SocketAddr::from((PUBLIC, 40000)));
-    let mut cfg = config(&[], 0, false, 1.0);
+    let mut cfg = config(&[], 3, false, 1.0);
     cfg.visibility = Visibility::Public;
     cfg.relays = vec![relay.url()];
     cfg.stun = vec![stun.server()];
@@ -952,6 +953,7 @@ fn a_public_server_is_listed() {
         mod_hash: s.mod_hash.clone(),
         players: 0,
         max_players: 8,
+        bots: 3,
         spectators: 0,
         max_spectators: 4,
         password: false,

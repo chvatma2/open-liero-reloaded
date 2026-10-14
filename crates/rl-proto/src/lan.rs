@@ -12,6 +12,9 @@ pub const LAN_PORT: u16 = 23401;
 /// Largest accepted announcement.
 pub const MAX_LAN: usize = 1024;
 
+/// One host's announcement, postcard-encoded: its fields are positional,
+/// so new ones are appended (`bots`, protocol 2) and an older build's
+/// datagram does not decode (its fingerprint differs anyway).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LanAnnounce {
     pub fingerprint: u64,
@@ -24,6 +27,9 @@ pub struct LanAnnounce {
     pub level_id: String,
     pub password: bool,
     pub playing: bool,
+    /// The bots, apart from `players` (the seated members): bots take no
+    /// seat (the user's report of 2026-10-15). At most `MAX_PLAYERS`.
+    pub bots: u8,
 }
 
 pub fn encode_lan(a: &LanAnnounce) -> Vec<u8> {
@@ -40,6 +46,7 @@ pub fn decode_lan(b: &[u8]) -> Result<LanAnnounce, ProtoError> {
         && valid_pack_id(&a.level_id)
         && a.players <= a.max_players
         && a.max_players as usize <= crate::lobby::MAX_PLAYERS
+        && a.bots as usize <= crate::lobby::MAX_PLAYERS
         && a.spectators as usize <= crate::lobby::MAX_SPECTATORS;
     if ok { Ok(a) } else { Err(ProtoError::Invalid) }
 }
@@ -61,6 +68,7 @@ mod tests {
             level_id: "olx-level-dirt-level".to_string(),
             password: true,
             playing: false,
+            bots: 3,
         }
     }
 
@@ -96,6 +104,14 @@ mod tests {
         assert_eq!(decode_lan(&encode_lan(&a)), Err(ProtoError::Invalid));
         let mut a = sample();
         a.max_players = 33;
+        assert_eq!(decode_lan(&encode_lan(&a)), Err(ProtoError::Invalid));
+        // Bots take no seat (the user's report of 2026-10-15): more bots
+        // than seats is a game's right, more than the worms a match holds
+        // is not.
+        let mut a = sample();
+        a.bots = 31;
+        assert_eq!(decode_lan(&encode_lan(&a)), Ok(a.clone()));
+        a.bots = 33;
         assert_eq!(decode_lan(&encode_lan(&a)), Err(ProtoError::Invalid));
     }
 

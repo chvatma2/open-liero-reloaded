@@ -210,6 +210,7 @@ fn a_lan_entry_click_joins_and_a_locked_one_asks_for_the_password() {
             map: "Dirt".into(),
             players: 2,
             max_players: 8,
+            bots: 0,
             password: false,
             addr,
         },
@@ -218,6 +219,7 @@ fn a_lan_entry_click_joins_and_a_locked_one_asks_for_the_password() {
             map: "Dirt".into(),
             players: 1,
             max_players: 8,
+            bots: 0,
             password: true,
             addr: locked,
         },
@@ -817,6 +819,7 @@ fn entry(key: u8, name: &str) -> InternetEntry {
         mod_name: "Liero v1.0".into(),
         players: 2,
         max_players: 8,
+        bots: 0,
         ping: PingView::Unknown,
         region: Region::Europe,
         password: false,
@@ -953,6 +956,69 @@ fn internet_games_join_by_key_and_block() {
     // Blocking twice saves nothing more.
     let again = h.state_mut().ui.update(UiAction::BlockHost([1; 32]));
     assert_eq!(again, [AppCommand::BlockHost([1; 32])]);
+}
+
+/// The user's report of 2026-10-15: bots take no seat a joiner could
+/// have, so a listed game shows its players over its seats and its bots
+/// beside them ("1/8 +3 bots", plain "1/8" without bots), and only full
+/// seats make it full, on the Internet tab and on the LAN.
+#[test]
+fn listed_games_show_bots_apart_and_only_seats_fill() {
+    let mut h = harness();
+    h.state_mut().ui.update(UiAction::Open(Screen::Multiplayer));
+    let game = |key: u8, name: &str, players: u8, max_players: u8, bots: u8| InternetEntry {
+        players,
+        max_players,
+        bots,
+        ..entry(key, name)
+    };
+    let mut playing = game(2, "One bot", 1, 8, 1);
+    playing.playing = true;
+    let games = vec![
+        game(1, "With bots", 1, 8, 3),
+        playing,
+        game(3, "No bots", 1, 8, 0),
+        game(4, "Seats full", 2, 2, 0),
+        game(5, "Bots past the seats", 1, 2, 20),
+    ];
+    h.state_mut().data.internet = InternetView { status: InternetStatus::Listed, games };
+    settle(&mut h);
+    h.get_by_label("1/8 +3 bots");
+    h.get_by_label("1/8 +1 bot (playing)");
+    h.get_by_label("1/8");
+    h.get_by_label("1/2 +20 bots");
+    // Bots never fill a game: Join is enabled.
+    h.get_by_label("Bots past the seats").click();
+    settle(&mut h);
+    assert!(!h.get_by_role_and_label(Role::Button, "Join").accesskit_node().is_disabled());
+    // Its seats taken, it is full.
+    h.get_by_label("Seats full").click();
+    settle(&mut h);
+    let join = h.get_by_role_and_label(Role::Button, "Join");
+    assert!(join.accesskit_node().is_disabled());
+    join.hover();
+    settle(&mut h);
+    h.get_by_label("This game is full.");
+    // The LAN list alike.
+    let lan = |name: &str, players: u8, max_players: u8, bots: u8| LanEntry {
+        name: name.into(),
+        map: "Dirt".into(),
+        players,
+        max_players,
+        bots,
+        password: false,
+        addr: "192.168.1.9:23400".parse().unwrap(),
+    };
+    h.state_mut().data.lan_games =
+        vec![lan("Desk", 1, 8, 3), lan("Plain", 1, 8, 0), lan("Packed", 2, 2, 0), lan("Botty", 1, 2, 20)];
+    h.get_by_label("LAN").click();
+    settle(&mut h);
+    let enabled =
+        |h: &Harness<'static, App>, text: &str| !h.get_by_label(text).accesskit_node().is_disabled();
+    assert!(enabled(&h, "Desk   Dirt   1/8 +3 bots"));
+    assert!(enabled(&h, "Plain   Dirt   1/8"));
+    assert!(!enabled(&h, "Packed   Dirt   2/2"), "its seats are taken");
+    assert!(enabled(&h, "Botty   Dirt   1/2 +20 bots"), "bots never fill a game");
 }
 
 /// No relay connected: the Internet tab says so.

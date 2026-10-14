@@ -122,6 +122,7 @@ pub fn internet_entry(g: &ListedGame, catalog: &Catalog) -> InternetEntry {
         mod_name,
         players: s.players,
         max_players: s.max_players,
+        bots: s.bots,
         ping: match g.ping {
             Ping::Unknown => PingView::Unknown,
             Ping::Measuring => PingView::Measuring,
@@ -625,6 +626,7 @@ mod tests {
             mod_hash: rl_proto::NO_HASH.into(),
             players: 1,
             max_players: 8,
+            bots: 3,
             spectators: 0,
             max_spectators: 4,
             password: false,
@@ -642,6 +644,10 @@ mod tests {
         i.events.push(PoolEvent::Event { relay: 0, event: note });
         i.poll(t0 + Duration::from_secs(60), 1_000_660);
         assert_eq!(i.games().len(), 1, "a current note is listed");
+        // The user's report of 2026-10-15: the tab shows the seated
+        // players and the bots apart.
+        let e = internet_entry(&i.games()[0], &Catalog::default());
+        assert_eq!((e.players, e.max_players, e.bots), (1, 8, 3));
     }
 
     /// Final review B-M1: a pool whose relays all dropped says so even

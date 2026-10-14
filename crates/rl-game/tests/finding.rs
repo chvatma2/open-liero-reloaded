@@ -392,6 +392,7 @@ fn announce_on(relay: &TestRelay, id: &rl_lobby::Identity, name: &str, created_a
         mod_hash: rl_proto::NO_HASH.into(),
         players: 1,
         max_players: 8,
+        bots: 0,
         spectators: 0,
         max_spectators: 4,
         password: false,
@@ -687,6 +688,7 @@ fn the_apps_lan_list_fills_without_an_online_game() {
         level_id: LEVEL.into(),
         password: false,
         playing: false,
+        bots: 3,
     };
     let start = Instant::now();
     while !app.shell().data.lan_games.iter().any(|g| g.name == "Desk game") {
@@ -695,6 +697,9 @@ fn the_apps_lan_list_fills_without_an_online_game() {
         app.network_frame(Instant::now());
         std::thread::sleep(Duration::from_millis(5));
     }
+    // The seated players and the bots apart (the user's report of 2026-10-15).
+    let g = app.shell().data.lan_games.iter().find(|g| g.name == "Desk game").unwrap();
+    assert_eq!((g.players, g.max_players, g.bots), (1, 8, 3));
 }
 
 /// The real app joins a typed host name: looked up on a thread ("Looking

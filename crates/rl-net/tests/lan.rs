@@ -18,6 +18,7 @@ fn announce(name: &str, port: u16) -> LanAnnounce {
         level_id: "olx-level-dirt-level".to_string(),
         password: false,
         playing: false,
+        bots: 0,
     }
 }
 

@@ -70,6 +70,7 @@ fn samples() -> Vec<Vec<u8>> {
             level_id: "dirt".into(),
             password: false,
             playing: false,
+            bots: 3,
         }),
     ];
     for m in [

@@ -29,6 +29,8 @@ pub const MIN_GAP: Duration = Duration::from_secs(12);
 pub const MAX_MODE: usize = 16;
 /// Longest `map_name`, in characters.
 pub const MAX_MAP_NAME: usize = 40;
+/// The most bots a summary counts: every worm a match holds.
+const MAX_BOTS: u8 = MAX_PLAYERS as u8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Region {
@@ -60,8 +62,13 @@ pub struct GameSummary {
     #[serde(rename = "mod")]
     pub mod_id: String,
     pub mod_hash: String,
+    /// The seated members: the seats taken of `max_players`.
     pub players: u8,
     pub max_players: u8,
+    /// The bots, which take no seat (the user's report of 2026-10-15): at
+    /// most `MAX_PLAYERS`. A note without it (an older build's) has none.
+    #[serde(default)]
+    pub bots: u8,
     pub spectators: u8,
     pub max_spectators: u8,
     pub password: bool,
@@ -99,9 +106,11 @@ pub struct Hosting {
 impl GameSummary {
     /// The one summary of a hosted lobby, for Nostr and (through
     /// [`GameSummary::lan`]) the LAN, so both count alike: players are the
-    /// seated members and the bots, spectators the other members, each held
-    /// to its maximum; playing from the start to the results. Its notes are
-    /// valid when the lobby's name and level id are (the lobby's own are).
+    /// seated members, spectators the other members, each held to its
+    /// maximum, and bots the setup's bots apart (they take no seat a
+    /// joiner could have: the user's report of 2026-10-15); playing from
+    /// the start to the results. Its notes are valid when the lobby's name
+    /// and level id are (the lobby's own are).
     pub fn of_lobby(state: &LobbyState, host: &Hosting) -> GameSummary {
         let seated = state.members.iter().filter(|m| matches!(m.seat, SeatWire::Player { .. })).count();
         let count = |n: usize, max: u8| u8::try_from(n).unwrap_or(u8::MAX).min(max);
@@ -115,8 +124,9 @@ impl GameSummary {
             map_name: display_name(&host.map_name, &setup.level_id),
             mod_id: setup.mod_id.clone(),
             mod_hash: mod_hash.unwrap_or(NO_HASH).into(),
-            players: count(seated + setup.bots.len(), host.max_players),
+            players: count(seated, host.max_players),
             max_players: host.max_players,
+            bots: count(setup.bots.len(), MAX_BOTS),
             spectators: count(state.members.len() - seated, host.max_spectators),
             max_spectators: host.max_spectators,
             password: host.password,
@@ -144,6 +154,7 @@ impl GameSummary {
             level_id: self.map.clone(),
             password: self.password,
             playing: self.playing,
+            bots: self.bots,
         }
     }
 }
@@ -201,6 +212,9 @@ fn check(s: &GameSummary) -> Result<(), AnnounceError> {
     }
     if s.players > s.max_players || usize::from(s.max_players) > MAX_PLAYERS {
         return bad("players");
+    }
+    if usize::from(s.bots) > MAX_PLAYERS {
+        return bad("bots");
     }
     if s.spectators > s.max_spectators || usize::from(s.max_spectators) > MAX_SPECTATORS {
         return bad("spectators");

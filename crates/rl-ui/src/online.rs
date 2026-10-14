@@ -446,11 +446,38 @@ impl OnlineSettings {
 pub struct LanEntry {
     pub name: String,
     pub map: String,
+    /// The seated members: the seats taken of `max_players`.
     pub players: u8,
     pub max_players: u8,
+    /// The bots, which take no seat.
+    pub bots: u8,
     /// A password is needed.
     pub password: bool,
     pub addr: SocketAddr,
+}
+
+/// A listed game's players as the lists show them: the seats taken of
+/// the seats, then its bots apart ("1/8 +3 bots"; "1/8" without bots).
+/// Bots take no seat a joiner could have (the user's report of
+/// 2026-10-15).
+fn players_text(players: u8, max_players: u8, bots: u8) -> String {
+    match bots {
+        0 => format!("{players}/{max_players}"),
+        1 => format!("{players}/{max_players} +1 bot"),
+        n => format!("{players}/{max_players} +{n} bots"),
+    }
+}
+
+impl LanEntry {
+    /// [`players_text`] of this game.
+    pub fn players_text(&self) -> String {
+        players_text(self.players, self.max_players, self.bots)
+    }
+
+    /// Every seat is taken (bots take none).
+    pub fn is_full(&self) -> bool {
+        self.players >= self.max_players
+    }
 }
 
 /// A ping as the Internet tab shows it (`rl_discovery::Ping`).
@@ -484,8 +511,11 @@ pub struct InternetEntry {
     pub map: String,
     /// The mod's name (its id when this game does not have it).
     pub mod_name: String,
+    /// The seated members: the seats taken of `max_players`.
     pub players: u8,
     pub max_players: u8,
+    /// The bots, which take no seat.
+    pub bots: u8,
     pub ping: PingView,
     pub region: Region,
     /// A password is needed.
@@ -510,6 +540,18 @@ pub enum InternetStatus {
     Searching,
     /// The games are listed.
     Listed,
+}
+
+impl InternetEntry {
+    /// [`players_text`] of this game.
+    pub fn players_text(&self) -> String {
+        players_text(self.players, self.max_players, self.bots)
+    }
+
+    /// Every seat is taken (bots take none).
+    pub fn is_full(&self) -> bool {
+        self.players >= self.max_players
+    }
 }
 
 /// What the Internet tab lists.

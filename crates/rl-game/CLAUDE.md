@@ -373,7 +373,8 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   screens show, the selected game pinged (`Pinger`, a TCP connect on a
   thread, only games the list accepted with an address), the view
   (`internet_entry`: the mod's name from the catalog, the region
-  converted naming every variant) made again only when something changed
+  converted naming every variant, the seated players and the bots apart
+  as the note gives them; the LAN list's `net::lan_entry` alike) made again only when something changed
   (a note the list refused changes nothing: `GameList::offer`'s result).
   The list's ages and the subscription's `since` use the wall clock read
   at each poll (`unix_now`; never the frames' monotonic clock, which

@@ -41,7 +41,10 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   `MAX_ARCHIVE_BYTES` restates rl-pack's `MAX_ARCHIVE`. `valid_hash` is 64
   lowercase hex; `NO_HASH` is valid and means unknown. `Look::skin_hash`
   and `Member::download` (percent) are new; `PROTOCOL_VERSION` is 2.
-- **LAN** (`lan.rs`): `LanAnnounce` on UDP `LAN_PORT` (23401), `MAX_LAN`.
+- **LAN** (`lan.rs`): `LanAnnounce` on UDP `LAN_PORT` (23401), `MAX_LAN`;
+  `players` the seated members (at most `max_players`, itself at most
+  `MAX_PLAYERS`), `bots` apart (appended; at most `MAX_PLAYERS`: bots take
+  no seat, the user's report of 2026-10-15).
 - **Paths** (N49, N61): `Path { Direct, MappedPort, HolePunched, Relayed }`,
   how a link reaches its peer (rl-net classifies ICE's selected pair);
   `Member::path` (appended; `None` for the host's own player).

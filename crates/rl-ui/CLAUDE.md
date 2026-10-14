@@ -186,15 +186,19 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   the app keeps current: `InternetStatus::{NoRelay, Searching, Listed}`,
   "No relay reachable", "Searching…", "No games found"; a grid of
   `InternetEntry`: name (selects: `MenuData::selected_game`, which the app
-  pings), map, mod, players, ping (`PingView`), region, a lock; another
+  pings), map, mod, players (`players_text()`: the seats taken of the
+  seats, the bots apart, "1/8 +3 bots", "1/8 +1 bot", "1/8" without; the
+  user's report of 2026-10-15: bots take no seat), ping (`PingView`), region, a lock; another
   version greyed with "needs version …"; plan 12b: one without an address
   is joinable (through the relays, the app's), its ping column
   `VIA_RELAYS` ("via relays"); the selected game's "Game password", Join
   (`JoinListed { addr: Option<SocketAddr>, key, password }` → `JoinGame {
   addr: Option<String>, expected_host: Some(key) }`, not remembered;
-  disabled with its reason on hover: another version, full) and "Block this host" (`BlockHost`
+  disabled with its reason on hover: another version, full: `is_full()`,
+  the seats taken, bots never) and "Block this host" (`BlockHost`
   → `AppCommand::BlockHost`, the hex key saved in
-  `online.finding.blocked`)), **LAN** (today's list) and **Direct**
+  `online.finding.blocked`)), **LAN** (today's list; `LanEntry`'s
+  `players_text()` and `is_full()` as the Internet tab's) and **Direct**
   ("Address or invite code": `Join` as before, `is_invite` text, `rlx1`
   any case or at least 60 letters and digits (a typo in the prefix: the
   app then says "damaged", never looks it up as a name), said to be an
@@ -372,7 +376,8 @@ settings sanitized (TURN entries, `port_mapping` on for an older file),
 `internet_games_join_by_key_and_block`, `the_internet_tab_says_no_relay_reachable`,
 `the_lobby_shows_the_invite_and_copies_it`, `the_host_chooses_who_can_join`,
 `an_addressless_internet_game_is_joinable` (Join enabled, `addr: None`,
-the join's step as the waiting text), `the_lobby_shows_reach_lines_and_path_tags`;
+the join's step as the waiting text), `the_lobby_shows_reach_lines_and_path_tags`,
+`listed_games_show_bots_apart_and_only_seats_fill`;
 `tests/layout.rs`'s `the_lobbys_long_lines_wrap_in_a_narrow_window`
 (1280 × 720 at 1, 2 and 3 pixels a point, 3440 × 1440 at 2),
 `the_longest_join_texts_and_turn_options_fit` (the same sizes, and
