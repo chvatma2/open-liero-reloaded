@@ -323,8 +323,11 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   it: the Internet tab and the LAN list stayed empty, a typed name hung
   on "Looking up …"). **Hidden window** (decision N21): while
   `Shell::network_live`, `about_to_wait` runs `App::hidden_frame` (the
-  network and the match's ticks, no drawing) every `net::HIDDEN_FRAME`
-  (4 ms, `WaitUntil`: not a spinning `Poll`). **In-game chat**: the options' `online.chat_key` (T)
+  network and the match's ticks, no drawing) every `Shell::hidden_wake`
+  (`WaitUntil`: not a spinning `Poll`): `net::HIDDEN_FRAME` (4 ms) while
+  an online game is live, `net::HIDDEN_IDLE_FRAME` (60 ms) for the lists,
+  lingering relays, a lookup or a replay being made alone
+  (`a_hidden_window_wakes_by_what_is_live`). **In-game chat**: the options' `online.chat_key` (T)
   opens rl-ui's field over the playfield (`Shell::open_chat`, from
   `App::key`); while it is open no key reaches the game (`handler.rs`,
   `App::key`) and those held are released. **Network

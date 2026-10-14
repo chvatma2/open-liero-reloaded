@@ -359,7 +359,7 @@ impl App {
     /// A frame while the window cannot show one (minimised or covered)
     /// and the network is live (decision N21): the network polled and
     /// the match ticked, nothing drawn. `about_to_wait` runs it about
-    /// every `net::HIDDEN_FRAME` and does the outcomes.
+    /// every `Shell::hidden_wake` and does the outcomes.
     pub fn hidden_frame(&mut self) -> Vec<Outcome> {
         let now = self.now();
         let mut out = self.network_frame(now);

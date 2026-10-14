@@ -66,11 +66,22 @@ const MAX_TURN: usize = 2;
 
 /// A TURN server for a signalled client's allocations: `host:port` (a name
 /// is resolved on the endpoint's DNS thread) and long-term credentials.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// `Debug` hides the password (configs get printed).
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct TurnServerSpec {
     pub addr: String,
     pub user: String,
     pub pass: String,
+}
+
+impl std::fmt::Debug for TurnServerSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TurnServerSpec")
+            .field("addr", &self.addr)
+            .field("user", &self.user)
+            .field("pass", &"•••")
+            .finish()
+    }
 }
 
 /// What an endpoint gathers for signalled setups (N48, N51). The default
@@ -1106,6 +1117,19 @@ impl Drop for Endpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A TURN server's password never shows in a printed config.
+    #[test]
+    fn a_turn_servers_password_is_not_printed() {
+        let spec =
+            TurnServerSpec { addr: "turn.example:3478".into(), user: "anna".into(), pass: "s3cret".into() };
+        let ice = IceConfig { turn: vec![spec.clone()], ..IceConfig::default() };
+        let cfg = EndpointConfig { ice, ..EndpointConfig::default() };
+        for printed in [format!("{spec:?}"), format!("{cfg:?}")] {
+            assert!(!printed.contains("s3cret"), "{printed}");
+            assert!(printed.contains("turn.example:3478") && printed.contains("anna"), "{printed}");
+        }
+    }
 
     const SDP: &str = "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n\
         a=candidate:1 1 udp 2130706431 192.168.1.5 50000 typ host\r\n\

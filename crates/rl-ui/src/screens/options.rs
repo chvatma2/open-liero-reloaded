@@ -245,7 +245,7 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
         form_row(ui, "Region", |ui, label| {
             ComboBox::from_id_salt("region")
                 .selected_text(f.region.label())
-                .width(220.0)
+                .width(fit(ui, 220.0))
                 .show_ui(ui, |ui| {
                     for r in Region::ALL {
                         ui.selectable_value(&mut f.region, r, r.label());
@@ -258,7 +258,7 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
         form_row(ui, "Public address", |ui, label| {
             let text = v.address.get_or_insert_with(|| f.public_address.clone());
             let r = ui
-                .add(TextEdit::singleline(text).hint_text("none").desired_width(220.0))
+                .add(TextEdit::singleline(text).hint_text("none").desired_width(fit(ui, 220.0)))
                 .labelled_by(label)
                 .on_hover_text(
                     "The address players join your hosted games at directly, when you forwarded the port \
@@ -274,10 +274,13 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
         });
         // Not in a form row: its long label wraps in a narrow column
         // (ruling UI-1).
-        ui.checkbox(&mut f.port_mapping, PORT_MAPPING).on_hover_text(
-            "Your hosted Internet and invite games ask your router to open their port, so players join \
-             directly. Applies to the next game you host.",
-        );
+        ui.scope(|ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            ui.checkbox(&mut f.port_mapping, PORT_MAPPING).on_hover_text(
+                "Your hosted Internet and invite games ask your router to open their port, so players join \
+                 directly. Applies to the next game you host.",
+            );
+        });
     });
     ui.add_space(10.0);
     let relays = f.relays.clone().unwrap_or_else(|| data.default_relays.clone());
@@ -340,6 +343,13 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
     }
 }
 
+/// `width`, or less in a column too narrow for it (ruling UI-1: the
+/// options fit at every window size and UI scale; a text field's frame
+/// and margin aside).
+fn fit(ui: &Ui, width: f32) -> f32 {
+    width.min(ui.available_width() - 16.0).max(40.0)
+}
+
 /// The Online tab's port mapping switch.
 const PORT_MAPPING: &str = "Open the game's port on my router (UPnP/NAT-PMP/PCP)";
 
@@ -381,7 +391,7 @@ fn server_list(
     }
     for (i, s) in list.iter().enumerate() {
         let s = shown(s);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if ui.small_button("Remove").on_hover_text(format!("Remove {s}")).clicked() {
                 let mut l = list.to_vec();
                 l.remove(i);
@@ -390,9 +400,11 @@ fn server_list(
             ui.label(RichText::new(s).monospace());
         });
     }
-    ui.horizontal(|ui| {
+    // Wrapped: in a narrow column (a large UI scale) Add and why go below.
+    ui.horizontal_wrapped(|ui| {
         let label = ui.label(format!("New {what}"));
-        let r = ui.add(TextEdit::singleline(new).hint_text(hint).desired_width(300.0)).labelled_by(label.id);
+        let field = TextEdit::singleline(new).hint_text(hint).desired_width(fit(ui, 300.0));
+        let r = ui.add(field).labelled_by(label.id);
         let typed = new.trim().to_string();
         let why = refusal(list, &typed, rule);
         let ok = why.is_none() && !typed.is_empty();

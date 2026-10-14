@@ -563,6 +563,8 @@ announcements.
     its threads wait for it first (at most `DROP_WAIT`, on their own
     threads, their deadlines moved by as much), so an old deletion that
     lands late never removes the new game's mapping.
+    `TurnServerSpec`'s `Debug` hides the password (`•••`;
+    `a_turn_servers_password_is_not_printed`).
     rl-server (Task 8) and the game (Task 9) wait on it at exit through
     `OnlinePeer::shutdown`; rl-cli is to (Task 10). Dropping the endpoint
     is the fallback: the same thread, nobody waits (a process exiting

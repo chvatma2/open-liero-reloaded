@@ -373,10 +373,13 @@ settings sanitized (TURN entries, `port_mapping` on for an older file),
 the join's step as the waiting text), `the_lobby_shows_reach_lines_and_path_tags`;
 `tests/layout.rs`'s `the_lobbys_long_lines_wrap_in_a_narrow_window`
 (1280 × 720 at 1, 2 and 3 pixels a point, 3440 × 1440 at 2),
-`the_longest_join_texts_and_turn_options_fit` (the same sizes: rl-online's
-`no_path` as the Multiplayer screen's failure, the Multiplayer and
-Options tab rows, the Online tab reached by a click, its port mapping
-switch and TURN rows);
+`the_longest_join_texts_and_turn_options_fit` (the same sizes, and
+borderless fullscreen on 16:10 and 4:3 desktops at UI scale 3, 384 and
+320 points wide: rl-online's `no_path` as the Multiplayer screen's
+failure, the Multiplayer and Options tab rows, the Online tab reached by
+a click and every widget of it in the window: `form_name` takes at most
+40 % of a narrow column, the Online tab's fields `fit` it, its server
+rows wrap);
 `tests/ingame.rs`: the HUD layout,
 the weapon selection, the pause menu, Esc/F5 repeats, the results;
 `tests/import.rs`: `import_runs_off_the_ui_thread_and_reports` on

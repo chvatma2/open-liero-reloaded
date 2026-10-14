@@ -37,6 +37,10 @@ const SAMPLE_EVERY: Duration = Duration::from_millis(100);
 /// A hidden window's frames (decision N21) come this often: the network
 /// and the 100 Hz ticks go on without drawing, and without spinning.
 pub const HIDDEN_FRAME: Duration = Duration::from_millis(4);
+/// A hidden window's frames while the network is live without an online
+/// game (the Multiplayer screen's lists, lingering relays, a lookup): no
+/// match to keep at 100 Hz, so a slow wake is enough (Task 9 re-review).
+pub const HIDDEN_IDLE_FRAME: Duration = Duration::from_millis(60);
 /// Where desync bundles go in the data directory.
 pub const DESYNCS_DIR: &str = "desyncs";
 /// Download cache directories tried, the first and `-2` to `-N`, while

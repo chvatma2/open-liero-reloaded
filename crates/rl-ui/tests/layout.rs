@@ -245,16 +245,26 @@ fn the_lobbys_long_lines_wrap_in_a_narrow_window() {
 /// Review Minor 5: the longest new texts outside the lobby fit too, at
 /// the same sizes and scales: a join's failure under the Multiplayer
 /// screen's button (rl-online's `no_path`, about 300 characters), and the
-/// Options' port mapping switch and TURN relays (ruling UI-1: the tab rows
-/// fit at 427 points too, the Online tab reached by a click).
+/// Options' tab row and Online tab, every widget of it (ruling UI-1: at
+/// 427 points too, and in borderless fullscreen on 16:10 and 4:3 desktops
+/// at UI scale 3, 384 and 320 points wide).
 #[test]
 fn the_longest_join_texts_and_turn_options_fit() {
     let no_path = "no network path to the game: hole punching failed and no TURN relay could be used. The host can \
                    open port 23400 (TCP and UDP) on their router (UPnP, or port forwarding) or use a dedicated \
                    server; anyone can run a TURN relay (rl-server --relay)";
-    for (w, h, ppp) in
-        [(1280.0, 720.0, 1.0), (1280.0, 720.0, 2.0), (1280.0, 720.0, 3.0), (3440.0, 1440.0, 2.0)]
-    {
+    // Windows, and borderless fullscreen on 16:10 and 4:3 desktops at UI
+    // scale 3 (`theme::pixels_per_point`: height / 720 × 3; 384 × 240 and
+    // 320 × 240 points).
+    let fullscreen = |w: f32, h: f32| (w, h, rl_ui::theme::pixels_per_point(h, 3.0));
+    for (w, h, ppp) in [
+        (1280.0, 720.0, 1.0),
+        (1280.0, 720.0, 2.0),
+        (1280.0, 720.0, 3.0),
+        (3440.0, 1440.0, 2.0),
+        fullscreen(1920.0, 1200.0),
+        fullscreen(1024.0, 768.0),
+    ] {
         let at = format!("{w}x{h} at {ppp} pixels a point");
         let inside = |harness: &Harness<'static, App>, label: &str| {
             let b = harness.get_by_label(label).accesskit_node().bounding_box().unwrap();
@@ -283,6 +293,10 @@ fn the_longest_join_texts_and_turn_options_fit() {
         harness.run();
         harness.step();
         harness.step();
+        // Every widget of the Online tab, not only these.
+        for (name, r) in widgets(&harness) {
+            assert!(r.left() >= -0.5 && r.right() <= w + 0.5, "{name:?} at {r:?} leaves the window: {at}");
+        }
         inside(&harness, "Open the game's port on my router (UPnP/NAT-PMP/PCP)");
         inside(&harness, "anna:•••@turn.example.org:3478");
     }

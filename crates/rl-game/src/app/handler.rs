@@ -71,7 +71,8 @@ impl ApplicationHandler for App {
     /// While the network is live (`Shell::network_live`: an online game,
     /// the Multiplayer screen's lists, a lookup) it goes on instead (decision N21): a
     /// frame without drawing (`App::hidden_frame`: the network, the
-    /// match's ticks) every `net::HIDDEN_FRAME`, not spinning.
+    /// match's ticks) every `Shell::hidden_wake` (4 ms with an online
+    /// game, 60 ms for the lists alone), not spinning.
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         if let Some(g) = &mut self.gilrs {
             while let Some(ev) = g.next_event() {
@@ -88,12 +89,11 @@ impl ApplicationHandler for App {
             }
             el.set_control_flow(ControlFlow::Poll);
             w.window.request_redraw();
-        } else if self.shell.network_live() {
+        } else if let Some(wake) = self.shell.hidden_wake() {
             self.paused = true;
             let out = self.hidden_frame();
             self.outcomes(el, out);
-            let next = std::time::Instant::now() + crate::net::HIDDEN_FRAME;
-            el.set_control_flow(ControlFlow::WaitUntil(next));
+            el.set_control_flow(ControlFlow::WaitUntil(std::time::Instant::now() + wake));
         } else {
             self.paused = true;
             el.set_control_flow(ControlFlow::Wait);

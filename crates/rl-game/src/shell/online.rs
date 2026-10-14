@@ -78,6 +78,21 @@ impl Shell {
         self.net.is_some() || self.sim_host.is_some() || !self.replays.is_empty()
     }
 
+    /// How often a hidden window (minimised or covered) runs the network
+    /// frame: `net::HIDDEN_FRAME` (4 ms) while an online game is live (a
+    /// lobby, its match, `--net-sim`'s host), `net::HIDDEN_IDLE_FRAME`
+    /// (60 ms) while only the lists, lingering relays, a lookup or a
+    /// replay being made keep the network live, never otherwise.
+    pub fn hidden_wake(&self) -> Option<std::time::Duration> {
+        if self.net.is_some() || self.sim_host.is_some() {
+            Some(net::HIDDEN_FRAME)
+        } else if self.network_live() {
+            Some(net::HIDDEN_IDLE_FRAME)
+        } else {
+            None
+        }
+    }
+
     /// Anything the network frame ([`Shell::net_frame`]) keeps going is
     /// live: an online game ([`Shell::online_active`]), the Multiplayer or
     /// Host screen (the LAN list, the Internet tab), the LAN listener or

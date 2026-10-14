@@ -764,3 +764,24 @@ fn hosting_again_on_the_same_port_keeps_its_mapping() {
     let ports: Vec<u16> = gw.mappings().iter().map(|m| m.2).collect();
     assert_eq!(ports, [port, port], "the new game's TCP and UDP mapping: {:?}", gw.mappings());
 }
+
+/// Task 9 re-review: a hidden window wakes every 4 ms only for a live
+/// online game; the lists alone (or lingering relays) every 60 ms; and not
+/// at all with nothing network-related live.
+#[test]
+fn a_hidden_window_wakes_by_what_is_live() {
+    use rl_game::net::{HIDDEN_FRAME, HIDDEN_IDLE_FRAME};
+    let Some(dir) = content_dir() else { return };
+    let relay = TestRelay::start();
+    let mut sh = menus(&dir, Store::in_memory(), "Anna", 1.0);
+    use_relays(&mut sh, &[relay.url()]);
+    assert_eq!(sh.hidden_wake(), None, "the main menu");
+    sh.act(UiAction::Open(Screen::Multiplayer));
+    assert_eq!(sh.hidden_wake(), Some(HIDDEN_IDLE_FRAME), "the lists");
+    frame(&mut [&mut sh], Instant::now(), &mut |_| Keys(0));
+    sh.act(UiAction::Back);
+    assert_eq!(sh.hidden_wake(), Some(HIDDEN_IDLE_FRAME), "the relays linger");
+    host_as(&mut sh, Visibility::Lan);
+    assert_eq!(sh.hidden_wake(), Some(HIDDEN_FRAME), "an online game");
+    assert_eq!((HIDDEN_FRAME.as_millis(), HIDDEN_IDLE_FRAME.as_millis()), (4, 60));
+}

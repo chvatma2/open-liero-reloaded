@@ -487,12 +487,15 @@ fn form_line<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.allocate_ui_with_layout(size, Layout::left_to_right(Align::Center), add).inner
 }
 
-/// A form's name cell: [`FORM_LABEL`] wide, its widget right-aligned.
+/// A form's name cell: [`FORM_LABEL`] wide (less in a narrow column), its
+/// widget right-aligned.
 fn form_name(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> egui::Response) -> egui::Response {
     let h = form_height(ui);
     let right = Layout::right_to_left(Align::Center);
-    ui.allocate_ui_with_layout(vec2(FORM_LABEL, h), right, |ui| {
-        ui.set_min_width(FORM_LABEL);
+    // At most 40 % of a narrow column (a large UI scale, ruling UI-1).
+    let w = FORM_LABEL.min((ui.available_width() * 0.4).floor());
+    ui.allocate_ui_with_layout(vec2(w, h), right, |ui| {
+        ui.set_min_width(w);
         add(ui)
     })
     .inner
