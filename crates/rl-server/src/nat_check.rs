@@ -256,6 +256,7 @@ fn relays(config: &Config, deadline: Duration, out: &mut dyn Write) -> anyhow::R
     }
     let mut pool = Pool::start(PoolConfig { relays: config.relays.clone(), ..PoolConfig::default() });
     pool.subscribe(TURN_SUB, vec![TurnList::filter(unix_now())]);
+    let mut probes: Vec<Probe> = config.relays.iter().map(|url| Probe::start(url)).collect();
     let n = config.relays.len();
     let mut status: Vec<Option<String>> = vec![None; n];
     let mut eose = vec![false; n];
@@ -266,7 +267,10 @@ fn relays(config: &Config, deadline: Duration, out: &mut dyn Write) -> anyhow::R
     let settled = |status: &[Option<String>], eose: &[bool]| {
         status.iter().zip(eose).all(|(s, e)| matches!(s.as_deref(), Some(s) if s != "connected") || *e)
     };
-    while begun.elapsed() < deadline && !settled(&status, &eose) {
+    while begun.elapsed() < deadline && !(settled(&status, &eose) && probes.iter().all(Probe::done)) {
+        for p in &mut probes {
+            p.poll();
+        }
         pool.poll(&mut events);
         for e in events.drain(..) {
             match e {
@@ -312,6 +316,23 @@ fn relays(config: &Config, deadline: Duration, out: &mut dyn Write) -> anyhow::R
              when two PCs' clocks differ by that much; set this PC's clock"
         )?;
     }
+    // Whether each reachable relay forwards a joiner's handshake (B-M3).
+    for ((url, s), probe) in config.relays.iter().zip(&status).zip(probes) {
+        if s.as_deref() != Some("connected") {
+            continue;
+        }
+        match probe.verdict {
+            Some(Ok(())) => writeln!(out, "relay {url}: forwards handshakes from new keys")?,
+            Some(Err(why)) => {
+                writeln!(out, "relay {url}: does not forward handshakes from new keys ({why})")?
+            }
+            None => writeln!(
+                out,
+                "relay {url}: does not forward handshakes from new keys (no echo within {} s)",
+                deadline.as_secs_f32()
+            )?,
+        }
+    }
     let open: Vec<&rl_discovery::TurnNote> =
         notes.values().map(|(_, n)| n).filter(|n| n.capacity > 0).collect();
     writeln!(out, "TURN notes: {}", open.len())?;
@@ -324,6 +345,75 @@ fn relays(config: &Config, deadline: Duration, out: &mut dyn Write) -> anyhow::R
         )?;
     }
     Ok(())
+}
+
+/// One relay's handshake probe (final review B-M3: two default relays
+/// refuse events from keys they do not know, which every joiner's is): a
+/// pool of its own, a fresh key, and a kind-21470 event of 16 KiB to that
+/// key once the subscription to it is up. The verdict: forwarded back, or
+/// refused with the relay's message.
+struct Probe {
+    pool: Pool,
+    me: Option<rl_lobby::Identity>,
+    sent: Option<[u8; 32]>,
+    verdict: Option<Result<(), String>>,
+}
+
+/// The probe's subscription id.
+const PROBE_SUB: &str = "probe";
+
+impl Probe {
+    fn start(url: &str) -> Probe {
+        let mut pool = Pool::start(PoolConfig { relays: vec![url.to_string()], ..PoolConfig::default() });
+        let me = rl_net::random_bytes::<32>().ok().and_then(rl_lobby::Identity::from_secret);
+        if let Some(me) = &me {
+            let filter = rl_discovery::Filter {
+                kinds: vec![rl_discovery::KIND_HANDSHAKE],
+                tags: vec![('p', vec![crate::files::hex(&me.public())])],
+                since: Some(unix_now().saturating_sub(MAX_SKEW)),
+                ..rl_discovery::Filter::default()
+            };
+            pool.subscribe(PROBE_SUB, vec![filter]);
+        }
+        let verdict = me.is_none().then(|| Err("no randomness for a key".to_string()));
+        Probe { pool, me, sent: None, verdict }
+    }
+
+    fn done(&self) -> bool {
+        self.verdict.is_some()
+    }
+
+    fn poll(&mut self) {
+        let mut events = Vec::new();
+        self.pool.poll(&mut events);
+        for e in events {
+            match e {
+                PoolEvent::Eose { .. } if self.sent.is_none() => self.send(),
+                PoolEvent::Event { event, .. } if Some(event.id) == self.sent => {
+                    self.verdict.get_or_insert(Ok(()));
+                }
+                PoolEvent::Ok { id, accepted: false, message, .. } if Some(id) == self.sent => {
+                    self.verdict.get_or_insert(Err(message));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The handshake-sized event to our own key.
+    fn send(&mut self) {
+        let Some(me) = &self.me else { return };
+        let unix = unix_now();
+        let tags = vec![
+            vec!["p".to_string(), crate::files::hex(&me.public())],
+            vec!["expiration".to_string(), (unix + MAX_SKEW).to_string()],
+        ];
+        let content = "x".repeat(rl_discovery::handshake::MAX_HANDSHAKE_CONTENT - 64);
+        let aux = rl_net::random_bytes::<32>().unwrap_or([0; 32]);
+        let event = rl_discovery::Event::sign(me, unix, rl_discovery::KIND_HANDSHAKE, tags, content, aux);
+        self.sent = Some(event.id);
+        self.pool.publish(event);
+    }
 }
 
 /// A relay's clock against this PC's, `by` seconds (ahead when positive).
@@ -393,12 +483,15 @@ mod tests {
         })
         .unwrap();
         let gw = FakeGateway::start(true, true, true, Ipv4Addr::new(203, 0, 113, 7), Misbehaviour::Honest);
-        // A relay whose clock is 2 minutes ahead (FR12b-3).
+        // A relay whose clock is 2 minutes ahead (FR12b-3; it refuses the
+        // probe as expired), and one refusing handshakes (B-M3).
         let ahead = TestRelay::start();
         ahead.set_time(unix_now() + 120);
+        let refusing = TestRelay::start();
+        refusing.set_misbehaviour(rl_discovery::Misbehaviour::RefuseKind(rl_discovery::KIND_HANDSHAKE));
         let config = Config {
             stun: vec![turn.local_addr().to_string()],
-            relays: vec![relay.url(), ahead.url()],
+            relays: vec![relay.url(), ahead.url(), refusing.url()],
             ..Config::default()
         };
         let text = report(&config, &gw);
@@ -414,6 +507,12 @@ mod tests {
             &format!("relay {}: connected, its clock agrees with this PC's\n", relay.url()),
             "clock: this PC's clock differs from a relay's by more than a minute: joins through the relays fail \
              when two PCs' clocks differ by that much; set this PC's clock\n",
+            &format!("relay {}: forwards handshakes from new keys\n", relay.url()),
+            &format!(
+                "relay {}: does not forward handshakes from new keys (invalid: event expired)\n",
+                ahead.url()
+            ),
+            &format!("relay {}: does not forward handshakes from new keys (blocked: ", refusing.url()),
             "TURN notes: 1\n",
             "TURN relay 81.2.69.142:3478 (Europe, 3 of 32 in use)\n",
             "nat-check done\n",

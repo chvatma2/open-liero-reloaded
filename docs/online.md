@@ -364,6 +364,9 @@ router: the mapping is deleted
 relay wss://relay.damus.io: connected, its clock agrees with this PC's
 relay wss://nos.lol: connected, its clock 2 s ahead of this PC's
 …
+relay wss://relay.damus.io: forwards handshakes from new keys
+relay wss://nostr.bitcoiner.social: does not forward handshakes from new keys (restricted: …)
+…
 TURN notes: 1
 TURN relay 198.51.100.4:3478 (Europe, 3 of 32 in use)
 nat-check done
@@ -389,7 +392,13 @@ How to read it:
   (from its `Date` header; nothing said when it sends none), or why not.
   A `clock: this PC's clock differs from a relay's by more than a
   minute …` line follows when one is: joins through the relays fail when
-  two PCs' clocks differ by more than a minute.
+  two PCs' clocks differ by more than a minute. Then, for each connected
+  relay, whether it forwards a joiner's handshake (a 16 KiB event from a
+  key it has never seen, sent to that key alone): `forwards handshakes
+  from new keys`, or `does not …` with the relay's reason (a relay that
+  takes events only from keys it knows says `restricted: …` or
+  `blocked: …`). A join through the relays needs a relay both sides use
+  that forwards.
 - **`TURN notes: 0`**: no volunteer relay is announced, so a symmetric
   pair cannot connect.
 

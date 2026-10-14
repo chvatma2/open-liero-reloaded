@@ -154,7 +154,13 @@ beside the executable, else in the working directory).
   PC's (`Pool::clocks`, the handshake's `Date`: "connected, its clock
   agrees with this PC's" within a second, else "N s ahead of|behind this
   PC's"; ruling FR12b-3), a `"clock: …"` warning when one is more than
-  `MAX_SKEW` off, then `"TURN notes: n"` and each open relay's
+  `MAX_SKEW` off, each connected one's handshake probe (final review
+  B-M3: a `Probe` per relay, its own pool and a fresh key, a kind-21470
+  event of `MAX_HANDSHAKE_CONTENT` - 64 bytes to that key once its
+  subscription's `EOSE` came: `"relay {url}: forwards handshakes from
+  new keys"` when it comes back, else `"… does not forward handshakes
+  from new keys ({the relay's refusal | no echo within N s})"`), then
+  `"TURN notes: n"` and each open relay's
   address, region and load); `"nat-check done"`. Errors only when `out`
   fails. The binary passes `NAT_CHECK_WAIT` (5 s). Public servers only
   when run by hand: the tests aim it at in-process fakes.
@@ -327,7 +333,10 @@ three, capacity 3 announced, the closing note, every deletion confirmed),
 port runs in words; a relay on its mapping's address restarted and
 announced on the router's new address (FR12b-2); `--nat-check`'s report with a `TurnServer` as STUN (`NAT: no
 NAT`), a `FakeGateway` (the mapping made, said not public, deleted), a
-`TestRelay` with a TURN note, two `StunResponder`s seeing different
+`TestRelay` with a TURN note (and its handshake probe echoed), one
+whose clock is 2 minutes ahead (its clock line, the clock warning, the
+probe refused as expired) and one refusing kind 21470 (the probe
+refused), two `StunResponder`s seeing different
 ports (`NAT: symmetric NAT`), a `LateUpnp` router's deletion confirmed
 before "deleted" is said, no STUN servers; the NAT judgement. Also: command parsing, `/unban` targets, hex keys,
 the bans and identity files, the log's rotation (and a rename that
