@@ -307,21 +307,32 @@ announcements.
     `gateway: None` skips both, and says so.
   - **`upnp`** (ruling PM-1, our own client; a LAN device must never
     crash or exhaust the game, so every step is bounded and nothing
-    recurses). Sans-IO parsers, fuzzed: `parse_ssdp`, `parse_http`,
-    `control_urls`, `find_element`/`element_text`, `soap_result`.
+    recurses). Sans-IO parsers, fuzzed: `parse_ssdp`, `HttpReader`
+    (`parse_http` feeds one in a piece), `control_urls`,
+    `find_element`/`element_text`, `soap_result`. Every scan is linear
+    in its input (review IN-1: a tag name ends at `<` too, so `<<<…` or
+    `<a<a…` cannot make it quadratic; pinned by time-bounded tests).
     - **SSDP:** a socket on the request's local IP (else the address
       routing toward the gateway), multicast TTL 2; M-SEARCH for
-      `InternetGatewayDevice:1` with `MX: 1` at 0, ¼ and ½ of the window
+      `InternetGatewayDevice:1`, `WANIPConnection:1` and
+      `WANPPPConnection:1` (`TARGETS`; not `ssdp:all` or rootdevice,
+      which every TV answers) with `MX: 1` at 0, ¼ and ½ of the window
       (`MapRequest::search`, `SEARCH` 2 s). A reply counts only as
       `HTTP/1.x 200` with a `LOCATION` `http://<IPv4>[:port]/path` whose
       host is its own sender, not global; bad replies are skipped, never
-      fatal. Up to 4 devices are tried until one works or the window ends.
+      fatal. Up to 4 devices are queued and tried, the default gateway's
+      first (`pick`); replies that arrived while a device was tried are
+      still tried after the window, up to the thread's deadline (review
+      n2: a stalled device answering first does not hide the router).
     - **HTTP/1.1** (`http`): no proxy whatever the environment says, no
       names, no redirects, `Connection: close`; connect, write and read
       bounded by the deadline (reads in 50 ms slices, so a drop stops it);
-      heads up to `HEAD_CAP` (8 KiB), bodies up to `BODY_CAP` (64 KiB),
-      by `Content-Length`, chunks (extensions and trailers ignored) or the
-      close. A device gets `DEVICE_WAIT` (2 s) for its description and
+      heads up to `HEAD_CAP` (8 KiB), ended by CRLF or bare LF lines,
+      bodies up to `BODY_CAP` (64 KiB), by `Content-Length`, chunks
+      (extensions and trailers ignored) or the close; read incrementally
+      (`HttpReader`: the head search and the chunk state resume where they
+      stopped, so an answer split into 1-byte reads costs no more).
+      A device gets `DEVICE_WAIT` (2 s) for its description and
       external address; SOAP calls run to the thread's deadline.
     - **The description:** a flat scan (no tree, so depth costs nothing)
       of `<service>` blocks for `WANIPConnection:1`/`:2` or
@@ -334,10 +345,15 @@ announcements.
       arguments, escaped; description `"rust-liero"`) and
       `DeletePortMapping`, in the found service's namespace. 725 → lease
       0 (never renewed); 718/724 → the next port; other UPnP errors →
-      `Fatal`; no usable answer → `Silent`. A deletion has 450 ms.
-  - **A thread's panic** (a bug) is reported as its failure ("the client
-    panicked") by a guard, and counted under `test-hooks`
-    (`portmap::worker_panics`, which the fuzz tests require to be 0).
+      `Fatal`; no usable answer → `Silent`. A deletion has 450 ms. The
+      thread checks the board and the deadline between steps (each HTTP
+      exchange, each service tried).
+  - **A thread's panic** (a bug) is reported by a guard as its failure
+    ("the client panicked"), or, once it had won, as the mapping dropped
+    (review n1), and counted under `test-hooks` (`portmap::worker_panics`,
+    which the fuzz tests require to be 0). Test hook
+    `portmap::panic_at_renewal(port)` (`test-hooks`) makes a winner panic
+    at its first renewal (not counted).
   - **Drop** sets the board's stop, wakes the threads, and waits at most
     `DROP_WAIT` (1 s) for those that asked for a mapping (`touched`) to
     delete it (PCP/NAT-PMP: lifetime 0, two sends 200 ms apart; UPnP:
@@ -518,12 +534,18 @@ and chunked), PCP first and NAT-PMP as the fallback, every
 an exact request never shifting, mappings deleted on drop, no gateway
 and no UPnP failing within 5 s, a test build refusing a real router,
 `HTTP_PROXY` ignored (a child process of the test binary runs with the
-proxy variables set; the proxy must see no connection), NAT-PMP/PCP
+proxy variables set; the proxy must see no connection, and the child
+must print that it mapped and `1 passed`), a stalled device answering
+before the router (`TwoDevices`: 127.0.0.3 and a relay), a panicking
+winner reported, NAT-PMP/PCP
 answers, the UPnP parsers and UPnP answers end to end fuzzed (through
 `serving`, a 30 ms search window; deep nesting, bodies over 64 KiB,
-malformed chunks; no panic); unit tests in `portmap/pmp.rs` (RFC
-layouts, the nonce, a version-0 answer) and `portmap/upnp.rs` (SSDP
-senders, HTTP framing and caps, descriptions, SOAP faults);
+runs of `<`, `<a`, attributes and entities, malformed chunks; no
+panic); unit tests in `portmap/pmp.rs` (RFC layouts, the nonce, a
+version-0 answer) and `portmap/upnp.rs` (SSDP senders, HTTP framing,
+caps and bare-LF heads, descriptions, SOAP faults, the gateway first,
+and time bounds: pathological markup scanned in under 50 ms, answers
+fed byte by byte in under 100 ms);
 `tests/turn.rs`: a `TurnServer` on 127.0.0.1 with plain sockets
 through `turn_client_proto` (relaying both ways, unbound and through a
 channel; the per-IP limits; a full relay; binding answers;

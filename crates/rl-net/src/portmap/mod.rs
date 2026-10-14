@@ -421,6 +421,8 @@ fn hold(r: &mut dyn Router, ctx: &Ctx, pair: Pair) {
             pair.delete(r);
             return;
         }
+        #[cfg(feature = "test-hooks")]
+        injected_panic(ctx.req.local.port());
         r.renewing();
         let why = match renew(r, ctx, pair) {
             Ok(lifetime) => {
@@ -524,7 +526,7 @@ impl PortMapper {
                 Worker::Pmp => pmp::run,
                 Worker::Upnp => upnp::run,
             };
-            let guard = PanicGuard { worker, tx: tx.clone() };
+            let guard = PanicGuard { worker, tx: tx.clone(), shared: Arc::clone(&shared) };
             let body = move || {
                 let _guard = guard;
                 run(ctx);
@@ -624,29 +626,64 @@ impl Drop for PortMapper {
     }
 }
 
-/// Reports a thread's panic as its failure (a bug: no input may cause one),
-/// counted for the tests (`worker_panics`).
+/// Reports a thread's panic (a bug: no input may cause one) as its failure,
+/// or as the mapping dropped once it had won; counted for the tests
+/// (`worker_panics`).
 struct PanicGuard {
     worker: Worker,
     tx: Sender<Report>,
+    shared: Arc<Shared>,
 }
 
 impl Drop for PanicGuard {
     fn drop(&mut self) {
         if std::thread::panicking() {
             #[cfg(feature = "test-hooks")]
-            PANICS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if !INJECTED.with(std::cell::Cell::get) {
+                PANICS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             let why = match self.worker {
                 Worker::Pmp => "PCP and NAT-PMP: the client panicked",
                 Worker::Upnp => "UPnP: the client panicked",
             };
-            let _ = self.tx.send(Report::Failed { worker: self.worker, why: why.into() });
+            let won = self.shared.board().winner == Some(self.worker);
+            let report = if won {
+                Report::Dropped(why.into())
+            } else {
+                Report::Failed { worker: self.worker, why: why.into() }
+            };
+            let _ = self.tx.send(report);
         }
     }
 }
 
 #[cfg(feature = "test-hooks")]
 static PANICS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Local ports whose winning thread panics at its first renewal.
+#[cfg(feature = "test-hooks")]
+static RENEWAL_PANICS: Mutex<std::collections::BTreeSet<u16>> = Mutex::new(std::collections::BTreeSet::new());
+
+#[cfg(feature = "test-hooks")]
+thread_local! {
+    /// This thread's panic was injected by `panic_at_renewal`: not counted.
+    static INJECTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test hook (feature `test-hooks`): the winner of a mapper for local port
+/// `port` panics at its first renewal, standing in for a bug.
+#[cfg(feature = "test-hooks")]
+pub fn panic_at_renewal(port: u16) {
+    RENEWAL_PANICS.lock().unwrap_or_else(|e| e.into_inner()).insert(port);
+}
+
+#[cfg(feature = "test-hooks")]
+fn injected_panic(port: u16) {
+    if RENEWAL_PANICS.lock().unwrap_or_else(|e| e.into_inner()).remove(&port) {
+        INJECTED.with(|i| i.set(true));
+        panic!("test-hooks: a panic injected at the renewal of port {port}");
+    }
+}
 
 /// How many mapper threads have panicked in this process (feature
 /// `test-hooks`): the fuzz tests require 0.

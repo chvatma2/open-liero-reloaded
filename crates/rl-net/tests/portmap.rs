@@ -318,7 +318,12 @@ fn upnp_ignores_http_proxy_child() {
     req.gateway = None;
     let mut mapper = PortMapper::start(req);
     mapped(&settle(&mut mapper, Duration::from_secs(5)));
+    println!("{PROXY_CHILD_MAPPED}");
 }
+
+/// What the child prints once it has mapped (review n5: a filter matching
+/// no test would pass vacuously).
+const PROXY_CHILD_MAPPED: &str = "proxy child: mapped through the fake";
 
 #[test]
 fn upnp_ignores_http_proxy() {
@@ -326,21 +331,119 @@ fn upnp_ignores_http_proxy() {
     // its own with the proxy variables set.
     let proxy = std::net::TcpListener::bind((LOCALHOST, 0)).unwrap();
     let url = format!("http://{}", proxy.local_addr().unwrap());
-    let status = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "portmap::upnp_ignores_http_proxy_child", "--ignored", "--test-threads", "1"])
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "portmap::upnp_ignores_http_proxy_child",
+            "--ignored",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
         .env("HTTP_PROXY", &url)
         .env("http_proxy", &url)
         .env("ALL_PROXY", &url)
         .env("all_proxy", &url)
         .env_remove("NO_PROXY")
         .env_remove("no_proxy")
-        .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
+        .output()
         .unwrap();
     proxy.set_nonblocking(true).unwrap();
     assert!(proxy.accept().is_err(), "the client went through the proxy");
-    assert!(status.success(), "the child failed to map through the fake");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "the child failed to map through the fake:\n{stdout}");
+    assert!(stdout.contains(PROXY_CHILD_MAPPED), "the child test did not run:\n{stdout}");
+    assert!(stdout.contains("1 passed"), "the child test did not run:\n{stdout}");
+}
+
+/// Two UPnP devices answering one client's search (review n2): a broken one
+/// on 127.0.0.3, which answers SSDP at once but whose HTTP accepts and
+/// never answers, and `fake`, whose answer is relayed a moment later from
+/// 127.0.0.1. Aim `MapRequest::ssdp` at `addr`.
+struct TwoDevices {
+    addr: std::net::SocketAddr,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    _silent_http: std::net::TcpListener,
+}
+
+impl TwoDevices {
+    fn start(fake: &FakeGateway) -> TwoDevices {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let broken = Ipv4Addr::new(127, 0, 0, 3);
+        let silent_http = std::net::TcpListener::bind((broken, 0)).unwrap();
+        let answer = format!(
+            "HTTP/1.1 200 OK\r\nST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\
+             LOCATION: http://{}/desc.xml\r\n\r\n",
+            silent_http.local_addr().unwrap()
+        );
+        let front = UdpSocket::bind((broken, 0)).unwrap();
+        let relay = UdpSocket::bind((LOCALHOST, 0)).unwrap();
+        front.set_read_timeout(Some(Duration::from_millis(5))).unwrap();
+        relay.set_read_timeout(Some(Duration::from_millis(5))).unwrap();
+        let addr = front.local_addr().unwrap();
+        let fake_ssdp = fake.ssdp();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let thread = std::thread::spawn({
+            let stop = stop.clone();
+            move || {
+                let mut client = None;
+                let mut buf = [0u8; 1500];
+                while !stop.load(Ordering::Relaxed) {
+                    if let Ok((n, from)) = front.recv_from(&mut buf) {
+                        client = Some(from);
+                        let _ = front.send_to(answer.as_bytes(), from);
+                        let _ = relay.send_to(&buf[..n], fake_ssdp);
+                    }
+                    if let (Ok((n, from)), Some(client)) = (relay.recv_from(&mut buf), client)
+                        && from == fake_ssdp
+                    {
+                        let _ = relay.send_to(&buf[..n], client);
+                    }
+                }
+            }
+        });
+        TwoDevices { addr, stop, thread: Some(thread), _silent_http: silent_http }
+    }
+}
+
+impl Drop for TwoDevices {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+#[test]
+fn a_stalled_device_does_not_hide_the_router() {
+    // The broken device answers first and stalls its HTTP past the search
+    // window; the router's answer, queued meanwhile, is still tried.
+    let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::Honest);
+    let devices = TwoDevices::start(&fake);
+    let mut req = request(&fake, 23620, true);
+    req.gateway = None;
+    req.ssdp = devices.addr;
+    let mut mapper = PortMapper::start(req);
+    let state = settle(&mut mapper, Duration::from_secs(5));
+    assert_eq!(mapped(&state).0, Method::Upnp, "{state:?}");
+}
+
+#[test]
+fn a_panicking_winner_is_reported() {
+    // A bug in the winning thread (review n1) ends the mapping it held.
+    let ssdp = silent();
+    let fake = FakeGateway::start(false, true, false, EXTERNAL, Misbehaviour::Honest);
+    let mut req = request(&fake, 23630, true);
+    req.ssdp = ssdp.local_addr().unwrap();
+    req.lifetime = Some(Duration::from_secs(2));
+    rl_net::portmap::panic_at_renewal(23630);
+    let mut mapper = PortMapper::start(req);
+    mapped(&settle(&mut mapper, Duration::from_secs(5)));
+    let state = settle(&mut mapper, Duration::from_secs(3));
+    assert!(failed(&state).contains("panicked"), "{state:?}");
 }
 
 #[test]
@@ -445,7 +548,8 @@ fn pmp_answer() -> impl Strategy<Value = Vec<u8>> {
 /// SSDP/HTTP head naming the fake's HTTP server (`$HTTP`) over junk, a
 /// truncated all-in-one device description and SOAP answer (never a whole
 /// one: it ends with the `AddPortMappingResponse` truncation always cuts),
-/// deep nesting, a body over 64 KiB, or malformed chunked framing.
+/// deep nesting, a body over 64 KiB, runs of `<`, `<a`, attributes or
+/// entities, or malformed chunked framing.
 fn upnp_answer() -> impl Strategy<Value = Vec<u8>> {
     const DOC: &str = "<?xml version=\"1.0\"?><root><device><serviceList><service>\
         <serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType>\
@@ -469,6 +573,9 @@ fn upnp_answer() -> impl Strategy<Value = Vec<u8>> {
             b
         }),
         (65_000usize..100_000).prop_map(|n| vec![b'x'; n]),
+        // Shapes that make a naive tag scanner quadratic (review IN-1).
+        (0usize..60_000, prop_oneof![Just("<"), Just("<a"), Just(" a=1"), Just("</"), Just("&#x")])
+            .prop_map(|(n, unit)| format!("<service{}", unit.repeat(n / unit.len())).into_bytes()),
     ];
     let chunk = (
         prop_oneof![Just("5".to_string()), Just("FFFFFFFFF".to_string()), "[0-9a-fA-FxZ;= -]{0,10}"],

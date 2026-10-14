@@ -50,9 +50,21 @@ pub const SERVICES: [&str; 3] = [
     "urn:schemas-upnp-org:service:WANPPPConnection:1",
 ];
 
-const M_SEARCH: &[u8] =
-    b"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\n\
-ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\r\n";
+/// What each search round asks for (as miniupnpc does, review n4): the
+/// gateway device, and its connection services directly, for devices that
+/// answer only those. `ssdp:all` and `upnp:rootdevice` are not asked: every
+/// TV and printer answers them.
+const TARGETS: [&str; 3] = [
+    "urn:schemas-upnp-org:device:InternetGatewayDevice:1",
+    "urn:schemas-upnp-org:service:WANIPConnection:1",
+    "urn:schemas-upnp-org:service:WANPPPConnection:1",
+];
+
+fn m_search(target: &str) -> String {
+    format!(
+        "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: {target}\r\n\r\n"
+    )
+}
 
 /// An HTTP address on a device: its IPv4 address and port, and a path.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -149,103 +161,227 @@ pub enum HttpParse {
     Bad(&'static str),
 }
 
-/// Reads an HTTP/1.x answer from the bytes so far (`eof`: the peer closed):
-/// a head of at most `HEAD_CAP`, then a body of at most `BODY_CAP` framed by
-/// `Transfer-Encoding: chunked`, `Content-Length` or the close.
+/// Reads a whole HTTP/1.x answer at once (`eof`: the peer closed): an
+/// `HttpReader` fed `bytes` in one piece.
 pub fn parse_http(bytes: &[u8], eof: bool) -> HttpParse {
-    let Some(end) = find(&bytes[..bytes.len().min(HEAD_CAP + 4)], b"\r\n\r\n") else {
-        return if bytes.len() > HEAD_CAP {
-            HttpParse::Bad("a head over 8 KiB")
-        } else if eof {
-            HttpParse::Bad("a cut head")
-        } else {
-            HttpParse::Incomplete
-        };
-    };
-    let (head, body) = (&bytes[..end], &bytes[end + 4..]);
-    let mut lines = head.split(|&b| b == b'\n').map(trim_cr);
-    let mut words = lines.next().unwrap_or(&[]).split(|&b| b == b' ');
-    if !words.next().unwrap_or(&[]).starts_with(b"HTTP/1.") {
-        return HttpParse::Bad("not an HTTP answer");
-    }
-    let status = match words.next().map(std::str::from_utf8) {
-        Some(Ok(s)) if s.len() == 3 => match s.parse::<u16>() {
-            Ok(code @ 100..=599) => code,
-            _ => return HttpParse::Bad("a bad status"),
-        },
-        _ => return HttpParse::Bad("a bad status"),
-    };
-    let (mut chunked, mut length) = (false, None);
-    for line in lines {
-        let Ok(line) = std::str::from_utf8(line) else { continue };
-        let Some((name, value)) = line.split_once(':') else { continue };
-        let (name, value) = (name.trim(), value.trim());
-        if name.eq_ignore_ascii_case("transfer-encoding") {
-            chunked |= value.to_ascii_lowercase().contains("chunked");
-        } else if name.eq_ignore_ascii_case("content-length") && length.is_none() {
-            match value.parse::<usize>() {
-                Ok(n) => length = Some(n),
-                Err(_) => return HttpParse::Bad("a bad Content-Length"),
-            }
-        }
-    }
-    if chunked {
-        return match dechunk(body) {
-            Ok(Some(body)) => HttpParse::Done { status, body },
-            Ok(None) if eof => HttpParse::Bad("a cut chunked body"),
-            Ok(None) => HttpParse::Incomplete,
-            Err(why) => HttpParse::Bad(why),
-        };
-    }
-    match length {
-        Some(n) if n > BODY_CAP => HttpParse::Bad("a body over 64 KiB"),
-        Some(n) if body.len() >= n => HttpParse::Done { status, body: body[..n].to_vec() },
-        Some(_) if eof => HttpParse::Bad("a cut body"),
-        Some(_) => HttpParse::Incomplete,
-        None if body.len() > BODY_CAP => HttpParse::Bad("a body over 64 KiB"),
-        None if eof => HttpParse::Done { status, body: body.to_vec() },
-        None => HttpParse::Incomplete,
+    let mut reader = HttpReader::default();
+    match reader.feed(bytes) {
+        HttpParse::Incomplete if eof => reader.finish(),
+        other => other,
     }
 }
 
-/// A chunked body (RFC 9112 §7.1), iteratively: `Ok(None)` while cut short.
-/// Chunk extensions and trailers are ignored.
-fn dechunk(mut b: &[u8]) -> Result<Option<Vec<u8>>, &'static str> {
-    let mut out = Vec::new();
-    loop {
-        let Some(i) = find(&b[..b.len().min(1024)], b"\r\n") else {
-            return if b.len() > 1024 { Err("a bad chunk size") } else { Ok(None) };
+/// How an answer's body is framed.
+#[derive(Clone, Copy, Debug)]
+enum Framing {
+    Length(usize),
+    Chunked,
+    Close,
+}
+
+/// Where a chunked body stands: reading a size line (scanned so far up to
+/// the offset) or waiting for a chunk's data.
+#[derive(Clone, Copy, Debug)]
+enum Chunk {
+    Size { scanned: usize },
+    Data(usize),
+}
+
+/// An HTTP/1.x answer read as it arrives (review n3): a head of at most
+/// `HEAD_CAP` ended by an empty line (CRLF or a bare LF), then a body of at
+/// most `BODY_CAP` framed by `Transfer-Encoding: chunked` (extensions and
+/// trailers ignored), `Content-Length` or the close; at most `RAW_CAP`
+/// bytes in all. Each byte is examined a bounded number of times, however
+/// the answer is split.
+#[derive(Debug, Default)]
+pub struct HttpReader {
+    raw: Vec<u8>,
+    /// Where the search for the head's end resumes.
+    scanned: usize,
+    /// The status, framing and body start, once the head is read.
+    head: Option<(u16, Framing, usize)>,
+    /// Chunked: where the next size line or chunk begins, and the state.
+    pos: usize,
+    chunk: Option<Chunk>,
+    body: Vec<u8>,
+    /// The answer, once known.
+    outcome: Option<HttpParse>,
+}
+
+impl HttpReader {
+    /// Takes the next bytes of the answer.
+    pub fn feed(&mut self, bytes: &[u8]) -> HttpParse {
+        if self.outcome.is_some() {
+            return self.step(false);
+        }
+        self.raw.extend_from_slice(bytes);
+        match self.step(false) {
+            HttpParse::Incomplete if self.raw.len() > RAW_CAP => {
+                self.end(HttpParse::Bad("an answer over 64 KiB"))
+            }
+            other => other,
+        }
+    }
+
+    /// The peer closed: the answer as it stands.
+    pub fn finish(&mut self) -> HttpParse {
+        self.step(true)
+    }
+
+    fn end(&mut self, outcome: HttpParse) -> HttpParse {
+        self.outcome = Some(outcome.clone());
+        outcome
+    }
+
+    fn step(&mut self, eof: bool) -> HttpParse {
+        if let Some(outcome) = &self.outcome {
+            return outcome.clone();
+        }
+        let (status, framing, start) = match self.head {
+            Some(head) => head,
+            None => match self.read_head(eof) {
+                Ok(Some(head)) => head,
+                Ok(None) => return HttpParse::Incomplete,
+                Err(why) => return self.end(HttpParse::Bad(why)),
+            },
         };
-        let line = &b[..i];
-        let size_text = line.split(|&c| c == b';').next().unwrap_or(line).trim_ascii();
-        if size_text.is_empty() || size_text.len() > 8 {
-            return Err("a bad chunk size");
+        let available = self.raw.len() - start;
+        let outcome = match framing {
+            Framing::Length(n) if available >= n => {
+                HttpParse::Done { status, body: self.raw[start..start + n].to_vec() }
+            }
+            Framing::Length(_) if eof => HttpParse::Bad("a cut body"),
+            Framing::Close if available > BODY_CAP => HttpParse::Bad("a body over 64 KiB"),
+            Framing::Close if eof => HttpParse::Done { status, body: self.raw[start..].to_vec() },
+            Framing::Length(_) | Framing::Close => return HttpParse::Incomplete,
+            Framing::Chunked => match self.dechunk() {
+                Ok(true) => HttpParse::Done { status, body: std::mem::take(&mut self.body) },
+                Ok(false) if eof => HttpParse::Bad("a cut chunked body"),
+                Ok(false) => return HttpParse::Incomplete,
+                Err(why) => HttpParse::Bad(why),
+            },
+        };
+        self.end(outcome)
+    }
+
+    /// Finds the head's end (resuming where the last search stopped) and
+    /// reads the status and framing.
+    fn read_head(&mut self, eof: bool) -> Result<Option<(u16, Framing, usize)>, &'static str> {
+        let raw = &self.raw;
+        let limit = raw.len().min(HEAD_CAP + 3);
+        let mut i = self.scanned;
+        let mut found = None;
+        while i < limit {
+            if raw[i] == b'\n' {
+                match (raw.get(i + 1), raw.get(i + 2)) {
+                    (Some(b'\n'), _) => found = Some((i, i + 2)),
+                    (Some(b'\r'), Some(b'\n')) => found = Some((i, i + 3)),
+                    (None, _) | (Some(b'\r'), None) => break,
+                    _ => {}
+                }
+                if found.is_some() {
+                    break;
+                }
+            }
+            i += 1;
         }
-        let mut size = 0usize;
-        for &c in size_text {
-            let digit = match c {
-                b'0'..=b'9' => c - b'0',
-                b'a'..=b'f' => c - b'a' + 10,
-                b'A'..=b'F' => c - b'A' + 10,
-                _ => return Err("a bad chunk size"),
+        self.scanned = i;
+        let Some((head_end, start)) = found else {
+            return if raw.len() > HEAD_CAP + 2 {
+                Err("a head over 8 KiB")
+            } else if eof {
+                Err("a cut head")
+            } else {
+                Ok(None)
             };
-            size = size * 16 + usize::from(digit);
+        };
+        let mut lines = raw[..head_end].split(|&b| b == b'\n').map(trim_cr);
+        let mut words = lines.next().unwrap_or(&[]).split(|&b| b == b' ');
+        if !words.next().unwrap_or(&[]).starts_with(b"HTTP/1.") {
+            return Err("not an HTTP answer");
         }
-        b = &b[i + 2..];
-        if size == 0 {
-            return Ok(Some(out));
+        let status = match words.next().map(std::str::from_utf8) {
+            Some(Ok(s)) if s.len() == 3 => match s.parse::<u16>() {
+                Ok(code @ 100..=599) => code,
+                _ => return Err("a bad status"),
+            },
+            _ => return Err("a bad status"),
+        };
+        let (mut chunked, mut length) = (false, None);
+        for line in lines {
+            let Ok(line) = std::str::from_utf8(line) else { continue };
+            let Some((name, value)) = line.split_once(':') else { continue };
+            let (name, value) = (name.trim(), value.trim());
+            if name.eq_ignore_ascii_case("transfer-encoding") {
+                chunked |= value.to_ascii_lowercase().contains("chunked");
+            } else if name.eq_ignore_ascii_case("content-length") && length.is_none() {
+                length = Some(value.parse::<usize>().map_err(|_| "a bad Content-Length")?);
+            }
         }
-        if size > BODY_CAP - out.len() {
-            return Err("a body over 64 KiB");
+        let framing = match (chunked, length) {
+            (true, _) => Framing::Chunked,
+            (false, Some(n)) if n > BODY_CAP => return Err("a body over 64 KiB"),
+            (false, Some(n)) => Framing::Length(n),
+            (false, None) => Framing::Close,
+        };
+        self.head = Some((status, framing, start));
+        self.pos = start;
+        self.chunk = Some(Chunk::Size { scanned: start });
+        Ok(self.head)
+    }
+
+    /// Moves the chunked body on as far as the bytes allow: `Ok(true)` once
+    /// the last chunk is read. A size line has at most 1024 bytes.
+    fn dechunk(&mut self) -> Result<bool, &'static str> {
+        loop {
+            match self.chunk.unwrap_or(Chunk::Size { scanned: self.pos }) {
+                Chunk::Size { scanned } => {
+                    let limit = self.raw.len().min(self.pos + 1024);
+                    let Some(nl) = self.raw[scanned..limit].iter().position(|&b| b == b'\n') else {
+                        if limit - self.pos >= 1024 {
+                            return Err("a bad chunk size");
+                        }
+                        self.chunk = Some(Chunk::Size { scanned: limit });
+                        return Ok(false);
+                    };
+                    let nl = scanned + nl;
+                    let line = trim_cr(&self.raw[self.pos..nl]);
+                    let size_text = line.split(|&c| c == b';').next().unwrap_or(line).trim_ascii();
+                    if size_text.is_empty() || size_text.len() > 8 {
+                        return Err("a bad chunk size");
+                    }
+                    let mut size = 0usize;
+                    for &c in size_text {
+                        let digit = match c {
+                            b'0'..=b'9' => c - b'0',
+                            b'a'..=b'f' => c - b'a' + 10,
+                            b'A'..=b'F' => c - b'A' + 10,
+                            _ => return Err("a bad chunk size"),
+                        };
+                        size = size * 16 + usize::from(digit);
+                    }
+                    self.pos = nl + 1;
+                    if size == 0 {
+                        return Ok(true);
+                    }
+                    if size > BODY_CAP - self.body.len() {
+                        return Err("a body over 64 KiB");
+                    }
+                    self.chunk = Some(Chunk::Data(size));
+                }
+                Chunk::Data(size) => {
+                    if self.raw.len() < self.pos + size + 2 {
+                        return Ok(false);
+                    }
+                    if &self.raw[self.pos + size..self.pos + size + 2] != b"\r\n" {
+                        return Err("a chunk without its CRLF");
+                    }
+                    self.body.extend_from_slice(&self.raw[self.pos..self.pos + size]);
+                    self.pos += size + 2;
+                    self.chunk = Some(Chunk::Size { scanned: self.pos });
+                }
+            }
         }
-        if b.len() < size + 2 {
-            return Ok(None);
-        }
-        if &b[size..size + 2] != b"\r\n" {
-            return Err("a chunk without its CRLF");
-        }
-        out.extend_from_slice(&b[..size]);
-        b = &b[size + 2..];
     }
 }
 
@@ -263,7 +399,9 @@ fn local(name: &[u8]) -> &[u8] {
 /// nested element of the same name closes at the first end tag.
 pub fn find_element(xml: &str, name: &str, from: usize) -> Option<(usize, usize, usize)> {
     let b = xml.as_bytes();
-    let is_end = |c: u8| matches!(c, b' ' | b'\t' | b'\r' | b'\n' | b'>' | b'/');
+    // `<` ends a name too, so a name never runs into the next tag: every
+    // scan below is linear (review IN-1).
+    let is_end = |c: u8| matches!(c, b' ' | b'\t' | b'\r' | b'\n' | b'>' | b'/' | b'<');
     let mut i = from;
     while i < b.len() {
         let open = i + b.get(i..)?.iter().position(|&c| c == b'<')?;
@@ -442,6 +580,9 @@ fn http(
 ) -> Result<(u16, Vec<u8>, Ipv4Addr), String> {
     let left = |now: Instant| deadline.checked_duration_since(now).filter(|d| !d.is_zero());
     let late = || "no answer within the deadline".to_string();
+    if !going() {
+        return Err("stopped".into());
+    }
     let mut stream = TcpStream::connect_timeout(&SocketAddr::V4(to), left(Instant::now()).ok_or_else(late)?)
         .map_err(|e| e.to_string())?;
     let ours = match stream.local_addr() {
@@ -450,7 +591,7 @@ fn http(
     };
     stream.set_write_timeout(Some(left(Instant::now()).ok_or_else(late)?)).map_err(|e| e.to_string())?;
     stream.write_all(request).map_err(|e| e.to_string())?;
-    let mut raw = Vec::new();
+    let mut reader = HttpReader::default();
     let mut buf = [0u8; 4096];
     loop {
         if !going() {
@@ -458,12 +599,9 @@ fn http(
         }
         let wait = left(Instant::now()).ok_or_else(late)?.min(TICK);
         stream.set_read_timeout(Some(wait)).map_err(|e| e.to_string())?;
-        let eof = match stream.read(&mut buf) {
-            Ok(0) => true,
-            Ok(n) => {
-                raw.extend_from_slice(&buf[..n]);
-                false
-            }
+        let parsed = match stream.read(&mut buf) {
+            Ok(0) => reader.finish(),
+            Ok(n) => reader.feed(&buf[..n]),
             Err(e)
                 if matches!(
                     e.kind(),
@@ -474,10 +612,9 @@ fn http(
             }
             Err(e) => return Err(e.to_string()),
         };
-        match parse_http(&raw, eof) {
+        match parsed {
             HttpParse::Done { status, body } => return Ok((status, body, ours)),
             HttpParse::Bad(why) => return Err(why.into()),
-            HttpParse::Incomplete if raw.len() > RAW_CAP => return Err("an answer over 64 KiB".into()),
             HttpParse::Incomplete => {}
         }
     }
@@ -569,9 +706,12 @@ fn route_to(to: Ipv4Addr) -> Option<Ipv4Addr> {
     }
 }
 
-/// The SSDP search: M-SEARCH at 0, ¼ and ½ of the window; every reply that
-/// names its sender is tried (description, then `GetExternalIPAddress`) until
-/// one works or the window ends.
+/// The SSDP search: M-SEARCH (each of `TARGETS`) at 0, ¼ and ½ of the
+/// window. Every reply that names its sender is queued (at most 4 devices)
+/// and tried — the default gateway's first (review n2) — with its
+/// description, then `GetExternalIPAddress`, until one works. Replies that
+/// arrived while a device was tried are still tried after the window ends,
+/// up to the thread's deadline.
 fn search(ctx: &Ctx) -> Result<Device, String> {
     let req = &ctx.req;
     let bind = match req.local.ip() {
@@ -584,48 +724,97 @@ fn search(ctx: &Ctx) -> Result<Device, String> {
     let end = (start + req.search).min(ctx.deadline);
     let resends = [Duration::ZERO, req.search / 4, req.search / 2];
     let mut sent = 0;
-    let mut tried: Vec<Location> = Vec::new();
+    let (mut queue, mut seen) = (Vec::new(), Vec::new());
     let mut why = "no router answered the search".to_string();
     let mut buf = [0u8; 1500];
     loop {
+        let now = Instant::now();
+        if now >= ctx.deadline {
+            return Err(why);
+        }
         if !ctx.live() {
             return Err("stopped".into());
         }
-        let now = Instant::now();
-        if now >= end {
-            return Err(why);
-        }
-        if sent < resends.len() && now >= start + resends[sent] {
-            let _ = sock.send_to(M_SEARCH, req.ssdp);
+        if sent < resends.len() && now < end && now >= start + resends[sent] {
+            for target in TARGETS {
+                let _ = sock.send_to(m_search(target).as_bytes(), req.ssdp);
+            }
             sent += 1;
             continue;
         }
-        let next = resends.get(sent).map_or(end, |&r| (start + r).min(end));
-        let Some(wait) = next.checked_duration_since(now).filter(|d| !d.is_zero()) else { continue };
-        if sock.set_read_timeout(Some(wait.min(TICK))).is_err() {
+        // Wait for a reply only while the window is open and nothing is
+        // queued; otherwise take only what has already arrived.
+        let wait = match (queue.is_empty(), now < end) {
+            (true, true) => {
+                let next = resends.get(sent).map_or(end, |&r| (start + r).min(end));
+                next.saturating_duration_since(now).min(TICK)
+            }
+            _ => Duration::ZERO,
+        };
+        if !receive(&sock, &mut buf, wait, &mut queue, &mut seen) {
             return Err("the SSDP socket failed".into());
         }
-        match sock.recv_from(&mut buf) {
+        if let Some(i) = pick(&queue, req.gateway) {
+            let location = queue.remove(i);
+            match describe(&location, ctx) {
+                Ok(device) => return Ok(device),
+                Err(w) => why = format!("{}: {w}", location.addr),
+            }
+            continue;
+        }
+        if Instant::now() >= end {
+            return Err(why);
+        }
+    }
+}
+
+/// Reads the SSDP replies that have arrived — waiting up to `wait` for the
+/// first, 1 ms for each next, at most 16 — and queues each new device (at
+/// most `MAX_DEVICES` seen in all). False when the socket fails.
+fn receive(
+    sock: &UdpSocket,
+    buf: &mut [u8],
+    wait: Duration,
+    queue: &mut Vec<Location>,
+    seen: &mut Vec<Location>,
+) -> bool {
+    for k in 0..16 {
+        let timeout = if k == 0 && !wait.is_zero() { wait } else { Duration::from_millis(1) };
+        if sock.set_read_timeout(Some(timeout)).is_err() {
+            return false;
+        }
+        match sock.recv_from(buf) {
             Ok((n, from)) => {
                 let Some(location) = parse_ssdp(&buf[..n], from) else { continue };
-                if tried.contains(&location) || tried.len() >= MAX_DEVICES {
-                    continue;
-                }
-                tried.push(location.clone());
-                match describe(&location, ctx) {
-                    Ok(device) => return Ok(device),
-                    Err(w) => why = format!("{}: {w}", location.addr),
+                if !seen.contains(&location) && seen.len() < MAX_DEVICES {
+                    seen.push(location.clone());
+                    queue.push(location);
                 }
             }
             Err(e)
                 if matches!(
                     e.kind(),
                     ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
-                ) => {}
+                ) =>
+            {
+                return true;
+            }
             // An ICMP report (Windows) or another transient error.
-            Err(_) => std::thread::sleep(Duration::from_millis(5)),
+            Err(_) => {
+                std::thread::sleep(Duration::from_millis(5));
+                return true;
+            }
         }
     }
+    true
+}
+
+/// The queued device to try next: the default gateway's, else the first.
+fn pick(queue: &[Location], gateway: Option<Ipv4Addr>) -> Option<usize> {
+    if queue.is_empty() {
+        return None;
+    }
+    Some(queue.iter().position(|l| Some(*l.addr.ip()) == gateway).unwrap_or(0))
 }
 
 /// Fetches a device's description and finds a connection service that
@@ -641,6 +830,10 @@ fn describe(location: &Location, ctx: &Ctx) -> Result<Device, String> {
     let controls = control_urls(&String::from_utf8_lossy(&body), location);
     let mut why = "no WANIPConnection or WANPPPConnection service".to_string();
     for control in controls {
+        // Between steps too: a parse is linear, but the mapper may be gone.
+        if !going() || Instant::now() >= deadline {
+            return Err("stopped".into());
+        }
         match soap(&control, "GetExternalIPAddress", &[], deadline, &going) {
             Ok(content) => match element_text(&content, "NewExternalIPAddress")
                 .and_then(|t| t.parse::<Ipv4Addr>().ok())
@@ -727,6 +920,81 @@ impl Router for Upnp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Markup built to make a naive scanner quadratic (review IN-1): every
+    /// scan of the description and SOAP answers must stay linear.
+    #[test]
+    fn pathological_markup_is_scanned_in_linear_time() {
+        let cases = [
+            "<".repeat(65_536),
+            "<a".repeat(32_768),
+            format!("<service{}", " a=1".repeat(16_000)),
+            format!("<x{}>", " a=1".repeat(16_000)).repeat(1),
+            "<service>".repeat(7_000),
+            "<service></service>".repeat(3_000),
+            "</".repeat(32_768),
+            "<a></".repeat(13_000),
+            "&".repeat(65_536),
+            "&#x".repeat(21_000),
+        ];
+        let location = loc();
+        for body in &cases {
+            let t = Instant::now();
+            let _ = control_urls(body, &location);
+            let _ = soap_result(200, body, "GetExternalIPAddress");
+            let _ = soap_result(500, body, "AddPortMapping");
+            let _ = element_text(body, "NewExternalIPAddress");
+            let _ = unescape(body);
+            let took = t.elapsed();
+            assert!(took < Duration::from_millis(50), "{took:?} for {:?}…", &body[..12]);
+        }
+    }
+
+    #[test]
+    fn the_default_gateway_is_tried_first() {
+        let at = |ip: [u8; 4]| Location { addr: SocketAddrV4::new(ip.into(), 80), path: "/".into() };
+        let queue = [at([192, 168, 1, 7]), at([192, 168, 1, 1])];
+        assert_eq!(pick(&queue, Some(Ipv4Addr::new(192, 168, 1, 1))), Some(1));
+        assert_eq!(pick(&queue, None), Some(0));
+        assert_eq!(pick(&[], None), None);
+    }
+
+    #[test]
+    fn http_answers_read_byte_by_byte_in_linear_time() {
+        let mut chunked = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+        for _ in 0..900 {
+            chunked.extend(b"40\r\n");
+            chunked.extend([b'x'; 64]);
+            chunked.extend(b"\r\n");
+        }
+        chunked.extend(b"0\r\n\r\n");
+        let mut long_head = b"HTTP/1.1 200 OK\r\n".to_vec();
+        for _ in 0..200 {
+            long_head.extend(b"X-Padding: 0123456789012345678901\r\n");
+        }
+        long_head.extend(b"Content-Length: 60000\r\n\r\n");
+        long_head.extend([b'y'; 60_000]);
+        for (answer, len) in [(chunked, 900 * 64), (long_head, 60_000)] {
+            let t = Instant::now();
+            let mut reader = HttpReader::default();
+            let mut outcome = HttpParse::Incomplete;
+            for byte in answer.chunks(1) {
+                outcome = reader.feed(byte);
+                if outcome != HttpParse::Incomplete {
+                    break;
+                }
+            }
+            assert!(matches!(&outcome, HttpParse::Done { body, .. } if body.len() == len), "{outcome:?}");
+            assert!(t.elapsed() < Duration::from_millis(100), "{:?}", t.elapsed());
+        }
+    }
+
+    #[test]
+    fn heads_may_end_with_bare_newlines() {
+        let done = HttpParse::Done { status: 200, body: b"ab".to_vec() };
+        assert_eq!(parse_http(b"HTTP/1.1 200 OK\nContent-Length: 2\n\nab", false), done);
+        assert_eq!(parse_http(b"HTTP/1.1 200 OK\r\nContent-Length: 2\n\r\nab", false), done);
+    }
 
     fn at(ip: [u8; 4], port: u16) -> SocketAddr {
         SocketAddr::from((ip, port))
