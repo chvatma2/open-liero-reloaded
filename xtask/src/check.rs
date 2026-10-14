@@ -1,6 +1,7 @@
 //! `cargo xtask check` and `cargo xtask full`: every step runs; only failing
 //! steps print their output.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
@@ -40,7 +41,8 @@ pub fn run(offline: bool) -> anyhow::Result<bool> {
 /// the render goldens and the HUD snapshots, with `RL_GPU_TESTS` set), skipped with a notice
 /// when no graphics adapter opens, the audio device check (OLX sounds
 /// on the default output), skipped with a notice when no device opens,
-/// the end-to-end autoplay on Xvfb (`e2e.rs`; skipped without Xvfb), and
+/// the end-to-end autoplay on Xvfb (`e2e.rs`; skipped without Xvfb), the
+/// Docker NAT tests (`nat.rs`; skipped without Docker), and
 /// the benchmarks and the short stress run against their baselines
 /// (`bench.rs`), and the feel numbers of online play against theirs
 /// (`net.rs`).
@@ -145,16 +147,18 @@ fn audio_step(envs: &[(&str, PathBuf)]) -> StepResult {
 fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
     crate::tidy::sweep_if_large();
     let rules = layers::load_rules()?;
-    let mut failed = Vec::new();
-    let mut step = |name: &str, f: &mut dyn FnMut() -> StepResult| {
-        let t = Instant::now();
-        match f() {
-            Ok(()) => println!("ok   {name} ({:.1}s)", t.elapsed().as_secs_f32()),
-            Err(out) => {
-                println!("FAIL {name} ({:.1}s)\n{out}", t.elapsed().as_secs_f32());
-                failed.push(name.to_string());
-            }
+    let failed = RefCell::new(Vec::new());
+    // A step's line: `ok   <name> (<detail><s>s)`, or its failure and output.
+    let finish = |name: &str, t: Instant, result: Result<String, String>| match result {
+        Ok(detail) => println!("ok   {name} ({detail}{:.1}s)", t.elapsed().as_secs_f32()),
+        Err(out) => {
+            println!("FAIL {name} ({:.1}s)\n{out}", t.elapsed().as_secs_f32());
+            failed.borrow_mut().push(name.to_string());
         }
+    };
+    let step = |name: &str, f: &mut dyn FnMut() -> StepResult| {
+        let t = Instant::now();
+        finish(name, t, f().map(|()| String::new()));
     };
 
     step("fmt", &mut || cargo(&["fmt", "--all", "--", "--check"], &[]));
@@ -212,6 +216,8 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
         step("audio", &mut || audio_step(&envs));
         let content = envs.iter().find(|(k, _)| *k == "RL_CONTENT_DIR").map(|(_, v)| v.clone());
         step("e2e", &mut || crate::e2e::run(content.as_deref()));
+        let t = Instant::now();
+        finish("net-nat", t, crate::nat::step());
         step("bench", &mut || crate::bench::bench_step(&envs, false));
         step("stress", &mut || crate::bench::stress_step(content.as_deref(), false));
         step("net-feel", &mut || crate::net::feel_step(content.as_deref()));
@@ -223,6 +229,7 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
         });
     }
     let what = if gpu { "full" } else { "check" };
+    let failed = failed.into_inner();
     if failed.is_empty() {
         println!("{what} passed");
         Ok(true)

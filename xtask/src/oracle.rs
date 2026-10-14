@@ -62,14 +62,14 @@ pub(crate) fn ensure_image(root: &Path) -> anyhow::Result<String> {
 }
 
 /// Which of `images` (`repo:tag` lines) to remove after building `current`:
-/// other `rl-olx-oracle` images, except the tag `dev` (kept for manual use).
+/// other images of `current`'s repository (`rl-olx-oracle`, `rl-nat`),
+/// except the tag `dev` (kept for manual use).
 pub fn images_to_prune<'a>(images: &[&'a str], current: &str) -> Vec<&'a str> {
+    let repo = format!("{}:", current.split_once(':').map_or(current, |(r, _)| r));
     images
         .iter()
         .copied()
-        .filter(|i| {
-            i.strip_prefix("rl-olx-oracle:").is_some_and(|t| !t.is_empty() && t != "dev") && *i != current
-        })
+        .filter(|i| i.strip_prefix(&repo).is_some_and(|t| !t.is_empty() && t != "dev") && *i != current)
         .collect()
 }
 
@@ -107,16 +107,17 @@ pub fn prune_all(build_cache: bool) {
     }
 }
 
-/// Runs [`prune_commands`] for `current`. Failures are warnings: pruning
-/// is housekeeping and must not fail a recording.
-fn prune_old(current: &str, build_cache: bool) {
-    let list = Command::new("docker")
-        .args(["image", "ls", "rl-olx-oracle", "--format", "{{.Repository}}:{{.Tag}}"])
-        .output();
+/// Runs [`prune_commands`] for `current` (an `rl-olx-oracle` or, for
+/// `net-nat`, an `rl-nat` image). Failures are warnings: pruning is
+/// housekeeping and must not fail a recording.
+pub(crate) fn prune_old(current: &str, build_cache: bool) {
+    let repo = current.split_once(':').map_or(current, |(r, _)| r);
+    let list =
+        Command::new("docker").args(["image", "ls", repo, "--format", "{{.Repository}}:{{.Tag}}"]).output();
     let text = match list {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => {
-            eprintln!("warning: could not list oracle images to prune");
+            eprintln!("warning: could not list {repo} images to prune");
             String::new()
         }
     };
@@ -312,6 +313,9 @@ mod tests {
             ["rl-olx-oracle:bbb", "rl-olx-oracle:<none>x"]
         );
         assert!(images_to_prune(&[], "rl-olx-oracle:aaa").is_empty());
+        // `net-nat`'s images: only its own repository's.
+        let nat = ["rl-nat:aaa", "rl-nat:bbb", "rl-nat:dev", "rl-olx-oracle:ccc", "rl-nat-x:old"];
+        assert_eq!(images_to_prune(&nat, "rl-nat:aaa"), ["rl-nat:bbb"]);
     }
 
     /// Plan 6's final review: Docker's build cache is the machine's, not

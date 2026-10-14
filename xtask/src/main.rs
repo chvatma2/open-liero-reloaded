@@ -11,6 +11,7 @@ mod e2e;
 mod envelope;
 mod fetch;
 mod layers;
+mod nat;
 mod net;
 mod olx_timing;
 mod oracle;
@@ -57,7 +58,7 @@ enum Command {
         no_import: bool,
     },
     /// Reclaim disk: remove superseded builds and incremental sessions from
-    /// target/ and superseded oracle Docker images.
+    /// target/ and superseded Docker images (the oracle's and the NAT tests').
     Tidy {
         /// Also bound Docker's build cache to 2 GB (`docker builder prune`): the
         /// cache is the whole machine's, so this prunes other projects' layers too.
@@ -128,6 +129,19 @@ enum Command {
         /// Why the baseline changes (with --bless).
         #[arg(long)]
         reason: Option<String>,
+    },
+    /// The Docker NAT tests (plan 12b, spec §9.7; also a step of `full`): home routers
+    /// (cone, symmetric, UPnP, PCP) on isolated networks, a Nostr relay, STUN and a TURN
+    /// relay; direct joins, port mapping, hole punching, relays, finding and --nat-check.
+    /// Skipped with a notice without Docker.
+    NetNat {
+        /// Leave the networks and the last scenario's containers for inspection.
+        #[arg(long)]
+        keep: bool,
+        /// Only these scenarios (repeatable): direct, upnp, pcp, hole-punching, relay,
+        /// no-relay, finding, nat-check.
+        #[arg(long)]
+        only: Vec<String>,
     },
     /// Install a git pre-push hook that runs `cargo xtask check`.
     InstallHooks,
@@ -214,6 +228,7 @@ fn main() -> ExitCode {
             envelope::run(&envelope::Opts { quick, only, gpu, bless: reason.filter(|_| bless), report, from })
         }
         Command::NetFeel { bless, reason } => net::run(reason.as_deref().filter(|_| bless)),
+        Command::NetNat { keep, only } => nat::command(&only, keep),
         Command::InstallHooks => install_hooks().map(|()| true),
         Command::OracleRecord { check, names } => oracle::run(&names, check),
         Command::OracleGenWeapons => oracle_gen::run(),

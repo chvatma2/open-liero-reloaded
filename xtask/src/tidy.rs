@@ -441,6 +441,7 @@ pub fn run(docker_cache: bool) -> anyhow::Result<bool> {
     let swept = sweep(&target, SAME_RUN);
     println!("{}", describe(&swept));
     oracle::prune_all(docker_cache);
+    crate::nat::prune();
     let after = dir_size(&target, Duration::from_secs(60));
     if let (Some(b), Some(a)) = (before, after) {
         println!("target/: {:.1} GB -> {:.1} GB", b as f64 / GB, a as f64 / GB);

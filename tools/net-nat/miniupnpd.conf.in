@@ -1,0 +1,27 @@
+# miniupnpd's configuration for `cargo xtask net-nat`'s routers C and D
+# (router.sh fills @WAN@, @WAN_IP@, @LAN@, @LAN_NET@, @UPNP@ and @PCP@: C offers
+# UPnP-IGD only, D NAT-PMP and PCP only).
+ext_ifname=@WAN@
+listening_ip=@LAN@
+# The WAN is 203.0.113.0/24 (TEST-NET-3), which miniupnpd counts as
+# private: map anyway (as on a router behind another NAT), and name the
+# address (UPnP's GetExternalIPAddress answers 0.0.0.0 for a reserved
+# interface address unless ext_ip names it).
+ext_allow_private_ipv4=yes
+ext_ip=@WAN_IP@
+http_port=0
+ipv6_disable=yes
+enable_upnp=@UPNP@
+enable_pcp_pmp=@PCP@
+secure_mode=yes
+system_uptime=yes
+notify_interval=60
+uuid=3b8a6c2e-6f1d-4c55-9a0e-2f4b7d1e9c01
+lease_file=/tmp/upnp.leases
+upnp_table_name=filter
+upnp_nat_table_name=filter
+upnp_forward_chain=miniupnpd
+upnp_nat_chain=prerouting_miniupnpd
+upnp_nat_postrouting_chain=postrouting_miniupnpd
+allow 1024-65535 @LAN_NET@ 1024-65535
+deny 0-65535 0.0.0.0/0 0-65535

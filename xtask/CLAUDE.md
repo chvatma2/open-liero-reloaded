@@ -2,8 +2,8 @@
 
 Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `oracle-record`, `tidy`, `bless-render`, `bless-regression`, `fetch-olx-content`,
-`e2e`, `bench`, `stress`, `net-feel`, `windows`, `envelope`, `determinism`,
-`dist`.
+`e2e`, `net-nat`, `bench`, `stress`, `net-feel`, `windows`, `envelope`,
+`determinism`, `dist`.
 
 - `fetch-olx-content` (`fetch.rs`) imports the manifest into the
   committed `content/packs`; `check`'s `olx-content` step (`fetch::verify`,
@@ -17,7 +17,10 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   (`check::GPU_TESTS` with `RL_GPU_TESTS=1`: `rl-render`'s `gpu`,
   `rl-cli`'s `render_golden` and `gpu_bench` (plan 8's `gpu-bench` on the
   software adapter), `rl-game`'s `soak`, `rl-ui`'s `hud_snapshots`) and the
-  audio step, then `e2e`, `bench`, `stress` and `net-feel`.
+  audio step, then `e2e`, `net-nat`, `bench`, `stress` and `net-feel`.
+  Each step prints `ok   <name> (<s>s)` (`net-nat`: `ok   net-nat (8
+  scenarios, <s>s)`, `run_with`'s `finish` with a detail) or `FAIL` and
+  its output.
 - `bench` (`bench.rs`, also `cargo xtask bench [--offline]`, spec §21 G8):
   the divan benchmarks (`BENCHES`: `rl-sim/benches/tick.rs`,
   `rl-render/benches/frame.rs`, `rl-cli/benches/game.rs` and `rollback.rs`; bench profile)
@@ -128,6 +131,49 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   nothing running; a failure's report includes all three). Skipped
   without Xvfb or content; each game killed after 240 s. Both runs about
   27 s (local 10 s, online 16 s) once built.
+- `net-nat [--keep] [--only <scenario>]...` (`nat.rs`, plan 12b Task 11,
+  spec §9.7, ruling N58; also `full`'s step after `e2e`, `nat::step`):
+  the Docker NAT tests; topology, scenarios and timings in
+  `tools/net-nat/CLAUDE.md`. Prerequisites (`prerequisites`; each
+  missing one is `skip net-nat (<why and the fix>)`, a pass):
+  `olx_timing::docker_missing`, `/etc/os-release` with `ID` and
+  `VERSION_ID` of a Debian-like distribution (`base_image`), the content
+  (`content/packs`). Then `build`: `rl-server` and `rl-cli --features
+  nat-tools` in release, in two cargo runs (one run with
+  `--features rl-cli/nat-tools` leaves the feature off: tried; and
+  rl-server needs no test relay), so `full`'s `stress` rebuilds release
+  `rl-cli` without it (about a minute), harmless. `ensure_image`:
+  `rl-nat:<image_tag>` (SHA-256 of `TOOL_FILES` and the base) built when
+  missing (`docker build --build-arg BASE=<ID>:<VERSION_ID>`; a base that
+  cannot be pulled is a skip, a failing build a failure), then
+  `oracle::prune_old` removes the other `rl-nat` tags. The configs
+  (`Config::text`) go to `target/net-nat/configs/`; the networks
+  (`Networks::create`: `networks()`, macvlan `--internal`, label
+  `rl-nat`; anything labelled `rl-nat` from an interrupted run removed
+  first) live for the run and go when it ends (`Drop`) unless `--keep`.
+  Each of `SCENARIOS` (`select`: `--only`, table order, an unknown name
+  an error) is `play`ed: `units` (the pure plan: per container its
+  stage, `docker run` arguments, every one on our networks only with the
+  `rl-nat=<scenario>` label, and `Ready`: lines, an invite code
+  (`invite_code`, with an address when `Code::Address`), or its exit),
+  started stage by stage (`run_units`; the joiner's `{invite}` replaced
+  by the host's code) and waited for (`wait_ready`, until `LIMIT`, 60 s,
+  from the scenario's start; a container exiting before it is ready
+  fails), then the host stopped with SIGTERM when `host_stops`, and
+  `verdict` (pure: `Expect` against `Seen`: exit status, stdout and
+  stderr lines, the host's log (one of each group), the relay's log, the
+  invite's kind, the host's exit). `Containers` saves every log to
+  `target/net-nat/<scenario>/` and removes the containers when dropped
+  (unless `--keep`), so a failing or panicking scenario leaves nothing
+  running; a failure prints the last 40 lines of each container. The
+  command prints `     net-nat: <scenario> passed in <s> s` per
+  scenario. Unit tests: `base_image_from_os_release`,
+  `invite_code_is_read_from_the_log`,
+  `scenario_names_are_unique_and_selectable`,
+  `image_tag_changes_with_the_scripts`,
+  `every_container_stays_on_our_networks` (labels, networks and their
+  subnets, read-only mounts, no host network), `configs_are_ron_on_our_servers_only`,
+  `the_verdict_names_what_is_missing`. About 75 s here once built.
 - `windows` (`winbuild.rs`, plan 8): the native Windows build run from
   WSL, for `envelope --gpu windows`. `missing()` says why it cannot run
   here (no `cmd.exe` or `WSLInterop`/`WSLInterop-late` not enabled, no
@@ -322,9 +368,14 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   locally (do not commit it).
 - `oracle-record` prunes after building a new `rl-olx-oracle:<hash>` image:
   it removes every other `rl-olx-oracle:*` image except the current tag and
-  `:dev`. Pruning failures only warn. `images_to_prune` and `prune_commands`
-  (unit-tested) pick the tags and the commands.
-- `tidy` (`tidy.rs`) sweeps `target/` and prunes oracle images as above;
+  `:dev`. Pruning failures only warn. `images_to_prune` (the current tag's
+  repository) and `prune_commands` (unit-tested) pick the tags and the
+  commands; `net-nat` prunes its `rl-nat:*` images the same way
+  (`oracle::prune_old`). The base image it builds on (`ubuntu:26.04`
+  here, 162 MB) stays for the next build.
+- `tidy` (`tidy.rs`) sweeps `target/` and prunes oracle and `rl-nat`
+  images as above (`nat::prune`: none when the current tag cannot be
+  computed);
   `tidy --docker-cache` also runs `docker builder prune -f --keep-storage
   2GB`. That cache is the whole machine's (Docker cannot select one
   project's layers), so pruning it is opt-in and nothing else does it.
