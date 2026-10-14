@@ -158,7 +158,9 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   (id: the process id, in every name and the label `rl-nat=<id>`;
   `life`: `LIFE` 120 s, `KEEP_LIFE` 3600 with `--keep`) whose networks
   (`Run::networks`, `network_args`: macvlan `--internal`, no parent;
-  `network_skip`: a Docker without macvlan skips) live for the run and
+  `network_skip`: a Docker without macvlan skips, judged from the
+  daemon's message alone, as `docker()`'s error starts with the command
+  line, which names macvlan; an overlapping subnet or a taken name fails) live for the run and
   go when it ends (`Networks`' `Drop`) unless `--keep`. Each of
   `SCENARIOS` (`select`: `--only`, table order, an unknown name an
   error) is `play`ed: `units` (the pure plan: per container its stage,

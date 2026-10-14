@@ -416,16 +416,21 @@ pub fn build_skip(base: &str, log: &str) -> Option<String> {
     ))
 }
 
-/// Why a failed network creation is a skip: this Docker cannot make
-/// macvlan networks (rootless Docker, a kernel without the module, some
-/// Docker Desktop setups). Any other failure is `None`.
+/// Why a failed network creation is a skip: the daemon says this Docker
+/// cannot make macvlan networks (rootless Docker, a kernel without the
+/// module, some Docker Desktop setups). `err` is [`docker`]'s error, whose
+/// command line always names macvlan, so only the daemon's message after
+/// it is read; any other failure (an overlapping subnet, a name taken,
+/// no permission) is `None`: a failure.
 pub fn network_skip(err: &str) -> Option<String> {
-    let lower = err.to_lowercase();
-    (lower.contains("macvlan") || lower.contains("not supported") || lower.contains("plugin not found")).then(|| {
+    let daemon = err.split_once("` failed: ").map_or(err, |(_, d)| d).trim();
+    let lower = daemon.to_lowercase();
+    let unavailable = ["not found", "not supported", "no such device", "unknown"];
+    (lower.contains("macvlan") && unavailable.iter().any(|w| lower.contains(w))).then(|| {
         format!(
             "Docker cannot create macvlan networks ({}): the tests need rootful Docker with the macvlan module \
              (`sudo modprobe macvlan`)",
-            err.lines().last().unwrap_or(err).trim()
+            daemon.lines().last().unwrap_or(daemon).trim()
         )
     })
 }
@@ -1554,17 +1559,26 @@ mod tests {
     }
 
     #[test]
+    /// The errors as `docker()` gives them: the command line (which
+    /// always names macvlan) first, then the daemon's message. Only the
+    /// daemon's saying macvlan is unavailable skips.
     fn network_failures_that_skip() {
-        let why = network_skip(
-            "`docker network create` failed: Error response from daemon: plugin \"macvlan\" not found",
-        )
-        .unwrap();
+        let run = run(LIFE);
+        let args = run.network_args("rl-nat-4242-a", "10.1.0.0/24");
+        let failed = |daemon: &str| format!("`docker {}` failed: {daemon}", args.join(" "));
+        let why = network_skip(&failed("Error response from daemon: plugin \"macvlan\" not found")).unwrap();
         assert!(why.contains("macvlan") && why.contains("modprobe"), "{why}");
-        assert!(network_skip("failed to create the macvlan port: operation not supported").is_some());
-        assert_eq!(
-            network_skip("Error response from daemon: Pool overlaps with other one on this address space"),
-            None
-        );
+        assert!(why.contains("plugin \"macvlan\" not found") && !why.contains("--internal"), "{why}");
+        let no_module =
+            failed("Error response from daemon: failed to create the macvlan port: operation not supported");
+        assert!(network_skip(&no_module).is_some());
+        for other in [
+            "Error response from daemon: Pool overlaps with other one on this address space",
+            "Error response from daemon: network with name rl-nat-4242-a already exists",
+            "permission denied while trying to connect to the Docker daemon socket",
+        ] {
+            assert_eq!(network_skip(&failed(other)), None, "fails, not a skip: {other}");
+        }
     }
 
     #[test]
