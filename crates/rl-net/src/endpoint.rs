@@ -685,7 +685,12 @@ impl Endpoint {
     /// `portmap::DROP_WAIT`, 1 s), so the router does not keep the port
     /// open (N51).
     pub fn shutdown(mut self) -> Shutdown {
-        let mapper = self.gathering.mapper.take();
+        let mut mapper = self.gathering.mapper.take();
+        // Marked before the thread starts: a mapper of the same port made
+        // right after waits for this deletion (ruling RH-1).
+        if let Some(m) = &mut mapper {
+            m.begin_delete();
+        }
         drop(self);
         Shutdown { done: mapper.map(close_mapper), verdict: None }
     }
@@ -1091,7 +1096,8 @@ impl Drop for Endpoint {
         let mut out = Vec::new();
         self.core.close_all(&mut out);
         send_datagrams(&self.udp, &mut self.core, &mut out);
-        if let Some(mapper) = self.gathering.mapper.take() {
+        if let Some(mut mapper) = self.gathering.mapper.take() {
+            mapper.begin_delete();
             unmap(mapper);
         }
     }

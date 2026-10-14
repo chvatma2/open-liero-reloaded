@@ -86,7 +86,10 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   `footer` puts the primary action (`primary`: a large button; Start,
   Import) and its status centred at the column's bottom and returns the
   rest; `columns` splits that rest (egui's own `columns` would reach
-  under the footer); `section`/`tall_section` group widgets in
+  under the footer); `tab_row(ui, size, n)` sizes and centres a screen's
+  tab row (Options, Multiplayer), each tab an equal share of a column too
+  narrow for `size` (ruling UI-1: 427 points wide at UI scale 3 in a
+  1280 × 720 window); `section`/`tall_section` group widgets in
   `theme::section_frame` panels under a title (the title's id may label a
   picker); `form_row`/`form_check_row` put a name right-aligned in a
   `FORM_LABEL`-wide column so a form's controls start on one line. A new
@@ -106,7 +109,8 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   shown), options (`options.rs`, 720 wide: Video (with the HUD layout),
   Audio, Keys and Online tabs,
   centred; Online (scrolling): "Finding games" (Region, Public address,
-  plan 12b's "Open the game's port on my router (UPnP/NAT-PMP/PCP)"),
+  plan 12b's "Open the game's port on my router (UPnP/NAT-PMP/PCP)", a
+  checkbox of its own line so its label wraps),
   Relays and STUN servers (each row's Remove, "New relay"/"Add relay"
   with why it cannot add, in red beside it and on Add's hover: "needs
   wss:// or ws://", "needs host:port", "already listed", "the list is
@@ -369,10 +373,10 @@ settings sanitized (TURN entries, `port_mapping` on for an older file),
 the join's step as the waiting text), `the_lobby_shows_reach_lines_and_path_tags`;
 `tests/layout.rs`'s `the_lobbys_long_lines_wrap_in_a_narrow_window`
 (1280 × 720 at 1, 2 and 3 pixels a point, 3440 × 1440 at 2),
-`the_longest_join_texts_and_turn_options_fit` (rl-online's `no_path` as
-the Multiplayer screen's failure, the same sizes; the Options' port
-mapping switch and TURN rows from 640 points: at 427 the options' tab
-row, older, cannot reach the Online tab);
+`the_longest_join_texts_and_turn_options_fit` (the same sizes: rl-online's
+`no_path` as the Multiplayer screen's failure, the Multiplayer and
+Options tab rows, the Online tab reached by a click, its port mapping
+switch and TURN rows);
 `tests/ingame.rs`: the HUD layout,
 the weapon selection, the pause menu, Esc/F5 repeats, the results;
 `tests/import.rs`: `import_runs_off_the_ui_thread_and_reports` on

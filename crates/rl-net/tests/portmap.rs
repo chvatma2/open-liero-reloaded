@@ -559,6 +559,29 @@ fn close_waits_for_the_routers_deletion() {
     assert!(mapper.close(), "nothing to delete");
 }
 
+/// Ruling RH-1: a mapper of a port another mapper of this process is
+/// still deleting (a router that deletes `LATE` after the request,
+/// `LateDelete`, and adds at once) waits for that deletion before it asks:
+/// the new mapping is there once the old deletion took effect.
+#[test]
+fn a_new_mapper_waits_for_the_ports_deletion() {
+    let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::LateDelete);
+    let mut req = request(&fake, 23570, true);
+    req.gateway = None;
+    let mut old = PortMapper::start(req.clone());
+    mapped(&settle(&mut old, Duration::from_secs(5)));
+    let closing = std::thread::spawn(move || old.close());
+    std::thread::sleep(Duration::from_millis(50));
+    let begun = Instant::now();
+    let mut new = PortMapper::start(req);
+    mapped(&settle(&mut new, Duration::from_secs(5)));
+    assert!(begun.elapsed() >= Duration::from_millis(200), "waited for the deletion: {:?}", begun.elapsed());
+    assert!(closing.join().unwrap(), "the old deletion confirmed");
+    std::thread::sleep(rl_net::portmap::fake::LATE);
+    assert_eq!(fake.mappings().len(), 2, "the new TCP and UDP mapping stay");
+    assert!(new.close());
+}
+
 #[test]
 fn mappings_are_deleted_on_drop() {
     let ssdp = silent();

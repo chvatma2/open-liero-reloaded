@@ -619,6 +619,10 @@ B-I3; through the relays, or joining nothing without them),
 `LateUpnp`, external 127.0.0.2: the reach line and the invite's mapped
 address, leaving returns at once with the mapping still there, the
 `Unmapping` wait sees it deleted),
+`hosting_again_on_the_same_port_keeps_its_mapping` (ruling RH-1: a
+`LateDelete` router, leave and host again at once on the same port: the
+new game's TCP and UDP mapping still there after the old deletion took
+effect),
 `tests/deathmatch.rs` (a Deathmatch to its results, the bots' think
 budget, a recording replayed through a replay session), `tests/menu.rs`
 (starts with missing or broken content, rapid menu actions) and

@@ -422,7 +422,10 @@ announcements.
     `http_requests()`), `SlowDelete` (`DeletePortMapping` deletes at once
     and answers `SLOW_DELETE`, 250 ms, late), `LateUpnp` (UPnP's
     `AddPortMapping` and `DeletePortMapping` take effect and answer only
-    `LATE`, 300 ms, after the request: Task 8's NT-2 test). `hold(port)`: another client's port.
+    `LATE`, 300 ms, after the request: Task 8's NT-2 test), `LateDelete`
+    (`DeletePortMapping` takes effect and answers `LATE` after the
+    request, on a thread of its own, while `AddPortMapping` answers at
+    once: ruling RH-1's re-host race). `hold(port)`: another client's port.
     `serving(answer)` (fuzzing) answers SSDP (its first 1400 bytes) and
     HTTP with `answer` (`$HTTP` → its HTTP address).
 - **`natsim`** (feature `test-hooks`, N56): `Net` runs `Core`s behind
@@ -551,7 +554,15 @@ announcements.
     `until` (`true` when the router confirmed every deletion, or there
     was no mapping; `false` past `until`, unconfirmed, or no thread);
     `Shutdown::poll` gives that verdict without waiting (`None` while the
-    router is asked; `Some(true)` at once without a mapping).
+    router is asked; `Some(true)` at once without a mapping). **Same-port
+    re-host** (ruling RH-1): a mapper being deleted holds its local ports
+    (the game's and its extras) in a process-wide set (`DELETING`, from
+    `begin_delete`, called by `shutdown` and the drop on the caller's
+    thread before the mapper goes to its thread, until its deletion's
+    bounded wait ended); a `PortMapper::start` of one of those ports makes
+    its threads wait for it first (at most `DROP_WAIT`, on their own
+    threads, their deadlines moved by as much), so an old deletion that
+    lands late never removes the new game's mapping.
     rl-server (Task 8) and the game (Task 9) wait on it at exit through
     `OnlinePeer::shutdown`; rl-cli is to (Task 10). Dropping the endpoint
     is the fallback: the same thread, nobody waits (a process exiting
@@ -640,6 +651,8 @@ and chunked), PCP first and NAT-PMP as the fallback, every
 an exact request never shifting, extra ports mapped exactly by the
 winner for each protocol (a held one failing alone, `close` confirming
 every deletion), `close` waiting for a late router and a failed `local`
+failing its extras, a new mapper of a port being deleted waiting for that
+deletion (`a_new_mapper_waits_for_the_ports_deletion`, `LateDelete`), a failed `local`
 failing its extras, mappings deleted on drop, no gateway
 and no UPnP failing within 5 s, a test build refusing a real router,
 `HTTP_PROXY` ignored (a child process of the test binary runs with the

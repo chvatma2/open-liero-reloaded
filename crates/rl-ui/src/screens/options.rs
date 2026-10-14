@@ -27,7 +27,7 @@
 
 use egui::{Button, ComboBox, Key, RichText, ScrollArea, Slider, TextEdit, Ui, vec2};
 
-use super::{MenuData, form_row, keys, page, section};
+use super::{MenuData, form_row, keys, page, section, tab_row};
 use crate::online::{
     FindingSettings, MAX_SERVERS, MAX_TURN, Region, megabytes, turn_shown, valid_relay, valid_stun,
     valid_turn,
@@ -86,12 +86,11 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     let ui = &mut ui;
     // The tabs, centred over the column.
     ui.horizontal(|ui| {
-        let n = Tab::ALL.len() as f32;
-        let row = TAB.x * n + ui.spacing().item_spacing.x * (n - 1.0);
-        ui.add_space(((ui.available_width() - row) / 2.0).max(0.0));
+        let (tab_size, indent) = tab_row(ui, TAB, Tab::ALL.len());
+        ui.add_space(indent);
         for t in Tab::ALL {
             let tab = Button::selectable(v.tab == t, RichText::new(t.label()).size(18.0));
-            if ui.add_sized(TAB, tab).clicked() {
+            if ui.add_sized(tab_size, tab).clicked() {
                 v.tab = t;
             }
         }
@@ -273,12 +272,12 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
                 f.public_address = typed.to_string();
             }
         });
-        form_row(ui, "", |ui, _| {
-            ui.checkbox(&mut f.port_mapping, PORT_MAPPING).on_hover_text(
-                "Your hosted Internet and invite games ask your router to open their port, so players join \
-                 directly. Applies to the next game you host.",
-            );
-        });
+        // Not in a form row: its long label wraps in a narrow column
+        // (ruling UI-1).
+        ui.checkbox(&mut f.port_mapping, PORT_MAPPING).on_hover_text(
+            "Your hosted Internet and invite games ask your router to open their port, so players join \
+             directly. Applies to the next game you host.",
+        );
     });
     ui.add_space(10.0);
     let relays = f.relays.clone().unwrap_or_else(|| data.default_relays.clone());

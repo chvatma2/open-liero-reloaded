@@ -245,7 +245,8 @@ fn the_lobbys_long_lines_wrap_in_a_narrow_window() {
 /// Review Minor 5: the longest new texts outside the lobby fit too, at
 /// the same sizes and scales: a join's failure under the Multiplayer
 /// screen's button (rl-online's `no_path`, about 300 characters), and the
-/// Options' port mapping switch and TURN relays (from 640 points wide).
+/// Options' port mapping switch and TURN relays (ruling UI-1: the tab rows
+/// fit at 427 points too, the Online tab reached by a click).
 #[test]
 fn the_longest_join_texts_and_turn_options_fit() {
     let no_path = "no network path to the game: hole punching failed and no TURN relay could be used. The host can \
@@ -267,16 +268,17 @@ fn the_longest_join_texts_and_turn_options_fit() {
         harness.run();
         harness.step();
         inside(&harness, no_path);
-        // The options' four tabs need 500 points: at 427 the Online tab
-        // cannot be clicked (the tab row predates plan 12b).
-        if w / ppp < 500.0 {
-            continue;
+        for tab in ["Internet", "LAN", "Direct"] {
+            inside(&harness, tab);
         }
         let mut settings = Settings::default();
         settings.online.finding.turn = vec!["anna:s3cret@turn.example.org:3478".into()];
         let ui = UiState::new(settings, Profiles::default(), 1);
         harness.state_mut().ui = ui;
         reach(&mut harness, Screen::Options);
+        for tab in ["Video", "Audio", "Keys", "Online"] {
+            inside(&harness, tab);
+        }
         harness.get_by_label("Online").click();
         harness.run();
         harness.step();

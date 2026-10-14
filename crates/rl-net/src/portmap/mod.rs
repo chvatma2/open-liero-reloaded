@@ -14,6 +14,7 @@ pub mod fake;
 pub mod pmp;
 pub mod upnp;
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -562,6 +563,38 @@ pub(crate) fn tidy(text: &str) -> String {
     s
 }
 
+/// The local ports whose mappings a mapper of this process is deleting,
+/// each with how many such mappers (ruling RH-1): a new mapper of one of
+/// them waits on its own threads, at most `DROP_WAIT`, before it asks its
+/// router, so an old deletion that lands late never removes the new
+/// mapping (a game left and hosted again at once on the same port).
+static DELETING: Mutex<BTreeMap<u16, u32>> = Mutex::new(BTreeMap::new());
+/// Wakes the mappers waiting on [`DELETING`].
+static DELETED: Condvar = Condvar::new();
+
+fn deleting() -> MutexGuard<'static, BTreeMap<u16, u32>> {
+    DELETING.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Whether a mapper of this process is deleting a mapping of one of `ports`.
+fn being_deleted(ports: &[u16]) -> bool {
+    let d = deleting();
+    ports.iter().any(|p| d.contains_key(p))
+}
+
+/// Waits until no mapper of this process deletes a mapping of `ports`, or
+/// `until` (a mapper's own thread, never the caller's).
+fn wait_deleted(ports: &[u16], until: Instant) {
+    let mut d = deleting();
+    while ports.iter().any(|p| d.contains_key(p)) {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        d = DELETED.wait_timeout(d, left).unwrap_or_else(|e| e.into_inner()).0;
+    }
+}
+
 /// Maps the host's port at its router (N51), off the caller's thread.
 pub struct PortMapper {
     shared: Arc<Shared>,
@@ -576,6 +609,10 @@ pub struct PortMapper {
     /// When `poll` stops waiting for each thread.
     deadlines: [Instant; 2],
     allow_local: bool,
+    /// Its local ports (`local`'s and the extras), and whether they are in
+    /// [`DELETING`] (from `begin_delete` until the deletion's wait ended).
+    ports: Vec<u16>,
+    deleting: bool,
 }
 
 impl PortMapper {
@@ -599,6 +636,10 @@ impl PortMapper {
         }
         let mut req = req;
         req.extra = extras.iter().map(|e| e.0).collect();
+        let ports: Vec<u16> = std::iter::once(req.local.port()).chain(req.extra.iter().copied()).collect();
+        // An earlier mapper of these ports still deleting (RH-1): the
+        // threads wait for it first, and their deadlines move with it.
+        let after = if being_deleted(&ports) { DROP_WAIT } else { Duration::ZERO };
         let mut mapper = PortMapper {
             shared: Arc::clone(&shared),
             rx,
@@ -607,8 +648,10 @@ impl PortMapper {
             extras,
             reported: MappingState::Trying,
             failures: [None, None],
-            deadlines: [now + PMP_DEADLINE + PMP_GRACE, now + UPNP_DEADLINE],
+            deadlines: [now + after + PMP_DEADLINE + PMP_GRACE, now + after + UPNP_DEADLINE],
             allow_local: req.allow_local,
+            ports: ports.clone(),
+            deleting: false,
         };
         if let Some(why) = refused_in_tests(&req) {
             mapper.state = MappingState::Failed(why);
@@ -629,8 +672,12 @@ impl PortMapper {
                 Worker::Upnp => upnp::run,
             };
             let guard = PanicGuard { worker, tx: tx.clone(), shared: Arc::clone(&shared) };
+            let ports = ports.clone();
             let body = move || {
                 let _guard = guard;
+                if !after.is_zero() {
+                    wait_deleted(&ports, now + after);
+                }
                 run(ctx);
             };
             match std::thread::Builder::new().name(name.into()).spawn(body) {
@@ -721,6 +768,7 @@ impl PortMapper {
     /// `DROP_WAIT` for those that asked their router for one: whether
     /// every one finished.
     fn stop_and_wait(&mut self) -> bool {
+        self.begin_delete();
         self.shared.board().stop = true;
         self.shared.wake.notify_all();
         let end = Instant::now() + DROP_WAIT;
@@ -740,7 +788,37 @@ impl PortMapper {
                 let _ = handle.join();
             }
         }
+        self.end_delete();
         finished
+    }
+
+    /// Marks its ports as being deleted (ruling RH-1), at once on the
+    /// caller's thread (an endpoint shutting down calls it before handing
+    /// the mapper to a thread, so a game hosted again right after never
+    /// maps first); idempotent. The deletion's end clears it.
+    pub(crate) fn begin_delete(&mut self) {
+        if !std::mem::replace(&mut self.deleting, true) {
+            let mut d = deleting();
+            for p in &self.ports {
+                *d.entry(*p).or_insert(0) += 1;
+            }
+        }
+    }
+
+    /// The deletion's wait ended: its ports are free for a new mapper.
+    fn end_delete(&mut self) {
+        if std::mem::replace(&mut self.deleting, false) {
+            let mut d = deleting();
+            for p in &self.ports {
+                if let Some(n) = d.get_mut(p) {
+                    *n -= 1;
+                    if *n == 0 {
+                        d.remove(p);
+                    }
+                }
+            }
+            DELETED.notify_all();
+        }
     }
 
     /// While trying: gives up on threads past their deadline (they may no

@@ -721,3 +721,46 @@ fn finished_shutdowns_are_forgotten() {
         assert_eq!(h.unmapping_pending(), 0);
     }
 }
+
+/// Ruling RH-1: hosting again at once on the same port, while the router
+/// still deletes the last game's mapping (`LateDelete`: a deletion takes
+/// effect 300 ms late, an addition at once), leaves the new game mapped:
+/// the new mapping is not added until the old deletion is done.
+#[test]
+fn hosting_again_on_the_same_port_keeps_its_mapping() {
+    use rl_net::portmap::fake::{FakeGateway, LATE, Misbehaviour};
+    let Some(dir) = content_dir() else { return };
+    let gw = FakeGateway::start(true, false, false, Ipv4Addr::new(127, 0, 0, 2), Misbehaviour::LateDelete);
+    let (pmp, ssdp) = (gw.pmp(), gw.ssdp());
+    let mut h = menus(&dir, Store::in_memory(), "Hosty", 1.0);
+    h.test_ice(move |ice| {
+        loopback(ice);
+        let SocketAddr::V4(pmp) = pmp else { unreachable!() };
+        ice.gateway = Some(pmp);
+        ice.ssdp = Some(ssdp);
+        ice.allow_local = true;
+    });
+    let f = FindingSettings { port_mapping: true, ..h.ui.settings().online.finding.clone() };
+    h.act(UiAction::SetFinding(f));
+    host_as(&mut h, Visibility::Invite);
+    let port = h.local_port().unwrap();
+    let open =
+        format!("Port {port} is open on your router (UPnP): players join directly at 127.0.0.2:{port}");
+    let mapped = |s: &[&mut Shell]| s[0].data.lobby.as_ref().is_some_and(|l| l.reach.contains(&open));
+    run_until("the port mapped", Duration::from_secs(10), &mut [&mut h], None, |s| mapped(s));
+    assert_eq!(gw.mappings().len(), 2, "TCP and UDP");
+    // Leave, and host again at once on the same port.
+    h.set_port(Some(port));
+    h.act(UiAction::LeaveLobby);
+    host_as(&mut h, Visibility::Invite);
+    assert_eq!(h.local_port(), Some(port), "the same port");
+    run_until("mapped again", Duration::from_secs(10), &mut [&mut h], None, |s| mapped(s));
+    // Past the old deletion's effect: the new game's mapping stays.
+    let until = Instant::now() + LATE * 3;
+    while Instant::now() < until {
+        frame(&mut [&mut h], Instant::now(), &mut |_| Keys(0));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let ports: Vec<u16> = gw.mappings().iter().map(|m| m.2).collect();
+    assert_eq!(ports, [port, port], "the new game's TCP and UDP mapping: {:?}", gw.mappings());
+}

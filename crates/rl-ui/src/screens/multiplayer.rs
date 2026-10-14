@@ -19,7 +19,7 @@
 
 use egui::{Button, Color32, Grid, Key, RichText, ScrollArea, TextEdit, Ui, vec2};
 
-use super::{MenuData, footer, form_row, message, page, primary, section};
+use super::{MenuData, footer, form_row, message, page, primary, section, tab_row};
 use crate::online::{ADDRESS_CHARS, InternetEntry, InternetStatus, PASSWORD_CHARS, Password, is_invite};
 use crate::state::{Screen, UiAction, UiState};
 
@@ -86,12 +86,11 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     let ui = &mut ui;
     // The tabs, centred over the column.
     ui.horizontal(|ui| {
-        let n = Tab::ALL.len() as f32;
-        let row = TAB.x * n + ui.spacing().item_spacing.x * (n - 1.0);
-        ui.add_space(((ui.available_width() - row) / 2.0).max(0.0));
+        let (tab_size, indent) = tab_row(ui, TAB, Tab::ALL.len());
+        ui.add_space(indent);
         for t in Tab::ALL {
             let tab = Button::selectable(data.multiplayer.tab == t, RichText::new(t.label()).size(18.0));
-            if ui.add_sized(TAB, tab).clicked() {
+            if ui.add_sized(tab_size, tab).clicked() {
                 data.multiplayer.tab = t;
             }
         }

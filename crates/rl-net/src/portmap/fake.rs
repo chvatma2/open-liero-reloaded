@@ -54,6 +54,11 @@ pub enum Misbehaviour {
     /// does not wait for a deletion's answer leaves the mapping behind
     /// (plan 12b Task 8, NT-2).
     LateUpnp,
+    /// UPnP's `DeletePortMapping` takes effect, and is answered, only
+    /// `LATE` (300 ms) after the request, each on a connection of its own,
+    /// while `AddPortMapping` is answered at once: a new mapping of the
+    /// same port added meanwhile is deleted with the old one (ruling RH-1).
+    LateDelete,
 }
 
 /// How late `SlowDelete` answers a deletion.
@@ -596,6 +601,16 @@ fn serve_one(inner: &Arc<Inner>, mut stream: TcpStream) -> Option<JoinHandle<()>
             Misbehaviour::HugeBody if line.starts_with("GET /desc.xml") => Some(false),
             _ => None,
         };
+        if inner.cfg.m == Misbehaviour::LateDelete && post && head.contains("#DeletePortMapping") {
+            let inner = Arc::clone(inner);
+            let spawned = std::thread::Builder::new().name("fake http late delete".into()).spawn(move || {
+                std::thread::sleep(LATE);
+                let (status, body) = respond(&inner, &head, &body);
+                let _ = stream.write_all(&http(status, &body, inner.chunked.load(Ordering::Relaxed)));
+                let _ = stream.flush();
+            });
+            return spawned.ok();
+        }
         if let Some(drip) = streaming {
             let inner = Arc::clone(inner);
             let spawned = std::thread::Builder::new()

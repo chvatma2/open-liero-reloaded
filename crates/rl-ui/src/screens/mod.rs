@@ -461,6 +461,20 @@ fn form_check_row<R>(ui: &mut Ui, on: bool, name: &str, add: impl FnOnce(&mut Ui
     })
 }
 
+/// A row of `n` tabs of `size` centred over the column: each tab's size
+/// and the indent before the first. A column too narrow for them (a small
+/// window at a large UI scale, 427 points wide at 3 pixels a point) gives
+/// each an equal share of its width instead (ruling UI-1), so every tab
+/// stays in the window.
+fn tab_row(ui: &Ui, size: Vec2, n: usize) -> (Vec2, f32) {
+    let n = n.max(1) as f32;
+    let gap = ui.spacing().item_spacing.x;
+    let room = ui.available_width();
+    let width = size.x.min(((room - gap * (n - 1.0)) / n).floor()).max(1.0);
+    let row = width * n + gap * (n - 1.0);
+    (Vec2::new(width, size.y), ((room - row) / 2.0).max(0.0))
+}
+
 /// A form row's height: a button's, so the name and a picker share a line.
 fn form_height(ui: &Ui) -> f32 {
     ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y
