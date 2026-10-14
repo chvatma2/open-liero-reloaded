@@ -11,7 +11,8 @@ use thiserror::Error;
 /// Announcements: addressable (parameterized replaceable), tag `d` =
 /// `"rust-liero"` (ruling PL12-2).
 pub const KIND_ANNOUNCE: u32 = 31470;
-/// Ephemeral handshake events (plan 12b).
+/// Ephemeral handshake events (plan 12b, N45): NIP-44 encrypted offers
+/// and answers, `p`-tagged to their recipient (`handshake`).
 pub const KIND_HANDSHAKE: u32 = 21470;
 /// The largest relay frame we decode, in bytes.
 pub const MAX_FRAME: usize = 128 * 1024;

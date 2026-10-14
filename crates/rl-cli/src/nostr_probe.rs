@@ -8,25 +8,32 @@
 //! per run (never the player's identity), the content `"rust-liero relay
 //! probe"`, tags `d` and `t` = `rust-liero-probe` (not the game's
 //! `rust-liero`, so game lists ignore it) and an expiration 10 minutes ahead.
-//! Per relay the probe opens two connections and publishes one note and one
+//! Per relay the probe opens two connections and publishes two notes and one
 //! ephemeral event:
 //! 1. connects both;
-//! 2. publishes a kind-31470 note on the first and records its `OK`;
-//! 3. reads it back at once on the second (`#t` filter);
-//! 4. subscribes to kind 21470 on the second, publishes one on the first,
-//!    and waits for it to be forwarded (plan 12b's handshakes need this);
+//! 2. publishes a kind-31470 note (announcements) and a kind-31471 note
+//!    (TURN relays, plan 12b) on the first and records their `OK`s;
+//! 3. reads them back at once on the second (`#t` filter);
+//! 4. subscribes to kind 21470 on the second, publishes one of
+//!    `MAX_HANDSHAKE_CONTENT` (16 KiB of random base64, the largest
+//!    handshake) on the first, and waits for it to be forwarded (plan 12b's
+//!    handshakes need this);
 //! 5. closes the second, waits (`--wait-min`, 3 minutes by default) and
-//!    reads the note back on the first.
+//!    reads both notes back on the first.
 //!
-//! A relay passes when it accepts the note, keeps it (both reads), forwards
-//! the ephemeral event and refuses nothing for payment or authentication.
+//! A relay passes when it accepts both notes, keeps them (both reads),
+//! forwards the ephemeral event and refuses nothing for payment or
+//! authentication.
 
 use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use base64::Engine as _;
 use rl_discovery::defaults::{DEFAULT_RELAYS, DEFAULT_STUN};
+use rl_discovery::handshake::MAX_HANDSHAKE_CONTENT;
 use rl_discovery::list::is_global;
+use rl_discovery::turn_note::KIND_TURN;
 use rl_discovery::{
     Event, Filter, KIND_ANNOUNCE, KIND_HANDSHAKE, Pool, PoolConfig, PoolEvent, RelayStatus, binding_request,
     parse_binding_response,
@@ -64,6 +71,23 @@ pub fn probe_event(key: &Identity, kind: u32, now_unix: u64) -> Event {
     ];
     let aux = rl_net::random_bytes::<32>().unwrap_or([0; 32]);
     Event::sign(key, now_unix, kind, tags, PROBE_CONTENT.to_owned(), aux)
+}
+
+/// The probe's ephemeral event: kind 21470, marked as [`probe_event`]
+/// marks, with [`MAX_HANDSHAKE_CONTENT`] bytes of random base64 as its
+/// content (the largest handshake a relay must forward).
+pub fn probe_handshake(key: &Identity, now_unix: u64) -> Event {
+    // 3 random bytes make 4 base64 characters, without padding.
+    let len = MAX_HANDSHAKE_CONTENT / 4 * 3;
+    let mut raw = Vec::with_capacity(len + 32);
+    while raw.len() < len {
+        raw.extend_from_slice(&rl_net::random_bytes::<32>().unwrap_or([0x5a; 32]));
+    }
+    raw.truncate(len);
+    let content = base64::engine::general_purpose::STANDARD.encode(raw);
+    let tags = probe_event(key, KIND_HANDSHAKE, now_unix).tags;
+    let aux = rl_net::random_bytes::<32>().unwrap_or([0; 32]);
+    Event::sign(key, now_unix, KIND_HANDSHAKE, tags, content, aux)
 }
 
 /// Whether a relay's refusal asks for payment or authentication: NIP-01's
@@ -108,6 +132,11 @@ pub struct RelayReport {
     pub read_now: bool,
     /// The note read back after the wait on the first.
     pub read_later: bool,
+    /// The kind-31471 note's `OK` (accepted, message).
+    pub turn: Option<(bool, String)>,
+    /// The kind-31471 note read back at once, and after the wait.
+    pub turn_read_now: bool,
+    pub turn_read_later: bool,
     /// The ephemeral event's `OK`.
     pub ephemeral: Option<(bool, String)>,
     /// The ephemeral event reached the second connection.
@@ -131,7 +160,17 @@ impl RelayReport {
         self.read_now && self.read_later
     }
 
-    /// The ephemeral event went from one connection to the other.
+    /// The relay took the kind-31471 note.
+    pub fn accepts_turn(&self) -> bool {
+        matches!(self.turn, Some((true, _)))
+    }
+
+    /// The kind-31471 note was served at once and after the wait.
+    pub fn keeps_turn(&self) -> bool {
+        self.turn_read_now && self.turn_read_later
+    }
+
+    /// The (16 KiB) ephemeral event went from one connection to the other.
     pub fn forwards(&self) -> bool {
         self.forwarded
     }
@@ -139,14 +178,19 @@ impl RelayReport {
     /// Connected, and refused nothing for payment or authentication.
     pub fn free(&self) -> bool {
         self.connected()
-            && [&self.note, &self.ephemeral]
+            && [&self.note, &self.turn, &self.ephemeral]
                 .into_iter()
                 .flatten()
                 .all(|(accepted, m)| *accepted || !needs_payment_or_auth(m))
     }
 
     pub fn passes(&self) -> bool {
-        self.accepts() && self.keeps() && self.forwards() && self.free()
+        self.accepts()
+            && self.keeps()
+            && self.accepts_turn()
+            && self.keeps_turn()
+            && self.forwards()
+            && self.free()
     }
 }
 
@@ -279,7 +323,7 @@ pub fn probe_relay(
         ..Filter::default()
     };
 
-    // The note, and the immediate read on the second connection.
+    // The notes, and the immediate reads on the second connection.
     let note = probe_event(key, KIND_ANNOUNCE, now_unix);
     let sent = Instant::now();
     a.pool.publish(note.clone());
@@ -287,8 +331,12 @@ pub fn probe_relay(
     if r.note.is_some() {
         r.ok_ms = Some(ms(sent.elapsed()));
     }
+    let turn = probe_event(key, KIND_TURN, now_unix);
+    a.pool.publish(turn.clone());
+    r.turn = a.ok(turn.id, Instant::now() + cfg.step, notes);
     if b_up.is_ok() {
         r.read_now = b.read("now", filter(KIND_ANNOUNCE), note.id, Instant::now() + cfg.step, notes);
+        r.turn_read_now = b.read("now-turn", filter(KIND_TURN), turn.id, Instant::now() + cfg.step, notes);
     }
 
     // The ephemeral event, from the first connection to the second.
@@ -307,7 +355,7 @@ pub fn probe_relay(
         if !ready {
             notes.push("no EOSE for `live` on the second connection".to_owned());
         }
-        let eph = probe_event(key, KIND_HANDSHAKE, now_unix);
+        let eph = probe_handshake(key, now_unix);
         a.pool.publish(eph.clone());
         while Instant::now() < until {
             for e in a.poll(notes) {
@@ -333,6 +381,7 @@ pub fn probe_relay(
 
     wait();
     r.read_later = a.read("later", filter(KIND_ANNOUNCE), note.id, Instant::now() + cfg.step, notes);
+    r.turn_read_later = a.read("later-turn", filter(KIND_TURN), turn.id, Instant::now() + cfg.step, notes);
     r
 }
 
@@ -379,15 +428,15 @@ fn opt_ms(v: Option<u64>) -> String {
 /// The reports as a Markdown table.
 pub fn relay_table(reports: &[RelayReport]) -> String {
     let mut out = String::from(
-        "| relay | connect ms | OK ms | accepts 31470 | read now/later | forwards 21470 | free | verdict | notes |\n\
-         |---|---|---|---|---|---|---|---|---|\n",
+        "| relay | connect ms | OK ms | accepts 31470 | read now/later | accepts 31471 | 31471 now/later | forwards 16 KiB 21470 | free | verdict | notes |\n\
+         |---|---|---|---|---|---|---|---|---|---|---|\n",
     );
     for r in reports {
         let mut notes: Vec<String> = Vec::new();
         if let Some(f) = &r.failure {
             notes.push(format!("connect: {f}"));
         }
-        for (what, ok) in [("note", &r.note), ("ephemeral", &r.ephemeral)] {
+        for (what, ok) in [("note", &r.note), ("TURN note", &r.turn), ("ephemeral", &r.ephemeral)] {
             match ok {
                 Some((_, m)) if !m.is_empty() => notes.push(format!("{what} OK: {}", clean(m))),
                 None if r.connected() => notes.push(format!("{what}: no OK")),
@@ -399,14 +448,16 @@ pub fn relay_table(reports: &[RelayReport]) -> String {
             [
                 yes(r.accepts()).to_owned(),
                 format!("{}/{}", yes(r.read_now), yes(r.read_later)),
+                yes(r.accepts_turn()).to_owned(),
+                format!("{}/{}", yes(r.turn_read_now), yes(r.turn_read_later)),
                 yes(r.forwards()).to_owned(),
                 yes(r.free()).to_owned(),
             ]
         } else {
-            ["-".to_owned(), "-".to_owned(), "-".to_owned(), "-".to_owned()]
+            std::array::from_fn(|_| "-".to_owned())
         };
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             r.url,
             opt_ms(r.connect_ms),
             opt_ms(r.ok_ms),
@@ -414,6 +465,8 @@ pub fn relay_table(reports: &[RelayReport]) -> String {
             cells[1],
             cells[2],
             cells[3],
+            cells[4],
+            cells[5],
             if r.passes() { "pass" } else { "FAIL" },
             notes.join("; "),
         ));
@@ -549,7 +602,7 @@ pub fn run_relays(args: &RelayArgs) -> anyhow::Result<bool> {
         args.urls.clone()
     };
     eprintln!(
-        "probing {} relays (two connections, one note and one ephemeral event each; reading back after {} min)",
+        "probing {} relays (two connections, two notes and one 16 KiB ephemeral event each; reading back after {} min)",
         urls.len(),
         args.wait_min
     );

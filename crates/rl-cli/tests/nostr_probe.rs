@@ -7,9 +7,10 @@ use std::time::Duration;
 
 use rl_cli::nostr_probe::{
     PROBE_CONTENT, PROBE_EXPIRY, PROBE_TAG, ProbeConfig, RelayReport, StunReport, needs_payment_or_auth,
-    probe_event, probe_key, probe_relay, probe_stun, relay_table, stun_table,
+    probe_event, probe_handshake, probe_key, probe_relay, probe_stun, relay_table, stun_table,
 };
-use rl_discovery::{KIND_ANNOUNCE, KIND_HANDSHAKE, Misbehaviour, StunResponder, TestRelay};
+use rl_discovery::handshake::MAX_HANDSHAKE_CONTENT;
+use rl_discovery::{KIND_ANNOUNCE, KIND_HANDSHAKE, KIND_TURN, Misbehaviour, StunResponder, TestRelay};
 
 const T: u64 = 1_800_000_000;
 
@@ -35,17 +36,20 @@ fn an_honest_relay_passes() {
     let relay = TestRelay::start();
     let r = probe(&relay, || {});
     assert!(r.connected(), "{r:?}");
-    assert!(r.read_now && r.read_later, "{r:?}");
-    assert!(r.accepts() && r.keeps() && r.forwards() && r.free(), "{r:?}");
+    assert!(r.read_now && r.read_later && r.turn_read_now && r.turn_read_later, "{r:?}");
+    assert!(r.accepts() && r.keeps() && r.accepts_turn() && r.keeps_turn(), "{r:?}");
+    assert!(r.forwards() && r.free(), "{r:?}");
     assert!(r.passes());
     assert!(r.connect_ms.is_some() && r.ok_ms.is_some());
-    // Exactly one stored note: the probe note, nothing else.
+    // Exactly two stored notes: the probe notes, nothing else.
     let stored = relay.events();
-    assert_eq!(stored.len(), 1, "{stored:?}");
-    let e = &stored[0];
-    assert_eq!((e.kind, e.content.as_str(), e.created_at), (KIND_ANNOUNCE, PROBE_CONTENT, T));
-    assert_eq!(e.tag("t"), Some(PROBE_TAG));
-    assert_eq!(e.expiration(), Some(T + PROBE_EXPIRY));
+    assert_eq!(stored.len(), 2, "{stored:?}");
+    for (e, kind) in stored.iter().zip([KIND_ANNOUNCE, KIND_TURN]) {
+        assert_eq!((e.kind, e.content.as_str(), e.created_at), (kind, PROBE_CONTENT, T));
+        assert_eq!(e.tag("t"), Some(PROBE_TAG));
+        assert_eq!(e.tag("d"), Some(PROBE_TAG), "never a TURN list's tag");
+        assert_eq!(e.expiration(), Some(T + PROBE_EXPIRY));
+    }
 }
 
 #[test]
@@ -68,7 +72,14 @@ fn a_relay_refusing_the_kind_does_not_accept() {
     relay.set_misbehaviour(Misbehaviour::RefuseKind(KIND_ANNOUNCE));
     let r = probe(&relay, || {});
     assert!(!r.accepts() && !r.keeps() && !r.passes(), "{r:?}");
+    assert!(r.accepts_turn() && r.keeps_turn(), "{r:?}");
     assert!(r.free() && r.forwards(), "the ephemeral kind still goes through: {r:?}");
+
+    relay.set_misbehaviour(Misbehaviour::RefuseKind(KIND_TURN));
+    let r = probe(&relay, || {});
+    assert!(r.accepts() && !r.accepts_turn() && !r.keeps_turn() && !r.passes(), "{r:?}");
+    let table = relay_table(&[r]);
+    assert!(table.contains("TURN note OK: blocked") && table.contains("FAIL"), "{table}");
 }
 
 #[test]
@@ -115,6 +126,14 @@ fn probe_events_are_marked_and_expire() {
         assert_eq!(e.tags.len(), 3);
     }
     assert_ne!(probe_key().unwrap().public(), key.public(), "a fresh key per run");
+    // The ephemeral one carries the largest handshake: 16 KiB of random base64.
+    let e = probe_handshake(&key, T);
+    assert!(e.verify());
+    assert_eq!((e.kind, e.content.len()), (KIND_HANDSHAKE, MAX_HANDSHAKE_CONTENT));
+    assert!(e.content.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/'));
+    assert_eq!(e.tag("t"), Some(PROBE_TAG));
+    assert_eq!(e.expiration(), Some(T + 600));
+    assert_ne!(e.content, probe_handshake(&key, T).content, "random");
 }
 
 #[test]

@@ -445,3 +445,44 @@ fn dropping_the_relay_closes_the_port() {
     assert!(TcpStream::connect(("127.0.0.1", port)).is_err());
     assert_eq!(c.next(), Next::Closed, "open connections are closed");
 }
+
+#[test]
+fn drop_ephemeral_drops_the_first_ones_then_forwards() {
+    let relay = TestRelay::start();
+    relay.set_time(1000);
+    let mut listener = Client::connect(&relay);
+    let mut sender = Client::connect(&relay);
+    assert!(listener.subscribe("hs", vec![kinds(KIND_HANDSHAKE)]).is_empty());
+    relay.set_misbehaviour(Misbehaviour::DropEphemeral(2));
+    for i in 0..2 {
+        let lost = ev(1, 1000 + i, KIND_HANDSHAKE, &[], &format!("lost {i}"));
+        assert_eq!(sender.publish(&lost), (true, String::new()), "accepted, then dropped");
+    }
+    // Stored kinds are not counted.
+    assert!(sender.publish(&ev(1, 1000, 1, &[], "stored")).0);
+    assert!(listener.query("after", vec![kinds(2)]).is_empty(), "a forwarded event would precede this EOSE");
+    let third = ev(1, 1003, KIND_HANDSHAKE, &[], "third");
+    assert_eq!(sender.publish(&third), (true, String::new()));
+    assert_eq!(listener.recv(), FromRelay::Event { sub: "hs".into(), event: third });
+}
+
+#[test]
+fn start_on_listens_where_asked() {
+    let relay = TestRelay::start_on("127.0.0.1:0".parse().unwrap());
+    assert_eq!(relay.url(), format!("ws://127.0.0.1:{}", relay.port()));
+    assert!(Client::connect(&relay).query("s", vec![kinds(1)]).is_empty());
+    // Another loopback address.
+    let other = TestRelay::start_on("127.0.0.2:0".parse().unwrap());
+    assert_eq!(other.url(), format!("ws://127.0.0.2:{}", other.port()));
+    let s = TcpStream::connect(("127.0.0.2", other.port())).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let (mut ws, _) = tungstenite::client(other.url().as_str(), s).unwrap();
+    ws.send(Message::text(encode_to_relay(&ToRelay::Req { sub: "s".into(), filters: vec![kinds(1)] })))
+        .unwrap();
+    let eose = loop {
+        if let Message::Text(t) = ws.read().unwrap() {
+            break decode_from_relay(t.as_str()).unwrap();
+        }
+    };
+    assert_eq!(eose, FromRelay::Eose { sub: "s".into() });
+}

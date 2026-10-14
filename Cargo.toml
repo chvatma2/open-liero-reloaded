@@ -114,8 +114,14 @@ crc32fast = "=1.5.2"
 # exact pin; only `gateway` (`get_default_interface`, `Interface::gateway`),
 # not the Apple and Android extras.
 netdev = { version = "=0.46.3", default-features = false, features = ["gateway"] }
-# Identity keys (plan 10, spec §5.2): BIP-340 Schnorr over secp256k1, no_std.
-k256 = { version = "=0.14.0", default-features = false, features = ["schnorr"] }
+# Identity keys (plan 10, spec §5.2): BIP-340 Schnorr over secp256k1, no_std;
+# `ecdh` for NIP-44's conversation keys (plan 12b, N44).
+k256 = { version = "=0.14.0", default-features = false, features = ["schnorr", "ecdh"] }
+# NIP-44 v2 (plan 12b, N44): HKDF-SHA256, ChaCha20 (IETF) and base64 with
+# padding; exact pins, pure Rust (HMAC-SHA256 is the `hmac` pin above).
+hkdf = "=0.13.0"
+chacha20 = { version = "=0.10.2", default-features = false, features = ["cipher"] }
+base64 = { version = "=0.22.1", default-features = false, features = ["alloc"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

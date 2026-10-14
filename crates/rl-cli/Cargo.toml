@@ -38,6 +38,8 @@ rl-net.workspace = true
 rl-lobby.workspace = true
 rl-server.workspace = true
 rl-discovery.workspace = true
+# The relay probe's random 16 KiB handshake content (plan 12b).
+base64.workspace = true
 serde_json.workspace = true
 postcard.workspace = true
 wgpu.workspace = true

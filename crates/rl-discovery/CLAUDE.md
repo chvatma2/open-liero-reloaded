@@ -3,18 +3,21 @@
 Finding games (networking spec §6, plan 12a), complete: the Nostr core, the
 relay pool and its test relay, announcements, the game list, STUN, invite
 codes, the default lists, and the pieces rl-server and rl-game share to
-host a listed game (`hosting`, `ping`).
+host a listed game (`hosting`, `ping`). Plan 12b adds NIP-44 encryption,
+the handshake events (`handshake`) and TURN relay notes (`turn_note`).
 
 - **Layer 5, std.** Depends on rl-proto (`PublicKey`, `Signature`), rl-lobby
   (`Identity`, `verify`), serde, serde_json, sha2, hex, thiserror, bech32 and
-  postcard (invite codes), and for the relay drivers rustls, webpki-roots and
-  tungstenite. The core (`nostr`, `announce`, `list`, `invite`, the
-  `Announcer`, STUN's codec) is sans-IO (no sockets, no threads, no clock:
+  postcard (invite codes), k256 (`ecdh`), hkdf, hmac, chacha20 and base64
+  (NIP-44), and for the relay drivers rustls, webpki-roots and
+  tungstenite. The core (`nostr`, `announce`, `list`, `invite`, `nip44`,
+  `handshake`, `turn_note`, the `Announcer`, STUN's codec) is sans-IO (no sockets, no threads, no clock:
   time is an argument) because plan 13 builds parts of this crate for WASM.
   Sockets and threads belong only to drivers (`relay`, `stun::public_ip`,
   `hosting::AddressWatch`, `ping`).
-- **Public API** (`lib.rs`): modules `announce`, `defaults`, `hosting`,
-  `list`, `nostr`, `ping`, `pool`, `stun` (and `test_relay`, below);
+- **Public API** (`lib.rs`): modules `announce`, `defaults`, `handshake`,
+  `hosting`, `list`, `nip44`, `nostr`, `ping`, `pool`, `stun`, `turn_note`
+  (and `test_relay`, below);
   `invite` and `relay` are private; `invite` is re-exported as `Invite`, `InviteError`,
   `RelayHint`, `MAX_CODE`, `MAX_DEFAULT_HINTS`, `MAX_URL_BYTES`,
   `MAX_URL_HINTS`; `relay` is the pool's driver (its types are `pool`'s).
@@ -24,7 +27,9 @@ host a listed game (`hosting`, `ping`).
   `ListedGame`, `Ping`, `Pinger`, `GameSummary`, `Hosting`, `Region`,
   `Announcer`, `announcement`, `parse_announcement`, `AddressWatch`,
   `Publisher`, `relay_hints`, `invite`, `binding_request`,
-  `parse_binding_response`, `public_ip`. Read `target/api/rl-discovery.txt`
+  `parse_binding_response`, `public_ip`, `Asker`, `Inbound`, `Inbox`,
+  `Reply`, `Request`, `KIND_TURN`, `TurnList`, `TurnNote`, `TurnPick`,
+  `parse_turn_note` (the function `turn_note` only by its module path). Read `target/api/rl-discovery.txt`
   (`cargo xtask api`) for signatures.
 - **Feature `test-relay`** adds `test_relay` (`TestRelay`, `Misbehaviour`)
   and `StunResponder`; it pulls in `rcgen` and is off in normal builds.
@@ -61,6 +66,78 @@ host a listed game (`hosting`, `ping`).
   github.com/nostr-protocol/registry-of-kinds (kinds section) and the NIPs
   README kinds table list nothing in 31400-31499 or 21400-21499 (31470 and
   21470 are free). Re-check before a release.
+- **Kinds registry re-check, 2026-10-14** (plan 12b Task 6, for 31471 and
+  21470): registry-of-kinds `schema.yaml` at d18576cc (2026-10-02) and the
+  NIPs README kinds table at 6631b3eb (2026-09-27). Neither lists 31470,
+  31471 or 21470; in 21000-21999 only 21000-21003 and 21059 are taken. The
+  31400-31499 range is not empty after all: 31436 ("Gopherhole Document")
+  is listed (already in the 2026-10-02 schema, so the 2026-10-13 note above
+  missed it); it does not touch our kinds.
+- **`nip44`** (N44): NIP-44 v2 exactly as the NIP's pseudocode.
+  `conversation_key(secret, public)` (k256 `ecdh::diffie_hellman` with the
+  scalar as given, `Identity::secret()`, and the x-only key lifted to
+  `0x02 || x`; HKDF-SHA256 extract, salt `nip44-v2`; `None` for a secret of
+  zero or ≥ n, or an x on no curve point), `message_keys` (HKDF expand of
+  the nonce to 76 bytes: ChaCha20 key, nonce, HMAC key), `padded_len`,
+  `encrypt(ck, plaintext, nonce)` (1..=65535 bytes, else `Length`) and
+  `decrypt(ck, payload)` (`#` or empty: `Version`; base64 length
+  132..=87472 and decoded 99..=65603: `Payload`; version byte 2; the MAC
+  through `Mac::verify_slice`, constant time: `Mac`; then the padding:
+  `Padding`; non-UTF-8 plaintext: `Payload`). Only the 2-byte length
+  prefix: the NIP's later 6-byte extended prefix (64 KiB and more) is left
+  out, as the NIP allows; handshakes are at most 16 KiB. Never panics
+  (fuzzed, including arbitrary padded plaintexts behind a correct MAC).
+- **Fixture** `tests/fixtures/nip44.vectors.json`: the official NIP-44
+  vectors, unmodified, fetched once by hand on 2026-10-14 from
+  `https://raw.githubusercontent.com/paulmillr/nip44/main/nip44.vectors.json`
+  (repository HEAD 671a1f04, the file last changed in 1f8dba17). SHA-256
+  `269ed0f69e4c192512cc779e78c555090cebc7c785b609e338a62afc3ce25040`, the
+  checksum NIP-44's "Tests" section states (nostr-protocol/nips 44.md at
+  733a0471). All of `v2.valid` and `v2.invalid` are tested, the long
+  messages included.
+- **`handshake`** (N45): kind-21470 events, tags `p` (the recipient) and
+  `expiration` (+60 s), content the NIP-44 encryption of
+  `{"v":1,"session":"<32 hex>","signal":<rl_proto::Signal>,"mapped":"<ip:port>"|null}`.
+  `MAX_HANDSHAKE_CONTENT` 16 KiB, `RESEND` 2 s, `ANSWER_DEADLINE` 10 s,
+  `MAX_SKEW` 60 s, `SESSION_MEMORY` 120 s, `MAX_SESSIONS` 4096.
+  - `Asker` (the joiner): `new` draws a fresh key from `rand` (an invalid
+    secret is drawn again; after 16 invalid draws the last is hashed until
+    valid, so a broken source still ends) and a 16-byte session; `poll`
+    gives the offer at once and every `RESEND` (a new event, the same
+    session) until answered or expired; `take` checks the author is the
+    host, kind, size, our `p` tag, the signature, decrypts, the session,
+    and an `Answer` (SDP within `MAX_SDP`) or `Refused`; taken once.
+    `filter`: kind 21470, author the host, `#p` our key, since now - 60.
+  - `Inbox` (the host): `offer` checks size, kind, `p` = us and the date
+    (±60 s) first. A key with a live session: an event id seen before is a
+    `duplicate` (no signature check); otherwise signature, decryption with
+    the remembered conversation key, the same session, then `Repeat(the
+    cached reply)` or `being answered` before the reply (at most 5 signed
+    resends per session, so a forgery naming the key uses none). A new key: signature, then the rate bucket (10 a second, burst
+    20; integer microseconds, so a steady 10/s always passes), then ECDH,
+    decryption, JSON, `v == 1`, an `Offer` with SDP within `MAX_SDP`, and
+    `mapped` an IPv4 socket address. One session per key; sessions are
+    forgotten `SESSION_MEMORY` after the offer or the reply, the oldest
+    dropped at 4096. `reply` encrypts and signs with the host's key and
+    caches the event for repeats. Ignored events are counted (`ignored()`).
+    `filter(now)`: kind 21470, `#p` us, since now - 60.
+- **`turn_note`** (N52, N53): `KIND_TURN` 31471 (addressable), `TURN_TAG`
+  `rust-liero-turn` (tags `d` and `t`), `TurnNote { v (TURN_NOTE_V = 1),
+  addr (IPv4), port, region, capacity, load, user, pass }` as JSON.
+  `turn_note(identity, note, now, ttl, aux)` (expiration now + ttl:
+  `ANNOUNCE_TTL` for a live relay, `CLOSE_TTL` with capacity 0 when it
+  closes); `parse_turn_note` (kind, `d`, `MAX_CONTENT`, JSON; port nonzero,
+  user and pass 1..=64 printable ASCII (space included), capacity at most
+  4096, the address neither unspecified, broadcast nor multicast;
+  `AnnounceError`s). `TurnList` checks like `GameList`: cheap checks
+  first (kind, size, age 180 s, future 60 s, expiration, the per-key 10 s
+  gap by arrival or date, staleness, a full list of `MAX_RELAYS` 64), then
+  the signature, the note and the address (global unless `allow_local`).
+  A closing note (capacity 0, recognised before the signature by
+  `"capacity":0,`) is exempt from the gap, removes the relay and leaves a
+  tombstone. `pick(region, n)`: the region first, then load/capacity
+  (compared exactly), then key; full relays (load >= capacity) never.
+  `filter(now)`: kind 31471, `#t` `TURN_TAG`, since now - 180.
 - **Fixture** `tests/fixtures/relay-events.json`: three real kind-1 events a
   public relay served on 2026-10-13, fetched once by hand (a WebSocket REQ
   from node) and embedded; they verify with our code. No test touches the
@@ -72,9 +149,14 @@ host a listed game (`hosting`, `ping`).
   plus the DER root; rcgen self-signed, rustls with the aws-lc-rs provider;
   the relay listens on 127.0.0.1 only, so a client connecting to `localhost`
   must fall back from `::1`, or connect to `port()` directly), `url()`,
+  `start_on(addr)` (`ws://` on any address, port 0 for a free one; `url()`
+  names the bound address, loopback for an unspecified one: `rl-cli
+  nostr-relay` in Docker),
   `port()`, `events()`, `set_misbehaviour(Honest | NeverEose | Garbage |
   DropAfter(n) | Slow(d) | Silent | Drip | SlowReads | Refuse(msg) |
-  RefuseKind(k) | KeepFor(secs) | NoForward | HalfFrame)` (HalfFrame: at
+  RefuseKind(k) | KeepFor(secs) | NoForward | HalfFrame |
+  DropEphemeral(n))` (DropEphemeral: the first n ephemeral events after it
+  is set are accepted and forwarded to nobody, then they are forwarded; HalfFrame: at
   the first frame read, half a 256-byte text frame, then the connection
   closes; Refuse: every event gets
   `OK false msg`, such as a paid relay's `restricted: …`; RefuseKind: that
@@ -253,7 +335,15 @@ host a listed game (`hosting`, `ping`).
 Test: `cargo nextest run -p rl-discovery` (`tests/announce.rs` and `tests/list.rs`: announcements and the game list; `tests/nostr.rs`: the published
 events verify, signing round-trips, canonical escaping, tampering, frames
 round-trip, fuzzed frames never panic; `tests/test_relay.rs`: the relay;
-`tests/stun.rs`: `public_ip` and the codec's re-exports; `tests/invite.rs`: invite codes (round trips, hints, damage, proptest `encode_always_decodes`); unit tests of `hosting` (hints, IPv4-only
+`tests/stun.rs`: `public_ip` and the codec's re-exports; `tests/nip44.rs`:
+the official vectors, padding behind a good MAC, fuzzed payloads;
+`tests/handshake.rs`: round trip, repeats and resends, replays, malformed
+offers, a host-only reply, filters, secret redraws, the hostile feed
+(`a_hostile_handshake_feed_is_bounded`: wrong recipient, too old, in the
+future, 2000 fresh sessions in 2 ms take at most 20, a steady 10/s for
+200 s keeps about 1200 sessions, tampering), fuzzed events;
+`tests/turn_note.rs`: notes, validation, local addresses, the pick order,
+the flood bound, closing notes, fuzzed notes; `tests/invite.rs`: invite codes (round trips, hints, damage, proptest `encode_always_decodes`); unit tests of `hosting` (hints, IPv4-only
 invites, the address watch's answers, the publisher's notes and closing)
 and `ping` (an open and a closed port, the bound); `tests/pool.rs`: the pool against the test relay (silent, dripping,
 slow, slow-reading: every frame arrives intact through partial writes,

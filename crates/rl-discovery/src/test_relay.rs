@@ -13,7 +13,7 @@
 //! [`TestRelay::set_time`], which keeps expiry tests deterministic.
 
 use std::io::{self, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -65,6 +65,10 @@ pub enum Misbehaviour {
     /// At the first frame it reads, writes half of a 256-byte text frame
     /// and closes the connection (a relay that dies mid-frame).
     HalfFrame,
+    /// Accepts the first this many ephemeral events (counted from when it
+    /// is set) and forwards them to nobody, then forwards again (a relay
+    /// losing the first offers).
+    DropEphemeral(u32),
 }
 
 /// The relay's side of a TCP connection: under [`Misbehaviour::SlowReads`]
@@ -130,6 +134,8 @@ struct State {
     events: Vec<Event>,
     subs: Vec<Sub>,
     misbehaviour: Misbehaviour,
+    /// Ephemeral events dropped under `DropEphemeral`.
+    dropped_ephemeral: u32,
     now: Option<u64>,
     next_conn: u64,
     conns: Vec<JoinHandle<()>>,
@@ -194,6 +200,12 @@ impl State {
                 return (false, format!("blocked: kind {k} not accepted"));
             }
             Misbehaviour::NoForward if (20_000..30_000).contains(&ev.kind) => return (true, String::new()),
+            Misbehaviour::DropEphemeral(n)
+                if (20_000..30_000).contains(&ev.kind) && self.dropped_ephemeral < n =>
+            {
+                self.dropped_ephemeral += 1;
+                return (true, String::new());
+            }
             _ => {}
         }
         let now = self.clock();
@@ -247,6 +259,7 @@ impl State {
 /// An in-process relay: dropped = stopped.
 pub struct TestRelay {
     shared: Arc<Shared>,
+    ip: IpAddr,
     port: u16,
     tls: bool,
     accept: Option<JoinHandle<()>>,
@@ -255,7 +268,13 @@ pub struct TestRelay {
 impl TestRelay {
     /// A `ws://127.0.0.1:<port>` relay.
     pub fn start() -> TestRelay {
-        TestRelay::spawn(None)
+        TestRelay::start_on(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+    }
+
+    /// A `ws://` relay listening on `addr` (port 0: any free port), such as
+    /// `0.0.0.0:7777` in a Docker network (`rl-cli nostr-relay`).
+    pub fn start_on(addr: SocketAddr) -> TestRelay {
+        TestRelay::spawn(addr, None)
     }
 
     /// A `wss://localhost:<port>` relay with a fresh self-signed
@@ -275,19 +294,27 @@ impl TestRelay {
         .with_no_client_auth()
         .with_single_cert(vec![cert.der().clone()], key.into())
         .expect("server certificate");
-        let relay = TestRelay::spawn(Some(Arc::new(config)));
+        let relay = TestRelay::spawn(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), Some(Arc::new(config)));
         (relay, der)
     }
 
-    fn spawn(tls: Option<Arc<rustls::ServerConfig>>) -> TestRelay {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind the test relay");
+    fn spawn(addr: SocketAddr, tls: Option<Arc<rustls::ServerConfig>>) -> TestRelay {
+        let listener = TcpListener::bind(addr).expect("bind the test relay");
         listener.set_nonblocking(true).expect("nonblocking listener");
-        let port = listener.local_addr().expect("local address").port();
+        let local = listener.local_addr().expect("local address");
+        let port = local.port();
+        // A relay on every interface is reached locally through loopback.
+        let ip = match local.ip() {
+            IpAddr::V4(a) if a.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V6(a) if a.is_unspecified() => IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+            ip => ip,
+        };
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
                 events: Vec::new(),
                 subs: Vec::new(),
                 misbehaviour: Misbehaviour::Honest,
+                dropped_ephemeral: 0,
                 now: None,
                 next_conn: 0,
                 conns: Vec::new(),
@@ -299,19 +326,21 @@ impl TestRelay {
             let shared = Arc::clone(&shared);
             thread::spawn(move || accept_loop(&shared, &listener, tls.as_ref()))
         };
-        TestRelay { shared, port, tls: is_tls, accept: Some(accept) }
+        TestRelay { shared, ip, port, tls: is_tls, accept: Some(accept) }
     }
 
-    /// The relay's URL: `ws://127.0.0.1:<port>` or `wss://localhost:<port>`.
+    /// The relay's URL: `ws://<address>:<port>` (`127.0.0.1` for
+    /// [`TestRelay::start`], loopback for an unspecified address) or
+    /// `wss://localhost:<port>`.
     pub fn url(&self) -> String {
         if self.tls {
             format!("wss://localhost:{}", self.port)
         } else {
-            format!("ws://127.0.0.1:{}", self.port)
+            format!("ws://{}", SocketAddr::from((self.ip, self.port)))
         }
     }
 
-    /// The listening port on `127.0.0.1`.
+    /// The listening port.
     pub fn port(&self) -> u16 {
         self.port
     }
@@ -323,7 +352,9 @@ impl TestRelay {
 
     /// Makes the relay misbehave from now on, on every connection.
     pub fn set_misbehaviour(&self, m: Misbehaviour) {
-        self.shared.lock().misbehaviour = m;
+        let mut st = self.shared.lock();
+        st.misbehaviour = m;
+        st.dropped_ephemeral = 0;
     }
 
     /// Sets the relay's clock (unix seconds) for expiry; the default is the

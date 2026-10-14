@@ -182,13 +182,16 @@ The headless command-line tool. Its commands:
   measure public relays and STUN servers to choose `rl_discovery::defaults`
   (the default lists when none are named). **By hand only: the relay probe
   publishes to public relays**; no test runs it against the internet. Per
-  relay, two pool connections: a kind-31470 note (its `OK` and round trip),
-  read back at once on the second and after the wait on the first, and a
-  kind-21470 event forwarded from the first to the second. Every event is a
+  relay, two pool connections: a kind-31470 note (its `OK` and round trip)
+  and a kind-31471 note (TURN relays, plan 12b), each read back at once on
+  the second and after the wait on the first, and a kind-21470 event of
+  `MAX_HANDSHAKE_CONTENT` (16 KiB of random base64, `probe_handshake`)
+  forwarded from the first to the second. Every event is a
   probe event: a fresh random key per run (`probe_key`, never the player's
-  identity), content `"rust-liero relay probe"`, tags `d` and `t` =
-  `rust-liero-probe`, expiry 10 minutes ahead (`probe_event`). A relay
-  passes when it accepts, keeps (both reads), forwards and refuses nothing
+  identity), content `"rust-liero relay probe"` (the handshake's random),
+  tags `d` and `t` = `rust-liero-probe`, expiry 10 minutes ahead
+  (`probe_event`). A relay passes when it accepts both notes, keeps them
+  (both reads), forwards and refuses nothing
   for payment or auth (`needs_payment_or_auth`: `restricted:`,
   `auth-required:`, or naming payment or a whitelist). The STUN probe asks
   over IPv4 (3 tries of 1 s) and keeps the RTT, the mapped address's family
