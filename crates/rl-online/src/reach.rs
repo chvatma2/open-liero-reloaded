@@ -314,6 +314,9 @@ pub(crate) struct Listener {
     /// Handshakes ignored for their date: how far off this machine's clock
     /// (seconds, ahead when positive; at most one every `NOTE_EVERY`).
     skews: Receiver<i64>,
+    /// Each relay's news (its URL, and "connected" or "unreachable: why"),
+    /// once until it changes (final review B-M4).
+    relay_news: Receiver<(String, String)>,
     answers: Sender<Answered>,
     status: Arc<Mutex<Listening>>,
     stop: Arc<AtomicBool>,
@@ -328,15 +331,22 @@ impl Listener {
         }
         let (offer_tx, offers) = mpsc::channel();
         let (skew_tx, skews) = mpsc::channel();
+        let (news_tx, relay_news) = mpsc::channel();
         let (answers, answer_rx) = mpsc::channel();
         let status = Arc::new(Mutex::new(Relays::new(cfg.relays.len()).listening()));
         let stop = Arc::new(AtomicBool::new(false));
         let (s, st) = (Arc::clone(&status), Arc::clone(&stop));
-        let to = ToPeer { offers: offer_tx, skews: skew_tx };
+        let to = ToPeer { offers: offer_tx, skews: skew_tx, relays: news_tx };
         thread::Builder::new()
             .name("rl-online listen".into())
             .spawn(move || listen(cfg, me, &to, &answer_rx, &s, &st))?;
-        Ok(Listener { offers, skews, answers, status, stop })
+        Ok(Listener { offers, skews, relay_news, answers, status, stop })
+    }
+
+    /// Each relay's news since the last call: its URL and "connected" or
+    /// "unreachable: why".
+    pub(crate) fn relay_news(&mut self) -> Vec<(String, String)> {
+        self.relay_news.try_iter().collect()
     }
 
     /// The handshakes ignored for their date since the last call, as how
@@ -489,6 +499,13 @@ impl HostReach {
         Some(r)
     }
 
+    /// The listener's relays' news since the last call (B-M4): each
+    /// relay's URL and "connected" or "unreachable: why", once until it
+    /// changes.
+    pub(crate) fn relay_news(&mut self) -> Vec<(String, String)> {
+        self.listener.as_mut().map(Listener::relay_news).unwrap_or_default()
+    }
+
     /// Stops listening (the thread drops its pool).
     pub(crate) fn stop(&mut self) {
         self.listener = None;
@@ -501,6 +518,7 @@ impl HostReach {
 struct ToPeer {
     offers: Sender<(Request, Instant)>,
     skews: Sender<i64>,
+    relays: Sender<(String, String)>,
 }
 
 /// The listener thread: subscribes to the inbox's filter (again every
@@ -518,6 +536,8 @@ fn listen(
 ) {
     let offers = &to.offers;
     let mut skew_said: Option<Instant> = None;
+    let urls = cfg.relays.clone();
+    let mut news_said: Vec<Option<String>> = vec![None; urls.len()];
     let mut relays = Relays::new(cfg.relays.len());
     let mut pool = Pool::start(cfg);
     let mut inbox = Inbox::new(me);
@@ -576,7 +596,23 @@ fn listen(
                         Inbound::Ignored(_) => {}
                     }
                 }
-                PoolEvent::Status { relay, status } => relays.status(relay, &status),
+                PoolEvent::Status { relay, status } => {
+                    relays.status(relay, &status);
+                    let said = match &status {
+                        RelayStatus::Connected => Some("connected".to_string()),
+                        RelayStatus::Failed(why) | RelayStatus::Dropped(why) => {
+                            Some(format!("unreachable: {why}"))
+                        }
+                        RelayStatus::Connecting => None,
+                    };
+                    if let (Some(said), Some(last), Some(url)) =
+                        (said, news_said.get_mut(relay), urls.get(relay))
+                        && last.as_deref() != Some(said.as_str())
+                    {
+                        let _ = to.relays.send((url.clone(), said.clone()));
+                        *last = Some(said);
+                    }
+                }
                 PoolEvent::Eose { .. } | PoolEvent::Ok { .. } => {}
             }
         }

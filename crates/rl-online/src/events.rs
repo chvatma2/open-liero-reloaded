@@ -81,6 +81,10 @@ pub enum OnlineEvent {
     /// connect, or was dated off this PC's clock (ruling FR12b-3);
     /// `join.line(more)` is its lobby and log line.
     RelayJoin { join: RelayJoin, more: u32 },
+    /// A host's listener's relay `url` is "connected" or "unreachable:
+    /// why", once until it changes (final review B-M4: a host with no other
+    /// pool on its relays says which one fails).
+    ListenRelay { url: String, status: String },
     /// A client's link to its host opened, by `path` (N49); `remote` is
     /// the host's end, or for `Relayed` the TURN relay's address (the
     /// server its allocation is on, ruling FR12b-4). Once.

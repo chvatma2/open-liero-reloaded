@@ -1203,6 +1203,9 @@ fn an_invite_server_without_an_address_is_joined_through_nostr() {
     assert!(log.contains("reach: Taking joins through 1 of 1 relays"), "{log}");
     // FR12b-3: what became of the join through the relays.
     assert!(log.contains("relays: A player asked to join through the relays: answered"), "{log}");
+    // Final review B-M4: an Invite server has no announcing pool; its
+    // listener's relays are said all the same.
+    assert!(log.contains(&format!("relay {}: connected", relay.url())), "{log}");
 }
 
 /// N47, N51: a public server whose router (a `FakeGateway` speaking UPnP

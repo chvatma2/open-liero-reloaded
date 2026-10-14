@@ -194,7 +194,9 @@ beside the executable, else in the working directory).
   Each `OnlineEvent::Reachability` is kept and every new line of its
   `lines()` logged once, `"reach: …"`; each `OnlineEvent::RelayJoin` is
   `"relays: {line}"` (ruling FR12b-3: answered, refused, not connected,
-  dated off the clock). The invite is printed once
+  dated off the clock); each `OnlineEvent::ListenRelay` is `"relay {url}:
+  {status}"` when the server has no pool of its own on its relays (an
+  Invite server without `--relay`; final review B-M4). The invite is printed once
   `Reachability::settled()` (the router answered or gave up, and STUN's
   first round) or `SETTLE_WAIT` (5 s) after the start, and again whenever
   `direct()` changes: `"invite code: rlx1…"` with an address, `"invite

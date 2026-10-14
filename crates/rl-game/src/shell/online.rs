@@ -697,6 +697,8 @@ impl Shell {
                     println!("rl-game: relays: {text}");
                     self.chat_line(LogLine::event(text));
                 }
+                // B-M4: which of the hosted game's relays fails.
+                OnlineEvent::ListenRelay { url, status } => println!("rl-game: relay {url}: {status}"),
                 OnlineEvent::Connected { path, remote } => {
                     println!("rl-game: {}", path_text(path, remote));
                     self.poll_connection();

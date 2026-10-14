@@ -484,6 +484,11 @@ impl Server {
             OnlineEvent::Reachability(r) => self.reached(r, log),
             // FR12b-3: what became of a join through the relays.
             OnlineEvent::RelayJoin { join, more } => line(log, format_args!("relays: {}", join.line(more))),
+            // B-M4: the listener's relays, when no pool of the server's own
+            // says the same relays' news.
+            OnlineEvent::ListenRelay { url, status } if self.nostr.is_none() => {
+                line(log, format_args!("relay {url}: {status}"));
+            }
             _ => {}
         }
     }

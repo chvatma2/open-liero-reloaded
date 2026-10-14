@@ -404,7 +404,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   it stops the thread, which drops its pool itself.
 - **`events.rs`**: `OnlineEvent` (plan 12b: `Joining(JoinStep)`,
   `Reachability(Reachability)`, `Connected { path, remote }`,
-  `RelayJoin { join, more }`), `NetStats` (round trip, input delay, the
+  `RelayJoin { join, more }`, `ListenRelay { url, status }`: a host's
+  listener's relay "connected" or "unreachable: why", once until it
+  changes, final review B-M4), `NetStats` (round trip, input delay, the
   last second's deepest rollback, a client's datagram loss, corrections
   per second, stall episodes).
 

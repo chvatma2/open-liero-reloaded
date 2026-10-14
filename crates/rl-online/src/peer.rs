@@ -856,6 +856,8 @@ impl OnlinePeer {
         let mut notes = Vec::new();
         h.reach.answer(ep, now, &mut notes);
         self.events.extend(notes.into_iter().map(|(join, more)| OnlineEvent::RelayJoin { join, more }));
+        let news = h.reach.relay_news();
+        self.events.extend(news.into_iter().map(|(url, status)| OnlineEvent::ListenRelay { url, status }));
     }
 
     /// A host's reachability, when its lines, whether it settled or its
