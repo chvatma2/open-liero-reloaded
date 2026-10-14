@@ -12,17 +12,14 @@ announcements.
   turn-client-proto (`=0.7.2`, default features: `std`; N52: `Core`'s
   TURN client), for our own relay server (ruling TR-2) md-5
   (`=0.11.0`), sha1 (`=0.11.0`), hmac (`=0.13.0`) and crc32fast
-  (`=1.5.2`), and igd-next (`=0.17.1`, N51: UPnP-IGD; no features, its
-  `default = []` — there is no `io_sync` feature, the sync API and its
-  attohttpc client without TLS are always on). Real clocks and sockets
+  (`=1.5.2`). Port mapping needs no crate (ruling PM-1: igd-next was
+  dropped — it parsed a LAN device's XML recursively, a stack-overflow
+  abort at ~35 KB of nesting, read unbounded bodies and used environment
+  proxies). Real clocks and sockets
   live only in this crate's socket drivers, `endpoint`,
   `turn::TurnServer` and `portmap::PortMapper` (and the binaries); `link`,
   `core`, `turn::TurnCore` and `portmap::pmp`'s codec are sans-IO, and
   `endpoint::poll` takes the time.
-- **igd-next's crates.** No pin-back was needed: every crate it brought
-  into `Cargo.lock` was at least two weeks old on 2026-10-14 (the newest,
-  yoke-derive 0.8.4, 2026-09-30): attohttpc 0.30.1, url 2.5.8, idna 1.1.0,
-  xmltree 0.10.3 and the icu_*/zerovec family.
 - **TURN client pins.** `Cargo.lock` holds turn-client-proto's
   transitive crates under two weeks old back (`cargo update -p <crate>
   --precise <ver>`): stun-proto 2.0.2 (2.0.3), stun-types 2.0.2 (2.0.3),
@@ -274,7 +271,7 @@ announcements.
   open its port. `PortMapper::start(MapRequest)` never blocks: two
   threads, `rl-net pcp` (PCP, then NAT-PMP after any PCP failure: a
   refusal, a version-0 `UNSUPP_VERSION`, silence) and `rl-net upnp`
-  (igd-next: SSDP search 2 s, then `get_external_ip`, `add_port`),
+  (our client: SSDP search, the description, SOAP),
   each with its deadline (`PMP_DEADLINE` 3 s, `UPNP_DEADLINE` 4 s:
   `poll` gives up on a thread past it, under the board's lock, so it can
   no longer win). The first mapping wins (`Ctx::claim`); the other thread
@@ -289,52 +286,95 @@ announcements.
     TCP's port; a UDP grant on another port is deleted and asked once
     more, else both go and the next port is tried; with no pair, UDP
     alone (`tcp: false`). PCP's `CANNOT_PROVIDE_EXTERNAL` and UPnP's
-    718/724 try the next port; any other failure ends the method.
+    718/724 try the next port. `MapError`: `Conflict` (next port),
+    `Fatal` (a refusal or nonsense: the method ends, except that a TCP
+    refusal falls back to UDP alone) and `Silent` (no usable answer: the
+    method ends).
   - **Lifetimes:** 2 h (PCP, NAT-PMP), 3600 s (UPnP; 725 → lease 0, never
     renewed), or the request's; the winner renews at half the granted
-    lifetime, and a failed renewal deletes the rest and becomes
-    `Failed("the router dropped the mapping: <method>: …")`.
+    lifetime. A refused renewal deletes the rest and becomes
+    `Failed("the router dropped the mapping: <method>: …")`; a silent one
+    is tried again halfway to the mapping's end while more than 2 s are
+    left (RFC 6886 §3.3), and only then reported dropped.
   - **`pmp`**: the RFC 6886/6887 codec (`pmp_map_request`, `parse_pmp`,
     `pcp_map_request`, `parse_pcp`: the answer must echo our nonce; an
     answer of another version reads as its version and result only) and
     the thread. A UDP socket connected to `gateway:pmp_port` (only its
     datagrams arrive); each request is sent with waits of 250, 500 and
     1000 ms, clipped to the deadline; a closed port (ICMP) fails at once.
-    A random nonce per protocol, kept for renewals and the deletion.
+    A random nonce per protocol, kept for renewals and the deletion; a
+    deletion waits only for its own answer (protocol, internal port).
     `gateway: None` skips both, and says so.
-  - **`upnp`**: igd-next's sync API, `SearchOptions { broadcast_address:
-    req.ssdp, timeout and single_search_timeout 2 s }`. Its SOAP requests
-    have no deadline of their own (attohttpc's 30 s defaults) and read
-    whole bodies: `poll` bounds the wait, the thread may linger. Its
-    search can panic (a `Duration` subtraction racing its deadline), so
-    the thread runs under `catch_unwind`. Router words in failures pass
-    `tidy` (printable, 160 chars).
+  - **`upnp`** (ruling PM-1, our own client; a LAN device must never
+    crash or exhaust the game, so every step is bounded and nothing
+    recurses). Sans-IO parsers, fuzzed: `parse_ssdp`, `parse_http`,
+    `control_urls`, `find_element`/`element_text`, `soap_result`.
+    - **SSDP:** a socket on the request's local IP (else the address
+      routing toward the gateway), multicast TTL 2; M-SEARCH for
+      `InternetGatewayDevice:1` with `MX: 1` at 0, ¼ and ½ of the window
+      (`MapRequest::search`, `SEARCH` 2 s). A reply counts only as
+      `HTTP/1.x 200` with a `LOCATION` `http://<IPv4>[:port]/path` whose
+      host is its own sender, not global; bad replies are skipped, never
+      fatal. Up to 4 devices are tried until one works or the window ends.
+    - **HTTP/1.1** (`http`): no proxy whatever the environment says, no
+      names, no redirects, `Connection: close`; connect, write and read
+      bounded by the deadline (reads in 50 ms slices, so a drop stops it);
+      heads up to `HEAD_CAP` (8 KiB), bodies up to `BODY_CAP` (64 KiB),
+      by `Content-Length`, chunks (extensions and trailers ignored) or the
+      close. A device gets `DEVICE_WAIT` (2 s) for its description and
+      external address; SOAP calls run to the thread's deadline.
+    - **The description:** a flat scan (no tree, so depth costs nothing)
+      of `<service>` blocks for `WANIPConnection:1`/`:2` or
+      `WANPPPConnection:1` (at most 4, document order) and their
+      `controlURL`, resolved against `<URLBase>` (if on the device's IP)
+      or the `LOCATION`: absolute URLs only on the device's IP,
+      absolute paths, or relative to the base's directory. Each is tried
+      with `GetExternalIPAddress`.
+    - **SOAP:** `GetExternalIPAddress`, `AddPortMapping` (the 8 standard
+      arguments, escaped; description `"rust-liero"`) and
+      `DeletePortMapping`, in the found service's namespace. 725 → lease
+      0 (never renewed); 718/724 → the next port; other UPnP errors →
+      `Fatal`; no usable answer → `Silent`. A deletion has 450 ms.
+  - **A thread's panic** (a bug) is reported as its failure ("the client
+    panicked") by a guard, and counted under `test-hooks`
+    (`portmap::worker_panics`, which the fuzz tests require to be 0).
   - **Drop** sets the board's stop, wakes the threads, and waits at most
     `DROP_WAIT` (1 s) for those that asked for a mapping (`touched`) to
     delete it (PCP/NAT-PMP: lifetime 0, two sends 200 ms apart; UPnP:
-    `remove_port`); a thread still searching, or stuck in HTTP, is
-    detached.
+    `DeletePortMapping`, 450 ms); a thread still searching holds nothing
+    and is detached (its reads stop within 50 ms).
   - **Tests never reach a real router.** Every request names its
     gateway, `pmp_port` and `ssdp`; with `test-hooks` (any test build of
     the workspace), `start` refuses a request whose `ssdp` or gateway is
     not loopback (`Failed`, no datagram sent): the defaults
     (`MapRequest::new`: 5351, `SSDP` 239.255.255.250:1900) are
     unreachable from tests by construction. A binary that must map a
-    real router (Docker tests) is built without `test-hooks`.
+    real router (Docker tests) is built without `test-hooks`. rl-online's
+    `test-hooks` forwards it, and rl-server and rl-cli turn it on as a
+    dev-dependency, so per-crate test runs keep the guard (review m6).
   - **`fake::FakeGateway`** (feature `test-hooks`): a router on
     127.0.0.1 on threads — SSDP (`LOCATION:
-    http://127.0.0.1:<port>/desc.xml`), a tiny HTTP server (a
-    `WANIPConnection:1` description and SCPD; SOAP
-    `GetExternalIPAddress`, `AddPortMapping`, `DeletePortMapping`) and
+    http://127.0.0.1:<port>/desc.xml`), a tiny HTTP server (a realistic
+    description, `serve_description(Description::{WanIp, WanPpp,
+    UrlBase})`: IGD → WANDevice → WANConnectionDevice with Layer3Forwarding
+    and WANCommonInterfaceConfig services around the connection service;
+    answers by `Content-Length` or `chunked(true)`; SOAP
+    `GetExternalIPAddress`, `AddPortMapping`, `DeletePortMapping`, only at
+    the description's control path and in its service's namespace) and
     one UDP socket for PCP and NAT-PMP (a NAT-PMP-only fake answers PCP
     with version 0 `UNSUPP_VERSION`). `Misbehaviour`: `HttpSilent`,
     `OtherUdpPort` (the first new UDP mapping 1000 ports away),
     `PcpRefuses`, `PrivateExternal` (10.0.0.1), `RenewRefused` (and the
-    mapping dropped), `Garbage` (SSDP with a junk line, truncated XML,
-    PCP with a wrong nonce, NAT-PMP truncated). `hold(port)`: another
-    client's port. `serving(answer)` (fuzzing) answers SSDP and HTTP with
-    `answer` (`$HTTP` → its HTTP address), each SSDP answer followed by
-    an empty datagram so igd-next's search ends at once.
+    mapping dropped), `RenewSilent` (the first renewal's three requests
+    unanswered), `TcpRefused` (UPnP 606 for TCP), `Garbage` (a non-UTF-8
+    SSDP datagram first, then one with a junk line; truncated XML; PCP
+    with a wrong nonce; NAT-PMP truncated), `SoapDrip` (`AddPortMapping`
+    drips a byte every 100 ms; `dripping()`), `HugeBody` (an endless
+    description; `streamed()`), `DeepNesting` (6000 levels, 42 KB),
+    `ForeignLocation` (SSDP from 127.0.0.2 naming 127.0.0.1;
+    `http_requests()`). `hold(port)`: another client's port.
+    `serving(answer)` (fuzzing) answers SSDP (its first 1400 bytes) and
+    HTTP with `answer` (`$HTTP` → its HTTP address).
 - **`natsim`** (feature `test-hooks`, N56): `Net` runs `Core`s behind
   virtual NATs (full cone, address-restricted, port-restricted:
   endpoint-independent mapping keeping the internal port if free;
@@ -472,13 +512,18 @@ mapping alive, a renumbered router, symmetric NATs through a relay, a
 hole-punched link releasing its allocation, a dead relay ending the
 link (kept relayed past `RELEASE_AFTER` first), gathering bounded by
 `TURN_WAIT`; `tests/portmap.rs`: `FakeGateway`s on 127.0.0.1 —
-UPnP mapping TCP and UDP on one port, PCP first and NAT-PMP as the
-fallback, every `Misbehaviour` reported
-(`fake_gateway_misbehaviours_are_reported::*`), an exact request never
-shifting, mappings deleted on drop, no gateway and no UPnP failing
-within 5 s, a test build refusing a real router, NAT-PMP/PCP answers
-and UPnP answers fuzzed (the latter through `serving`); unit tests in
-`portmap/pmp.rs` (RFC layouts, the nonce, a version-0 answer);
+UPnP mapping TCP and UDP on one port, real routers' descriptions (plain
+and chunked), PCP first and NAT-PMP as the fallback, every
+`Misbehaviour` reported (`fake_gateway_misbehaviours_are_reported::*`),
+an exact request never shifting, mappings deleted on drop, no gateway
+and no UPnP failing within 5 s, a test build refusing a real router,
+`HTTP_PROXY` ignored (a child process of the test binary runs with the
+proxy variables set; the proxy must see no connection), NAT-PMP/PCP
+answers, the UPnP parsers and UPnP answers end to end fuzzed (through
+`serving`, a 30 ms search window; deep nesting, bodies over 64 KiB,
+malformed chunks; no panic); unit tests in `portmap/pmp.rs` (RFC
+layouts, the nonce, a version-0 answer) and `portmap/upnp.rs` (SSDP
+senders, HTTP framing and caps, descriptions, SOAP faults);
 `tests/turn.rs`: a `TurnServer` on 127.0.0.1 with plain sockets
 through `turn_client_proto` (relaying both ways, unbound and through a
 channel; the per-IP limits; a full relay; binding answers;

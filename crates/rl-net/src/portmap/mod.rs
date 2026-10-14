@@ -1,6 +1,7 @@
 //! Port mapping (decision N51, spec §5.3 step 1): a native host asks its
 //! router to open its port, through PCP (RFC 6887), falling back to NAT-PMP
-//! (RFC 6886), and UPnP-IGD (igd-next), in parallel.
+//! (RFC 6886), and UPnP-IGD, in parallel; all three clients are our own
+//! (ruling PM-1 for UPnP: a LAN device must never crash or exhaust us).
 //!
 //! `PortMapper` is the driver: one thread per method family (`rl-net pcp`:
 //! PCP, then NAT-PMP; `rl-net upnp`), each with its own deadline; the first
@@ -11,7 +12,7 @@
 #[cfg(feature = "test-hooks")]
 pub mod fake;
 pub mod pmp;
-mod upnp;
+pub mod upnp;
 
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -75,6 +76,8 @@ pub struct MapRequest {
     pub pmp_port: u16,
     /// 239.255.255.250:1900; tests: a FakeGateway's (never the real group).
     pub ssdp: SocketAddr,
+    /// The SSDP search window: `upnp::SEARCH` (2 s); fuzz tests shorten it.
+    pub search: Duration,
 }
 
 /// The PCP and NAT-PMP server port (RFC 6886 §3.1, RFC 6887 §19.1).
@@ -110,6 +113,7 @@ impl MapRequest {
             lifetime: None,
             pmp_port: PMP_PORT,
             ssdp: SSDP,
+            search: upnp::SEARCH,
         }
     }
 
@@ -252,8 +256,11 @@ pub(crate) struct Grant {
 pub(crate) enum MapError {
     /// This external port is taken: try the next one.
     Conflict(String),
-    /// The protocol failed (silence, refusal, garbage): stop.
+    /// The router refused, or answered nonsense: stop (or, for TCP, map UDP alone).
     Fatal(String),
+    /// No usable answer (silence, a closed port, a cut answer): stop; a
+    /// renewal tries again while the mapping lives.
+    Silent(String),
 }
 
 /// One router protocol, as the pairing logic and the renewal use it.
@@ -322,7 +329,13 @@ fn map_pair(r: &mut dyn Router, ctx: &Ctx) -> Result<Pair, String> {
                     why = w;
                     continue;
                 }
-                Err(MapError::Fatal(w)) => return Err(w),
+                // TCP refused outright (a router that maps UDP only, say):
+                // UDP alone.
+                Err(MapError::Fatal(w)) => {
+                    why = w;
+                    break;
+                }
+                Err(MapError::Silent(w)) => return Err(w),
             };
             if req.exact && t.port != local {
                 r.unmap(false, t.port);
@@ -347,7 +360,7 @@ fn map_pair(r: &mut dyn Router, ctx: &Ctx) -> Result<Pair, String> {
                         why = w;
                         break;
                     }
-                    Err(MapError::Fatal(w)) => {
+                    Err(MapError::Fatal(w) | MapError::Silent(w)) => {
                         r.unmap(false, t.port);
                         return Err(w);
                     }
@@ -372,7 +385,7 @@ fn map_pair(r: &mut dyn Router, ctx: &Ctx) -> Result<Pair, String> {
             }
             Ok(u) => return Ok(Pair { port: u.port, tcp: false, lifetime: u.lifetime }),
             Err(MapError::Conflict(w)) => why = w,
-            Err(MapError::Fatal(w)) => return Err(w),
+            Err(MapError::Fatal(w) | MapError::Silent(w)) => return Err(w),
         }
     }
     Err(if why.is_empty() { "no port could be mapped".into() } else { why })
@@ -395,31 +408,46 @@ fn try_router(r: &mut dyn Router, ctx: &Ctx) -> Result<(), String> {
     Ok(())
 }
 
-/// The winner: renews at half the lifetime; a refused renewal reports the
-/// mapping dropped. Deletes the mappings when the mapper is dropped.
+/// The winner: renews at half the lifetime. A refused renewal reports the
+/// mapping dropped; a silent one is tried again halfway to the mapping's
+/// end (RFC 6886 §3.3 retries too), and only when the mapping has run out
+/// is it reported dropped. Deletes the mappings when the mapper is dropped.
 fn hold(r: &mut dyn Router, ctx: &Ctx, pair: Pair) {
-    let mut lifetime = pair.lifetime;
+    let half = |lifetime: u32| (Duration::from_secs(lifetime.into()) / 2).max(Duration::from_secs(1));
+    let mut ends = (pair.lifetime != 0).then(|| Instant::now() + Duration::from_secs(pair.lifetime.into()));
+    let mut next = (pair.lifetime != 0).then(|| Instant::now() + half(pair.lifetime));
     loop {
-        let at = (lifetime != 0)
-            .then(|| Instant::now() + (Duration::from_secs(lifetime.into()) / 2).max(Duration::from_secs(1)));
-        if !ctx.sleep_until(at) {
+        if !ctx.sleep_until(next) {
             pair.delete(r);
             return;
         }
         r.renewing();
-        match renew(r, ctx, pair) {
-            Ok(l) => lifetime = l,
-            Err(why) => {
-                pair.delete(r);
-                let _ = ctx.tx.send(Report::Dropped(format!("{}: {why}", r.method())));
-                return;
+        let why = match renew(r, ctx, pair) {
+            Ok(lifetime) => {
+                let now = Instant::now();
+                ends = (lifetime != 0).then(|| now + Duration::from_secs(lifetime.into()));
+                next = (lifetime != 0).then(|| now + half(lifetime));
+                continue;
             }
-        }
+            Err(MapError::Silent(why)) => {
+                let now = Instant::now();
+                let left = ends.map_or(Duration::ZERO, |e| e.saturating_duration_since(now));
+                if left > Duration::from_secs(2) {
+                    next = Some(now + (left / 2).max(Duration::from_secs(1)));
+                    continue;
+                }
+                format!("the renewal got no answer before the mapping ran out ({why})")
+            }
+            Err(MapError::Conflict(why) | MapError::Fatal(why)) => format!("the renewal failed: {why}"),
+        };
+        pair.delete(r);
+        let _ = ctx.tx.send(Report::Dropped(format!("{}: {why}", r.method())));
+        return;
     }
 }
 
 /// One renewal of every mapping held, at its own port: the new lifetime.
-fn renew(r: &mut dyn Router, ctx: &Ctx, pair: Pair) -> Result<u32, String> {
+fn renew(r: &mut dyn Router, ctx: &Ctx, pair: Pair) -> Result<u32, MapError> {
     let mut lifetime = 0;
     for udp in [false, true] {
         if !udp && !pair.tcp {
@@ -429,11 +457,9 @@ fn renew(r: &mut dyn Router, ctx: &Ctx, pair: Pair) -> Result<u32, String> {
             Ok(g) if g.port == pair.port => lifetime = shorter(lifetime, g.lifetime),
             Ok(g) => {
                 r.unmap(udp, g.port);
-                return Err(format!("the renewal moved it to port {}", g.port));
+                return Err(MapError::Fatal(format!("it moved to port {}", g.port)));
             }
-            Err(MapError::Conflict(w) | MapError::Fatal(w)) => {
-                return Err(format!("the renewal failed: {w}"));
-            }
+            Err(e) => return Err(e),
         }
     }
     Ok(lifetime)
@@ -498,7 +524,12 @@ impl PortMapper {
                 Worker::Pmp => pmp::run,
                 Worker::Upnp => upnp::run,
             };
-            match std::thread::Builder::new().name(name.into()).spawn(move || run(ctx)) {
+            let guard = PanicGuard { worker, tx: tx.clone() };
+            let body = move || {
+                let _guard = guard;
+                run(ctx);
+            };
+            match std::thread::Builder::new().name(name.into()).spawn(body) {
                 Ok(handle) => mapper.threads.push((worker, handle)),
                 Err(e) => {
                     mapper.failures[worker as usize] = Some(match worker {
@@ -591,6 +622,37 @@ impl Drop for PortMapper {
             }
         }
     }
+}
+
+/// Reports a thread's panic as its failure (a bug: no input may cause one),
+/// counted for the tests (`worker_panics`).
+struct PanicGuard {
+    worker: Worker,
+    tx: Sender<Report>,
+}
+
+impl Drop for PanicGuard {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            #[cfg(feature = "test-hooks")]
+            PANICS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let why = match self.worker {
+                Worker::Pmp => "PCP and NAT-PMP: the client panicked",
+                Worker::Upnp => "UPnP: the client panicked",
+            };
+            let _ = self.tx.send(Report::Failed { worker: self.worker, why: why.into() });
+        }
+    }
+}
+
+#[cfg(feature = "test-hooks")]
+static PANICS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How many mapper threads have panicked in this process (feature
+/// `test-hooks`): the fuzz tests require 0.
+#[cfg(feature = "test-hooks")]
+pub fn worker_panics() -> usize {
+    PANICS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Why a build with `test-hooks` refuses `req`: tests map through a

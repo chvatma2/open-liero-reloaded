@@ -54,6 +54,8 @@ insta.workspace = true
 divan.workspace = true
 # The relay probe's tests run against the in-process test relay.
 rl-discovery = { workspace = true, features = ["test-relay"] }
+# rl-net's test hooks: its port mapper refuses real routers in tests.
+rl-net = { workspace = true, features = ["test-hooks"] }
 
 [[test]]
 name = "integration"

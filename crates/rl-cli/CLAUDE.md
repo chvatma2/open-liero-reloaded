@@ -271,7 +271,8 @@ another match) and makes its start world.
 
 **Layer 6.** `dump-state` comes later (spec §7.4).
 
-Test: `cargo nextest run -p rl-cli`. The tests are modules of one binary,
+Test: `cargo nextest run -p rl-cli` (the dev-dependency on
+`rl-net/test-hooks` keeps the port mapper off real routers in tests). The tests are modules of one binary,
 `tests/integration.rs`, except those xtask runs by name (`golden`,
 `net_cases`, `grid`, `net_sim`, `transport`, `render_golden`, `gpu_bench`): one module's
 tests are `cargo nextest run -p rl-cli --test integration corpus::`.

@@ -367,7 +367,7 @@ impl Router for Pcp<'_> {
             parse_pcp(b, &nonce)
                 .filter(|r| r.version != PCP_VERSION || (r.protocol == protocol && r.internal == internal))
         })
-        .map_err(MapError::Fatal)?;
+        .map_err(MapError::Silent)?;
         if r.version != PCP_VERSION {
             return Err(MapError::Fatal(match r.version {
                 0 => "the gateway speaks NAT-PMP only".into(),
@@ -457,7 +457,7 @@ impl Router for NatPmp<'_> {
             }
             _ => None,
         })
-        .map_err(MapError::Fatal)?;
+        .map_err(MapError::Silent)?;
         match r {
             (0, port, lifetime) if port != 0 && lifetime != 0 => Ok(Grant { port, lifetime }),
             (0, ..) => Err(MapError::Fatal("an empty grant".into())),
@@ -468,7 +468,13 @@ impl Router for NatPmp<'_> {
     fn unmap(&mut self, udp: bool, _external: u16) {
         let req = pmp_map_request(udp, self.internal, 0, 0);
         let end = Instant::now() + Duration::from_millis(DELETE_RETRIES.iter().sum());
-        let _ = exchange(self.sock, &req, &DELETE_RETRIES, end, &|| true, parse_pmp);
+        let internal = self.internal;
+        // Only this deletion's answer counts: a late one to another request
+        // must not stop its resend.
+        let _ = exchange(self.sock, &req, &DELETE_RETRIES, end, &|| true, |b| match parse_pmp(b) {
+            Some(PmpResponse::Map { udp: u, internal: i, .. }) if u == udp && i == internal => Some(()),
+            _ => None,
+        });
     }
 
     fn external_ip(&self) -> Option<Ipv4Addr> {

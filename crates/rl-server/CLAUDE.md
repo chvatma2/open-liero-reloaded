@@ -144,8 +144,9 @@ beside the executable, else in the working directory).
 - Chat, names and end reasons in log lines are sanitized by the lobby
   (no control characters): a member cannot forge a log line.
 
-Test: `cargo nextest run -p rl-server` (`tests/server.rs`, on 127.0.0.1
-with port 0, Classic from `RL_CONTENT_DIR`, skipped with a notice without
+Test: `cargo nextest run -p rl-server` (the dev-dependency on
+`rl-net/test-hooks` keeps the port mapper off real routers in tests;
+`tests/server.rs`, on 127.0.0.1 with port 0, Classic from `RL_CONTENT_DIR`, skipped with a notice without
 it; each under 20 s, every wait bounded): a rotation (two bot-driven
 clients ready, entry 0 on Dirt Level with one fill bot, its end, the lobby
 offering entry 1 on Liero Factory, which starts once both are ready again;

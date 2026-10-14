@@ -35,6 +35,8 @@ ron.workspace = true
 tempfile.workspace = true
 # The announcement tests run a relay and a STUN server in-process.
 rl-discovery = { workspace = true, features = ["test-relay"] }
+# rl-net's test hooks: its port mapper refuses real routers in tests.
+rl-net = { workspace = true, features = ["test-hooks"] }
 
 [[test]]
 name = "integration"

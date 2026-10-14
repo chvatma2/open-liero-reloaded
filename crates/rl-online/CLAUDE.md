@@ -63,7 +63,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   `test_seed_override`, `test_serve_instead` (a host serves another
   pack's archive for a pack) and `test_prompt_limit` (a client's prompt
   bytes) exist only with the `test-hooks` feature (this crate's own
-  dev-dependency).
+  dev-dependency). It forwards `rl-net/test-hooks`, so any test build
+  with it keeps rl-net's port mapper away from real routers.
   - **Reliable sends are never dropped** (`outbox.rs`, `Outbox`): every
     reliable message (the session's, the lobby's) waits in a per-peer FIFO
     backlog fed into the endpoint while its `buffered` for that peer is

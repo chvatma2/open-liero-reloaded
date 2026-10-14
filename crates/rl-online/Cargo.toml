@@ -30,8 +30,10 @@ hex.workspace = true
 
 [features]
 # Test-only API (OnlinePeer::test_seed_override): enabled by this crate's
-# own tests, never by a build that ships.
-test-hooks = []
+# own tests, never by a build that ships. Forwards rl-net's, so a per-crate
+# test run keeps rl-net's port-mapping guard on (tests never map a real
+# router).
+test-hooks = ["rl-net/test-hooks"]
 
 [dev-dependencies]
 proptest.workspace = true

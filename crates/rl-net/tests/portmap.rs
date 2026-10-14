@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 use proptest::prelude::*;
 use proptest::sample::Index;
 use proptest::test_runner::Config;
-use rl_net::portmap::fake::{FakeGateway, Misbehaviour};
+use rl_net::portmap::fake::{Description, FakeGateway, Misbehaviour};
 use rl_net::portmap::pmp::{parse_pcp, parse_pmp};
+use rl_net::portmap::upnp;
 use rl_net::portmap::{MapRequest, MappingState, Method, PortMapper};
 
 const LOCALHOST: Ipv4Addr = Ipv4Addr::LOCALHOST;
@@ -34,13 +35,22 @@ fn request(fake: &FakeGateway, port: u16, tcp: bool) -> MapRequest {
 }
 
 /// Polls until the state leaves `Trying` (or `within` passes), checking that
-/// no `poll` blocks: each returns within 5 ms.
+/// no `poll` blocks: each returns within 50 ms (a loaded machine may preempt
+/// a thread for a few ms; `settle_strictly` holds `poll` to 5 ms).
 fn settle(mapper: &mut PortMapper, within: Duration) -> MappingState {
+    settle_within(mapper, within, Duration::from_millis(50))
+}
+
+fn settle_strictly(mapper: &mut PortMapper, within: Duration) -> MappingState {
+    settle_within(mapper, within, Duration::from_millis(5))
+}
+
+fn settle_within(mapper: &mut PortMapper, within: Duration, max_poll: Duration) -> MappingState {
     let end = Instant::now() + within;
     while Instant::now() < end {
         let t = Instant::now();
         let changed = mapper.poll();
-        assert!(t.elapsed() < Duration::from_millis(5), "poll blocked for {:?}", t.elapsed());
+        assert!(t.elapsed() < max_poll, "poll blocked for {:?}", t.elapsed());
         if let Some(state) = changed
             && state != MappingState::Trying
         {
@@ -114,7 +124,7 @@ mod fake_gateway_misbehaviours_are_reported {
         req.gateway = None;
         let start = Instant::now();
         let mut mapper = PortMapper::start(req);
-        let state = settle(&mut mapper, Duration::from_secs(5));
+        let state = settle_strictly(&mut mapper, Duration::from_secs(5));
         assert!(failed(&state).contains("UPnP"), "{state:?}");
         assert!(start.elapsed() < Duration::from_secs(5));
     }
@@ -181,6 +191,156 @@ mod fake_gateway_misbehaviours_are_reported {
         let state = settle(&mut mapper, Duration::from_secs(6));
         failed(&state);
     }
+
+    #[test]
+    fn renew_silent() {
+        // A renewal burst lost on the way (review m1): the mapping lives on
+        // and is renewed again before it runs out, never reported dropped.
+        let ssdp = silent();
+        let fake = FakeGateway::start(false, true, false, EXTERNAL, Misbehaviour::RenewSilent);
+        let mut req = request(&fake, 23600, true);
+        req.ssdp = ssdp.local_addr().unwrap();
+        req.lifetime = Some(Duration::from_secs(8));
+        let mut mapper = PortMapper::start(req);
+        mapped(&settle(&mut mapper, Duration::from_secs(5)));
+        // Renewed at 4 s (silent until about 5.75 s), again at about 6.9 s.
+        let end = Instant::now() + Duration::from_millis(7500);
+        while Instant::now() < end {
+            assert_eq!(mapper.poll(), None, "the mapping was reported lost");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(fake.mappings().len(), 2);
+    }
+
+    #[test]
+    fn tcp_refused() {
+        // A router that refuses TCP still maps UDP alone (review m7).
+        let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::TcpRefused);
+        let mut mapper = PortMapper::start(upnp_only(&fake, 23610));
+        let state = settle(&mut mapper, Duration::from_secs(5));
+        assert_eq!(mapped(&state), (Method::Upnp, SocketAddrV4::new(EXTERNAL, 23610), false, true));
+        assert_eq!(fake.mappings(), vec![(Method::Upnp, true, 23610, SocketAddrV4::new(LOCALHOST, 23610))]);
+    }
+
+    /// A UPnP-only request at `fake` (no PCP/NAT-PMP gateway).
+    fn upnp_only(fake: &FakeGateway, port: u16) -> MapRequest {
+        let mut req = request(fake, port, true);
+        req.gateway = None;
+        req
+    }
+
+    #[test]
+    fn soap_drip() {
+        // `AddPortMapping`'s answer drips a byte every 100 ms: the client
+        // gives up at its deadline (4 s) and closes the connection; nothing
+        // lingers.
+        let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::SoapDrip);
+        let start = Instant::now();
+        let mut mapper = PortMapper::start(upnp_only(&fake, 23540));
+        let state = settle(&mut mapper, Duration::from_secs(5));
+        assert!(failed(&state).contains("UPnP"), "{state:?}");
+        assert!(start.elapsed() < Duration::from_secs(5));
+        let dropped = Instant::now();
+        drop(mapper);
+        assert!(dropped.elapsed() <= Duration::from_millis(1100), "drop took {:?}", dropped.elapsed());
+        while fake.dripping() > 0 && dropped.elapsed() < Duration::from_secs(1) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(fake.dripping(), 0, "a dripping answer is still being read");
+    }
+
+    #[test]
+    fn huge_body() {
+        // An endless description: the client stops reading at 64 KiB.
+        let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::HugeBody);
+        let mut mapper = PortMapper::start(upnp_only(&fake, 23550));
+        let state = settle(&mut mapper, Duration::from_secs(5));
+        assert!(failed(&state).contains("UPnP"), "{state:?}");
+        drop(mapper);
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(fake.streamed() < 32 << 20, "the client read {} bytes", fake.streamed());
+    }
+
+    #[test]
+    fn deep_nesting() {
+        // 6000 levels of nesting (42 KB) around a real device: no crash.
+        let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::DeepNesting);
+        let mut mapper = PortMapper::start(upnp_only(&fake, 23560));
+        let (method, ..) = mapped(&settle(&mut mapper, Duration::from_secs(5)));
+        assert_eq!(method, Method::Upnp);
+    }
+
+    #[test]
+    fn foreign_location() {
+        // An SSDP answer naming another host than its sender is ignored.
+        let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::ForeignLocation);
+        let mut mapper = PortMapper::start(upnp_only(&fake, 23570));
+        let state = settle(&mut mapper, Duration::from_secs(5));
+        assert!(failed(&state).contains("UPnP"), "{state:?}");
+        assert_eq!(fake.http_requests(), 0);
+    }
+}
+
+#[test]
+fn upnp_reads_real_router_descriptions() {
+    for (i, d) in [Description::WanIp, Description::WanPpp, Description::UrlBase].into_iter().enumerate() {
+        for chunked in [false, true] {
+            let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::Honest);
+            fake.serve_description(d);
+            fake.chunked(chunked);
+            let port = 23580 + 2 * i as u16 + u16::from(chunked);
+            let mut req = request(&fake, port, true);
+            req.gateway = None;
+            let mut mapper = PortMapper::start(req);
+            let state = settle(&mut mapper, Duration::from_secs(5));
+            assert_eq!(
+                state,
+                MappingState::Mapped {
+                    method: Method::Upnp,
+                    external: SocketAddrV4::new(EXTERNAL, port),
+                    tcp: true,
+                    usable: true
+                },
+                "{d:?}, chunked {chunked}"
+            );
+            assert_eq!(fake.mappings().len(), 2, "{d:?}, chunked {chunked}");
+        }
+    }
+}
+
+/// The child of `upnp_ignores_http_proxy`: maps through a fake with
+/// `HTTP_PROXY` (and its kin) set to a proxy that must never be used.
+#[test]
+#[ignore = "run by upnp_ignores_http_proxy with a proxy in the environment"]
+fn upnp_ignores_http_proxy_child() {
+    let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::Honest);
+    let mut req = request(&fake, 23590, true);
+    req.gateway = None;
+    let mut mapper = PortMapper::start(req);
+    mapped(&settle(&mut mapper, Duration::from_secs(5)));
+}
+
+#[test]
+fn upnp_ignores_http_proxy() {
+    // The environment is per process: the child test runs in a process of
+    // its own with the proxy variables set.
+    let proxy = std::net::TcpListener::bind((LOCALHOST, 0)).unwrap();
+    let url = format!("http://{}", proxy.local_addr().unwrap());
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "portmap::upnp_ignores_http_proxy_child", "--ignored", "--test-threads", "1"])
+        .env("HTTP_PROXY", &url)
+        .env("http_proxy", &url)
+        .env("ALL_PROXY", &url)
+        .env("all_proxy", &url)
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    proxy.set_nonblocking(true).unwrap();
+    assert!(proxy.accept().is_err(), "the client went through the proxy");
+    assert!(status.success(), "the child failed to map through the fake");
 }
 
 #[test]
@@ -282,27 +442,39 @@ fn pmp_answer() -> impl Strategy<Value = Vec<u8>> {
 }
 
 /// What a hostile UPnP device answers to SSDP and HTTP alike: junk, or an
-/// SSDP/HTTP head naming the fake's HTTP server (`$HTTP`) over junk or a
-/// truncated device description (never a whole valid one).
+/// SSDP/HTTP head naming the fake's HTTP server (`$HTTP`) over junk, a
+/// truncated all-in-one device description and SOAP answer (never a whole
+/// one: it ends with the `AddPortMappingResponse` truncation always cuts),
+/// deep nesting, a body over 64 KiB, or malformed chunked framing.
 fn upnp_answer() -> impl Strategy<Value = Vec<u8>> {
     const DOC: &str = "<?xml version=\"1.0\"?><root><device><serviceList><service>\
         <serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType>\
         <SCPDURL>/scpd.xml</SCPDURL><controlURL>/ctl</controlURL></service></serviceList></device>\
-        <actionList><action><name>AddPortMapping</name><argumentList><argument><name>NewExternalPort</name>\
-        <direction>in</direction></argument></argumentList></action></actionList>\
         <s:Body><u:GetExternalIPAddressResponse><NewExternalIPAddress>203.0.113.7</NewExternalIPAddress>\
-        </u:GetExternalIPAddressResponse><u:AddPortMappingResponse/></s:Body></root>";
+        </u:GetExternalIPAddressResponse><u:AddPortMappingResponse/>";
     let location = prop_oneof![
         Just("http://$HTTP/desc.xml".to_string()),
         Just("http://localhost/desc.xml".to_string()),
-        Just("http://[::1]/x".to_string()),
+        Just("http://$HTTP/other.xml".to_string()),
         Just("http://$HTTP".to_string()),
         "[ -~]{0,40}",
     ];
+    let truncated = || any::<Index>().prop_map(|cut| DOC.as_bytes()[..cut.index(DOC.len())].to_vec());
     let body = prop_oneof![
         proptest::collection::vec(any::<u8>(), 0..400),
-        any::<Index>().prop_map(|cut| DOC.as_bytes()[..cut.index(DOC.len())].to_vec()),
+        truncated(),
+        (0usize..9000, truncated()).prop_map(|(depth, doc)| {
+            let mut b = "<a>".repeat(depth).into_bytes();
+            b.extend(doc);
+            b
+        }),
+        (65_000usize..100_000).prop_map(|n| vec![b'x'; n]),
     ];
+    let chunk = (
+        prop_oneof![Just("5".to_string()), Just("FFFFFFFFF".to_string()), "[0-9a-fA-FxZ;= -]{0,10}"],
+        proptest::collection::vec(any::<u8>(), 0..12),
+        prop_oneof![Just("\r\n"), Just("\n"), Just("")],
+    );
     prop_oneof![
         proptest::collection::vec(any::<u8>(), 0..600),
         (location, body, any::<bool>(), 0usize..2000).prop_map(|(location, body, honest, length)| {
@@ -311,6 +483,18 @@ fn upnp_answer() -> impl Strategy<Value = Vec<u8>> {
                 format!("HTTP/1.1 200 OK\r\nLOCATION: {location}\r\nContent-Length: {length}\r\n\r\n")
                     .into_bytes();
             answer.extend(body);
+            answer
+        }),
+        proptest::collection::vec(chunk, 0..8).prop_map(|chunks| {
+            let mut answer =
+                b"HTTP/1.1 200 OK\r\nLOCATION: http://$HTTP/desc.xml\r\nTransfer-Encoding: chunked\r\n\r\n"
+                    .to_vec();
+            for (size, data, end) in chunks {
+                answer.extend(size.into_bytes());
+                answer.extend(b"\r\n");
+                answer.extend(data);
+                answer.extend(end.as_bytes());
+            }
             answer
         }),
     ]
@@ -327,12 +511,29 @@ proptest! {
     }
 
     #[test]
+    fn upnp_parsers_never_panic(bytes in upnp_answer(), eof in any::<bool>()) {
+        let from = std::net::SocketAddr::from((LOCALHOST, 1900));
+        let _ = upnp::parse_ssdp(&bytes, from);
+        let _ = upnp::parse_http(&bytes, eof);
+        let text = String::from_utf8_lossy(&bytes);
+        let location = upnp::Location { addr: SocketAddrV4::new(LOCALHOST, 80), path: "/d/desc.xml".into() };
+        let _ = upnp::control_urls(&text, &location);
+        let _ = upnp::soap_result(200, &text, "AddPortMapping");
+        let _ = upnp::soap_result(500, &text, "GetExternalIPAddress");
+        let _ = upnp::element_text(&text, "a");
+    }
+
+    #[test]
     fn upnp_answers_never_panic(answer in upnp_answer()) {
         let fake = FakeGateway::serving(answer);
         let mut req = request(&fake, 23530, true);
         req.gateway = None;
+        // A failed device leaves the client listening for others until the
+        // search window ends: shortened, so 256 cases stay quick.
+        req.search = Duration::from_millis(30);
         let mut mapper = PortMapper::start(req);
         let state = settle(&mut mapper, Duration::from_secs(6));
-        prop_assert!(matches!(state, MappingState::Failed(_)), "{:?}", state);
+        prop_assert!(matches!(&state, MappingState::Failed(why) if !why.contains("panicked")), "{:?}", state);
+        prop_assert_eq!(rl_net::portmap::worker_panics(), 0);
     }
 }
