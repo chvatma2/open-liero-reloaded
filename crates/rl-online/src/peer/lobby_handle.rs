@@ -165,6 +165,8 @@ impl LobbyHandle<'_> {
     /// server's `/banip`; `None`: the host's own or a server command): N59's
     /// notice goes to that admin.
     pub fn ban_with_address_by(&mut self, member: u8, by: Option<u8>) {
+        // N59 decides by the path now, not as it was at `Connected` (B-M1).
+        self.peer.sync_paths();
         self.act(|h| h.ban_with_address(member, by), |_| {});
     }
 

@@ -150,7 +150,11 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     set mirrored from `Kick { ban: true }` when the lobby banned the
     address, and from `ban_ip`/`unban_ip`). `Connected` → `connected` with
     a fresh nonce and the link's `dtls_fingerprints` (a client's
-    `connected` takes them too). Lobby messages leave at most every `LOBBY_DRAIN`
+    `connected` takes them too). Each poll (and before
+    `ban_with_address_by`) every member's path follows the endpoint's
+    `path(peer)` (`LobbyHost::set_path`; final review B-M1: the tags and
+    N59's ban decision use the path now, not as it was at `Connected`).
+    Lobby messages leave at most every `LOBBY_DRAIN`
     (250 ms; a start, an end, a kick, a join (its welcome before the
     content list), the `HostProof` answering a `Hello` and a mid-match
     join at once). A

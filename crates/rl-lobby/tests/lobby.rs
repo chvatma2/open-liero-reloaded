@@ -152,6 +152,28 @@ fn a_members_path_is_shown() {
     assert_eq!(member(&net, a).path, Some(Path::Direct));
 }
 
+/// Final review B-M1: a member's path follows its link (ICE moved to
+/// another pair after `Connected`), so the tags and N59's ban decision use
+/// the path now: a member whose link became relayed is banned by key only.
+#[test]
+fn a_members_path_follows_its_link() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    assert_eq!(member(&net, a).path, Some(Path::Direct));
+    let peer = net.peers[a].peer;
+    assert!(net.host.set_path(peer, Path::Relayed), "a change");
+    assert!(!net.host.set_path(peer, Path::Relayed), "the same path");
+    net.settle();
+    assert_eq!(member(&net, a).path, Some(Path::Relayed));
+    assert!(net.host.set_path(peer, Path::HolePunched));
+    assert!(net.host.set_path(peer, Path::Relayed));
+    net.host.ban_with_address(id_of(&net, a), None);
+    net.settle();
+    assert!(net.host.banned(&key(1)));
+    assert!(!net.host.banned_ip(ip(1)), "its address is the relay's now");
+    assert!(!net.host.set_path(999, Path::Direct), "no such link");
+}
+
 #[test]
 fn three_players_and_a_spectator_gather_ready_and_start() {
     let mut net = lobby_with(HostConfig { max_players: 4, max_spectators: 2, ..cfg() }, 0);

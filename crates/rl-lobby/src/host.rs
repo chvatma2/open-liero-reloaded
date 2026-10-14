@@ -381,6 +381,27 @@ impl LobbyHost {
 
     /// The round trip the transport measured to `peer`, shown in the lobby
     /// (call it every few seconds, not per packet: a change is a `Lobby`).
+    /// The link to `peer` now goes by `path` (ICE moved to another pair
+    /// after `Connected`): its member's `path`, and a pending link's, follow,
+    /// so the tags and N59's ban decision use the path now (final review
+    /// B-M1). Whether it changed.
+    pub fn set_path(&mut self, peer: PeerId, path: Path) -> bool {
+        if let Some(Link::Pending(p)) = self.links.get_mut(&peer) {
+            let changed = p.path != path;
+            p.path = path;
+            return changed;
+        }
+        let Some(i) = self.member_of(peer).and_then(|id| self.index(id)) else { return false };
+        if self.members[i].path == Some(path) {
+            return false;
+        }
+        self.members[i].path = Some(path);
+        // Not a change a start depends on: no new generation.
+        self.refresh();
+        self.dirty = true;
+        true
+    }
+
     pub fn set_ping(&mut self, peer: PeerId, ms: u32) {
         let Some(id) = self.member_of(peer) else { return };
         let Some(i) = self.index(id) else { return };

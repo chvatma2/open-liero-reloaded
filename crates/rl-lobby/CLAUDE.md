@@ -131,6 +131,10 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     held-back value is shown by `tick`; an empty `Have` clears it.
   - `set_ping(peer, ms)`: the transport's round trip in `Member.ping_ms`
     (a change is a `Lobby`: call it every few seconds).
+  - `set_path(peer, path)`: the link's path now (ICE moved to another
+    pair): the member's `path` (or a pending link's) follows, a change is
+    a `Lobby`, and N59's ban decision reads it (final review B-M1);
+    whether it changed.
   - Leaving (`Bye`, `disconnected`): removed, `Notice(Left)`,
     `HostEvent::Left`; during a match the slot stays in the match.
   - The state never breaks rl-proto's decoders (looks, names, chat, end

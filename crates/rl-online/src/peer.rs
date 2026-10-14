@@ -447,6 +447,7 @@ impl OnlinePeer {
                 self.on_net(e, now);
             }
             self.session_events();
+            self.sync_paths();
             if let Side::Host(h) = &mut self.side {
                 h.lobby.tick(self.now_us);
             }
@@ -846,6 +847,17 @@ impl OnlinePeer {
         let Some(j) = &mut c.joiner else { return };
         if let Err(why) = j.poll(now, &mut self.endpoint, &mut self.events) {
             self.end_with(OnlineEvent::Disconnected(why));
+        }
+    }
+
+    /// A host's members' paths follow their links as ICE moves (final
+    /// review B-M1: the tags, and N59's ban decision, use the path now).
+    pub(crate) fn sync_paths(&mut self) {
+        let (Side::Host(h), Some(ep)) = (&mut self.side, self.endpoint.endpoint()) else { return };
+        for &peer in h.addrs.keys() {
+            if let Some(path) = ep.path(peer) {
+                h.lobby.set_path(peer, path);
+            }
         }
     }
 
