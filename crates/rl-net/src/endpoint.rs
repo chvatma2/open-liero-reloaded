@@ -265,7 +265,9 @@ struct Gathering {
     found: Option<Receiver<Found>>,
     /// The host's port mapping, once its base is known.
     mapper: Option<PortMapper>,
-    /// Its latest state (`Off` without one).
+    /// Its latest state: `Trying` from the start on a host that will map
+    /// (until the mapper reports, or `Failed` when it cannot start), else
+    /// `Off`.
     mapping: MappingState,
     /// TURN servers resolved before the base was known: allocated from it
     /// once it is.
@@ -457,8 +459,15 @@ impl Endpoint {
         } else {
             None
         };
-        let gathering =
-            Gathering { started: now, found, mapper: None, mapping: MappingState::Off, turn: Vec::new() };
+        // A host that will map says `Trying` from the start, not `Off`
+        // until the DNS thread's base arrives (its first reach line would
+        // read "Port mapping is off").
+        let mapping = if matches!(role, Role::Host { .. }) && cfg.ice.port_mapping {
+            MappingState::Trying
+        } else {
+            MappingState::Off
+        };
+        let gathering = Gathering { started: now, found, mapper: None, mapping, turn: Vec::new() };
         let mut endpoint = Endpoint {
             cfg,
             udp,
@@ -727,7 +736,10 @@ impl Endpoint {
                 }
                 Ok(_) => {}
                 Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => self.gathering.found = None,
+                Err(TryRecvError::Disconnected) => {
+                    self.gathering.found = None;
+                    self.no_mapper("no local address to map the port from");
+                }
             }
         }
         if let Some(state) = self.gathering.mapper.as_mut().and_then(PortMapper::poll) {
@@ -750,13 +762,16 @@ impl Endpoint {
             self.core.set_base(base, hosts);
         }
         self.allocate();
-        let Some(SocketAddr::V4(base)) = self.core.local().base else { return };
         if !matches!(self.role, Role::Host { .. })
             || !self.cfg.ice.port_mapping
             || self.gathering.mapper.is_some()
         {
             return;
         }
+        let Some(SocketAddr::V4(base)) = self.core.local().base else {
+            self.no_mapper("no IPv4 address to map the port from");
+            return;
+        };
         let mut req = MapRequest::new(SocketAddrV4::new(*base.ip(), port), true, gateway);
         req.allow_local = self.cfg.ice.allow_local;
         #[cfg(feature = "test-hooks")]
@@ -771,6 +786,14 @@ impl Endpoint {
         }
         self.gathering.mapper = Some(PortMapper::start(req));
         self.gathering.mapping = MappingState::Trying;
+    }
+
+    /// The mapper cannot start (no base, or no IPv4 one): a `Trying`
+    /// mapping becomes `Failed(why)`, so it never stays unsettled.
+    fn no_mapper(&mut self, why: &str) {
+        if self.gathering.mapper.is_none() && self.gathering.mapping == MappingState::Trying {
+            self.gathering.mapping = MappingState::Failed(why.into());
+        }
     }
 
     /// A signalled setup is made now and no base came yet (the DNS thread

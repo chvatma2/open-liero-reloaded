@@ -543,7 +543,10 @@ announcements.
     out without candidates. A TCP client (`connect`) gathers nothing. A
     host with `port_mapping` starts a `PortMapper` (TCP and UDP, the base
     and our port, the gateway; under the hooks the fake's) once the DNS
-    thread's base is known; `poll` takes its states (`reach().mapping`)
+    thread's base is known (its `reach().mapping` is `Trying` from the
+    endpoint's making, never a passing `Off`; `Failed` when the mapper
+    cannot start: the thread ended without a base, or the base is not
+    IPv4); `poll` takes its states (`reach().mapping`)
     and hands the usable mapping's external address and its `tcp` to
     `Core::set_mapped` (`mapped()`). **Exit** (N51, ruling NT-2):
     `shutdown(self) -> Shutdown` closes every link as the drop does and
@@ -697,7 +700,9 @@ signalled client and a host connecting `Direct` (both `Connected`
 addresses the pair's remote ends, a message each way), through a local
 `TurnServer` with `relay_only` (`Relayed` at both ends, 1000 reliable
 messages in order, relayed bytes counted), STUN to the `TurnServer`
-learning `srflx` = the base (`Open`), a host mapping its port on a
+learning `srflx` = the base (`Open`), a mapping host `Trying` from its
+first `reach()` (no base override, its router a silent 127.0.0.1 port;
+`Off` without `port_mapping` and for a client), a host mapping its port on a
 `FakeGateway` (UPnP; `mapped()` the fake's external 127.0.0.2: test
 rule NT-1, every datagram to 127.0.0.0/8), a TCP join dialling that
 address `MappedPort` at the host and `Direct` at the joiner, a drop

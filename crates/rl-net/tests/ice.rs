@@ -257,6 +257,32 @@ fn mapped_host(fake: &FakeGateway) -> Side {
     host
 }
 
+/// A host that will map says so from its first `reach()`: `Trying`, not
+/// `Off`, while the DNS thread still looks for the base (the lobby's and
+/// the server log's first line was "Port mapping is off" on every mapping
+/// host). Its router is a silent 127.0.0.1 port (NT-1); no base override,
+/// so the base comes from the thread. A host without `port_mapping`, and a
+/// signalled client with it, are `Off`.
+#[test]
+fn a_mapping_host_is_trying_from_the_start() {
+    let quiet = silent();
+    let gateway = match quiet.local_addr().unwrap() {
+        SocketAddr::V4(a) => a,
+        other => panic!("{other}"),
+    };
+    let mapping = IceConfig {
+        port_mapping: true,
+        gateway: Some(gateway),
+        ssdp: Some(gateway.into()),
+        ..IceConfig::default()
+    };
+    let host_ep = host(mapping.clone());
+    assert_eq!(host_ep.reach().mapping, MappingState::Trying);
+    drop(host_ep);
+    assert_eq!(host(IceConfig::default()).reach().mapping, MappingState::Off);
+    assert_eq!(signalled(mapping).reach().mapping, MappingState::Off, "a client maps no port");
+}
+
 #[test]
 fn a_host_maps_its_port_on_a_fake_gateway() {
     let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::Honest);
