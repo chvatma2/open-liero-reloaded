@@ -728,14 +728,21 @@ fn the_fixture_configs_parse() {
     let defaults = Config::default();
     assert_eq!((&config.relays, &config.stun), (&defaults.relays, &defaults.stun));
     assert_eq!(config.visibility, Visibility::Public);
-    // `cargo xtask e2e`'s: port 0, one short match for the game and a bot client.
+    // `cargo xtask e2e`'s: port 0, one short match for the game and a bot
+    // client; `{relay}` is the run's own relay's URL.
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/server/e2e.ron");
-    let e2e = Config::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let text = std::fs::read_to_string(path).unwrap().replace("{relay}", "ws://127.0.0.1:7777");
+    let e2e = Config::parse(&text).unwrap();
     assert_eq!((e2e.port, e2e.min_players, e2e.fill_bots, e2e.rotation.len()), (0, 2, 0, 1));
-    // The e2e run stays on the machine: invite only, no relays, no STUN, no
-    // port mapping.
-    assert_eq!((e2e.visibility, e2e.relays.len(), e2e.stun.len()), (Visibility::Invite, 0, 0));
-    assert!(!e2e.port_mapping);
+    // The e2e run stays on the machine: listed on its own loopback relay at
+    // 127.0.0.1 (`allow_local`), no STUN, no port mapping.
+    assert_eq!(
+        (e2e.visibility, &e2e.relays[..], e2e.stun.len()),
+        (Visibility::Public, &["ws://127.0.0.1:7777".to_string()][..], 0)
+    );
+    assert_eq!(e2e.public_ip(), Some(std::net::IpAddr::from([127, 0, 0, 1])));
+    assert!(!e2e.port_mapping && e2e.allow_local);
+    assert_eq!(e2e.unreachable_public_address(), None, "it is announced");
     // The example documents the relay (off) and port mapping (on).
     assert!(config.port_mapping && config.relay.is_none() && !config.allow_local);
     let Some(dir) = content_dir() else { return };

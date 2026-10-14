@@ -6,17 +6,21 @@
 //! structured log (`autoplay.jsonl`) ends in `pass`, every screenshot the
 //! script names was written, and stderr has no warning, error or panic.
 //!
-//! Then the online run (plan 10 task 15): `rl-server` with
-//! `fixtures/server/e2e.ron` (port 0: the port is read from its log's
-//! "listening on port N", so runs never collide), a bot client (`rl-cli
-//! net-client --bot`) joined, and the game plays
-//! `fixtures/autoplay/online.ron` (its `{port}` replaced) on the real clock:
-//! joining through the menus, chat, ready, the server's short match, its
-//! results, back to the lobby, leaving and quitting. It also needs the bot
-//! client to finish its match and leave by itself, the server to stop
-//! cleanly on SIGTERM, the server's log to show both joins, the chat line
-//! and a match's start and end, and both helpers' output to be clean.
-//! Both helpers are killed whatever happens.
+//! Then the online run (plan 10 task 15, plan 12b task 10): a Nostr relay
+//! of its own on loopback (`rl-cli nostr-relay --listen 127.0.0.1:0`,
+//! built with `nat-tools`; its URL read from its first line), `rl-server`
+//! with `fixtures/server/e2e.ron` (Public on that relay at 127.0.0.1,
+//! `allow_local`; port 0: the port is read from its log's "listening on
+//! port N", so runs never collide), a bot client (`rl-cli net-client
+//! --bot`) joined, and the game (its settings naming the relay) plays
+//! `fixtures/autoplay/online.ron` (its `{port}` replaced) on the real
+//! clock: joining by the typed address, leaving, joining again as listed
+//! on the Internet tab, chat, ready, the server's short match, its results,
+//! back to the lobby, leaving and quitting. It also needs the bot client
+//! to finish its match and leave by itself, the server to stop cleanly on
+//! SIGTERM, the server's log to show the three joins, the chat line and a
+//! match's start and end, and the helpers' output to be clean. The helpers
+//! are killed whatever happens.
 //!
 //! Rendering is forced onto Mesa's software rasteriser, so the run is the
 //! same on every machine and the WSL relaunch (`rl-game`'s `wsl.rs`, which
@@ -144,13 +148,19 @@ pub fn run(content: Option<&Path>) -> Result<(), String> {
         println!("skip e2e (no OLX content: --offline)");
         return Ok(());
     };
-    let build = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-        .args(["build", "--quiet", "-p", "rl-game", "-p", "rl-server", "-p", "rl-cli"])
-        .current_dir(&root)
-        .output()
-        .map_err(|e| format!("cannot run cargo: {e}"))?;
-    if !build.status.success() {
-        return Err(String::from_utf8_lossy(&build.stderr).into_owned());
+    // rl-cli on its own, with its dev tools (`nostr-relay`): one build
+    // with the feature would give rl-game and rl-server rl-discovery's
+    // test relay too.
+    for args in [&["-p", "rl-game", "-p", "rl-server"][..], &["-p", "rl-cli", "--features", "nat-tools"]] {
+        let build = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+            .args(["build", "--quiet"])
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .map_err(|e| format!("cannot run cargo: {e}"))?;
+        if !build.status.success() {
+            return Err(String::from_utf8_lossy(&build.stderr).into_owned());
+        }
     }
     let Some(x) = xvfb()? else {
         println!("skip e2e (Xvfb is not installed)");
@@ -160,12 +170,13 @@ pub fn run(content: Option<&Path>) -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&out);
     let started = Instant::now();
     let script = std::fs::read_to_string(root.join(SCRIPT)).map_err(|e| format!("{SCRIPT}: {e}"))?;
-    let local = play(&x, content, &script, &out, true)?;
+    let settings = std::fs::read_to_string(root.join(SETTINGS)).map_err(|e| format!("{SETTINGS}: {e}"))?;
+    let local = play(&x, content, &script, &settings, &out, true)?;
     println!(
         "     e2e: {SCRIPT} passed on Xvfb {} in {:.1} s ({} frames)",
         x.display, local.secs, local.frames
     );
-    let online = online(&x, content, &out.join("online"))?;
+    let online = online(&x, content, &settings, &out.join("online"))?;
     println!(
         "     e2e: {ONLINE_SCRIPT} passed against rl-server on port {} in {:.1} s ({} frames); both runs {:.1} s",
         online.port,
@@ -183,14 +194,23 @@ struct Played {
 }
 
 /// Plays `script` in the game on `x`, from a fresh `<out>/data` holding
-/// [`SETTINGS`], its screenshots and log in `<out>/shots`; with
-/// `--fake-clock` or on the real clock. Fails unless it passed cleanly.
-fn play(x: &Xvfb, content: &Path, script: &str, out: &Path, fake_clock: bool) -> Result<Played, String> {
+/// `settings` (as `settings.ron`), its screenshots and log in
+/// `<out>/shots`; with `--fake-clock` or on the real clock. Fails unless
+/// it passed cleanly.
+fn play(
+    x: &Xvfb,
+    content: &Path,
+    script: &str,
+    settings: &str,
+    out: &Path,
+    fake_clock: bool,
+) -> Result<Played, String> {
     let root = root();
     let data = out.join("data");
     let shot_dir = out.join("shots");
     std::fs::create_dir_all(&data).map_err(|e| format!("{}: {e}", data.display()))?;
-    std::fs::copy(root.join(SETTINGS), data.join("settings.ron")).map_err(|e| format!("{SETTINGS}: {e}"))?;
+    let settings_file = data.join("settings.ron");
+    std::fs::write(&settings_file, settings).map_err(|e| format!("{}: {e}", settings_file.display()))?;
     let script_file = out.join("script.ron");
     std::fs::write(&script_file, script).map_err(|e| format!("{}: {e}", script_file.display()))?;
 
@@ -365,26 +385,56 @@ const POLL: Duration = Duration::from_millis(50);
 /// The longest the server may take to listen and the bot client to join.
 const READY_WITHIN: Duration = Duration::from_secs(30);
 
+/// The first line of `rl-cli nostr-relay`, before its URL.
+const RELAY_LINE: &str = "nostr relay: ";
+
+/// [`SETTINGS`]' text with the relay `url` in place of its empty relay
+/// list: the online run's game lists the games on the run's relay.
+pub fn online_settings(settings: &str, url: &str) -> Result<String, String> {
+    const NONE: &str = "relays: Some([])";
+    if !settings.contains(NONE) {
+        return Err(format!("{SETTINGS} has no `{NONE}` for the online run's relay"));
+    }
+    Ok(settings.replace(NONE, &format!("relays: Some([{url:?}])")))
+}
+
 /// The chat line `ONLINE_SCRIPT` types, which the server must log.
 const CHAT: &str = "hello from the e2e run";
 
-/// The online run in `out`: `rl-server` with [`SERVER_CONFIG`] (port 0,
-/// its data in `<out>/server`), `rl-cli net-client --bot` joined (named
-/// [`BOT`]), then the game plays [`ONLINE_SCRIPT`] with the server's port
-/// on the real clock. Passes when the game passed (as [`play`] checks),
-/// the bot client played its match and left by itself (exit 0), the
-/// server stopped cleanly on SIGTERM, the server's log shows both joins,
-/// the chat line, a match's start and end, and no helper's output has a
-/// warning, error or panic.
-fn online(x: &Xvfb, content: &Path, out: &Path) -> Result<Online, String> {
+/// The online run in `out`: `rl-cli nostr-relay` on loopback, `rl-server`
+/// with [`SERVER_CONFIG`] (`{relay}` replaced; port 0, its data in
+/// `<out>/server`), `rl-cli net-client --bot` joined (named [`BOT`]), then
+/// the game plays [`ONLINE_SCRIPT`] with the server's port on the real
+/// clock, from `settings` naming the relay ([`online_settings`]). Passes
+/// when the game passed (as [`play`] checks), the bot client played its
+/// match and left by itself (exit 0), the server stopped cleanly on
+/// SIGTERM, the server's log shows the three joins (the bot's, the game's
+/// by address and as listed), the chat line, a match's start and end, and
+/// no helper's output has a warning, error or panic.
+fn online(x: &Xvfb, content: &Path, settings: &str, out: &Path) -> Result<Online, String> {
     let root = root();
     let server_dir = out.join("server");
     std::fs::create_dir_all(&server_dir).map_err(|e| format!("{}: {e}", server_dir.display()))?;
+    // The run's own relay: loopback only, nothing leaves the machine.
+    let mut relay = Helper::start(
+        "relay",
+        Command::new(root.join("target/debug/rl-cli"))
+            .args(["nostr-relay", "--listen", "127.0.0.1:0"])
+            .current_dir(&root),
+        out,
+    )?;
+    let url = relay.wait_for("its URL", READY_WITHIN, |l| l.strip_prefix(RELAY_LINE).map(str::to_string))?;
+    let config =
+        std::fs::read_to_string(root.join(SERVER_CONFIG)).map_err(|e| format!("{SERVER_CONFIG}: {e}"))?;
+    let config_file = out.join("server.ron");
+    std::fs::write(&config_file, config.replace("{relay}", &url))
+        .map_err(|e| format!("{}: {e}", config_file.display()))?;
+    let settings = online_settings(settings, &url)?;
     let mut server = Helper::start(
         "server",
         Command::new(root.join("target/debug/rl-server"))
             .arg("--config")
-            .arg(root.join(SERVER_CONFIG))
+            .arg(&config_file)
             .arg("--content")
             .arg(content)
             .arg("--data-dir")
@@ -416,16 +466,19 @@ fn online(x: &Xvfb, content: &Path, out: &Path) -> Result<Online, String> {
     let script =
         std::fs::read_to_string(root.join(ONLINE_SCRIPT)).map_err(|e| format!("{ONLINE_SCRIPT}: {e}"))?;
     let script = script.replace("{port}", &port.to_string());
-    let helpers =
-        |why: String, server: &Helper, bot: &Helper| format!("{why}\n{}\n{}", server.logs(), bot.logs());
-    let game = match play(x, content, &script, out, false) {
-        Ok(g) => g,
-        Err(why) => return Err(helpers(why, &server, &bot)),
+    let helpers = |why: String, server: &Helper, bot: &Helper, relay: &Helper| {
+        format!("{why}\n{}\n{}\n{}", server.logs(), bot.logs(), relay.logs())
     };
-    // The bot client leaves after its match; the server stops on SIGTERM.
+    let game = match play(x, content, &script, &settings, out, false) {
+        Ok(g) => g,
+        Err(why) => return Err(helpers(why, &server, &bot, &relay)),
+    };
+    // The bot client leaves after its match; the server stops on SIGTERM,
+    // then the relay (which runs until killed).
     let bot_status = bot.end(false, Duration::from_secs(15));
     let server_status = server.end(true, Duration::from_secs(15));
-    let fail = |why: &str| Err(helpers(why.to_string(), &server, &bot));
+    relay.end(true, Duration::from_secs(5));
+    let fail = |why: &str| Err(helpers(why.to_string(), &server, &bot, &relay));
     match bot_status {
         Some(s) if s.success() => {}
         Some(s) => return fail(&format!("the bot client exited with {s}")),
@@ -438,10 +491,11 @@ fn online(x: &Xvfb, content: &Path, out: &Path) -> Result<Online, String> {
     }
     let (server_out, server_err) = server.output();
     let (bot_out, bot_err) = bot.output();
+    let (relay_out, relay_err) = relay.output();
     let server_log: Vec<&str> = server_out.lines().map(unstamped).collect();
     let server_text = server_log.join("\n");
     let mut bad = bad_lines(&server_text);
-    for text in [&server_err, &bot_out, &bot_err] {
+    for text in [&server_err, &bot_out, &bot_err, &relay_out, &relay_err] {
         bad.extend(bad_lines(text));
     }
     if !bad.is_empty() {
@@ -450,7 +504,8 @@ fn online(x: &Xvfb, content: &Path, out: &Path) -> Result<Online, String> {
     let has = |prefix: &str| server_log.iter().any(|l| l.starts_with(prefix));
     let chat = format!(": {CHAT}");
     let wanted = [
-        ("the game's join", server_log.iter().filter(|l| l.starts_with("join: ")).count() == 2),
+        // The bot's, then the game's by address and as listed.
+        ("the game's two joins", server_log.iter().filter(|l| l.starts_with("join: ")).count() == 3),
         ("the chat line", server_log.iter().any(|l| l.starts_with("chat ") && l.ends_with(&chat))),
         ("a match start", has("match start: ")),
         ("a match end", has("match end ")),
@@ -511,10 +566,24 @@ mod tests {
         // server's log must show.
         let online = std::fs::read_to_string(root().join(ONLINE_SCRIPT)).unwrap();
         assert!(online.contains(r#"Type("127.0.0.1:{port}")"#));
+        // Then the server as listed on the run's relay.
+        assert!(online.contains(r#"Click("e2e server")"#));
         assert!(online.contains(&format!("Type({CHAT:?})")));
         assert!(shots(&online).contains(&"online".to_string()));
         let err = "rl-game: GPU x\nwarning: no gamepads\nthread 'main' panicked at x\nerror: y\nMesa: fine\n";
         assert_eq!(bad_lines(err), ["warning: no gamepads", "thread 'main' panicked at x", "error: y"]);
+    }
+
+    /// The online run's game lists the games on the run's relay; the
+    /// server is listed there.
+    #[test]
+    fn the_online_run_names_its_relay() {
+        let settings = std::fs::read_to_string(root().join(SETTINGS)).unwrap();
+        let online = online_settings(&settings, "ws://127.0.0.1:7777").unwrap();
+        assert!(online.contains(r#"relays: Some(["ws://127.0.0.1:7777"])"#), "{online}");
+        assert!(online_settings("(settings: ())", "ws://x").is_err());
+        let server = std::fs::read_to_string(root().join(SERVER_CONFIG)).unwrap();
+        assert!(server.contains(r#"relays: ["{relay}"]"#) && server.contains("visibility: Public"));
     }
 
     #[test]

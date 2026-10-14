@@ -118,13 +118,35 @@ The headless command-line tool. Its commands:
   `Stats::bytes_in`/`bytes_out`, `OVERHEAD` per datagram included). A
   failed verdict is an error. `cargo xtask net-feel` gates them (see
   xtask); `tests/feel.rs` checks the definitions on a short run.
-- `rl-cli net-client --join <host[:port]> --bot [--difficulty
+- `rl-cli net-client --bot (--join <host[:port]> | --invite rlx1… | --key
+  <64 hex> | --listed "<name>") [--relay URL]... [--stun host:port]...
+  [--turn user:pass@host:port]... [--no-nostr-turn] [--region R]
+  [--allow-local] [--lobby-only] [--difficulty
   easy|medium|hard|xtreme] [--name N] [--matches 1] [--spectate] [--impair
   <profile>] [--impair-seed S] [--timeout 3600] [--content DIR] [--cache
   DIR]` (plan 10,
   spec §9.4, the command in `net_client_cmd.rs`, the client in
   `transport.rs`): a headless bot client over real connections (port
-  23400 by default). It joins, readies whenever the lobby gathers and it
+  23400 by default). Exactly one way to the game (plan 12b, N46; `target`
+  resolves it, unit-tested): `--join` an address, directly only;
+  `--invite` its address first (when the code has one), then through the
+  relays (`join_relays`: the code's hints, then the `--relay`s; neither an
+  address nor a relay is an error), its key expected; `--key` through the
+  `--relay`s only (one needed); `--listed` subscribes a `GameList` on the
+  `--relay`s (one needed; `allow_local` with `--allow-local`), waits up to
+  10 s (`LISTED_WAIT`, never past `--timeout`) for a compatible game of
+  that exact name and joins it as the game's Internet tab does (its
+  announced address first, then through the `--relay`s, its key
+  expected). There are no default relays or STUN servers: nothing public
+  unless named. A join through the relays gets the ICE settings (`--stun`,
+  `--turn`, `--allow-local`; a direct one none); its `NostrJoin` takes
+  `--region` (default unknown), `--no-nostr-turn` and `--allow-local`
+  (N62: listed games, TURN notes and relayed addresses may be local or
+  private). Once the link opens it prints `path: <tag>` on stdout
+  (`rl_online::join::path_tag`: direct, open port, punched, relayed) and
+  the host's end on stderr; `--lobby-only` exits 0 once in the lobby (no
+  ready, no match). Leaving waits at most 1 s (`SHUTDOWN_WAIT`) for the
+  endpoint's shutdown (`OnlinePeer::shutdown`, ruling NT-2). It joins, readies whenever the lobby gathers and it
   wants another match (or asks to watch, `--spectate`), plays with a bot on
   its slot (`Bot::new` for its slot and the start's seed, thinking in
   `on_tick` on the world each newest tick leaves: a re-simulation of an
@@ -138,6 +160,18 @@ The headless command-line tool. Its commands:
   Exits 1 when refused, kicked, disconnected or past `--timeout` seconds;
   every wait is bounded by it (the name resolves on its own thread; rl-net's
   TCP connect and signalling never block the poll loop).
+- `rl-cli nostr-relay [--listen 127.0.0.1:0]` and `rl-cli stun-server
+  [--listen 127.0.0.1:0]` (feature `nat-tools`, `nat_tools.rs`; plan 12b,
+  the Docker NAT tests' WAN infrastructure): rl-discovery's
+  `TestRelay::start_on` (honest) and `StunResponder::reflecting` (answers
+  each binding with its observed source) as processes. The first stdout
+  line is `nostr relay: ws://<addr>:<port>` (loopback for an unspecified
+  address) or `stun server: <addr>:<port>`; then they serve until killed.
+  Loopback by default (tests and e2e send only to 127.0.0.0/8). The
+  feature enables `rl-discovery/test-relay`; a build without it has no
+  such commands, and no release build has it (`xtask dist` does not build
+  rl-cli). `xtask e2e` builds rl-cli with it in a cargo run of its own (so
+  rl-game and rl-server keep rl-discovery without the test relay).
 - `rl-cli gpu-bench --replay F [--sizes 1920x1080,2560x1440,3440x1440,3840x2160]
   [--start-tick 1000] [--frames 600] [--probe-passes 0,1,2,4,8,16,32]
   [--probe-taps 9] [--probe-frames 120] [--adapter hardware|software]
@@ -218,8 +252,11 @@ and `World::actions_triggered`), `failure`, `golden`, `assets`,
 
 **Real transport** (`transport.rs`, plan 10, spec §9.4):
 `run_bot_client(content, ClientSpec, stop, progress)` is one bot client
-(`net-client`; `ClientSpec::cache`, its download cache's directory or
-`None` for no downloads; a `ClientRun`: its `PeerMatch`es (start, slot, confirmed
+(`net-client`; `ClientSpec::join`, an `rl_online::Join`, with
+`expected_host`, the endpoint's `ice` and `lobby_only`, plan 12b;
+`ClientSpec::cache`, its download cache's directory or
+`None` for no downloads; `Progress::Connected(path, remote)` once its
+link opens; a `ClientRun`: its `PeerMatch`es (start, slot, confirmed
 checksums, record, replay), why it was `dropped`, desync bundles). A
 match is finished once it ended and rl-online kept its record (the
 replay then awaited), or at its end for a spectator that joined mid-match
@@ -275,7 +312,19 @@ another match) and makes its start world.
 **Layer 6.** `dump-state` comes later (spec §7.4).
 
 Test: `cargo nextest run -p rl-cli` (the dev-dependency on
-`rl-net/test-hooks` keeps the port mapper off real routers in tests). The tests are modules of one binary,
+`rl-net/test-hooks` keeps the port mapper off real routers in tests; a
+dev-dependency on itself with `nat-tools`, rl-discovery's pattern, gives
+the test build the dev tools, so `check`'s plain `nextest --workspace`
+runs their test; `cargo build -p rl-cli` builds without them). `tests/cli.rs`
+(check): `net_client_joins_by_invite_through_a_test_relay` (an in-process
+Invite rl-server, `public_address` 127.0.0.1 with `allow_local`, the
+`TestRelay` its code's hint: `--invite --lobby-only` prints `path:
+direct`), `net_client_joins_a_listed_game` (a Public one found by
+`--listed` on the relay; a name nobody announces fails within
+`--timeout 1`), `nostr_relay_and_stun_server_run_until_killed` (the
+binary's two dev tools on loopback answer a REQ with EOSE and a binding
+with the asker's address, then are killed); the unit tests of
+`net_client_cmd.rs` check the target's resolution. The tests are modules of one binary,
 `tests/integration.rs`, except those xtask runs by name (`golden`,
 `net_cases`, `grid`, `net_sim`, `transport`, `render_golden`, `gpu_bench`): one module's
 tests are `cargo nextest run -p rl-cli --test integration corpus::`.

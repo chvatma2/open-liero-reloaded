@@ -2,7 +2,9 @@
 // directory): the smallest window, a short Deathmatch against two bots on
 // Dirt Level, so the scripted match reaches its results quickly; no Nostr
 // relay, no STUN server and no port mapping, so the Multiplayer screen
-// reaches nothing beyond the machine and the router is never asked.
+// reaches nothing beyond the machine and the router is never asked. The
+// online run names its own loopback relay instead of `relays: Some([])`
+// (`xtask e2e`'s `online_settings`).
 (
     version: 1,
     settings: (

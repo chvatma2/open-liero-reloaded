@@ -3975,6 +3975,7 @@ dependencies = [
  "postcard",
  "proptest",
  "rl-bots",
+ "rl-cli",
  "rl-content",
  "rl-data",
  "rl-discovery",

@@ -22,14 +22,14 @@ use anyhow::{Context as _, anyhow};
 use rl_bots::{Bot, BotConfig, Difficulty};
 use rl_content::{Content, DownloadCache};
 use rl_lobby::Identity;
-use rl_net::endpoint::EndpointConfig;
+use rl_net::endpoint::{EndpointConfig, IceConfig};
 use rl_netcode::TickInfo;
 use rl_netcode::netsim::Profile;
 use rl_online::content::HOST_RATE;
 use rl_online::peer::RECORD_AFTER_END;
 use rl_online::replay::MatchRecord;
 use rl_online::{Join, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
-use rl_proto::{Look, MatchStartWire, Phase, SeatWire};
+use rl_proto::{Look, MatchStartWire, Phase, PublicKey, SeatWire};
 use rl_replay::Replay;
 use rl_server::config::{Config, Entry, Visibility};
 use rl_sim::{Keys, TickEvents, World};
@@ -39,12 +39,25 @@ pub const CLIENT_POLL: Duration = Duration::from_millis(1);
 /// A lobby request (ready, spectate) is repeated at most this often while
 /// the lobby does not show it yet.
 const REQUEST_EVERY: Duration = Duration::from_millis(500);
+/// A client leaving waits at most this long for its endpoint's shutdown
+/// (ruling NT-2: a port mapping deleted; N51's 1 s).
+pub const SHUTDOWN_WAIT: Duration = Duration::from_secs(1);
 
 /// One headless bot client.
 #[derive(Clone, Debug)]
 pub struct ClientSpec {
-    /// The server's (TCP signalling) address.
-    pub addr: SocketAddr,
+    /// How it reaches the host (N46): its address, its key on Nostr, or
+    /// both.
+    pub join: Join,
+    /// The host's key it expects (an invite's, a listed game's; N37, N42):
+    /// a host of another key is refused.
+    pub expected_host: Option<PublicKey>,
+    /// Its endpoint's ICE settings for a join through Nostr (STUN, TURN,
+    /// `allow_local`; N48, N52, N62).
+    pub ice: IceConfig,
+    /// Leaves as soon as it is in the lobby (no match): the join alone
+    /// (`net-client --lobby-only`, the Docker NAT tests).
+    pub lobby_only: bool,
     pub name: String,
     pub difficulty: Difficulty,
     /// Matches to play (or watch) before leaving.
@@ -94,6 +107,9 @@ pub struct ClientRun {
 
 /// What a client tells its caller as it goes.
 pub enum Progress<'a> {
+    /// Its link to the host opened, by `path` (N49); `remote` is the
+    /// host's end (or the TURN relay's).
+    Connected(rl_proto::Path, SocketAddr),
     /// A match starts: the slot it plays (`None`: it watches).
     Started(&'a MatchStartWire, Option<u8>),
     Finished(&'a PeerMatch),
@@ -160,12 +176,15 @@ pub fn new_identity() -> anyhow::Result<Identity> {
     Err(anyhow!("no valid identity from 64 random secrets"))
 }
 
-/// One bot client (spec §9.4, `rl-cli net-client --bot`): joins `spec.addr`,
-/// readies whenever the lobby gathers (or watches), plays `spec.matches`
-/// matches with a bot on its slot, keeps each match's confirmed checksums
-/// and replay, then leaves. Returns early, `dropped`, when the server
-/// refuses, kicks or loses it, at `spec.deadline` or when `stop` is set.
-/// An error only when the client cannot start.
+/// One bot client (spec §9.4, `rl-cli net-client --bot`): joins as
+/// `spec.join` says (N46), readies whenever the lobby gathers (or
+/// watches), plays `spec.matches` matches with a bot on its slot, keeps
+/// each match's confirmed checksums and replay, then leaves (with
+/// `spec.lobby_only`, once in the lobby). Returns early, `dropped`, when
+/// the server refuses, kicks or loses it, at `spec.deadline` or when
+/// `stop` is set. Leaving waits at most [`SHUTDOWN_WAIT`] for the
+/// endpoint's shutdown (ruling NT-2). An error only when the client
+/// cannot start.
 pub fn run_bot_client(
     content: Content,
     spec: &ClientSpec,
@@ -176,6 +195,7 @@ pub fn run_bot_client(
         port: 0,
         impair: spec.impair,
         impair_seed: spec.impair_seed,
+        ice: spec.ice.clone(),
         ..EndpointConfig::default()
     };
     let look = Look {
@@ -184,7 +204,8 @@ pub fn run_bot_client(
         skin: rl_lobby::DEFAULT_SKIN.into(),
         skin_hash: rl_proto::NO_HASH.into(),
     };
-    let role = PeerRole::Client { join: Join::direct(spec.addr), password: None, expected_host: None };
+    let role =
+        PeerRole::Client { join: spec.join.clone(), password: None, expected_host: spec.expected_host };
     let downloads = match &spec.cache {
         Some(dir) => {
             let cache =
@@ -194,7 +215,7 @@ pub fn run_bot_client(
         None => PeerContent::without_downloads("this client has no download cache"),
     };
     let mut peer = OnlinePeer::start(role, endpoint, new_identity()?, look, content, None, downloads)
-        .with_context(|| format!("joining {}", spec.addr))?;
+        .with_context(|| format!("joining {}", joining(&spec.join)))?;
     let brain = RefCell::new(Brain {
         cfg: BotConfig { difficulty: spec.difficulty, ..BotConfig::default() },
         playing: None,
@@ -245,6 +266,7 @@ pub fn run_bot_client(
                     run.dropped = Some(if banned { "banned" } else { "kicked" }.into());
                 }
                 OnlineEvent::Disconnected(why) => run.dropped = Some(format!("disconnected: {why}")),
+                OnlineEvent::Connected { path, remote } => progress(Progress::Connected(path, remote)),
                 _ => {}
             }
         }
@@ -289,8 +311,15 @@ pub fn run_bot_client(
         if run.dropped.is_some() || run.matches.len() >= spec.matches as usize {
             break;
         }
+        if spec.lobby_only {
+            let lobby = peer.lobby();
+            if lobby.me().is_some() && lobby.state().is_some() {
+                break;
+            }
+        }
         let more = run.matches.len() + usize::from(current.is_some()) < spec.matches as usize;
-        if want_request(&mut peer, spec.spectate, more)
+        if !spec.lobby_only
+            && want_request(&mut peer, spec.spectate, more)
             && asked.is_none_or(|t| now.duration_since(t) >= REQUEST_EVERY)
         {
             asked = Some(now);
@@ -302,8 +331,19 @@ pub fn run_bot_client(
         }
         std::thread::sleep(CLIENT_POLL);
     }
-    peer.leave();
+    // Ruling NT-2: the endpoint shut down, its mapping (if any) deleted,
+    // waited for at most `SHUTDOWN_WAIT`.
+    peer.shutdown().wait(Instant::now() + SHUTDOWN_WAIT);
     Ok(run)
+}
+
+/// What a join is to, for an error.
+fn joining(join: &Join) -> String {
+    match (join.direct, &join.nostr) {
+        (Some(to), None) => to.to_string(),
+        (Some(to), Some(_)) => format!("{to}, then through the relays"),
+        (None, _) => "through the relays".into(),
+    }
 }
 
 /// Whether the lobby does not show this client's wish yet: a player not
@@ -541,7 +581,10 @@ pub fn run_transport(content_dir: &Path, spec: &TransportSpec) -> anyhow::Result
         .chain(spec.spectators.iter().enumerate().map(|(i, &d)| (TransportSpec::spectator_name(i), Some(d))));
     for (i, (name, join_after)) in clients.enumerate() {
         let client = ClientSpec {
-            addr,
+            join: Join::direct(addr),
+            expected_host: None,
+            ice: IceConfig::default(),
+            lobby_only: false,
             name: name.clone(),
             difficulty: spec.difficulty.unwrap_or(levels[i % levels.len()]),
             matches: spec.matches,

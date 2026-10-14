@@ -49,7 +49,16 @@ serde = { workspace = true, features = ["std"] }
 ron.workspace = true
 tempfile.workspace = true
 
+[features]
+# The Docker NAT tests' dev tools (plan 12b Task 10): `rl-cli nostr-relay`
+# and `rl-cli stun-server`. Never in a release build (`xtask dist` does not
+# build rl-cli).
+nat-tools = ["rl-discovery/test-relay"]
+
 [dev-dependencies]
+# Tests build this crate with `nat-tools` (rl-discovery's pattern), so
+# `check`'s plain `nextest --workspace` runs the dev tools' test.
+rl-cli = { path = ".", features = ["nat-tools"] }
 proptest.workspace = true
 allocation-counter.workspace = true
 insta.workspace = true

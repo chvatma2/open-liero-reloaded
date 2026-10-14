@@ -106,8 +106,10 @@ mod responder {
 
     /// A STUN server for tests (feature `test-relay`): answers binding
     /// requests on `127.0.0.1` with a configured mapped address, in an
-    /// XOR-MAPPED-ADDRESS (or a MAPPED-ADDRESS, see [`Self::start_plain`]).
-    /// Dropping it stops the thread.
+    /// XOR-MAPPED-ADDRESS (or a MAPPED-ADDRESS, see [`Self::start_plain`]),
+    /// or on a given address with each request's observed source
+    /// ([`Self::reflecting`], `rl-cli stun-server`). Dropping it stops the
+    /// thread.
     pub struct StunResponder {
         addr: SocketAddr,
         answered: Arc<AtomicUsize>,
@@ -115,21 +117,40 @@ mod responder {
         thread: Option<JoinHandle<()>>,
     }
 
+    /// What a responder answers.
+    #[derive(Clone, Copy)]
+    enum Answer {
+        /// This address, XOR-mapped or plain.
+        Fixed(SocketAddr, bool),
+        /// The request's source, XOR-mapped (a real server's answer).
+        Source,
+    }
+
     impl StunResponder {
         /// Answers with XOR-MAPPED-ADDRESS `mapped`.
         pub fn start(mapped: SocketAddr) -> Self {
-            Self::spawn(mapped, true)
+            Self::spawn(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), Answer::Fixed(mapped, true))
+                .expect("bind the STUN responder")
         }
 
         /// Answers with the plain MAPPED-ADDRESS `mapped`.
         pub fn start_plain(mapped: SocketAddr) -> Self {
-            Self::spawn(mapped, false)
+            Self::spawn(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), Answer::Fixed(mapped, false))
+                .expect("bind the STUN responder")
         }
 
-        fn spawn(mapped: SocketAddr, xor: bool) -> Self {
-            let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind the STUN responder");
-            let _ = socket.set_read_timeout(Some(Duration::from_millis(20)));
-            let addr = socket.local_addr().expect("responder address");
+        /// Listens on `bind` (port 0: a free one) and answers each request
+        /// with its observed source in an XOR-MAPPED-ADDRESS, as a public
+        /// STUN server does (`rl-cli stun-server`, the Docker NAT tests).
+        /// An error when `bind` cannot be bound.
+        pub fn reflecting(bind: SocketAddr) -> io::Result<Self> {
+            Self::spawn(bind, Answer::Source)
+        }
+
+        fn spawn(bind: SocketAddr, answer: Answer) -> io::Result<Self> {
+            let socket = UdpSocket::bind(bind)?;
+            socket.set_read_timeout(Some(Duration::from_millis(20)))?;
+            let addr = socket.local_addr()?;
             let answered = Arc::new(AtomicUsize::new(0));
             let stop = Arc::new(AtomicBool::new(false));
             let (a, s) = (answered.clone(), stop.clone());
@@ -138,14 +159,25 @@ mod responder {
                 while !s.load(Ordering::Relaxed) {
                     let Ok((len, from)) = socket.recv_from(&mut buf) else { continue };
                     let Some(t) = binding_request_transaction(&buf[..len]) else { continue };
-                    let _ = socket.send_to(&response(&t, mapped, xor), from);
+                    let reply = match answer {
+                        Answer::Fixed(mapped, xor) => response(&t, mapped, xor),
+                        Answer::Source => response(&t, from, true),
+                    };
+                    let _ = socket.send_to(&reply, from);
                     a.fetch_add(1, Ordering::Relaxed);
                 }
             });
-            Self { addr, answered, stop, thread: Some(thread) }
+            Ok(Self { addr, answered, stop, thread: Some(thread) })
         }
 
-        /// `127.0.0.1:<port>`, as a `host:port` server string.
+        /// The address it listens on (as bound: `0.0.0.0` for every
+        /// interface).
+        pub fn local_addr(&self) -> SocketAddr {
+            self.addr
+        }
+
+        /// Its address as a `host:port` server string (`127.0.0.1:<port>`
+        /// for [`Self::start`]).
         pub fn server(&self) -> String {
             self.addr.to_string()
         }

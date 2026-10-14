@@ -86,3 +86,24 @@ fn forged_and_stray_replies_are_ignored() {
     fake.join().unwrap();
     assert_eq!(ip, Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 5))));
 }
+
+/// `rl-cli stun-server`'s mode: the answer is the request's observed
+/// source (address and port), on the address it was bound to.
+#[test]
+fn a_reflecting_responder_answers_with_the_source() {
+    let responder = StunResponder::reflecting(sa("127.0.0.1:0")).unwrap();
+    let to = responder.local_addr();
+    assert_eq!(to.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+    assert_ne!(to.port(), 0);
+    let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+    client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let t = [3u8; 12];
+    client.send_to(&binding_request(t), to).unwrap();
+    let mut buf = [0u8; 200];
+    let (len, from) = client.recv_from(&mut buf).unwrap();
+    assert_eq!(from, to);
+    assert_eq!(parse_binding_response(&buf[..len], &t), Some(client.local_addr().unwrap()));
+    assert_eq!(responder.answered(), 1);
+    // A port taken already is an error, not a panic.
+    assert!(StunResponder::reflecting(to).is_err());
+}

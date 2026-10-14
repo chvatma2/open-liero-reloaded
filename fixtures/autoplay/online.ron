@@ -1,11 +1,14 @@
-// Online play end to end (plan 10 task 15, spec §7.1-7.2, §21 G7): the game
-// joins a dedicated server through the menus, chats in its lobby, readies,
+// Online play end to end (plan 10 task 15, plan 12b, spec §7.1-7.2, §21
+// G7): the game joins a dedicated server through the menus by its typed
+// address, leaves, joins it again as listed on the Internet tab (the run's
+// own Nostr relay; its address, directly), chats in its lobby, readies,
 // plays the server's short match against a bot client, sees the results,
-// goes back to the lobby, leaves and quits. `xtask e2e` starts the server
-// (`fixtures/server/e2e.ron`, port 0) and `rl-cli net-client --bot`, waits
-// until the bot is in the lobby, replaces `{port}` with the server's port
-// and runs this with the real clock (the netcode keeps real time, so no
-// --fake-clock): every wait is in frames, so the long ones are generous.
+// goes back to the lobby, leaves and quits. `xtask e2e` starts the relay
+// (`rl-cli nostr-relay`), the server (`fixtures/server/e2e.ron`, port 0)
+// and `rl-cli net-client --bot`, waits until the bot is in the lobby,
+// replaces `{port}` with the server's port and runs this with the real
+// clock (the netcode keeps real time, so no --fake-clock): every wait is
+// in frames, so the long ones are generous.
 (
     steps: [
         (ui: WaitFor("Main")),
@@ -19,6 +22,17 @@
         (ui: Click("Join")),
         (ui: WaitFor("Lobby"), within: 3000),
         // The game and the bot client: the dedicated server is no member.
+        (ui: Assert(Lobby(members: 2))),
+        // Leave, and join again as the game is listed on the relay.
+        (ui: Click("Back")),
+        (ui: WaitFor("Multiplayer")),
+        (ui: Click("Internet")),
+        // The tab's table takes no click in its first frame (egui's sizing pass).
+        (ui: Wait(2)),
+        (ui: Click("e2e server"), within: 3000),
+        (ui: Screenshot("online-listed")),
+        (ui: Click("Join")),
+        (ui: WaitFor("Lobby"), within: 3000),
         (ui: Assert(Lobby(members: 2))),
         (ui: Click("Chat")),
         (ui: Type("hello from the e2e run")),

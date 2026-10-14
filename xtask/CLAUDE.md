@@ -82,7 +82,9 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   pass (else the netcode has a problem to fix, not the gate) and logs the
   reason in `fixtures/blessings.log`. About 40 s once built.
 - `e2e` (`e2e.rs`, also `cargo xtask e2e [--offline]`): builds `rl-game`
-  (dev profile), starts Xvfb on the first display from `:90` without a
+  and `rl-server` (dev profile), and `rl-cli --features nat-tools` in a
+  cargo run of its own (one run would give the others rl-discovery's
+  test relay too), starts Xvfb on the first display from `:90` without a
   lock file (`-displayfd` says when it is ready; stopped with SIGTERM so
   its lock goes; WSLg mounts `/tmp/.X11-unix` read-only, Xvfb then listens
   on the abstract socket), and plays `fixtures/autoplay/menus.ron` with
@@ -93,26 +95,37 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   relaunch onto the real GPU). It passes on exit 0, an `autoplay.jsonl`
   ending in `pass`, every screenshot the script names, and no `warning:`,
   `error:` or panic line on stderr (`bad_lines`). Then the online run
-  (plan 10 task 15, `online`, in `target/e2e/online`): `rl-server --config
-  fixtures/server/e2e.ron` (port 0, by address only, no fill bots, one
-  0.2-minute Classic match on Dirt Level that starts when both players
-  are ready; its port read from the log's "listening on port N",
-  `unstamped`), `rl-cli net-client --bot --name "e2e bot"` waited for in
-  the server's log (so the game's lobby has both members at once), then
-  the game plays `fixtures/autoplay/online.ron` (`{port}` replaced) on the
-  real clock (no `--fake-clock`: the netcode keeps real time; the script's
-  waits are frames, about 180 a second here, so its long `within`s are
-  generous): Multiplayer, the address typed, Join, the lobby's 2 members
-  (the dedicated server is no member), a chat line, Ready, the match with
-  keys held, its results, Back to lobby, Back, Quit. Besides the game's
-  checks it needs the bot client to exit 0 by itself after its match, the
-  server to stop cleanly on SIGTERM ("server stopped"), the server's log
-  (stamps removed) to show two joins, the chat line, a match start and
-  end, and no `bad_lines` in either helper's output (`Helper`: output in
+  (plan 10 task 15, plan 12b task 10, `online`, in `target/e2e/online`):
+  the run's own Nostr relay, `rl-cli nostr-relay --listen 127.0.0.1:0`
+  (its URL read from its first line, `nostr relay: ws://…`; nothing
+  leaves the machine), `rl-server --config` with
+  `fixtures/server/e2e.ron`'s `{relay}` replaced by that URL (written to
+  `online/server.ron`: Public on that relay at `public_address`
+  127.0.0.1 with `allow_local`, no STUN, no port mapping, port 0, no fill
+  bots, one 0.2-minute Classic match on Dirt Level that starts when both
+  players are ready; its port read from the log's "listening on port N",
+  `unstamped`), `rl-cli net-client --bot --name "e2e bot" --join
+  127.0.0.1:<port>` waited for in the server's log (so the game's lobby
+  has both members at once), then the game plays
+  `fixtures/autoplay/online.ron` (`{port}` replaced) on the real clock (no
+  `--fake-clock`: the netcode keeps real time; the script's waits are
+  frames, about 180 a second here, so its long `within`s are generous)
+  from `settings.ron` naming the relay (`online_settings` replaces its
+  `relays: Some([])`): Multiplayer, the Direct tab, the address typed,
+  Join, the lobby's 2 members (the dedicated server is no member), Back,
+  then the Internet tab (2 frames for the table's sizing pass), the
+  listed "e2e server" clicked, Join (its announced address, directly),
+  the lobby's 2 members again, a chat line, Ready, the match with keys
+  held, its results, Back to lobby, Back, Quit. Besides the game's checks
+  it needs the bot client to exit 0 by itself after its match, the server
+  to stop cleanly on SIGTERM ("server stopped"), the relay to be ended
+  (SIGTERM), the server's log (stamps removed) to show three joins (the
+  bot's, the game's typed and listed), the chat line, a match start and
+  end, and no `bad_lines` in any helper's output (`Helper`: output in
   `<name>.out`/`.err` files, killed when dropped, so a failing run leaves
-  nothing running; a failure's report includes both). Skipped without
-  Xvfb or content; each game killed after 240 s. Both runs about 28 s
-  (local 11 s, online 16 s) once built.
+  nothing running; a failure's report includes all three). Skipped
+  without Xvfb or content; each game killed after 240 s. Both runs about
+  27 s (local 10 s, online 16 s) once built.
 - `windows` (`winbuild.rs`, plan 8): the native Windows build run from
   WSL, for `envelope --gpu windows`. `missing()` says why it cannot run
   here (no `cmd.exe` or `WSLInterop`/`WSLInterop-late` not enabled, no

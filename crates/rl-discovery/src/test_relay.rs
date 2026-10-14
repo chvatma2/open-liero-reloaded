@@ -268,12 +268,13 @@ pub struct TestRelay {
 impl TestRelay {
     /// A `ws://127.0.0.1:<port>` relay.
     pub fn start() -> TestRelay {
-        TestRelay::start_on(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+        TestRelay::spawn(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), None).expect("bind the test relay")
     }
 
     /// A `ws://` relay listening on `addr` (port 0: any free port), such as
-    /// `0.0.0.0:7777` in a Docker network (`rl-cli nostr-relay`).
-    pub fn start_on(addr: SocketAddr) -> TestRelay {
+    /// `0.0.0.0:7777` in a Docker network (`rl-cli nostr-relay`). An error
+    /// when `addr` cannot be bound.
+    pub fn start_on(addr: SocketAddr) -> std::io::Result<TestRelay> {
         TestRelay::spawn(addr, None)
     }
 
@@ -294,14 +295,15 @@ impl TestRelay {
         .with_no_client_auth()
         .with_single_cert(vec![cert.der().clone()], key.into())
         .expect("server certificate");
-        let relay = TestRelay::spawn(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), Some(Arc::new(config)));
+        let relay = TestRelay::spawn(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), Some(Arc::new(config)))
+            .expect("bind the test relay");
         (relay, der)
     }
 
-    fn spawn(addr: SocketAddr, tls: Option<Arc<rustls::ServerConfig>>) -> TestRelay {
-        let listener = TcpListener::bind(addr).expect("bind the test relay");
-        listener.set_nonblocking(true).expect("nonblocking listener");
-        let local = listener.local_addr().expect("local address");
+    fn spawn(addr: SocketAddr, tls: Option<Arc<rustls::ServerConfig>>) -> std::io::Result<TestRelay> {
+        let listener = TcpListener::bind(addr)?;
+        listener.set_nonblocking(true)?;
+        let local = listener.local_addr()?;
         let port = local.port();
         // A relay on every interface is reached locally through loopback.
         let ip = match local.ip() {
@@ -326,7 +328,7 @@ impl TestRelay {
             let shared = Arc::clone(&shared);
             thread::spawn(move || accept_loop(&shared, &listener, tls.as_ref()))
         };
-        TestRelay { shared, ip, port, tls: is_tls, accept: Some(accept) }
+        Ok(TestRelay { shared, ip, port, tls: is_tls, accept: Some(accept) })
     }
 
     /// The relay's URL: `ws://<address>:<port>` (`127.0.0.1` for

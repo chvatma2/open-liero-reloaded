@@ -168,7 +168,8 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   plus the DER root; rcgen self-signed, rustls with the aws-lc-rs provider;
   the relay listens on 127.0.0.1 only, so a client connecting to `localhost`
   must fall back from `::1`, or connect to `port()` directly), `url()`,
-  `start_on(addr)` (`ws://` on any address, port 0 for a free one; `url()`
+  `start_on(addr)` (`ws://` on any address, port 0 for a free one; an
+  `io::Result`, the address being the caller's; `url()`
   names the bound address, loopback for an unspecified one: `rl-cli
   nostr-relay` in Docker),
   `port()`, `events()`, `set_misbehaviour(Honest | NeverEose | Garbage |
@@ -268,7 +269,11 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   address with our transaction counts; a read failing with
   `ConnectionReset`/`ConnectionRefused` (Windows' `WSAECONNRESET` from an
   earlier server's ICMP unreachable) keeps waiting (final review A-M8). `StunResponder` (feature `test-relay`;
-  `start`, `start_plain`, `server()`, `answered()`) is the test server;
+  `start`, `start_plain` (a fixed mapped address, on 127.0.0.1),
+  `reflecting(bind)` (on `bind`, an `io::Result`; answers each request
+  with its observed source in an XOR-MAPPED-ADDRESS, as a public server
+  does: `rl-cli stun-server`, plan 12b), `local_addr()`, `server()`,
+  `answered()`) is the test server;
   `stun::response` (same feature) is `rl_proto::stun::binding_response`.
 - **`invite`** (N42) and **`defaults`**: `Invite::{encode, decode, relay_urls}`,
   `rlx1…` bech32m of a postcard `Wire` (version byte 1, key, `RelayHint`s,

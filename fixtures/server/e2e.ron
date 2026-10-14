@@ -1,14 +1,19 @@
 // The dedicated server `cargo xtask e2e`'s online run joins (`xtask/src/e2e.rs`,
 // `fixtures/autoplay/online.ron`): port 0 (the run reads the port from the
-// log's "listening on port N" and types it in the game), by address only
-// (invite only, no Nostr relays, no STUN server, no port mapping: nothing
-// leaves the machine and the real router is never asked),
-// no fill bots, one short match on Dirt Level that starts when the game's
-// player and the run's bot client (`rl-cli net-client --bot`) are both ready.
+// log's "listening on port N"), listed on the run's own Nostr relay
+// (`rl-cli nostr-relay --listen 127.0.0.1:0`; xtask replaces `{relay}`
+// with its URL) at its public address 127.0.0.1 (`allow_local`, N62), so
+// the game finds it on the Internet tab and joins it there, after joining
+// it once by the typed address. No STUN server and no port mapping: nothing
+// leaves the machine and the real router is never asked. No fill bots, one
+// short match on Dirt Level that starts when the game's player and the
+// run's bot client (`rl-cli net-client --bot`) are both ready.
 (
     name: "e2e server",
-    visibility: Invite,
-    relays: [],
+    visibility: Public,
+    relays: ["{relay}"],
+    public_address: Some("127.0.0.1"),
+    allow_local: true,
     stun: [],
     port_mapping: false,
     port: 0,

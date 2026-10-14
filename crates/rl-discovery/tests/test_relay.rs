@@ -468,11 +468,11 @@ fn drop_ephemeral_drops_the_first_ones_then_forwards() {
 
 #[test]
 fn start_on_listens_where_asked() {
-    let relay = TestRelay::start_on("127.0.0.1:0".parse().unwrap());
+    let relay = TestRelay::start_on("127.0.0.1:0".parse().unwrap()).unwrap();
     assert_eq!(relay.url(), format!("ws://127.0.0.1:{}", relay.port()));
     assert!(Client::connect(&relay).query("s", vec![kinds(1)]).is_empty());
     // Another loopback address.
-    let other = TestRelay::start_on("127.0.0.2:0".parse().unwrap());
+    let other = TestRelay::start_on("127.0.0.2:0".parse().unwrap()).unwrap();
     assert_eq!(other.url(), format!("ws://127.0.0.2:{}", other.port()));
     let s = TcpStream::connect(("127.0.0.2", other.port())).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();

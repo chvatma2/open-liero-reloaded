@@ -3,6 +3,8 @@
 mod gpu_bench_cmd;
 mod import;
 mod match_cmd;
+#[cfg(feature = "nat-tools")]
+mod nat_tools;
 mod net_client_cmd;
 mod net_repro_cmd;
 mod net_sim_cmd;
@@ -40,8 +42,9 @@ enum Command {
     /// Plays an online match in one process over a simulated network (bots on every peer)
     /// and checks that every peer agrees; exits with status 1 on a failure.
     NetSim(net_sim_cmd::Args),
-    /// A headless bot client over real connections: joins a server, plays its matches,
-    /// prints each one's confirmed checksums; exits with status 1 if it was dropped.
+    /// A headless bot client over real connections: joins a server (by address, invite
+    /// code, key or listed name), plays its matches, prints its path and each match's
+    /// confirmed checksums; exits with status 1 if it was dropped.
     NetClient(net_client_cmd::Args),
     /// Replays a desync bundle (`.rlds`) and names the first diverging tick and world field;
     /// exits with status 1 if anything differs from the recording.
@@ -62,6 +65,13 @@ enum Command {
     NostrProbe(rl_cli::nostr_probe::RelayArgs),
     /// Measures STUN servers for the default list; exits with status 1 unless every one answers.
     StunProbe(rl_cli::nostr_probe::StunArgs),
+    /// A Nostr relay for the NAT tests (dev only), until killed; prints its URL first.
+    #[cfg(feature = "nat-tools")]
+    NostrRelay(nat_tools::RelayArgs),
+    /// A STUN server answering with the observed source, for the NAT tests (dev only),
+    /// until killed; prints its address first.
+    #[cfg(feature = "nat-tools")]
+    StunServer(nat_tools::StunArgs),
     /// Validate packs; exits with status 1 if any pack has errors.
     Validate {
         /// Pack directories, or directories containing pack directories.
@@ -85,6 +95,10 @@ fn main() -> ExitCode {
         Command::GpuBench(args) => gpu_bench_cmd::run(&args),
         Command::NostrProbe(args) => rl_cli::nostr_probe::run_relays(&args),
         Command::StunProbe(args) => rl_cli::nostr_probe::run_stun(&args),
+        #[cfg(feature = "nat-tools")]
+        Command::NostrRelay(args) => nat_tools::run_relay(&args),
+        #[cfg(feature = "nat-tools")]
+        Command::StunServer(args) => nat_tools::run_stun(&args),
         Command::Validate { paths } => validate::run(&paths),
     };
     match result {
