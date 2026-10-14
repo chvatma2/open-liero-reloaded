@@ -430,9 +430,9 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   release zips, `tidy::KEPT`: never entered) are never touched.
   Builds of targets that no longer exist (a removed test file) are the
   newest of their key and stay until `cargo clean`. `check` runs the
-  sweep first when `target/` exceeds 20 GB (`tidy::SWEEP_BYTES`, GiB; a
+  sweep first when `target/` exceeds 40 GB (`tidy::SWEEP_BYTES`, GiB; a
   size walk over 10 s counts as over) and prints one line: `tidy target/
-  was <n> GB (over 20 GB): freed <n> GB (<n> stale artifacts, <n>
+  was <n> GB (over 40 GB): freed <n> GB (<n> stale artifacts, <n>
   incremental sessions)`.
 - WSL footnote: the Windows drive hosts the virtual disk; `wsl --shutdown`
   then `wsl --manage <distro> --set-sparse true` lets it shrink.

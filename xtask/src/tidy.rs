@@ -21,7 +21,7 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::{oracle, root};
 
 /// `check` sweeps `target/` when it is bigger than this.
-pub const SWEEP_BYTES: u64 = 20 * 1024 * 1024 * 1024;
+pub const SWEEP_BYTES: u64 = 40 * 1024 * 1024 * 1024;
 /// Measuring `target/` gives up after this long (and then sweeps: a tree
 /// that slow to walk is a big one).
 const MEASURE_BUDGET: Duration = Duration::from_secs(10);
