@@ -419,7 +419,10 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   (ruling FR12b-3: what became of a join through the relays) is a line
   in the host's lobby log (`chat_line`) and `rl-game: relays: …` on the
   console; each `OnlineEvent::ListenRelay` (B-M4) is `rl-game: relay
-  <url>: connected|unreachable: …` on the console. A Public game's `Publisher` signs
+  <url>: connected|unreachable: …` on the console; each member's path
+  (`net::path_news`, final review C-M1) is `rl-game: join: <name> via
+  <tag>` when it first shows, `rl-game: path: <name> now via <tag>` when it
+  changes. A Public game's `Publisher` signs
   with the install's identity: notes once the reachability settled, at
   most `SETTLE_WAIT` (5 s) after hosting (`created_at` the wall clock; the
   first note dated 10 s after this game's last closing note,

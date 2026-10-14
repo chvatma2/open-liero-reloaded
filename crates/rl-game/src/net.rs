@@ -104,6 +104,8 @@ pub struct Net {
     pub weapons: Option<(WeaponsKey, Option<WeaponMenu>)>,
     /// The content downloads as last reported (`OnlineEvent::Downloads`).
     pub downloads: Vec<DownloadView>,
+    /// The members' paths the host's console said (`path_news`, C-M1).
+    pub paths_said: std::collections::BTreeMap<rl_proto::PublicKey, rl_proto::Path>,
     /// The overlay's rollback depths.
     pub meter: NetMeter,
     /// `--net-sim`: ready whenever the lobby gathers.
@@ -149,8 +151,31 @@ impl Net {
             downloads: Vec::new(),
             meter: NetMeter::default(),
             auto_ready: false,
+            paths_said: std::collections::BTreeMap::new(),
         }
     }
+}
+
+/// The host's console lines for its members' paths (final review C-M1):
+/// "join: <name> via <tag>" when a member's path first shows, "path:
+/// <name> now via <tag>" when it changes; `said` keeps what was said, by
+/// key (members gone are forgotten).
+pub fn path_news(
+    said: &mut std::collections::BTreeMap<rl_proto::PublicKey, rl_proto::Path>,
+    members: &[Member],
+) -> Vec<String> {
+    said.retain(|key, _| members.iter().any(|m| m.key == *key));
+    let mut lines = Vec::new();
+    for m in members {
+        let Some(path) = m.path else { continue };
+        let tag = rl_online::join::path_tag(path);
+        match said.insert(m.key, path) {
+            None => lines.push(format!("join: {} via {tag}", m.look.name)),
+            Some(old) if old != path => lines.push(format!("path: {} now via {tag}", m.look.name)),
+            Some(_) => {}
+        }
+    }
+    lines
 }
 
 /// The lobby's phase as the menus show it: [`PHASE_LOBBY`] while players
@@ -495,6 +520,34 @@ mod tests {
 
     /// The last rollback's depth and the window's p99 (nearest rank); the
     /// rollbacks older than the window drop out.
+    /// Final review C-M1: the host's console says each member's path when
+    /// it first shows and when it changes, once; members gone are forgotten.
+    #[test]
+    fn the_hosts_console_says_each_members_path() {
+        let member = |id: u8, name: &str, path: Option<rl_proto::Path>| rl_proto::Member {
+            id,
+            key: [id; 32],
+            look: Look { name: name.into(), colour: [0; 3], skin: String::new(), skin_hash: String::new() },
+            seat: rl_proto::SeatWire::Spectator,
+            ready: false,
+            missing: Vec::new(),
+            ping_ms: None,
+            admin: false,
+            download: None,
+            path,
+        };
+        let mut said = std::collections::BTreeMap::new();
+        let host = member(0, "Host", None);
+        let ann = |p| member(1, "Ann", Some(p));
+        let lines = path_news(&mut said, &[host.clone(), ann(rl_proto::Path::HolePunched)]);
+        assert_eq!(lines, ["join: Ann via punched"]);
+        assert!(path_news(&mut said, &[host.clone(), ann(rl_proto::Path::HolePunched)]).is_empty());
+        let lines = path_news(&mut said, &[host.clone(), ann(rl_proto::Path::Relayed)]);
+        assert_eq!(lines, ["path: Ann now via relayed"]);
+        assert!(path_news(&mut said, std::slice::from_ref(&host)).is_empty());
+        assert_eq!(path_news(&mut said, &[host, ann(rl_proto::Path::Relayed)]), ["join: Ann via relayed"]);
+    }
+
     #[test]
     fn the_meter_reads_rollback_depths_over_five_seconds() {
         let t0 = Instant::now();

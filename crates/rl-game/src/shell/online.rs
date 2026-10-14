@@ -738,6 +738,9 @@ impl Shell {
         let host = n.host;
         let downloads = n.downloads.clone();
         if host {
+            for line in net::path_news(&mut n.paths_said, &state.members) {
+                println!("rl-game: {line}");
+            }
             // The level's name from the peer's content (`weapons` holds it).
             let level = &state.setup.level_id;
             let map_name = n.weapons.as_ref().and_then(|w| w.0.content.pack_name(level)).unwrap_or_default();

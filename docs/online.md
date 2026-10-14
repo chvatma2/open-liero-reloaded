@@ -235,9 +235,16 @@ or the relays refused it.
 A server logs the reach lines as `reach: …`, the join lines as
 `relays: …`, its invite as `invite code: rlx1…` (with an address) or
 `invite code (joins through the relays): rlx1…`, and each join as
-`join: <name> (<fingerprint>) from <ip> via <tag> key <key>`. `rl-game`
-prints the reach and join lines on its console too (`rl-game: reach: …`,
-`rl-game: relays: …`).
+`join: <name> (<fingerprint>) from <ip> via <tag> key <key>`.
+
+`rl-game` prints on its console (stdout): when hosting, each new reach
+line (`rl-game: reach: …`), each join line (`rl-game: relays: …`), each
+relay it listens on as it connects or fails (`rl-game: relay <url>:
+connected` or `… unreachable: …`) and each member's path (`rl-game:
+join: <name> via <tag>`, then `rl-game: path: <name> now via <tag>` when
+it changes); when joining, each step (`rl-game: Asking the game through
+the relays…`) and the connection line (`rl-game: connected …`). The
+invite code is not printed: copy it from the lobby.
 
 ### When a join fails
 
