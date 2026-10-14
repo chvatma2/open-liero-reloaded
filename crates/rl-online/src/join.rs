@@ -113,6 +113,12 @@ pub const NO_REPLY: &str = "the game did not answer through the relays (it may h
 /// `restricted:`): not the host's doing.
 pub const RELAYS_REFUSED: &str = "the relays refused this join's handshake (some take events only from keys they know): try other relays in \
      Options → Online";
+/// Every relay that could be reached refused this join's handshake events,
+/// one at least as `invalid:` (NIP-01): an event dated too far from the
+/// relay's clock, or expired at once, is the likeliest (final review
+/// B-M2: not web of trust).
+pub const RELAYS_INVALID: &str = "the relays refused this join's handshake as invalid: is this PC's clock right? \
+     (set it automatically)";
 /// The host's endpoint had no room for another signalled setup
 /// (`Refused { Busy }` through Nostr: every pending setup is live).
 pub const BUSY: &str = "the game is busy with other joins: try again in a moment";
@@ -207,6 +213,8 @@ enum Verdict {
     None,
     Accepted,
     Refused,
+    /// Refused as `invalid:` (B-M2: a clock off, likeliest).
+    Invalid,
 }
 
 /// A refusal by policy: NIP-01's machine-readable prefix (`blocked:`,
@@ -290,8 +298,8 @@ impl Nostr {
     /// Every relay either refused the join's events or could never be
     /// reached, and one refused.
     fn all_refused(&self) -> bool {
-        let refused = |i: usize| self.verdicts[i] == Verdict::Refused;
-        self.verdicts.contains(&Verdict::Refused)
+        let refused = |i: usize| matches!(self.verdicts[i], Verdict::Refused | Verdict::Invalid);
+        (0..self.verdicts.len()).any(refused)
             && (0..self.verdicts.len()).all(|i| refused(i) || self.relays.unreachable(i))
     }
 
@@ -344,7 +352,11 @@ impl Nostr {
                         if accepted {
                             *v = Verdict::Accepted;
                         } else if *v == Verdict::None && refusal(&message) {
-                            *v = Verdict::Refused;
+                            *v = if message.starts_with("invalid:") {
+                                Verdict::Invalid
+                            } else {
+                                Verdict::Refused
+                            };
                         }
                     }
                 }
@@ -368,7 +380,8 @@ impl Nostr {
             return Err(NO_RELAYS.into());
         }
         if self.all_refused() {
-            return Err(RELAYS_REFUSED.into());
+            let invalid = self.verdicts.contains(&Verdict::Invalid);
+            return Err(if invalid { RELAYS_INVALID } else { RELAYS_REFUSED }.into());
         }
         // 1. The TURN notes, then the servers to allocate on.
         if let Some((list, eose)) = &self.turn {

@@ -247,6 +247,7 @@ The joiner's Multiplayer screen says why:
 |---|---|
 | "could not reach any Nostr relay: check your Internet connection, or the relays in Options → Online" | no relay answered: check the connection, or put relays back (Reset relays to defaults) |
 | "the relays refused this join's handshake (some take events only from keys they know): try other relays in Options → Online" | every relay refused it; add relays that take events from new keys |
+| "the relays refused this join's handshake as invalid: is this PC's clock right? (set it automatically)" | a relay found the join's events invalid, most often dated too far from its clock: set this PC's clock automatically (the network check prints each relay's clock) |
 | "the game did not answer through the relays (it may have closed, its relays may differ from yours, or one of the two PCs' clocks is off by more than a minute)" | is the game still hosted? Do you share a relay with the host? An invite names the host's relays; a listed game is found on yours. Are both PCs' clocks right (set automatically)? The host's lobby says "Ignored a join … dated …" when they are not |
 | "the game is busy with other joins: try again in a moment" | the host is answering 8 other joins; try again |
 | "no network path to the game: hole punching failed and no TURN relay could be used. The host can open port N (TCP and UDP) on their router (UPnP, or port forwarding) or use a dedicated server; anyone can run a TURN relay (rl-server --relay)" | see below |

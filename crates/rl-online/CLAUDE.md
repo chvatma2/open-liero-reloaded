@@ -357,7 +357,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   NIP-01 policy, `blocked:`/`restricted:`/`invalid:` … but not the
   transient `rate-limited:` or `error:`, or could never be reached:
   web-of-trust relays refuse fresh keys, so this is not blamed on the
-  host; the pool's own "no answer within …" is no refusal), `BUSY`,
+  host; the pool's own "no answer within …" is no refusal),
+  `RELAYS_INVALID` (the same, with one refusal at least `invalid:`, most
+  often an event dated off the relay's clock: it asks after this PC's
+  clock; final review B-M2), `BUSY`,
   `no_path`, `path_text`, `path_tag`, `nat_text`. Through Nostr
   (`Nostr`, polled before the endpoint): `Relays` (a `Pool`; with
   `turn_from_nostr` a `TurnList` subscription until 1 s after its first
@@ -459,7 +462,8 @@ whose clock is 2 minutes ahead (`test_clock_offset(120)`) ends with
 `NO_REPLY` while its host says `Skewed { by: ~120 }` (FR12b-3); the
 host's `Answered`, `Refused(Version)` and `NotConnected` lines in the
 join, refusal and no-path tests; `RELAYS_REFUSED`
-(`RefuseKind(21470)`); `NO_RELAYS` (a closed port, within 6 s); a
+(`RefuseKind(21470)`); `RELAYS_INVALID` (a joiner's clock 2 minutes
+behind: the relay refuses its expired events, B-M2); `NO_RELAYS` (a closed port, within 6 s); a
 direct failure falling back to Nostr; a same-LAN joiner whose router does
 not hairpin (rl-net's `connect_stall` hook: the connect fails after
 `CONNECT_TIMEOUT`) joining through Nostr directly; a flood (Review Focus

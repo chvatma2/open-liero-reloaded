@@ -29,7 +29,9 @@ use rl_net::link::{Link, LinkCandidates};
 use rl_net::portmap::DROP_WAIT;
 use rl_net::portmap::fake::{FakeGateway, Misbehaviour as GatewayMisbehaviour};
 use rl_net::turn::{RelayPorts, TurnLimits, TurnServer, TurnServerConfig};
-use rl_online::join::{Join, JoinStep, NO_RELAYS, NO_REPLY, NostrJoin, RELAYS_REFUSED, no_path};
+use rl_online::join::{
+    Join, JoinStep, NO_RELAYS, NO_REPLY, NostrJoin, RELAYS_INVALID, RELAYS_REFUSED, no_path,
+};
 use rl_online::matches::{bot_wire, rules_wire, setup_packs};
 use rl_online::reach::{HostListen, Listening};
 use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole, RelayJoin};
@@ -572,6 +574,23 @@ fn relays_refusing_handshakes_are_named() {
     let c = net.client(content, join, ice(), Some(host));
     net.run_until(Duration::from_secs(8), "the join gives up", |n| n.peers[c].ended_with().is_some());
     assert_eq!(net.peers[c].ended_with().as_deref(), Some(RELAYS_REFUSED));
+}
+
+/// Final review B-M2: a relay refusing the join's events as invalid (here
+/// expired: the joiner's clock is 2 minutes behind, so its events expire
+/// at once) is not blamed on web of trust: the text asks after the clock.
+#[test]
+fn invalid_handshakes_ask_after_the_clock() {
+    let Some(content) = content() else { return };
+    let relay = TestRelay::start();
+    let mut net = Net::new();
+    let host = identity().public();
+    let join = Join { direct: None, nostr: Some(nostr(host, pool(&[&relay]))) };
+    let c = net.client(content, join, ice(), Some(host));
+    net.peers[c].p.test_clock_offset(-120);
+    net.run_until(Duration::from_secs(8), "the join gives up", |n| n.peers[c].ended_with().is_some());
+    assert_eq!(net.peers[c].ended_with().as_deref(), Some(RELAYS_INVALID));
+    assert!(RELAYS_INVALID.contains("clock"), "{RELAYS_INVALID}");
 }
 
 #[test]
