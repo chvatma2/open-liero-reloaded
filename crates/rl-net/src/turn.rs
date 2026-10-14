@@ -337,6 +337,9 @@ pub struct TurnCore {
     key: [u8; 16],
     limits: TurnLimits,
     allow_local: bool,
+    /// The machine's own addresses (`set_own_ips`): its sockets there are
+    /// never peers (TR-5).
+    own_ips: Vec<IpAddr>,
     /// Signs nonces (stateless: an HMAC of the source and the period).
     secret: [u8; 32],
     /// Answers to unproven sources, relay-wide.
@@ -360,8 +363,8 @@ pub struct TurnCore {
 
 impl TurnCore {
     /// Listens on `listen`; relayed addresses are `public` with the port the driver allocated.
-    /// Peers must be global and not the relay's own addresses
-    /// ([`TurnCore::set_allow_local`] lifts it); the nonce key comes from
+    /// Peers must be global ([`TurnCore::set_allow_local`] lifts it) and
+    /// never the relay's own sockets ([`TurnCore::own`]); the nonce key comes from
     /// the system's randomness ([`TurnCore::set_secret`] sets it).
     pub fn new(
         listen: SocketAddr,
@@ -388,6 +391,7 @@ impl TurnCore {
             key,
             limits,
             allow_local: false,
+            own_ips: Vec::new(),
             secret,
             unproven: Bucket::full(UNPROVEN_BYTES_PER_S, now),
             epoch: now,
@@ -407,10 +411,17 @@ impl TurnCore {
         }
     }
 
-    /// N62: relay to private, loopback and the relay's own addresses too
-    /// (office and LAN setups, tests).
+    /// N62: relay to private and loopback addresses too (office and LAN
+    /// setups, tests); never to the relay's own sockets.
     pub fn set_allow_local(&mut self, allow: bool) {
         self.allow_local = allow;
+    }
+
+    /// The machine's own addresses (its interfaces'; the driver sets them):
+    /// the relay's listening port and relay ports there are never peers
+    /// (TR-5: a loop), as at its public and listening IPs.
+    pub fn set_own_ips(&mut self, ips: Vec<IpAddr>) {
+        self.own_ips = ips;
     }
 
     /// The nonce key (a seeded one keeps a simulation's bytes repeatable).
@@ -418,17 +429,30 @@ impl TurnCore {
         self.secret = secret;
     }
 
-    /// Whether a peer at `ip` is refused (TR-1): IPv4 only, global and not
-    /// ours, unless `allow_local`.
+    /// Whether a peer at `ip` is refused (TR-1 as amended by TR-5): it must
+    /// be global, unless `allow_local`. The relay's own public IP is not
+    /// refused: a host on its LAN, or beside it, is reached there through
+    /// a router that hairpins; only its own sockets are ([`TurnCore::own`]).
     fn forbidden(&self, ip: IpAddr) -> bool {
-        if ip.is_unspecified() {
-            return true;
+        ip.is_unspecified() || (!self.allow_local && !is_global(ip))
+    }
+
+    /// Whether `peer` is one of the relay's own sockets (TR-5: a loop): its
+    /// listening port or an allocation's relay port, at its public or
+    /// listening IP, a loopback address or one of the machine's own
+    /// addresses (`set_own_ips`; a multi-homed relay, final review A-M3).
+    /// Refused even with `allow_local`.
+    pub fn own(&self, peer: SocketAddr) -> bool {
+        let port = peer.port();
+        if port != self.listen.port() && !self.by_port.contains_key(&port) {
+            return false;
         }
-        !self.allow_local && (!is_global(ip) || ip == self.public || ip == self.listen.ip())
+        let ip = peer.ip();
+        ip == self.public || ip == self.listen.ip() || ip.is_loopback() || self.own_ips.contains(&ip)
     }
 
     fn push(&mut self, from_port: u16, to: SocketAddr, bytes: Vec<u8>) {
-        // Never to ourselves.
+        // Never to our listening socket (peers are judged by `own` before).
         let own = to == self.listen || to == SocketAddr::new(self.public, self.listen.port());
         if !own && !to.ip().is_unspecified() {
             self.out.push(TurnOut { from_port, to, bytes });
@@ -772,6 +796,9 @@ impl TurnCore {
         if !CHANNELS.contains(&number) || peer.port() == 0 {
             return Err(BAD_REQUEST);
         }
+        if self.own(peer) {
+            return Err(FORBIDDEN);
+        }
         let a = self.allocations.get_mut(&from).ok_or(ALLOCATION_MISMATCH)?;
         a.prune(now);
         let bound = a.channels.get(&number).map(|(p, _)| *p);
@@ -827,7 +854,12 @@ impl TurnCore {
         if data.len() > MAX_DATAGRAM {
             return;
         }
-        if !peer.is_ipv4() || peer.port() == 0 || self.forbidden(peer.ip()) || !a.permitted(peer.ip(), now) {
+        if !peer.is_ipv4()
+            || peer.port() == 0
+            || self.forbidden(peer.ip())
+            || self.own(peer)
+            || !a.permitted(peer.ip(), now)
+        {
             return;
         }
         let port = a.port;
@@ -845,7 +877,7 @@ impl TurnCore {
             self.dropped += 1;
             return;
         }
-        if !from.is_ipv4() || self.forbidden(from.ip()) || !a.permitted(from.ip(), now) {
+        if !from.is_ipv4() || self.forbidden(from.ip()) || self.own(from) || !a.permitted(from.ip(), now) {
             return;
         }
         let channel =

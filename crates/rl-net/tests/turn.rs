@@ -416,7 +416,7 @@ fn an_allocation_ends_at_the_session_cap() {
 fn a_public_relay_refuses_local_peers() {
     let mut w = Wire::new("11.0.0.9:3478", "11.0.0.20:50000", TurnLimits::generous(), false);
     w.allocate();
-    for ip in ["127.0.0.1", "192.168.1.5", "169.254.1.1", "224.0.0.1", "10.1.2.3", "11.0.0.9"] {
+    for ip in ["127.0.0.1", "192.168.1.5", "169.254.1.1", "224.0.0.1", "10.1.2.3"] {
         assert!(!w.permit(ip), "{ip} refused");
     }
     assert!(w.permit("8.8.4.4"), "a global peer is permitted");
@@ -430,6 +430,48 @@ fn a_public_relay_refuses_local_peers() {
     w.send_indication(a("127.0.0.53:53"), b"to loopback");
     w.step();
     assert!(w.to_peers.is_empty(), "nothing reaches a local address: {:?}", w.to_peers);
+}
+
+/// Ruling TR-5 (amends TR-1; final review B-I3): a relay reaches a host
+/// behind its own public IP (on its LAN, or beside it on the same machine:
+/// the router hairpins), but never its own sockets there (its listening
+/// port, its relay ports: a loop), nor at another of its own addresses
+/// (a multi-homed relay, final review A-M3). In memory, on global
+/// addresses, without `allow_local`: no datagram leaves the test.
+#[test]
+fn a_relay_reaches_hosts_at_its_public_ip_but_never_its_own_ports() {
+    let mut w = Wire::new("11.0.0.9:3478", "11.0.0.20:50000", TurnLimits::generous(), false);
+    w.core.set_own_ips(vec!["11.0.0.10".parse().unwrap()]);
+    let relayed = w.allocate();
+    assert!(w.permit("11.0.0.9"), "a host behind the relay's own public IP");
+    assert!(w.permit("11.0.0.10"), "the relay's other address");
+    let host = a("11.0.0.9:23400");
+    for own in [a("11.0.0.9:3478"), relayed, a("11.0.0.10:3478"), a(&format!("11.0.0.10:{}", relayed.port()))]
+    {
+        w.send_indication(own, b"to itself");
+        w.client.bind_channel(TransportType::Udp, own, w.t()).unwrap();
+        assert!(
+            w.until(|w| w
+                .events
+                .iter()
+                .any(|e| matches!(e, TurnEvent::ChannelCreateFailed(_, p) if *p == own))),
+            "a channel to {own} refused"
+        );
+    }
+    w.send_indication(host, b"to the host");
+    w.send_indication(a("11.0.0.10:23400"), b"to the other address");
+    w.step();
+    let sent: Vec<_> = w.to_peers.iter().map(|o| (o.to, o.bytes.clone())).collect();
+    assert_eq!(
+        sent,
+        [(host, b"to the host".to_vec()), (a("11.0.0.10:23400"), b"to the other address".to_vec())]
+    );
+    // The host's answer comes back; a datagram from the relay's own port is a loop, dropped.
+    let now = w.now();
+    w.core.receive_relayed(relayed.port(), a("11.0.0.9:3478"), b"a loop", now);
+    w.core.receive_relayed(relayed.port(), host, b"from the host", now);
+    w.step();
+    assert_eq!(w.received, vec![(host, b"from the host".to_vec())]);
 }
 
 #[test]

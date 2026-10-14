@@ -272,11 +272,18 @@ for tests.
     second, each bucket holding 2 s; review N9), so forged requests in a
     client's name cannot starve its signed ones and the IP's total keeps
     the rate.
-  - **Peers (TR-1):** IPv4, global (`rl_proto::is_global`) and not the
-    relay's public or listening address, unless `set_allow_local(true)`
+  - **Peers (TR-1, amended by TR-5):** IPv4 and global
+    (`rl_proto::is_global`), unless `set_allow_local(true)`
     (`TurnServerConfig::allow_local`, N62); CreatePermission and
     ChannelBind to others → 403, Send/ChannelData and peers' datagrams
-    from them dropped.
+    from them dropped. The relay's own public IP is a peer like any
+    other (TR-5: a host on its LAN or machine, reached through a router
+    that hairpins); only its own sockets are not (`own`: its listening
+    port or an allocation's relay port at its public or listening IP, a
+    loopback address or any of the machine's interface addresses,
+    `set_own_ips`, which the driver's thread reads with netdev; final
+    review A-M3), even with `allow_local`: ChannelBind → 403, sends and
+    datagrams from them dropped.
   - **Bounds:** every table is a map: allocations by client 5-tuple and
     by port, expiries indexed by time, at most 16 permissions and 16
     channels per allocation; requests above 1500 B and any datagram (or
@@ -721,7 +728,9 @@ channel; the per-IP limits; a full relay; binding answers;
 IPv4 only), and in memory against a sans-IO client: local peers refused,
 a stranger not draining a player's down budget, 16 permissions, spoofed
 sources and oversized requests costing nothing, a `Core` refusing a
-relay that names our base or a private address, `TurnCore` fuzzed with
+relay that names our base or a private address, a relay reaching a host
+at its own public IP but never its own ports there or at its other
+address (TR-5, without `allow_local`), `TurnCore` fuzzed with
 requests, Send and ChannelData; only an Allocate getting an
 unauthenticated answer, the amplification pinned, the relay-wide cap on
 unauthenticated answers, forged requests not starving a client's signed

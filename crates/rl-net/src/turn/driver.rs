@@ -261,6 +261,9 @@ struct Relay {
 
 impl Relay {
     fn run(mut self, rx: Receiver<Inbound>, listen_reader: Reader, stop: &AtomicBool) {
+        // The machine's addresses (a netlink dump: on this thread, never
+        // the caller's): the relay's own sockets there are never peers.
+        self.core.set_own_ips(crate::local::interface_addresses());
         let ip = match self.listen.local_addr().map(|a| a.ip()) {
             Ok(ip) if !ip.is_unspecified() => ip,
             _ => IpAddr::V4(Ipv4Addr::UNSPECIFIED),

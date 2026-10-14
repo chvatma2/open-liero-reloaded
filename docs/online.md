@@ -269,6 +269,14 @@ announces itself on the config's Nostr relays (the defaults if the config
 names none), and joiners find it there. It runs beside the server's game
 (`visibility: Invite` keeps that game unlisted).
 
+A relay reaches games hosted behind its own public address (the
+server's own game, or a player hosting on its LAN) only through the
+router: the router must send the relay's packets for its own public
+address back inside (hairpin NAT, which most home routers do and some
+do not). Without it, a relay helps only games hosted on other networks:
+run it on a third network, or on the joiner's side. On a machine with
+no NAT (a VPS), its own game is always reachable.
+
 **Ports.** UDP **3478** (TURN) and UDP **49160-49191** (one per player
 relayed) must reach the machine, on the same port numbers outside.
 `port_mapping: true` (the default) asks the router to open each of them
@@ -298,7 +306,7 @@ allocations and 20 requests a second, and an allocation lasts at most 6
 hours, so the relay cannot serve as a free proxy. A full relay with 32
 players carries about 1 MiB/s each way. It relays only to public
 addresses, never into your own network (`allow_local: true` lifts that
-for an office relay). Its credentials are public by design: anyone may
+for an office relay), and never to its own ports. Its credentials are public by design: anyone may
 use it within those limits. It sees the IP addresses of the players it
 relays.
 

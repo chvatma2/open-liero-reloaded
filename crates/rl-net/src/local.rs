@@ -41,6 +41,16 @@ pub(crate) fn quick_base() -> Ipv4Addr {
     source_toward((Ipv4Addr::new(192, 0, 2, 1), 9).into()).unwrap_or(Ipv4Addr::LOCALHOST)
 }
 
+/// Every address of the machine's interfaces (a TURN relay's own sockets
+/// are never its peers there, TR-5); empty when the OS names none.
+pub(crate) fn interface_addresses() -> Vec<IpAddr> {
+    let mut ips: Vec<IpAddr> =
+        netdev::get_interfaces().iter().flat_map(netdev::Interface::ip_addrs).collect();
+    ips.sort();
+    ips.dedup();
+    ips
+}
+
 /// A unicast address a peer could send to.
 fn usable(ip: Ipv4Addr) -> bool {
     !(ip.is_unspecified() || ip.is_multicast() || ip.is_broadcast())
