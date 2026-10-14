@@ -18,6 +18,9 @@
 //! - **Delivery** takes 10 ms per hop (sender to wire, through each NAT),
 //!   in (time, sequence) order, without loss. A STUN server answers a
 //!   binding request with the source it observed.
+//! - **TURN servers** ([`Net::turn_server`]) run a [`TurnCore`] with the
+//!   default limits on the public network, relay ports from its own port
+//!   + 1 upward on its IP; [`Net::kill`] silences one (a dead relay).
 //! - **Time** advances in 1 ms steps ([`Net::run_until`]); every node's
 //!   core is polled at each step and every datagram it sends is reported
 //!   sent (`Core::sent`).
@@ -32,6 +35,7 @@ use rl_proto::{PROTOCOL_VERSION, Path, Refusal, Signal};
 
 use crate::candidates::TurnSpec;
 use crate::core::{Core, CoreConfig, CoreEvent, HOST, NetEvent, Why};
+use crate::turn::{TurnCore, TurnLimits, TurnOut};
 
 /// One hop's delay.
 const HOP: Duration = Duration::from_millis(10);
@@ -88,6 +92,20 @@ struct Node {
     connected: bool,
 }
 
+/// A TURN server on the public network.
+struct Turn {
+    at: SocketAddr,
+    core: TurnCore,
+    /// Relay ports bound.
+    ports: BTreeSet<u16>,
+    /// Killed: it neither receives nor sends.
+    dead: bool,
+}
+
+/// The credentials of natsim's TURN servers.
+const TURN_USER: &str = "natsim";
+const TURN_PASS: &str = "natsim";
+
 /// A datagram on its way to `to`: on the public network, or (`lan`) to a
 /// node behind the sender's NAT.
 struct Flight {
@@ -103,6 +121,7 @@ pub struct Net {
     now: Instant,
     nats: Vec<Nat>,
     servers: Vec<SocketAddr>,
+    turns: Vec<Turn>,
     nodes: Vec<Node>,
     flights: BTreeMap<(Instant, u64), Flight>,
     seq: u64,
@@ -115,6 +134,7 @@ impl Net {
             now: Instant::now(),
             nats: Vec::new(),
             servers: Vec::new(),
+            turns: Vec::new(),
             nodes: Vec::new(),
             flights: BTreeMap::new(),
             seq: 0,
@@ -136,6 +156,25 @@ impl Net {
     pub fn stun_server(&mut self, at: SocketAddr) -> SocketAddr {
         self.servers.push(at);
         at
+    }
+
+    /// Relay ports from at.port() + 1 upward on the same IP; TurnLimits::default().
+    pub fn turn_server(&mut self, at: SocketAddr) -> TurnSpec {
+        let core = TurnCore::new(at, at.ip(), TURN_USER, TURN_PASS, TurnLimits::default(), self.now);
+        self.turns.push(Turn { at, core, ports: BTreeSet::new(), dead: false });
+        TurnSpec { addr: at, user: TURN_USER.into(), pass: TURN_PASS.into() }
+    }
+
+    /// Datagrams the TURN server at `at` dropped over its limits.
+    pub fn turn_dropped(&self, at: SocketAddr) -> u64 {
+        self.turns.iter().find(|t| t.at == at).map_or(0, |t| t.core.dropped())
+    }
+
+    /// The TURN server at `at` dies: from now on it neither receives nor sends.
+    pub fn kill(&mut self, at: SocketAddr) {
+        for t in self.turns.iter_mut().filter(|t| t.at == at) {
+            t.dead = true;
+        }
     }
 
     /// A host core (CoreConfig::host()) at `at`, behind `nat` (or on the public network).
@@ -165,11 +204,14 @@ impl Net {
         self.now
     }
 
-    /// core.stun(servers) (and, from Task 3, core.allocate(turn)).
+    /// core.stun(servers), and core.allocate(turn) when `turn` names any.
     pub fn gather(&mut self, n: NodeId, stun: &[SocketAddr], turn: &[TurnSpec]) {
-        let _ = turn;
         let now = self.now;
-        self.nodes[n.0].core.stun(stun.to_vec(), now);
+        let core = &mut self.nodes[n.0].core;
+        core.stun(stun.to_vec(), now);
+        if !turn.is_empty() {
+            core.allocate(turn, now);
+        }
     }
 
     pub fn gathered(&self, n: NodeId) -> bool {
@@ -244,7 +286,8 @@ impl Net {
         }
     }
 
-    /// One clock step: expiries, arrivals, then every node's poll.
+    /// One clock step: expiries, arrivals, the TURN servers, then every
+    /// node's poll.
     fn step(&mut self) {
         self.now += STEP;
         let now = self.now;
@@ -257,6 +300,9 @@ impl Net {
             }
             let flight = entry.remove();
             self.arrive(flight);
+        }
+        for i in 0..self.turns.len() {
+            self.step_turn(i);
         }
         for i in 0..self.nodes.len() {
             let (mut out, mut events) = (Vec::new(), Vec::new());
@@ -275,6 +321,32 @@ impl Net {
                 }
                 node.events.push(event);
             }
+        }
+    }
+
+    /// TURN server `i`'s step: ports for its allocations (the next free
+    /// one above its own port), ports back from ended ones, its datagrams.
+    fn step_turn(&mut self, i: usize) {
+        let now = self.now;
+        let t = &mut self.turns[i];
+        if t.dead {
+            return;
+        }
+        for req in t.core.take_allocation_requests() {
+            let port = (t.at.port().saturating_add(1)..=u16::MAX).find(|p| !t.ports.contains(p));
+            if let Some(p) = port {
+                t.ports.insert(p);
+            }
+            t.core.allocated(req, port, now);
+        }
+        for p in t.core.released() {
+            t.ports.remove(&p);
+        }
+        let mut out = Vec::new();
+        t.core.poll(now, &mut out);
+        let ip = t.at.ip();
+        for TurnOut { from_port, to, bytes } in out {
+            self.fly(SocketAddr::new(ip, from_port), to, bytes, 1, None);
         }
     }
 
@@ -314,6 +386,14 @@ impl Net {
             if let Some(transaction) = binding_request_transaction(&f.bytes) {
                 let answer = binding_response(&transaction, f.from, true);
                 self.fly(f.to, f.from, answer, 1, None);
+            }
+            return;
+        }
+        if let Some(t) = self.turns.iter_mut().find(|t| t.at.ip() == f.to.ip() && !t.dead) {
+            if f.to == t.at {
+                t.core.receive(f.from, &f.bytes, now);
+            } else if t.ports.contains(&f.to.port()) {
+                t.core.receive_relayed(f.to.port(), f.from, &f.bytes, now);
             }
             return;
         }

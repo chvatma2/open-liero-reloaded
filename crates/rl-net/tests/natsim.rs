@@ -149,3 +149,66 @@ fn a_changed_reflexive_address_is_offered() {
     assert!(net.run_until(Duration::from_secs(15), |n| n.connected(client).is_some()));
     assert_eq!(net.connected(client), Some(Path::HolePunched));
 }
+
+fn join_relayed(host_nat: NatKind, client_nat: NatKind) -> (Net, NodeId, Option<Path>) {
+    let mut net = Net::new(11);
+    let s1 = net.stun_server(a("198.51.100.1:3478"));
+    let turn = net.turn_server(a("198.51.100.9:3478"));
+    let nh = net.nat(host_nat, "203.0.113.10".parse().unwrap());
+    let nc = net.nat(client_nat, "203.0.113.20".parse().unwrap());
+    let host = net.host(Some(nh), a("192.168.1.10:23400"));
+    let client = net.client(Some(nc), a("192.168.7.20:50000"));
+    net.gather(host, &[s1], &[]);
+    net.gather(client, &[s1], &[turn]);
+    assert!(net.run_until(Duration::from_secs(3), |n| n.gathered(host) && n.gathered(client)));
+    net.signal(client, host).expect("answered");
+    net.run_until(Duration::from_secs(15), |n| n.connected(client).is_some());
+    let path = net.connected(client);
+    (net, client, path)
+}
+
+#[test]
+fn symmetric_against_port_restricted_goes_through_the_relay() {
+    assert_eq!(join_relayed(NatKind::PortRestricted, NatKind::Symmetric).2, Some(Path::Relayed));
+}
+
+#[test]
+fn symmetric_against_symmetric_goes_through_the_relay() {
+    assert_eq!(join_relayed(NatKind::Symmetric, NatKind::Symmetric).2, Some(Path::Relayed));
+}
+
+#[test]
+fn a_hole_punched_link_releases_its_allocation() {
+    let (mut net, client, path) = join_relayed(NatKind::PortRestricted, NatKind::PortRestricted);
+    assert_eq!(path, Some(Path::HolePunched));
+    net.run_until(Duration::from_secs(6), |_| false);
+    assert!(!net.core(client).relays().is_empty(), "the client allocated");
+    assert!(net.core(client).relays().iter().all(|(_, s)| *s == rl_net::relayed::RelayState::Released));
+}
+
+#[test]
+fn a_dead_relay_ends_the_link() {
+    let (mut net, client, path) = join_relayed(NatKind::PortRestricted, NatKind::Symmetric);
+    assert_eq!(path, Some(Path::Relayed));
+    net.kill(a("198.51.100.9:3478"));
+    assert!(net.run_until(Duration::from_secs(30), |n| {
+        n.events(client).iter().any(|e| matches!(e, rl_net::endpoint::NetEvent::Disconnected { .. }))
+    }));
+}
+
+#[test]
+fn gathering_waits_for_a_silent_relay_at_most_turn_wait() {
+    let mut net = Net::new(11);
+    let s1 = net.stun_server(a("198.51.100.1:3478"));
+    let turn = net.turn_server(a("198.51.100.9:3478"));
+    net.kill(turn.addr);
+    let nc = net.nat(NatKind::PortRestricted, "203.0.113.20".parse().unwrap());
+    let client = net.client(Some(nc), a("192.168.7.20:50000"));
+    net.gather(client, &[s1], &[turn]);
+    // STUN answers within STUN_WAIT; the relay never does.
+    net.run_until(rl_net::probe::STUN_WAIT, |_| false);
+    assert!(!net.gathered(client), "waiting for the relay");
+    assert!(net.run_until(rl_net::relayed::TURN_WAIT, |n| n.gathered(client)));
+    assert_eq!(net.core(client).relays()[0].1, rl_net::relayed::RelayState::Allocating);
+    assert!(net.core(client).local().relayed.is_empty());
+}

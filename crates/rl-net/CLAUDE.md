@@ -7,11 +7,19 @@ announcements.
 - **Layer 5, std; not wasm.** Depends on rl-netcode (`Channel`, `PeerId`,
   `netsim::LinkModel`, `Rng`), rl-proto (`Signal`, `Path`, the STUN codec,
   the limits' sizes), str0m,
-  tungstenite (`=0.30.0`, default features: no TLS) and getrandom
-  (`=0.4.3`, `random_bytes`: the native peers' randomness). Real clocks and
-  sockets live only in this crate's socket driver, `endpoint` (and the
-  binaries); `link` and `core` are sans-IO, and `endpoint::poll` takes the
+  tungstenite (`=0.30.0`, default features: no TLS), getrandom
+  (`=0.4.3`, `random_bytes`: the native peers' randomness) and
+  turn-client-proto / turn-server-proto (`=0.7.2`, default features:
+  `std`; N52). Real clocks and sockets live only in this crate's socket
+  drivers, `endpoint` and `turn::TurnServer` (and the binaries); `link`,
+  `core` and `turn::TurnCore` are sans-IO, and `endpoint::poll` takes the
   time.
+- **TURN crates' pins.** `Cargo.lock` holds their transitive crates under
+  two weeks old back (`cargo update -p <crate> --precise <ver>`):
+  stun-proto 2.0.2 (2.0.3), stun-types 2.0.2 (2.0.3), turn-types 0.7.2
+  (0.7.3). `cargo tree -p rl-net -e normal` shows them. The server pulls
+  pnet_packet 0.35 (ICMP parsing) and rand 0.9 (its nonces, OS
+  randomness).
 - **str0m pinned exactly** (`=0.24.0`, decision N15), `default-features =
   false, features = ["rust-crypto"]`: the default features pull the
   `examples` web server and select aws-lc-rs as the crypto backend.
@@ -141,8 +149,33 @@ announcements.
     `srflx` is the base, `Preserving`, `Symmetric`). Transaction ids come
     from `CoreConfig::stun_seed` (the endpoint seeds it from the system's
     randomness). The probe's datagrams belong to no setup.
+  - **TURN allocations** (`relayed.rs`, N48, N52; a joiner's):
+    `allocate(servers, now)` asks each server (IPv4, at most 2 live
+    allocations) from the base with one `turn_client_proto`
+    `TurnClientUdp` each (`TurnConfig::new(TurnCredentials::new(user,
+    pass))`); `relays()` lists each server's `RelayState` (`Allocating`,
+    `Allocated(relayed)`, `Failed(why)`, `Released`). `gathered` also
+    waits for every allocation to settle, or `TURN_WAIT` (2 s). Allocated
+    addresses are `local().relayed` and relayed candidates `(relayed,
+    base)` of links made afterwards, inside the `MAX_CANDIDATES` budget
+    with the reflexive ones (before hosts). `receive`: after the probe, a
+    datagram from a TURN server goes to its client — a peer's data
+    reaches the links as arriving at the relayed address (str0m's
+    relayed candidate's base), what the client ignores goes on to the
+    links. A link's transmit from a relayed address leaves through its
+    client's `send_to` (counted in the link's stats; dropped while no
+    permission is installed, as on a lossy path; ICE retries), and binds
+    a channel for each peer address sent to (4-byte ChannelData headers
+    once bound). The peer's SDP (`accept_answer_ice`, `answer_ice`) asks
+    permissions for every candidate IP and the mapped hint's (at most 32
+    permissions and channels per allocation). An allocation no open
+    link's selected pair uses is deleted `RELEASE_AFTER` (5 s) after a
+    `Connected`, while no setup is connecting (kept while a pair is
+    unknown); `close_all` deletes every one. A dead relay's link is lost
+    by ICE (`Disconnected { Timeout }`). The relays' own datagrams belong
+    to no setup.
 - **`candidates`** (N48-N50): `LocalCandidates`, `RemoteCandidates`,
-  `TurnSpec` (Task 3), `MAX_CANDIDATES` (8). `sanitize(sdp)` keeps at most
+  `TurnSpec` (`Core::allocate`), `MAX_CANDIDATES` (8). `sanitize(sdp)` keeps at most
   8 `a=candidate` lines that are UDP, IPv4, unicast (not unspecified,
   multicast or broadcast), with a port and a known `typ` (fields split on
   single spaces, as str0m parses them; no mDNS name, TCP or IPv6), other
@@ -150,6 +183,28 @@ announcements.
   (`prflx` with `srflx`); `classify(local, remote, ours, theirs)`:
   `Relayed` (either side's address a relay), `MappedPort` (the remote's
   mapped hint), `Direct` (a remote host candidate), else `HolePunched`.
+- **`turn`** (N52, spec §5.3): `TurnCore` wraps
+  `turn_server_proto::server::TurnServer` (UDP, realm `REALM`
+  `"rust-liero"`, one user) without sockets: `receive` (the listening
+  port), `receive_relayed(port, ..)` (a relay port), `poll` (`TurnOut {
+  from_port, to, bytes }`), and the driver's ports through
+  `take_allocation_requests` / `allocated(req, Some(port) | None)` /
+  `released()`: relayed addresses are `public:port`. `TurnLimits`
+  (default 32 allocations, 4 per client IP, 32 KiB/s relayed payload per
+  IP each way, 20 requests/s; `generous()` for tests sharing 127.0.0.1):
+  a full relay or IP is refused (`InsufficientCapacity`, 508), the byte
+  and request buckets hold 2 s, and a datagram over one is dropped and
+  counted (`dropped`), never the client. ChannelData and Send
+  indications are data, everything else to the listening port a
+  request. At most 4096 client IPs are tracked (the longest idle without
+  an allocation evicted). `TurnCore` answers STUN binding requests itself
+  (`rl_proto::stun`): turn-server-proto 0.7.2 (and 0.7.3) addresses its
+  binding answer to its own listening address. The library's time is
+  nanoseconds since the core's creation. `TurnServer::start(cfg)` runs
+  it on a thread (`listen` port 0: ephemeral, `local_addr`; one
+  non-blocking UDP socket per allocation, a free port of `ports`, or an
+  OS-assigned one for `0..=0`); `stats()` (allocations, dropped,
+  relayed bytes); dropping it stops and joins the thread.
 - **`natsim`** (feature `test-hooks`, N56): `Net` runs `Core`s behind
   virtual NATs (full cone, address-restricted, port-restricted:
   endpoint-independent mapping keeping the internal port if free;
@@ -157,9 +212,12 @@ announcements.
   router `forward`s, 120 s idle expiry, no hairpinning (nodes behind one
   NAT reach each other's private addresses directly), STUN servers, 10 ms
   per hop and a 1 ms virtual clock; each node's `impair_seed` and
-  `stun_seed` come from `Net::new`'s seed; `gather`, `signal` (the signalling
+  `stun_seed` come from `Net::new`'s seed; `gather` (STUN, and TURN
+  allocations when given servers), `signal` (the signalling
   Nostr will carry), `run_until`, `connected` (the client's path),
-  `events`, `renumber`.
+  `events`, `renumber`. `turn_server(at)` runs a `TurnCore` (default
+  limits, relay ports from `at.port() + 1` up on its IP) and returns its
+  `TurnSpec`; `kill(at)` silences it; `turn_dropped(at)`.
 - **`endpoint::Endpoint`**: the socket driver of a `Core`: the UDP socket,
   the TCP listener and `SignalConn`s (mapped by `SetupId`), the per-IP
   caps, the gate, the connect thread, lingering closes, and the SDP
@@ -278,7 +336,13 @@ table evicting a silent setup and refusing `Busy` once every one has
 heard checks, reflexive candidates surviving ten host addresses, the
 1.5 s `Connected` fallback with a real address, `gathered` without STUN; `tests/natsim.rs`: hole punching through every NAT pair of
 interest, a mapped port, the same LAN, NAT detection, STUN keeping a
-mapping alive, a renumbered router; `tests/candidates.rs`: reading,
+mapping alive, a renumbered router, symmetric NATs through a relay, a
+hole-punched link releasing its allocation, a dead relay ending the
+link, gathering bounded by `TURN_WAIT`; `tests/turn.rs`: a `TurnServer`
+on 127.0.0.1 with plain sockets through `turn_client_proto` (relaying
+both ways, unbound and through a channel; the per-IP limits; a full
+relay; binding answers) and `TurnCore` fuzzed; unit tests in `turn.rs`
+(the bucket, the IP table, an allocation in memory); `tests/candidates.rs`: reading,
 sanitizing (fuzzed) and classifying candidates;
 `tests/link.rs`: in memory on a
 virtual clock, 32 s in well under 1 s of wall time, and irregular

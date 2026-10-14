@@ -100,6 +100,11 @@ ctrlc = { version = "=3.5.2", features = ["termination"] }
 # The release zips (`cargo xtask dist`, xtask only): zip 8.6.0 (2026-04-25),
 # deflate through flate2's pure-Rust backend; no bzip2, zstd or lzma.
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2"] }
+# TURN relays (plan 12b, decision N52): sans-IO client and server, pure
+# Rust, exact pins (2026-08-05); default features keep `std`. Cargo.lock
+# pins their stun-proto, stun-types and turn-types back (rl-net's CLAUDE.md).
+turn-client-proto = "=0.7.2"
+turn-server-proto = "=0.7.2"
 # Identity keys (plan 10, spec §5.2): BIP-340 Schnorr over secp256k1, no_std.
 k256 = { version = "=0.14.0", default-features = false, features = ["schnorr"] }
 

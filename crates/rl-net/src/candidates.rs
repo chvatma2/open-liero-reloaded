@@ -20,7 +20,7 @@ pub struct LocalCandidates {
     pub srflx: Option<SocketAddr>,
     /// The router mapping's external address.
     pub mapped: Option<SocketAddr>,
-    /// TURN relay addresses (Task 3).
+    /// The TURN relayed addresses allocated (`Core::allocate`).
     pub relayed: Vec<SocketAddr>,
 }
 
@@ -35,8 +35,7 @@ pub struct RemoteCandidates {
     pub mapped: Option<SocketAddr>,
 }
 
-/// A TURN server's address and long-term credentials (allocations come in
-/// Task 3).
+/// A TURN server's address and long-term credentials (`Core::allocate`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TurnSpec {
     pub addr: SocketAddr,

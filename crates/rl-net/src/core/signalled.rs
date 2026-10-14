@@ -1,9 +1,10 @@
 //! `Core`'s signalled setups (plan 12b, N48-N50): the socket's
-//! candidates and STUN, the ICE offer and answer (PF12b-2's pending
+//! candidates, STUN and TURN, the ICE offer and answer (PF12b-2's pending
 //! table), and each link's path (N49) and `Connected` report.
 
 use super::*;
-use crate::candidates::MAX_CANDIDATES;
+use crate::candidates::{MAX_CANDIDATES, TurnSpec};
+use crate::relayed::RelayState;
 
 impl Core {
     /// The socket's candidates: `base` is where every datagram is taken as arriving; `hosts` (base first) are offered.
@@ -22,6 +23,16 @@ impl Core {
         self.probe.start(servers, now);
     }
 
+    /// Allocates on each server (at most 2), from this socket.
+    pub fn allocate(&mut self, servers: &[TurnSpec], now: Instant) {
+        self.relays.allocate(servers, self.base, now);
+    }
+
+    /// Each TURN server asked and where its allocation stands.
+    pub fn relays(&self) -> Vec<(SocketAddr, RelayState)> {
+        self.relays.states()
+    }
+
     /// The router mapping's external address (a server-reflexive candidate
     /// at it), or `None`.
     pub fn set_mapped(&mut self, mapped: Option<SocketAddr>) {
@@ -36,7 +47,7 @@ impl Core {
             host: self.hosts.clone(),
             srflx: self.probe.srflx(),
             mapped: self.mapped,
-            relayed: Vec::new(),
+            relayed: self.relays.addresses(),
         }
     }
 
@@ -44,17 +55,18 @@ impl Core {
         self.probe.nat(self.base)
     }
 
-    /// STUN answered (or STUN_WAIT passed) — and, from Task 3, TURN too.
+    /// STUN answered (or STUN_WAIT passed), and every TURN allocation
+    /// settled, allocated or failed (or TURN_WAIT passed).
     pub fn gathered(&self, now: Instant) -> bool {
-        self.probe.gathered(now)
+        self.probe.gathered(now) && self.relays.settled(now)
     }
 
-    /// What a signalled link offers: the host candidates, and the
+    /// What a signalled link offers: the host candidates, the
     /// server-reflexive and mapped addresses on the base (unless equal to
-    /// it).
+    /// it), and the relayed addresses allocated (on the base).
     /// They fit the far side's `sanitize` (at most `MAX_CANDIDATES`): the
-    /// reflexive ones (and, from Task 3, relayed) first, then the host
-    /// candidates, base first, as many as are left room.
+    /// reflexive and relayed ones first, then the host candidates, base
+    /// first, as many as are left room.
     pub(super) fn link_candidates(&self) -> LinkCandidates {
         let mut c = LinkCandidates::default();
         if let Some(base) = self.base {
@@ -63,6 +75,7 @@ impl Core {
                     c.srflx.push((addr, base));
                 }
             }
+            c.relayed = self.relays.addresses().into_iter().map(|addr| (addr, base)).collect();
         }
         let room = MAX_CANDIDATES.saturating_sub(c.srflx.len() + c.relayed.len());
         c.host = self.hosts.iter().copied().take(room).collect();
@@ -90,6 +103,8 @@ impl Core {
         };
         p.link.accept_answer(&answer)?;
         p.theirs = remote_candidates(&answer, mapped_hint);
+        let ips = ips(&p.theirs);
+        self.relays.permit(ips, self.now);
         Ok(())
     }
 
@@ -126,7 +141,9 @@ impl Core {
         }
         let base = self.base.unwrap_or((Ipv4Addr::UNSPECIFIED, 0).into());
         let addr = (Ipv4Addr::UNSPECIFIED, 0).into();
-        self.add(addr, base, link, now, Some(remote_candidates(&sdp, mapped_hint)));
+        let theirs = remote_candidates(&sdp, mapped_hint);
+        self.relays.permit(ips(&theirs), now);
+        self.add(addr, base, link, now, Some(theirs));
         Signal::Answer { sdp: answer }
     }
 
@@ -157,8 +174,6 @@ impl Core {
         }
     }
 
-    /// Reports an opened peer `Connected` (once) with its path, then the
-    /// events that waited for it.
     /// A signalled peer's address: its selected pair's remote address,
     /// else the latest source its link took a datagram from (never the
     /// unspecified placeholder once it has sent one: the lobby's IP bans
@@ -172,12 +187,15 @@ impl Core {
         }
     }
 
+    /// Reports an opened peer `Connected` (once) with its path, then the
+    /// events that waited for it.
     pub(super) fn report(&self, peer: &mut Peer, events: &mut Vec<CoreEvent>) {
         let Some(id) = peer.id else { return };
         if peer.reported {
             return;
         }
         peer.reported = true;
+        peer.connected = Some(self.now);
         peer.pair = self.selected(peer);
         let path = self.classify(peer);
         peer.path = Some(path);
@@ -185,4 +203,20 @@ impl Core {
         events.push(CoreEvent::Net(NetEvent::Connected { peer: id, addr: peer.addr, path }));
         events.extend(peer.held.drain(..).map(CoreEvent::Net));
     }
+}
+
+/// The peer's candidate IPs (and its mapped hint's): the permissions a
+/// relay asks for, so its checks and data pass.
+fn ips(theirs: &RemoteCandidates) -> Vec<std::net::IpAddr> {
+    let mut ips: Vec<_> = theirs
+        .host
+        .iter()
+        .chain(&theirs.srflx)
+        .chain(&theirs.relay)
+        .chain(&theirs.mapped)
+        .map(|a| a.ip())
+        .collect();
+    ips.sort();
+    ips.dedup();
+    ips
 }

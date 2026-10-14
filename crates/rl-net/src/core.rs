@@ -11,9 +11,11 @@
 //! decision N16) and signalled ones (`offer_ice`, `answer_ice`: every
 //! local candidate of [`Core::local`], decisions N48-N50), whose
 //! datagrams are all taken as arriving at the base. STUN rounds on the
-//! same socket learn the server-reflexive candidate ([`Core::stun`]).
+//! same socket learn the server-reflexive candidate ([`Core::stun`]), and
+//! TURN allocations from it the relayed ones ([`Core::allocate`],
+//! `relayed.rs`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
@@ -27,6 +29,7 @@ use crate::impair::Impair;
 use crate::limits::{Limits, PeerLimits};
 use crate::link::{Ended, Link, LinkCandidates, LinkError, LinkEvent, Transmit};
 use crate::probe::{NatBehaviour, StunProbe};
+use crate::relayed::{Outgoing, RELEASE_AFTER, Received, Relays};
 
 mod signalled;
 
@@ -218,8 +221,9 @@ struct Peer {
     checked: bool,
     /// The peer's candidates as its SDP names them, for `classify`.
     theirs: RemoteCandidates,
-    /// When the link opened.
+    /// When the link opened, and when it was reported `Connected`.
     opened: Option<Instant>,
+    connected: Option<Instant>,
     /// `Connected` was reported; until then its events wait in `held`.
     reported: bool,
     held: Vec<NetEvent>,
@@ -262,6 +266,8 @@ pub struct Core {
     /// The router mapping's external address.
     mapped: Option<SocketAddr>,
     probe: StunProbe,
+    /// TURN allocations (a joiner's, N48).
+    relays: Relays,
     /// Forks each link's impairment.
     rng: Rng,
     /// Datagrams no link accepted.
@@ -285,14 +291,34 @@ fn emit(peer: &mut Peer, events: &mut Vec<CoreEvent>, event: NetEvent) {
     }
 }
 
-/// The link's transmits as datagrams of `peer`.
-fn datagrams(peer: &Peer, out: &mut Vec<Datagram>, transmits: impl IntoIterator<Item = Transmit>) {
-    out.extend(transmits.into_iter().map(|t| Datagram { to: t.to, bytes: t.bytes, setup: peer.setup }));
+/// The link's transmits as datagrams of `peer`: one from a relayed
+/// address goes through its relay (or is dropped while it cannot).
+fn datagrams(
+    peer: &Peer,
+    relays: &mut Relays,
+    now: Instant,
+    out: &mut Vec<Datagram>,
+    transmits: impl IntoIterator<Item = Transmit>,
+) {
+    for t in transmits {
+        let (to, bytes) = match relays.send(t.from, t.to, &t.bytes, now) {
+            Outgoing::Direct => (t.to, t.bytes),
+            Outgoing::Wrapped { to, bytes } => (to, bytes),
+            Outgoing::Dropped => continue,
+        };
+        out.push(Datagram { to, bytes, setup: peer.setup });
+    }
 }
 
 /// Polls the peer's link and hands out its datagrams (through the
 /// impairment).
-fn pump(peer: &mut Peer, now: Instant, out: &mut Vec<Datagram>, events: &mut Vec<LinkEvent>) {
+fn pump(
+    peer: &mut Peer,
+    relays: &mut Relays,
+    now: Instant,
+    out: &mut Vec<Datagram>,
+    events: &mut Vec<LinkEvent>,
+) {
     let mut transmits = Vec::new();
     peer.link.poll(now, &mut transmits, events);
     if let Some(impair) = &mut peer.impair {
@@ -301,15 +327,15 @@ fn pump(peer: &mut Peer, now: Instant, out: &mut Vec<Datagram>, events: &mut Vec
         }
         impair.due(now, &mut transmits);
     }
-    datagrams(peer, out, transmits);
+    datagrams(peer, relays, now, out, transmits);
 }
 
 /// Closes the peer's link and hands out its last datagrams at once.
-fn finish(mut peer: Peer, now: Instant, out: &mut Vec<Datagram>) {
+fn finish(mut peer: Peer, relays: &mut Relays, now: Instant, out: &mut Vec<Datagram>) {
     peer.link.close();
     let mut transmits = Vec::new();
     peer.link.poll(now, &mut transmits, &mut Vec::new());
-    datagrams(&peer, out, transmits);
+    datagrams(&peer, relays, now, out, transmits);
 }
 
 impl Core {
@@ -332,6 +358,7 @@ impl Core {
             hosts: Vec::new(),
             mapped: None,
             probe,
+            relays: Relays::new(now),
             rng,
             stray: 0,
             now,
@@ -417,6 +444,7 @@ impl Core {
             checked: false,
             theirs: theirs.unwrap_or_default(),
             opened: None,
+            connected: None,
             reported: false,
             held: Vec::new(),
             pair: None,
@@ -449,21 +477,37 @@ impl Core {
                 events.push(CoreEvent::Net(NetEvent::Disconnected { peer: HOST, why }));
             }
             let mut out = std::mem::take(&mut self.outbox);
-            finish(peer, self.now, &mut out);
+            finish(peer, &mut self.relays, self.now, &mut out);
             self.outbox = out;
         }
     }
 
     /// Hands a received datagram to the STUN probe when it answers one of
-    /// its requests, else to the link that accepts it, as arriving at the
-    /// base (a TCP-signalled link: at its own host candidate, N16). Others
-    /// are counted, [`Core::stray_datagrams`].
+    /// its requests, else to the relay client of the server it comes from
+    /// (a peer's data through it reaches the links as arriving at the
+    /// relayed address), else to the link that accepts it, as arriving at
+    /// the base (a TCP-signalled link: at its own host candidate, N16).
+    /// Others are counted, [`Core::stray_datagrams`].
     pub fn receive(&mut self, from: SocketAddr, bytes: &[u8], now: Instant) {
         if self.probe.receive(from, bytes, now) {
             return;
         }
+        match self.relays.receive(from, bytes, now) {
+            Received::Consumed => {}
+            Received::Peer { relayed, peer, bytes } => self.deliver(peer, Some(relayed), &bytes, now),
+            Received::NotOurs => self.deliver(from, None, bytes, now),
+        }
+    }
+
+    /// A datagram for the links from `from`, arriving at `relayed` (else
+    /// at the base, or a TCP-signalled link's host candidate).
+    fn deliver(&mut self, from: SocketAddr, relayed: Option<SocketAddr>, bytes: &[u8], now: Instant) {
         let base = self.base;
-        let to = |p: &Peer| if p.signalled { base.unwrap_or(p.local) } else { p.local };
+        let to = |p: &Peer| match relayed {
+            Some(r) => r,
+            None if p.signalled => base.unwrap_or(p.local),
+            None => p.local,
+        };
         let peer = self
             .pending
             .iter_mut()
@@ -510,6 +554,27 @@ impl Core {
                 }
             }
         }
+        self.release_relays(now);
+        self.relays.poll(now, out);
+    }
+
+    /// Deletes the allocations no open link uses, once a link has been
+    /// `Connected` for `RELEASE_AFTER` (N48) and none is connecting; kept
+    /// while an open link's pair is unknown.
+    fn release_relays(&mut self, now: Instant) {
+        if !self.relays.any_allocated() || !self.pending.is_empty() {
+            return;
+        }
+        let mut due = false;
+        let mut used = BTreeSet::new();
+        for p in self.open.values() {
+            let Some((local, _)) = self.selected(p).filter(|_| p.reported) else { return };
+            used.insert(local);
+            due |= p.connected.is_some_and(|t| now >= t + RELEASE_AFTER);
+        }
+        if due {
+            self.relays.release_unused(&used, now);
+        }
     }
 
     /// The caller reports each datagram of [`Core::poll`] and
@@ -544,14 +609,14 @@ impl Core {
                 Some(id) => {
                     self.report(&mut peer, events);
                     events.push(CoreEvent::Net(NetEvent::Disconnected { peer: id, why }));
-                    finish(peer, now, out);
+                    finish(peer, &mut self.relays, now, out);
                 }
                 None => self.fail_setup(peer, why, now, out, events),
             }
             return None;
         }
         let mut link_events = Vec::new();
-        pump(&mut peer, now, out, &mut link_events);
+        pump(&mut peer, &mut self.relays, now, out, &mut link_events);
         for event in link_events {
             match event {
                 LinkEvent::Open => {
@@ -577,7 +642,7 @@ impl Core {
                         Err(why) => {
                             self.report(&mut peer, events);
                             events.push(CoreEvent::Net(NetEvent::Disconnected { peer: id, why }));
-                            finish(peer, now, out);
+                            finish(peer, &mut self.relays, now, out);
                             return None;
                         }
                     }
@@ -618,7 +683,7 @@ impl Core {
             Some(id) if now.saturating_duration_since(peer.heard) >= SILENCE_TIMEOUT => {
                 self.report(&mut peer, events);
                 events.push(CoreEvent::Net(NetEvent::Disconnected { peer: id, why: Why::Timeout }));
-                finish(peer, now, out);
+                finish(peer, &mut self.relays, now, out);
                 None
             }
             None if now >= peer.deadline => {
@@ -643,7 +708,7 @@ impl Core {
             events.push(CoreEvent::Net(NetEvent::Disconnected { peer: HOST, why }));
         }
         events.push(CoreEvent::SetupFailed { setup: peer.setup, why });
-        finish(peer, now, out);
+        finish(peer, &mut self.relays, now, out);
     }
 
     /// Queues `bytes` as one message to `peer`; it leaves with the next
@@ -683,20 +748,22 @@ impl Core {
     /// is told, no event follows.
     pub fn close(&mut self, peer: PeerId, out: &mut Vec<Datagram>) {
         if let Some(p) = self.open.remove(&peer) {
-            finish(p, self.now, out);
+            finish(p, &mut self.relays, self.now, out);
         }
     }
 
-    /// Closes every link, connecting or open, and hands out their last
-    /// datagrams (the driver's drop).
+    /// Closes every link, connecting or open, deletes the allocations and
+    /// hands out their last datagrams (the driver's drop).
     pub(crate) fn close_all(&mut self, out: &mut Vec<Datagram>) {
         let now = self.now;
         out.append(&mut self.outbox);
         for peer in
             std::mem::take(&mut self.pending).into_iter().chain(std::mem::take(&mut self.open).into_values())
         {
-            finish(peer, now, out);
+            finish(peer, &mut self.relays, now, out);
         }
+        self.relays.release_all(now);
+        self.relays.poll(now, out);
     }
 
     /// The open peers reported `Connected`, by id, with their addresses.

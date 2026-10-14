@@ -12,7 +12,9 @@ pub mod link;
 #[cfg(feature = "test-hooks")]
 pub mod natsim;
 pub mod probe;
+pub mod relayed;
 mod signal;
+pub mod turn;
 
 /// `N` bytes from the operating system's random source (identity keys,
 /// nonces): the native peers' randomness, which the `no_std` crates take

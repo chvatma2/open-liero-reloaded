@@ -14,6 +14,8 @@ rl-netcode.workspace = true
 rl-proto.workspace = true
 tungstenite.workspace = true
 getrandom.workspace = true
+turn-client-proto.workspace = true
+turn-server-proto.workspace = true
 
 [features]
 # Test-only API (EndpointConfig's overrides, the virtual NAT network
