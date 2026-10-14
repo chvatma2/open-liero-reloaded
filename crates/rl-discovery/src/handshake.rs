@@ -12,15 +12,21 @@
 //!   first (size, kind, tag, age), a rate bucket before any decryption (10
 //!   new offers a second, a burst of 20), and remembers each session for
 //!   [`SESSION_MEMORY`] (at most 4096), so a resent offer is answered with
-//!   the same reply event. A hostile event is ignored and counted: its
-//!   sender cannot be dropped, its key being ephemeral.
+//!   the same reply event. A hostile or over-limit event is ignored and
+//!   counted: its sender cannot be dropped, its key being ephemeral.
+//!
+//! Cost: `Inbox::offer` checks every signature again, although the pool's
+//! drivers verified each event already (a forgery never reaches it from a
+//! `Pool`). What it spends before the rate bucket is thus bounded only by
+//! the pool's per-relay limits (200 frames/s): call it from the host's
+//! network thread, never the game's UI thread.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use rl_lobby::Identity;
-use rl_proto::{MAX_SDP, PublicKey, Signal};
+use rl_proto::{MAX_SDP, PublicKey, Refusal, Signal};
 use serde::{Deserialize, Serialize};
 
 use crate::nip44::{conversation_key, decrypt, encrypt};
@@ -85,24 +91,30 @@ struct Wire {
     mapped: Option<String>,
 }
 
+/// The encrypted content, or `None` when it would exceed
+/// [`MAX_HANDSHAKE_CONTENT`] (an SDP of `MAX_SDP` bytes fits unless JSON
+/// escapes most of it).
 fn seal(
     ck: &[u8; 32],
     session: &[u8; 16],
     signal: &Signal,
     mapped: Option<SocketAddr>,
     nonce: [u8; 32],
-) -> String {
+) -> Option<String> {
     let wire = Wire {
         v: WIRE_V,
         session: hex::encode(session),
         signal: signal.clone(),
         mapped: mapped.map(|a| a.to_string()),
     };
-    let json = serde_json::to_string(&wire).unwrap_or_default();
-    // Only an oversized signal fails (the caller's own SDP beyond 64 KiB):
-    // an empty content the other side ignores.
-    encrypt(ck, &json, nonce).unwrap_or_default()
+    let json = serde_json::to_string(&wire).ok()?;
+    encrypt(ck, &json, nonce).ok().filter(|c| c.len() <= MAX_HANDSHAKE_CONTENT)
 }
+
+/// Ignored for honest redundancy, not counted: every relay's copy of an
+/// event, and a resend before the reply.
+const DUPLICATE: &str = "duplicate";
+const BEING_ANSWERED: &str = "being answered";
 
 /// Decrypts and parses a content: the session, the signal and an IPv4
 /// mapped address; the signal's own checks are the caller's.
@@ -198,7 +210,8 @@ impl Inbox {
         self.sessions.len()
     }
 
-    /// How many events were ignored.
+    /// How many hostile or over-limit events were ignored (not the honest
+    /// duplicates from several relays nor resends before the reply).
     pub fn ignored(&self) -> u64 {
         self.ignored
     }
@@ -207,7 +220,10 @@ impl Inbox {
     /// the checks).
     pub fn offer(&mut self, e: &Event, now: Instant, now_unix: u64) -> Inbound {
         let got = self.check(e, now, now_unix);
-        if matches!(got, Inbound::Ignored(_)) {
+        if let Inbound::Ignored(why) = got
+            && why != DUPLICATE
+            && why != BEING_ANSWERED
+        {
             self.ignored += 1;
         }
         got
@@ -227,7 +243,7 @@ impl Inbox {
             // lookup; a resend a signature check and a decryption with the
             // remembered key.
             if s.ids.contains(&e.id) {
-                return Inbound::Ignored("duplicate");
+                return Inbound::Ignored(DUPLICATE);
             }
             if s.repeats >= MAX_REPEATS {
                 return Inbound::Ignored("too many repeats");
@@ -249,7 +265,7 @@ impl Inbox {
                 s.ids.remove(0);
             }
             s.ids.push(e.id);
-            let Some(reply) = &s.reply else { return Inbound::Ignored("being answered") };
+            let Some(reply) = &s.reply else { return Inbound::Ignored(BEING_ANSWERED) };
             return Inbound::Repeat(reply.clone());
         }
         if !e.verify() {
@@ -304,7 +320,10 @@ impl Inbox {
 
     /// The reply to `req` (an `Answer` or `Refused`), signed with our key,
     /// and remembered for the session's repeats from `now` on. `rand`
-    /// gives the nonce and the signature's randomness.
+    /// gives the nonce and the signature's randomness. A signal whose
+    /// content would exceed [`MAX_HANDSHAKE_CONTENT`] is replaced by
+    /// `Refused { reason: Malformed }`, so the joiner learns at once
+    /// instead of waiting out its deadline.
     pub fn reply(
         &mut self,
         req: &Request,
@@ -318,8 +337,13 @@ impl Inbox {
             Some(s) if s.session == req.session => Some(s.conversation),
             _ => conversation_key(&self.me.secret(), &req.from),
         };
-        let content =
-            conversation.map(|ck| seal(&ck, &req.session, &signal, mapped, rand())).unwrap_or_default();
+        let refused = Signal::Refused { reason: Refusal::Malformed };
+        let content = conversation
+            .and_then(|ck| {
+                seal(&ck, &req.session, &signal, mapped, rand())
+                    .or_else(|| seal(&ck, &req.session, &refused, None, rand()))
+            })
+            .unwrap_or_default();
         let e =
             Event::sign(&self.me, now_unix, KIND_HANDSHAKE, tags_to(&req.from, now_unix), content, rand());
         if let Some(s) = self.sessions.get_mut(&req.from)
@@ -342,31 +366,20 @@ pub struct Reply {
 }
 
 /// A secret drawn from `rand`: a draw that is no valid secret (zero, or
-/// not below the curve order) is drawn again. After 16 such draws, a
-/// source that is plainly broken, the last is hashed until valid, so the
-/// call always ends.
-fn fresh_identity(rand: &mut dyn FnMut() -> [u8; 32]) -> Identity {
-    use sha2::{Digest, Sha256};
-    let mut draw = rand();
-    for _ in 0..16 {
-        if let Some(id) = Identity::from_secret(draw) {
-            return id;
-        }
-        draw = rand();
-    }
-    loop {
-        if let Some(id) = Identity::from_secret(draw) {
-            return id;
-        }
-        draw = Sha256::digest(draw).into();
-    }
+/// not below the curve order) is drawn again, up to 16 draws. `None` after
+/// that: the source is plainly broken, and a key derived from its output
+/// would be the same for every join.
+fn fresh_identity(rand: &mut dyn FnMut() -> [u8; 32]) -> Option<Identity> {
+    (0..16).find_map(|_| Identity::from_secret(rand()))
 }
 
 /// The joiner's side: one offer to one host.
 pub struct Asker {
     host: PublicKey,
-    key: Identity,
-    /// `None` when `host` is no valid key: nothing is sent.
+    /// `None` when `rand` gave no valid secret in 16 draws.
+    key: Option<Identity>,
+    /// `None` when `host` is no valid key or there is no key of ours:
+    /// nothing is sent.
     conversation: Option<[u8; 32]>,
     session: [u8; 16],
     offer: Signal,
@@ -377,6 +390,13 @@ pub struct Asker {
 
 impl Asker {
     /// A fresh ephemeral key from `rand` (a draw that is no valid secret, such as all zeros or ≥ n, is drawn again); `offer` is a Signal::Offer.
+    ///
+    /// After 16 invalid draws (a broken source) the asker sends nothing and
+    /// expires at its deadline. An offer whose content would exceed
+    /// [`MAX_HANDSHAKE_CONTENT`] is never sent either: callers keep SDPs
+    /// within `MAX_SDP` and mostly unescaped (an SDP of `MAX_SDP` bytes in
+    /// CRLF-ended lines fits). The joiner sends no `mapped` address: only
+    /// the host's is useful to the other side (N47).
     pub fn new(
         host: PublicKey,
         offer: Signal,
@@ -386,15 +406,16 @@ impl Asker {
     ) -> Asker {
         let _ = now_unix;
         let key = fresh_identity(rand);
-        let conversation = conversation_key(&key.secret(), &host);
+        let conversation = key.as_ref().and_then(|k| conversation_key(&k.secret(), &host));
         let mut session = [0u8; 16];
         session.copy_from_slice(&rand()[..16]);
         Asker { host, key, conversation, session, offer, started: now, next: None, answered: false }
     }
 
-    /// The ephemeral key of this join.
+    /// The ephemeral key of this join (all zeros when there is none: a
+    /// broken randomness source).
     pub fn key(&self) -> PublicKey {
-        self.key.public()
+        self.key.as_ref().map_or([0; 32], Identity::public)
     }
 
     /// The subscription: the host's handshakes tagged with our key.
@@ -402,7 +423,7 @@ impl Asker {
         Filter {
             kinds: vec![KIND_HANDSHAKE],
             authors: vec![self.host],
-            tags: vec![('p', vec![hex::encode(self.key.public())])],
+            tags: vec![('p', vec![hex::encode(self.key())])],
             since: Some(now_unix.saturating_sub(MAX_SKEW)),
             limit: None,
         }
@@ -410,13 +431,13 @@ impl Asker {
 
     /// The offer event to publish now: at once, then every RESEND (a new event, the same session).
     pub fn poll(&mut self, now: Instant, now_unix: u64, rand: &mut dyn FnMut() -> [u8; 32]) -> Option<Event> {
-        let ck = self.conversation?;
+        let (ck, key) = (self.conversation?, self.key.as_ref()?);
         if self.answered || self.expired(now) || self.next.is_some_and(|n| now < n) {
             return None;
         }
         self.next = Some(now + RESEND);
-        let content = seal(&ck, &self.session, &self.offer, None, rand());
-        Some(Event::sign(&self.key, now_unix, KIND_HANDSHAKE, tags_to(&self.host, now_unix), content, rand()))
+        let content = seal(&ck, &self.session, &self.offer, None, rand())?;
+        Some(Event::sign(key, now_unix, KIND_HANDSHAKE, tags_to(&self.host, now_unix), content, rand()))
     }
 
     /// The host's reply to our session, decrypted: by the host, to our
@@ -428,7 +449,7 @@ impl Asker {
             || e.pubkey != self.host
             || e.kind != KIND_HANDSHAKE
             || e.content.len() > MAX_HANDSHAKE_CONTENT
-            || e.tag("p") != Some(hex::encode(self.key.public()).as_str())
+            || e.tag("p") != Some(hex::encode(self.key()).as_str())
             || !e.verify()
         {
             return None;

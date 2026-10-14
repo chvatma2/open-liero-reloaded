@@ -91,9 +91,33 @@ fn invalid_turn_notes_are_refused() {
         [0; 32],
     );
     assert_eq!(parse_turn_note(&wrong_d), Err(AnnounceError::Tag("d")));
-    let junk =
-        Event::sign(&key(1), NOW, KIND_TURN, vec![vec!["d".into(), TURN_TAG.into()]], "junk".into(), [0; 32]);
+    let both = vec![vec!["d".to_owned(), TURN_TAG.to_owned()], vec!["t".to_owned(), TURN_TAG.to_owned()]];
+    let junk = Event::sign(&key(1), NOW, KIND_TURN, both, "junk".into(), [0; 32]);
     assert_eq!(parse_turn_note(&junk), Err(AnnounceError::Json));
+    // Without the `t` tag; another format version.
+    let content = serde_json::to_string(&good).unwrap();
+    let no_t =
+        Event::sign(&key(1), NOW, KIND_TURN, vec![vec!["d".into(), TURN_TAG.into()]], content, [0; 32]);
+    assert_eq!(parse_turn_note(&no_t), Err(AnnounceError::Tag("t")));
+    let v2 = TurnNote { v: 2, ..good.clone() };
+    assert_eq!(parse_turn_note(&note(1, &v2, NOW)), Err(AnnounceError::Invalid("v")));
+}
+
+#[test]
+fn a_flood_of_closing_notes_keeps_a_closed_relays_tombstone() {
+    let mut list = TurnList::new();
+    assert!(list.offer(&note(0, &relay(Region::Europe, 4, 32), NOW), NOW));
+    let closing = turn_note(&key(0), &relay(Region::Europe, 0, 0), NOW + 2, CLOSE_TTL, [1; 32]);
+    assert!(list.offer(&closing, NOW + 2));
+    // Signed closing notes from fresh keys, never listed, fill the
+    // remembered keys past their bound.
+    for i in 1..=4_200 {
+        let c = turn_note(&key(i), &relay(Region::Europe, 0, 0), NOW + 3, CLOSE_TTL, [2; 32]);
+        list.offer(&c, NOW + 3);
+    }
+    // The closed relay's older open note, from a relay that missed the close.
+    assert!(!list.offer(&note(0, &relay(Region::Europe, 4, 32), NOW + 1), NOW + 20));
+    assert!(list.is_empty());
 }
 
 #[test]

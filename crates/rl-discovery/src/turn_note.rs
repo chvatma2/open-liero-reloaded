@@ -60,6 +60,10 @@ fn credential(s: &str) -> bool {
 /// local) is the list's.
 fn check(n: &TurnNote) -> Result<(), AnnounceError> {
     let bad = |f: &'static str| Err(AnnounceError::Invalid(f));
+    // Another format may mean other things: never read it as ours.
+    if n.v != TURN_NOTE_V {
+        return bad("v");
+    }
     if n.addr.is_unspecified() || n.addr.is_broadcast() || n.addr.is_multicast() {
         return bad("addr");
     }
@@ -91,7 +95,8 @@ pub fn turn_note(identity: &Identity, note: &TurnNote, now_unix: u64, ttl: u64, 
     Event::sign(identity, now_unix, KIND_TURN, tags, content, aux)
 }
 
-/// Reads a note. Does not verify the signature (`Event::verify` does), the
+/// Reads a note: kind, tags `d` and `t`, size, JSON, format version
+/// [`TURN_NOTE_V`] and fields. Does not verify the signature (`Event::verify` does), the
 /// time, nor the address policy.
 pub fn parse_turn_note(e: &Event) -> Result<TurnNote, AnnounceError> {
     if e.kind != KIND_TURN {
@@ -99,6 +104,9 @@ pub fn parse_turn_note(e: &Event) -> Result<TurnNote, AnnounceError> {
     }
     if e.tag("d") != Some(TURN_TAG) {
         return Err(AnnounceError::Tag("d"));
+    }
+    if e.tag("t") != Some(TURN_TAG) {
+        return Err(AnnounceError::Tag("t"));
     }
     if e.content.len() > MAX_CONTENT {
         return Err(AnnounceError::TooLarge);
@@ -128,6 +136,8 @@ struct Entry {
 struct Seen {
     accepted_unix: u64,
     created_at: u64,
+    /// The key was listed once: its tombstone guards a real relay.
+    listed: bool,
 }
 
 /// The announced relays.
@@ -184,7 +194,10 @@ impl TurnList {
                 || e.created_at >= l.created_at.saturating_add(MIN_NOTE_GAP)
         });
         // A closing note is recognised by our compact encoding before the
-        // signature check.
+        // signature check (serde's field order, no spaces): only rust-liero
+        // writes these notes. Another encoder's closing note inside the gap
+        // would be refused, which costs nothing but a late removal. The
+        // parsed capacity decides below.
         let closing = e.content.contains("\"capacity\":0,");
         if !gap_ok && (!listed || !closing) {
             return false;
@@ -212,20 +225,24 @@ impl TurnList {
         }
         if closing {
             let listed = self.relays.remove(&e.pubkey).is_some();
-            self.remember(e, now_unix);
+            self.remember(e, now_unix, listed);
             return listed;
         }
         if !listed && self.relays.len() >= MAX_RELAYS {
             return false;
         }
-        self.remember(e, now_unix);
+        self.remember(e, now_unix, true);
         self.relays.insert(e.pubkey, Entry { note, created_at: e.created_at, expiration: e.expiration() });
         true
     }
 
     /// Records the accepted note. When the table is full, stale keys go,
-    /// then the oldest key that is not listed.
-    fn remember(&mut self, e: &Event, now_unix: u64) {
+    /// then the oldest key that was never listed (a flood of closing notes
+    /// from fresh keys), then the oldest that is not listed now: a closed
+    /// relay's tombstone outlives the flood. (Each eviction scans the
+    /// table: 4096 keys, behind a verified signature.)
+    fn remember(&mut self, e: &Event, now_unix: u64, listed: bool) {
+        let listed = listed || self.seen.get(&e.pubkey).is_some_and(|s| s.listed);
         if self.seen.len() >= MAX_SEEN && !self.seen.contains_key(&e.pubkey) {
             self.prune_seen(now_unix);
             if self.seen.len() >= MAX_SEEN {
@@ -233,14 +250,14 @@ impl TurnList {
                     .seen
                     .iter()
                     .filter(|(k, _)| !self.relays.contains_key(*k))
-                    .min_by_key(|(k, s)| (s.accepted_unix, **k))
+                    .min_by_key(|(k, s)| (s.listed, s.accepted_unix, **k))
                     .map(|(k, _)| *k);
                 if let Some(k) = oldest {
                     self.seen.remove(&k);
                 }
             }
         }
-        self.seen.insert(e.pubkey, Seen { accepted_unix: now_unix, created_at: e.created_at });
+        self.seen.insert(e.pubkey, Seen { accepted_unix: now_unix, created_at: e.created_at, listed });
     }
 
     /// Forgets keys whose last note no longer constrains anything.

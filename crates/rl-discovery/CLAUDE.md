@@ -101,10 +101,14 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   `MAX_HANDSHAKE_CONTENT` 16 KiB, `RESEND` 2 s, `ANSWER_DEADLINE` 10 s,
   `MAX_SKEW` 60 s, `SESSION_MEMORY` 120 s, `MAX_SESSIONS` 4096.
   - `Asker` (the joiner): `new` draws a fresh key from `rand` (an invalid
-    secret is drawn again; after 16 invalid draws the last is hashed until
-    valid, so a broken source still ends) and a 16-byte session; `poll`
-    gives the offer at once and every `RESEND` (a new event, the same
-    session) until answered or expired; `take` checks the author is the
+    secret is drawn again, up to 16 draws; a source that gives none is
+    broken: the asker then has no key (`key()` all zeros), sends nothing and
+    expires, rather than derive a key every join would share) and a 16-byte
+    session; `poll` gives the offer at once and every `RESEND` (a new
+    event, the same session) until answered or expired, never an offer
+    whose content would exceed `MAX_HANDSHAKE_CONTENT` (an SDP of
+    `MAX_SDP` bytes in CRLF lines fits; one JSON escapes mostly does not).
+    The joiner sends `mapped: null` (only the host's mapped address helps); `take` checks the author is the
     host, kind, size, our `p` tag, the signature, decrypts, the session,
     and an `Answer` (SDP within `MAX_SDP`) or `Refused`; taken once.
     `filter`: kind 21470, author the host, `#p` our key, since now - 60.
@@ -119,14 +123,22 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
     `mapped` an IPv4 socket address. One session per key; sessions are
     forgotten `SESSION_MEMORY` after the offer or the reply, the oldest
     dropped at 4096. `reply` encrypts and signs with the host's key and
-    caches the event for repeats. Ignored events are counted (`ignored()`).
+    caches the event for repeats; a signal that would not fit
+    `MAX_HANDSHAKE_CONTENT` is sent as `Refused(Malformed)`. `ignored()`
+    counts hostile or over-limit events, not `duplicate` (each relay's
+    copy) nor `being answered` (a resend before the reply).
     `filter(now)`: kind 21470, `#p` us, since now - 60.
+  - **Cost:** `Inbox::offer` re-verifies signatures the pool's drivers
+    already checked (a forgery never arrives through a `Pool`), so its cost
+    before the bucket is bounded by the pool's per-relay limits (200
+    frames/s): call it from the host's network thread, never the UI thread.
 - **`turn_note`** (N52, N53): `KIND_TURN` 31471 (addressable), `TURN_TAG`
   `rust-liero-turn` (tags `d` and `t`), `TurnNote { v (TURN_NOTE_V = 1),
   addr (IPv4), port, region, capacity, load, user, pass }` as JSON.
   `turn_note(identity, note, now, ttl, aux)` (expiration now + ttl:
   `ANNOUNCE_TTL` for a live relay, `CLOSE_TTL` with capacity 0 when it
-  closes); `parse_turn_note` (kind, `d`, `MAX_CONTENT`, JSON; port nonzero,
+  closes); `parse_turn_note` (kind, `d`, `t`, `MAX_CONTENT`, JSON; `v` must
+  be `TURN_NOTE_V` (another format is never read as ours); port nonzero,
   user and pass 1..=64 printable ASCII (space included), capacity at most
   4096, the address neither unspecified, broadcast nor multicast;
   `AnnounceError`s). `TurnList` checks like `GameList`: cheap checks
@@ -134,8 +146,11 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   gap by arrival or date, staleness, a full list of `MAX_RELAYS` 64), then
   the signature, the note and the address (global unless `allow_local`).
   A closing note (capacity 0, recognised before the signature by
-  `"capacity":0,`) is exempt from the gap, removes the relay and leaves a
-  tombstone. `pick(region, n)`: the region first, then load/capacity
+  `"capacity":0,`, our own serde encoding: only rust-liero writes notes;
+  the parsed capacity decides) is exempt from the gap, removes the relay
+  and leaves a tombstone. At 4096 remembered keys, stale ones go, then the
+  oldest never listed (a flood of closing notes from fresh keys), then the
+  oldest unlisted: a closed relay's tombstone outlives such a flood. `pick(region, n)`: the region first, then load/capacity
   (compared exactly), then key; full relays (load >= capacity) never.
   `filter(now)`: kind 31471, `#t` `TURN_TAG`, since now - 180.
 - **Fixture** `tests/fixtures/relay-events.json`: three real kind-1 events a
@@ -338,12 +353,14 @@ round-trip, fuzzed frames never panic; `tests/test_relay.rs`: the relay;
 `tests/stun.rs`: `public_ip` and the codec's re-exports; `tests/nip44.rs`:
 the official vectors, padding behind a good MAC, fuzzed payloads;
 `tests/handshake.rs`: round trip, repeats and resends, replays, malformed
-offers, a host-only reply, filters, secret redraws, the hostile feed
+offers, a host-only reply, filters, secret redraws, a maximal offer and
+an unsendable one, honest redundancy not counted as ignored, the hostile feed
 (`a_hostile_handshake_feed_is_bounded`: wrong recipient, too old, in the
 future, 2000 fresh sessions in 2 ms take at most 20, a steady 10/s for
 200 s keeps about 1200 sessions, tampering), fuzzed events;
 `tests/turn_note.rs`: notes, validation, local addresses, the pick order,
-the flood bound, closing notes, fuzzed notes; `tests/invite.rs`: invite codes (round trips, hints, damage, proptest `encode_always_decodes`); unit tests of `hosting` (hints, IPv4-only
+the flood bound, closing notes, a closing-note flood keeping a closed
+relay's tombstone, fuzzed notes; `tests/invite.rs`: invite codes (round trips, hints, damage, proptest `encode_always_decodes`); unit tests of `hosting` (hints, IPv4-only
 invites, the address watch's answers, the publisher's notes and closing)
 and `ping` (an open and a closed port, the bound); `tests/pool.rs`: the pool against the test relay (silent, dripping,
 slow, slow-reading: every frame arrives intact through partial writes,

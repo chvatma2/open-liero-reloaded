@@ -251,9 +251,82 @@ fn invalid_secrets_are_drawn_again() {
     };
     let asker = Asker::new(host.public(), offer(), Instant::now(), 1_800_000_000, &mut rand);
     assert_eq!(asker.key(), Identity::from_secret([0x11; 32]).unwrap().public());
-    // A source that never yields a valid secret still ends.
-    let asker = Asker::new(host.public(), offer(), Instant::now(), 1_800_000_000, &mut || [0; 32]);
-    assert_ne!(asker.key(), [0; 32]);
+    // A source that never yields a valid secret still ends, and the join
+    // sends nothing (no key derived from it, which every join would share).
+    let t0 = Instant::now();
+    let mut asker = Asker::new(host.public(), offer(), t0, 1_800_000_000, &mut || [0; 32]);
+    assert!(asker.poll(t0, 1_800_000_000, &mut rand_from(8)).is_none());
+    assert!(asker.expired(t0 + ANSWER_DEADLINE));
+}
+
+/// An SDP of exactly `MAX_SDP` bytes in lines of 61 (CRLF included).
+fn maximal_sdp() -> String {
+    let mut sdp = String::from("v=0\r\n");
+    let line = format!("a=x-filler:{}\r\n", "0123456789abcdef".repeat(3));
+    while sdp.len() < MAX_SDP {
+        sdp.push_str(&line);
+    }
+    sdp.truncate(MAX_SDP);
+    sdp
+}
+
+#[test]
+fn a_maximal_offer_fits_and_an_unsendable_one_is_not_sent() {
+    let (t0, unix) = (Instant::now(), 1_800_000_000);
+    let host = Identity::from_secret([5; 32]).unwrap();
+    let mut inbox = Inbox::new(host.clone());
+    let mut rand = rand_from(9);
+    let big = Signal::Offer { protocol: PROTOCOL_VERSION, fingerprint: FINGERPRINT, sdp: maximal_sdp() };
+    assert_eq!(maximal_sdp().len(), MAX_SDP);
+    let mut asker = Asker::new(host.public(), big.clone(), t0, unix, &mut rand);
+    let e = asker.poll(t0, unix, &mut rand).expect("a maximal offer is sent");
+    assert!(e.content.len() <= MAX_HANDSHAKE_CONTENT, "{}", e.content.len());
+    let Inbound::Offer(req) = inbox.offer(&e, t0, unix) else { panic!("a maximal offer is taken") };
+    assert_eq!(req.signal, big);
+    // A maximal answer fits too.
+    let answer = Signal::Answer { sdp: maximal_sdp() };
+    let reply = inbox.reply(&req, answer.clone(), None, t0, unix, &mut rand);
+    assert!(reply.content.len() <= MAX_HANDSHAKE_CONTENT);
+    assert_eq!(asker.take(&reply).map(|r| r.signal), Some(answer));
+    // An SDP whose escapes overflow the content limit: the offer is never
+    // sent, and the join expires.
+    let escaped =
+        Signal::Offer { protocol: PROTOCOL_VERSION, fingerprint: FINGERPRINT, sdp: "\n".repeat(MAX_SDP) };
+    let mut asker = Asker::new(host.public(), escaped, t0, unix, &mut rand);
+    assert!(asker.poll(t0, unix, &mut rand).is_none());
+    assert!(asker.expired(t0 + ANSWER_DEADLINE));
+    // An answer that cannot be sent is replaced by a refusal the joiner reads.
+    let mut asker = Asker::new(host.public(), offer(), t0, unix, &mut rand);
+    let Inbound::Offer(req) = inbox.offer(&asker.poll(t0, unix, &mut rand).unwrap(), t0, unix) else {
+        panic!()
+    };
+    let reply = inbox.reply(&req, Signal::Answer { sdp: "\n".repeat(MAX_SDP) }, None, t0, unix, &mut rand);
+    assert!(reply.content.len() <= MAX_HANDSHAKE_CONTENT);
+    assert_eq!(asker.take(&reply).map(|r| r.signal), Some(Signal::Refused { reason: Refusal::Malformed }));
+}
+
+#[test]
+fn only_hostile_or_over_limit_events_are_counted() {
+    let (t0, unix) = (Instant::now(), 1_800_000_000);
+    let host = Identity::from_secret([5; 32]).unwrap();
+    let mut inbox = Inbox::new(host.clone());
+    let mut rand = rand_from(10);
+    let mut asker = Asker::new(host.public(), offer(), t0, unix, &mut rand);
+    let first = asker.poll(t0, unix, &mut rand).unwrap();
+    assert!(matches!(inbox.offer(&first, t0, unix), Inbound::Offer(_)));
+    // Every relay's copy, and a resend before the reply: honest redundancy.
+    for _ in 0..7 {
+        assert_eq!(inbox.offer(&first, t0, unix), Inbound::Ignored("duplicate"));
+    }
+    let resend = asker.poll(t0 + RESEND, unix + 2, &mut rand).unwrap();
+    assert_eq!(inbox.offer(&resend, t0, unix + 2), Inbound::Ignored("being answered"));
+    assert_eq!(inbox.ignored(), 0);
+    // A tampered event and a stale one count.
+    let mut forged = asker.poll(t0 + RESEND * 2, unix + 4, &mut rand).unwrap();
+    forged.content.push('A');
+    assert!(matches!(inbox.offer(&forged, t0, unix + 2), Inbound::Ignored(_)));
+    assert!(matches!(inbox.offer(&first, t0, unix + 3600), Inbound::Ignored(_)));
+    assert_eq!(inbox.ignored(), 2);
 }
 
 proptest! {
