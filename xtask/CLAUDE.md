@@ -28,8 +28,28 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   determinism checked on the first run) `RUNS` times, the median tick p50,
   frame p50 and peak MiB against `fixtures/bench/stress.ron`. Noise guard:
   a measurement fails only over `TOLERANCE` (+10 %; peak memory
-  `MEMORY_TOLERANCE`, +25 %), and then only if the best of `RETRIES` (2)
-  more runs is still over (a notice says it was retried). A baseline that
+  `MEMORY_TOLERANCE`, +25 %). The divan targets are built first
+  (`build_benches`: `cargo bench --no-run --message-format=json` per
+  target, `bench_executable`), then the machine is let `settle` (fewer
+  than `SETTLE_BUSY_CPUS`, 1, CPUs busy in `/proc/stat` over
+  `SETTLE_SAMPLE`, 1 s; at most `SETTLE_MAX`, 60 s, then a notice), and
+  every run executes a fresh copy of the target's executable (`Copies`,
+  in `target/bench-copies`, all kept until the step ends, then removed):
+  `tick_32_worms` ran 13-20 % slower from some byte-identical copies than
+  from others, the same copy every time, so runs of one built file are
+  one draw. A divan benchmark still over is measured in up to `RETRIES`
+  (2) later windows, each `RETRY_PAUSE` (5 s) after the last and settled,
+  each the median of `RUNS` runs of its whole target (as the baseline;
+  a function alone measured 2-3 % faster), from fresh copies; the best
+  window counts (`best_window`: noise only slows) and a notice lists each
+  (`window_notice`, busy ones marked). A rerun that does not measure the
+  benchmark is an error, never a pass (the retries once passed divan
+  `--exact <function>`, which matches nothing: it needs
+  `<target>::<function>`). A stress measurement over is run `RETRIES`
+  more times, the best counting. On this machine `tick_32_worms` was
+  +25 % to +60 % a run with 2 to 12 other threads busy; a +15 % synthetic
+  regression measured +18 % to +21 % in every window and failed 4 of 4
+  times. A baseline that
   nothing measured fails, unless its target said it skipped (`skip ...`:
   no adapter, no content; a stress run without frames or `/proc`): then a
   notice; a measurement without a baseline is a notice. Both files store
@@ -37,11 +57,10 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   adapter); on another host `full` prints a notice and does not gate (the
   stress runs still check determinism). `full` prints one summary line
   each; the command prints every measurement. `bench --bless --reason
-  "<why>"` measures and writes both files (logged like `bless-render`);
-  baselines it could not measure are kept from the old file and listed in
-  `kept`, and offline the stress file stays as it was. In repeated runs
-  here (WSL2, 12 cores, lavapipe) the medians stayed within ±6 %. About
-  35 s once built.
+  "<why>"` measures (built, settled, fresh copies) and writes both files
+  (logged like `bless-render`); baselines it could not measure are kept
+  from the old file and listed in `kept`, and offline the stress file
+  stays as it was. About 35 s once built.
 - `stress [--seconds 180]` (`bench::stress_command`): the long stress
   run, every `STRESS` configuration through `rl-cli stress` (progress and
   each report as it plays, determinism checked), then a summary table

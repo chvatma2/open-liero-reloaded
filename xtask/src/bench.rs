@@ -12,13 +12,34 @@
 //!   tick time and offscreen frame time against `fixtures/bench/stress.ron`.
 //!
 //! **Noise guard.** A measurement fails only above the baseline by more
-//! than [`TOLERANCE`] (10 %), on the median of [`RUNS`] runs; one that does
-//! is measured [`RETRIES`] more times and passes if the best run is within
-//! the tolerance (this machine is shared: WSL2 with noisy neighbours). A
-//! measurement without a baseline, or a baseline not measured (no adapter,
-//! no content), is a notice, never a failure. `cargo xtask bench --bless
-//! --reason "<why>"` measures everything and writes both files, logged in
-//! `fixtures/blessings.log`. Baselines are this machine's.
+//! than [`TOLERANCE`] (10 %), on the median of [`RUNS`] runs. This machine
+//! is shared (WSL2, 12 logical CPUs on 6 cores): `tick_32_worms` measured
+//! 4.0-4.6 µs a run when idle, but often +25 % with 2 other threads busy
+//! and +35 % to +60 % with 6 to 12 (as when one lands on its core's other
+//! hyperthread), and the [`RUNS`] runs of a target take about 7 s
+//! together, so one burst of other work moves their median. And it ran
+//! 13-20 % slower from some byte-identical copies of its executable than
+//! from others, the same copy every time (where the file's pages lie in
+//! memory), so every run of one built file draws the same. Hence:
+//! - each run is from a fresh copy of the executable ([`Copies`]), so the
+//!   [`RUNS`] runs and each retry are independent draws;
+//! - the bench targets are built first ([`build_benches`]), then the
+//!   machine is let [`settle`]: until fewer than [`SETTLE_BUSY_CPUS`] CPUs
+//!   are busy (`/proc/stat`, every process in the VM, not ours alone) over
+//!   [`SETTLE_SAMPLE`], for at most [`SETTLE_MAX`] (then a notice says how
+//!   busy it stayed);
+//! - a benchmark over the tolerance is measured again in up to
+//!   [`RETRIES`] later windows, each [`RETRY_PAUSE`] after the last and
+//!   settled, each the median of [`RUNS`] runs of its whole target (as
+//!   the baseline was measured, so a real regression shows in every
+//!   window; a function run alone measured 2-3 % faster); the
+//!   best window counts, as noise only ever slows a run down. A notice
+//!   lists every window.
+//!
+//! A measurement without a baseline, or a baseline not measured (no
+//! adapter, no content), is a notice, never a failure. `cargo xtask bench
+//! --bless --reason "<why>"` measures everything and writes both files,
+//! logged in `fixtures/blessings.log`. Baselines are this machine's.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -37,8 +58,19 @@ pub const STRESS_BASELINE: &str = "fixtures/bench/stress.ron";
 
 /// Runs whose median is compared.
 pub const RUNS: usize = 3;
-/// More runs for a measurement over the tolerance; the best counts.
+/// More windows of [`RUNS`] runs for a benchmark over the tolerance; the
+/// best window's median counts.
 pub const RETRIES: usize = 2;
+/// The wait before each retry window, so it does not fall in the same
+/// burst of other work (on the Windows side too, which `/proc/stat` does
+/// not show).
+pub const RETRY_PAUSE: std::time::Duration = std::time::Duration::from_secs(5);
+/// The machine counts as settled with fewer CPUs than this busy.
+pub const SETTLE_BUSY_CPUS: f64 = 1.0;
+/// How long one look at the machine's load lasts.
+pub const SETTLE_SAMPLE: std::time::Duration = std::time::Duration::from_secs(1);
+/// The longest wait for the machine to settle before measuring anyway.
+pub const SETTLE_MAX: std::time::Duration = std::time::Duration::from_secs(60);
 /// How much slower than its baseline a measurement may be.
 pub const TOLERANCE: f64 = 0.10;
 /// How much more peak memory than its baseline a stress run may take.
@@ -234,46 +266,201 @@ fn cargo() -> Command {
     c
 }
 
-/// One run of one bench target (only `filter`'s function when given):
-/// its medians, and whether it said it skipped (`skip ...`: no adapter,
-/// no content).
-fn run_bench(
-    package: &str,
-    bench: &str,
-    filter: Option<&str>,
-    envs: &[(&str, PathBuf)],
-) -> Result<(BTreeMap<String, f64>, bool), String> {
-    let mut c = cargo();
-    c.args(["bench", "--quiet", "-p", package, "--bench", bench, "--"]);
-    if let Some(f) = filter {
-        c.args(["--exact", f]);
+/// A built bench target: its executable and its package's directory
+/// (where `cargo bench` would run it).
+#[derive(Clone, Debug)]
+pub struct BenchBin {
+    pub package: &'static str,
+    pub bench: &'static str,
+    pub exe: PathBuf,
+    pub dir: PathBuf,
+}
+
+/// Builds every bench target (bench profile, each as `cargo bench -p
+/// <package> --bench <target>` would, so features unify the same), so no
+/// build runs between measurements: their executables.
+fn build_benches(envs: &[(&str, PathBuf)]) -> Result<Vec<BenchBin>, String> {
+    let mut bins = Vec::new();
+    for &(package, bench) in BENCHES {
+        let mut c = cargo();
+        c.args(["bench", "--quiet", "--no-run", "--message-format=json", "-p", package, "--bench", bench]);
+        for (k, v) in envs {
+            c.env(k, v);
+        }
+        let out = c.output().map_err(|e| format!("cannot run cargo: {e}"))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+        }
+        let found = bench_executable(&out.stdout, bench);
+        let (exe, dir) = found.ok_or_else(|| format!("{package}/{bench}: cargo named no executable"))?;
+        bins.push(BenchBin { package, bench, exe, dir });
     }
-    for (k, v) in envs {
-        c.env(k, v);
+    Ok(bins)
+}
+
+/// Bench target `bench`'s executable and its package's directory, from
+/// `cargo bench --no-run --message-format=json`'s output.
+pub fn bench_executable(json: &[u8], bench: &str) -> Option<(PathBuf, PathBuf)> {
+    cargo_metadata::Message::parse_stream(json).find_map(|m| match m {
+        Ok(cargo_metadata::Message::CompilerArtifact(a)) if a.target.is_bench() && a.target.name == bench => {
+            let dir = a.manifest_path.parent()?.as_std_path().to_path_buf();
+            Some((a.executable?.into_std_path_buf(), dir))
+        }
+        _ => None,
+    })
+}
+
+/// Where [`Copies`] puts its executables.
+pub const COPIES: &str = "target/bench-copies";
+
+/// Fresh copies of bench executables, one a run, kept until dropped.
+///
+/// `tick_32_worms` ran 13-20 % slower from some byte-identical copies of
+/// its executable than from others, the same copy every time (where the
+/// file's pages lie in memory), so a run of the built file alone is one
+/// draw for every run and retry until it is rebuilt. Each run here is a
+/// new copy, a new draw; all are kept until the step ends, so a copy
+/// cannot take the pages a removed one left.
+pub struct Copies {
+    dir: PathBuf,
+    made: usize,
+}
+
+impl Copies {
+    pub fn new() -> Result<Copies, String> {
+        let dir = root().join(COPIES);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        Ok(Copies { dir, made: 0 })
     }
-    let out = c.output().map_err(|e| format!("cannot run cargo: {e}"))?;
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    if !out.status.success() {
-        return Err(format!("{text}{}", String::from_utf8_lossy(&out.stderr)));
+
+    /// One run of `bin` from a fresh copy, every function: its medians,
+    /// and whether it said it skipped (`skip ...`: no adapter, no content).
+    fn run(
+        &mut self,
+        bin: &BenchBin,
+        envs: &[(&str, PathBuf)],
+    ) -> Result<(BTreeMap<String, f64>, bool), String> {
+        let (package, bench) = (bin.package, bin.bench);
+        self.made += 1;
+        let copy = self.dir.join(format!("{bench}-{}", self.made));
+        std::fs::copy(&bin.exe, &copy)
+            .map_err(|e| format!("{} to {}: {e}", bin.exe.display(), copy.display()))?;
+        let mut c = Command::new(&copy);
+        c.arg("--bench").current_dir(&bin.dir);
+        for (k, v) in envs {
+            c.env(k, v);
+        }
+        let out = c.output().map_err(|e| format!("cannot run {}: {e}", copy.display()))?;
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        if !out.status.success() {
+            return Err(format!("{package}/{bench}: {text}{}", String::from_utf8_lossy(&out.stderr)));
+        }
+        let skip = text.lines().find(|l| l.starts_with("skip "));
+        if let Some(skip) = skip {
+            println!("     {skip}");
+        }
+        Ok((parse_divan(&text, &format!("{package}/{bench}")), skip.is_some()))
     }
-    let skip = text.lines().find(|l| l.starts_with("skip "));
-    if let Some(skip) = skip {
-        println!("     {skip}");
+}
+
+impl Drop for Copies {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
     }
-    Ok((parse_divan(&text, &format!("{package}/{bench}")), skip.is_some()))
+}
+
+/// The aggregate `cpu` line of `/proc/stat`: (busy, total) jiffies, busy
+/// being everything but idle and I/O wait (steal included: the host took
+/// the CPU).
+pub fn cpu_jiffies(stat: &str) -> Option<(u64, u64)> {
+    let line = stat.lines().find(|l| l.starts_with("cpu "))?;
+    let v: Vec<u64> = line.split_whitespace().skip(1).map(|x| x.parse().ok()).collect::<Option<_>>()?;
+    // user nice system idle iowait irq softirq steal (guest time is in user).
+    let total: u64 = v.iter().take(8).sum();
+    let idle = v.get(3)? + v.get(4).copied().unwrap_or(0);
+    Some((total - idle, total))
+}
+
+/// How many of `cpus` CPUs were busy between two [`cpu_jiffies`] readings.
+pub fn busy_cpus(before: (u64, u64), after: (u64, u64), cpus: usize) -> f64 {
+    let total = after.1.saturating_sub(before.1);
+    if total == 0 {
+        return 0.0;
+    }
+    after.0.saturating_sub(before.0) as f64 / total as f64 * cpus as f64
+}
+
+/// How the wait for the machine to settle ended.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Settle {
+    /// Fewer than [`SETTLE_BUSY_CPUS`] busy after waiting this long.
+    Idle(std::time::Duration),
+    /// Still this many CPUs busy at [`SETTLE_MAX`].
+    Busy(f64),
+    /// No `/proc/stat` to read.
+    Unknown,
+}
+
+/// Waits until fewer than [`SETTLE_BUSY_CPUS`] CPUs are busy over a
+/// [`SETTLE_SAMPLE`], at most [`SETTLE_MAX`].
+pub fn settle() -> Settle {
+    let read = || std::fs::read_to_string("/proc/stat").ok().as_deref().and_then(cpu_jiffies);
+    let cpus = std::thread::available_parallelism().map_or(1, usize::from);
+    let start = std::time::Instant::now();
+    loop {
+        let Some(before) = read() else { return Settle::Unknown };
+        std::thread::sleep(SETTLE_SAMPLE);
+        let Some(after) = read() else { return Settle::Unknown };
+        let busy = busy_cpus(before, after, cpus);
+        if busy < SETTLE_BUSY_CPUS {
+            return Settle::Idle(start.elapsed());
+        }
+        if start.elapsed() >= SETTLE_MAX {
+            return Settle::Busy(busy);
+        }
+    }
+}
+
+/// A notice for a wait that ended busy, naming what was measured.
+fn settle_notice(s: Settle, what: &str) -> Option<String> {
+    match s {
+        Settle::Busy(busy) => Some(format!(
+            "{what}: measured on a busy machine ({busy:.1} CPUs in use after {} s; settled is under {SETTLE_BUSY_CPUS})",
+            SETTLE_MAX.as_secs()
+        )),
+        _ => None,
+    }
 }
 
 /// Each benchmark's measurements, by name.
 type Measured = BTreeMap<String, Vec<f64>>;
 
-/// Every benchmark `runs` times: each one's measurements, and the targets
-/// that said they skipped (`<package>/<bench target>`).
-fn measure_benches(runs: usize, envs: &[(&str, PathBuf)]) -> Result<(Measured, BTreeSet<String>), String> {
+/// What [`measure_benches`] found.
+struct Measurement {
+    bins: Vec<BenchBin>,
+    runs: Measured,
+    /// The targets that said they skipped (`<package>/<bench target>`).
+    skipped: BTreeSet<String>,
+    /// A notice when the machine stayed busy.
+    busy: Option<String>,
+}
+
+/// Every benchmark `runs` times, built first, on a settled machine, each
+/// run from a fresh copy.
+fn measure_benches(
+    runs: usize,
+    envs: &[(&str, PathBuf)],
+    copies: &mut Copies,
+) -> Result<Measurement, String> {
+    let bins = build_benches(envs)?;
+    let busy = settle_notice(settle(), "the benchmarks");
     let mut all: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     let mut skipped = BTreeSet::new();
     for _ in 0..runs {
-        for (package, bench) in BENCHES {
-            let (found, skip) = run_bench(package, bench, None, envs)?;
+        for bin in &bins {
+            let (package, bench) = (bin.package, bin.bench);
+            let (found, skip) = copies.run(bin, envs)?;
             if skip {
                 skipped.insert(format!("{package}/{bench}"));
             }
@@ -282,7 +469,7 @@ fn measure_benches(runs: usize, envs: &[(&str, PathBuf)]) -> Result<(Measured, B
             }
         }
     }
-    Ok((all, skipped))
+    Ok(Measurement { bins, runs: all, skipped, busy })
 }
 
 /// `rl-cli` in the release profile, built.
@@ -491,25 +678,81 @@ pub fn bench_step(envs: &[(&str, PathBuf)], verbose: bool) -> Result<(), String>
         println!("     notice: {BASELINES}: {n}");
         return Ok(());
     }
-    let (runs, skipped) = measure_benches(RUNS, envs)?;
-    let medians: BTreeMap<String, f64> = runs.iter().map(|(k, v)| (k.clone(), median(v))).collect();
-    let mut c = compare(&base.benches, &medians, &skipped);
+    let mut copies = Copies::new()?;
+    let m = measure_benches(RUNS, envs, &mut copies)?;
+    let medians: BTreeMap<String, f64> = m.runs.iter().map(|(k, v)| (k.clone(), median(v))).collect();
+    let mut c = compare(&base.benches, &medians, &m.skipped);
+    c.notices.extend(m.busy);
     let mut retried = Vec::new();
     for v in c.verdicts.iter_mut().filter(|v| v.regressed()) {
-        let first = v.change();
-        // The noise guard: the best of more runs.
-        let (package, bench) = split_name(&v.name);
-        let function = v.name.rsplit('/').next().unwrap_or_default();
+        // The noise guard: later windows of runs of its target.
+        let first = v.measured;
+        let mut windows = Vec::new();
         for _ in 0..RETRIES {
-            let (again, _) = run_bench(package, bench, Some(function), envs)?;
-            if let Some(&ns) = again.get(&v.name) {
-                v.measured = v.measured.min(ns);
+            std::thread::sleep(RETRY_PAUSE);
+            let settled = settle();
+            let mut window = Vec::new();
+            for _ in 0..RUNS {
+                window.push(rerun(&v.name, &m.bins, envs, &mut copies)?);
+            }
+            windows.push((median(&window), settled));
+            v.measured = best_window(first, &windows);
+            if !v.regressed() {
+                break;
             }
         }
-        retried.push(retry_notice(v, first));
+        retried.push(window_notice(v, first, &windows));
     }
     c.notices.extend(retried);
     report("bench", &c, "µs", 1e3, verbose)
+}
+
+/// One more run of benchmark `name`'s target (`<package>/<bench
+/// target>/<function>`), all of it as the baseline's runs (a function run
+/// alone measured 2-3 % faster) and from a fresh copy: the benchmark's
+/// median. A run that did not measure it is an error, never a pass (the
+/// retries once filtered by a name divan matched to nothing, and so never
+/// measured anything).
+fn rerun(
+    name: &str,
+    bins: &[BenchBin],
+    envs: &[(&str, PathBuf)],
+    copies: &mut Copies,
+) -> Result<f64, String> {
+    let (package, bench) = split_name(name);
+    let bin = bins
+        .iter()
+        .find(|b| b.package == package && b.bench == bench)
+        .ok_or_else(|| format!("{name}: no bench target {package}/{bench}"))?;
+    let (again, _) = copies.run(bin, envs)?;
+    again.get(name).copied().ok_or_else(|| format!("{name}: its target ran again but did not measure it"))
+}
+
+/// The measurement a benchmark over its tolerance keeps: the best of its
+/// first median and its retry windows' medians (noise only slows a run
+/// down; a real regression slows every window).
+pub fn best_window(first: f64, windows: &[(f64, Settle)]) -> f64 {
+    windows.iter().map(|w| w.0).fold(first, f64::min)
+}
+
+/// The notice for a benchmark measured again: each window's change, and
+/// whether its machine was busy.
+fn window_notice(v: &Verdict, first: f64, windows: &[(f64, Settle)]) -> String {
+    let change = |ns: f64| if v.baseline > 0.0 { (ns / v.baseline - 1.0) * 100.0 } else { 0.0 };
+    let each: Vec<String> = windows
+        .iter()
+        .map(|(ns, s)| match s {
+            Settle::Busy(busy) => format!("{:+.1} % (busy: {busy:.1} CPUs)", change(*ns)),
+            _ => format!("{:+.1} %", change(*ns)),
+        })
+        .collect();
+    format!(
+        "{}: {:+.1} %, then {} in {} later window(s) of {RUNS} runs",
+        v.name,
+        change(first),
+        each.join(", "),
+        windows.len()
+    )
 }
 
 fn retry_notice(v: &Verdict, first: f64) -> String {
@@ -541,7 +784,7 @@ fn report(what: &str, c: &Comparison, unit: &str, scale: f64, verbose: bool) -> 
         let mut err = if verbose { String::new() } else { table.join("\n") + "\n" };
         if !bad.is_empty() {
             err.push_str(&format!(
-                "over the baseline by more than {:.0} % ({:.0} % for memory; median of {RUNS} runs, then the best of {RETRIES} more):\n{}\n",
+                "over the baseline by more than {:.0} % ({:.0} % for memory; median of {RUNS} runs, then the best of {RETRIES} retries):\n{}\n",
                 TOLERANCE * 100.0,
                 MEMORY_TOLERANCE * 100.0,
                 bad.join("\n")
@@ -668,8 +911,13 @@ pub fn run(bless: Option<&str>, offline: bool) -> anyhow::Result<bool> {
     let before = [BASELINES, STRESS_BASELINE].map(|p| std::fs::read(root().join(p)).ok());
     let host = Host::here();
     println!("measuring the benchmarks ({RUNS} runs) on {host:?}...");
-    let (runs, _) = measure_benches(RUNS, &envs).map_err(anyhow::Error::msg)?;
-    let benches = runs.iter().map(|(k, v)| (k.clone(), median(v))).collect();
+    let mut copies = Copies::new().map_err(anyhow::Error::msg)?;
+    let m = measure_benches(RUNS, &envs, &mut copies).map_err(anyhow::Error::msg)?;
+    drop(copies);
+    if let Some(n) = m.busy {
+        println!("notice: {n}");
+    }
+    let benches = m.runs.iter().map(|(k, v)| (k.clone(), median(v))).collect();
     let old: Baselines = read_ron(BASELINES).unwrap_or_default();
     let new = blessed(&old, benches, host.clone());
     if !new.kept.is_empty() {
@@ -779,6 +1027,62 @@ tick               fastest       │ slowest       │ median        │ mean   
         let again = blessed(&b, [("rl-render/frame/f".into(), 6.0)].into(), Host::default());
         assert_eq!(again.kept, ["rl-sim/tick/a"], "the frame measured again is no longer kept");
         assert_eq!(again.benches["rl-render/frame/f"], 6.0);
+    }
+
+    /// The bench target's executable is read from cargo's JSON messages.
+    #[test]
+    fn bench_executables_come_from_cargos_messages() {
+        let json = r#"{"reason":"compiler-artifact","package_id":"path+file:///w/crates/rl-sim#0.1.0","manifest_path":"/w/crates/rl-sim/Cargo.toml","target":{"kind":["lib"],"crate_types":["lib"],"name":"rl_sim","src_path":"/w/crates/rl-sim/src/lib.rs","edition":"2024","doc":true,"doctest":true,"test":true},"profile":{"opt_level":"3","debuginfo":0,"debug_assertions":false,"overflow_checks":false,"test":false},"features":[],"filenames":["/w/target/release/deps/librl_sim-1.rlib"],"executable":null,"fresh":true}
+{"reason":"compiler-artifact","package_id":"path+file:///w/crates/rl-sim#0.1.0","manifest_path":"/w/crates/rl-sim/Cargo.toml","target":{"kind":["bench"],"crate_types":["bin"],"name":"tick","src_path":"/w/crates/rl-sim/benches/tick.rs","edition":"2024","doc":false,"doctest":false,"test":false},"profile":{"opt_level":"3","debuginfo":0,"debug_assertions":false,"overflow_checks":false,"test":true},"features":[],"filenames":["/w/target/release/deps/tick-e23f"],"executable":"/w/target/release/deps/tick-e23f","fresh":false}
+{"reason":"build-finished","success":true}
+"#;
+        let (exe, dir) = bench_executable(json.as_bytes(), "tick").expect("the bench artifact");
+        assert_eq!(exe, Path::new("/w/target/release/deps/tick-e23f"));
+        assert_eq!(dir, Path::new("/w/crates/rl-sim"));
+        assert_eq!(bench_executable(json.as_bytes(), "frame"), None);
+        assert_eq!(bench_executable(b"not json", "tick"), None);
+    }
+
+    /// A retry runs the benchmark's target: `<package>/<bench target>`.
+    #[test]
+    fn retries_run_the_benchmarks_target() {
+        assert_eq!(split_name("rl-cli/game/bots_8_tick"), ("rl-cli", "game"));
+    }
+
+    /// The machine's load from two `/proc/stat` readings, in busy CPUs.
+    #[test]
+    fn busy_cpus_come_from_proc_stat() {
+        let a = "cpu  100 0 50 1000 10 0 5 0 0 0\ncpu0 1 2 3 4 5 6 7 8 9 10\n";
+        // 12 CPUs, 1200 jiffies pass: 300 busy (user, system, softirq,
+        // steal), 900 idle or waiting: 3 CPUs busy.
+        let b = "cpu  250 0 100 1800 110 0 25 80 0 0\n";
+        assert_eq!(cpu_jiffies(a), Some((155, 1165)));
+        assert_eq!(cpu_jiffies(b), Some((455, 2365)));
+        assert!((busy_cpus(cpu_jiffies(a).unwrap(), cpu_jiffies(b).unwrap(), 12) - 3.0).abs() < 1e-9);
+        assert_eq!(busy_cpus((5, 10), (5, 10), 12), 0.0, "no time passed");
+        assert_eq!(cpu_jiffies("intr 1 2 3"), None);
+        assert_eq!(cpu_jiffies("cpu  1 x 3"), None);
+        assert!(settle_notice(Settle::Busy(4.25), "b").unwrap().contains("4.2 CPUs in use"));
+        assert_eq!(settle_notice(Settle::Idle(SETTLE_SAMPLE), "b"), None);
+    }
+
+    /// A benchmark over its tolerance passes when a later window is within
+    /// it (noise only slows), and fails when every window is over (a real
+    /// regression of 15 % stays over 10 % in each).
+    #[test]
+    fn the_best_retry_window_counts() {
+        let idle = Settle::Idle(SETTLE_SAMPLE);
+        let v = |measured| Verdict { name: "rl-sim/tick/t".into(), baseline: 100.0, measured };
+        let noisy = best_window(114.0, &[(104.0, idle), (112.0, idle)]);
+        assert!(!v(noisy).regressed(), "a burst of other work: {noisy}");
+        let real = best_window(118.0, &[(115.0, idle), (116.0, Settle::Busy(3.0))]);
+        assert!(v(real).regressed(), "a real regression: {real}");
+        assert_eq!(best_window(120.0, &[]), 120.0);
+        let n = window_notice(&v(104.0), 114.0, &[(104.0, idle), (112.0, Settle::Busy(2.5))]);
+        assert_eq!(
+            n,
+            "rl-sim/tick/t: +14.0 %, then +4.0 %, +12.0 % (busy: 2.5 CPUs) in 2 later window(s) of 3 runs"
+        );
     }
 
     /// Baselines from another machine are a notice, not a failure.
