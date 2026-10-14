@@ -318,14 +318,20 @@ The two whole-program-optimised builds take several minutes from cold.
   the device tier: the renderer's GPU tests, the render goldens
   (`fixtures/render/`), the 10-minute headless sandbox soak (60 000 ticks,
   memory and entity counts must stay bounded), the HUD snapshots and a
-  short sound on the default output; then the end-to-end menus script
-  (`fixtures/autoplay/menus.ron`, `rl-game --autoplay --fake-clock` on
-  Xvfb with software GL) and the benchmarks and short engine stress run
-  against their baselines in `fixtures/bench/` (more than 10 % slower
-  fails). Each device step skips with a notice when its adapter, device or
-  Xvfb is missing. About two minutes warm.
-- `cargo xtask e2e`, `cargo xtask bench [--bless --reason "<why>"]` and
-  `cargo xtask stress [--seconds N]` run those steps alone; `stress` plays
+  short sound on the default output; then the end-to-end runs on Xvfb
+  with software GL (`fixtures/autoplay/menus.ron`, `rl-game --autoplay
+  --fake-clock`, and the online run `fixtures/autoplay/online.ron`
+  against an `rl-server` and a local Nostr relay: a typed join, then the
+  same server from the Internet tab), `cargo xtask net-nat` (joins across
+  Docker routers: port-restricted, symmetric, UPnP, PCP, NAT-PMP, a TURN
+  relay; skipped with a notice without Docker), the benchmarks and short
+  engine stress run against their baselines in `fixtures/bench/` (more
+  than 10 % slower fails), the network feel check and the Windows and
+  arm64 determinism runs. Each device step skips with a notice when its
+  adapter, device or Xvfb is missing. Several minutes warm.
+- `cargo xtask e2e`, `cargo xtask net-nat`, `cargo xtask bench [--bless
+  --reason "<why>"]` and `cargo xtask stress [--seconds N]` run those
+  steps alone; `stress` plays
   32 chaos bots on Castle Strike past OLX's limits and prints a report.
 - `cargo xtask envelope [--quick] [--only <part>] [--gpu
   wsl|windows|both|none]` measures how far the game goes on this machine
