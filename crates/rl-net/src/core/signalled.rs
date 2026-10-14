@@ -132,8 +132,11 @@ impl Core {
     }
 
     /// Host, signalled: admit, sanitize, an answerer link with every local candidate; Answer or Refused.
-    /// With MAX_SIGNALLED_PENDING setups pending, the oldest one that has received no ICE connectivity
-    /// check (STUN binding request) from its peer is closed to make room (PF12b-2); if every one has, Refused { Busy }.
+    /// With MAX_SIGNALLED_PENDING setups pending, the oldest unprotected one is closed to make room
+    /// (PF12b-2), or, if every one is protected, Refused { Busy }. A setup is protected once one of our
+    /// connectivity checks to it was answered from where we sent it (FR12b-1: its peer receives there;
+    /// a flooder holding its own answer's credentials can send valid checks from forged sources, but
+    /// cannot answer ours there), and only the oldest MAX_ANSWERED_PER_IP of one IP's are.
     /// The evicted setup's `SetupFailed { why: Timeout }` comes with the next poll.
     pub fn answer_ice(&mut self, offer: &Signal, mapped_hint: Option<SocketAddr>, now: Instant) -> Signal {
         let refused = |reason| Signal::Refused { reason };
@@ -143,10 +146,8 @@ impl Core {
         let Signal::Offer { sdp, .. } = offer else { return refused(Refusal::Malformed) };
         let signalled = self.pending.iter().filter(|p| p.signalled).count();
         let victim = if signalled >= MAX_SIGNALLED_PENDING {
-            // Setup ids grow: the smallest is the oldest.
-            let silent = self.pending.iter().filter(|p| p.signalled && !p.checked).min_by_key(|p| p.setup);
-            match silent {
-                Some(p) => Some(p.setup),
+            match self.evictable() {
+                Some(setup) => Some(setup),
                 None => return refused(Refusal::Busy),
             }
         } else {
@@ -168,6 +169,28 @@ impl Core {
         self.relays.permit(ips(&theirs), now);
         self.add(addr, base, link, now, Some(theirs));
         Signal::Answer { sdp: answer }
+    }
+
+    /// The oldest pending signalled setup not protected from eviction
+    /// (FR12b-1): no check of ours answered, or beyond the
+    /// `MAX_ANSWERED_PER_IP` oldest answered from its IP.
+    fn evictable(&self) -> Option<SetupId> {
+        // Setup ids grow: the smallest is the oldest.
+        let mut signalled: Vec<&Peer> = self.pending.iter().filter(|p| p.signalled).collect();
+        signalled.sort_by_key(|p| p.setup);
+        let mut per_ip: BTreeMap<std::net::IpAddr, usize> = BTreeMap::new();
+        let mut unprotected = None;
+        for p in signalled {
+            let protected = p.answered.is_some_and(|ip| {
+                let n = per_ip.entry(ip).or_default();
+                *n += 1;
+                *n <= MAX_ANSWERED_PER_IP
+            });
+            if !protected && unprotected.is_none() {
+                unprotected = Some(p.setup);
+            }
+        }
+        unprotected
     }
 
     /// The path of an open (reported) peer's link: its selected pair's

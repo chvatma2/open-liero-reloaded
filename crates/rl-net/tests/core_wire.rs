@@ -203,13 +203,15 @@ fn signalled_offer(
     (setup, offer)
 }
 
-/// PF12b-2: with `MAX_SIGNALLED_PENDING` signalled setups pending, a new
-/// offer evicts the oldest one whose peer sent no connectivity check; only
-/// when every one has is it refused `Busy`.
+/// PF12b-2 and FR12b-1: with `MAX_SIGNALLED_PENDING` signalled setups
+/// pending, a new offer evicts the oldest one that no check of ours has
+/// been answered by: a silent one, or one whose peer's checks come from
+/// forged sources (a flooder holds its own answer's credentials, so its
+/// checks are valid, but it cannot answer ours from where it forged them).
 #[test]
 fn a_full_pending_table_evicts_a_silent_setup() {
     use rl_net::core::MAX_SIGNALLED_PENDING;
-    use rl_proto::{Refusal, Signal};
+    use rl_proto::Signal;
     let t0 = Instant::now();
     let host_at: SocketAddr = "10.0.0.1:23400".parse().unwrap();
     let mut host = Core::new(CoreConfig::host(), t0);
@@ -238,27 +240,30 @@ fn a_full_pending_table_evicts_a_silent_setup() {
     }
     assert_eq!(eh.iter().filter(|e| matches!(e, CoreEvent::SetupFailed { .. })).count(), 1, "{eh:?}");
     assert_eq!(host.pending(), MAX_SIGNALLED_PENDING - 1);
-    // Eight live offerers whose checks reach the host (its answers never
-    // reach them) fill the table, evicting the seven silent setups left.
-    let mut live = Vec::new();
+    // Eight flood offers whose valid checks reach the host from forged
+    // sources (the host's checks and answers never reach them) fill the
+    // table, evicting the seven silent setups left.
+    let mut flood = Vec::new();
     for i in 0..MAX_SIGNALLED_PENDING {
         let at: SocketAddr = format!("10.0.3.{}:50000", i + 1).parse().unwrap();
         let mut c = Core::new(CoreConfig::client(), now);
         let (setup, offer) = signalled_offer(&mut c, at, host_at, now);
         let Signal::Answer { sdp } = host.answer_ice(&offer, None, now) else { panic!("refused {i}") };
         c.accept_answer_ice(setup, &sdp, None).expect("accepted");
-        live.push((c, at));
+        flood.push(c);
     }
     assert_eq!(host.pending(), MAX_SIGNALLED_PENDING);
     let end = now + Duration::from_secs(1);
-    let mut out = Vec::new();
+    let (mut out, mut forged) = (Vec::new(), 0u32);
     while now < end {
         now += Duration::from_millis(5);
-        for (c, at) in &mut live {
+        for c in &mut flood {
             c.poll(now, &mut out, &mut Vec::new());
             for d in out.drain(..) {
                 if d.to == host_at {
-                    host.receive(*at, &d.bytes, now);
+                    forged += 1;
+                    let from = SocketAddr::from(([10, 0, 9, (forged % 250) as u8 + 1], 40000));
+                    host.receive(from, &d.bytes, now);
                 }
             }
         }
@@ -266,10 +271,69 @@ fn a_full_pending_table_evicts_a_silent_setup() {
         out.clear();
     }
     assert_eq!(host.pending(), MAX_SIGNALLED_PENDING);
-    // Every pending setup has heard a check: a tenth is refused.
+    // No check of the host's was answered: a tenth offer is still answered,
+    // evicting the oldest flood setup.
     let mut late = Core::new(CoreConfig::client(), now);
     let (_, offer) = signalled_offer(&mut late, "10.0.4.1:50000".parse().unwrap(), host_at, now);
-    assert_eq!(host.answer_ice(&offer, None, now), Signal::Refused { reason: Refusal::Busy });
+    assert!(matches!(host.answer_ice(&offer, None, now), Signal::Answer { .. }), "a flood locked the host");
+    assert_eq!(host.pending(), MAX_SIGNALLED_PENDING);
+}
+
+/// Fills a host's pending table with `MAX_SIGNALLED_PENDING` setups whose
+/// STUN checks go both ways (DTLS is dropped, so none opens), from `at(i)`;
+/// then a ninth offer's reply.
+fn answered_table(at: impl Fn(usize) -> SocketAddr) -> (rl_proto::Signal, Vec<CoreEvent>) {
+    use rl_net::core::MAX_SIGNALLED_PENDING;
+    use rl_proto::Signal;
+    use rl_proto::stun::is_stun;
+    let t0 = Instant::now();
+    let host_at: SocketAddr = "10.0.0.1:23400".parse().unwrap();
+    let mut host = Core::new(CoreConfig::host(), t0);
+    host.set_base(host_at, vec![host_at]);
+    let mut joiners = Vec::new();
+    for i in 0..MAX_SIGNALLED_PENDING {
+        let mut c = Core::new(CoreConfig::client(), t0);
+        let (setup, offer) = signalled_offer(&mut c, at(i), host_at, t0);
+        let Signal::Answer { sdp } = host.answer_ice(&offer, None, t0) else { panic!("refused {i}") };
+        c.accept_answer_ice(setup, &sdp, None).expect("accepted");
+        joiners.push((c, at(i)));
+    }
+    let (mut now, mut out, mut events) = (t0, Vec::new(), Vec::new());
+    while now < t0 + Duration::from_secs(1) {
+        now += Duration::from_millis(5);
+        for (c, c_at) in &mut joiners {
+            c.poll(now, &mut out, &mut Vec::new());
+            for d in out.drain(..).filter(|d| d.to == host_at && is_stun(&d.bytes)) {
+                host.receive(*c_at, &d.bytes, now);
+            }
+        }
+        host.poll(now, &mut out, &mut events);
+        for d in out.drain(..).filter(|d| is_stun(&d.bytes)) {
+            if let Some((c, _)) = joiners.iter_mut().find(|(_, c_at)| *c_at == d.to) {
+                c.receive(host_at, &d.bytes, now);
+            }
+        }
+    }
+    assert_eq!(host.pending(), MAX_SIGNALLED_PENDING, "{events:?}");
+    let mut late = Core::new(CoreConfig::client(), now);
+    let (_, offer) = signalled_offer(&mut late, "10.0.4.1:50000".parse().unwrap(), host_at, now);
+    let reply = host.answer_ice(&offer, None, now);
+    host.poll(now, &mut out, &mut events);
+    (reply, events)
+}
+
+/// FR12b-1: a setup whose peer answered one of our checks is protected
+/// from eviction (it receives where it says), so a full table of them
+/// refuses a newcomer `Busy`; but at most 2 per source IP are, so one
+/// real IP cannot hold the table.
+#[test]
+fn answered_checks_protect_at_most_two_setups_per_ip() {
+    use rl_proto::{Refusal, Signal};
+    let (reply, events) = answered_table(|i| format!("10.0.3.{}:50000", i + 1).parse().unwrap());
+    assert_eq!(reply, Signal::Refused { reason: Refusal::Busy }, "{events:?}");
+    let (reply, events) = answered_table(|i| format!("10.0.3.1:{}", 50000 + i).parse().unwrap());
+    assert!(matches!(reply, Signal::Answer { .. }), "one IP held the table: {reply:?}");
+    assert_eq!(events.iter().filter(|e| matches!(e, CoreEvent::SetupFailed { .. })).count(), 1, "{events:?}");
 }
 
 /// A core with 10 host addresses that STUN answered and a router mapped.

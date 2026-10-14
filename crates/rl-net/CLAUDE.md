@@ -143,9 +143,15 @@ for tests.
     table, then `sanitize` and the answerer link with every local
     candidate). They must open within `SIGNALLED_SETUP_TIMEOUT` (15 s).
     At most `MAX_SIGNALLED_PENDING` (8) connect at once: a new offer then
-    evicts the oldest whose peer has sent no ICE connectivity check (a
-    STUN binding request reaching its link), or is `Refused { Busy }`
-    when every one has (PF12b-2); the eviction's `SetupFailed { Timeout }`
+    evicts the oldest unprotected one, or is `Refused { Busy }` when every
+    one is protected (PF12b-2). A setup is protected once one of our ICE
+    connectivity checks to it was answered from the address it went to
+    (ruling FR12b-1: the link's sent checks, the latest 32 transactions
+    and destinations, matched against binding success responses its link
+    accepts), and only the oldest `MAX_ANSWERED_PER_IP` (2) of one IP's
+    are: a flooder holds its own answer's credentials and can send valid
+    checks from forged sources, but cannot answer ours there, and one real
+    IP holds at most two slots. The eviction's `SetupFailed { Timeout }`
     comes with the next `poll` (calls without an event list queue theirs
     in `Core`, like `outbox`). Offers and answers carry the
     server-reflexive and the mapped address on the base (not when equal
@@ -662,8 +668,9 @@ Test: `cargo nextest run -p rl-net` (`tests/core_wire.rs`: two `Core`s
 on an in-memory wire and a virtual clock, a setup timing out, `admit`,
 setup-time datagrams and a refused one in the stats, a cancelled setup's
 last datagrams closing the host's open link, a full signalled pending
-table evicting a silent setup and refusing `Busy` once every one has
-heard checks, reflexive candidates surviving ten host addresses, the
+table evicting a silent setup and a flooder's whose valid checks come
+from forged sources, refusing `Busy` once every one had a check of ours
+answered from 8 IPs, but not from one (FR12b-1), reflexive candidates surviving ten host addresses, the
 1.5 s `Connected` fallback with a real address, `gathered` without STUN,
 a link losing every datagram one way for 6 s (either way) keeping the
 netcode's inputs within the limits once it recovers: the stalled ones

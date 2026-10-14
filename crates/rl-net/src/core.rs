@@ -16,12 +16,12 @@
 //! `relayed.rs`).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
 use rl_netcode::netsim::Profile;
 use rl_netcode::{Channel, PeerId, Rng};
-use rl_proto::stun::binding_request_transaction;
+use rl_proto::stun::{binding_request_transaction, is_stun};
 use rl_proto::{FINGERPRINT, PROTOCOL_VERSION, Path, Refusal, Signal};
 
 use crate::candidates::{LocalCandidates, RemoteCandidates, classify, remote_candidates, sanitize};
@@ -47,8 +47,15 @@ pub const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
 pub const SILENCE_TIMEOUT: Duration = Duration::from_secs(10);
 /// A signalled setup must open within this (TCP-signalled ones keep SETUP_TIMEOUT, 10 s).
 pub const SIGNALLED_SETUP_TIMEOUT: Duration = Duration::from_secs(15);
-/// At most this many signalled setups connect at once; when full, PF12b-2 evicts a silent one.
+/// At most this many signalled setups connect at once; when full, PF12b-2 evicts one no check of ours
+/// was answered by (FR12b-1).
 pub const MAX_SIGNALLED_PENDING: usize = 8;
+/// At most this many pending signalled setups per source IP are protected from eviction (FR12b-1):
+/// one real IP cannot hold the pending table.
+pub const MAX_ANSWERED_PER_IP: usize = 2;
+/// The connectivity checks a connecting signalled link sent that are remembered, to know their
+/// answers (FR12b-1); older ones are forgotten.
+const ASKED_KEPT: usize = 32;
 /// A signalled link that opened before str0m's stats named its selected
 /// pair waits at most this long for them before `Connected` (stats come
 /// every second).
@@ -239,8 +246,12 @@ struct Peer {
     local: SocketAddr,
     /// Set up by `offer_ice` / `answer_ice` (N48), not over TCP.
     signalled: bool,
-    /// Its peer sent an ICE connectivity check while connecting (PF12b-2).
-    checked: bool,
+    /// The ICE connectivity checks its link sent while connecting
+    /// (transaction, destination), the latest `ASKED_KEPT` (FR12b-1).
+    asked: Vec<([u8; 12], SocketAddr)>,
+    /// The IP that answered one of those checks from where it was sent:
+    /// the peer really receives there (FR12b-1: protected from eviction).
+    answered: Option<IpAddr>,
     /// The peer's candidates as its SDP names them, for `classify`.
     theirs: RemoteCandidates,
     /// When the link opened, and when it was reported `Connected`.
@@ -352,7 +363,26 @@ fn pump(
         }
         impair.due(now, &mut transmits);
     }
+    if peer.signalled && peer.id.is_none() {
+        for t in &transmits {
+            if let Some(transaction) = binding_request_transaction(&t.bytes) {
+                if peer.asked.len() >= ASKED_KEPT {
+                    peer.asked.remove(0);
+                }
+                peer.asked.push((transaction, t.to));
+            }
+        }
+    }
     datagrams(peer, relays, now, out, transmits);
+}
+
+/// The transaction of a STUN binding success response (an answered ICE
+/// connectivity check), else `None`.
+fn binding_success_transaction(bytes: &[u8]) -> Option<[u8; 12]> {
+    if !is_stun(bytes) || bytes[..2] != [0x01, 0x01] {
+        return None;
+    }
+    bytes[8..20].try_into().ok()
 }
 
 /// Closes the peer's link and hands out its last datagrams at once.
@@ -478,7 +508,8 @@ impl Core {
             addr,
             local,
             signalled,
-            checked: false,
+            asked: Vec::new(),
+            answered: None,
             theirs: theirs.unwrap_or_default(),
             opened: None,
             connected: None,
@@ -562,8 +593,13 @@ impl Core {
                     return;
                 }
                 p.heard = now;
-                if p.id.is_none() && binding_request_transaction(bytes).is_some() {
-                    p.checked = true;
+                if p.signalled
+                    && p.id.is_none()
+                    && p.answered.is_none()
+                    && let Some(t) = binding_success_transaction(bytes)
+                    && p.asked.contains(&(t, from))
+                {
+                    p.answered = Some(from.ip());
                 }
                 p.from = Some(from);
                 let to = to(p);

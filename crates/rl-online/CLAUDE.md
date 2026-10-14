@@ -437,10 +437,12 @@ refused offer (another fingerprint) says why and never `Connecting`;
 direct failure falling back to Nostr; a same-LAN joiner whose router does
 not hairpin (rl-net's `connect_stall` hook: the connect fails after
 `CONNECT_TIMEOUT`) joining through Nostr directly; a flood (Review Focus
-1, PF12b-2: for 8 s, 100 forged, tampered or undecryptable events a
-second and, after every 20 of them, a valid offer that never checks; an
-honest joiner starting 1 s in connects during the flood, more than 8
-silent offers answered, all `Answer`); a host's reachability on a
+1, PF12b-2, FR12b-1: for 8 s, 100 forged, tampered or undecryptable
+events a second and, after every 20 of them, a valid offer whose joiner,
+once answered, sends valid checks from a forged source and answers none;
+an honest joiner starting 3 s in, the pending table full of checked
+offers, connects during the flood, more than 8 flood offers answered,
+all `Answer`); a host's reachability on a
 `FakeGateway` (external 127.0.0.2, UPnP) and one relay, its exact lines;
 a host's shutdown returning at once and its `wait` seeing the mapping
 deleted (NT-2); a host listening on edited relays (`listen_on`: a join

@@ -29,8 +29,8 @@ use rl_proto::{PROTOCOL_VERSION, Path, Refusal, Signal, decode_signal, encode_si
 use crate::candidates::TurnSpec;
 use crate::core::{Core, CoreConfig, CoreEvent, Datagram, SetupId};
 pub use crate::core::{
-    HOST, MAX_QUEUED, MAX_SIGNALLED_PENDING, NetEvent, PeerStats, SETUP_TIMEOUT, SIGNALLED_SETUP_TIMEOUT,
-    SILENCE_TIMEOUT, Why,
+    HOST, MAX_ANSWERED_PER_IP, MAX_QUEUED, MAX_SIGNALLED_PENDING, NetEvent, PeerStats, SETUP_TIMEOUT,
+    SIGNALLED_SETUP_TIMEOUT, SILENCE_TIMEOUT, Why,
 };
 pub use crate::limits::Limits;
 use crate::portmap::{MapRequest, MappingState, PortMapper};
@@ -661,9 +661,10 @@ impl Endpoint {
 
     /// Host: answers a signalled offer (`Core::answer_ice`: admitted, then
     /// sanitized, with every local candidate; when `MAX_SIGNALLED_PENDING`
-    /// setups are pending, the oldest that has heard no connectivity check
-    /// is evicted, PF12b-2, and `Refused { Busy }` comes only when every
-    /// one has). `mapped_hint` is the joiner's mapped address. No gate:
+    /// setups are pending, the oldest unprotected one is evicted, PF12b-2:
+    /// protected once one of our checks to it was answered, at most
+    /// `MAX_ANSWERED_PER_IP` per IP, FR12b-1; `Refused { Busy }` comes only
+    /// when every one is). `mapped_hint` is the joiner's mapped address. No gate:
     /// a signalled offer has no address to judge. Other endpoints refuse
     /// (`Malformed`).
     pub fn answer_signalled(

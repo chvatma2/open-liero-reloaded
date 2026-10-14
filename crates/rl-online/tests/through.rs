@@ -611,33 +611,45 @@ fn junk(host: &PublicKey, i: u64, at: SocketAddr, links: &mut Vec<Link>) -> Even
     }
 }
 
-/// What a flood sent and heard: the host's replies to its silent offers.
+/// What a flood sent and heard: the host's replies to its offers.
 struct Flooded {
     replies: Vec<Signal>,
     junk: u64,
-    /// How many of the host's links sent checks to the silent joiners.
+    /// How many of the host's links sent checks to the offers' candidates.
     checked: usize,
+    /// How many of the host's answers to valid checks from the forged
+    /// source (made with its own answer's credentials) reached it.
+    forged_answered: usize,
 }
 
 /// For `length`: 100 undecryptable handshakes a second to `host` on
 /// `relay`, and after every 20 of them (junk first) a valid offer from a
-/// fresh key whose joiner never sends a connectivity check (5 a second).
+/// fresh key (5 a second). Its joiner never answers the host's checks, but
+/// once the host's answer arrives it sends valid connectivity checks (it
+/// holds the answer's credentials) from a forged source: another socket
+/// than its candidate, which never answers either (FR12b-1).
 fn flood(relay: PoolConfig, host: PublicKey, length: Duration) -> std::thread::JoinHandle<Flooded> {
     std::thread::spawn(move || {
         let quiet = UdpSocket::bind((LOCALHOST, 0)).unwrap();
+        let forged = UdpSocket::bind((LOCALHOST, 0)).unwrap();
+        forged.set_nonblocking(true).unwrap();
         let at = quiet.local_addr().unwrap();
         let mut links = Vec::new();
         let mut rand = || rl_net::random_bytes::<32>().unwrap();
         let silent = (length.as_secs() as usize + 1) * 5;
         let (t0, unix) = (Instant::now(), unix_now());
-        let mut askers: Vec<Asker> = (0..silent)
-            .map(|_| Asker::new(host, silent_offer(at, &mut links), t0, unix, &mut rand))
+        let mut offers: Vec<(Asker, Link, bool)> = (0..silent)
+            .map(|_| {
+                let mut one = Vec::new();
+                let asker = Asker::new(host, silent_offer(at, &mut one), t0, unix, &mut rand);
+                (asker, one.pop().unwrap(), false)
+            })
             .collect();
         let mut pool = Pool::start(relay);
         let replies = Filter {
             kinds: vec![KIND_HANDSHAKE],
             authors: vec![host],
-            tags: vec![('p', askers.iter().map(|a| hex::encode(a.key())).collect())],
+            tags: vec![('p', offers.iter().map(|(a, ..)| hex::encode(a.key())).collect())],
             ..Filter::default()
         };
         pool.subscribe("replies", vec![replies]);
@@ -647,21 +659,42 @@ fn flood(relay: PoolConfig, host: PublicKey, length: Duration) -> std::thread::J
             pool.poll(&mut heard);
             std::thread::sleep(Duration::from_millis(1));
         }
+        let (mut answers, mut seen) = (Vec::new(), heard.len());
         let begun = Instant::now();
         let (mut sent, mut next) = (0u64, 0usize);
+        let mut transmits = Vec::new();
         while begun.elapsed() < length {
             // On schedule: 100 a second.
             while sent < (begun.elapsed().as_millis() / 10) as u64 {
                 pool.publish(junk(&host, sent, at, &mut links));
                 sent += 1;
                 if sent % 20 == 0
-                    && let Some(a) = askers.get_mut(next)
+                    && let Some((a, ..)) = offers.get_mut(next)
                 {
                     next += 1;
                     pool.publish(a.poll(Instant::now(), unix_now(), &mut rand).unwrap());
                 }
             }
             pool.poll(&mut heard);
+            for e in &heard[seen..] {
+                let PoolEvent::Event { event, .. } = e else { continue };
+                for (a, link, answered) in &mut offers {
+                    if let Some(reply) = a.take(event) {
+                        if let Signal::Answer { sdp } = &reply.signal {
+                            *answered = link.accept_answer(sdp).is_ok();
+                        }
+                        answers.push(reply.signal);
+                    }
+                }
+            }
+            seen = heard.len();
+            // The answered offers' checks leave from the forged source.
+            for (_, link, _) in offers.iter_mut().filter(|(.., answered)| *answered) {
+                link.poll(Instant::now(), &mut transmits, &mut Vec::new());
+                for t in transmits.drain(..) {
+                    let _ = forged.send_to(&t.bytes, t.to);
+                }
+            }
             std::thread::sleep(Duration::from_millis(2));
         }
         let quiet_end = Instant::now();
@@ -669,24 +702,23 @@ fn flood(relay: PoolConfig, host: PublicKey, length: Duration) -> std::thread::J
             pool.poll(&mut heard);
             std::thread::sleep(Duration::from_millis(5));
         }
-        let replies = heard
-            .iter()
-            .filter_map(|e| match e {
-                PoolEvent::Event { event, .. } => askers.iter_mut().find_map(|a| a.take(event)),
-                _ => None,
-            })
-            .map(|reply| reply.signal)
-            .collect();
-        drop(links);
-        Flooded { replies, junk: sent, checked: check_usernames(&quiet).len() }
+        for e in &heard[seen..] {
+            let PoolEvent::Event { event, .. } = e else { continue };
+            answers.extend(offers.iter_mut().find_map(|(a, ..)| a.take(event)).map(|r| r.signal));
+        }
+        let forged_answered = binding_successes(&forged);
+        drop((links, offers));
+        Flooded { replies: answers, junk: sent, checked: check_usernames(&quiet).len(), forged_answered }
     })
 }
 
-/// PF12b-2 and Review Focus 1: for 8 s, 100 forged or undecryptable
-/// handshakes a second and, among them (junk first), 5 valid offers a
-/// second from fresh keys that never send a connectivity check (enough to
-/// fill `MAX_SIGNALLED_PENDING` many times over) reach the host's relay.
-/// An honest client starting 1 s into the flood connects during it.
+/// PF12b-2, FR12b-1 and Review Focus 1: for 8 s, 100 forged or
+/// undecryptable handshakes a second and, among them (junk first), 5 valid
+/// offers a second from fresh keys (enough to fill `MAX_SIGNALLED_PENDING`
+/// many times over), each sending valid connectivity checks from a forged
+/// source once answered but never answering the host's, reach the host's
+/// relay. An honest client starting 3 s into the flood (the pending table
+/// full of checked offers) connects during it.
 #[test]
 fn a_flood_of_offers_leaves_room_for_an_honest_joiner() {
     let Some(content) = content() else { return };
@@ -698,10 +730,10 @@ fn a_flood_of_offers_leaves_room_for_an_honest_joiner() {
     let length = Duration::from_secs(8);
     let flooding = flood(pool(&[&relay]), key, length);
     let begun = Instant::now();
-    net.run_until(Duration::from_secs(3), "a second of flood", |_| begun.elapsed() >= Duration::from_secs(1));
+    net.run_until(Duration::from_secs(5), "3 s of flood", |_| begun.elapsed() >= Duration::from_secs(3));
     let join = Join { direct: None, nostr: Some(nostr(key, pool(&[&relay]))) };
     let c = net.client(self::content().unwrap(), join, ice(), Some(key));
-    joined(&mut net, h, c, Duration::from_secs(10));
+    joined(&mut net, h, c, Duration::from_secs(5));
     let at = net.peers[c].when(|e| matches!(e, OnlineEvent::Connected { .. })).unwrap();
     assert!(at < begun + length, "connected during the flood, {:?} in", at - begun);
     assert_eq!(net.peers[c].connected().unwrap().0, Path::Direct);
@@ -709,18 +741,36 @@ fn a_flood_of_offers_leaves_room_for_an_honest_joiner() {
     net.run_until(Duration::from_secs(12), "the flood ends", |_| flooding.is_finished());
     let flooded = flooding.join().unwrap();
     assert!(flooded.junk >= 700, "{} junk events", flooded.junk);
-    // The host answered more silent offers than its pending table holds
-    // (PF12b-2 evicted the oldest silent ones; without it, the ninth would
-    // be refused `Busy`).
+    // The host answered more offers than its pending table holds (PF12b-2
+    // evicted the oldest unproven ones; without FR12b-1, the forged checks
+    // would protect them and the honest joiner would be refused `Busy`).
     let answers = flooded.replies;
-    assert!(answers.len() > MAX_SIGNALLED_PENDING, "{} silent offers answered", answers.len());
+    assert!(answers.len() > MAX_SIGNALLED_PENDING, "{} flood offers answered", answers.len());
     assert!(answers.iter().all(|s| matches!(s, Signal::Answer { .. })), "{answers:?}");
     assert!(flooded.checked >= MAX_SIGNALLED_PENDING, "{} links checked their joiners", flooded.checked);
+    assert!(
+        flooded.forged_answered >= MAX_SIGNALLED_PENDING,
+        "{} forged checks taken by the host",
+        flooded.forged_answered
+    );
     assert_eq!(
         net.peers[h].p.lobby().state().unwrap().members.len(),
         2,
         "only the honest joiner is a member"
     );
+}
+
+/// How many STUN binding success responses reached `socket` (the host's
+/// answers to checks sent from it).
+fn binding_successes(socket: &UdpSocket) -> usize {
+    socket.set_nonblocking(true).unwrap();
+    let (mut n, mut buf) = (0, [0u8; 2048]);
+    while let Ok((len, _)) = socket.recv_from(&mut buf) {
+        if len >= 20 && buf[..2] == [1, 1] && buf[4..8] == [0x21, 0x12, 0xa4, 0x42] {
+            n += 1;
+        }
+    }
+    n
 }
 
 /// The ICE usernames of the STUN binding requests that reached `socket`
