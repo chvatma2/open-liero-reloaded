@@ -182,6 +182,10 @@ struct Board {
     stop: bool,
     /// A deletion at the mapper's end that the router did not confirm.
     unconfirmed: bool,
+    /// A losing thread deleted what it mapped: on a router with one table
+    /// for every protocol (miniupnpd) that was the winner's mapping too, so
+    /// the winner renews at once (final review A-M1).
+    renew: bool,
 }
 
 struct Shared {
@@ -238,6 +242,16 @@ impl Ctx {
         true
     }
 
+    /// This thread lost the race after asking its router for mappings, and
+    /// deleted them: the winner renews at once (A-M1).
+    fn lost(&self) {
+        let mut b = self.shared.board();
+        if b.touched[self.worker as usize] && b.winner.is_some_and(|w| w != self.worker) {
+            b.renew = true;
+            self.shared.wake.notify_all();
+        }
+    }
+
     fn fail(&self, why: String) {
         let _ = self.tx.send(Report::Failed { worker: self.worker, why });
     }
@@ -246,13 +260,16 @@ impl Ctx {
         let _ = self.tx.send(Report::Extra { port, mapped });
     }
 
-    /// Sleeps until `at` (`None`: for ever) or the mapper's drop; false
-    /// when dropped.
+    /// Sleeps until `at` (`None`: for ever), a loser's deletion (A-M1:
+    /// renew now) or the mapper's drop; false when dropped.
     fn sleep_until(&self, at: Option<Instant>) -> bool {
         let mut b = self.shared.board();
         loop {
             if b.stop {
                 return false;
+            }
+            if std::mem::take(&mut b.renew) {
+                return true;
             }
             b = match at {
                 None => self.shared.wake.wait(b).unwrap_or_else(|e| e.into_inner()),
@@ -430,13 +447,21 @@ fn map_pair(r: &mut dyn Router, ctx: &Ctx) -> Result<Pair, String> {
 /// until the mapper is dropped. `Ok(())` once it held a mapping or lost the
 /// race (nothing is left mapped); `Err(why)` when it could not map.
 fn try_router(r: &mut dyn Router, ctx: &Ctx) -> Result<(), String> {
-    let pair = map_pair(r, ctx)?;
+    let pair = match map_pair(r, ctx) {
+        Ok(pair) => pair,
+        Err(why) => {
+            // What it mapped is deleted: maybe the winner's too (A-M1).
+            ctx.lost();
+            return Err(why);
+        }
+    };
     let Some(ip) = r.external_ip() else {
         pair.delete(r);
         return Err("the router named no external IPv4 address".into());
     };
     if !ctx.claim(r.method(), SocketAddrV4::new(ip, pair.port), pair.tcp) {
         pair.delete(r);
+        ctx.lost();
         return Ok(());
     }
     let extras = map_extras(r, ctx, ip);

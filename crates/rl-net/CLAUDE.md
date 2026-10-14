@@ -326,7 +326,10 @@ for tests.
   each with its deadline (`PMP_DEADLINE` 3 s, `UPNP_DEADLINE` 4 s:
   `poll` gives up on a thread past it, under the board's lock, so it can
   no longer win). The first mapping wins (`Ctx::claim`); the other thread
-  deletes what it mapped and ends. `poll` drains a channel and returns
+  deletes what it mapped and ends, and the winner then renews at once
+  (`Ctx::lost`, `Board::renew`; final review A-M1: on a router with one
+  table for every protocol, miniupnpd's, the loser's deletion removed
+  the winner's mapping until its renewal). `poll` drains a channel and returns
   the state when it changed (`Trying`, `Mapped { method, external, tcp,
   usable }`, `Failed(why per method)`); `usable` is
   `rl_proto::is_global` of the external IP or `allow_local` (N62).
@@ -451,7 +454,8 @@ for tests.
     `PcpRefuses`, `PrivateExternal` (10.0.0.1), `RenewRefused` (and the
     mapping dropped), `RenewSilent` (the first renewal's three requests
     unanswered), `SlowPmp` (PCP unanswered, and NAT-PMP's first two
-    requests), `TcpRefused` (UPnP 606 for TCP), `Garbage` (a non-UTF-8
+    requests), `SharedTable` (one table for every protocol, every mapping
+    request answered `LATE`), `TcpRefused` (UPnP 606 for TCP), `Garbage` (a non-UTF-8
     SSDP datagram first, then one with a junk line; truncated XML; PCP
     with a wrong nonce; NAT-PMP truncated), `SoapDrip` (`AddPortMapping`
     drips a byte every 100 ms; `dripping()`), `HugeBody` (an endless
@@ -714,7 +718,8 @@ every deletion), `close` waiting for a late router and a failed `local`
 failing its extras, a new mapper of a port being deleted waiting for that
 deletion (`a_new_mapper_waits_for_the_ports_deletion`, `LateDelete`),
 and PCP and NAT-PMP keeping their whole deadline after that wait
-(`SlowPmp`, final review A-M2), a failed `local`
+(`SlowPmp`, final review A-M2), the race's loser deleting from a
+shared table without leaving the winner unmapped (`SharedTable`, A-M1), a failed `local`
 failing its extras, a renewal reporting the router's new external
 address for each protocol, the extras' too (FR12b-2), mappings deleted on drop, no gateway
 and no UPnP failing within 5 s, a test build refusing a real router,

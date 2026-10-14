@@ -609,6 +609,22 @@ fn pcp_and_nat_pmp_keep_their_deadline_after_a_wait() {
     let _ = closing.join();
 }
 
+/// Final review A-M1: on a router with one table for every protocol
+/// (miniupnpd), the thread that loses the race deletes what it mapped,
+/// which is the winner's mapping too; the winner then renews at once, so
+/// its mapping stays (else it would be gone until its renewal, 30 minutes).
+#[test]
+fn the_losers_deletion_leaves_the_winners_mapping() {
+    let fake = FakeGateway::start(true, false, true, EXTERNAL, Misbehaviour::SharedTable);
+    let mut mapper = PortMapper::start(request(&fake, 23700, true));
+    let (_, external, tcp, _) = mapped(&settle(&mut mapper, Duration::from_secs(5)));
+    assert!(tcp);
+    // Both threads have finished asking (each request answers in 300 ms).
+    std::thread::sleep(Duration::from_millis(2500));
+    let held: Vec<(bool, u16)> = fake.mappings().iter().map(|m| (m.1, m.2)).collect();
+    assert!(held.contains(&(false, external.port())) && held.contains(&(true, external.port())), "{held:?}");
+}
+
 #[test]
 fn mappings_are_deleted_on_drop() {
     let ssdp = silent();

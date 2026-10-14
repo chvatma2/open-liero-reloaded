@@ -37,6 +37,13 @@ pub enum Misbehaviour {
     RenewSilent,
     /// garbage in every SSDP, HTTP and PCP/NAT-PMP answer
     Garbage,
+    /// One table for every protocol, as miniupnpd keeps: a request for a
+    /// port another protocol mapped to the same client refreshes it, and a
+    /// deletion by any protocol removes it; every mapping request (UPnP's
+    /// `AddPortMapping`, PCP's and NAT-PMP's) is answered `LATE` (300 ms)
+    /// after it, so both protocols map while the other has not won yet
+    /// (final review A-M1).
+    SharedTable,
     /// PCP requests go unanswered (an old router dropping a version it does
     /// not know), and so do the first two NAT-PMP requests: a NAT-PMP
     /// mapping takes about 2.5 s from the first PCP request.
@@ -132,11 +139,12 @@ impl Table {
         self.held.contains(&port) || self.mappings.contains_key(&(udp, port))
     }
 
-    /// The external port of `method`'s mapping of `udp` to `internal`.
-    fn find(&self, method: Method, udp: bool, internal: SocketAddrV4) -> Option<u16> {
+    /// The external port of `method`'s mapping of `udp` to `internal`
+    /// (any protocol's with one `shared` table).
+    fn find(&self, method: Method, udp: bool, internal: SocketAddrV4, shared: bool) -> Option<u16> {
         self.mappings
             .iter()
-            .find(|(k, e)| k.0 == udp && e.method == method && e.internal == internal)
+            .find(|(k, e)| k.0 == udp && (shared || e.method == method) && e.internal == internal)
             .map(|(k, _)| k.1)
     }
 
@@ -151,7 +159,7 @@ impl Table {
         internal: SocketAddrV4,
         suggested: u16,
     ) -> Outcome {
-        if let Some(port) = self.find(method, udp, internal) {
+        if let Some(port) = self.find(method, udp, internal, m == Misbehaviour::SharedTable) {
             if m == Misbehaviour::RenewRefused {
                 self.mappings.remove(&(udp, port));
                 return Outcome::Refused;
@@ -177,8 +185,8 @@ impl Table {
         Outcome::Refused
     }
 
-    fn delete(&mut self, method: Method, udp: bool, internal: SocketAddrV4) {
-        if let Some(port) = self.find(method, udp, internal) {
+    fn delete(&mut self, method: Method, m: Misbehaviour, udp: bool, internal: SocketAddrV4) {
+        if let Some(port) = self.find(method, udp, internal, m == Misbehaviour::SharedTable) {
             self.mappings.remove(&(udp, port));
         }
     }
@@ -488,7 +496,7 @@ fn answer_pmp(inner: &Inner, req: &[u8], source: Ipv4Addr) -> Option<Vec<u8>> {
                     let lifetime = u32::from_be_bytes([req[8], req[9], req[10], req[11]]);
                     let mut table = inner.table();
                     let (result, port, lifetime) = if lifetime == 0 {
-                        table.delete(Method::NatPmp, udp, internal);
+                        table.delete(Method::NatPmp, cfg.m, udp, internal);
                         (0u16, 0u16, 0u32)
                     } else {
                         match table.grant(Method::NatPmp, cfg.m, udp, internal, suggested) {
@@ -528,9 +536,12 @@ fn answer_pcp(inner: &Inner, req: &[u8]) -> Option<Vec<u8>> {
     let (result, port, lifetime) = if inner.cfg.m == Misbehaviour::PcpRefuses {
         (2u8, 0u16, 0u32)
     } else if lifetime == 0 {
-        inner.table().delete(Method::Pcp, udp, internal);
+        inner.table().delete(Method::Pcp, inner.cfg.m, udp, internal);
         (0, 0, 0)
     } else {
+        if inner.cfg.m == Misbehaviour::SharedTable {
+            std::thread::sleep(LATE);
+        }
         match inner.table().grant(Method::Pcp, inner.cfg.m, udp, internal, suggested) {
             Outcome::Granted(port) => (0, port, lifetime.min(7200)),
             Outcome::Refused => (2, 0, 0),
@@ -859,7 +870,7 @@ fn respond(inner: &Inner, head: &str, body: &str) -> (&'static str, String) {
                 return soap_fault(402, "Invalid Args");
             }
             let internal = SocketAddrV4::new(ip, internal_port);
-            if inner.cfg.m == Misbehaviour::LateUpnp {
+            if matches!(inner.cfg.m, Misbehaviour::LateUpnp | Misbehaviour::SharedTable) {
                 std::thread::sleep(LATE);
             }
             if !udp && inner.cfg.m == Misbehaviour::TcpRefused {
@@ -870,7 +881,10 @@ fn respond(inner: &Inner, head: &str, body: &str) -> (&'static str, String) {
                 return soap_fault(718, "ConflictInMappingEntry");
             }
             match table.mappings.get(&(udp, port)) {
-                Some(e) if e.method == Method::Upnp && e.internal == internal => {
+                Some(e)
+                    if (e.method == Method::Upnp || inner.cfg.m == Misbehaviour::SharedTable)
+                        && e.internal == internal =>
+                {
                     if inner.cfg.m == Misbehaviour::RenewRefused {
                         table.mappings.remove(&(udp, port));
                         return soap_fault(606, "Action not authorized");
