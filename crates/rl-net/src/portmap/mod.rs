@@ -16,6 +16,7 @@ pub mod upnp;
 
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
@@ -168,6 +169,9 @@ struct Board {
 struct Shared {
     board: Mutex<Board>,
     wake: Condvar,
+    /// Per thread: it won (set with `Board::winner`). The panic guard reads
+    /// this, never the lock, so its `drop` cannot block or deadlock.
+    won: [AtomicBool; 2],
 }
 
 impl Shared {
@@ -213,6 +217,7 @@ impl Ctx {
             return false;
         }
         b.winner = Some(self.worker);
+        self.shared.won[self.worker as usize].store(true, Ordering::Relaxed);
         let _ = self.tx.send(Report::Mapped { method, external, tcp });
         true
     }
@@ -497,7 +502,11 @@ impl PortMapper {
     /// SSDP group, fails at once.
     pub fn start(req: MapRequest) -> PortMapper {
         let now = Instant::now();
-        let shared = Arc::new(Shared { board: Mutex::new(Board::default()), wake: Condvar::new() });
+        let shared = Arc::new(Shared {
+            board: Mutex::new(Board::default()),
+            wake: Condvar::new(),
+            won: Default::default(),
+        });
         let (tx, rx) = mpsc::channel();
         let mut mapper = PortMapper {
             shared: Arc::clone(&shared),
@@ -646,7 +655,7 @@ impl Drop for PanicGuard {
                 Worker::Pmp => "PCP and NAT-PMP: the client panicked",
                 Worker::Upnp => "UPnP: the client panicked",
             };
-            let won = self.shared.board().winner == Some(self.worker);
+            let won = self.shared.won[self.worker as usize].load(Ordering::Relaxed);
             let report = if won {
                 Report::Dropped(why.into())
             } else {

@@ -925,17 +925,22 @@ mod tests {
     /// scan of the description and SOAP answers must stay linear.
     #[test]
     fn pathological_markup_is_scanned_in_linear_time() {
+        // 128 KiB each (twice a body's cap: the parsers take any text). A
+        // quadratic scan took 6.1 s on 64 KiB of `<`, and 39 s on this set:
+        // the generous 1 s bound below still catches it by far, and a
+        // loaded machine cannot make the linear scan miss it.
+        const N: usize = 128 * 1024;
         let cases = [
-            "<".repeat(65_536),
-            "<a".repeat(32_768),
-            format!("<service{}", " a=1".repeat(16_000)),
-            format!("<x{}>", " a=1".repeat(16_000)).repeat(1),
-            "<service>".repeat(7_000),
-            "<service></service>".repeat(3_000),
-            "</".repeat(32_768),
-            "<a></".repeat(13_000),
-            "&".repeat(65_536),
-            "&#x".repeat(21_000),
+            "<".repeat(N),
+            "<a".repeat(N / 2),
+            format!("<service{}", " a=1".repeat(N / 4)),
+            format!("<x{}>", " a=1".repeat(N / 4)),
+            "<service>".repeat(N / 9),
+            "<service></service>".repeat(N / 19),
+            "</".repeat(N / 2),
+            "<a></".repeat(N / 5),
+            "&".repeat(N),
+            "&#x".repeat(N / 3),
         ];
         let location = loc();
         for body in &cases {
@@ -946,7 +951,7 @@ mod tests {
             let _ = element_text(body, "NewExternalIPAddress");
             let _ = unescape(body);
             let took = t.elapsed();
-            assert!(took < Duration::from_millis(50), "{took:?} for {:?}…", &body[..12]);
+            assert!(took < Duration::from_secs(1), "{took:?} for {:?}…", &body[..12]);
         }
     }
 
@@ -961,8 +966,11 @@ mod tests {
 
     #[test]
     fn http_answers_read_byte_by_byte_in_linear_time() {
+        // Answers near the reader's caps, each read 1 byte at a time 20
+        // times: re-parsing every prefix (the old reader) takes about 15 s
+        // here, far over the generous 2 s bound the linear reader meets.
         let mut chunked = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
-        for _ in 0..900 {
+        for _ in 0..1000 {
             chunked.extend(b"40\r\n");
             chunked.extend([b'x'; 64]);
             chunked.extend(b"\r\n");
@@ -974,19 +982,21 @@ mod tests {
         }
         long_head.extend(b"Content-Length: 60000\r\n\r\n");
         long_head.extend([b'y'; 60_000]);
-        for (answer, len) in [(chunked, 900 * 64), (long_head, 60_000)] {
-            let t = Instant::now();
-            let mut reader = HttpReader::default();
-            let mut outcome = HttpParse::Incomplete;
-            for byte in answer.chunks(1) {
-                outcome = reader.feed(byte);
-                if outcome != HttpParse::Incomplete {
-                    break;
+        let t = Instant::now();
+        for _ in 0..20 {
+            for (answer, len) in [(&chunked, 1000 * 64), (&long_head, 60_000)] {
+                let mut reader = HttpReader::default();
+                let mut outcome = HttpParse::Incomplete;
+                for byte in answer.chunks(1) {
+                    outcome = reader.feed(byte);
+                    if outcome != HttpParse::Incomplete {
+                        break;
+                    }
                 }
+                assert!(matches!(&outcome, HttpParse::Done { body, .. } if body.len() == len), "{outcome:?}");
             }
-            assert!(matches!(&outcome, HttpParse::Done { body, .. } if body.len() == len), "{outcome:?}");
-            assert!(t.elapsed() < Duration::from_millis(100), "{:?}", t.elapsed());
         }
+        assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
     }
 
     #[test]
