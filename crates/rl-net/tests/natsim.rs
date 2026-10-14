@@ -65,7 +65,7 @@ fn a_mapped_port_is_used_and_named() {
     let nc = net.nat(NatKind::Symmetric, "203.0.113.20".parse().unwrap());
     let host = net.host(Some(nh), a("192.168.1.10:23400"));
     net.forward(nh, 23400, a("192.168.1.10:23400"));
-    net.core(host).set_mapped(Some(a("203.0.113.10:23400")));
+    net.core(host).set_mapped(Some(a("203.0.113.10:23400")), false);
     let client = net.client(Some(nc), a("192.168.7.20:50000"));
     net.gather(host, &[s1], &[]);
     net.gather(client, &[s1], &[]);

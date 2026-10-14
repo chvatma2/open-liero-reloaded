@@ -4,7 +4,9 @@
 //! address, a host maps its port on a `FakeGateway`, the signalled pending
 //! table stays bounded, the TCP path is unchanged and gathering ends by its
 //! deadline. Every endpoint has `base_override: 127.0.0.1`; nothing reaches
-//! a real router or a public server. Every wait is bounded.
+//! a real router or a public server: every datagram goes to 127.0.0.0/8
+//! (test rule NT-1), so a fake router's external address is 127.0.0.2.
+//! Every wait is bounded.
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::time::{Duration, Instant};
@@ -14,6 +16,7 @@ use rl_net::endpoint::{
     TurnServerSpec,
 };
 use rl_net::link::{Link, LinkCandidates};
+use rl_net::portmap::DROP_WAIT;
 use rl_net::portmap::MappingState;
 use rl_net::portmap::fake::{FakeGateway, Misbehaviour};
 use rl_net::probe::NatBehaviour;
@@ -24,9 +27,10 @@ use rl_proto::{FINGERPRINT, PROTOCOL_VERSION, Path, Signal};
 const LOCALHOST: Ipv4Addr = Ipv4Addr::LOCALHOST;
 const USER: &str = "relay-user";
 const PASS: &str = "relay-pass";
-/// The fake router's external address (TEST-NET-3: not global, so the
-/// mapping is usable only with `allow_local`).
-const EXTERNAL: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 7);
+/// The fake router's external address: a loopback alias (NT-1), not
+/// global, so the mapping is usable only with `allow_local`, and not the
+/// base (127.0.0.1), so it is a candidate of its own.
+const EXTERNAL: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 2);
 
 /// Every endpoint's ICE: the base on 127.0.0.1, local relays allowed.
 fn ice() -> IceConfig {
@@ -231,19 +235,33 @@ fn stun_on_the_game_socket_learns_the_reflexive_address() {
     assert_eq!(host.ep.reach().srflx, Some(SocketAddr::from((LOCALHOST, host.ep.local_port()))));
 }
 
-#[test]
-fn a_host_maps_its_port_on_a_fake_gateway() {
-    let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::Honest);
+/// The fake's PCP/NAT-PMP address, for the `gateway` hook.
+fn pmp(fake: &FakeGateway) -> SocketAddrV4 {
+    match fake.pmp() {
+        SocketAddr::V4(a) => a,
+        other => panic!("the fake listens on IPv4: {other}"),
+    }
+}
+
+/// A host mapping its port on `fake` (UPnP through the hooks), once mapped.
+fn mapped_host(fake: &FakeGateway) -> Side {
     let mut host = Side::new(host(IceConfig {
         port_mapping: true,
-        gateway: Some(fake.pmp()),
+        gateway: Some(pmp(fake)),
         ssdp: Some(fake.ssdp()),
         ..ice()
     }));
-    let port = host.ep.local_port();
     run_until(&mut [&mut host], Duration::from_secs(6), "the mapping", |s| {
         matches!(s[0].ep.reach().mapping, MappingState::Mapped { .. })
     });
+    host
+}
+
+#[test]
+fn a_host_maps_its_port_on_a_fake_gateway() {
+    let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::Honest);
+    let host = mapped_host(&fake);
+    let port = host.ep.local_port();
     match host.ep.reach().mapping {
         MappingState::Mapped { usable, tcp, external, .. } => {
             assert!(usable);
@@ -253,19 +271,63 @@ fn a_host_maps_its_port_on_a_fake_gateway() {
         other => panic!("not mapped: {other:?}"),
     }
     assert_eq!(host.ep.mapped(), Some(SocketAddr::from((EXTERNAL, port))));
-    // A client is not connected here: the host would offer 203.0.113.7,
-    // and the client's checks to it would leave through the real router.
-    // The mapping is deleted once the endpoint is gone (on a thread of its
-    // own: the mapper's drop waits for the router).
-    assert!(!fake.mappings().is_empty());
+}
+
+/// N49: a TCP join through the host's mapped port (the joiner dials the
+/// external address) is `MappedPort` at the host, `Direct` at the joiner.
+#[test]
+fn a_tcp_join_through_the_mapping_is_mapped_port() {
+    let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::Honest);
+    let mut host = mapped_host(&fake);
+    let external = host.ep.mapped().expect("a usable mapping");
+    let mut client = Side::new(Endpoint::connect(config(ice()), external).unwrap());
+    let peer = wait_connected(&mut host, &mut client);
+    assert_eq!(client.connected().unwrap(), (HOST, external, Path::Direct));
+    assert_eq!(host.connected().unwrap().2, Path::MappedPort);
+    assert_eq!(host.ep.path(peer), Some(Path::MappedPort));
+    exchange(&mut host, &mut client, peer);
+}
+
+/// Dropping a mapping host never blocks its caller, though the router
+/// answers each deletion 250 ms late; the mapping still goes within
+/// `DROP_WAIT`.
+#[test]
+fn a_host_drops_its_mapping_without_blocking() {
+    let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::SlowDelete);
+    let host = mapped_host(&fake);
+    assert_eq!(fake.mappings().len(), 2);
     let dropping = Instant::now();
     drop(host);
     assert!(dropping.elapsed() < Duration::from_millis(200), "the drop blocked for {:?}", dropping.elapsed());
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while !fake.mappings().is_empty() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
+    while !fake.mappings().is_empty() && dropping.elapsed() < DROP_WAIT + Duration::from_millis(200) {
+        std::thread::sleep(Duration::from_millis(10));
     }
-    assert!(fake.mappings().is_empty(), "deleted after the endpoint went: {:?}", fake.mappings());
+    assert_eq!(fake.mappings(), vec![], "deleted within DROP_WAIT");
+}
+
+/// N51's exit: `shutdown` returns at once, and its `wait` returns once the
+/// router deleted the mapping (bounded by its deadline).
+#[test]
+fn shutdown_deletes_the_mapping_before_wait_returns() {
+    let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::SlowDelete);
+    let host = mapped_host(&fake);
+    assert_eq!(fake.mappings().len(), 2);
+    let started = Instant::now();
+    let shutdown = host.ep.shutdown();
+    assert!(started.elapsed() < Duration::from_millis(200), "shutdown blocked for {:?}", started.elapsed());
+    assert!(shutdown.wait(Instant::now() + DROP_WAIT + Duration::from_millis(200)), "deleted in time");
+    assert_eq!(fake.mappings(), vec![]);
+    assert!(started.elapsed() >= Duration::from_millis(500), "waited for both deletions");
+
+    // An endpoint without a mapping shuts down at once.
+    let plain = host_plain();
+    let started = Instant::now();
+    assert!(plain.shutdown().wait(Instant::now() + DROP_WAIT));
+    assert!(started.elapsed() < Duration::from_millis(200));
+}
+
+fn host_plain() -> Endpoint {
+    host(ice())
 }
 
 /// The SDP of an offerer `Link` that is never pumped: a joiner that never

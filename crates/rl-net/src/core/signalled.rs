@@ -45,10 +45,13 @@ impl Core {
         self.relays.states()
     }
 
-    /// The router mapping's external address (a server-reflexive candidate
-    /// at it), or `None`.
-    pub fn set_mapped(&mut self, mapped: Option<SocketAddr>) {
+    /// The router's usable mapping: its external address (a
+    /// server-reflexive candidate at it), or `None`; `tcp` when it forwards
+    /// TCP on the same port too (a host's TCP joins then come through it:
+    /// `MappedPort`, N49).
+    pub fn set_mapped(&mut self, mapped: Option<SocketAddr>, tcp: bool) {
         self.mapped = mapped;
+        self.mapped_tcp = tcp && mapped.is_some();
         let own = self.own_addresses();
         self.relays.set_own(own);
     }
@@ -185,9 +188,19 @@ impl Core {
     }
 
     /// The path of a peer's link: its selected pair's class (N49), or
-    /// `HolePunched` without one; `Direct` for a TCP-signalled link.
+    /// `HolePunched` without one. A TCP-signalled link is `Direct`, or on a
+    /// host `MappedPort` when its usable mapping forwards TCP and the
+    /// joiner's address is global (any, with `allow_local`): N49's "Direct
+    /// TCP path".
     pub(super) fn classify(&self, peer: &Peer) -> Path {
         match (peer.signalled, peer.pair) {
+            (false, _)
+                if self.cfg.host
+                    && self.mapped_tcp
+                    && (self.cfg.allow_local || rl_proto::is_global(peer.addr.ip())) =>
+            {
+                Path::MappedPort
+            }
             (false, _) => Path::Direct,
             (true, Some((local, remote))) => classify(local, remote, &self.local(), &peer.theirs),
             (true, None) => Path::HolePunched,

@@ -288,7 +288,7 @@ fn crowded(cfg: CoreConfig, t0: Instant) -> (Core, SocketAddr, SocketAddr, Socke
     let transaction: [u8; 12] = request.bytes[8..20].try_into().unwrap();
     core.receive(server, &rl_proto::stun::binding_response(&transaction, srflx, true), t0);
     assert_eq!(core.local().srflx, Some(srflx));
-    core.set_mapped(Some(mapped));
+    core.set_mapped(Some(mapped), false);
     (core, base, srflx, mapped)
 }
 
@@ -388,4 +388,60 @@ fn without_stun_a_core_is_gathered() {
     asked.stun(vec!["198.51.100.1:3478".parse().unwrap()], t0);
     assert!(!asked.gathered(t0));
     assert!(asked.gathered(t0 + rl_net::probe::STUN_WAIT));
+}
+
+/// N49: a host's TCP-signalled joiner, its path as the host names it: the
+/// host holds `mapped` (address, TCP mapped too), and the joiner comes
+/// from `client_at` (in memory only: nothing is sent).
+fn tcp_join_path(
+    allow_local: bool,
+    mapped: Option<(SocketAddr, bool)>,
+    client_at: SocketAddr,
+) -> rl_proto::Path {
+    let t0 = Instant::now();
+    let host_at: SocketAddr = "10.0.0.1:23400".parse().unwrap();
+    let mut host = Core::new(CoreConfig { allow_local, ..CoreConfig::host() }, t0);
+    if let Some((addr, tcp)) = mapped {
+        host.set_mapped(Some(addr), tcp);
+    }
+    let mut client = Core::new(CoreConfig::client(), t0);
+    let (setup, offer) = client.offer(&[client_at], host_at, t0);
+    let (_, answer) = host.answer(&[host_at], &offer, client_at, t0).expect("answered");
+    client.accept_answer(setup, &answer).expect("accepted");
+    let (mut eh, mut ec) = (Vec::new(), Vec::new());
+    let mut now = t0;
+    while !(connected(&eh) && connected(&ec)) {
+        now += Duration::from_millis(5);
+        assert!(now < t0 + Duration::from_secs(10), "no connection; host {eh:?} client {ec:?}");
+        exchange(&mut client, client_at, &mut host, host_at, now, &mut ec, &mut eh);
+    }
+    let client_path = ec.iter().find_map(|e| match e {
+        CoreEvent::Net(NetEvent::Connected { path, .. }) => Some(*path),
+        _ => None,
+    });
+    assert_eq!(client_path, Some(rl_proto::Path::Direct), "the joiner's TCP path is Direct");
+    let (peer, path) = eh
+        .iter()
+        .find_map(|e| match e {
+            CoreEvent::Net(NetEvent::Connected { peer, path, .. }) => Some((*peer, *path)),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(host.path(peer), Some(path));
+    path
+}
+
+/// N49: a host holding a usable TCP mapping names a TCP join from a global
+/// address (or any, with `allow_local`) `MappedPort`; otherwise `Direct`.
+#[test]
+fn a_mapped_host_names_tcp_joins_mapped_port() {
+    use rl_proto::Path::{Direct, MappedPort};
+    let mapped: SocketAddr = "203.0.113.10:23400".parse().unwrap();
+    let global: SocketAddr = "1.2.3.4:50000".parse().unwrap();
+    let private: SocketAddr = "10.0.0.2:50000".parse().unwrap();
+    assert_eq!(tcp_join_path(false, Some((mapped, true)), global), MappedPort);
+    assert_eq!(tcp_join_path(false, Some((mapped, true)), private), Direct, "a LAN joiner");
+    assert_eq!(tcp_join_path(true, Some((mapped, true)), private), MappedPort, "allow_local");
+    assert_eq!(tcp_join_path(false, Some((mapped, false)), global), Direct, "UDP mapped only");
+    assert_eq!(tcp_join_path(true, None, global), Direct, "no mapping");
 }

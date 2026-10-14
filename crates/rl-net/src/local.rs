@@ -32,6 +32,15 @@ pub(crate) fn default_interface() -> Option<(Vec<Ipv4Addr>, Option<Ipv4Addr>)> {
     Some((ips, gateway))
 }
 
+/// The source address the OS routes from toward the Internet, at once
+/// (no netdev, nothing sent: a `connect`ed UDP socket toward 192.0.2.1,
+/// TEST-NET-1, which only picks the default route); 127.0.0.1 without
+/// one. The endpoint's fallback when a signalled setup is made before the
+/// slow `default_interface` answered.
+pub(crate) fn quick_base() -> Ipv4Addr {
+    source_toward((Ipv4Addr::new(192, 0, 2, 1), 9).into()).unwrap_or(Ipv4Addr::LOCALHOST)
+}
+
 /// A unicast address a peer could send to.
 fn usable(ip: Ipv4Addr) -> bool {
     !(ip.is_unspecified() || ip.is_multicast() || ip.is_broadcast())
@@ -60,6 +69,15 @@ mod tests {
         let (ips, _) = base_addresses(None);
         assert!(!ips.is_empty() && ips.len() <= MAX_HOSTS, "{ips:?}");
         assert!(ips.iter().all(|ip| usable(*ip)), "{ips:?}");
+    }
+
+    /// The quick base is a usable address, found at once.
+    #[test]
+    fn a_quick_base_is_instant() {
+        let t = std::time::Instant::now();
+        let ip = quick_base();
+        assert!(usable(ip), "{ip}");
+        assert!(t.elapsed() < std::time::Duration::from_millis(100), "{:?}", t.elapsed());
     }
 
     /// Toward 127.0.0.1 the OS picks 127.0.0.1 (nothing is sent).

@@ -279,6 +279,24 @@ mod fake_gateway_misbehaviours_are_reported {
         assert!(failed(&state).contains("UPnP"), "{state:?}");
         assert_eq!(fake.http_requests(), 0);
     }
+
+    #[test]
+    fn slow_delete() {
+        // Each deletion's answer comes 250 ms late: the mapper's drop
+        // waits for both (TCP and UDP), within `DROP_WAIT`.
+        let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::SlowDelete);
+        let mut mapper = PortMapper::start(upnp_only(&fake, 23710));
+        mapped(&settle(&mut mapper, Duration::from_secs(5)));
+        assert_eq!(fake.mappings().len(), 2);
+        let dropped = Instant::now();
+        drop(mapper);
+        let took = dropped.elapsed();
+        assert!(
+            took >= Duration::from_millis(500) && took <= Duration::from_millis(1100),
+            "drop took {took:?}"
+        );
+        assert_eq!(fake.mappings(), vec![]);
+    }
 }
 
 #[test]

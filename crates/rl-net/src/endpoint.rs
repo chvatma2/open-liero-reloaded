@@ -19,7 +19,7 @@ use std::io;
 use std::net::{
     IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream, ToSocketAddrs, UdpSocket,
 };
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::time::{Duration, Instant};
 
 use rl_netcode::netsim::Profile;
@@ -99,7 +99,7 @@ pub struct IceConfig {
     /// Tests only (`test-hooks`): the gateway's PCP/NAT-PMP address (a
     /// `FakeGateway`'s) instead of the default gateway's port 5351.
     #[cfg(feature = "test-hooks")]
-    pub gateway: Option<SocketAddr>,
+    pub gateway: Option<SocketAddrV4>,
     /// Tests only (`test-hooks`): where the SSDP search goes (a
     /// `FakeGateway`'s) instead of the multicast group.
     #[cfg(feature = "test-hooks")]
@@ -224,7 +224,8 @@ enum Role {
     },
 }
 
-/// What the endpoint's DNS thread found, in this order.
+/// What the endpoint's DNS threads found: the base before the STUN
+/// servers; the TURN servers whenever they resolve.
 enum Found {
     /// The host candidates' IPs (base first) and the default gateway.
     Base(Vec<Ipv4Addr>, Option<Ipv4Addr>),
@@ -244,6 +245,9 @@ struct Gathering {
     mapper: Option<PortMapper>,
     /// Its latest state (`Off` without one).
     mapping: MappingState,
+    /// TURN servers resolved before the base was known: allocated from it
+    /// once it is.
+    turn: Vec<TurnSpec>,
 }
 
 /// One end of online play: a host and its peers, or a client and its host.
@@ -373,13 +377,26 @@ fn resolve(name: &str) -> Option<SocketAddr> {
     name.to_socket_addrs().ok()?.find(SocketAddr::is_ipv4)
 }
 
-/// Resolves the STUN servers and `turn` on a thread named `rl-net dns`,
-/// and finds the base unless `base` is false: the default interface's at
-/// once, else (it has none) the source address toward the first STUN
-/// server once resolved. A name that does not resolve is skipped; the
-/// channel closes when the thread is done.
+/// Finds the base (unless `base` is false: the default interface's at
+/// once, else, without one, the source address toward the first STUN
+/// server once resolved) and resolves the STUN servers on a thread named
+/// `rl-net dns`, and the TURN servers on one of their own, `rl-net dns
+/// turn` (a slow STUN name must not hold up the joiner's last resort). A
+/// name that does not resolve is skipped; the channel closes when both
+/// threads are done.
 fn start_dns(stun: Vec<String>, turn: Vec<TurnServerSpec>, base: bool) -> io::Result<Receiver<Found>> {
     let (tx, rx) = mpsc::channel();
+    if !turn.is_empty() {
+        let tx = tx.clone();
+        std::thread::Builder::new().name("rl-net dns turn".into()).spawn(move || {
+            let turn: Vec<TurnSpec> = turn
+                .into_iter()
+                .filter_map(|t| Some(TurnSpec { addr: resolve(&t.addr)?, user: t.user, pass: t.pass }))
+                .take(MAX_TURN)
+                .collect();
+            let _ = tx.send(Found::Turn(turn));
+        })?;
+    }
     std::thread::Builder::new().name("rl-net dns".into()).spawn(move || {
         // A send fails only once the endpoint is gone: nothing to do then.
         let interface = if base { crate::local::default_interface() } else { None };
@@ -393,12 +410,6 @@ fn start_dns(stun: Vec<String>, turn: Vec<TurnServerSpec>, base: bool) -> io::Re
             let _ = tx.send(Found::Base(ips, gateway));
         }
         let _ = tx.send(Found::Stun(stun));
-        let turn: Vec<TurnSpec> = turn
-            .into_iter()
-            .filter_map(|t| Some(TurnSpec { addr: resolve(&t.addr)?, user: t.user, pass: t.pass }))
-            .take(MAX_TURN)
-            .collect();
-        let _ = tx.send(Found::Turn(turn));
     })?;
     Ok(rx)
 }
@@ -422,7 +433,8 @@ impl Endpoint {
         } else {
             None
         };
-        let gathering = Gathering { started: now, found, mapper: None, mapping: MappingState::Off };
+        let gathering =
+            Gathering { started: now, found, mapper: None, mapping: MappingState::Off, turn: Vec::new() };
         let mut endpoint = Endpoint {
             cfg,
             udp,
@@ -436,7 +448,7 @@ impl Endpoint {
             now,
         };
         if let Some(ip) = base_override {
-            endpoint.set_base(vec![ip], None);
+            endpoint.take_base(vec![ip], None);
         }
         Ok(endpoint)
     }
@@ -572,6 +584,8 @@ impl Endpoint {
         if let Some((_, signal)) = offer {
             return Some(signal.clone());
         }
+        self.ensure_base();
+        let Role::Signalled { offer, .. } = &mut self.role else { return None };
         // The peer's address is not known before its datagrams come.
         let (setup, sdp) = self.core.offer_ice((Ipv4Addr::UNSPECIFIED, 0).into(), self.now);
         let signal = Signal::Offer { protocol: PROTOCOL_VERSION, fingerprint: self.core.fingerprint(), sdp };
@@ -619,6 +633,7 @@ impl Endpoint {
         if !matches!(self.role, Role::Host { .. }) {
             return Signal::Refused { reason: Refusal::Malformed };
         }
+        self.ensure_base();
         self.core.answer_ice(offer, mapped_hint, self.now)
     }
 
@@ -641,8 +656,21 @@ impl Endpoint {
         }
     }
 
+    /// Closes every link (the peers are told, as dropping the endpoint
+    /// does) and starts deleting the port mapping on a thread; never
+    /// blocks. Wait on the [`Shutdown`] before the process exits (at most
+    /// `portmap::DROP_WAIT`, 1 s), so the router does not keep the port
+    /// open (N51).
+    pub fn shutdown(mut self) -> Shutdown {
+        let mapper = self.gathering.mapper.take();
+        drop(self);
+        Shutdown { done: mapper.map(unmap) }
+    }
+
     /// The path of a connected peer's link (N49): its selected pair's
-    /// class, following ICE; `Direct` for a TCP-signalled link.
+    /// class, following ICE; for a TCP-signalled link `Direct`, or on a
+    /// host `MappedPort` when its usable mapping forwards TCP and the
+    /// joiner's address is global (any address with `allow_local`).
     pub fn path(&self, peer: PeerId) -> Option<Path> {
         self.core.path(peer)
     }
@@ -652,39 +680,49 @@ impl Endpoint {
     fn poll_gathering(&mut self, now: Instant) {
         while let Some(rx) = &self.gathering.found {
             match rx.try_recv() {
-                Ok(Found::Base(ips, gateway)) => self.set_base(ips, gateway),
+                Ok(Found::Base(ips, gateway)) => self.take_base(ips, gateway),
                 Ok(Found::Stun(servers)) if !servers.is_empty() => self.core.stun(servers, now),
-                Ok(Found::Turn(servers)) if !servers.is_empty() => self.core.allocate(&servers, now),
+                Ok(Found::Turn(servers)) => {
+                    self.gathering.turn = servers;
+                    self.allocate();
+                }
                 Ok(_) => {}
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => self.gathering.found = None,
             }
         }
         if let Some(state) = self.gathering.mapper.as_mut().and_then(PortMapper::poll) {
-            self.core.set_mapped(usable_mapping(&state));
+            let tcp = matches!(state, MappingState::Mapped { tcp: true, .. });
+            self.core.set_mapped(usable_mapping(&state), tcp);
             self.gathering.mapping = state;
         }
     }
 
-    /// The host candidates (`ips` on our port, the first the base) go to
-    /// the core; a host with `port_mapping` starts mapping the base's
-    /// port at `gateway`.
-    fn set_base(&mut self, ips: Vec<Ipv4Addr>, gateway: Option<Ipv4Addr>) {
+    /// The base the DNS thread found (or the override): the host
+    /// candidates, `ips` on our port, the first the base, unless a base is
+    /// set already (the first one stays: the links made since take their
+    /// datagrams as arriving at it). Then a host with `port_mapping` maps
+    /// the base's port at `gateway`, and TURN servers waiting allocate.
+    fn take_base(&mut self, ips: Vec<Ipv4Addr>, gateway: Option<Ipv4Addr>) {
         let port = self.port;
-        let hosts: Vec<SocketAddr> = ips.iter().map(|&ip| SocketAddr::from((ip, port))).collect();
-        let Some(&base) = hosts.first() else { return };
-        self.core.set_base(base, hosts);
+        if self.core.local().base.is_none() {
+            let hosts: Vec<SocketAddr> = ips.iter().map(|&ip| SocketAddr::from((ip, port))).collect();
+            let Some(&base) = hosts.first() else { return };
+            self.core.set_base(base, hosts);
+        }
+        self.allocate();
+        let Some(SocketAddr::V4(base)) = self.core.local().base else { return };
         if !matches!(self.role, Role::Host { .. })
             || !self.cfg.ice.port_mapping
             || self.gathering.mapper.is_some()
         {
             return;
         }
-        let mut req = MapRequest::new(SocketAddrV4::new(ips[0], port), true, gateway);
+        let mut req = MapRequest::new(SocketAddrV4::new(*base.ip(), port), true, gateway);
         req.allow_local = self.cfg.ice.allow_local;
         #[cfg(feature = "test-hooks")]
         {
-            if let Some(SocketAddr::V4(g)) = self.cfg.ice.gateway {
+            if let Some(g) = self.cfg.ice.gateway {
                 req.gateway = Some(*g.ip());
                 req.pmp_port = g.port();
             }
@@ -694,6 +732,31 @@ impl Endpoint {
         }
         self.gathering.mapper = Some(PortMapper::start(req));
         self.gathering.mapping = MappingState::Trying;
+    }
+
+    /// A signalled setup is made now and no base came yet (the DNS thread
+    /// is slow): the address the OS routes from (`local::quick_base`,
+    /// instant), so the SDP is not without candidates. Port mapping waits
+    /// for the thread's base and gateway.
+    fn ensure_base(&mut self) {
+        if self.core.local().base.is_none() {
+            let base = SocketAddr::from((crate::local::quick_base(), self.port));
+            self.core.set_base(base, vec![base]);
+            self.allocate();
+        }
+    }
+
+    /// Allocates on the TURN servers waiting, once a base is known (a
+    /// signalled client's only).
+    fn allocate(&mut self) {
+        if self.gathering.turn.is_empty()
+            || self.core.local().base.is_none()
+            || !matches!(self.role, Role::Signalled { .. })
+        {
+            return;
+        }
+        let servers = std::mem::take(&mut self.gathering.turn);
+        self.core.allocate(&servers, self.now);
     }
 
     /// Host: accepts TCP connections and takes their offers. Client:
@@ -923,6 +986,42 @@ impl Endpoint {
     }
 }
 
+/// An endpoint shutting down (N51's exit, ruling NT-2): its peers were
+/// told, and its port mapping is being deleted on a thread of its own.
+/// [`Shutdown::wait`] lets a process wait for that before it exits;
+/// dropping a `Shutdown` lets the deletion go on alone (as dropping the
+/// endpoint does), which a process that exits at once may cut short.
+#[must_use = "wait on it before the process exits, or the router may keep the mapping"]
+pub struct Shutdown {
+    /// Closes (or gets a `()`) once the mapper's drop returned.
+    done: Option<Receiver<()>>,
+}
+
+impl Shutdown {
+    /// Waits until the mapping is deleted (the mapper waits at most
+    /// `portmap::DROP_WAIT` for the router) or `until`, whichever comes
+    /// first. `true` when it was deleted, or there was none.
+    pub fn wait(self, until: Instant) -> bool {
+        let Some(done) = self.done else { return true };
+        match done.recv_timeout(until.saturating_duration_since(Instant::now())) {
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => true,
+            Err(RecvTimeoutError::Timeout) => false,
+        }
+    }
+}
+
+/// Drops `mapper` (deleting its mapping, up to `DROP_WAIT`) on a thread,
+/// `rl-net unmap`; the receiver hears when it is done. If the thread
+/// cannot start, the mapper is dropped here (a wait of at most a second).
+fn unmap(mapper: PortMapper) -> Receiver<()> {
+    let (tx, rx) = mpsc::channel();
+    let _ = std::thread::Builder::new().name("rl-net unmap".into()).spawn(move || {
+        drop(mapper);
+        let _ = tx.send(());
+    });
+    rx
+}
+
 /// The external address of a usable mapping.
 fn usable_mapping(state: &MappingState) -> Option<SocketAddr> {
     match state {
@@ -940,9 +1039,7 @@ impl Drop for Endpoint {
         self.core.close_all(&mut out);
         send_datagrams(&self.udp, &mut self.core, &mut out);
         if let Some(mapper) = self.gathering.mapper.take() {
-            // If the thread cannot start, the closure (and the mapper) is
-            // dropped here: a wait of at most a second.
-            let _ = std::thread::Builder::new().name("rl-net unmap".into()).spawn(move || drop(mapper));
+            unmap(mapper);
         }
     }
 }

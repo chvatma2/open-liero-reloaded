@@ -277,6 +277,9 @@ pub struct Core {
     hosts: Vec<SocketAddr>,
     /// The router mapping's external address.
     mapped: Option<SocketAddr>,
+    /// The mapping forwards TCP on the same port too (the direct path,
+    /// N47): a host names its TCP joins `MappedPort` (N49).
+    mapped_tcp: bool,
     probe: StunProbe,
     /// TURN allocations (a joiner's, N48).
     relays: Relays,
@@ -370,6 +373,7 @@ impl Core {
             base: None,
             hosts: Vec::new(),
             mapped: None,
+            mapped_tcp: false,
             probe,
             relays: Relays::new(cfg_allow_local, now),
             rng,

@@ -46,7 +46,13 @@ pub enum Misbehaviour {
     DeepNesting,
     /// SSDP answers from 127.0.0.2, naming the HTTP server on 127.0.0.1.
     ForeignLocation,
+    /// `DeletePortMapping` deletes at once but answers `SLOW_DELETE`
+    /// (250 ms) late: a mapper's drop must wait for it.
+    SlowDelete,
 }
+
+/// How late `SlowDelete` answers a deletion.
+pub const SLOW_DELETE: Duration = Duration::from_millis(250);
 
 /// The device description a fake router serves: real routers' shapes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -835,7 +841,11 @@ fn respond(inner: &Inner, head: &str, body: &str) -> (&'static str, String) {
         }
         "DeletePortMapping" => {
             let Some(port) = port else { return soap_fault(402, "Invalid Args") };
-            match inner.table().mappings.remove(&(udp, port)) {
+            let removed = inner.table().mappings.remove(&(udp, port));
+            if inner.cfg.m == Misbehaviour::SlowDelete {
+                std::thread::sleep(SLOW_DELETE);
+            }
+            match removed {
                 Some(_) => soap_ok(service, action, ""),
                 None => soap_fault(714, "NoSuchEntryInArray"),
             }

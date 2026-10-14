@@ -115,7 +115,8 @@ announcements.
   - **Signalled setups** (plan 12b, N48-N50; Nostr carries their SDP from
     Task 7; `core/signalled.rs`): `set_base(base, hosts)` (every signalled link's datagrams are
     taken as arriving at `base`; TCP-signalled links keep their own host
-    candidate, N16), `stun(servers, now)`, `set_mapped`, `local()`
+    candidate, N16), `stun(servers, now)`, `set_mapped(addr, tcp)` (the
+    usable mapping; `tcp` when it forwards TCP on the same port), `local()`
     (`LocalCandidates`), `nat()`, `gathered(now)`; `offer_ice(hint, now)`
     and `accept_answer_ice(setup, answer, mapped_hint)` on a client
     (the answer is sanitized too; no F-G rewrite), `answer_ice(offer,
@@ -134,7 +135,10 @@ announcements.
     reflexive ones (review I-1); `srflx` follows STUN's latest answer, so a renumbered router's
     new address is offered from its next round.
   - **Paths** (N49): `NetEvent::Connected { path }` and `path(peer)`. A
-    TCP-signalled link is `Direct`, reported at `Open`. A signalled link
+    TCP-signalled link is reported at `Open`: `Direct`, or on a host
+    `MappedPort` when `set_mapped` named a TCP mapping and the joiner's
+    address is global (any address with `allow_local`): N49's "Direct
+    TCP path" (`core_wire::a_mapped_host_names_tcp_joins_mapped_port`). A signalled link
     is classified (`candidates::classify`) from its selected pair against
     `local()` and the peer's SDP candidates plus its mapped hint, and
     re-classified when the pair changes; its `Connected` waits for
@@ -396,7 +400,8 @@ announcements.
     drips a byte every 100 ms; `dripping()`), `HugeBody` (an endless
     description; `streamed()`), `DeepNesting` (6000 levels, 42 KB),
     `ForeignLocation` (SSDP from 127.0.0.2 naming 127.0.0.1;
-    `http_requests()`). `hold(port)`: another client's port.
+    `http_requests()`), `SlowDelete` (`DeletePortMapping` deletes at once
+    and answers `SLOW_DELETE`, 250 ms, late). `hold(port)`: another client's port.
     `serving(answer)` (fuzzing) answers SSDP (its first 1400 bytes) and
     HTTP with `answer` (`$HTTP` → its HTTP address).
 - **`natsim`** (feature `test-hooks`, N56): `Net` runs `Core`s behind
@@ -419,7 +424,8 @@ announcements.
   broadcast) and its gateway (netdev: a netlink dump on Linux, which can
   take ~350 ms, so the endpoint calls it on a thread); else the source
   address the OS picks toward `toward` (a `connect`ed UDP socket: nothing
-  is sent); else 127.0.0.1.
+  is sent); else 127.0.0.1. `quick_base()` (crate): the source toward
+  192.0.2.1 (the default route; instant, nothing sent), else 127.0.0.1.
 - **`endpoint::Endpoint`**: the socket driver of a `Core`: the UDP socket,
   the TCP listener and `SignalConn`s (mapped by `SetupId`), the per-IP
   caps, the gate, the connect thread, lingering closes, and the SDP
@@ -479,7 +485,8 @@ announcements.
   - **Peers**: host side 1, 2, 3, … in the order links open, never reused
     (`PeerId` is `u32` and never goes on the wire);
     the client's peer is `HOST` (0). `Connected { addr, path }`: the
-    remote end of the signalling connection, `Path::Direct`. `dtls_fingerprints(peer)`: an open
+    remote end of the signalling connection, `Path::Direct` (a host's
+    `MappedPort` through its TCP mapping, N49). `dtls_fingerprints(peer)`: an open
     peer's link's. A local `close` (and dropping the
     endpoint) tells the peer at once and reports nothing.
   - **Timeouts**: a link must open within `SETUP_TIMEOUT` (10 s) of its
@@ -492,21 +499,32 @@ announcements.
     resolve), `port_mapping` (a host's), `allow_local` (N62: the core's
     relays and the mapping's `usable`); test hooks `base_override`,
     `relay_only` (a client's), `gateway` (a `FakeGateway`'s PCP/NAT-PMP
-    address) and `ssdp`. A host and a signalled client start a thread,
-    `rl-net dns`, that sends what it finds in order: the base
+    address, `SocketAddrV4`) and `ssdp`. A host and a signalled client
+    start a thread, `rl-net dns`, that sends the base
     (`local::default_interface` at once; without one,
-    `base_addresses(first STUN server)` after the names resolve), the STUN
-    servers, then the TURN servers; `poll` hands them to `Core::set_base`
-    (every IP on our port, the first the base), `Core::stun` and
-    `Core::allocate` (signalled clients only: a host never allocates).
-    With `base_override` the base is set at once. A TCP client
-    (`connect`) gathers nothing. A host with `port_mapping` starts a
-    `PortMapper` (TCP and UDP, the base and our port, the gateway; under
-    the hooks the fake's) once its base is known; `poll` takes its states
-    (`reach().mapping`) and hands the usable mapping's external address
-    to `Core::set_mapped` (`mapped()`). The endpoint's drop hands the
-    mapper to a thread, `rl-net unmap` (its drop waits up to `DROP_WAIT`
-    for the router: never on the game's UI thread). `poll` calls
+    `base_addresses(first STUN server)` after the names resolve), then
+    the STUN servers; a signalled client's TURN names resolve on their own
+    thread, `rl-net dns turn` (a slow STUN name does not hold up the
+    last resort). `poll` hands them to `Core::set_base` (every IP on our
+    port, the first the base; the first base stays), `Core::stun` and
+    `Core::allocate` (signalled clients only, once a base is known: a
+    host never allocates). With `base_override` the base is set at once.
+    A signalled setup made before any base came (`offer`,
+    `answer_signalled`) takes `local::quick_base` at once, so no SDP goes
+    out without candidates. A TCP client (`connect`) gathers nothing. A
+    host with `port_mapping` starts a `PortMapper` (TCP and UDP, the base
+    and our port, the gateway; under the hooks the fake's) once the DNS
+    thread's base is known; `poll` takes its states (`reach().mapping`)
+    and hands the usable mapping's external address and its `tcp` to
+    `Core::set_mapped` (`mapped()`). **Exit** (N51, ruling NT-2):
+    `shutdown(self) -> Shutdown` closes every link as the drop does and
+    hands the mapper to a thread, `rl-net unmap`, at once;
+    `Shutdown::wait(until)` returns once the mapping is deleted (the
+    mapper waits at most `DROP_WAIT`, 1 s) or at `until` (`true` when
+    deleted or none). rl-server, rl-cli and the game are to wait on it
+    on exit (plan 12b Tasks 8-10; not wired yet). Dropping the endpoint
+    is the fallback: the same thread, nobody waits (a process exiting
+    at once may cut it short). `poll` calls
     `Core::poll` every time, so the TURN clients' timers and the STUN
     rounds run whether or not the socket is readable.
   - **Signalled client** (`Endpoint::signalled(cfg)`): UDP on `cfg.port`,
@@ -615,8 +633,8 @@ unauthenticated answer, the amplification pinned, the relay-wide cap on
 unauthenticated answers, forged requests not starving a client's signed
 ones, a live client keeping its allocation, permission and channel for
 32 virtual minutes past nonce expiry against a spoofer draining both
-unproven budgets, oversized datagrams dropped; unit tests in `local.rs` (a base always found, the source toward
-loopback), in `turn.rs`
+unproven budgets, oversized datagrams dropped; unit tests in `local.rs` (a base always found, the quick base instant,
+the source toward loopback), in `turn.rs`
 (the bucket, the IP table, nonces, a stale tag proven only for its own
 source, a proven source answered outside the unproven budget, an IP's
 two buckets keeping its rate, a hostile nonce, any nonce on a signed
@@ -628,9 +646,12 @@ addresses the pair's remote ends, a message each way), through a local
 `TurnServer` with `relay_only` (`Relayed` at both ends, 1000 reliable
 messages in order, relayed bytes counted), STUN to the `TurnServer`
 learning `srflx` = the base (`Open`), a host mapping its port on a
-`FakeGateway` (UPnP; `mapped()` the fake's 203.0.113.7, no client
-connected: its checks to that TEST-NET address would leave through the
-real router; the drop returns at once and the mapping goes), eight
+`FakeGateway` (UPnP; `mapped()` the fake's external 127.0.0.2: test
+rule NT-1, every datagram to 127.0.0.0/8), a TCP join dialling that
+address `MappedPort` at the host and `Direct` at the joiner, a drop
+that returns at once though the router answers deletions 250 ms late
+(`SlowDelete`) with the mapping gone within `DROP_WAIT`, `shutdown`'s
+`wait` returning only once it is deleted, eight
 silent offers pending and a ninth, live, connecting (PF12b-2), the TCP
 path unchanged, and gathering against silent STUN and TURN ports
 ending within `GATHER_DEADLINE` + 100 ms of the endpoint's making;
