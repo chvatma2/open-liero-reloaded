@@ -489,15 +489,23 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
     }
     app.save_recording();
     let autoplay = app.autoplay_result();
+    let error = app.error.take();
+    // The window closes with the app; then, off any frame, the router
+    // deletes the online games' port mappings (N51, ruling NT-2).
+    let unmapping = app.take_unmapping();
+    drop(app);
+    if !unmapping.wait(rl_game::shell::UNMAP_WAIT) {
+        eprintln!("warning: the router did not confirm deleting the port mapping within 1 s");
+    }
     match ran {
         // The game never sets a failing exit code; winit does, most often
         // when the display server closed the connection (a compositor crash).
-        Err(winit::error::EventLoopError::ExitFailure(_)) if app.error.is_none() => {
+        Err(winit::error::EventLoopError::ExitFailure(_)) if error.is_none() => {
             Err(anyhow::anyhow!(window::lost_connection(wayland)))
         }
         ran => {
             ran.context("the event loop")?;
-            if let Some(e) = app.error.take() {
+            if let Some(e) = error {
                 return Err(e);
             }
             match autoplay {

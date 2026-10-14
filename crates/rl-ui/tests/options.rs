@@ -471,6 +471,9 @@ fn options_clears_the_download_cache() {
     h.get_by_label("Online").click();
     h.run();
     h.get_by_label("Download cache: 312 MB");
+    // Below the Online tab's lists: scrolled into view first.
+    h.get_by_role_and_label(Role::Button, "Clear").scroll_to_me();
+    h.run();
     h.get_by_role_and_label(Role::Button, "Clear").click();
     h.run();
     assert_eq!(clears(&h), 1);
@@ -567,7 +570,9 @@ fn options_edit_relays_and_unblock() {
     h.get_by_label("Oceania").click();
     h.run();
     assert_eq!(saved(&h).online.finding.region, rl_ui::Region::Oceania);
-    // Unblock the first host.
+    // Unblock the first host (below the lists: scrolled into view first).
+    h.get_all_by_label("Unblock").next().unwrap().scroll_to_me();
+    h.run();
     h.get_all_by_label("Unblock").next().unwrap().click();
     h.run();
     assert_eq!(saved(&h).online.finding.blocked, ["cd".repeat(32)]);
@@ -605,14 +610,90 @@ fn finding_settings_are_sanitized() {
         stun: Some(vec!["stun.example:3478".into(), "nope".into(), "x:0".into()]),
         public_address: "not an ip".into(),
         blocked: vec!["AB".repeat(32), "ab".repeat(32), "zz".into()],
+        port_mapping: false,
+        turn: vec![
+            "me:secret@turn.example:3478".into(),
+            "turn.example:3478".into(),
+            " me:secret@turn.example:3478 ".into(),
+            ":secret@turn.example:3478".into(),
+            "me:secret@turn.example".into(),
+        ],
     };
     let w = f.sanitize();
     assert_eq!(f.relays, Some(vec!["wss://a.example".to_string(), "ws://127.0.0.1:7000".to_string()]));
     assert_eq!(f.stun, Some(vec!["stun.example:3478".to_string()]));
     assert_eq!(f.public_address, "");
     assert_eq!(f.blocked, ["ab".repeat(32)]);
-    assert_eq!(w.len(), 6, "{w:?}");
+    assert_eq!(f.turn, ["me:secret@turn.example:3478"]);
+    assert!(!f.port_mapping, "the player's choice stays");
+    assert_eq!(w.len(), 9, "{w:?}");
     let mut ok = rl_ui::FindingSettings { public_address: " 81.2.69.142 ".into(), ..Default::default() };
     assert!(ok.sanitize().is_empty());
     assert_eq!(ok.public_address, "81.2.69.142");
+    // At most `MAX_TURN` TURN servers.
+    let mut many = rl_ui::FindingSettings {
+        turn: (0..12).map(|i| format!("u:p@turn{i}.example:3478")).collect(),
+        ..Default::default()
+    };
+    assert_eq!(many.sanitize().len(), 1);
+    assert_eq!(many.turn.len(), rl_ui::MAX_TURN);
+    // Port mapping is on by default, and for a file written before it.
+    assert!(rl_ui::FindingSettings::default().port_mapping);
+    let old: rl_ui::FindingSettings = ron::from_str("(region: Europe)").unwrap();
+    assert!(old.port_mapping && old.turn.is_empty());
+}
+
+/// Plan 12b (N51, N52): the Online tab's port mapping switch and the
+/// player's own TURN servers, `user:pass@host:port`, each refused with
+/// why (as relays are), at most `MAX_TURN`; every change saved.
+#[test]
+fn options_edit_turn_relays_and_port_mapping() {
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
+    h.get_by_label("Options").click();
+    h.run();
+    h.get_by_label("Online").click();
+    h.run();
+    // On by default; unchecked, it is saved off.
+    let switch = "Open the game's port on my router (UPnP/NAT-PMP/PCP)";
+    assert!(h.state().ui.settings().online.finding.port_mapping);
+    h.get_by_label(switch).click();
+    h.run();
+    assert!(!saved(&h).online.finding.port_mapping);
+    // None by default (the project ships no TURN list, N52).
+    h.get_by_label("No TURN relays: none is asked.");
+    h.get_by_role_and_label(Role::TextInput, "New TURN relay").focus();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "New TURN relay").type_text("turn.example.org:3478");
+    h.run();
+    h.get_by_label("needs user:pass@host:port");
+    let add = h.get_by_label("Add TURN relay");
+    assert!(add.accesskit_node().is_disabled());
+    add.hover();
+    h.run();
+    assert_eq!(h.get_all_by_label("needs user:pass@host:port").count(), 2, "beside the field and on hover");
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "New TURN relay").type_text("anna:s3cret@turn.example.org:3478");
+    h.run();
+    h.get_by_label("Add TURN relay").click();
+    h.run();
+    assert_eq!(saved(&h).online.finding.turn, ["anna:s3cret@turn.example.org:3478"]);
+    // Listed without its password.
+    h.get_by_label("anna:•••@turn.example.org:3478");
+    assert!(h.query_by_label_contains("s3cret").is_none(), "the password is not shown");
+    // Removed again.
+    h.get_by_role_and_label(Role::Button, "Remove").click();
+    h.run();
+    assert!(saved(&h).online.finding.turn.is_empty());
+    // A full list takes no more.
+    let mut settings = Settings::default();
+    settings.online.finding.turn =
+        (0..rl_ui::MAX_TURN).map(|i| format!("u:p@turn{i}.example:3478")).collect();
+    let mut h = harness(UiState::new(settings, Profiles::default(), 1));
+    h.get_by_label("Options").click();
+    h.run();
+    h.get_by_label("Online").click();
+    h.run();
+    h.get_by_label("the list is full");
+    assert!(h.get_by_label("Add TURN relay").accesskit_node().is_disabled());
 }

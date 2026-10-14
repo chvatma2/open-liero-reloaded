@@ -407,6 +407,12 @@ impl App {
         }
     }
 
+    /// The router mappings being deleted (ruling NT-2): the caller waits
+    /// for them once the window closed (`Unmapping::wait`).
+    pub fn take_unmapping(&mut self) -> crate::shell::Unmapping {
+        self.shell.take_unmapping()
+    }
+
     /// Writes `r` to the next `--record` path; a failure is a warning.
     fn save_replay(&mut self, r: &rl_replay::Replay) {
         let Some(base) = &self.cfg.record else { return };

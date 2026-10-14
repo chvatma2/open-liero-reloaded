@@ -106,6 +106,10 @@ pub struct MenuData {
     pub chat: Vec<LogLine>,
     /// What the online screens say besides errors (the app's status).
     pub online_status: Option<String>,
+    /// Where a join stands while the menus wait for it (the app's
+    /// `rl_online::JoinStep` in words: "Asking the game through the
+    /// relays…"); `None`: "Connecting…".
+    pub joining: Option<String>,
     /// The in-game chat's line while its field is open (`T` online; the
     /// app sends no key to the game meanwhile).
     pub ingame_chat: Option<String>,
@@ -157,6 +161,7 @@ impl MenuData {
             lobby: None,
             chat: Vec::new(),
             online_status: None,
+            joining: None,
             ingame_chat: None,
             download_cache: Err("there is no download cache".into()),
             typing: false,

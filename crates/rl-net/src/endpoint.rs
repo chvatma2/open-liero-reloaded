@@ -19,7 +19,7 @@ use std::io;
 use std::net::{
     IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream, ToSocketAddrs, UdpSocket,
 };
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use rl_netcode::netsim::Profile;
@@ -687,7 +687,7 @@ impl Endpoint {
     pub fn shutdown(mut self) -> Shutdown {
         let mapper = self.gathering.mapper.take();
         drop(self);
-        Shutdown { done: mapper.map(unmap) }
+        Shutdown { done: mapper.map(close_mapper) }
     }
 
     /// The path of a connected peer's link (N49): its selected pair's
@@ -1010,39 +1010,47 @@ impl Endpoint {
 }
 
 /// An endpoint shutting down (N51's exit, ruling NT-2): its peers were
-/// told, and its port mapping is being deleted on a thread of its own.
+/// told, and its port mapping is being deleted on a thread of its own
+/// (`PortMapper::close`, which says whether the router confirmed it).
 /// [`Shutdown::wait`] lets a process wait for that before it exits;
 /// dropping a `Shutdown` lets the deletion go on alone (as dropping the
 /// endpoint does), which a process that exits at once may cut short.
 #[must_use = "wait on it before the process exits, or the router may keep the mapping"]
 pub struct Shutdown {
-    /// Closes (or gets a `()`) once the mapper's drop returned.
-    done: Option<Receiver<()>>,
+    /// Gets the mapper's `close` verdict once it returned.
+    done: Option<Receiver<bool>>,
 }
 
 impl Shutdown {
     /// Waits until the mapping is deleted (the mapper waits at most
     /// `portmap::DROP_WAIT` for the router) or `until`, whichever comes
-    /// first. `true` when it was deleted, or there was none.
+    /// first. `true` when the router confirmed every deletion, or there
+    /// was no mapping; `false` past `until`, or when the router did not
+    /// confirm.
     pub fn wait(self, until: Instant) -> bool {
         let Some(done) = self.done else { return true };
-        match done.recv_timeout(until.saturating_duration_since(Instant::now())) {
-            Ok(()) | Err(RecvTimeoutError::Disconnected) => true,
-            Err(RecvTimeoutError::Timeout) => false,
-        }
+        // Disconnected: the thread could not start (the mapper was closed
+        // with the closure, unconfirmed) or panicked.
+        done.recv_timeout(until.saturating_duration_since(Instant::now())).unwrap_or(false)
     }
 }
 
-/// Drops `mapper` (deleting its mapping, up to `DROP_WAIT`) on a thread,
-/// `rl-net unmap`; the receiver hears when it is done. If the thread
-/// cannot start, the mapper is dropped here (a wait of at most a second).
-fn unmap(mapper: PortMapper) -> Receiver<()> {
+/// Closes `mapper` (deleting its mappings, waiting up to `DROP_WAIT` for
+/// the router) on a thread, `rl-net unmap`; the receiver gets whether the
+/// router confirmed it. If the thread cannot start, the mapper is dropped
+/// with the closure here (a wait of at most a second).
+fn close_mapper(mapper: PortMapper) -> Receiver<bool> {
     let (tx, rx) = mpsc::channel();
     let _ = std::thread::Builder::new().name("rl-net unmap".into()).spawn(move || {
-        drop(mapper);
-        let _ = tx.send(());
+        let _ = tx.send(mapper.close());
     });
     rx
+}
+
+/// Drops `mapper` (deleting its mapping, up to `DROP_WAIT`) on a thread,
+/// `rl-net unmap`: the endpoint's drop, which nobody waits for.
+fn unmap(mapper: PortMapper) {
+    let _ = std::thread::Builder::new().name("rl-net unmap".into()).spawn(move || drop(mapper));
 }
 
 /// The external address of a usable mapping.

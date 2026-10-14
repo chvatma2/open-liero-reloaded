@@ -64,10 +64,11 @@ use rl_content::{Content, LoadedSkin, MatchOptions, Player};
 use rl_discovery::defaults::{DEFAULT_RELAYS, DEFAULT_STUN};
 use rl_input::Bindings;
 use rl_lobby::Identity;
+use rl_net::endpoint::IceConfig;
 use rl_net::lan::Listener;
 use rl_netcode::netsim::Profile;
-use rl_online::OnlinePeer;
 use rl_online::replay::PendingReplay;
+use rl_online::{OnlinePeer, Shutdown};
 use rl_scene::{Interpolation, Viewport};
 use rl_sim::{Keys, MAX_SLOTS};
 use rl_ui::import::{ImportJob, ImportProgress};
@@ -86,7 +87,7 @@ use crate::setup::{self, Assets, Game, PlayerLook, SandboxOptions};
 use crate::video::{self, Overrides};
 
 mod online;
-pub use online::{INVITE_WITHOUT_ADDRESS, resolve};
+pub use online::{NO_WAY_TO_JOIN, UNMAP_WAIT, Unmapping, resolve};
 
 /// What the shell needs besides the menus' state.
 #[derive(Clone, Debug)]
@@ -193,7 +194,20 @@ pub struct Shell {
     /// The `created_at` of the last closing note this game published (a
     /// game hosted again dates its first note after it).
     closed_note: Option<u64>,
+    /// A typed host name being looked up on a thread (never on the UI
+    /// thread), and the join waiting for it.
+    resolving: Option<online::Resolving>,
+    /// The peers let go, their router mappings being deleted on threads
+    /// (ruling NT-2): the exit waits for them, after the window closed.
+    unmapping: Vec<Shutdown>,
+    /// Tests only: applied to the ICE settings of every endpoint the shell
+    /// makes (`test_ice`, feature `test-hooks`).
+    ice_hook: Option<IceHook>,
 }
+
+/// A change to an endpoint's ICE settings (tests: a loopback base, a
+/// `FakeGateway`).
+type IceHook = Box<dyn Fn(&mut IceConfig)>;
 
 /// The Options' download cache row reads the cache's sizes (a directory
 /// listing, a file per partial) at most this often (review Minor 4).
@@ -253,6 +267,9 @@ impl Shell {
             internet_left: None,
             relay_pools: 0,
             closed_note: None,
+            resolving: None,
+            unmapping: Vec::new(),
+            ice_hook: None,
         };
         shell.data.default_relays = DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect();
         shell.data.default_stun = DEFAULT_STUN.iter().map(|s| s.to_string()).collect();
@@ -306,6 +323,9 @@ impl Shell {
             internet_left: None,
             relay_pools: 0,
             closed_note: None,
+            resolving: None,
+            unmapping: Vec::new(),
+            ice_hook: None,
         }
     }
 
@@ -519,7 +539,7 @@ impl Shell {
                 self.connected(started.map(|()| true), out);
             }
             AppCommand::JoinGame { addr, password, expected_host } => {
-                let started = self.start_client(&addr, password, expected_host);
+                let started = self.start_client(addr, password, expected_host);
                 self.connected(started.map(|()| false), out);
             }
             AppCommand::BlockHost(key) => self.block_host(key),
@@ -838,7 +858,10 @@ impl Shell {
 
     /// At exit: the playing game's replay saved, the settings written, an
     /// import stopped after its item (waited for at most
-    /// [`IMPORT_STOP_WAIT`]; a pack it was writing stays hidden).
+    /// [`IMPORT_STOP_WAIT`]; a pack it was writing stays hidden), the
+    /// online game left (its router mapping's deletion started: the
+    /// caller waits for it with [`Shell::take_unmapping`] once the window
+    /// closed).
     pub fn finish(&mut self) {
         if let Some(mut job) = self.import.take()
             && !job.stop(IMPORT_STOP_WAIT)

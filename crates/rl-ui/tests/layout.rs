@@ -207,3 +207,37 @@ fn the_primary_action_is_centred_below() {
         }
     }
 }
+
+/// Plan 12b: the lobby's reachability lines are long; they wrap inside the
+/// window at the smallest window size, also at a large UI scale (two and
+/// three pixels a point: a 640- and a 427-point-wide window), and on the
+/// user's ultrawide screen.
+#[test]
+fn the_lobbys_long_lines_wrap_in_a_narrow_window() {
+    let long = [
+        "Your router opened port 23400 (UPnP), but its own address 100.64.12.34 is not public (double NAT or \
+         carrier-grade NAT): players connect by hole punching or a TURN relay",
+        "Your router changes ports for every destination (symmetric NAT): hole punching will fail; players need \
+         the open port or a TURN relay",
+        "Taking joins through 3 of 8 relays",
+    ];
+    for (w, h, ppp) in
+        [(1280.0, 720.0, 1.0), (1280.0, 720.0, 2.0), (1280.0, 720.0, 3.0), (3440.0, 1440.0, 2.0)]
+    {
+        let mut harness = harness(egui::vec2(w / ppp, h / ppp), ppp);
+        reach(&mut harness, Screen::Lobby);
+        let mut v = crate::online::lobby_view(true);
+        v.listing = Some("Announcing on the Internet…".into());
+        v.reach = long.iter().map(|l| l.to_string()).collect();
+        v.members[1].path = Some("open port".into());
+        harness.state_mut().data.lobby = Some(v);
+        harness.run();
+        harness.step();
+        let at = format!("{w}x{h} at {ppp} pixels a point");
+        for line in long {
+            let b = harness.get_by_label(line).accesskit_node().bounding_box().unwrap();
+            assert!(b.x0 >= -0.5 && b.x1 as f32 <= w + 0.5, "{line:?} at {b:?} leaves the window: {at}");
+            assert!(b.x1 > b.x0, "{line:?} is laid out: {at}");
+        }
+    }
+}

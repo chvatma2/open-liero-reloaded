@@ -9,12 +9,16 @@
 //! - **Audio:** the master volume (OLX's sound volume) and the effects'.
 //! - **Keys** (`keys.rs`).
 //! - **Online:** finding games (plan 12a): the region a hosted game says,
-//!   the public address it announces (empty: STUN asks), the Nostr relays
-//!   and the STUN servers (editable lists, each with its Reset to the
-//!   game's defaults) and the blocked hosts (Unblock); the download
-//!   cache's size and its Clear (plan 11; the app disables it while an
-//!   online game is on). Changes to the relays and STUN servers apply the
-//!   next time the Multiplayer screen opens or a game is hosted.
+//!   the public address it gives for direct joins (a manual port forward;
+//!   empty: none), whether a hosted game opens its port on the router
+//!   (plan 12b, on by default), the Nostr relays and the STUN servers
+//!   (editable lists, each with its Reset to the game's defaults), the
+//!   player's own TURN relays (`user:pass@host:port`, none by default) and
+//!   the blocked hosts (Unblock); the download cache's size and its Clear
+//!   (plan 11; the app disables it while an online game is on). Relay
+//!   edits reconnect the relays in use (the Internet tab's, a hosted
+//!   game's listening); the other settings apply to the next game hosted
+//!   or joined.
 //!
 //! The match (OLX's game settings) is set up in local play, before each
 //! game, and remembered there: it has no tab here.
@@ -24,7 +28,10 @@
 use egui::{Button, ComboBox, Key, RichText, ScrollArea, Slider, TextEdit, Ui, vec2};
 
 use super::{MenuData, form_row, keys, page, section};
-use crate::online::{FindingSettings, Region, megabytes, valid_relay, valid_stun};
+use crate::online::{
+    FindingSettings, MAX_SERVERS, MAX_TURN, Region, megabytes, turn_shown, valid_relay, valid_stun,
+    valid_turn,
+};
 use crate::settings::{FrameRate, HudArrangement, UI_SCALE_RANGE, UpscaleFilter, WindowPreset};
 use crate::state::{UiAction, UiState};
 
@@ -58,9 +65,10 @@ pub(super) struct View {
     /// slider does not move under the pointer as the menus grow.
     scale: Option<f32>,
     pub(super) keys: keys::View,
-    /// The Online tab's new relay and STUN server being typed.
+    /// The Online tab's new relay, STUN server and TURN relay being typed.
     new_relay: String,
     new_stun: String,
+    new_turn: String,
     /// The public address being typed (`None`: the saved one, not edited).
     address: Option<String>,
 }
@@ -227,8 +235,9 @@ fn downloads(ui: &mut Ui, data: &MenuData, out: &mut Vec<UiAction>) {
     }
 }
 
-/// Finding games: the region, the public address, the relays, the STUN
-/// servers and the blocked hosts. Every change is one `SetFinding`.
+/// Finding and reaching games: the region, the public address, port
+/// mapping, the relays, the STUN servers, the player's TURN relays and the
+/// blocked hosts. Every change is one `SetFinding`.
 fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut Vec<UiAction>) {
     let before = &state.settings().online.finding;
     let mut f = before.clone();
@@ -250,9 +259,12 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
         form_row(ui, "Public address", |ui, label| {
             let text = v.address.get_or_insert_with(|| f.public_address.clone());
             let r = ui
-                .add(TextEdit::singleline(text).hint_text("asked from STUN").desired_width(220.0))
+                .add(TextEdit::singleline(text).hint_text("none").desired_width(220.0))
                 .labelled_by(label)
-                .on_hover_text("The address your hosted games announce. Empty: asked from the STUN servers.");
+                .on_hover_text(
+                    "The address players join your hosted games at directly, when you forwarded the port \
+                     yourself. Empty: the port your router opens, else joins through the relays.",
+                );
             let typed = text.trim();
             let ok = typed.is_empty() || typed.parse::<std::net::IpAddr>().is_ok();
             if !ok {
@@ -260,6 +272,12 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
             } else if r.changed() {
                 f.public_address = typed.to_string();
             }
+        });
+        form_row(ui, "", |ui, _| {
+            ui.checkbox(&mut f.port_mapping, PORT_MAPPING).on_hover_text(
+                "Your hosted Internet and invite games ask your router to open their port, so players join \
+                 directly. Applies to the next game you host.",
+            );
         });
     });
     ui.add_space(10.0);
@@ -270,8 +288,8 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
             "relay",
             &relays,
             &mut v.new_relay,
-            (valid_relay, "needs wss:// or ws://"),
-            "wss://relay.example.org",
+            (valid_relay, "needs wss:// or ws://", MAX_SERVERS),
+            ("wss://relay.example.org", str::to_string),
         ) {
             f.relays = Some(list);
         }
@@ -287,13 +305,33 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
             "STUN server",
             &stun,
             &mut v.new_stun,
-            (valid_stun, "needs host:port"),
-            "stun.example.org:3478",
+            (valid_stun, "needs host:port", MAX_SERVERS),
+            ("stun.example.org:3478", str::to_string),
         ) {
             f.stun = Some(list);
         }
         if ui.add_enabled(f.stun.is_some(), Button::new("Reset STUN servers to defaults")).clicked() {
             f.stun = None;
+        }
+    });
+    ui.add_space(10.0);
+    section(ui, "TURN relays", |ui, _| {
+        ui.label(
+            RichText::new(
+                "Your own TURN relays, for joining games no other path reaches (the first two are used; \
+                 relays announced on Nostr after them).",
+            )
+            .weak(),
+        );
+        if let Some(list) = server_list(
+            ui,
+            "TURN relay",
+            &f.turn,
+            &mut v.new_turn,
+            (valid_turn, "needs user:pass@host:port", MAX_TURN),
+            ("user:pass@turn.example.org:3478", turn_shown),
+        ) {
+            f.turn = list;
         }
     });
     ui.add_space(10.0);
@@ -303,15 +341,17 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
     }
 }
 
-/// Why a new server cannot be added to `list` (`None`: it can, or
-/// nothing is typed yet); `needs` says what a valid one looks like.
+/// The Online tab's port mapping switch.
+const PORT_MAPPING: &str = "Open the game's port on my router (UPnP/NAT-PMP/PCP)";
+
+/// Why a new server cannot be added to `list` of at most `max` (`None`: it
+/// can, or nothing is typed yet); `needs` says what a valid one looks like.
 fn refusal(
     list: &[String],
     typed: &str,
-    valid: fn(&str) -> bool,
-    needs: &'static str,
+    (valid, needs, max): (fn(&str) -> bool, &'static str, usize),
 ) -> Option<&'static str> {
-    if list.len() >= crate::online::MAX_SERVERS {
+    if list.len() >= max {
         Some("the list is full")
     } else if typed.is_empty() {
         None
@@ -324,22 +364,24 @@ fn refusal(
     }
 }
 
-/// An editable list of servers: each with Remove, then a field and Add
-/// (enabled for a new valid one; else why not beside it and on Add's
-/// hover). The new list, when it changed.
+/// An editable list of servers: each with Remove (shown by `shown`: a
+/// TURN relay without its password), then a field and Add (enabled for a
+/// new valid one while the list has fewer than `max`; else why not beside
+/// it and on Add's hover). The new list, when it changed.
 fn server_list(
     ui: &mut Ui,
     what: &str,
     list: &[String],
     new: &mut String,
-    (valid, needs): (fn(&str) -> bool, &'static str),
-    hint: &str,
+    rule: (fn(&str) -> bool, &'static str, usize),
+    (hint, shown): (&str, fn(&str) -> String),
 ) -> Option<Vec<String>> {
     let mut changed = None;
     if list.is_empty() {
         ui.label(RichText::new(format!("No {what}s: none is asked.")).weak());
     }
     for (i, s) in list.iter().enumerate() {
+        let s = shown(s);
         ui.horizontal(|ui| {
             if ui.small_button("Remove").on_hover_text(format!("Remove {s}")).clicked() {
                 let mut l = list.to_vec();
@@ -353,7 +395,7 @@ fn server_list(
         let label = ui.label(format!("New {what}"));
         let r = ui.add(TextEdit::singleline(new).hint_text(hint).desired_width(300.0)).labelled_by(label.id);
         let typed = new.trim().to_string();
-        let why = refusal(list, &typed, valid, needs);
+        let why = refusal(list, &typed, rule);
         let ok = why.is_none() && !typed.is_empty();
         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
         let add = ui.add_enabled(ok, Button::new(format!("Add {what}")));

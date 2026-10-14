@@ -280,6 +280,9 @@ fn fresh(queued: impl Iterator<Item = (Request, Instant)>, now: Instant) -> Vec<
 /// and what it last reported.
 pub(crate) struct HostReach {
     listener: Option<Listener>,
+    /// The relays `listener` listens on, and the key it listens for.
+    pool: Option<PoolConfig>,
+    me: Identity,
     public_address: Option<IpAddr>,
     /// The reachability last looked at, and what the last report said: its
     /// lines, whether it settled, its direct address.
@@ -290,8 +293,28 @@ pub(crate) struct HostReach {
 impl HostReach {
     /// Listens as `listen` says, on `me`'s key.
     pub(crate) fn start(listen: HostListen, me: &Identity) -> io::Result<HostReach> {
-        let listener = listen.pool.map(|pool| Listener::start(pool, me.clone())).transpose()?;
-        Ok(HostReach { listener, public_address: listen.public_address, seen: None, reported: None })
+        let listener = listen.pool.clone().map(|pool| Listener::start(pool, me.clone())).transpose()?;
+        Ok(HostReach {
+            listener,
+            pool: listen.pool,
+            me: me.clone(),
+            public_address: listen.public_address,
+            seen: None,
+            reported: None,
+        })
+    }
+
+    /// Listens on `pool` from now on (relays edited while hosting), or no
+    /// longer with `None`: the old listener's thread drops its pool, a new
+    /// one starts; nothing when the relays are the same. Never blocks.
+    pub(crate) fn listen_on(&mut self, pool: Option<PoolConfig>) -> io::Result<()> {
+        if pool == self.pool {
+            return Ok(());
+        }
+        self.listener = None;
+        self.listener = pool.clone().map(|p| Listener::start(p, self.me.clone())).transpose()?;
+        self.pool = pool;
+        Ok(())
     }
 
     /// The listener's offers, answered by `ep` (`answer_signalled` with the
@@ -335,6 +358,7 @@ impl HostReach {
     /// Stops listening (the thread drops its pool).
     pub(crate) fn stop(&mut self) {
         self.listener = None;
+        self.pool = None;
     }
 }
 

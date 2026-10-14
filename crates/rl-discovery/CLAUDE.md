@@ -14,7 +14,7 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   `handshake`, `turn_note`, the `Announcer`, STUN's codec) is sans-IO (no sockets, no threads, no clock:
   time is an argument) because plan 13 builds parts of this crate for WASM.
   Sockets and threads belong only to drivers (`relay`, `stun::public_ip`,
-  `hosting::AddressWatch`, `ping`).
+  `ping`).
 - **Public API** (`lib.rs`): modules `announce`, `defaults`, `handshake`,
   `hosting`, `list`, `nip44`, `nostr`, `ping`, `pool`, `stun`, `turn_note`
   (and `test_relay`, below);
@@ -25,7 +25,7 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   `Filter`, `ToRelay`, `FromRelay`, `KIND_ANNOUNCE`, `KIND_HANDSHAKE`,
   `Pool`, `PoolConfig`, `PoolEvent`, `RelayStatus`, `Timings`, `GameList`,
   `ListedGame`, `Ping`, `Pinger`, `GameSummary`, `Hosting`, `Region`,
-  `Announcer`, `announcement`, `parse_announcement`, `AddressWatch`,
+  `Announcer`, `announcement`, `parse_announcement`,
   `Publisher`, `relay_hints`, `invite`, `binding_request`,
   `parse_binding_response`, `public_ip`, `Asker`, `Inbound`, `Inbox`,
   `Reply`, `Request`, `KIND_TURN`, `TurnList`, `TurnNote`, `TurnPick`,
@@ -333,15 +333,10 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   its next note). `filter()` has no `since` (no clock); `filter_since(now)` does.
 
 - **`hosting`** (plan 12a Task 10: shared by rl-server and rl-game, moved
-  from rl-server's `finding.rs`): `AddressWatch` (N40; plan 12b's N47
-  retires it: rl-server no longer uses it (Task 8), the game's use and
-  then the type go in Task 9; a driver: the
-  configured address wins; else `stun::public_ip(stun, STUN_DEADLINE 3 s)`
-  on a thread at the start and every `ADDRESS_EVERY` (10 minutes), an
-  answer kept only when `is_global`; a later round without an answer
-  keeps the address, one answering a non-public address drops it; `poll`
-  returns a log line when the address is first settled or changes),
-  `relay_hints` (default relays by index, plus the first other URL of at
+  from rl-server's `finding.rs`; sans-IO): plan 12b's N47 retired N40's
+  `AddressWatch` (a host's address is its reachability's, rl-online's,
+  never one STUN learnt; removed in Task 9 with its test; `stun::public_ip`
+  stays for `rl-cli stun-probe`), `relay_hints` (default relays by index, plus the first other URL of at
   most `MAX_URL_BYTES`), `local_relays(relays)` (every relay `localhost`
   or a loopback/private IP literal: lists may take local addresses
   (PF12-8) and a host may announce a private configured address; a host
@@ -375,7 +370,7 @@ from fresh keys leaving the whole burst of 20 to honest offers
 `tests/turn_note.rs`: notes, validation, local addresses, the pick order,
 the flood bound, closing notes, a closing-note flood keeping a closed
 relay's tombstone, fuzzed notes; `tests/invite.rs`: invite codes (round trips, hints, damage, proptest `encode_always_decodes`); unit tests of `hosting` (hints, IPv4-only
-invites, the address watch's answers, the publisher's notes and closing)
+invites, `local_relays`, the publisher's notes and closing)
 and `ping` (an open and a closed port, the bound); `tests/pool.rs`: the pool against the test relay (silent, dripping,
 slow, slow-reading: every frame arrives intact through partial writes,
 over `ws://` and `wss://`; a relay dying mid-frame), a flooding relay and unreachable relays: a

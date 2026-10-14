@@ -80,9 +80,12 @@ pub struct Net {
     pub lagging: bool,
     /// LAN announcements while hosting a Public or LAN game.
     pub announcer: Option<Announcer>,
-    /// What a hosted game does to be found (plan 12a): its address, its
-    /// invite, a Public game's notes.
+    /// What a hosted game does to be found (plan 12a): its invite, a
+    /// Public game's notes, its lobby lines (plan 12b: its reachability).
     pub hosted: Option<crate::finding::Hosted>,
+    /// A client's path to its host and the host's end (or the TURN relay's)
+    /// as last shown (`OnlinePeer::connection`, following ICE).
+    pub connection: Option<(rl_proto::Path, std::net::SocketAddr)>,
     /// The hosted game has a password (the LAN announcement says so).
     pub password: bool,
     /// The hosted game's most players (the LAN announcement's).
@@ -133,6 +136,7 @@ impl Net {
             lagging: false,
             announcer: None,
             hosted: None,
+            connection: None,
             password: false,
             max_players: 0,
             announce: None,
@@ -173,6 +177,7 @@ pub fn member_view(m: &Member) -> MemberView {
         download: m.download,
         ping_ms: m.ping_ms,
         admin: m.admin,
+        path: m.path.map(|p| rl_online::join::path_tag(p).to_string()),
     }
 }
 
@@ -219,6 +224,8 @@ pub fn lobby_view(
         prompt,
         invite: None,
         listing: None,
+        connection: None,
+        reach: Vec::new(),
     }
 }
 

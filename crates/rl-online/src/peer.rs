@@ -363,6 +363,17 @@ impl OnlinePeer {
         Some(h.reach.now(self.endpoint.endpoint()?))
     }
 
+    /// A host listens on `pool`'s relays from now on (N54; the relays
+    /// edited while hosting: the game's Options), or on none: the old
+    /// listener's thread drops its pool, a new one starts. Never blocks;
+    /// nothing on a client, a closed peer, or the same relays.
+    pub fn listen_on(&mut self, pool: Option<rl_discovery::PoolConfig>) -> io::Result<()> {
+        match &mut self.side {
+            Side::Host(h) if !self.closed => h.reach.listen_on(pool),
+            _ => Ok(()),
+        }
+    }
+
     /// A client's path to its host and the host's end (or the TURN
     /// relay's), once its link opened; the path follows ICE.
     pub fn connection(&self) -> Option<(Path, SocketAddr)> {

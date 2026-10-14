@@ -21,7 +21,7 @@ pub use announce::{
     AnnounceError, Announcer, GameSummary, Hosting, Region, announcement, parse_announcement,
 };
 pub use handshake::{Asker, Inbound, Inbox, Reply, Request};
-pub use hosting::{AddressWatch, Publisher, invite, relay_hints};
+pub use hosting::{Publisher, invite, relay_hints};
 pub use invite::{Invite, InviteError, MAX_CODE, MAX_DEFAULT_HINTS, MAX_URL_BYTES, MAX_URL_HINTS, RelayHint};
 pub use list::{GameList, ListedGame, Ping};
 pub use nostr::{

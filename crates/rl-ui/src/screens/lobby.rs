@@ -7,7 +7,9 @@
 //! state) and the chat; below, Start and "Force start" for the host, else
 //! "Waiting for the host". The host's invite code (Copy) and, for a
 //! public game, whether it is listed on the Internet, over the setup
-//! (plan 12a). Ready is disabled while this player lacks
+//! (plan 12a); under them its reachability's lines (plan 12b: its
+//! router's port, its relays), and on a client how it reaches its host;
+//! each member's path tag beside its ping. Ready is disabled while this player lacks
 //! required content. Content over the prompt asks "Download" or "Leave"
 //! first. Back leaves the lobby, after a confirmation when a match runs.
 
@@ -195,8 +197,14 @@ fn setup(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mut Vec<UiAct
     let before = view.setup.clone();
     let mut p = before.clone();
     ScrollArea::vertical().id_salt("lobby setup").auto_shrink([false, false]).show(ui, |ui| {
-        if view.invite.is_some() || view.listing.is_some() {
+        if view.invite.is_some() || view.listing.is_some() || !view.reach.is_empty() {
             section(ui, "Invite", |ui, _| invite(ui, view));
+            ui.add_space(SECTION_GAP);
+        }
+        if let Some(c) = &view.connection {
+            section(ui, "Connection", |ui, _| {
+                ui.label(RichText::new(c).color(Color32::from_gray(190)));
+            });
             ui.add_space(SECTION_GAP);
         }
         section(ui, "Your weapons", |ui, _| {
@@ -233,8 +241,9 @@ fn setup(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mut Vec<UiAct
     }
 }
 
-/// The hosted game's invite code with its Copy (egui's clipboard), and
-/// whether a public game is listed on the Internet.
+/// The hosted game's invite code with its Copy (egui's clipboard),
+/// whether a public game is listed on the Internet, and how players reach
+/// it (each line wraps in the column).
 fn invite(ui: &mut Ui, view: &LobbyView) {
     if let Some(code) = &view.invite {
         ui.horizontal(|ui| {
@@ -246,6 +255,9 @@ fn invite(ui: &mut Ui, view: &LobbyView) {
     }
     if let Some(listing) = &view.listing {
         ui.label(RichText::new(listing).weak());
+    }
+    for line in &view.reach {
+        ui.label(RichText::new(line).color(Color32::from_gray(190)));
     }
 }
 
@@ -369,6 +381,10 @@ fn member(ui: &mut Ui, view: &LobbyView, m: &MemberView, v: &mut View, out: &mut
                     .small()
                     .weak(),
             );
+            if let Some(path) = &m.path {
+                ui.label(RichText::new(path).small().color(theme::ACCENT))
+                    .on_hover_text("How the host reaches this player");
+            }
             ui.label(RichText::new(&m.seat).small());
             ui.label(if m.ready {
                 RichText::new("✔ ready").color(Color32::from_rgb(120, 220, 120))

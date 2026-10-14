@@ -5,28 +5,31 @@
 //!   list): name, map, mod, players, ping, region and a lock for a
 //!   password. A click selects a game (the app measures its ping); Join
 //!   joins it, expecting its key; "Block this host" hides its games for
-//!   good. A game of another version is greyed out ("needs version …"),
-//!   one without a public address "cannot be joined yet". Above the list,
-//!   "No relay reachable" or "Searching…" until a relay sent its games.
+//!   good. A game of another version is greyed out ("needs version …");
+//!   one without an address (plan 12b, N46) is joined through the relays,
+//!   its ping column "via relays". Above the list, "No relay reachable" or
+//!   "Searching…" until a relay sent its games.
 //! - **LAN:** the games announced on the local network (a click joins; a
 //!   locked one asks for its password in the Direct tab).
 //! - **Direct:** an address or an invite code (`rlx1…`, any case; the app
 //!   tells them apart) and a password (the last one typed remembered).
 //!
-//! "Host a game" below.
+//! "Host a game" below, and while a join waits, its step (the app's
+//! `MenuData::joining`) or "Connecting…".
 
 use egui::{Button, Color32, Grid, Key, RichText, ScrollArea, TextEdit, Ui, vec2};
 
 use super::{MenuData, footer, form_row, message, page, primary, section};
-use crate::online::{
-    ADDRESS_CHARS, CANNOT_JOIN_YET, InternetEntry, InternetStatus, PASSWORD_CHARS, Password, is_invite,
-};
+use crate::online::{ADDRESS_CHARS, InternetEntry, InternetStatus, PASSWORD_CHARS, Password, is_invite};
 use crate::state::{Screen, UiAction, UiState};
 
 const WIDTH: f32 = 900.0;
 /// A tab's button.
 const TAB: egui::Vec2 = vec2(130.0, 34.0);
 const GREY: Color32 = Color32::from_gray(120);
+/// The ping column of a game without an address (N46: joined through the
+/// relays; its ping is not measured).
+pub const VIA_RELAYS: &str = "via relays";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Tab {
@@ -143,11 +146,10 @@ fn internet(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<Ui
     let Some(g) = selected.and_then(|k| games.iter().find(|g| g.key == k)) else { return };
     ui.add_space(8.0);
     let full = g.players >= g.max_players;
-    let why_not = match (&g.incompatible, g.addr) {
-        (Some(v), _) => Some(v.clone()),
-        (None, None) => Some(format!("This game {CANNOT_JOIN_YET}: it has no public address.")),
-        (None, Some(_)) if full => Some("This game is full.".into()),
-        _ => None,
+    let why_not = match &g.incompatible {
+        Some(v) => Some(v.clone()),
+        None if full => Some("This game is full.".into()),
+        None => None,
     };
     let v = &mut data.multiplayer;
     let mut join = false;
@@ -176,13 +178,9 @@ fn internet(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<Ui
             out.push(UiAction::BlockHost(g.key));
         }
     });
-    if join
-        && !connecting
-        && why_not.is_none()
-        && let Some(addr) = g.addr
-    {
+    if join && !connecting && why_not.is_none() {
         let password = g.password.then(|| Password(v.internet_password.clone()));
-        out.push(UiAction::JoinListed { addr, key: g.key, password });
+        out.push(UiAction::JoinListed { addr: g.addr, key: g.key, password });
     }
 }
 
@@ -199,10 +197,13 @@ fn row(ui: &mut Ui, g: &InternetEntry, selected: &mut Option<[u8; 32]>) {
     ui.label(text(format!("{}/{}{playing}", g.players, g.max_players)));
     let ping = match (&g.incompatible, g.addr) {
         (Some(v), _) => v.clone(),
-        (None, None) => CANNOT_JOIN_YET.into(),
+        (None, None) => VIA_RELAYS.into(),
         (None, Some(_)) => g.ping.text(),
     };
-    ui.label(text(ping));
+    let r = ui.label(text(ping));
+    if g.incompatible.is_none() && g.addr.is_none() {
+        r.on_hover_text("No address to measure: joined through the Nostr relays.");
+    }
     ui.label(text(g.region.label().into()));
     ui.label(if g.password { "🔒" } else { "" });
     ui.end_row();
@@ -274,10 +275,11 @@ fn direct(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<UiAc
     }
 }
 
-/// "Connecting…", the app's status line and the failure, under the button.
+/// "Connecting…" (or the join's step), the app's status line and the
+/// failure, under the button.
 pub(super) fn status(ui: &mut Ui, state: &UiState, data: &MenuData) {
     if state.is_connecting() {
-        ui.label("Connecting…");
+        ui.label(data.joining.as_deref().unwrap_or("Connecting…"));
     }
     if let Some(s) = &data.online_status {
         ui.label(RichText::new(s).color(Color32::from_gray(190)));

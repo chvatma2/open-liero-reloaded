@@ -25,11 +25,11 @@ pub use match_prefs::{
     MatchPrefs, RulePrefs, TIME_LIMIT_RANGE,
 };
 pub use online::{
-    ADDRESS_CHARS, CANNOT_JOIN_YET, CHAT_CHARS, CHAT_KEY, DEFAULT_PORT, DownloadCacheView, DownloadView,
-    FindingSettings, HostPrefs, InternetEntry, InternetStatus, InternetView, LanEntry, LobbyCommand,
-    LobbyView, MAX_PLAYERS, MAX_SERVERS, MIN_PLAYERS, MemberView, OnlineSettings, PASSWORD_CHARS,
-    PHASE_LOBBY, Password, PingView, Region, SEAT_SPECTATOR, Visibility, is_invite, key_hex, megabytes,
-    parse_key_hex, valid_relay, valid_stun,
+    ADDRESS_CHARS, CHAT_CHARS, CHAT_KEY, DEFAULT_PORT, DownloadCacheView, DownloadView, FindingSettings,
+    HostPrefs, InternetEntry, InternetStatus, InternetView, LanEntry, LobbyCommand, LobbyView, MAX_PLAYERS,
+    MAX_SERVERS, MAX_TURN, MIN_PLAYERS, MemberView, OnlineSettings, PASSWORD_CHARS, PHASE_LOBBY, Password,
+    PingView, Region, SEAT_SPECTATOR, Visibility, is_invite, key_hex, megabytes, parse_key_hex, turn_parts,
+    turn_shown, valid_relay, valid_stun, valid_turn,
 };
 pub use profiles::{
     CPU_COLOURS, DEFAULT_WEAPONS, MAX_NAME_CHARS, MAX_PROFILES, NEW_COLOURS, NameError, PROFILES_VERSION,

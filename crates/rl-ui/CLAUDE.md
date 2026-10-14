@@ -105,13 +105,17 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   the profile playing), replays (`replays.rs`, each file's header problem
   shown), options (`options.rs`, 720 wide: Video (with the HUD layout),
   Audio, Keys and Online tabs,
-  centred; Online (scrolling): "Finding games" (Region, Public address),
+  centred; Online (scrolling): "Finding games" (Region, Public address,
+  plan 12b's "Open the game's port on my router (UPnP/NAT-PMP/PCP)"),
   Relays and STUN servers (each row's Remove, "New relay"/"Add relay"
   with why it cannot add, in red beside it and on Add's hover: "needs
   wss:// or ws://", "needs host:port", "already listed", "the list is
   full",
-  "Reset relays to defaults"; the same for STUN), Blocked hosts (Unblock),
-  each change one `SetFinding`; then "Download cache: N MB" and Clear from
+  "Reset relays to defaults"; the same for STUN), "TURN relays" (the
+  same, no Reset: "needs user:pass@host:port", at most `MAX_TURN`, each
+  row without its password, `turn_shown`), Blocked hosts (Unblock),
+  each change one `SetFinding` (relay edits reconnect the relays in use,
+  the rest applies to the next game hosted or joined: the app's); then "Download cache: N MB" and Clear from
   `MenuData::download_cache` (`DownloadCacheView`: the app's bytes and
   whether Clear may run, else why, the disabled button's hover; `Err`:
   none, and why) → `UiAction::ClearDownloadCache`, which only the options
@@ -177,26 +181,41 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   "No relay reachable", "Searching…", "No games found"; a grid of
   `InternetEntry`: name (selects: `MenuData::selected_game`, which the app
   pings), map, mod, players, ping (`PingView`), region, a lock; another
-  version greyed with "needs version …", no address `CANNOT_JOIN_YET`;
-  the selected game's "Game password", Join (`JoinListed { addr, key,
-  password }` → `JoinGame { expected_host: Some(key) }`, not remembered;
-  disabled with its reason on hover) and "Block this host" (`BlockHost`
+  version greyed with "needs version …"; plan 12b: one without an address
+  is joinable (through the relays, the app's), its ping column
+  `VIA_RELAYS` ("via relays"); the selected game's "Game password", Join
+  (`JoinListed { addr: Option<SocketAddr>, key, password }` → `JoinGame {
+  addr: Option<String>, expected_host: Some(key) }`, not remembered;
+  disabled with its reason on hover: another version, full) and "Block this host" (`BlockHost`
   → `AppCommand::BlockHost`, the hex key saved in
   `online.finding.blocked`)), **LAN** (today's list) and **Direct**
   ("Address or invite code": `Join` as before, `is_invite` text, `rlx1`
   any case or at least 60 letters and digits (a typo in the prefix: the
   app then says "damaged", never looks it up as a name), said to be an
-  invite; the app decodes it). The Internet tab's password is cleared
+  invite; the app decodes it). While a join waits, the footer says its
+  step (`MenuData::joining`, the app's `JoinStep` in words), else
+  "Connecting…". The Internet tab's password is cleared
   when the selection changes (`View::password_for`: one game's password
   is never offered to another, final review B-M7). `FindingSettings`
   (`online.finding`): `region` (`Region`, rl-discovery's mirrored), `relays`
   and `stun` (`None`: the app's defaults, `MenuData::default_relays`/
   `default_stun`; `valid_relay`, `valid_stun`, at most `MAX_SERVERS`),
-  `public_address` (empty: STUN), `blocked` (64 lowercase hex,
-  `key_hex`/`parse_key_hex`, at most `MAX_BLOCKED`); `sanitize` drops bad
-  entries, one warning each; `SetFinding` saves. The lobby shows
-  `LobbyView::invite` with Copy (`ctx.copy_text`) and `listing` (a Public
-  game's listing line, an Invite game's "This code has no address …") in an "Invite" section over the setup, the host's only.
+  `public_address` (empty: none; plan 12b's N47: a manual forward's
+  address), `blocked` (64 lowercase hex, `key_hex`/`parse_key_hex`, at
+  most `MAX_BLOCKED`), `port_mapping` (default true, an older file's too:
+  a manual `Default`), `turn` (the player's TURN servers, `user:pass@host:port`,
+  `valid_turn`/`turn_parts`: the user before the first `:`, the password
+  up to the last `@`; at most `MAX_TURN` 8; none by default, N52);
+  `sanitize` drops bad entries, one warning each (a TURN entry's password
+  never in it); `SetFinding` saves. The lobby shows
+  `LobbyView::invite` with Copy (`ctx.copy_text`), `listing` (a Public
+  game's listing line, an Invite game's "This code joins through the
+  relays" …) and `reach` (plan 12b: the host's reachability lines, under
+  `listing`, wrapping in the column) in an "Invite" section over the
+  setup, the host's only; a client's `connection` ("connected directly to
+  …") in a "Connection" section; each member's `path` tag ("direct",
+  "open port", "punched", "relayed": how the host reaches it) beside its
+  ping.
   **Online matches** (plan 10 task 12): while online the app's
   `MatchStarted` (from any screen) is `Game::Online` in game, no weapon
   selection (the lobby's); Esc opens the match's menu ("Menu", the match
@@ -340,9 +359,14 @@ set; `tests/options.rs`: rebinding never leaves an action unreachable, the
 rebinding flow and the other sections through the widgets, game keys never
 bound, the capture swallowing its key, the download cache's Clear (disabled
 with its reason; none), `options_edit_relays_and_unblock`, the finding
-settings sanitized; `tests/online.rs` also `tabs_and_direct_invite`,
+settings sanitized (TURN entries, `port_mapping` on for an older file),
+`options_edit_turn_relays_and_port_mapping`; `tests/online.rs` also `tabs_and_direct_invite`,
 `internet_games_join_by_key_and_block`, `the_internet_tab_says_no_relay_reachable`,
-`the_lobby_shows_the_invite_and_copies_it`, `the_host_chooses_who_can_join`;
+`the_lobby_shows_the_invite_and_copies_it`, `the_host_chooses_who_can_join`,
+`an_addressless_internet_game_is_joinable` (Join enabled, `addr: None`,
+the join's step as the waiting text), `the_lobby_shows_reach_lines_and_path_tags`;
+`tests/layout.rs`'s `the_lobbys_long_lines_wrap_in_a_narrow_window`
+(1280 × 720 at 1, 2 and 3 pixels a point, 3440 × 1440 at 2);
 `tests/ingame.rs`: the HUD layout,
 the weapon selection, the pause menu, Esc/F5 repeats, the results;
 `tests/import.rs`: `import_runs_off_the_ui_thread_and_reports` on

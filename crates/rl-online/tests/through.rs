@@ -320,6 +320,28 @@ fn a_client_joins_through_nostr_without_an_address() {
     assert!(net.peers[c].ended_with().is_none());
 }
 
+/// A host whose relays were edited listens on the new ones
+/// (`OnlinePeer::listen_on`, plan 12b Task 9): its reachability says so
+/// and a join through the new relay alone reaches it; the same relays
+/// again change nothing.
+#[test]
+fn a_host_listens_on_edited_relays() {
+    let Some(content) = content() else { return };
+    let (old, new) = (TestRelay::start(), TestRelay::start());
+    let (mut net, h, key) = host_on(content, pool(&[&old]));
+    net.peers[h].p.listen_on(Some(pool(&[&new]))).unwrap();
+    net.peers[h].p.listen_on(Some(pool(&[&new]))).unwrap();
+    net.run_until(Duration::from_secs(10), "listening on the new relay", |n| {
+        n.peers[h].p.reachability().is_some_and(|r| r.listening == Listening::On { relays: 1, of: 1 })
+    });
+    let join = Join { direct: None, nostr: Some(nostr(key, pool(&[&new]))) };
+    let c = net.client(self::content().unwrap(), join, ice(), Some(key));
+    joined(&mut net, h, c, Duration::from_secs(15));
+    // No relay: no longer listening.
+    net.peers[h].p.listen_on(None).unwrap();
+    assert_eq!(net.peers[h].p.reachability().unwrap().listening, Listening::Off);
+}
+
 #[test]
 fn a_client_joins_through_a_turn_relay_found_on_nostr() {
     let Some(content) = content() else { return };

@@ -74,9 +74,13 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   and the joiner's pool stopped on their threads, `Endpoint::shutdown`,
   the rest of the peer dropped on a thread `rl-online drop` (its content
   worker waits up to 2 s for a job); never blocks; `Shutdown::wait(until)`
-  waits at most 1 s for the port mapping's deletion, `true` without one;
-  rl-server, rl-cli and the game are to wait on it at exit: wired in
-  plan 12b's Tasks 8-10, not yet);
+  waits at most 1 s for the port mapping's deletion, `true` once the
+  router confirmed it or without one; rl-server (Task 8) and the game
+  (Task 9) wait on it at exit, rl-cli is to (Task 10));
+  `listen_on(pool)` (a host listens on these relays from now on, or on
+  none: the relays edited in the game's Options while hosting; the old
+  listener's thread drops its pool, a new one starts; nothing on a
+  client, a closed peer or the same relays; never blocks);
   `LobbyHandle::revision` (the host's `LobbyHost::revision`).
   `test_seed_override`, `test_serve_instead` (a host serves another
   pack's archive for a pack) and `test_prompt_limit` (a client's prompt
@@ -360,7 +364,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   mapping is not `Trying` and `stun_settled`, `Endpoint::gathered`;
   `lines()`: the router's line, the configured address's, a symmetric
   NAT's, the listener's, in that order). `HostReach` (crate-private):
-  `start(listen, me)`, `answer(ep, now)`, `now(ep)`, `changed(ep)` (a
+  `start(listen, me)`, `listen_on(pool)` (another listener on other
+  relays), `answer(ep, now)`, `now(ep)`, `changed(ep)` (a
   report when the lines, `settled` or `direct` changed), `stop`.
   `Listener` (crate-private): a
   thread `rl-online listen` owning the `Pool` and the `Inbox` (whose
@@ -437,7 +442,8 @@ honest joiner starting 1 s in connects during the flood, more than 8
 silent offers answered, all `Answer`); a host's reachability on a
 `FakeGateway` (external 127.0.0.2, UPnP) and one relay, its exact lines;
 a host's shutdown returning at once and its `wait` seeing the mapping
-deleted (NT-2). `join.rs`' and `reach.rs`' unit tests: every text
+deleted (NT-2); a host listening on edited relays (`listen_on`: a join
+through the new relay alone, then none: `Listening::Off`). `join.rs`' and `reach.rs`' unit tests: every text
 exactly, the relays' order, refusals told from a slow relay or a
 transient one, the answer's port, `direct`, `settled`, the listener's
 status, stale offers skipped. `peer.rs`: a join through Nostr expects

@@ -415,12 +415,15 @@ use rl_ui::{HostPrefs, Profiles, Screen, Settings, Store, UiAction, UiState, Vis
 
 /// A shell of the menus over `dir` playing as `name`, with Classic on Dirt
 /// Level saved as its match (no bot, a `minutes` time limit), no LAN
-/// (tests use no fixed port), hosting on an ephemeral port, and no relay
-/// or STUN server (nothing leaves the machine).
+/// (tests use no fixed port), hosting on an ephemeral port, no relay or
+/// STUN server, no port mapping and every endpoint's address on
+/// 127.0.0.1 (ruling NT-1: nothing leaves the machine, the router is
+/// never asked).
 pub(crate) fn menus(dir: &std::path::Path, store: Store, name: &str, minutes: f32) -> Shell {
     let mut settings = Settings::default();
     settings.online.finding.relays = Some(Vec::new());
     settings.online.finding.stun = Some(Vec::new());
+    settings.online.finding.port_mapping = false;
     let m = &mut settings.gameplay.match_prefs;
     m.mod_id = MOD.into();
     m.level_id = LEVEL.into();
@@ -437,7 +440,13 @@ pub(crate) fn menus(dir: &std::path::Path, store: Store, name: &str, minutes: f3
     let mut sh = Shell::new(cfg, ui, store, Audio::silent());
     sh.set_lan(false);
     sh.set_port(Some(0));
+    sh.test_ice(loopback);
     sh
+}
+
+/// Every candidate on 127.0.0.1 (ruling NT-1).
+pub(crate) fn loopback(ice: &mut rl_net::endpoint::IceConfig) {
+    ice.base_override = Some(std::net::Ipv4Addr::LOCALHOST);
 }
 
 /// One frame of each shell at `now` (their keys from `keys`), as the

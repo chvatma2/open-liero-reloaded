@@ -23,7 +23,7 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `rl-audio`, `rl-input`, `rl-sim`, `rl-modes`, `rl-bots`, `rl-replay`,
   `rl-terrain`, `rl-pack`, `rl-online`, `rl-netcode`, `rl-proto`,
   `rl-lobby` (identities, host settings), `rl-net` (endpoint settings,
-  LAN announcements), `rl-discovery` (the hosted lobby's summary,
+  LAN announcements, `IceConfig`), `rl-discovery` (the hosted lobby's summary,
   `GameSummary::of_lobby`, and `hosting`, shared with rl-server; the
   relay pool, the game list, pings, invites), plus winit,
   wgpu, gilrs and egui / egui-wgpu / egui-winit 0.36.2 (exact pins). Logs
@@ -367,35 +367,66 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `InternetStatus`: `NoRelay` without relays or when none is connected
   and each failed since the start, `Searching` until the list's first
   `EOSE`, else `Listed`. `BlockHost` drops the key's games at once.
-  **Joining**: `JoinGame { addr, password, expected_host }`; text that
-  `is_invite` is decoded (`Invite::decode`: "this invite code is
-  damaged", …), its address joined and its key expected; an invite
-  without an address fails with `INVITE_WITHOUT_ADDRESS`; a listed game's
-  Join expects its key (N37: another is `WRONG_HOST`). **Hosting**
-  (`finding::Hosted`, in `Net::hosted`): the LAN announcer for Public and
-  Lan; for Public and Invite an `AddressWatch` (the settings'
-  `public_address`, else their STUN servers, else `DEFAULT_STUN`; Lan asks
-  nothing) and the invite code (`LobbyView::invite`, the host's only);
-  for Public a `Publisher` signing with the install's identity: notes once
-  the address is settled (the summary's region and address from
-  `Hosted`: `announced_addr`, never a configured address the Internet
-  cannot reach unless every relay is local, and no note at all then,
-  `Hosted::publishes`, final review B-M2; `created_at` the wall clock; the
+  **Joining** (plan 12b, N46): `JoinGame { addr: Option<String>,
+  password, expected_host }` → `start_client`. Text that `is_invite` is
+  decoded (`Invite::decode`: "this invite code is damaged", …) and joined
+  with `Join { direct: invite.addr, nostr }`, its key expected, the
+  relays `join_relays(invite.relay_urls(), settings')` (hints first, at
+  most 8); a typed address or a LAN game is `Join::direct`; a listed
+  game's Join expects its key (N37: another is `WRONG_HOST`), its address
+  directly first then through the settings' relays, and without an
+  address through the relays alone (`listed_join`, `nostr_join`:
+  `NostrJoin { host, pool, region: the settings', turn_from_nostr: true,
+  allow_local: local_relays }`, `None` without relays; neither address nor
+  relays: `NO_WAY_TO_JOIN`). A join through Nostr's endpoint asks the
+  settings' STUN servers and their own TURN servers (`turn_of`:
+  `TurnServerSpec`s of `user:pass@host:port`, rl-online uses the first 2);
+  a direct-only join asks nothing. A typed host name is looked up on a
+  thread (`Resolving`, `rl-game resolve`; `literal` takes an IP address
+  at once), polled by `net_frame` (`poll_resolving`; "Looking up …" the
+  waiting text; Back gives it up): no DNS on the UI thread. Every
+  `OnlineEvent::Joining(step)` is `MenuData::joining` (the Multiplayer
+  screen's waiting text) and a log line; `Connected` and
+  `OnlinePeer::connection` (following ICE, `poll_connection`) are the
+  client's `LobbyView::connection` (`path_text`); every member's
+  `Member::path` its `MemberView::path` (`path_tag`, `net::member_view`).
+  **Hosting** (`finding::Hosted`, in `Net::hosted`): the LAN announcer for
+  Public and Lan; for Public and Invite the endpoint asks the router to
+  open its port (`IceConfig { stun: the settings', port_mapping: the
+  settings', allow_local: local_relays }`) and listens on the settings'
+  relays (`HostListen { pool, public_address: the setting }`, N54; Lan
+  neither); relays edited in Options are listened on at once
+  (`OnlinePeer::listen_on`) and hinted by the invite. Its
+  `OnlineEvent::Reachability` is kept (`Hosted::set_reach`, each new line
+  logged "reach: …"): its address is `Reachability::direct()` (N47: the
+  router's usable mapping, else the public address setting; never STUN's)
+  on the invite (`LobbyView::invite`, the host's only) and, for Public, in
+  the notes (`Hosted::announced`: IPv4, and not a private one on public
+  relays, final review B-M2; with its external port); its lines are
+  `LobbyView::reach` under `listing`. A Public game's `Publisher` signs
+  with the install's identity: notes once the reachability settled, at
+  most `SETTLE_WAIT` (5 s) after hosting (`created_at` the wall clock; the
   first note dated 10 s after this game's last closing note,
-  `Shell::closed_note`, A-M6), the closing note when the lobby is left or
-  lost (`close_hosted`), and `LobbyView::listing`: "Finding the public
-  address…", "Not listed: no public address (forward port N or set it in
-  Options)", `UNREACHABLE_ADDRESS` (a configured address that is private,
-  local or IPv6; never "Listed" then), "Not listed: no relays …", "Not
-  listed: no relay reachable" (checked before "Listed": all relays
-  dropped), "Announcing on the Internet…", "Listed on the Internet" (a
-  relay's `OK` for one of this game's notes: `Internet::forget_ours` at
-  each hosting, B-M1). An Invite game's line is about its code
-  (B-I3): "Finding the public address…", then "This code has no address:
-  forward port N or set the public address in Options"
-  (`INVITE_NO_ADDRESS`) when its code carries none. The invite's relay
-  hints follow Options' relays; a Public game's pool opened on edited
+  `Shell::closed_note`, A-M6), address or not (N46: joined through the
+  relays); none with an unreachable public address setting on public
+  relays (`Hosted::publishes`); the closing note when the lobby is left
+  or lost (`close_hosted`). `LobbyView::listing`: "Finding the public
+  address…" until settled, `UNREACHABLE_ADDRESS`, "Not listed: no relays
+  …", "Not listed: no relay reachable" (checked before "Listed": all
+  relays dropped), "Announcing on the Internet…", "Listed on the Internet"
+  (a relay's `OK` for one of this game's notes: `Internet::forget_ours` at
+  each hosting, B-M1). An Invite game's line is about its code (B-I3):
+  "Finding the public address…", then none with an address, else "This
+  code joins through the relays" (`INVITE_THROUGH_RELAYS`), or without
+  relays `INVITE_JOINS_NOTHING`. A Public game's pool opened on edited
   relays gets the last note again at once (`Hosted::last_note`, `pool`).
+  **Leaving** (ruling NT-2): a peer let go (`release`: leave, its replay
+  taken, `OnlinePeer::shutdown`; `--net-sim`'s host too) never blocks;
+  its `Shutdown` (the router mapping being deleted, rl-net's confirming
+  `PortMapper::close` on a thread) is kept, `Shell::take_unmapping` hands
+  them over as an `Unmapping`, and `main` waits on it (`UNMAP_WAIT`, 1 s
+  in all) after `App` (the window) is dropped, warning when the router did
+  not confirm.
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the default
   restrictions) feeds `rl_content::build_match`, the same assembly as
@@ -537,24 +568,39 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   the counters; it needs `RL_GPU_TESTS`, content and an adapter, else skips.
 
 Test: `cargo nextest run -p rl-game` (the pure parts; `setup`, `session`,
-`tests/finding.rs` (plan 12a; rl-discovery's in-process `TestRelay`, the
-server in-process (`rl-server` a dev-dependency), no STUN: nothing leaves
-the machine, and `online::menus` sets no relay and no STUN server for
-every other test): `a_listed_server_is_joined_from_the_internet_tab`
-(listed with its name, map, region and address, pinged, an impostor key
-refused, the listed key's lobby, the server's invite in upper case
-joins, blocked), `a_public_game_without_an_address_is_listed_unjoinable`
-(the lobby's lines, the invite without an address, listed "cannot be
-joined yet", the invite refused, a damaged code, a direct join, the
-closing note takes it off the list), `the_internet_tab_without_relays`
-(a closed port: "No relay reachable", no frame over 250 ms, hosting and
-a direct join unaffected; none set: at once),
-`the_relays_linger_after_the_multiplayer_screen` (a fake clock: reused
-within 30 s, closed after, the selection cleared),
+`tests/finding.rs` (plans 12a, 12b; rl-discovery's in-process
+`TestRelay`, the server in-process (`rl-server` a dev-dependency with its
+`test-hooks`: `test_gateway` pins its base to 127.0.0.1), no STUN, every
+endpoint's candidates on 127.0.0.1 (`Shell::test_ice`, this crate's
+`test-hooks` feature, enabled by its own dev-dependency, ruling NT-1):
+nothing leaves the machine, and `online::menus` sets no relay, no STUN
+server and no port mapping for every other test, as
+`fixtures/autoplay/settings.ron` does):
+`a_listed_server_is_joined_from_the_internet_tab` (listed with its name,
+map, region and address, pinged, an impostor key refused, the listed
+key's lobby, the server's invite in upper case joins, blocked),
+`a_public_game_without_an_address_is_joined_through_the_relays` (the
+lobby's listing and reach lines, the invite without an address, listed
+without one, its invite joining through Nostr with the steps as the
+waiting text, the client's "connected directly to 127.0.0.1:…" and the
+host's "direct" tag, the listed game joined through the relays, a
+damaged code, a direct join, the closing note takes it off the list),
+`a_listed_server_without_an_address_is_joined_through_nostr` (Task 9's
+end to end), `the_internet_tab_without_relays` (a closed port: "No relay
+reachable", no frame over 250 ms, hosting and a direct join unaffected;
+none set: at once), `the_relays_linger_after_the_multiplayer_screen` (a
+fake clock: reused within 30 s, closed after, the selection cleared),
 `relay_edits_apply_to_the_open_pool`, `block_edits_apply_to_the_open_list`,
-`a_public_host_follows_relay_edits`,
+`a_public_host_follows_relay_edits` (announced and listened on the new
+relay: its invite joins through it alone),
+`a_typed_name_is_looked_up_off_the_frame` (`localhost`: no peer at the
+Join, the lobby frames later; Back gives the lookup up),
 `an_invite_only_game_without_an_address_says_so` (final review B-I2,
-B-I3),
+B-I3; through the relays, or joining nothing without them),
+`quitting_deletes_the_router_mapping` (NT-2: a loopback `FakeGateway`,
+`LateUpnp`, external 127.0.0.2: the reach line and the invite's mapped
+address, leaving returns at once with the mapping still there, the
+`Unmapping` wait sees it deleted),
 `tests/deathmatch.rs` (a Deathmatch to its results, the bots' think
 budget, a recording replayed through a replay session), `tests/menu.rs`
 (starts with missing or broken content, rapid menu actions) and

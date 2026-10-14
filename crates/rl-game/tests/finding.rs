@@ -1,11 +1,15 @@
 //! Finding games from the menus (plan 12a, spec §7.1, N39-N43): the
 //! Internet tab against rl-discovery's in-process test relay, a dedicated
 //! server in-process announcing to it, invites, and relays that cannot be
-//! reached. Nothing leaves the machine: every relay is the test relay or a
-//! closed local port, and no STUN server is asked. Classic on Dirt Level
-//! from `RL_CONTENT_DIR`; skipped with a notice without it.
+//! reached; plan 12b: joins through the relays (N46), the lobby's paths
+//! and reachability, and the router's mapping deleted at quitting (NT-2).
+//! Nothing leaves the machine (ruling NT-1): every relay is the test relay
+//! or a closed local port, no STUN server is asked, every endpoint's
+//! candidates are on 127.0.0.1, and a router is a loopback `FakeGateway`.
+//! Classic on Dirt Level from `RL_CONTENT_DIR`; skipped with a notice
+//! without it.
 
-use std::net::{SocketAddr, TcpListener};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::time::{Duration, Instant};
 
 use rl_content::Content;
@@ -17,13 +21,14 @@ use rl_server::config::Config;
 use rl_sim::Keys;
 use rl_ui::{FindingSettings, HostPrefs, InternetEntry, InternetStatus, Screen, Store, UiAction, Visibility};
 
-use crate::online::{LEVEL, MOD, content_dir, frame, members, menus};
+use crate::online::{LEVEL, MOD, content_dir, frame, loopback, members, menus};
 
-/// `sh`'s relays are `relays` (and no STUN server).
+/// `sh`'s relays are `relays` (and no STUN server, no port mapping).
 fn use_relays(sh: &mut Shell, relays: &[String]) {
     let f = FindingSettings {
         relays: Some(relays.to_vec()),
         stun: Some(Vec::new()),
+        port_mapping: false,
         ..sh.ui.settings().online.finding.clone()
     };
     sh.act(UiAction::SetFinding(f));
@@ -68,8 +73,12 @@ fn listed(sh: &Shell, key: [u8; 32]) -> Option<InternetEntry> {
     sh.data.internet.games.iter().find(|g| g.key == key).cloned()
 }
 
-/// A server on Dirt Level announcing on `relay` from 127.0.0.1.
-fn server_config(relay: &str) -> Config {
+/// A server on Dirt Level announcing on `relay` from 127.0.0.1 (`public`:
+/// its public address setting; else it has none), no STUN server, no port
+/// mapping, its candidates on 127.0.0.1 (the test gateway's pinned base;
+/// the gateway itself, a closed loopback port, is never asked).
+fn server_config(relay: &str, public: bool) -> Config {
+    let address = if public { r#"public_address: Some("127.0.0.1"),"# } else { "" };
     let text = format!(
         r#"(
             name: "Office server",
@@ -77,14 +86,18 @@ fn server_config(relay: &str) -> Config {
             relays: ["{relay}"],
             stun: [],
             port_mapping: false,
-            public_address: Some("127.0.0.1"),
+            {address}
             region: Europe,
             port: 0,
             max_players: 8,
             rotation: [(mod: "{MOD}", level: "{LEVEL}", time_limit: 1.0, kill_limit: -1, lives: -2, bonuses: false)],
         )"#
     );
-    Config::parse(&text).unwrap()
+    let mut cfg = Config::parse(&text).unwrap();
+    let closed = SocketAddr::from((Ipv4Addr::LOCALHOST, 9));
+    cfg.test_gateway =
+        Some(rl_server::config::TestGateway { pmp: closed, ssdp: closed, base: Ipv4Addr::LOCALHOST });
+    cfg
 }
 
 /// Plan 12a Task 10: a dedicated server announces itself to a relay; the
@@ -98,7 +111,7 @@ fn a_listed_server_is_joined_from_the_internet_tab() {
     let relay = TestRelay::start();
     let data = tempfile::tempdir().unwrap();
     let mut server = Server::start(
-        server_config(&relay.url()),
+        server_config(&relay.url(), true),
         Content::open(&dir).unwrap(),
         data.path(),
         &mut std::io::sink(),
@@ -123,7 +136,7 @@ fn a_listed_server_is_joined_from_the_internet_tab() {
         listed(s[0], key).is_some_and(|g| matches!(g.ping, rl_ui::PingView::Ms(_)))
     });
     // Another key at its address: refused.
-    let addr = game.addr.unwrap();
+    let addr = game.addr;
     sh.act(UiAction::JoinListed { addr, key: [9; 32], password: None });
     run_until("the impostor refused", Duration::from_secs(10), &mut [&mut sh], Some(&mut server), |s| {
         !s[0].ui.is_connecting()
@@ -152,25 +165,33 @@ fn a_listed_server_is_joined_from_the_internet_tab() {
     server.shutdown(&mut std::io::sink());
 }
 
-/// Review Focus 3: a Public game without a public address (no STUN
-/// server, none configured) is still hosted and announced; the Internet
-/// tab lists it as "cannot be joined yet", its invite has no address and
-/// says so, the lobby says why it is not listed, and a direct join works.
+/// Plan 12b (N46, N47): a Public game without an address (no mapping, no
+/// public address setting) is listed and joined through the relays: the
+/// host's lobby says how it is reached, its invite (without an address)
+/// joins, as does the listed game; the joiner's lobby says how it is
+/// connected and the host tags it; a damaged code still says so, a direct
+/// join still works, and the closing note takes the game off the list.
 #[test]
-fn a_public_game_without_an_address_is_listed_unjoinable() {
+fn a_public_game_without_an_address_is_joined_through_the_relays() {
     let Some(dir) = content_dir() else { return };
     let relay = TestRelay::start();
     let mut h = menus(&dir, Store::in_memory(), "Hosty", 1.0);
     use_relays(&mut h, &[relay.url()]);
     host_as(&mut h, Visibility::Public);
     let port = h.local_port().unwrap();
-    run_until("the lobby's lines", Duration::from_secs(5), &mut [&mut h], None, |s| {
-        s[0].data.lobby.as_ref().is_some_and(|l| l.invite.is_some() && l.listing.is_some())
+    run_until("listed, taking joins", Duration::from_secs(10), &mut [&mut h], None, |s| {
+        s[0].data.lobby.as_ref().is_some_and(|l| {
+            l.listing.as_deref() == Some("Listed on the Internet")
+                && l.reach.iter().any(|r| r == "Taking joins through 1 of 1 relays")
+        })
     });
     let lobby = h.data.lobby.clone().unwrap();
     assert_eq!(
-        lobby.listing.as_deref(),
-        Some(format!("Not listed: no public address (forward port {port} or set it in Options)").as_str())
+        lobby.reach,
+        [
+            "Port mapping is off: players connect by hole punching or a TURN relay",
+            "Taking joins through 1 of 1 relays"
+        ]
     );
     let invite = Invite::decode(lobby.invite.as_deref().unwrap()).unwrap();
     assert_eq!(invite.addr, None, "no address to give");
@@ -183,11 +204,37 @@ fn a_public_game_without_an_address_is_listed_unjoinable() {
         listed(s[1], invite.key).is_some()
     });
     let game = listed(&c, invite.key).unwrap();
-    assert_eq!(game.addr, None, "cannot be joined yet");
+    assert_eq!(game.addr, None, "joined through the relays");
     assert_eq!(game.name, "Hosty");
-    // Its invite cannot be joined either, and says why.
+    // Its invite joins through the relays; the waiting text follows.
     c.act(UiAction::Join { addr: lobby.invite.clone().unwrap(), password: None });
-    assert_eq!(c.ui.message(), Some(rl_game::shell::INVITE_WITHOUT_ADDRESS));
+    assert!(c.ui.is_connecting(), "{:?}", c.ui.message());
+    let mut steps = Vec::new();
+    run_until("the lobby by invite", Duration::from_secs(15), &mut [&mut h, &mut c], None, |s| {
+        if let Some(step) = &s[1].data.joining
+            && !steps.contains(step)
+        {
+            steps.push(step.clone());
+        }
+        s[1].ui.screen() == Screen::Lobby && members(s[0]) == 2
+    });
+    assert!(steps.contains(&"Asking the game through the relays…".to_string()), "{steps:?}");
+    run_until("the paths", Duration::from_secs(5), &mut [&mut h, &mut c], None, |s| {
+        s[0].data.lobby.as_ref().is_some_and(|l| l.members.iter().any(|m| m.path.is_some()))
+            && s[1].data.lobby.as_ref().is_some_and(|l| l.connection.is_some())
+    });
+    let connection = c.data.lobby.as_ref().unwrap().connection.clone().unwrap();
+    assert_eq!(connection, format!("connected directly to 127.0.0.1:{port}"));
+    let tags: Vec<_> = h.data.lobby.as_ref().unwrap().members.iter().map(|m| m.path.clone()).collect();
+    assert_eq!(tags, [None, Some("direct".to_string())], "the host has no path, its joiner's is direct");
+    assert_eq!(c.data.lobby.as_ref().unwrap().reach, Vec::<String>::new(), "a client has no reach lines");
+    c.act(UiAction::LeaveLobby);
+    // The listed game joins through the relays too.
+    c.act(UiAction::JoinListed { addr: None, key: invite.key, password: None });
+    run_until("the lobby from the list", Duration::from_secs(15), &mut [&mut h, &mut c], None, |s| {
+        s[1].ui.screen() == Screen::Lobby && members(s[0]) == 2
+    });
+    c.act(UiAction::LeaveLobby);
     // A damaged code says so.
     let mut damaged = lobby.invite.clone().unwrap();
     let last = damaged.pop().unwrap();
@@ -195,6 +242,9 @@ fn a_public_game_without_an_address_is_listed_unjoinable() {
     c.act(UiAction::Join { addr: damaged, password: None });
     assert_eq!(c.ui.message(), Some("this invite code is damaged"));
     // The address still joins.
+    run_until("the host forgets the joiner", Duration::from_secs(10), &mut [&mut h, &mut c], None, |s| {
+        members(s[0]) == 1
+    });
     c.act(UiAction::Join { addr: format!("127.0.0.1:{port}"), password: None });
     run_until("the direct join", Duration::from_secs(10), &mut [&mut h, &mut c], None, |s| {
         s[1].ui.screen() == Screen::Lobby && members(s[0]) == 2
@@ -205,6 +255,49 @@ fn a_public_game_without_an_address_is_listed_unjoinable() {
     run_until("the game is gone", Duration::from_secs(10), &mut [&mut h, &mut c], None, |s| {
         listed(s[1], invite.key).is_none()
     });
+}
+
+/// Plan 12b (N46): a dedicated server without an address (no public
+/// address setting, no port mapping, no STUN server) is listed on the
+/// relay; the game's Internet tab, its pool on that relay, selects it and
+/// Join reaches its lobby through Nostr, connected directly to its
+/// loopback port.
+#[test]
+fn a_listed_server_without_an_address_is_joined_through_nostr() {
+    let Some(dir) = content_dir() else { return };
+    let relay = TestRelay::start();
+    let data = tempfile::tempdir().unwrap();
+    let mut server = Server::start(
+        server_config(&relay.url(), false),
+        Content::open(&dir).unwrap(),
+        data.path(),
+        &mut std::io::sink(),
+    )
+    .unwrap();
+    let (key, port) = (server.key(), server.local_port());
+    let mut sh = menus(&dir, Store::in_memory(), "Anna", 1.0);
+    use_relays(&mut sh, &[relay.url()]);
+    sh.act(UiAction::Open(Screen::Multiplayer));
+    run_until("the server is listed", Duration::from_secs(15), &mut [&mut sh], Some(&mut server), |s| {
+        listed(s[0], key).is_some()
+    });
+    let game = listed(&sh, key).unwrap();
+    assert_eq!(game.addr, None, "no address");
+    sh.data.selected_game = Some(key);
+    sh.act(UiAction::JoinListed { addr: game.addr, key, password: None });
+    assert!(sh.ui.is_connecting(), "{:?}", sh.ui.message());
+    run_until("the lobby", Duration::from_secs(15), &mut [&mut sh], Some(&mut server), |s| {
+        s[0].ui.screen() == Screen::Lobby && members(s[0]) == 1
+    });
+    run_until("the connection", Duration::from_secs(5), &mut [&mut sh], Some(&mut server), |s| {
+        s[0].data.lobby.as_ref().is_some_and(|l| l.connection.is_some())
+    });
+    let lobby = sh.data.lobby.clone().unwrap();
+    assert_eq!(lobby.name, "Office server");
+    assert_eq!(lobby.connection, Some(format!("connected directly to 127.0.0.1:{port}")));
+    assert_eq!(lobby.members[0].path.as_deref(), Some("direct"), "the server's view of this player");
+    sh.act(UiAction::LeaveLobby);
+    server.shutdown(&mut std::io::sink());
 }
 
 /// Review Focus 4: relays that cannot be reached (a closed port; or none
@@ -373,7 +466,9 @@ fn block_edits_apply_to_the_open_list() {
 }
 
 /// Final review B-I2: a Public host whose relays change in Options
-/// announces on the new relays at once, and its invite hints them.
+/// announces on the new relays at once, and its invite hints them; plan
+/// 12b: it listens on them too, so its invite (without an address) joins
+/// through the new relay alone.
 #[test]
 fn a_public_host_follows_relay_edits() {
     let Some(dir) = content_dir() else { return };
@@ -388,28 +483,126 @@ fn a_public_host_follows_relay_edits() {
     run_until("announced on the new relay", Duration::from_secs(10), &mut [&mut h], None, |_| {
         !new.events().is_empty()
     });
-    let invite = Invite::decode(h.data.lobby.as_ref().unwrap().invite.as_deref().unwrap()).unwrap();
+    let code = h.data.lobby.as_ref().unwrap().invite.clone().unwrap();
+    let invite = Invite::decode(&code).unwrap();
     assert_eq!(invite.relay_urls(), [new.url()], "the invite hints the new relays");
+    assert_eq!(invite.addr, None);
+    run_until("listening on the new relay", Duration::from_secs(10), &mut [&mut h], None, |s| {
+        s[0].data
+            .lobby
+            .as_ref()
+            .is_some_and(|l| l.reach.iter().any(|r| r == "Taking joins through 1 of 1 relays"))
+    });
+    // A joiner whose own relays are none: the invite's hint alone.
+    let mut c = menus(&dir, Store::in_memory(), "Anna", 1.0);
+    c.act(UiAction::Open(Screen::Multiplayer));
+    c.act(UiAction::Join { addr: code, password: None });
+    run_until("joined through the new relay", Duration::from_secs(15), &mut [&mut h, &mut c], None, |s| {
+        s[1].ui.screen() == Screen::Lobby && members(s[0]) == 2
+    });
 }
 
-/// Final review B-I3: an Invite-only host is told when its code has no
-/// address (no STUN server, none configured), as a Public host is.
+/// A typed host name is looked up on a thread, never in the frame: the
+/// Join returns at once, still connecting without a peer, and the lobby
+/// follows a few frames later.
+#[test]
+fn a_typed_name_is_looked_up_off_the_frame() {
+    let Some(dir) = content_dir() else { return };
+    let mut h = menus(&dir, Store::in_memory(), "Hosty", 1.0);
+    host_as(&mut h, Visibility::Lan);
+    let port = h.local_port().unwrap();
+    let mut c = menus(&dir, Store::in_memory(), "Anna", 1.0);
+    c.act(UiAction::Open(Screen::Multiplayer));
+    c.act(UiAction::Join { addr: format!("localhost:{port}"), password: None });
+    assert!(c.ui.is_connecting(), "{:?}", c.ui.message());
+    assert_eq!(c.local_port(), None, "no peer before the name is looked up");
+    run_until("the lobby", Duration::from_secs(10), &mut [&mut h, &mut c], None, |s| {
+        s[1].ui.screen() == Screen::Lobby && members(s[0]) == 2
+    });
+    // Back while it is looked up gives up: nothing joins afterwards.
+    c.act(UiAction::LeaveLobby);
+    c.act(UiAction::Join { addr: format!("localhost:{port}"), password: None });
+    c.act(UiAction::Back);
+    assert!(!c.ui.is_connecting());
+    run_until("frames", Duration::from_secs(5), &mut [&mut h, &mut c], None, |_| true);
+    std::thread::sleep(Duration::from_millis(200));
+    frame(&mut [&mut h, &mut c], Instant::now(), &mut |_| Keys(0));
+    assert_eq!(c.local_port(), None, "the lookup's answer joins nothing");
+}
+
+/// Final review B-I3, plan 12b: an Invite-only host is told how its code
+/// joins: without an address through its relays, and with no relays
+/// either, that it joins nothing.
 #[test]
 fn an_invite_only_game_without_an_address_says_so() {
     let Some(dir) = content_dir() else { return };
+    let relay = TestRelay::start();
     let mut h = menus(&dir, Store::in_memory(), "Hosty", 1.0);
+    use_relays(&mut h, &[relay.url()]);
     host_as(&mut h, Visibility::Invite);
-    let port = h.local_port().unwrap();
-    run_until("the lobby's lines", Duration::from_secs(5), &mut [&mut h], None, |s| {
-        s[0].data.lobby.as_ref().is_some_and(|l| l.invite.is_some())
+    run_until("the lobby's lines", Duration::from_secs(10), &mut [&mut h], None, |s| {
+        s[0].data.lobby.as_ref().is_some_and(|l| l.invite.is_some() && l.listing.is_some())
     });
     let lobby = h.data.lobby.clone().unwrap();
     assert_eq!(Invite::decode(lobby.invite.as_deref().unwrap()).unwrap().addr, None);
+    assert_eq!(lobby.listing.as_deref(), Some("This code joins through the relays"));
+    h.act(UiAction::LeaveLobby);
+    // No relays: nothing to join through.
+    let mut h = menus(&dir, Store::in_memory(), "Hosty", 1.0);
+    host_as(&mut h, Visibility::Invite);
+    run_until("the lobby's lines", Duration::from_secs(10), &mut [&mut h], None, |s| {
+        s[0].data.lobby.as_ref().is_some_and(|l| l.invite.is_some() && l.listing.is_some())
+    });
     assert_eq!(
-        lobby.listing.as_deref(),
-        Some(
-            format!("This code has no address: forward port {port} or set the public address in Options")
-                .as_str()
-        )
+        h.data.lobby.as_ref().unwrap().listing.as_deref(),
+        Some("This code has no address and no relays: it joins nothing (set relays in Options)")
     );
+}
+
+/// Ruling NT-2: leaving a hosted game starts deleting its router mapping
+/// without blocking the frame, and the exit waits for the router (here a
+/// loopback `FakeGateway` that deletes only 300 ms after the request,
+/// `LateUpnp`), at most a second, after the shell is gone.
+#[test]
+fn quitting_deletes_the_router_mapping() {
+    use rl_net::portmap::fake::{FakeGateway, Misbehaviour};
+    let Some(dir) = content_dir() else { return };
+    // The external address on loopback too (NT-1).
+    let gw = FakeGateway::start(true, false, false, Ipv4Addr::new(127, 0, 0, 2), Misbehaviour::LateUpnp);
+    let (pmp, ssdp) = (gw.pmp(), gw.ssdp());
+    let mut h = menus(&dir, Store::in_memory(), "Hosty", 1.0);
+    h.test_ice(move |ice| {
+        loopback(ice);
+        let SocketAddr::V4(pmp) = pmp else { unreachable!() };
+        ice.gateway = Some(pmp);
+        ice.ssdp = Some(ssdp);
+        ice.allow_local = true;
+    });
+    let f = FindingSettings { port_mapping: true, ..h.ui.settings().online.finding.clone() };
+    h.act(UiAction::SetFinding(f));
+    host_as(&mut h, Visibility::Invite);
+    let port = h.local_port().unwrap();
+    let open =
+        format!("Port {port} is open on your router (UPnP): players join directly at 127.0.0.2:{port}");
+    run_until("the port mapped", Duration::from_secs(10), &mut [&mut h], None, |s| {
+        s[0].data.lobby.as_ref().is_some_and(|l| l.reach.contains(&open))
+    });
+    assert_eq!(gw.mappings().len(), 2, "TCP and UDP");
+    let lobby = h.data.lobby.clone().unwrap();
+    assert_eq!(lobby.listing, None, "the code has the address");
+    let invite = Invite::decode(lobby.invite.as_deref().unwrap()).unwrap();
+    assert_eq!(invite.addr, Some(SocketAddr::from(([127, 0, 0, 2], port))), "N47: the mapping's address");
+    // Leaving returns at once; the router still holds the mapping.
+    let t = Instant::now();
+    h.act(UiAction::LeaveLobby);
+    assert!(t.elapsed() < Duration::from_millis(200), "leaving blocked for {:?}", t.elapsed());
+    assert_eq!(gw.mappings().len(), 2, "being deleted");
+    // Quitting: the shell finishes, then the exit waits for the router.
+    h.finish();
+    let unmapping = h.take_unmapping();
+    drop(h);
+    let t = Instant::now();
+    assert!(unmapping.wait(Duration::from_secs(1)), "the router confirmed");
+    assert!(t.elapsed() < Duration::from_secs(1) + Duration::from_millis(100));
+    assert_eq!(gw.mappings(), vec![], "deleted when the wait returns");
 }

@@ -544,12 +544,14 @@ announcements.
     and hands the usable mapping's external address and its `tcp` to
     `Core::set_mapped` (`mapped()`). **Exit** (N51, ruling NT-2):
     `shutdown(self) -> Shutdown` closes every link as the drop does and
-    hands the mapper to a thread, `rl-net unmap`, at once;
-    `Shutdown::wait(until)` returns once the mapping is deleted (the
-    mapper waits at most `DROP_WAIT`, 1 s) or at `until` (`true` when
-    deleted or none). rl-server waits on it on exit (through
-    `OnlinePeer::shutdown`, Task 8); rl-cli and the game are to (plan 12b
-    Tasks 9-10). Dropping the endpoint
+    hands the mapper to a thread, `rl-net unmap`, at once, which closes
+    it with `PortMapper::close` (the router's confirmation, plan 12b Task
+    9's carried NT-2 item); `Shutdown::wait(until)` returns once the
+    mapping is deleted (the mapper waits at most `DROP_WAIT`, 1 s) or at
+    `until` (`true` when the router confirmed every deletion, or there
+    was no mapping; `false` past `until`, unconfirmed, or no thread).
+    rl-server (Task 8) and the game (Task 9) wait on it at exit through
+    `OnlinePeer::shutdown`; rl-cli is to (Task 10). Dropping the endpoint
     is the fallback: the same thread, nobody waits (a process exiting
     at once may cut it short). `poll` calls
     `Core::poll` every time, so the TURN clients' timers and the STUN

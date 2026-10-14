@@ -5,25 +5,31 @@
 use std::collections::VecDeque;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::{Duration, Instant};
 
 use rl_audio::Audio;
 use rl_content::Content;
-use rl_discovery::{GameSummary, Hosting, Invite};
+use rl_discovery::{GameSummary, Hosting, Invite, PoolConfig};
 use rl_lobby::{HostConfig, Identity};
-use rl_net::endpoint::EndpointConfig;
+use rl_net::endpoint::{EndpointConfig, IceConfig};
 use rl_net::lan::{Announcer, Listener, broadcast_targets};
 use rl_netcode::netsim::Profile;
 use rl_online::content::HOST_RATE;
+use rl_online::join::{join_relays, path_text};
 use rl_online::matches::setup_packs;
-use rl_online::{HostListen, Join, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
+use rl_online::{
+    HostListen, Join, NostrJoin, OnlineEvent, OnlinePeer, PeerContent, PeerRole, Reachability, Shutdown,
+};
 use rl_proto::{LAN_PORT, LobbyState, Look, MatchStartWire};
 use rl_sim::Keys;
 use rl_ui::hud::{LineKind, LogLine};
-use rl_ui::{HostPrefs, InternetView, LobbyCommand, Password, Screen, UiAction, Visibility, is_invite};
+use rl_ui::{
+    FindingSettings, HostPrefs, InternetView, LobbyCommand, Password, Screen, UiAction, Visibility, is_invite,
+};
 
 use super::{MAX_SPECTATORS, NET_SIM_BOTS, Outcome, Playing, Shell};
-use crate::finding::{Hosted, Internet, RELAY_LINGER, relays_of};
+use crate::finding::{Hosted, Internet, RELAY_LINGER, local_relays, region, relays_of, stun_of, turn_of};
 use crate::net::{self, Net, NetView};
 use crate::online::OnlineDriver;
 use crate::session::{Driver, Session};
@@ -40,6 +46,30 @@ impl Shell {
     /// the options' (`--port`; 0 hosts on a free port).
     pub fn set_port(&mut self, port: Option<u16>) {
         self.port = port;
+    }
+
+    /// Tests only: `f` changes the ICE settings of every endpoint this
+    /// shell makes from now on (ruling NT-1: a loopback base, a
+    /// `FakeGateway` instead of the router).
+    #[cfg(feature = "test-hooks")]
+    pub fn test_ice(&mut self, f: impl Fn(&mut IceConfig) + 'static) {
+        self.ice_hook = Some(Box::new(f));
+    }
+
+    /// The ICE settings of an endpoint this shell makes (the tests' hook
+    /// applied last).
+    fn ice(&self, mut ice: IceConfig) -> IceConfig {
+        if let Some(f) = &self.ice_hook {
+            f(&mut ice);
+        }
+        ice
+    }
+
+    /// The router mappings of the peers let go so far, being deleted
+    /// (ruling NT-2): the exit waits for them once the window closed
+    /// ([`Unmapping::wait`], at most [`UNMAP_WAIT`]).
+    pub fn take_unmapping(&mut self) -> Unmapping {
+        Unmapping(std::mem::take(&mut self.unmapping))
     }
 
     /// An online game (a lobby, its match, or `--net-sim`'s) exists: the
@@ -269,9 +299,31 @@ impl Shell {
             admins: Vec::new(),
         };
         let port = self.port.unwrap_or(prefs.port);
-        let endpoint = EndpointConfig { port, impair: self.impair, ..EndpointConfig::default() };
+        // Public and Invite games: the port mapped at the router and STUN
+        // from the game's socket (N48, N51), joins taken on the relays
+        // (N54); a LAN game neither.
+        let finding = &self.ui.settings().online.finding;
+        let (listen, ice) = match prefs.visibility {
+            Visibility::Public | Visibility::Invite => {
+                let relays = relays_of(finding);
+                let ice = IceConfig {
+                    stun: stun_of(finding),
+                    port_mapping: finding.port_mapping,
+                    allow_local: local_relays(&relays),
+                    ..IceConfig::default()
+                };
+                let listen = HostListen {
+                    pool: (!relays.is_empty()).then(|| PoolConfig { relays, ..PoolConfig::default() }),
+                    public_address: finding.public_address.trim().parse().ok(),
+                };
+                (listen, ice)
+            }
+            Visibility::Lan => (HostListen::off(), IceConfig::default()),
+        };
+        let endpoint =
+            EndpointConfig { port, impair: self.impair, ice: self.ice(ice), ..EndpointConfig::default() };
         let peer = OnlinePeer::start(
-            PeerRole::Host { lobby: cfg, listen: HostListen::off() },
+            PeerRole::Host { lobby: cfg, listen },
             endpoint,
             id,
             look,
@@ -297,11 +349,7 @@ impl Shell {
         // A game hosted again right after its closing note: the first note
         // a gap after it, so relays and lists take it at once.
         let after = self.closed_note.map(|c| c.saturating_add(rl_discovery::list::MIN_NOTE_GAP));
-        let (hosted, said) = Hosted::start(prefs.visibility, finding, signer, now, after);
-        if let Some(said) = said {
-            println!("rl-game: {said}");
-        }
-        n.hosted = Some(hosted);
+        n.hosted = Some(Hosted::start(prefs.visibility, finding, signer, now, after));
         self.net = Some(n);
         // The pool may still hold the last hosted game's verdicts: this
         // game is "Listed" on its own notes only (final review B-M1).
@@ -311,35 +359,99 @@ impl Shell {
         Ok(())
     }
 
-    /// Joining from the Multiplayer screen: `addr` is `host[:port]` as
-    /// typed (the port defaults to the options' or `--port`), or an invite
-    /// code (`rlx1…`: its address, its key expected, N42). With
-    /// `expected_host` (an invite's, a listed game's), a host of another
-    /// key is refused (N37).
+    /// Joining from the Multiplayer screen (N46): `addr` is `host[:port]`
+    /// as typed (the port defaults to the options' or `--port`; a name is
+    /// looked up on a thread, [`Shell::poll_resolving`]), or an invite code
+    /// (`rlx1…`: its address first, then through its relays and this
+    /// player's; its key expected, N42); none: through the relays alone to
+    /// `expected_host` (a listed game without an address). With
+    /// `expected_host` (a listed game's), a host of another key is refused
+    /// (N37), and an address that never answers falls back to the relays.
+    /// A typed address or a LAN game joins directly only.
     pub(super) fn start_client(
         &mut self,
-        addr: &str,
+        addr: Option<String>,
         password: Option<Password>,
         expected_host: Option<[u8; 32]>,
     ) -> anyhow::Result<()> {
         self.leave_net();
-        let (to, expected_host) = if is_invite(addr) {
-            let invite = decode_invite(addr)?;
-            let Some(to) = invite.addr else { anyhow::bail!("{INVITE_WITHOUT_ADDRESS}") };
-            (to, Some(invite.key))
-        } else {
-            let default_port = self.port.filter(|&p| p != 0).unwrap_or(self.ui.settings().online.port);
-            (resolve(addr, default_port)?, expected_host)
+        self.data.joining = None;
+        let finding = self.ui.settings().online.finding.clone();
+        let own = relays_of(&finding);
+        let join = match addr {
+            Some(text) if is_invite(&text) => {
+                let invite = decode_invite(&text)?;
+                let relays = join_relays(&invite.relay_urls(), &own);
+                let join = Join { direct: invite.addr, nostr: nostr_join(&finding, invite.key, relays) };
+                return self.start_join(join, password, Some(invite.key));
+            }
+            Some(text) => {
+                let default_port = self.port.filter(|&p| p != 0).unwrap_or(self.ui.settings().online.port);
+                let Some(to) = literal(&text, default_port) else {
+                    // A name: looked up off the UI thread (it may take seconds).
+                    self.data.joining = Some(format!("Looking up {}…", text.trim()));
+                    self.resolving = Some(Resolving::start(text, default_port, password, expected_host));
+                    return Ok(());
+                };
+                listed_join(&finding, to?, expected_host)
+            }
+            None => {
+                let key =
+                    expected_host.ok_or_else(|| anyhow::anyhow!("no address and no host key to join"))?;
+                Join { direct: None, nostr: nostr_join(&finding, key, join_relays(&[], &own)) }
+            }
         };
+        self.start_join(join, password, expected_host)
+    }
+
+    /// Starts the peer joining as `join` says (the ICE settings for a join
+    /// through Nostr: STUN from the game's socket, this player's TURN
+    /// servers, N48, N52).
+    fn start_join(
+        &mut self,
+        join: Join,
+        password: Option<Password>,
+        expected_host: Option<[u8; 32]>,
+    ) -> anyhow::Result<()> {
+        if join.direct.is_none() && join.nostr.is_none() {
+            anyhow::bail!("{NO_WAY_TO_JOIN}");
+        }
         let (id, look) = self.me()?;
         let content = self.open_content()?;
-        let role =
-            PeerRole::Client { join: Join::direct(to), password: password.map(|p| p.0), expected_host };
-        let endpoint = EndpointConfig { port: 0, impair: self.impair, ..EndpointConfig::default() };
+        let finding = &self.ui.settings().online.finding;
+        let ice = match &join.nostr {
+            Some(_) => IceConfig { stun: stun_of(finding), turn: turn_of(finding), ..IceConfig::default() },
+            None => IceConfig::default(),
+        };
+        let what = match (join.direct, &join.nostr) {
+            (Some(to), None) => format!("{to}"),
+            (Some(to), Some(_)) => format!("{to}, then through the relays"),
+            (None, _) => "through the relays".to_string(),
+        };
+        let role = PeerRole::Client { join, password: password.map(|p| p.0), expected_host };
+        let endpoint =
+            EndpointConfig { port: 0, impair: self.impair, ice: self.ice(ice), ..EndpointConfig::default() };
         let peer = OnlinePeer::start(role, endpoint, id, look, content, None, self.peer_content())?;
-        println!("rl-game: joining {to}");
+        println!("rl-game: joining {what}");
         self.net = Some(Net::new(peer, false));
         Ok(())
+    }
+
+    /// The typed host name looked up (a frame of `net_frame`): its join
+    /// starts, or the menus hear why not.
+    fn poll_resolving(&mut self, out: &mut Vec<Outcome>) {
+        let Some(r) = &self.resolving else { return };
+        let found = match r.rx.try_recv() {
+            Ok(found) => found,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err(anyhow::anyhow!("{}: the lookup failed", r.typed)),
+        };
+        let Some(r) = self.resolving.take() else { return };
+        let finding = self.ui.settings().online.finding.clone();
+        let started = found.and_then(|to| {
+            self.start_join(listed_join(&finding, to, r.expected_host), r.password, r.expected_host)
+        });
+        self.connected(started.map(|()| false), out);
     }
 
     /// The menus told: a host's lobby is up at once (`LobbyJoined`); a
@@ -444,8 +556,8 @@ impl Shell {
     /// [`Shell::leave_net`], and `--net-sim`'s host goes too.
     pub(super) fn leave_online(&mut self) {
         self.leave_net();
-        if let Some(mut h) = self.sim_host.take() {
-            h.leave();
+        if let Some(h) = self.sim_host.take() {
+            self.unmapping.push(h.shutdown());
         }
         self.impair = None;
     }
@@ -460,18 +572,23 @@ impl Shell {
         if let Some(p) = self.net.take().and_then(|n| n.peer) {
             self.release(p);
         }
+        self.resolving = None;
         self.data.lobby = None;
         self.data.online_status = None;
+        self.data.joining = None;
         self.data.weapons = None;
     }
 
-    /// Lets `peer` go: its goodbye, and the replay it is making kept (it is
-    /// saved when done: [`Shell::poll_replays`]).
+    /// Lets `peer` go: its goodbye, the replay it is making kept (it is
+    /// saved when done: [`Shell::poll_replays`]), and its shutdown started
+    /// (ruling NT-2: never blocking; its router mapping deleted on a
+    /// thread, which the exit waits for).
     fn release(&mut self, mut peer: OnlinePeer) {
         peer.leave();
         if let Some(r) = peer.take_replay() {
             self.replays.push(r);
         }
+        self.unmapping.push(peer.shutdown());
     }
 
     /// The replays of matches whose peer is gone, saved as they are done
@@ -519,11 +636,12 @@ impl Shell {
         if let Some(p) = self.net.take().and_then(|n| n.peer) {
             self.release(p);
         }
-        if let Some(mut h) = self.sim_host.take() {
-            h.leave();
+        if let Some(h) = self.sim_host.take() {
+            self.unmapping.push(h.shutdown());
         }
         self.impair = None;
         self.data.lobby = None;
+        self.data.joining = None;
         self.data.weapons = None;
         for c in self.ui.update(UiAction::OnlineFailed(why)) {
             self.carry(c, out);
@@ -542,6 +660,7 @@ impl Shell {
         self.poll_lan(now);
         self.poll_sim_host(now);
         self.poll_internet(now);
+        self.poll_resolving(&mut out);
         if self.net.is_none() {
             return out;
         }
@@ -557,6 +676,7 @@ impl Shell {
         };
         self.on_net_events(events, &mut out);
         self.poll_hosted(now);
+        self.poll_connection();
         let Some(n) = &mut self.net else { return out };
         if let Some((a, info)) = n.announcer.as_mut().zip(n.announce.as_ref()) {
             a.tick(now, info);
@@ -623,9 +743,15 @@ impl Shell {
                 | OnlineEvent::Restored(_)
                 | OnlineEvent::Ticked(_)
                 | OnlineEvent::Confirmed(_) => {}
-                // Joins through Nostr, paths and reachability: shown by
-                // plan 12b's Task 9.
-                OnlineEvent::Joining(_) | OnlineEvent::Reachability(_) | OnlineEvent::Connected { .. } => {}
+                OnlineEvent::Joining(step) => {
+                    println!("rl-game: {step}");
+                    self.data.joining = Some(step.to_string());
+                }
+                OnlineEvent::Reachability(r) => self.reached(r),
+                OnlineEvent::Connected { path, remote } => {
+                    println!("rl-game: {}", path_text(path, remote));
+                    self.poll_connection();
+                }
             }
         }
     }
@@ -664,18 +790,18 @@ impl Shell {
             // The level's name from the peer's content (`weapons` holds it).
             let level = &state.setup.level_id;
             let map_name = n.weapons.as_ref().and_then(|w| w.0.content.pack_name(level)).unwrap_or_default();
-            let (region, addr) = n
+            let (region, announced) = n
                 .hosted
                 .as_ref()
-                .map_or((rl_discovery::Region::Unknown, None), |h| (h.region, h.announced_addr()));
+                .map_or((rl_discovery::Region::Unknown, None), |h| (h.region, h.announced()));
             let hosting = Hosting {
                 port,
                 max_players: n.max_players,
                 max_spectators: MAX_SPECTATORS,
                 password: n.password,
                 region,
-                addr,
-                public_port: None,
+                addr: announced.map(|a| a.ip()),
+                public_port: announced.map(|a| a.port()),
                 map_name: map_name.into(),
             };
             let summary = GameSummary::of_lobby(state, &hosting);
@@ -684,7 +810,7 @@ impl Shell {
             if let Some(h) = &mut n.hosted {
                 h.summary = Some(summary);
                 // The lobby view is made again: its invite lines too.
-                h.shown = (None, None);
+                h.shown = (None, None, Vec::new());
             }
         }
         let can_start = if host {
@@ -693,6 +819,7 @@ impl Shell {
             Err("Waiting for the host".into())
         };
         let weapons = n.weapons.as_ref().and_then(|w| w.1.clone());
+        let connection = n.connection.map(|(path, remote)| path_text(path, remote));
         let welcomed = !n.joined && me.is_some();
         n.joined |= welcomed;
         // `--net-sim`: ready whenever the lobby gathers (after each match
@@ -708,7 +835,11 @@ impl Shell {
             self.data.weapons = weapons;
         }
         self.data.lobby = me.map(|me| net::lobby_view(state, me, host, can_start, downloads, prompt));
+        if let Some(l) = &mut self.data.lobby {
+            l.connection = connection;
+        }
         if welcomed {
+            self.data.joining = None;
             self.data.chat.clear();
             for c in self.ui.update(UiAction::LobbyJoined) {
                 self.carry(c, out);
@@ -910,27 +1041,35 @@ impl Shell {
         }
     }
 
-    /// A hosted game's finding (plan 12a): its public address learnt (said
-    /// once, and when it changes), a Public game's notes published once the
-    /// address is settled (the first carries it), and the lobby's invite
-    /// and listing lines kept current.
+    /// A hosted game's finding (plans 12a, 12b): its listener and invite
+    /// following the relays edited in Options, a Public game's notes
+    /// published once its reachability settled (at most `SETTLE_WAIT`: the
+    /// first carries the direct address when there is one, N47), and the
+    /// lobby's invite, listing and reachability lines kept current.
     fn poll_hosted(&mut self, now: Instant) {
         let port = self.local_port().unwrap_or(0);
         let key = self.identity.as_ref().map(Identity::public);
         let pools = self.relay_pools;
         let relays = relays_of(&self.ui.settings().online.finding);
         let Some(h) = self.net.as_mut().and_then(|n| n.hosted.as_mut()) else { return };
-        if let Some(said) = h.address.poll(now) {
-            println!("rl-game: {said}");
+        // The invite hints the relays as edited in Options and the game
+        // listens on them (final review B-I2; N54); a Public game's pool
+        // follows them in `poll_internet`.
+        let edited = (h.relays != relays).then(|| {
+            h.relays.clone_from(&relays);
+            matches!(h.visibility, Visibility::Public | Visibility::Invite)
+        });
+        if edited == Some(true) {
+            let pool = (!relays.is_empty()).then(|| PoolConfig { relays, ..PoolConfig::default() });
+            if let Some(Err(e)) = self.peer_mut().map(|p| p.listen_on(pool)) {
+                self.log([format!("cannot listen on the edited relays: {e}")]);
+            }
         }
-        // The invite hints the relays as edited in Options (final review
-        // B-I2); a Public game's pool follows them in `poll_internet`.
-        if h.relays != relays {
-            h.relays = relays;
-        }
-        let addr = h.announced_addr();
+        let Some(h) = self.net.as_mut().and_then(|n| n.hosted.as_mut()) else { return };
+        let announced = h.announced();
         if let Some(s) = &mut h.summary {
-            s.addr = addr;
+            s.addr = announced.map(|a| a.ip());
+            s.port = announced.map_or(port, |a| a.port());
         }
         if let Some(i) = &mut self.internet
             && h.publisher.is_some()
@@ -943,7 +1082,7 @@ impl Shell {
                 i.publish(note.clone());
             }
         }
-        if h.address.settled()
+        if h.settled(now)
             && h.publishes()
             && let (Some(p), Some(summary), Some(i)) = (&mut h.publisher, &h.summary, &mut self.internet)
             && let Some(note) = p.tick(now, unix_now(), summary, aux)
@@ -953,13 +1092,34 @@ impl Shell {
             i.publish(note);
         }
         let invite = key.and_then(|k| h.invite(k, port));
-        let listing = h.listing(self.internet.as_ref(), port);
-        if h.shown != (invite.clone(), listing.clone()) {
-            h.shown = (invite.clone(), listing.clone());
+        let listing = h.listing(self.internet.as_ref(), now);
+        if h.shown.0 != invite || h.shown.1 != listing || h.shown.2 != h.said {
+            h.shown = (invite.clone(), listing.clone(), h.said.clone());
             if let Some(l) = &mut self.data.lobby {
                 l.invite = invite;
                 l.listing = listing;
+                l.reach.clone_from(&h.said);
             }
+        }
+    }
+
+    /// The host's reachability changed (N47, N54): kept for its address
+    /// and lines, each new line said once in the log.
+    fn reached(&mut self, r: Reachability) {
+        let Some(h) = self.net.as_mut().and_then(|n| n.hosted.as_mut()) else { return };
+        for line in h.set_reach(r) {
+            println!("rl-game: reach: {line}");
+        }
+    }
+
+    /// A client's path to its host, following ICE (N49): the lobby's
+    /// connection line when it changed.
+    fn poll_connection(&mut self) {
+        let now = self.peer().and_then(OnlinePeer::connection);
+        let Some(n) = self.net.as_mut().filter(|n| !n.host && n.connection != now) else { return };
+        n.connection = now;
+        if let Some(l) = &mut self.data.lobby {
+            l.connection = now.map(|(path, remote)| path_text(path, remote));
         }
     }
 
@@ -1021,9 +1181,87 @@ fn decode_invite(text: &str) -> Result<Invite, rl_discovery::InviteError> {
     })
 }
 
-/// Why an invite code without an address is not joined (N40: its host
-/// had no public address; plan 12b reaches such hosts).
-pub const INVITE_WITHOUT_ADDRESS: &str = "this invite has no address: the game cannot be joined yet";
+/// Why a game is not joined: no address, and no relays to join it through
+/// (an invite without either, or a listed game while the settings name
+/// no relay).
+pub const NO_WAY_TO_JOIN: &str =
+    "this game has no address, and there are no relays to join it through (set relays in Options → Online)";
+
+/// The exit waits at most this long for the router to delete the port
+/// mappings (N51, ruling NT-2), once the window closed.
+pub const UNMAP_WAIT: Duration = Duration::from_secs(1);
+
+/// The router mappings of the peers a shell let go, being deleted on
+/// threads (ruling NT-2).
+#[must_use = "wait on it before the process exits, or the router may keep the mapping"]
+pub struct Unmapping(Vec<Shutdown>);
+
+impl Unmapping {
+    /// Waits until every mapping is deleted, at most `limit` in all: `true`
+    /// when the router confirmed each (or there was none).
+    pub fn wait(self, limit: Duration) -> bool {
+        let until = Instant::now() + limit;
+        // Each waited for, also after one the router did not confirm.
+        let mut all = true;
+        for s in self.0 {
+            all &= s.wait(until);
+        }
+        all
+    }
+}
+
+/// A typed host name looked up on a thread (`rl-game resolve`; a lookup
+/// may take seconds), and the join waiting for it.
+pub(super) struct Resolving {
+    rx: Receiver<anyhow::Result<SocketAddr>>,
+    typed: String,
+    password: Option<Password>,
+    expected_host: Option<[u8; 32]>,
+}
+
+impl Resolving {
+    fn start(
+        typed: String,
+        default_port: u16,
+        password: Option<Password>,
+        expected_host: Option<[u8; 32]>,
+    ) -> Self {
+        let (tx, rx) = mpsc::channel();
+        let name = typed.clone();
+        let spawned = std::thread::Builder::new().name("rl-game resolve".into()).spawn(move || {
+            // A send fails only once the join was given up.
+            let _ = tx.send(resolve(&name, default_port));
+        });
+        if let Err(e) = spawned {
+            let (tx, failed) = mpsc::channel();
+            let _ = tx.send(Err(anyhow::anyhow!("{typed}: cannot look it up: {e}")));
+            return Resolving { rx: failed, typed, password, expected_host };
+        }
+        Resolving { rx, typed, password, expected_host }
+    }
+}
+
+/// A join through Nostr to `host` on `relays` (N46: an invite's hints
+/// first, then the player's, at most 8: `join_relays`), the player's
+/// region for announced TURN relays, local addresses allowed when every
+/// relay is local (PF12-8); `None` without relays.
+fn nostr_join(finding: &FindingSettings, host: [u8; 32], relays: Vec<String>) -> Option<NostrJoin> {
+    (!relays.is_empty()).then(|| NostrJoin {
+        host,
+        allow_local: local_relays(&relays),
+        pool: PoolConfig { relays, ..PoolConfig::default() },
+        region: region(finding.region),
+        turn_from_nostr: true,
+    })
+}
+
+/// The join of an address (N46): a listed game's (`expected_host`) directly
+/// first, then through the player's relays; a typed address or a LAN
+/// game's directly only.
+fn listed_join(finding: &FindingSettings, to: SocketAddr, expected_host: Option<[u8; 32]>) -> Join {
+    let nostr = expected_host.and_then(|key| nostr_join(finding, key, join_relays(&[], &relays_of(finding))));
+    Join { direct: Some(to), nostr }
+}
 
 /// The wall-clock unix time now, read at each use: notes' `created_at` and
 /// the list's ages (never anchored to the frames' monotonic clock, which
@@ -1053,10 +1291,23 @@ fn fresh_identity() -> anyhow::Result<Identity> {
 pub const IPV6_UNSUPPORTED: &str = "IPv6 is not supported yet";
 
 /// The address `typed` (`host[:port]`, `default_port` when it has none); a
-/// name is looked up and its first IPv4 address taken. An IPv6 literal
-/// (`::1`, `[::1]:23400`) or a name with IPv6 addresses only is refused
-/// ([`IPV6_UNSUPPORTED`]).
+/// name is looked up (blocking: never on the UI thread, [`Resolving`]) and
+/// its first IPv4 address taken. An IPv6 literal (`::1`, `[::1]:23400`) or
+/// a name with IPv6 addresses only is refused ([`IPV6_UNSUPPORTED`]).
 pub fn resolve(typed: &str, default_port: u16) -> anyhow::Result<SocketAddr> {
+    if let Some(a) = literal(typed, default_port) {
+        return a;
+    }
+    let typed = typed.trim();
+    let with_port = if typed.contains(':') { typed.to_string() } else { format!("{typed}:{default_port}") };
+    let addrs = with_port.to_socket_addrs().map_err(|e| anyhow::anyhow!("{typed}: {e}"))?;
+    choose_address(typed, addrs)
+}
+
+/// The address `typed` names without a lookup (an IP address, with or
+/// without a port: `default_port`), as [`resolve`] judges it; `None`: a
+/// name to look up.
+pub fn literal(typed: &str, default_port: u16) -> Option<anyhow::Result<SocketAddr>> {
     let typed = typed.trim();
     let literal = typed.parse::<SocketAddr>().ok().or_else(|| {
         typed
@@ -1066,12 +1317,7 @@ pub fn resolve(typed: &str, default_port: u16) -> anyhow::Result<SocketAddr> {
             .ok()
             .map(|ip| SocketAddr::new(ip, default_port))
     });
-    if let Some(a) = literal {
-        return choose_address(typed, [a]);
-    }
-    let with_port = if typed.contains(':') { typed.to_string() } else { format!("{typed}:{default_port}") };
-    let addrs = with_port.to_socket_addrs().map_err(|e| anyhow::anyhow!("{typed}: {e}"))?;
-    choose_address(typed, addrs)
+    literal.map(|a| choose_address(typed, [a]))
 }
 
 /// The address to join among those `typed` resolved to: the first IPv4

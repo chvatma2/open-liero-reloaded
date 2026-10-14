@@ -15,7 +15,8 @@
 //!   (`LeaveOnline`, to Multiplayer). The download prompt's Download is
 //!   `ApproveDownloads`, its Leave leaves (plan 11). Finding games (plan
 //!   12a): the Internet tab's Join is `JoinListed` (a `JoinGame` that
-//!   expects the listed key), its "Block this host" `BlockHost` (the app's
+//!   expects the listed key; plan 12b: without an address too, the app
+//!   joins it through the relays), its "Block this host" `BlockHost` (the app's
 //!   list hides it at once; the key is saved); the Direct tab's Join takes
 //!   an address or an invite code alike (the app tells them apart); the
 //!   options' Online tab sets the finding settings (`SetFinding`, saved).
@@ -162,10 +163,11 @@ pub enum UiAction {
     },
     /// A game on the network was clicked.
     JoinLan(SocketAddr),
-    /// The Internet tab's Join: the listed game at `addr`, whose host must
-    /// prove it holds `key`.
+    /// The Internet tab's Join: the listed game whose host must prove it
+    /// holds `key`, at `addr` (directly first, then through the relays,
+    /// N46), or through the relays alone without one.
     JoinListed {
-        addr: SocketAddr,
+        addr: Option<SocketAddr>,
         key: [u8; 32],
         password: Option<Password>,
     },
@@ -252,9 +254,11 @@ pub enum AppCommand {
     /// Join the game at `addr` (`host[:port]` as typed, the port defaulting
     /// to `settings.online.port`, or an invite code: `is_invite`), then
     /// report as for `HostGame`. With `expected_host`, a host whose key is
-    /// another is refused.
+    /// another is refused, and the join goes on through the relays when
+    /// the address never answers (a listed game); without `addr`, it goes
+    /// through the relays to `expected_host` alone (N46).
     JoinGame {
-        addr: String,
+        addr: Option<String>,
         password: Option<Password>,
         expected_host: Option<[u8; 32]>,
     },
@@ -594,10 +598,10 @@ impl UiState {
                 Vec::new()
             }
             UiAction::Host(prefs) => self.host(prefs),
-            UiAction::Join { addr, password } => self.join_at(addr, password, true, None),
-            UiAction::JoinLan(addr) => self.join_at(addr.to_string(), None, false, None),
+            UiAction::Join { addr, password } => self.join_at(Some(addr), password, true, None),
+            UiAction::JoinLan(addr) => self.join_at(Some(addr.to_string()), None, false, None),
             UiAction::JoinListed { addr, key, password } => {
-                self.join_at(addr.to_string(), password, false, Some(key))
+                self.join_at(addr.map(|a| a.to_string()), password, false, Some(key))
             }
             UiAction::BlockHost(key) => {
                 if self.screen != Screen::Multiplayer {
@@ -707,23 +711,29 @@ impl UiState {
     }
 
     /// Join a game (the Multiplayer screen): an address or invite typed is
-    /// remembered, a game clicked in a list is not.
+    /// remembered, a game clicked in a list is not. A join without an
+    /// address needs the host's key (a listed game's, through the relays).
     fn join_at(
         &mut self,
-        addr: String,
+        addr: Option<String>,
         password: Option<Password>,
         remember: bool,
         expected_host: Option<[u8; 32]>,
     ) -> Vec<AppCommand> {
-        let addr: String = addr.trim().chars().take(crate::online::ADDRESS_CHARS).collect();
-        if self.screen != Screen::Multiplayer || self.is_connecting() || addr.is_empty() {
+        let addr: Option<String> =
+            addr.map(|a| a.trim().chars().take(crate::online::ADDRESS_CHARS).collect());
+        let reachable = match &addr {
+            Some(a) => !a.is_empty(),
+            None => expected_host.is_some(),
+        };
+        if self.screen != Screen::Multiplayer || self.is_connecting() || !reachable {
             return Vec::new();
         }
         self.message = None;
         self.connecting = Some(Screen::Multiplayer);
         let password = password.filter(|p| !p.is_empty());
         let mut out = vec![AppCommand::JoinGame { addr: addr.clone(), password, expected_host }];
-        if remember && self.settings.online.last_address != addr {
+        if let Some(addr) = addr.filter(|a| remember && self.settings.online.last_address != *a) {
             self.settings.online.last_address = addr;
             out.push(self.save_settings());
         }

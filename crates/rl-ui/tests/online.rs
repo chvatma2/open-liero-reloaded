@@ -48,6 +48,7 @@ fn member(id: u8, name: &str, seat: &str, ready: bool) -> MemberView {
         download: None,
         ping_ms: Some(23),
         admin: id == 0,
+        path: None,
     }
 }
 
@@ -66,6 +67,8 @@ pub fn lobby_view(host: bool) -> LobbyView {
         prompt: None,
         invite: None,
         listing: None,
+        connection: None,
+        reach: Vec::new(),
     }
 }
 
@@ -160,7 +163,7 @@ fn typing_an_address_and_joining_emits_join_game() {
     settle(&mut h);
     let cmds = &h.state().commands;
     assert!(
-        matches!(&cmds[..], [AppCommand::JoinGame { addr, password: Some(p), expected_host: None }, AppCommand::SaveSettings(s)]
+        matches!(&cmds[..], [AppCommand::JoinGame { addr: Some(addr), password: Some(p), expected_host: None }, AppCommand::SaveSettings(s)]
             if addr == "192.168.1.5:23400" && p.as_str() == "hunter2" && s.online.last_address == addr.as_str()),
         "{cmds:?}"
     );
@@ -237,7 +240,7 @@ fn a_lan_entry_click_joins_and_a_locked_one_asks_for_the_password() {
     settle(&mut h);
     assert_eq!(
         h.state().commands,
-        [AppCommand::JoinGame { addr: addr.to_string(), password: None, expected_host: None }]
+        [AppCommand::JoinGame { addr: Some(addr.to_string()), password: None, expected_host: None }]
     );
 }
 
@@ -551,7 +554,8 @@ fn the_chat_draft_survives_the_weapon_screen_and_a_moot_dialog_closes() {
 fn passwords_are_neither_printed_nor_saved() {
     let p = HostPrefs { password: "s3cret".into(), ..HostPrefs::default() };
     assert!(!format!("{p:?}").contains("s3cret"));
-    let cmd = AppCommand::JoinGame { addr: "a".into(), password: Some("s3cret".into()), expected_host: None };
+    let cmd =
+        AppCommand::JoinGame { addr: Some("a".into()), password: Some("s3cret".into()), expected_host: None };
     assert!(!format!("{cmd:?}").contains("s3cret"));
     let ron = ron::to_string(&Settings {
         online: rl_ui::OnlineSettings { host: p, ..Default::default() },
@@ -856,7 +860,7 @@ fn tabs_and_direct_invite() {
     settle(&mut h);
     let cmds = &h.state().commands;
     assert!(
-        matches!(&cmds[..], [AppCommand::JoinGame { addr, password: None, expected_host: None }, AppCommand::SaveSettings(s)]
+        matches!(&cmds[..], [AppCommand::JoinGame { addr: Some(addr), password: None, expected_host: None }, AppCommand::SaveSettings(s)]
             if addr == code && s.online.last_address == code),
         "{cmds:?}"
     );
@@ -886,27 +890,20 @@ fn internet_games_join_by_key_and_block() {
     locked.ping = PingView::Ms(42);
     let mut old = entry(2, "Old game");
     old.incompatible = Some("needs version 2-abcdef".into());
-    let mut unjoinable = entry(3, "Behind a router");
-    unjoinable.addr = None;
-    let games = vec![locked.clone(), old, unjoinable];
+    let games = vec![locked.clone(), old];
     h.state_mut().data.internet = InternetView { status: InternetStatus::Listed, games };
     settle(&mut h);
     h.get_by_label("42 ms");
     h.get_by_label("needs version 2-abcdef");
-    h.get_by_label("cannot be joined yet");
-    // The unjoinable one: selected, Join stays disabled.
-    h.get_by_label("Behind a router").click();
+    // Another version: selected, Join stays disabled.
+    h.get_by_label("Old game").click();
     settle(&mut h);
-    assert_eq!(h.state().data.selected_game, Some([3; 32]), "the app pings the selection");
+    assert_eq!(h.state().data.selected_game, Some([2; 32]), "the app pings the selection");
     let join = h.get_by_role_and_label(Role::Button, "Join");
     assert!(join.accesskit_node().is_disabled());
     join.hover();
     settle(&mut h);
-    h.get_by_label_contains("it has no public address");
-    // Another version: disabled too.
-    h.get_by_label("Old game").click();
-    settle(&mut h);
-    assert!(h.get_by_role_and_label(Role::Button, "Join").accesskit_node().is_disabled());
+    assert_eq!(h.get_all_by_label("needs version 2-abcdef").count(), 2, "in its row and on Join's hover");
     // The locked one: its password, then Join expecting its key.
     h.get_by_label("Locked").click();
     settle(&mut h);
@@ -917,7 +914,8 @@ fn internet_games_join_by_key_and_block() {
     h.get_by_role_and_label(Role::Button, "Join").click();
     settle(&mut h);
     let cmds = h.state().commands.clone();
-    let [AppCommand::JoinGame { addr, password: Some(p), expected_host: Some(k) }] = &cmds[..] else {
+    let [AppCommand::JoinGame { addr: Some(addr), password: Some(p), expected_host: Some(k) }] = &cmds[..]
+    else {
         panic!("{cmds:?}")
     };
     assert_eq!((addr.as_str(), p.as_str(), *k), ("81.2.69.1:23400", "hunter2", [1; 32]));
@@ -1026,4 +1024,78 @@ fn the_host_chooses_who_can_join() {
     // Plan 10's word reads as Invite.
     let old: HostPrefs = ron::from_str("(visibility: DirectOnly)").unwrap();
     assert_eq!(old.visibility, Visibility::Invite);
+}
+
+/// Plan 12b (N46): a listed game without an address is joinable through
+/// the relays: Join is enabled and its action carries no address, only the
+/// key; the waiting text is the join's step as the app reports it.
+#[test]
+fn an_addressless_internet_game_is_joinable() {
+    let mut h = harness();
+    h.state_mut().ui.update(UiAction::Open(Screen::Multiplayer));
+    let mut behind = entry(3, "Behind a router");
+    behind.addr = None;
+    h.state_mut().data.internet = InternetView { status: InternetStatus::Listed, games: vec![behind] };
+    settle(&mut h);
+    // Its ping cannot be measured: the row says how it is reached.
+    h.get_by_label("via relays");
+    h.get_by_label("Behind a router").click();
+    settle(&mut h);
+    let join = h.get_by_role_and_label(Role::Button, "Join");
+    assert!(!join.accesskit_node().is_disabled(), "joinable through the relays");
+    join.click();
+    settle(&mut h);
+    let cmds = h.state().commands.clone();
+    assert_eq!(
+        cmds,
+        [AppCommand::JoinGame { addr: None, password: None, expected_host: Some([3; 32]) }],
+        "no address: the app joins the key through Nostr"
+    );
+    let action = UiAction::JoinListed { addr: None, key: [3; 32], password: None };
+    assert!(h.state_mut().ui.update(action).is_empty(), "once, while it connects");
+    h.get_by_label("Connecting…");
+    h.state_mut().data.joining = Some("Asking the game through the relays…".into());
+    settle(&mut h);
+    h.get_by_label("Asking the game through the relays…");
+    assert!(h.query_by_label("Connecting…").is_none(), "the step replaces the generic text");
+}
+
+/// Plan 12b (N47, N49): a host's lobby shows its reachability lines under
+/// the listing line, a client's lobby its connection, and every member's
+/// path tag beside its ping.
+#[test]
+fn the_lobby_shows_reach_lines_and_path_tags() {
+    let mut h = harness();
+    let mut v = lobby_view(true);
+    v.invite = Some("rlx1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn".into());
+    v.listing = Some("Listed on the Internet".into());
+    v.reach = vec![
+        "Your router did not open port 23400 (no router answered): players connect by hole punching or a TURN relay"
+            .into(),
+        "Taking joins through 2 of 3 relays".into(),
+    ];
+    v.members[0].path = None;
+    v.members[1].path = Some("relayed".into());
+    in_lobby(h.state_mut(), v);
+    settle(&mut h);
+    h.get_by_label("Listed on the Internet");
+    h.get_by_label_contains("Your router did not open port 23400");
+    h.get_by_label("Taking joins through 2 of 3 relays");
+    h.get_by_label("relayed");
+    // The listing line comes first, then the reach lines in order.
+    let top = |h: &Harness<'static, App>, label: &str| {
+        h.get_by_label_contains(label).accesskit_node().bounding_box().unwrap().y0
+    };
+    assert!(top(&h, "Listed on the Internet") < top(&h, "Your router did not open"));
+    assert!(top(&h, "Your router did not open") < top(&h, "Taking joins"));
+    // A client: its connection, and the host's tag.
+    let mut h = harness();
+    let mut v = lobby_view(false);
+    v.connection = Some("connected by hole punching through both routers".into());
+    v.members[1].path = Some("punched".into());
+    in_lobby(h.state_mut(), v);
+    settle(&mut h);
+    h.get_by_label("connected by hole punching through both routers");
+    h.get_by_label("punched");
+    assert!(h.query_by_label("Copy").is_none(), "a client has no invite");
 }

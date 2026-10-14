@@ -159,6 +159,39 @@ pub fn valid_stun(server: &str) -> bool {
         && !server.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
+/// The most TURN servers of the player's own the options keep (N52; a
+/// join uses the first 2).
+pub const MAX_TURN: usize = 8;
+
+/// A TURN server entry's parts, `user:pass@host:port`: the user (before the
+/// first `:`), the password (up to the last `@`) and `host:port`, each not
+/// empty, the port not 0; at most [`SERVER_BYTES`], no whitespace or
+/// control character. `None`: not one.
+pub fn turn_parts(entry: &str) -> Option<(&str, &str, &str)> {
+    if entry.len() > SERVER_BYTES || entry.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return None;
+    }
+    let (credentials, server) = entry.rsplit_once('@')?;
+    let (user, pass) = credentials.split_once(':')?;
+    (!user.is_empty() && !pass.is_empty() && valid_stun(server)).then_some((user, pass, server))
+}
+
+/// Whether `entry` can be a TURN server: `user:pass@host:port` ([`turn_parts`]).
+pub fn valid_turn(entry: &str) -> bool {
+    turn_parts(entry).is_some()
+}
+
+/// A TURN server entry as the options list it (and warnings name it): its
+/// password hidden, everything before the last `@` of an entry that is not
+/// one.
+pub fn turn_shown(entry: &str) -> String {
+    match (turn_parts(entry), entry.rsplit_once('@')) {
+        (Some((user, _, server)), _) => format!("{user}:•••@{server}"),
+        (None, Some((_, server))) => format!("•••@{server}"),
+        (None, None) => entry.to_string(),
+    }
+}
+
 /// A host's key as the options keep it: 64 lowercase hex characters.
 pub fn key_hex(key: &[u8; 32]) -> String {
     key.iter().map(|b| format!("{b:02x}")).collect()
@@ -176,8 +209,9 @@ pub fn parse_key_hex(hex: &str) -> Option<[u8; 32]> {
     Some(key)
 }
 
-/// Finding games on the Internet (plan 12a; the options' Online tab).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Finding games on the Internet and reaching them (plans 12a and 12b; the
+/// options' Online tab).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FindingSettings {
     /// The region this player's hosted games say.
@@ -185,14 +219,38 @@ pub struct FindingSettings {
     /// The Nostr relays (`wss://` or `ws://`); `None`: the game's
     /// defaults (`MenuData::default_relays`), which may grow.
     pub relays: Option<Vec<String>>,
-    /// The STUN servers (`host:port`) asked for the public address; `None`:
-    /// the defaults.
+    /// The STUN servers (`host:port`) the game's socket asks for its
+    /// public address and port (ICE's candidates); `None`: the defaults.
     pub stun: Option<Vec<String>>,
-    /// The public address announced instead of asking STUN (empty: ask).
+    /// The address a hosted game says players join it at directly (a
+    /// manual port forward); empty: none (N47: the router's mapping, else
+    /// joins through the relays).
     pub public_address: String,
     /// Hosts whose games the Internet tab hides: their keys, 64 lowercase
     /// hex characters.
     pub blocked: Vec<String>,
+    /// A hosted Public or Invite game asks the router to open its port
+    /// (UPnP, NAT-PMP, PCP; N51). On by default; an older file without it
+    /// reads as on.
+    pub port_mapping: bool,
+    /// The player's own TURN servers for joining (N52), `user:pass@host:port`
+    /// ([`valid_turn`]), at most [`MAX_TURN`]; a join uses the first 2.
+    /// None by default: the project ships no TURN list.
+    pub turn: Vec<String>,
+}
+
+impl Default for FindingSettings {
+    fn default() -> Self {
+        FindingSettings {
+            region: Region::default(),
+            relays: None,
+            stun: None,
+            public_address: String::new(),
+            blocked: Vec::new(),
+            port_mapping: true,
+            turn: Vec::new(),
+        }
+    }
 }
 
 impl FindingSettings {
@@ -219,6 +277,24 @@ impl FindingSettings {
         };
         list("relays", &mut self.relays, valid_relay);
         list("stun", &mut self.stun, valid_stun);
+        let mut turn: Vec<String> = Vec::new();
+        for t in self.turn.drain(..) {
+            let t = t.trim().to_string();
+            if !valid_turn(&t) {
+                // The entry may hold a password: never in a warning.
+                w.push(format!(
+                    "online.finding.turn: {:?} is not user:pass@host:port: dropped",
+                    turn_shown(&t)
+                ));
+            } else if !turn.contains(&t) {
+                turn.push(t);
+            }
+        }
+        if turn.len() > MAX_TURN {
+            w.push(format!("online.finding.turn: over {MAX_TURN}: the rest dropped"));
+            turn.truncate(MAX_TURN);
+        }
+        self.turn = turn;
         let address = self.public_address.trim();
         if !address.is_empty() && address.parse::<IpAddr>().is_err() {
             w.push(format!("online.finding.public_address {address:?} is not an IP address: none"));
@@ -402,8 +478,8 @@ pub struct InternetEntry {
     pub region: Region,
     /// A password is needed.
     pub password: bool,
-    /// Where it listens; `None`: it has no public address yet, so it
-    /// cannot be joined yet.
+    /// Where it is joined directly (N47: its router's open port, or its
+    /// public address setting); `None`: joined through the relays alone.
     pub addr: Option<SocketAddr>,
     /// For a game of another version, "needs version …" (greyed out).
     pub incompatible: Option<String>,
@@ -430,9 +506,6 @@ pub struct InternetView {
     pub status: InternetStatus,
     pub games: Vec<InternetEntry>,
 }
-
-/// What an Internet game's Join says when it cannot join.
-pub const CANNOT_JOIN_YET: &str = "cannot be joined yet";
 
 /// The shortest invite code: `rlx1`, 35 bytes of payload and the checksum.
 const MIN_CODE: usize = 60;
@@ -473,6 +546,13 @@ pub struct LobbyView {
     /// Where the hosted game stands: a Public game's listing on the
     /// Internet (or why not), an Invite game's code without an address.
     pub listing: Option<String>,
+    /// A client's way to its host (`rl_online::path_text`: "connected
+    /// directly to …", "… through the TURN relay …").
+    pub connection: Option<String>,
+    /// A hosted Public or Invite game's reachability, in order: its
+    /// router's port, its public address setting, a symmetric NAT, its
+    /// relays (`rl_online::Reachability::lines`), under `listing`.
+    pub reach: Vec<String>,
 }
 
 /// One download of the lobby's list (plan 11).
@@ -524,6 +604,10 @@ pub struct MemberView {
     pub download: Option<u8>,
     pub ping_ms: Option<u16>,
     pub admin: bool,
+    /// How the host reaches this member, in a word or two
+    /// (`rl_online::path_tag`: "direct", "open port", "punched",
+    /// "relayed"); `None` for the host itself.
+    pub path: Option<String>,
 }
 
 impl MemberView {

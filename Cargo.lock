@@ -4105,6 +4105,7 @@ dependencies = [
  "rl-data",
  "rl-discovery",
  "rl-fx",
+ "rl-game",
  "rl-input",
  "rl-lobby",
  "rl-math",

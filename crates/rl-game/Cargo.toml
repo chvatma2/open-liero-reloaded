@@ -48,15 +48,24 @@ egui.workspace = true
 egui-wgpu.workspace = true
 egui-winit.workspace = true
 
+[features]
+# Tests only: `Shell::test_ice` (every endpoint's ICE settings, a
+# `FakeGateway` and a loopback base, ruling NT-1). Forwards rl-online's, so
+# rl-net's port mapper refuses real routers. Enabled by this crate's own
+# dev-dependency, never by a build that ships.
+test-hooks = ["rl-online/test-hooks"]
+
 [dev-dependencies]
 tempfile.workspace = true
 rl-vfs.workspace = true
+rl-game = { path = ".", features = ["test-hooks"] }
 # The tests set a client's prompt bytes (`OnlinePeer::test_prompt_limit`).
 rl-online = { workspace = true, features = ["test-hooks"] }
 # Finding games end to end (plan 12a): the dedicated server in-process,
-# announcing to rl-discovery's in-process test relay.
+# announcing to rl-discovery's in-process test relay; its `test_gateway`
+# pins a loopback base (plan 12b).
 rl-discovery = { workspace = true, features = ["test-relay"] }
-rl-server.workspace = true
+rl-server = { workspace = true, features = ["test-hooks"] }
 
 [[test]]
 name = "integration"

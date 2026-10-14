@@ -2,11 +2,14 @@
 //! decisions N39-N43): the one relay [`Pool`] the game owns while the
 //! Multiplayer screen shows or a hosted game is public, the [`GameList`]
 //! its announcements add up to, the pings of selected games, and what a
-//! hosted game publishes ([`Hosted`]: its public address, its invite, its
-//! notes). Nothing here blocks the caller: the pool, the pings and STUN
-//! run on threads of their own.
+//! hosted game publishes ([`Hosted`]: its invite, its notes, its lobby
+//! lines). Plan 12b (N47): a hosted game's address is its reachability's
+//! (`rl_online::Reachability::direct`: the router's usable mapping, else
+//! the public address setting), never one STUN learnt. Nothing here
+//! blocks the caller: the pool and the pings run on threads of their own,
+//! the reachability is the peer's.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use rl_content::Catalog;
@@ -14,13 +17,16 @@ use rl_discovery::defaults::{DEFAULT_RELAYS, DEFAULT_STUN};
 pub use rl_discovery::hosting::local_relays;
 use rl_discovery::list::is_global;
 use rl_discovery::{
-    AddressWatch, Event, GameList, GameSummary, ListedGame, Ping, Pinger, Pool, PoolConfig, PoolEvent,
-    Publisher, RelayStatus,
+    Event, GameList, GameSummary, ListedGame, Ping, Pinger, Pool, PoolConfig, PoolEvent, Publisher,
+    RelayStatus,
 };
 use rl_lobby::Identity;
+use rl_net::endpoint::TurnServerSpec;
+use rl_online::Reachability;
 use rl_proto::{FINGERPRINT, PublicKey};
 use rl_ui::{
-    FindingSettings, InternetEntry, InternetStatus, InternetView, PingView, Region, Visibility, parse_key_hex,
+    FindingSettings, InternetEntry, InternetStatus, InternetView, PingView, Region, Visibility,
+    parse_key_hex, turn_parts,
 };
 
 /// The game list's subscription.
@@ -33,14 +39,25 @@ const OURS: usize = 16;
 /// (the Multiplayer screen left): a visit within it reuses them instead of
 /// reconnecting to every relay.
 pub const RELAY_LINGER: Duration = Duration::from_secs(30);
+/// A hosted game's first note and its invite's line wait this long at most
+/// for its reachability to settle (`Reachability::settled`: the router
+/// answered or gave up, and STUN's first round), as rl-server's do.
+pub const SETTLE_WAIT: Duration = Duration::from_secs(5);
 /// A Public game's lobby line when the configured public address cannot be
 /// reached from the Internet (private, local, or IPv6, which invites and
 /// joiners do not use).
 pub const UNREACHABLE_ADDRESS: &str =
     "Not listed: your public address setting is not reachable from the Internet";
-/// An Invite game's lobby line when its code carries no address (no STUN
-/// answer, none configured, or IPv6); the forwarding advice follows.
-pub const INVITE_NO_ADDRESS: &str = "This code has no address";
+/// An Invite game's lobby line when its code carries no address (N47: no
+/// usable mapping, no public address setting): it joins through the
+/// relays (N46).
+pub const INVITE_THROUGH_RELAYS: &str = "This code joins through the relays";
+/// An Invite game's lobby line when its code has neither an address nor
+/// relays.
+pub const INVITE_JOINS_NOTHING: &str =
+    "This code has no address and no relays: it joins nothing (set relays in Options)";
+/// A hosted game's line while its reachability settles.
+pub const FINDING_ADDRESS: &str = "Finding the public address…";
 
 /// The relays `settings` name, else the game's defaults.
 pub fn relays_of(settings: &FindingSettings) -> Vec<String> {
@@ -50,6 +67,18 @@ pub fn relays_of(settings: &FindingSettings) -> Vec<String> {
 /// The STUN servers `settings` name, else the game's defaults.
 pub fn stun_of(settings: &FindingSettings) -> Vec<String> {
     settings.stun.clone().unwrap_or_else(|| DEFAULT_STUN.iter().map(|s| s.to_string()).collect())
+}
+
+/// The player's own TURN servers (`settings.turn`, `user:pass@host:port`)
+/// for a joiner's endpoint (N52: rl-online uses the first 2); entries that
+/// are not one are skipped (the settings are sanitized already).
+pub fn turn_of(settings: &FindingSettings) -> Vec<TurnServerSpec> {
+    settings
+        .turn
+        .iter()
+        .filter_map(|t| turn_parts(t))
+        .map(|(user, pass, addr)| TurnServerSpec { addr: addr.into(), user: user.into(), pass: pass.into() })
+        .collect()
 }
 
 /// The region of the menus as announced.
@@ -344,126 +373,175 @@ impl Internet {
     }
 }
 
-/// What a hosted game does to be found: its public address (N40, Public
-/// and Invite), its invite (N42), and for a Public game its notes (N39).
+/// What a hosted game does to be found: its invite (N42; Public and
+/// Invite), its notes (N39; Public), and its lobby lines (its listing, its
+/// reachability), from the peer's reachability (N47).
 pub struct Hosted {
     pub visibility: Visibility,
-    pub address: AddressWatch,
     /// Signs and times the notes (Public).
     pub publisher: Option<Publisher>,
     pub relays: Vec<String>,
     pub region: rl_discovery::Region,
-    /// The address is the settings' `public_address`, not STUN's.
-    pub configured: bool,
+    /// When hosting began ([`SETTLE_WAIT`] counts from it).
+    pub started: Instant,
+    /// The reachability as the peer last reported it
+    /// (`OnlineEvent::Reachability`, [`Hosted::set_reach`]); `None` before
+    /// its first report.
+    pub reach: Option<Reachability>,
+    /// Its lines ([`Hosted::reach_lines`]), made once a report.
+    pub said: Vec<String>,
     /// The lobby's summary as last seen.
     pub summary: Option<GameSummary>,
-    /// The invite and listing lines last shown.
-    pub shown: (Option<String>, Option<String>),
+    /// The invite, listing and reachability lines last shown.
+    pub shown: Shown,
     /// The last note published, and the pool (`Shell::relay_pools_opened`)
     /// it went to: a pool opened on edited relays gets it again at once.
     pub last_note: Option<Event>,
     pub pool: u32,
 }
 
+/// A hosted game's lobby lines: the invite code, the listing line, the
+/// reachability's lines.
+pub type Shown = (Option<String>, Option<String>, Vec<String>);
+
 impl Hosted {
-    /// A hosted game of `visibility` (the address asked for a Public or
-    /// Invite game only); `identity` signs a Public game's notes, the first
-    /// dated `after` at the earliest (a closing note of the same key just
-    /// left: [`Publisher::new`]). The line saying where the address comes
-    /// from, if one is asked.
+    /// A hosted game of `visibility` on the relays `settings` name;
+    /// `identity` signs a Public game's notes, the first dated `after` at
+    /// the earliest (a closing note of the same key just left:
+    /// [`Publisher::new`]).
     pub fn start(
         visibility: Visibility,
         settings: &FindingSettings,
         identity: Identity,
         now: Instant,
         after: Option<u64>,
-    ) -> (Hosted, Option<String>) {
-        let configured = settings.public_address.trim().parse::<IpAddr>().ok();
-        let asks = matches!(visibility, Visibility::Public | Visibility::Invite);
-        let stun = if asks { stun_of(settings) } else { Vec::new() };
-        let configured = configured.filter(|_| asks);
-        let (address, said) = AddressWatch::start(configured, &stun, now);
-        let publisher = (visibility == Visibility::Public).then(|| Publisher::new(identity, after));
-        let hosted = Hosted {
+    ) -> Hosted {
+        Hosted {
             visibility,
-            address,
-            publisher,
+            publisher: (visibility == Visibility::Public).then(|| Publisher::new(identity, after)),
             relays: relays_of(settings),
             region: region(settings.region),
-            configured: configured.is_some(),
+            started: now,
+            reach: None,
+            said: Vec::new(),
             summary: None,
-            shown: (None, None),
+            shown: (None, None, Vec::new()),
             last_note: None,
             pool: 0,
-        };
-        (hosted, asks.then_some(said))
+        }
     }
 
-    /// The invite code (Public and Invite games) of the host `key` on
-    /// `port`.
-    pub fn invite(&self, key: PublicKey, port: u16) -> Option<String> {
+    /// Found on the Internet or by its code: a Public or Invite game.
+    fn findable(&self) -> bool {
         matches!(self.visibility, Visibility::Public | Visibility::Invite)
-            .then(|| rl_discovery::invite(key, &self.relays, self.address.current(), port).encode())
     }
 
-    /// The address announced: none for a configured one the Internet
-    /// cannot reach (private or local) unless every relay is local too, so
-    /// a LAN address never goes to public relays (final review B-M2).
-    pub fn announced_addr(&self) -> Option<IpAddr> {
-        self.address.current().filter(|ip| is_global(*ip) || local_relays(&self.relays))
+    /// N47: the address players join directly (the router's usable
+    /// mapping, else the public address setting), if any.
+    pub fn direct(&self) -> Option<SocketAddr> {
+        self.reach.as_ref().and_then(Reachability::direct).filter(|_| self.findable())
     }
 
-    /// Whether a Public game publishes: not with a configured address the
-    /// Internet cannot reach, on public relays (its lobby says so, and a
-    /// note would put the game on lists it is "Not listed" on).
+    /// The reachability settled, or [`SETTLE_WAIT`] passed since hosting
+    /// began (a slow router: the first note and the invite's line go
+    /// without the address, which follows when it comes).
+    pub fn settled(&self, now: Instant) -> bool {
+        self.reach.as_ref().is_some_and(Reachability::settled)
+            || now.saturating_duration_since(self.started) >= SETTLE_WAIT
+    }
+
+    /// The invite code (Public and Invite games) of the host `key`: its
+    /// relays and its direct address (IPv4), else the local `port`.
+    pub fn invite(&self, key: PublicKey, port: u16) -> Option<String> {
+        let direct = self.direct();
+        let port = direct.map_or(port, |a| a.port());
+        self.findable()
+            .then(|| rl_discovery::invite(key, &self.relays, direct.map(|a| a.ip()), port).encode())
+    }
+
+    /// The address a Public game's notes give: the direct one, IPv4, and
+    /// none the Internet cannot reach unless every relay is local too, so a
+    /// LAN address never goes to public relays (final review B-M2).
+    pub fn announced(&self) -> Option<SocketAddr> {
+        self.direct().filter(|a| a.is_ipv4() && (is_global(a.ip()) || local_relays(&self.relays)))
+    }
+
+    /// Whether a Public game publishes: not with a direct address the
+    /// Internet cannot reach (a public address setting that is private,
+    /// local or IPv6), on public relays (its lobby says so, and a note
+    /// would put the game on lists it is "Not listed" on).
     pub fn publishes(&self) -> bool {
-        !self.unreachable() || local_relays(&self.relays)
+        !self.unreachable()
     }
 
-    /// A configured address that the Internet cannot reach (IPv6, which
-    /// invites and joiners do not use, or not global).
     fn unreachable(&self) -> bool {
-        self.configured && self.address.current().is_some_and(|ip| ip.is_ipv6() || !is_global(ip))
+        !local_relays(&self.relays) && self.direct().is_some_and(|a| a.is_ipv6() || !is_global(a.ip()))
+    }
+
+    /// The reachability's lines (`Reachability::lines`: the router's port,
+    /// the public address setting, a symmetric NAT, the relays) of a Public
+    /// or Invite game; a LAN game has none.
+    pub fn reach_lines(&self) -> Vec<String> {
+        match &self.reach {
+            Some(r) if self.findable() => r.lines(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The peer reported `r`: kept, its lines made once; the lines not said
+    /// before (for the log).
+    pub fn set_reach(&mut self, r: Reachability) -> Vec<String> {
+        self.reach = Some(r);
+        let lines = self.reach_lines();
+        let new = lines.iter().filter(|l| !self.said.contains(l)).cloned().collect();
+        self.said = lines;
+        new
     }
 
     /// Where a hosted game stands: for a Public game whether it is listed
-    /// on the Internet, or why not; for an Invite game whether its code
-    /// carries an address (final review B-I3). The line shows beside the
-    /// invite's Copy: one copied before STUN settles has no address.
-    pub fn listing(&self, internet: Option<&Internet>, port: u16) -> Option<String> {
-        if self.visibility == Visibility::Invite {
-            return if !self.address.settled() {
-                Some("Finding the public address…".to_string())
-            } else if !matches!(self.address.current(), Some(IpAddr::V4(_))) {
-                Some(format!("{INVITE_NO_ADDRESS}: forward port {port} or set the public address in Options"))
-            } else {
-                None
-            };
-        }
-        if self.visibility != Visibility::Public {
+    /// on the Internet, or why not; for an Invite game how its code joins
+    /// (final review B-I3). The line shows beside the invite's Copy: one
+    /// copied before the reachability settled may lack the address.
+    pub fn listing(&self, internet: Option<&Internet>, now: Instant) -> Option<String> {
+        if !self.findable() {
             return None;
         }
-        let said = if !self.address.settled() {
-            "Finding the public address…".to_string()
-        } else if self.address.current().is_none() {
-            format!("Not listed: no public address (forward port {port} or set it in Options)")
-        } else if self.unreachable() {
-            UNREACHABLE_ADDRESS.to_string()
+        if !self.settled(now) {
+            return Some(FINDING_ADDRESS.to_string());
+        }
+        if self.visibility == Visibility::Invite {
+            return if self.direct().is_some_and(|a| a.is_ipv4()) {
+                None
+            } else if self.relays.is_empty() {
+                Some(INVITE_JOINS_NOTHING.to_string())
+            } else {
+                Some(INVITE_THROUGH_RELAYS.to_string())
+            };
+        }
+        let said = if self.unreachable() {
+            UNREACHABLE_ADDRESS
         } else if internet.is_none_or(|i| i.relays().is_empty()) {
-            "Not listed: no relays (set them in Options)".to_string()
+            "Not listed: no relays (set them in Options)"
         } else if internet.is_some_and(|i| i.status() == InternetStatus::NoRelay) {
-            "Not listed: no relay reachable".to_string()
+            "Not listed: no relay reachable"
         } else if internet.is_some_and(Internet::accepted) {
-            "Listed on the Internet".to_string()
+            "Listed on the Internet"
         } else {
-            "Announcing on the Internet…".to_string()
+            "Announcing on the Internet…"
         };
-        Some(said)
+        Some(said.to_string())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, SocketAddrV4};
+
+    use rl_net::endpoint::Reach;
+    use rl_net::portmap::{MappingState, Method};
+    use rl_net::probe::NatBehaviour;
+    use rl_online::Listening;
+
     use super::*;
 
     #[test]
@@ -473,22 +551,38 @@ mod tests {
         }
     }
 
+    /// A hosted game's reachability: `mapping` at the router, `configured`
+    /// its public address setting, settled.
+    fn reached(mapping: MappingState, configured: Option<&str>) -> Reachability {
+        Reachability {
+            port: 23400,
+            configured: configured.map(|a| a.parse().unwrap()),
+            reach: Reach { base: None, srflx: None, nat: NatBehaviour::Unknown, mapping, relays: Vec::new() },
+            listening: Listening::Off,
+            stun_settled: true,
+        }
+    }
+
+    /// A hosted game of `visibility` on `relays`, reached as `reach`.
+    fn hosted(visibility: Visibility, relays: &[&str], reach: Option<Reachability>) -> Hosted {
+        let f = FindingSettings {
+            relays: Some(relays.iter().map(|r| r.to_string()).collect()),
+            ..FindingSettings::default()
+        };
+        let id = Identity::from_secret([7; 32]).unwrap();
+        let mut h = Hosted::start(visibility, &f, id, Instant::now(), None);
+        h.reach = reach;
+        h
+    }
+
     /// A configured public address that the Internet cannot reach (private,
     /// local, or IPv6, which neither invites nor joiners use) is said in the
     /// lobby, never "Listed on the Internet".
     #[test]
     fn an_unreachable_configured_address_is_said() {
-        let id = Identity::from_secret([7; 32]).unwrap();
-        let now = Instant::now();
         let line = |addr: &str| {
-            let f = FindingSettings {
-                public_address: addr.into(),
-                relays: Some(Vec::new()),
-                stun: Some(Vec::new()),
-                ..FindingSettings::default()
-            };
-            let (h, _) = Hosted::start(Visibility::Public, &f, id.clone(), now, None);
-            h.listing(None, 23400).unwrap()
+            let reach = Some(reached(MappingState::Off, Some(addr)));
+            hosted(Visibility::Public, &["wss://relay.example"], reach).listing(None, Instant::now()).unwrap()
         };
         for bad in ["192.168.1.5", "127.0.0.1", "2a00:1450::1"] {
             assert_eq!(line(bad), UNREACHABLE_ADDRESS, "{bad}");
@@ -497,7 +591,7 @@ mod tests {
             UNREACHABLE_ADDRESS,
             "Not listed: your public address setting is not reachable from the Internet"
         );
-        assert!(line("81.2.69.142").starts_with("Not listed: no relays"));
+        assert!(line("81.2.69.142").starts_with("Not listed: no relays"), "no pool open");
     }
 
     #[test]
@@ -548,24 +642,18 @@ mod tests {
     /// its predecessor's notes.
     #[test]
     fn listed_is_neither_stale_nor_inherited() {
-        let id = Identity::from_secret([7; 32]).unwrap();
-        let f = FindingSettings {
-            public_address: "81.2.69.142".into(),
-            relays: Some(vec!["ws://127.0.0.1:1".into()]),
-            stun: Some(Vec::new()),
-            ..FindingSettings::default()
-        };
-        let (h, _) = Hosted::start(Visibility::Public, &f, id, Instant::now(), None);
+        let h = hosted(Visibility::Public, &["ws://127.0.0.1:1"], Some(reached(MappingState::Off, None)));
         let mut i = Internet::open(Vec::new(), &[]);
         i.relays = vec!["ws://127.0.0.1:1".into()];
         i.connected = vec![false];
         i.failed = vec![true];
         i.accepted = true;
-        assert_eq!(h.listing(Some(&i), 23400).as_deref(), Some("Not listed: no relay reachable"));
+        let now = Instant::now();
+        assert_eq!(h.listing(Some(&i), now).as_deref(), Some("Not listed: no relay reachable"));
         i.failed = vec![false];
-        assert_eq!(h.listing(Some(&i), 23400).as_deref(), Some("Listed on the Internet"));
+        assert_eq!(h.listing(Some(&i), now).as_deref(), Some("Listed on the Internet"));
         i.forget_ours();
-        assert_eq!(h.listing(Some(&i), 23400).as_deref(), Some("Announcing on the Internet…"));
+        assert_eq!(h.listing(Some(&i), now).as_deref(), Some("Announcing on the Internet…"));
     }
 
     /// Final review B-M2: a configured address the Internet cannot reach
@@ -573,47 +661,90 @@ mod tests {
     /// "Not listed"), but is on relays that are all local.
     #[test]
     fn a_private_configured_address_stays_off_public_relays() {
-        let id = Identity::from_secret([7; 32]).unwrap();
-        let hosted = |relays: Option<Vec<String>>| {
-            let f = FindingSettings {
-                public_address: "192.168.1.5".into(),
-                relays,
-                stun: Some(Vec::new()),
-                ..FindingSettings::default()
-            };
-            Hosted::start(Visibility::Public, &f, id.clone(), Instant::now(), None).0
-        };
-        let public = hosted(None);
+        let private = || Some(reached(MappingState::Off, Some("192.168.1.5")));
+        let public = hosted(Visibility::Public, &["wss://relay.example"], private());
         assert!(!public.publishes());
-        assert_eq!(public.announced_addr(), None);
-        let local = hosted(Some(vec!["ws://192.168.1.2:7000".into()]));
+        assert_eq!(public.announced(), None);
+        let local = hosted(Visibility::Public, &["ws://192.168.1.2:7000"], private());
         assert!(local.publishes());
-        assert_eq!(local.announced_addr(), Some("192.168.1.5".parse().unwrap()));
+        assert_eq!(local.announced(), Some("192.168.1.5:23400".parse().unwrap()));
     }
 
-    /// Final review B-I3: an Invite game's line says while the address is
-    /// asked, and when its code has none; nothing once it has one.
+    /// Plan 12b (N47): the direct address is the router's usable mapping
+    /// (its external port), else the public address setting; a mapping
+    /// whose address is not public is not one, and STUN never gives one.
+    /// Without it no address is announced, and the game is still published.
     #[test]
-    fn an_invite_game_says_whether_its_code_has_an_address() {
-        let id = Identity::from_secret([7; 32]).unwrap();
-        let line = |addr: &str, stun: Vec<String>| {
-            let f = FindingSettings {
-                public_address: addr.into(),
-                relays: Some(Vec::new()),
-                stun: Some(stun),
-                ..FindingSettings::default()
-            };
-            let (h, _) = Hosted::start(Visibility::Invite, &f, id.clone(), Instant::now(), None);
-            h.listing(None, 23400)
-        };
-        // A STUN server on a closed local port: not answered yet.
-        assert_eq!(line("", vec!["127.0.0.1:9".into()]).as_deref(), Some("Finding the public address…"));
+    fn the_address_comes_from_the_reachability() {
+        let external = SocketAddrV4::new(Ipv4Addr::new(81, 2, 69, 142), 23401);
+        let mapped = |usable| MappingState::Mapped { method: Method::Upnp, external, tcp: true, usable };
+        let relays = ["wss://relay.example"];
+        let h = hosted(Visibility::Public, &relays, Some(reached(mapped(true), Some("81.2.69.200"))));
+        assert_eq!(h.direct(), Some(external.into()));
+        assert_eq!(h.announced(), Some(external.into()));
+        let key = [1; 32];
+        let code = rl_discovery::Invite::decode(&h.invite(key, 23400).unwrap()).unwrap();
+        assert_eq!(code.addr, Some(external.into()), "the external port");
+        let h = hosted(Visibility::Public, &relays, Some(reached(mapped(false), None)));
+        assert_eq!((h.direct(), h.announced()), (None, None), "a double NAT's mapping");
+        assert!(h.publishes(), "listed without an address (N46)");
+        let code = rl_discovery::Invite::decode(&h.invite(key, 23400).unwrap()).unwrap();
+        assert_eq!(code.addr, None);
+        let mut stun = reached(MappingState::Failed("no router".into()), None);
+        stun.reach.srflx = Some("81.2.69.7:40000".parse().unwrap());
+        let h = hosted(Visibility::Public, &relays, Some(stun));
+        assert_eq!(h.direct(), None, "STUN's address is a candidate only");
+        // A LAN game has neither an address nor lines.
+        let lan = hosted(Visibility::Lan, &relays, Some(reached(mapped(true), None)));
+        assert_eq!((lan.direct(), lan.invite(key, 1), lan.listing(None, Instant::now())), (None, None, None));
+        assert!(lan.reach_lines().is_empty());
+    }
+
+    /// Final review B-I3, plan 12b: an Invite game's line says while the
+    /// reachability settles, then how its code joins: nothing once it has
+    /// an address, else through the relays, or nothing without them.
+    #[test]
+    fn an_invite_game_says_how_its_code_joins() {
+        let relays = ["wss://relay.example"];
+        let now = Instant::now();
+        let line = |h: Hosted, at: Instant| h.listing(None, at);
+        assert_eq!(line(hosted(Visibility::Invite, &relays, None), now).as_deref(), Some(FINDING_ADDRESS));
+        let trying = || hosted(Visibility::Invite, &relays, Some(reached(MappingState::Trying, None)));
+        assert_eq!(line(trying(), now).as_deref(), Some(FINDING_ADDRESS));
         assert_eq!(
-            line("", Vec::new()).as_deref(),
-            Some("This code has no address: forward port 23400 or set the public address in Options")
+            line(trying(), now + SETTLE_WAIT + Duration::from_secs(1)).as_deref(),
+            Some("This code joins through the relays"),
+            "a slow router: said after SETTLE_WAIT"
         );
-        assert!(line("2a00:1450::1", Vec::new()).is_some_and(|l| l.starts_with(INVITE_NO_ADDRESS)), "IPv6");
-        assert_eq!(line("81.2.69.142", Vec::new()), None);
+        let none = || Some(reached(MappingState::Off, None));
+        assert_eq!(
+            line(hosted(Visibility::Invite, &relays, none()), now).as_deref(),
+            Some(INVITE_THROUGH_RELAYS)
+        );
+        assert_eq!(
+            line(hosted(Visibility::Invite, &[], none()), now).as_deref(),
+            Some("This code has no address and no relays: it joins nothing (set relays in Options)")
+        );
+        let v6 = Some(reached(MappingState::Off, Some("2a00:1450::1")));
+        assert_eq!(
+            line(hosted(Visibility::Invite, &relays, v6), now).as_deref(),
+            Some(INVITE_THROUGH_RELAYS)
+        );
+        let set = Some(reached(MappingState::Off, Some("81.2.69.142")));
+        assert_eq!(line(hosted(Visibility::Invite, &relays, set), now), None);
+    }
+
+    /// The player's TURN servers for a joiner's endpoint.
+    #[test]
+    fn turn_entries_become_turn_servers() {
+        let f = FindingSettings {
+            turn: vec!["anna:p@ss:w@turn.example:3478".into(), "broken".into()],
+            ..FindingSettings::default()
+        };
+        assert_eq!(
+            turn_of(&f),
+            [TurnServerSpec { addr: "turn.example:3478".into(), user: "anna".into(), pass: "p@ss:w".into() }]
+        );
     }
 
     /// Final review B-M6: a note the list refuses (a flood, a forgery, a
