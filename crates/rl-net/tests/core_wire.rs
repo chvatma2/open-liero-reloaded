@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use rl_net::core::{Core, CoreConfig, CoreEvent, Datagram};
-use rl_net::endpoint::{HOST, NetEvent};
+use rl_net::endpoint::{HOST, NetEvent, Why};
 use rl_netcode::Channel;
 
 /// Delivers what each core sends to the other at once.
@@ -79,14 +79,8 @@ fn a_setup_that_never_answers_times_out() {
         client.offer(&["10.0.0.2:50000".parse().unwrap()], "10.0.0.1:23400".parse().unwrap(), t0);
     let mut events = Vec::new();
     client.poll(t0 + Duration::from_secs(11), &mut Vec::new(), &mut events);
-    assert!(
-        events.contains(&CoreEvent::SetupFailed { setup, why: rl_net::endpoint::Why::Timeout }),
-        "{events:?}"
-    );
-    assert!(events.contains(&CoreEvent::Net(NetEvent::Disconnected {
-        peer: HOST,
-        why: rl_net::endpoint::Why::Timeout
-    })));
+    assert!(events.contains(&CoreEvent::SetupFailed { setup, why: Why::Timeout }), "{events:?}");
+    assert!(events.contains(&CoreEvent::Net(NetEvent::Disconnected { peer: HOST, why: Why::Timeout })));
 }
 
 #[test]
@@ -100,4 +94,94 @@ fn admit_checks_version_fingerprint_and_capacity() {
     assert_eq!(core.admit(&offer), Err(rl_proto::Refusal::Full));
     let old = rl_proto::Signal::Offer { protocol: 1, fingerprint: rl_proto::FINGERPRINT, sdp: String::new() };
     assert_eq!(core.admit(&old), Err(rl_proto::Refusal::Version));
+}
+
+/// Two cores with the client's offer answered and taken.
+fn set_up(t0: Instant, client_at: SocketAddr, host_at: SocketAddr) -> (Core, Core, u64) {
+    let mut host = Core::new(CoreConfig::host(), t0);
+    let mut client = Core::new(CoreConfig::client(), t0);
+    let (setup, offer) = client.offer(&[client_at], host_at, t0);
+    let (_, answer) = host.answer(&[host_at], &offer, client_at, t0).expect("answered");
+    client.accept_answer(setup, &answer).expect("accepted");
+    (client, host, setup)
+}
+
+/// The stats count what the caller reports sent (`Core::sent`), the
+/// handshake's datagrams too, from before the link had a peer id.
+#[test]
+fn datagrams_sent_while_connecting_count_in_the_stats() {
+    let t0 = Instant::now();
+    let host_at: SocketAddr = "10.0.0.1:23400".parse().unwrap();
+    let client_at: SocketAddr = "10.0.0.2:50000".parse().unwrap();
+    let (mut client, mut host, _) = set_up(t0, client_at, host_at);
+    let (mut eh, mut ec) = (Vec::new(), Vec::new());
+    let (mut sent, mut bytes, mut refused, mut before_open) = (0u64, 0u64, 0u64, 0u64);
+    let mut out = Vec::new();
+    let mut now = t0;
+    while !(connected(&eh) && connected(&ec)) {
+        now += Duration::from_millis(5);
+        assert!(now < t0 + Duration::from_secs(10), "no connection; host {eh:?} client {ec:?}");
+        client.poll(now, &mut out, &mut ec);
+        for d in out.drain(..) {
+            // The socket refuses the client's first datagram (ICE sends
+            // its check again).
+            let ok = sent + refused > 0;
+            client.sent(&d, ok);
+            if !ok {
+                refused += 1;
+                continue;
+            }
+            sent += 1;
+            bytes += d.bytes.len() as u64;
+            if !connected(&ec) {
+                before_open += 1;
+            }
+            host.receive(client_at, &d.bytes, now);
+        }
+        host.poll(now, &mut out, &mut eh);
+        for d in out.drain(..) {
+            host.sent(&d, true);
+            client.receive(host_at, &d.bytes, now);
+        }
+    }
+    assert!(before_open > 0);
+    let stats = client.stats(HOST).expect("open");
+    assert_eq!((stats.datagrams_sent, stats.bytes_sent, stats.send_failures), (sent, bytes, refused));
+    assert_eq!(refused, 1);
+}
+
+/// `cancel` drops a connecting setup at once (a client hears why, no
+/// `SetupFailed` follows) and its link's last datagrams leave with the next
+/// poll: the host, already open, learns the link is closed.
+#[test]
+fn a_cancelled_setup_tells_the_peer_with_the_next_poll() {
+    let t0 = Instant::now();
+    let host_at: SocketAddr = "10.0.0.1:23400".parse().unwrap();
+    let client_at: SocketAddr = "10.0.0.2:50000".parse().unwrap();
+    let (mut client, mut host, setup) = set_up(t0, client_at, host_at);
+    let (mut eh, mut ec) = (Vec::new(), Vec::new());
+    let mut now = t0;
+    // The host opens first: in each exchange it polls after the client.
+    while !connected(&eh) {
+        now += Duration::from_millis(5);
+        assert!(now < t0 + Duration::from_secs(10), "no connection; host {eh:?}");
+        exchange(&mut client, client_at, &mut host, host_at, now, &mut ec, &mut eh);
+    }
+    assert!(!connected(&ec) && client.pending() == 1, "{ec:?}");
+    let mut events = Vec::new();
+    client.cancel(setup, Why::Closed, &mut events);
+    assert_eq!(events, [CoreEvent::Net(NetEvent::Disconnected { peer: HOST, why: Why::Closed })]);
+    assert_eq!(client.pending(), 0);
+    let mut out = Vec::new();
+    client.poll(now, &mut out, &mut events);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert!(!out.is_empty() && out.iter().all(|d| d.to == host_at), "{out:?}");
+    for d in out.drain(..) {
+        host.receive(client_at, &d.bytes, now);
+    }
+    client.poll(now + Duration::from_millis(5), &mut out, &mut events);
+    assert!(out.is_empty(), "the outbox goes once: {out:?}");
+    eh.clear();
+    host.poll(now, &mut Vec::new(), &mut eh);
+    assert!(eh.contains(&CoreEvent::Net(NetEvent::Disconnected { peer: 1, why: Why::Closed })), "{eh:?}");
 }

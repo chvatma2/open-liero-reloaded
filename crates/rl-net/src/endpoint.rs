@@ -19,23 +19,12 @@ use rl_netcode::{Channel, PeerId};
 use rl_proto::{PROTOCOL_VERSION, Refusal, Signal, decode_signal, encode_signal};
 
 use crate::core::{Core, CoreConfig, CoreEvent, Datagram, SetupId};
+pub use crate::core::{HOST, MAX_QUEUED, NetEvent, PeerStats, SETUP_TIMEOUT, SILENCE_TIMEOUT, Why};
 pub use crate::limits::Limits;
 use crate::signal::SignalConn;
 
-/// A client's only peer: the host.
-pub const HOST: PeerId = 0;
 /// The host's default TCP and UDP port (spec §5.1).
 pub const DEFAULT_PORT: u16 = 23400;
-/// At most this many bytes wait to be sent to one peer on one channel;
-/// [`Endpoint::send`] drops a message beyond it (`PeerStats::sends_dropped`),
-/// and a reliable one ends the link (`Why::Limits`).
-pub const MAX_QUEUED: usize = 4 * 1024 * 1024;
-/// A connection not set up within this time is dropped: the signalling, and
-/// the link until it opens.
-pub const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
-/// An open link that hears nothing for this long is dropped (`Why::Timeout`);
-/// ICE keeps a live link's datagrams coming every few seconds.
-pub const SILENCE_TIMEOUT: Duration = Duration::from_secs(10);
 /// The client's TCP connect gives up after this long.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// A host's signalling connection must deliver its offer within this time.
@@ -90,15 +79,17 @@ pub struct EndpointConfig {
 }
 
 impl Default for EndpointConfig {
-    /// The default port, 32 players and 16 spectators (spec §7.2), the
-    /// default limits, no impairment.
+    /// The default port and [`CoreConfig::host`]'s defaults: 32 players and
+    /// 16 spectators (spec §7.2), the default limits, no impairment.
     fn default() -> Self {
+        // The core's defaults, written once (`CoreConfig::host`).
+        let core = CoreConfig::host();
         EndpointConfig {
             port: DEFAULT_PORT,
-            max_peers: 48,
-            limits: Limits::default(),
-            impair: None,
-            impair_seed: 0,
+            max_peers: core.max_peers,
+            limits: core.limits,
+            impair: core.impair,
+            impair_seed: core.impair_seed,
             #[cfg(feature = "test-hooks")]
             fingerprint_override: None,
             #[cfg(feature = "test-hooks")]
@@ -109,65 +100,6 @@ impl Default for EndpointConfig {
             answer_addr_override: None,
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum NetEvent {
-    /// The link to `peer` is open; `addr` is the remote end of its
-    /// signalling connection.
-    Connected {
-        peer: PeerId,
-        addr: SocketAddr,
-    },
-    Message {
-        peer: PeerId,
-        channel: Channel,
-        bytes: Vec<u8>,
-    },
-    /// The peer is gone. On a client, `HOST` disconnected without a
-    /// `Connected` first means the connection never came up.
-    Disconnected {
-        peer: PeerId,
-        why: Why,
-    },
-    /// Client side: the host refused us.
-    Refused {
-        why: Refusal,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Why {
-    /// The peer closed the connection, or it could not be made.
-    Closed,
-    /// Nothing heard for [`SILENCE_TIMEOUT`], ICE lost the connection, or
-    /// the setup took longer than [`SETUP_TIMEOUT`].
-    Timeout,
-    /// The peer sent faster than its [`Limits`].
-    Limits,
-    /// The peer sent a message too large for its channel, or bad signalling.
-    Malformed,
-    /// Not reported by the endpoint: the session layers' refusal (a kick or
-    /// a ban).
-    Refused,
-    /// A reliable message to the peer could not be queued (beyond
-    /// [`MAX_QUEUED`], or refused by the link): our own failure, the
-    /// ordered stream cannot go on.
-    Unsent,
-}
-
-/// What went through the socket for one peer.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PeerStats {
-    pub datagrams_sent: u64,
-    pub bytes_sent: u64,
-    pub datagrams_received: u64,
-    pub bytes_received: u64,
-    /// Messages [`Endpoint::send`] dropped: over [`MAX_QUEUED`], or refused
-    /// by the link (empty, too large). A reliable one ends the link.
-    pub sends_dropped: u64,
-    /// Datagrams the local socket did not take (a full send buffer).
-    pub send_failures: u64,
 }
 
 /// The signalling side of one of the core's setups, until its link opens

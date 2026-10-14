@@ -78,10 +78,14 @@ announcements.
   `CoreEvent::Opened` or `SetupFailed`; `receive(from, bytes, now)` takes a
   datagram, `poll(now, out, events)` hands out `Datagram`s and
   `CoreEvent::Net(NetEvent)`s. A cancelled link's last datagrams leave with
-  the next `poll`. `CoreConfig::host()`/`client()` are `EndpointConfig`'s
-  defaults. The driver counts each datagram the socket took or refused in
-  its peer's stats (`Core::sent`, crate-private, by the datagram's setup:
-  setup-time datagrams count, as before the split).
+  the next `poll`. `CoreConfig::host()` holds the defaults
+  (`EndpointConfig::default` takes them from it). The shared vocabulary
+  (`HOST`, `MAX_QUEUED`, `SETUP_TIMEOUT`, `SILENCE_TIMEOUT`, `NetEvent`,
+  `Why`, `PeerStats`) is defined in `core`; `endpoint` re-exports it under
+  the same paths. The driver reports each datagram its socket took or
+  refused (`Core::sent`), counted in the stats of the datagram's setup:
+  setup-time datagrams count, as before the split; without the reports the
+  stats count no sends.
 - **`endpoint::Endpoint`**: the socket driver of a `Core`: the UDP socket,
   the TCP listener and `SignalConn`s (mapped by `SetupId`), the per-IP
   caps, the gate, the connect thread, lingering closes, and the SDP
@@ -193,7 +197,9 @@ announcements.
   connection quietly (`tests/endpoint.rs`).
 
 Test: `cargo nextest run -p rl-net` (`tests/core_wire.rs`: two `Core`s
-on an in-memory wire and a virtual clock, a setup timing out, `admit`;
+on an in-memory wire and a virtual clock, a setup timing out, `admit`,
+setup-time datagrams and a refused one in the stats, a cancelled setup's
+last datagrams closing the host's open link;
 `tests/link.rs`: in memory on a
 virtual clock, 32 s in well under 1 s of wall time, and irregular
 polling without a FORWARD-TSN/SACK storm; over localhost UDP:

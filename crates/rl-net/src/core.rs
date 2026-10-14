@@ -7,21 +7,93 @@
 
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rl_netcode::netsim::Profile;
 use rl_netcode::{Channel, PeerId, Rng};
 use rl_proto::{FINGERPRINT, PROTOCOL_VERSION, Refusal, Signal};
 
-use crate::endpoint::{HOST, MAX_QUEUED, NetEvent, PeerStats, SETUP_TIMEOUT, SILENCE_TIMEOUT, Why};
 use crate::impair::Impair;
 use crate::limits::{Limits, PeerLimits};
 use crate::link::{Ended, Link, LinkError, LinkEvent, Transmit};
+
+/// A client's only peer: the host.
+pub const HOST: PeerId = 0;
+/// At most this many bytes wait to be sent to one peer on one channel;
+/// [`Core::send`] drops a message beyond it (`PeerStats::sends_dropped`),
+/// and a reliable one ends the link (`Why::Unsent`).
+pub const MAX_QUEUED: usize = 4 * 1024 * 1024;
+/// A connection not set up within this time is dropped: the signalling, and
+/// the link until it opens.
+pub const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
+/// An open link that hears nothing for this long is dropped (`Why::Timeout`);
+/// ICE keeps a live link's datagrams coming every few seconds.
+pub const SILENCE_TIMEOUT: Duration = Duration::from_secs(10);
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NetEvent {
+    /// The link to `peer` is open; `addr` is the remote end of its
+    /// signalling connection.
+    Connected {
+        peer: PeerId,
+        addr: SocketAddr,
+    },
+    Message {
+        peer: PeerId,
+        channel: Channel,
+        bytes: Vec<u8>,
+    },
+    /// The peer is gone. On a client, `HOST` disconnected without a
+    /// `Connected` first means the connection never came up.
+    Disconnected {
+        peer: PeerId,
+        why: Why,
+    },
+    /// Client side: the host refused us.
+    Refused {
+        why: Refusal,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Why {
+    /// The peer closed the connection, or it could not be made.
+    Closed,
+    /// Nothing heard for [`SILENCE_TIMEOUT`], ICE lost the connection, or
+    /// the setup took longer than [`SETUP_TIMEOUT`].
+    Timeout,
+    /// The peer sent faster than its [`Limits`].
+    Limits,
+    /// The peer sent a message too large for its channel, or bad signalling.
+    Malformed,
+    /// Not reported by the endpoint: the session layers' refusal (a kick or
+    /// a ban).
+    Refused,
+    /// A reliable message to the peer could not be queued (beyond
+    /// [`MAX_QUEUED`], or refused by the link): our own failure, the
+    /// ordered stream cannot go on.
+    Unsent,
+}
+
+/// What went through the socket for one peer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PeerStats {
+    pub datagrams_sent: u64,
+    pub bytes_sent: u64,
+    pub datagrams_received: u64,
+    pub bytes_received: u64,
+    /// Messages [`Core::send`] (`Endpoint::send`) dropped: over [`MAX_QUEUED`], or refused
+    /// by the link (empty, too large). A reliable one ends the link.
+    pub sends_dropped: u64,
+    /// Datagrams the local socket did not take (a full send buffer).
+    pub send_failures: u64,
+}
 
 /// One connection attempt, from its offer (or answer) until its link opens
 /// or fails; never reused.
 pub type SetupId = u64;
 
+/// What a [`Core`] is: a host or a client, its capacity, the limits it
+/// holds its peers to and the impairment of its sending.
 #[derive(Clone, Debug)]
 pub struct CoreConfig {
     /// A host numbers its peers 1, 2, 3, …; a client's only peer is `HOST`.
@@ -43,8 +115,9 @@ pub struct CoreConfig {
 }
 
 impl CoreConfig {
-    /// A host with `EndpointConfig`'s defaults: 32 players and 16
-    /// spectators (spec §7.2), the default limits, no impairment.
+    /// A host with the defaults (`EndpointConfig::default` takes them
+    /// from here): 32 players and 16 spectators (spec §7.2), the default
+    /// limits, no impairment.
     pub fn host() -> CoreConfig {
         CoreConfig {
             host: true,
@@ -59,7 +132,7 @@ impl CoreConfig {
         }
     }
 
-    /// A client with `EndpointConfig`'s defaults.
+    /// A client with the defaults.
     pub fn client() -> CoreConfig {
         CoreConfig { host: false, ..CoreConfig::host() }
     }
@@ -70,11 +143,9 @@ impl CoreConfig {
 pub struct Datagram {
     pub to: SocketAddr,
     pub bytes: Vec<u8>,
-    /// The open peer it comes from (`None` while its link was connecting):
-    /// a quick way to its stats.
-    pub(crate) peer: Option<PeerId>,
-    /// The setup it comes from: [`Core::sent`] counts it in the peer's
-    /// stats, connecting or open.
+    /// The setup it comes from: [`Core::sent`] counts it in that peer's
+    /// stats, whether its link was connecting or open (a link opening
+    /// hands out datagrams before it has a peer id).
     pub(crate) setup: SetupId,
 }
 
@@ -85,8 +156,9 @@ pub enum CoreEvent {
     /// Setup `setup` opened as `peer` (the driver lingers its signalling
     /// connection).
     Opened { setup: SetupId, peer: PeerId },
-    /// Setup `setup` did not open (`Timeout` past `SETUP_TIMEOUT`, `Closed`
-    /// by the link).
+    /// Setup `setup` did not open: `Timeout` past `SETUP_TIMEOUT` (or ICE
+    /// lost it), `Closed` by the link, or the limit a connecting peer broke
+    /// (`Limits`). Not reported for the caller's own [`Core::cancel`].
     SetupFailed { setup: SetupId, why: Why },
 }
 
@@ -133,12 +205,7 @@ pub struct Core {
 
 /// The link's transmits as datagrams of `peer`.
 fn datagrams(peer: &Peer, out: &mut Vec<Datagram>, transmits: impl IntoIterator<Item = Transmit>) {
-    out.extend(transmits.into_iter().map(|t| Datagram {
-        to: t.to,
-        bytes: t.bytes,
-        peer: peer.id,
-        setup: peer.setup,
-    }));
+    out.extend(transmits.into_iter().map(|t| Datagram { to: t.to, bytes: t.bytes, setup: peer.setup }));
 }
 
 /// Polls the peer's link and hands out its datagrams (through the
@@ -325,16 +392,16 @@ impl Core {
         }
     }
 
-    /// Counts a datagram of [`Core::poll`] in its peer's stats: sent, or
-    /// refused by the socket.
-    pub(crate) fn sent(&mut self, datagram: &Datagram, ok: bool) {
+    /// The caller reports each datagram of [`Core::poll`] and
+    /// [`Core::close`]: `ok` if its socket took it, else refused (a full
+    /// send buffer). The peer's [`PeerStats`] count it (`datagrams_sent`
+    /// and `bytes_sent`, or `send_failures`); a datagram of a link gone
+    /// since is ignored. Without these reports the stats count no sends.
+    pub fn sent(&mut self, datagram: &Datagram, ok: bool) {
         let setup = datagram.setup;
-        let peer = match datagram.peer.and_then(|id| self.open.get_mut(&id)) {
-            Some(p) => Some(p),
-            // Connecting when it was sent (it may have opened since).
-            None => self.pending.iter_mut().chain(self.open.values_mut()).find(|p| p.setup == setup),
-        };
-        let Some(p) = peer.filter(|p| p.setup == setup) else { return };
+        // At most `max_peers` links: a scan is cheap next to a `send_to`.
+        let peer = self.pending.iter_mut().chain(self.open.values_mut()).find(|p| p.setup == setup);
+        let Some(p) = peer else { return };
         if ok {
             p.stats.datagrams_sent += 1;
             p.stats.bytes_sent += datagram.bytes.len() as u64;
