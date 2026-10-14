@@ -1476,8 +1476,10 @@ Decided in `docs/superpowers/plans/2026-10-14-plan-12b-through-routers.md`
 ("Decisions this plan makes", N44-N62, PL12b-1 to PL12b-3) and by rulings
 during its execution: PL12b-0, PF12b-1 to PF12b-5 (pre-flight), TR-1 to
 TR-4 (the TURN relay), PM-1 and PM-2 (port mapping), NT-1 and NT-2 (tests
-and exit), RH-1 (re-hosting) and UI-1 (Options). Where a ruling changed a
-decision, the decision below says so and gives its final form. "If wrong"
+and exit), RH-1 (re-hosting) and UI-1 (Options), and the final review's
+FR12b-1 to FR12b-4, TR-5 (amends TR-1) and N47-a (amends N47). Where a
+ruling changed a decision, the decision below says so and gives its final
+form. "If wrong"
 is the cost of the decision being wrong.
 
 - **N44 - handshake encryption.** NIP-44 v2 (`rl_discovery::nip44`):
@@ -1537,19 +1539,34 @@ is the cost of the decision being wrong.
     dropped".
   - If wrong: up to 2 s more per Nostr join (no trickle); a flood of valid
     offers from fresh keys delays honest joiners.
-- **PF12b-2 - a full pending table evicts a silent setup.** When the
-  signalled-pending table (`MAX_SIGNALLED_PENDING`, 8) is full and a new
-  valid offer arrives, the oldest pending signalled setup that has heard
-  no ICE connectivity check from its peer (a check str0m accepted: ufrag
-  and integrity) is closed (`SetupFailed { Timeout }`), and the new offer
-  takes its place. Only when every pending setup has heard a check is the
-  offer refused `Busy`, which a joiner shows as `BUSY` ("the game is busy
-  with other joins: try again in a moment"). Honest joiners send checks
-  within about 1 s of the answer, so valid but silent offers from fresh
-  keys cannot lock one out. Pinned by `a_flood_of_offers_leaves_room_for_
-  an_honest_joiner` (an 8 s flood of 100 junk events and 5 silent valid
-  offers a second; the honest joiner connects during it). If wrong: a
-  slow honest joiner is evicted during a flood and retries.
+- **PF12b-2 - a full pending table evicts an unproven setup** (as amended
+  by FR12b-1). When the signalled-pending table (`MAX_SIGNALLED_PENDING`,
+  8) is full and a new valid offer arrives, the oldest unprotected
+  pending signalled setup is closed (`SetupFailed { Timeout }`, the host's
+  `JoinFailed`), and the new offer takes its place. Only when every
+  pending setup is protected is the offer refused `Busy`, which a joiner
+  shows as `BUSY` ("the game is busy with other joins: try again in a
+  moment"). **FR12b-1** (final review A-I1): PF12b-2 first protected a
+  setup once its peer sent one ICE check that str0m accepted, but a
+  flooder holds its own answer's ufrag and password and can send valid
+  checks from any forged source, so 8 offers with one check each per 15 s
+  locked honest joiners out. A setup is now protected only once one of
+  the host's own checks to it was answered from the address it went to
+  (its transaction and destination remembered, the binding success
+  response matched), which a forged source cannot do; and only the oldest
+  `MAX_ANSWERED_PER_IP` (2) answered setups of one IP are protected, so
+  one real IP holds at most two slots. Honest joiners answer the host's
+  checks within about 1 s of the answer. Pinned by `a_flood_of_offers_
+  leaves_room_for_an_honest_joiner` (an 8 s flood of 100 junk events and
+  5 valid offers a second, each sending valid checks from a forged source
+  once answered; the honest joiner, starting 3 s in with the table full,
+  connects during it; RED before FR12b-1: refused `Busy`) and
+  `answered_checks_protect_at_most_two_setups_per_ip`. **Residual:** a
+  flooder with many real IPs (each answering the host's checks) still
+  fills the table, 2 slots per IP; with a real IP it could as well
+  complete the link, which is the lobby's problem (the lobby's limits
+  apply). If wrong: an honest joiner slow to answer the host's checks is
+  evicted during a flood and retries.
 - **N46 - join order** (as amended by PF12b-3).
   - A typed address or a LAN game: direct only (plan 10). A typed name is
     looked up on a thread (`rl-game resolve`), never on the frame.
@@ -1588,9 +1605,23 @@ is the cost of the decision being wrong.
   first STUN round settled), at most `SETTLE_WAIT` (5 s), in rl-server
   and in the game; the invite is printed again whenever `direct()`
   changes. A Public game without an address is announced all the same
-  and joined through the relays. If wrong: a manual forward without
-  `public_address` joins through Nostr and ICE, which needs hole punching
-  or a TURN relay.
+  and joined through the relays. **N47-a** (final review C-I1): an
+  address is also advertised when STUN shows no NAT (a VPS or cloud VM:
+  the server-reflexive IP is one of the host's own addresses,
+  `Reach::open`, usable when global or `allow_local`), on the local port,
+  after the mapping and the configured address; the reach line then says
+  "No router: players reach you directly at …" instead of the router's
+  failure. Before, an upgraded VPS lost its listed and invite address and
+  its log blamed a router it does not have. The CHANGELOG and online.md
+  name VPS servers. **FR12b-2** (final review A-I2): every renewal reads
+  the router's external address again (PCP from its answer, NAT-PMP op 0,
+  UPnP `GetExternalIPAddress`); a changed one is a new `Mapped` state, so
+  `direct()`, the invite, the notes and a relay on the mapping's address
+  (restarted on it) follow an ISP's renumbering. If wrong: a manual
+  forward without `public_address` joins through Nostr and ICE, which
+  needs hole punching or a TURN relay; a host behind a firewall that drops
+  inbound traffic but has no NAT advertises an address that times out
+  after 5 s, then Nostr.
 - **N48 - ICE candidates.**
   - **Host:** the default interface's IPv4 addresses, at most 2
     (`netdev =0.46.3` with feature `gateway`; else the OS's source address
@@ -1809,7 +1840,9 @@ is the cost of the decision being wrong.
   "symmetric NAT", "not known yet"); the router (a random UDP port of
   49152-65535 mapped exactly, its result, then "router: the mapping is
   deleted" only when the router confirmed it); each Nostr relay's status
-  and the TURN notes on them; `nat-check done`. Exit 0. Without
+  with its clock against this PC's (FR12b-3) and a warning past a minute,
+  whether each forwards a 16 KiB handshake from a new key (final review
+  B-M3), and the TURN notes on them; `nat-check done`. Exit 0. Without
   `--config` it uses the defaults (8 relays, 5 STUN servers). It ships in
   the release zips (it is `rl-server`); it uses public servers only when
   run by hand. If wrong: a report that misleads a playtester; it changes
@@ -1865,12 +1898,22 @@ Pre-flight rulings:
 
 Task rulings:
 
-- **TR-1:** a TURN relay refuses peers that are not global
-  (`rl_proto::is_global`: loopback, private, link-local, multicast,
-  unspecified, documentation, CGNAT …) and its own listening and public
-  addresses (403; IPv6 peers 443), unless `allow_local` (N62): a public
-  relay with public credentials must never reach its operator's network.
-  If wrong: an office relay needs `allow_local`.
+- **TR-1** (as amended by TR-5): a TURN relay refuses peers that are not
+  global (`rl_proto::is_global`: loopback, private, link-local, multicast,
+  unspecified, documentation, CGNAT …; 403, IPv6 peers 443), unless
+  `allow_local` (N62): a public relay with public credentials must never
+  reach its operator's network. **TR-5** (final review B-I3): TR-1 first
+  refused the relay's own public IP too, so a relay could never carry a
+  game hosted behind its own router (the `rl-server --relay` beside its
+  own game, a player hosting on its LAN), and a two-PC playtest's only
+  relay was likely the user's own. The relay now refuses only its own
+  sockets: its listening port and its allocations' relay ports, at its
+  public or listening IP, a loopback address or any of the machine's
+  interface addresses (`TurnCore::own`; a multi-homed relay, final
+  review A-M3), even with `allow_local` (a loop). online.md says a relay
+  beside the host needs a router with hairpin NAT, else run it elsewhere.
+  If wrong: an office relay needs `allow_local`; a relay can reach
+  services forwarded on its own router (already public).
 - **TR-2:** our own UDP-only TURN server core replaces turn-server-proto:
   the RFC 8656 subset our client and browsers use (Allocate, Refresh,
   CreatePermission, ChannelBind, Send and Data indications, ChannelData,
@@ -1953,6 +1996,30 @@ Task rulings:
   on its own line. A tab that cannot be reached is a bug. If wrong: a
   layout change.
 
+Final review rulings (2026-10-14; the fix pass):
+
+- **FR12b-1** (A-I1): see PF12b-2 above.
+- **FR12b-2** (A-I2): see N47 above.
+- **FR12b-3** (B-I1): the host's side reports joins through the relays.
+  Its lobby log and the server's log (`relays: …`) say each outcome:
+  answered, refused (busy, or the reason), answered but not connected
+  within 15 s (rl-net's new `NetEvent::JoinFailed`, for a host's
+  signalled setups only), and handshakes dated more than a minute off the
+  host's clock ("… check both PCs' clocks"; the host's subscription now
+  reaches 10 minutes back, `CLOCK_SEEN`, so a joiner whose clock is
+  behind is seen); at most one line of each kind every 5 s. `NO_REPLY`
+  names the clocks, and an `invalid:` refusal is `RELAYS_INVALID` (B-M2).
+  `rl-server --nat-check` prints each relay's clock against the PC's,
+  from its WebSocket handshake's `Date` header (`Pool::clocks`), and
+  warns past a minute. Clock skew is the likeliest silent failure at a
+  playtest. If wrong: a few more log lines.
+- **FR12b-4** (B-I2): a relayed joiner's connection line names the TURN
+  relay's address (the server of the selected pair's local, relayed
+  candidate, `Endpoint::relay_server`), not the host's; its test's relay
+  listens on 127.0.0.3 so it can fail. If wrong: none.
+- **TR-5** (B-I3): see TR-1 above.
+- **N47-a** (C-I1): see N47 above.
+
 Review findings that changed behaviour beyond the plan:
 
 - The game ran its network frame only while an online game existed
@@ -1967,6 +2034,24 @@ Review findings that changed behaviour beyond the plan:
   TURN entry.
 - rl-server's `/banip` on a relayed member wrote the relay's IP to the
   bans file, which after a restart banned the relay for everyone (N59).
+- A stalled link no longer floods its peer when it recovers (the bot-grid
+  flake of 2026-10-14, f4a1f26): sctp-proto 0.10.5 starts an unreliable
+  message's lifetime only at its first send, so every input written during
+  a stall left at once after it, past the host's 400 messages a second,
+  and an honest peer was dropped. A link now holds at most 100 inputs in
+  SCTP and keeps only the newest 4 of its own (`PeerStats::stale_dropped`
+  counts the rest); each netcode datagram repeats what is unacknowledged.
+- The final review's minors, fixed: the mapping race's loser asks the
+  winner to renew at once (A-M1: on a router with one table for every
+  protocol its deletion removed the winner's mapping); PCP and NAT-PMP
+  keep their whole deadline after an RH-1 wait (A-M2); signalled SDP keeps
+  loopback candidates only with `allow_local` (A-M4); a member's path
+  follows its link, for its tag and N59's ban (B-M1); `--nat-check` says
+  whether each relay forwards a handshake from a new key (B-M3); a
+  host's listener says which relay fails (B-M4); a failed listener restart
+  no longer holds the old relays (B-M5); a join's relays count a trailing
+  `/` as the same relay (B-M6); the host's console says each member's
+  path (C-M1); a new TURN relay is masked as it is typed (C-M5).
 
 Measured:
 
@@ -2047,6 +2132,14 @@ Open items (deferred minors):
 - The benchmark gate (side task, d75269a): a regression of exactly about
   15 % can pass when one window measures under +10 %, and Windows-side
   load is invisible to `/proc/stat`.
+- From f4a1f26 (the stalled-link fix): sctp-proto's unreliable lifetime
+  starting at the first send is worth reporting upstream; the `awful`
+  profile still drops some inputs (by design now: stale ones); the
+  bot-grid's p99 budgets can fail under heavy machine load.
+- FR12b-1's residual: a flooder with many real IPs, each answering the
+  host's checks, fills the pending table 2 slots per IP.
+- A relay restarted on its router's new address (FR12b-2) drops its
+  allocations: they were on the old address, which no peer reaches.
 
 ## Kept OLX quirks
 

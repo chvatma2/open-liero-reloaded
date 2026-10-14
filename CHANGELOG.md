@@ -80,12 +80,48 @@ All notable changes to rust-liero are recorded here. The format follows
     and 49160-49191 exactly, or no NAT; otherwise it logs "relay: not
     announced" and does not start. Its credentials are public by design.
 
+### Fixed — through routers (final review)
+
+- A flood of valid offers whose joiners send checks from forged
+  addresses can no longer lock honest joiners out: a pending join counts
+  as live only once it answered one of the host's own checks, at most 2
+  per IP.
+- A host whose ISP renumbers its router follows the new address: each
+  port-mapping renewal reads the router's address again, and the invite,
+  the listing and a relay on that address move with it.
+- The host's lobby and log say what became of each join through the
+  relays: answered, refused, answered but not connected, or ignored
+  because one of the two PCs' clocks is off by more than a minute. A
+  joiner's "did not answer" names the clocks, and a relay refusing the
+  join's events as invalid asks after the clock. `rl-server --nat-check`
+  prints each relay's clock against this PC's and whether it forwards a
+  joiner's handshake.
+- A relayed joiner's "connected through the TURN relay …" names the
+  relay, not the host.
+- A TURN relay carries games hosted behind its own public address (its
+  own server's game, a player on its LAN) when the router hairpins; it
+  refuses only its own ports.
+- A server with a public address of its own and no NAT (a VPS) is
+  listed and invited at that address again, and its log says "No router:
+  players reach you directly at …".
+- A stalled link (a lossy path, a loaded machine) no longer floods its
+  peer with old inputs when it recovers, which dropped honest players as
+  flooders; it drops its stale inputs instead.
+- Smaller fixes: the port-mapping race on a router with one table for
+  all protocols, PCP and NAT-PMP time after re-hosting, loopback
+  candidates refused from strangers, a member's path tag following its
+  link (and a relayed member never IP-banned), the host's console
+  printing each member's path and its relays' state, a listener restart
+  that failed, duplicate relays by a trailing `/`, and the new TURN relay
+  field masked while typed.
+
 ### Added — finding games
 
 - Multiplayer has three tabs: **Internet** (games announced on public Nostr
   relays: name, map, mod, players, ping, region and a lock for a password;
   games of another version greyed out, games without a public address "cannot
-  be joined yet"; Join, and Block this host), **LAN** and **Direct** (an
+  be joined yet", which "Added — through routers" above lifts: they join
+  through the relays; Join, and Block this host), **LAN** and **Direct** (an
   address or an invite code). See `docs/online.md`.
 - Invite codes (`rlx1…`): a hosted game's lobby shows its code with a Copy
   button; pasting one in Direct joins that game and only that game.
