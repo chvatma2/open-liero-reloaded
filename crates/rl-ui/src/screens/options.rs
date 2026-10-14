@@ -69,6 +69,9 @@ pub(super) struct View {
     new_relay: String,
     new_stun: String,
     new_turn: String,
+    /// The new TURN relay is shown as typed, not masked (final review
+    /// C-M5: its password).
+    show_turn: bool,
     /// The public address being typed (`None`: the saved one, not edited).
     address: Option<String>,
 }
@@ -292,6 +295,7 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
             &mut v.new_relay,
             (valid_relay, "needs wss:// or ws://", MAX_SERVERS),
             ("wss://relay.example.org", str::to_string),
+            None,
         ) {
             f.relays = Some(list);
         }
@@ -309,6 +313,7 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
             &mut v.new_stun,
             (valid_stun, "needs host:port", MAX_SERVERS),
             ("stun.example.org:3478", str::to_string),
+            None,
         ) {
             f.stun = Some(list);
         }
@@ -332,6 +337,7 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
             &mut v.new_turn,
             (valid_turn, "needs user:pass@host:port", MAX_TURN),
             ("user:pass@turn.example.org:3478", turn_shown),
+            Some(&mut v.show_turn),
         ) {
             f.turn = list;
         }
@@ -376,7 +382,8 @@ fn refusal(
 /// An editable list of servers: each with Remove (shown by `shown`: a
 /// TURN relay without its password), then a field and Add (enabled for a
 /// new valid one while the list has fewer than `max`; else why not beside
-/// it and on Add's hover). The new list, when it changed.
+/// it and on Add's hover); a `secret` list's field is masked unless its
+/// "Show password" is ticked. The new list, when it changed.
 fn server_list(
     ui: &mut Ui,
     what: &str,
@@ -384,6 +391,7 @@ fn server_list(
     new: &mut String,
     rule: (fn(&str) -> bool, &'static str, usize),
     (hint, shown): (&str, fn(&str) -> String),
+    secret: Option<&mut bool>,
 ) -> Option<Vec<String>> {
     let mut changed = None;
     if list.is_empty() {
@@ -403,8 +411,13 @@ fn server_list(
     // Wrapped: in a narrow column (a large UI scale) Add and why go below.
     ui.horizontal_wrapped(|ui| {
         let label = ui.label(format!("New {what}"));
-        let field = TextEdit::singleline(new).hint_text(hint).desired_width(fit(ui, 300.0));
+        // A secret entry is masked as it is typed unless shown (C-M5).
+        let masked = secret.as_deref().is_some_and(|shown| !*shown);
+        let field = TextEdit::singleline(new).hint_text(hint).password(masked).desired_width(fit(ui, 300.0));
         let r = ui.add(field).labelled_by(label.id);
+        if let Some(shown) = secret {
+            ui.checkbox(shown, "Show password");
+        }
         let typed = new.trim().to_string();
         let why = refusal(list, &typed, rule);
         let ok = why.is_none() && !typed.is_empty();

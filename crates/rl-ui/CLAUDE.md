@@ -117,7 +117,9 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   full",
   "Reset relays to defaults"; the same for STUN), "TURN relays" (the
   same, no Reset: "needs user:pass@host:port", at most `MAX_TURN`, each
-  row without its password, `turn_shown`), Blocked hosts (Unblock),
+  row without its password, `turn_shown`; the new one masked as it is
+  typed, a `PasswordInput`, unless "Show password" is ticked: final
+  review C-M5), Blocked hosts (Unblock),
   each change one `SetFinding` (relay edits reconnect the relays in use,
   the rest applies to the next game hosted or joined: the app's); then "Download cache: N MB" and Clear from
   `MenuData::download_cache` (`DownloadCacheView`: the app's bytes and

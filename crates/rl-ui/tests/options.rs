@@ -676,9 +676,12 @@ fn options_edit_turn_relays_and_port_mapping() {
     assert!(!saved(&h).online.finding.port_mapping);
     // None by default (the project ships no TURN list, N52).
     h.get_by_label("No TURN relays: none is asked.");
-    h.get_by_role_and_label(Role::TextInput, "New TURN relay").focus();
+    // Final review C-M5: the new TURN relay is masked as it is typed (its
+    // password), unless "Show password" is ticked.
+    let field = Role::PasswordInput;
+    h.get_by_role_and_label(field, "New TURN relay").focus();
     h.run();
-    h.get_by_role_and_label(Role::TextInput, "New TURN relay").type_text("turn.example.org:3478");
+    h.get_by_role_and_label(field, "New TURN relay").type_text("turn.example.org:3478");
     h.run();
     h.get_by_label("needs user:pass@host:port");
     let add = h.get_by_label("Add TURN relay");
@@ -688,8 +691,14 @@ fn options_edit_turn_relays_and_port_mapping() {
     assert_eq!(h.get_all_by_label("needs user:pass@host:port").count(), 2, "beside the field and on hover");
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
     h.run();
-    h.get_by_role_and_label(Role::TextInput, "New TURN relay").type_text("anna:s3cret@turn.example.org:3478");
+    h.get_by_role_and_label(field, "New TURN relay").type_text("anna:s3cret@turn.example.org:3478");
     h.run();
+    let typed = h.get_by_role_and_label(field, "New TURN relay").accesskit_node().value().unwrap_or_default();
+    assert!(!typed.contains("s3cret"), "masked while typed: {typed}");
+    h.get_by_label("Show password").click();
+    h.run();
+    let shown = h.get_by_role_and_label(Role::TextInput, "New TURN relay").accesskit_node().value();
+    assert_eq!(shown.as_deref(), Some("anna:s3cret@turn.example.org:3478"), "shown when asked");
     h.get_by_label("Add TURN relay").click();
     h.run();
     assert_eq!(saved(&h).online.finding.turn, ["anna:s3cret@turn.example.org:3478"]);
