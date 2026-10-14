@@ -9,17 +9,21 @@
 //!   the same session) until the host's reply, and gives up after
 //!   [`ANSWER_DEADLINE`].
 //! - [`Inbox`] (the host) takes offers addressed to it: cheap checks
-//!   first (size, kind, tag, age), a rate bucket before any decryption (10
-//!   new offers a second, a burst of 20), and remembers each session for
+//!   first (size, kind, tag, age), then the signature and decryption, and a
+//!   rate bucket for the offers that decrypt (10 new offers a second, a
+//!   burst of 20; ruling of plan 12b's Task 7 review: undecryptable junk
+//!   must not drain the honest joiners' tokens), and remembers each session for
 //!   [`SESSION_MEMORY`] (at most 4096), so a resent offer is answered with
 //!   the same reply event. A hostile or over-limit event is ignored and
 //!   counted: its sender cannot be dropped, its key being ephemeral.
 //!
 //! Cost: `Inbox::offer` checks every signature again, although the pool's
 //! drivers verified each event already (a forgery never reaches it from a
-//! `Pool`). What it spends before the rate bucket is thus bounded only by
-//! the pool's per-relay limits (200 frames/s): call it from the host's
-//! network thread, never the game's UI thread.
+//! `Pool`), and decrypts every event addressed to us before the rate
+//! bucket. What it spends (a signature check, an ECDH, a ChaCha20 and an
+//! HMAC per event) is thus bounded only by the pool's per-relay limits
+//! (200 frames/s): call it from the host's network thread, never the
+//! game's UI thread. Valid offers from fresh keys still share the bucket.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -271,9 +275,6 @@ impl Inbox {
         if !e.verify() {
             return Inbound::Ignored("bad signature");
         }
-        if !self.take_token(now) {
-            return Inbound::Ignored("too many offers");
-        }
         let Some(conversation) = conversation_key(&self.me.secret(), &e.pubkey) else {
             return Inbound::Ignored("bad key");
         };
@@ -285,6 +286,11 @@ impl Inbox {
             Signal::Offer { sdp, .. } if sdp.len() <= MAX_SDP => {}
             Signal::Offer { .. } => return Inbound::Ignored("SDP too large"),
             _ => return Inbound::Ignored("not an offer"),
+        }
+        // The bucket counts only offers that decrypt: junk cannot use up
+        // the honest joiners' tokens.
+        if !self.take_token(now) {
+            return Inbound::Ignored("too many offers");
         }
         self.remember(e, session, conversation, now);
         Inbound::Offer(Request { from: e.pubkey, session, signal, mapped })

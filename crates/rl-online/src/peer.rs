@@ -38,8 +38,11 @@ use crate::events::{NetStats, OnlineEvent};
 use crate::join::{BUSY, Join, Joiner, Lost};
 use crate::matches::{self, HostBots};
 use crate::outbox::{Outbox, Part};
-use crate::reach::{HostListen, Listener, Listening, Reachability};
+use crate::reach::{HostListen, HostReach, Reachability};
 use crate::replay::{MatchRecord, PendingReplay};
+
+mod lobby_handle;
+pub use lobby_handle::LobbyHandle;
 
 /// The host sends its lobby's messages at most this often: changes in
 /// between are coalesced into one `Lobby` (a start, an end, a kick and a
@@ -159,15 +162,8 @@ struct HostSide {
     last_ping: Option<Instant>,
     /// The lobby's revision last reported to the caller.
     reported: Option<u64>,
-    /// Takes joins through Nostr (N54).
-    listener: Option<Listener>,
-    /// The configured public address (`Reachability::configured`).
-    public_address: Option<IpAddr>,
-    /// The reachability last looked at, and what the last
-    /// `OnlineEvent::Reachability` said: its lines, whether it settled,
-    /// its direct address.
-    reach_seen: Option<Reachability>,
-    reach_reported: Option<(Vec<String>, bool, Option<SocketAddr>)>,
+    /// Its listener on Nostr and its reachability (N47, N54).
+    reach: HostReach,
 }
 
 impl HostSide {
@@ -290,7 +286,7 @@ impl OnlinePeer {
         let (endpoint, side) = match hosting {
             Ok((cfg, listen, look)) => {
                 let setup = setup.ok_or_else(|| invalid("a host needs a match setup".into()))?;
-                let listener = listen.pool.map(|pool| Listener::start(pool, me.clone())).transpose()?;
+                let reach = HostReach::start(listen, &me)?;
                 let lobby = LobbyHost::new(cfg, me, look, setup)
                     .map_err(|e: LobbyError| invalid(format!("the match setup: {e}")))?;
                 let banned = Arc::new(Mutex::new(BTreeSet::new()));
@@ -308,10 +304,7 @@ impl OnlinePeer {
                     last_drain: None,
                     last_ping: None,
                     reported: None,
-                    listener,
-                    public_address: listen.public_address,
-                    reach_seen: None,
-                    reach_reported: None,
+                    reach,
                 };
                 (Some(Endpoint::host(endpoint, gate)?), Side::Host(Box::new(side)))
             }
@@ -367,14 +360,7 @@ impl OnlinePeer {
     /// its listener); `None` on a client.
     pub fn reachability(&self) -> Option<Reachability> {
         let Side::Host(h) = &self.side else { return None };
-        let ep = self.endpoint.endpoint()?;
-        Some(Reachability {
-            port: ep.local_port(),
-            configured: h.public_address,
-            reach: ep.reach(),
-            listening: h.listener.as_ref().map_or(Listening::Off, Listener::listening),
-            stun_settled: ep.gathered(),
-        })
+        Some(h.reach.now(self.endpoint.endpoint()?))
     }
 
     /// A client's path to its host and the host's end (or the TURN
@@ -389,12 +375,17 @@ impl OnlinePeer {
     }
 
     /// Leaves (as [`OnlinePeer::leave`]), stops listening and shuts the
-    /// endpoint down (ruling NT-2): never blocks. Wait on the [`Shutdown`]
-    /// (at most 1 s) before the process exits, so the router deletes the
-    /// port mapping (N51). Take the replay first ([`OnlinePeer::take_replay`]).
+    /// endpoint down (ruling NT-2): never blocks. The rest of the peer is
+    /// dropped on a thread (`rl-online drop`: its content worker waits up to
+    /// 2 s for a running job). Wait on the [`Shutdown`] (at most 1 s)
+    /// before the process exits, so the router deletes the port mapping
+    /// (N51). Take the replay first ([`OnlinePeer::take_replay`]).
     pub fn shutdown(mut self) -> Shutdown {
         self.leave();
-        Shutdown { endpoint: self.endpoint.take_endpoint().map(Endpoint::shutdown) }
+        let endpoint = self.endpoint.take_endpoint().map(Endpoint::shutdown);
+        // If no thread can start, the closure (and the peer) is dropped here.
+        let _ = std::thread::Builder::new().name("rl-online drop".into()).spawn(move || drop(self));
+        Shutdown { endpoint }
     }
 
     pub fn is_host(&self) -> bool {
@@ -790,7 +781,7 @@ impl OnlinePeer {
         }
         // The listener's and the joiner's pools go on threads of their own.
         match &mut self.side {
-            Side::Host(h) => h.listener = None,
+            Side::Host(h) => h.reach.stop(),
             Side::Client(c) => c.joiner = None,
         }
         self.closing.clear();
@@ -811,26 +802,15 @@ impl OnlinePeer {
 
     /// A host's listener's offers, answered by the endpoint (N54).
     fn listen_tasks(&mut self, now: Instant) {
-        let Side::Host(h) = &mut self.side else { return };
-        let (Some(listener), Some(ep)) = (&mut h.listener, self.endpoint.endpoint_mut()) else { return };
-        for req in listener.offers() {
-            let signal = ep.answer_signalled(&req.signal, req.mapped, now);
-            listener.answer(req, signal, ep.mapped());
-        }
+        let (Side::Host(h), Some(ep)) = (&mut self.side, self.endpoint.endpoint_mut()) else { return };
+        h.reach.answer(ep, now);
     }
 
     /// A host's reachability, when its lines, whether it settled or its
     /// direct address changed.
     fn report_reachability(&mut self) {
-        let Some(r) = self.reachability() else { return };
-        let Side::Host(h) = &mut self.side else { return };
-        if h.reach_seen.as_ref() == Some(&r) {
-            return;
-        }
-        h.reach_seen = Some(r.clone());
-        let said = (r.lines(), r.settled(), r.direct());
-        if h.reach_reported.as_ref() != Some(&said) {
-            h.reach_reported = Some(said);
+        let (Side::Host(h), Some(ep)) = (&mut self.side, self.endpoint.endpoint()) else { return };
+        if let Some(r) = h.reach.changed(ep) {
             self.events.push(OnlineEvent::Reachability(r));
         }
     }
@@ -1603,213 +1583,6 @@ fn refusal_text(r: Refusal) -> &'static str {
     }
 }
 
-/// The lobby's actions, for the host or a client.
-pub struct LobbyHandle<'a> {
-    peer: &'a mut OnlinePeer,
-}
-
-impl LobbyHandle<'_> {
-    /// The lobby as last known (a client's once welcomed).
-    pub fn state(&self) -> Option<&LobbyState> {
-        match &self.peer.side {
-            Side::Host(h) => Some(h.lobby.state()),
-            Side::Client(c) => c.lobby.state(),
-        }
-    }
-
-    /// The host's lobby revision: it changes whenever [`LobbyHandle::state`]
-    /// does (`LobbyHost::revision`; `None` on a client).
-    pub fn revision(&self) -> Option<u64> {
-        match &self.peer.side {
-            Side::Host(h) => Some(h.lobby.revision()),
-            Side::Client(_) => None,
-        }
-    }
-
-    /// This peer's member id.
-    pub fn me(&self) -> Option<u8> {
-        self.peer.me()
-    }
-
-    /// Whether the host could start the match now (a client cannot).
-    pub fn can_start(&self) -> Result<(), StartError> {
-        match &self.peer.side {
-            _ if self.peer.game.is_some() => Err(StartError::Running),
-            Side::Host(h) => h.lobby.can_start().map_err(StartError::Lobby),
-            Side::Client(_) => Err(StartError::NotHost),
-        }
-    }
-
-    /// Moves a member to the spectators or back to the players (the
-    /// host's; a client's does nothing: no admin command moves seats).
-    pub fn move_seat(&mut self, member: u8, spectate: bool) {
-        self.act(|h| h.move_seat(member, spectate), |_| {});
-    }
-
-    pub fn set_ready(&mut self, ready: bool) {
-        self.act(|h| h.set_my_ready(ready), |c| c.set_ready(ready));
-    }
-
-    /// Watch the next matches (or play them again).
-    pub fn set_spectate(&mut self, spectate: bool) {
-        let me = self.me();
-        self.act(
-            |h| {
-                if let Some(me) = me {
-                    h.move_seat(me, spectate);
-                }
-            },
-            |c| c.set_spectate(spectate),
-        );
-    }
-
-    /// The player's look; its skin's hash comes from this peer's content
-    /// (filled in now when known, else once hashed).
-    pub fn set_look(&mut self, look: Look) {
-        if self.peer.closed {
-            return;
-        }
-        let look = self.peer.content.set_look(look);
-        self.act(|h| h.set_my_look(look.clone()), |c| c.set_look(look.clone()));
-    }
-
-    /// The weapons for the next match (`None`: random).
-    pub fn set_loadout(&mut self, loadout: Option<[i32; 5]>) {
-        self.act(|h| h.set_my_loadout(loadout), |c| c.set_loadout(loadout));
-    }
-
-    pub fn chat(&mut self, text: &str) {
-        self.act(|h| h.chat(text), |c| c.chat(text));
-    }
-
-    /// The next match's setup: the host's own, an admin client's request.
-    pub fn set_setup(&mut self, setup: MatchSetupWire) -> Result<(), LobbyError> {
-        let mut result = Ok(());
-        self.act(|h| result = h.set_setup(setup.clone()), |c| c.admin(AdminCommand::Settings(setup.clone())));
-        result
-    }
-
-    /// Kicks (and bans, by key: spec §5.2) a member: the host's own action,
-    /// an admin client's request by the member's key.
-    pub fn kick(&mut self, member: u8, ban: bool) {
-        let key = self.state().and_then(|s| s.members.iter().find(|m| m.id == member)).map(|m| m.key);
-        self.act(
-            |h| h.kick(member, ban),
-            |c| {
-                if let Some(key) = key {
-                    c.admin(if ban { AdminCommand::Ban(key) } else { AdminCommand::Kick(key) });
-                }
-            },
-        );
-    }
-
-    /// Starts the match on `seed` when every player is ready (the host's).
-    pub fn start(&mut self, seed: u32) -> Result<(), StartError> {
-        self.peer.host_start(seed, false)
-    }
-
-    /// Starts the match on `seed`; players not ready watch it (spec §7.2).
-    pub fn force_start(&mut self, seed: u32) -> Result<(), StartError> {
-        self.peer.host_start(seed, true)
-    }
-
-    /// Ends the running match now (the host's; an admin's `/next` on a
-    /// dedicated server): the results of the last confirmed tick go out as
-    /// at a match's end, and the replay is made of the confirmed ticks.
-    /// Whether a match was ended.
-    pub fn end_match(&mut self) -> bool {
-        self.peer.host_end_now()
-    }
-
-    /// A notice to one member only (the host's; a dedicated server's answer
-    /// to a command). Nothing for an unknown member or on a client.
-    pub fn tell(&mut self, member: u8, text: &str) {
-        let Side::Host(h) = &self.peer.side else { return };
-        if self.peer.closed {
-            return;
-        }
-        let (Some(peer), Some(text)) = (h.lobby.peer_of(member), sanitize_chat(text)) else { return };
-        let notice = ToClient::Notice(Notice::Message(text));
-        send_tagged(&mut self.peer.endpoint, peer, TAG_TO_CLIENT, &encode_to_client(&notice));
-    }
-
-    /// The address a member's signalling connection came from (the host's).
-    pub fn addr_of(&self, member: u8) -> Option<SocketAddr> {
-        let Side::Host(h) = &self.peer.side else { return None };
-        h.lobby.peer_of(member).and_then(|peer| h.addrs.get(&peer)).copied()
-    }
-
-    /// Bans a key for the lobby's life (the host's; a dedicated server's
-    /// bans file): refused at its next join.
-    pub fn ban_key(&mut self, key: PublicKey) {
-        self.act(|h| h.ban_key(key), |_| {});
-    }
-
-    /// Bans an address for the lobby's life (the host's): the endpoint's
-    /// gate refuses it.
-    pub fn ban_ip(&mut self, ip: IpAddr) {
-        if let Side::Host(h) = &mut self.peer.side {
-            h.banned.lock().unwrap_or_else(|e| e.into_inner()).insert(ip);
-        }
-        self.act(|h| h.ban_ip(ip), |_| {});
-    }
-
-    /// Kicks a member and bans its key and its address (the host's own
-    /// Ban button). A member reached through a TURN relay is banned by key
-    /// only (N59), and `OnlineEvent::Notice` says so.
-    pub fn ban_with_address(&mut self, member: u8) {
-        self.ban_with_address_by(member, None);
-    }
-
-    /// As [`LobbyHandle::ban_with_address`], asked by the admin `by` (a
-    /// server's `/banip`; `None`: the host's own or a server command): N59's
-    /// notice goes to that admin.
-    pub fn ban_with_address_by(&mut self, member: u8, by: Option<u8>) {
-        self.act(|h| h.ban_with_address(member, by), |_| {});
-    }
-
-    /// Lifts a key's ban (the host's); whether it was banned.
-    pub fn unban_key(&mut self, key: &PublicKey) -> bool {
-        let mut lifted = false;
-        self.act(|h| lifted = h.unban_key(key), |_| {});
-        lifted
-    }
-
-    /// Lifts an address's ban, in the gate too (the host's); whether it
-    /// was banned.
-    pub fn unban_ip(&mut self, ip: IpAddr) -> bool {
-        if let Side::Host(h) = &mut self.peer.side {
-            h.banned.lock().unwrap_or_else(|e| e.into_inner()).remove(&ip);
-        }
-        let mut lifted = false;
-        self.act(|h| lifted = h.unban_ip(ip), |_| {});
-        lifted
-    }
-
-    /// The host's bans, keys and addresses, in order (a client's are empty).
-    pub fn bans(&self) -> (Vec<PublicKey>, Vec<IpAddr>) {
-        match &self.peer.side {
-            Side::Host(h) => {
-                (h.lobby.banned_keys().copied().collect(), h.lobby.banned_ips().copied().collect())
-            }
-            Side::Client(_) => (Vec::new(), Vec::new()),
-        }
-    }
-
-    fn act(&mut self, host: impl FnOnce(&mut LobbyHost), client: impl FnOnce(&mut LobbyClient)) {
-        if self.peer.closed {
-            return;
-        }
-        match &mut self.peer.side {
-            Side::Host(h) => host(&mut h.lobby),
-            Side::Client(c) => {
-                client(&mut c.lobby);
-                self.peer.flush_client();
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1888,6 +1661,33 @@ mod tests {
         // The worker is free again.
         p.make_replay(Some(r));
         assert!(p.replay.is_some());
+    }
+
+    /// A join through Nostr without `expected_host` expects the host's key
+    /// it asks (N37's proof binds it: `WRONG_HOST`, not `UNPROVEN_HOST`).
+    #[test]
+    fn a_nostr_join_expects_its_hosts_key() {
+        let Some(c) = content() else { return };
+        let host = Identity::from_secret([9; 32]).unwrap().public();
+        let nostr = crate::join::NostrJoin {
+            host,
+            pool: rl_discovery::PoolConfig::default(),
+            region: rl_discovery::Region::Europe,
+            turn_from_nostr: false,
+            allow_local: false,
+        };
+        let role = PeerRole::Client {
+            join: Join { direct: None, nostr: Some(nostr) },
+            password: None,
+            expected_host: None,
+        };
+        let cfg = EndpointConfig { port: 0, ..EndpointConfig::default() };
+        let me = Identity::from_secret([7; 32]).unwrap();
+        let p = OnlinePeer::start(role, cfg, me, look(), c, None, PeerContent::without_downloads("a test"))
+            .unwrap();
+        assert!(matches!(&p.side, Side::Client(c) if c.expected), "a key is expected");
+        assert_eq!(p.events, vec![OnlineEvent::Joining(crate::join::JoinStep::Relays)]);
+        assert_eq!(p.local_port(), 0, "no endpoint before gathering");
     }
 
     /// The session's state messages are told apart for the outbox's bound.

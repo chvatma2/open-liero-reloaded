@@ -117,10 +117,13 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
     `duplicate` (no signature check); otherwise signature, decryption with
     the remembered conversation key, the same session, then `Repeat(the
     cached reply)` or `being answered` before the reply (at most 5 signed
-    resends per session, so a forgery naming the key uses none). A new key: signature, then the rate bucket (10 a second, burst
-    20; integer microseconds, so a steady 10/s always passes), then ECDH,
+    resends per session, so a forgery naming the key uses none). A new key: signature, ECDH,
     decryption, JSON, `v == 1`, an `Offer` with SDP within `MAX_SDP`, and
-    `mapped` an IPv4 socket address. One session per key; sessions are
+    `mapped` an IPv4 socket address, then the rate bucket (10 a second,
+    burst 20; integer microseconds, so a steady 10/s always passes): only
+    offers that decrypt spend tokens, so undecryptable junk cannot starve
+    honest joiners (Task 7 review, Important 1; a flood of valid offers
+    from fresh keys still shares the bucket). One session per key; sessions are
     forgotten `SESSION_MEMORY` after the offer or the reply, the oldest
     dropped at 4096. `reply` encrypts and signs with the host's key and
     caches the event for repeats; a signal that would not fit
@@ -129,9 +132,10 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
     copy) nor `being answered` (a resend before the reply).
     `filter(now)`: kind 21470, `#p` us, since now - 60.
   - **Cost:** `Inbox::offer` re-verifies signatures the pool's drivers
-    already checked (a forgery never arrives through a `Pool`), so its cost
-    before the bucket is bounded by the pool's per-relay limits (200
-    frames/s): call it from the host's network thread, never the UI thread.
+    already checked (a forgery never arrives through a `Pool`) and decrypts
+    every event addressed to us before the bucket, so its cost is bounded
+    by the pool's per-relay limits (200 frames/s): call it from the host's
+    network thread (rl-online's listener thread), never the UI thread.
 - **`turn_note`** (N52, N53): `KIND_TURN` 31471 (addressable), `TURN_TAG`
   `rust-liero-turn` (tags `d` and `t`), `TurnNote { v (TURN_NOTE_V = 1),
   addr (IPv4), port, region, capacity, load, user, pass }` as JSON.
@@ -357,7 +361,9 @@ offers, a host-only reply, filters, secret redraws, a maximal offer and
 an unsendable one, honest redundancy not counted as ignored, the hostile feed
 (`a_hostile_handshake_feed_is_bounded`: wrong recipient, too old, in the
 future, 2000 fresh sessions in 2 ms take at most 20, a steady 10/s for
-200 s keeps about 1200 sessions, tampering), fuzzed events;
+200 s keeps about 1200 sessions, tampering), 200 undecryptable events
+from fresh keys leaving the whole burst of 20 to honest offers
+(`undecryptable_events_spend_no_tokens`), fuzzed events;
 `tests/turn_note.rs`: notes, validation, local addresses, the pick order,
 the flood bound, closing notes, a closing-note flood keeping a closed
 relay's tombstone, fuzzed notes; `tests/invite.rs`: invite codes (round trips, hints, damage, proptest `encode_always_decodes`); unit tests of `hosting` (hints, IPv4-only

@@ -96,6 +96,10 @@ pub struct IceConfig {
     /// candidates.
     #[cfg(feature = "test-hooks")]
     pub relay_only: bool,
+    /// Tests only (`test-hooks`): signalled setups get this long to open
+    /// instead of `SIGNALLED_SETUP_TIMEOUT`.
+    #[cfg(feature = "test-hooks")]
+    pub setup_timeout: Option<Duration>,
     /// Tests only (`test-hooks`): the gateway's PCP/NAT-PMP address (a
     /// `FakeGateway`'s) instead of the default gateway's port 5351.
     #[cfg(feature = "test-hooks")]
@@ -155,6 +159,11 @@ pub struct EndpointConfig {
     /// elsewhere).
     #[cfg(feature = "test-hooks")]
     pub answer_addr_override: Option<SocketAddr>,
+    /// Tests only (`test-hooks`): a client's TCP connect never completes
+    /// (no SYN leaves): it fails with `TimedOut` after `CONNECT_TIMEOUT`,
+    /// as toward a router that does not hairpin (rl-online's fallback).
+    #[cfg(feature = "test-hooks")]
+    pub connect_stall: bool,
     /// Signalled setups' candidates (default: nothing asked).
     pub ice: IceConfig,
 }
@@ -179,6 +188,8 @@ impl Default for EndpointConfig {
             first_peer_id: None,
             #[cfg(feature = "test-hooks")]
             answer_addr_override: None,
+            #[cfg(feature = "test-hooks")]
+            connect_stall: false,
             ice: IceConfig::default(),
         }
     }
@@ -369,6 +380,8 @@ fn core_config(cfg: &EndpointConfig, host: bool) -> CoreConfig {
         suppress_stats: false,
         #[cfg(feature = "test-hooks")]
         relay_only: cfg.ice.relay_only && !host,
+        #[cfg(feature = "test-hooks")]
+        signalled_setup_timeout: cfg.ice.setup_timeout,
     }
 }
 
@@ -477,8 +490,18 @@ impl Endpoint {
         let udp = bind_udp(cfg.port)?;
         let port = udp.local_addr()?.port();
         let (tx, rx) = mpsc::channel();
+        #[cfg(feature = "test-hooks")]
+        let stall = cfg.connect_stall;
+        #[cfg(not(feature = "test-hooks"))]
+        let stall = false;
         std::thread::Builder::new().name("rl-net connect".into()).spawn(move || {
-            let _ = tx.send(TcpStream::connect_timeout(&host, CONNECT_TIMEOUT));
+            let result = if stall {
+                std::thread::sleep(CONNECT_TIMEOUT);
+                Err(io::ErrorKind::TimedOut.into())
+            } else {
+                TcpStream::connect_timeout(&host, CONNECT_TIMEOUT)
+            };
+            let _ = tx.send(result);
         })?;
         Endpoint::new(cfg, udp, port, Role::Client { host, connecting: Some((rx, None)) })
     }

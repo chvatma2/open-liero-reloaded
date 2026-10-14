@@ -15,14 +15,14 @@
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use rl_discovery::{Inbound, Inbox, Pool, PoolConfig, PoolEvent, RelayStatus, Request};
 use rl_lobby::Identity;
-use rl_net::endpoint::Reach;
+use rl_net::endpoint::{Endpoint, Reach};
 use rl_net::portmap::MappingState;
 use rl_net::probe::NatBehaviour;
 use rl_proto::Signal;
@@ -32,9 +32,10 @@ use crate::join::unix_now;
 /// The host's subscription to its handshakes is made again this often, with
 /// a fresh `since` (the inbox takes nothing older than a minute anyway).
 pub const RESUBSCRIBE: Duration = Duration::from_secs(30);
-/// At most this many offers wait for the peer's poll; more are dropped
-/// (the inbox's rate, 10 a second with a burst of 20, keeps far below).
-const OFFERS_QUEUED: usize = 64;
+/// An offer that waited this long for the peer's poll (a stalled caller)
+/// is not answered: its joiner gives up after `ANSWER_DEADLINE` (10 s). The
+/// queue itself is unbounded: the inbox's rate (10 a second) bounds it.
+pub const OFFER_STALE: Duration = Duration::from_secs(8);
 /// The listener thread's pace: it waits this long for answers between its
 /// looks at the relays.
 const TICK: Duration = Duration::from_millis(5);
@@ -225,7 +226,8 @@ struct Answered {
 /// The host's listener (N54): a thread with the relay pool and the inbox.
 /// Dropping it stops the thread, which drops its pool itself.
 pub(crate) struct Listener {
-    offers: Receiver<Request>,
+    /// Each new offer, with when the inbox took it.
+    offers: Receiver<(Request, Instant)>,
     answers: Sender<Answered>,
     status: Arc<Mutex<Listening>>,
     stop: Arc<AtomicBool>,
@@ -234,7 +236,7 @@ pub(crate) struct Listener {
 impl Listener {
     /// Listens on `cfg`'s relays for handshakes addressed to `me`.
     pub(crate) fn start(cfg: PoolConfig, me: Identity) -> io::Result<Listener> {
-        let (offer_tx, offers) = mpsc::sync_channel(OFFERS_QUEUED);
+        let (offer_tx, offers) = mpsc::channel();
         let (answers, answer_rx) = mpsc::channel();
         let status = Arc::new(Mutex::new(Relays::new(cfg.relays.len()).listening()));
         let stop = Arc::new(AtomicBool::new(false));
@@ -245,13 +247,10 @@ impl Listener {
         Ok(Listener { offers, answers, status, stop })
     }
 
-    /// The new offers, in order.
-    pub(crate) fn offers(&mut self) -> Vec<Request> {
-        let mut out = Vec::new();
-        while let Ok(req) = self.offers.try_recv() {
-            out.push(req);
-        }
-        out
+    /// The new offers at `now`, in order, but those older than
+    /// [`OFFER_STALE`].
+    pub(crate) fn offers(&mut self, now: Instant) -> Vec<Request> {
+        fresh(self.offers.try_iter(), now)
     }
 
     /// The endpoint's answer (or refusal) to `req`, with the host's mapped
@@ -272,13 +271,80 @@ impl Drop for Listener {
     }
 }
 
+/// The offers of `queued` taken less than [`OFFER_STALE`] before `now`.
+fn fresh(queued: impl Iterator<Item = (Request, Instant)>, now: Instant) -> Vec<Request> {
+    queued.filter(|(_, at)| now.saturating_duration_since(*at) < OFFER_STALE).map(|(req, _)| req).collect()
+}
+
+/// A host's side of N47 and N54: its listener, its configured address,
+/// and what it last reported.
+pub(crate) struct HostReach {
+    listener: Option<Listener>,
+    public_address: Option<IpAddr>,
+    /// The reachability last looked at, and what the last report said: its
+    /// lines, whether it settled, its direct address.
+    seen: Option<Reachability>,
+    reported: Option<(Vec<String>, bool, Option<SocketAddr>)>,
+}
+
+impl HostReach {
+    /// Listens as `listen` says, on `me`'s key.
+    pub(crate) fn start(listen: HostListen, me: &Identity) -> io::Result<HostReach> {
+        let listener = listen.pool.map(|pool| Listener::start(pool, me.clone())).transpose()?;
+        Ok(HostReach { listener, public_address: listen.public_address, seen: None, reported: None })
+    }
+
+    /// The listener's offers, answered by `ep` (`answer_signalled` with the
+    /// joiner's mapped hint), the answers handed back with `ep`'s mapping.
+    pub(crate) fn answer(&mut self, ep: &mut Endpoint, now: Instant) {
+        let Some(listener) = &mut self.listener else { return };
+        for req in listener.offers(now) {
+            let signal = ep.answer_signalled(&req.signal, req.mapped, now);
+            listener.answer(req, signal, ep.mapped());
+        }
+    }
+
+    /// The reachability of `ep` now.
+    pub(crate) fn now(&self, ep: &Endpoint) -> Reachability {
+        Reachability {
+            port: ep.local_port(),
+            configured: self.public_address,
+            reach: ep.reach(),
+            listening: self.listener.as_ref().map_or(Listening::Off, Listener::listening),
+            stun_settled: ep.gathered(),
+        }
+    }
+
+    /// The reachability when its lines, whether it settled or its direct
+    /// address changed since the last report (the struct is compared
+    /// first, so nothing is formatted while it stays the same).
+    pub(crate) fn changed(&mut self, ep: &Endpoint) -> Option<Reachability> {
+        let r = self.now(ep);
+        if self.seen.as_ref() == Some(&r) {
+            return None;
+        }
+        self.seen = Some(r.clone());
+        let said = (r.lines(), r.settled(), r.direct());
+        if self.reported.as_ref() == Some(&said) {
+            return None;
+        }
+        self.reported = Some(said);
+        Some(r)
+    }
+
+    /// Stops listening (the thread drops its pool).
+    pub(crate) fn stop(&mut self) {
+        self.listener = None;
+    }
+}
+
 /// The listener thread: subscribes to the inbox's filter (again every
 /// [`RESUBSCRIBE`]), passes new offers to the peer, publishes repeats'
 /// cached replies and the peer's answers, and keeps the status.
 fn listen(
     cfg: PoolConfig,
     me: Identity,
-    offers: &SyncSender<Request>,
+    offers: &Sender<(Request, Instant)>,
     answers: &Receiver<Answered>,
     status: &Mutex<Listening>,
     stop: &AtomicBool,
@@ -323,8 +389,8 @@ fn listen(
         for e in events.drain(..) {
             match e {
                 PoolEvent::Event { event, .. } => match inbox.offer(&event, now, unix_now()) {
-                    // A full queue drops the offer (the peer does not poll).
-                    Inbound::Offer(req) => drop(offers.try_send(req)),
+                    // A send fails only once the peer is gone.
+                    Inbound::Offer(req) => drop(offers.send((req, now))),
                     Inbound::Repeat(reply) => pool.publish(reply),
                     Inbound::Ignored(_) => {}
                 },
@@ -447,6 +513,21 @@ mod tests {
         assert!(r.settled());
         r.stun_settled = false;
         assert!(!r.settled());
+    }
+
+    /// A stalled caller does not answer offers whose joiners gave up.
+    #[test]
+    fn stale_offers_are_skipped() {
+        let req = |n: u8| Request {
+            from: [n; 32],
+            session: [n; 16],
+            signal: Signal::Refused { reason: rl_proto::Refusal::Full },
+            mapped: None,
+        };
+        let t0 = Instant::now();
+        let now = t0 + Duration::from_secs(9);
+        let queued = vec![(req(1), t0), (req(2), now - OFFER_STALE), (req(3), now - Duration::from_secs(7))];
+        assert_eq!(fresh(queued.into_iter(), now), vec![req(3)]);
     }
 
     #[test]

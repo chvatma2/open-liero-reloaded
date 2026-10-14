@@ -29,7 +29,7 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   (`rl-cli`'s `net-sim` builds with it too) and `HostBots` (bots by slot,
   thinking in slot order; `press` with the host player's keys from a
   callback; `Driver<WorldSim>` for bots alone, `rl-cli`'s).
-- **`peer.rs`, `OnlinePeer`**: `start(role, endpoint, me, look, content,
+- **`peer.rs`, `OnlinePeer`** (its `LobbyHandle` in `peer/lobby_handle.rs`): `start(role, endpoint, me, look, content,
   setup, content_cfg)` (`PeerRole::Host { lobby, listen }`, `Server {
   lobby, listen }`: a host without a local player, the dedicated
   server's, `look` unused; `listen: HostListen`, `reach.rs`; `Client {
@@ -71,10 +71,12 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   same); `connection()` (a client's `(Path, remote)` once its link opened,
   the path following ICE; `OnlineEvent::Connected { path, remote }`
   once); `shutdown(self) -> Shutdown` (ruling NT-2: `leave`, the listener
-  and the joiner's pool stopped on their threads, `Endpoint::shutdown`;
-  never blocks; `Shutdown::wait(until)` waits at most 1 s for the port
-  mapping's deletion, `true` without one; rl-server, rl-cli and the game
-  wait on it at exit);
+  and the joiner's pool stopped on their threads, `Endpoint::shutdown`,
+  the rest of the peer dropped on a thread `rl-online drop` (its content
+  worker waits up to 2 s for a job); never blocks; `Shutdown::wait(until)`
+  waits at most 1 s for the port mapping's deletion, `true` without one;
+  rl-server, rl-cli and the game are to wait on it at exit: wired in
+  plan 12b's Tasks 8-10, not yet);
   `LobbyHandle::revision` (the host's `LobbyHost::revision`).
   `test_seed_override`, `test_serve_instead` (a host serves another
   pack's archive for a pack) and `test_prompt_limit` (a client's prompt
@@ -91,8 +93,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     `Refused { Busy }` through Nostr is `BUSY` (the host's pending
     setups, PF12b-2), not "you are in this lobby already". On
     `Connected` the joiner goes (its pool dropped on a thread, R10-10).
-  - **Listening** (N54): a host with `listen.pool` starts `reach::
-    Listener`; each poll answers its offers with `Endpoint::
+  - **Listening** (N54): the host's `reach::HostReach` (its listener, the
+    configured address, what was last reported) starts a `reach::
+    Listener` with `listen.pool`; each poll answers its offers with `Endpoint::
     answer_signalled(&req.signal, req.mapped, now)` (`req.mapped` is
     always `None` from our joiners: a joiner maps no port, N47) and hands
     the answer and `Endpoint::mapped()` back to be sealed and published.
@@ -330,7 +333,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   then the player's own, each once, at most `MAX_JOIN_RELAYS` 8; the
   joiner cuts its pool's list the same way), the texts `NO_RELAYS`,
   `NO_REPLY`, `RELAYS_REFUSED` (every relay refused the join's events by
-  NIP-01 policy, `blocked:`/`restricted:` …, or could never be reached:
+  NIP-01 policy, `blocked:`/`restricted:`/`invalid:` … but not the
+  transient `rate-limited:` or `error:`, or could never be reached:
   web-of-trust relays refuse fresh keys, so this is not blamed on the
   host; the pool's own "no answer within …" is no refusal), `BUSY`,
   `no_path`, `path_text`, `path_tag`, `nat_text`. Through Nostr
@@ -343,7 +347,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   after that subscription's first `EOSE` or 2 s, then every resend, each
   to every relay), `Connecting` (the reply to `take_reply`; the host's
   first candidate's port kept for `no_path`, and the first TURN server
-  with an allocation). Failures before an answer: every relay `Failed`
+  with an allocation; `Connecting` is reported for an `Answer` only, a
+  `Refused` ending the join with its text). Failures before an answer: every relay `Failed`
   and none ever connected → `NO_RELAYS`; `RELAYS_REFUSED`; the asker
   expired → `NO_REPLY`.
 - **`reach.rs`** (N47, N54): `HostListen { pool, public_address }`
@@ -354,11 +359,16 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   usable mapping with TCP, else the configured address; `settled()`: the
   mapping is not `Trying` and `stun_settled`, `Endpoint::gathered`;
   `lines()`: the router's line, the configured address's, a symmetric
-  NAT's, the listener's, in that order). `Listener` (crate-private): a
+  NAT's, the listener's, in that order). `HostReach` (crate-private):
+  `start(listen, me)`, `answer(ep, now)`, `now(ep)`, `changed(ep)` (a
+  report when the lines, `settled` or `direct` changed), `stop`.
+  `Listener` (crate-private): a
   thread `rl-online listen` owning the `Pool` and the `Inbox` (whose
   signature checks stay off the caller's thread), subscribing
   `Inbox::filter` again every `RESUBSCRIBE` (30 s); new offers go to the
-  peer (at most 64 queued, more dropped), repeats' cached replies are
+  peer with when they came (unbounded: the inbox's rate bounds it; one
+  older than `OFFER_STALE`, 8 s, is skipped, its joiner gone after 10 s),
+  repeats' cached replies are
   published, answers sealed with `Inbox::reply` and published; dropping
   it stops the thread, which drops its pool itself.
 - **`events.rs`**: `OnlineEvent` (plan 12b: `Joining(JoinStep)`,
@@ -408,23 +418,30 @@ content over the prompt waits for `approve_downloads`.
 `tests/through.rs` (plan 12b; `TestRelay`s and a `TurnServer` on
 127.0.0.1, `base_override: 127.0.0.1`, every datagram on 127.0.0.0/8,
 ruling NT-1): a join through Nostr without an address (`Relays` before
-`Asking`, path `Direct`, the host's member's path); a join through a
+`Asking`, path `Direct`, the host's member's path; another without
+`expected_host`: it expects the host's key); a join through a
 TURN relay found on Nostr (`relay_only`, path `Relayed`, a 6 s match to
 equal confirmed inputs and checksums); a lost offer sent again
 (`DropEphemeral(2)`, connected within 8 s); a relay that never forwards
-survived; `NO_REPLY` 10 s ± 1 s after `Asking`; `RELAYS_REFUSED`
+survived; a host's answer with no path (`relay_only`, no TURN server,
+rl-net's `setup_timeout` hook at 3 s) is `no_path(port, None)`; a
+refused offer (another fingerprint) says why and never `Connecting`;
+`NO_REPLY` 10 s ± 1 s after `Asking`; `RELAYS_REFUSED`
 (`RefuseKind(21470)`); `NO_RELAYS` (a closed port, within 6 s); a
 direct failure falling back to Nostr; a same-LAN joiner whose router does
-not hairpin (a loopback port whose accept queue is full: its connect
-waits `CONNECT_TIMEOUT`) joining through Nostr directly; a flood (PF12b-2:
-50 valid offers that never check, then 150 forged, tampered or
-undecryptable events within 1 s: more than 8 answered, all `Answer`, and
-an honest joiner connects within 10 s); a host's reachability on a
+not hairpin (rl-net's `connect_stall` hook: the connect fails after
+`CONNECT_TIMEOUT`) joining through Nostr directly; a flood (Review Focus
+1, PF12b-2: for 8 s, 100 forged, tampered or undecryptable events a
+second and, after every 20 of them, a valid offer that never checks; an
+honest joiner starting 1 s in connects during the flood, more than 8
+silent offers answered, all `Answer`); a host's reachability on a
 `FakeGateway` (external 127.0.0.2, UPnP) and one relay, its exact lines;
 a host's shutdown returning at once and its `wait` seeing the mapping
 deleted (NT-2). `join.rs`' and `reach.rs`' unit tests: every text
-exactly, the relays' order, refusals told from a slow relay, the
-answer's port, `direct`, `settled`, the listener's status.
+exactly, the relays' order, refusals told from a slow relay or a
+transient one, the answer's port, `direct`, `settled`, the listener's
+status, stale offers skipped. `peer.rs`: a join through Nostr expects
+its host's key.
 `tests/matches.rs`: a proptest of starts within rl-proto's bounds (256
 cases, about 30 build) never panics `build`; a slot both member and bot,
 a single slot, an unknown mod and a pack hash mismatch are refused.

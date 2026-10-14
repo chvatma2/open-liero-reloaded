@@ -9,7 +9,7 @@
 //! wait is bounded, every test under 20 s.
 
 use std::collections::BTreeSet;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, UdpSocket};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rl_bots::BotConfig;
@@ -29,7 +29,7 @@ use rl_net::link::{Link, LinkCandidates};
 use rl_net::portmap::DROP_WAIT;
 use rl_net::portmap::fake::{FakeGateway, Misbehaviour as GatewayMisbehaviour};
 use rl_net::turn::{TurnLimits, TurnServer, TurnServerConfig};
-use rl_online::join::{Join, JoinStep, NO_RELAYS, NO_REPLY, NostrJoin, RELAYS_REFUSED};
+use rl_online::join::{Join, JoinStep, NO_RELAYS, NO_REPLY, NostrJoin, RELAYS_REFUSED, no_path};
 use rl_online::matches::{bot_wire, rules_wire, setup_packs};
 use rl_online::reach::{HostListen, Listening};
 use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole};
@@ -205,12 +205,23 @@ impl Net {
         ice: IceConfig,
         expected_host: Option<PublicKey>,
     ) -> usize {
+        self.client_with(content, join, endpoint(ice), expected_host)
+    }
+
+    /// A client joining by `join` with the endpoint `cfg`; its index.
+    fn client_with(
+        &mut self,
+        content: Content,
+        join: Join,
+        cfg: EndpointConfig,
+        expected_host: Option<PublicKey>,
+    ) -> usize {
         let me = identity();
         let key = me.public();
         let role = PeerRole::Client { join, password: None, expected_host };
         let p = OnlinePeer::start(
             role,
-            endpoint(ice),
+            cfg,
             me,
             look("Anna"),
             content,
@@ -282,24 +293,6 @@ fn closed_port() -> SocketAddr {
     let addr = l.local_addr().unwrap();
     drop(l);
     addr
-}
-
-/// A 127.0.0.1 port whose connects never complete (NT-1's loopback
-/// stand-in for a router that does not hairpin): a listener whose accept
-/// queue (std's backlog, 128) is filled and never accepted, so further SYNs
-/// are dropped and a connect waits for its timeout. Hold the result.
-fn blackhole() -> (TcpListener, Vec<TcpStream>, SocketAddr) {
-    let l = TcpListener::bind((LOCALHOST, 0)).unwrap();
-    let addr = l.local_addr().unwrap();
-    let mut held = Vec::new();
-    loop {
-        match TcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
-            Ok(s) => held.push(s),
-            Err(_) => break,
-        }
-        assert!(held.len() < 5000, "the accept queue fills");
-    }
-    (l, held, addr)
 }
 
 #[test]
@@ -429,9 +422,45 @@ fn a_relay_that_never_forwards_is_survived() {
     let both = pool(&[&deaf, &honest]);
     let (mut net, h, key) = host_on(content, both.clone());
     let join = Join { direct: None, nostr: Some(nostr(key, both)) };
-    let c = net.client(self::content().unwrap(), join, ice(), Some(key));
+    // No `expected_host`: a join through Nostr expects its host's key.
+    let c = net.client(self::content().unwrap(), join, ice(), None);
     joined(&mut net, h, c, Duration::from_secs(15));
     assert_eq!(net.peers[c].connected().unwrap().0, Path::Direct);
+}
+
+/// The host answered, but no path opens (a client offering only relayed
+/// candidates, with no TURN server): `no_path` names the host's port, once
+/// the setup's time (a 3 s test hook instead of 15 s) is up.
+#[test]
+fn a_join_without_a_path_says_what_to_do() {
+    let Some(content) = content() else { return };
+    let relay = TestRelay::start();
+    let (mut net, h, key) = host_on(content, pool(&[&relay]));
+    let join = Join { direct: None, nostr: Some(nostr(key, pool(&[&relay]))) };
+    let pathless = IceConfig { relay_only: true, setup_timeout: Some(Duration::from_secs(3)), ..ice() };
+    let c = net.client(self::content().unwrap(), join, pathless, Some(key));
+    net.run_until(Duration::from_secs(12), "the join gives up", |n| n.peers[c].ended_with().is_some());
+    let port = net.peers[h].p.local_port();
+    assert_eq!(net.peers[c].ended_with(), Some(no_path(port, None)));
+    assert!(net.peers[c].steps().contains(&JoinStep::Connecting), "the host answered");
+    assert!(net.peers[c].connected().is_none());
+}
+
+/// A host refusing the offer (another simulation fingerprint): the join
+/// says why, and never reports `Connecting`.
+#[test]
+fn a_refused_join_says_why() {
+    let Some(content) = content() else { return };
+    let relay = TestRelay::start();
+    let (mut net, _, key) = host_on(content, pool(&[&relay]));
+    let join = Join { direct: None, nostr: Some(nostr(key, pool(&[&relay]))) };
+    let other = EndpointConfig { fingerprint_override: Some(FINGERPRINT ^ 1), ..endpoint(ice()) };
+    let c = net.client_with(self::content().unwrap(), join, other, Some(key));
+    net.run_until(Duration::from_secs(10), "the join is refused", |n| n.peers[c].ended_with().is_some());
+    let p = &net.peers[c];
+    assert!(p.has(|e| matches!(e, OnlineEvent::Refused(_))), "{:?}", p.ended_with());
+    assert_eq!(p.ended_with().as_deref(), Some("the host plays another version"));
+    assert!(!p.steps().contains(&JoinStep::Connecting), "{:?}", p.steps());
 }
 
 #[test]
@@ -495,18 +524,18 @@ fn direct_failure_falls_back_to_nostr() {
 
 /// Review Focus 5: a joiner behind the host's router dials the host's
 /// public address, which the router does not hairpin (the connect never
-/// completes: a loopback port whose accept queue is full, NT-1). After the
-/// direct attempt's `CONNECT_TIMEOUT` it joins through Nostr, and ICE finds
-/// the host's LAN address: a direct path.
+/// completes: rl-net's `connect_stall` hook, so nothing leaves 127.0.0.1,
+/// NT-1). After the direct attempt's `CONNECT_TIMEOUT` it joins through
+/// Nostr, and ICE finds the host's LAN address: a direct path.
 #[test]
 fn a_same_lan_joiner_without_hairpinning_falls_back_and_connects_directly() {
     let Some(content) = content() else { return };
     let relay = TestRelay::start();
-    let (_listener, _held, unanswered) = blackhole();
     let (mut net, h, key) = host_on(content, pool(&[&relay]));
-    let join = Join { direct: Some(unanswered), nostr: Some(nostr(key, pool(&[&relay]))) };
+    let join = Join { direct: Some(closed_port()), nostr: Some(nostr(key, pool(&[&relay]))) };
     let started = Instant::now();
-    let c = net.client(self::content().unwrap(), join, ice(), Some(key));
+    let stalled = EndpointConfig { connect_stall: true, ..endpoint(ice()) };
+    let c = net.client_with(self::content().unwrap(), join, stalled, Some(key));
     joined(&mut net, h, c, Duration::from_secs(16));
     let p = &net.peers[c];
     assert_eq!(p.steps().first(), Some(&JoinStep::Direct));
@@ -534,10 +563,108 @@ fn addressed(host: &PublicKey, content: String, unix: u64) -> Event {
     Event::sign(&identity(), unix, KIND_HANDSHAKE, tags, content, rl_net::random_bytes::<32>().unwrap())
 }
 
-/// PF12b-2 and Review Focus 1: in one second, 150 forged or undecryptable
-/// handshakes and 50 valid offers that never send a connectivity check
-/// (enough to fill `MAX_SIGNALLED_PENDING` many times over) reach the
-/// host's relay; an honest client then still connects within 10 s.
+/// One undecryptable handshake addressed to `host`, of kind `i % 3`: a
+/// forged signature (a relay refuses it), a valid offer's content tampered
+/// and signed again (its MAC fails), or content encrypted to another key.
+fn junk(host: &PublicKey, i: u64, at: SocketAddr, links: &mut Vec<Link>) -> Event {
+    let unix = unix_now();
+    let mut rand = || rl_net::random_bytes::<32>().unwrap();
+    match i % 3 {
+        0 => {
+            let mut forged = addressed(host, format!("forged {i}"), unix);
+            forged.sig[0] ^= 1;
+            forged
+        }
+        1 => {
+            let mut a = Asker::new(*host, silent_offer(at, links), Instant::now(), unix, &mut rand);
+            let mut tampered = a.poll(Instant::now(), unix, &mut rand).unwrap().content;
+            let flipped = if &tampered[10..11] == "A" { "B" } else { "A" };
+            tampered.replace_range(10..11, flipped);
+            addressed(host, tampered, unix)
+        }
+        _ => {
+            let ck = conversation_key(&identity().secret(), &identity().public()).unwrap();
+            addressed(host, encrypt(&ck, "{\"v\":1}", rand()).unwrap(), unix)
+        }
+    }
+}
+
+/// What a flood sent and heard: the host's replies to its silent offers.
+struct Flooded {
+    replies: Vec<Signal>,
+    junk: u64,
+    /// How many of the host's links sent checks to the silent joiners.
+    checked: usize,
+}
+
+/// For `length`: 100 undecryptable handshakes a second to `host` on
+/// `relay`, and after every 20 of them (junk first) a valid offer from a
+/// fresh key whose joiner never sends a connectivity check (5 a second).
+fn flood(relay: PoolConfig, host: PublicKey, length: Duration) -> std::thread::JoinHandle<Flooded> {
+    std::thread::spawn(move || {
+        let quiet = UdpSocket::bind((LOCALHOST, 0)).unwrap();
+        let at = quiet.local_addr().unwrap();
+        let mut links = Vec::new();
+        let mut rand = || rl_net::random_bytes::<32>().unwrap();
+        let silent = (length.as_secs() as usize + 1) * 5;
+        let (t0, unix) = (Instant::now(), unix_now());
+        let mut askers: Vec<Asker> = (0..silent)
+            .map(|_| Asker::new(host, silent_offer(at, &mut links), t0, unix, &mut rand))
+            .collect();
+        let mut pool = Pool::start(relay);
+        let replies = Filter {
+            kinds: vec![KIND_HANDSHAKE],
+            authors: vec![host],
+            tags: vec![('p', askers.iter().map(|a| hex::encode(a.key())).collect())],
+            ..Filter::default()
+        };
+        pool.subscribe("replies", vec![replies]);
+        let mut heard = Vec::new();
+        while !heard.iter().any(|e| matches!(e, PoolEvent::Eose { .. })) {
+            assert!(t0.elapsed() < Duration::from_secs(5), "the flood's pool subscribes");
+            pool.poll(&mut heard);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let begun = Instant::now();
+        let (mut sent, mut next) = (0u64, 0usize);
+        while begun.elapsed() < length {
+            // On schedule: 100 a second.
+            while sent < (begun.elapsed().as_millis() / 10) as u64 {
+                pool.publish(junk(&host, sent, at, &mut links));
+                sent += 1;
+                if sent % 20 == 0
+                    && let Some(a) = askers.get_mut(next)
+                {
+                    next += 1;
+                    pool.publish(a.poll(Instant::now(), unix_now(), &mut rand).unwrap());
+                }
+            }
+            pool.poll(&mut heard);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let quiet_end = Instant::now();
+        while quiet_end.elapsed() < Duration::from_millis(500) {
+            pool.poll(&mut heard);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let replies = heard
+            .iter()
+            .filter_map(|e| match e {
+                PoolEvent::Event { event, .. } => askers.iter_mut().find_map(|a| a.take(event)),
+                _ => None,
+            })
+            .map(|reply| reply.signal)
+            .collect();
+        drop(links);
+        Flooded { replies, junk: sent, checked: check_usernames(&quiet).len() }
+    })
+}
+
+/// PF12b-2 and Review Focus 1: for 8 s, 100 forged or undecryptable
+/// handshakes a second and, among them (junk first), 5 valid offers a
+/// second from fresh keys that never send a connectivity check (enough to
+/// fill `MAX_SIGNALLED_PENDING` many times over) reach the host's relay.
+/// An honest client starting 1 s into the flood connects during it.
 #[test]
 fn a_flood_of_offers_leaves_room_for_an_honest_joiner() {
     let Some(content) = content() else { return };
@@ -546,95 +673,32 @@ fn a_flood_of_offers_leaves_room_for_an_honest_joiner() {
     net.run_until(Duration::from_secs(5), "the host listens", |n| {
         n.peers[h].p.reachability().is_some_and(|r| r.listening == Listening::On { relays: 1, of: 1 })
     });
-    let unix = unix_now();
-    let mut rand = || rl_net::random_bytes::<32>().unwrap();
-    let quiet = UdpSocket::bind((LOCALHOST, 0)).unwrap();
-    let at = quiet.local_addr().unwrap();
-    let mut links = Vec::new();
-    // The valid offers, from fresh keys; the flood's pool hears the host's
-    // replies to them.
-    let mut askers: Vec<Asker> = (0..50)
-        .map(|_| Asker::new(key, silent_offer(at, &mut links), Instant::now(), unix, &mut rand))
-        .collect();
-    let mut flood = Pool::start(pool(&[&relay]));
-    let replies = Filter {
-        kinds: vec![KIND_HANDSHAKE],
-        authors: vec![key],
-        tags: vec![('p', askers.iter().map(|a| hex::encode(a.key())).collect())],
-        ..Filter::default()
-    };
-    flood.subscribe("replies", vec![replies]);
-    let mut heard = Vec::new();
+    let length = Duration::from_secs(8);
+    let flooding = flood(pool(&[&relay]), key, length);
     let begun = Instant::now();
-    while !heard.iter().any(|e| matches!(e, PoolEvent::Eose { .. })) {
-        assert!(begun.elapsed() < Duration::from_secs(5), "the flood's pool subscribes");
-        flood.poll(&mut heard);
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    // The valid offers first: the inbox's rate bucket (a burst of 20, then
-    // 10 a second) takes them before the junk drains it.
-    let mut junk: Vec<Event> =
-        askers.iter_mut().map(|a| a.poll(Instant::now(), unix, &mut rand).unwrap()).collect();
-    for i in 0..50 {
-        // A forged signature (a relay refuses it; the host would too).
-        let mut forged = addressed(&key, format!("forged {i}"), unix);
-        forged.sig[0] ^= 1;
-        junk.push(forged);
-        // A valid offer's content, tampered, signed again: its MAC fails.
-        let mut a = Asker::new(key, silent_offer(at, &mut links), Instant::now(), unix, &mut rand);
-        let mut tampered = a.poll(Instant::now(), unix, &mut rand).unwrap().content;
-        let flipped = if &tampered[10..11] == "A" { "B" } else { "A" };
-        tampered.replace_range(10..11, flipped);
-        junk.push(addressed(&key, tampered, unix));
-        // Content encrypted to another key.
-        let stranger = identity();
-        let ck = conversation_key(&stranger.secret(), &identity().public()).unwrap();
-        junk.push(addressed(&key, encrypt(&ck, "{\"v\":1}", rand()).unwrap(), unix));
-    }
-    let sent = Instant::now();
-    for (i, e) in junk.into_iter().enumerate() {
-        flood.publish(e);
-        if i % 20 == 19 {
-            net.poll();
-            std::thread::sleep(Duration::from_millis(90));
-        }
-    }
-    // Let the host take what got through.
-    net.run_until(Duration::from_secs(3), "a while", |n| {
-        flood.poll(&mut heard);
-        n.poll();
-        sent.elapsed() >= Duration::from_secs(2)
-    });
-    flood.poll(&mut heard);
-    assert!(
-        heard.iter().any(|v| matches!(v, PoolEvent::Ok { accepted: true, .. })),
-        "the relay took the flood"
-    );
-    // The host answered more silent offers than its pending table holds
-    // (PF12b-2 evicted the oldest silent ones; without it, the ninth would
-    // be refused `Busy`).
-    let answers = heard
-        .iter()
-        .filter_map(|e| match e {
-            PoolEvent::Event { event, .. } => askers.iter_mut().find_map(|a| a.take(event)),
-            _ => None,
-        })
-        .map(|reply| reply.signal)
-        .collect::<Vec<_>>();
-    assert!(answers.len() > MAX_SIGNALLED_PENDING, "{} silent offers answered", answers.len());
-    assert!(answers.iter().all(|s| matches!(s, Signal::Answer { .. })), "{answers:?}");
-    assert!(check_usernames(&quiet).len() >= MAX_SIGNALLED_PENDING, "the pending ones check their joiners");
-
+    net.run_until(Duration::from_secs(3), "a second of flood", |_| begun.elapsed() >= Duration::from_secs(1));
     let join = Join { direct: None, nostr: Some(nostr(key, pool(&[&relay]))) };
     let c = net.client(self::content().unwrap(), join, ice(), Some(key));
     joined(&mut net, h, c, Duration::from_secs(10));
+    let at = net.peers[c].when(|e| matches!(e, OnlineEvent::Connected { .. })).unwrap();
+    assert!(at < begun + length, "connected during the flood, {:?} in", at - begun);
     assert_eq!(net.peers[c].connected().unwrap().0, Path::Direct);
+    // The flood ends; the host stays well.
+    net.run_until(Duration::from_secs(12), "the flood ends", |_| flooding.is_finished());
+    let flooded = flooding.join().unwrap();
+    assert!(flooded.junk >= 700, "{} junk events", flooded.junk);
+    // The host answered more silent offers than its pending table holds
+    // (PF12b-2 evicted the oldest silent ones; without it, the ninth would
+    // be refused `Busy`).
+    let answers = flooded.replies;
+    assert!(answers.len() > MAX_SIGNALLED_PENDING, "{} silent offers answered", answers.len());
+    assert!(answers.iter().all(|s| matches!(s, Signal::Answer { .. })), "{answers:?}");
+    assert!(flooded.checked >= MAX_SIGNALLED_PENDING, "{} links checked their joiners", flooded.checked);
     assert_eq!(
         net.peers[h].p.lobby().state().unwrap().members.len(),
         2,
         "only the honest joiner is a member"
     );
-    drop(links);
 }
 
 /// The ICE usernames of the STUN binding requests that reached `socket`

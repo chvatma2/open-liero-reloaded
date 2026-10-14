@@ -159,6 +159,11 @@ pub struct CoreConfig {
     /// on 127.0.0.1 a path really is `Relayed`.
     #[cfg(feature = "test-hooks")]
     pub relay_only: bool,
+    /// Tests only (`test-hooks`): signalled setups get this long to open
+    /// instead of `SIGNALLED_SETUP_TIMEOUT` (a failure test within its
+    /// time).
+    #[cfg(feature = "test-hooks")]
+    pub signalled_setup_timeout: Option<Duration>,
 }
 
 impl CoreConfig {
@@ -182,6 +187,8 @@ impl CoreConfig {
             suppress_stats: false,
             #[cfg(feature = "test-hooks")]
             relay_only: false,
+            #[cfg(feature = "test-hooks")]
+            signalled_setup_timeout: None,
         }
     }
 
@@ -354,6 +361,16 @@ fn finish(mut peer: Peer, relays: &mut Relays, now: Instant, out: &mut Vec<Datag
 }
 
 impl Core {
+    /// A signalled setup's time to open: `SIGNALLED_SETUP_TIMEOUT`, or the
+    /// test hook's.
+    fn signalled_setup_timeout(&self) -> Duration {
+        #[cfg(feature = "test-hooks")]
+        if let Some(t) = self.cfg.signalled_setup_timeout {
+            return t;
+        }
+        SIGNALLED_SETUP_TIMEOUT
+    }
+
     pub fn new(cfg: CoreConfig, now: Instant) -> Core {
         #[cfg(feature = "test-hooks")]
         let next_id = cfg.first_peer_id.unwrap_or(1).max(1);
@@ -468,7 +485,7 @@ impl Core {
             from: None,
             path: None,
             link,
-            deadline: now + if signalled { SIGNALLED_SETUP_TIMEOUT } else { SETUP_TIMEOUT },
+            deadline: now + if signalled { self.signalled_setup_timeout() } else { SETUP_TIMEOUT },
             heard: now,
             broke: None,
             limits: PeerLimits::new(&self.cfg.limits, now),

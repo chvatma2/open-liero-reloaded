@@ -113,6 +113,47 @@ fn a_hostile_handshake_feed_is_bounded() {
     assert!(matches!(inbox.offer(&e, late, unix + 310), Inbound::Ignored(_)));
 }
 
+/// Only offers that decrypt spend the rate bucket's tokens: a burst of
+/// undecryptable events from fresh keys (sealed to someone else, or
+/// garbage) leaves the whole burst to honest offers (Task 7 review,
+/// Important 1).
+#[test]
+fn undecryptable_events_spend_no_tokens() {
+    let (t0, unix) = (Instant::now(), 1_800_000_000);
+    let host = Identity::from_secret([5; 32]).unwrap();
+    let other = Identity::from_secret([6; 32]).unwrap();
+    let mut inbox = Inbox::new(host.clone());
+    let mut rand = rand_from(4);
+    for i in 0..200u64 {
+        let from = Identity::from_secret(rand_from(50_000 + i)()).unwrap();
+        // Sealed to another key: the host's decryption fails.
+        let e = sealed_offer(&from, &other, "{\"v\":1}", unix);
+        let e =
+            Event::sign(
+                &from,
+                unix,
+                KIND_HANDSHAKE,
+                e.tags
+                    .iter()
+                    .map(|t| {
+                        if t[0] == "p" { vec!["p".to_owned(), hex::encode(host.public())] } else { t.clone() }
+                    })
+                    .collect(),
+                e.content,
+                [9; 32],
+            );
+        assert!(matches!(inbox.offer(&e, t0, unix), Inbound::Ignored(_)));
+    }
+    let taken = (0..20u64)
+        .filter(|&i| {
+            let mut a = Asker::new(host.public(), offer(), t0, unix, &mut rand_from(60_000 + i));
+            let e = a.poll(t0, unix, &mut rand).unwrap();
+            matches!(inbox.offer(&e, t0, unix), Inbound::Offer(_))
+        })
+        .count();
+    assert_eq!(taken, 20, "the whole burst is left to honest offers");
+}
+
 /// An event from `from` to the host carrying `plaintext`, encrypted for the
 /// host (any text: the JSON checks behind the decryption).
 fn sealed_offer(from: &Identity, host: &Identity, plaintext: &str, unix: u64) -> Event {

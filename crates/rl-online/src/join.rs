@@ -209,12 +209,13 @@ enum Verdict {
 }
 
 /// A refusal by policy: NIP-01's machine-readable prefix (`blocked:`,
-/// `restricted:`, `rate-limited:` …), not the pool's own "no answer within
-/// …" for a slow relay.
+/// `restricted:`, `invalid:` …), not the pool's own "no answer within …"
+/// for a slow relay, and not a transient `rate-limited:` or `error:` (the
+/// resends get their chance).
 fn refusal(message: &str) -> bool {
     message.split_once(':').is_some_and(|(prefix, _)| {
         !prefix.is_empty()
-            && prefix != "duplicate"
+            && !matches!(prefix, "duplicate" | "rate-limited" | "error")
             && prefix.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
     })
 }
@@ -315,13 +316,17 @@ impl Nostr {
                         _ => None,
                     };
                     if let (Some(reply), Some(ep)) = (reply, outbox.endpoint_mut()) {
+                        ep.take_reply(&reply.signal, reply.mapped, now);
+                        // A refusal ends the join with the endpoint's
+                        // `Refused` (next poll): no step to report.
                         let port = match &reply.signal {
-                            Signal::Answer { sdp } => first_candidate_port(sdp),
+                            Signal::Answer { sdp } => {
+                                events.push(OnlineEvent::Joining(JoinStep::Connecting));
+                                first_candidate_port(sdp)
+                            }
                             _ => 0,
                         };
-                        ep.take_reply(&reply.signal, reply.mapped, now);
                         self.answered = Some(port);
-                        events.push(OnlineEvent::Joining(JoinStep::Connecting));
                     }
                 }
                 PoolEvent::Ok { relay, id, accepted, message } if self.published.contains(&id) => {
@@ -595,8 +600,11 @@ mod tests {
     fn refusals_are_told_from_a_slow_relay() {
         assert!(refusal("blocked: kind 21470 not accepted"));
         assert!(refusal("restricted: not in web of trust"));
+        assert!(refusal("invalid: bad signature"));
         assert!(!refusal("no answer within 5 s"));
         assert!(!refusal("duplicate: already have it"));
+        assert!(!refusal("rate-limited: slow down"), "transient: the resends get their chance");
+        assert!(!refusal("error: could not save"));
         assert!(!refusal(""));
     }
 

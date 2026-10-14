@@ -454,7 +454,12 @@ announcements.
     peer-reflexive candidate its checks reveal; str0m takes an offer with
     no candidate left. Test hooks (`EndpointConfig`'s `fingerprint_override`,
     `offer_ip_override`, `answer_addr_override`, `first_peer_id`; the first
-    and last are `CoreConfig`'s too) exist only
+    and last are `CoreConfig`'s too; `connect_stall`: a client's TCP
+    connect sends nothing and fails `TimedOut` after `CONNECT_TIMEOUT`, a
+    router that does not hairpin, for rl-online's fallback test;
+    `IceConfig::setup_timeout`, `CoreConfig::signalled_setup_timeout`: a
+    signalled setup's time to open instead of `SIGNALLED_SETUP_TIMEOUT`,
+    for rl-online's `no_path` test) exist only
     with the `test-hooks` feature, enabled by this crate's own
     dev-dependency (never in a shipped build). Accepted:
     `Link::answerer` with the candidate (the TCP connection's local IP, the
