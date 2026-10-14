@@ -7,21 +7,24 @@ use std::collections::BTreeMap;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::ops::RangeInclusive;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use super::{TurnCore, TurnLimits};
+use super::{MAX_DATAGRAM, TurnCore, TurnLimits};
 
 /// A reader wakes this often to see whether it should stop.
 const READ_TIMEOUT: Duration = Duration::from_millis(200);
 /// The core's thread steps at least this often (expiries, stopping).
 const TICK: Duration = Duration::from_millis(100);
-/// Datagrams waiting for the core; beyond, readers drop (as a full socket
-/// buffer would).
-const QUEUE: usize = 8192;
+/// Datagrams waiting for the core (each at most `MAX_DATAGRAM`: at most
+/// 4 MiB); beyond, readers drop and count (as a full socket buffer would).
+const QUEUE: usize = 1024;
+/// A reader sleeps 1 ms only after this many errors in a row (other than
+/// timeouts and resets), so a failing socket does not spin.
+const ERRORS_BEFORE_SLEEP: u32 = 16;
 /// At most this many datagrams are taken per turn of the core's loop.
 const PER_TURN: usize = 1024;
 
@@ -71,24 +74,54 @@ struct Reader {
 }
 
 impl Reader {
-    fn spawn(socket: UdpSocket, port: Option<u16>, tx: SyncSender<Inbound>) -> io::Result<Reader> {
+    fn spawn(
+        socket: UdpSocket,
+        port: Option<u16>,
+        tx: SyncSender<Inbound>,
+        dropped: Arc<AtomicU64>,
+    ) -> io::Result<Reader> {
         socket.set_read_timeout(Some(READ_TIMEOUT))?;
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
         let thread = std::thread::Builder::new().name("turn-reader".into()).spawn(move || {
+            // The whole datagram is read (a smaller buffer fails on
+            // Windows, WSAEMSGSIZE); only small ones are copied on.
             let mut buf = vec![0u8; 65_536];
+            let mut errors = 0;
             while !flag.load(Ordering::Relaxed) {
                 match socket.recv_from(&mut buf) {
                     Ok((n, from)) => {
+                        errors = 0;
+                        if n > MAX_DATAGRAM {
+                            dropped.fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        }
                         let inbound = Inbound { port, from, bytes: buf[..n].to_vec() };
-                        if let Err(TrySendError::Disconnected(_)) = tx.try_send(inbound) {
-                            return;
+                        match tx.try_send(inbound) {
+                            Ok(()) => {}
+                            Err(TrySendError::Full(_)) => {
+                                dropped.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(TrySendError::Disconnected(_)) => return,
                         }
                     }
-                    Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {}
-                    // Anything else (on Windows, a reset from an ICMP port
-                    // unreachable) ends nothing: read on, without spinning.
-                    Err(_) => std::thread::sleep(Duration::from_millis(1)),
+                    // A timeout, or on Windows a reset from an ICMP port
+                    // unreachable (spoofable): read on at once.
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            io::ErrorKind::WouldBlock
+                                | io::ErrorKind::TimedOut
+                                | io::ErrorKind::ConnectionReset
+                        ) => {}
+                    // Anything else ends nothing either; a socket failing
+                    // again and again does not spin.
+                    Err(_) => {
+                        errors += 1;
+                        if errors >= ERRORS_BEFORE_SLEEP {
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                    }
                 }
             }
         })?;
@@ -146,7 +179,8 @@ impl TurnServer {
         let mut core = TurnCore::new(local, cfg.public, &cfg.user, &cfg.pass, cfg.limits, Instant::now());
         core.set_allow_local(cfg.allow_local);
         let (tx, rx) = sync_channel(QUEUE);
-        let reader = Reader::spawn(listen.try_clone()?, None, tx.clone())?;
+        let dropped = Arc::new(AtomicU64::new(0));
+        let reader = Reader::spawn(listen.try_clone()?, None, tx.clone(), dropped.clone())?;
         let (thread_stop, thread_stats) = (stop.clone(), stats.clone());
         let ports = cfg.ports;
         let thread = std::thread::Builder::new().name("turn-server".into()).spawn(move || {
@@ -158,6 +192,7 @@ impl TurnServer {
                 readers: BTreeMap::new(),
                 retiring: Vec::new(),
                 tx,
+                dropped,
                 stats: thread_stats,
             }
             .run(rx, reader, &thread_stop)
@@ -195,6 +230,8 @@ struct Relay {
     /// Stopped readers, joined once finished (never waited for).
     retiring: Vec<Reader>,
     tx: SyncSender<Inbound>,
+    /// Datagrams the readers dropped (too large, or the queue full).
+    dropped: Arc<AtomicU64>,
     stats: Arc<Mutex<TurnStats>>,
 }
 
@@ -245,7 +282,7 @@ impl Relay {
             if let Ok(mut s) = self.stats.lock() {
                 *s = TurnStats {
                     allocations: self.core.allocations(),
-                    dropped: self.core.dropped(),
+                    dropped: self.core.dropped() + self.dropped.load(Ordering::Relaxed),
                     relayed_bytes: self.core.relayed_bytes(),
                 };
             }
@@ -260,7 +297,9 @@ impl Relay {
     /// A relay socket and its reader for a new allocation.
     fn open(&mut self, ip: IpAddr) -> Option<u16> {
         let (port, socket) = bind_relay(ip, &self.ports, &self.relays)?;
-        let reader = Reader::spawn(socket.try_clone().ok()?, Some(port), self.tx.clone()).ok()?;
+        let reader =
+            Reader::spawn(socket.try_clone().ok()?, Some(port), self.tx.clone(), self.dropped.clone())
+                .ok()?;
         self.relays.insert(port, socket);
         self.readers.insert(port, reader);
         Some(port)

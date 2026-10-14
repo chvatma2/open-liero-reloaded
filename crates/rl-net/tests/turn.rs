@@ -438,7 +438,8 @@ fn spoofed_sources_and_oversized_requests_cost_nothing() {
         w.core.receive(from, &initial, now);
         w.core.poll(now, &mut out);
     }
-    assert_eq!(out.len(), 10_000, "each is answered (401)");
+    let answered = out.len();
+    assert!(answered > 0, "the first ones are answered (401)");
     assert!(w.core.tracked_ips() <= 4096, "{} IPs tracked", w.core.tracked_ips());
     assert_eq!(w.core.allocations(), 0);
     // A request over 1500 bytes is dropped unread.
@@ -452,7 +453,7 @@ fn spoofed_sources_and_oversized_requests_cost_nothing() {
     let dropped = w.core.dropped();
     w.core.receive(a("11.0.0.21:1"), &big, now);
     w.core.poll(now, &mut out);
-    assert_eq!(out.len(), 10_000, "no answer");
+    assert_eq!(out.len(), answered, "no answer");
     assert_eq!(w.core.dropped(), dropped + 1);
 }
 
@@ -564,4 +565,127 @@ proptest! {
         prop_assert_eq!(core.allocations(), 0);
         let _ = core.released();
     }
+}
+
+/// A request of `method` (header only, or with `attrs`), not signed.
+fn raw_request(method: u16, attrs: &[u8]) -> Vec<u8> {
+    let mut v = method.to_be_bytes().to_vec();
+    v.extend_from_slice(&(attrs.len() as u16).to_be_bytes());
+    v.extend_from_slice(&[0x21, 0x12, 0xa4, 0x42]);
+    v.extend_from_slice(&[5; 12]);
+    v.extend_from_slice(attrs);
+    v
+}
+
+/// REQUESTED-TRANSPORT UDP.
+const UDP: [u8; 8] = [0x00, 0x19, 0x00, 0x04, 17, 0, 0, 0];
+
+/// The answers `core` sends for `request` from `from` now.
+fn answers(core: &mut TurnCore, from: SocketAddr, request: &[u8], now: Instant) -> Vec<TurnOut> {
+    core.receive(from, request, now);
+    let mut out = Vec::new();
+    core.poll(now, &mut out);
+    out
+}
+
+#[test]
+fn only_an_allocate_gets_an_unauthenticated_answer() {
+    let t0 = Instant::now();
+    let mut core =
+        TurnCore::new(a("11.0.0.9:3478"), "11.0.0.9".parse().unwrap(), USER, PASS, TurnLimits::default(), t0);
+    let from = a("11.0.0.20:50000");
+    for method in [0x0004, 0x0008, 0x0009] {
+        assert!(answers(&mut core, from, &raw_request(method, &[]), t0).is_empty(), "method {method:#x}");
+    }
+    assert!(
+        answers(&mut core, from, &raw_request(0x0003, &[]), t0).is_empty(),
+        "an Allocate without a transport"
+    );
+    assert_eq!(answers(&mut core, from, &raw_request(0x0003, &UDP), t0).len(), 1, "a 401");
+}
+
+#[test]
+fn unauthenticated_answers_amplify_little() {
+    let t0 = Instant::now();
+    let mut core =
+        TurnCore::new(a("11.0.0.9:3478"), "11.0.0.9".parse().unwrap(), USER, PASS, TurnLimits::default(), t0);
+    let from = a("11.0.0.20:50000");
+    // The smallest requests that get an answer, and turn-client-proto's first Allocate.
+    let binding = rl_proto::stun::binding_request([1; 12]);
+    let allocate = raw_request(0x0003, &UDP);
+    let mut client = Wire::new("11.0.0.9:3478", "11.0.0.21:50000", TurnLimits::default(), false);
+    client.step();
+    let first = client.sent[0].clone();
+    for (request, most) in [(&binding, 1.6), (&allocate, 2.3), (&first, 1.6)] {
+        let out = answers(&mut core, from, request, t0);
+        assert_eq!(out.len(), 1);
+        let factor = out[0].bytes.len() as f64 / request.len() as f64;
+        assert!(factor <= most, "{} B answered with {} B ({factor:.2}x)", request.len(), out[0].bytes.len());
+    }
+}
+
+#[test]
+fn the_relay_caps_unauthenticated_answers_overall() {
+    let t0 = Instant::now();
+    let mut core =
+        TurnCore::new(a("11.0.0.9:3478"), "11.0.0.9".parse().unwrap(), USER, PASS, TurnLimits::default(), t0);
+    let binding = rl_proto::stun::binding_request([1; 12]);
+    let allocate = raw_request(0x0003, &UDP);
+    let mut answered = 0;
+    for i in 0..10_000u32 {
+        let from = SocketAddr::new(IpAddr::V4((0x0b00_0000 + i).into()), 40000);
+        let request = if i % 2 == 0 { &binding } else { &allocate };
+        answered += answers(&mut core, from, request, t0).iter().map(|o| o.bytes.len()).sum::<usize>();
+    }
+    assert!(answered <= 2 * 64 * 1024, "{answered} B of answers from many sources at once");
+    assert!(answered > 64 * 1024, "the burst is answered");
+}
+
+#[test]
+fn spoofed_requests_cannot_starve_a_clients_signed_requests() {
+    let mut w = Wire::new("11.0.0.9:3478", "11.0.0.20:50000", TurnLimits::default(), false);
+    w.allocate();
+    // A spoofer floods unauthenticated Allocates "from" the client's IP,
+    // 5 a millisecond, while the client asks for a permission.
+    let ip: IpAddr = "8.8.4.4".parse().unwrap();
+    let mut port = 1000u16;
+    let now = w.now();
+    for _ in 0..100 {
+        port += 1;
+        w.core.receive(SocketAddr::new(w.me.ip(), port), &raw_request(0x0003, &UDP), now);
+    }
+    w.client.create_permission(TransportType::Udp, ip, w.t()).unwrap();
+    for _ in 0..3000 {
+        for _ in 0..5 {
+            port = port.wrapping_add(1);
+            // At the instant of the coming step, so the spoofer is first.
+            let now = w.now() + Duration::from_millis(1);
+            w.core.receive(SocketAddr::new(w.me.ip(), port), &raw_request(0x0003, &UDP), now);
+        }
+        w.step();
+        if w.events.iter().any(|e| matches!(e, TurnEvent::PermissionCreated(..))) {
+            return;
+        }
+    }
+    panic!("the client's signed request never passed");
+}
+
+/// The driver's readers drop datagrams over 4 KiB before queueing them
+/// (not testable over this machine's loopback, which drops UDP datagrams
+/// over 1472 B); the core drops and counts them too.
+#[test]
+fn oversized_datagrams_are_dropped_and_counted() {
+    let mut w = Wire::new("11.0.0.9:3478", "11.0.0.20:50000", TurnLimits::generous(), false);
+    let relayed = w.allocate();
+    assert!(w.permit("8.8.4.4"));
+    let now = w.now();
+    let dropped = w.core.dropped();
+    // A Send indication's type, so not a request.
+    let mut big = vec![0u8; 5000];
+    big[1] = 0x16;
+    w.core.receive(w.me, &big, now);
+    w.core.receive_relayed(relayed.port(), a("8.8.4.4:5000"), &[1u8; 5000], now);
+    w.step();
+    assert_eq!(w.core.dropped(), dropped + 2);
+    assert!(w.received.is_empty() && w.to_peers.is_empty());
 }

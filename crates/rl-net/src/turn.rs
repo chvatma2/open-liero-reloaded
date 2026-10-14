@@ -47,6 +47,13 @@ const BURST_SECS: u128 = 2;
 const NANOS: u128 = 1_000_000_000;
 /// A request (anything but data) above this is dropped unread.
 const MAX_REQUEST: usize = 1500;
+/// A datagram above this is dropped unread (the driver's readers too):
+/// requests and game datagrams fit an MTU.
+pub(crate) const MAX_DATAGRAM: usize = 4096;
+/// Answers to sources nothing proves (Binding, the first 401, 438), in
+/// bytes per second for the whole relay (a bucket holding 2 s): what the
+/// relay can reflect at forged sources, wherever they are.
+const UNPROVEN_BYTES_PER_S: u32 = 64 * 1024;
 /// Per allocation.
 const MAX_PERMISSIONS: usize = 16;
 const MAX_CHANNELS: usize = 16;
@@ -59,6 +66,10 @@ const DEFAULT_LIFETIME: u32 = 600;
 const MAX_LIFETIME: u32 = 3600;
 /// A nonce is valid in the period it was made in and the next.
 const NONCE_PERIOD: u64 = 600;
+/// A nonce: the period (4 hex digits, wrapping) and a 48-bit HMAC tag
+/// (12 hex digits), short to keep the 401 small.
+const NONCE_LEN: usize = 16;
+const TAG_LEN: usize = 6;
 /// The channel numbers RFC 5766 allows (RFC 8656 narrows them to 0x4fff;
 /// clients built on 5766 use the whole range).
 const CHANNELS: std::ops::RangeInclusive<u16> = 0x4000..=0x7fff;
@@ -157,7 +168,12 @@ struct IpState {
     /// Relayed payload: client to peers, and peers to the client.
     up: Bucket,
     down: Bucket,
+    /// Requests whose nonce proves the source (it heard our answer), and
+    /// requests nothing proves (forgeable: Binding, the first Allocate, a
+    /// stale nonce). Separate, so forged requests in a client's name
+    /// cannot starve its signed ones.
     requests: Bucket,
+    unproven: Bucket,
     last: Instant,
 }
 
@@ -186,6 +202,7 @@ impl Ips {
                     up: Bucket::full(limits.per_ip_bytes_per_s, now),
                     down: Bucket::full(limits.per_ip_bytes_per_s, now),
                     requests: Bucket::full(limits.per_ip_requests_per_s, now),
+                    unproven: Bucket::full(limits.per_ip_requests_per_s, now),
                     last: now,
                 },
             );
@@ -283,6 +300,8 @@ pub struct TurnCore {
     allow_local: bool,
     /// Signs nonces (stateless: an HMAC of the source and the period).
     secret: [u8; 32],
+    /// Answers to unproven sources, relay-wide.
+    unproven: Bucket,
     epoch: Instant,
     ips: Ips,
     allocations: BTreeMap<SocketAddr, Allocation>,
@@ -331,6 +350,7 @@ impl TurnCore {
             limits,
             allow_local: false,
             secret,
+            unproven: Bucket::full(UNPROVEN_BYTES_PER_S, now),
             epoch: now,
             ips: Ips::default(),
             allocations: BTreeMap::new(),
@@ -370,14 +390,24 @@ impl TurnCore {
 
     fn push(&mut self, from_port: u16, to: SocketAddr, bytes: Vec<u8>) {
         // Never to ourselves.
-        if to != self.listen && !to.ip().is_unspecified() {
+        let own = to == self.listen || to == SocketAddr::new(self.public, self.listen.port());
+        if !own && !to.ip().is_unspecified() {
             self.out.push(TurnOut { from_port, to, bytes });
         }
     }
 
-    /// The nonce for `from` in period `period`: the period and an HMAC of
-    /// the source and the period, in hex.
-    fn nonce(&self, from: SocketAddr, period: u64) -> String {
+    /// An answer to a source nothing proves: within the relay-wide budget
+    /// (and the source IP's unproven bucket, taken by the caller).
+    fn push_unproven(&mut self, to: SocketAddr, bytes: Vec<u8>, now: Instant) {
+        if self.unproven.take(UNPROVEN_BYTES_PER_S, bytes.len() as u64, now) {
+            self.push(self.listen.port(), to, bytes);
+        } else {
+            self.dropped += 1;
+        }
+    }
+
+    /// The HMAC tag of `from` in `period`.
+    fn tag(&self, from: SocketAddr, period: u16) -> Hmac<Sha1> {
         let mut mac = Hmac::<Sha1>::new_from_slice(&self.secret).expect("HMAC takes any key");
         match from.ip() {
             IpAddr::V4(a) => mac.update(&a.octets()),
@@ -385,43 +415,74 @@ impl TurnCore {
         }
         mac.update(&from.port().to_be_bytes());
         mac.update(&period.to_be_bytes());
-        let tag = mac.finalize().into_bytes();
-        let mut s = format!("{period:016x}");
-        for b in &tag[..10] {
+        mac
+    }
+
+    /// The nonce for `from` in period `period`: the period and the first
+    /// bytes of an HMAC of the source and the period, in hex.
+    fn nonce(&self, from: SocketAddr, period: u16) -> String {
+        let tag = self.tag(from, period).finalize().into_bytes();
+        let mut s = format!("{period:04x}");
+        for b in &tag[..TAG_LEN] {
             s.push_str(&format!("{b:02x}"));
         }
         s
     }
 
-    fn period(&self, now: Instant) -> u64 {
-        now.saturating_duration_since(self.epoch).as_secs() / NONCE_PERIOD
+    /// The nonce period of `now` (wrapping: a nonce's period is compared
+    /// with wrapping arithmetic).
+    fn period(&self, now: Instant) -> u16 {
+        (now.saturating_duration_since(self.epoch).as_secs() / NONCE_PERIOD) as u16
     }
 
+    /// Whether `nonce` is ours for `from`, of this period or the last; the
+    /// tag is compared in constant time.
     fn nonce_ok(&self, nonce: &[u8], from: SocketAddr, now: Instant) -> bool {
-        let current = self.period(now);
-        let Some(period) = nonce
-            .get(..16)
-            .and_then(|p| std::str::from_utf8(p).ok())
-            .and_then(|p| u64::from_str_radix(p, 16).ok())
-        else {
+        if nonce.len() != NONCE_LEN {
             return false;
-        };
-        (period == current || period + 1 == current) && self.nonce(from, period).as_bytes() == nonce
+        }
+        let Some(period) = hex(&nonce[..4]) else { return false };
+        let period = u16::from_be_bytes([period[0], period[1]]);
+        let Some(tag) = hex(&nonce[4..]) else { return false };
+        self.period(now).wrapping_sub(period) <= 1
+            && self.tag(from, period).verify_truncated_left(&tag).is_ok()
     }
 
-    /// An error answer to request `m` from `from`: signed when the request
-    /// was authenticated; 401 and 438 carry REALM and a fresh NONCE.
-    fn refuse(&mut self, m: &Msg<'_>, from: SocketAddr, (code, reason): Refusal, signed: bool, now: Instant) {
-        let mut b = Builder::new(Class::Error, m.method, m.transaction).error(code, reason);
-        if code == 401 || code == 438 {
-            let nonce = self.nonce(from, self.period(now));
-            b = b.attr(msg::REALM, REALM.as_bytes()).attr(msg::NONCE, nonce.as_bytes());
-        }
-        if signed {
-            b = b.integrity(&self.key);
-        }
-        let bytes = b.fingerprint().finish();
+    /// A challenge to request `m` from `from` (401 or 438, RFC 8489
+    /// §9.2.4): ERROR-CODE without a reason, REALM and a fresh NONCE, as
+    /// small as the RFC allows; within the relay-wide unproven budget.
+    fn challenge(&mut self, m: &Msg<'_>, from: SocketAddr, code: u16, now: Instant) {
+        let nonce = self.nonce(from, self.period(now));
+        let bytes = Builder::new(Class::Error, m.method, m.transaction)
+            .error(code, "")
+            .attr(msg::REALM, REALM.as_bytes())
+            .attr(msg::NONCE, nonce.as_bytes())
+            .finish();
+        self.push_unproven(from, bytes, now);
+    }
+
+    /// A signed error answer to an authenticated request.
+    fn refuse(&mut self, m: &Msg<'_>, from: SocketAddr, (code, reason): Refusal) {
+        let bytes = Builder::new(Class::Error, m.method, m.transaction)
+            .error(code, reason)
+            .integrity(&self.key)
+            .fingerprint()
+            .finish();
         self.push(self.listen.port(), from, bytes);
+    }
+
+    /// Takes a request token of `ip`: from its proven bucket or its
+    /// unproven one; counts a drop.
+    fn admit_request(&mut self, ip: IpAddr, proven: bool, now: Instant) -> bool {
+        let rate = self.limits.per_ip_requests_per_s;
+        let ok = self.ips.states.get_mut(&ip).is_some_and(|s| {
+            let bucket = if proven { &mut s.requests } else { &mut s.unproven };
+            bucket.take(rate, 1, now)
+        });
+        if !ok {
+            self.dropped += 1;
+        }
+        ok
     }
 
     /// A signed success answer to `m` with `attrs` added.
@@ -433,6 +494,10 @@ impl TurnCore {
 
     /// A datagram to the listening port.
     pub fn receive(&mut self, from: SocketAddr, bytes: &[u8], now: Instant) {
+        if bytes.len() > MAX_DATAGRAM {
+            self.dropped += 1;
+            return;
+        }
         if bytes.first().is_some_and(|b| b & 0xc0 == 0x40) {
             return self.client_data(from, bytes, now);
         }
@@ -446,11 +511,7 @@ impl TurnCore {
             Class::Indication if m.method == msg::SEND => self.send_indication(from, &m, now),
             Class::Request => {
                 let limits = self.limits;
-                let admitted = self
-                    .ips
-                    .touch(from.ip(), &limits, now)
-                    .is_some_and(|s| s.requests.take(limits.per_ip_requests_per_s, 1, now));
-                if !admitted {
+                if self.ips.touch(from.ip(), &limits, now).is_none() {
                     self.dropped += 1;
                     return;
                 }
@@ -463,11 +524,13 @@ impl TurnCore {
     fn request(&mut self, from: SocketAddr, m: &Msg<'_>, now: Instant) {
         let known: &[u16] = match m.method {
             msg::BINDING => {
-                let bytes = Builder::new(Class::Success, msg::BINDING, m.transaction)
-                    .xor_addr(msg::XOR_MAPPED_ADDRESS, from)
-                    .fingerprint()
-                    .finish();
-                return self.push(self.listen.port(), from, bytes);
+                if self.admit_request(from.ip(), false, now) {
+                    let bytes = Builder::new(Class::Success, msg::BINDING, m.transaction)
+                        .xor_addr(msg::XOR_MAPPED_ADDRESS, from)
+                        .finish();
+                    self.push_unproven(from, bytes, now);
+                }
+                return;
             }
             msg::ALLOCATE => {
                 &[msg::REQUESTED_TRANSPORT, msg::LIFETIME, msg::DONT_FRAGMENT, msg::REQUESTED_ADDRESS_FAMILY]
@@ -477,20 +540,36 @@ impl TurnCore {
             msg::CHANNEL_BIND => &[msg::CHANNEL_NUMBER, msg::XOR_PEER_ADDRESS],
             _ => return,
         };
-        // Long-term credentials (RFC 8489 §9.2.4).
+        // Long-term credentials (RFC 8489 §9.2.4), answering forgeable
+        // requests as little as a client needs (review N2): only an
+        // Allocate naming its transport gets the first 401 (every client
+        // signs everything after it), and a signed request with a nonce
+        // not ours for this source gets 438 only when its integrity holds.
         if !m.has_integrity() {
-            return self.refuse(m, from, UNAUTHORIZED, false, now);
+            if m.method == msg::ALLOCATE
+                && m.attr(msg::REQUESTED_TRANSPORT).is_some()
+                && self.admit_request(from.ip(), false, now)
+            {
+                self.challenge(m, from, UNAUTHORIZED.0, now);
+            }
+            return;
         }
         let (Some(user), Some(realm), Some(nonce)) =
             (m.attr(msg::USERNAME), m.attr(msg::REALM), m.attr(msg::NONCE))
         else {
-            return self.refuse(m, from, BAD_REQUEST, false, now);
+            return;
         };
-        if user != self.user.as_bytes() || realm != REALM.as_bytes() || !m.integrity_ok(&self.key) {
-            return self.refuse(m, from, UNAUTHORIZED, false, now);
+        let proven = self.nonce_ok(nonce, from, now);
+        if !self.admit_request(from.ip(), proven, now) {
+            return;
         }
-        if !self.nonce_ok(nonce, from, now) {
-            return self.refuse(m, from, STALE_NONCE, false, now);
+        let credentials =
+            user == self.user.as_bytes() && realm == REALM.as_bytes() && m.integrity_ok(&self.key);
+        match (proven, credentials) {
+            (true, true) => {}
+            (true, false) => return self.challenge(m, from, UNAUTHORIZED.0, now),
+            (false, true) => return self.challenge(m, from, STALE_NONCE.0, now),
+            (false, false) => return,
         }
         let unknown: Vec<u16> =
             m.types().filter(|t| *t < 0x8000 && !known.contains(t) && !AUTH_ATTRIBUTES.contains(t)).collect();
@@ -511,7 +590,7 @@ impl TurnCore {
             _ => self.channel_bind(from, m, now),
         };
         if let Err(refusal) = result {
-            self.refuse(m, from, refusal, true, now);
+            self.refuse(m, from, refusal);
         }
     }
 
@@ -683,6 +762,9 @@ impl TurnCore {
 
     fn relay_up(&mut self, from: SocketAddr, peer: SocketAddr, data: &[u8], now: Instant) {
         let Some(a) = self.allocations.get(&from) else { return };
+        if data.len() > MAX_DATAGRAM {
+            return;
+        }
         if !peer.is_ipv4() || peer.port() == 0 || self.forbidden(peer.ip()) || !a.permitted(peer.ip(), now) {
             return;
         }
@@ -697,6 +779,10 @@ impl TurnCore {
     pub fn receive_relayed(&mut self, port: u16, from: SocketAddr, bytes: &[u8], now: Instant) {
         let Some(&client) = self.by_port.get(&port) else { return };
         let Some(a) = self.allocations.get(&client) else { return };
+        if bytes.len() > MAX_DATAGRAM {
+            self.dropped += 1;
+            return;
+        }
         if !from.is_ipv4() || self.forbidden(from.ip()) || !a.permitted(from.ip(), now) {
             return;
         }
@@ -813,6 +899,22 @@ fn lifetime(m: &Msg<'_>) -> Option<u32> {
     Some(u32::from_be_bytes(v.try_into().ok()?))
 }
 
+/// The bytes of an even run of lowercase or uppercase hex digits.
+fn hex(digits: &[u8]) -> Option<Vec<u8>> {
+    fn nibble(d: u8) -> Option<u8> {
+        match d {
+            b'0'..=b'9' => Some(d - b'0'),
+            b'a'..=b'f' => Some(d - b'a' + 10),
+            b'A'..=b'F' => Some(d - b'A' + 10),
+            _ => None,
+        }
+    }
+    if !digits.len().is_multiple_of(2) {
+        return None;
+    }
+    digits.chunks(2).map(|p| Some(nibble(p[0])? << 4 | nibble(p[1])?)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -852,6 +954,59 @@ mod tests {
         );
         ips.count(holder, false);
         assert!(ips.idle.contains(&(t0, holder)), "idle again");
+    }
+
+    /// A Refresh signed with the right key, carrying `nonce`.
+    fn signed_refresh(core: &TurnCore, nonce: &[u8]) -> Vec<u8> {
+        Builder::new(Class::Request, msg::REFRESH, [3; 12])
+            .u32(msg::LIFETIME, 600)
+            .attr(msg::USERNAME, b"u")
+            .attr(msg::REALM, REALM.as_bytes())
+            .attr(msg::NONCE, nonce)
+            .integrity(&core.key)
+            .fingerprint()
+            .finish()
+    }
+
+    fn core(t0: Instant) -> TurnCore {
+        TurnCore::new(
+            "11.0.0.9:3478".parse().unwrap(),
+            "11.0.0.9".parse().unwrap(),
+            "u",
+            "p",
+            TurnLimits::default(),
+            t0,
+        )
+    }
+
+    #[test]
+    fn a_hostile_nonce_does_not_panic() {
+        let t0 = Instant::now();
+        let mut core = core(t0);
+        let from: SocketAddr = "11.0.0.20:50000".parse().unwrap();
+        for nonce in [
+            &b"ffffffffffffffff00000000000000000000"[..],
+            b"ffffffffffffffff",
+            b"ffff",
+            b"+0000000000000000000",
+        ] {
+            core.receive(from, &signed_refresh(&core, nonce), t0 + Duration::from_secs(1200));
+        }
+        let mut out = Vec::new();
+        core.poll(t0, &mut out);
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config { cases: 256, failure_persistence: None, ..Default::default() })]
+
+        /// Any nonce bytes on a correctly signed request, at any time.
+        #[test]
+        fn any_nonce_on_a_signed_request_is_safe(nonce in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..64), secs in 0u64..100_000) {
+            let t0 = Instant::now();
+            let mut core = core(t0);
+            let from: SocketAddr = "11.0.0.20:50000".parse().unwrap();
+            core.receive(from, &signed_refresh(&core, &nonce), t0 + Duration::from_secs(secs));
+        }
     }
 
     #[test]

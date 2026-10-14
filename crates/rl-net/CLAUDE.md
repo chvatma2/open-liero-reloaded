@@ -199,13 +199,29 @@ announcements.
   (at most 8 peers per request); ChannelBind (0x4000-0x7fff); Send and
   Data indications; ChannelData (unpadded). Long-term credentials: realm
   `REALM` `"rust-liero"`, one user, MESSAGE-INTEGRITY HMAC-SHA1 under
-  MD5(user:realm:pass) on every authenticated answer, FINGERPRINT on
-  every answer; a stateless nonce (the period and an HMAC of the source
-  address and the period under a per-relay random key, `set_secret`;
-  valid for its 10-minute period and the next, then 438), so an
-  unauthenticated source costs no memory. Unknown comprehension-required
-  attributes → 420; 437 for a 5-tuple's wrong allocation; 440, 442, 443;
-  486 per-IP quota, 508 capacity. The codec is `turn/msg.rs` (fuzzed).
+  MD5(user:realm:pass) and FINGERPRINT on every authenticated answer; a
+  stateless nonce (16 hex digits: the 10-minute period, wrapping, and a
+  48-bit HMAC tag of the source address and the period under a
+  per-relay random key, `set_secret`, compared in constant time; valid
+  in its period and the next), so an unauthenticated source costs no
+  memory. Unknown comprehension-required attributes → 420; 437 for a
+  5-tuple's wrong allocation; 440, 442, 443; 486 per-IP quota, 508
+  capacity. The codec is `turn/msg.rs` (fuzzed).
+  - **Reflection (review N2):** answers to sources nothing proves are
+    few, small and capped. Only an Allocate naming REQUESTED-TRANSPORT
+    gets the first 401; other unsigned requests, and signed ones lacking
+    USERNAME/REALM/NONCE, get nothing. A signed request whose nonce is not
+    ours for its source gets 438 only if its integrity holds, else
+    nothing. 401 and 438 are as small as RFC 8489 allows (ERROR-CODE
+    without a reason, REALM, NONCE, no FINGERPRINT: 64 B), Binding answers
+    XOR-MAPPED-ADDRESS only (32 B): 1.6× a 20 B Binding or
+    turn-client-proto's 40 B first Allocate, 2.3× a bare 28 B Allocate.
+    All of them share a relay-wide bucket of 64 KiB/s (holding 2 s),
+    whatever the spread of forged sources.
+  - **Request buckets per IP (review N6):** a request whose nonce proves
+    its source takes from the IP's proven bucket, any other from its
+    unproven one (both `per_ip_requests_per_s`, holding 2 s), so forged
+    requests in a client's name cannot starve its signed ones.
   - **Peers (TR-1):** IPv4, global (`rl_proto::is_global`) and not the
     relay's public or listening address, unless `set_allow_local(true)`
     (`TurnServerConfig::allow_local`, N62); CreatePermission and
@@ -213,7 +229,8 @@ announcements.
     from them dropped.
   - **Bounds:** every table is a map: allocations by client 5-tuple and
     by port, expiries indexed by time, at most 16 permissions and 16
-    channels per allocation; requests above 1500 B are dropped unread;
+    channels per allocation; requests above 1500 B and any datagram (or
+    relayed payload) above 4096 B are dropped unread and counted;
     at most 4096 client IPs, an entry only for a request source (never
     for data), the longest idle without an allocation evicted through a
     last-seen index (O(log n)).
@@ -229,11 +246,13 @@ announcements.
     `public` only (TR-3: per-IP limits; else `InvalidInput`); port 0:
     ephemeral, `local_addr`. One reader thread per socket (the listening
     one, one per allocation: a free port of `ports`, or OS-assigned for
-    `0..=0`) blocks in `recv_from` (200 ms timeout; any error but a
-    timeout is read past, Windows' ICMP resets included) and feeds a
-    bounded channel; the core's thread waits on it (100 ms tick), so an
-    idle relay sleeps. `stats()` (allocations, dropped, relayed bytes);
-    dropping it stops and joins every thread (within about 200 ms).
+    `0..=0`) blocks in `recv_from` (200 ms timeout; a timeout or a reset —
+    Windows reports ICMP port unreachables so — is read past at once,
+    other errors too, sleeping 1 ms only after 16 in a row), drops and
+    counts datagrams over 4096 B before copying them, and feeds a channel
+    of 1024 (at most 4 MiB; a full one drops and counts); the core's
+    thread waits on it (100 ms tick), so an idle relay sleeps. `stats()`
+    (allocations, dropped, relayed bytes); dropping it stops and joins every thread (within about 200 ms).
 - **`natsim`** (feature `test-hooks`, N56): `Net` runs `Core`s behind
   virtual NATs (full cone, address-restricted, port-restricted:
   endpoint-independent mapping keeping the internal port if free;
@@ -377,8 +396,12 @@ IPv4 only), and in memory against a sans-IO client: local peers refused,
 a stranger not draining a player's down budget, 16 permissions, spoofed
 sources and oversized requests costing nothing, a `Core` refusing a
 relay that names our base or a private address, `TurnCore` fuzzed with
-requests, Send and ChannelData; unit tests in `turn.rs` (the bucket, the
-IP table, nonces) and `turn/msg.rs` (the codec, fuzzed); `tests/candidates.rs`: reading,
+requests, Send and ChannelData; only an Allocate getting an
+unauthenticated answer, the amplification pinned, the relay-wide cap on
+unauthenticated answers, forged requests not starving a client's signed
+ones, oversized datagrams dropped; unit tests in `turn.rs` (the bucket,
+the IP table, nonces, a hostile nonce, any nonce on a signed request,
+fuzzed) and `turn/msg.rs` (the codec, fuzzed); `tests/candidates.rs`: reading,
 sanitizing (fuzzed) and classifying candidates;
 `tests/link.rs`: in memory on a
 virtual clock, 32 s in well under 1 s of wall time, and irregular
