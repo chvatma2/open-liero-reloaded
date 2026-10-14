@@ -996,6 +996,18 @@ fn egui_frame_time(input: &mut egui::RawInput, elapsed: f64) {
 mod tests {
     use winit::event::{Ime, WindowEvent};
 
+    /// The lobby's Copy (the invite code) and pasting into a text field go
+    /// through egui-winit's clipboard, a feature its default features
+    /// carry: with them off, the workspace must name it, or both silently
+    /// do nothing (the user's report on Windows).
+    #[test]
+    fn egui_winit_has_its_clipboard() {
+        let manifest = include_str!("../../../Cargo.toml");
+        let line =
+            manifest.lines().find(|l| l.starts_with("egui-winit")).expect("egui-winit in the workspace");
+        assert!(line.contains("\"clipboard\""), "{line}");
+    }
+
     /// The game draws every frame without asking egui for a repaint, so
     /// egui takes `predicted_dt` as each frame's time: it must be the
     /// frame's real time, or menu animations (the profiles' skin preview)

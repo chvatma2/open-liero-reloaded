@@ -76,7 +76,7 @@ winit = { version = "=0.30.13", features = ["serde"] }
 # The overlay (plan 5, spec §19 E10): exact pins, matching wgpu 30.0.1 and winit 0.30.13.
 egui = "=0.36.2"
 egui-wgpu = { version = "=0.36.2", default-features = false }
-egui-winit = { version = "=0.36.2", default-features = false, features = ["wayland", "x11"] }
+egui-winit = { version = "=0.36.2", default-features = false, features = ["clipboard", "wayland", "x11"] }
 # Menus (plan 7): exact pins. egui_kittest drives GUI flows by label, in lockstep with egui.
 egui_kittest = "=0.36.2"
 directories = "=6.0.0"
