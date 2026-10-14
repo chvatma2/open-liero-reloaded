@@ -211,17 +211,25 @@ announcements.
     few, small and capped. Only an Allocate naming REQUESTED-TRANSPORT
     gets the first 401; other unsigned requests, and signed ones lacking
     USERNAME/REALM/NONCE, get nothing. A signed request whose nonce is not
-    ours for its source gets 438 only if its integrity holds, else
-    nothing. 401 and 438 are as small as RFC 8489 allows (ERROR-CODE
+    ours for its source (or older than 80 minutes) gets 438 only if its
+    integrity holds, else nothing. 401 and 438 are as small as RFC 8489 allows (ERROR-CODE
     without a reason, REALM, NONCE, no FINGERPRINT: 64 B), Binding answers
     XOR-MAPPED-ADDRESS only (32 B): 1.6× a 20 B Binding or
     turn-client-proto's 40 B first Allocate, 2.3× a bare 28 B Allocate.
-    All of them share a relay-wide bucket of 64 KiB/s (holding 2 s),
-    whatever the spread of forged sources.
-  - **Request buckets per IP (review N6):** a request whose nonce proves
-    its source takes from the IP's proven bucket, any other from its
-    unproven one (both `per_ip_requests_per_s`, holding 2 s), so forged
-    requests in a client's name cannot starve its signed ones.
+    All answers to unproven sources share a relay-wide bucket of
+    64 KiB/s (holding 2 s), whatever the spread of forged sources.
+  - **Proven sources (review N6, N7):** a nonce whose tag is ours for the
+    request's exact source (IP and port) and at most `PROVEN_PERIODS` (8,
+    80 minutes: past `MAX_LIFETIME`) old proves the source heard our
+    answer. Fresh (this period or the last) it is accepted; older, the
+    request gets 438 with a fresh nonce, and a proven source's 401 or 438
+    is sent outside the unproven budgets, so a blind flood that drains
+    them cannot starve a live client's renewals. A proven request takes
+    from the IP's proven bucket, any other from its unproven one: the
+    IP's `per_ip_requests_per_s` split three to one (default 15 and 5 a
+    second, each bucket holding 2 s; review N9), so forged requests in a
+    client's name cannot starve its signed ones and the IP's total keeps
+    the rate.
   - **Peers (TR-1):** IPv4, global (`rl_proto::is_global`) and not the
     relay's public or listening address, unless `set_allow_local(true)`
     (`TurnServerConfig::allow_local`, N62); CreatePermission and
@@ -251,8 +259,9 @@ announcements.
     other errors too, sleeping 1 ms only after 16 in a row), drops and
     counts datagrams over 4096 B before copying them, and feeds a channel
     of 1024 (at most 4 MiB; a full one drops and counts); the core's
-    thread waits on it (100 ms tick), so an idle relay sleeps. `stats()`
-    (allocations, dropped, relayed bytes); dropping it stops and joins every thread (within about 200 ms).
+    thread waits on it (100 ms tick), so an idle relay sleeps.
+    `stats()` (allocations, dropped, relayed bytes); dropping it stops
+    and joins every thread (within about 200 ms).
 - **`natsim`** (feature `test-hooks`, N56): `Net` runs `Core`s behind
   virtual NATs (full cone, address-restricted, port-restricted:
   endpoint-independent mapping keeping the internal port if free;
@@ -399,9 +408,13 @@ relay that names our base or a private address, `TurnCore` fuzzed with
 requests, Send and ChannelData; only an Allocate getting an
 unauthenticated answer, the amplification pinned, the relay-wide cap on
 unauthenticated answers, forged requests not starving a client's signed
-ones, oversized datagrams dropped; unit tests in `turn.rs` (the bucket,
-the IP table, nonces, a hostile nonce, any nonce on a signed request,
-fuzzed) and `turn/msg.rs` (the codec, fuzzed); `tests/candidates.rs`: reading,
+ones, a live client keeping its allocation, permission and channel for
+32 virtual minutes past nonce expiry against a spoofer draining both
+unproven budgets, oversized datagrams dropped; unit tests in `turn.rs`
+(the bucket, the IP table, nonces, a stale tag proven only for its own
+source, a proven source answered outside the unproven budget, an IP's
+two buckets keeping its rate, a hostile nonce, any nonce on a signed
+request, fuzzed) and `turn/msg.rs` (the codec, fuzzed); `tests/candidates.rs`: reading,
 sanitizing (fuzzed) and classifying candidates;
 `tests/link.rs`: in memory on a
 virtual clock, 32 s in well under 1 s of wall time, and irregular

@@ -274,6 +274,8 @@ struct Wire {
     me: SocketAddr,
     t0: Instant,
     ms: u64,
+    /// Virtual milliseconds per step.
+    tick: u64,
     next_port: u16,
     events: Vec<TurnEvent>,
     /// The client's datagrams, and data relayed to the client and to peers.
@@ -296,6 +298,7 @@ impl Wire {
             me,
             t0,
             ms: 0,
+            tick: 1,
             next_port: 49160,
             events: Vec::new(),
             sent: Vec::new(),
@@ -320,7 +323,7 @@ impl Wire {
     }
 
     fn step(&mut self) {
-        self.ms += 1;
+        self.ms += self.tick;
         let (now, t) = (self.now(), self.t());
         let _ = self.client.poll(t);
         while let Some(tx) = self.client.poll_transmit(t) {
@@ -688,4 +691,47 @@ fn oversized_datagrams_are_dropped_and_counted() {
     w.step();
     assert_eq!(w.core.dropped(), dropped + 2);
     assert!(w.received.is_empty() && w.to_peers.is_empty());
+}
+
+/// N6/N7: past nonce expiry (fresh for 10-20 minutes), a live client's
+/// signed renewals carry an aged but genuine nonce: they are proven, so a
+/// spoofer draining the client IP's unproven bucket and the relay-wide
+/// unproven budget cannot starve them. 32 virtual minutes, past the
+/// allocation's refresh (at 29 of its 30).
+#[test]
+fn a_live_client_survives_a_spoofer_past_nonce_expiry() {
+    let mut w = Wire::new("11.0.0.9:3478", "11.0.0.20:50000", TurnLimits::default(), false);
+    let relayed = w.allocate();
+    let peer = a("8.8.4.4:5000");
+    w.client.bind_channel(TransportType::Udp, peer, w.t()).unwrap();
+    assert!(w.until(|w| w.events.iter().any(|e| matches!(e, TurnEvent::ChannelCreated(..)))));
+    w.tick = 10;
+    let allocate = raw_request(0x0003, &UDP);
+    let mut spoof = 0u32;
+    while w.ms < 32 * 60 * 1000 {
+        // At the coming step's instant, so the spoofer comes first: one
+        // forged Allocate from the client's IP, and sixteen from strangers
+        // (above the relay-wide budget's ~10 answers per 10 ms).
+        let now = w.now() + Duration::from_millis(w.tick);
+        spoof = spoof.wrapping_add(1);
+        w.core.receive(SocketAddr::new(w.me.ip(), 1024 + (spoof % 60_000) as u16), &allocate, now);
+        for _ in 0..16 {
+            spoof = spoof.wrapping_add(1);
+            let from = SocketAddr::new(IpAddr::V4((0x0c00_0000 + spoof % 100_000).into()), 40000);
+            w.core.receive(from, &allocate, now);
+        }
+        w.step();
+    }
+    assert!(w.core.dropped() > 100_000, "the spoofer was busy: {}", w.core.dropped());
+    assert_eq!(w.core.allocations(), 1, "the allocation lives");
+    assert_eq!(w.client.relayed_addresses().count(), 1, "the client kept it");
+    // Its permission and channel still relay both ways.
+    let now = w.now();
+    w.core.receive_relayed(relayed.port(), peer, b"still here", now);
+    let tx =
+        w.client.send_to(TransportType::Udp, peer, b"me too".as_slice(), w.t()).unwrap().unwrap().build();
+    w.deliver(tx.data);
+    w.step();
+    assert!(w.received.contains(&(peer, b"still here".to_vec())), "down");
+    assert!(w.to_peers.iter().any(|o| o.to == peer && o.bytes == b"me too"), "up");
 }

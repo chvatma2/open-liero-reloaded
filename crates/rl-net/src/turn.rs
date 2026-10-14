@@ -70,6 +70,23 @@ const NONCE_PERIOD: u64 = 600;
 /// (12 hex digits), short to keep the 401 small.
 const NONCE_LEN: usize = 16;
 const TAG_LEN: usize = 6;
+/// A nonce whose tag is ours for its exact source proves that source (it
+/// heard our answer) for this many periods (80 minutes: longer than
+/// `MAX_LIFETIME`, so a live allocation's renewals stay proven after its
+/// nonce went stale; review N6, N7).
+const PROVEN_PERIODS: u16 = 8;
+
+/// What a request's nonce says about its source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NonceCheck {
+    /// Ours for this source, of this period or the last: accepted.
+    Fresh,
+    /// Ours for this source, older but within `PROVEN_PERIODS`: the source
+    /// is proven, the nonce stale (438 with a fresh one).
+    Aged,
+    /// Anything else: nothing proves the source.
+    Invalid,
+}
 /// The channel numbers RFC 5766 allows (RFC 8656 narrows them to 0x4fff;
 /// clients built on 5766 use the whole range).
 const CHANNELS: std::ops::RangeInclusive<u16> = 0x4000..=0x7fff;
@@ -201,8 +218,8 @@ impl Ips {
                     allocations: 0,
                     up: Bucket::full(limits.per_ip_bytes_per_s, now),
                     down: Bucket::full(limits.per_ip_bytes_per_s, now),
-                    requests: Bucket::full(limits.per_ip_requests_per_s, now),
-                    unproven: Bucket::full(limits.per_ip_requests_per_s, now),
+                    requests: Bucket::full(request_rates(limits).0, now),
+                    unproven: Bucket::full(request_rates(limits).1, now),
                     last: now,
                 },
             );
@@ -435,30 +452,42 @@ impl TurnCore {
         (now.saturating_duration_since(self.epoch).as_secs() / NONCE_PERIOD) as u16
     }
 
-    /// Whether `nonce` is ours for `from`, of this period or the last; the
-    /// tag is compared in constant time.
-    fn nonce_ok(&self, nonce: &[u8], from: SocketAddr, now: Instant) -> bool {
+    /// What `nonce` says about `from` now; the tag is compared in
+    /// constant time.
+    fn check_nonce(&self, nonce: &[u8], from: SocketAddr, now: Instant) -> NonceCheck {
         if nonce.len() != NONCE_LEN {
-            return false;
+            return NonceCheck::Invalid;
         }
-        let Some(period) = hex(&nonce[..4]) else { return false };
+        let (Some(period), Some(tag)) = (hex(&nonce[..4]), hex(&nonce[4..])) else {
+            return NonceCheck::Invalid;
+        };
         let period = u16::from_be_bytes([period[0], period[1]]);
-        let Some(tag) = hex(&nonce[4..]) else { return false };
-        self.period(now).wrapping_sub(period) <= 1
-            && self.tag(from, period).verify_truncated_left(&tag).is_ok()
+        let age = self.period(now).wrapping_sub(period);
+        if age > PROVEN_PERIODS || self.tag(from, period).verify_truncated_left(&tag).is_err() {
+            NonceCheck::Invalid
+        } else if age <= 1 {
+            NonceCheck::Fresh
+        } else {
+            NonceCheck::Aged
+        }
     }
 
     /// A challenge to request `m` from `from` (401 or 438, RFC 8489
     /// §9.2.4): ERROR-CODE without a reason, REALM and a fresh NONCE, as
-    /// small as the RFC allows; within the relay-wide unproven budget.
-    fn challenge(&mut self, m: &Msg<'_>, from: SocketAddr, code: u16, now: Instant) {
+    /// small as the RFC allows; within the relay-wide unproven budget
+    /// unless the source is `proven` (review N8).
+    fn challenge(&mut self, m: &Msg<'_>, from: SocketAddr, code: u16, proven: bool, now: Instant) {
         let nonce = self.nonce(from, self.period(now));
         let bytes = Builder::new(Class::Error, m.method, m.transaction)
             .error(code, "")
             .attr(msg::REALM, REALM.as_bytes())
             .attr(msg::NONCE, nonce.as_bytes())
             .finish();
-        self.push_unproven(from, bytes, now);
+        if proven {
+            self.push(self.listen.port(), from, bytes);
+        } else {
+            self.push_unproven(from, bytes, now);
+        }
     }
 
     /// A signed error answer to an authenticated request.
@@ -474,10 +503,9 @@ impl TurnCore {
     /// Takes a request token of `ip`: from its proven bucket or its
     /// unproven one; counts a drop.
     fn admit_request(&mut self, ip: IpAddr, proven: bool, now: Instant) -> bool {
-        let rate = self.limits.per_ip_requests_per_s;
+        let (proven_rate, unproven_rate) = request_rates(&self.limits);
         let ok = self.ips.states.get_mut(&ip).is_some_and(|s| {
-            let bucket = if proven { &mut s.requests } else { &mut s.unproven };
-            bucket.take(rate, 1, now)
+            if proven { s.requests.take(proven_rate, 1, now) } else { s.unproven.take(unproven_rate, 1, now) }
         });
         if !ok {
             self.dropped += 1;
@@ -550,7 +578,7 @@ impl TurnCore {
                 && m.attr(msg::REQUESTED_TRANSPORT).is_some()
                 && self.admit_request(from.ip(), false, now)
             {
-                self.challenge(m, from, UNAUTHORIZED.0, now);
+                self.challenge(m, from, UNAUTHORIZED.0, false, now);
             }
             return;
         }
@@ -559,17 +587,23 @@ impl TurnCore {
         else {
             return;
         };
-        let proven = self.nonce_ok(nonce, from, now);
+        let check = self.check_nonce(nonce, from, now);
+        let proven = check != NonceCheck::Invalid;
         if !self.admit_request(from.ip(), proven, now) {
             return;
         }
         let credentials =
             user == self.user.as_bytes() && realm == REALM.as_bytes() && m.integrity_ok(&self.key);
-        match (proven, credentials) {
-            (true, true) => {}
-            (true, false) => return self.challenge(m, from, UNAUTHORIZED.0, now),
-            (false, true) => return self.challenge(m, from, STALE_NONCE.0, now),
-            (false, false) => return,
+        match (check, credentials) {
+            (NonceCheck::Fresh, true) => {}
+            (NonceCheck::Fresh | NonceCheck::Aged, false) => {
+                return self.challenge(m, from, UNAUTHORIZED.0, true, now);
+            }
+            // A live client whose nonce aged: renewed outside the
+            // unproven budgets, which a blind flood can drain (N7).
+            (NonceCheck::Aged, true) => return self.challenge(m, from, STALE_NONCE.0, true, now),
+            (NonceCheck::Invalid, true) => return self.challenge(m, from, STALE_NONCE.0, false, now),
+            (NonceCheck::Invalid, false) => return,
         }
         let unknown: Vec<u16> =
             m.types().filter(|t| *t < 0x8000 && !known.contains(t) && !AUTH_ATTRIBUTES.contains(t)).collect();
@@ -893,6 +927,14 @@ impl TurnCore {
     }
 }
 
+/// An IP's request rates, proven and unproven: `per_ip_requests_per_s`
+/// split three to one, so together they keep it (review N9; at least 1 each).
+fn request_rates(limits: &TurnLimits) -> (u32, u32) {
+    let total = limits.per_ip_requests_per_s;
+    let unproven = (total / 4).max(1);
+    (total.saturating_sub(unproven).max(1), unproven)
+}
+
 /// A request's LIFETIME in seconds.
 fn lifetime(m: &Msg<'_>) -> Option<u32> {
     let v = m.attr(msg::LIFETIME)?;
@@ -957,13 +999,13 @@ mod tests {
     }
 
     /// A Refresh signed with the right key, carrying `nonce`.
-    fn signed_refresh(core: &TurnCore, nonce: &[u8]) -> Vec<u8> {
+    fn signed_refresh(key: &[u8], nonce: &[u8]) -> Vec<u8> {
         Builder::new(Class::Request, msg::REFRESH, [3; 12])
             .u32(msg::LIFETIME, 600)
             .attr(msg::USERNAME, b"u")
             .attr(msg::REALM, REALM.as_bytes())
             .attr(msg::NONCE, nonce)
-            .integrity(&core.key)
+            .integrity(key)
             .fingerprint()
             .finish()
     }
@@ -990,7 +1032,7 @@ mod tests {
             b"ffff",
             b"+0000000000000000000",
         ] {
-            core.receive(from, &signed_refresh(&core, nonce), t0 + Duration::from_secs(1200));
+            core.receive(from, &signed_refresh(&core.key, nonce), t0 + Duration::from_secs(1200));
         }
         let mut out = Vec::new();
         core.poll(t0, &mut out);
@@ -1005,8 +1047,82 @@ mod tests {
             let t0 = Instant::now();
             let mut core = core(t0);
             let from: SocketAddr = "11.0.0.20:50000".parse().unwrap();
-            core.receive(from, &signed_refresh(&core, &nonce), t0 + Duration::from_secs(secs));
+            core.receive(from, &signed_refresh(&core.key, &nonce), t0 + Duration::from_secs(secs));
         }
+    }
+
+    #[test]
+    fn a_stale_tag_is_proven_only_for_its_own_source() {
+        let t0 = Instant::now();
+        let core = core(t0);
+        let a: SocketAddr = "11.0.0.20:50000".parse().unwrap();
+        let n = core.nonce(a, 0);
+        let at = |periods: u64| t0 + Duration::from_secs(periods * NONCE_PERIOD + 1);
+        assert_eq!(core.check_nonce(n.as_bytes(), a, at(1)), NonceCheck::Fresh);
+        assert_eq!(core.check_nonce(n.as_bytes(), a, at(2)), NonceCheck::Aged, "stale, still proven");
+        assert_eq!(core.check_nonce(n.as_bytes(), a, at(u64::from(PROVEN_PERIODS))), NonceCheck::Aged);
+        assert_eq!(
+            core.check_nonce(n.as_bytes(), a, at(u64::from(PROVEN_PERIODS) + 1)),
+            NonceCheck::Invalid,
+            "too old"
+        );
+        for other in ["11.0.0.20:50001", "11.0.0.21:50000"] {
+            assert_eq!(
+                core.check_nonce(n.as_bytes(), other.parse().unwrap(), at(2)),
+                NonceCheck::Invalid,
+                "{other}"
+            );
+        }
+    }
+
+    /// N8: a proven source's 401 and 438 do not spend the relay-wide
+    /// unproven budget.
+    #[test]
+    fn a_proven_source_is_answered_outside_the_unproven_budget() {
+        let t0 = Instant::now();
+        let mut core = core(t0);
+        let from: SocketAddr = "11.0.0.20:50000".parse().unwrap();
+        let now = t0 + Duration::from_secs(3 * NONCE_PERIOD);
+        core.unproven.nanos = 0;
+        core.unproven.at = now;
+        // Fresh nonce, wrong key: 401. Aged nonce, right key: 438.
+        let fresh = core.nonce(from, core.period(now));
+        let bad = signed_refresh(&[9; 16], fresh.as_bytes());
+        let aged = core.nonce(from, core.period(now) - 2);
+        let mut out = Vec::new();
+        for request in [bad, signed_refresh(&core.key, aged.as_bytes())] {
+            core.receive(from, &request, now);
+            core.poll(now, &mut out);
+        }
+        let codes: Vec<u16> = out
+            .iter()
+            .filter_map(|o| {
+                Msg::parse(&o.bytes)?.attr(msg::ERROR_CODE).map(|e| u16::from(e[2]) * 100 + u16::from(e[3]))
+            })
+            .collect();
+        assert_eq!(codes, vec![401, 438]);
+    }
+
+    /// N9: one IP's requests, proven and unproven together, stay within
+    /// `per_ip_requests_per_s` (plus the 2 s burst).
+    #[test]
+    fn an_ips_requests_together_keep_the_rate() {
+        let t0 = Instant::now();
+        let mut core = core(t0);
+        let ip: IpAddr = "11.0.0.20".parse().unwrap();
+        let limits = core.limits;
+        core.ips.touch(ip, &limits, t0);
+        let mut admitted = 0;
+        for tick in 0..100u64 {
+            let now = t0 + Duration::from_millis(tick * 100);
+            for proven in [true, false] {
+                for _ in 0..100 {
+                    admitted += usize::from(core.admit_request(ip, proven, now));
+                }
+            }
+        }
+        let rate = limits.per_ip_requests_per_s as usize;
+        assert!(admitted <= rate * 10 + 2 * rate + 2, "{admitted} admitted in 10 s");
     }
 
     #[test]
@@ -1016,13 +1132,23 @@ mod tests {
         let core =
             TurnCore::new("11.0.0.9:3478".parse().unwrap(), a.ip(), "u", "p", TurnLimits::default(), t0);
         let n = core.nonce(a, 0);
-        assert!(core.nonce_ok(n.as_bytes(), a, t0));
-        assert!(
-            core.nonce_ok(n.as_bytes(), a, t0 + Duration::from_secs(NONCE_PERIOD + 1)),
+        let check = |nonce: &[u8], from: SocketAddr, at: Instant| core.check_nonce(nonce, from, at);
+        assert_eq!(check(n.as_bytes(), a, t0), NonceCheck::Fresh);
+        assert_eq!(
+            check(n.as_bytes(), a, t0 + Duration::from_secs(NONCE_PERIOD + 1)),
+            NonceCheck::Fresh,
             "the next period"
         );
-        assert!(!core.nonce_ok(n.as_bytes(), a, t0 + Duration::from_secs(2 * NONCE_PERIOD)), "stale");
-        assert!(!core.nonce_ok(n.as_bytes(), "11.0.0.20:50001".parse().unwrap(), t0), "another source");
-        assert!(!core.nonce_ok(b"zz", a, t0));
+        assert_eq!(
+            check(n.as_bytes(), a, t0 + Duration::from_secs(2 * NONCE_PERIOD)),
+            NonceCheck::Aged,
+            "stale"
+        );
+        assert_eq!(
+            check(n.as_bytes(), "11.0.0.20:50001".parse().unwrap(), t0),
+            NonceCheck::Invalid,
+            "another source"
+        );
+        assert_eq!(check(b"zz", a, t0), NonceCheck::Invalid);
     }
 }
