@@ -122,6 +122,12 @@ impl Shutdown {
     pub fn wait(self, until: Instant) -> bool {
         self.endpoint.is_none_or(|s| s.wait(until))
     }
+
+    /// The verdict if the deletion is over, never waiting (`Some(true)` at
+    /// once without a mapping); `None` while the router is still asked.
+    pub fn poll(&mut self) -> Option<bool> {
+        self.endpoint.as_mut().map_or(Some(true), rl_net::endpoint::Shutdown::poll)
+    }
 }
 
 /// Why the host could not start a match.

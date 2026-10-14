@@ -206,8 +206,10 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   a manual `Default`), `turn` (the player's TURN servers, `user:pass@host:port`,
   `valid_turn`/`turn_parts`: the user before the first `:`, the password
   up to the last `@`; at most `MAX_TURN` 8; none by default, N52);
-  `sanitize` drops bad entries, one warning each (a TURN entry's password
-  never in it); `SetFinding` saves. The lobby shows
+  `sanitize` drops bad entries, one warning each (a TURN entry is never
+  quoted in it); `Debug` is written by hand: TURN entries as `turn_shown`
+  (`user:•••@host:port`, "•••" for one that is not an entry), so no
+  printed setting, action or command holds a password; `SetFinding` saves. The lobby shows
   `LobbyView::invite` with Copy (`ctx.copy_text`), `listing` (a Public
   game's listing line, an Invite game's "This code joins through the
   relays" …) and `reach` (plan 12b: the host's reachability lines, under
@@ -366,7 +368,11 @@ settings sanitized (TURN entries, `port_mapping` on for an older file),
 `an_addressless_internet_game_is_joinable` (Join enabled, `addr: None`,
 the join's step as the waiting text), `the_lobby_shows_reach_lines_and_path_tags`;
 `tests/layout.rs`'s `the_lobbys_long_lines_wrap_in_a_narrow_window`
-(1280 × 720 at 1, 2 and 3 pixels a point, 3440 × 1440 at 2);
+(1280 × 720 at 1, 2 and 3 pixels a point, 3440 × 1440 at 2),
+`the_longest_join_texts_and_turn_options_fit` (rl-online's `no_path` as
+the Multiplayer screen's failure, the same sizes; the Options' port
+mapping switch and TURN rows from 640 points: at 427 the options' tab
+row, older, cannot reach the Online tab);
 `tests/ingame.rs`: the HUD layout,
 the weapon selection, the pause menu, Esc/F5 repeats, the results;
 `tests/import.rs`: `import_runs_off_the_ui_thread_and_reports` on

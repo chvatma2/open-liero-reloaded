@@ -181,14 +181,13 @@ pub fn valid_turn(entry: &str) -> bool {
     turn_parts(entry).is_some()
 }
 
-/// A TURN server entry as the options list it (and warnings name it): its
-/// password hidden, everything before the last `@` of an entry that is not
-/// one.
+/// A TURN server entry as the options list it: its password hidden. An
+/// entry that is not one shows nothing of itself (where its password
+/// ends cannot be told): "•••".
 pub fn turn_shown(entry: &str) -> String {
-    match (turn_parts(entry), entry.rsplit_once('@')) {
-        (Some((user, _, server)), _) => format!("{user}:•••@{server}"),
-        (None, Some((_, server))) => format!("•••@{server}"),
-        (None, None) => entry.to_string(),
+    match turn_parts(entry) {
+        Some((user, _, server)) => format!("{user}:•••@{server}"),
+        None => "•••".into(),
     }
 }
 
@@ -210,8 +209,9 @@ pub fn parse_key_hex(hex: &str) -> Option<[u8; 32]> {
 }
 
 /// Finding games on the Internet and reaching them (plans 12a and 12b; the
-/// options' Online tab).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// options' Online tab). `Debug` hides the TURN servers' passwords
+/// ([`turn_shown`]): settings, actions and commands may be printed.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FindingSettings {
     /// The region this player's hosted games say.
@@ -237,6 +237,21 @@ pub struct FindingSettings {
     /// ([`valid_turn`]), at most [`MAX_TURN`]; a join uses the first 2.
     /// None by default: the project ships no TURN list.
     pub turn: Vec<String>,
+}
+
+impl std::fmt::Debug for FindingSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let turn: Vec<String> = self.turn.iter().map(|t| turn_shown(t)).collect();
+        f.debug_struct("FindingSettings")
+            .field("region", &self.region)
+            .field("relays", &self.relays)
+            .field("stun", &self.stun)
+            .field("public_address", &self.public_address)
+            .field("blocked", &self.blocked)
+            .field("port_mapping", &self.port_mapping)
+            .field("turn", &turn)
+            .finish()
+    }
 }
 
 impl Default for FindingSettings {
@@ -282,10 +297,7 @@ impl FindingSettings {
             let t = t.trim().to_string();
             if !valid_turn(&t) {
                 // The entry may hold a password: never in a warning.
-                w.push(format!(
-                    "online.finding.turn: {:?} is not user:pass@host:port: dropped",
-                    turn_shown(&t)
-                ));
+                w.push("online.finding.turn: an entry is not user:pass@host:port: dropped".into());
             } else if !turn.contains(&t) {
                 turn.push(t);
             }

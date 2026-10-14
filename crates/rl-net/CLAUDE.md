@@ -549,7 +549,9 @@ announcements.
     9's carried NT-2 item); `Shutdown::wait(until)` returns once the
     mapping is deleted (the mapper waits at most `DROP_WAIT`, 1 s) or at
     `until` (`true` when the router confirmed every deletion, or there
-    was no mapping; `false` past `until`, unconfirmed, or no thread).
+    was no mapping; `false` past `until`, unconfirmed, or no thread);
+    `Shutdown::poll` gives that verdict without waiting (`None` while the
+    router is asked; `Some(true)` at once without a mapping).
     rl-server (Task 8) and the game (Task 9) wait on it at exit through
     `OnlinePeer::shutdown`; rl-cli is to (Task 10). Dropping the endpoint
     is the fallback: the same thread, nobody waits (a process exiting

@@ -444,6 +444,28 @@ pub(crate) fn menus(dir: &std::path::Path, store: Store, name: &str, minutes: f3
     sh
 }
 
+/// The app of the menus `shell` without a window (no GPU backend): its
+/// `network_frame` and `hidden_frame` are the real loop's.
+pub(crate) fn app_of(shell: Shell) -> App {
+    let cfg = Config {
+        backends: wgpu::Backends::empty(),
+        render: rl_render::RenderSettings::default(),
+        fullscreen: false,
+        uncapped: false,
+        interpolation: Interpolation::Linear,
+        autoquit_after: None,
+        script: Vec::new(),
+        shot_dir: std::env::temp_dir(),
+        print_stats: false,
+        latency_probe: None,
+        record: None,
+        menus: true,
+        speed: Default::default(),
+        fake_clock: false,
+    };
+    App::new(cfg, shell, true, None, None)
+}
+
 /// Every candidate on 127.0.0.1 (ruling NT-1).
 pub(crate) fn loopback(ice: &mut rl_net::endpoint::IceConfig) {
     ice.base_override = Some(std::net::Ipv4Addr::LOCALHOST);
@@ -654,29 +676,13 @@ fn chat_reaches_the_other_player_in_game() {
 fn a_hidden_window_keeps_the_match_alive() {
     let Some(dir) = content_dir() else { return };
     let (mut h, c) = host_and_client(&dir, 1.0, None);
-    let cfg = Config {
-        backends: wgpu::Backends::empty(),
-        render: rl_render::RenderSettings::default(),
-        fullscreen: false,
-        uncapped: false,
-        interpolation: Interpolation::Linear,
-        autoquit_after: None,
-        script: Vec::new(),
-        shot_dir: std::env::temp_dir(),
-        print_stats: false,
-        latency_probe: None,
-        record: None,
-        menus: true,
-        speed: Default::default(),
-        fake_clock: false,
-    };
-    let mut app = App::new(cfg, c, true, None, None);
+    let mut app = app_of(c);
     let mut setup = h.data.lobby.as_ref().unwrap().setup.clone();
     setup.bots = 1;
     h.act(UiAction::LobbySetup(setup));
     let hidden = |app: &mut App, h: &mut Shell| {
         frame(&mut [h], Instant::now(), &mut |_| Keys(0));
-        assert!(app.online_active(), "online: the hidden window keeps polling");
+        assert!(app.network_live(), "online: the hidden window keeps polling");
         app.hidden_frame();
         std::thread::sleep(Duration::from_millis(2));
     };

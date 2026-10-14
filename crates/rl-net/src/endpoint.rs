@@ -687,7 +687,7 @@ impl Endpoint {
     pub fn shutdown(mut self) -> Shutdown {
         let mapper = self.gathering.mapper.take();
         drop(self);
-        Shutdown { done: mapper.map(close_mapper) }
+        Shutdown { done: mapper.map(close_mapper), verdict: None }
     }
 
     /// The path of a connected peer's link (N49): its selected pair's
@@ -1019,15 +1019,37 @@ impl Endpoint {
 pub struct Shutdown {
     /// Gets the mapper's `close` verdict once it returned.
     done: Option<Receiver<bool>>,
+    /// The verdict, once `poll` took it.
+    verdict: Option<bool>,
 }
 
 impl Shutdown {
+    /// The verdict if the deletion is over, never waiting: as
+    /// [`Shutdown::wait`]'s (`Some(true)` at once without a mapping);
+    /// `None` while the router is still asked.
+    pub fn poll(&mut self) -> Option<bool> {
+        if self.verdict.is_none() {
+            self.verdict = match &self.done {
+                None => Some(true),
+                Some(rx) => match rx.try_recv() {
+                    Ok(v) => Some(v),
+                    Err(TryRecvError::Empty) => None,
+                    Err(TryRecvError::Disconnected) => Some(false),
+                },
+            };
+        }
+        self.verdict
+    }
+
     /// Waits until the mapping is deleted (the mapper waits at most
     /// `portmap::DROP_WAIT` for the router) or `until`, whichever comes
     /// first. `true` when the router confirmed every deletion, or there
     /// was no mapping; `false` past `until`, or when the router did not
     /// confirm.
     pub fn wait(self, until: Instant) -> bool {
+        if let Some(v) = self.verdict {
+            return v;
+        }
         let Some(done) = self.done else { return true };
         // Disconnected: the thread could not start (the mapper was closed
         // with the closure, unconfirmed) or panicked.

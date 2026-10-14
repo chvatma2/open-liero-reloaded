@@ -494,8 +494,9 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
     // deletes the online games' port mappings (N51, ruling NT-2).
     let unmapping = app.take_unmapping();
     drop(app);
-    if !unmapping.wait(rl_game::shell::UNMAP_WAIT) {
-        eprintln!("warning: the router did not confirm deleting the port mapping within 1 s");
+    let wait = rl_game::shell::UNMAP_WAIT;
+    if !unmapping.wait(wait) {
+        eprintln!("warning: the router did not confirm deleting the port mapping within {wait:?}");
     }
     match ran {
         // The game never sets a failing exit code; winit does, most often

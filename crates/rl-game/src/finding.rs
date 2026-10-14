@@ -57,7 +57,7 @@ pub const INVITE_THROUGH_RELAYS: &str = "This code joins through the relays";
 pub const INVITE_JOINS_NOTHING: &str =
     "This code has no address and no relays: it joins nothing (set relays in Options)";
 /// A hosted game's line while its reachability settles.
-pub const FINDING_ADDRESS: &str = "Finding the public address…";
+pub const FINDING_ADDRESS: &str = "Checking how players can reach you…";
 
 /// The relays `settings` name, else the game's defaults.
 pub fn relays_of(settings: &FindingSettings) -> Vec<String> {

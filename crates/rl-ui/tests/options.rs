@@ -617,6 +617,8 @@ fn finding_settings_are_sanitized() {
             " me:secret@turn.example:3478 ".into(),
             ":secret@turn.example:3478".into(),
             "me:secret@turn.example".into(),
+            "me:secret".into(),
+            "me:secret turn.example:3478".into(),
         ],
     };
     let w = f.sanitize();
@@ -626,10 +628,23 @@ fn finding_settings_are_sanitized() {
     assert_eq!(f.blocked, ["ab".repeat(32)]);
     assert_eq!(f.turn, ["me:secret@turn.example:3478"]);
     assert!(!f.port_mapping, "the player's choice stays");
-    assert_eq!(w.len(), 9, "{w:?}");
+    assert_eq!(w.len(), 11, "{w:?}");
+    assert!(!w.iter().any(|w| w.contains("secret")), "no password in a warning: {w:?}");
     let mut ok = rl_ui::FindingSettings { public_address: " 81.2.69.142 ".into(), ..Default::default() };
     assert!(ok.sanitize().is_empty());
     assert_eq!(ok.public_address, "81.2.69.142");
+    // Printing the settings, an action or a command shows no password.
+    let settings = Settings {
+        online: rl_ui::OnlineSettings { finding: f.clone(), ..Default::default() },
+        ..Settings::default()
+    };
+    for printed in [
+        format!("{f:?}"),
+        format!("{:?}", UiAction::SetFinding(f.clone())),
+        format!("{:?}", AppCommand::SaveSettings(settings)),
+    ] {
+        assert!(!printed.contains("secret") && printed.contains("me:•••@turn.example:3478"), "{printed}");
+    }
     // At most `MAX_TURN` TURN servers.
     let mut many = rl_ui::FindingSettings {
         turn: (0..12).map(|i| format!("u:p@turn{i}.example:3478")).collect(),

@@ -21,7 +21,7 @@ use rl_server::config::Config;
 use rl_sim::Keys;
 use rl_ui::{FindingSettings, HostPrefs, InternetEntry, InternetStatus, Screen, Store, UiAction, Visibility};
 
-use crate::online::{LEVEL, MOD, content_dir, frame, loopback, members, menus};
+use crate::online::{LEVEL, MOD, app_of, content_dir, frame, loopback, members, menus};
 
 /// `sh`'s relays are `relays` (and no STUN server, no port mapping).
 fn use_relays(sh: &mut Shell, relays: &[String]) {
@@ -597,6 +597,7 @@ fn quitting_deletes_the_router_mapping() {
     h.act(UiAction::LeaveLobby);
     assert!(t.elapsed() < Duration::from_millis(200), "leaving blocked for {:?}", t.elapsed());
     assert_eq!(gw.mappings().len(), 2, "being deleted");
+    assert_eq!(h.unmapping_pending(), 1);
     // Quitting: the shell finishes, then the exit waits for the router.
     h.finish();
     let unmapping = h.take_unmapping();
@@ -605,4 +606,118 @@ fn quitting_deletes_the_router_mapping() {
     assert!(unmapping.wait(Duration::from_secs(1)), "the router confirmed");
     assert!(t.elapsed() < Duration::from_secs(1) + Duration::from_millis(100));
     assert_eq!(gw.mappings(), vec![], "deleted when the wait returns");
+}
+
+// ---- The app's own frame path (review Critical 1, Important 1) ----
+
+/// Frames of the app `app` (its network frame, as the real loop and its
+/// hidden window run it, then the shell's poll) and of the shells
+/// `others` on the real clock, until `done` holds for the app's shell.
+fn app_until(
+    what: &str,
+    limit: Duration,
+    app: &mut rl_game::app::App,
+    others: &mut [&mut Shell],
+    mut done: impl FnMut(&Shell) -> bool,
+) {
+    let start = Instant::now();
+    loop {
+        assert!(start.elapsed() < limit, "{what} within {limit:?}");
+        let now = Instant::now();
+        app.network_frame(now);
+        app.shell_mut().poll();
+        frame(others, now, &mut |_| Keys(0));
+        if done(app.shell()) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// The real app polls the Internet tab with no online game: a game
+/// announced on the (loopback) test relay is listed.
+#[test]
+fn the_apps_internet_tab_lists_games_without_an_online_game() {
+    let relay = TestRelay::start();
+    let empty = tempfile::tempdir().unwrap();
+    let mut sh = menus(empty.path(), Store::in_memory(), "Anna", 1.0);
+    use_relays(&mut sh, &[relay.url()]);
+    let host = rl_lobby::Identity::from_secret([44; 32]).unwrap();
+    announce_on(&relay, &host, "Office game", unix_now());
+    let mut app = app_of(sh);
+    app.shell_mut().act(UiAction::Open(Screen::Multiplayer));
+    assert!(!app.shell().online_active(), "no online game");
+    app_until("listed", Duration::from_secs(10), &mut app, &mut [], |s| {
+        s.data.internet.games.iter().any(|g| g.name == "Office game")
+    });
+    assert_eq!(app.shell().data.internet.status, InternetStatus::Listed);
+}
+
+/// The real app fills the LAN list with no online game: an announcement
+/// sent to the list's port on 127.0.0.1 (never broadcast) shows.
+#[test]
+fn the_apps_lan_list_fills_without_an_online_game() {
+    let empty = tempfile::tempdir().unwrap();
+    let mut sh = menus(empty.path(), Store::in_memory(), "Anna", 1.0);
+    sh.set_lan(true);
+    sh.test_lan_port(0);
+    let mut app = app_of(sh);
+    app.shell_mut().act(UiAction::Open(Screen::Multiplayer));
+    app_until("listening", Duration::from_secs(5), &mut app, &mut [], |s| s.lan_listen_port().is_some());
+    let port = app.shell().lan_listen_port().unwrap();
+    let mut announcer = rl_net::lan::Announcer::new(SocketAddr::from((Ipv4Addr::LOCALHOST, port))).unwrap();
+    let game = rl_proto::LanAnnounce {
+        fingerprint: rl_proto::FINGERPRINT,
+        name: "Desk game".into(),
+        port: 23400,
+        players: 1,
+        max_players: 8,
+        spectators: 0,
+        mod_id: MOD.into(),
+        level_id: LEVEL.into(),
+        password: false,
+        playing: false,
+    };
+    let start = Instant::now();
+    while !app.shell().data.lan_games.iter().any(|g| g.name == "Desk game") {
+        assert!(start.elapsed() < Duration::from_secs(10), "the LAN list fills");
+        announcer.tick(Instant::now(), &game);
+        app.network_frame(Instant::now());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// The real app joins a typed host name: looked up on a thread ("Looking
+/// up …" meanwhile), then the lobby, with no online game before (review
+/// Important 1: it hung there).
+#[test]
+fn the_app_joins_a_typed_host_name() {
+    let Some(dir) = content_dir() else { return };
+    let mut h = menus(&dir, Store::in_memory(), "Hosty", 1.0);
+    host_as(&mut h, Visibility::Lan);
+    let port = h.local_port().unwrap();
+    let mut app = app_of(menus(&dir, Store::in_memory(), "Anna", 1.0));
+    app.shell_mut().act(UiAction::Open(Screen::Multiplayer));
+    app.shell_mut().act(UiAction::Join { addr: format!("localhost:{port}"), password: None });
+    assert_eq!(
+        app.shell().data.joining.as_deref(),
+        Some("Looking up localhost:{port}…".replace("{port}", &port.to_string()).as_str())
+    );
+    assert!(!app.shell().online_active(), "no peer while the name is looked up");
+    app_until("the lobby", Duration::from_secs(10), &mut app, &mut [&mut h], |s| {
+        s.ui.screen() == Screen::Lobby && members(s) == 2
+    });
+}
+
+/// Review Minor 3: the shutdowns of peers with nothing to delete (a LAN
+/// host, a client) are forgotten at once, so the list stays short.
+#[test]
+fn finished_shutdowns_are_forgotten() {
+    let Some(dir) = content_dir() else { return };
+    let mut h = menus(&dir, Store::in_memory(), "Hosty", 1.0);
+    for _ in 0..3 {
+        host_as(&mut h, Visibility::Lan);
+        h.act(UiAction::LeaveLobby);
+        assert_eq!(h.unmapping_pending(), 0);
+    }
 }

@@ -313,10 +313,18 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `Shell::download_cache()` is the shared cache) and its Clear (`clear(&[])`: the menus keep
   nothing), refused while an online game is on (`net` or `--net-sim`'s
   host: "leave the online game first").
-  **Hidden window** (decision N21): while `Shell::online_active`,
-  `about_to_wait` runs `App::hidden_frame` (the network and the match's
-  ticks, no drawing) every `net::HIDDEN_FRAME` (4 ms, `WaitUntil`: not a
-  spinning `Poll`). **In-game chat**: the options' `online.chat_key` (T)
+  **The network's gate** (Task 9 review Critical 1): one predicate,
+  `Shell::network_live` (an online game, `online_active`; the Multiplayer
+  or Host screen; the LAN listener or the relays not yet let go; a typed
+  name being looked up). `App::network_frame` (every drawn frame, and the
+  hidden window's) runs the network frame while it holds, and
+  `Shell::net_frame` itself returns at once otherwise, so the tests'
+  frames go through the same gate (before, only an online game opened
+  it: the Internet tab and the LAN list stayed empty, a typed name hung
+  on "Looking up …"). **Hidden window** (decision N21): while
+  `Shell::network_live`, `about_to_wait` runs `App::hidden_frame` (the
+  network and the match's ticks, no drawing) every `net::HIDDEN_FRAME`
+  (4 ms, `WaitUntil`: not a spinning `Poll`). **In-game chat**: the options' `online.chat_key` (T)
   opens rl-ui's field over the playfield (`Shell::open_chat`, from
   `App::key`); while it is open no key reaches the game (`handler.rs`,
   `App::key`) and those held are released. **Network
@@ -382,7 +390,8 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   settings' STUN servers and their own TURN servers (`turn_of`:
   `TurnServerSpec`s of `user:pass@host:port`, rl-online uses the first 2);
   a direct-only join asks nothing. A typed host name is looked up on a
-  thread (`Resolving`, `rl-game resolve`; `literal` takes an IP address
+  thread (`shell/joining.rs`, with the joins' building and `Unmapping`:
+  `Resolving`, `rl-game resolve`; `literal` takes an IP address
   at once), polled by `net_frame` (`poll_resolving`; "Looking up …" the
   waiting text; Back gives it up): no DNS on the UI thread. Every
   `OnlineEvent::Joining(step)` is `MenuData::joining` (the Multiplayer
@@ -410,23 +419,25 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `Shell::closed_note`, A-M6), address or not (N46: joined through the
   relays); none with an unreachable public address setting on public
   relays (`Hosted::publishes`); the closing note when the lobby is left
-  or lost (`close_hosted`). `LobbyView::listing`: "Finding the public
-  address…" until settled, `UNREACHABLE_ADDRESS`, "Not listed: no relays
+  or lost (`close_hosted`). `LobbyView::listing`: `FINDING_ADDRESS`
+  ("Checking how players can reach you…") until settled, `UNREACHABLE_ADDRESS`, "Not listed: no relays
   …", "Not listed: no relay reachable" (checked before "Listed": all
   relays dropped), "Announcing on the Internet…", "Listed on the Internet"
   (a relay's `OK` for one of this game's notes: `Internet::forget_ours` at
   each hosting, B-M1). An Invite game's line is about its code (B-I3):
-  "Finding the public address…", then none with an address, else "This
+  `FINDING_ADDRESS`, then none with an address, else "This
   code joins through the relays" (`INVITE_THROUGH_RELAYS`), or without
   relays `INVITE_JOINS_NOTHING`. A Public game's pool opened on edited
   relays gets the last note again at once (`Hosted::last_note`, `pool`).
   **Leaving** (ruling NT-2): a peer let go (`release`: leave, its replay
   taken, `OnlinePeer::shutdown`; `--net-sim`'s host too) never blocks;
   its `Shutdown` (the router mapping being deleted, rl-net's confirming
-  `PortMapper::close` on a thread) is kept, `Shell::take_unmapping` hands
-  them over as an `Unmapping`, and `main` waits on it (`UNMAP_WAIT`, 1 s
-  in all) after `App` (the window) is dropped, warning when the router did
-  not confirm.
+  `PortMapper::close` on a thread) is kept while the router is asked
+  (`prune_unmapping` at each push and network frame, `Shutdown::poll`:
+  finished ones go, one the router did not confirm warned about then;
+  `unmapping_pending`), `Shell::take_unmapping` hands them over as an
+  `Unmapping`, and `main` waits on it (`UNMAP_WAIT`, 1 s in all) after
+  `App` (the window) is dropped, warning when the router did not confirm.
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the default
   restrictions) feeds `rl_content::build_match`, the same assembly as
@@ -593,6 +604,13 @@ fake clock: reused within 30 s, closed after, the selection cleared),
 `relay_edits_apply_to_the_open_pool`, `block_edits_apply_to_the_open_list`,
 `a_public_host_follows_relay_edits` (announced and listened on the new
 relay: its invite joins through it alone),
+the app's own frame path (`App::network_frame` on `online::app_of`, an
+`App` without a GPU backend; RED against the old gate):
+`the_apps_internet_tab_lists_games_without_an_online_game`,
+`the_apps_lan_list_fills_without_an_online_game` (`Shell::test_lan_port(0)`:
+the announcement sent to 127.0.0.1, never broadcast),
+`the_app_joins_a_typed_host_name` ("Looking up localhost:…", then the
+lobby), `finished_shutdowns_are_forgotten`,
 `a_typed_name_is_looked_up_off_the_frame` (`localhost`: no peer at the
 Join, the lobby frames later; Back gives the lookup up),
 `an_invite_only_game_without_an_address_says_so` (final review B-I2,

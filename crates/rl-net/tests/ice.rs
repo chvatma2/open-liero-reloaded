@@ -313,8 +313,9 @@ fn shutdown_deletes_the_mapping_before_wait_returns() {
     let host = mapped_host(&fake);
     assert_eq!(fake.mappings().len(), 2);
     let started = Instant::now();
-    let shutdown = host.ep.shutdown();
+    let mut shutdown = host.ep.shutdown();
     assert!(started.elapsed() < Duration::from_millis(200), "shutdown blocked for {:?}", started.elapsed());
+    assert_eq!(shutdown.poll(), None, "the router is still asked: poll never waits");
     assert!(shutdown.wait(Instant::now() + DROP_WAIT + Duration::from_millis(200)), "deleted in time");
     assert_eq!(fake.mappings(), vec![]);
     assert!(started.elapsed() >= Duration::from_millis(500), "waited for both deletions");
@@ -322,7 +323,9 @@ fn shutdown_deletes_the_mapping_before_wait_returns() {
     // An endpoint without a mapping shuts down at once.
     let plain = host_plain();
     let started = Instant::now();
-    assert!(plain.shutdown().wait(Instant::now() + DROP_WAIT));
+    let mut shutdown = plain.shutdown();
+    assert_eq!(shutdown.poll(), Some(true), "nothing to delete");
+    assert!(shutdown.wait(Instant::now() + DROP_WAIT));
     assert!(started.elapsed() < Duration::from_millis(200));
 }
 

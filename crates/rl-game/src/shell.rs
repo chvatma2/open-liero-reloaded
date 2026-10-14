@@ -86,8 +86,9 @@ use crate::session::{Driver, Session};
 use crate::setup::{self, Assets, Game, PlayerLook, SandboxOptions};
 use crate::video::{self, Overrides};
 
+mod joining;
 mod online;
-pub use online::{NO_WAY_TO_JOIN, UNMAP_WAIT, Unmapping, resolve};
+pub use joining::{NO_WAY_TO_JOIN, UNMAP_WAIT, Unmapping, resolve};
 
 /// What the shell needs besides the menus' state.
 #[derive(Clone, Debug)]
@@ -165,8 +166,10 @@ pub struct Shell {
     identity: Option<Identity>,
     /// LAN announcements and the LAN list (tests turn them off: fixed port).
     lan: bool,
-    /// The LAN list's listener while the Multiplayer screen shows.
+    /// The LAN list's listener while the Multiplayer screen shows, on
+    /// `lan_port` (`LAN_PORT`; tests: another, `test_lan_port`).
     lan_listener: Option<Listener>,
+    lan_port: u16,
     /// The listener could not be made (the port taken): tried again when
     /// the screen opens again.
     lan_failed: bool,
@@ -196,7 +199,7 @@ pub struct Shell {
     closed_note: Option<u64>,
     /// A typed host name being looked up on a thread (never on the UI
     /// thread), and the join waiting for it.
-    resolving: Option<online::Resolving>,
+    resolving: Option<joining::Resolving>,
     /// The peers let go, their router mappings being deleted on threads
     /// (ruling NT-2): the exit waits for them, after the window closed.
     unmapping: Vec<Shutdown>,
@@ -256,6 +259,7 @@ impl Shell {
             identity: None,
             lan: true,
             lan_listener: None,
+            lan_port: rl_proto::LAN_PORT,
             lan_failed: false,
             port: None,
             impair: None,
@@ -312,6 +316,7 @@ impl Shell {
             identity: None,
             lan: false,
             lan_listener: None,
+            lan_port: rl_proto::LAN_PORT,
             lan_failed: false,
             port: None,
             impair: None,

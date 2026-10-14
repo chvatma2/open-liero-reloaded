@@ -68,7 +68,8 @@ impl ApplicationHandler for App {
     /// covered or of no size, it stops asking for frames and sleeps until a
     /// window event (`Resized`, `Occluded`) changes that: the sandbox pauses
     /// (no ticks run, and the time hidden is not caught up afterwards).
-    /// While an online game exists it goes on instead (decision N21): a
+    /// While the network is live (`Shell::network_live`: an online game,
+    /// the Multiplayer screen's lists, a lookup) it goes on instead (decision N21): a
     /// frame without drawing (`App::hidden_frame`: the network, the
     /// match's ticks) every `net::HIDDEN_FRAME`, not spinning.
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
@@ -87,7 +88,7 @@ impl ApplicationHandler for App {
             }
             el.set_control_flow(ControlFlow::Poll);
             w.window.request_redraw();
-        } else if self.shell.online_active() {
+        } else if self.shell.network_live() {
             self.paused = true;
             let out = self.hidden_frame();
             self.outcomes(el, out);

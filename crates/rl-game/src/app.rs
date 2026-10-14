@@ -309,15 +309,30 @@ impl App {
         &mut self.shell
     }
 
-    /// An online game exists: the loop polls it every frame, the window
-    /// hidden or not (decision N21).
+    /// An online game exists (decision N21).
     pub fn online_active(&self) -> bool {
         self.shell.online_active()
     }
 
-    /// The online game's frame at `now`: the peer polled (an online
-    /// match's ticks run inside, the input latch giving the player's keys
-    /// for each new tick), its events carried out.
+    /// The network is live (`Shell::network_live`): the loop runs its
+    /// frame, the window hidden or not.
+    pub fn network_live(&self) -> bool {
+        self.shell.network_live()
+    }
+
+    /// The network's frame at `now`, as every drawn and hidden frame runs
+    /// it, while anything network-related is live (`Shell::network_live`:
+    /// the Multiplayer screen's lists, a lookup, an online game): the
+    /// lists and the relays polled, the peer polled (an online match's
+    /// ticks run inside, the input latch giving the player's keys for
+    /// each new tick), its events carried out.
+    pub fn network_frame(&mut self, now: Instant) -> Vec<Outcome> {
+        if !self.shell.network_live() {
+            return Vec::new();
+        }
+        self.net_step(now)
+    }
+
     fn net_step(&mut self, now: Instant) -> Vec<Outcome> {
         let (input, latency) = (&mut self.input, &mut self.latency);
         let mut keys = || {
@@ -342,12 +357,12 @@ impl App {
     }
 
     /// A frame while the window cannot show one (minimised or covered)
-    /// and an online game exists (decision N21): the network polled and
+    /// and the network is live (decision N21): the network polled and
     /// the match ticked, nothing drawn. `about_to_wait` runs it about
     /// every `net::HIDDEN_FRAME` and does the outcomes.
     pub fn hidden_frame(&mut self) -> Vec<Outcome> {
         let now = self.now();
-        let mut out = self.net_step(now);
+        let mut out = self.network_frame(now);
         out.extend(self.shell.poll());
         if self.cfg.menus && self.flushed.is_none_or(|t| now.saturating_duration_since(t) >= FLUSH_INTERVAL) {
             self.flushed = Some(now);
@@ -668,10 +683,8 @@ impl App {
         let start = *self.start.get_or_insert(now);
         let elapsed = self.last.map_or(0.0, |l| (now - l).as_secs_f64());
         self.last = Some(now);
-        if self.shell.online_active() {
-            let out = self.net_step(now);
-            self.outcomes(el, out);
-        }
+        let out = self.network_frame(now);
+        self.outcomes(el, out);
         // An online match's peer runs its ticks (`net_step`): the local
         // clock rests meanwhile (nothing to catch up afterwards).
         let online = self.shell.plays_online();

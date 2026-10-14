@@ -241,3 +241,47 @@ fn the_lobbys_long_lines_wrap_in_a_narrow_window() {
         }
     }
 }
+
+/// Review Minor 5: the longest new texts outside the lobby fit too, at
+/// the same sizes and scales: a join's failure under the Multiplayer
+/// screen's button (rl-online's `no_path`, about 300 characters), and the
+/// Options' port mapping switch and TURN relays (from 640 points wide).
+#[test]
+fn the_longest_join_texts_and_turn_options_fit() {
+    let no_path = "no network path to the game: hole punching failed and no TURN relay could be used. The host can \
+                   open port 23400 (TCP and UDP) on their router (UPnP, or port forwarding) or use a dedicated \
+                   server; anyone can run a TURN relay (rl-server --relay)";
+    for (w, h, ppp) in
+        [(1280.0, 720.0, 1.0), (1280.0, 720.0, 2.0), (1280.0, 720.0, 3.0), (3440.0, 1440.0, 2.0)]
+    {
+        let at = format!("{w}x{h} at {ppp} pixels a point");
+        let inside = |harness: &Harness<'static, App>, label: &str| {
+            let b = harness.get_by_label(label).accesskit_node().bounding_box().unwrap();
+            assert!(b.x0 >= -0.5 && b.x1 as f32 <= w + 0.5, "{label:?} at {b:?} leaves the window: {at}");
+        };
+        let mut harness = harness(egui::vec2(w / ppp, h / ppp), ppp);
+        reach(&mut harness, Screen::Multiplayer);
+        let app = harness.state_mut();
+        app.ui.update(UiAction::Join { addr: "10.0.0.7".into(), password: None });
+        app.ui.update(UiAction::OnlineFailed(no_path.into()));
+        harness.run();
+        harness.step();
+        inside(&harness, no_path);
+        // The options' four tabs need 500 points: at 427 the Online tab
+        // cannot be clicked (the tab row predates plan 12b).
+        if w / ppp < 500.0 {
+            continue;
+        }
+        let mut settings = Settings::default();
+        settings.online.finding.turn = vec!["anna:s3cret@turn.example.org:3478".into()];
+        let ui = UiState::new(settings, Profiles::default(), 1);
+        harness.state_mut().ui = ui;
+        reach(&mut harness, Screen::Options);
+        harness.get_by_label("Online").click();
+        harness.run();
+        harness.step();
+        harness.step();
+        inside(&harness, "Open the game's port on my router (UPnP/NAT-PMP/PCP)");
+        inside(&harness, "anna:•••@turn.example.org:3478");
+    }
+}

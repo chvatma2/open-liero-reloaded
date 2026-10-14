@@ -75,7 +75,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   the rest of the peer dropped on a thread `rl-online drop` (its content
   worker waits up to 2 s for a job); never blocks; `Shutdown::wait(until)`
   waits at most 1 s for the port mapping's deletion, `true` once the
-  router confirmed it or without one; rl-server (Task 8) and the game
+  router confirmed it or without one; `Shutdown::poll` the same verdict
+  without waiting, `None` while the router is asked; rl-server (Task 8) and the game
   (Task 9) wait on it at exit, rl-cli is to (Task 10));
   `listen_on(pool)` (a host listens on these relays from now on, or on
   none: the relays edited in the game's Options while hosting; the old
