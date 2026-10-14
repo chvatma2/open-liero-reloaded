@@ -134,7 +134,10 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   (`Gpu::acquire`), so a VSync wait comes before the input is read, not
   between reading and drawing it. Then `TickClock` (`clock.rs`) runs the
   ticks owed, at most `MAX_CATCHUP_TICKS` (10) per frame, dropping the
-  rest. Per tick: script steps, `input.latch_tick()`, `Session::tick` (`world.tick` →
+  rest. egui hears each frame's real time (`app::egui_frame_time`, its
+  `predicted_dt`: the game never asks egui for a repaint, so egui's
+  `stable_dt`, which menu animations and the skin preview step by, would
+  otherwise be 1/60 s at any frame rate). Per tick: script steps, `input.latch_tick()`, `Session::tick` (`world.tick` →
   `audio.play_events` at the view centre → `Presentation::on_tick`, see
   `rl-present` → damage popups). Per frame: `Session::build` (scene,
   entities), the overlay, `Presentation::upload` (atlas if a worm was

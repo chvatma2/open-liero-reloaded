@@ -746,6 +746,8 @@ impl App {
         if self.fake_start.is_some() {
             input.time = Some((now - start).as_secs_f64());
             input.predicted_dt = autoplay::FAKE_FRAME.as_secs_f32();
+        } else {
+            egui_frame_time(&mut input, elapsed);
         }
         if let Some(a) = &mut self.autoplay {
             a.input(&mut input);
@@ -979,9 +981,37 @@ impl App {
     }
 }
 
+/// Tells egui how long this frame took (`elapsed`, the game's clock). The
+/// game draws every frame without asking egui for a repaint, so egui's
+/// `stable_dt` (its animations' time step, and the profiles' skin
+/// preview's) is `predicted_dt`, 1/60 s unless set: on a faster display
+/// every animation ran that much too fast. The first frame keeps egui's.
+fn egui_frame_time(input: &mut egui::RawInput, elapsed: f64) {
+    if elapsed > 0.0 {
+        input.predicted_dt = elapsed as f32;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use winit::event::{Ime, WindowEvent};
+
+    /// The game draws every frame without asking egui for a repaint, so
+    /// egui takes `predicted_dt` as each frame's time: it must be the
+    /// frame's real time, or menu animations (the profiles' skin preview)
+    /// run at 60 Hz's pace however fast the display is.
+    #[test]
+    fn egui_animates_by_the_frames_real_time() {
+        let ctx = egui::Context::default();
+        let frame = 1.0 / 144.0;
+        let mut dt = 0.0;
+        for n in 1..=30 {
+            let mut input = egui::RawInput { time: Some(n as f64 * frame), ..Default::default() };
+            super::egui_frame_time(&mut input, frame);
+            ctx.run_ui(input, |ui| dt = ui.input(|i| i.stable_dt)).textures_delta.clear();
+        }
+        assert!((dt - frame as f32).abs() < 1e-5, "stable_dt {dt}, the frame {frame}");
+    }
 
     /// While the options capture a key, egui hears no key or text: the
     /// capture has it alone. Other events still reach egui.
