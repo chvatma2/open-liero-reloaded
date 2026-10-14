@@ -93,8 +93,10 @@
     // address: public_address, else its port mapped by the router, else a
     // host with no NAT; it is announced on the relays above every minute,
     // with fresh credentials each start. Open UDP port and ports (the
-    // router mapping does when it can). Each player's IP gets user_kib_s
-    // KiB/s each way and allocations_per_ip allocations; capacity in all;
+    // router mapping does when it can; then only the ports it mapped are
+    // used). Each player's IP gets user_kib_s KiB/s each way and
+    // allocations_per_ip allocations; capacity in all, at most one per
+    // relay port;
     // an allocation lasts at most 6 hours. Default None (no relay), e.g.
     // relay: Some((port: 3478, ports: (49160, 49191), capacity: 32, user_kib_s: 32, allocations_per_ip: 4)),
     relay: None,

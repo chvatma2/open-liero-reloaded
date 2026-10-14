@@ -152,7 +152,8 @@ pub struct RelayConfig {
     /// The relay ports, first and last (UDP; one per allocation). Default
     /// (49160, 49191).
     pub ports: (u16, u16),
-    /// Allocations in all, 1 to `MAX_CAPACITY` (4096). Default 32.
+    /// Allocations in all, 1 to `MAX_CAPACITY` (4096), and at most the
+    /// number of relay ports (one allocation each). Default 32.
     pub capacity: u16,
     /// KiB per second relayed for each player's IP, each way (at least 1).
     /// Default 32.
@@ -184,6 +185,11 @@ impl RelayConfig {
         }
         if self.capacity == 0 || self.capacity > MAX_CAPACITY {
             bail!("relay capacity must be 1 to {MAX_CAPACITY}");
+        }
+        // One allocation per relay port (ephemeral ones take any number).
+        let count = u32::from(last - first) + 1;
+        if first != 0 && u32::from(self.capacity) > count {
+            bail!("relay capacity {} is more than its {count} relay ports", self.capacity);
         }
         if self.user_kib_s == 0 {
             bail!("relay user_kib_s must be at least 1");
@@ -396,7 +402,12 @@ mod tests {
         ] {
             assert!(with(&format!("relay: Some({bad}),")).is_err(), "{bad}");
         }
-        assert!(with("relay: Some((port: 3478, ports: (40000, 40000), capacity: 4096)),").is_ok());
+        // Task 8 review: one allocation per relay port, so no more than them
+        // (ephemeral ports take any capacity).
+        assert!(with("relay: Some((port: 3478, ports: (40000, 40000), capacity: 4096)),").is_err());
+        assert!(with("relay: Some((port: 3478, ports: (40000, 40009), capacity: 10)),").is_ok());
+        assert!(with("relay: Some((port: 3478, ports: (40000, 40009), capacity: 11)),").is_err());
+        assert!(with("relay: Some((port: 0, ports: (0, 0), capacity: 4096)),").is_ok());
     }
 
     /// N62: with `allow_local` a private `public_address` is announced

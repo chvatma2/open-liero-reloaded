@@ -71,6 +71,12 @@ pub struct MapRequest {
     pub description: &'static str,
     /// The external port must equal the local one (a relay's ports: no +1 … +7 shift).
     pub exact: bool,
+    /// More local ports on the same base (ruling PM-2: a relay's ports),
+    /// mapped by the protocol that mapped `local`, after it, with the same
+    /// discovery: UDP only, each with its external port equal to its local
+    /// one (never shifted), renewed and deleted with `local`'s. Each one's
+    /// state is in [`PortMapper::extras`].
+    pub extra: Vec<u16>,
     /// None: 2 h for PCP/NAT-PMP, 3600 s for UPnP. Tests set seconds.
     pub lifetime: Option<Duration>,
     /// 5351; tests: a FakeGateway's port.
@@ -111,6 +117,7 @@ impl MapRequest {
             allow_local: false,
             description: "rust-liero",
             exact: false,
+            extra: Vec::new(),
             lifetime: None,
             pmp_port: PMP_PORT,
             ssdp: SSDP,
@@ -152,6 +159,11 @@ enum Report {
     },
     /// The winner's renewal was refused: the mapping is gone.
     Dropped(String),
+    /// An extra port (`MapRequest::extra`): mapped by the winner, or why not.
+    Extra {
+        port: u16,
+        mapped: Result<(Method, SocketAddrV4), String>,
+    },
 }
 
 /// The threads' common board: who won, who gave up, whether to stop.
@@ -164,6 +176,8 @@ struct Board {
     /// waits for it to delete what it holds.
     touched: [bool; 2],
     stop: bool,
+    /// A deletion at the mapper's end that the router did not confirm.
+    unconfirmed: bool,
 }
 
 struct Shared {
@@ -226,6 +240,10 @@ impl Ctx {
         let _ = self.tx.send(Report::Failed { worker: self.worker, why });
     }
 
+    fn extra(&self, port: u16, mapped: Result<(Method, SocketAddrV4), String>) {
+        let _ = self.tx.send(Report::Extra { port, mapped });
+    }
+
     /// Sleeps until `at` (`None`: for ever) or the mapper's drop; false
     /// when dropped.
     fn sleep_until(&self, at: Option<Instant>) -> bool {
@@ -272,19 +290,22 @@ pub(crate) enum MapError {
 pub(crate) trait Router {
     fn method(&self) -> Method;
     /// Maps `udp` (else TCP) from `external` (a suggestion for PCP/NAT-PMP)
-    /// to the local port.
-    fn map(&mut self, udp: bool, external: u16, ctx: &Ctx) -> Result<Grant, MapError>;
-    /// Deletes a mapping, bounded in time; failures are ignored.
-    fn unmap(&mut self, udp: bool, external: u16);
+    /// to local port `internal`.
+    fn map(&mut self, udp: bool, internal: u16, external: u16, ctx: &Ctx) -> Result<Grant, MapError>;
+    /// Deletes a mapping, bounded in time: whether the router confirmed it.
+    fn unmap(&mut self, udp: bool, internal: u16, external: u16) -> bool;
     /// The external IPv4 address the mappings are on.
     fn external_ip(&self) -> Option<Ipv4Addr>;
     /// Starts a renewal round: its own deadline for the retries.
     fn renewing(&mut self) {}
 }
 
-/// The mappings a thread holds: UDP and maybe TCP on one external port.
+/// The mappings a thread holds for one local port: UDP and maybe TCP on
+/// one external port.
 #[derive(Clone, Copy, Debug)]
 struct Pair {
+    /// The local port.
+    internal: u16,
     port: u16,
     tcp: bool,
     /// Seconds until the shorter lifetime ends; 0 never ends.
@@ -292,11 +313,11 @@ struct Pair {
 }
 
 impl Pair {
-    fn delete(&self, r: &mut dyn Router) {
-        r.unmap(true, self.port);
-        if self.tcp {
-            r.unmap(false, self.port);
-        }
+    /// Deletes both: whether the router confirmed each.
+    fn delete(&self, r: &mut dyn Router) -> bool {
+        let udp = r.unmap(true, self.internal, self.port);
+        let tcp = !self.tcp || r.unmap(false, self.internal, self.port);
+        udp && tcp
     }
 }
 
@@ -328,7 +349,7 @@ fn map_pair(r: &mut dyn Router, ctx: &Ctx) -> Result<Pair, String> {
             if !ctx.live() {
                 return Err("stopped".into());
             }
-            let t = match r.map(false, p, ctx) {
+            let t = match r.map(false, local, p, ctx) {
                 Ok(t) => t,
                 Err(MapError::Conflict(w)) => {
                     why = w;
@@ -343,19 +364,19 @@ fn map_pair(r: &mut dyn Router, ctx: &Ctx) -> Result<Pair, String> {
                 Err(MapError::Silent(w)) => return Err(w),
             };
             if req.exact && t.port != local {
-                r.unmap(false, t.port);
+                r.unmap(false, local, t.port);
                 why = wrong_port(t.port);
                 break;
             }
             let mut granted = None;
             for attempt in 0..2 {
-                match r.map(true, t.port, ctx) {
+                match r.map(true, local, t.port, ctx) {
                     Ok(u) if u.port == t.port => {
                         granted = Some(u);
                         break;
                     }
                     Ok(u) => {
-                        r.unmap(true, u.port);
+                        r.unmap(true, local, u.port);
                         why = format!("UDP was granted port {} for TCP's {}", u.port, t.port);
                         if attempt == 1 || !ctx.live() {
                             break;
@@ -366,16 +387,19 @@ fn map_pair(r: &mut dyn Router, ctx: &Ctx) -> Result<Pair, String> {
                         break;
                     }
                     Err(MapError::Fatal(w) | MapError::Silent(w)) => {
-                        r.unmap(false, t.port);
+                        r.unmap(false, local, t.port);
                         return Err(w);
                     }
                 }
             }
             match granted {
                 Some(u) => {
-                    return Ok(Pair { port: t.port, tcp: true, lifetime: shorter(t.lifetime, u.lifetime) });
+                    let lifetime = shorter(t.lifetime, u.lifetime);
+                    return Ok(Pair { internal: local, port: t.port, tcp: true, lifetime });
                 }
-                None => r.unmap(false, t.port),
+                None => {
+                    r.unmap(false, local, t.port);
+                }
             }
         }
     }
@@ -383,12 +407,12 @@ fn map_pair(r: &mut dyn Router, ctx: &Ctx) -> Result<Pair, String> {
         if !ctx.live() {
             return Err("stopped".into());
         }
-        match r.map(true, p, ctx) {
+        match r.map(true, local, p, ctx) {
             Ok(u) if req.exact && u.port != local => {
-                r.unmap(true, u.port);
+                r.unmap(true, local, u.port);
                 return Err(wrong_port(u.port));
             }
-            Ok(u) => return Ok(Pair { port: u.port, tcp: false, lifetime: u.lifetime }),
+            Ok(u) => return Ok(Pair { internal: local, port: u.port, tcp: false, lifetime: u.lifetime }),
             Err(MapError::Conflict(w)) => why = w,
             Err(MapError::Fatal(w) | MapError::Silent(w)) => return Err(w),
         }
@@ -409,21 +433,55 @@ fn try_router(r: &mut dyn Router, ctx: &Ctx) -> Result<(), String> {
         pair.delete(r);
         return Ok(());
     }
-    hold(r, ctx, pair);
+    let extras = map_extras(r, ctx, ip);
+    hold(r, ctx, pair, extras);
     Ok(())
+}
+
+/// The winner maps each extra port (ruling PM-2), UDP, exactly: the
+/// granted ones, each reported.
+fn map_extras(r: &mut dyn Router, ctx: &Ctx, ip: Ipv4Addr) -> Vec<Pair> {
+    let mut held = Vec::new();
+    for &p in &ctx.req.extra {
+        if ctx.stopped() {
+            break;
+        }
+        // Each request gets the protocol's own deadline, as a renewal does.
+        r.renewing();
+        let mapped = match r.map(true, p, p, ctx) {
+            Ok(g) if g.port == p => {
+                held.push(Pair { internal: p, port: p, tcp: false, lifetime: g.lifetime });
+                Ok((r.method(), SocketAddrV4::new(ip, p)))
+            }
+            Ok(g) => {
+                r.unmap(true, p, g.port);
+                Err(format!("{}: the router offered port {}, not {p}", r.method(), g.port))
+            }
+            Err(MapError::Conflict(w) | MapError::Fatal(w) | MapError::Silent(w)) => {
+                Err(format!("{}: {w}", r.method()))
+            }
+        };
+        ctx.extra(p, mapped);
+    }
+    held
 }
 
 /// The winner: renews at half the lifetime. A refused renewal reports the
 /// mapping dropped; a silent one is tried again halfway to the mapping's
 /// end (RFC 6886 §3.3 retries too), and only when the mapping has run out
 /// is it reported dropped. Deletes the mappings when the mapper is dropped.
-fn hold(r: &mut dyn Router, ctx: &Ctx, pair: Pair) {
+fn hold(r: &mut dyn Router, ctx: &Ctx, pair: Pair, mut extras: Vec<Pair>) {
     let half = |lifetime: u32| (Duration::from_secs(lifetime.into()) / 2).max(Duration::from_secs(1));
-    let mut ends = (pair.lifetime != 0).then(|| Instant::now() + Duration::from_secs(pair.lifetime.into()));
-    let mut next = (pair.lifetime != 0).then(|| Instant::now() + half(pair.lifetime));
+    let first = extras.iter().fold(pair.lifetime, |l, e| shorter(l, e.lifetime));
+    let mut ends = (first != 0).then(|| Instant::now() + Duration::from_secs(first.into()));
+    let mut next = (first != 0).then(|| Instant::now() + half(first));
     loop {
         if !ctx.sleep_until(next) {
-            pair.delete(r);
+            let mut confirmed = pair.delete(r);
+            for e in &extras {
+                confirmed &= e.delete(r);
+            }
+            ctx.shared.board().unconfirmed |= !confirmed;
             return;
         }
         #[cfg(feature = "test-hooks")]
@@ -431,6 +489,26 @@ fn hold(r: &mut dyn Router, ctx: &Ctx, pair: Pair) {
         r.renewing();
         let why = match renew(r, ctx, pair) {
             Ok(lifetime) => {
+                // The extras, each on its own deadline; one refused is
+                // deleted and reported alone.
+                let mut lifetime = lifetime;
+                extras.retain(|e| {
+                    r.renewing();
+                    match renew(r, ctx, *e) {
+                        Ok(l) => {
+                            lifetime = shorter(lifetime, l);
+                            true
+                        }
+                        Err(MapError::Conflict(w) | MapError::Fatal(w) | MapError::Silent(w)) => {
+                            e.delete(r);
+                            ctx.extra(
+                                e.internal,
+                                Err(format!("the router dropped the mapping: {}: {w}", r.method())),
+                            );
+                            false
+                        }
+                    }
+                });
                 let now = Instant::now();
                 ends = (lifetime != 0).then(|| now + Duration::from_secs(lifetime.into()));
                 next = (lifetime != 0).then(|| now + half(lifetime));
@@ -448,6 +526,9 @@ fn hold(r: &mut dyn Router, ctx: &Ctx, pair: Pair) {
             Err(MapError::Conflict(why) | MapError::Fatal(why)) => format!("the renewal failed: {why}"),
         };
         pair.delete(r);
+        for e in &extras {
+            e.delete(r);
+        }
         let _ = ctx.tx.send(Report::Dropped(format!("{}: {why}", r.method())));
         return;
     }
@@ -460,10 +541,10 @@ fn renew(r: &mut dyn Router, ctx: &Ctx, pair: Pair) -> Result<u32, MapError> {
         if !udp && !pair.tcp {
             continue;
         }
-        match r.map(udp, pair.port, ctx) {
+        match r.map(udp, pair.internal, pair.port, ctx) {
             Ok(g) if g.port == pair.port => lifetime = shorter(lifetime, g.lifetime),
             Ok(g) => {
-                r.unmap(udp, g.port);
+                r.unmap(udp, pair.internal, g.port);
                 return Err(MapError::Fatal(format!("it moved to port {}", g.port)));
             }
             Err(e) => return Err(e),
@@ -487,6 +568,8 @@ pub struct PortMapper {
     rx: Receiver<Report>,
     threads: Vec<(Worker, JoinHandle<()>)>,
     state: MappingState,
+    /// Each extra port's state (`MapRequest::extra`), in the request's order.
+    extras: Vec<(u16, MappingState)>,
     /// What `poll` last returned.
     reported: MappingState,
     failures: [Option<String>; 2],
@@ -508,11 +591,20 @@ impl PortMapper {
             won: Default::default(),
         });
         let (tx, rx) = mpsc::channel();
+        let mut extras: Vec<(u16, MappingState)> = Vec::new();
+        for &p in &req.extra {
+            if p != req.local.port() && !extras.iter().any(|e| e.0 == p) {
+                extras.push((p, MappingState::Trying));
+            }
+        }
+        let mut req = req;
+        req.extra = extras.iter().map(|e| e.0).collect();
         let mut mapper = PortMapper {
             shared: Arc::clone(&shared),
             rx,
             threads: Vec::new(),
             state: MappingState::Trying,
+            extras,
             reported: MappingState::Trying,
             failures: [None, None],
             deadlines: [now + PMP_DEADLINE + PMP_GRACE, now + UPNP_DEADLINE],
@@ -520,6 +612,7 @@ impl PortMapper {
         };
         if let Some(why) = refused_in_tests(&req) {
             mapper.state = MappingState::Failed(why);
+            mapper.fail_extras("the first port was not mapped");
             return mapper;
         }
         for (worker, name) in [(Worker::Pmp, "rl-net pcp"), (Worker::Upnp, "rl-net upnp")] {
@@ -569,6 +662,22 @@ impl PortMapper {
                 }
                 Ok(Report::Dropped(why)) => {
                     self.state = MappingState::Failed(format!("the router dropped the mapping: {why}"));
+                    self.fail_extras("the router dropped the first port's mapping");
+                }
+                Ok(Report::Extra { port, mapped }) => {
+                    let usable = |ip: Ipv4Addr| self.allow_local || rl_proto::is_global(IpAddr::V4(ip));
+                    let state = match mapped {
+                        Ok((method, external)) => MappingState::Mapped {
+                            method,
+                            external,
+                            tcp: false,
+                            usable: usable(*external.ip()),
+                        },
+                        Err(why) => MappingState::Failed(why),
+                    };
+                    if let Some(e) = self.extras.iter_mut().find(|e| e.0 == port) {
+                        e.1 = state;
+                    }
                 }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
@@ -583,6 +692,55 @@ impl PortMapper {
 
     pub fn state(&self) -> &MappingState {
         &self.state
+    }
+
+    /// Each extra port's state (`MapRequest::extra`, ruling PM-2), as of
+    /// the last `poll`: `Trying` until the winner asked the router for it.
+    pub fn extras(&self) -> &[(u16, MappingState)] {
+        &self.extras
+    }
+
+    /// Deletes the mappings (as the drop does, waiting at most `DROP_WAIT`)
+    /// and says whether the router confirmed every deletion (true when
+    /// nothing was held).
+    pub fn close(mut self) -> bool {
+        let finished = self.stop_and_wait();
+        finished && !self.shared.board().unconfirmed
+    }
+
+    /// Extras still trying fail with the first port.
+    fn fail_extras(&mut self, why: &str) {
+        for e in &mut self.extras {
+            if !matches!(e.1, MappingState::Failed(_)) {
+                e.1 = MappingState::Failed(why.into());
+            }
+        }
+    }
+
+    /// Tells the threads to delete their mappings and waits at most
+    /// `DROP_WAIT` for those that asked their router for one: whether
+    /// every one finished.
+    fn stop_and_wait(&mut self) -> bool {
+        self.shared.board().stop = true;
+        self.shared.wake.notify_all();
+        let end = Instant::now() + DROP_WAIT;
+        let finished = loop {
+            let touched = self.shared.board().touched;
+            let waiting = self.threads.iter().any(|(w, h)| touched[*w as usize] && !h.is_finished());
+            if !waiting {
+                break true;
+            }
+            if Instant::now() >= end {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        for (_, handle) in self.threads.drain(..) {
+            if handle.is_finished() {
+                let _ = handle.join();
+            }
+        }
+        finished
     }
 
     /// While trying: gives up on threads past their deadline (they may no
@@ -606,6 +764,7 @@ impl PortMapper {
         }
         if let [Some(pmp), Some(upnp)] = &self.failures {
             self.state = MappingState::Failed(format!("{pmp}; {upnp}"));
+            self.fail_extras("the first port was not mapped");
         }
     }
 }
@@ -616,22 +775,7 @@ impl Drop for PortMapper {
     /// still searching holds nothing, and one stuck in a router's HTTP is
     /// detached (it deletes what it maps if it ever gets an answer).
     fn drop(&mut self) {
-        self.shared.board().stop = true;
-        self.shared.wake.notify_all();
-        let end = Instant::now() + DROP_WAIT;
-        loop {
-            let touched = self.shared.board().touched;
-            let waiting = self.threads.iter().any(|(w, h)| touched[*w as usize] && !h.is_finished());
-            if !waiting || Instant::now() >= end {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        for (_, handle) in self.threads.drain(..) {
-            if handle.is_finished() {
-                let _ = handle.join();
-            }
-        }
+        self.stop_and_wait();
     }
 }
 

@@ -54,7 +54,8 @@ beside the executable, else in the working directory).
   3478, `ports` (49160, 49191), `capacity` 32, `user_kib_s` 32,
   `allocations_per_ip` 4; checked: ports first ≤ last or `(0, 0)`
   (ephemeral, tests; `port: 0` too), the port outside them, capacity
-  1..=`MAX_CAPACITY` 4096, the rest ≥ 1). No TURN server list (ruling
+  1..=`MAX_CAPACITY` 4096 and at most the number of relay ports (one
+  allocation each; any with `(0, 0)`), the rest ≥ 1). No TURN server list (ruling
   PF12b-4: a host never allocates, N48). Test hook (feature
   `test-hooks`, `#[serde(skip)]`) `test_gateway: Option<TestGateway {
   pmp, ssdp, base }>`: the port mapping aimed at a `FakeGateway`, the base
@@ -95,15 +96,17 @@ beside the executable, else in the working directory).
   address watch here: the address comes from `Reachability::direct()`.
 - **`relay.rs`** (`--relay`, N52): `Relay` (crate-private) with fresh
   credentials each start (16 lowercase hex characters each,
-  `random_bytes`). With `port_mapping`, one `PortMapper` per port (the
-  listening port unless 0, each relay port unless `(0, 0)`), UDP,
-  `exact: true` (pre-flight fix #11: the relay reports `public:<local
-  port>`, so a port the router would move is logged, `"relay: port {p}
-  not mapped: {why}"`, never shifted), on the base and gateway the OS
-  gives (`local::base_addresses`, on a thread `rl-server relay base`) or
-  the `test_gateway`; `"relay: port {p} mapped ({method}) at {external}"`
+  `random_bytes`). With `port_mapping`, one `PortMapper` (ruling PM-2: one
+  discovery) for the listening port (unless 0) first and each relay port
+  (unless `(0, 0)`) as `MapRequest::extra`, UDP, exact (pre-flight fix
+  #11: the relay reports `public:<local port>`, so a port the router
+  would move is logged, `"relay: port {p} not mapped: {why}"`, never
+  shifted), on the base and gateway the OS gives
+  (`local::base_addresses`, on a thread `rl-server relay base`) or the
+  `test_gateway`; `"relay: port {p} mapped ({method}) at {external}"`
   for the listening port, `"relay: {k} of {n} relay ports mapped"` once
-  all answered. **Start** (pre-flight fix #10): only once its public IPv4
+  all answered. **Start** waits until the router answered for every port
+  (Task 8 review I1), then (pre-flight fix #10) only once its public IPv4
   is known — `public_address` (IPv6 said and skipped); else the listening
   port's usable exact mapping's external IP (waiting while it is
   `Trying`); else, once STUN settled, the game socket's srflx IP, only
@@ -111,17 +114,26 @@ beside the executable, else in the working directory).
   being reachable"`); a non-global IP only with `allow_local`. Otherwise
   `NO_PUBLIC_ADDRESS` ("relay: not announced: no public address (set
   public_address, or enable port mapping)") and it never starts.
-  `"relay: waiting for the public address"` at first. `TurnServer` on
-  `0.0.0.0:port` with `ports`, `TurnLimits` from the config (requests 20/s
+  `"relay: waiting for the public address"` at first. **Relay ports**
+  (review I1): `RelayPorts::Ephemeral` for `(0, 0)`; when the router
+  maps (the first port mapped, usable) only the relay ports it mapped
+  exactly; else (no mapping, or a router that mapped nothing: a manual
+  forward) the whole range. The note's capacity is the config's, at most
+  that many ports (`"relay: capacity {n}: one allocation per relay
+  port"`); none mapped: `"relay: not started: the router mapped none of
+  its relay ports exactly"`. `TurnServer` on
+  `0.0.0.0:port` with those ports, `TurnLimits` from the config (requests 20/s
   and `max_session` `MAX_SESSION`, 6 h, rl-net's defaults: the Task 3
   review's session cap), `allow_local`; `"relay: TURN on port {p}, relay
-  ports {a}-{b} (or ephemeral), announced as {ip}:{p}"`; a `turn_note`
+  ports {runs} (or ephemeral), announced as {ip}:{p}"` (runs such as
+  `49160-49175, 49177-49191`); a `turn_note`
   (the server's identity, region, capacity, load = allocations,
   `ANNOUNCE_TTL`) at once and every `REPUBLISH` (60 s), `created_at` never
   going back; `"relay: {n} allocations"` at each change (looked at every
   second). `shutdown`: the closing note (capacity 0, `CLOSE_TTL`, one
-  second after the last), the server dropped, and an `Unmapping` (each
-  mapper dropped on its own thread, `wait(until)`).
+  second after the last), the server dropped, and an `Unmapping` (the
+  mapper's `close` on a thread; `wait(until)` true once the router
+  confirmed every deletion).
 - **`nat_check.rs`** (`--nat-check`, N60): `run(config, deadline, out)`
   (`run_with(config, Some(&TestGateway), ..)` under `test-hooks`): the
   base address and gateway (`local::base_addresses`, or the hooks'); every
@@ -131,7 +143,8 @@ beside the executable, else in the working directory).
   a symmetric NAT prints `"NAT: symmetric NAT"`, a stable wording Task 11
   greps); the router (`PortMapper` on a random port of 49152-65535, UDP,
   exact; at most 5 s; its result, a non-public external address said;
-  dropped, deleting it: "router: the mapping is deleted"); the relays (a
+  `close`d: "router: the mapping is deleted" only when the router
+  confirmed it, else "the router did not confirm it within 1 s"); the relays (a
   `Pool` subscribed to `TurnList::filter`; each one's status once all
   answered or `deadline`, then `"TURN notes: n"` and each open relay's
   address, region and load); `"nat-check done"`. Errors only when `out`
@@ -276,7 +289,11 @@ of plan 12a's or 12b's fields) loads. Plan 12b (`TestRelay`, a pinned
 joined through Nostr (`via direct`, the `reach:` lines); a public server
 mapped by a UPnP-only `FakeGateway` at 203.0.113.7 listed at that address
 and the mapped port (TCP and UDP), its `reach: Port … (UPnP)` line, the
-mapping gone after a clean stop (NT-2); `--relay` (`public_address`
+mapping gone after a clean stop; NT-2 (review I2): a `LateUpnp` router
+(deletion effective 300 ms late) and no Nostr pool, the mapping gone the
+moment `shutdown` returns (RED without the wait); the invite printed at
+`SETTLE_WAIT` without an address while the (`LateUpnp`) router is busy,
+then again with the mapped address; `--relay` (`public_address`
 127.0.0.1, ephemeral ports, generous limits) picked from a `TurnList`
 (the server's key, its port, 16-hex credentials), a `relay_only` client
 joining through it (`Relayed`, `via relayed`, relayed bytes, `relay: 1
@@ -284,13 +301,15 @@ allocations`); its closing note at the stop (the list empties); a relayed
 member's `/banip` by key only (the admin told, the file without the
 address) kept across a restart from the bans file (the key refused, a new
 key from 127.0.0.1 welcomed). Unit tests: the new config fields and the
-relay's checks, `allow_local`'s public address; relay ports mapped
-exactly (a held port said and not shifted, the relay started on the
-mapping's external address, its note and closing note, the mappings
-deleted); `--nat-check`'s report with a `TurnServer` as STUN (`NAT: no
+relay's checks (capacity against the port count), `allow_local`'s public
+address; only exactly-mapped relay ports handed out (one mapper, a held
+port said and not shifted, the TURN server on port 0 given the other
+three, capacity 3 announced, the closing note, every deletion confirmed),
+port runs in words; `--nat-check`'s report with a `TurnServer` as STUN (`NAT: no
 NAT`), a `FakeGateway` (the mapping made, said not public, deleted), a
 `TestRelay` with a TURN note, two `StunResponder`s seeing different
-ports (`NAT: symmetric NAT`), no STUN servers; the NAT judgement. Also: command parsing, `/unban` targets, hex keys,
+ports (`NAT: symmetric NAT`), a `LateUpnp` router's deletion confirmed
+before "deleted" is said, no STUN servers; the NAT judgement. Also: command parsing, `/unban` targets, hex keys,
 the bans and identity files, the log's rotation (and a rename that
 fails, injected), notices split at 200
 characters, UTC dates (the hints, invites and address watch are tested

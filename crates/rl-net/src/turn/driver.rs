@@ -3,7 +3,7 @@
 //! allocation) blocks in `recv_from` with a short timeout and hands the
 //! datagrams over a bounded channel, so an idle relay sleeps.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::ops::RangeInclusive;
@@ -34,13 +34,45 @@ pub struct TurnServerConfig {
     /// Port 0: an ephemeral port (`local_addr` tells). IPv4 only (ruling TR-3).
     pub listen: SocketAddr,
     pub public: IpAddr,
-    /// Relay ports; `0..=0`: an OS-assigned ephemeral port per allocation (tests).
-    pub ports: RangeInclusive<u16>,
+    /// The relay ports it may hand out.
+    pub ports: RelayPorts,
     pub user: String,
     pub pass: String,
     pub limits: TurnLimits,
     /// N62: relay to private and loopback peers too (office and LAN setups, tests).
     pub allow_local: bool,
+}
+
+/// Which ports a relay hands out, one per allocation (Task 8 review I1: a
+/// relay behind a router hands out only the ports the router forwards with
+/// the same external port, since its relayed addresses are `public:port`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RelayPorts {
+    /// An OS-assigned ephemeral port per allocation (tests).
+    Ephemeral,
+    /// Only these, the lowest free one first (port 0 is never used).
+    Only(BTreeSet<u16>),
+}
+
+impl RelayPorts {
+    /// Every port of `ports`.
+    pub fn range(ports: RangeInclusive<u16>) -> RelayPorts {
+        RelayPorts::Only(ports.filter(|p| *p != 0).collect())
+    }
+
+    /// The ports to try for a new allocation, in order, but those `taken`
+    /// (`None`: an ephemeral one).
+    fn candidates<'a>(
+        &'a self,
+        taken: &'a BTreeMap<u16, UdpSocket>,
+    ) -> Option<impl Iterator<Item = u16> + 'a> {
+        match self {
+            RelayPorts::Ephemeral => None,
+            RelayPorts::Only(ports) => {
+                Some(ports.iter().copied().filter(|p| *p != 0 && !taken.contains_key(p)))
+            }
+        }
+    }
 }
 
 /// What a running relay did.
@@ -147,19 +179,11 @@ impl Drop for Reader {
 }
 
 /// A relay socket for an allocation: a free port of `ports` on `ip`, or
-/// an OS-assigned one for `0..=0`.
-fn bind_relay(
-    ip: IpAddr,
-    ports: &RangeInclusive<u16>,
-    taken: &BTreeMap<u16, UdpSocket>,
-) -> Option<(u16, UdpSocket)> {
-    let socket = if *ports == (0..=0) {
-        UdpSocket::bind((ip, 0)).ok()?
-    } else {
-        ports
-            .clone()
-            .filter(|p| *p != 0 && !taken.contains_key(p))
-            .find_map(|p| UdpSocket::bind((ip, p)).ok())?
+/// an OS-assigned one for `RelayPorts::Ephemeral`.
+fn bind_relay(ip: IpAddr, ports: &RelayPorts, taken: &BTreeMap<u16, UdpSocket>) -> Option<(u16, UdpSocket)> {
+    let socket = match ports.candidates(taken) {
+        None => UdpSocket::bind((ip, 0)).ok()?,
+        Some(mut candidates) => candidates.find_map(|p| UdpSocket::bind((ip, p)).ok())?,
     };
     let port = socket.local_addr().ok()?.port();
     (!taken.contains_key(&port)).then_some((port, socket))
@@ -223,7 +247,7 @@ impl Drop for TurnServer {
 struct Relay {
     core: TurnCore,
     listen: UdpSocket,
-    ports: RangeInclusive<u16>,
+    ports: RelayPorts,
     /// Relay sockets (the sending side) and their readers.
     relays: BTreeMap<u16, UdpSocket>,
     readers: BTreeMap<u16, Reader>,
@@ -303,5 +327,25 @@ impl Relay {
         self.relays.insert(port, socket);
         self.readers.insert(port, reader);
         Some(port)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Task 8 review I1: a relay hands out only the ports it was given (a
+    /// port its router would not forward exactly is never among them),
+    /// the lowest free first, never port 0.
+    #[test]
+    fn relay_ports_come_only_from_the_set() {
+        let ports = RelayPorts::Only(BTreeSet::from([49160, 49162, 49163]));
+        let none = BTreeMap::new();
+        assert_eq!(ports.candidates(&none).unwrap().collect::<Vec<_>>(), vec![49160, 49162, 49163]);
+        let mut taken = BTreeMap::new();
+        taken.insert(49160, UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
+        assert_eq!(ports.candidates(&taken).unwrap().collect::<Vec<_>>(), vec![49162, 49163]);
+        assert_eq!(RelayPorts::range(0..=2), RelayPorts::Only(BTreeSet::from([1, 2])));
+        assert!(RelayPorts::Ephemeral.candidates(&none).is_none());
     }
 }

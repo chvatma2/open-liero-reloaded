@@ -28,7 +28,7 @@ use rl_net::endpoint::{CONNECT_TIMEOUT, EndpointConfig, IceConfig, MAX_SIGNALLED
 use rl_net::link::{Link, LinkCandidates};
 use rl_net::portmap::DROP_WAIT;
 use rl_net::portmap::fake::{FakeGateway, Misbehaviour as GatewayMisbehaviour};
-use rl_net::turn::{TurnLimits, TurnServer, TurnServerConfig};
+use rl_net::turn::{RelayPorts, TurnLimits, TurnServer, TurnServerConfig};
 use rl_online::join::{Join, JoinStep, NO_RELAYS, NO_REPLY, NostrJoin, RELAYS_REFUSED, no_path};
 use rl_online::matches::{bot_wire, rules_wire, setup_packs};
 use rl_online::reach::{HostListen, Listening};
@@ -327,7 +327,7 @@ fn a_client_joins_through_a_turn_relay_found_on_nostr() {
     let turn = TurnServer::start(TurnServerConfig {
         listen: (LOCALHOST, 0).into(),
         public: LOCALHOST.into(),
-        ports: 0..=0,
+        ports: RelayPorts::Ephemeral,
         user: TURN_USER.into(),
         pass: TURN_PASS.into(),
         limits: TurnLimits::generous(),

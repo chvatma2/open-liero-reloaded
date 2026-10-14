@@ -686,7 +686,7 @@ fn attempt(ctx: &Ctx) -> Result<(), String> {
     }
     let mut router = Upnp {
         control: device.control,
-        local: SocketAddrV4::new(ip, ctx.req.local.port()),
+        client: ip,
         lease: ctx.req.lifetime_or(UPNP_LIFETIME),
         external: device.external,
         description: ctx.req.description,
@@ -851,7 +851,8 @@ fn describe(location: &Location, ctx: &Ctx) -> Result<Device, String> {
 
 struct Upnp {
     control: Control,
-    local: SocketAddrV4,
+    /// Our address the mappings lead to (each request names its port).
+    client: Ipv4Addr,
     /// Seconds; 0 once the router said it takes permanent leases only.
     lease: u32,
     external: Ipv4Addr,
@@ -872,7 +873,7 @@ impl Router for Upnp {
     /// `AddPortMapping` at exactly `external`. A router answering 725
     /// (only permanent leases) gets lease 0; 718 (taken) and 724 (same
     /// ports required) try the next port.
-    fn map(&mut self, udp: bool, external: u16, ctx: &Ctx) -> Result<Grant, MapError> {
+    fn map(&mut self, udp: bool, internal: u16, external: u16, ctx: &Ctx) -> Result<Grant, MapError> {
         let renewal = self.renewal;
         let going = move || if renewal { !ctx.stopped() } else { ctx.live() };
         loop {
@@ -880,8 +881,8 @@ impl Router for Upnp {
                 ("NewRemoteHost", String::new()),
                 ("NewExternalPort", external.to_string()),
                 ("NewProtocol", protocol(udp).to_string()),
-                ("NewInternalPort", self.local.port().to_string()),
-                ("NewInternalClient", self.local.ip().to_string()),
+                ("NewInternalPort", internal.to_string()),
+                ("NewInternalClient", self.client.to_string()),
                 ("NewEnabled", "1".to_string()),
                 ("NewPortMappingDescription", self.description.to_string()),
                 ("NewLeaseDuration", self.lease.to_string()),
@@ -898,13 +899,13 @@ impl Router for Upnp {
         }
     }
 
-    fn unmap(&mut self, udp: bool, external: u16) {
+    fn unmap(&mut self, udp: bool, _internal: u16, external: u16) -> bool {
         let args = [
             ("NewRemoteHost", String::new()),
             ("NewExternalPort", external.to_string()),
             ("NewProtocol", protocol(udp).to_string()),
         ];
-        let _ = soap(&self.control, "DeletePortMapping", &args, Instant::now() + DELETE_WAIT, &|| true);
+        soap(&self.control, "DeletePortMapping", &args, Instant::now() + DELETE_WAIT, &|| true).is_ok()
     }
 
     fn external_ip(&self) -> Option<Ipv4Addr> {

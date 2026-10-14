@@ -49,10 +49,17 @@ pub enum Misbehaviour {
     /// `DeletePortMapping` deletes at once but answers `SLOW_DELETE`
     /// (250 ms) late: a mapper's drop must wait for it.
     SlowDelete,
+    /// UPnP's `AddPortMapping` and `DeletePortMapping` take effect, and are
+    /// answered, only `LATE` (300 ms) after the request: a caller that
+    /// does not wait for a deletion's answer leaves the mapping behind
+    /// (plan 12b Task 8, NT-2).
+    LateUpnp,
 }
 
 /// How late `SlowDelete` answers a deletion.
 pub const SLOW_DELETE: Duration = Duration::from_millis(250);
+/// How late `LateUpnp` maps, deletes and answers.
+pub const LATE: Duration = Duration::from_millis(300);
 
 /// The device description a fake router serves: real routers' shapes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -818,6 +825,9 @@ fn respond(inner: &Inner, head: &str, body: &str) -> (&'static str, String) {
                 return soap_fault(402, "Invalid Args");
             }
             let internal = SocketAddrV4::new(ip, internal_port);
+            if inner.cfg.m == Misbehaviour::LateUpnp {
+                std::thread::sleep(LATE);
+            }
             if !udp && inner.cfg.m == Misbehaviour::TcpRefused {
                 return soap_fault(606, "Action not authorized");
             }
@@ -841,6 +851,9 @@ fn respond(inner: &Inner, head: &str, body: &str) -> (&'static str, String) {
         }
         "DeletePortMapping" => {
             let Some(port) = port else { return soap_fault(402, "Invalid Args") };
+            if inner.cfg.m == Misbehaviour::LateUpnp {
+                std::thread::sleep(LATE);
+            }
             let removed = inner.table().mappings.remove(&(udp, port));
             if inner.cfg.m == Misbehaviour::SlowDelete {
                 std::thread::sleep(SLOW_DELETE);

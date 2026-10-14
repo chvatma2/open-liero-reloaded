@@ -484,6 +484,81 @@ fn an_exact_request_never_shifts() {
     assert_eq!((external.port(), tcp), (23491, true));
 }
 
+/// Ruling PM-2 (Task 8 review): one request maps several ports with one
+/// discovery. The protocol that maps `local` maps each extra port too, UDP
+/// with the external port equal to the local one; a port the router would
+/// move (here held by another client) fails alone and is never shifted.
+/// `close` deletes them all and says the router confirmed it.
+#[test]
+fn extra_ports_are_mapped_exactly_by_the_winner() {
+    let ssdp = silent();
+    for (upnp, pmp, pcp, port) in
+        [(true, false, false, 23520), (false, true, false, 23530), (false, false, true, 23540)]
+    {
+        let fake = FakeGateway::start(upnp, pmp, pcp, EXTERNAL, Misbehaviour::Honest);
+        fake.hold(port + 2);
+        let mut req = request(&fake, port, false);
+        if upnp {
+            req.gateway = None;
+        } else {
+            req.ssdp = ssdp.local_addr().unwrap();
+        }
+        req.exact = true;
+        req.extra = vec![port + 1, port + 2, port + 3];
+        let mut mapper = PortMapper::start(req);
+        let (method, external, ..) = mapped(&settle(&mut mapper, Duration::from_secs(5)));
+        assert_eq!(external.port(), port);
+        let begun = Instant::now();
+        while mapper.extras().iter().any(|(_, s)| *s == MappingState::Trying) {
+            assert!(begun.elapsed() < Duration::from_secs(5), "{:?}", mapper.extras());
+            mapper.poll();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let extras = mapper.extras().to_vec();
+        assert_eq!(extras.iter().map(|e| e.0).collect::<Vec<_>>(), vec![port + 1, port + 2, port + 3]);
+        for (p, s) in &extras {
+            if *p == port + 2 {
+                failed(s);
+            } else {
+                let (m, ext, tcp, usable) = mapped(s);
+                assert_eq!((m, ext, tcp, usable), (method, SocketAddrV4::new(EXTERNAL, *p), false, true));
+            }
+        }
+        let held: Vec<(bool, u16, u16)> = fake.mappings().iter().map(|m| (m.1, m.2, m.3.port())).collect();
+        assert_eq!(held, vec![(true, port, port), (true, port + 1, port + 1), (true, port + 3, port + 3)]);
+        assert!(mapper.close(), "the router confirmed every deletion");
+        assert_eq!(fake.mappings(), vec![], "upnp {upnp} pmp {pmp} pcp {pcp}");
+    }
+}
+
+/// `close` returns once the router confirmed the deletions: a router that
+/// removes a mapping only `LATE` after the request (`LateUpnp`) has none
+/// left when it returns. A primary that fails fails its extras too.
+#[test]
+fn close_waits_for_the_routers_deletion() {
+    let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::LateUpnp);
+    let mut req = request(&fake, 23550, true);
+    req.gateway = None;
+    let mut mapper = PortMapper::start(req);
+    mapped(&settle(&mut mapper, Duration::from_secs(5)));
+    assert_eq!(fake.mappings().len(), 2);
+    let begun = Instant::now();
+    assert!(mapper.close());
+    assert!(begun.elapsed() >= rl_net::portmap::fake::LATE, "{:?}", begun.elapsed());
+    assert_eq!(fake.mappings(), vec![], "gone when close returns");
+
+    let ssdp = silent();
+    let mut req = MapRequest::new(SocketAddrV4::new(LOCALHOST, 23560), false, None);
+    req.ssdp = ssdp.local_addr().unwrap();
+    req.search = Duration::from_millis(30);
+    req.extra = vec![23561];
+    let mut mapper = PortMapper::start(req);
+    failed(&settle(&mut mapper, Duration::from_secs(6)));
+    mapper.poll();
+    assert!(matches!(mapper.extras(), [(23561, MappingState::Failed(_))]), "{:?}", mapper.extras());
+    assert!(mapper.close(), "nothing to delete");
+}
+
 #[test]
 fn mappings_are_deleted_on_drop() {
     let ssdp = silent();

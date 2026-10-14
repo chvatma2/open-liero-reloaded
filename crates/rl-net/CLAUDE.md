@@ -275,8 +275,10 @@ announcements.
   - **`TurnServer::start(cfg)`** (`turn/driver.rs`): IPv4 `listen` and
     `public` only (TR-3: per-IP limits; else `InvalidInput`); port 0:
     ephemeral, `local_addr`. One reader thread per socket (the listening
-    one, one per allocation: a free port of `ports`, or OS-assigned for
-    `0..=0`) blocks in `recv_from` (200 ms timeout; a timeout or a reset —
+    one, one per allocation: the lowest free port of
+    `RelayPorts::Only(set)` — `RelayPorts::range(a..=b)` for a range; Task
+    8 review I1: a relay behind a router is given only the ports mapped
+    exactly — or OS-assigned for `RelayPorts::Ephemeral`) blocks in `recv_from` (200 ms timeout; a timeout or a reset —
     Windows reports ICMP port unreachables so — is read past at once,
     other errors too, sleeping 1 ms only after 16 in a row), drops and
     counts datagrams over 4096 B before copying them, and feeds a channel
@@ -299,7 +301,16 @@ announcements.
   - **Ports** (`map_pair`, shared by the three protocols through the
     `Router` trait): the local port, then +1 … +7 (none with `exact`,
     whose granted port must be the local one, else the mapping is
-    deleted and the method fails). With `tcp`, TCP first, then UDP at
+    deleted and the method fails). **Extra ports** (`MapRequest::extra`,
+    ruling PM-2: a relay's ports with one discovery): once a protocol won
+    `local`, the same thread maps each extra port in turn on the same
+    session (PCP/NAT-PMP socket and nonce, UPnP control URL), UDP only,
+    each exact (a moved grant is deleted and fails that port alone), each
+    request on the protocol's own deadline (`renewing`); `extras()` gives
+    each one's `MappingState` (all fail when `local` fails or its mapping
+    is dropped). They renew with `local` (one refused is deleted and
+    reported alone) and are deleted with it. `Router::map`/`unmap` take
+    the internal port; `unmap` says whether the router confirmed. With `tcp`, TCP first, then UDP at
     TCP's port; a UDP grant on another port is deleted and asked once
     more, else both go and the next port is tried; with no pair, UDP
     alone (`tcp: false`). PCP's `CANNOT_PROVIDE_EXTERNAL` and UPnP's
@@ -371,7 +382,10 @@ announcements.
     which the fuzz tests require to be 0). Test hook
     `portmap::panic_at_renewal(port)` (`test-hooks`) makes a winner panic
     at its first renewal (not counted).
-  - **Drop** sets the board's stop, wakes the threads, and waits at most
+  - **Drop** (and `close(self) -> bool`, which also says whether the
+    router confirmed every deletion: false when one was not answered, or
+    a thread did not finish within `DROP_WAIT`) sets the board's stop,
+    wakes the threads, and waits at most
     `DROP_WAIT` (1 s) for those that asked for a mapping (`touched`) to
     delete it (PCP/NAT-PMP: lifetime 0, two sends 200 ms apart; UPnP:
     `DeletePortMapping`, 450 ms); a thread still searching holds nothing
@@ -406,7 +420,9 @@ announcements.
     description; `streamed()`), `DeepNesting` (6000 levels, 42 KB),
     `ForeignLocation` (SSDP from 127.0.0.2 naming 127.0.0.1;
     `http_requests()`), `SlowDelete` (`DeletePortMapping` deletes at once
-    and answers `SLOW_DELETE`, 250 ms, late). `hold(port)`: another client's port.
+    and answers `SLOW_DELETE`, 250 ms, late), `LateUpnp` (UPnP's
+    `AddPortMapping` and `DeletePortMapping` take effect and answer only
+    `LATE`, 300 ms, after the request: Task 8's NT-2 test). `hold(port)`: another client's port.
     `serving(answer)` (fuzzing) answers SSDP (its first 1400 bytes) and
     HTTP with `answer` (`$HTTP` → its HTTP address).
 - **`natsim`** (feature `test-hooks`, N56): `Net` runs `Core`s behind
@@ -617,7 +633,10 @@ link (kept relayed past `RELEASE_AFTER` first), gathering bounded by
 UPnP mapping TCP and UDP on one port, real routers' descriptions (plain
 and chunked), PCP first and NAT-PMP as the fallback, every
 `Misbehaviour` reported (`fake_gateway_misbehaviours_are_reported::*`),
-an exact request never shifting, mappings deleted on drop, no gateway
+an exact request never shifting, extra ports mapped exactly by the
+winner for each protocol (a held one failing alone, `close` confirming
+every deletion), `close` waiting for a late router and a failed `local`
+failing its extras, mappings deleted on drop, no gateway
 and no UPnP failing within 5 s, a test build refusing a real router,
 `HTTP_PROXY` ignored (a child process of the test binary runs with the
 proxy variables set; the proxy must see no connection, and the child
@@ -648,7 +667,8 @@ unproven budgets, oversized datagrams dropped, an allocation refreshed
 past its lifetime ending at its session cap (1800 s on a 1 s virtual
 clock); unit tests in `local.rs` (a base always found, the quick base instant,
 the source toward loopback), in `turn.rs`
-(the bucket, the IP table, nonces, a stale tag proven only for its own
+(the bucket, the IP table, nonces, `turn/driver.rs`'s relay ports
+coming only from the set, a stale tag proven only for its own
 source, a proven source answered outside the unproven budget, an IP's
 two buckets keeping its rate, a hostile nonce, any nonce on a signed
 request, fuzzed) and `turn/msg.rs` (the codec, fuzzed); `tests/candidates.rs`: reading,

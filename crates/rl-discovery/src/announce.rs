@@ -128,7 +128,10 @@ impl GameSummary {
         }
     }
 
-    /// The LAN announcement of the same game (this build's fingerprint).
+    /// The LAN announcement of the same game (this build's fingerprint), on
+    /// the summary's port: the note's, which is the router's external port
+    /// when `Hosting::public_port` is set. A host announces on the LAN
+    /// through [`Hosting::lan`] (the local port) instead.
     pub fn lan(&self) -> LanAnnounce {
         LanAnnounce {
             fingerprint: FINGERPRINT,

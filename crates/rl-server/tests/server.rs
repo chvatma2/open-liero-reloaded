@@ -1383,3 +1383,68 @@ fn a_relayed_member_is_banned_by_key_only_across_a_restart() {
     });
     assert_eq!(rig.clients[again].refused(), Some("you are banned from this lobby"));
 }
+
+/// A config mapping its port at `gw` (127.0.0.1 base, `allow_local`).
+fn mapped_config(gw: &FakeGateway, mut cfg: Config) -> Config {
+    cfg.port_mapping = true;
+    cfg.allow_local = true;
+    cfg.test_gateway = Some(TestGateway { pmp: gw.pmp(), ssdp: gw.ssdp(), base: Ipv4Addr::LOCALHOST });
+    cfg
+}
+
+/// Ruling NT-2 (Task 8 review I2): a clean stop returns only once the
+/// router deleted the mapping. The router here (`LateUpnp`) removes a
+/// mapping only 300 ms after the request, and no Nostr pool's drop holds
+/// the stop up: without the wait the mapping would still be there.
+#[test]
+fn a_clean_stop_waits_for_the_router_to_delete_the_mapping() {
+    let Some(dir) = content_dir() else { return };
+    let gw = FakeGateway::start(true, false, false, Ipv4Addr::new(203, 0, 113, 7), Misbehaviour::LateUpnp);
+    let mut rig = Rig::new(dir, mapped_config(&gw, config(&[], 0, false, 1.0)));
+    let port = rig.server().local_port();
+    let open = format!("reach: Port {port} is open on your router (UPnP)");
+    rig.run_until(Duration::from_secs(10), "the port mapped", |r| r.log_text().contains(&open));
+    assert_eq!(gw.mappings().len(), 2, "TCP and UDP");
+    rig.server.take().unwrap().shutdown(&mut rig.log);
+    assert!(gw.mappings().is_empty(), "deleted when the stop returns: {:?}", gw.mappings());
+    assert!(!rig.log_text().contains("did not confirm"), "{}", rig.log_text());
+}
+
+/// N47: the invite waits for the reachability at most `SETTLE_WAIT`, then
+/// goes out without an address (the router is slow: `LateUpnp`), and is
+/// printed again once the mapping gives the server a direct address.
+#[test]
+fn the_invite_waits_at_most_settle_wait_and_follows_the_address() {
+    let Some(dir) = content_dir() else { return };
+    let relay = TestRelay::start();
+    let external = Ipv4Addr::new(203, 0, 113, 7);
+    let gw = FakeGateway::start(true, false, false, external, Misbehaviour::LateUpnp);
+    let mut rig = Rig::new(dir, mapped_config(&gw, nostr_config(&relay, &[])));
+    let port = rig.server().local_port();
+    // The server's clock already past `SETTLE_WAIT`; the router still busy.
+    let later = || Instant::now() + rl_server::SETTLE_WAIT;
+    let Rig { server, log, .. } = &mut rig;
+    let server = server.as_mut().unwrap();
+    server.poll(later(), log);
+    let first = String::from_utf8_lossy(log).into_owned();
+    assert!(
+        first.contains("invite code (joins through the relays): rlx1"),
+        "printed at SETTLE_WAIT: {first}"
+    );
+    assert!(!first.contains("reach: Port"), "before the router answered: {first}");
+    let begun = Instant::now();
+    while !String::from_utf8_lossy(log).contains("\ninvite code: rlx1") {
+        assert!(
+            begun.elapsed() < Duration::from_secs(10),
+            "the second invite: {}",
+            String::from_utf8_lossy(log)
+        );
+        server.poll(later(), log);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let text = rig.log_text();
+    assert_eq!(text.lines().filter(|l| l.starts_with("invite code")).count(), 2, "{text}");
+    let mapped = gw.mappings().iter().find(|m| m.1).unwrap().2;
+    assert_eq!(mapped, port, "the local port");
+    assert_eq!(printed_invite(&text).unwrap().addr, Some(SocketAddr::from((external, port))));
+}

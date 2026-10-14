@@ -679,7 +679,8 @@ impl Shell {
                 map_name: map_name.into(),
             };
             let summary = GameSummary::of_lobby(state, &hosting);
-            n.announce = Some(summary.lan());
+            // The LAN joins the local port, whatever port the note names.
+            n.announce = Some(hosting.lan(&summary));
             if let Some(h) = &mut n.hosted {
                 h.summary = Some(summary);
                 // The lobby view is made again: its invite lines too.

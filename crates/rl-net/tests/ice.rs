@@ -20,7 +20,7 @@ use rl_net::portmap::DROP_WAIT;
 use rl_net::portmap::MappingState;
 use rl_net::portmap::fake::{FakeGateway, Misbehaviour};
 use rl_net::probe::NatBehaviour;
-use rl_net::turn::{TurnLimits, TurnServer, TurnServerConfig};
+use rl_net::turn::{RelayPorts, TurnLimits, TurnServer, TurnServerConfig};
 use rl_netcode::{Channel, PeerId};
 use rl_proto::{FINGERPRINT, PROTOCOL_VERSION, Path, Signal};
 
@@ -55,7 +55,7 @@ fn turn_server() -> TurnServer {
     TurnServer::start(TurnServerConfig {
         listen: (LOCALHOST, 0).into(),
         public: LOCALHOST.into(),
-        ports: 0..=0,
+        ports: RelayPorts::Ephemeral,
         user: USER.into(),
         pass: PASS.into(),
         limits: TurnLimits::generous(),

@@ -304,9 +304,10 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   `addr` is the address players join directly (N47: a usable router
   mapping's or the configured one) and the note's `port`
   `Hosting::public_port.unwrap_or(port)` (plan 12b Task 8: the mapping's
-  external port); `lan()` is the same game's `LanAnnounce` (its port the
-  summary's), `Hosting::lan(&summary)` the host's own on the local `port`
-  whatever the note names. `announcement(..)`
+  external port); `lan()` is the same game's `LanAnnounce` on the
+  summary's (the note's) port, so hosts use `Hosting::lan(&summary)`, the
+  local `port` whatever the note names (rl-server and the game since Task
+  8's review). `announcement(..)`
   (tags `d`, `t`, `f` = 16 lowercase hex, `expiration` +180 s, +10 s when
   `closed`), `parse_announcement` (validates names, ids and counts, no address policy; refuses
   a missing or malformed `f`; does not verify the signature) and the sans-IO

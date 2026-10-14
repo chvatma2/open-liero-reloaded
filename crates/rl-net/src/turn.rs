@@ -34,7 +34,7 @@ use self::msg::{Builder, Class, Msg};
 mod driver;
 mod msg;
 
-pub use driver::{TurnServer, TurnServerConfig, TurnStats};
+pub use driver::{RelayPorts, TurnServer, TurnServerConfig, TurnStats};
 
 /// The realm of every rust-liero relay (N52: the credentials are public).
 pub const REALM: &str = "rust-liero";

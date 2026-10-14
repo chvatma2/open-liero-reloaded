@@ -234,10 +234,14 @@ fn router(
             writeln!(out, "router: no answer within {} s", ROUTER_WAIT.as_secs())?
         }
     }
-    // The drop deletes it (waiting at most 1 s for the router).
-    drop(mapper);
-    if matches!(state, MappingState::Mapped { .. }) {
-        writeln!(out, "router: the mapping is deleted")?;
+    // Deleted, waiting at most 1 s for the router to confirm it.
+    let confirmed = mapper.close();
+    match (&state, confirmed) {
+        (MappingState::Mapped { .. }, true) => writeln!(out, "router: the mapping is deleted")?,
+        (MappingState::Mapped { .. }, false) => {
+            writeln!(out, "router: deleting the mapping: the router did not confirm it within 1 s")?
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -313,7 +317,7 @@ mod tests {
     use rl_discovery::{Region, StunResponder, TestRelay};
     use rl_lobby::Identity;
     use rl_net::portmap::fake::{FakeGateway, Misbehaviour};
-    use rl_net::turn::{TurnLimits, TurnServer, TurnServerConfig};
+    use rl_net::turn::{RelayPorts, TurnLimits, TurnServer, TurnServerConfig};
 
     fn hooks(gw: &FakeGateway) -> TestGateway {
         TestGateway { pmp: gw.pmp(), ssdp: gw.ssdp(), base: Ipv4Addr::LOCALHOST }
@@ -355,7 +359,7 @@ mod tests {
         let turn = TurnServer::start(TurnServerConfig {
             listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
             public: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            ports: 0..=0,
+            ports: RelayPorts::Ephemeral,
             user: "u".into(),
             pass: "p".into(),
             limits: TurnLimits::generous(),
@@ -401,6 +405,17 @@ mod tests {
         ] {
             assert!(text.contains(want), "{want:?} in:\n{text}");
         }
+        // A router that deletes only `LATE` after the request: "deleted" is
+        // said once it confirmed, and nothing is left then.
+        let late =
+            FakeGateway::start(true, false, false, Ipv4Addr::new(203, 0, 113, 7), Misbehaviour::LateUpnp);
+        let config = Config { stun: vec![], relays: vec![], allow_local: true, ..Config::default() };
+        let text = report(&config, &late);
+        assert!(
+            text.contains("opened (UPnP)") && text.contains("router: the mapping is deleted\n"),
+            "{text}"
+        );
+        assert!(late.mappings().is_empty(), "{:?}", late.mappings());
         // No STUN server: said, and the NAT not known.
         let config = Config { stun: vec![], relays: vec![], ..Config::default() };
         let text = report(&config, &gw);

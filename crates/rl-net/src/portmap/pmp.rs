@@ -286,11 +286,9 @@ pub(crate) fn run(ctx: Ctx) {
     };
     let deadline = ctx.started + PMP_DEADLINE;
     let lifetime = ctx.req.lifetime_or(PMP_LIFETIME);
-    let internal = ctx.req.local.port();
     let mut pcp = Pcp {
         sock: &sock,
         client,
-        internal,
         lifetime,
         nonces: [nonce(), nonce()],
         external: None,
@@ -305,7 +303,7 @@ pub(crate) fn run(ctx: Ctx) {
         ctx.fail(format!("PCP: {pcp_why}; NAT-PMP: not tried"));
         return;
     }
-    let mut nat = NatPmp { sock: &sock, internal, lifetime, external: None, deadline, renewal: false };
+    let mut nat = NatPmp { sock: &sock, lifetime, external: None, deadline, renewal: false };
     let pmp_why = match nat.external_address(&ctx).and_then(|()| try_router(&mut nat, &ctx)) {
         Ok(()) => return,
         Err(why) => why,
@@ -335,10 +333,10 @@ fn going(renewal: bool, ctx: &Ctx) -> impl Fn() -> bool + '_ {
 struct Pcp<'a> {
     sock: &'a UdpSocket,
     client: Ipv4Addr,
-    internal: u16,
     lifetime: u32,
     /// Per protocol (TCP, UDP): a mapping keeps its nonce for renewals and
-    /// its deletion.
+    /// its deletion (one for every local port this client maps: PCP keys a
+    /// mapping by its internal address, port and protocol).
     nonces: [[u8; 12]; 2],
     external: Option<Ipv4Addr>,
     deadline: Instant,
@@ -346,11 +344,11 @@ struct Pcp<'a> {
 }
 
 impl Pcp<'_> {
-    fn request(&self, udp: bool, external: u16, lifetime: u32) -> (Vec<u8>, [u8; 12], u8) {
+    fn request(&self, udp: bool, internal: u16, external: u16, lifetime: u32) -> (Vec<u8>, [u8; 12], u8) {
         let nonce = self.nonces[usize::from(udp)];
         let protocol = if udp { 17 } else { 6 };
         let suggested = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, external);
-        (pcp_map_request(nonce, self.client, protocol, self.internal, suggested, lifetime), nonce, protocol)
+        (pcp_map_request(nonce, self.client, protocol, internal, suggested, lifetime), nonce, protocol)
     }
 }
 
@@ -359,10 +357,9 @@ impl Router for Pcp<'_> {
         Method::Pcp
     }
 
-    fn map(&mut self, udp: bool, external: u16, ctx: &Ctx) -> Result<Grant, MapError> {
-        let (req, nonce, protocol) = self.request(udp, external, self.lifetime);
+    fn map(&mut self, udp: bool, internal: u16, external: u16, ctx: &Ctx) -> Result<Grant, MapError> {
+        let (req, nonce, protocol) = self.request(udp, internal, external, self.lifetime);
         let going = going(self.renewal, ctx);
-        let internal = self.internal;
         let r = exchange(self.sock, &req, &RETRIES, self.deadline, &going, |b| {
             parse_pcp(b, &nonce)
                 .filter(|r| r.version != PCP_VERSION || (r.protocol == protocol && r.internal == internal))
@@ -388,10 +385,13 @@ impl Router for Pcp<'_> {
         Ok(Grant { port: r.external.port(), lifetime: r.lifetime })
     }
 
-    fn unmap(&mut self, udp: bool, _external: u16) {
-        let (req, nonce, _) = self.request(udp, 0, 0);
+    fn unmap(&mut self, udp: bool, internal: u16, _external: u16) -> bool {
+        let (req, nonce, protocol) = self.request(udp, internal, 0, 0);
         let end = Instant::now() + Duration::from_millis(DELETE_RETRIES.iter().sum());
-        let _ = exchange(self.sock, &req, &DELETE_RETRIES, end, &|| true, |b| parse_pcp(b, &nonce));
+        let answer = exchange(self.sock, &req, &DELETE_RETRIES, end, &|| true, |b| {
+            parse_pcp(b, &nonce).filter(|r| r.protocol == protocol && r.internal == internal)
+        });
+        matches!(answer, Ok(r) if r.version == PCP_VERSION && r.result == 0)
     }
 
     fn external_ip(&self) -> Option<Ipv4Addr> {
@@ -406,7 +406,6 @@ impl Router for Pcp<'_> {
 
 struct NatPmp<'a> {
     sock: &'a UdpSocket,
-    internal: u16,
     lifetime: u32,
     external: Option<Ipv4Addr>,
     deadline: Instant,
@@ -445,10 +444,9 @@ impl Router for NatPmp<'_> {
         Method::NatPmp
     }
 
-    fn map(&mut self, udp: bool, external: u16, ctx: &Ctx) -> Result<Grant, MapError> {
-        let req = pmp_map_request(udp, self.internal, external, self.lifetime);
+    fn map(&mut self, udp: bool, internal: u16, external: u16, ctx: &Ctx) -> Result<Grant, MapError> {
+        let req = pmp_map_request(udp, internal, external, self.lifetime);
         let going = going(self.renewal, ctx);
-        let internal = self.internal;
         let r = exchange(self.sock, &req, &RETRIES, self.deadline, &going, |b| match parse_pmp(b) {
             Some(PmpResponse::Map { udp: u, result, internal: i, external, lifetime })
                 if u == udp && i == internal =>
@@ -465,16 +463,18 @@ impl Router for NatPmp<'_> {
         }
     }
 
-    fn unmap(&mut self, udp: bool, _external: u16) {
-        let req = pmp_map_request(udp, self.internal, 0, 0);
+    fn unmap(&mut self, udp: bool, internal: u16, _external: u16) -> bool {
+        let req = pmp_map_request(udp, internal, 0, 0);
         let end = Instant::now() + Duration::from_millis(DELETE_RETRIES.iter().sum());
-        let internal = self.internal;
         // Only this deletion's answer counts: a late one to another request
         // must not stop its resend.
-        let _ = exchange(self.sock, &req, &DELETE_RETRIES, end, &|| true, |b| match parse_pmp(b) {
-            Some(PmpResponse::Map { udp: u, internal: i, .. }) if u == udp && i == internal => Some(()),
+        let answer = exchange(self.sock, &req, &DELETE_RETRIES, end, &|| true, |b| match parse_pmp(b) {
+            Some(PmpResponse::Map { udp: u, internal: i, result, .. }) if u == udp && i == internal => {
+                Some(result)
+            }
             _ => None,
         });
+        answer == Ok(0)
     }
 
     fn external_ip(&self) -> Option<Ipv4Addr> {

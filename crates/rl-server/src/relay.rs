@@ -10,9 +10,17 @@
 //! the listening port's exact mapping; else the game socket's
 //! server-reflexive IP once STUN settled, and then only when the host is
 //! not behind a NAT (`NatBehaviour::Open`). Otherwise it is not started.
+//!
+//! With port mapping, one `PortMapper` asks for the listening port and
+//! every relay port (ruling PM-2: one discovery), and the relay waits until
+//! the router answered for each: when the router maps, the TURN server
+//! hands out only the relay ports it mapped exactly (Task 8 review I1: a
+//! relayed address is `public:<local port>`, so any other port would be
+//! unreachable), and announces at most that many allocations.
 
+use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use rl_discovery::announce::{ANNOUNCE_TTL, CLOSE_TTL, REPUBLISH};
@@ -22,7 +30,7 @@ use rl_discovery::{Event, Region};
 use rl_lobby::Identity;
 use rl_net::portmap::{MapRequest, MappingState, PortMapper};
 use rl_net::probe::NatBehaviour;
-use rl_net::turn::{TurnLimits, TurnServer, TurnServerConfig, TurnStats};
+use rl_net::turn::{RelayPorts, TurnLimits, TurnServer, TurnServerConfig, TurnStats};
 use rl_online::Reachability;
 
 use crate::config::RelayConfig;
@@ -45,18 +53,42 @@ pub(crate) struct MapTarget {
     pub(crate) ssdp: Option<SocketAddr>,
 }
 
-/// One port the relay asked its router to open (UDP, exact).
+/// The ports the relay asked its router to open (UDP, exact): the first
+/// (the listening port, else the first relay port) and the extras, in one
+/// `PortMapper`; which ones the log has said.
 struct Mapping {
-    port: u16,
+    first: u16,
     mapper: PortMapper,
-    state: MappingState,
+    said: BTreeSet<u16>,
+    /// The summary line was said (every port answered).
+    settled: bool,
+}
+
+impl Mapping {
+    /// Every port's state: the first, then the extras.
+    fn states(&self) -> Vec<(u16, MappingState)> {
+        let mut all = vec![(self.first, self.mapper.state().clone())];
+        all.extend(self.mapper.extras().iter().cloned());
+        all
+    }
+
+    /// The router answered for every port.
+    fn answered(&self) -> bool {
+        *self.mapper.state() != MappingState::Trying
+            && self.mapper.extras().iter().all(|(_, s)| *s != MappingState::Trying)
+    }
+
+    /// The router maps: the first port is mapped, usable.
+    fn router_maps(&self) -> bool {
+        matches!(self.mapper.state(), MappingState::Mapped { usable: true, .. })
+    }
 }
 
 /// The relay's mappings: waiting for the base address (found on a thread:
 /// the OS's interfaces can take ~350 ms), asked, or none.
 enum Maps {
     Finding(Receiver<Option<MapTarget>>),
-    Asked(Vec<Mapping>),
+    Asked(Box<Mapping>),
     None,
 }
 
@@ -64,6 +96,8 @@ enum Maps {
 struct Running {
     server: TurnServer,
     public: Ipv4Addr,
+    /// What the note announces: the config's, at most the relay ports.
+    capacity: u16,
     /// The last note's time and `created_at` (none yet: not announced).
     noted: Option<(Instant, u64)>,
     load: Option<usize>,
@@ -91,21 +125,19 @@ pub(crate) struct Relay {
     phase: Phase,
 }
 
-/// The relay's mappings being deleted (each mapper's drop on a thread).
+/// The relay's mappings being deleted (the mapper's `close` on a thread).
 pub(crate) struct Unmapping {
-    done: Vec<Receiver<()>>,
+    done: Option<Receiver<bool>>,
 }
 
 impl Unmapping {
-    /// Waits until every mapping is deleted (each mapper waits at most
-    /// `portmap::DROP_WAIT`, 1 s) or `until`; `true` when all were.
+    /// Waits until the mappings are deleted (the mapper waits at most
+    /// `portmap::DROP_WAIT`, 1 s) or `until`; `true` when the router
+    /// confirmed every deletion (or there was none).
     pub(crate) fn wait(self, until: Instant) -> bool {
-        self.done.into_iter().all(|rx| {
-            match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
-                Ok(()) | Err(RecvTimeoutError::Disconnected) => true,
-                Err(RecvTimeoutError::Timeout) => false,
-            }
-        })
+        let Some(rx) = self.done else { return true };
+        // Disconnected (no thread) or past `until`: not confirmed.
+        rx.recv_timeout(until.saturating_duration_since(Instant::now())).unwrap_or(false)
     }
 }
 
@@ -115,12 +147,18 @@ fn credential() -> Option<String> {
     Some(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// `first-last`, or "ephemeral" for `(0, 0)`.
-fn ports_text(cfg: &RelayConfig) -> String {
-    match cfg.ports {
-        (0, 0) => "ephemeral".into(),
-        (a, b) => format!("{a}-{b}"),
+/// The ports as runs (`49160-49175, 49177-49191`), or "ephemeral".
+fn ports_text(ports: &RelayPorts) -> String {
+    let RelayPorts::Only(set) = ports else { return "ephemeral".into() };
+    let mut runs: Vec<(u16, u16)> = Vec::new();
+    for &p in set {
+        match runs.last_mut() {
+            Some((_, last)) if last.checked_add(1) == Some(p) => *last = p,
+            _ => runs.push((p, p)),
+        }
     }
+    let run = |(a, b): &(u16, u16)| if a == b { a.to_string() } else { format!("{a}-{b}") };
+    runs.iter().map(run).collect::<Vec<_>>().join(", ")
 }
 
 impl Relay {
@@ -224,8 +262,8 @@ impl Relay {
         let load = r.load.unwrap_or(0);
         let created = r.noted.map_or(0, |(_, c)| c).max(unix_now());
         r.noted = Some((now, created));
-        let (public, port) = (r.public, r.server.local_addr().port());
-        let note = self.note(public, port, self.cfg.capacity, load);
+        let (public, port, capacity) = (r.public, r.server.local_addr().port(), r.capacity);
+        let note = self.note(public, port, capacity, load);
         Some(turn_note(&self.identity, &note, created, ANNOUNCE_TTL, aux()))
     }
 
@@ -259,27 +297,34 @@ impl Relay {
                 ))
             }
         };
-        match self.configured {
-            Some(IpAddr::V4(ip)) => return Some(usable(ip)),
+        // The configured address, once the mapping (if any) answered.
+        let configured = match self.configured {
+            Some(IpAddr::V4(ip)) => Some(ip),
             Some(IpAddr::V6(ip)) => {
                 line(log, format_args!("relay: public_address {ip} is IPv6: a relay needs IPv4"));
                 self.configured = None;
+                None
             }
-            None => {}
-        }
-        // The listening port's exact mapping, once the router answered.
+            None => None,
+        };
+        // The listening port's exact mapping, once the router answered for
+        // every port.
         match &self.maps {
             Maps::Finding(_) => return None,
-            Maps::Asked(maps) => match maps.iter().find(|m| m.port == self.cfg.port).map(|m| &m.state) {
-                Some(MappingState::Trying) => return None,
-                Some(MappingState::Mapped { external, usable: true, .. })
-                    if external.port() == self.cfg.port =>
+            Maps::Asked(m) if !m.answered() => return None,
+            _ if configured.is_some() => {}
+            Maps::Asked(m) => match m.mapper.state() {
+                MappingState::Mapped { external, usable: true, .. }
+                    if m.first == self.cfg.port && external.port() == self.cfg.port =>
                 {
                     return Some(usable(*external.ip()));
                 }
                 _ => {}
             },
             Maps::None => {}
+        }
+        if let Some(configured) = configured {
+            return Some(usable(configured));
         }
         // The game socket's server-reflexive address, once STUN settled:
         // only a host behind no NAT is reachable there.
@@ -297,10 +342,43 @@ impl Relay {
         }
     }
 
-    /// Starts the TURN server on `public`.
+    /// The relay ports to hand out: ephemeral ones for `(0, 0)`; when the
+    /// router maps, only those it mapped exactly; else (no mapping, or the
+    /// router never mapped: a manual forward) every configured one.
+    fn relay_ports(&self) -> RelayPorts {
+        if self.cfg.ports == (0, 0) {
+            return RelayPorts::Ephemeral;
+        }
+        match &self.maps {
+            Maps::Asked(m) if m.router_maps() => RelayPorts::Only(
+                m.states()
+                    .into_iter()
+                    .filter(|(p, s)| {
+                        self.cfg.port_range().contains(p)
+                            && matches!(s, MappingState::Mapped { external, usable: true, .. } if external.port() == *p)
+                    })
+                    .map(|(p, _)| p)
+                    .collect(),
+            ),
+            _ => RelayPorts::range(self.cfg.port_range()),
+        }
+    }
+
+    /// Starts the TURN server on `public`, on the relay ports it may use,
+    /// announcing at most that many allocations.
     fn start(&mut self, public: Ipv4Addr, log: &mut dyn std::io::Write) {
+        let ports = self.relay_ports();
+        let capacity = match &ports {
+            RelayPorts::Ephemeral => self.cfg.capacity,
+            RelayPorts::Only(set) => self.cfg.capacity.min(u16::try_from(set.len()).unwrap_or(u16::MAX)),
+        };
+        if capacity == 0 {
+            line(log, format_args!("relay: not started: the router mapped none of its relay ports exactly"));
+            self.phase = Phase::Off;
+            return;
+        }
         let limits = TurnLimits {
-            capacity: usize::from(self.cfg.capacity),
+            capacity: usize::from(capacity),
             per_ip_allocations: usize::from(self.cfg.allocations_per_ip),
             per_ip_bytes_per_s: self.cfg.user_kib_s.saturating_mul(1024),
             ..TurnLimits::default()
@@ -308,7 +386,7 @@ impl Relay {
         let started = TurnServer::start(TurnServerConfig {
             listen: SocketAddr::from((Ipv4Addr::UNSPECIFIED, self.cfg.port)),
             public: IpAddr::V4(public),
-            ports: self.cfg.port_range(),
+            ports: ports.clone(),
             user: self.user.clone(),
             pass: self.pass.clone(),
             limits,
@@ -321,12 +399,16 @@ impl Relay {
                     log,
                     format_args!(
                         "relay: TURN on port {port}, relay ports {}, announced as {public}:{port}",
-                        ports_text(&self.cfg)
+                        ports_text(&ports)
                     ),
                 );
+                if capacity < self.cfg.capacity {
+                    line(log, format_args!("relay: capacity {capacity}: one allocation per relay port"));
+                }
                 self.phase = Phase::Running(Box::new(Running {
                     server,
                     public,
+                    capacity,
                     noted: None,
                     load: None,
                     load_checked: None,
@@ -346,71 +428,74 @@ impl Relay {
         if let Maps::Finding(rx) = &self.maps {
             self.maps = match rx.try_recv() {
                 Err(TryRecvError::Empty) => return,
-                Ok(Some(target)) => Maps::Asked(self.ask(&target)),
+                Ok(Some(target)) => match self.ask(&target) {
+                    Some(m) => Maps::Asked(Box::new(m)),
+                    None => Maps::None,
+                },
                 Ok(None) | Err(TryRecvError::Disconnected) => {
                     line(log, format_args!("relay: ports not mapped: no local address found"));
                     Maps::None
                 }
             };
         }
-        let Maps::Asked(maps) = &mut self.maps else { return };
-        let mut mapped = 0;
-        let mut changed = false;
-        for m in maps.iter_mut() {
-            if let Some(state) = m.mapper.poll() {
-                changed = true;
-                match &state {
-                    MappingState::Failed(why) => {
-                        line(log, format_args!("relay: port {} not mapped: {why}", m.port))
-                    }
-                    MappingState::Mapped { external, usable: false, .. } => line(
-                        log,
-                        format_args!(
-                            "relay: port {} not mapped: the router's address {} is not public (double NAT or \
-                             carrier-grade NAT)",
-                            m.port,
-                            external.ip()
-                        ),
-                    ),
-                    MappingState::Mapped { method, external, .. } if m.port == self.cfg.port => {
-                        line(log, format_args!("relay: port {} mapped ({method}) at {external}", m.port))
-                    }
-                    _ => {}
-                }
-                m.state = state;
+        let Maps::Asked(m) = &mut self.maps else { return };
+        m.mapper.poll();
+        for (port, state) in m.states() {
+            if state == MappingState::Trying || m.said.contains(&port) {
+                continue;
             }
-            mapped += usize::from(matches!(m.state, MappingState::Mapped { usable: true, .. }));
+            m.said.insert(port);
+            match &state {
+                MappingState::Failed(why) => line(log, format_args!("relay: port {port} not mapped: {why}")),
+                MappingState::Mapped { external, usable: false, .. } => line(
+                    log,
+                    format_args!(
+                        "relay: port {port} not mapped: the router's address {} is not public (double NAT or \
+                         carrier-grade NAT)",
+                        external.ip()
+                    ),
+                ),
+                MappingState::Mapped { method, external, .. } if port == self.cfg.port => {
+                    line(log, format_args!("relay: port {port} mapped ({method}) at {external}"))
+                }
+                _ => {}
+            }
         }
-        let relay_ports = maps.iter().filter(|m| m.port != self.cfg.port).count();
-        if changed && relay_ports > 0 && maps.iter().all(|m| m.state != MappingState::Trying) {
-            let listening = usize::from(maps.iter().any(|m| {
-                m.port == self.cfg.port && matches!(m.state, MappingState::Mapped { usable: true, .. })
-            }));
-            line(log, format_args!("relay: {} of {relay_ports} relay ports mapped", mapped - listening));
+        if !m.settled && m.answered() {
+            m.settled = true;
+            let range = self.cfg.port_range();
+            let relay: Vec<(u16, MappingState)> = m
+                .states()
+                .into_iter()
+                .filter(|(p, _)| self.cfg.ports != (0, 0) && range.contains(p))
+                .collect();
+            let mapped =
+                relay.iter().filter(|(_, s)| matches!(s, MappingState::Mapped { usable: true, .. })).count();
+            if !relay.is_empty() {
+                line(log, format_args!("relay: {mapped} of {} relay ports mapped", relay.len()));
+            }
         }
     }
 
-    /// One exact UDP mapping per port: the listening port (unless
-    /// ephemeral) and each relay port.
-    fn ask(&self, target: &MapTarget) -> Vec<Mapping> {
+    /// One mapper (ruling PM-2) for every port, UDP, exact: the listening
+    /// port (unless ephemeral) first, then each relay port. `None`: no port
+    /// to map.
+    fn ask(&self, target: &MapTarget) -> Option<Mapping> {
         let listening = (self.cfg.port != 0).then_some(self.cfg.port);
         let relay = (self.cfg.ports != (0, 0)).then(|| self.cfg.port_range());
-        listening
-            .into_iter()
-            .chain(relay.into_iter().flatten())
-            .map(|port| {
-                let mut req = MapRequest::new(SocketAddrV4::new(target.base, port), false, target.gateway);
-                req.exact = true;
-                req.allow_local = self.allow_local;
-                if let Some(p) = target.pmp_port {
-                    req.pmp_port = p;
-                }
-                if let Some(ssdp) = target.ssdp {
-                    req.ssdp = ssdp;
-                }
-                Mapping { port, mapper: PortMapper::start(req), state: MappingState::Trying }
-            })
-            .collect()
+        let mut ports = listening.into_iter().chain(relay.into_iter().flatten());
+        let first = ports.next()?;
+        let mut req = MapRequest::new(SocketAddrV4::new(target.base, first), false, target.gateway);
+        req.exact = true;
+        req.extra = ports.collect();
+        req.allow_local = self.allow_local;
+        if let Some(p) = target.pmp_port {
+            req.pmp_port = p;
+        }
+        if let Some(ssdp) = target.ssdp {
+            req.ssdp = ssdp;
+        }
+        Some(Mapping { first, mapper: PortMapper::start(req), said: BTreeSet::new(), settled: false })
     }
 
     /// Stops: the closing note (capacity 0, `CLOSE_TTL`; `TurnList` takes
@@ -427,20 +512,17 @@ impl Relay {
         };
         drop(self.phase);
         let done = match self.maps {
-            Maps::Asked(maps) => maps
-                .into_iter()
-                .map(|m| {
-                    let (tx, rx) = mpsc::channel();
-                    let mapper = m.mapper;
-                    // If no thread starts, the mapper is dropped here (≤ 1 s).
-                    let _ = std::thread::Builder::new().name("rl-server unmap".into()).spawn(move || {
-                        drop(mapper);
-                        let _ = tx.send(());
-                    });
-                    rx
-                })
-                .collect(),
-            _ => Vec::new(),
+            Maps::Asked(m) => {
+                let (tx, rx) = mpsc::channel();
+                let mapper = m.mapper;
+                // If no thread starts, the mapper is dropped with the
+                // closure (≤ 1 s) and the wait says unconfirmed.
+                let _ = std::thread::Builder::new().name("rl-server unmap".into()).spawn(move || {
+                    let _ = tx.send(mapper.close());
+                });
+                Some(rx)
+            }
+            _ => None,
         };
         (closing, Unmapping { done })
     }
@@ -455,21 +537,21 @@ mod tests {
         String::from_utf8_lossy(log).into_owned()
     }
 
-    /// Pre-flight fix #11: every relay port is mapped with its external
-    /// port equal to the local one; a port the router would move is said
-    /// and left unmapped, never shifted. The listening port's mapping gives
-    /// the public address (the fake's 127.0.0.2, usable with
-    /// `allow_local`): the relay starts and announces it there. At its
-    /// shutdown the closing note goes out and the mappings are deleted.
+    /// Pre-flight fix #11 and the Task 8 review (I1, PM-2): one mapper asks
+    /// for every relay port; each is mapped with its external port equal to
+    /// the local one, and a port the router would move (held by another
+    /// client) is said, never shifted. The relay waits for every answer,
+    /// then hands out only the ports mapped exactly and announces at most
+    /// that many allocations. The TURN server listens on an ephemeral port
+    /// (port 0; the relay ports are only mapped here, never bound). At its
+    /// shutdown the closing note goes out and every mapping is deleted,
+    /// confirmed by the router.
     #[test]
-    fn relay_ports_are_mapped_exactly_or_not_at_all() {
+    fn only_exactly_mapped_relay_ports_are_handed_out() {
         let gw = FakeGateway::start(true, true, true, Ipv4Addr::new(127, 0, 0, 2), Misbehaviour::Honest);
-        // A free port for the relay (its relay ports are only mapped here).
-        let base =
-            std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).unwrap().local_addr().unwrap().port();
-        let base = base.min(u16::MAX - 3);
-        gw.hold(base + 2);
-        let cfg = RelayConfig { port: base, ports: (base + 1, base + 3), ..RelayConfig::default() };
+        let first = 49160;
+        gw.hold(first + 2);
+        let cfg = RelayConfig { port: 0, ports: (first, first + 3), ..RelayConfig::default() };
         let target = MapTarget {
             base: Ipv4Addr::LOCALHOST,
             gateway: Some(Ipv4Addr::LOCALHOST),
@@ -478,43 +560,49 @@ mod tests {
         };
         let mut log = Vec::new();
         let id = Identity::from_secret([7; 32]).unwrap();
+        let configured = Some(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)));
         let mut relay =
-            Relay::new(cfg, id, Region::Europe, true, None, Some(Some(target)), &mut log).unwrap();
+            Relay::new(cfg, id, Region::Europe, true, configured, Some(Some(target)), &mut log).unwrap();
         let begun = Instant::now();
         let mut no_reach = || None;
         let mut notes = Vec::new();
-        while !log_text(&log).contains("relay ports mapped") || notes.is_empty() {
+        while notes.is_empty() {
             assert!(begun.elapsed() < Duration::from_secs(8), "{}", log_text(&log));
             notes.extend(relay.poll(Instant::now(), &mut no_reach, &mut log));
             std::thread::sleep(Duration::from_millis(5));
         }
         let text = log_text(&log);
-        assert!(text.contains(&format!("relay: port {base} mapped (")), "{text}");
-        assert!(text.contains(&format!("relay: port {} not mapped: ", base + 2)), "{text}");
-        assert!(text.contains("relay: 2 of 3 relay ports mapped"), "{text}");
-        let started = format!("relay ports {}-{}, announced as 127.0.0.2:{base}", base + 1, base + 3);
-        assert!(text.contains(&started), "{text}");
-        let note = rl_discovery::parse_turn_note(&notes[0]).unwrap();
-        assert_eq!(
-            (note.addr, note.port, note.capacity, note.load),
-            (Ipv4Addr::new(127, 0, 0, 2), base, 32, 0)
+        assert!(text.contains(&format!("relay: port {} not mapped: ", first + 2)), "{text}");
+        assert!(text.contains("relay: 3 of 4 relay ports mapped"), "{text}");
+        let started = format!(
+            "relay ports {first}-{}, {}, announced as 127.0.0.2:{}",
+            first + 1,
+            first + 3,
+            relay.local_addr().unwrap().port()
         );
-        let mut external: Vec<u16> = gw
-            .mappings()
-            .iter()
-            .map(|&(_, udp, port, local)| {
-                assert!(udp, "UDP only");
-                assert_eq!(port, local.port(), "the external port is the local one");
-                port
-            })
-            .collect();
-        external.sort_unstable();
-        external.dedup();
-        assert_eq!(external, vec![base, base + 1, base + 3]);
+        assert!(text.contains(&started), "{text}");
+        assert!(text.contains("relay: capacity 3: one allocation per relay port"), "{text}");
+        let note = rl_discovery::parse_turn_note(&notes[0]).unwrap();
+        assert_eq!((note.addr, note.capacity, note.load), (Ipv4Addr::new(127, 0, 0, 2), 3, 0));
+        let held: Vec<(bool, u16, u16)> = gw.mappings().iter().map(|m| (m.1, m.2, m.3.port())).collect();
+        let exact: Vec<(bool, u16, u16)> =
+            [first, first + 1, first + 3].iter().map(|&p| (true, p, p)).collect();
+        assert_eq!(held, exact, "UDP, each on its own port");
         let (closing, unmapping) = relay.shutdown(&mut log);
         let closing = rl_discovery::parse_turn_note(&closing.expect("a closing note")).unwrap();
-        assert_eq!((closing.capacity, closing.port), (0, base));
-        assert!(unmapping.wait(Instant::now() + Duration::from_secs(2)));
+        assert_eq!(closing.capacity, 0);
+        assert!(unmapping.wait(Instant::now() + Duration::from_secs(2)), "confirmed");
         assert!(gw.mappings().is_empty(), "{:?}", gw.mappings());
+    }
+
+    #[test]
+    fn port_runs_are_said_compactly() {
+        let only = |p: &[u16]| RelayPorts::Only(p.iter().copied().collect());
+        assert_eq!(
+            ports_text(&only(&[49160, 49161, 49162, 49164, 49166, 49167])),
+            "49160-49162, 49164, 49166-49167"
+        );
+        assert_eq!(ports_text(&RelayPorts::Ephemeral), "ephemeral");
+        assert_eq!(ports_text(&RelayPorts::range(49160..=49191)), "49160-49191");
     }
 }

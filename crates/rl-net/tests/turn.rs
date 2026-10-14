@@ -11,7 +11,7 @@ use proptest::test_runner::Config;
 use rl_net::candidates::TurnSpec;
 use rl_net::core::{Core, CoreConfig};
 use rl_net::relayed::RelayState;
-use rl_net::turn::{MAX_SESSION, TurnCore, TurnLimits, TurnOut, TurnServer, TurnServerConfig};
+use rl_net::turn::{MAX_SESSION, RelayPorts, TurnCore, TurnLimits, TurnOut, TurnServer, TurnServerConfig};
 use turn_client_proto::api::{Transmit, TurnClientApi, TurnConfig, TurnEvent, TurnRecvRet};
 use turn_client_proto::stun::Instant as TurnInstant;
 use turn_client_proto::types::prelude::DelayedTransmitBuild;
@@ -30,7 +30,7 @@ fn server(limits: TurnLimits) -> TurnServer {
     TurnServer::start(TurnServerConfig {
         listen: (local(), 0).into(),
         public: local(),
-        ports: 0..=0,
+        ports: RelayPorts::Ephemeral,
         user: USER.into(),
         pass: PASS.into(),
         limits,
@@ -251,7 +251,7 @@ fn a_relay_listens_on_ipv4_only() {
     let cfg = TurnServerConfig {
         listen: "[::1]:0".parse().unwrap(),
         public: local(),
-        ports: 0..=0,
+        ports: RelayPorts::Ephemeral,
         user: USER.into(),
         pass: PASS.into(),
         limits: TurnLimits::generous(),
