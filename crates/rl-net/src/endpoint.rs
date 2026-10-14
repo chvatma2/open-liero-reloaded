@@ -728,6 +728,13 @@ impl Endpoint {
         self.core.path(peer)
     }
 
+    /// The TURN server an open peer's link goes through: the server whose
+    /// allocation is its selected pair's local (relayed) address (ruling
+    /// FR12b-4: a relayed joiner's line names the relay, not the host).
+    pub fn relay_server(&self, peer: PeerId) -> Option<SocketAddr> {
+        self.core.relay_server(peer)
+    }
+
     /// Takes what the DNS thread found (the base, STUN and TURN servers)
     /// to the core, and the port mapper's news.
     fn poll_gathering(&mut self, now: Instant) {

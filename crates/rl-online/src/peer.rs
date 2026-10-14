@@ -82,6 +82,16 @@ pub const UNPROVEN_HOST: &str = "this game could not prove who it is";
 /// Why a client left a host that failed its proof: [`WRONG_HOST`] when a
 /// key was `expected` (an invite's or a listed game's), else
 /// [`UNPROVEN_HOST`].
+/// A client's far end as its lines name it: the TURN relay a relayed link
+/// goes through (the pair's remote end is then the host, ruling FR12b-4),
+/// else the host's end `remote`.
+fn far_end(ep: &Endpoint, path: Path, remote: SocketAddr) -> SocketAddr {
+    match path {
+        Path::Relayed => ep.relay_server(HOST).unwrap_or(remote),
+        _ => remote,
+    }
+}
+
 fn wrong_host_text(expected: bool) -> &'static str {
     if expected { WRONG_HOST } else { UNPROVEN_HOST }
 }
@@ -380,15 +390,16 @@ impl OnlinePeer {
         }
     }
 
-    /// A client's path to its host and the host's end (or the TURN
-    /// relay's), once its link opened; the path follows ICE.
+    /// A client's path to its host and the host's end (relayed: the TURN
+    /// relay's address, ruling FR12b-4), once its link opened; the path
+    /// follows ICE.
     pub fn connection(&self) -> Option<(Path, SocketAddr)> {
         let Side::Client(c) = &self.side else { return None };
         let (path, remote) = c.connection?;
         let ep = self.endpoint.endpoint();
         let now = ep.and_then(|ep| ep.path(HOST)).unwrap_or(path);
         let remote = ep.and_then(|ep| ep.peers().next()).map_or(remote, |(_, addr)| addr);
-        Some((now, remote))
+        Some((now, ep.map_or(remote, |ep| far_end(ep, now, remote))))
     }
 
     /// Leaves (as [`OnlinePeer::leave`]), stops listening and shuts the
@@ -641,7 +652,9 @@ impl OnlinePeer {
             },
             Side::Client(c) => match e {
                 NetEvent::Connected { addr, path, .. } => {
-                    match self.endpoint.endpoint().and_then(|ep| ep.dtls_fingerprints(HOST)) {
+                    let ep = self.endpoint.endpoint();
+                    let addr = ep.map_or(addr, |ep| far_end(ep, path, addr));
+                    match ep.and_then(|ep| ep.dtls_fingerprints(HOST)) {
                         Some(fps) => {
                             c.waiting_since = Some(now);
                             c.lobby.connected(fps);

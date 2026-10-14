@@ -69,8 +69,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   Reachability` when its lines, `settled()` or `direct()` change: the
   struct is compared first, so a poll formats nothing when it is the
   same); `connection()` (a client's `(Path, remote)` once its link opened,
-  the path following ICE; `OnlineEvent::Connected { path, remote }`
-  once); `shutdown(self) -> Shutdown` (ruling NT-2: `leave`, the listener
+  the path following ICE; `remote` the host's end, or for `Relayed` the
+  TURN relay's address, `Endpoint::relay_server`: ruling FR12b-4;
+  `OnlineEvent::Connected { path, remote }` once, alike); `shutdown(self) -> Shutdown` (ruling NT-2: `leave`, the listener
   and the joiner's pool stopped on their threads, `Endpoint::shutdown`,
   the rest of the peer dropped on a thread `rl-online drop` (its content
   worker waits up to 2 s for a job); never blocks; `Shutdown::wait(until)`
@@ -426,8 +427,9 @@ content over the prompt waits for `approve_downloads`.
 ruling NT-1): a join through Nostr without an address (`Relays` before
 `Asking`, path `Direct`, the host's member's path; another without
 `expected_host`: it expects the host's key); a join through a
-TURN relay found on Nostr (`relay_only`, path `Relayed`, a 6 s match to
-equal confirmed inputs and checksums); a lost offer sent again
+TURN relay found on Nostr (`relay_only`, the relay on 127.0.0.3, path
+`Relayed` naming the relay's address, not the host's, FR12b-4; a 6 s
+match to equal confirmed inputs and checksums); a lost offer sent again
 (`DropEphemeral(2)`, connected within 8 s); a relay that never forwards
 survived; a host's answer with no path (`relay_only`, no TURN server,
 rl-net's `setup_timeout` hook at 3 s) is `no_path(port, None)`; a

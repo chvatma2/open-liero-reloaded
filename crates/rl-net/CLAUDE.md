@@ -630,8 +630,10 @@ for tests.
     both re-exported here with `MAX_SIGNALLED_PENDING`); no gate (a
     signalled offer has no address); a non-host endpoint answers
     `Refused { Malformed }`. `mapped()`, `reach()` (`Reach`: base,
-    srflx, `nat`, `mapping` — `Off` without a mapper —, `relays`) and
-    `path(peer)` serve every endpoint.
+    srflx, `nat`, `mapping` — `Off` without a mapper —, `relays`),
+    `path(peer)` and `relay_server(peer)` (the TURN server whose
+    allocation is the selected pair's local address: a relayed joiner's
+    line names it, ruling FR12b-4) serve every endpoint.
 - **Limits** (`limits.rs`, spec §5.4), per peer, on what it sends us: a
   token bucket holding one second, `max_datagrams_per_s` (400) messages on
   the unreliable channel, `max_reliable_bytes_per_s` (256 KiB) reliable

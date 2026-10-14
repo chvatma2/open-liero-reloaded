@@ -78,7 +78,8 @@ pub enum OnlineEvent {
     /// direct address): the lobby's lines, the server's log, its notes.
     Reachability(Reachability),
     /// A client's link to its host opened, by `path` (N49); `remote` is
-    /// the host's end (or the TURN relay's). Once.
+    /// the host's end, or for `Relayed` the TURN relay's address (the
+    /// server its allocation is on, ruling FR12b-4). Once.
     Connected { path: Path, remote: SocketAddr },
 }
 

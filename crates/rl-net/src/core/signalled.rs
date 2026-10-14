@@ -200,6 +200,17 @@ impl Core {
         self.open.get(&peer).filter(|p| p.reported).and_then(|p| p.path)
     }
 
+    /// The TURN server an open (reported) peer's link goes through: the one
+    /// whose allocation is its selected pair's local address (FR12b-4).
+    pub fn relay_server(&self, peer: PeerId) -> Option<SocketAddr> {
+        let p = self.open.get(&peer).filter(|p| p.reported)?;
+        let (local, _) = p.pair?;
+        self.relays.states().into_iter().find_map(|(server, state)| match state {
+            RelayState::Allocated(relayed) if relayed == local => Some(server),
+            _ => None,
+        })
+    }
+
     /// The link's selected candidate pair (none under the `suppress_stats`
     /// test hook).
     pub(super) fn selected(&self, peer: &Peer) -> Option<(SocketAddr, SocketAddr)> {

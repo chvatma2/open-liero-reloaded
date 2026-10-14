@@ -133,7 +133,7 @@ pub fn no_path(port: u16, relayed: Option<SocketAddr>) -> String {
 }
 
 /// How a client's link reaches its host, in words (`remote`: the host's
-/// end, or the relay's).
+/// end, or for `Relayed` the TURN relay's address, FR12b-4).
 pub fn path_text(path: Path, remote: SocketAddr) -> String {
     match path {
         Path::Direct => format!("connected directly to {remote}"),

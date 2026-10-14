@@ -342,13 +342,17 @@ fn a_host_listens_on_edited_relays() {
     assert_eq!(net.peers[h].p.reachability().unwrap().listening, Listening::Off);
 }
 
+/// The TURN relay's own loopback address: not the host's (127.0.0.1), so
+/// the relayed line can name the wrong one and fail (ruling FR12b-4).
+const TURN_AT: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 3);
+
 #[test]
 fn a_client_joins_through_a_turn_relay_found_on_nostr() {
     let Some(content) = content() else { return };
     let relay = TestRelay::start();
     let turn = TurnServer::start(TurnServerConfig {
-        listen: (LOCALHOST, 0).into(),
-        public: LOCALHOST.into(),
+        listen: (TURN_AT, 0).into(),
+        public: TURN_AT.into(),
         ports: RelayPorts::Ephemeral,
         user: TURN_USER.into(),
         pass: TURN_PASS.into(),
@@ -389,7 +393,11 @@ fn a_client_joins_through_a_turn_relay_found_on_nostr() {
     joined(&mut net, h, c, Duration::from_secs(15));
     let (path, remote) = net.peers[c].connected().unwrap();
     assert_eq!(path, Path::Relayed);
-    assert_eq!(remote.ip(), LOCALHOST, "the relay's address");
+    assert_eq!(remote, turn.local_addr(), "the TURN relay's address, not the host's");
+    assert!(
+        net.peers[c].has(|e| *e == OnlineEvent::Connected { path, remote: turn.local_addr() }),
+        "the event names the relay too"
+    );
     assert!(turn.stats().allocations >= 1, "{:?}", turn.stats());
 
     // A 6 s match over the relay, to equal confirmed checksums.
