@@ -593,8 +593,68 @@ fn allocated_core() -> (TurnCore, Vec<Vec<u8>>) {
     (w.core, w.sent)
 }
 
+/// Final review A, declined item 3, judged a finding: a TURN relay is
+/// anyone's (announced on Nostr), so its answers are untrusted input to
+/// a joiner's `Core` and turn-client-proto. A `Core` allocating on a relay
+/// whose every answer is damaged (a byte changed, cut, junk appended) or
+/// replaced by junk never panics.
+/// How many answers reached the client.
+fn hostile_relay(edits: &[(u8, prop::sample::Index, u8, Vec<u8>)]) -> usize {
+    let (base, server) = (a("11.0.0.20:50000"), a("11.0.0.9:3478"));
+    let t0 = Instant::now();
+    let mut turn = TurnCore::new(server, server.ip(), USER, PASS, TurnLimits::generous(), t0);
+    let mut core = Core::new(CoreConfig::client(), t0);
+    core.set_base(base, vec![base]);
+    core.allocate(&[TurnSpec { addr: server, user: USER.into(), pass: PASS.into() }], t0);
+    let mut edits = edits.iter().cycle();
+    let mut answers = 0;
+    for ms in (0..3000u64).step_by(5) {
+        let now = t0 + Duration::from_millis(ms);
+        let mut out = Vec::new();
+        core.poll(now, &mut out, &mut Vec::new());
+        for d in out {
+            turn.receive(base, &d.bytes, now);
+        }
+        for req in turn.take_allocation_requests() {
+            turn.allocated(req, Some(49160), now);
+        }
+        let mut outs = Vec::new();
+        turn.poll(now, &mut outs);
+        for o in outs {
+            let mut bytes = o.bytes;
+            if let Some((kind, at, byte, junk)) = edits.next() {
+                match kind % 4 {
+                    0 => {
+                        let i = at.index(bytes.len().max(1)).min(bytes.len().saturating_sub(1));
+                        if let Some(b) = bytes.get_mut(i) {
+                            *b = *byte;
+                        }
+                    }
+                    1 => bytes.truncate(at.index(bytes.len() + 1)),
+                    2 => bytes.extend_from_slice(junk),
+                    _ => bytes = junk.clone(),
+                }
+            }
+            core.receive(server, &bytes, now);
+            answers += 1;
+        }
+    }
+    let _ = core.relays();
+    answers
+}
+
 proptest! {
     #![proptest_config(Config { cases: 256, failure_persistence: None, ..Config::default() })]
+
+    #[test]
+    fn a_hostile_relays_answers_never_panic_the_client(
+        edits in proptest::collection::vec(
+            (any::<u8>(), any::<prop::sample::Index>(), any::<u8>(), proptest::collection::vec(any::<u8>(), 0..200)),
+            1..8,
+        ),
+    ) {
+        prop_assert!(hostile_relay(&edits) >= 1, "the relay answered");
+    }
 
     /// Garbage, and the client's own datagrams (requests, a Send
     /// indication, ChannelData) damaged, to the listening port and the

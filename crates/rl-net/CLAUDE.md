@@ -748,7 +748,9 @@ sources and oversized requests costing nothing, a `Core` refusing a
 relay that names our base or a private address, a relay reaching a host
 at its own public IP but never its own ports there or at its other
 address (TR-5, without `allow_local`), `TurnCore` fuzzed with
-requests, Send and ChannelData; only an Allocate getting an
+requests, Send and ChannelData; a `Core` allocating on a hostile relay
+(every answer damaged or replaced, fuzzed: announced relays are anyone's)
+never panicking; only an Allocate getting an
 unauthenticated answer, the amplification pinned, the relay-wide cap on
 unauthenticated answers, forged requests not starving a client's signed
 ones, a live client keeping its allocation, permission and channel for
