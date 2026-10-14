@@ -232,7 +232,21 @@ fn stun_on_the_game_socket_learns_the_reflexive_address() {
     run_until(&mut [&mut host], Duration::from_secs(5), "a host's STUN answer", |s| {
         s[0].ep.reach().srflx.is_some()
     });
-    assert_eq!(host.ep.reach().srflx, Some(SocketAddr::from((LOCALHOST, host.ep.local_port()))));
+    let own = SocketAddr::from((LOCALHOST, host.ep.local_port()));
+    assert_eq!(host.ep.reach().srflx, Some(own));
+    // Ruling N47-a: no NAT (the reflexive address is our own): the address
+    // players join directly, on our port, when usable (`allow_local` here).
+    assert_eq!(host.ep.reach().open, Some(own));
+    assert_eq!(reach.open, Some(SocketAddr::from((LOCALHOST, side.ep.local_port()))));
+    let mut strict = Side::new(self::host(IceConfig {
+        stun: vec![stun.local_addr().to_string()],
+        allow_local: false,
+        ..ice()
+    }));
+    run_until(&mut [&mut strict], Duration::from_secs(5), "a strict host's STUN answer", |s| {
+        s[0].ep.reach().srflx.is_some()
+    });
+    assert_eq!(strict.ep.reach().open, None, "127.0.0.1 is not public");
 }
 
 /// The fake's PCP/NAT-PMP address, for the `gateway` hook.

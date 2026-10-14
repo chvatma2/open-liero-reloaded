@@ -634,7 +634,10 @@ for tests.
     both re-exported here with `MAX_SIGNALLED_PENDING`); no gate (a
     signalled offer has no address); a non-host endpoint answers
     `Refused { Malformed }`. `mapped()`, `reach()` (`Reach`: base,
-    srflx, `nat`, `mapping` — `Off` without a mapper —, `relays`),
+    srflx, `nat`, `mapping` — `Off` without a mapper —, `relays`, `open`:
+    ruling N47-a, the server-reflexive IP when it is one of our host
+    addresses — no NAT, a VPS —, on our port, when global or
+    `allow_local`),
     `path(peer)` and `relay_server(peer)` (the TURN server whose
     allocation is the selected pair's local address: a relayed joiner's
     line names it, ruling FR12b-4) serve every endpoint.
@@ -757,7 +760,8 @@ signalled client and a host connecting `Direct` (both `Connected`
 addresses the pair's remote ends, a message each way), through a local
 `TurnServer` with `relay_only` (`Relayed` at both ends, 1000 reliable
 messages in order, relayed bytes counted), STUN to the `TurnServer`
-learning `srflx` = the base (`Open`), a mapping host `Trying` from its
+learning `srflx` = the base (`Open`; `reach().open` the base with
+`allow_local`, none without: N47-a), a mapping host `Trying` from its
 first `reach()` (no base override, its router a silent 127.0.0.1 port;
 `Off` without `port_mapping` and for a client), a host mapping its port on a
 `FakeGateway` (UPnP; `mapped()` the fake's external 127.0.0.2: test

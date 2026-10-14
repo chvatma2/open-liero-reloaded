@@ -62,8 +62,9 @@ Public game, admins otherwise). Send the code by any chat. The joiner pastes it 
 and a few relay hints, and the game only joins a host with that key ("this
 is not the game you were invited to" otherwise). A code carries an
 address only when players can reach the host directly: its router opened
-the port, or a public address is set (Options → Online, or the server's
-`public_address`). Without one, the code joins through its relay hints
+the port, a public address is set (Options → Online, or the server's
+`public_address`), or the machine has a public address of its own with
+no NAT (a VPS or cloud VM: STUN sees its own address). Without one, the code joins through its relay hints
 and the joiner's own relays (see "Through routers"); a game with neither
 an address nor relays cannot be joined ("this game has no address, and
 there are no relays to join it through").
@@ -204,6 +205,7 @@ Under the invite code, a Public or Invite game shows a listing line (see
 | "Your router opened port 23400 (…), but its own address 100.64.1.2 is not public (double NAT or carrier-grade NAT): players connect by hole punching or a TURN relay" | a second router or the ISP sits in between; the opened port does not help |
 | "Your router did not open port 23400 (…): players connect by hole punching or a TURN relay" | UPnP, NAT-PMP and PCP are off on the router, or it refused; the reason is in brackets |
 | "Port mapping is off: players connect by hole punching or a TURN relay" | Options' "Open the game's port on my router" is off (or a server's `port_mapping: false`) |
+| "No router: players reach you directly at 1.2.3.4:23400" | the machine has a public address with no NAT (a VPS or cloud VM): STUN sees its own address; the invite and the listing carry it |
 | "Players join directly at 1.2.3.4:23400 (your public address setting)" | the Public address in Options (a server's `public_address`) |
 | "Your router changes ports for every destination (symmetric NAT): hole punching will fail; players need the open port or a TURN relay" | see "When hole punching works" |
 | "Taking joins through 5 of 8 relays" | joiners can ask the game through that many relays |
@@ -478,7 +480,13 @@ and exits (see "Through routers").
   LAN, the default; `Lan`: the LAN only; `Invite`: not announced; the old
   `DirectOnly` reads as `Invite`), `password`, `port` (TCP and UDP);
 - `relays`, `stun`, `region`, `public_address` (see "Finding games"); a
-  Public or Invite server also takes joins through its `relays`;
+  Public or Invite server also takes joins through its `relays`. A
+  server on a VPS or cloud VM (a public address on its interface, no
+  NAT) needs no `public_address`: STUN shows it has no NAT, and its
+  invite and listing carry its own address (its log says "reach: No
+  router: players reach you directly at …"). Keep `stun` set for it
+  (an empty `stun` asks no one, and the server is then joined through
+  the relays); its firewall must let TCP and UDP on `port` in;
 - `port_mapping` (default `true`: a Public or Invite server asks the
   router to open its port, and with `--relay` the relay's ports; deleted
   at exit), `allow_local` (default `false`: accept private and local
@@ -533,7 +541,9 @@ through its firewall: a joiner sends its game traffic to the address and
 port it dialled. Then set the Public address in Options → Online (a
 server's `public_address`): a forwarded port is not found by itself, and
 without it players join through the relays. This also holds for a server
-in Docker or on a cloud VM: publish or open both protocols on one port.
+in Docker: publish both protocols on one port. A cloud VM with a public
+address of its own needs only its firewall opened (TCP and UDP on one
+port): STUN finds its address.
 
 ## Testing a bad network
 

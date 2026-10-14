@@ -557,7 +557,14 @@ mod tests {
         Reachability {
             port: 23400,
             configured: configured.map(|a| a.parse().unwrap()),
-            reach: Reach { base: None, srflx: None, nat: NatBehaviour::Unknown, mapping, relays: Vec::new() },
+            reach: Reach {
+                base: None,
+                srflx: None,
+                nat: NatBehaviour::Unknown,
+                mapping,
+                relays: Vec::new(),
+                open: None,
+            },
             listening: Listening::Off,
             stun_settled: true,
         }

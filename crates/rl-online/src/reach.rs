@@ -92,11 +92,12 @@ pub struct Reachability {
 }
 
 impl Reachability {
-    /// N47: the usable mapping's external address (UDP and TCP, `tcp: true`), else the configured address on `port`.
+    /// N47: the usable mapping's external address (UDP and TCP, `tcp: true`), else the configured address on `port`,
+    /// else (ruling N47-a) the machine's own address when STUN shows no NAT (`Reach::open`: a VPS).
     pub fn direct(&self) -> Option<SocketAddr> {
         match &self.reach.mapping {
             MappingState::Mapped { external, tcp: true, usable: true, .. } => Some(SocketAddr::V4(*external)),
-            _ => self.configured.map(|ip| SocketAddr::new(ip, self.port)),
+            _ => self.configured.map(|ip| SocketAddr::new(ip, self.port)).or(self.reach.open),
         }
     }
 
@@ -121,6 +122,14 @@ impl Reachability {
                 external.ip()
             )),
             MappingState::Trying => lines.push(format!("Asking your router to open port {p}…")),
+            // N47-a: no NAT (a VPS), no configured address: no router to
+            // blame, and players reach this machine directly.
+            MappingState::Failed(_) | MappingState::Off
+                if self.configured.is_none()
+                    && let Some(open) = self.reach.open =>
+            {
+                lines.push(format!("No router: players reach you directly at {open}"))
+            }
             MappingState::Failed(why) => {
                 lines.push(format!("Your router did not open port {p} ({why}): {fallback}"))
             }
@@ -577,7 +586,42 @@ mod tests {
     use super::*;
 
     fn reach(mapping: MappingState, nat: NatBehaviour) -> Reach {
-        Reach { base: None, srflx: None, nat, mapping, relays: Vec::new() }
+        Reach { base: None, srflx: None, nat, mapping, relays: Vec::new(), open: None }
+    }
+
+    /// Ruling N47-a (final review C-I1): a machine with no NAT (a VPS) is
+    /// joined directly at its own address and port, and says so, not that
+    /// its router failed; the router's mapping and the configured address
+    /// go first.
+    #[test]
+    fn a_host_without_nat_is_joined_directly() {
+        let public = SocketAddr::from((Ipv4Addr::new(81, 2, 69, 142), 23400));
+        let open = |mapping: MappingState, configured: Option<IpAddr>| {
+            let mut r = reachability(mapping, configured, Listening::Off);
+            r.reach.open = Some(public);
+            r.reach.nat = NatBehaviour::Open;
+            r
+        };
+        let failed = open(MappingState::Failed("no router answered".into()), None);
+        assert_eq!(failed.direct(), Some(public));
+        assert_eq!(failed.lines(), ["No router: players reach you directly at 81.2.69.142:23400"]);
+        assert_eq!(open(MappingState::Off, None).direct(), Some(public));
+        assert_eq!(
+            open(MappingState::Off, None).lines(),
+            ["No router: players reach you directly at 81.2.69.142:23400"]
+        );
+        let ip = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 4));
+        assert_eq!(open(MappingState::Off, Some(ip)).direct(), Some(SocketAddr::new(ip, 23400)));
+        assert_eq!(
+            open(MappingState::Off, Some(ip)).lines(),
+            ["Players join directly at 198.51.100.4:23400 (your public address setting)"]
+        );
+        assert_eq!(
+            open(MappingState::Trying, None).lines(),
+            ["Asking your router to open port 23400…"],
+            "not before the router answered"
+        );
+        assert_eq!(open(MappingState::Trying, None).direct(), Some(public));
     }
 
     fn reachability(mapping: MappingState, configured: Option<IpAddr>, listening: Listening) -> Reachability {

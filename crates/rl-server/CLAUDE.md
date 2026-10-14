@@ -187,7 +187,9 @@ beside the executable, else in the working directory).
   they began, a warning if the router did not confirm), `local_port`,
   `key`, `invite()` (the key, the relays — none for a Lan server — and
   `Reachability::direct()`, N47: the usable mapping's external address
-  and port, else `public_address` on the local port; never STUN's),
+  and port, else `public_address` on the local port, else (ruling N47-a:
+  a VPS) STUN's address when it is the machine's own, on the local port;
+  never one STUN learned through a NAT),
   `relay_addr()` and `relay_stats()` (the TURN server's, once it runs).
   Each `OnlineEvent::Reachability` is kept and every new line of its
   `lines()` logged once, `"reach: …"`; each `OnlineEvent::RelayJoin` is
@@ -296,7 +298,10 @@ closing note at shutdown; the printed invite joins (`expected_host`;
 nothing and advertises no STUN answer; an old config (`DirectOnly`, none
 of plan 12a's or 12b's fields) loads. Plan 12b (`TestRelay`, a pinned
 127.0.0.1 base, `allow_local`): an invite server without an address
-joined through Nostr (`via direct`, the `reach:` lines); a public server
+joined through Nostr (`via direct`, the `reach:` lines); a server with
+no NAT (STUN from a `TurnServer` on 127.0.0.1: its own address) invited
+at 127.0.0.1 and its port, "reach: No router: players reach you
+directly at …" (N47-a); a public server
 mapped by a UPnP-only `FakeGateway` at 203.0.113.7 listed at that address
 and the mapped port (TCP and UDP), its `reach: Port … (UPnP)` line, the
 mapping gone after a clean stop; NT-2 (review I2): a `LateUpnp` router

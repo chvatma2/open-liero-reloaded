@@ -63,10 +63,14 @@ All notable changes to rust-liero are recorded here. The format follows
   - A Public or Invite server now listens on its Nostr relays for joins
     (a second connection to each relay); a Lan server does not. An empty
     `relays` keeps it off Nostr.
-  - The address in a note or invite is now the router mapping's or
-    `public_address`, never the one STUN learned: a server behind a
-    manual port forward should set `public_address`, or players join
-    through the relays.
+  - The address in a note or invite is now the router mapping's,
+    `public_address`, or, on a machine with no NAT (a VPS or cloud VM
+    with a public address on its interface: STUN sees its own address),
+    that address on the game's port ("reach: No router: players reach you
+    directly at …"). It is never the address STUN learned through a NAT:
+    a server behind a manual port forward should set `public_address`, or
+    players join through the relays. A VPS keeps its address only with
+    `stun` set (the default list).
   - A relay limits each player's IP to 32 KiB/s each way, 4 allocations
     and 20 requests a second (`user_kib_s`, `allocations_per_ip`), relays
     only to public addresses (not to the operator's LAN, unless

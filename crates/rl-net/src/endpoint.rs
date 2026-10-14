@@ -138,6 +138,11 @@ pub struct Reach {
     pub mapping: MappingState,
     /// Each TURN server asked and where its allocation stands.
     pub relays: Vec<(SocketAddr, RelayState)>,
+    /// Ruling N47-a: STUN shows no NAT (the server-reflexive IP is one of
+    /// our host addresses: a VPS, a public address on the interface): that
+    /// IP on our port, when usable (global, or `allow_local`). Players join
+    /// it directly.
+    pub open: Option<SocketAddr>,
 }
 
 /// The host's admission check for a valid offer from the signalling
@@ -695,12 +700,19 @@ impl Endpoint {
     /// How this endpoint can be reached now.
     pub fn reach(&self) -> Reach {
         let local = self.core.local();
+        let allow_local = self.cfg.ice.allow_local;
+        let open = local
+            .srflx
+            .filter(|s| s.is_ipv4() && local.host.iter().any(|h| h.ip() == s.ip()))
+            .filter(|s| allow_local || rl_proto::is_global(s.ip()))
+            .map(|s| SocketAddr::new(s.ip(), self.port));
         Reach {
             base: local.base,
             srflx: local.srflx,
             nat: self.core.nat(),
             mapping: self.gathering.mapping.clone(),
             relays: self.core.relays(),
+            open,
         }
     }
 

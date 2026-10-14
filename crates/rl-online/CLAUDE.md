@@ -377,10 +377,14 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   `NoRelay`: every relay failed or dropped at least once and none is
   connected, so it does not flap while they retry), `Reachability {
   port, configured, reach, listening, stun_settled }` (`direct()`: a
-  usable mapping with TCP, else the configured address; `settled()`: the
+  usable mapping with TCP, else the configured address, else (ruling
+  N47-a) `Reach::open`, the machine's own address when STUN shows no NAT;
+  `settled()`: the
   mapping is not `Trying` and `stun_settled`, `Endpoint::gathered`;
-  `lines()`: the router's line, the configured address's, a symmetric
-  NAT's, the listener's, in that order). `HostReach` (crate-private):
+  `lines()`: the router's line (with no NAT and no configured address,
+  a failed or off mapping says "No router: players reach you directly at
+  <open>" instead, N47-a), the configured address's, a symmetric NAT's,
+  the listener's, in that order). `HostReach` (crate-private):
   `start(listen, me)`, `listen_on(pool)` (another listener on other
   relays), `answer(ep, now)`, `now(ep)`, `changed(ep)` (a
   report when the lines, `settled` or `direct` changed), `stop`.
@@ -469,7 +473,8 @@ all `Answer`); a host's reachability on a
 a host's shutdown returning at once and its `wait` seeing the mapping
 deleted (NT-2); a host listening on edited relays (`listen_on`: a join
 through the new relay alone, then none: `Listening::Off`). `join.rs`' and `reach.rs`' unit tests: every text
-exactly, the relays' order, refusals told from a slow relay or a
+exactly, a host without NAT joined directly at its own address with its
+"No router" line (N47-a), the relays' order, refusals told from a slow relay or a
 transient one, the answer's port, `direct`, `settled`, the listener's
 status, stale offers skipped. `peer.rs`: a join through Nostr expects
 its host's key.

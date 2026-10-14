@@ -1277,6 +1277,42 @@ fn a_mapped_server_follows_its_routers_new_address() {
     assert!(log.contains(&said), "{log}");
 }
 
+/// Ruling N47-a (final review C-I1): a server with no NAT (a VPS: STUN
+/// sees its own address, here a `TurnServer` on 127.0.0.1 answering STUN,
+/// with `allow_local`) is joined directly: its invite carries its address
+/// and port, and its log says there is no router, not that the router
+/// failed.
+#[test]
+fn a_server_without_nat_is_joined_directly() {
+    let Some(dir) = content_dir() else { return };
+    let relay = TestRelay::start();
+    let stun = rl_net::turn::TurnServer::start(rl_net::turn::TurnServerConfig {
+        listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        public: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        ports: rl_net::turn::RelayPorts::Ephemeral,
+        user: "u".into(),
+        pass: "p".into(),
+        limits: rl_net::turn::TurnLimits::generous(),
+        allow_local: true,
+    })
+    .unwrap();
+    let mut cfg = nostr_config(&relay, &[]);
+    cfg.stun = vec![stun.local_addr().to_string()];
+    let mut rig = Rig::new(dir, cfg);
+    let port = rig.server().local_port();
+    rig.run_until(Duration::from_secs(10), "the invite", |r| printed_invite(&r.log_text()).is_some());
+    let log = rig.log_text();
+    assert_eq!(
+        printed_invite(&log).unwrap().addr,
+        Some(SocketAddr::from((Ipv4Addr::LOCALHOST, port))),
+        "{log}"
+    );
+    assert!(
+        log.contains(&format!("reach: No router: players reach you directly at 127.0.0.1:{port}")),
+        "{log}"
+    );
+}
+
 /// A relay server's config: `nostr_config` with a configured address and
 /// a TURN relay on ephemeral ports with generous limits (one IP: 127.0.0.1).
 fn relay_config(relay: &TestRelay, admins: &[PublicKey]) -> Config {
