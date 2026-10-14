@@ -15,13 +15,11 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use rl_netcode::netsim::Profile;
-use rl_netcode::{Channel, PeerId, Rng};
-use rl_proto::{FINGERPRINT, PROTOCOL_VERSION, Refusal, Signal, decode_signal, encode_signal};
+use rl_netcode::{Channel, PeerId};
+use rl_proto::{PROTOCOL_VERSION, Refusal, Signal, decode_signal, encode_signal};
 
-use crate::impair::Impair;
+use crate::core::{Core, CoreConfig, CoreEvent, Datagram, SetupId};
 pub use crate::limits::Limits;
-use crate::limits::PeerLimits;
-use crate::link::{Ended, Link, LinkEvent, Transmit};
 use crate::signal::SignalConn;
 
 /// A client's only peer: the host.
@@ -172,26 +170,16 @@ pub struct PeerStats {
     pub send_failures: u64,
 }
 
-struct Peer {
-    /// Assigned when the link opens.
-    id: Option<PeerId>,
-    /// The remote end of the signalling connection.
+/// The signalling side of one of the core's setups, until its link opens
+/// or fails.
+struct Setup {
+    /// The signalling connection's remote address.
     addr: SocketAddr,
-    /// Our host candidate for this link: where its datagrams arrive.
-    local: SocketAddr,
-    link: Link,
-    /// The signalling connection, until the link opens.
+    /// The signalling connection, until the link opens (or it closes after
+    /// the answer).
     ws: Option<SignalConn>,
     /// Client: the host's answer is taken. Host: always.
     answered: bool,
-    /// The link must open by then.
-    deadline: Instant,
-    heard: Instant,
-    /// The peer broke a limit with raw traffic; dropped at its next step.
-    broke: Option<Why>,
-    limits: PeerLimits,
-    stats: PeerStats,
-    impair: Option<Impair>,
 }
 
 /// A signalling connection waiting for its offer.
@@ -206,7 +194,6 @@ enum Role {
     Host {
         listener: TcpListener,
         gate: Gate,
-        next_id: PeerId,
         incoming: Vec<Incoming>,
     },
     Client {
@@ -217,20 +204,18 @@ enum Role {
 }
 
 /// One end of online play: a host and its peers, or a client and its host.
+/// The socket driver of a [`Core`].
 pub struct Endpoint {
     cfg: EndpointConfig,
     udp: UdpSocket,
     port: u16,
     role: Role,
-    /// Links not open yet.
-    pending: Vec<Peer>,
-    open: BTreeMap<PeerId, Peer>,
+    /// The links, their limits, ids and deadlines.
+    core: Core,
+    /// The signalling of the core's setups not open yet.
+    setups: BTreeMap<SetupId, Setup>,
     /// Signalling connections closing.
     lingering: Vec<(SignalConn, Instant)>,
-    /// Forks each link's impairment.
-    rng: Rng,
-    /// Datagrams no link accepted.
-    stray: u64,
     /// The latest time `poll` was given.
     now: Instant,
 }
@@ -258,13 +243,12 @@ fn bind_both(port: u16) -> io::Result<(TcpListener, UdpSocket, u16)> {
     }
 }
 
-fn send_datagram(udp: &UdpSocket, stats: &mut PeerStats, t: &Transmit) {
-    // A full socket buffer loses the datagram, as a network would.
-    if udp.send_to(&t.bytes, t.to).is_ok() {
-        stats.datagrams_sent += 1;
-        stats.bytes_sent += t.bytes.len() as u64;
-    } else {
-        stats.send_failures += 1;
+/// Sends the core's datagrams and counts them in their peers' stats.
+fn send_datagrams(udp: &UdpSocket, core: &mut Core, out: &mut Vec<Datagram>) {
+    for d in out.drain(..) {
+        // A full socket buffer loses the datagram, as a network would.
+        let ok = udp.send_to(&d.bytes, d.to).is_ok();
+        core.sent(&d, ok);
     }
 }
 
@@ -306,57 +290,33 @@ fn rewrite_candidates(sdp: &str, ip: IpAddr, port: Option<u16>) -> String {
         .collect()
 }
 
-/// Polls the peer's link and sends its datagrams (through the impairment).
-fn pump(udp: &UdpSocket, peer: &mut Peer, now: Instant, events: &mut Vec<LinkEvent>) {
-    let mut out = Vec::new();
-    peer.link.poll(now, &mut out, events);
-    if let Some(impair) = &mut peer.impair {
-        for t in out.drain(..) {
-            impair.push(now, t);
-        }
-        impair.due(now, &mut out);
-    }
-    for t in &out {
-        send_datagram(udp, &mut peer.stats, t);
-    }
-}
-
-/// Closes the peer's link and sends its last datagrams at once.
-fn finish(udp: &UdpSocket, mut peer: Peer, now: Instant) {
-    peer.link.close();
-    let mut out = Vec::new();
-    peer.link.poll(now, &mut out, &mut Vec::new());
-    for t in &out {
-        send_datagram(udp, &mut peer.stats, t);
+/// The core's configuration of an endpoint's.
+fn core_config(cfg: &EndpointConfig, host: bool) -> CoreConfig {
+    CoreConfig {
+        host,
+        max_peers: cfg.max_peers,
+        limits: cfg.limits,
+        impair: cfg.impair,
+        impair_seed: cfg.impair_seed,
+        #[cfg(feature = "test-hooks")]
+        fingerprint_override: cfg.fingerprint_override,
+        #[cfg(feature = "test-hooks")]
+        first_peer_id: cfg.first_peer_id,
     }
 }
 
 impl Endpoint {
     fn new(cfg: EndpointConfig, udp: UdpSocket, port: u16, role: Role) -> Endpoint {
-        let rng = Rng::new(cfg.impair_seed);
-        Endpoint {
-            cfg,
-            udp,
-            port,
-            role,
-            pending: Vec::new(),
-            open: BTreeMap::new(),
-            lingering: Vec::new(),
-            rng,
-            stray: 0,
-            now: Instant::now(),
-        }
+        let now = Instant::now();
+        let core = Core::new(core_config(&cfg, matches!(role, Role::Host { .. })), now);
+        Endpoint { cfg, udp, port, role, core, setups: BTreeMap::new(), lingering: Vec::new(), now }
     }
 
     /// A host on `cfg.port` (TCP and UDP, all interfaces); `gate` admits or
     /// refuses each valid offer.
     pub fn host(cfg: EndpointConfig, gate: Gate) -> io::Result<Endpoint> {
         let (listener, udp, port) = bind_both(cfg.port)?;
-        #[cfg(feature = "test-hooks")]
-        let next_id = cfg.first_peer_id.unwrap_or(1).max(1);
-        #[cfg(not(feature = "test-hooks"))]
-        let next_id = 1;
-        Ok(Endpoint::new(cfg, udp, port, Role::Host { listener, gate, next_id, incoming: Vec::new() }))
+        Ok(Endpoint::new(cfg, udp, port, Role::Host { listener, gate, incoming: Vec::new() }))
     }
 
     /// A client of the host whose signalling (TCP) address is `host`. The
@@ -377,37 +337,19 @@ impl Endpoint {
         self.port
     }
 
-    fn fingerprint(&self) -> u64 {
-        #[cfg(feature = "test-hooks")]
-        if let Some(f) = self.cfg.fingerprint_override {
-            return f;
-        }
-        FINGERPRINT
-    }
-
-    fn is_client(&self) -> bool {
-        matches!(self.role, Role::Client { .. })
-    }
-
     /// Does what the sockets allow at `now` and appends what happened to
     /// `events`. Never blocks; call it often (every frame, and after sends).
     pub fn poll(&mut self, now: Instant, events: &mut Vec<NetEvent>) {
         self.now = self.now.max(now);
         let now = self.now;
+        let mut core_events = Vec::new();
         self.poll_signalling(now, events);
         self.receive(now);
-        let pending = std::mem::take(&mut self.pending);
-        let open = std::mem::take(&mut self.open);
-        for peer in pending.into_iter().chain(open.into_values()) {
-            if let Some(peer) = self.step(peer, now, events) {
-                match peer.id {
-                    Some(id) => {
-                        self.open.insert(id, peer);
-                    }
-                    None => self.pending.push(peer),
-                }
-            }
-        }
+        self.poll_setups(events, &mut core_events);
+        let mut out = Vec::new();
+        self.core.poll(now, &mut out, &mut core_events);
+        send_datagrams(&self.udp, &mut self.core, &mut out);
+        self.on_core_events(core_events, now, events);
         self.lingering.retain_mut(|(conn, deadline)| {
             let _ = conn.poll();
             !conn.is_closed() && now < *deadline
@@ -422,22 +364,13 @@ impl Endpoint {
     /// `poll` reports `Disconnected { why: Why::Unsent }` (callers keep
     /// their own backlog and feed it as [`Endpoint::buffered`] drains).
     pub fn send(&mut self, peer: PeerId, channel: Channel, bytes: &[u8]) {
-        let Some(p) = self.open.get_mut(&peer) else { return };
-        if p.broke.is_some()
-            || p.link.buffered(channel) + bytes.len() > MAX_QUEUED
-            || p.link.send(channel, bytes).is_err()
-        {
-            p.stats.sends_dropped += 1;
-            if channel == Channel::Reliable {
-                p.broke.get_or_insert(Why::Unsent);
-            }
-        }
+        self.core.send(peer, channel, bytes);
     }
 
     /// The bytes waiting to leave for `peer` on `channel` (sent and not yet
     /// acknowledged, on the reliable channel).
     pub fn buffered(&self, peer: PeerId, channel: Channel) -> usize {
-        self.open.get(&peer).map_or(0, |p| p.link.buffered(channel))
+        self.core.buffered(peer, channel)
     }
 
     /// Lets the next `bytes` of reliable messages from `peer` through the
@@ -446,62 +379,35 @@ impl Endpoint {
     /// transfer, which a sender of a state well above 3 MB needs too: the
     /// receiver's SACKs count.
     pub fn allow_burst(&mut self, peer: PeerId, bytes: usize) {
-        if let Some(p) = self.open.get_mut(&peer) {
-            p.limits.allow_burst(bytes);
-        }
+        self.core.allow_burst(peer, bytes);
     }
 
     /// Closes the link to `peer`; the peer is told, no event follows here.
     pub fn close(&mut self, peer: PeerId) {
-        if let Some(p) = self.open.remove(&peer) {
-            finish(&self.udp, p, self.now);
-        }
+        let mut out = Vec::new();
+        self.core.close(peer, &mut out);
+        send_datagrams(&self.udp, &mut self.core, &mut out);
     }
 
     /// The open peers, by id.
     pub fn peers(&self) -> impl Iterator<Item = (PeerId, SocketAddr)> + '_ {
-        self.open.iter().map(|(&id, p)| (id, p.addr))
+        self.core.peers()
     }
 
     /// The DTLS fingerprints of an open peer's link, offer side's then
     /// answer side's (`Link::dtls_fingerprints`): the same at both ends.
     pub fn dtls_fingerprints(&self, peer: PeerId) -> Option<([u8; 32], [u8; 32])> {
-        self.open.get(&peer).and_then(|p| p.link.dtls_fingerprints())
+        self.core.dtls_fingerprints(peer)
     }
 
     /// What went through the socket for an open peer.
     pub fn stats(&self, peer: PeerId) -> Option<PeerStats> {
-        self.open.get(&peer).map(|p| p.stats)
+        self.core.stats(peer)
     }
 
     /// Datagrams no link accepted (dropped).
     pub fn stray_datagrams(&self) -> u64 {
-        self.stray
-    }
-
-    fn new_peer(
-        &mut self,
-        addr: SocketAddr,
-        local: SocketAddr,
-        link: Link,
-        ws: SignalConn,
-        now: Instant,
-    ) -> Peer {
-        let impair = self.cfg.impair.map(|p| Impair::new(p, self.rng.fork()));
-        Peer {
-            id: None,
-            addr,
-            local,
-            link,
-            ws: Some(ws),
-            answered: !self.is_client(),
-            deadline: now + SETUP_TIMEOUT,
-            heard: now,
-            broke: None,
-            limits: PeerLimits::new(&self.cfg.limits, now),
-            stats: PeerStats::default(),
-            impair,
-        }
+        self.core.stray_datagrams()
     }
 
     /// Host: accepts TCP connections and takes their offers. Client:
@@ -513,8 +419,9 @@ impl Endpoint {
                 for _ in 0..MAX_ACCEPTS_PER_POLL {
                     let Ok((stream, addr)) = listener.accept() else { break };
                     let ip = addr.ip();
+                    // The setups are the core's links not open yet.
                     let same_ip = incoming.iter().filter(|i| i.addr.ip() == ip).count()
-                        + self.pending.iter().filter(|p| p.addr.ip() == ip).count();
+                        + self.setups.values().filter(|s| s.addr.ip() == ip).count();
                     if incoming.len() >= MAX_INCOMING
                         || same_ip >= MAX_PER_IP
                         || stream.set_nonblocking(true).is_err()
@@ -550,25 +457,21 @@ impl Endpoint {
                     Err(TryRecvError::Disconnected) => Err(io::Error::other("the connect thread ended")),
                 };
                 *connecting = None;
-                match result.and_then(|stream| self.offer(stream, host, now)) {
-                    Ok(peer) => self.pending.push(peer),
-                    Err(e) => {
-                        let why =
-                            if e.kind() == io::ErrorKind::TimedOut { Why::Timeout } else { Why::Closed };
-                        events.push(NetEvent::Disconnected { peer: HOST, why });
-                    }
+                if let Err(e) = result.and_then(|stream| self.offer(stream, host, now)) {
+                    let why = if e.kind() == io::ErrorKind::TimedOut { Why::Timeout } else { Why::Closed };
+                    events.push(NetEvent::Disconnected { peer: HOST, why });
                 }
             }
         }
     }
 
     /// Client: the link and its offer over the new signalling connection.
-    fn offer(&mut self, stream: TcpStream, host: SocketAddr, now: Instant) -> io::Result<Peer> {
+    fn offer(&mut self, stream: TcpStream, host: SocketAddr, now: Instant) -> io::Result<()> {
         stream.set_nonblocking(true)?;
         let _ = stream.set_nodelay(true);
         let local = SocketAddr::new(stream.local_addr()?.ip(), self.port);
         #[cfg_attr(not(feature = "test-hooks"), allow(unused_mut))]
-        let (link, mut sdp) = Link::offerer(&[local], now);
+        let (setup, mut sdp) = self.core.offer(&[local], host, now);
         #[cfg(feature = "test-hooks")]
         if let Some(ip) = self.cfg.offer_ip_override {
             sdp = rewrite_candidates(&sdp, ip, None);
@@ -576,10 +479,11 @@ impl Endpoint {
         let mut ws = SignalConn::connect(stream, host, self.cfg.limits.max_signal_bytes);
         ws.send(encode_signal(&Signal::Offer {
             protocol: PROTOCOL_VERSION,
-            fingerprint: self.fingerprint(),
+            fingerprint: self.core.fingerprint(),
             sdp,
         }));
-        Ok(self.new_peer(host, local, link, ws, now))
+        self.setups.insert(setup, Setup { addr: host, ws: Some(ws), answered: false });
+        Ok(())
     }
 
     /// Host: checks an offer and answers or refuses it.
@@ -589,36 +493,28 @@ impl Endpoint {
             Ok(signal @ Signal::Offer { .. }) => signal,
             _ => return self.refuse(conn, Refusal::Malformed, now),
         };
-        let Signal::Offer { protocol, fingerprint, sdp } = &signal else { return };
-        if *protocol != PROTOCOL_VERSION || *fingerprint != self.fingerprint() {
-            return self.refuse(conn, Refusal::Version, now);
+        if let Err(why) = self.core.admit(&signal) {
+            return self.refuse(conn, why, now);
         }
-        if self.pending.len() + self.open.len() >= self.cfg.max_peers {
-            return self.refuse(conn, Refusal::Full, now);
-        }
-        let Role::Host { gate, next_id, .. } = &mut self.role else { return };
-        // Ids are never reused: refuse once they run out (4 billion links:
-        // unreachable in practice).
-        if u64::from(*next_id) + self.pending.len() as u64 >= u64::from(PeerId::MAX) {
-            return self.refuse(conn, Refusal::Exhausted, now);
-        }
+        let Role::Host { gate, .. } = &mut self.role else { return };
         if let Err(why) = gate(&addr, &signal) {
             return self.refuse(conn, why, now);
         }
+        let Signal::Offer { sdp, .. } = &signal else { return };
         // Only candidates on the signalling connection's IP (ruling T4-A).
         let sdp = keep_candidates_of(sdp, addr.ip());
         let local = SocketAddr::new(local, self.port);
         #[cfg_attr(not(feature = "test-hooks"), allow(unused_mut))]
-        let Ok((link, mut answer)) = Link::answerer(&[local], &sdp, now) else {
-            return self.refuse(conn, Refusal::Malformed, now);
+        let (setup, mut answer) = match self.core.answer(&[local], &sdp, addr, now) {
+            Ok(answered) => answered,
+            Err(why) => return self.refuse(conn, why, now),
         };
         #[cfg(feature = "test-hooks")]
         if let Some(a) = self.cfg.answer_addr_override {
             answer = rewrite_candidates(&answer, a.ip(), Some(a.port()));
         }
         conn.send(encode_signal(&Signal::Answer { sdp: answer }));
-        let peer = self.new_peer(addr, local, link, conn, now);
-        self.pending.push(peer);
+        self.setups.insert(setup, Setup { addr, ws: Some(conn), answered: true });
     }
 
     fn refuse(&mut self, mut conn: SignalConn, why: Refusal, now: Instant) {
@@ -636,7 +532,7 @@ impl Endpoint {
         }
     }
 
-    /// Hands each received datagram to the link that accepts it.
+    /// Hands each received datagram to the core.
     fn receive(&mut self, now: Instant) {
         let mut buf = [0u8; 2048];
         for _ in 0..MAX_DATAGRAMS_PER_POLL {
@@ -646,152 +542,106 @@ impl Endpoint {
                 // E.g. Windows reports an earlier datagram's ICMP error here.
                 Err(_) => continue,
             };
-            let bytes = &buf[..n];
-            let peer = self
-                .pending
-                .iter_mut()
-                .chain(self.open.values_mut())
-                .find(|p| p.link.accepts(from, p.local, bytes));
-            match peer {
-                Some(p) if p.broke.is_none() => {
-                    p.stats.datagrams_received += 1;
-                    p.stats.bytes_received += n as u64;
-                    if let Err(why) = p.limits.on_datagram(now, n) {
-                        p.broke = Some(why);
-                        continue;
-                    }
-                    p.heard = now;
-                    p.link.receive(from, p.local, bytes, now);
-                }
-                Some(_) => {}
-                None => self.stray += 1,
-            }
+            self.core.receive(from, &buf[..n], now);
         }
     }
 
-    /// Drives one peer: its signalling, its link, its limits and timeouts.
-    /// `None` when it is gone.
-    fn step(&mut self, mut peer: Peer, now: Instant, events: &mut Vec<NetEvent>) -> Option<Peer> {
-        if let Some(why) = peer.broke {
-            return match peer.id {
-                Some(id) => {
-                    events.push(NetEvent::Disconnected { peer: id, why });
-                    finish(&self.udp, peer, now);
-                    None
-                }
-                None => self.fail_setup(peer, why, now, events),
-            };
+    /// Drives the signalling of the setups not open yet: the client takes
+    /// the answer or a refusal; one more frame, or a connection closed
+    /// before the answer, cancels the setup.
+    fn poll_setups(&mut self, events: &mut Vec<NetEvent>, core_events: &mut Vec<CoreEvent>) {
+        let setups = std::mem::take(&mut self.setups);
+        for (id, mut setup) in setups {
+            // A setup that broke a limit fails in the core's poll, its
+            // signalling untouched.
+            if !self.core.broke(id) && !self.poll_setup(id, &mut setup, events, core_events) {
+                continue;
+            }
+            self.setups.insert(id, setup);
         }
-        if let Some(ws) = &mut peer.ws {
-            if let Some(frame) = ws.poll() {
-                // After the offer (host) or the answer (client) nothing more
-                // may come: one more frame is a violation.
-                if peer.answered {
-                    return self.fail_setup(peer, Why::Malformed, now, events);
+    }
+
+    /// One setup's signalling; `false` when the setup is gone.
+    fn poll_setup(
+        &mut self,
+        id: SetupId,
+        setup: &mut Setup,
+        events: &mut Vec<NetEvent>,
+        core_events: &mut Vec<CoreEvent>,
+    ) -> bool {
+        let Some(ws) = &mut setup.ws else { return true };
+        if let Some(frame) = ws.poll() {
+            // After the offer (host) or the answer (client) nothing more
+            // may come: one more frame is a violation.
+            if setup.answered {
+                self.core.cancel(id, Why::Malformed, core_events);
+                return false;
+            }
+            match decode_signal(&frame) {
+                // Every candidate becomes the address the client dialled
+                // (ruling F-G): a host behind NAT (a port forward,
+                // Docker, a cloud VM) answers with its private address,
+                // and the host's TCP and UDP share the port, so a
+                // forward maps both alike; a host still cannot aim its
+                // joiners' checks at a third party (T4-A).
+                Ok(Signal::Answer { sdp })
+                    if self
+                        .core
+                        .accept_answer(
+                            id,
+                            &rewrite_candidates(&sdp, setup.addr.ip(), Some(setup.addr.port())),
+                        )
+                        .is_ok() =>
+                {
+                    setup.answered = true
                 }
-                match decode_signal(&frame) {
-                    // Every candidate becomes the address the client dialled
-                    // (ruling F-G): a host behind NAT (a port forward,
-                    // Docker, a cloud VM) answers with its private address,
-                    // and the host's TCP and UDP share the port, so a
-                    // forward maps both alike; a host still cannot aim its
-                    // joiners' checks at a third party (T4-A).
-                    Ok(Signal::Answer { sdp })
-                        if peer
-                            .link
-                            .accept_answer(&rewrite_candidates(&sdp, peer.addr.ip(), Some(peer.addr.port())))
-                            .is_ok() =>
-                    {
-                        peer.answered = true
-                    }
-                    Ok(Signal::Refused { reason }) => {
-                        events.push(NetEvent::Refused { why: reason });
-                        return None;
-                    }
-                    _ => return self.fail_setup(peer, Why::Malformed, now, events),
+                Ok(Signal::Refused { reason }) => {
+                    events.push(NetEvent::Refused { why: reason });
+                    // Refused is all the client hears.
+                    self.core.cancel(id, Why::Refused, &mut Vec::new());
+                    return false;
+                }
+                _ => {
+                    self.core.cancel(id, Why::Malformed, core_events);
+                    return false;
                 }
             }
-            if ws.is_closed() {
-                if !peer.answered {
-                    return self.fail_setup(peer, Why::Closed, now, events);
-                }
-                peer.ws = None;
-            }
         }
-        let mut link_events = Vec::new();
-        pump(&self.udp, &mut peer, now, &mut link_events);
-        for event in link_events {
+        if ws.is_closed() {
+            if !setup.answered {
+                self.core.cancel(id, Why::Closed, core_events);
+                return false;
+            }
+            setup.ws = None;
+        }
+        true
+    }
+
+    /// Turns the core's events into the endpoint's: an opened setup's
+    /// signalling lingers, a failed one's is dropped.
+    fn on_core_events(&mut self, core_events: Vec<CoreEvent>, now: Instant, events: &mut Vec<NetEvent>) {
+        for event in core_events {
             match event {
-                LinkEvent::Open => {
-                    let id = match &mut self.role {
-                        Role::Host { next_id, .. } => {
-                            *next_id += 1;
-                            *next_id - 1
-                        }
-                        Role::Client { .. } => HOST,
-                    };
-                    peer.id = Some(id);
-                    events.push(NetEvent::Connected { peer: id, addr: peer.addr });
-                    if let Some(ws) = peer.ws.take() {
+                CoreEvent::Net(event) => events.push(event),
+                CoreEvent::Opened { setup, .. } => {
+                    if let Some(ws) = self.setups.remove(&setup).and_then(|s| s.ws) {
                         self.linger(ws, now);
                     }
                 }
-                LinkEvent::Message { channel, bytes } => {
-                    let Some(id) = peer.id else { continue };
-                    match peer.limits.on_message(now, channel == Channel::Reliable, bytes.len()) {
-                        Ok(()) => events.push(NetEvent::Message { peer: id, channel, bytes }),
-                        Err(why) => {
-                            events.push(NetEvent::Disconnected { peer: id, why });
-                            finish(&self.udp, peer, now);
-                            return None;
-                        }
-                    }
-                }
-                LinkEvent::Closed { why } => {
-                    let why = match why {
-                        Ended::Lost => Why::Timeout,
-                        Ended::Peer | Ended::Failed(_) => Why::Closed,
-                    };
-                    match peer.id {
-                        Some(id) => events.push(NetEvent::Disconnected { peer: id, why }),
-                        None if self.is_client() => events.push(NetEvent::Disconnected { peer: HOST, why }),
-                        None => {}
-                    }
-                    return None;
+                CoreEvent::SetupFailed { setup, .. } => {
+                    self.setups.remove(&setup);
                 }
             }
         }
-        match peer.id {
-            Some(id) if now.saturating_duration_since(peer.heard) >= SILENCE_TIMEOUT => {
-                events.push(NetEvent::Disconnected { peer: id, why: Why::Timeout });
-                finish(&self.udp, peer, now);
-                None
-            }
-            None if now >= peer.deadline => self.fail_setup(peer, Why::Timeout, now, events),
-            _ => Some(peer),
-        }
-    }
-
-    /// A connection that did not come up: the client hears why, the host
-    /// drops it quietly.
-    fn fail_setup(&mut self, peer: Peer, why: Why, now: Instant, events: &mut Vec<NetEvent>) -> Option<Peer> {
-        if self.is_client() {
-            events.push(NetEvent::Disconnected { peer: HOST, why });
-        }
-        finish(&self.udp, peer, now);
-        None
     }
 }
 
 impl Drop for Endpoint {
     /// Tells every peer the link is closed.
     fn drop(&mut self) {
-        let now = self.now;
-        for peer in
-            std::mem::take(&mut self.pending).into_iter().chain(std::mem::take(&mut self.open).into_values())
-        {
-            finish(&self.udp, peer, now);
-        }
+        let mut out = Vec::new();
+        self.core.close_all(&mut out);
+        send_datagrams(&self.udp, &mut self.core, &mut out);
     }
 }
 

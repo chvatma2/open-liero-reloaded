@@ -9,7 +9,8 @@ announcements.
   tungstenite (`=0.30.0`, default features: no TLS) and getrandom
   (`=0.4.3`, `random_bytes`: the native peers' randomness). Real clocks and
   sockets live only in this crate's socket driver, `endpoint` (and the
-  binaries); `link` itself is sans-IO, and `endpoint::poll` takes the time.
+  binaries); `link` and `core` are sans-IO, and `endpoint::poll` takes the
+  time.
 - **str0m pinned exactly** (`=0.24.0`, decision N15), `default-features =
   false, features = ["rust-crypto"]`: the default features pull the
   `examples` web server and select aws-lc-rs as the crypto backend.
@@ -67,7 +68,28 @@ announcements.
   it returns a timeout, before the next mutation — is kept inside `Link`:
   every method that mutates drains into the link's own buffers (`fail`
   too, after `rtc.disconnect()`). Keep it so when adding methods.
-- **`endpoint::Endpoint`**: the socket driver. One non-blocking UDP socket
+- **`core::Core`**: the endpoint without sockets (the spine of plan 12b's
+  ICE work; tested on a virtual wire, `tests/core_wire.rs`). It owns every
+  peer's `Link`, the limits, the impairment, peer ids, `SETUP_TIMEOUT` and
+  `SILENCE_TIMEOUT`, the stats and `MAX_QUEUED`'s `Unsent`; `admit` makes
+  the version, fingerprint, `Full` and `Exhausted` checks of an offer.
+  Each connection attempt is a `SetupId` (`offer` / `accept_answer` on a
+  client, `answer` on a host, `cancel` when its signalling fails) until
+  `CoreEvent::Opened` or `SetupFailed`; `receive(from, bytes, now)` takes a
+  datagram, `poll(now, out, events)` hands out `Datagram`s and
+  `CoreEvent::Net(NetEvent)`s. A cancelled link's last datagrams leave with
+  the next `poll`. `CoreConfig::host()`/`client()` are `EndpointConfig`'s
+  defaults. The driver counts each datagram the socket took or refused in
+  its peer's stats (`Core::sent`, crate-private, by the datagram's setup:
+  setup-time datagrams count, as before the split).
+- **`endpoint::Endpoint`**: the socket driver of a `Core`: the UDP socket,
+  the TCP listener and `SignalConn`s (mapped by `SetupId`), the per-IP
+  caps, the gate, the connect thread, lingering closes, and the SDP
+  rewrites T4-A (`keep_candidates_of`) and F-G (`rewrite_candidates`),
+  which are about the TCP connection. `poll`'s order: signalling (accepts,
+  offers, the connect), the socket's datagrams into `Core::receive`, each
+  setup's signalling, `Core::poll` (its datagrams `send_to`), lingering
+  closes. One non-blocking UDP socket
   for every link (a datagram goes to the link that `accepts` it, given the
   link's own host candidate as the destination; others are counted,
   `stray_datagrams`). `poll(now, events)` never blocks.
@@ -86,7 +108,8 @@ announcements.
     NAT (its private candidate dropped) still connects through the
     peer-reflexive candidate its checks reveal; str0m takes an offer with
     no candidate left. Test hooks (`EndpointConfig`'s `fingerprint_override`,
-    `offer_ip_override`, `answer_addr_override`, `first_peer_id`) exist only
+    `offer_ip_override`, `answer_addr_override`, `first_peer_id`; the first
+    and last are `CoreConfig`'s too) exist only
     with the `test-hooks` feature, enabled by this crate's own
     dev-dependency (never in a shipped build). Accepted:
     `Link::answerer` with the candidate (the TCP connection's local IP, the
@@ -169,7 +192,9 @@ announcements.
   link. Signalling garbage, oversized frames and wrong messages close the
   connection quietly (`tests/endpoint.rs`).
 
-Test: `cargo nextest run -p rl-net` (`tests/link.rs`: in memory on a
+Test: `cargo nextest run -p rl-net` (`tests/core_wire.rs`: two `Core`s
+on an in-memory wire and a virtual clock, a setup timing out, `admit`;
+`tests/link.rs`: in memory on a
 virtual clock, 32 s in well under 1 s of wall time, and irregular
 polling without a FORWARD-TSN/SACK storm; over localhost UDP:
 connect, 3 MB reliable, 2 000 unreliable datagrams at 1 ms — 10 000, about

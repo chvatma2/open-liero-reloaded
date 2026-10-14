@@ -2,6 +2,7 @@
 //! channels over the sans-IO str0m stack, signalling over a WebSocket, LAN
 //! announcements. Layer 5, std.
 
+pub mod core;
 pub mod endpoint;
 mod impair;
 pub mod lan;

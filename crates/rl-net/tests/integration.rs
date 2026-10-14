@@ -5,6 +5,7 @@
 //! Kept as their own binaries:
 //! - `link`: the full tier's 10 000 datagrams (`check::FULL_TESTS`).
 
+mod core_wire;
 mod endpoint;
 mod fuzz;
 mod lan;
