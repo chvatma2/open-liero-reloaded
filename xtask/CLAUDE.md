@@ -18,7 +18,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `rl-cli`'s `render_golden` and `gpu_bench` (plan 8's `gpu-bench` on the
   software adapter), `rl-game`'s `soak`, `rl-ui`'s `hud_snapshots`) and the
   audio step, then `e2e`, `net-nat`, `bench`, `stress` and `net-feel`.
-  Each step prints `ok   <name> (<s>s)` (`net-nat`: `ok   net-nat (9
+  Each step prints `ok   <name> (<s>s)` (`net-nat`: `ok   net-nat (11
   scenarios, <s>s)`, `run_with`'s `finish` with a detail) or `FAIL` and
   its output.
 - `bench` (`bench.rs`, also `cargo xtask bench [--offline]`, spec §21 G8):

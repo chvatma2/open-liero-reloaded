@@ -9,6 +9,11 @@
 #   pcp        cone, plus miniupnpd with NAT-PMP and PCP only
 #   pmp        as pcp, but PCP requests (version byte 2) are dropped: a
 #              NAT-PMP-only router (miniupnpd switches both together)
+#   hairpin    cone, plus a manual forward of a TURN relay's ports (UDP
+#              3478 and 49160-49191) to the LAN's .30, with hairpin NAT:
+#              the LAN reaches them at the WAN address too, and its
+#              packets so forwarded come from the WAN address (TR-5: a
+#              relay beside the host)
 # (rl-net asks every method at once and keeps the first mapping: PCP
 # answers before UPnP's search ends, so a router offering both would
 # never show UPnP.)
@@ -36,7 +41,7 @@ lan_net=$(ip -o -4 route show dev "$lan" scope link | awk '{ print $1; exit }')
 
 case "$kind" in
     symmetric) masquerade="masquerade fully-random" ;;
-    cone | upnp | pcp | pmp) masquerade="masquerade" ;;
+    cone | upnp | pcp | pmp | hairpin) masquerade="masquerade" ;;
     *)
         echo "router: unknown kind $kind" >&2
         exit 1
@@ -56,6 +61,17 @@ pcp_rule=""
 if [ "$kind" = pmp ]; then
     pcp_rule="iifname \"$lan\" udp dport 5351 @th,64,8 2 drop"
 fi
+# A manual forward of the relay's ports, from the WAN and (hairpin) from
+# the LAN: forwarded packets are let through, and a LAN packet forwarded
+# back into the LAN leaves from the WAN address, as a hairpinning home
+# router does.
+forward_rule="" dnat_rule="" hairpin_rule=""
+if [ "$kind" = hairpin ]; then
+    relay_ip=$(echo "$lan_ip" | sed 's/\.[0-9]*$/.30/')
+    forward_rule="ct status dnat accept"
+    dnat_rule="ip daddr $wan_ip udp dport { 3478, 49160-49191 } dnat ip to $relay_ip"
+    hairpin_rule="ip saddr $lan_net ip daddr $lan_net ct status dnat snat ip to $wan_ip"
+fi
 nft -f - <<NFT
 table inet filter {
     chain input {
@@ -69,17 +85,20 @@ table inet filter {
         type filter hook forward priority 0; policy drop;
         ct state established,related accept
         iifname "$lan" oifname "$wan" accept
+        $forward_rule
         jump miniupnpd
     }
     chain miniupnpd {
     }
     chain prerouting {
         type nat hook prerouting priority -100; policy accept;
+        $dnat_rule
         jump prerouting_miniupnpd
     }
     chain postrouting {
         type nat hook postrouting priority 100; policy accept;
         jump postrouting_miniupnpd
+        $hairpin_rule
         oifname "$wan" $masquerade
     }
     chain prerouting_miniupnpd {

@@ -27,6 +27,9 @@ yet. A broken Dockerfile or script fails.
   address, sets nftables (table `inet filter`: forward from the LAN out,
   replies back, miniupnpd's chains; postrouting `masquerade`, or
   `masquerade fully-random` for `symmetric`; input dropped from the WAN;
+  for `hairpin`, the relay's ports forwarded to the LAN's `.30` from the
+  WAN and the LAN (`dnat`, `ct status dnat accept`) and a LAN packet so
+  forwarded back into the LAN sent from the WAN address (`snat`);
   for `pmp`, PCP requests dropped: `udp dport 5351 @th,64,8 2`, the
   version byte, 2 for PCP and 0 for NAT-PMP, as miniupnpd switches both
   together) and, for `upnp`, `pcp` and `pmp`, starts miniupnpd from
@@ -61,13 +64,17 @@ outside its subnet, which is all of a router's traffic.
 | `c` | 10.3.0.0/24 | C 203.0.113.103, 10.3.0.2 | cone + miniupnpd, UPnP-IGD only |
 | `d` | 10.4.0.0/24 | D 203.0.113.104, 10.4.0.2 | cone + miniupnpd, NAT-PMP and PCP (PCP answers first) |
 | `e` | 10.5.0.0/24 | E 203.0.113.105, 10.5.0.2 | cone + miniupnpd, PCP dropped: NAT-PMP only |
+| `f` | 10.6.0.0/24 | F 203.0.113.106, 10.6.0.2 | cone + a manual forward of UDP 3478 and 49160-49191 to 10.6.0.30, hairpinned (`hairpin`: the LAN reaches them at the WAN address, and so forwarded its packets come from the WAN address) |
 
 On the WAN: `infra` at 203.0.113.10 (`rl-cli nostr-relay --listen
 0.0.0.0:7777` and `rl-cli stun-server --listen 0.0.0.0:3479`), `relay` at
 .20 (`rl-server --relay`, Invite, `public_address` 203.0.113.20, STUN the
 infra's, no port mapping; its TURN server's binding answers are the
-second STUN server) and, for `direct`, `public` at .30 (Public,
-`public_address` 203.0.113.30). In a LAN, the host is `.10` and the joiner
+second STUN server; in `relay-beside` it runs instead in LAN F at
+10.6.0.30, `public_address` 203.0.113.106, behind F's forward), for
+`direct`, `public` at .30 (Public, `public_address` 203.0.113.30), and
+for `no-nat`, `open` at .40 (Invite, no address configured, no port
+mapping: STUN sees its own address, N47-a). In a LAN, the host is `.10` and the joiner
 `.20`. Every config (written to `target/net-nat/configs/`) and every
 joiner uses relay `ws://203.0.113.10:7777`, STUN `203.0.113.10:3479` and
 `203.0.113.20:3478` (the relay server: the first only), and `allow_local`
@@ -122,12 +129,27 @@ output.
 | `no-relay` | Invite in LAN A | LAN B, `--invite --no-nostr-turn` | exit 1, stderr `no network path to the game` | 19.7 s |
 | `finding` | Public in LAN A, no mapping (listed without an address) | LAN B, `--listed "nat finding" --lobby-only` | `path: relayed`, `via relayed` | 7.0 s |
 | `nat-check` | `rl-server --nat-check` in LAN B | — | `NAT: symmetric NAT` | 5.4 s |
+| `no-nat` | Invite on the WAN at .40, no NAT (N47-a) | LAN A, `--invite --lobby-only` | `reach: No router: players reach you directly at 203.0.113.40:23400`, the code has an address, `path: direct`, `via direct` | 4.3 s |
+| `relay-beside` | Invite in LAN F, its TURN relay beside it at 10.6.0.30 (TR-5; the WAN relay not run) | LAN B (symmetric), `--invite --lobby-only` | `path: relayed`, the relay's allocation, the host's `via relayed` or `via punched` (below) | 9.3 s |
+
+`relay-beside` runs with `allow_local`, as every scenario must
+(203.0.113.0/24 is not global), and `allow_local` lifted TR-1's refusal
+of the relay's own address too: the scenario checks that a relay beside
+the host carries a join through a hairpinning router (and that TR-5's
+own-port refusal, kept with `allow_local`, does not get in the way), not
+TR-5's difference, which `rl-net`'s `a_relay_reaches_hosts_at_its_public_ip_but_never_its_own_ports`
+pins without `allow_local`. With `allow_local` the relay reaches the
+host at its LAN address, so the host sees the joiner as a
+peer-reflexive address of the relay's (10.6.0.30) and names the path
+`punched`; through the hairpin (no `allow_local`) it would see the WAN
+address, a port the hairpin chose.
 
 A browser host is plan 13's (ruling PL12b-3).
 
 Times measured here (WSL2, Docker 29.1.3, 2026-10-14): all nine about
 84 s once built (the dev binaries); the image 196 MB (51 MB content),
-built in 12 s from a pulled base.
+built in 12 s from a pulled base. `no-nat` and `relay-beside` (the final
+review's fix pass, 2026-10-15) 4.3 s and 9.3 s.
 
 ## By hand
 

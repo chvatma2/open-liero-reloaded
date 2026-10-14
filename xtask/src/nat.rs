@@ -5,7 +5,8 @@
 //! relay, a STUN server and a TURN relay (`rl-server --relay`) on the WAN,
 //! and our host-built binaries playing each scenario of [`SCENARIOS`]: a
 //! direct join, port mapping (UPnP, PCP, NAT-PMP), hole punching, the TURN
-//! relay, its absence, finding a listed game, and `rl-server --nat-check`.
+//! relay, its absence, finding a listed game, `rl-server --nat-check`, a
+//! host with no NAT (N47-a) and a relay beside the host (TR-5).
 //! Every network is `--internal` with a dummy parent (macvlan): nothing
 //! reaches the host, its router or the Internet. The image build
 //! (`tools/net-nat/Dockerfile`, FROM the host's own distribution, so the
@@ -79,18 +80,21 @@ pub enum Lan {
     D,
     /// Cone, plus miniupnpd with PCP requests dropped: NAT-PMP only.
     E,
+    /// Cone, plus a manual forward of a TURN relay's ports to `.30` with
+    /// hairpin NAT (TR-5: a relay beside the host).
+    F,
 }
 
 impl Lan {
-    pub const ALL: [Lan; 5] = [Lan::A, Lan::B, Lan::C, Lan::D, Lan::E];
+    pub const ALL: [Lan; 6] = [Lan::A, Lan::B, Lan::C, Lan::D, Lan::E, Lan::F];
 
-    /// 1 to 5: the subnet's second byte and the router's WAN address' 10x.
+    /// 1 to 6: the subnet's second byte and the router's WAN address' 10x.
     fn n(self) -> u8 {
         self as u8 + 1
     }
 
     fn letter(self) -> &'static str {
-        ["a", "b", "c", "d", "e"][self as usize]
+        ["a", "b", "c", "d", "e", "f"][self as usize]
     }
 
     pub fn subnet(self) -> String {
@@ -102,14 +106,14 @@ impl Lan {
         self.addr(2)
     }
 
-    /// The router's WAN address, 203.0.113.101 to .105.
+    /// The router's WAN address, 203.0.113.101 to .106.
     pub fn router_wan(self) -> String {
         format!("203.0.113.{}", 100 + self.n())
     }
 
     /// `router.sh`'s kind.
     pub fn kind(self) -> &'static str {
-        ["cone", "symmetric", "upnp", "pcp", "pmp"][self as usize]
+        ["cone", "symmetric", "upnp", "pcp", "pmp", "hairpin"][self as usize]
     }
 
     fn addr(self, host: u8) -> String {
@@ -130,14 +134,28 @@ pub enum Config {
     Invite,
     /// Public (listed on the relay), no port mapping.
     Listed,
+    /// The TURN relay in LAN F, at its router's WAN address 203.0.113.106
+    /// (a manual forward, hairpinned).
+    RelayBeside,
+    /// Invite only on the WAN at 203.0.113.40, no NAT and no configured
+    /// address: STUN shows its own address (N47-a, a VPS).
+    Open,
 }
 
 impl Config {
-    pub const ALL: [Config; 5] =
-        [Config::Relay, Config::Public, Config::Mapped, Config::Invite, Config::Listed];
+    pub const ALL: [Config; 7] = [
+        Config::Relay,
+        Config::Public,
+        Config::Mapped,
+        Config::Invite,
+        Config::Listed,
+        Config::RelayBeside,
+        Config::Open,
+    ];
 
     pub fn file(self) -> &'static str {
-        ["relay.ron", "public.ron", "mapped.ron", "invite.ron", "listed.ron"][self as usize]
+        ["relay.ron", "public.ron", "mapped.ron", "invite.ron", "listed.ron", "relay-beside.ron", "open.ron"]
+            [self as usize]
     }
 
     /// The config's text (RON, `rl-server`'s `Config`): every one on the
@@ -151,6 +169,8 @@ impl Config {
             Config::Mapped => ("nat host", "Invite", true, None, &STUN[..], 2),
             Config::Invite => ("nat host", "Invite", false, None, &STUN[..], 2),
             Config::Listed => (LISTED_NAME, "Public", false, None, &STUN[..], 2),
+            Config::RelayBeside => ("nat relay f", "Invite", false, Some("203.0.113.106"), &STUN[..1], 0),
+            Config::Open => ("nat open", "Invite", false, None, &STUN[..1], 2),
         };
         let quoted = |items: &[&str]| items.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", ");
         let address = address.map_or_else(|| "None".into(), |a| format!("Some({a:?})"));
@@ -176,6 +196,20 @@ pub enum Host {
     Server(Lan, Config),
     /// `rl-server --nat-check` in a LAN, no joiner.
     NatCheck(Lan),
+    /// `rl-server` on the WAN at 203.0.113.40 with no NAT and no
+    /// configured address ([`Config::Open`], N47-a).
+    Open,
+}
+
+/// Where the scenario's TURN relay (`rl-server --relay`) runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelayAt {
+    /// On the WAN at 203.0.113.20 ([`Config::Relay`]).
+    Wan,
+    /// In a LAN at `.30`, behind its router's manual forward
+    /// ([`Config::RelayBeside`]; TR-5: beside the host). The WAN relay
+    /// does not run, so it is the only one announced.
+    Beside(Lan),
 }
 
 /// How the joiner finds the game.
@@ -244,23 +278,26 @@ pub struct Scenario {
     pub name: &'static str,
     pub host: Host,
     pub joiner: Option<Joiner>,
+    pub relay: RelayAt,
     pub expect: Expect,
 }
 
 /// The scenarios, in the order they run (spec §9.7; its "browser host"
 /// is plan 13's, ruling PL12b-3). Each path is checked on both ends: the
 /// joiner's `path:` line and the host's `via` (N49).
-pub const SCENARIOS: [Scenario; 9] = [
+pub const SCENARIOS: [Scenario; 11] = [
     Scenario {
         name: "direct",
         host: Host::Public,
         joiner: Some(Joiner { lan: Lan::A, way: Way::Join("203.0.113.30:23400"), flags: &["--lobby-only"] }),
+        relay: RelayAt::Wan,
         expect: Expect { stdout: &["path: direct"], host_log: &[&["via direct"]], ..EXPECT },
     },
     Scenario {
         name: "upnp",
         host: Host::Server(Lan::C, Config::Mapped),
         joiner: Some(Joiner { lan: Lan::A, way: Way::Invite, flags: &["--lobby-only"] }),
+        relay: RelayAt::Wan,
         expect: Expect {
             stdout: &["path: direct"],
             host_log: &[&["reach: Port 23400 is open on your router (UPnP)"], &["via open port"]],
@@ -272,6 +309,7 @@ pub const SCENARIOS: [Scenario; 9] = [
         name: "pcp",
         host: Host::Server(Lan::D, Config::Mapped),
         joiner: Some(Joiner { lan: Lan::A, way: Way::Invite, flags: &["--lobby-only"] }),
+        relay: RelayAt::Wan,
         expect: Expect {
             stdout: &["path: direct"],
             host_log: &[&["reach: Port 23400 is open on your router (PCP)"], &["via open port"]],
@@ -283,6 +321,7 @@ pub const SCENARIOS: [Scenario; 9] = [
         name: "nat-pmp",
         host: Host::Server(Lan::E, Config::Mapped),
         joiner: Some(Joiner { lan: Lan::A, way: Way::Invite, flags: &["--lobby-only"] }),
+        relay: RelayAt::Wan,
         expect: Expect {
             stdout: &["path: direct"],
             host_log: &[&["reach: Port 23400 is open on your router (NAT-PMP)"], &["via open port"]],
@@ -294,6 +333,7 @@ pub const SCENARIOS: [Scenario; 9] = [
         name: "hole-punching",
         host: Host::Server(Lan::A, Config::Invite),
         joiner: Some(Joiner { lan: Lan::C, way: Way::Invite, flags: &["--lobby-only", "--no-nostr-turn"] }),
+        relay: RelayAt::Wan,
         expect: Expect {
             stdout: &["path: punched"],
             host_log: &[&["via punched"]],
@@ -305,6 +345,7 @@ pub const SCENARIOS: [Scenario; 9] = [
         name: "relay",
         host: Host::Server(Lan::A, Config::Invite),
         joiner: Some(Joiner { lan: Lan::B, way: Way::Invite, flags: &["--matches", "1"] }),
+        relay: RelayAt::Wan,
         expect: Expect {
             stdout: &["path: relayed", "match 1:"],
             host_log: &[&["via relayed"], &["match end"]],
@@ -318,6 +359,7 @@ pub const SCENARIOS: [Scenario; 9] = [
         name: "no-relay",
         host: Host::Server(Lan::A, Config::Invite),
         joiner: Some(Joiner { lan: Lan::B, way: Way::Invite, flags: &["--no-nostr-turn"] }),
+        relay: RelayAt::Wan,
         expect: Expect {
             exit: 1,
             stderr: &["no network path to the game"],
@@ -329,13 +371,43 @@ pub const SCENARIOS: [Scenario; 9] = [
         name: "finding",
         host: Host::Server(Lan::A, Config::Listed),
         joiner: Some(Joiner { lan: Lan::B, way: Way::Listed(LISTED_NAME), flags: &["--lobby-only"] }),
+        relay: RelayAt::Wan,
         expect: Expect { stdout: &["path: relayed"], host_log: &[&["via relayed"]], ..EXPECT },
     },
     Scenario {
         name: "nat-check",
         host: Host::NatCheck(Lan::B),
         joiner: None,
+        relay: RelayAt::Wan,
         expect: Expect { stdout: &["NAT: symmetric NAT"], ..EXPECT },
+    },
+    Scenario {
+        name: "no-nat",
+        host: Host::Open,
+        joiner: Some(Joiner { lan: Lan::A, way: Way::Invite, flags: &["--lobby-only"] }),
+        relay: RelayAt::Wan,
+        expect: Expect {
+            stdout: &["path: direct"],
+            host_log: &[
+                &["reach: No router: players reach you directly at 203.0.113.40:23400"],
+                &["via direct"],
+            ],
+            code: Some(Code::Address),
+            ..EXPECT
+        },
+    },
+    Scenario {
+        name: "relay-beside",
+        host: Host::Server(Lan::F, Config::Invite),
+        joiner: Some(Joiner { lan: Lan::B, way: Way::Invite, flags: &["--lobby-only"] }),
+        relay: RelayAt::Beside(Lan::F),
+        expect: Expect {
+            stdout: &["path: relayed"],
+            host_log: &[&["via relayed", "via punched"]],
+            relay_allocates: true,
+            code: Some(Code::Relays),
+            ..EXPECT
+        },
     },
 ];
 
@@ -676,21 +748,42 @@ pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
         ]),
         Ready::Lines(vec!["nostr relay:", "stun server:"]),
     )];
-    let mut relay_cmd = server(Config::Relay);
-    relay_cmd.push("--relay".into());
-    out.push(unit(
-        "relay",
-        1,
-        &wan("203.0.113.20"),
-        &mounts,
-        bounded(relay_cmd),
-        Ready::Lines(vec!["relay: TURN on port"]),
-    ));
+    match sc.relay {
+        RelayAt::Wan => {
+            let mut relay_cmd = server(Config::Relay);
+            relay_cmd.push("--relay".into());
+            out.push(unit(
+                "relay",
+                1,
+                &wan("203.0.113.20"),
+                &mounts,
+                bounded(relay_cmd),
+                Ready::Lines(vec!["relay: TURN on port"]),
+            ));
+        }
+        // Behind its router (stage 2: the router routes first).
+        RelayAt::Beside(lan) => {
+            let mut relay_cmd = server(Config::RelayBeside);
+            relay_cmd.push("--relay".into());
+            out.push(unit(
+                "relay",
+                2,
+                &[(run.lan(lan), lan.addr(30))],
+                &node_opts,
+                on_lan(lan, relay_cmd),
+                Ready::Lines(vec!["relay: TURN on port"]),
+            ));
+        }
+    }
     let host_lan = match sc.host {
-        Host::Public => None,
+        Host::Public | Host::Open => None,
         Host::Server(lan, _) | Host::NatCheck(lan) => Some(lan),
     };
-    let mut lans: Vec<Lan> = host_lan.into_iter().chain(sc.joiner.map(|j| j.lan)).collect();
+    let relay_lan = match sc.relay {
+        RelayAt::Wan => None,
+        RelayAt::Beside(lan) => Some(lan),
+    };
+    let mut lans: Vec<Lan> = host_lan.into_iter().chain(relay_lan).chain(sc.joiner.map(|j| j.lan)).collect();
     lans.sort_by_key(|l| *l as u8);
     lans.dedup();
     for lan in lans {
@@ -719,6 +812,14 @@ pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
             &node_opts,
             on_lan(lan, server(config)),
             Ready::Invite(sc.expect.code.filter(|c| *c == Code::Address)),
+        )),
+        Host::Open => out.push(unit(
+            "host",
+            1,
+            &wan("203.0.113.40"),
+            &mounts,
+            bounded(server(Config::Open)),
+            Ready::Invite(Some(Code::Address)),
         )),
         Host::NatCheck(lan) => out.push(unit(
             "host",
@@ -1238,7 +1339,7 @@ pub fn command(only: &[String], keep: bool, offline: bool) -> anyhow::Result<boo
 }
 
 /// `full`'s step: every scenario; `Ok` with the `ok` line's detail
-/// (`9 scenarios, `), after a `skip` line when a prerequisite is missing.
+/// (`11 scenarios, `), after a `skip` line when a prerequisite is missing.
 pub fn step(offline: bool) -> Result<String, String> {
     match run(&[], false, offline, false)? {
         Outcome::Skipped(why) => {
@@ -1321,10 +1422,12 @@ mod tests {
                 "relay",
                 "no-relay",
                 "finding",
-                "nat-check"
+                "nat-check",
+                "no-nat",
+                "relay-beside"
             ]
         );
-        assert_eq!(select(&[]).unwrap().len(), 9);
+        assert_eq!(select(&[]).unwrap().len(), 11);
         let two = select(&["relay".into(), "direct".into()]).unwrap();
         assert_eq!(two.iter().map(|s| s.name).collect::<Vec<_>>(), ["direct", "relay"], "in table order");
         let why = select(&["browser".into()]).unwrap_err();
@@ -1435,6 +1538,19 @@ mod tests {
         let pmp = units(scenario("nat-pmp"), &run(LIFE));
         let router = pmp.iter().find(|u| u.role == "router-e").unwrap();
         assert!(router.args.windows(2).any(|w| w == ["/rl-nat/router.sh", "pmp"]));
+        // TR-5: the relay beside the host, behind router F's hairpinning
+        // forward; the WAN relay does not run.
+        let beside = units(scenario("relay-beside"), &run(LIFE));
+        let relay = beside.iter().find(|u| u.role == "relay").unwrap();
+        assert!(relay.args.windows(2).any(|w| w == ["/rl-nat/node.sh", "10.6.0.2"]), "{:?}", relay.args);
+        assert!(relay.args.iter().any(|a| a.ends_with(",ip=10.6.0.30")));
+        let router = beside.iter().find(|u| u.role == "router-f").unwrap();
+        assert!(router.args.windows(2).any(|w| w == ["/rl-nat/router.sh", "hairpin"]));
+        // N47-a: the open host on the WAN, its code with an address.
+        let open = units(scenario("no-nat"), &run(LIFE));
+        let host = open.iter().find(|u| u.role == "host").unwrap();
+        assert_eq!(host.ready, Ready::Invite(Some(Code::Address)));
+        assert!(host.args.iter().any(|a| a.ends_with(",ip=203.0.113.40")));
     }
 
     /// The isolation rests on these: macvlan, `--internal`, no `parent`
@@ -1447,7 +1563,15 @@ mod tests {
         let subnets: Vec<&str> = nets.iter().map(|(_, s)| s.as_str()).collect();
         assert_eq!(
             subnets,
-            ["203.0.113.0/24", "10.1.0.0/24", "10.2.0.0/24", "10.3.0.0/24", "10.4.0.0/24", "10.5.0.0/24"]
+            [
+                "203.0.113.0/24",
+                "10.1.0.0/24",
+                "10.2.0.0/24",
+                "10.3.0.0/24",
+                "10.4.0.0/24",
+                "10.5.0.0/24",
+                "10.6.0.0/24"
+            ]
         );
         for (name, subnet) in &nets {
             assert!(name.starts_with("rl-nat-4242-"), "{name}");
@@ -1476,6 +1600,9 @@ mod tests {
         assert!(Config::Mapped.text().contains("port_mapping: true"));
         assert!(Config::Invite.text().contains("port_mapping: false"));
         assert!(Config::Listed.text().contains("visibility: Public"));
+        assert!(Config::RelayBeside.text().contains("public_address: Some(\"203.0.113.106\")"));
+        let open = Config::Open.text();
+        assert!(open.contains("public_address: None") && open.contains("port_mapping: false"), "{open}");
     }
 
     #[test]
