@@ -260,8 +260,13 @@ announcements.
     for data), the longest idle without an allocation evicted through a
     last-seen index (O(log n)).
   - **Limits** (`TurnLimits`: default 32 allocations, 4 per client IP,
-    32 KiB/s relayed payload per IP each way, 20 requests/s; `generous()`
-    for tests sharing 127.0.0.1): buckets holding 2 s; a datagram over one
+    32 KiB/s relayed payload per IP each way, 20 requests/s, `max_session`
+    `MAX_SESSION` (6 h, plan 12b Task 8, the Task 3 review: an allocation
+    ends that long after it was made however often it is refreshed — the
+    last Allocate/Refresh answers grant only the time left, a Refresh with
+    none left deletes it — so a few IPs cannot hold a relay forever; longer
+    than an evening on one host); `generous()` for tests sharing 127.0.0.1,
+    `MAX_SESSION` too): buckets holding 2 s; a datagram over one
     is dropped and counted (`dropped`), never the client; the down bucket
     is charged only once the peer's permission passed (a stranger cannot
     drain it). Ports come from the driver: `take_allocation_requests` /
@@ -526,8 +531,9 @@ announcements.
     hands the mapper to a thread, `rl-net unmap`, at once;
     `Shutdown::wait(until)` returns once the mapping is deleted (the
     mapper waits at most `DROP_WAIT`, 1 s) or at `until` (`true` when
-    deleted or none). rl-server, rl-cli and the game are to wait on it
-    on exit (plan 12b Tasks 8-10; not wired yet). Dropping the endpoint
+    deleted or none). rl-server waits on it on exit (through
+    `OnlinePeer::shutdown`, Task 8); rl-cli and the game are to (plan 12b
+    Tasks 9-10). Dropping the endpoint
     is the fallback: the same thread, nobody waits (a process exiting
     at once may cut it short). `poll` calls
     `Core::poll` every time, so the TURN clients' timers and the STUN
@@ -638,7 +644,9 @@ unauthenticated answer, the amplification pinned, the relay-wide cap on
 unauthenticated answers, forged requests not starving a client's signed
 ones, a live client keeping its allocation, permission and channel for
 32 virtual minutes past nonce expiry against a spoofer draining both
-unproven budgets, oversized datagrams dropped; unit tests in `local.rs` (a base always found, the quick base instant,
+unproven budgets, oversized datagrams dropped, an allocation refreshed
+past its lifetime ending at its session cap (1800 s on a 1 s virtual
+clock); unit tests in `local.rs` (a base always found, the quick base instant,
 the source toward loopback), in `turn.rs`
 (the bucket, the IP table, nonces, a stale tag proven only for its own
 source, a proven source answered outside the unproven budget, an IP's

@@ -31,12 +31,20 @@ ctrlc.workspace = true
 serde = { workspace = true, features = ["std"] }
 ron.workspace = true
 
+[features]
+# Tests only: `Config::test_gateway` (a `FakeGateway` and a pinned base
+# address) and `nat_check::run_with`; rl-net's port mapper then refuses
+# real routers. Enabled by this crate's own dev-dependency.
+test-hooks = ["rl-net/test-hooks"]
+
 [dev-dependencies]
 tempfile.workspace = true
 # The announcement tests run a relay and a STUN server in-process.
 rl-discovery = { workspace = true, features = ["test-relay"] }
 # rl-net's test hooks: its port mapper refuses real routers in tests.
 rl-net = { workspace = true, features = ["test-hooks"] }
+# This crate's own test hooks (rl-discovery's pattern).
+rl-server = { path = ".", features = ["test-hooks"] }
 
 [[test]]
 name = "integration"

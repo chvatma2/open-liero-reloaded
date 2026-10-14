@@ -2,6 +2,8 @@
 //! documented in `fixtures/server/example.ron`.
 
 use std::net::IpAddr;
+#[cfg(feature = "test-hooks")]
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
 use anyhow::{Context as _, bail};
@@ -10,6 +12,7 @@ use rl_discovery::Region;
 use rl_discovery::defaults::{DEFAULT_RELAYS, DEFAULT_STUN};
 use rl_discovery::hosting::local_relays;
 use rl_discovery::list::is_global;
+use rl_discovery::turn_note::MAX_CAPACITY;
 use rl_lobby::HostConfig;
 use rl_modes::DeathmatchSettings;
 use rl_net::endpoint::DEFAULT_PORT;
@@ -115,10 +118,93 @@ pub struct Config {
     /// The server's public IP address, when STUN cannot learn it (or
     /// should not be asked).
     pub public_address: Option<String>,
-    /// STUN servers (`host:port`) asked for the public address when
-    /// `public_address` is not set, at the start and every ten minutes.
+    /// STUN servers (`host:port`) the game socket asks for its
+    /// server-reflexive address (an ICE candidate, never advertised: N47)
+    /// and the router's NAT behaviour, at the start and every 25 s.
     /// Default `DEFAULT_STUN`; empty: none asked.
     pub stun: Vec<String>,
+    /// Ask the router to open the port (UPnP-IGD, NAT-PMP, PCP; N51), TCP
+    /// and UDP, for Public and Invite servers; with a relay, its ports
+    /// too. Default true.
+    pub port_mapping: bool,
+    /// N62: accept local, private and documentation addresses where public
+    /// ones are expected (the router's external address, the configured
+    /// `public_address`, the relay's address and its peers): office and
+    /// LAN setups, the Docker tests. Default false.
+    pub allow_local: bool,
+    /// Run a TURN relay for players whose routers cannot meet (N52),
+    /// announced on `relays`. `None`: none (`--relay` sets the default).
+    pub relay: Option<RelayConfig>,
+    /// Tests only (feature `test-hooks`): aim the port mapping at a
+    /// `FakeGateway` and pin the base address.
+    #[cfg(feature = "test-hooks")]
+    #[serde(skip)]
+    pub test_gateway: Option<TestGateway>,
+}
+
+/// A volunteer TURN relay's settings (N52). `port: 0` and `ports: (0, 0)`
+/// take ephemeral ports (tests).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct RelayConfig {
+    /// The TURN listening port (UDP). Default 3478.
+    pub port: u16,
+    /// The relay ports, first and last (UDP; one per allocation). Default
+    /// (49160, 49191).
+    pub ports: (u16, u16),
+    /// Allocations in all, 1 to `MAX_CAPACITY` (4096). Default 32.
+    pub capacity: u16,
+    /// KiB per second relayed for each player's IP, each way (at least 1).
+    /// Default 32.
+    pub user_kib_s: u32,
+    /// Allocations each player's IP may hold (at least 1). Default 4.
+    pub allocations_per_ip: u8,
+}
+
+impl Default for RelayConfig {
+    fn default() -> Self {
+        RelayConfig { port: 3478, ports: (49160, 49191), capacity: 32, user_kib_s: 32, allocations_per_ip: 4 }
+    }
+}
+
+impl RelayConfig {
+    /// The relay ports as a range (`0..=0`: OS-assigned, tests).
+    pub fn port_range(&self) -> std::ops::RangeInclusive<u16> {
+        self.ports.0..=self.ports.1
+    }
+
+    /// Why the settings cannot work, if they cannot.
+    fn check(&self) -> anyhow::Result<()> {
+        let (first, last) = self.ports;
+        if (first == 0) != (last == 0) || first > last {
+            bail!("relay ports must be (first, last), first <= last, or (0, 0)");
+        }
+        if self.port != 0 && self.port_range().contains(&self.port) {
+            bail!("the relay's port {} is among its relay ports", self.port);
+        }
+        if self.capacity == 0 || self.capacity > MAX_CAPACITY {
+            bail!("relay capacity must be 1 to {MAX_CAPACITY}");
+        }
+        if self.user_kib_s == 0 {
+            bail!("relay user_kib_s must be at least 1");
+        }
+        if self.allocations_per_ip == 0 {
+            bail!("relay allocations_per_ip must be at least 1");
+        }
+        Ok(())
+    }
+}
+
+/// Tests only (feature `test-hooks`): where the port mapping asks (a
+/// `FakeGateway`'s PCP/NAT-PMP and SSDP sockets) and the base address
+/// (the only host candidate; 127.0.0.1 keeps every datagram on the
+/// machine, test rule NT-1).
+#[cfg(feature = "test-hooks")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct TestGateway {
+    pub pmp: SocketAddr,
+    pub ssdp: SocketAddr,
+    pub base: Ipv4Addr,
 }
 
 /// The default of `upload_kib_s`: `rl_online`'s `HOST_RATE`, 4 MiB/s.
@@ -148,6 +234,11 @@ impl Default for Config {
             region: Region::Unknown,
             public_address: None,
             stun: DEFAULT_STUN.iter().map(|s| s.to_string()).collect(),
+            port_mapping: true,
+            allow_local: false,
+            relay: None,
+            #[cfg(feature = "test-hooks")]
+            test_gateway: None,
         }
     }
 }
@@ -202,6 +293,9 @@ impl Config {
         if let Some(r) = config.relays.iter().find(|r| !(r.starts_with("wss://") || r.starts_with("ws://"))) {
             bail!("relay {r:?}: a wss:// or ws:// URL");
         }
+        if let Some(relay) = &config.relay {
+            relay.check()?;
+        }
         Ok(config)
     }
 
@@ -213,9 +307,12 @@ impl Config {
     /// The configured public address when the Internet cannot reach it
     /// (IPv6, which invites and joiners do not use, or not global) and a
     /// relay is public: such a server is not announced on Nostr (its note
-    /// would leak the LAN address, and every list refuses it).
+    /// would leak the LAN address, and every list refuses it). With
+    /// `allow_local` (N62) only IPv6 is.
     pub fn unreachable_public_address(&self) -> Option<IpAddr> {
-        self.public_ip().filter(|ip| ip.is_ipv6() || !is_global(*ip)).filter(|_| !local_relays(&self.relays))
+        self.public_ip()
+            .filter(|ip| ip.is_ipv6() || (!is_global(*ip) && !self.allow_local))
+            .filter(|_| !local_relays(&self.relays))
     }
 
     /// Bytes per second the server sends content in all: `upload_kib_s`
@@ -247,5 +344,71 @@ impl Config {
     /// every entry a setup the wire takes.
     pub fn check(&self, content: &Content) -> anyhow::Result<()> {
         Rotation::new(content, &self.rotation, self.fill_bots).map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with(fields: &str) -> anyhow::Result<Config> {
+        Config::parse(&format!(
+            r#"({fields} rotation: [(mod: "olx-classic", level: "olx-level-dirt-level")])"#
+        ))
+    }
+
+    /// Plan 12b's fields: mapping on, local addresses refused and no relay
+    /// unless asked; a relay's defaults (N52).
+    #[test]
+    fn the_new_fields_default() {
+        let c = with("").unwrap();
+        assert!(c.port_mapping && !c.allow_local);
+        assert_eq!(c.relay, None);
+        let c = with("port_mapping: false, allow_local: true, relay: Some(()),").unwrap();
+        assert!(!c.port_mapping && c.allow_local);
+        let r = c.relay.unwrap();
+        assert_eq!(
+            r,
+            RelayConfig {
+                port: 3478,
+                ports: (49160, 49191),
+                capacity: 32,
+                user_kib_s: 32,
+                allocations_per_ip: 4
+            }
+        );
+        assert_eq!(r.port_range(), 49160..=49191);
+        let r = with("relay: Some((port: 0, ports: (0, 0), capacity: 256)),").unwrap().relay.unwrap();
+        assert_eq!((r.port, r.port_range(), r.capacity), (0, 0..=0, 256));
+    }
+
+    #[test]
+    fn a_relay_config_is_checked() {
+        for bad in [
+            "(ports: (49170, 49160))",
+            "(ports: (0, 49160))",
+            "(port: 49165)",
+            "(capacity: 0)",
+            "(capacity: 5000)",
+            "(user_kib_s: 0)",
+            "(allocations_per_ip: 0)",
+            "(turn: [])",
+        ] {
+            assert!(with(&format!("relay: Some({bad}),")).is_err(), "{bad}");
+        }
+        assert!(with("relay: Some((port: 3478, ports: (40000, 40000), capacity: 4096)),").is_ok());
+    }
+
+    /// N62: with `allow_local` a private `public_address` is announced
+    /// (an office's relay and lists accept it); IPv6 never is.
+    #[test]
+    fn allow_local_announces_a_private_public_address() {
+        let public = r#"relays: ["wss://relay.example.org"],"#;
+        let c =
+            with(&format!(r#"public_address: Some("192.168.1.5"), {public} allow_local: true,"#)).unwrap();
+        assert_eq!(c.unreachable_public_address(), None);
+        let c =
+            with(&format!(r#"public_address: Some("2a00:1450::1"), {public} allow_local: true,"#)).unwrap();
+        assert!(c.unreachable_public_address().is_some());
     }
 }

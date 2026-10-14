@@ -47,12 +47,14 @@ const READY_WITHIN: Duration = Duration::from_secs(60);
 /// How long the Linux verification waits for the bot client's match.
 const MATCH_WITHIN: Duration = Duration::from_secs(90);
 /// The server config the verification runs (no network beyond the machine).
-const CHECK_CONFIG: &str = "// `cargo xtask dist`'s check: by address only, nothing announced, no STUN.
+const CHECK_CONFIG: &str = "// `cargo xtask dist`'s check: by address only, nothing announced, no
+// STUN, the router never asked.
 (
     name: \"dist check\",
     visibility: Invite,
     relays: [],
     stun: [],
+    port_mapping: false,
     port: 0,
     max_players: 2,
     max_spectators: 0,

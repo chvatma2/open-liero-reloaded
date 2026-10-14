@@ -190,8 +190,22 @@ fn hosting() -> Hosting {
         password: true,
         region: Region::Oceania,
         addr: Some(IpAddr::V4(Ipv4Addr::new(81, 2, 69, 142))),
+        public_port: None,
         map_name: "Dirt Level".into(),
     }
+}
+
+/// Plan 12b Task 8 (N47): a note names the router mapping's external port
+/// (`public_port`) when the host has one; its LAN announcement keeps the
+/// local port.
+#[test]
+fn a_note_names_the_public_port() {
+    let mapped = Hosting { public_port: Some(40001), ..hosting() };
+    let s = GameSummary::of_lobby(&lobby(rl_proto::Phase::Gathering, 0), &mapped);
+    assert_eq!(s.port, 40001);
+    assert_eq!(mapped.lan(&s).port, 23400, "the LAN joins the local port");
+    let s = GameSummary::of_lobby(&lobby(rl_proto::Phase::Gathering, 0), &hosting());
+    assert_eq!((s.port, hosting().lan(&s)), (23400, s.lan()));
 }
 
 #[test]

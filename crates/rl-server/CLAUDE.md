@@ -3,12 +3,15 @@
 The headless dedicated server (networking spec §7.4): a lobby without a
 local player, a map rotation, bots filling empty seats, admins' chat
 commands, bans kept in a file, LAN and Nostr announcements, an invite code
-and a log line per event.
+and a log line per event; plan 12b: its port mapped at the router, joins
+through its Nostr relays, a volunteer TURN relay (`--relay`) and a network
+check (`--nat-check`).
 No window, no GPU, no audio: it simulates only to run the bots and check
 checksums.
 
 ```
-rl-server --config server.ron [--content content/packs] [--data-dir <dir>]
+rl-server --config server.ron [--content content/packs] [--data-dir <dir>] [--relay]
+rl-server --nat-check [--config server.ron]
 ```
 
 Without `--content`: `rl_content::default_content_dir` (`content/packs`
@@ -17,11 +20,14 @@ beside the executable, else in the working directory).
 - **Layer 6, std; a library plus the binary** (plan 10 ruling PF2:
   `rl-cli`'s real-transport tests run the server in-process; `xtask/layers.ron`
   pairs `rl-cli` with `rl-server`). Depends on `rl-online` (`OnlinePeer`
-  with `PeerRole::Server`, `LobbyHandle`), `rl-lobby` (fingerprints,
-  `NOT_ADMIN`, `DEFAULT_SKIN`), `rl-net` (`EndpointConfig`, LAN
-  `Announcer`, `random_bytes`), `rl-discovery` (the summary, `Pool`,
-  `hosting`'s `AddressWatch`, `Publisher` and `invite`, shared with the
-  game; its `test-relay` feature for the tests), `rl-proto`, `rl-content`, `rl-bots`,
+  with `PeerRole::Server` and `HostListen`, `LobbyHandle`, `Reachability`,
+  `join::{path_tag, nat_text}`), `rl-lobby` (fingerprints,
+  `NOT_ADMIN`, `RELAYED_BAN`, `DEFAULT_SKIN`), `rl-net` (`EndpointConfig`
+  and `IceConfig`, LAN `Announcer`, `random_bytes`, `portmap::PortMapper`,
+  `turn::TurnServer`, `local::base_addresses`, `probe::NatBehaviour`),
+  `rl-discovery` (the summary and `Hosting`, `Pool`, `Publisher`,
+  `invite`, `turn_note`/`TurnList`, the STUN codec, shared with the game;
+  its `test-relay` feature for the tests), `rl-proto`, `rl-content`, `rl-bots`,
   `rl-modes`, `rl-sim`, serde, ron, clap, ctrlc (the binary's stop) and
   anyhow. Not `rl-ui` (egui): the identity file's owner-only writing is replicated in `files.rs`.
 - **`config.rs`**: `Config::parse` (RON, `deny_unknown_fields`, every field
@@ -39,9 +45,23 @@ beside the executable, else in the working directory).
   `host_config`, `check(content)` (the rotation against the packs),
   `upload_kib_s` (plan 11: content sent in all, KiB/s; default
   `DEFAULT_UPLOAD_KIB_S` 4096, so older configs load; `upload_rate()`
-  clamps it to `UPLOAD_KIB_S`, 64..=65536, in bytes/s).
-  `fixtures/server/example.ron` documents every field (its admin key is a
-  placeholder no one holds).
+  clamps it to `UPLOAD_KIB_S`, 64..=65536, in bytes/s). Plan 12b (all
+  defaulted, so older configs load): `port_mapping` (default true; N51,
+  Public and Invite servers, the relay's ports), `allow_local` (default
+  false; N62: the mapping's external address, `public_address` — then
+  `unreachable_public_address` names only IPv6 —, the relay's address and
+  its peers may be non-global), `relay: Option<RelayConfig>` (N52; `port`
+  3478, `ports` (49160, 49191), `capacity` 32, `user_kib_s` 32,
+  `allocations_per_ip` 4; checked: ports first ≤ last or `(0, 0)`
+  (ephemeral, tests; `port: 0` too), the port outside them, capacity
+  1..=`MAX_CAPACITY` 4096, the rest ≥ 1). No TURN server list (ruling
+  PF12b-4: a host never allocates, N48). Test hook (feature
+  `test-hooks`, `#[serde(skip)]`) `test_gateway: Option<TestGateway {
+  pmp, ssdp, base }>`: the port mapping aimed at a `FakeGateway`, the base
+  pinned (NT-1: 127.0.0.1). `stun` now feeds the game socket's ICE
+  (server-reflexive candidate, `NatBehaviour`), never an advertised
+  address (N47). `fixtures/server/example.ron` documents every field (its
+  admin key is a placeholder no one holds).
 - **`rotation.rs`**: `Rotation::new` hashes each entry's packs once
   (`setup_packs`), picks its restrictions as the menus do (`DEFAULT_PRESET`,
   else the mod's first) and checks the setup with 0 and `fill_bots` bots
@@ -69,35 +89,98 @@ beside the executable, else in the working directory).
   `who` the name and `/banip` address of a key, for `/unban`; atomic;
   missing = none; a bad key or over 4 MiB is an error), `hex`,
   `parse_key`.
-- **Finding** (plan 12a): the address watch, the relay hints, the invite
-  and the notes' publisher are rl-discovery's `hosting` (shared with the
-  game since Task 10; this crate's `finding.rs` moved there).
+- **Finding** (plan 12a): the relay hints, the invite and the notes'
+  publisher are rl-discovery's `hosting` (shared with the game since Task
+  10; this crate's `finding.rs` moved there). Plan 12b retired the
+  address watch here: the address comes from `Reachability::direct()`.
+- **`relay.rs`** (`--relay`, N52): `Relay` (crate-private) with fresh
+  credentials each start (16 lowercase hex characters each,
+  `random_bytes`). With `port_mapping`, one `PortMapper` per port (the
+  listening port unless 0, each relay port unless `(0, 0)`), UDP,
+  `exact: true` (pre-flight fix #11: the relay reports `public:<local
+  port>`, so a port the router would move is logged, `"relay: port {p}
+  not mapped: {why}"`, never shifted), on the base and gateway the OS
+  gives (`local::base_addresses`, on a thread `rl-server relay base`) or
+  the `test_gateway`; `"relay: port {p} mapped ({method}) at {external}"`
+  for the listening port, `"relay: {k} of {n} relay ports mapped"` once
+  all answered. **Start** (pre-flight fix #10): only once its public IPv4
+  is known — `public_address` (IPv6 said and skipped); else the listening
+  port's usable exact mapping's external IP (waiting while it is
+  `Trying`); else, once STUN settled, the game socket's srflx IP, only
+  when `NatBehaviour::Open` (`"relay: no port mapping: relying on {ip}
+  being reachable"`); a non-global IP only with `allow_local`. Otherwise
+  `NO_PUBLIC_ADDRESS` ("relay: not announced: no public address (set
+  public_address, or enable port mapping)") and it never starts.
+  `"relay: waiting for the public address"` at first. `TurnServer` on
+  `0.0.0.0:port` with `ports`, `TurnLimits` from the config (requests 20/s
+  and `max_session` `MAX_SESSION`, 6 h, rl-net's defaults: the Task 3
+  review's session cap), `allow_local`; `"relay: TURN on port {p}, relay
+  ports {a}-{b} (or ephemeral), announced as {ip}:{p}"`; a `turn_note`
+  (the server's identity, region, capacity, load = allocations,
+  `ANNOUNCE_TTL`) at once and every `REPUBLISH` (60 s), `created_at` never
+  going back; `"relay: {n} allocations"` at each change (looked at every
+  second). `shutdown`: the closing note (capacity 0, `CLOSE_TTL`, one
+  second after the last), the server dropped, and an `Unmapping` (each
+  mapper dropped on its own thread, `wait(until)`).
+- **`nat_check.rs`** (`--nat-check`, N60): `run(config, deadline, out)`
+  (`run_with(config, Some(&TestGateway), ..)` under `test-hooks`): the
+  base address and gateway (`local::base_addresses`, or the hooks'); every
+  configured STUN server asked from one socket (a retry after 500 ms),
+  each answer or "no answer", then `"NAT: {nat_text}"` (`Open` when an
+  answer is our base and port, else the first two answers alike or not:
+  a symmetric NAT prints `"NAT: symmetric NAT"`, a stable wording Task 11
+  greps); the router (`PortMapper` on a random port of 49152-65535, UDP,
+  exact; at most 5 s; its result, a non-public external address said;
+  dropped, deleting it: "router: the mapping is deleted"); the relays (a
+  `Pool` subscribed to `TurnList::filter`; each one's status once all
+  answered or `deadline`, then `"TURN notes: n"` and each open relay's
+  address, region and load); `"nat-check done"`. Errors only when `out`
+  fails. The binary passes `NAT_CHECK_WAIT` (5 s). Public servers only
+  when run by hand: the tests aim it at in-process fakes.
 - **`lib.rs`, `Server`**: `start(config, content, data_dir, log)` (identity,
   bans into the lobby and the gate, the rotation, `PeerRole::Server` on the
-  config's port, LAN `Announcer` for `Public` and `Lan`, a Nostr `Pool` on
-  `relays` for `Public` (none, with a warning, when `relays` is empty, or
-  when `unreachable_public_address` names the configured address: its
-  note would leak the LAN address to public relays, and every list
-  refuses it; declined item of final review A, B-M2); the
-  address as `AddressWatch` says (logged); the download cache
+  config's port with `HostListen` (N54: Public and Invite servers listen
+  on `relays` when there are any, Lan servers do not; `public_address`
+  as the configured address) and `IceConfig { stun, port_mapping:
+  port_mapping && not Lan, allow_local }` (no TURN: a host never
+  allocates; the `test_gateway`'s `gateway`, `ssdp`, `base_override`
+  under `test-hooks`), LAN `Announcer` for `Public` and `Lan`, a Nostr
+  `Pool` on `relays` for `Public` notes (none, with a warning, when
+  `relays` is empty, or when `unreachable_public_address` names the
+  configured address: its note would leak the LAN address to public
+  relays, and every list refuses it; declined item of final review A,
+  B-M2) and for a relay's notes (any visibility; one pool for both); the
+  `Relay` when `relay` is set (not started without relays); the download cache
   `<data>/downloads`, `DOWNLOADS_DIR`, logged, shared with the peer as
   `PeerContent { cache, upload_rate }`: the server serves its packs to
   members lacking them and fetches members' skins it lacks into it;
   when it cannot be opened (`InstallError::Locked`: another server on
   the data directory) a warning line, and the server runs without one,
   still serving its packs, members' skins it lacks drawn as the
-  default), `poll(now, log)`, `shutdown`
-  (`Bye` to everyone; then a public server's closing note, `created_at`
-  after the last note's, and the pool dropped, which flushes it within
-  2 s), `local_port`, `key`, `invite()`. The log prints `invite code:
-  rlx1…` once the address is settled (at the start when configured or no
-  STUN is asked, else at STUN's first answer, within about 3 s) and again
-  whenever the address changes. Announcements: `GameSummary::of_lobby` with
-  the level's pack name, the config's maximums, password flag, region and
-  the public address on the local port; the LAN gets `summary.lan()` every
-  poll, Nostr an `announcement` signed with the server's identity when
-  the `Announcer` says (every minute, at a change after 12 s), not before
-  the address is settled; `created_at` is the wall clock read at each note
+  default), `poll(now, log)`, `shutdown(self, log)` (the bans saved; a
+  public server's closing note, `created_at` after the last note's, and
+  the relay's; `OnlinePeer::shutdown` — `Bye` to everyone, listening
+  stopped, the endpoint's mapping deleted on a thread —, the pool dropped,
+  which flushes it within 2 s; then ruling NT-2: it waits on the peer's
+  `Shutdown` and the relay's `Unmapping` until `DROP_WAIT` (1 s) after
+  they began, a warning if the router did not confirm), `local_port`,
+  `key`, `invite()` (the key, the relays — none for a Lan server — and
+  `Reachability::direct()`, N47: the usable mapping's external address
+  and port, else `public_address` on the local port; never STUN's),
+  `relay_addr()` and `relay_stats()` (the TURN server's, once it runs).
+  Each `OnlineEvent::Reachability` is kept and every new line of its
+  `lines()` logged once, `"reach: …"`. The invite is printed once
+  `Reachability::settled()` (the router answered or gave up, and STUN's
+  first round) or `SETTLE_WAIT` (5 s) after the start, and again whenever
+  `direct()` changes: `"invite code: rlx1…"` with an address, `"invite
+  code (joins through the relays): rlx1…"` without (`"(no address and no
+  relays: it joins nothing)"` when it has neither). Announcements:
+  `GameSummary::of_lobby` with `Hosting` (the level's pack name, the
+  config's maximums, password flag, region, `direct()`'s IP as `addr` and
+  its port as `public_port`); the LAN gets `Hosting::lan(&summary)` (the
+  local port) every poll, Nostr an `announcement` signed with the
+  server's identity when the `Announcer` says (every minute, at a change
+  after 12 s), not before it settled (at most 5 s); `created_at` is the wall clock read at each note
   (`unix_now`; final review A-I2: a monotonic clock anchored at the start
   dated every note expired after a suspend or an NTP step). Relay statuses (not `Connecting`) and refused
   notes are logged once per relay until they change. Each poll (the lobby copied
@@ -108,7 +191,8 @@ beside the executable, else in the working directory).
   `NOT_AN_ADMIN_TARGET`; answers are notices to the asker alone,
   `LobbyHandle::tell`;
   setting and map changes are said to everyone), joins and leaves from the
-  lobby's members (fingerprint, address, full key), the match's desyncs
+  lobby's members (`"join: {name} ({fp}) from {ip} via {path_tag}[ (admin)]
+  key {hex}"`, the member's `path`, N49), the match's desyncs
   and states sent (`Session::stats`), the bans file written at once after
   `/ban`, `/banip`, `/unban` and checked every `BANS_EVERY` (1 s, an
   admin's ban from the game's lobby; a write failure retried then and said
@@ -130,7 +214,17 @@ beside the executable, else in the working directory).
   it). `run_with(.., observe)` shows the server to `observe` after each
   poll; `last_record` is the last finished match's `MatchRecord` (`rl-cli`'s
   real-transport verdict, spec §9.4, compares every client's with it).
-- **`main.rs`**: clap; the data directory defaults to the config file's;
+- **`/banip`** (N59, the Task 7 review): `ban_with_address_by(member,
+  Some(admin))`; a member whose `path` is `Relayed` is banned by key only
+  (its address is the relay's: banning it would close the relay to
+  everyone after a restart): the lobby tells the admin `RELAYED_BAN`
+  ("reached through a TURN relay: banned by key only"), the log says
+  `"banip {name}: {RELAYED_BAN}"`, and its `Who` keeps no address, so the
+  bans file holds none.
+- **`main.rs`**: clap; `--config` (required but with `--nat-check`, which
+  then uses `Config::default()`'s servers), `--relay` (sets `relay` to
+  `RelayConfig::default()` when the config has none), `--nat-check`
+  (`nat_check::run` to stdout, exit 0); the data directory defaults to the config file's;
   the log goes to stdout and `<data>/server.log` (`files::RotatingLog`:
   past `LOG_MAX_BYTES`, 10 MiB, at a line start, `server.log` becomes
   `server.log.1`, `.1` `.2`; `LOG_KEEP` 2 old files; `server.log` moves
@@ -145,7 +239,10 @@ beside the executable, else in the working directory).
   (no control characters): a member cannot forge a log line.
 
 Test: `cargo nextest run -p rl-server` (the dev-dependency on
-`rl-net/test-hooks` keeps the port mapper off real routers in tests;
+`rl-net/test-hooks` keeps the port mapper off real routers in tests, and
+the one on itself turns on its own `test-hooks`; every test config sets
+`port_mapping: false` or aims `test_gateway` at a `FakeGateway`, and no
+test uses the default relays or STUN servers;
 `tests/server.rs`, on 127.0.0.1 with port 0, Classic from `RL_CONTENT_DIR`, skipped with a notice without
 it; each under 20 s, every wait bounded): a rotation (two bot-driven
 clients ready, entry 0 on Dirt Level with one fill bot, its end, the lobby
@@ -166,13 +263,34 @@ another's skin the server lacks lands in `<data>/downloads` (held:
 `Locked`); with that cache held by another, a warning, the level still
 served, no skin fetched; finding the server (plan 12a, with rl-discovery's
 in-process `TestRelay` and `StunResponder`: nothing leaves the machine, so
-the shared `config` is `Invite` with `stun: []`): a public server listed by
-a `GameList` subscribed to the relay with the right summary and the STUN
-address, `/invite` for anyone, a closing note at shutdown; the printed
-invite joins (`expected_host`), a forged key is refused (`WRONG_HOST`),
-`/invite` admins only; an invite-only server publishes nothing and keeps no
-private STUN answer; the address asked again after ten minutes (a new
-invite printed); an old config (`DirectOnly`, no new fields) loads. Unit tests: command parsing, `/unban` targets, hex keys,
+the shared `config` is `Invite` with `relays: []`, `stun: []` and
+`port_mapping: false`): a public server listed by
+a `GameList` subscribed to the relay with the right summary and no
+address (STUN's answer never advertised, N47), `/invite` for anyone, a
+closing note at shutdown; the printed invite joins (`expected_host`;
+`public_address` 127.0.0.1, its `reach:` line), a forged key is refused
+(`WRONG_HOST`), `/invite` admins only; an invite-only server publishes
+nothing and advertises no STUN answer; an old config (`DirectOnly`, none
+of plan 12a's or 12b's fields) loads. Plan 12b (`TestRelay`, a pinned
+127.0.0.1 base, `allow_local`): an invite server without an address
+joined through Nostr (`via direct`, the `reach:` lines); a public server
+mapped by a UPnP-only `FakeGateway` at 203.0.113.7 listed at that address
+and the mapped port (TCP and UDP), its `reach: Port … (UPnP)` line, the
+mapping gone after a clean stop (NT-2); `--relay` (`public_address`
+127.0.0.1, ephemeral ports, generous limits) picked from a `TurnList`
+(the server's key, its port, 16-hex credentials), a `relay_only` client
+joining through it (`Relayed`, `via relayed`, relayed bytes, `relay: 1
+allocations`); its closing note at the stop (the list empties); a relayed
+member's `/banip` by key only (the admin told, the file without the
+address) kept across a restart from the bans file (the key refused, a new
+key from 127.0.0.1 welcomed). Unit tests: the new config fields and the
+relay's checks, `allow_local`'s public address; relay ports mapped
+exactly (a held port said and not shifted, the relay started on the
+mapping's external address, its note and closing note, the mappings
+deleted); `--nat-check`'s report with a `TurnServer` as STUN (`NAT: no
+NAT`), a `FakeGateway` (the mapping made, said not public, deleted), a
+`TestRelay` with a TURN note, two `StunResponder`s seeing different
+ports (`NAT: symmetric NAT`), no STUN servers; the NAT judgement. Also: command parsing, `/unban` targets, hex keys,
 the bans and identity files, the log's rotation (and a rename that
 fails, injected), notices split at 200
 characters, UTC dates (the hints, invites and address watch are tested

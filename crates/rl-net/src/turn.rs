@@ -111,28 +111,43 @@ pub struct TurnLimits {
     /// others from the smaller (a quarter, rounded down). Each bucket gets
     /// at least 1 a second, so 0 or 1 still lets an IP send 2 a second.
     pub per_ip_requests_per_s: u32,
+    /// An allocation ends this long after it was made, however often it
+    /// is refreshed: the last refreshes are granted only the time left.
+    /// Default [`MAX_SESSION`].
+    pub max_session: Duration,
 }
 
+/// The longest an allocation lives, refreshes included (Task 8, the Task 3
+/// review): 6 h, longer than an evening's play on one host, so a few IPs'
+/// allocations cannot hold a relay's capacity forever. A relayed player
+/// still connected then loses the link ("the connection to the host was
+/// lost") and joins again.
+pub const MAX_SESSION: Duration = Duration::from_secs(6 * 3600);
+
 impl Default for TurnLimits {
-    /// 32 allocations, 4 per IP, 32 KiB/s each way, 20 requests/s (N52).
+    /// 32 allocations, 4 per IP, 32 KiB/s each way, 20 requests/s,
+    /// sessions of at most [`MAX_SESSION`] (N52).
     fn default() -> TurnLimits {
         TurnLimits {
             capacity: 32,
             per_ip_allocations: 4,
             per_ip_bytes_per_s: 32 * 1024,
             per_ip_requests_per_s: 20,
+            max_session: MAX_SESSION,
         }
     }
 }
 
 impl TurnLimits {
-    /// For tests that share 127.0.0.1: 256 allocations, 64 per IP, 64 MiB/s, 10 000 requests/s.
+    /// For tests that share 127.0.0.1: 256 allocations, 64 per IP, 64 MiB/s, 10 000 requests/s
+    /// ([`MAX_SESSION`] still).
     pub fn generous() -> TurnLimits {
         TurnLimits {
             capacity: 256,
             per_ip_allocations: 64,
             per_ip_bytes_per_s: 64 * 1024 * 1024,
             per_ip_requests_per_s: 10_000,
+            max_session: MAX_SESSION,
         }
     }
 }
@@ -271,6 +286,9 @@ struct Allocation {
     transaction: [u8; 12],
     lifetime: u32,
     expires: Instant,
+    /// The session's end ([`TurnLimits::max_session`] after it was made):
+    /// `expires` never passes it.
+    ends: Instant,
     /// Peer IPs and when their permission ends.
     permissions: BTreeMap<IpAddr, Instant>,
     /// Channel numbers, their peers and when they end; and back.
@@ -694,13 +712,19 @@ impl TurnCore {
             self.answer(m, from, |b| b.u32(msg::LIFETIME, 0));
             return Ok(());
         }
-        let lifetime = requested.clamp(DEFAULT_LIFETIME, MAX_LIFETIME);
-        if let Some(a) = self.allocations.get_mut(&from) {
-            self.expiries.remove(&(a.expires, from));
-            a.expires = now + Duration::from_secs(u64::from(lifetime));
-            a.lifetime = lifetime;
-            self.expiries.insert((a.expires, from));
+        let wanted = requested.clamp(DEFAULT_LIFETIME, MAX_LIFETIME);
+        let Some(a) = self.allocations.get_mut(&from) else { return Err(ALLOCATION_MISMATCH) };
+        // Never past the session's end: the last refreshes get what is left.
+        let (expires, lifetime) = capped(now, wanted, a.ends);
+        if lifetime == 0 {
+            self.release(from);
+            self.answer(m, from, |b| b.u32(msg::LIFETIME, 0));
+            return Ok(());
         }
+        self.expiries.remove(&(a.expires, from));
+        a.expires = expires;
+        a.lifetime = lifetime;
+        self.expiries.insert((expires, from));
         self.answer(m, from, |b| b.u32(msg::LIFETIME, lifetime));
         Ok(())
     }
@@ -887,14 +911,17 @@ impl TurnCore {
                 .finish();
             return self.push(self.listen.port(), p.client, bytes);
         };
-        let expires = now + Duration::from_secs(u64::from(p.lifetime));
+        let ends = now + self.limits.max_session.max(Duration::from_secs(1));
+        let (expires, lifetime) = capped(now, p.lifetime, ends);
+        let lifetime = lifetime.max(1);
         self.allocations.insert(
             p.client,
             Allocation {
                 port,
                 transaction: p.transaction,
-                lifetime: p.lifetime,
+                lifetime,
                 expires,
+                ends,
                 permissions: BTreeMap::new(),
                 channels: BTreeMap::new(),
                 peers: BTreeMap::new(),
@@ -902,7 +929,7 @@ impl TurnCore {
         );
         self.by_port.insert(port, p.client);
         self.expiries.insert((expires, p.client));
-        self.allocated_answer(p.transaction, p.client, port, p.lifetime);
+        self.allocated_answer(p.transaction, p.client, port, lifetime);
     }
 
     /// Relay ports whose allocation ended since the last call (the driver closes them).
@@ -937,6 +964,14 @@ fn request_rates(limits: &TurnLimits) -> (u32, u32) {
     let total = limits.per_ip_requests_per_s;
     let unproven = (total / 4).max(1);
     (total.saturating_sub(unproven).max(1), unproven)
+}
+
+/// A lifetime of `wanted` seconds from `now`, cut at `ends`: when it ends,
+/// and the whole seconds granted (0: the session is over).
+fn capped(now: Instant, wanted: u32, ends: Instant) -> (Instant, u32) {
+    let expires = ends.min(now + Duration::from_secs(u64::from(wanted)));
+    let secs = u32::try_from(expires.saturating_duration_since(now).as_secs()).unwrap_or(u32::MAX);
+    (expires, secs)
 }
 
 /// A request's LIFETIME in seconds.

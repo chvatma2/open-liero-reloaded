@@ -1,5 +1,7 @@
-//! `rl-server --config <file.ron> [--content <dir>] [--data-dir <dir>]`:
-//! the dedicated server (networking spec §7.4). Logs every event to the
+//! `rl-server --config <file.ron> [--content <dir>] [--data-dir <dir>]
+//! [--relay]`: the dedicated server (networking spec §7.4), and with
+//! `--relay` a volunteer TURN relay (N52). `rl-server --nat-check [--config
+//! <file.ron>]` checks the network instead (N60) and exits. Logs every event to the
 //! terminal and to `<data>/server.log` (rotated past 10 MiB, two old files
 //! kept), each line stamped with the UTC
 //! time. Ctrl+C, SIGTERM, closing its console (Windows) or typing `quit`
@@ -14,8 +16,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context as _;
 use clap::Parser;
 use rl_content::Content;
-use rl_server::config::Config;
+use rl_server::config::{Config, RelayConfig};
 use rl_server::files::{LOG_KEEP, LOG_MAX_BYTES, RotatingLog};
+use rl_server::nat_check::{self, NAT_CHECK_WAIT};
 
 /// The log file, in the data directory.
 const LOG_FILE: &str = "server.log";
@@ -26,8 +29,8 @@ static STOP: AtomicBool = AtomicBool::new(false);
 #[command(name = "rl-server", about = "The rust-liero dedicated server")]
 struct Args {
     /// The server's config (RON; see fixtures/server/example.ron).
-    #[arg(long)]
-    config: PathBuf,
+    #[arg(long, required_unless_present = "nat_check")]
+    config: Option<PathBuf>,
     /// The content directory (mods, levels, skins): `content/packs` beside
     /// this program when there is one, else in the working directory.
     #[arg(long, default_value_os_t = default_content())]
@@ -36,6 +39,17 @@ struct Args {
     /// (default: the config file's directory).
     #[arg(long)]
     data_dir: Option<PathBuf>,
+    /// Also run a volunteer TURN relay for players whose routers cannot
+    /// meet (the config's `relay`, else the defaults: UDP 3478 and
+    /// 49160-49191), announced on the config's Nostr relays.
+    #[arg(long)]
+    relay: bool,
+    /// Check the network instead (the base address and gateway, STUN and
+    /// the NAT, the router's port mapping, the Nostr relays and the TURN
+    /// relays on them), print a report and exit. Uses the config's servers,
+    /// else the defaults.
+    #[arg(long)]
+    nat_check: bool,
 }
 
 /// `content/packs` beside the executable (an unpacked release), else in
@@ -46,11 +60,24 @@ fn default_content() -> PathBuf {
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let text =
-        fs::read_to_string(&args.config).with_context(|| format!("reading {}", args.config.display()))?;
-    let config = Config::parse(&text).with_context(|| format!("{}", args.config.display()))?;
+    let config = match &args.config {
+        Some(path) => {
+            let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+            Config::parse(&text).with_context(|| format!("{}", path.display()))?
+        }
+        // Only `--nat-check` runs without a config: the default servers.
+        None => Config::default(),
+    };
+    if args.nat_check {
+        return nat_check::run(&config, NAT_CHECK_WAIT, &mut io::stdout().lock());
+    }
+    let mut config = config;
+    if args.relay && config.relay.is_none() {
+        config.relay = Some(RelayConfig::default());
+    }
+    let config_path = args.config.unwrap_or_default();
     let data_dir = args.data_dir.unwrap_or_else(|| {
-        args.config.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| ".".into(), PathBuf::from)
+        config_path.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| ".".into(), PathBuf::from)
     });
     fs::create_dir_all(&data_dir).with_context(|| format!("making {}", data_dir.display()))?;
     let content =

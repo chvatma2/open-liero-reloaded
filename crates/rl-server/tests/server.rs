@@ -1,9 +1,13 @@
 //! The dedicated server (networking spec §7.4) driven in-process against
 //! `rl_online` clients on 127.0.0.1: a rotation played to its next entry,
 //! admins' chat commands, bans kept across a restart, the example config,
-//! announcements on an in-process relay and the invite code.
-//! Classic on Dirt Level from `RL_CONTENT_DIR` (skipped with a notice
-//! without it); every wait is bounded, each test under 20 s.
+//! announcements on an in-process relay and the invite code; plan 12b's
+//! joins through Nostr, port mapping on a `FakeGateway`, the TURN relay and
+//! its notes. Nothing leaves the machine: relays, STUN and TURN servers and
+//! routers are in-process, every test config sets `port_mapping: false` or
+//! aims at a `FakeGateway`, and Nostr joins pin their base to 127.0.0.1
+//! (test rule NT-1). Classic on Dirt Level from `RL_CONTENT_DIR` (skipped
+//! with a notice without it); every wait is bounded, each test under 20 s.
 
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -16,14 +20,16 @@ use rl_content::Content;
 use rl_discovery::defaults::{DEFAULT_RELAYS, DEFAULT_STUN};
 use rl_discovery::{
     GameList, GameSummary, Invite, ListedGame, Pool, PoolConfig, PoolEvent, Region, StunResponder, TestRelay,
-    parse_announcement,
+    TurnList, parse_announcement, parse_turn_note,
 };
-use rl_lobby::{Identity, NOT_ADMIN};
-use rl_net::endpoint::EndpointConfig;
+use rl_lobby::{Identity, NOT_ADMIN, RELAYED_BAN};
+use rl_net::endpoint::{EndpointConfig, IceConfig};
+use rl_net::portmap::fake::{FakeGateway, Misbehaviour};
 use rl_online::content::DownloadState;
+use rl_online::join::NostrJoin;
 use rl_online::{Join, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
-use rl_proto::{Look, Phase, PublicKey, SeatWire};
-use rl_server::config::{Config, Visibility};
+use rl_proto::{Look, Path as LinkPath, Phase, PublicKey, SeatWire};
+use rl_server::config::{Config, RelayConfig, TestGateway, Visibility};
 use rl_server::files::{IDENTITY_FILE, hex};
 use rl_server::{NOT_AN_ADMIN_TARGET, Server, run};
 use rl_sim::Keys;
@@ -66,15 +72,17 @@ fn look(name: &str) -> Look {
 }
 
 /// A server's config: port 0, invite only (no LAN or Nostr announcements,
-/// no STUN: nothing leaves the machine), Classic on Dirt Level then on
-/// Liero Factory, each `minutes` long.
+/// no relays, no STUN, no port mapping: nothing leaves the machine),
+/// Classic on Dirt Level then on Liero Factory, each `minutes` long.
 fn config(admins: &[PublicKey], fill_bots: u8, start_when_ready: bool, minutes: f32) -> Config {
     let admins: Vec<String> = admins.iter().map(|k| format!("{:?}", hex(k))).collect();
     let text = format!(
         r#"(
             name: "Test server",
             visibility: Invite,
+            relays: [],
             stun: [],
+            port_mapping: false,
             password: None,
             port: 0,
             max_players: 8,
@@ -196,7 +204,7 @@ impl Rig {
 
     /// Stops the server (if one runs) and starts it again with `config`.
     fn restart(&mut self, config: Config) {
-        if let Some(mut s) = self.server.take() {
+        if let Some(s) = self.server.take() {
             s.shutdown(&mut self.log);
         }
         let s =
@@ -229,8 +237,60 @@ impl Rig {
         downloads: PeerContent,
         role: PeerRole,
     ) -> usize {
+        self.join_endpoint(
+            me,
+            look,
+            content,
+            downloads,
+            role,
+            EndpointConfig { port: 0, ..EndpointConfig::default() },
+        )
+    }
+
+    /// A client joining `invite`'s server through its relays only (N46: no
+    /// address), its base pinned to 127.0.0.1; `relay_only`: through a TURN
+    /// relay announced on them.
+    fn join_nostr(&mut self, me: Identity, name: &str, invite: &Invite, relay_only: bool) -> usize {
+        let nostr = NostrJoin {
+            host: invite.key,
+            pool: PoolConfig { relays: invite.relay_urls(), ..PoolConfig::default() },
+            region: Region::Europe,
+            turn_from_nostr: relay_only,
+            allow_local: true,
+        };
+        let role = PeerRole::Client {
+            join: Join { direct: None, nostr: Some(nostr) },
+            password: None,
+            expected_host: None,
+        };
+        let ice = IceConfig {
+            base_override: Some(Ipv4Addr::LOCALHOST),
+            allow_local: true,
+            relay_only,
+            ..IceConfig::default()
+        };
+        let c = content(&self.content_dir);
+        self.join_endpoint(
+            me,
+            look(name),
+            c,
+            no_downloads(),
+            role,
+            EndpointConfig { port: 0, ice, ..EndpointConfig::default() },
+        )
+    }
+
+    /// A client joining as `role` on an endpoint of `cfg`.
+    fn join_endpoint(
+        &mut self,
+        me: Identity,
+        look: Look,
+        content: Content,
+        downloads: PeerContent,
+        role: PeerRole,
+        cfg: EndpointConfig,
+    ) -> usize {
         let key = me.public();
-        let cfg = EndpointConfig { port: 0, ..EndpointConfig::default() };
         let p = OnlinePeer::start(role, cfg, me, look, content, None, downloads).unwrap();
         self.clients.push(Client {
             p,
@@ -359,7 +419,7 @@ fn a_server_runs_a_rotation() {
     assert_eq!(second.setup.rules.kill_limit, 15);
     // One line per event.
     let log = rig.log_text();
-    for want in ["join Anna", "join Bert", "match start", "match end", "winner"] {
+    for want in ["join: Anna (", "join: Bert (", "via direct", "match start", "match end", "winner"] {
         assert!(log.contains(want), "{want:?} in the log:\n{log}");
     }
     assert_eq!(log.matches("match start").count(), 2, "{log}");
@@ -672,8 +732,12 @@ fn the_fixture_configs_parse() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/server/e2e.ron");
     let e2e = Config::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!((e2e.port, e2e.min_players, e2e.fill_bots, e2e.rotation.len()), (0, 2, 0, 1));
-    // The e2e run stays on the machine: invite only, no STUN.
-    assert_eq!((e2e.visibility, e2e.stun.len()), (Visibility::Invite, 0));
+    // The e2e run stays on the machine: invite only, no relays, no STUN, no
+    // port mapping.
+    assert_eq!((e2e.visibility, e2e.relays.len(), e2e.stun.len()), (Visibility::Invite, 0, 0));
+    assert!(!e2e.port_mapping);
+    // The example documents the relay (off) and port mapping (on).
+    assert!(config.port_mapping && config.relay.is_none() && !config.allow_local);
     let Some(dir) = content_dir() else { return };
     // Their rotations' mods and levels are the committed packs.
     let content = content(&dir);
@@ -806,16 +870,16 @@ fn a_server_without_its_cache_still_serves_its_packs() {
 /// The public address the test's STUN server answers (a global one: no
 /// packet is ever sent to it).
 const PUBLIC: Ipv4Addr = Ipv4Addr::new(81, 2, 69, 142);
-/// Another public address, after the first changed.
-const PUBLIC_LATER: Ipv4Addr = Ipv4Addr::new(81, 2, 69, 143);
 
 fn unix_now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
 }
 
-/// The last invite code the log printed.
+/// The last invite code the log printed (with an address or without).
 fn printed_invite(log: &str) -> Option<Invite> {
-    let code = log.lines().rev().find_map(|l| l.strip_prefix("invite code: "))?;
+    let code = log.lines().rev().find_map(|l| {
+        l.strip_prefix("invite code: ").or_else(|| l.strip_prefix("invite code (joins through the relays): "))
+    })?;
     Some(Invite::decode(code).unwrap_or_else(|e| panic!("the printed code {code:?}: {e}")))
 }
 
@@ -845,6 +909,9 @@ impl Browser {
     }
 }
 
+/// A public server is listed; STUN's answer is only an ICE candidate
+/// (N47): without a mapping or a configured address its note and invite
+/// carry no address, and players join through its relays.
 #[test]
 fn a_public_server_is_listed() {
     let Some(dir) = content_dir() else { return };
@@ -883,15 +950,17 @@ fn a_public_server_is_listed() {
         password: false,
         region: Region::Europe,
         playing: false,
-        addr: Some(IpAddr::V4(PUBLIC)),
+        addr: None,
         port,
         closed: false,
     };
     assert_eq!(*s, expected);
+    assert!(stun.answered() >= 1, "STUN asked from the game socket");
     let log = rig.log_text();
-    assert!(log.contains("public address 81.2.69.142 (STUN)"), "{log}");
-    let invite = printed_invite(&log).expect("the invite printed at the start");
-    assert_eq!((invite.key, invite.addr), (key, Some(SocketAddr::from((PUBLIC, port)))));
+    assert!(!log.contains("81.2.69.142"), "never advertised: {log}");
+    assert!(log.contains("invite code (joins through the relays): rlx1"), "{log}");
+    let invite = printed_invite(&log).expect("the invite printed once settled");
+    assert_eq!((invite.key, invite.addr), (key, None));
     assert_eq!(invite.relay_urls(), vec![relay.url()], "the configured relay");
 
     // In a public game the invite is no secret: anyone may ask for it.
@@ -924,14 +993,21 @@ fn the_invite_joins_the_server() {
     cfg.public_address = Some("127.0.0.1".into());
     let mut rig = Rig::new(dir, cfg);
     let (key, port) = (rig.server().key(), rig.server().local_port());
-    // Printed at the start: the key, the default relays (as hints: three
-    // fit), the configured address.
+    // Printed once settled: the key and the configured address (N47); no
+    // relays in this config.
+    rig.run_until(Duration::from_secs(10), "the invite", |r| printed_invite(&r.log_text()).is_some());
     let log = rig.log_text();
-    assert!(log.contains("public address 127.0.0.1 (configured)"), "{log}");
-    let invite = printed_invite(&log).expect("the invite printed at the start");
+    assert!(
+        log.contains(&format!(
+            "reach: Players join directly at 127.0.0.1:{port} (your public address setting)"
+        )),
+        "{log}"
+    );
+    assert!(log.contains("invite code: rlx1"), "{log}");
+    let invite = printed_invite(&log).unwrap();
     assert_eq!(invite.key, key);
     assert_eq!(invite.addr, Some(SocketAddr::from(([127, 0, 0, 1], port))));
-    assert_eq!(invite.relay_urls(), DEFAULT_RELAYS[..3].iter().map(|r| r.to_string()).collect::<Vec<_>>());
+    assert!(invite.relay_urls().is_empty());
 
     // Joining by the code: its address, expecting its key.
     let join = |rig: &mut Rig, me: Identity, name: &str, invite: &Invite| {
@@ -975,49 +1051,16 @@ fn an_invite_server_is_not_announced() {
     cfg.relays = vec![relay.url()];
     cfg.stun = vec![stun.server()];
     let mut rig = Rig::new(dir, cfg);
-    rig.run_until(Duration::from_secs(10), "the invite printed", |r| r.log_text().contains("invite code: "));
+    rig.run_until(Duration::from_secs(10), "the invite printed", |r| printed_invite(&r.log_text()).is_some());
     let log = rig.log_text();
-    assert!(log.contains("no public address (STUN answered 10.1.2.3, not a public address)"), "{log}");
+    assert!(log.contains("invite code (joins through the relays): rlx1"), "{log}");
     assert_eq!(printed_invite(&log).unwrap().addr, None);
-    assert_eq!(stun.answered(), 1);
+    assert!(!log.contains("10.1.2.3"), "STUN's answer is never advertised: {log}");
+    assert!(stun.answered() >= 1);
     let start = Instant::now();
     rig.run_until(Duration::from_secs(5), "a second of polls", |_| start.elapsed() > Duration::from_secs(1));
     rig.server.take().unwrap().shutdown(&mut rig.log);
     assert!(relay.events().is_empty(), "nothing published");
-}
-
-#[test]
-fn the_public_address_is_checked_again() {
-    let Some(dir) = content_dir() else { return };
-    // The first server answers first; once it is gone, the second does.
-    let first = StunResponder::start(SocketAddr::from((PUBLIC, 40000)));
-    let second = StunResponder::start(SocketAddr::from((PUBLIC_LATER, 40000)));
-    let mut cfg = config(&[], 0, false, 1.0);
-    cfg.stun = vec![first.server(), second.server()];
-    let mut rig = Rig::new(dir, cfg);
-    let port = rig.server().local_port();
-    rig.run_until(Duration::from_secs(10), "the address", |r| r.log_text().contains("invite code: "));
-    assert_eq!(printed_invite(&rig.log_text()).unwrap().addr, Some(SocketAddr::from((PUBLIC, port))));
-    drop(first);
-    // Nothing is asked again within ten minutes …
-    let Rig { server, log, .. } = &mut rig;
-    let server = server.as_mut().unwrap();
-    let t0 = Instant::now();
-    while t0.elapsed() < Duration::from_millis(300) {
-        server.poll(Instant::now() + Duration::from_secs(590), log);
-    }
-    assert_eq!(second.answered(), 0);
-    // … then the new address is learnt and a new invite printed.
-    while !String::from_utf8_lossy(log).contains("public address 81.2.69.143 (STUN)") {
-        assert!(
-            t0.elapsed() < Duration::from_secs(10),
-            "the new address; the log:\n{}",
-            String::from_utf8_lossy(log)
-        );
-        server.poll(Instant::now() + Duration::from_secs(601), log);
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    assert_eq!(printed_invite(&rig.log_text()).unwrap().addr, Some(SocketAddr::from((PUBLIC_LATER, port))));
 }
 
 /// Plan 10's configs (`DirectOnly`, none of the new fields) still load.
@@ -1033,6 +1076,8 @@ fn an_old_config_still_loads() {
     assert_eq!(c.relays, DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect::<Vec<_>>());
     assert_eq!(c.stun, DEFAULT_STUN.iter().map(|r| r.to_string()).collect::<Vec<_>>());
     assert_eq!((c.region, c.public_address.as_deref()), (Region::Unknown, None));
+    // Plan 12b's fields default: port mapping on, no local addresses, no relay.
+    assert!(c.port_mapping && !c.allow_local && c.relay.is_none());
     // A server without a visibility is public.
     let c = Config::parse(r#"(rotation: [(mod: "olx-classic", level: "olx-level-dirt-level")])"#).unwrap();
     assert_eq!(c.visibility, Visibility::Public);
@@ -1043,11 +1088,16 @@ fn an_old_config_still_loads() {
         stun: [],
         region: Oceania,
         public_address: Some("2001:db8::7"),
+        port_mapping: false,
+        allow_local: true,
+        relay: Some((capacity: 8)),
         rotation: [(mod: "olx-classic", level: "olx-level-dirt-level")],
     )"#;
     let c = Config::parse(new).unwrap();
     assert_eq!((c.relays.len(), c.stun.len(), c.region), (1, 0, Region::Oceania));
     assert_eq!(c.public_ip(), Some("2001:db8::7".parse().unwrap()));
+    assert!(!c.port_mapping && c.allow_local);
+    assert_eq!(c.relay, Some(RelayConfig { capacity: 8, ..RelayConfig::default() }));
     // A region this version does not know reads as `Unknown` (as on the wire).
     let c =
         Config::parse(r#"(region: Mars, rotation: [(mod: "olx-classic", level: "olx-level-dirt-level")])"#);
@@ -1103,4 +1153,233 @@ fn a_private_public_address_is_not_announced_on_public_relays() {
         None,
         "a LAN relay"
     );
+}
+
+// ---- through routers (plan 12b): Nostr joins, port mapping, the relay ----
+
+/// A config listening on `relay` (Invite), local addresses allowed, no
+/// port mapping, its base pinned to 127.0.0.1 (NT-1: the fake gateway's
+/// ports are never asked with mapping off).
+fn nostr_config(relay: &TestRelay, admins: &[PublicKey]) -> Config {
+    let mut cfg = config(admins, 0, false, 1.0);
+    cfg.relays = vec![relay.url()];
+    cfg.allow_local = true;
+    cfg.test_gateway = Some(TestGateway {
+        pmp: SocketAddr::from(([127, 0, 0, 1], 9)),
+        ssdp: SocketAddr::from(([127, 0, 0, 1], 9)),
+        base: Ipv4Addr::LOCALHOST,
+    });
+    cfg
+}
+
+/// N46, N54: an invite server with no address prints a code without one;
+/// a client with only that code reaches its lobby through the relay, and
+/// the log names the join's path.
+#[test]
+fn an_invite_server_without_an_address_is_joined_through_nostr() {
+    let Some(dir) = content_dir() else { return };
+    let relay = TestRelay::start();
+    let mut rig = Rig::new(dir, nostr_config(&relay, &[]));
+    let key = rig.server().key();
+    rig.run_until(Duration::from_secs(10), "the invite", |r| printed_invite(&r.log_text()).is_some());
+    let log = rig.log_text();
+    assert!(log.contains("invite code (joins through the relays): rlx1"), "{log}");
+    let invite = printed_invite(&log).unwrap();
+    assert_eq!((invite.key, invite.addr, invite.relay_urls()), (key, None, vec![relay.url()]));
+    let c = rig.join_nostr(identity(), "Anna", &invite, false);
+    rig.run_until(Duration::from_secs(15), "Anna joins through the relay", |r| r.clients[c].welcomed());
+    rig.run_until(Duration::from_secs(5), "the join logged", |r| r.log_text().contains("join: Anna ("));
+    let log = rig.log_text();
+    assert!(log.contains("from 127.0.0.1 via direct key "), "{log}");
+    assert!(log.contains("reach: Port mapping is off: "), "{log}");
+    assert!(log.contains("reach: Taking joins through 1 of 1 relays"), "{log}");
+}
+
+/// N47, N51: a public server whose router (a `FakeGateway` speaking UPnP
+/// only, external address 203.0.113.7, a documentation address: hence
+/// `allow_local`) maps its port announces the mapped address and port;
+/// a clean stop deletes the mapping (ruling NT-2).
+#[test]
+fn a_mapped_server_announces_its_mapped_address() {
+    let Some(dir) = content_dir() else { return };
+    let relay = TestRelay::start();
+    let external = Ipv4Addr::new(203, 0, 113, 7);
+    let gw = FakeGateway::start(true, false, false, external, Misbehaviour::Honest);
+    let mut cfg = nostr_config(&relay, &[]);
+    cfg.visibility = Visibility::Public;
+    cfg.port_mapping = true;
+    cfg.test_gateway = Some(TestGateway { pmp: gw.pmp(), ssdp: gw.ssdp(), base: Ipv4Addr::LOCALHOST });
+    let mut rig = Rig::new(dir, cfg);
+    let (key, port) = (rig.server().key(), rig.server().local_port());
+    let mut browser = Browser::new(&relay);
+    browser.list.allow_local(true);
+    let mut listed = None;
+    rig.run_until(Duration::from_secs(15), "listed at the mapped address", |_| {
+        listed = browser.game(key).filter(|g| g.summary.addr.is_some());
+        listed.is_some()
+    });
+    let mapped: Vec<_> = gw.mappings();
+    let udp = mapped.iter().find(|m| m.1).expect("a UDP mapping").2;
+    assert!(mapped.iter().any(|m| !m.1 && m.2 == udp), "TCP on the same port: {mapped:?}");
+    let s = listed.unwrap().summary;
+    assert_eq!((s.addr, s.port), (Some(IpAddr::V4(external)), udp));
+    let log = rig.log_text();
+    assert!(log.contains(&format!("reach: Port {port} is open on your router (UPnP)")), "{log}");
+    assert_eq!(printed_invite(&log).unwrap().addr, Some(SocketAddr::from((external, udp))));
+    rig.server.take().unwrap().shutdown(&mut rig.log);
+    assert!(gw.mappings().is_empty(), "deleted at the stop: {:?}", gw.mappings());
+}
+
+/// A relay server's config: `nostr_config` with a configured address and
+/// a TURN relay on ephemeral ports with generous limits (one IP: 127.0.0.1).
+fn relay_config(relay: &TestRelay, admins: &[PublicKey]) -> Config {
+    let mut cfg = nostr_config(relay, admins);
+    cfg.public_address = Some("127.0.0.1".into());
+    cfg.region = Region::Europe;
+    cfg.relay = Some(RelayConfig {
+        port: 0,
+        ports: (0, 0),
+        user_kib_s: 65536,
+        allocations_per_ip: 64,
+        capacity: 256,
+    });
+    cfg
+}
+
+/// A `TurnList` on `relay`.
+struct Turns {
+    pool: Pool,
+    list: TurnList,
+}
+
+impl Turns {
+    fn new(relay: &TestRelay) -> Turns {
+        let mut pool = Pool::start(PoolConfig { relays: vec![relay.url()], ..PoolConfig::default() });
+        pool.subscribe("turn", vec![TurnList::filter(unix_now())]);
+        let mut list = TurnList::new();
+        list.allow_local(true);
+        Turns { pool, list }
+    }
+
+    fn picks(&mut self) -> Vec<rl_discovery::TurnPick> {
+        let mut out = Vec::new();
+        self.pool.poll(&mut out);
+        for e in out {
+            if let PoolEvent::Event { event, .. } = e {
+                self.list.offer(&event, unix_now());
+            }
+        }
+        self.list.pick(Region::Europe, 2)
+    }
+}
+
+/// Waits until the relay's note is listed; its pick.
+fn announced_relay(rig: &mut Rig, turns: &mut Turns) -> rl_discovery::TurnPick {
+    let mut picks = Vec::new();
+    rig.run_until(Duration::from_secs(10), "the relay's note", |_| {
+        picks = turns.picks();
+        !picks.is_empty()
+    });
+    picks.remove(0)
+}
+
+/// N52: `--relay` starts our TURN server once its public address is known
+/// (configured here), announces it, and a joiner whose links may only be
+/// relayed reaches the lobby through it.
+#[test]
+fn a_relay_server_announces_itself_and_relays() {
+    let Some(dir) = content_dir() else { return };
+    let relay = TestRelay::start();
+    let mut rig = Rig::new(dir, relay_config(&relay, &[]));
+    let mut turns = Turns::new(&relay);
+    let pick = announced_relay(&mut rig, &mut turns);
+    let at = rig.server().relay_addr().expect("the relay runs");
+    assert_eq!(pick.key, rig.server().key(), "signed by the server's identity");
+    assert_eq!(pick.addr, SocketAddr::from(([127, 0, 0, 1], at.port())));
+    for c in [&pick.user, &pick.pass] {
+        assert!(c.len() == 16 && c.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()), "{c}");
+    }
+    let log = rig.log_text();
+    assert!(log.contains("relay: waiting for the public address"), "{log}");
+    let started =
+        format!("relay: TURN on port {0}, relay ports ephemeral, announced as 127.0.0.1:{0}", at.port());
+    assert!(log.contains(&started), "{log}");
+    let invite = printed_invite(&log).unwrap();
+    let c = rig.join_nostr(identity(), "Rob", &invite, true);
+    rig.run_until(Duration::from_secs(20), "Rob joins through the TURN relay", |r| r.clients[c].welcomed());
+    assert_eq!(rig.clients[c].p.connection().map(|c| c.0), Some(LinkPath::Relayed));
+    rig.run_until(Duration::from_secs(5), "the join logged", |r| r.log_text().contains("join: Rob ("));
+    assert!(rig.log_text().contains("via relayed key "), "{}", rig.log_text());
+    rig.run_until(Duration::from_secs(5), "bytes relayed", |r| {
+        r.server().relay_stats().is_some_and(|s| s.relayed_bytes > 0 && s.allocations >= 1)
+    });
+    rig.run_until(Duration::from_secs(5), "the allocation logged", |r| {
+        r.log_text().contains("relay: 1 allocations")
+    });
+}
+
+/// The relay's closing note (capacity 0) goes out at the stop, and the
+/// list drops the relay despite its 10 s gap.
+#[test]
+fn the_relay_closes_its_note_at_shutdown() {
+    let Some(dir) = content_dir() else { return };
+    let relay = TestRelay::start();
+    let mut rig = Rig::new(dir, relay_config(&relay, &[]));
+    let key = rig.server().key();
+    let mut turns = Turns::new(&relay);
+    announced_relay(&mut rig, &mut turns);
+    rig.server.take().unwrap().shutdown(&mut rig.log);
+    assert!(rig.log_text().contains("relay: closing note published"), "{}", rig.log_text());
+    let closed = || {
+        relay.events().iter().any(|e| e.pubkey == key && parse_turn_note(e).is_ok_and(|n| n.capacity == 0))
+    };
+    let begun = Instant::now();
+    while !(closed() && turns.picks().is_empty()) {
+        assert!(begun.elapsed() < Duration::from_secs(5), "the closing note; the log:\n{}", rig.log_text());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// N59 (Task 7 review): an admin's `/banip` of a member reached through a
+/// TURN relay bans its key only — the address is the relay's — live and in
+/// the bans file; the admin is told. After a restart from the bans file
+/// the key is still refused, and the relay's address (127.0.0.1, every
+/// client's here) is not banned.
+#[test]
+fn a_relayed_member_is_banned_by_key_only_across_a_restart() {
+    let Some(dir) = content_dir() else { return };
+    let relay = TestRelay::start();
+    let admin = identity();
+    let cfg = relay_config(&relay, &[admin.public()]);
+    let mut rig = Rig::new(dir, cfg.clone());
+    let mut turns = Turns::new(&relay);
+    announced_relay(&mut rig, &mut turns);
+    let anna = rig.join_as(admin.clone(), "Anna");
+    let invite = printed_invite(&rig.log_text()).unwrap();
+    let rob_id = identity();
+    let rob_secret = rob_id.secret();
+    let rob = rig.join_nostr(rob_id, "Rob", &invite, true);
+    rig.run_until(Duration::from_secs(20), "both are in", |r| {
+        r.clients[anna].welcomed() && r.clients[rob].welcomed() && r.member_names(anna).len() == 2
+    });
+    let rob_key = rig.clients[rob].key;
+    rig.say(anna, "/banip rob");
+    rig.hears(anna, RELAYED_BAN);
+    rig.run_until(Duration::from_secs(10), "Rob is banned", |r| {
+        r.clients[rob].has(|e| matches!(e, OnlineEvent::Kicked { banned: true }))
+    });
+    assert!(rig.log_text().contains(&format!("banip Rob: {RELAYED_BAN}")), "{}", rig.log_text());
+    let bans = rig.data.path().join("bans.ron");
+    let text = std::fs::read_to_string(&bans).expect("the bans file, written at the ban");
+    assert!(text.contains(&hex(&rob_key)) && text.contains("Rob"), "{text}");
+    assert!(!text.contains("127.0.0.1"), "a key-only ban: {text}");
+
+    rig.restart(cfg);
+    assert!(rig.log_text().contains("bans: 1 keys, 0 addresses"), "{}", rig.log_text());
+    let again = rig.join_as(Identity::from_secret(rob_secret).unwrap(), "Rob");
+    let cid = rig.join_as(identity(), "Cid");
+    rig.run_until(Duration::from_secs(10), "Rob refused, Cid welcomed", |r| {
+        r.clients[again].refused().is_some() && r.clients[cid].welcomed()
+    });
+    assert_eq!(rig.clients[again].refused(), Some("you are banned from this lobby"));
 }

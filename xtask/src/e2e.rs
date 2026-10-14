@@ -409,7 +409,7 @@ fn online(x: &Xvfb, content: &Path, out: &Path) -> Result<Online, String> {
     )?;
     // The bot is in the lobby before the game joins: the game's lobby
     // shows both at once (the script counts them).
-    let joined = format!("join {BOT} [");
+    let joined = format!("join: {BOT} (");
     server
         .wait_for("the bot's join", READY_WITHIN, |l| unstamped(l).starts_with(&joined).then(String::new))?;
 
@@ -450,7 +450,7 @@ fn online(x: &Xvfb, content: &Path, out: &Path) -> Result<Online, String> {
     let has = |prefix: &str| server_log.iter().any(|l| l.starts_with(prefix));
     let chat = format!(": {CHAT}");
     let wanted = [
-        ("the game's join", server_log.iter().filter(|l| l.starts_with("join ")).count() == 2),
+        ("the game's join", server_log.iter().filter(|l| l.starts_with("join: ")).count() == 2),
         ("the chat line", server_log.iter().any(|l| l.starts_with("chat ") && l.ends_with(&chat))),
         ("a match start", has("match start: ")),
         ("a match end", has("match end ")),

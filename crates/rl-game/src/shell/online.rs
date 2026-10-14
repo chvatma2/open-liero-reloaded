@@ -675,6 +675,7 @@ impl Shell {
                 password: n.password,
                 region,
                 addr,
+                public_port: None,
                 map_name: map_name.into(),
             };
             let summary = GameSummary::of_lobby(state, &hosting);

@@ -301,7 +301,12 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   each held to its maximum, `playing` from `Starting` to `Playing`, mode
   "deathmatch", the mod's hash from the setup's packs (else `NO_HASH`),
   `map_name` cut to 40 characters (blank or invalid: the level id);
-  `lan()` is the same game's `LanAnnounce`. `announcement(..)`
+  `addr` is the address players join directly (N47: a usable router
+  mapping's or the configured one) and the note's `port`
+  `Hosting::public_port.unwrap_or(port)` (plan 12b Task 8: the mapping's
+  external port); `lan()` is the same game's `LanAnnounce` (its port the
+  summary's), `Hosting::lan(&summary)` the host's own on the local `port`
+  whatever the note names. `announcement(..)`
   (tags `d`, `t`, `f` = 16 lowercase hex, `expiration` +180 s, +10 s when
   `closed`), `parse_announcement` (validates names, ids and counts, no address policy; refuses
   a missing or malformed `f`; does not verify the signature) and the sans-IO
@@ -327,7 +332,9 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   its next note). `filter()` has no `since` (no clock); `filter_since(now)` does.
 
 - **`hosting`** (plan 12a Task 10: shared by rl-server and rl-game, moved
-  from rl-server's `finding.rs`): `AddressWatch` (N40, a driver: the
+  from rl-server's `finding.rs`): `AddressWatch` (N40; plan 12b's N47
+  retires it: rl-server no longer uses it (Task 8), the game's use and
+  then the type go in Task 9; a driver: the
   configured address wins; else `stun::public_ip(stun, STUN_DEADLINE 3 s)`
   on a thread at the start and every `ADDRESS_EVERY` (10 minutes), an
   answer kept only when `is_global`; a later round without an answer
@@ -351,7 +358,7 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   connect on a thread (`PING_TIMEOUT` 2 s → `Ping::NoAnswer`), one per key
   and at most `MAX_PINGS` (4) at once; `poll` collects the answers.
 
-Test: `cargo nextest run -p rl-discovery` (`tests/announce.rs` and `tests/list.rs`: announcements and the game list; `tests/nostr.rs`: the published
+Test: `cargo nextest run -p rl-discovery` (`tests/announce.rs` and `tests/list.rs`: announcements (a note naming the public port, the LAN the local one) and the game list; `tests/nostr.rs`: the published
 events verify, signing round-trips, canonical escaping, tampering, frames
 round-trip, fuzzed frames never panic; `tests/test_relay.rs`: the relay;
 `tests/stun.rs`: `public_ip` and the codec's re-exports; `tests/nip44.rs`:

@@ -439,6 +439,11 @@ impl TransportSpec {
             region: rl_discovery::Region::Unknown,
             public_address: None,
             stun: Vec::new(),
+            // The real router is never asked (test rule PF12b-5).
+            port_mapping: false,
+            // No relay, no local addresses (and no `test_gateway` under
+            // rl-server's test hooks).
+            ..Config::default()
         }
     }
 }

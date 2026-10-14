@@ -11,7 +11,7 @@ use proptest::test_runner::Config;
 use rl_net::candidates::TurnSpec;
 use rl_net::core::{Core, CoreConfig};
 use rl_net::relayed::RelayState;
-use rl_net::turn::{TurnCore, TurnLimits, TurnOut, TurnServer, TurnServerConfig};
+use rl_net::turn::{MAX_SESSION, TurnCore, TurnLimits, TurnOut, TurnServer, TurnServerConfig};
 use turn_client_proto::api::{Transmit, TurnClientApi, TurnConfig, TurnEvent, TurnRecvRet};
 use turn_client_proto::stun::Instant as TurnInstant;
 use turn_client_proto::types::prelude::DelayedTransmitBuild;
@@ -382,6 +382,34 @@ impl Wire {
         let msg = DelayedMessage::for_server(peer, bytes).build();
         self.deliver(msg);
     }
+}
+
+/// Task 8 (the Task 3 review's carry): an allocation ends `max_session`
+/// after it was made, however often its client refreshes it, so a few IPs
+/// cannot hold a relay's capacity forever. The default is
+/// `MAX_SESSION` (6 h). On a virtual clock, one step a second.
+#[test]
+fn an_allocation_ends_at_the_session_cap() {
+    assert_eq!(TurnLimits::default().max_session, MAX_SESSION);
+    assert_eq!(MAX_SESSION, Duration::from_secs(6 * 3600));
+    assert_eq!(TurnLimits::generous().max_session, MAX_SESSION);
+    let cap = Duration::from_secs(1800);
+    let limits = TurnLimits { max_session: cap, ..TurnLimits::generous() };
+    let mut w = Wire::new("11.0.0.9:3478", "11.0.0.20:50000", limits, false);
+    let relayed = w.allocate();
+    let made = w.now();
+    w.tick = 1000;
+    // Refreshed past its 600 s lifetime, up to the cap.
+    while w.now() + Duration::from_secs(2) < made + cap {
+        w.step();
+        assert_eq!(w.core.allocations(), 1, "alive at {:?}", w.now() - made);
+    }
+    assert!(w.core.released().is_empty());
+    while w.now() <= made + cap {
+        w.step();
+    }
+    assert_eq!(w.core.released(), vec![relayed.port()], "ended at the cap");
+    assert_eq!(w.core.allocations(), 0);
 }
 
 #[test]

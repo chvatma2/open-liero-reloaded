@@ -84,8 +84,13 @@ pub struct Hosting {
     pub max_spectators: u8,
     pub password: bool,
     pub region: Region,
-    /// The public address (N40), when known.
+    /// The address players join directly (N47: a usable router mapping's
+    /// external IP, or the configured public address), when there is one.
     pub addr: Option<IpAddr>,
+    /// The router mapping's external port when it differs from `port`
+    /// (N47): the note's `port` is `public_port.unwrap_or(port)`; LAN
+    /// announcements ([`Hosting::lan`]) keep `port`.
+    pub public_port: Option<u16>,
     /// The level's display name (the content's; the lobby has only the
     /// id). A blank or invalid one reads as the level's id.
     pub map_name: String,
@@ -118,7 +123,7 @@ impl GameSummary {
             region: host.region,
             playing: matches!(state.phase, Phase::Starting | Phase::Playing { .. }),
             addr: host.addr,
-            port: host.port,
+            port: host.public_port.unwrap_or(host.port),
             closed: false,
         }
     }
@@ -137,6 +142,14 @@ impl GameSummary {
             password: self.password,
             playing: self.playing,
         }
+    }
+}
+
+impl Hosting {
+    /// The LAN announcement of `summary` (this host's): on the local
+    /// `port`, whatever port the note names.
+    pub fn lan(&self, summary: &GameSummary) -> LanAnnounce {
+        LanAnnounce { port: self.port, ..summary.lan() }
     }
 }
 

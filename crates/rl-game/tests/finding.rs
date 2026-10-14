@@ -76,6 +76,7 @@ fn server_config(relay: &str) -> Config {
             visibility: Public,
             relays: ["{relay}"],
             stun: [],
+            port_mapping: false,
             public_address: Some("127.0.0.1"),
             region: Europe,
             port: 0,

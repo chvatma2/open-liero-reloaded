@@ -7,15 +7,22 @@
 //!
 //! [`Server`] does one poll at a time on the caller's clock (tests drive it
 //! in-process); [`run`] polls it on the real clock until a stop flag.
+//!
+//! Plan 12b: the server maps its port at the router (N51), takes joins
+//! through its Nostr relays (N54), advertises an address only when it is
+//! directly reachable (N47), can run a volunteer TURN relay ([`relay`],
+//! N52) and checks the network ([`nat_check`], N60).
 
 pub mod admin;
 pub mod config;
 pub mod files;
+pub mod nat_check;
+pub mod relay;
 pub mod rotation;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,18 +30,24 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use rl_content::{Content, DownloadCache};
-use rl_discovery::{AddressWatch, GameSummary, Hosting, Pool, PoolConfig, PoolEvent, Publisher, RelayStatus};
-use rl_lobby::{NOT_ADMIN, fingerprint};
-use rl_net::endpoint::EndpointConfig;
+use rl_discovery::{GameSummary, Hosting, Pool, PoolConfig, PoolEvent, Publisher, RelayStatus};
+use rl_lobby::{NOT_ADMIN, RELAYED_BAN, fingerprint};
+use rl_net::endpoint::{EndpointConfig, IceConfig};
 use rl_net::lan::{Announcer, broadcast_targets};
+use rl_net::portmap::DROP_WAIT;
+use rl_net::turn::TurnStats;
+use rl_online::join::path_tag;
 use rl_online::replay::MatchRecord;
-use rl_online::{HostListen, OnlineEvent, OnlinePeer, PeerRole, StartError};
-use rl_proto::{LobbyState, Look, MAX_CHAT, MatchEndWire, MatchStartWire, Phase, PublicKey, SeatWire};
+use rl_online::{HostListen, OnlineEvent, OnlinePeer, PeerRole, Reachability, StartError};
+use rl_proto::{
+    LobbyState, Look, MAX_CHAT, MatchEndWire, MatchStartWire, Path as LinkPath, Phase, PublicKey, SeatWire,
+};
 use rl_sim::Keys;
 
 use crate::admin::{Command, Setting, Unban};
 use crate::config::{Config, Visibility};
 use crate::files::{BanList, Who, hex};
+use crate::relay::{MapTarget, Relay};
 use crate::rotation::Rotation;
 
 /// A match starts this long after the lobby gathered, forced (players not
@@ -55,6 +68,10 @@ pub const NOT_AN_ADMIN_TARGET: &str = "admins cannot kick or ban admins (or them
 /// The download cache (members' skins the server lacks, plan 11 ruling
 /// N30), in the data directory.
 pub const DOWNLOADS_DIR: &str = "downloads";
+/// The first note and the printed invite wait this long at most for the
+/// reachability to settle (`Reachability::settled`: the router answered or
+/// gave up, within `UPNP_DEADLINE` 4 s, and STUN's first round).
+pub const SETTLE_WAIT: Duration = Duration::from_secs(5);
 
 /// What the server keeps of a member for its log.
 struct Known {
@@ -62,12 +79,13 @@ struct Known {
     key: PublicKey,
 }
 
-/// Announcing on Nostr (a public server): the relays, when to publish,
-/// and what each relay last said in the log.
+/// Publishing on Nostr: a public server's notes, a relay's TURN notes; the
+/// relays, and what each last said in the log.
 struct Nostr {
     pool: Pool,
-    /// Signs and times the notes (the server's identity).
-    publisher: Publisher,
+    /// Signs and times the game's notes (the server's identity); `None`:
+    /// the game is not announced (only a relay's notes go out).
+    publisher: Option<Publisher>,
     /// Each relay's last status or refusal logged (said once until it
     /// changes).
     said: Vec<Option<String>>,
@@ -108,7 +126,16 @@ pub struct Server {
     halted: bool,
     announcer: Option<Announcer>,
     nostr: Option<Nostr>,
-    address: AddressWatch,
+    /// The host's reachability as last reported (N47), and the lines the
+    /// log said of it.
+    reach: Option<Reachability>,
+    reach_said: Vec<String>,
+    /// When the server started ([`SETTLE_WAIT`]).
+    started: Instant,
+    /// The direct address of the invite last printed.
+    invite_said: Option<Option<SocketAddr>>,
+    /// The volunteer TURN relay (`--relay`).
+    relay: Option<Relay>,
     members: BTreeMap<u8, Known>,
     /// The setup the server last gave the lobby; another (an admin's
     /// `Settings` from the game's lobby) is kept for the next match.
@@ -148,8 +175,14 @@ impl Server {
         };
         let setup = rotation.setup(config.fill_bots);
         let identity = me.clone();
-        let endpoint = EndpointConfig { port: config.port, ..EndpointConfig::default() };
-        let role = PeerRole::Server { lobby: config.host_config()?, listen: HostListen::off() };
+        let endpoint = EndpointConfig { port: config.port, ice: ice(&config), ..EndpointConfig::default() };
+        // N54: Public and Invite servers take joins through their relays.
+        let listen = HostListen {
+            pool: (config.visibility != Visibility::Lan && !config.relays.is_empty())
+                .then(|| PoolConfig { relays: config.relays.clone(), ..PoolConfig::default() }),
+            public_address: config.public_ip(),
+        };
+        let role = PeerRole::Server { lobby: config.host_config()?, listen };
         let unused = Look {
             name: config.name.clone(),
             colour: [0; 3],
@@ -185,21 +218,20 @@ impl Server {
         line(log, format_args!("server {:?} with {which} {fp} (key {})", config.name, hex(&key)));
         line(log, format_args!("bans: {} keys, {} addresses", bans.keys.len(), bans.ips.len()));
         line(log, format_args!("listening on port {} (TCP and UDP)", peer.local_port()));
-        let now = Instant::now();
-        let nostr = match config.visibility {
+        let announced = match config.visibility {
             Visibility::Public if config.relays.is_empty() => {
                 line(log, format_args!("warning: public, but no relays configured: not announced on Nostr"));
-                None
+                false
             }
             Visibility::Public if let Some(ip) = config.unreachable_public_address() => {
                 line(
                     log,
                     format_args!(
                         "warning: public_address {ip} is not reachable from the Internet: not announced on Nostr \
-                         (set the server's public IPv4 address, or remove public_address to ask STUN)"
+                         (set the server's public IPv4 address, or remove public_address)"
                     ),
                 );
-                None
+                false
             }
             Visibility::Public => {
                 line(
@@ -210,27 +242,48 @@ impl Server {
                         config.relays.join(", ")
                     ),
                 );
-                let pool = Pool::start(PoolConfig { relays: config.relays.clone(), ..PoolConfig::default() });
-                let said = vec![None; config.relays.len()];
-                let publisher = Publisher::new(identity, None);
-                Some(Nostr { pool, publisher, said, events: Vec::new() })
+                true
             }
             Visibility::Lan => {
                 line(log, format_args!("announced on the LAN only"));
-                None
+                false
             }
             Visibility::Invite => {
                 line(log, format_args!("not announced: joined by its invite code or address"));
-                None
+                false
             }
         };
-        let (address, said) = AddressWatch::start(config.public_ip(), &config.stun, now);
-        line(log, format_args!("{said}"));
+        let relay = match &config.relay {
+            Some(_) if config.relays.is_empty() => {
+                line(log, format_args!("relay: not started: no Nostr relays to announce it on"));
+                None
+            }
+            Some(rc) => Relay::new(
+                rc.clone(),
+                identity.clone(),
+                config.region,
+                config.allow_local,
+                config.public_ip(),
+                config.port_mapping.then(|| map_target(&config)),
+                log,
+            ),
+            None => None,
+        };
+        let nostr = (announced || relay.is_some()).then(|| Nostr {
+            pool: Pool::start(PoolConfig { relays: config.relays.clone(), ..PoolConfig::default() }),
+            publisher: announced.then(|| Publisher::new(identity, None)),
+            said: vec![None; config.relays.len()],
+            events: Vec::new(),
+        });
         let next = rotation.next();
         line(log, format_args!("next map: {} on {}", next.mod_id, next.level));
         let server = Server {
             nostr,
-            address,
+            reach: None,
+            reach_said: Vec::new(),
+            started: Instant::now(),
+            invite_said: None,
+            relay,
             lobby: None,
             peer,
             config,
@@ -255,25 +308,67 @@ impl Server {
             start_names: Vec::new(),
             seeds: 0,
         };
-        if server.address.settled() {
-            server.say_invite(log);
-        }
         Ok(server)
     }
 
-    /// The server's invite code (decision N42): its key, its relays and
-    /// its public address, when known.
+    /// The server's invite code (decision N42): its key, the relays it
+    /// listens on (none for a LAN server) and, when it is directly
+    /// reachable (N47), that address.
     pub fn invite(&self) -> rl_discovery::Invite {
-        rl_discovery::invite(self.key, &self.config.relays, self.address.current(), self.local_port())
+        let direct = self.direct();
+        let relays: &[String] =
+            if self.config.visibility == Visibility::Lan { &[] } else { &self.config.relays };
+        let port = direct.map_or(self.local_port(), |a| a.port());
+        rl_discovery::invite(self.key, relays, direct.map(|a| a.ip()), port)
     }
 
-    fn say_invite(&self, log: &mut dyn Write) {
-        match self.address.current() {
-            Some(IpAddr::V4(_)) => {}
-            Some(IpAddr::V6(_)) => line(log, format_args!("the invite has no address: codes hold IPv4 only")),
-            None => line(log, format_args!("the invite has no address: no public address is known")),
+    /// N47: the usable mapping's external address, else the configured
+    /// one on the local port.
+    fn direct(&self) -> Option<SocketAddr> {
+        self.reach.as_ref().and_then(Reachability::direct)
+    }
+
+    /// The reachability settled, or [`SETTLE_WAIT`] passed.
+    fn settled(&self, now: Instant) -> bool {
+        self.reach.as_ref().is_some_and(Reachability::settled)
+            || now.saturating_duration_since(self.started) >= SETTLE_WAIT
+    }
+
+    /// The invite once settled, and again whenever its address changes.
+    fn say_invite(&mut self, now: Instant, log: &mut dyn Write) {
+        if !self.settled(now) || self.invite_said == Some(self.direct()) {
+            return;
         }
-        line(log, format_args!("invite code: {}", self.invite().encode()));
+        self.invite_said = Some(self.direct());
+        let invite = self.invite();
+        let code = invite.encode();
+        match (invite.addr, invite.relays.is_empty()) {
+            (Some(_), _) => line(log, format_args!("invite code: {code}")),
+            (None, false) => line(log, format_args!("invite code (joins through the relays): {code}")),
+            (None, true) => {
+                line(log, format_args!("invite code (no address and no relays: it joins nothing): {code}"))
+            }
+        }
+    }
+
+    /// N47 and N54 in the log: each new line of the reachability.
+    fn reached(&mut self, r: Reachability, log: &mut dyn Write) {
+        let lines = r.lines();
+        for l in lines.iter().filter(|l| !self.reach_said.contains(l)) {
+            line(log, format_args!("reach: {l}"));
+        }
+        self.reach_said = lines;
+        self.reach = Some(r);
+    }
+
+    /// The TURN relay's listening address, once it runs (`--relay`).
+    pub fn relay_addr(&self) -> Option<SocketAddr> {
+        self.relay.as_ref().and_then(Relay::local_addr)
+    }
+
+    /// What the TURN relay did, once it runs.
+    pub fn relay_stats(&self) -> Option<TurnStats> {
+        self.relay.as_ref().and_then(Relay::stats)
     }
 
     /// The TCP and UDP port it listens on.
@@ -297,14 +392,19 @@ impl Server {
     /// what the server decides: commands, bots, starts, bans, the log.
     pub fn poll(&mut self, now: Instant, log: &mut dyn Write) {
         self.now = Some(now);
-        if let Some(said) = self.address.poll(now) {
-            line(log, format_args!("{said}"));
-            self.say_invite(log);
-        }
         self.relays(log);
         let events = self.peer.poll(now, &mut || Keys(0), &mut |_, _, _| {});
         for e in events {
             self.on_event(e, log);
+        }
+        self.say_invite(now, log);
+        if let Some(relay) = &mut self.relay {
+            let peer = &self.peer;
+            if let Some(note) = relay.poll(now, &mut || peer.reachability(), log)
+                && let Some(n) = &mut self.nostr
+            {
+                n.pool.publish(note);
+            }
         }
         self.track_match(log);
         if self.bans_checked.is_none_or(|t| now.saturating_duration_since(t) >= BANS_EVERY) {
@@ -323,22 +423,42 @@ impl Server {
         self.lobby = Some((revision, state));
     }
 
-    /// Says goodbye to everyone (`Bye`), closes every connection and, when
-    /// it was announced on Nostr, publishes a closing note (the pool's drop
-    /// sends it, bounded at 2 s).
-    pub fn shutdown(&mut self, log: &mut dyn Write) {
-        self.peer.leave();
-        if let Some(mut n) = self.nostr.take() {
-            if let Some((_, state)) = &self.lobby {
-                let summary = self.summary(state);
-                if let Some(note) = n.publisher.closing(unix_now(), &summary, aux) {
-                    n.pool.publish(note);
-                    line(log, format_args!("closing note published"));
-                }
-            }
-            drop(n);
-        }
+    /// Says goodbye to everyone (`Bye`), closes every connection, stops
+    /// listening and, when it was announced on Nostr, publishes a closing
+    /// note (and the relay's); the pool's drop sends them, bounded at 2 s.
+    /// Then waits at most [`DROP_WAIT`] (1 s) for the router to delete the
+    /// port mappings (N51, ruling NT-2).
+    pub fn shutdown(mut self, log: &mut dyn Write) {
         self.save_bans(log);
+        let mut nostr = self.nostr.take();
+        if let Some(n) = &mut nostr
+            && let Some(publisher) = &mut n.publisher
+            && let Some((_, state)) = &self.lobby
+        {
+            let summary = GameSummary::of_lobby(state, &self.hosting(state));
+            if let Some(note) = publisher.closing(unix_now(), &summary, aux) {
+                n.pool.publish(note);
+                line(log, format_args!("closing note published"));
+            }
+        }
+        let relay = self.relay.take().map(|r| r.shutdown(log));
+        // The endpoint's mapping and the relay's go at once, on threads.
+        let peer = self.peer.shutdown();
+        let until = Instant::now() + DROP_WAIT;
+        let unmapping = relay.map(|(closing, unmapping)| {
+            if let (Some(note), Some(n)) = (closing, &mut nostr) {
+                n.pool.publish(note);
+            }
+            unmapping
+        });
+        drop(nostr);
+        let deleted = peer.wait(until) & unmapping.is_none_or(|u| u.wait(until));
+        if !deleted {
+            line(
+                log,
+                format_args!("warning: the router did not confirm deleting the port mappings within 1 s"),
+            );
+        }
         line(log, format_args!("server stopped"));
     }
 
@@ -361,6 +481,7 @@ impl Server {
             OnlineEvent::MatchStarting { start, .. } => self.started(&start, log),
             OnlineEvent::MatchEnded(end) => self.ended(&end, log),
             OnlineEvent::DesyncBundle(bytes) => self.save_bundle(&bytes, log),
+            OnlineEvent::Reachability(r) => self.reached(r, log),
             _ => {}
         }
     }
@@ -383,10 +504,11 @@ impl Server {
             }
             let ip = self.peer.lobby().addr_of(m.id).map_or_else(|| "?".into(), |a| a.ip().to_string());
             let admin = if m.admin { " (admin)" } else { "" };
+            let via = m.path.map_or("an unknown path", path_tag);
             line(
                 log,
                 format_args!(
-                    "join {} [{}] from {ip}{admin} key {}",
+                    "join: {} ({}) from {ip} via {via}{admin} key {}",
                     m.look.name,
                     fingerprint(&m.key),
                     hex(&m.key)
@@ -459,13 +581,22 @@ impl Server {
                         hex(&t.key)
                     ),
                 );
+                // N59: a relayed member's address is the relay's, which
+                // banning would close to everyone: its key alone is banned
+                // (live and in the bans file), and the admin is told.
+                let relayed = t.path == Some(LinkPath::Relayed);
                 match how {
                     "kick" => self.peer.lobby().kick(t.id, false),
                     "ban" => self.peer.lobby().kick(t.id, true),
-                    _ => self.peer.lobby().ban_with_address(t.id),
+                    _ => {
+                        self.peer.lobby().ban_with_address_by(t.id, Some(member));
+                        if relayed {
+                            line(log, format_args!("banip {}: {RELAYED_BAN}", t.look.name));
+                        }
+                    }
                 }
                 if how != "kick" {
-                    let ip = if how == "banip" { addr } else { None };
+                    let ip = if how == "banip" && !relayed { addr } else { None };
                     self.who.insert(t.key, Who { name: t.look.name.clone(), ip });
                     self.who_changed = true;
                     self.save_bans(log);
@@ -707,35 +838,41 @@ impl Server {
         self.who_changed = false;
     }
 
-    /// The lobby's summary (one builder for the LAN and Nostr).
-    fn summary(&self, state: &LobbyState) -> GameSummary {
+    /// What the summary (one builder for the LAN and Nostr) takes beside
+    /// the lobby: the direct address and its port (N47), when there is one.
+    fn hosting(&self, state: &LobbyState) -> Hosting {
         let content = self.peer.content();
-        let hosting = Hosting {
+        let direct = self.direct();
+        Hosting {
             port: self.local_port(),
             max_players: self.config.max_players,
             max_spectators: self.config.max_spectators,
             password: self.config.password.is_some(),
             region: self.config.region,
-            addr: self.address.current(),
+            addr: direct.map(|a| a.ip()),
+            public_port: direct.map(|a| a.port()),
             map_name: content.pack_name(&state.setup.level_id).unwrap_or_default().into(),
-        };
-        GameSummary::of_lobby(state, &hosting)
+        }
     }
 
-    /// The LAN broadcast, and on Nostr every minute and at a change (once
-    /// the first STUN question is answered, so the first note has the
-    /// address).
+    /// The LAN broadcast (on the local port), and on Nostr every minute and
+    /// at a change, once the reachability settled (so the first note has
+    /// the address), at most [`SETTLE_WAIT`] after the start.
     fn announce(&mut self, state: &LobbyState, now: Instant) {
-        if self.announcer.is_none() && self.nostr.is_none() {
+        let publishing = self.nostr.as_ref().is_some_and(|n| n.publisher.is_some());
+        if self.announcer.is_none() && !publishing {
             return;
         }
-        let summary = self.summary(state);
+        let hosting = self.hosting(state);
+        let summary = GameSummary::of_lobby(state, &hosting);
         if let Some(a) = &mut self.announcer {
-            a.tick(now, &summary.lan());
+            a.tick(now, &hosting.lan(&summary));
         }
+        let settled = self.settled(now);
         if let Some(n) = &mut self.nostr
-            && self.address.settled()
-            && let Some(note) = n.publisher.tick(now, unix_now(), &summary, aux)
+            && let Some(publisher) = &mut n.publisher
+            && settled
+            && let Some(note) = publisher.tick(now, unix_now(), &summary, aux)
         {
             n.pool.publish(note);
         }
@@ -802,6 +939,45 @@ pub fn run_with(
     }
     server.shutdown(log);
     Ok(())
+}
+
+/// The game endpoint's ICE settings (N48, N51): the config's STUN servers,
+/// port mapping for Public and Invite servers, `allow_local`; under the
+/// test hooks the fake gateway and the pinned base.
+fn ice(config: &Config) -> IceConfig {
+    #[allow(unused_mut)]
+    let mut ice = IceConfig {
+        stun: config.stun.clone(),
+        port_mapping: config.port_mapping && config.visibility != Visibility::Lan,
+        allow_local: config.allow_local,
+        ..IceConfig::default()
+    };
+    #[cfg(feature = "test-hooks")]
+    if let Some(g) = &config.test_gateway {
+        ice.base_override = Some(g.base);
+        if let SocketAddr::V4(pmp) = g.pmp {
+            ice.gateway = Some(pmp);
+        }
+        ice.ssdp = Some(g.ssdp);
+    }
+    ice
+}
+
+/// Where the relay's mappings ask: under the test hooks the fake gateway
+/// and the pinned base; else `None` (the OS's base and gateway, found on a
+/// thread).
+#[allow(clippy::unnecessary_wraps)]
+fn map_target(config: &Config) -> Option<MapTarget> {
+    #[cfg(feature = "test-hooks")]
+    if let Some(g) = &config.test_gateway {
+        let gateway = match g.pmp.ip() {
+            IpAddr::V4(ip) => Some(ip),
+            IpAddr::V6(_) => None,
+        };
+        return Some(MapTarget { base: g.base, gateway, pmp_port: Some(g.pmp.port()), ssdp: Some(g.ssdp) });
+    }
+    let _ = config;
+    None
 }
 
 /// The server's download cache in `dir` (`<data dir>/downloads`, ruling
