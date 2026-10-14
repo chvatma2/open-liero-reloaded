@@ -117,6 +117,9 @@ pub struct PeerStats {
     pub sends_dropped: u64,
     /// Datagrams the local socket did not take (a full send buffer).
     pub send_failures: u64,
+    /// Unreliable messages the link dropped as stale: written while it
+    /// could not send them (a stalled association), beyond the newest few.
+    pub stale_dropped: u64,
 }
 
 /// One connection attempt, from its offer (or answer) until its link opens
@@ -816,7 +819,7 @@ impl Core {
 
     /// What went through the socket for an open peer.
     pub fn stats(&self, peer: PeerId) -> Option<PeerStats> {
-        self.open.get(&peer).map(|p| p.stats)
+        self.open.get(&peer).map(|p| PeerStats { stale_dropped: p.link.stale_dropped(), ..p.stats })
     }
 
     /// Datagrams no link accepted (dropped).

@@ -35,10 +35,13 @@ pub struct Limits {
     pub max_raw_bytes_per_s: u32,
 }
 
+/// [`Limits::max_datagrams_per_s`]'s default.
+pub(crate) const DEFAULT_DATAGRAMS_PER_S: u32 = 400;
+
 impl Default for Limits {
     fn default() -> Self {
         Limits {
-            max_datagrams_per_s: 400,
+            max_datagrams_per_s: DEFAULT_DATAGRAMS_PER_S,
             max_reliable_bytes_per_s: 256 * 1024,
             max_signal_bytes: MAX_SIGNAL,
             max_raw_datagrams_per_s: 10_000,

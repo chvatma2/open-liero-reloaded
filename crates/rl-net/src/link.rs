@@ -41,6 +41,23 @@ const SCTP_BUFFER: usize = 128 * 1024;
 /// Room in str0m's buffer the control channel leaves free for inputs, so a
 /// big reliable transfer never holds inputs back.
 const INPUTS_ROOM: usize = 16 * 1024;
+/// The most unreliable messages str0m may hold for a link, waiting to leave
+/// or not yet acknowledged: a quarter of what a peer may send us in a
+/// second (`Limits::max_datagrams_per_s`), one second of the netcode's one
+/// message per 10 ms tick, more than a lossy path's round trip keeps in
+/// flight. sctp-proto 0.10.5 starts a message's `MaxPacketLifetime` only
+/// when it first transmits it, so while the association stalls (a
+/// retransmission timeout backing off on a lossy path, longer under CPU
+/// load) every message written waits, and all of them leave together once
+/// it recovers: past the receiver's limit, an honest peer dropped as a
+/// flood (the bot-grid flake of 2026-10-14). Beyond this the link holds
+/// back its inputs and keeps only the newest [`INPUTS_QUEUED`].
+const INPUTS_HELD: usize = crate::limits::DEFAULT_DATAGRAMS_PER_S as usize / 4;
+/// The unreliable messages the link itself keeps while str0m cannot take
+/// them (stalled, or its buffer full): the newest few. Each netcode
+/// datagram repeats what its peer has not acknowledged, so older ones add
+/// nothing; they are dropped as stale ([`Link::stale_dropped`]).
+const INPUTS_QUEUED: usize = 4;
 /// How often one `poll` feeds the time again while str0m asks for immediate
 /// attention (a timeout not after `now`, e.g. opening channels).
 const MAX_SPINS: usize = 16;
@@ -190,6 +207,13 @@ pub struct Link {
     queued: [usize; 2],
     /// str0m's buffered amount of each channel after the last mutation.
     in_sctp: [usize; 2],
+    /// The sizes of the unreliable messages str0m holds, oldest first, and
+    /// their sum: estimated from its buffered amount, which drops as the
+    /// oldest are acknowledged (or abandoned).
+    inputs_held: VecDeque<usize>,
+    inputs_held_bytes: usize,
+    /// Unreliable messages dropped as stale (beyond [`INPUTS_QUEUED`]).
+    stale_dropped: u64,
     out: Vec<Transmit>,
     events: Vec<LinkEvent>,
     timeout: Instant,
@@ -219,6 +243,9 @@ impl Link {
             queues: [VecDeque::new(), VecDeque::new()],
             queued: [0; 2],
             in_sctp: [0; 2],
+            inputs_held: VecDeque::new(),
+            inputs_held_bytes: 0,
+            stale_dropped: 0,
             out: Vec::new(),
             events: Vec::new(),
             timeout: now,
@@ -343,9 +370,10 @@ impl Link {
     /// Queues `bytes` as one message on `channel`. Messages leave in order
     /// as str0m's send buffer has room; [`Link::buffered`] tells how much waits.
     ///
-    /// The queue has no limit of its own: callers check [`Link::buffered`]
-    /// before sending more (the endpoint refuses sends beyond its per-peer
-    /// cap).
+    /// The reliable queue has no limit of its own: callers check
+    /// [`Link::buffered`] before sending more (the endpoint refuses sends
+    /// beyond its per-peer cap). The unreliable one keeps the newest
+    /// [`INPUTS_QUEUED`] messages that str0m cannot take yet.
     pub fn send(&mut self, channel: Channel, bytes: &[u8]) -> Result<(), LinkError> {
         match self.state {
             State::Closed => return Err(LinkError::Closed),
@@ -362,7 +390,21 @@ impl Link {
         self.queues[i].push_back(bytes.to_vec());
         self.queued[i] += bytes.len();
         self.flush();
+        if channel == Channel::Unreliable {
+            while self.queues[i].len() > INPUTS_QUEUED {
+                let stale = self.queues[i].pop_front().map_or(0, |m| m.len());
+                self.queued[i] -= stale;
+                self.stale_dropped += 1;
+            }
+        }
         Ok(())
+    }
+
+    /// Unreliable messages dropped as stale: written while str0m held
+    /// [`INPUTS_HELD`] of them (a stalled association) or had no room,
+    /// beyond the newest [`INPUTS_QUEUED`].
+    pub fn stale_dropped(&self) -> u64 {
+        self.stale_dropped
     }
 
     /// The bytes sent on `channel` and not yet acknowledged (reliable) or
@@ -506,7 +548,9 @@ impl Link {
             while self.state == State::Open {
                 let Some(len) = self.queues[i].front().map(Vec::len) else { break };
                 self.refresh_buffered();
-                if self.in_sctp[0] + self.in_sctp[1] + len > room {
+                if self.in_sctp[0] + self.in_sctp[1] + len > room
+                    || (channel == Channel::Unreliable && self.inputs_held.len() >= INPUTS_HELD)
+                {
                     break;
                 }
                 let Some(id) = self.ids[i] else { break };
@@ -515,6 +559,10 @@ impl Link {
                     Ok(true) => {
                         self.queues[i].pop_front();
                         self.queued[i] -= len;
+                        if channel == Channel::Unreliable {
+                            self.inputs_held.push_back(len);
+                            self.inputs_held_bytes += len;
+                        }
                         self.drain();
                     }
                     Ok(false) => break,
@@ -533,6 +581,11 @@ impl Link {
             let i = index(channel);
             self.in_sctp[i] =
                 self.ids[i].and_then(|id| self.rtc.channel(id)).map_or(0, |mut c| c.buffered_amount());
+        }
+        let held = self.in_sctp[index(Channel::Unreliable)];
+        while self.inputs_held_bytes > held {
+            let Some(len) = self.inputs_held.pop_front() else { break };
+            self.inputs_held_bytes -= len;
         }
     }
 }

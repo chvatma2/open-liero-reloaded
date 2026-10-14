@@ -445,3 +445,98 @@ fn a_mapped_host_names_tcp_joins_mapped_port() {
     assert_eq!(tcp_join_path(false, Some((mapped, false)), global), Direct, "UDP mapped only");
     assert_eq!(tcp_join_path(true, None, global), Direct, "no mapping");
 }
+
+/// Plays a host and a client on the virtual wire, each sending the
+/// netcode's traffic (an unreliable message every 10 ms tick, a reliable
+/// one every 100 ms) for `secs` seconds, with every datagram from the
+/// client (`from_client`) or from the host lost from 2 s to `2 + stall` s.
+/// Returns either side's `Disconnected`, else the stale messages both
+/// dropped and the unreliable messages each received in the last second.
+fn stalled_traffic(from_client: bool, stall: u64, secs: u64) -> Result<(u64, usize, usize), CoreEvent> {
+    let t0 = Instant::now();
+    let host_at: SocketAddr = "10.0.0.1:23400".parse().unwrap();
+    let client_at: SocketAddr = "10.0.0.2:50000".parse().unwrap();
+    let (mut client, mut host, _) = set_up(t0, client_at, host_at);
+    let (mut eh, mut ec) = (Vec::new(), Vec::new());
+    let mut now = t0;
+    while !(connected(&eh) && connected(&ec)) {
+        now += Duration::from_millis(5);
+        assert!(now < t0 + Duration::from_secs(10), "no connection; host {eh:?} client {ec:?}");
+        exchange(&mut client, client_at, &mut host, host_at, now, &mut ec, &mut eh);
+    }
+    let peer = eh
+        .iter()
+        .find_map(|e| match e {
+            CoreEvent::Net(NetEvent::Connected { peer, .. }) => Some(*peer),
+            _ => None,
+        })
+        .expect("connected");
+    let unreliable = |events: &[CoreEvent]| {
+        events
+            .iter()
+            .filter(|e| matches!(e, CoreEvent::Net(NetEvent::Message { channel: Channel::Unreliable, .. })))
+            .count()
+    };
+    let (mut host_got, mut client_got) = (0, 0);
+    let start = now;
+    let mut out = Vec::new();
+    for ms in 1..=secs * 1000 {
+        now = start + Duration::from_millis(ms);
+        let stalled = (2000..(2 + stall) * 1000).contains(&ms);
+        if ms % 10 == 0 {
+            client.send(HOST, Channel::Unreliable, &[ms as u8; 60]);
+            host.send(peer, Channel::Unreliable, &[ms as u8; 200]);
+        }
+        if ms % 100 == 0 {
+            client.send(HOST, Channel::Reliable, &[1; 24]);
+            host.send(peer, Channel::Reliable, &[2; 48]);
+        }
+        eh.clear();
+        ec.clear();
+        client.poll(now, &mut out, &mut ec);
+        for d in out.drain(..) {
+            if !(stalled && from_client) {
+                host.receive(client_at, &d.bytes, now);
+            }
+        }
+        host.poll(now, &mut out, &mut eh);
+        for d in out.drain(..) {
+            if !(stalled && !from_client) {
+                client.receive(host_at, &d.bytes, now);
+            }
+        }
+        if let Some(e) =
+            eh.iter().chain(&ec).find(|e| matches!(e, CoreEvent::Net(NetEvent::Disconnected { .. })))
+        {
+            return Err(e.clone());
+        }
+        if ms > (secs - 1) * 1000 {
+            host_got += unreliable(&eh);
+            client_got += unreliable(&ec);
+        }
+    }
+    let stale = client.stats(HOST).unwrap().stale_dropped + host.stats(peer).unwrap().stale_dropped;
+    Ok((stale, host_got, client_got))
+}
+
+/// A link whose datagrams are lost for seconds (a lossy path backing its
+/// SCTP retransmission timeout off, worse under CPU load) keeps its
+/// unreliable messages within the other side's limits once it recovers:
+/// what could not leave during the stall is stale and dropped, never a
+/// flood, and fresh messages flow again. The bot-grid flake of 2026-10-14:
+/// after a 6.6 s stall a client's 543 queued inputs reached the host
+/// within a second, past `max_datagrams_per_s`, and the host dropped an
+/// honest client.
+#[test]
+fn a_stalled_links_unreliable_backlog_stays_within_the_limits() {
+    for from_client in [true, false] {
+        let side = if from_client { "client" } else { "host" };
+        let (stale, host_got, client_got) =
+            stalled_traffic(from_client, 6, 14).unwrap_or_else(|e| panic!("stalled from the {side}: {e:?}"));
+        assert!(stale > 0, "stalled from the {side}: nothing dropped as stale");
+        assert!(
+            host_got >= 90 && client_got >= 90,
+            "stalled from the {side}: {host_got} and {client_got} in the last second"
+        );
+    }
+}

@@ -92,7 +92,22 @@ for tests.
   link at the next `poll`, `Disconnected { Unsent }` (our failure,
   not the peer's; rl-online tells a client so): the ordered channel
   never loses a message silently. rl-online keeps its own backlog and
-  feeds it while `buffered` is below 1 MiB).
+  feeds it while `buffered` is below 1 MiB). **Inputs never pile up**:
+  sctp-proto 0.10.5 starts a message's `MaxPacketLifetime` only at its
+  first transmission, so while an association stalls (a retransmission
+  timeout backing off on a lossy path, longer under CPU load) every
+  unreliable message written waits, and all leave together once it
+  recovers — past the receiver's `max_datagrams_per_s`, an honest peer
+  dropped as a flood (`Disconnected { Limits }` at the host, "the
+  connection closed" at the client: the bot-grid flake of 2026-10-14,
+  543 inputs within a second after a 6.6 s stall). So the link lets str0m
+  hold at most `INPUTS_HELD` unreliable messages (a quarter of
+  `max_datagrams_per_s`'s default, 100: one second of ticks, more than a
+  lossy round trip keeps in flight; counted from the sizes it handed over
+  and str0m's buffered amount) and keeps only the newest `INPUTS_QUEUED`
+  (4) of its own: older ones are dropped as stale (`Link::stale_dropped`,
+  `PeerStats::stale_dropped`); each netcode datagram repeats what its
+  peer has not acknowledged.
 - **str0m's contract** — every mutation of the `Rtc` (input, write, SDP or
   direct API change, candidate) is followed by draining `poll_output` until
   it returns a timeout, before the next mutation — is kept inside `Link`:
@@ -612,8 +627,9 @@ for tests.
   `allow_burst` lifts them by twice the transfer (call it on the sending
   side too for states much larger than 3 MB: their SACKs count). Beyond →
   `Limits`. At most 1024 datagrams and 64 TCP connections per `poll`.
-  `PeerStats` counts both ways, plus `sends_dropped` and `send_failures`
-  (datagrams the local socket refused).
+  `PeerStats` counts both ways, plus `sends_dropped`, `send_failures`
+  (datagrams the local socket refused) and `stale_dropped` (inputs the
+  link dropped as stale).
 - **Impairment** (`impair.rs`, spec §9.4): with `cfg.impair`, every
   outgoing datagram (handshakes included) passes `rl_netcode::netsim`'s
   `LinkModel` with the profile — loss, delay with jitter, duplication —
@@ -648,7 +664,11 @@ setup-time datagrams and a refused one in the stats, a cancelled setup's
 last datagrams closing the host's open link, a full signalled pending
 table evicting a silent setup and refusing `Busy` once every one has
 heard checks, reflexive candidates surviving ten host addresses, the
-1.5 s `Connected` fallback with a real address, `gathered` without STUN; `tests/natsim.rs`: hole punching through every NAT pair of
+1.5 s `Connected` fallback with a real address, `gathered` without STUN,
+a link losing every datagram one way for 6 s (either way) keeping the
+netcode's inputs within the limits once it recovers: the stalled ones
+dropped as stale, fresh ones flowing again (RED before `INPUTS_HELD`:
+`Disconnected { Limits }`); `tests/natsim.rs`: hole punching through every NAT pair of
 interest, a mapped port, the same LAN, NAT detection, STUN keeping a
 mapping alive, a renumbered router, symmetric NATs through a relay, a
 hole-punched link releasing its allocation, a dead relay ending the
