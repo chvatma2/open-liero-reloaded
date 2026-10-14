@@ -229,7 +229,9 @@ for tests.
   multicast or broadcast), with a port and a known `typ` (fields split on
   single spaces, as str0m parses them; no mDNS name, TCP or IPv6), other
   lines as they are; `remote_candidates` reads only those lines, by type
-  (`prflx` with `srflx`); `classify(local, remote, ours, theirs)`:
+  (`prflx` with `srflx`); `sanitize_with(sdp, allow_local)`: the same, and
+  without `allow_local` no loopback candidate (final review A-M4: `Core`
+  sanitizes signalled offers and answers so); `classify(local, remote, ours, theirs)`:
   `Relayed` (either side's address a relay), `MappedPort` (the remote's
   mapped hint), `Direct` (a remote host candidate), else `HolePunched`.
 - **`turn`** (N52, spec §5.3, ruling TR-2): `TurnCore` is our own
@@ -698,7 +700,8 @@ setup-time datagrams and a refused one in the stats, a cancelled setup's
 last datagrams closing the host's open link, a full signalled pending
 table evicting a silent setup and a flooder's whose valid checks come
 from forged sources, refusing `Busy` once every one had a check of ours
-answered from 8 IPs, but not from one (FR12b-1), reflexive candidates surviving ten host addresses, the
+answered from 8 IPs, but not from one (FR12b-1), reflexive candidates surviving ten host addresses, loopback
+candidates dropped without `allow_local` (A-M4), the
 1.5 s `Connected` fallback with a real address, `gathered` without STUN,
 a link losing every datagram one way for 6 s (either way) keeping the
 netcode's inputs within the limits once it recovers: the stalled ones

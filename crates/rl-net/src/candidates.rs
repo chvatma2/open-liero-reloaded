@@ -108,13 +108,21 @@ pub fn remote_candidates(sdp: &str, mapped_hint: Option<SocketAddr>) -> RemoteCa
 /// checks at a third party. Other lines are kept as they are (str0m ends
 /// a line only at `\n`).
 pub fn sanitize(sdp: &str) -> String {
+    sanitize_with(sdp, true)
+}
+
+/// [`sanitize`], and without `allow_local` no loopback candidate either
+/// (final review A-M4: no honest remote peer offers one, and a hostile
+/// one would aim checks at the machine's own 127.0.0.1 services).
+pub fn sanitize_with(sdp: &str, allow_local: bool) -> String {
     let mut candidates = 0;
     sdp.split_inclusive('\n')
         .filter(|line| {
             if !line.starts_with("a=candidate:") {
                 return true;
             }
-            let keep = candidates < MAX_CANDIDATES && kept(line).is_some();
+            let keep = candidates < MAX_CANDIDATES
+                && kept(line).is_some_and(|(addr, _)| allow_local || !addr.ip().is_loopback());
             candidates += usize::from(keep);
             keep
         })

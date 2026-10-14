@@ -120,7 +120,7 @@ impl Core {
         answer: &str,
         mapped_hint: Option<SocketAddr>,
     ) -> Result<(), LinkError> {
-        let answer = sanitize(answer);
+        let answer = sanitize_with(answer, self.cfg.allow_local);
         let Some(p) = self.pending.iter_mut().find(|p| p.setup == setup) else {
             return Err(LinkError::Closed);
         };
@@ -153,7 +153,7 @@ impl Core {
         } else {
             None
         };
-        let sdp = sanitize(sdp);
+        let sdp = sanitize_with(sdp, self.cfg.allow_local);
         let Ok((link, answer)) = Link::answerer_with(&self.link_candidates(), &sdp, now) else {
             return refused(Refusal::Malformed);
         };

@@ -587,7 +587,8 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
 Test: `cargo nextest run -p rl-game` (the pure parts; `setup`, `session`,
 `tests/finding.rs` (plans 12a, 12b; rl-discovery's in-process
 `TestRelay`, the server in-process (`rl-server` a dev-dependency with its
-`test-hooks`: `test_gateway` pins its base to 127.0.0.1), no STUN, every
+`test-hooks`: `test_gateway` pins its base to 127.0.0.1; `allow_local`,
+since its joiners' candidates are loopback ones, final review A-M4), no STUN, every
 endpoint's candidates on 127.0.0.1 (`Shell::test_ice`, this crate's
 `test-hooks` feature, enabled by its own dev-dependency, ruling NT-1):
 nothing leaves the machine, and `online::menus` sets no relay, no STUN

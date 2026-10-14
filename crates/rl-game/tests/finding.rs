@@ -86,6 +86,9 @@ fn server_config(relay: &str, public: bool) -> Config {
             relays: ["{relay}"],
             stun: [],
             port_mapping: false,
+            // Every candidate is on 127.0.0.1 (NT-1): loopback candidates
+            // need allow_local (final review A-M4).
+            allow_local: true,
             {address}
             region: Europe,
             port: 0,

@@ -24,7 +24,7 @@ use rl_netcode::{Channel, PeerId, Rng};
 use rl_proto::stun::{binding_request_transaction, is_stun};
 use rl_proto::{FINGERPRINT, PROTOCOL_VERSION, Path, Refusal, Signal};
 
-use crate::candidates::{LocalCandidates, RemoteCandidates, classify, remote_candidates, sanitize};
+use crate::candidates::{LocalCandidates, RemoteCandidates, classify, remote_candidates, sanitize_with};
 use crate::impair::Impair;
 use crate::limits::{Limits, PeerLimits};
 use crate::link::{Ended, Link, LinkCandidates, LinkError, LinkEvent, Transmit};

@@ -336,6 +336,32 @@ fn answered_checks_protect_at_most_two_setups_per_ip() {
     assert_eq!(events.iter().filter(|e| matches!(e, CoreEvent::SetupFailed { .. })).count(), 1, "{events:?}");
 }
 
+/// Final review A-M4: without `allow_local`, a signalled offer's (or
+/// answer's) loopback candidates are dropped, so a hostile joiner cannot aim
+/// the host's checks at the host's own 127.0.0.1 services; with it (tests,
+/// natsim) they stay.
+#[test]
+fn loopback_candidates_need_allow_local() {
+    use rl_proto::Signal;
+    let checks_to = |allow_local: bool| {
+        let t0 = Instant::now();
+        let host_at: SocketAddr = "10.0.0.1:23400".parse().unwrap();
+        let mut host = Core::new(CoreConfig { allow_local, ..CoreConfig::host() }, t0);
+        host.set_base(host_at, vec![host_at]);
+        let target: SocketAddr = "127.0.0.1:631".parse().unwrap();
+        let mut joiner = Core::new(CoreConfig::client(), t0);
+        let (_, offer) = signalled_offer(&mut joiner, target, host_at, t0);
+        assert!(matches!(host.answer_ice(&offer, None, t0), Signal::Answer { .. }));
+        let mut out = Vec::new();
+        for ms in (0..2000).step_by(10) {
+            host.poll(t0 + Duration::from_millis(ms), &mut out, &mut Vec::new());
+        }
+        out.iter().filter(|d| d.to == target).count()
+    };
+    assert_eq!(checks_to(false), 0, "no check aimed at the host's own loopback");
+    assert!(checks_to(true) > 0, "allow_local keeps loopback candidates");
+}
+
 /// A core with 10 host addresses that STUN answered and a router mapped.
 fn crowded(cfg: CoreConfig, t0: Instant) -> (Core, SocketAddr, SocketAddr, SocketAddr) {
     let base: SocketAddr = "192.168.1.10:23400".parse().unwrap();
