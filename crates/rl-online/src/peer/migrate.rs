@@ -19,7 +19,7 @@ use rl_proto::{MAX_MEMBERS, MAX_SPECTATORS, SuccessorWire};
 use super::*;
 use crate::join::JoinStep;
 use crate::migration::{
-    Connector, Failure, HOST_BACK, MIGRATION_CONNECT_TIMEOUT, MigrationStep, Planner, REPORT_WAIT,
+    CUT_OFF, Connector, Failure, HOST_BACK, MIGRATION_CONNECT_TIMEOUT, MigrationStep, Planner, REPORT_WAIT,
 };
 
 /// A client's standby endpoint (N63): a host endpoint on its own port whose
@@ -1037,16 +1037,30 @@ impl OnlinePeer {
         if gap < Duration::from_micros(STEP_DOWN_US) || !h.lobby.succession().iter().any(|s| s.can_host) {
             return;
         }
-        self.step_down(gap, now);
+        self.leave_match(stepped_down(gap.as_secs_f32()), now);
     }
 
-    /// The step-down (N70): `Bye` to every peer (the session's and the
-    /// lobby's, sent with this poll), each link closed after
-    /// `CLOSE_LINGER`, the lobby back to gathering without them (its
-    /// results first, as at an end), the replay of what it confirmed, and
-    /// `HostLost(stepped_down(secs))`. It does not rejoin the match; a
+    /// Ruling SB-2, after each advance: a host during a match, with an
+    /// entry of its succession that can host, that heard none of its
+    /// players for `HOST_SILENT_US` (`Session::players_silent`: its own
+    /// network is down, so they are moving to a successor) leaves the
+    /// match as a stepped-down host does, `HostLost(CUT_OFF)`, instead of
+    /// playing on alone. Players that all left by `Bye` are not this case.
+    pub(super) fn cut_off_check(&mut self, now: Instant) {
+        let Side::Host(h) = &self.side else { return };
+        let Some(g) = self.game.as_ref().filter(|g| g.ended.is_none()) else { return };
+        if g.session.players_silent(self.now_us) && h.lobby.succession().iter().any(|s| s.can_host) {
+            self.leave_match(CUT_OFF.into(), now);
+        }
+    }
+
+    /// The step-down (N70), and a host cut off (SB-2): `Bye` to every peer
+    /// (the session's and the lobby's, sent with this poll), each link
+    /// closed after `CLOSE_LINGER`, the lobby back to gathering without
+    /// them (its results first, as at an end), the replay of what it
+    /// confirmed, and `HostLost(why)`. It does not rejoin the match; a
     /// dedicated server's lobby stays open.
-    fn step_down(&mut self, gap: Duration, now: Instant) {
+    fn leave_match(&mut self, why: String, now: Instant) {
         let now_us = self.now_us;
         let Some(mut g) = self.game.take() else { return };
         g.session.leave();
@@ -1069,7 +1083,7 @@ impl OnlinePeer {
             // Nobody is left to tell.
             let _ = h.lobby.outgoing();
         }
-        self.events.push(OnlineEvent::HostLost(stepped_down(gap.as_secs_f32())));
+        self.events.push(OnlineEvent::HostLost(why));
         self.make_replay(record);
     }
 }

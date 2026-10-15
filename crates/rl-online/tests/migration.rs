@@ -9,9 +9,11 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use rl_discovery::{PoolConfig, Region, TestRelay};
-use rl_netcode::migration::{GIVE_UP_US, Step, WINDOW_US};
+use rl_netcode::migration::{GIVE_UP_US, HOST_SILENT_US, Step, WINDOW_US};
 use rl_online::migration::{ANSWER_OPEN_TIMEOUT, Connector, Failure, HOST_BACK, Planner, Route};
-use rl_online::{HOST_LOST, Join, JoinStep, MigrationConfig, MigrationStep, OnlineEvent, StartError};
+use rl_online::{
+    CUT_OFF, HOST_LOST, Join, JoinStep, MigrationConfig, MigrationStep, OnlineEvent, StartError,
+};
 use rl_proto::SuccessorWire;
 
 use crate::common::net::{Net, content, ended, replay_ready};
@@ -385,18 +387,22 @@ fn a_report_that_never_comes_holds_nobody_for_ever() {
     net.run_until(Duration::from_secs(5), "Bert resumes too", |n| n.peers[b].has(migrated));
 }
 
-/// N69 for a follower: the old host comes back (its own 2.8 s outage) while
-/// Bert's join to Anna is open but its `Hello` held (`test_delay_rejoin`):
-/// Bert, in contact, keeps the migration, but Anna calls hers off and
-/// closes the link; losing that contact, Bert goes back to the host too,
-/// instead of running through the windows to a host lost.
+/// N69 for a follower: Anna's and Bert's own links drop for 2.8 s (the
+/// host still hears Cid, so it hosts on: ruling SB-2 ends a host only when
+/// it hears none of its players) while Bert's join to Anna is open (the
+/// signalling's TCP answers) but its `Hello` held (`test_delay_rejoin`).
+/// The old host comes back: Bert, in contact, keeps the migration, but
+/// Anna calls hers off and closes the link; losing that contact, Bert goes
+/// back to the host too, instead of running through the windows to a host
+/// lost.
 #[test]
 fn a_follower_in_contact_when_the_host_returns_goes_back_too() {
     let Some(content) = content() else { return };
-    let (mut net, [a, b]) = started(content);
+    let (mut net, [a, b, c]) = started3(content, 0.2);
     net.peers[b].peer().test_delay_rejoin(Duration::from_secs(3));
     let cut = Instant::now();
-    net.outage(0, Duration::from_millis(2_800));
+    net.outage(a, Duration::from_millis(2_800));
+    net.outage(b, Duration::from_millis(2_800));
     net.run_until(Duration::from_secs(8), "both are back with the host", |n| {
         [a, b].iter().all(|&i| {
             n.peers[i].has(|e| *e == OnlineEvent::Notice(HOST_BACK.into()))
@@ -407,8 +413,42 @@ fn a_follower_in_contact_when_the_host_returns_goes_back_too() {
     assert!(
         net.peers[b].has(|e| matches!(e, OnlineEvent::Migrating(MigrationStep::Moving(n)) if n == "Anna"))
     );
-    assert!(!net.peers[a].has(migrated) && !net.peers[b].has(migrated));
+    for i in [a, b, c] {
+        assert!(!net.peers[i].has(migrated), "{i}");
+    }
+    assert!(!net.peers[c].has(|e| matches!(e, OnlineEvent::Migrating(_))), "Cid heard the host all along");
     assert!(net.host().peer().is_host());
+    assert!(!net.host().has(|e| matches!(e, OnlineEvent::HostLost(_))));
+}
+
+/// Ruling SB-2: the host's own network drops for longer than the silence
+/// limit. It hears none of its players for `HOST_SILENT_US`, as they hear
+/// nothing of it: they move to Anna and play on, while the old host ends
+/// its match with `CUT_OFF` and its replay instead of playing on alone
+/// (it did, filling the players' slots, until their links timed out).
+#[test]
+fn a_host_cut_off_from_its_players_ends_its_match() {
+    let Some(content) = content() else { return };
+    let (mut net, [a, b]) = started(content);
+    let cut = Instant::now();
+    net.outage(0, Duration::from_secs(6));
+    net.run_until(Duration::from_secs(5), "the old host is cut off", |n| {
+        n.peers[0].has(|e| *e == OnlineEvent::HostLost(CUT_OFF.into()))
+    });
+    let took = cut.elapsed();
+    // The last datagrams heard came just before the cut.
+    let limit = Duration::from_micros(HOST_SILENT_US) - Duration::from_millis(100);
+    assert!(took >= limit && took < limit + Duration::from_secs(1), "{took:?}: at the silence limit");
+    assert!(net.host().peer().match_session().is_none(), "its match view is over");
+    net.run_until(Duration::from_secs(10), "both resume under Anna", |n| {
+        n.peers[a].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
+            && n.peers[b].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Anna"))
+    });
+    net.run_until(Duration::from_secs(5), "the old host's replay", |n| n.peers[0].has(replay_ready));
+    for i in [a, b] {
+        assert!(!net.peers[i].has(|e| matches!(e, OnlineEvent::HostLost(_))), "{i}");
+    }
+    records_agree(&mut net, [a, b]);
 }
 
 /// N72: a member welcomed after the new host's resume is a mid-match

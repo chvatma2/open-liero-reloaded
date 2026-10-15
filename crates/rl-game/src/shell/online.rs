@@ -722,13 +722,14 @@ impl Shell {
         }
     }
 
-    /// No player could take the match over, or this host stalled and the
-    /// match moved on without it (plan 12c): the match view goes at once
+    /// No player could take the match over, or this host stalled or was
+    /// cut off from its players and the match moved on without it (plan
+    /// 12c, ruling SB-2): the match view goes at once
     /// (as at a lost connection), the peer is let go (its replay of the
     /// match saved when made), and the Host lost screen says `why`.
     fn host_lost(&mut self, why: String, out: &mut Vec<Outcome>) {
         println!("rl-game: migration: host lost: {why}");
-        // A host lost is this player's own step-down (N70).
+        // A host lost is this player's own step-down (N70) or cut-off (SB-2).
         let hosting = self.net.as_ref().is_some_and(|n| n.host);
         self.end();
         self.close_hosted();

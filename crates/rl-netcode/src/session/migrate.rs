@@ -17,7 +17,9 @@ use rl_sim::Keys;
 use super::{MAX_AHEAD, PeerState, Resuming, Role, Seat, Session, TICK_US, TimeSync};
 use crate::clock::{Pace, TARGET_MARGIN};
 use crate::inputs::SetResult;
-use crate::migration::{KEEPALIVE_US, MAX_RESUME_HOLD_US, RESUME_REPEAT_US, fit_report, fit_resume};
+use crate::migration::{
+    HOST_SILENT_US, KEEPALIVE_US, MAX_RESUME_HOLD_US, RESUME_REPEAT_US, fit_report, fit_resume,
+};
 use crate::{Channel, Event, PeerId, Simulation};
 
 /// A resume's `at_ms` is taken at most this far from the receipt (a broken
@@ -63,6 +65,28 @@ impl<S: Simulation> Session<S> {
 
     pub fn suspended(&self) -> bool {
         self.suspended
+    }
+
+    /// Host (ruling SB-2): every player peer heard in this match and not
+    /// abandoned has sent nothing for [`HOST_SILENT_US`], counted only over
+    /// time this host advanced (as a client's `HostSilent`), and there is
+    /// one at least. Its own network is down (or every player crashed):
+    /// its peers find it silent as it finds them, and move to a successor;
+    /// with migration on the driver ends its match view rather than play on
+    /// alone. Players gone by `Bye` are abandoned and count for nothing,
+    /// spectators neither.
+    pub fn players_silent(&self, now_us: u64) -> bool {
+        if !self.is_host() {
+            return false;
+        }
+        let from = self.silence_from_us;
+        let mut players = self
+            .peers
+            .values()
+            .filter(|p| matches!(p.seat, Seat::Player(_)) && !p.lost && p.echo.is_some())
+            .peekable();
+        players.peek().is_some()
+            && players.all(|p| now_us.saturating_sub(p.heard_us.max(from)) >= HOST_SILENT_US)
     }
 
     /// The old host is back before any rehost (N69): advancing again, the

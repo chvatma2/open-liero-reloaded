@@ -208,7 +208,10 @@ beside the executable, else in the working directory).
   a server stalled past `STEP_DOWN_US` during a match with someone to
   take over; a server is never a client, so this is its only host lost)
   `"stalled for {s:.1} s: the match moved to the next player; the lobby
-  is open again"`, `s` the gap between its last two polls.
+  is open again"`, `s` the gap between its last two polls; on
+  `HostLost(CUT_OFF)` (ruling SB-2: it heard none of its players for
+  `HOST_SILENT_US`, its own network down) `"heard none of the players:
+  the match moved to the next player; the lobby is open again"`.
   Each `OnlineEvent::Reachability` is kept and every new line of its
   `lines()` logged once, `"reach: …"`; each `OnlineEvent::RelayJoin` is
   `"relays: {line}"` (ruling FR12b-3: answered, refused, not connected,

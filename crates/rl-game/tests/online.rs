@@ -1486,6 +1486,40 @@ fn the_host_lost_screen_shows_and_the_replay_is_saved() {
     assert!(rig.bert().shell().data.host_lost_replay, "then the screen says it is in Replays");
 }
 
+/// Ruling SB-2: the hosting game's own network drops (every datagram both
+/// ways, 6 s). It hears none of its players for `HOST_SILENT_US`, as Anna
+/// hears nothing of it: she takes the match over, while the old host's
+/// match view ends on its Host lost screen ("Match lost", `CUT_OFF`) with
+/// its replay saved, instead of playing on alone.
+#[test]
+fn a_host_cut_off_from_its_players_shows_why() {
+    let Some(dir) = content_dir() else { return };
+    let data = tempfile::tempdir().unwrap();
+    let (mut h, mut c) = host_and_client_with(&dir, 0.3, Some(data.path()), true);
+    start_match(&mut h, &mut c);
+    frames_until("the match runs", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
+        confirmed(s[1]).is_some_and(|(t, _)| t > 200)
+    });
+    h.with_peer(|p| p.test_outage(Instant::now() + Duration::from_secs(6)));
+    frames_until("the old host's Host lost screen", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
+        s[0].ui.screen() == Screen::HostLost
+    });
+    assert_eq!(h.data.host_lost.as_deref(), Some(rl_online::CUT_OFF));
+    assert!(h.data.host_lost_hosting, "its own match, titled Match lost");
+    assert!(h.session().is_none(), "the match view went");
+    frames_until(
+        "Anna hosts and the old host's replay is saved",
+        Duration::from_secs(8),
+        &mut [&mut h, &mut c],
+        |s| {
+            s[1].data.chat.iter().any(|l| l.text == "You are now hosting")
+                && !saved_replays(data.path()).is_empty()
+        },
+    );
+    assert!(h.data.host_lost_replay, "then the screen says it is in Replays");
+    assert!(c.plays_online() && c.ui.screen() == Screen::InGame, "Anna plays on");
+}
+
 /// Plan 12c Task 9 (N72): Cid comes back only after the new host resumed
 /// the match (his rejoin held 6 s): he lost his place in it. His log says
 /// who hosts and why he watches (`late_rejoin`), his view keeps the match

@@ -529,6 +529,8 @@ impl OnlinePeer {
             self.host_lobby_events(now);
             self.content_tasks();
             self.advance(now, local_keys, on_tick);
+            // SB-2: after the advance, which keeps the silence clock.
+            self.cut_off_check(now);
             self.host_tasks(now);
             self.overflowed();
             self.close_lingering(now);

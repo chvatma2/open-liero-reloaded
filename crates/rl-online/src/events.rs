@@ -95,8 +95,9 @@ pub enum OnlineEvent {
     Migrating(MigrationStep),
     /// The match resumed under `host` (a name; `me`: this peer hosts now).
     Migrated { host: String, me: bool },
-    /// No successor took over ([`crate::HOST_LOST`]), or this host stepped
-    /// down ([`crate::stepped_down`]): the match is over for this peer; its
+    /// No successor took over ([`crate::HOST_LOST`]), this host stepped
+    /// down ([`crate::stepped_down`]), or this host heard none of its
+    /// players ([`crate::CUT_OFF`]): the match is over for this peer; its
     /// replay follows (`ReplayReady`).
     HostLost(String),
 }

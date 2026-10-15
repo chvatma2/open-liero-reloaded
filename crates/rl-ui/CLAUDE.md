@@ -172,11 +172,12 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   actions become `AppCommand::Lobby(LobbyCommand)`, Back / `LeaveLobby`
   emit `LeaveOnline` and return to Multiplayer. **Host lost** (plan 12c
   Task 9): the app's `HostLost(why)` (the host gone and nobody could take
-  the match over, or this host stalled and stepped down) while online ends
+  the match over, this host stalled and stepped down, or this host heard
+  none of its players, ruling SB-2's `CUT_OFF`) while online ends
   the match (`EndMatch`) and opens `Screen::HostLost` (`host_lost.rs`, a
   page: `HOST_LOST_TITLE` "Host lost", or `STEPPED_DOWN_TITLE` "Match
-  lost" when `MenuData::host_lost_hosting` (this player's own stalled
-  game stepped down), `MenuData::host_lost` (the app's reason), then
+  lost" when `MenuData::host_lost_hosting` (this player's own hosted
+  match left: its stalled game stepped down, or its network cut it off), `MenuData::host_lost` (the app's reason), then
   `HOST_LOST_REPLAY` ("The match's replay is saved in Replays.") once
   `MenuData::host_lost_replay` (the app sets it when the file is written),
   and Replays, which opens the Replays screen; Back or Esc returns to

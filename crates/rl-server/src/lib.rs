@@ -494,10 +494,19 @@ impl Server {
             }
             OnlineEvent::MatchStarting { start, .. } => self.started(&start, log),
             OnlineEvent::MatchEnded(end) => self.ended(&end, log),
+            // Ruling SB-2: the server heard none of its players for
+            // `HOST_SILENT_US` during a match (its own network down);
+            // rl-online left the match as at a step-down.
+            OnlineEvent::HostLost(why) if why == rl_online::CUT_OFF => line(
+                log,
+                format_args!(
+                    "heard none of the players: the match moved to the next player; the lobby is open again"
+                ),
+            ),
             // N70: the server stalled past `STEP_DOWN_US` during a match
             // with someone to take over; rl-online stepped down (its `Bye`,
             // its replay, the lobby gathering again). A server is never a
-            // client, so this is its only host lost.
+            // client, so this and the above are its only host lost.
             OnlineEvent::HostLost(_) => line(
                 log,
                 format_args!(

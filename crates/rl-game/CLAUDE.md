@@ -388,7 +388,8 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   line; `HostLost(why)` → `host_lost`: the match view goes at once, the
   peer is let go (`release`: its replay to `Shell::replays`, saved by
   `auto_save`), `MenuData::host_lost` (why), `host_lost_hosting` (this
-  player hosted: its own step-down), `host_lost_replay` set once the
+  player hosted: its own step-down, or `CUT_OFF`, ruling SB-2: it heard
+  none of its players), `host_lost_replay` set once the
   replay is saved (`Shell::host_lost_pending`, `save_online_replay`; none
   for a mid-match watcher or without a data directory), then
   `UiAction::HostLost` (the Host lost screen), never `OnlineFailed`.
@@ -818,7 +819,11 @@ shows, he is seated at the gathering and his Ready reaches Anna; RED: the
 frozen view stayed; about 15 s), `a_host_heard_again_calls_the_migration_off`
 (Bert's datagrams dropped 3.5 s, `test_outage`: his migration line, then
 `HOST_BACK` in his log and HUD, the line gone, the match on, nobody took
-over; about 9 s), and the pump's two tests run again with
+over; about 9 s), `a_host_cut_off_from_its_players_shows_why` (ruling
+SB-2: the hosting game's network blacked out 6 s: its Host lost screen,
+`CUT_OFF`, `host_lost_hosting`, its replay saved, while Anna takes over
+and plays on; RED without rl-online's `cut_off_check`; about 5 s), and
+the pump's two tests run again with
 migration on, `a_host_whose_frames_stop_keeps_hosting_with_migration`
 and, in the full tier only (`RL_FULL_TESTS`: its migration checks pass
 without the pump, a poll receives before it judges the host silent),

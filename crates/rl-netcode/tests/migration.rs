@@ -190,6 +190,40 @@ fn a_silent_host_is_reported_after_two_seconds_and_heard_again() {
 }
 
 #[test]
+fn a_host_knows_when_it_hears_none_of_its_players() {
+    // Ruling SB-2: one player still heard is enough; both silent for
+    // `HOST_SILENT_US` (its own network down: they move on) is not.
+    let mut m = Mesh::new(20, 3);
+    m.run_ms(2_000);
+    let silent = |m: &Mesh| m.s[&H].players_silent(m.now_ms * 1000);
+    assert!(!silent(&m));
+    m.cut.insert((B, H), m.now_ms);
+    m.run_ms(3_000);
+    assert!(!silent(&m), "A is still heard");
+    assert!(!m.s[&A].players_silent(m.now_ms * 1000), "a client never is");
+    m.cut.insert((A, H), m.now_ms);
+    let cut = m.now_ms;
+    m.until(HOST_SILENT_US / 1000 + 100, "none heard", |m| silent(m));
+    assert!(m.now_ms >= cut + HOST_SILENT_US / 1000, "{} ms after the cut", m.now_ms - cut);
+    m.cut.remove(&(A, H));
+    m.run_ms(100);
+    assert!(!silent(&m), "A heard again");
+
+    // Players that left by `Bye` are not silent: nobody is left to hear.
+    let mut m = Mesh::new(20, 4);
+    m.run_ms(2_000);
+    for id in [A, B] {
+        m.s.get_mut(&id).unwrap().leave();
+    }
+    m.run_ms(100);
+    m.alive.insert(A, false);
+    m.alive.insert(B, false);
+    m.run_ms(3_000);
+    assert_eq!(m.count(H, |e| matches!(e, Event::PeerLeft { .. })), 2);
+    assert!(!silent(&m));
+}
+
+#[test]
 fn a_peers_own_sleep_is_not_its_hosts_silence() {
     let mut m = Mesh::new(20, 2);
     m.run_ms(2_000);

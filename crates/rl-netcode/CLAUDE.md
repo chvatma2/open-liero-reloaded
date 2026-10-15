@@ -184,6 +184,15 @@ model that tests it in one process (spec §9.1).
     Margins are not taken; `tick_phase` is `None`. `unsuspend(now)` (the old
     host is back, N69) restarts the pace at the current tick; nothing after
     `rehost` or `take_over`.
+  - `players_silent(now)` (host, ruling SB-2): every player peer heard in
+    the match (a stamped datagram) and not abandoned sent nothing for
+    `HOST_SILENT_US` (counted from `silence_from_us`, as `HostSilent`),
+    and there is one at least; spectators and players gone by `Bye` count
+    for nothing. rl-online ends a host's match on it
+    (`a_host_knows_when_it_hears_none_of_its_players`). The harness does
+    not: its cut-off old host plays on and is judged left behind (its
+    N69 cases need the old host back after its own outage, which only the
+    harness's two-way outages model).
   - `rehost(host, now)`: a client's or spectator's host is now `host`, its
     peer state (acks, round trip, silence, time sync) fresh; suspended until
     that host's `Control::Resume` or its `Datagram::Resume`. `Collect`/

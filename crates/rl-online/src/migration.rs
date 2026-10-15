@@ -47,6 +47,11 @@ pub const HOST_LOST: &str = "The host left and no other player could take over t
 /// before anyone took over (N69).
 pub const HOST_BACK: &str = "The host is back: the match goes on";
 
+/// Why a host that heard none of its players for `HOST_SILENT_US` during a
+/// match left it (ruling SB-2): its own network is down, and its peers,
+/// finding it silent at the same time, play on under a successor.
+pub const CUT_OFF: &str = "Connection lost: the others play on under a new host.";
+
 /// Why a host that stalled `secs` seconds stepped down (N70).
 pub fn stepped_down(secs: f32) -> String {
     format!("Your game stopped for {secs:.1} s, so the match moved on without you.")

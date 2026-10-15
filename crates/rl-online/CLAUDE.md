@@ -51,8 +51,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   net-soak's `soak-transport-125`, which Task 7's 2 s for direct links
   left host lost), `REPORT_WAIT`
   (1 s: the reports' wait past the window), `HOST_LOST`, `HOST_BACK`
-  (N69's log line), `stepped_down(secs)`; `HOST_BACK` and the
-  timeouts in `migration::` only, the rest at the crate root as well.
+  (N69's log line), `stepped_down(secs)`, `CUT_OFF` (ruling SB-2:
+  "Connection lost: the others play on under a new host."); `HOST_BACK`
+  and the timeouts in `migration::` only, the rest at the crate root as
+  well.
   The attempt planner (`#[doc(hidden)] pub` for its unit test): `Planner<A>`
   over `rl_netcode`'s `Migration` and the old host's order, its joins
   behind a `Connector` (`connect(entry, join) -> Option<A>`, `discard`),
@@ -369,6 +371,19 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       gathering), makes its replay and reports
       `HostLost(stepped_down(secs))`; the peer stays open (a server's
       lobby). A start's own world build does not count.
+    - **Cut off** (ruling SB-2, `cut_off_check`, after each advance): a
+      host during a match, with a `can_host` entry, whose session says
+      `players_silent` (every player heard in the match and not gone has
+      sent nothing for `HOST_SILENT_US`: its own network is down, and its
+      players, finding it silent as it finds them, move to a successor)
+      leaves the match as a stepping-down host does (`leave_match`: the
+      `Bye`s, the lobby gathering, its replay) with `HostLost(CUT_OFF)`,
+      instead of playing on alone, filling their slots, until their links
+      time out. Players that all left by `Bye` are not this case (they
+      are abandoned in the session). Cost: a host's own network blip
+      longer than `HOST_SILENT_US` now always hands the match on; N69's
+      return to the old host stays for its players' own blips (the host
+      still hearing another player).
     - Test hooks (`test-hooks`): `test_outage(until)` (every endpoint of
       the peer, and those it makes before then, in rl-net's
       `test_blackout`; a signalled endpoint an attempt makes later too),
@@ -636,9 +651,10 @@ for direct links); C1: Bert holding
 rows Anna lacks (Anna's 0.7 s outage before the freeze) keeps every one
 (fails resuming without the reports); a rejoined member that never
 reports holds the resume only to the window's end plus `REPORT_WAIT`; a
-follower in contact when the host returns (the host's own 2.8 s outage,
-its `Hello` held) goes back to the host when its successor calls off
-(fails without the remembered `HostHeard`); through the relays (Bert's
+follower in contact when the host returns (Anna's and Bert's own 2.8 s
+outages, the host still hearing Cid, Bert's `Hello` held) goes back to
+the host when its successor calls off (fails without the remembered
+`HostHeard`); through the relays (Bert's
 joins skip direct addresses): `Relays` then `Asking`, Anna welcomes him,
 listening only from her turn, his `Connected` to her standby, records
 equal (fails without the standby answering in its turn); a slow relayed
@@ -673,6 +689,10 @@ relays alone without an address), N64's direct addresses (a global one
 or a port below 1024 never connected), `NotHost` asked again after
 `RETRY_US` directly and not through the relays, the lapse (alike on every route),
 N69's remembered `HostHeard`.
+`a_host_cut_off_from_its_players_ends_its_match` (ruling SB-2: the host's
+network blacked out 6 s: `HostLost(CUT_OFF)` 1.9-2.9 s after the cut,
+its match view gone, its replay; Anna and Bert resume under Anna, records
+equal; fails without `cut_off_check`).
 Content (each peer a cache in a temporary directory; `common::
 partial_content` copies the match's packs but some, `with_test_skin`
 adds a skin pack of another hash): a client without the level, or the mod,
