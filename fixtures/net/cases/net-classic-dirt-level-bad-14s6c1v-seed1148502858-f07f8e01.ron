@@ -1,0 +1,26 @@
+(
+    spec: (
+        mod_id: "olx-classic",
+        level_id: "olx-level-dirt-level",
+        seed: 1148502858,
+        slots: 14,
+        clients: 6,
+        spectators: 1,
+        join_tick: None,
+        profile: "bad",
+        drift_ppm: 2000,
+        ticks: 5804,
+        outages: [
+            (1, 2879, 2944),
+            (5, 1541, 1830),
+        ],
+        net_seed: 12272886230526586885,
+        difficulty: Some("hard"),
+        faults: [],
+        exits: [],
+        host_freeze: None,
+        profile_changes: [],
+        migration: false,
+    ),
+    failure: Some("player peer 3 stalled at tick 1901"),
+)

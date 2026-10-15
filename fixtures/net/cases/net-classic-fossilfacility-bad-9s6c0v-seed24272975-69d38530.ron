@@ -1,0 +1,27 @@
+(
+    spec: (
+        mod_id: "olx-classic",
+        level_id: "olx-level-fossilfacility",
+        seed: 24272975,
+        slots: 9,
+        clients: 6,
+        spectators: 0,
+        join_tick: None,
+        profile: "bad",
+        drift_ppm: 500,
+        ticks: 5056,
+        outages: [
+            (6, 1830, 2103),
+        ],
+        net_seed: 15554127950971112704,
+        difficulty: None,
+        faults: [],
+        exits: [],
+        host_freeze: None,
+        profile_changes: [
+            (1997, 4, "bad"),
+        ],
+        migration: false,
+    ),
+    failure: Some("player peer 5 stalled at tick 778"),
+)
