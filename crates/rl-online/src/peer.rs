@@ -233,6 +233,9 @@ struct ClientSide {
     /// Its migration relays, connected from its match's start to its end
     /// (ruling FR12c-5).
     relays: Option<Box<relays::MigrationRelays>>,
+    /// The succession kept at a rejoin (the old without the new host), for
+    /// a migration before the new host's first (final review B-M4).
+    kept_order: Vec<rl_proto::SuccessorWire>,
 }
 
 enum Side {
@@ -406,6 +409,7 @@ impl OnlinePeer {
                     rejoined: None,
                     migrations: 0,
                     relays: None,
+                    kept_order: Vec::new(),
                 };
                 (endpoint, Side::Client(Box::new(client)))
             }
@@ -1560,9 +1564,11 @@ impl OnlinePeer {
     /// A client's match is over: its replay, from the ticks it confirmed
     /// up to the match's last.
     fn finish_client(&mut self) {
-        // The match is over: its migration relays close (FR12c-5).
+        // The match is over: its migration relays close (FR12c-5), and a
+        // succession kept for it goes.
         if let Side::Client(c) = &mut self.side {
             c.relays = None;
+            c.kept_order.clear();
         }
         let Some(g) = self.game.take() else { return };
         let confirmed = g.session.confirmed();

@@ -271,10 +271,12 @@ struct Live<A> {
 ///   own turn or past the windows discards it; none starts past the
 ///   give-up.
 /// - Direct first when the entry has an address N64 allows ([`n64_direct`]:
-///   not global, a port of at least 1024; and the test hook does not skip
-///   it), with `MIGRATION_CONNECT_TIMEOUT`; a direct route that failed is
-///   not tried again in its window.
-/// - Then through the relays: the entry's, then this peer's own, cut to
+///   not global, a port of at least 1024; loopback only from the host's own
+///   PC, B-M1; and the test hook does not skip it), with
+///   `MIGRATION_CONNECT_TIMEOUT`; a direct route that failed is not tried
+///   again in its window.
+/// - Then through the relays: the entry's (not local ones unless
+///   `allow_local`, B-M3), then this peer's own, cut to
 ///   [`MAX_JOIN_RELAYS`](crate::join::MAX_JOIN_RELAYS) (`join_relays`),
 ///   expecting the entry's key. Without relays on either side: direct
 ///   only.
@@ -293,6 +295,8 @@ pub struct Planner<A> {
     turn_from_nostr: bool,
     allow_local: bool,
     ignore_direct: bool,
+    /// A loopback direct address is tried ([`Planner::loopback_host`]).
+    loopback_ok: bool,
     attempt: Option<Live<A>>,
     /// Entries not tried again before this time (their window's end).
     failed: BTreeMap<usize, u64>,
@@ -325,6 +329,7 @@ impl<A> Planner<A> {
             turn_from_nostr: cfg.turn_from_nostr,
             allow_local: cfg.allow_local,
             ignore_direct: false,
+            loopback_ok: false,
             attempt: None,
             failed: BTreeMap::new(),
             direct_failed: BTreeMap::new(),
@@ -337,6 +342,14 @@ impl<A> Planner<A> {
     /// exercises the relays).
     pub fn ignore_direct(&mut self) {
         self.ignore_direct = true;
+    }
+
+    /// This peer's own link to the host is loopback (it runs on the host's
+    /// PC): only then is a loopback direct address tried (final review
+    /// B-M1: the host lists a member on its own PC at 127.0.0.1, which
+    /// from another PC is that PC itself).
+    pub fn loopback_host(&mut self, same_pc: bool) {
+        self.loopback_ok = same_pc;
     }
 
     /// The old host's succession order.
@@ -388,6 +401,7 @@ impl<A> Planner<A> {
         let direct = entry
             .direct
             .filter(|&(ip, port)| n64_direct(ip, port))
+            .filter(|&(ip, _)| self.loopback_ok || !std::net::Ipv4Addr::from(ip).is_loopback())
             .filter(|_| !self.ignore_direct && !until(&self.direct_failed))
             .map(|(ip, port)| SocketAddr::from((ip, port)));
         let (route, join) = match (direct, self.nostr(entry)) {
@@ -411,11 +425,19 @@ impl<A> Planner<A> {
         }
     }
 
-    /// The join through the relays to `entry`: its relays first, then this
-    /// peer's own, at most 8; `None` without any.
+    /// The join through the relays to `entry`: its relays first (but a
+    /// local or private one unless `allow_local`: final review B-M3, a
+    /// hostile member cannot aim every peer's WebSocket at a LAN host),
+    /// then this peer's own, at most 8; `None` without any.
     fn nostr(&self, entry: &SuccessorWire) -> Option<NostrJoin> {
         let own = self.own.as_ref().map_or(&[][..], |p| p.relays.as_slice());
-        let relays = join_relays(&entry.relays, own);
+        let theirs: Vec<String> = entry
+            .relays
+            .iter()
+            .filter(|r| self.allow_local || !rl_discovery::hosting::local_relays(std::slice::from_ref(r)))
+            .cloned()
+            .collect();
+        let relays = join_relays(&theirs, own);
         if relays.is_empty() {
             return None;
         }
@@ -699,6 +721,46 @@ mod tests {
         assert!(n64_direct([192, 168, 1, 5], 1024) && n64_direct([10, 0, 0, 1], 4000));
         assert!(n64_direct([127, 0, 0, 1], 4000), "loopback is no global address");
         assert!(!n64_direct([1, 1, 1, 1], 4000) && !n64_direct([10, 0, 0, 1], 80));
+    }
+
+    /// Final review B-M1: a member the host saw on its own PC (127.0.0.1)
+    /// is listed at loopback; another PC's connect there reaches itself.
+    /// Its direct address is tried only by a peer whose own link to the
+    /// host is loopback (the same PC); the others go through the relays.
+    #[test]
+    fn a_loopback_address_is_tried_only_from_the_same_pc() {
+        let mut c = Joins::default();
+        for (same_pc, route) in [(false, Route::Relays), (true, Route::Direct)] {
+            let mut e = entry(false, &["ws://a"]);
+            e.direct = Some(([127, 0, 0, 1], 4000));
+            let mut p = planner(e, &[]);
+            p.loopback_host(same_pc);
+            p.step(0, &mut c);
+            assert_eq!(p.attempt(), Some((0, route)), "same PC: {same_pc}");
+        }
+    }
+
+    /// Final review B-M3: a member's standby relays naming a local or
+    /// private address (or `localhost`) are not asked (a hostile member
+    /// would aim every peer's WebSocket at a LAN host), unless local
+    /// relays are allowed (`allow_local`: a LAN game's own relay).
+    #[test]
+    fn local_standby_relays_are_asked_only_when_allowed() {
+        let local = ["ws://192.168.1.1/", "ws://10.0.0.5:22", "ws://localhost:7777", "wss://127.0.0.1"];
+        let mut c = Joins::default();
+        let mut e = entry(false, &local);
+        e.relays.push("wss://relay.example".into());
+        let mut p = planner(e.clone(), &["wss://own.example"]);
+        p.step(0, &mut c);
+        assert_eq!(c.0[0].1, ["wss://relay.example", "wss://own.example"]);
+        let cfg = MigrationConfig {
+            relays: Some(PoolConfig { relays: vec!["wss://own.example".into()], ..Default::default() }),
+            allow_local: true,
+            ..MigrationConfig::direct()
+        };
+        let mut p = Planner::new(vec![e], vec![true], None, &cfg, 0);
+        p.step(0, &mut c);
+        assert_eq!(c.0[1].1.len(), 6, "allowed: {:?}", c.0[1].1);
     }
 
     #[test]

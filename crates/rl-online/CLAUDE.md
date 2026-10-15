@@ -268,7 +268,12 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       again after every welcome); a bind failure is a `Notice` and no
       standby (N79). Polled every poll, closed at the end.
       `standby_port()`.
-    - **Start** (during a match only, N71): the session's `HostSilent`,
+    - **Start** (during a match only, N71; a member waiting outside it
+      while it runs, welcomed then or still downloading, too: final review
+      B-M2, it follows as a late rejoiner does, its count carried on,
+      `a_member_waiting_outside_the_match_follows_it`; from the
+      succession kept at a rejoin until the new host's first, B-M4,
+      `migration_order`): the session's `HostSilent`,
       `PeerLeft`, `PeerTimedOut`, the open link's `Disconnected`, or the
       lobby's `Closed` (A7: a leaving or stepping-down host's `Bye` may
       come first) suspend the session and begin a `Migration` from
@@ -287,10 +292,16 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       at a time, `Migrating(Moving(name))`. Its route: **direct** first
       when the entry has an address N64 allows (`n64_direct`: not global,
       a port of at least 1024; a hostile host cannot aim its members at an
-      internet address) (a `Joiner` with `Join::direct`,
+      internet address; a loopback one only from the host's own PC,
+      `Planner::loopback_host`, final review B-M1: a member on the host's
+      PC is listed at 127.0.0.1, which elsewhere is that PC itself) (a
+      `Joiner` with `Join::direct`,
       `connect_timeout` `MIGRATION_CONNECT_TIMEOUT`), **then through the
       relays** (`Join { nostr: NostrJoin { host: entry.key, pool:
-      join_relays(entry.relays, own relays) (at most 8, the own pool's
+      join_relays(entry.relays, own relays) (the entry's local or private
+      ones, `localhost` too, only with `allow_local`: final review B-M3,
+      a hostile member cannot aim every peer's WebSocket at a LAN host;
+      at most 8, the own pool's
       other settings), migration.region, turn_from_nostr, allow_local }
       }`); without relays on either side, direct only. Both with the
       client's endpoint config, `migration.ice`, and a fresh `LobbyClient`

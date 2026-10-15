@@ -317,6 +317,15 @@ pub(super) fn stall_gap(mono: Duration, wall: Option<Duration>) -> Duration {
     }
 }
 
+/// The succession a migration begins from: the lobby's, else (final
+/// review B-M4) the one kept at a rejoin, the old one without the new host,
+/// until the new host's first `Succession` comes (a rejoin that changed
+/// the member list empties the lobby's until the new host's next drain,
+/// `LOBBY_DRAIN`: a new host lost then ended the client as before plan 12c).
+fn migration_order(lobby: &[SuccessorWire], kept: &[SuccessorWire]) -> Vec<SuccessorWire> {
+    if lobby.is_empty() { kept.to_vec() } else { lobby.to_vec() }
+}
+
 /// A new endpoint of this peer in the test hook's outage too.
 fn darken(outage: Option<Instant>, out: &mut Outbox) {
     #[cfg(feature = "test-hooks")]
@@ -504,30 +513,45 @@ impl OnlinePeer {
             mg.gone |= gone;
             return true;
         }
-        let Some(g) = self.game.as_mut().filter(|g| g.ended.is_none()) else { return false };
-        if !c.migration.enabled || c.lobby.succession().is_empty() {
+        // In the match, or (final review B-M2) a member waiting for the
+        // next one while it runs (welcomed then, or still downloading): it
+        // follows the match to the new host, as a late rejoiner does.
+        let has_game = self.game.is_some();
+        let mut game = self.game.as_mut().filter(|g| g.ended.is_none());
+        let running =
+            matches!(c.lobby.state().map(|s| s.phase), Some(Phase::Starting | Phase::Playing { .. }));
+        if game.is_none() && (has_game || !running) {
+            return false;
+        }
+        let order = migration_order(c.lobby.succession(), &c.kept_order);
+        if !c.migration.enabled || order.is_empty() {
             return false;
         }
         // A spectator still joining has no world to follow a migration
         // with (ruling SK-8): host lost, not stranded on its join.
-        if g.migrations >= MAX_MIGRATIONS || g.session.is_joining() {
-            let why = if g.session.is_joining() { LostWhy::StillJoining } else { LostWhy::TooManyMigrations };
+        let joining = game.as_ref().is_some_and(|g| g.session.is_joining());
+        if game.as_ref().map_or(c.migrations, |g| g.migrations) >= MAX_MIGRATIONS || joining {
+            let why = if joining { LostWhy::StillJoining } else { LostWhy::TooManyMigrations };
             self.host_lost(why);
             return true;
         }
-        let order = c.lobby.succession().to_vec();
         let me = order.iter().position(|e| e.key == my_key);
         let mut can_host: Vec<bool> = order.iter().map(|e| e.can_host).collect();
         if let Some(i) = me {
             // Its own turn needs its standby.
             can_host[i] &= c.standby.is_some();
         }
-        g.session.suspend();
+        if let Some(g) = game.as_mut() {
+            g.session.suspend();
+        }
         c.rejoined = None;
         let mut plan = Planner::new(order, can_host, me, &c.migration, now_us);
         if ignore_direct {
             plan.ignore_direct();
         }
+        // B-M1: a loopback successor address is this PC only from the
+        // host's own PC.
+        plan.loopback_host(c.connection.is_some_and(|(_, remote)| remote.ip().is_loopback()));
         c.migrating = Some(Box::new(Migrating {
             plan,
             reported: None,
@@ -1090,6 +1114,9 @@ impl OnlinePeer {
         let Side::Client(c) = &mut self.side else { return };
         let Some(mut mg) = c.migrating.take() else { return };
         let to = mg.plan.attempt().map(|(to, _)| to);
+        // B-M4: the old succession without the new host, until its own.
+        let new_host = to.and_then(|to| mg.plan.order().get(to)).map(|e| e.key);
+        c.kept_order = mg.plan.order().iter().filter(|e| Some(e.key) != new_host).cloned().collect();
         let Some(mut a) = mg.plan.take_attempt() else { return };
         // A pool it borrowed goes back: the match goes on, and a further
         // migration (N74) may need it (FR12c-5).
@@ -1123,8 +1150,11 @@ impl OnlinePeer {
         c.expected = true;
         self.closing.clear();
         self.content.host_changed();
-        if late {
-            c.migrations = carried.unwrap_or(0);
+        // A member that waited outside the match (B-M2) has no session to
+        // resume: it is through at once, its count carried on.
+        let waited = self.game.is_none() && !late;
+        if late || waited {
+            c.migrations = carried.unwrap_or(c.migrations + 1);
             self.events.push(OnlineEvent::Migrated { host: name, me: false });
             if let Some((path, remote)) = connection {
                 self.events.push(OnlineEvent::Connected { path, remote });
@@ -1264,6 +1294,25 @@ mod tests {
 
     /// N70, pre-flight C3: the monotonic gap counts; a wall-clock one only
     /// beyond it plus `HOST_SILENT_US` (a suspend); a backward step never.
+    /// Final review B-M4: a rejoined client's lobby has no succession until
+    /// its new host's next drain; a migration then begins from the one kept
+    /// at the rejoin (the old without the new host), and from the lobby's
+    /// once it came.
+    #[test]
+    fn a_rejoined_client_keeps_the_old_succession_until_the_new_one() {
+        let entry = |member: u8| SuccessorWire {
+            member,
+            key: [member; 32],
+            direct: None,
+            relays: vec![],
+            can_host: true,
+        };
+        let kept = [entry(2), entry(3)];
+        assert_eq!(migration_order(&[], &kept), kept);
+        assert_eq!(migration_order(&[entry(3)], &kept), [entry(3)]);
+        assert!(migration_order(&[], &[]).is_empty());
+    }
+
     #[test]
     fn a_stall_is_the_monotonic_gap_unless_the_machine_slept() {
         assert_eq!(stall_gap(2 * S, Some(2 * S)), 2 * S);

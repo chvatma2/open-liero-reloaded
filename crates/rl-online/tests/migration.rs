@@ -293,6 +293,54 @@ fn a_players_blip_beside_a_spectator_is_a_stall() {
     assert!(net.host().peer().is_host());
 }
 
+/// Final review B-M2: a member waiting outside the match while it runs
+/// (Bert, his download of the level held by the prompt) follows the match
+/// to its new host when the host leaves, as a late rejoiner does: Anna
+/// takes over, and Bert is her lobby's member, waiting, instead of ending
+/// with "the host closed the lobby".
+#[test]
+fn a_member_waiting_outside_the_match_follows_it() {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 0.3);
+    let a = net.join_with_migration("Anna", direct());
+    let (dir, partial) = crate::common::partial_content(&[crate::common::net::LEVEL]);
+    net.dirs.push(dir);
+    let b = net.join_full(
+        crate::common::net::identity(),
+        crate::common::net::look("Bert"),
+        partial,
+        None,
+        None,
+        direct(),
+    );
+    net.peers[b].peer().test_prompt_limit(1000);
+    net.run_until(Duration::from_secs(10), "Bert is told what he lacks", |n| {
+        n.peers[b].has(|e| matches!(e, OnlineEvent::DownloadPrompt { .. })) && n.members() == 3
+    });
+    net.peers[b].peer().lobby().set_spectate(true);
+    let b_key = net.peers[b].key;
+    net.run_until(Duration::from_secs(10), "Bert would watch", |n| {
+        n.host().peer().lobby().state().is_some_and(|s| {
+            s.members.iter().any(|m| m.key == b_key && m.seat == rl_proto::SeatWire::Spectator)
+        })
+    });
+    net.ready(&[a]);
+    net.host().peer().lobby().start(7).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs, Bert waits", |n| n.host_tick() > 300);
+    assert!(net.peers[b].peer().match_session().is_none(), "Bert waits outside the match");
+    net.host().peer().leave();
+    net.peers[0].frozen = true;
+    net.run_until(Duration::from_secs(10), "Anna hosts and Bert follows", |n| {
+        n.peers[a].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
+            && n.peers[b].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Anna"))
+    });
+    net.run_until(Duration::from_secs(5), "Bert in Anna's lobby", |n| {
+        n.peers[a].peer().lobby().state().is_some_and(|s| s.members.iter().any(|m| m.key == b_key))
+    });
+    assert!(!net.peers[b].peer().is_closed());
+    assert!(!net.peers[b].has(|e| matches!(e, OnlineEvent::Disconnected(_) | OnlineEvent::HostLost(_))));
+}
+
 /// Bert and Cid, the survivors, confirmed the same rows and checksums.
 fn records_agree(net: &mut Net, [b, c]: [usize; 2]) {
     net.run_until(Duration::from_secs(25), "the match ends and both make replays", |n| {
