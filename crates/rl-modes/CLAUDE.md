@@ -23,8 +23,11 @@ port of the bare `CGameMode` (`src/server/CGameMode.cpp`) at commit
   (`CGameMode.cpp:254-263`): `drop_worm` zeroes the worm's kills and
   deaths in a row, then the board is refreshed. `refresh` takes the gone
   mask (`ModeCtx::gone`) and marks those rows `Score::left`; the checksum
-  hashes `left` only when true. `check` and `winner` need nothing more: a
-  gone worm is `WRM_OUT`.
+  hashes `left` only when true. `check` takes the mask too: a gone worm
+  is `WRM_OUT` (so out of the last-standing count), and `rules::in_game`
+  leaves it out of the kill-limit check and `winner`'s `highest` (OLX's
+  `HighestScoredWorm` no longer sees a removed worm), so it never wins.
+  `on_drop` gives no commands (`CommandError::Closed`).
 - **Respawn loadouts** (`respawn.rs`, spec §20 F10):
   `DeathmatchSettings::respawn_loadout` is `Keep` (OLX) or `ChaosCycle`:
   `on_spawn` gives chaos bot `i` of `n` the weapons `(i·5 + r·5·n + j) mod

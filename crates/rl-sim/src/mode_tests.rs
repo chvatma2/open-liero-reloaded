@@ -195,6 +195,18 @@ impl GameMode for Script {
         self.spawned.push(worm);
     }
 
+    /// Tries every command: `on_drop` may give none.
+    fn on_drop(&mut self, _worm: i32, ctx: &mut ModeCtx) {
+        let results = [
+            ctx.spawn_worm(&worm_at(150, 100)),
+            ctx.give_weapon(0, 1, 0),
+            ctx.stamp(StampOp::Carve { hole: 2 }, 100, 50),
+            ctx.message(HELLO),
+            ctx.end(THE_END),
+        ];
+        self.errors.extend(results.into_iter().filter_map(Result::err));
+    }
+
     fn on_kill(&mut self, victim: i32, killer: i32, ctx: &mut ModeCtx) -> KillCredit {
         olx_kill_credit(ctx.worms(), ctx.settings(), victim, killer)
     }
@@ -492,4 +504,18 @@ fn physics_stops_at_exactly_three_seconds_like_olx() {
     r.over_frame = 62;
     assert!(!r.frozen(361), "2990 ms");
     assert!(r.frozen(362), "3000 ms is past 3 s in float");
+}
+
+/// `on_drop` gives no commands (they would wait between ticks, where a
+/// state transfer does not carry them): each is refused, nothing is
+/// queued, and commands work again afterwards.
+#[test]
+fn on_drop_cannot_queue_commands() {
+    let mut w = scripted();
+    w.withdraw(0);
+    let script = w.mode_state().as_any().downcast_ref::<Script>().unwrap();
+    assert_eq!(script.errors, [CommandError::Closed; 5]);
+    assert!(w.referee.commands.list.is_empty(), "nothing waits between ticks");
+    let (w, _) = run(w, 4);
+    assert_eq!(w.worms().len(), 2, "the tick-3 script's spawn ran");
 }

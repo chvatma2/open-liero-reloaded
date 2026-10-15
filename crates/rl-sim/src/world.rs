@@ -162,8 +162,9 @@ impl World {
         self.latches[i] = Latches::default();
         let (id, now) = (w.id, self.time);
         let r = &mut self.referee;
-        // A command the mode queues here is applied at the next tick's
-        // `apply_commands`, as setup's are.
+        // `on_drop` gives no commands: the queue stays empty between ticks,
+        // as a state transfer (which carries none) needs.
+        r.commands.closed = true;
         let mut ctx = ModeCtx {
             worms: &self.worms,
             settings: &self.settings,
@@ -172,6 +173,7 @@ impl World {
             commands: &mut r.commands,
         };
         r.mode.on_drop(id, &mut ctx);
+        r.commands.closed = false;
     }
 
     /// The projectile pool's size ([`crate::MatchSetup::pool_capacity`]).

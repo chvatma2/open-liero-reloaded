@@ -321,6 +321,28 @@ fn a_withdrawn_worm_leaves_the_board_and_the_last_one_wins() {
     assert_eq!(r.w.result(), Some(MatchResult { winner: 0, reason: EndReason::LastStanding }));
 }
 
+/// A worm that left never wins (`CGameMode::HighestScoredWorm`,
+/// `src/server/CGameMode.cpp:398-407`, iterates the worms still in the
+/// game): here the last two go out in one tick, and the one that left has
+/// the best damage score.
+#[test]
+fn a_withdrawn_worm_never_wins() {
+    let lives = DeathmatchSettings { lives: 0, ..dm() };
+    let mut r = settled(lives, &[(200, LASER), (50, GRAZE), (300, LASER)]);
+    r.fire(&[1], 10);
+    assert!(r.w.worms()[1].damage > 0.0, "worm 1 grazed worm 0");
+    r.w.withdraw(1);
+    r.idle(1);
+    assert!(r.w.result().is_none(), "two worms play on");
+    r.w.set_health(0, 0.0);
+    r.w.set_health(2, 0.0);
+    r.idle(2);
+    let result = r.w.result().expect("both went out: the match is over");
+    assert_eq!(result.reason, EndReason::LastStanding);
+    assert_ne!(result.winner, 1, "the worm that left does not win");
+    assert_eq!(result.winner, 0, "a tie among the worms still in: the first");
+}
+
 /// N84 (ruling PF12d-2): a projectile in flight when its worm leaves still
 /// explodes and kills, crediting nobody. A beam cannot show it: its shot is
 /// dropped when its worm is dead at delivery.

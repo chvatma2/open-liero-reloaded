@@ -339,15 +339,17 @@ impl Deathmatch {
     }
 
     /// `CGameMode::CheckGameOver` (`CGameMode.cpp:276-360`, without teams)
-    /// at server frame `server_frame`, with `Winner` for the result.
-    fn check(&self, worms: &[Worm], s: &SimSettings, server_frame: u64) -> Option<End> {
+    /// at server frame `server_frame`, with `Winner` for the result. The
+    /// worms in `gone` ([`ModeCtx::gone`]) left: out of lives, never at the
+    /// kill limit and never the winner (OLX no longer sees them).
+    fn check(&self, worms: &[Worm], s: &SimSettings, server_frame: u64, gone: u32) -> Option<End> {
         let (lives, kill_limit) = (self.settings.lives, self.settings.kill_limit);
         let end = |reason, hit_by| {
-            let winner = rules::winner(worms, s, lives, kill_limit);
+            let winner = rules::winner(worms, s, lives, kill_limit, gone);
             Some(End { result: MatchResult { winner, reason }, hit_by })
         };
         if kill_limit > 0
-            && let Some(w) = worms.iter().find(|w| olx_score(w, s) >= kill_limit)
+            && let Some(w) = rules::in_game(worms, gone).find(|w| olx_score(w, s) >= kill_limit)
         {
             return end(EndReason::KillLimit, w.id);
         }
@@ -374,7 +376,7 @@ impl Deathmatch {
                 .iter()
                 .take(MAX_WORMS)
                 .enumerate()
-                .map(|(i, w)| Score { left: gone & (1 << i) != 0, ..rules::row(w, s) }),
+                .map(|(i, w)| Score { left: rules::is_gone(gone, i), ..rules::row(w, s) }),
         );
         rules::sort(&mut self.board, self.settings.lives, self.settings.kill_limit);
     }
@@ -495,7 +497,7 @@ impl GameMode for Deathmatch {
     }
 
     fn is_over(&self, world: &World) -> Option<MatchResult> {
-        self.check(world.worms(), world.settings(), world.server_frame()).map(|e| e.result)
+        self.check(world.worms(), world.settings(), world.server_frame(), world.gone()).map(|e| e.result)
     }
 
     /// `CGameMode::Simulate` plays only sounds; this sends the end's texts
@@ -504,7 +506,7 @@ impl GameMode for Deathmatch {
     fn on_tick(&mut self, ctx: &mut ModeCtx) {
         self.frame = self.frame.wrapping_add(1);
         if self.over.is_none()
-            && let Some(end) = self.check(ctx.worms(), ctx.settings(), self.frame)
+            && let Some(end) = self.check(ctx.worms(), ctx.settings(), self.frame, ctx.gone())
         {
             self.over = Some(end.result);
             self.ended_at = self.frame;

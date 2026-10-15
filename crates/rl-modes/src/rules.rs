@@ -76,17 +76,30 @@ pub(crate) fn highest(rows: impl Iterator<Item = Score>, lives: i32, kill_limit:
     best.map_or(-1, |b| b.worm)
 }
 
+/// Whether worm index `i` is in the gone mask `gone` (`rl_sim::World::gone`).
+pub(crate) fn is_gone(gone: u32, i: usize) -> bool {
+    gone.checked_shr(i as u32).unwrap_or(0) & 1 != 0
+}
+
+/// The worms still in the game: OLX's `game.worms()` no longer holds a
+/// worm that left (`Game::removeWorm`); here it stays, in `gone`.
+pub(crate) fn in_game(worms: &[Worm], gone: u32) -> impl Iterator<Item = &Worm> {
+    worms.iter().enumerate().filter(move |&(i, _)| !is_gone(gone, i)).map(|(_, w)| w)
+}
+
 /// `CGameMode::Winner` (`CGameMode.cpp:388-396`): with fewer than two
 /// worms not out, the first not out (`getFirstAliveWorm`, which counts
-/// lives, not `bAlive`); otherwise the highest scored worm.
-pub(crate) fn winner(worms: &[Worm], s: &SimSettings, lives: i32, kill_limit: i32) -> i32 {
-    let in_game = worms.iter().filter(|w| w.lives != WRM_OUT).count();
-    if in_game < 2
+/// lives, not `bAlive`); otherwise the highest scored worm
+/// (`HighestScoredWorm`, `:398-407`) among those still in the game: a worm
+/// that left (in `gone`) never wins.
+pub(crate) fn winner(worms: &[Worm], s: &SimSettings, lives: i32, kill_limit: i32, gone: u32) -> i32 {
+    let in_game_count = worms.iter().filter(|w| w.lives != WRM_OUT).count();
+    if in_game_count < 2
         && let Some(w) = worms.iter().find(|w| w.lives != WRM_OUT)
     {
         return w.id;
     }
-    highest(worms.iter().map(|w| row(w, s)), lives, kill_limit)
+    highest(in_game(worms, gone).map(|w| row(w, s)), lives, kill_limit)
 }
 
 /// The results order (`CClient::UpdateScore`, `CClient_Draw.cpp:1840-1897`):

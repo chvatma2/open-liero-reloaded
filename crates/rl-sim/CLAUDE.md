@@ -31,8 +31,10 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
 - **Leaving players** (decision N82): `World::withdraw(i)` takes worm `i`
   out for good, between ticks (OLX `RemoveClientWorms`): dead, `WRM_OUT`,
   rope, input state and latches cleared, never respawned, still slot `i`;
-  the mode is told by `GameMode::on_drop` (`CGameMode::Drop`), and the
-  next `is_over` counts it out. `World::gone()` is the mask (bit `i` for
+  the mode is told by `GameMode::on_drop` (`CGameMode::Drop`), which gives
+  no commands (`Commands::closed`, `CommandError::Closed`: the queue stays
+  empty between ticks, and a state transfer carries none), and the next
+  `is_over` counts it out. `World::gone()` is the mask (bit `i` for
   worm `i`), kept in the `Referee` (never on `Worm`: its 992-byte size
   stays) and hashed **only when not 0**, so a match nobody left hashes as
   before (match goldens, oracle). Every `ModeCtx` carries it

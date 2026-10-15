@@ -85,6 +85,11 @@ pub trait GameMode: fmt::Debug + Send + Sync {
     /// Worm `worm` left the match for good ([`World::withdraw`]), in place
     /// of OLX's `CGameMode::Drop` (`src/server/CGameMode.cpp:254-263`).
     /// It is dead and out of lives already.
+    ///
+    /// It gives no commands: each is refused ([`CommandError::Closed`]). It
+    /// runs between ticks, where a queued command would wait for the next
+    /// tick, and a world's state transfer (`World::state`) carries none; a
+    /// mode speaks in its other callbacks (`on_tick`).
     fn on_drop(&mut self, worm: i32, ctx: &mut ModeCtx) {
         let _ = (worm, ctx);
     }
@@ -220,6 +225,8 @@ pub enum CommandError {
     NoSuchHole(u8),
     /// A loadout of more than [`MAX_SLOTS`] slots.
     TooManySlots(usize),
+    /// Asked for in [`GameMode::on_drop`], which gives no commands.
+    Closed,
 }
 
 impl fmt::Display for CommandError {
@@ -230,6 +237,7 @@ impl fmt::Display for CommandError {
             CommandError::NoSuchSlot(i) => write!(f, "no slot {i} (at most {MAX_SLOTS})"),
             CommandError::NoSuchHole(h) => write!(f, "no hole {h}"),
             CommandError::TooManySlots(n) => write!(f, "{n} slots, at most {MAX_SLOTS}"),
+            CommandError::Closed => write!(f, "no commands while a worm leaves (on_drop)"),
         }
     }
 }
@@ -267,14 +275,20 @@ pub(crate) struct Commands {
     pub list: crate::buf::Buf<Command>,
     pub num_weapons: i32,
     pub num_holes: usize,
+    /// Set while [`GameMode::on_drop`] runs: every command is refused
+    /// ([`CommandError::Closed`]). Always false between calls.
+    pub closed: bool,
 }
 
 impl Commands {
     pub fn new(num_weapons: i32, num_holes: usize) -> Self {
-        Self { list: crate::buf::Buf::with_capacity(COMMAND_CAPACITY), num_weapons, num_holes }
+        Self { list: crate::buf::Buf::with_capacity(COMMAND_CAPACITY), num_weapons, num_holes, closed: false }
     }
 
     fn push(&mut self, c: Command) -> Result<(), CommandError> {
+        if self.closed {
+            return Err(CommandError::Closed);
+        }
         if self.list.len() >= COMMAND_CAPACITY {
             return Err(CommandError::Full);
         }

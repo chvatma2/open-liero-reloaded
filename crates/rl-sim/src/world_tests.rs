@@ -305,9 +305,14 @@ fn a_withdrawn_worm_is_out_for_good() {
     let mut w = world(Material::Background);
     w.spawn_worm(60, 20);
     w.spawn_worm(140, 20);
+    // Worm 1 throws its rope and holds keys: each of `withdraw`'s clears
+    // (input state, rope, latches) has something to clear.
     for _ in 0..20 {
-        w.tick_new(&[Keys(0), Keys(0)]);
+        w.tick_new(&[Keys(0), Keys(Keys::ROPE | Keys::RIGHT | Keys::UP)]);
     }
+    assert_ne!(w.worms[1].state, Default::default(), "worm 1 holds keys");
+    assert!(w.worms[1].rope.released, "worm 1's rope is out");
+    assert_ne!(w.latches[1], Latches::default(), "worm 1's keys are latched");
     let mut by_hand = w.clone();
     {
         let g = &mut by_hand.worms[1];
@@ -322,6 +327,7 @@ fn a_withdrawn_worm_is_out_for_good() {
     w.withdraw(1);
     assert_eq!(w.gone(), 0b10);
     assert_eq!((by_hand.gone(), &by_hand.worms()[1]), (0, &w.worms()[1]), "the same worm");
+    assert_eq!(by_hand.latches[1], w.latches[1], "the same latches");
     assert_ne!(w.checksum(), by_hand.checksum(), "the mask is hashed once set");
     assert_eq!(w.worms().len(), 2, "worm 1 is still slot 1");
     w.withdraw(1);

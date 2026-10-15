@@ -92,30 +92,30 @@ fn check_order_like_olx() {
     let rules = DeathmatchSettings { kill_limit: 2, time_limit: 0.05, ..Default::default() };
     let dm = Deathmatch::new(rules);
     let mut w = worms(3);
-    assert!(dm.check(&w, &s, 300).is_none());
+    assert!(dm.check(&w, &s, 300, 0).is_none());
     // The time limit: strictly after 3000 ms.
-    let e = dm.check(&w, &s, 301).unwrap();
+    let e = dm.check(&w, &s, 301, 0).unwrap();
     assert_eq!((e.result.reason, e.result.winner), (EndReason::TimeLimit, 0));
     // The kill limit comes first, named by the first worm (by id) at it.
     w[2].kills = 2;
     w[1].kills = 3;
-    let e = dm.check(&w, &s, 301).unwrap();
+    let e = dm.check(&w, &s, 301, 0).unwrap();
     assert_eq!((e.result.reason, e.hit_by, e.result.winner), (EndReason::KillLimit, 1, 1));
     // Fewer than two worms not out; one worm alone plays on (a local game).
     let mut w = worms(3);
     w[0].lives = WRM_OUT;
     w[1].lives = WRM_OUT;
-    let e = dm.check(&w, &s, 1).unwrap();
+    let e = dm.check(&w, &s, 1, 0).unwrap();
     assert_eq!((e.result.reason, e.result.winner), (EndReason::LastStanding, 2));
-    assert!(dm.check(&worms(1), &s, 1).is_none());
+    assert!(dm.check(&worms(1), &s, 1, 0).is_none());
     let mut w = worms(1);
     w[0].lives = WRM_OUT;
-    assert_eq!(dm.check(&w, &s, 1).unwrap().result.winner, 0, "nobody in: the highest scored");
+    assert_eq!(dm.check(&w, &s, 1, 0).unwrap().result.winner, 0, "nobody in: the highest scored");
     // Off: a time limit of 0 or less, a kill limit of 0 or less.
     let off = Deathmatch::new(DeathmatchSettings { kill_limit: 0, time_limit: -0.15, ..Default::default() });
     let mut w = worms(2);
     w[0].kills = 1000;
-    assert!(off.check(&w, &s, u64::MAX).is_none());
+    assert!(off.check(&w, &s, u64::MAX, 0).is_none());
 }
 
 /// `CGameMode::Drop`: the worm's runs start over.
@@ -132,6 +132,10 @@ fn drop_resets_the_runs_like_olx() {
     dm.drop_worm(2);
     dm.drop_worm(0);
     assert_eq!((dm.kills_in_row[2], dm.deaths_in_row[0]), (0, 0));
+    let (kills, deaths) = (dm.kills_in_row, dm.deaths_in_row);
+    assert_eq!(deaths[1], 1, "a run left to keep");
     dm.drop_worm(-1);
     dm.drop_worm(99); // out of range: nothing
+    dm.drop_worm(MAX_WORMS as i32);
+    assert_eq!((dm.kills_in_row, dm.deaths_in_row), (kills, deaths));
 }

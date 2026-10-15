@@ -90,7 +90,8 @@ impl Referee {
     pub fn hash(&self, h: &mut Fnv) {
         let Referee { mode, commands, over, over_frame, game_over_sent, gone } = self;
         mode.checksum(h);
-        // Applied within the tick that queues them, so empty between ticks.
+        // Applied within the tick that queues them, so empty between ticks
+        // (`World::withdraw`, between ticks, lets the mode queue none).
         h.usize(commands.list.len());
         match over {
             None => h.bool(false),
