@@ -19,7 +19,13 @@ impl LobbyHost {
     /// player slots, `max_spectators` = `MAX_SPECTATORS` and the admins
     /// from the members' marks; its password is ignored (there is none).
     ///
-    /// `key` must be a member's in both (else `LobbyError::NotASuccessor`).
+    /// `match_ids` are the running match's member ids (its `MatchStartWire`
+    /// slots): all stay reserved, so the id of a player who left before the
+    /// migration is not given to anyone while its slot plays.
+    ///
+    /// `key` must be a member's in both (else `LobbyError::NotASuccessor`);
+    /// the online layer promotes only an entry that is `can_host` (a
+    /// follower has no world to host from).
     /// That member is the host's own (ready, an admin), keeping its seat; a
     /// spectator successor hosts as a spectator for the rest of the match
     /// and is seated at the next gathering like any member who wants to
@@ -33,6 +39,7 @@ impl LobbyHost {
         key: Identity,
         state: &LobbyState,
         succession: &[SuccessorWire],
+        match_ids: &[u8],
         cfg: HostConfig,
     ) -> Result<LobbyHost, LobbyError> {
         let me_key = key.public();
@@ -51,8 +58,15 @@ impl LobbyHost {
             .iter()
             .filter(|m| matches!(m.seat, SeatWire::Player { .. }))
             .map(|m| m.id)
+            .chain(match_ids.iter().copied())
             .collect();
-        host.next_id = state.members.iter().map(|m| m.id).max().map_or(0, |id| id.wrapping_add(1));
+        host.next_id = state
+            .members
+            .iter()
+            .map(|m| m.id)
+            .chain(match_ids.iter().copied())
+            .max()
+            .map_or(0, |id| id.wrapping_add(1));
         for m in &state.members {
             let Some(s) = succession.iter().find(|s| s.key == m.key && s.member == m.id) else { continue };
             let mine = m.key == me_key;
@@ -63,7 +77,7 @@ impl LobbyHost {
             host.members.push(Rec {
                 id: m.id,
                 peer: None,
-                addr: s.direct.map(|(ip, _)| IpAddr::V4(Ipv4Addr::from(ip))).filter(|_| !mine),
+                addr: None,
                 path: None,
                 key: m.key,
                 look: m.look.clone(),
@@ -85,6 +99,12 @@ impl LobbyHost {
                 chat: VecDeque::new(),
                 looks: VecDeque::new(),
                 look_held: None,
+                // The state does not say who got the `Start`: a player did,
+                // and a spectator the old host listed as `can_host` was
+                // one from the start (a spectator without a standby that
+                // was too is not waited for: the limit of the wire).
+                in_start: m.seat != SeatWire::Waiting && (m.seat != SeatWire::Spectator || s.can_host),
+                inherited_addr: s.direct.map(|(ip, _)| IpAddr::V4(Ipv4Addr::from(ip))).filter(|_| !mine),
                 standby: if mine { None } else { standby },
                 standby_at: None,
                 standby_held: None,
@@ -113,7 +133,7 @@ impl LobbyHost {
         self.members
             .iter()
             .filter(|m| m.peer.is_none() && Some(m.id) != self.me)
-            .filter(|m| !matches!(m.seat, SeatWire::Waiting))
+            .filter(|m| m.in_start)
             .map(|m| m.id)
             .collect()
     }
@@ -135,6 +155,7 @@ impl LobbyHost {
         let m = &mut self.members[i];
         m.peer = Some(peer);
         m.addr = Some(addr);
+        m.inherited_addr = None;
         m.path = Some(path);
         m.known = known;
         m.have_revision = None;
@@ -144,11 +165,11 @@ impl LobbyHost {
         // address is the link's now); else the rejoiner gets the one in
         // force now. Its standby stays what the old host knew until it
         // reports again.
-        if matches!(self.phase, Phase::Starting | Phase::Playing { .. })
-            && self.sent_succession.as_ref() == Some(&self.succession())
-        {
+        if matches!(self.phase, Phase::Starting | Phase::Playing { .. }) {
             let list = self.succession();
-            self.out.push((peer, ToClient::Succession(list)));
+            if self.sent_succession.as_ref() == Some(&list) {
+                self.out.push((peer, ToClient::Succession(list)));
+            }
         }
         self.flush_except(Some(peer));
         self.broadcast(&ToClient::Notice(Notice::Joined(id)));

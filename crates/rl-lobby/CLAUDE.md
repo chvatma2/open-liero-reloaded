@@ -143,20 +143,24 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     wins, and `tick` takes it (as `SetLook`: a member alternating its
     endpoint makes the host send at most one `Succession` per window).
     `succession()` (N64): the match's players in join order, then
-    spectators, then waiting members (`can_host: false`: followers have no
-    world); the host's own member and ids the wire cannot name are left
-    out. `direct` is the address the member joined from when IPv4, not
+    spectators, then waiting members; the host's own member is left out.
+    `can_host` needs a standby and the member's `Start` of this match (a
+    player or a spectator from the start; a mid-match joiner follows only). `direct` is the address the member joined from when IPv4, not
     global, its `path` is not `Relayed` (N59/C5) and its port is
     >= `MIN_STANDBY_PORT`. `Succession` goes to every member after the
     `Start` and, while `Starting`/`Playing`, whenever the list differs from
     the last sent (coalesced into `outgoing()`); never while gathering.
   - Migrated lobby (`host/migrated.rs`, N72): `LobbyHost::migrated(key,
-    state, succession, cfg)` (`NotASuccessor` unless `key` is in both): the
+    state, succession, match_ids, cfg)` (`NotASuccessor` unless `key` is in both): the
     successor is the host's own member (ready, admin, its seat); every
     other member the succession names is kept, away (no link), with its
     id, look, seat and admin mark; the old host and unnamed members are
-    gone; `cfg.password` is ignored; ids of the state's players stay
-    reserved and `next_id` starts past the highest. A spectator successor
+    gone; `cfg.password` is ignored; `match_ids` (the `MatchStartWire`'s
+    member ids) and the state's players' ids stay reserved and `next_id`
+    starts past the highest, so a departed player's id is not reused. The
+    successor should be a `can_host` entry. The state does not say who got
+    the `Start`: a player did, and a spectator did if its entry was
+    `can_host` (`away_in_match` uses it). A spectator successor
     keeps its seat and `wants_play` (seated at the next gathering); other
     spectators keep watching (the wire does not say whether they chose).
     Closed: a `Hello` whose key is not in the succession is

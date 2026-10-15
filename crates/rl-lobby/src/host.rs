@@ -11,10 +11,9 @@ use core::net::IpAddr;
 
 use rl_netcode::{PeerId, input_delay};
 use rl_proto::{
-    AdminCommand, LobbyState, Look, MAX_INPUT_DELAY, MAX_MEMBERS, MAX_PLAYERS, MAX_SPECTATORS,
-    MAX_STANDBY_RELAYS, MIN_STANDBY_PORT, MatchEndWire, MatchSetupWire, MatchStartWire, Member, Notice, Path,
-    Phase, PublicKey, Refusal, SeatWire, SlotWire, SuccessorWire, ToClient, ToHost, is_global,
-    valid_relay_url, valid_setup,
+    AdminCommand, LobbyState, Look, MAX_INPUT_DELAY, MAX_PLAYERS, MAX_SPECTATORS, MAX_STANDBY_RELAYS,
+    MIN_STANDBY_PORT, MatchEndWire, MatchSetupWire, MatchStartWire, Member, Notice, Path, Phase, PublicKey,
+    Refusal, SeatWire, SlotWire, SuccessorWire, ToClient, ToHost, is_global, valid_relay_url, valid_setup,
 };
 
 use crate::identity::{
@@ -96,6 +95,12 @@ struct Rec {
     /// Its latest look beyond them, taken by `tick` once the window
     /// allows (the last of a dragged colour slider is the one chosen).
     look_held: Option<Look>,
+    /// It got this match's `Start` (a player, or a spectator from its
+    /// start): it has a world. Cleared at the return to gathering.
+    in_start: bool,
+    /// The address the old host listed for it (a migrated lobby's away
+    /// member, until it rejoins); `addr` stays what this host saw.
+    inherited_addr: Option<IpAddr>,
     /// Its standby endpoint (`ToHost::Standby`).
     standby: Option<Standby>,
     /// When its standby was last taken.
@@ -125,7 +130,11 @@ impl Rec {
         // The address it joined from, when it is on the host's own network
         // and the link is not a TURN relay's (N59: that address is the
         // relay's, C5).
-        let direct = match (self.standby.as_ref().and_then(|s| s.port), self.addr, self.path) {
+        let direct = match (
+            self.standby.as_ref().and_then(|s| s.port),
+            self.addr.or(self.inherited_addr),
+            self.path,
+        ) {
             (Some(port), Some(IpAddr::V4(ip)), path)
                 if port >= MIN_STANDBY_PORT && path != Some(Path::Relayed) && !is_global(IpAddr::V4(ip)) =>
             {
@@ -138,13 +147,13 @@ impl Rec {
             key: self.key,
             direct,
             relays,
-            // A member waiting for the next match has no world.
-            can_host: self.standby.is_some() && self.seat != SeatWire::Waiting,
+            // N64: a player, or a spectator from the start, has a world; a
+            // member that joined mid-match (waiting, or a spectator at
+            // once) follows only.
+            can_host: self.standby.is_some() && self.in_start,
         }
     }
-}
 
-impl Rec {
     /// Whether a look change may be taken at `now_us` (the window's
     /// changes are counted when it is).
     fn look_change_allowed(&mut self, now_us: u64) -> bool {
@@ -157,9 +166,7 @@ impl Rec {
         self.looks.push_back(now_us);
         true
     }
-}
 
-impl Rec {
     /// Its content is not known complete: its `Have` for the current list
     /// is missing, or named something.
     fn lacking(&self) -> bool {
@@ -339,6 +346,8 @@ impl LobbyHost {
                 chat: VecDeque::new(),
                 looks: VecDeque::new(),
                 look_held: None,
+                in_start: false,
+                inherited_addr: None,
                 standby: None,
                 standby_at: None,
                 standby_held: None,
@@ -802,6 +811,7 @@ impl LobbyHost {
             if m.awaiting_content {
                 m.seat = SeatWire::Waiting;
             }
+            m.in_start = m.seat != SeatWire::Waiting;
         }
         let start = ToClient::Start(wire);
         let peers: Vec<PeerId> =
@@ -845,8 +855,7 @@ impl LobbyHost {
     /// no successor; a member whose id the wire cannot name is left out.
     pub fn succession(&self) -> Vec<SuccessorWire> {
         let mine = self.key.public();
-        let mut order: Vec<&Rec> =
-            self.members.iter().filter(|m| m.key != mine && usize::from(m.id) < MAX_MEMBERS).collect();
+        let mut order: Vec<&Rec> = self.members.iter().filter(|m| m.key != mine).collect();
         order.sort_by_key(|m| match m.seat {
             SeatWire::Player { .. } => 0,
             SeatWire::Spectator => 1,
@@ -1061,6 +1070,8 @@ impl LobbyHost {
             chat: VecDeque::new(),
             looks: VecDeque::new(),
             look_held: None,
+            in_start: false,
+            inherited_addr: None,
             standby: None,
             standby_at: None,
             standby_held: None,
@@ -1331,6 +1342,7 @@ impl LobbyHost {
         self.in_match.clear();
         for m in &mut self.members {
             m.awaiting_content = false;
+            m.in_start = false;
         }
         let me = self.me;
         for m in self.members.iter_mut().filter(|m| Some(m.id) != me) {

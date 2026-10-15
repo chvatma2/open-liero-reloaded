@@ -458,13 +458,13 @@ fn valid_direct_addr(a: [u8; 4]) -> bool {
     a != [0; 4] && a != [255; 4] && !(224..=239).contains(&a[0])
 }
 
-/// At most `MAX_MEMBERS` entries, member ids below `MAX_MEMBERS`, unique ids and keys, relays valid
-/// and at most 2, direct ports >= `MIN_STANDBY_PORT`.
+/// At most `MAX_MEMBERS` entries, unique ids and keys (a member id is any
+/// `u8`: ids count up through a lobby's life), relays valid and at most 2,
+/// direct ports >= `MIN_STANDBY_PORT`.
 pub fn valid_succession(list: &[SuccessorWire]) -> bool {
     list.len() <= MAX_MEMBERS
         && list.iter().enumerate().all(|(i, s)| {
-            (s.member as usize) < MAX_MEMBERS
-                && valid_relays(&s.relays)
+            valid_relays(&s.relays)
                 && s.direct.is_none_or(|(a, port)| port >= MIN_STANDBY_PORT && valid_direct_addr(a))
                 && list[..i].iter().all(|o| o.member != s.member && o.key != s.key)
         })

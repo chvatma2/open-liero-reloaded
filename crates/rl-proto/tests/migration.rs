@@ -92,7 +92,6 @@ fn successions_and_standbys_out_of_bounds_are_refused() {
     let bare = SuccessorWire { relays: vec!["ws://".into()], ..successor(1) };
     let bare_s = SuccessorWire { relays: vec!["wss://".into()], ..successor(1) };
     let direct = |a: [u8; 4], p| SuccessorWire { direct: Some((a, p)), ..successor(1) };
-    let bad_member = SuccessorWire { member: MAX_MEMBERS as u8, ..successor(1) };
     for s in [
         low_port,
         three,
@@ -105,11 +104,12 @@ fn successions_and_standbys_out_of_bounds_are_refused() {
         direct([255, 255, 255, 255], 40_000),
         direct([224, 0, 0, 1], 40_000),
         direct([10, 0, 0, 1], 0),
-        bad_member,
     ] {
         let bytes = encode_to_client(&ToClient::Succession(vec![s.clone()]));
         assert_eq!(decode_to_client(&bytes), Err(ProtoError::Invalid), "{s:?}");
     }
+    // A member id is any `u8` (ids count up through a lobby's life, N64).
+    assert!(valid_succession(&[successor(MAX_MEMBERS as u8), successor(255)]));
     let too_many: Vec<SuccessorWire> = (0..=MAX_MEMBERS as u8).map(successor).collect();
     assert_eq!(
         decode_to_client(&encode_to_client(&ToClient::Succession(too_many))),

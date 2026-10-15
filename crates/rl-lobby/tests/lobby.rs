@@ -1522,7 +1522,8 @@ fn a_migrated_lobby_takes_back_its_members_by_key() {
         max_spectators: 16,
         admins: vec![],
     };
-    let mut next = Net::new(LobbyHost::migrated(ident(1), &state, &list, cfg.clone()).unwrap(), DELAY_US);
+    let mut next =
+        Net::new(LobbyHost::migrated(ident(1), &state, &list, &[], cfg.clone()).unwrap(), DELAY_US);
     assert_eq!(next.host.state().phase, state.phase);
     assert!(next.host.state().members.iter().all(|m| m.key != key(HOST)), "the old host is gone");
     assert_eq!(next.host.away(), vec![bob, cid]);
@@ -1551,7 +1552,7 @@ fn a_migrated_lobby_takes_back_its_members_by_key() {
     assert!(!next.host_events.contains(&HostEvent::Rejoined(cid)));
     assert!(next.host.away().is_empty());
     assert_ne!(id_of(&next, nc), bob, "ids stay unique");
-    assert!(LobbyHost::migrated(ident(9), &state, &list, cfg).is_err(), "not a successor");
+    assert!(LobbyHost::migrated(ident(9), &state, &list, &[], cfg).is_err(), "not a successor");
     consistent(&next);
 }
 
@@ -1567,7 +1568,7 @@ fn a_spectator_successor_hosts_as_a_spectator_and_is_seated_next_gathering() {
         max_spectators: 16,
         admins: vec![],
     };
-    let mut next = LobbyHost::migrated(ident(3), &state, &net.host.succession(), cfg).unwrap();
+    let mut next = LobbyHost::migrated(ident(3), &state, &net.host.succession(), &[], cfg).unwrap();
     let me = |h: &LobbyHost| h.state().members.iter().find(|m| m.id == cid).cloned().unwrap();
     assert_eq!(me(&next).seat, SeatWire::Spectator);
     assert!(me(&next).ready && me(&next).admin);
@@ -1575,6 +1576,108 @@ fn a_spectator_successor_hosts_as_a_spectator_and_is_seated_next_gathering() {
     next.match_ended(MatchEndWire { reason: "x".into(), rows: vec![], last_tick: 9 }, 0);
     next.tick(RESULTS_US + 1);
     assert_eq!(me(&next).seat, SeatWire::Player { slot: 0 }, "free: the away players left slot 1 and 2 held");
+}
+
+fn migrate_cfg(state: &LobbyState, max_players: u8) -> HostConfig {
+    HostConfig { name: state.name.clone(), password: None, max_players, max_spectators: 16, admins: vec![] }
+}
+
+/// The ids of the match's slots, as the online layer has them from the start.
+fn match_ids(wire: &MatchStartWire) -> Vec<u8> {
+    wire.slots.iter().filter_map(|s| s.member).collect()
+}
+
+/// Ids count up through a lobby's life (reconnects included): members past
+/// `MAX_MEMBERS` are still successors and rejoin a migrated lobby.
+#[test]
+fn members_with_high_ids_are_successors_and_rejoin() {
+    let mut net = lobby();
+    for round in 0..50u8 {
+        let c = join(&mut net, 100 + round % 40, "Tmp");
+        net.disconnect(c);
+        net.settle();
+    }
+    let a = join(&mut net, 60, "Ann");
+    let b = join(&mut net, 61, "Bob");
+    let (ann, bob) = (id_of(&net, a), id_of(&net, b));
+    assert!(ann >= MAX_MEMBERS as u8 && bob > ann, "ids {ann} {bob}");
+    net.client(a).standby(40_001, vec![]);
+    net.client(a).set_ready(true);
+    net.client(b).set_ready(true);
+    net.settle();
+    let wire = net.start(7, 0).unwrap();
+    net.settle();
+    let list = net.host.succession();
+    assert_eq!(list.iter().map(|s| s.member).collect::<Vec<_>>(), vec![ann, bob]);
+    assert_eq!(net.peers[a].client.as_ref().unwrap().succession(), &list[..], "it decodes");
+    let state = net.host.state().clone();
+    let host =
+        LobbyHost::migrated(ident(60), &state, &list, &match_ids(&wire), migrate_cfg(&state, 8)).unwrap();
+    let mut next = Net::new(host, DELAY_US);
+    assert_eq!(next.host.away(), vec![bob]);
+    let nb = next.join(LobbyClient::new(ident(61), look("Bob"), None, Some(key(60))), ip(61));
+    next.settle();
+    assert!(next.host_events.contains(&HostEvent::Rejoined(bob)));
+    assert!(got(&next, nb, &ClientEvent::Welcome { you: bob }));
+}
+
+/// A player who left before the migration still holds its slot: its id is
+/// not given to anyone while the match runs.
+#[test]
+fn a_departed_players_id_is_not_reused_after_a_migration() {
+    let mut net = lobby_with(HostConfig { max_players: 4, ..cfg() }, 0);
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let d = join(&mut net, 3, "Dan");
+    let dan = id_of(&net, d);
+    for x in [a, b, d] {
+        net.client(x).set_ready(true);
+    }
+    net.client(a).standby(40_001, vec![]);
+    net.settle();
+    let wire = net.start(7, 0).unwrap();
+    net.host.playing(1);
+    net.settle();
+    net.disconnect(d);
+    net.settle();
+    let (state, list) = (net.host.state().clone(), net.host.succession());
+    assert!(match_ids(&wire).contains(&dan) && state.members.iter().all(|m| m.id != dan));
+    let host =
+        LobbyHost::migrated(ident(1), &state, &list, &match_ids(&wire), migrate_cfg(&state, 4)).unwrap();
+    let mut next = Net::new(host, DELAY_US);
+    next.host.drop_away();
+    let nb = next.join(LobbyClient::new(ident(2), look("Bob"), None, Some(key(1))), ip(2));
+    next.settle();
+    assert_ne!(id_of(&next, nb), dan, "Dan's slot is still in the match");
+    assert!(match_ids(&wire).iter().all(|&m| m != id_of(&next, nb)), "no match id is given out");
+}
+
+/// A spectator welcomed mid-match has no world: no successor and nobody the
+/// new host waits for.
+#[test]
+fn a_mid_match_spectator_is_a_follower() {
+    let mut net = lobby_with(HostConfig { max_players: 3, ..cfg() }, 0);
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    for x in [a, b] {
+        net.client(x).set_ready(true);
+    }
+    net.client(a).standby(40_001, vec![]);
+    net.settle();
+    let wire = net.start(7, 0).unwrap();
+    net.host.playing(1);
+    net.settle();
+    let s = join(&mut net, 3, "Sam"); // the player seats are full: a spectator at once
+    net.client(s).standby(40_003, vec![]);
+    net.settle();
+    let sam = id_of(&net, s);
+    let list = net.host.succession();
+    assert!(!list.iter().find(|e| e.member == sam).unwrap().can_host, "{list:?}");
+    let state = net.host.state().clone();
+    let next =
+        LobbyHost::migrated(ident(1), &state, &list, &match_ids(&wire), migrate_cfg(&state, 3)).unwrap();
+    assert!(next.away().contains(&sam));
+    assert_eq!(next.away_in_match(), vec![id_of(&net, b)], "Bob only");
 }
 
 // ---- robustness: any sequence of messages and host actions ----
@@ -1763,7 +1866,7 @@ proptest! {
                 Op::Migrate(p) => {
                     let (state, list) = (host.state().clone(), host.succession());
                     prop_assert!(valid_succession(&list));
-                    if let Ok(next) = LobbyHost::migrated(ident(p + 1), &state, &list, cfg.clone()) {
+                    if let Ok(next) = LobbyHost::migrated(ident(p + 1), &state, &list, &[], cfg.clone()) {
                         host = next;
                         host_key = key(p + 1);
                         nonces.clear();

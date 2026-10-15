@@ -39,7 +39,7 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
 - **Migration lobby messages** (plan 12c): `ToHost::Standby { port, relays }`
   (port >= `MIN_STANDBY_PORT` 1024; relays valid, <= `MAX_STANDBY_RELAYS` 2) and
   `ToClient::Succession(Vec<SuccessorWire { member, key, direct, relays,
-  can_host }>)` (`valid_succession`: <= `MAX_MEMBERS`, ids below it and unique, unique keys,
+  can_host }>)` (`valid_succession`: <= `MAX_MEMBERS` entries, unique ids (any `u8`: ids count up) and unique keys,
   relays valid, direct ports >= 1024 and not 0.0.0.0, broadcast or multicast). `valid_relay_url`: `ws://` or `wss://` plus a host,
   printable ASCII without spaces, <= `MAX_RELAY_URL` 128 bytes. A worst-case
   `Succession` fits `MAX_LOBBY` (`tests/migration.rs`). The host counts
