@@ -18,13 +18,19 @@ fn client() -> (Session<ToySim>, Box<dyn Driver<ToySim>>) {
 
 /// The host's datagram with every slot's input `0` for ticks `first..first + n`.
 fn frames(first: u32, n: u32) -> Vec<u8> {
+    frames_of(first, n, 0, 0)
+}
+
+/// The host's datagram with every slot's input `v` for ticks `first..first
+/// + n`, encoded against `base` at `first - 1`.
+fn frames_of(first: u32, n: u32, v: u8, base: u8) -> Vec<u8> {
     let h = HostInputs {
         stamp: Stamp::default(),
         tick: first + n,
         your_ack: 0,
         margin: TARGET_MARGIN as i16,
         first,
-        frames: rl_proto::encode_frames(first, n, 3, &|_, _| Some(0), &|_| Some(0)),
+        frames: rl_proto::encode_frames(first, n, 3, &|_, _| Some(v), &|_| Some(base)),
     };
     encode_datagram(&Datagram::Host(h))
 }
@@ -256,4 +262,60 @@ fn a_backlog_datagram_that_overtakes_its_predecessor_is_kept() {
     c.receive(HOST, Channel::Unreliable, &frames(0, 64), 1_002_000);
     assert_eq!(c.frontier(), 192, "the overtaking datagrams follow the one they waited for");
     assert_eq!(c.stats().malformed, 0);
+}
+
+/// Final review A-M2: a datagram with no frames (a new host's collection
+/// keepalive, or one with nothing new) starting past the frontier is not
+/// kept: it took one of the `AHEAD_KEPT` places and sorted before the real
+/// backlog datagrams, pushing them out.
+#[test]
+fn a_datagram_without_frames_is_never_kept_ahead() {
+    let (mut c, _) = client();
+    // Sixteen frame-less datagrams ahead, then the backlog's second datagram.
+    for k in 0..16 {
+        c.receive(HOST, Channel::Unreliable, &frames(65 + k, 0), 1_000_000 + u64::from(k));
+    }
+    c.receive(HOST, Channel::Unreliable, &frames(128, 64), 1_100_000);
+    c.receive(HOST, Channel::Unreliable, &frames(64, 64), 1_101_000);
+    c.receive(HOST, Channel::Unreliable, &frames(0, 64), 1_102_000);
+    assert_eq!(c.frontier(), 192, "the backlog's datagrams were kept, not the empty ones");
+}
+
+/// Ruling FR12c-2 (final review A-I1): frames kept ahead of the frontier
+/// are the old host's. rl-online's new host has the old one's peer id
+/// (`HOST`), so frames kept across the rehost were taken as the new host's
+/// once the frontier reached them: the old host's values made final, then
+/// the new host's own `Inconsistent`. A suspension and a rehost drop them;
+/// a rehost also drops what was queued for the old host.
+#[test]
+fn frames_kept_ahead_of_the_old_host_are_dropped_at_a_rehost() {
+    let (mut c, mut d) = client();
+    c.receive(HOST, Channel::Unreliable, &frames(0, 10), 1_000_000);
+    // A datagram for ticks 20..30 (value 7) overtook the one for 10..20.
+    c.receive(HOST, Channel::Unreliable, &frames_of(20, 10, 7, 7), 1_001_000);
+    assert_eq!(c.frontier(), 10);
+    c.suspend();
+    // Its keepalive, queued for the old host.
+    c.advance(1_300_000, d.as_mut());
+    c.rehost(HOST, 2_000_000);
+    let mut sent = 0;
+    c.transmit(&mut |_, _, _| sent += 1);
+    assert_eq!(sent, 0, "nothing queued for the old host goes to the new one");
+    // The new host resumes at 20 with ticks 10..20 (value 1) ...
+    let resume = Control::Resume {
+        tick: 20,
+        at_ms: 0,
+        first: 10,
+        frames: rl_proto::encode_frames(10, 10, 3, &|_, _| Some(1), &|_| Some(0)),
+    };
+    c.receive(HOST, Channel::Reliable, &encode_control(&resume), 2_100_000);
+    assert_eq!(c.frontier(), 20);
+    // ... and its first datagram has no frames: nothing past 20 is final.
+    c.receive(HOST, Channel::Unreliable, &frames_of(20, 0, 0, 1), 2_200_000);
+    assert_eq!(c.final_input(25, 0), None, "the old host's kept frames are not the new host's");
+    // Its own frames for 20..30 (value 2) are taken, and agree.
+    c.receive(HOST, Channel::Unreliable, &frames_of(20, 10, 2, 1), 2_210_000);
+    assert_eq!(c.final_input(25, 0), Some(rl_sim::Keys(2)));
+    let events = c.drain_events();
+    assert!(!events.iter().any(|e| matches!(e, Event::Inconsistent { .. })), "{events:?}");
 }

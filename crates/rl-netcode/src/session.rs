@@ -1593,9 +1593,11 @@ impl<S: Simulation> Session<S> {
     /// did every later one, until the host's resend a round trip later; the
     /// peer stalled at the prediction limit meanwhile (ruling SK-4,
     /// net-soak's `typical-11s6c0v-seed3117434416`). The nearest
-    /// [`AHEAD_KEPT`] are kept, one per `first`.
+    /// [`AHEAD_KEPT`] are kept, one per `first`, none without frames.
     fn keep_ahead(&mut self, from: PeerId, first: u32, frames: Vec<Frame>) {
-        if self.ahead.iter().any(|a| a.0 == from && a.1 == first) {
+        // A datagram without frames (a keepalive, or nothing new) would take
+        // a place and sort before the backlog's (final review A-M2).
+        if frames.is_empty() || self.ahead.iter().any(|a| a.0 == from && a.1 == first) {
             return;
         }
         let at = self.ahead.partition_point(|a| a.1 < first);

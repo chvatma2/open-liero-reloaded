@@ -80,10 +80,14 @@ model that tests it in one process (spec §9.1).
     and the resend starts from its ack again. Each such datagram begins
     where the one before ends: one that overtakes it (jitter) begins past
     the receiver's frontier, so the receiver keeps it (`ahead`, the nearest
-    `AHEAD_KEPT`, 16, one per `first`) and takes it again once its frontier
-    reaches it; dropped, it and every later one waited a round trip for the
-    resend (ruling SK-4, net-soak's `typical-11s6c0v-seed3117434416`;
-    `tests/play.rs`' `a_backlog_datagram_that_overtakes_its_predecessor_is_kept`).
+    `AHEAD_KEPT`, 16, one per `first`, none without frames: final review
+    A-M2, `a_datagram_without_frames_is_never_kept_ahead`) and takes it
+    again once its frontier reaches it; dropped, it and every later one
+    waited a round trip for the resend (ruling SK-4, net-soak's
+    `typical-11s6c0v-seed3117434416`; `tests/play.rs`'
+    `a_backlog_datagram_that_overtakes_its_predecessor_is_kept`). What is
+    kept is the host's of the moment: `suspend`, `rehost` and `take_over`
+    drop it (ruling FR12c-2, below).
   - Pace (`clock.rs`, `Pace`): local time to due ticks (minus ticks run,
     at most `MAX_CATCHUP` per `advance`), adjustable by ±1 % (re-anchored,
     so a change affects only later time) and shiftable by whole ticks (a
@@ -237,7 +241,12 @@ model that tests it in one process (spec §9.1).
     (`a_host_knows_when_it_hears_none_of_its_players`), and so does the
     harness (below).
   - `rehost(host, now)`: a client's or spectator's host is now `host`, its
-    peer state (acks, round trip, silence, time sync) fresh; suspended until
+    peer state (acks, round trip, silence, time sync) fresh, nothing queued
+    and no frame kept ahead left (ruling FR12c-2, final review A-I1:
+    rl-online's new host has the old one's id, `HOST`, so the old host's
+    kept frames became final as the new host's;
+    `tests/play.rs`' `frames_kept_ahead_of_the_old_host_are_dropped_at_a_rehost`,
+    a rehost to the same id); suspended until
     that host's `Control::Resume` or its `Datagram::Resume`. `Collect`/
     `Resume` from anyone else are ignored, and so is a `Resume` more than
     `MAX_AHEAD` (6000) ticks past our tick. A `Collect` (whose `known` must have one entry per slot, else

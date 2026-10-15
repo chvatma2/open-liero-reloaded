@@ -55,12 +55,14 @@ impl<S: Simulation> Session<S> {
     /// frames. A frame-less keepalive datagram every [`KEEPALIVE_US`] and
     /// every reliable control still go; an owed rollback or a loaded state
     /// still re-simulates up to the current tick; states arriving are still
-    /// taken.
+    /// taken. The frames kept ahead of the frontier go (ruling FR12c-2:
+    /// they are the old host's, and a new host may have its peer id).
     pub fn suspend(&mut self) {
         if !self.suspended {
             self.suspended = true;
             self.keepalive_us = None;
         }
+        self.ahead.clear();
     }
 
     pub fn suspended(&self) -> bool {
@@ -107,7 +109,8 @@ impl<S: Simulation> Session<S> {
     }
 
     /// Client or spectator: its host is now `host` (a new link). The host's
-    /// state (acks, round trip, silence) starts afresh; the session stays
+    /// state (acks, round trip, silence) starts afresh, and nothing queued
+    /// or kept ahead for the old host stays (ruling FR12c-2); the session stays
     /// suspended until `Control::Resume`, answers `Control::Collect` with
     /// `Control::Report`, and takes nothing from any other peer.
     pub fn rehost(&mut self, host: PeerId, now_us: u64) {
@@ -117,7 +120,11 @@ impl<S: Simulation> Session<S> {
         }
         self.peers.clear();
         self.peers.insert(host, PeerState::new(Seat::Spectator, now_us));
-        self.out.retain(|&(to, _, _)| to == host);
+        // Everything queued, and every frame kept ahead, was the old host's,
+        // whatever its id (rl-online's new host has the old one's: ruling
+        // FR12c-2).
+        self.out.clear();
+        self.ahead.clear();
         self.rehosted = true;
         self.suspend();
         // Our clock's first sample at the new host goes at once.
@@ -150,6 +157,7 @@ impl<S: Simulation> Session<S> {
         self.local = local;
         self.peers.clear();
         self.out.clear();
+        self.ahead.clear();
         self.collection = Some(Collection { awaited, rejoined: BTreeMap::new(), resumed: false });
         self.abandoned.clear();
         self.rehosted = false;
