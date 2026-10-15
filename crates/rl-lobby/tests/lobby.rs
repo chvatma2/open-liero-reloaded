@@ -2078,6 +2078,11 @@ fn a_timed_out_member_is_announced_as_such() {
     net.time_out(a);
     net.settle();
     assert!(got(&net, w, &ClientEvent::Notice(Notice::TimedOut(id))));
+    assert!(!got(&net, w, &ClientEvent::Notice(Notice::Left(id))), "no Left as well");
+    assert_eq!(
+        net.peers[w].events.iter().filter(|e| matches!(e, ClientEvent::Notice(Notice::TimedOut(_)))).count(),
+        1
+    );
     assert!(net.host_events.contains(&HostEvent::TimedOut(id)));
     assert!(!net.host_events.contains(&HostEvent::Left(id)));
     assert!(net.host.state().members.iter().all(|m| m.id != id));

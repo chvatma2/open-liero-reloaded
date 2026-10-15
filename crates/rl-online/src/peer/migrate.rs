@@ -394,6 +394,14 @@ impl OnlinePeer {
         self.withhold_reports = true;
     }
 
+    /// Tests only (`test-hooks`): the match session sends nothing from now
+    /// on while the transport stays alive, so the host's session (not its
+    /// transport) times this peer out.
+    #[cfg(feature = "test-hooks")]
+    pub fn test_mute_game(&mut self) {
+        self.mute_game = true;
+    }
+
     /// The test hook's delay of a rejoin's `Hello` (zero without it).
     fn hello_delay(&self) -> Duration {
         #[cfg(feature = "test-hooks")]

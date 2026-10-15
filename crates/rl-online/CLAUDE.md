@@ -240,7 +240,12 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     (`forget_peer_as(peer, false)`: `OnlineEvent::Left`), and
     `RepairFailed`/`JoinRefused` drop the peer. A client maps
     `Notice::TimedOut`; every path reaches `Session::peer_lost` (the worm is
-    withdrawn). Tests: `a_member_that_times_out_is_said_to`,
+    withdrawn). Tests (each line exactly once per peer, `count == 1`):
+    `a_member_that_times_out_is_said_to` and `a_spectator_that_times_out_is_said_to`
+    (a frozen peer: the transport's arm),
+    `a_member_whose_game_goes_silent_is_timed_out_by_the_session` (the
+    `test_mute_game` hook: the session's arm; each arm fails alone when
+    mutated), `a_kicked_player_is_not_said_to_have_left`,
     `the_last_opponent_leaving_ends_the_match`, and
     `a_player_leaving_during_a_migration_is_removed_at_the_resume` (only Cid
     "has left", the old host goes silently);
@@ -470,6 +475,7 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       `test_delay_rejoin(d)` (an attempt's lobby
       messages, its `Hello`, held `d` after its link opened),
       `test_withhold_reports()` (a client drops a new host's `Collect`),
+      `test_mute_game()` (the match session sends nothing, the link lives),
       `test_ignore_direct()` (joins to successors skip direct addresses,
       so a loopback test exercises the relays), `test_set_migrations(n)`
       (the match counts `n` so far), `test_joins()` (each join started:

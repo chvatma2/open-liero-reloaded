@@ -1109,7 +1109,7 @@ fn the_last_opponent_leaving_ends_the_match() {
         rec.rows.len() <= (t + 1 + rl_online::RECORD_AFTER_END + 20) as usize,
         "ended at once, not at the limit"
     );
-    assert!(net.peers[0].has(|e| matches!(e, OnlineEvent::Left(n) if n == "Anna")));
+    assert_eq!(net.peers[0].count(|e| matches!(e, OnlineEvent::Left(n) if n == "Anna")), 1);
     let end = net.peers[0].events.iter().find_map(|e| match e {
         OnlineEvent::MatchEnded(end) => Some(end.clone()),
         _ => None,
@@ -1117,19 +1117,91 @@ fn the_last_opponent_leaving_ends_the_match() {
     assert_eq!(end.unwrap().reason, "last worm standing");
 }
 
-/// N86: a member whose link times out is "timed out" to the others.
+/// A member goes silent without a `Bye`: `silence` stops it (a frozen peer, or
+/// one whose game sends nothing while its link lives), and the host says it
+/// timed out, once, to everyone, and never that it left. `spectator`: the
+/// silent member watches instead of playing.
+fn a_silent_member_is_timed_out(spectator: bool, silence: impl Fn(&mut Net, usize)) {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 0.5);
+    let clients = net.join_all(&["Anna", "Bert", "Wat"]);
+    let (victim, name, others) = if spectator {
+        (clients[2], "Wat", vec![clients[0], clients[1]])
+    } else {
+        (clients[1], "Bert", vec![clients[0]])
+    };
+    if spectator {
+        let key = net.peers[clients[2]].key;
+        net.peers[clients[2]].peer().lobby().set_spectate(true);
+        net.run_until(Duration::from_secs(10), "Wat watches", |n| {
+            n.host()
+                .peer()
+                .lobby()
+                .state()
+                .is_some_and(|s| s.members.iter().any(|m| m.key == key && m.seat == SeatWire::Spectator))
+        });
+    } else {
+        net.peers[clients[2]].peer().lobby().set_spectate(true);
+    }
+    net.ready(&clients[..2]);
+    net.host().peer().lobby().start(9).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() >= 100);
+    silence(&mut net, victim);
+    let said = |e: &OnlineEvent| matches!(e, OnlineEvent::TimedOut(x) if x == name);
+    let left = |e: &OnlineEvent| matches!(e, OnlineEvent::Left(x) if x == name);
+    net.run_until(Duration::from_secs(20), "the host times the member out", |n| {
+        n.peers[0].has(said) && others.iter().all(|&i| n.peers[i].has(said))
+    });
+    // Let any second line arrive before counting.
+    let until = Instant::now() + Duration::from_millis(1500);
+    while Instant::now() < until {
+        net.poll();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    for i in std::iter::once(0).chain(others.iter().copied()) {
+        assert_eq!(net.peers[i].count(said), 1, "peer {i}: timed out exactly once");
+        assert_eq!(net.peers[i].count(left), 0, "peer {i}: never also left");
+    }
+}
+
+/// N86: a player whose link times out (the transport's `Timeout`) is "timed
+/// out" to the others.
 #[test]
 fn a_member_that_times_out_is_said_to() {
+    a_silent_member_is_timed_out(false, |net, i| net.peers[i].frozen = true);
+}
+
+/// The same for a spectator.
+#[test]
+fn a_spectator_that_times_out_is_said_to() {
+    a_silent_member_is_timed_out(true, |net, i| net.peers[i].frozen = true);
+}
+
+/// N86, the session's arm: the link lives (the member is polled) but its game
+/// sends nothing, so the host's `PeerTimedOut` comes, not a transport timeout.
+#[test]
+fn a_member_whose_game_goes_silent_is_timed_out_by_the_session() {
+    a_silent_member_is_timed_out(false, |net, i| net.peers[i].peer().test_mute_game());
+}
+
+/// A kick or a ban is not "has left" or "has timed out".
+#[test]
+fn a_kicked_player_is_not_said_to_have_left() {
     let Some(content) = content() else { return };
     let mut net = Net::new(content, 0.5);
     let clients = net.join_all(&["Anna", "Bert"]);
-    net.ready(&clients);
-    net.host().peer().lobby().start(9).unwrap();
-    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() >= 100);
-    net.peers[clients[1]].frozen = true; // alive, silent: no Bye, no close
-    net.run_until(Duration::from_secs(14), "the host times Bert out", |n| {
-        n.peers[0].has(|e| matches!(e, OnlineEvent::TimedOut(x) if x == "Bert"))
-            && n.peers[clients[0]].has(|e| matches!(e, OnlineEvent::TimedOut(x) if x == "Bert"))
+    let key = net.peers[clients[1]].key;
+    let id = net.peers[0].member_id(key).expect("Bert is a member");
+    net.host().peer().lobby().kick(id, false);
+    net.run_until(Duration::from_secs(10), "Anna hears the kick", |n| {
+        n.peers[clients[0]].has(|e| matches!(e, OnlineEvent::Notice(t) if t.contains("Bert was kicked")))
     });
-    assert!(!net.peers[0].has(|e| matches!(e, OnlineEvent::Left(x) if x == "Bert")));
+    let until = Instant::now() + Duration::from_millis(1500);
+    while Instant::now() < until {
+        net.poll();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    for i in [0, clients[0]] {
+        assert_eq!(net.peers[i].count(|e| matches!(e, OnlineEvent::Left(_) | OnlineEvent::TimedOut(_))), 0);
+    }
 }

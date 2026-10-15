@@ -320,6 +320,9 @@ pub struct OnlinePeer {
     /// Tests only (`test-hooks`): `test_withhold_reports`.
     #[cfg(feature = "test-hooks")]
     withhold_reports: bool,
+    /// Tests only (`test-hooks`): `test_mute_game`.
+    #[cfg(feature = "test-hooks")]
+    mute_game: bool,
     /// Test hook: joins to successors skip direct addresses.
     #[cfg(feature = "test-hooks")]
     ignore_direct: bool,
@@ -439,6 +442,8 @@ impl OnlinePeer {
             rejoin_delay: Duration::ZERO,
             #[cfg(feature = "test-hooks")]
             withhold_reports: false,
+            #[cfg(feature = "test-hooks")]
+            mute_game: false,
             #[cfg(feature = "test-hooks")]
             ignore_direct: false,
             #[cfg(feature = "test-hooks")]
@@ -1494,7 +1499,15 @@ impl OnlinePeer {
         };
         g.session.advance(now_us, &mut driver);
         let ep = &mut self.endpoint;
-        g.session.transmit(&mut |peer, ch, bytes| send(ep, peer, ch, &bytes));
+        #[cfg(feature = "test-hooks")]
+        let muted = self.mute_game;
+        #[cfg(not(feature = "test-hooks"))]
+        let muted = false;
+        g.session.transmit(&mut |peer, ch, bytes| {
+            if !muted {
+                send(ep, peer, ch, &bytes)
+            }
+        });
         let restored = g.session.take_restored_areas();
         let ticked = g.recorder.take_ticked();
         let confirmed = g.recorder.take_confirmed(g.session.confirmed());
