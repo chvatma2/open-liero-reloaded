@@ -55,6 +55,57 @@ fn record_then_replay_gives_identical_checksums() {
     assert_eq!(run.world, end);
 }
 
+/// A withdrawal is recorded at its tick and replayed there.
+#[test]
+fn a_withdrawal_replays_at_its_tick() {
+    let (setup, mode) = deathmatch(4, 9);
+    let new_world = || World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
+    let mut world = new_world();
+    let mut rec = Recorder::new(packs(), &setup, &mode);
+    assert_eq!(rec.withdraw(&mut world, 1), Err(RecordError::NotStarted));
+    rec.start(&world).unwrap();
+    let mut keys = KeyGen::new(9, 4, 12);
+    let mut out = TickEvents::new();
+    for t in 0..250u32 {
+        if t == 120 {
+            rec.withdraw(&mut world, 1).unwrap();
+        }
+        let row = keys.row();
+        world.tick(&row, &mut out);
+        rec.push(&row, &world).unwrap();
+    }
+    assert_eq!(rec.withdraw(&mut world, 1), Err(RecordError::NoWorm(1)), "gone already");
+    assert_eq!(rec.withdraw(&mut world, 40), Err(RecordError::NoWorm(40)));
+    let failed = rec.clone().finish_failed(&world, &[Keys(0); 4]).unwrap();
+    assert_eq!(failed.withdrawals, [(120, 1)], "a failed match keeps them");
+    let replay = rec.finish(&world).unwrap();
+    assert_eq!(replay.withdrawals, [(120, 1)]);
+    let back = Replay::decode(&replay.encode()).unwrap();
+    assert_eq!(back, replay);
+    let run = back.play(new_world()).unwrap();
+    assert_eq!(run.world.gone(), 0b10);
+    // Without the withdrawal the checksums no longer match.
+    let mut cut = back.clone();
+    cut.withdrawals.clear();
+    assert!(cut.play(new_world()).is_err());
+}
+
+#[test]
+fn withdrawals_are_checked_on_decode() {
+    let base = record(5, 2).0;
+    for bad in [
+        vec![(base.ticks(), 0)],
+        vec![(2, 0), (1, 1)],
+        vec![(1, 0), (2, 0)],
+        vec![(1, 40)],
+        (0..33).map(|i| (0, i as u8)).collect(),
+    ] {
+        let mut r = base.clone();
+        r.withdrawals = bad.clone();
+        assert!(matches!(Replay::decode(&r.encode()), Err(DecodeError::Invalid(_))), "{bad:?}");
+    }
+}
+
 #[test]
 fn replay_reports_the_first_mismatching_tick() {
     let (replay, _, _) = record(600, 3);

@@ -165,6 +165,9 @@ impl Cursor {
         if self.is_done(replay) {
             return Ok(false);
         }
+        for &(_, worm) in replay.withdrawals.iter().filter(|w| w.0 == self.tick) {
+            world.withdraw(usize::from(worm));
+        }
         world.tick(replay.row(self.tick), out);
         self.tick += 1;
         self.verify(replay, world)?;

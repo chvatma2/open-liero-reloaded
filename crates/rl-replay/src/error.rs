@@ -47,6 +47,9 @@ pub enum RecordError {
     /// The world's frame is not the one the recorded ticks lead to: a tick
     /// was played without being recorded (or recorded twice).
     OutOfStep { recorded: u32, frame: u64 },
+    /// [`crate::Recorder::withdraw`] of a worm the world does not have, or
+    /// that is gone already.
+    NoWorm(u8),
 }
 
 impl fmt::Display for RecordError {
@@ -60,6 +63,7 @@ impl fmt::Display for RecordError {
             RecordError::OutOfStep { recorded, frame } => {
                 write!(f, "{recorded} ticks recorded but the world is at server frame {frame}")
             }
+            RecordError::NoWorm(w) => write!(f, "worm {w} does not exist or has withdrawn already"),
         }
     }
 }

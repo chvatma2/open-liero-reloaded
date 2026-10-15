@@ -41,6 +41,7 @@ struct Wire {
     /// deflated.
     keys: Vec<u8>,
     checksums: Vec<(u32, u64)>,
+    withdrawals: Vec<(u32, u8)>,
 }
 
 /// The deflate level: the best (bot keys deflate to about a quarter).
@@ -74,6 +75,7 @@ impl Replay {
             width: u8::try_from(self.width()).unwrap_or(u8::MAX),
             keys: miniz_oxide::deflate::compress_to_vec(&columns(self), LEVEL),
             checksums: self.checksums.clone(),
+            withdrawals: self.withdrawals.clone(),
         };
         let mut out = Vec::from(MAGIC);
         out.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
@@ -119,7 +121,7 @@ fn invalid<T>(m: alloc::string::String) -> Result<T, DecodeError> {
 }
 
 fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
-    let Wire { setup, mode, ticks, width, keys, checksums } = w;
+    let Wire { setup, mode, ticks, width, keys, checksums, withdrawals } = w;
     if ticks > MAX_TICKS {
         return invalid(format!("{ticks} ticks, at most {MAX_TICKS}"));
     }
@@ -132,6 +134,21 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
             return invalid(format!("checksum at tick {t} out of order"));
         }
         prev = Some(t);
+    }
+    if withdrawals.len() > MAX_WORMS {
+        return invalid(format!("{} withdrawals, at most {MAX_WORMS}", withdrawals.len()));
+    }
+    let mut seen = 0u32;
+    let mut prev = 0;
+    for &(t, worm) in &withdrawals {
+        if t >= ticks || t < prev {
+            return invalid(format!("withdrawal at tick {t} out of order or past the end"));
+        }
+        if usize::from(worm) >= MAX_WORMS || seen & (1 << worm) != 0 {
+            return invalid(format!("withdrawal of worm {worm}: no such worm, or withdrawn twice"));
+        }
+        seen |= 1 << worm;
+        prev = t;
     }
     let SetupW { packs, settings, start, seed, worms, pool_capacity, bonus_weapons, calls, viewer } = setup;
     if worms.len() > MAX_WORMS {
@@ -180,7 +197,7 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
     setup.settings.validate().map_err(|e| DecodeError::Invalid(format!("settings: {}", e.0)))?;
     let mode: crate::ModeSpec = mode.into();
     mode.validate(&setup.settings).map_err(|e| DecodeError::Invalid(format!("mode: {e}")))?;
-    Ok(Replay { setup, mode, checksums, ticks, width, keys })
+    Ok(Replay { setup, mode, checksums, withdrawals, ticks, width, keys })
 }
 
 #[cfg(test)]
@@ -216,6 +233,7 @@ mod tests {
             width,
             keys: miniz_oxide::deflate::compress_to_vec(keys, LEVEL),
             checksums: vec![],
+            withdrawals: vec![],
         }
     }
 

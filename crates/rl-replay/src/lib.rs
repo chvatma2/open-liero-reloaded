@@ -34,7 +34,9 @@ pub use record::Recorder;
 /// [`Replay::decode`] reads. Bump it whenever the encoding changes (a field
 /// of the setup, the settings, the mode or the key columns): while no
 /// replay is published, other versions are refused, not migrated.
-pub const FORMAT_VERSION: u16 = 2;
+///
+/// 3: withdrawals (plan 12d).
+pub const FORMAT_VERSION: u16 = 3;
 
 /// The first bytes of every replay file.
 pub const MAGIC: [u8; 4] = *b"RLRP";
@@ -196,6 +198,10 @@ pub struct Replay {
     /// `(t, checksum)`: the world's checksum after `t` ticks, every
     /// [`CHECKSUM_EVERY`] ticks and after the last one, in order.
     pub checksums: Vec<(u32, u64)>,
+    /// `(t, worm)`: `worm` withdrawn ([`rl_sim::World::withdraw`]) right
+    /// before tick `t` (0-based) is played; in order of `t`, each worm at
+    /// most once, `t` below [`Replay::ticks`].
+    pub withdrawals: Vec<(u32, u8)>,
     /// How many ticks it holds (at most [`MAX_TICKS`]).
     ticks: u32,
     /// How many keys a row holds (the widest row recorded).

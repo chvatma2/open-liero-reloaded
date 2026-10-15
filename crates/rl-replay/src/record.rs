@@ -32,6 +32,7 @@ pub struct Recorder {
     /// Column `i` holds worm `i`'s keys, one per tick.
     columns: Vec<Vec<Keys>>,
     checksums: Vec<(u32, u64)>,
+    withdrawals: Vec<(u32, u8)>,
 }
 
 impl Recorder {
@@ -47,6 +48,7 @@ impl Recorder {
             base_frame: None,
             columns: Vec::new(),
             checksums: Vec::new(),
+            withdrawals: Vec::new(),
         }
     }
 
@@ -111,6 +113,22 @@ impl Recorder {
         Ok(())
     }
 
+    /// Withdraws `worm` from `world` before the next tick
+    /// ([`World::withdraw`]) and records it. `RecordError::NotStarted`
+    /// before [`Recorder::start`]; `RecordError::NoWorm` for a worm `world`
+    /// does not have or has withdrawn already.
+    pub fn withdraw(&mut self, world: &mut World, worm: u8) -> Result<(), RecordError> {
+        if self.base_frame.is_none() {
+            return Err(RecordError::NotStarted);
+        }
+        if usize::from(worm) >= world.worms().len() || world.gone() & (1 << worm) != 0 {
+            return Err(RecordError::NoWorm(worm));
+        }
+        world.withdraw(usize::from(worm));
+        self.withdrawals.push((self.ticks, worm));
+        Ok(())
+    }
+
     /// How many ticks are recorded.
     pub fn ticks(&self) -> u32 {
         self.ticks
@@ -125,7 +143,7 @@ impl Recorder {
         if frame.wrapping_sub(base) != u64::from(self.ticks) {
             return Err(RecordError::OutOfStep { recorded: self.ticks, frame });
         }
-        let Recorder { setup, mode, ticks, columns, mut checksums, .. } = self;
+        let Recorder { setup, mode, ticks, columns, mut checksums, withdrawals, .. } = self;
         if checksums.last().is_none_or(|c| c.0 != ticks) {
             checksums.push((ticks, world.checksum()));
         }
@@ -134,7 +152,7 @@ impl Recorder {
         for t in 0..ticks as usize {
             keys.extend(columns.iter().map(|c| c[t]));
         }
-        Ok(Replay { setup, mode, checksums, ticks, width, keys })
+        Ok(Replay { setup, mode, checksums, withdrawals, ticks, width, keys })
     }
 
     /// The replay of a match whose next tick failed (spec §7.3): `world` is
