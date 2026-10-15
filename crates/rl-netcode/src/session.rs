@@ -10,8 +10,9 @@ use alloc::vec::Vec;
 use core::mem;
 
 use rl_proto::{
-    ClientInputs, Control, Datagram, HostInputs, MAX_DATAGRAM, MAX_FRAMES, MAX_KEYS, OVERHEAD, Stamp,
-    decode_control, decode_datagram, decode_frames, encode_control, encode_datagram, encode_frames,
+    ClientInputs, Control, Datagram, Frame, HostInputs, HostResume, MAX_DATAGRAM, MAX_FRAMES, MAX_KEYS,
+    OVERHEAD, Stamp, decode_control, decode_datagram, decode_frames, encode_control, encode_datagram,
+    encode_frames,
 };
 use rl_sim::Keys;
 
@@ -315,6 +316,10 @@ struct PeerState {
     lost: bool,
     /// Host: the arrival margins of a player's inputs.
     margins: Margins,
+    /// Our clock's ms at each stamped datagram's arrival minus its
+    /// `sent_ms` (the peer's clock offset plus one trip): a resume's
+    /// `at_ms` in the peer's clock (ruling RS-1).
+    offsets: Margins,
     /// Host: the newest input tick sampled into `margins`.
     sampled: Option<u32>,
     /// Host: the player's filled ticks not yet answered by `Late`, from
@@ -341,6 +346,9 @@ struct PeerState {
     recent: VecDeque<u32>,
     /// Host: the peer lacks inputs we sent: our next datagram starts at its `ack`.
     resend: bool,
+    /// New host, after its resume: our `Datagram::Resume` goes to this
+    /// player instead of its frames until its inputs come (ruling RS-1).
+    resuming: Option<Resuming>,
     /// Host: the `sent_ms` of our last such datagram.
     resent_ms: u32,
 }
@@ -358,6 +366,7 @@ impl PeerState {
             silent: false,
             lost: false,
             margins: Margins::default(),
+            offsets: Margins::default(),
             sampled: None,
             filled: BTreeSet::new(),
             first_max: 0,
@@ -369,9 +378,19 @@ impl PeerState {
             sends: VecDeque::new(),
             recent: VecDeque::new(),
             resend: false,
+            resuming: None,
             resent_ms: 0,
         }
     }
+}
+
+/// A new host's resume, repeated to one player in every datagram until its
+/// inputs come or `until_us` ([`Session::resume`]).
+#[derive(Clone, Copy, Debug)]
+struct Resuming {
+    until_us: u64,
+    tick: u32,
+    at_ms: u32,
 }
 
 /// A client's time sync after a jump.
@@ -754,7 +773,9 @@ impl<S: Simulation> Session<S> {
     /// not the pace.
     pub fn tick_phase(&self, now_us: u64) -> Option<f32> {
         let paced = matches!(self.role, Role::Host { .. } | Role::Client { .. });
-        (paced && !self.behind && !self.stalling && !self.suspended).then(|| self.pace.phase(now_us))
+        // Held (a resume's hold, a jump back), the pace runs while no tick does.
+        let held = self.pace.ticks(now_us) < i64::from(self.ticks_run);
+        (paced && !self.behind && !self.stalling && !self.suspended && !held).then(|| self.pace.phase(now_us))
     }
 
     /// Runs the ticks that are due: first a pending rollback, then new ticks.
@@ -839,7 +860,9 @@ impl<S: Simulation> Session<S> {
         // too: a peer waiting for frames the other side already has would
         // otherwise wait for ever.
         let tick = self.pace.ticks(now_us);
-        if (ran > 0 || due > 0) && self.sent_at != Some(tick) {
+        // A new host's resume goes every tick of its hold too.
+        let resuming = self.peers.values().any(|p| p.resuming.is_some_and(|r| now_us < r.until_us));
+        if (ran > 0 || due > 0 || resuming) && self.sent_at != Some(tick) {
             self.sent_at = Some(tick);
             self.queue_datagrams(now_us);
         }
@@ -1153,6 +1176,9 @@ impl<S: Simulation> Session<S> {
         if p.echo.is_none_or(|(e, _)| st.sent_ms >= e) {
             p.echo = Some((st.sent_ms, now_us));
         }
+        if st.sent_ms != 0 {
+            p.offsets.push(((now_us / 1000) as u32).wrapping_sub(st.sent_ms) as i32);
+        }
         // An echo older than our first stamp to them is no echo.
         if p.first_sent_ms.is_some_and(|f| st.echo_ms >= f) {
             let sample = (now_us / 1000) as i64 - st.echo_ms as i64 - st.held_ms as i64;
@@ -1188,6 +1214,15 @@ impl<S: Simulation> Session<S> {
                 let horizon = self.log.horizon();
                 for id in ids {
                     let Some(p) = self.peers.get_mut(&id) else { continue };
+                    if let Some(r) = p.resuming {
+                        if now_us < r.until_us {
+                            let first = p.ack.min(frontier);
+                            let bytes = resume_datagram(&self.log, r, first, horizon, slots);
+                            self.push_out(id, Channel::Unreliable, bytes);
+                            continue;
+                        }
+                        p.resuming = None;
+                    }
                     // Every change goes out in `COPIES` datagrams; what the
                     // peer still lacks after that (`resend`), from its ack.
                     p.recent.push_back(dirty);
@@ -1302,6 +1337,11 @@ impl<S: Simulation> Session<S> {
                     self.on_stamp(from, h.stamp, now_us);
                 }
                 Ok(Datagram::Host(h)) if !self.is_host() => self.on_host_inputs(from, h, now_us),
+                Ok(Datagram::Resume(r))
+                    if matches!(self.role, Role::Client { .. } | Role::Spectator { .. }) =>
+                {
+                    self.on_resume(from, r.tick, r.at_ms, r.first, &r.frames, now_us)
+                }
                 _ => self.malformed(from),
             },
         }
@@ -1318,6 +1358,10 @@ impl<S: Simulation> Session<S> {
         let frontier = self.log.frontier();
         let Some(p) = self.peers.get_mut(&from) else { return };
         p.ack = p.ack.max(c.ack);
+        // Its inputs after our resume: it resumed.
+        if !c.keys.is_empty() {
+            p.resuming = None;
+        }
         // The datagram of ours they had last when they sent this one held
         // every input below our frontier then, or repeated them recently: if
         // they still lack some, some were lost. Not while our resend is on
@@ -1399,12 +1443,17 @@ impl<S: Simulation> Session<S> {
         }
         // The host's tick runs with ours: one older than the last taken, or
         // far past our own (hostile), is not taken.
-        let fresh = self.sync_tick.is_none_or(|t| h.tick >= t)
-            && h.tick <= self.current.saturating_add(HOST_TICK_SLACK);
+        let ordered = self.sync_tick.is_none_or(|t| h.tick >= t);
+        let fresh = ordered && h.tick <= self.current.saturating_add(HOST_TICK_SLACK);
         if error.abs() > JUMP_TICKS {
-            self.pace.shift(error.clamp(-MAX_JUMP_BACK, MAX_JUMP_AHEAD));
-            self.stats.jumps += 1;
-            self.sync = TimeSync::Jumped;
+            // A reordered datagram's margin is older than one taken: a jump
+            // on it would undo a correction already made (ruling RS-1). (A
+            // host far ahead, after our own freeze, is no reason to wait.)
+            if ordered {
+                self.pace.shift(error.clamp(-MAX_JUMP_BACK, MAX_JUMP_AHEAD));
+                self.stats.jumps += 1;
+                self.sync = TimeSync::Jumped;
+            }
         } else {
             let dt = match self.sync_tick {
                 Some(t) if fresh => (h.tick - t).min(100) as i64,
@@ -1422,7 +1471,6 @@ impl<S: Simulation> Session<S> {
 
     /// Client or spectator: the host's final inputs.
     fn on_host_inputs(&mut self, from: PeerId, h: HostInputs, now_us: u64) {
-        let slots = self.cfg.slots as usize;
         let first = h.first;
         // Sent before the host had our state (a joined spectator's log
         // begins after it): its base is a tick we never learn, and every
@@ -1432,6 +1480,26 @@ impl<S: Simulation> Session<S> {
             self.on_stamp(from, h.stamp, now_us);
             return;
         }
+        if !self.take_frames(from, first, &h.frames) {
+            self.malformed(from);
+            return;
+        }
+        self.on_stamp(from, h.stamp, now_us);
+        if let Some(p) = self.peers.get_mut(&from) {
+            p.ack = p.ack.max(h.your_ack);
+        }
+        // Suspended, the pace stands still: no margin is ours to steer by.
+        if !self.suspended {
+            self.sync(&h);
+        }
+    }
+
+    /// Client or spectator: the host's final inputs for ticks `first..`
+    /// (its datagram's, or its `Control::Resume`'s): `false`, nothing
+    /// taken, when they do not decode. The first value stays final; a
+    /// differing one is [`Event::Inconsistent`].
+    fn take_frames(&mut self, from: PeerId, first: u32, frames: &[Frame]) -> bool {
+        let slots = self.cfg.slots as usize;
         let mut scratch = mem::take(&mut self.scratch);
         scratch.clear();
         let log = &self.log;
@@ -1443,32 +1511,24 @@ impl<S: Simulation> Session<S> {
             f => log.get(f - 1, s as u8).or_else(|| (log.known_upto(s as u8) < f).then_some(0)),
         };
         let decoded =
-            decode_frames(first, &h.frames, slots, &base, &mut |t, s, v| scratch.push((t, s as u8, v)));
-        if decoded.is_err() {
-            self.scratch = scratch;
-            self.malformed(from);
-            return;
-        }
-        self.on_stamp(from, h.stamp, now_us);
-        let limit = self.current.saturating_add(MAX_AHEAD);
-        for &(t, s, v) in &scratch {
-            if t >= limit {
-                continue;
-            }
-            match self.log.set(t, s, v) {
-                SetResult::New => self.on_final(t, s, v),
-                SetResult::Conflict => self.events.push(Event::Inconsistent { peer: from, tick: t, slot: s }),
-                SetResult::Same | SetResult::Gap => {}
+            decode_frames(first, frames, slots, &base, &mut |t, s, v| scratch.push((t, s as u8, v))).is_ok();
+        if decoded {
+            let limit = self.current.saturating_add(MAX_AHEAD);
+            for &(t, s, v) in &scratch {
+                if t >= limit {
+                    continue;
+                }
+                match self.log.set(t, s, v) {
+                    SetResult::New => self.on_final(t, s, v),
+                    SetResult::Conflict => {
+                        self.events.push(Event::Inconsistent { peer: from, tick: t, slot: s })
+                    }
+                    SetResult::Same | SetResult::Gap => {}
+                }
             }
         }
         self.scratch = scratch;
-        if let Some(p) = self.peers.get_mut(&from) {
-            p.ack = p.ack.max(h.your_ack);
-        }
-        // Suspended, the pace stands still: no margin is ours to steer by.
-        if !self.suspended {
-            self.sync(&h);
-        }
+        decoded
     }
 
     /// A reliable message from `from`. Each is taken by the role it is for;
@@ -1518,8 +1578,10 @@ impl<S: Simulation> Session<S> {
                 }
             }
             Control::Collect { known } if !host => self.on_collect(from, &known),
-            Control::Report(r) if host => self.on_report(from, r),
-            Control::Resume { tick } if !host => self.on_resume(from, tick, now_us),
+            Control::Report(r) if host => self.on_report(from, r, now_us),
+            Control::Resume { tick, at_ms, first, frames } if !host => {
+                self.on_resume(from, tick, at_ms, first, &frames, now_us)
+            }
             _ => {}
         }
     }
@@ -1776,6 +1838,23 @@ impl<S: Simulation> Session<S> {
     }
 }
 
+/// A new host's `Datagram::Resume` (ruling RS-1): its `Resuming` and the
+/// final inputs from `first` to `horizon`, at most `MAX_FRAMES`, halved
+/// until it fits `MAX_DATAGRAM`.
+fn resume_datagram(log: &InputLog, r: Resuming, first: u32, horizon: u32, slots: usize) -> Vec<u8> {
+    let base = |s: usize| first.checked_sub(1).and_then(|t| log.get(t, s as u8));
+    let mut n = horizon.saturating_sub(first).min(MAX_FRAMES as u32);
+    loop {
+        let frames = encode_frames(first, n, slots, &|t, s| log.get(t, s as u8), &base);
+        let d = Datagram::Resume(HostResume { tick: r.tick, at_ms: r.at_ms, first, frames });
+        let bytes = encode_datagram(&d);
+        if bytes.len() <= MAX_DATAGRAM || n == 0 {
+            return bytes;
+        }
+        n /= 2;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::boxed::Box;
@@ -1928,6 +2007,48 @@ mod tests {
         c.receive(0, Channel::Unreliable, &host_inputs(0, i16::MIN, 0, vec![]), 0);
         assert_eq!(c.pace.ticks(0), (SILENCE_TIMEOUT_US / TICK_US) as i64);
         assert_eq!(c.stats.jumps, 1);
+    }
+
+    #[test]
+    fn a_held_pace_has_no_tick_phase() {
+        // A jump back holds the client: no tick runs, so there is nothing
+        // to draw between (the phase would swing back every tick).
+        let mut c = client();
+        let mut d = driver();
+        c.advance(100_000, d.as_mut());
+        assert!(c.tick_phase(105_000).is_some());
+        c.receive(0, Channel::Unreliable, &host_inputs(10, i16::MAX, 0, vec![]), 105_000);
+        assert_eq!(c.tick_phase(105_000), None, "held");
+    }
+
+    #[test]
+    fn a_reordered_margin_never_jumps() {
+        // Ruling RS-1: a datagram overtaken by a newer one carries a stale
+        // margin; a jump on it would undo a correction already made.
+        let mut c = client();
+        c.receive(0, Channel::Unreliable, &host_inputs(30, 1, 0, vec![]), 0);
+        c.receive(0, Channel::Unreliable, &host_inputs(20, -30, 0, vec![]), 1_000);
+        assert_eq!(c.stats.jumps, 0, "an older datagram");
+        c.receive(0, Channel::Unreliable, &host_inputs(31, -30, 0, vec![]), 2_000);
+        assert_eq!(c.stats.jumps, 1, "a newer one");
+    }
+
+    #[test]
+    fn a_resumes_moment_moves_the_pace_at_most_its_bound() {
+        // `at_ms` five seconds ago, or a hundred to come: the pace moves by
+        // at most `RESUME_AT_BOUND_MS` (a hostile host's whim).
+        let resume = |at_ms| encode_control(&Control::Resume { tick: 0, at_ms, first: 0, frames: vec![] });
+        let now = 5_000_000;
+        let mut c = client();
+        c.rehost(7, 0);
+        c.receive(7, Channel::Reliable, &resume(1), now);
+        assert!(!c.suspended());
+        assert_eq!(c.pace.ticks(now), 200, "caught up two seconds' worth");
+        let mut c = client();
+        c.rehost(7, 0);
+        c.receive(7, Channel::Reliable, &resume(105_000), now);
+        assert_eq!(c.pace.ticks(now + 2_000_000), 0, "held two seconds");
+        assert_eq!(c.pace.ticks(now + 2_010_000), 1);
     }
 
     #[test]

@@ -103,13 +103,18 @@ impl Margins {
 
     /// The median (the lower one of an even count), `None` without samples.
     pub fn median(&self) -> Option<i16> {
+        self.median_i32().map(|m| m.clamp(i16::MIN as i32, i16::MAX as i32) as i16)
+    }
+
+    /// The median unclamped (a peer's clock offset, ruling RS-1).
+    pub fn median_i32(&self) -> Option<i32> {
         if self.len == 0 {
             return None;
         }
         let mut v = self.ring;
         let v = &mut v[..self.len];
         v.sort_unstable();
-        Some(v[(self.len - 1) / 2].clamp(i16::MIN as i32, i16::MAX as i32) as i16)
+        Some(v[(self.len - 1) / 2])
     }
 }
 

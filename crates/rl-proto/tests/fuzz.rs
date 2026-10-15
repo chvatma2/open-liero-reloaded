@@ -65,7 +65,8 @@ fn migration_control() -> impl Strategy<Value = Control> {
     ];
     prop_oneof![
         prop::collection::vec(edge.clone(), 0..=MAX_SLOTS + 1).prop_map(|known| Control::Collect { known }),
-        edge.clone().prop_map(|tick| Control::Resume { tick }),
+        (edge.clone(), edge.clone(), edge.clone(), frames.clone())
+            .prop_map(|(tick, at_ms, first, frames)| Control::Resume { tick, at_ms, first, frames }),
         (edge.clone(), edge.clone(), frames, edge, own).prop_map(|(ack, first, frames, own_first, own)| {
             Control::Report(InputsReport { ack, first, frames, own_first, own })
         }),

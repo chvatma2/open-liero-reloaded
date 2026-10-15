@@ -9,21 +9,30 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use rl_proto::{
-    ClientInputs, Control, Datagram, HostInputs, InputsReport, MAX_KEYS, MAX_REPORT_OWN, decode_frames,
-    encode_control, encode_datagram,
+    ClientInputs, Control, Datagram, Frame, HostInputs, InputsReport, MAX_KEYS, MAX_REPORT_OWN,
+    decode_frames, encode_control, encode_datagram,
 };
 use rl_sim::Keys;
 
-use super::{MAX_AHEAD, PeerState, Role, Seat, Session, TimeSync};
-use crate::clock::Pace;
+use super::{MAX_AHEAD, PeerState, Resuming, Role, Seat, Session, TICK_US, TimeSync};
+use crate::clock::{Pace, TARGET_MARGIN};
 use crate::inputs::SetResult;
-use crate::migration::{KEEPALIVE_US, fit_report};
+use crate::migration::{KEEPALIVE_US, MAX_RESUME_HOLD_US, RESUME_REPEAT_US, fit_report, fit_resume};
 use crate::{Channel, Event, PeerId, Simulation};
+
+/// A resume's `at_ms` is taken at most this far from the receipt (a broken
+/// or hostile host cannot move a pace by more; an honest one is within a
+/// hold and a lost reliable message's retransmission of it).
+pub(super) const RESUME_AT_BOUND_MS: i64 = 2_000;
+
+/// A rehosted peer's keepalive period, faster than [`KEEPALIVE_US`]: each
+/// one's stamp is a sample of its clock at the new host (ruling RS-1).
+pub(super) const REHOSTED_KEEPALIVE_US: u64 = 20_000;
 
 /// A rejoined peer's report, as the new host has it.
 enum Rejoin {
-    /// `Control::Collect` sent, no `Control::Report` yet.
-    Awaiting,
+    /// `Control::Collect` sent at `collect_us`, no `Control::Report` yet.
+    Awaiting { collect_us: u64 },
     /// Reported: its own provisional inputs from `own_first`, kept until the
     /// resume (then taken, and emptied).
     Reported { own_first: u32, own: Vec<u8> },
@@ -82,6 +91,8 @@ impl<S: Simulation> Session<S> {
         self.out.retain(|&(to, _, _)| to == host);
         self.rehosted = true;
         self.suspend();
+        // Our clock's first sample at the new host goes at once.
+        self.keepalive_us = None;
         self.incoming = None;
         self.forget_time_sync();
     }
@@ -143,7 +154,7 @@ impl<S: Simulation> Session<S> {
             peers.push((peer, seat));
         }
         if let Some(c) = self.collection.as_mut() {
-            c.rejoined.insert(peer, Rejoin::Awaiting);
+            c.rejoined.insert(peer, Rejoin::Awaiting { collect_us: now_us });
         }
         let known = (0..self.cfg.slots).map(|s| self.log.known_upto(s)).collect();
         self.push_out(peer, Channel::Reliable, encode_control(&Control::Collect { known }));
@@ -156,7 +167,9 @@ impl<S: Simulation> Session<S> {
         let Some(c) = &self.collection else { return Vec::new() };
         c.rejoined
             .iter()
-            .filter(|(id, r)| matches!(r, Rejoin::Awaiting) && self.peers.get(id).is_some_and(|p| !p.lost))
+            .filter(|(id, r)| {
+                matches!(r, Rejoin::Awaiting { .. }) && self.peers.get(id).is_some_and(|p| !p.lost)
+            })
             .map(|(&id, _)| id)
             .collect()
     }
@@ -164,11 +177,22 @@ impl<S: Simulation> Session<S> {
     /// New host: the merge ends (N67; the order matters). Reported own
     /// inputs extend their slots; bot slots' missing ticks below R get their
     /// previous final value, its own slot its pressed keys; awaited slots
-    /// nobody took become abandoned (`Keys(0)`, decision N6).
-    /// `Control::Resume { tick }` to every rejoined peer; the pace restarts
-    /// at the current tick and `now_us`. Returns that tick (R). Once only:
-    /// later calls, and calls on a session that did not take over, change
-    /// nothing and return the current tick.
+    /// nobody took become abandoned (`Keys(0)`, decision N6). Returns the
+    /// current tick, R. Once only: later calls, and calls on a session that
+    /// did not take over, change nothing and return the current tick.
+    ///
+    /// The time sync (ruling RS-1): every input in flight before the
+    /// migration is gone, so tick R waits for the rejoined players' first
+    /// inputs: it runs after a hold of their longest round trip (at most
+    /// [`MAX_RESUME_HOLD_US`], in whole ticks; our pace restarts at
+    /// `now_us`, that far behind R). Each rejoined peer gets
+    /// `Control::Resume` now, with the final inputs it lacks from its
+    /// report's `ack`, and `at_ms`: the moment, on its own clock, from which
+    /// its inputs reach us as R runs. It is our clock at R's start less the
+    /// median of its datagrams' arrival here minus their `sent_ms` (its
+    /// clock's offset plus one trip): the trip's own length cancels, and a
+    /// `Resume` delivered late (a reliable message lost once) is no later
+    /// for it.
     pub fn resume(&mut self, now_us: u64) -> u32 {
         let r = self.current;
         let host = self.is_host();
@@ -219,16 +243,33 @@ impl<S: Simulation> Session<S> {
         // current tick can be `MAX_PREDICTION` past an absent player's
         // prefix, and a host stalled there would never run that fill.
         self.fill(r);
+        // The hold: the rejoined players' longest round trip.
+        let rtt_us = |p: &PeerState| p.rtt_x8.map(|r| (r.max(0) as u64 / 8).saturating_mul(1000));
+        let players = self.peers.values().filter(|p| !p.lost && matches!(p.seat, Seat::Player(_)));
+        let longest = players.filter_map(rtt_us).max().unwrap_or(0).min(MAX_RESUME_HOLD_US);
+        let hold = longest.div_ceil(TICK_US);
+        let start_ms = ((now_us + hold * TICK_US) / 1000) as u32;
+        let (frontier, horizon, slots) = (self.log.frontier(), self.log.horizon(), self.cfg.slots as usize);
         let ids: Vec<PeerId> = self.peers.iter().filter(|(_, p)| !p.lost).map(|(&id, _)| id).collect();
         for id in ids {
-            // Our next datagram starts at its report's ack: what it lacks.
-            if let Some(p) = self.peers.get_mut(&id) {
-                p.resend = true;
+            let Some(p) = self.peers.get(&id) else { continue };
+            // 0 is "unknown" on the wire: a real moment is at least 1.
+            let at_ms = p.offsets.median_i32().map_or(0, |o| start_ms.wrapping_sub(o as u32).max(1));
+            // It holds every slot below its ack, and so do we below our frontier.
+            let first = p.ack.min(frontier).max(self.log.origin());
+            let log = &self.log;
+            let base = |s: usize| first.checked_sub(1).and_then(|t| log.get(t, s as u8));
+            let resume = fit_resume(r, at_ms, first, horizon, slots, &|t, s| log.get(t, s as u8), &base);
+            self.push_out(id, Channel::Reliable, encode_control(&resume));
+            // Its unreliable twin in every datagram until its inputs come.
+            if let Some(p) = self.peers.get_mut(&id)
+                && matches!(p.seat, Seat::Player(_))
+            {
+                p.resuming = Some(Resuming { until_us: now_us + RESUME_REPEAT_US, tick: r, at_ms });
             }
-            self.push_out(id, Channel::Reliable, encode_control(&Control::Resume { tick: r }));
         }
         self.suspended = false;
-        self.restart_pace(now_us, 0);
+        self.restart_pace(now_us, -(hold as i64));
         self.events.push(Event::Resumed { tick: r });
         self.stats.migrations += 1;
         r
@@ -275,11 +316,9 @@ impl<S: Simulation> Session<S> {
     /// a second one, changes nothing. One that does not decode for the
     /// match's slots (a frame naming a slot beyond them: the decoder cannot
     /// know the count) is malformed, takes nothing and ends the wait for it.
-    pub(super) fn on_report(&mut self, from: PeerId, r: InputsReport) {
+    pub(super) fn on_report(&mut self, from: PeerId, r: InputsReport, now_us: u64) {
         let Some(c) = self.collection.as_mut() else { return };
-        if !matches!(c.rejoined.get(&from), Some(Rejoin::Awaiting)) {
-            return;
-        }
+        let Some(&Rejoin::Awaiting { collect_us }) = c.rejoined.get(&from) else { return };
         let resumed = c.resumed;
         c.rejoined.insert(from, Rejoin::Reported { own_first: 0, own: Vec::new() });
         let slots = self.cfg.slots as usize;
@@ -316,6 +355,11 @@ impl<S: Simulation> Session<S> {
         self.scratch = scratch;
         let Some(p) = self.peers.get_mut(&from) else { return };
         p.ack = r.ack;
+        // Our `Collect` and its answer are a round trip (a reliable one: a
+        // retransmission lengthens it), the measure until stamps give one.
+        if p.rtt_x8.is_none() {
+            p.rtt_x8 = Some((now_us.saturating_sub(collect_us) / 1000) as i64 * 8);
+        }
         let Seat::Player(s) = p.seat else { return };
         if resumed {
             self.extend_own(s, r.own_first, &r.own);
@@ -324,20 +368,62 @@ impl<S: Simulation> Session<S> {
         }
     }
 
-    /// Client or spectator: the new host resumes at `tick`. The pace
-    /// restarts at `max(current, tick)` and `now_us` (the pause is not
-    /// caught up); time sync starts as after a jump. Only from a host we
-    /// rehosted to, before its resume, and not more than `MAX_AHEAD` ticks
-    /// past our current tick (a hostile or broken host cannot push our
-    /// timeline to `u32::MAX`).
-    pub(super) fn on_resume(&mut self, from: PeerId, tick: u32, now_us: u64) {
+    /// Client or spectator: the new host resumes at `tick` (R), sending
+    /// the final inputs we lack from `first`. They are taken as its
+    /// datagrams' are (a frame that does not decode makes the whole message
+    /// malformed: nothing changes). A client's pace is at `R +
+    /// TARGET_MARGIN - input_delay` at `at_ms` on our clock (ruling RS-1:
+    /// from then our inputs reach the new host one tick early, as time sync
+    /// keeps them; the receipt when `at_ms` is 0), and runs on from there:
+    /// catching up when `at_ms` has passed, waiting when ahead (the pause
+    /// is not caught up); a spectator's at `max(current, R)` now. `at_ms` is
+    /// taken within [`RESUME_AT_BOUND_MS`] of now. Time sync starts as
+    /// after a jump (margins from inputs made after a catch-up). Only from
+    /// our host, and not more than `MAX_AHEAD` ticks past our current tick
+    /// (a hostile or broken host cannot push our timeline to `u32::MAX`);
+    /// once resumed (by the first of `Control::Resume` and its
+    /// `Datagram::Resume` twin, or never rehosted), its finals alone.
+    pub(super) fn on_resume(
+        &mut self,
+        from: PeerId,
+        tick: u32,
+        at_ms: u32,
+        first: u32,
+        frames: &[Frame],
+        now_us: u64,
+    ) {
         let (Role::Client { host, .. } | Role::Spectator { host }) = self.role else { return };
-        if from != host || !self.rehosted || tick > self.current.saturating_add(MAX_AHEAD) {
+        if from != host || tick > self.current.saturating_add(MAX_AHEAD) {
+            return;
+        }
+        // An honest host starts them at our report's ack, within our log.
+        let within = first == 0 || first >= self.log.origin();
+        if !within || !self.take_frames(from, first, frames) {
+            self.malformed(from);
+            return;
+        }
+        // Resumed already (its twin came first): the final inputs alone.
+        if !self.rehosted {
             return;
         }
         self.rehosted = false;
         self.suspended = false;
-        self.restart_pace(now_us, tick.saturating_sub(self.current));
+        let current = i64::from(self.current);
+        let (target, origin_us) = match self.role {
+            Role::Client { .. } => {
+                // How long ago `at_ms` was on our clock (negative: to come).
+                let now_ms = (now_us / 1000) as u32;
+                let ago_ms = match at_ms {
+                    0 => 0,
+                    at => i64::from(now_ms.wrapping_sub(at) as i32)
+                        .clamp(-RESUME_AT_BOUND_MS, RESUME_AT_BOUND_MS),
+                };
+                let origin_us = (now_us as i64 - ago_ms * 1000).max(0) as u64;
+                (i64::from(tick) + i64::from(TARGET_MARGIN) - i64::from(self.cfg.input_delay), origin_us)
+            }
+            _ => (current.max(i64::from(tick)), now_us),
+        };
+        self.restart_pace(origin_us, target - current);
         if matches!(self.role, Role::Client { .. }) {
             self.sync = TimeSync::Jumped;
         }
@@ -349,7 +435,8 @@ impl<S: Simulation> Session<S> {
     /// `ClientInputs` without keys to its host, a host's `HostInputs`
     /// without frames to every peer), so nobody takes us for silent.
     pub(super) fn keepalive(&mut self, now_us: u64) {
-        if self.keepalive_us.is_some_and(|k| now_us.saturating_sub(k) < KEEPALIVE_US) {
+        let period = if self.rehosted { REHOSTED_KEEPALIVE_US } else { KEEPALIVE_US };
+        if self.keepalive_us.is_some_and(|k| now_us.saturating_sub(k) < period) {
             return;
         }
         self.keepalive_us = Some(now_us);
@@ -416,12 +503,14 @@ impl<S: Simulation> Session<S> {
     }
 
     /// The pace starts again at `now_us`, `ahead` ticks past the current
-    /// tick (the pause is not caught up), keeping its speed.
-    fn restart_pace(&mut self, now_us: u64, ahead: u32) {
+    /// tick (negative: that many ticks of time before the next runs; the
+    /// pause is not caught up), keeping its speed.
+    fn restart_pace(&mut self, now_us: u64, ahead: i64) {
         let adjust = self.pace.adjust_ppm();
         self.pace = Pace::new(now_us);
         self.pace.set_adjust_ppm(adjust);
-        self.pace.shift(ahead.min(MAX_AHEAD) as i32);
+        let bound = i64::from(MAX_AHEAD);
+        self.pace.shift(ahead.clamp(-bound, bound) as i32);
         self.ticks_run = 0;
         self.sent_at = None;
         self.behind = false;

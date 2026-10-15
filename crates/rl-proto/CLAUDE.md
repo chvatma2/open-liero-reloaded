@@ -10,6 +10,10 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   carries the sender's own keys for ticks `first..`, its `ack` and next
   `tick`; `Datagram::Host(HostInputs)` carries `Frame`s for ticks `first..`,
   `your_ack` and the arrival `margin`. Both carry a `Stamp` for round trips.
+  `Datagram::Resume(HostResume { tick, at_ms, first, frames })` (plan 12c,
+  ruling RS-1, appended): a new host's resume, `Control::Resume`'s
+  unreliable twin (frames <= `MAX_FRAMES`, each within the slots), sent
+  every tick until the player's inputs come.
   **Control** (reliable channel): `Checksum`, `Late { from, to }` (one per
   answered datagram, spanning its filled ticks, on-time ones between two
   fill episodes included; `from < to` or `Invalid`), `Desync`,
@@ -18,8 +22,11 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   `Report(InputsReport { ack, first, frames, own_first, own })` (frames <=
   `MAX_REPORT_FRAMES` 3000, own <= `MAX_REPORT_OWN` 256, no `u32` overflow of
   `first + len` or `own_first + len`, each frame `changed ⊆ known` with a key
-  per changed bit) and `Resume { tick }`. A worst-case report exceeds
-  `MAX_CONTROL`: the sender trims it (rl-netcode).
+  per changed bit) and `Resume { tick, at_ms, first, frames }` (`at_ms`:
+  when, on the receiver's own stamp clock, its inputs reach the new host as
+  it runs `tick`, 0 unknown; the final inputs the peer lacks, delivered
+  with the resume; the same frame bounds as a report's). A worst-case report or resume exceeds `MAX_CONTROL`: the
+  sender trims it (rl-netcode).
 - **Signalling** (`signal.rs`, WebSocket, one postcard message per frame,
   `MAX_SIGNAL`): `Signal::{Offer, Answer, Refused}`, `Refusal` (`Version`,
   `Full`, `Banned`, `Busy`, `Malformed`, `Password`, `Exhausted`, `Throttled`, `NotHost` (a standby before its peer took over),

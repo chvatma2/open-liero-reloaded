@@ -8,8 +8,8 @@ use rl_netcode::netsim::Profile;
 use rl_netcode::toy::ToyFactory;
 use rl_netcode::{Channel, Config, Role, Seat, Session, Simulation, ToySim, input_delay};
 use rl_proto::{
-    ClientInputs, Control, Datagram, Frame, HostInputs, MAX_FRAMES, MAX_KEYS, Stamp, encode_control,
-    encode_datagram,
+    ClientInputs, Control, Datagram, Frame, HostInputs, HostResume, MAX_FRAMES, MAX_KEYS, Stamp,
+    encode_control, encode_datagram,
 };
 use rl_sim::Keys;
 
@@ -162,6 +162,9 @@ fn datagram() -> impl Strategy<Value = Datagram> {
                 first,
                 frames
             })),
+        (edge_u32(), edge_u32(), edge_u32(), prop::collection::vec(frame(), 0..=MAX_FRAMES)).prop_map(
+            |(tick, at_ms, first, frames)| Datagram::Resume(HostResume { tick, at_ms, first, frames })
+        ),
     ]
 }
 

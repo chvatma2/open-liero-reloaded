@@ -33,6 +33,13 @@ struct Mesh {
     one_way_ms: u64,
     /// `(from, to)` → from this ms on, that direction loses everything.
     cut: BTreeMap<(PeerId, PeerId), u64>,
+    /// That direction and channel loses everything.
+    lost: BTreeSet<(PeerId, PeerId, Channel)>,
+    /// That direction and channel takes this many ms longer (reliable
+    /// messages stay in order: a retransmission's wait).
+    later: BTreeMap<(PeerId, PeerId, Channel), u64>,
+    /// The last reliable arrival per direction.
+    last_reliable: BTreeMap<(PeerId, PeerId), u64>,
     now_ms: u64,
     wire: Vec<(u64, PeerId, PeerId, Channel, Vec<u8>)>,
     /// Every message sent (not cut), with the time: (ms, from, to, channel, bytes).
@@ -62,6 +69,9 @@ impl Mesh {
             inbox: BTreeMap::new(),
             one_way_ms,
             cut: BTreeMap::new(),
+            lost: BTreeSet::new(),
+            later: BTreeMap::new(),
+            last_reliable: BTreeMap::new(),
             now_ms: 0,
             wire: Vec::new(),
             sent: Vec::new(),
@@ -102,11 +112,19 @@ impl Mesh {
                 self.events.entry(id).or_default().push((now, e));
             }
             for (to, ch, b) in out {
-                if self.cut.get(&(id, to)).is_some_and(|&from| now >= from) {
+                if self.cut.get(&(id, to)).is_some_and(|&from| now >= from)
+                    || self.lost.contains(&(id, to, ch))
+                {
                     continue;
                 }
                 self.sent.push((now, id, to, ch, b.clone()));
-                self.wire.push((now + self.one_way_ms, id, to, ch, b));
+                let mut at = now + self.one_way_ms + self.later.get(&(id, to, ch)).copied().unwrap_or(0);
+                if ch == Channel::Reliable {
+                    let last = self.last_reliable.entry((id, to)).or_default();
+                    at = at.max(*last);
+                    *last = at;
+                }
+                self.wire.push((at, id, to, ch, b));
             }
         }
     }
@@ -329,7 +347,7 @@ fn a_far_resume_is_ignored() {
     m.s.get_mut(&B).unwrap().receive(
         A,
         Channel::Reliable,
-        &encode_control(&Control::Resume { tick: far }),
+        &encode_control(&Control::Resume { tick: far, at_ms: 0, first: 0, frames: vec![] }),
         us,
     );
     assert!(m.s[&B].suspended(), "a Resume 6001 ticks ahead is ignored");
@@ -376,7 +394,10 @@ fn migration_messages_from_a_non_host_are_ignored() {
     let us = m.now_ms * 1000;
     // B, a client of a live host: A's Collect and Resume are not its host's.
     let sent = m.s[&B].stats().datagrams_out;
-    for c in [Control::Collect { known: vec![0; SLOTS as usize] }, Control::Resume { tick: 5 }] {
+    for c in [
+        Control::Collect { known: vec![0; SLOTS as usize] },
+        Control::Resume { tick: 5, at_ms: 0, first: 0, frames: vec![] },
+    ] {
         m.s.get_mut(&B).unwrap().receive(A, Channel::Reliable, &encode_control(&c), us);
     }
     let mut out = Vec::new();
@@ -564,7 +585,7 @@ fn a_silent_hosts_bye_is_no_return() {
 }
 
 #[test]
-fn a_rejoined_peer_gets_what_it_lacks_from_its_reports_ack() {
+fn a_rejoined_peer_gets_what_it_lacks_with_the_resume() {
     let mut m = Mesh::new(10, 13);
     m.run_ms(3_800);
     // The host's last 200 ms reach A only: B knows less than its new host.
@@ -576,22 +597,94 @@ fn a_rejoined_peer_gets_what_it_lacks_from_its_reports_ack() {
     assert!(b_frontier + 10 < m.s[&A].frontier(), "B lacks some: {b_frontier} of {}", m.s[&A].frontier());
     m.migrate_to_a();
     m.until(1_000, "B's report", |m| m.s[&A].awaiting_reports().is_empty());
-    // The keepalives measure the round trip: a short one alone would start
-    // the frames at the latest change, not at what B lacks.
-    m.run_ms(600);
-    assert!(m.s[&A].peer_rtt_ms(B).is_some_and(|r| r <= 100));
+    let at = m.now_ms;
+    let r = m.s.get_mut(&A).unwrap().resume(at * 1000);
+    let a_frontier = m.s[&A].frontier();
+    m.until(200, "B resumes", |m| m.first(B, |e| matches!(e, Event::Resumed { .. })).is_some());
+    let resume =
+        m.sent.iter().filter(|(t, from, to, ..)| *t >= at && *from == A && *to == B).find_map(|(.., b)| {
+            match decode_control(b) {
+                Ok(Control::Resume { tick, first, frames, .. }) => Some((tick, first, frames.len() as u32)),
+                _ => None,
+            }
+        });
+    let horizon = m.s[&A].input_log().horizon();
+    assert_eq!(resume, Some((r, b_frontier, horizon - b_frontier)), "from its report's ack to our horizon");
+    // Before any frame of A's reached it (A holds its first tick a round trip).
+    assert!(m.s[&B].frontier() >= a_frontier, "B {} of A's {a_frontier} at the resume", m.s[&B].frontier());
+}
+
+/// A, B's new host, after B's report; one-way trips of 30 ms (B's input
+/// delay is 1).
+fn reported_to_a(seed: u64) -> Mesh {
+    let mut m = Mesh::new(30, seed);
+    m.run_ms(3_000);
+    m.alive.insert(H, false);
+    m.until(2_500, "silence", |m| m.first(B, |e| *e == Event::HostSilent).is_some());
+    m.migrate_to_a();
+    m.until(1_000, "B's report", |m| m.s[&A].awaiting_reports().is_empty());
+    m
+}
+
+#[test]
+fn a_new_host_holds_its_first_tick_a_round_trip() {
+    // RS-1: the inputs in flight were lost with the old host; R runs once
+    // the rejoined players' first inputs can be here.
+    let mut m = reported_to_a(31);
+    let r = m.s.get_mut(&A).unwrap().resume(m.now_ms * 1000);
+    m.run_ms(50);
+    assert_eq!(m.s[&A].current_tick(), r, "held 50 ms after its resume (a 60 ms round trip)");
+    m.run_ms(50);
+    assert!(m.s[&A].current_tick() > r, "running 100 ms after it");
+}
+
+#[test]
+fn a_resume_lost_once_still_places_its_player_on_time() {
+    // B's `Resume` is lost once (it comes 100 ms late) and none of A's
+    // datagrams reach B meanwhile: `at_ms`, on B's own clock, still puts B
+    // where its inputs reach A one tick early.
+    let mut m = reported_to_a(32);
+    m.lost.insert((A, B, Channel::Unreliable));
+    m.later.insert((A, B, Channel::Reliable), 100);
+    m.s.get_mut(&A).unwrap().resume(m.now_ms * 1000);
+    m.until(300, "B resumes", |m| m.first(B, |e| matches!(e, Event::Resumed { .. })).is_some());
+    m.lost.clear();
+    m.later.clear();
+    m.run_ms(30);
+    // B leads A by one trip and its margin, less its input delay: 3 + 1 - 1 ticks.
+    let lead = m.s[&B].current_tick() as i64 - m.s[&A].current_tick() as i64;
+    assert!((2..=4).contains(&lead), "B leads A by {lead} ticks");
+}
+
+#[test]
+fn a_late_resume_is_overtaken_by_its_datagrams() {
+    // B's reliable `Resume` comes 300 ms late; its unreliable twin, in each
+    // of A's datagrams to B from the resume on, does not.
+    let mut m = reported_to_a(33);
+    m.later.insert((A, B, Channel::Reliable), 300);
     let at = m.now_ms;
     m.s.get_mut(&A).unwrap().resume(at * 1000);
-    m.run_ms(50);
-    let first = m
+    m.until(300, "B resumes", |m| m.first(B, |e| matches!(e, Event::Resumed { .. })).is_some());
+    let resumed = m.first(B, |e| matches!(e, Event::Resumed { .. })).unwrap();
+    let took = resumed - at;
+    assert!(took <= 30 + 10, "B resumed {took} ms after A");
+    m.later.clear();
+    m.run_ms(1_000);
+    // Once B's inputs came, A's datagrams to it are frames again (its acks
+    // and margins).
+    let twins: Vec<u64> = m
         .sent
         .iter()
-        .filter(|(t, from, to, ch, _)| *t >= at && *from == A && *to == B && *ch == Channel::Unreliable)
-        .find_map(|(.., b)| match decode_datagram(b, SLOTS as usize) {
-            Ok(Datagram::Host(h)) if !h.frames.is_empty() => Some(h.first),
-            _ => None,
-        });
-    assert_eq!(first, Some(b_frontier), "the first frames start at its ack");
+        .filter(|(t, from, to, ch, _)| {
+            *t > resumed + 200 && *from == A && *to == B && *ch == Channel::Unreliable
+        })
+        .filter(|(.., b)| matches!(decode_datagram(b, SLOTS as usize), Ok(Datagram::Resume(_))))
+        .map(|m| m.0)
+        .collect();
+    assert!(twins.is_empty(), "resumes sent at {twins:?}");
+    assert_eq!(m.count(B, |e| matches!(e, Event::Resumed { .. })), 1, "the late `Resume` changes nothing");
+    let after = m.events[&B].iter().filter(|(t, _)| *t >= at).map(|(_, e)| e);
+    assert_eq!(after.filter(|e| matches!(e, Event::Stalled { .. } | Event::Malformed { .. })).count(), 0);
 }
 
 /// The decoder cannot check a report's `known` bits, or a `Collect`'s length,
@@ -628,12 +721,19 @@ fn control() -> impl Strategy<Value = Control> {
     let edge = prop_oneof![Just(0u32), Just(1), Just(99), Just(u32::MAX - 1), Just(u32::MAX), 0u32..5_000];
     let frame = (any::<u32>(), any::<u32>(), prop::collection::vec(any::<u8>(), 0..33))
         .prop_map(|(known, changed, keys)| Frame { known, changed, keys });
+    // Frames within the match's slots, which decode (the merge's path).
+    let fitting = (0u32..16, 0u32..16, any::<u8>()).prop_map(|(known, changed, key)| {
+        let changed = changed & known;
+        Frame { known, changed, keys: vec![key; changed.count_ones() as usize] }
+    });
+    let frames =
+        prop_oneof![prop::collection::vec(frame.clone(), 0..80), prop::collection::vec(fitting, 0..80)];
     prop_oneof![
         prop::collection::vec(edge.clone(), 0..40).prop_map(|known| Control::Collect { known }),
         (
             edge.clone(),
             edge.clone(),
-            prop::collection::vec(frame, 0..80),
+            frames.clone(),
             edge.clone(),
             prop::collection::vec(any::<u8>(), 0..300)
         )
@@ -644,7 +744,12 @@ fn control() -> impl Strategy<Value = Control> {
                 own_first,
                 own
             })),
-        edge.prop_map(|tick| Control::Resume { tick }),
+        (edge.clone(), any::<u32>(), edge, frames).prop_map(|(tick, at_ms, first, frames)| Control::Resume {
+            tick,
+            at_ms,
+            first,
+            frames
+        }),
     ]
 }
 
@@ -954,6 +1059,8 @@ fn migration_runs_are_deterministic() {
     assert_eq!(a.host_log, b.host_log);
     assert_eq!(a.migrations, b.migrations);
     assert_eq!(a.checksums, b.checksums);
+    assert_eq!(a.logs, b.logs);
+    assert_eq!(a.events, b.events);
 }
 
 #[test]
@@ -1014,4 +1121,70 @@ fn a_new_host_waits_past_its_window_for_a_rejoined_peers_report() {
     let m = &r.migrations[0];
     assert!(m.resumed_us > m.silent_us + WINDOW_US + 1_000_000, "it waited for the report: {m:?}");
     assert!(m.resumed_us < m.silent_us + SILENCE_TIMEOUT_US + 1_000_000, "until the peer timed out: {m:?}");
+}
+
+/// Every event `what` picks (its tick) a peer had after its own
+/// `Resumed`: `(peer, tick, resume tick)`.
+fn after_resume(r: &Report, what: impl Fn(&Event) -> Option<u32>) -> Vec<(PeerId, u32, u32)> {
+    let mut out = Vec::new();
+    for (&peer, events) in &r.events {
+        let mut resumed = None;
+        for e in events {
+            if let Event::Resumed { tick } = *e {
+                resumed = Some(tick);
+            } else if let (Some(at), Some(tick)) = (resumed, what(e)) {
+                out.push((peer, tick, at));
+            }
+        }
+    }
+    out
+}
+
+/// A migration stops the match; once it resumes, the time sync must carry
+/// every peer on without another stall episode.
+fn stalls_after_resume(r: &Report) -> Vec<(PeerId, u32, u32)> {
+    after_resume(r, |e| match *e {
+        Event::Stalled { tick } => Some(tick),
+        _ => None,
+    })
+}
+
+/// Nor may a player's inputs for the resume tick on come too late (filled:
+/// its own keys replaced). Ticks before it are the migration's (the
+/// resume's lagging rule).
+fn lates_after_resume(r: &Report) -> Vec<(PeerId, u32, u32)> {
+    let lates = after_resume(r, |e| match *e {
+        Event::Late { to, .. } => Some(to - 1),
+        _ => None,
+    });
+    lates.into_iter().filter(|&(_, last, at)| last >= at).collect()
+}
+
+#[test]
+fn no_peer_stalls_after_a_resume_on_bad_links() {
+    // Ruling RS-1: a resume used to leave clients a round trip late (their
+    // inputs held every frontier back), a `Resume` lost once a ping later
+    // still, and their time sync jumped on stale margins: 30 stall episodes
+    // over these 80 migrations. Odd seeds drift the clients' clocks.
+    let (mut stalls, mut lates) = (Vec::new(), Vec::new());
+    let mut runs = 0;
+    for seed in 1..=40 {
+        for how in [ExitHow::Crash, ExitHow::Leave] {
+            let mut sc = mscenario(seed, Profile::BAD, 3);
+            if seed % 2 == 1 {
+                for (p, ppm) in sc.peers.iter_mut().zip([2_000, -2_000, 1_000, -1_000]) {
+                    p.clock_ppm = ppm;
+                }
+            }
+            sc.exits.push(Exit { peer: HOST, tick: 300 + (seed as u32 * 37) % 400, after_us: 0, how });
+            let r = run_checked(&sc);
+            assert_eq!(r.migrations.len(), 1, "seed {seed} {how:?}");
+            runs += 1;
+            stalls.extend(stalls_after_resume(&r).into_iter().map(|s| (seed, how, s)));
+            lates.extend(lates_after_resume(&r).into_iter().map(|s| (seed, how, s)));
+        }
+    }
+    assert_eq!(runs, 80);
+    assert!(stalls.is_empty(), "{} post-resume stall episodes: {stalls:?}", stalls.len());
+    assert!(lates.is_empty(), "{} post-resume late inputs: {lates:?}", lates.len());
 }

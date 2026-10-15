@@ -76,14 +76,17 @@ model that tests it in one process (spec §9.1).
     its pace, a stalled one too. `Pace::phase(now)` is the timeline's
     place in its tick, `[0, 1)`; `Session::tick_phase(now_us)` gives it
     for drawing between the last two ticks (plan 10 task 12), `None` when
-    the last advance left due ticks unrun (stalled or catching up) and for
-    spectators (their ticks follow the host's frames).
+    the last advance left due ticks unrun (stalled or catching up), while
+    the pace is held (a resume's hold, a jump back: no tick runs), while
+    suspended, and for spectators (their ticks follow the host's frames).
   - Time sync (decision N7): a client datagram whose newest input is newer
     than all before is a margin sample at the host (that tick minus the
     host's current tick); `HostInputs.margin` is the median of the last 16
     (`Margins`). The client steers to `TARGET_MARGIN`: an error beyond
     `JUMP_TICKS` shifts the pace (margins are then stale until the host
-    holds 16 of its inputs made after the jump), a smaller one sets the
+    holds 16 of its inputs made after the jump; no jump on a datagram whose
+    host tick is older than the last taken: a reordered one's margin is
+    stale, ruling RS-1), a smaller one sets the
     speed to `2000 ppm × error` plus an integral term (no lasting error
     from a drifting clock). A client always sends its newest input, so a
     client the host filled past still yields samples.
@@ -175,15 +178,17 @@ model that tests it in one process (spec §9.1).
     stalls; it still re-simulates an owed rollback or loaded state,
     confirms and sends checksums, and sends a frame-less keepalive
     (`ClientInputs` without keys, `HostInputs` without frames) every
-    `KEEPALIVE_US` (250 ms), so a collecting new host never looks silent.
+    `KEEPALIVE_US` (250 ms; a rehosted peer every `REHOSTED_KEEPALIVE_US`,
+    20 ms, from the rehost on: each stamp samples its clock at the new
+    host), so a collecting new host never looks silent.
     Margins are not taken; `tick_phase` is `None`. `unsuspend(now)` (the old
     host is back, N69) restarts the pace at the current tick; nothing after
     `rehost` or `take_over`.
   - `rehost(host, now)`: a client's or spectator's host is now `host`, its
     peer state (acks, round trip, silence, time sync) fresh; suspended until
-    that host's `Control::Resume`. `Collect`/`Resume` from anyone else are
-    ignored, and so is a `Resume` more than `MAX_AHEAD` (6000) ticks past
-    our tick. A `Collect` (whose `known` must have one entry per slot, else
+    that host's `Control::Resume` or its `Datagram::Resume`. `Collect`/
+    `Resume` from anyone else are ignored, and so is a `Resume` more than
+    `MAX_AHEAD` (6000) ticks past our tick. A `Collect` (whose `known` must have one entry per slot, else
     `Malformed`) is answered with a `Report`: final inputs from
     `max(min(known), origin)` to our horizon, our own provisional inputs
     from our slot's prefix, our frontier as `ack`; `fit_report` halves the
@@ -215,11 +220,52 @@ model that tests it in one process (spec §9.1).
     abandoned (`Keys(0)` from their first unknown tick, as a lost peer's,
     N6), and the lagging rule for R runs at once (our tick can be
     `MAX_PREDICTION` past an absent slot: stalled there, the tick's own
-    fill would never run). Each rejoined peer gets `Resume { tick: R }`
-    and frames from its report's `ack` (`resend`); the pace restarts at R
-    and `now`. A client's `Resume` restarts its pace at `max(current, R)`
-    (the pause is not caught up) with time sync as after a jump. Both push
-    `Event::Resumed { tick }` and count `Stats::migrations`.
+    fill would never run). Both push `Event::Resumed { tick }` and count
+    `Stats::migrations`.
+  - The time sync after a resume (ruling RS-1; before it, on `bad`, 22 of
+    80 toy migrations and 24 of 90 net-sim runs stalled after the resume,
+    up to 123 ticks past it; none now):
+    - **The hold.** Every input in flight was lost with the old host, so
+      R runs only after the rejoined players' longest round trip (`rtt_x8`
+      from stamps, else the `Collect` → `Report` round trip; at most
+      `MAX_RESUME_HOLD_US`, 500 ms, in whole ticks): the pace restarts at
+      `now`, that far behind R.
+    - **`at_ms`.** Each rejoined peer gets `Control::Resume { tick: R,
+      at_ms, first, frames }` now: the final inputs it lacks from its
+      report's `ack` to our horizon (`fit_resume`, cut as a report), so it
+      never waits for them, and `at_ms`, the moment on *its* clock from
+      which its inputs reach us as R runs: our clock at R's start less the
+      median of its datagrams' arrival here minus their `sent_ms`
+      (`PeerState::offsets`: its clock offset plus one trip). The trip's
+      length cancels, so neither our round-trip estimate nor the
+      `Resume`'s own delivery time places the peer (0: no sample, the
+      receipt).
+    - **The twin.** A reliable message lost once comes a ping later (150
+      ms on `bad`, more in a burst), so each rejoined player also gets
+      `Datagram::Resume` (the same, at most `MAX_FRAMES`, halved to fit
+      `MAX_DATAGRAM`) in place of its frames in every datagram, the hold
+      included, until a datagram with its keys comes (it resumed) or
+      `RESUME_REPEAT_US` (2 s). The first of the two resumes; the other's
+      finals are taken, nothing else.
+    - **The client** takes the finals as its datagrams' (undecodable:
+      `Malformed`, nothing changes) and puts its pace at `R +
+      TARGET_MARGIN - input_delay` at `at_ms` (within
+      `RESUME_AT_BOUND_MS`, 2 s, of now: a hostile host moves a pace no
+      further), catching up when `at_ms` has passed, waiting when ahead
+      (the pause is not caught up); time sync as after a jump. A
+      spectator's pace is at `max(current, R)` now. Its integral term and
+      speed were zeroed at the rehost (another host's clock): kept, they
+      left 3 late stalls in 400 runs where zeroed left none.
+    - Pinned by `no_peer_stalls_after_a_resume_on_bad_links` (80 `bad`
+      migrations, odd seeds' clocks drifting: no stall episode and no late
+      input after any resume; 35 before), `a_new_host_holds_its_first_
+      tick_a_round_trip`, `a_resume_lost_once_still_places_its_player_on_
+      time`, `a_late_resume_is_overtaken_by_its_datagrams`,
+      `a_rejoined_peer_gets_what_it_lacks_with_the_resume` and
+      `session.rs`' `a_reordered_margin_never_jumps`,
+      `a_resumes_moment_moves_the_pace_at_most_its_bound`,
+      `a_held_pace_has_no_tick_phase`. `awful` stalls after a resume as it
+      does without one (its steady state).
   - `tests/migration.rs`: three sessions over a wire the test controls,
     then the harness's migrations (below).
 - **Successor choice** (`migration.rs`, N65, N68, N74): `Migration::new(

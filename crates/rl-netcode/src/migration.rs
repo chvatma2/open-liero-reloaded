@@ -31,6 +31,15 @@ pub const RETRY_US: u64 = 250_000;
 /// N74: at most this many migrations per match (the driver's count); past
 /// it, the host is lost.
 pub const MAX_MIGRATIONS: u32 = 4;
+/// A new host holds its first tick after the resume at most this long (its
+/// rejoined players' longest round trip, ruling RS-1: their first inputs
+/// reach it in time). `awful`'s 300 ms ping and its jitter fit.
+pub const MAX_RESUME_HOLD_US: u64 = 500_000;
+/// A new host repeats its resume in every datagram to a rejoined player
+/// (`Datagram::Resume`) until that player's inputs come, at most this long
+/// (then its frames, as to any player; the reliable `Control::Resume` went
+/// too).
+pub const RESUME_REPEAT_US: u64 = 2_000_000;
 
 /// What a peer in a migration does now ([`Migration::step`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,14 +156,45 @@ pub fn fit_report(
 ) -> InputsReport {
     // The decoder refuses a span past `u32::MAX`.
     own.truncate(MAX_REPORT_OWN.min((u32::MAX - own_first) as usize));
-    let mut n = upto.saturating_sub(first).min(u32::MAX - first);
     let mut report = InputsReport { ack, first, frames: Vec::new(), own_first, own };
+    fit_frames(first, upto, &mut |n| {
+        report.frames = encode_frames(first, n, slots, value, base);
+        encode_control(&Control::Report(report.clone())).len()
+    });
+    report
+}
+
+/// The new host's `Control::Resume { tick, at_ms, first, frames }` to a
+/// rejoined peer (ruling RS-1): the final inputs it lacks, ticks
+/// `first..upto` (`value`, `base` as `encode_frames` takes them), cut as a
+/// report is.
+pub fn fit_resume(
+    tick: u32,
+    at_ms: u32,
+    first: u32,
+    upto: u32,
+    slots: usize,
+    value: &dyn Fn(u32, usize) -> Option<u8>,
+    base: &dyn Fn(usize) -> Option<u8>,
+) -> Control {
+    let mut resume = Control::Resume { tick, at_ms, first, frames: Vec::new() };
+    fit_frames(first, upto, &mut |n| {
+        resume = Control::Resume { tick, at_ms, first, frames: encode_frames(first, n, slots, value, base) };
+        encode_control(&resume).len()
+    });
+    resume
+}
+
+/// Ticks `first..upto`, the span halved from its end until `encode(n)`
+/// (the message with `n` frames, its encoded length) fits `MAX_CONTROL`
+/// and `n` fits `MAX_REPORT_FRAMES`: the earliest ticks matter. The last
+/// call is the one that fits (or `n == 0`).
+fn fit_frames(first: u32, upto: u32, encode: &mut dyn FnMut(u32) -> usize) {
+    // The decoder refuses a span past `u32::MAX`.
+    let mut n = upto.saturating_sub(first).min(u32::MAX - first);
     loop {
-        if n as usize <= MAX_REPORT_FRAMES {
-            report.frames = encode_frames(first, n, slots, value, base);
-            if n == 0 || encode_control(&Control::Report(report.clone())).len() <= MAX_CONTROL {
-                return report;
-            }
+        if n as usize <= MAX_REPORT_FRAMES && (encode(n) <= MAX_CONTROL || n == 0) {
+            return;
         }
         n /= 2;
     }

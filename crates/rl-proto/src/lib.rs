@@ -47,7 +47,7 @@ pub const STATE_CHUNK: usize = 32 * 1024;
 pub const MAX_STATE: usize = 64 * 1024 * 1024;
 /// Per-datagram bytes on the wire (DTLS + SCTP + UDP + IPv4), for budgets.
 pub const OVERHEAD: usize = 48;
-/// Most ticks of final inputs one `Control::Report` carries (30 s).
+/// Most ticks of final inputs one `Control::Report` or `Control::Resume` carries (30 s).
 pub const MAX_REPORT_FRAMES: usize = 3_000;
 /// Most provisional inputs of its own slot a report carries.
 pub const MAX_REPORT_OWN: usize = 256;
@@ -67,6 +67,9 @@ pub struct Stamp {
 pub enum Datagram {
     Client(ClientInputs),
     Host(HostInputs),
+    /// Plan 12c (ruling RS-1): a new host's resume, the unreliable twin of
+    /// `Control::Resume`.
+    Resume(HostResume),
 }
 
 /// `keys[k]` is the sender's own slot's input for tick `first + k`; `ack` is
@@ -87,6 +90,18 @@ pub struct HostInputs {
     pub tick: u32,
     pub your_ack: u32,
     pub margin: i16,
+    pub first: u32,
+    pub frames: Vec<Frame>,
+}
+
+/// A new host's resume to a rejoined player, sent every tick until that
+/// player's inputs arrive: `Control::Resume`'s fields (`tick`, `at_ms`, the
+/// final inputs from `first`), with at most `MAX_FRAMES` frames, so that a
+/// reliable message lost once (a ping later) does not make a player late.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostResume {
+    pub tick: u32,
+    pub at_ms: u32,
     pub first: u32,
     pub frames: Vec<Frame>,
 }
@@ -161,9 +176,17 @@ pub enum Control {
     },
     /// A rejoined peer to its new host: the answer to `Collect`.
     Report(InputsReport),
-    /// New host to its peers: the match resumes at `tick`.
+    /// New host to a rejoined peer: the match resumes at `tick`. `at_ms`
+    /// is the moment, on the receiver's own clock (its stamps' `sent_ms`),
+    /// from which an input it sends reaches the new host as it runs `tick`
+    /// (`0`: unknown, the receipt). `frames` are the final inputs from
+    /// `first` the peer lacks (the frame delta rule, `base` the peer's
+    /// values at `first - 1`), so it never waits for them after the resume.
     Resume {
         tick: u32,
+        at_ms: u32,
+        first: u32,
+        frames: Vec<Frame>,
     },
 }
 
@@ -205,12 +228,25 @@ fn validate_datagram(d: &Datagram, slots: usize) -> Result<(), ProtoError> {
         Datagram::Host(h) => {
             h.frames.len() <= MAX_FRAMES && h.frames.iter().all(|f| validate_frame(f, slots))
         }
+        Datagram::Resume(r) => {
+            r.frames.len() <= MAX_FRAMES && r.frames.iter().all(|f| validate_frame(f, slots))
+        }
     };
     if ok { Ok(()) } else { Err(ProtoError::Invalid) }
 }
 
 pub fn encode_control(c: &Control) -> Vec<u8> {
     postcard::to_allocvec(c).expect("serialising into a Vec cannot fail")
+}
+
+/// A migration message's frames (`Report`, `Resume`): at most
+/// `MAX_REPORT_FRAMES`, no `u32` overflow of `first + len`, each frame
+/// `changed ⊆ known` with a key per changed bit (the slots' count is the
+/// receiver's to check).
+fn valid_report_frames(first: u32, frames: &[Frame]) -> bool {
+    frames.len() <= MAX_REPORT_FRAMES
+        && first.checked_add(frames.len() as u32).is_some()
+        && frames.iter().all(|f| f.changed & !f.known == 0 && f.keys.len() == f.changed.count_ones() as usize)
 }
 
 pub fn decode_control(b: &[u8]) -> Result<Control, ProtoError> {
@@ -226,14 +262,11 @@ pub fn decode_control(b: &[u8]) -> Result<Control, ProtoError> {
         Control::Late { from, to } => from < to,
         Control::Collect { known } => (1..=MAX_SLOTS).contains(&known.len()),
         Control::Report(r) => {
-            r.frames.len() <= MAX_REPORT_FRAMES
+            valid_report_frames(r.first, &r.frames)
                 && r.own.len() <= MAX_REPORT_OWN
-                && r.first.checked_add(r.frames.len() as u32).is_some()
                 && r.own_first.checked_add(r.own.len() as u32).is_some()
-                && r.frames
-                    .iter()
-                    .all(|f| f.changed & !f.known == 0 && f.keys.len() == f.changed.count_ones() as usize)
         }
+        Control::Resume { first, frames, .. } => valid_report_frames(*first, frames),
         _ => true,
     };
     if ok { Ok(c) } else { Err(ProtoError::Invalid) }
