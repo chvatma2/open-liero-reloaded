@@ -136,7 +136,10 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     a `Lobby`, and N59's ban decision reads it (final review B-M1);
     whether it changed.
   - Leaving (`Bye`, `disconnected`): removed, `Notice(Left)`,
-    `HostEvent::Left`; during a match the slot stays in the match.
+    `HostEvent::Left`; `timed_out` (a link that timed out; N86):
+    `Notice(TimedOut)`, `HostEvent::TimedOut`; during a match the slot's worm
+    is withdrawn (rl-netcode). A migrated lobby never keeps the old host's
+    member and drops players not back as `Left` (PF12d-3).
   - Standby and succession (plan 12c): `ToHost::Standby { port, relays }`
     is kept per member (invalid ones ignored); a change is taken at most
     once per `STANDBY_WINDOW_US` (5 s), a later one is held, the latest

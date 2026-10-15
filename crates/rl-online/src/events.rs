@@ -49,6 +49,8 @@ pub enum OnlineEvent {
     Lagging(bool),
     /// A member left the lobby.
     Left(String),
+    /// A member timed out (OLX's "<player> has timed out").
+    TimedOut(String),
     /// The host kicked this peer (and `banned` it).
     Kicked { banned: bool },
     /// The host refused this peer, or this peer cannot play the host's

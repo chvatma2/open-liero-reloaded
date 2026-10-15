@@ -102,6 +102,7 @@ fn samples() -> Vec<Vec<u8>> {
             SuccessorWire { member: 2, key: [2; 32], direct: None, relays: vec![], can_host: false },
         ]),
         ToClient::Notice(Notice::NotReady(vec![1, 2])),
+        ToClient::Notice(Notice::TimedOut(3)),
         ToClient::Ended(MatchEndWire {
             reason: "limit".into(),
             rows: vec![(0, 1, 2, 3, 4)],

@@ -77,6 +77,8 @@ pub enum HostEvent {
     ContentComplete(u8),
     /// A member left (`Bye` or its transport closed).
     Left(u8),
+    /// A member's link timed out (`timed_out`); no `Left` follows.
+    TimedOut(u8),
     /// Close this peer's transport: a refusal, a timeout, a protocol
     /// violation or a kick (`ban` for a ban). A kicked member is gone from
     /// the lobby; no `Left` follows.

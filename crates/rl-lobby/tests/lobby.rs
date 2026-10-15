@@ -2067,3 +2067,19 @@ fn a_member_is_lacking_until_its_have_answers_the_current_list() {
     assert!(net.start(1, 2).is_ok());
     consistent(&net);
 }
+
+/// N86: a member whose link timed out is announced as timed out, not left.
+#[test]
+fn a_timed_out_member_is_announced_as_such() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let w = join(&mut net, 2, "Wat");
+    let id = id_of(&net, a);
+    net.time_out(a);
+    net.settle();
+    assert!(got(&net, w, &ClientEvent::Notice(Notice::TimedOut(id))));
+    assert!(net.host_events.contains(&HostEvent::TimedOut(id)));
+    assert!(!net.host_events.contains(&HostEvent::Left(id)));
+    assert!(net.host.state().members.iter().all(|m| m.id != id));
+    consistent(&net);
+}

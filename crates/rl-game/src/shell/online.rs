@@ -831,7 +831,11 @@ impl Shell {
                     }
                     self.chat_line(LogLine::event(text));
                 }
-                OnlineEvent::Left(name) => self.chat_line(LogLine::event(format!("{name} left"))),
+                // OLX's NetworkTexts HasLeft and HasTimedOut (src/client/Options.cpp:769-770).
+                OnlineEvent::Left(name) => self.chat_line(LogLine::event(format!("{name} has left"))),
+                OnlineEvent::TimedOut(name) => {
+                    self.chat_line(LogLine::event(format!("{name} has timed out")))
+                }
                 OnlineEvent::MatchStarting { start, my_slot } => {
                     let after: Vec<OnlineEvent> = queue.drain(..).collect();
                     let rest = self.start_online(start, my_slot, after, pumped, out);

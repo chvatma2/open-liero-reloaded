@@ -316,7 +316,7 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   tally's kills and the results survive a stall of any length (bound:
   the exit summary's match time misses the thinned ticks, and their damage
   popups are gone); then the oldest chat-like event goes (`Chat`,
-  `Notice`, `Left`, `Downloads`, `Reachability`, `RelayJoin`,
+  `Notice`, `Left`, `TimedOut`, `Downloads`, `Reachability`, `RelayJoin`,
   `ListenRelay`); control events (all others: a match's start and end,
   the lobby, lagging, a lost connection, a replay) never go (PU-2), so
   only they can pass the bound; each loss counted, the first logged. A
@@ -364,7 +364,7 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   mod counts, `net::WeaponsKey`), the host's LAN
   announcement (`Announcer`, for `Visibility::Public` and `Lan`; `GameSummary::of_lobby(..).lan()`,
   the level's name from the peer's content); `Chat` ("name: text",
-  `LineKind::Chat`), `Notice` and `Left` ("name left") → the lobby's chat
+  `LineKind::Chat`), `Notice`, `Left` ("name has left") and `TimedOut` ("name has timed out"; OLX HasLeft/HasTimedOut) → the lobby's chat
   (`net::CHAT_KEEP` lines) and the HUD log; `MatchStarting` → the last
   match's view ends, `setup::load_online` (from `OnlinePeer::content`,
   the content the match was built from), `Session::try_online` (a

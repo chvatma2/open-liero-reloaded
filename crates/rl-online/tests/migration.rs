@@ -1109,3 +1109,45 @@ fn a_joiner_still_loading_when_its_host_crashes_is_host_lost() {
     assert!(!net.peers[c].has(|e| matches!(e, OnlineEvent::Migrating(_))), "it does not follow");
     net.run_until(Duration::from_secs(8), "the players move on", |n| n.peers[a].has(migrated));
 }
+
+/// N86, N88, Review Focus 2: Cid leaves while the match moves from a frozen
+/// host to Anna; Anna and Bert remove Cid's worm and the old host's, their
+/// records and replays agree, and only Cid is said to have left (the old
+/// host goes silently, ruling PF12d-3).
+#[test]
+fn a_player_leaving_during_a_migration_is_removed_at_the_resume() {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 0.15);
+    let a = net.join_with_migration("Anna", direct());
+    let b = net.join_with_migration("Bert", direct());
+    let c = net.join_with_migration("Cid", direct());
+    net.ready(&[a, b, c]);
+    net.host().peer().lobby().start(7).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() > 300);
+    let sc = net.peers[c].started()[0].unwrap();
+    net.peers[0].frozen = true;
+    net.run_until(Duration::from_secs(5), "Bert finds the host gone", |n| {
+        n.peers[b].has(|e| matches!(e, OnlineEvent::Migrating(_)))
+    });
+    net.peers[c].peer().leave();
+    net.peers[c].frozen = true;
+    net.run_until(Duration::from_secs(12), "both resume under Anna", |n| {
+        n.peers[a].has(migrated) && n.peers[b].has(migrated)
+    });
+    net.run_until(Duration::from_secs(25), "the match ends and both make replays", |n| {
+        [a, b].iter().all(|&i| n.peers[i].has(ended) && n.peers[i].has(replay_ready))
+    });
+    let ra = net.peers[a].peer().last_record().cloned().unwrap();
+    let rb = net.peers[b].peer().last_record().cloned().unwrap();
+    assert_eq!(ra, rb);
+    let slots: Vec<u8> = ra.gone.iter().map(|g| g.1).collect();
+    assert!(slots.contains(&0) && slots.contains(&sc), "the old host and Cid: {:?}", ra.gone);
+    for i in [a, b] {
+        assert!(!net.peers[i].has(|e| matches!(e, OnlineEvent::DesyncBundle(_))));
+        assert!(net.peers[i].has(|e| matches!(e, OnlineEvent::Left(x) if x == "Cid")));
+        assert!(
+            !net.peers[i].has(|e| matches!(e, OnlineEvent::Left(x) if x == "Host")),
+            "the old host goes silently"
+        );
+    }
+}

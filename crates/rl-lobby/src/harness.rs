@@ -169,6 +169,22 @@ impl Net {
         self.pump();
     }
 
+    /// Peer `c`'s link times out: as `disconnect`, but the host is told
+    /// `timed_out`.
+    pub fn time_out(&mut self, c: usize) {
+        self.pump();
+        self.flights.retain(
+            |f| !matches!(f.what, What::ToHost(i, _) | What::ToClient(i, _) | What::Close(i) if i == c),
+        );
+        if core::mem::replace(&mut self.peers[c].open, false) {
+            if let Some(client) = &mut self.peers[c].client {
+                client.disconnected();
+            }
+            self.host.timed_out(self.peers[c].peer);
+        }
+        self.pump();
+    }
+
     /// The round trips the host would measure: twice the delay, in ms.
     pub fn rtts(&self) -> BTreeMap<PeerId, u32> {
         let ms = u32::try_from(2 * self.delay_us / 1000).unwrap_or(u32::MAX);

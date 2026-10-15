@@ -165,6 +165,7 @@ fn evictable(e: &OnlineEvent) -> bool {
         OnlineEvent::Chat { .. }
             | OnlineEvent::Notice(_)
             | OnlineEvent::Left(_)
+            | OnlineEvent::TimedOut(_)
             | OnlineEvent::Downloads(_)
             | OnlineEvent::Reachability(_)
             | OnlineEvent::RelayJoin { .. }

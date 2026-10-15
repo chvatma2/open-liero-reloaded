@@ -752,7 +752,7 @@ impl OnlinePeer {
                     },
                     _ => self.drop_peer(peer),
                 },
-                NetEvent::Disconnected { peer, .. } => self.forget_peer(peer),
+                NetEvent::Disconnected { peer, why } => self.forget_peer_as(peer, why == Why::Timeout),
                 NetEvent::Refused { .. } | NetEvent::Answered => {}
                 NetEvent::JoinFailed { .. } => {
                     let mut notes = Vec::new();
@@ -854,8 +854,19 @@ impl OnlinePeer {
 
     /// A host's peer is gone.
     fn forget_peer(&mut self, peer: PeerId) {
+        self.forget_peer_as(peer, false);
+    }
+
+    /// A host's peer is gone; `timed_out` says it to the others as "has
+    /// timed out" instead of "has left" (N86). The match withdraws its
+    /// worm either way (N87).
+    fn forget_peer_as(&mut self, peer: PeerId, timed_out: bool) {
         if let Side::Host(h) = &mut self.side {
-            h.lobby.disconnected(peer);
+            if timed_out {
+                h.lobby.timed_out(peer);
+            } else {
+                h.lobby.disconnected(peer);
+            }
             h.forget(peer);
         }
         self.closing.remove(&peer);
@@ -1073,6 +1084,7 @@ impl OnlinePeer {
                 // content is complete (its `Have`, after every list).
                 HostEvent::ContentComplete(id) => self.mid_match_join(id, now),
                 HostEvent::Left(id) => self.events.push(OnlineEvent::Left(self.name(id))),
+                HostEvent::TimedOut(id) => self.events.push(OnlineEvent::TimedOut(self.name(id))),
                 HostEvent::Kick { peer, ban } => {
                     // A ban by key leaves the address open (spec §5.2);
                     // one with the address closes the gate to it.
@@ -1249,6 +1261,7 @@ impl OnlinePeer {
         match n {
             Notice::Joined(id) => OnlineEvent::Notice(format!("{} joined", self.name(id))),
             Notice::Left(id) => OnlineEvent::Left(self.name(id)),
+            Notice::TimedOut(id) => OnlineEvent::TimedOut(self.name(id)),
             Notice::Kicked(id) => OnlineEvent::Notice(format!("{} was kicked", self.name(id))),
             Notice::Banned(id) => OnlineEvent::Notice(format!("{} was banned", self.name(id))),
             Notice::NotReady(ids) => {
@@ -1394,9 +1407,11 @@ impl OnlinePeer {
                     ep.allow_burst(peer, bytes)
                 }
             }
-            Event::PeerTimedOut { peer } | Event::RepairFailed { peer } | Event::JoinRefused { peer }
-                if host =>
-            {
+            Event::PeerTimedOut { peer } if host => {
+                self.endpoint.close(peer);
+                self.forget_peer_as(peer, true);
+            }
+            Event::RepairFailed { peer } | Event::JoinRefused { peer } if host => {
                 self.drop_peer(peer);
             }
             Event::Lagging(on) if !host => self.events.push(OnlineEvent::Lagging(on)),

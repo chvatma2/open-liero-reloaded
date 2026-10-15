@@ -15,7 +15,7 @@ use rl_online::bundle::GameBundle;
 use rl_online::content::{Download, DownloadState};
 use rl_online::peer::{MISMATCH, SETUP_REFUSED, WRONG_HOST};
 use rl_online::{HostListen, Join, MigrationConfig, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
-use rl_proto::{Phase, PublicKey, SeatWire};
+use rl_proto::{MatchSetupWire, Phase, PublicKey, SeatWire};
 use rl_replay::Replay;
 use rl_sim::Keys;
 use tempfile::TempDir;
@@ -1083,4 +1083,53 @@ fn a_silent_host_is_given_up() {
     let waited = at.saturating_duration_since(opened);
     assert!(waited >= JOIN_DEADLINE && waited < JOIN_DEADLINE + Duration::from_secs(1), "{waited:?}");
     assert!(client.is_closed());
+}
+
+/// User decision 3: the last opponent leaving ends the match at once
+/// (OLX's CheckGameOver below two worms); the one left wins. RED before
+/// Task 4 (Anna's worm stayed); here it pins the end and the text.
+#[test]
+fn the_last_opponent_leaving_ends_the_match() {
+    let Some(content) = content() else { return };
+    let setup = MatchSetupWire { bots: vec![], ..setup(&content, 1.0) };
+    let cfg =
+        HostConfig { name: "Duel".into(), password: None, max_players: 8, max_spectators: 4, admins: vec![] };
+    let mut net = Net::hosted_with(content, setup, PeerRole::Host { lobby: cfg, listen: HostListen::off() });
+    let a = net.join_all(&["Anna"])[0];
+    net.ready(&[a]);
+    net.host().peer().lobby().start(4).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() >= 200);
+    net.peers[a].peer().leave();
+    net.run_until(Duration::from_secs(8), "the host's match ends", |n| n.peers[0].has(ended));
+    let rec = net.peers[0].peer().last_record().cloned().unwrap();
+    let t = rec.gone.iter().find(|g| g.1 == 1).expect("Anna is withdrawn").0;
+    // The end comes in the tick of the withdrawal; the record runs RECORD_AFTER_END
+    // (300) more ticks, and a few for the end to be confirmed.
+    assert!(
+        rec.rows.len() <= (t + 1 + rl_online::RECORD_AFTER_END + 20) as usize,
+        "ended at once, not at the limit"
+    );
+    assert!(net.peers[0].has(|e| matches!(e, OnlineEvent::Left(n) if n == "Anna")));
+    let end = net.peers[0].events.iter().find_map(|e| match e {
+        OnlineEvent::MatchEnded(end) => Some(end.clone()),
+        _ => None,
+    });
+    assert_eq!(end.unwrap().reason, "last worm standing");
+}
+
+/// N86: a member whose link times out is "timed out" to the others.
+#[test]
+fn a_member_that_times_out_is_said_to() {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 0.5);
+    let clients = net.join_all(&["Anna", "Bert"]);
+    net.ready(&clients);
+    net.host().peer().lobby().start(9).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() >= 100);
+    net.peers[clients[1]].frozen = true; // alive, silent: no Bye, no close
+    net.run_until(Duration::from_secs(14), "the host times Bert out", |n| {
+        n.peers[0].has(|e| matches!(e, OnlineEvent::TimedOut(x) if x == "Bert"))
+            && n.peers[clients[0]].has(|e| matches!(e, OnlineEvent::TimedOut(x) if x == "Bert"))
+    });
+    assert!(!net.peers[0].has(|e| matches!(e, OnlineEvent::Left(x) if x == "Bert")));
 }

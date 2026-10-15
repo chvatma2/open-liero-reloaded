@@ -233,7 +233,17 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     `TickRecorder::state_loaded` and `OnlineEvent::StateLoaded { tick }`
     (a state loads while receiving, so it comes before that poll's
     `Restored`); a client's `Lagging` → `Lagging`; the
-    host's `PeerTimedOut`/`RepairFailed`/`JoinRefused` drop the peer;
+    host's `PeerTimedOut` closes the peer and `forget_peer_as(peer, true)`
+    (`lobby.timed_out`: `OnlineEvent::TimedOut`, OLX's "has timed out"),
+    as does the transport's `Disconnected { why: Timeout }` (also in a
+    standby host's lobby); every other `Disconnected` is `forget_peer`
+    (`forget_peer_as(peer, false)`: `OnlineEvent::Left`), and
+    `RepairFailed`/`JoinRefused` drop the peer. A client maps
+    `Notice::TimedOut`; every path reaches `Session::peer_lost` (the worm is
+    withdrawn). Tests: `a_member_that_times_out_is_said_to`,
+    `the_last_opponent_leaving_ends_the_match`, and
+    `a_player_leaving_during_a_migration_is_removed_at_the_resume` (only Cid
+    "has left", the old host goes silently);
     `StateSent` → `allow_burst` on the sending side, a client's
     `StateBegin` → `allow_burst` on receiving. A client's endpoint lets its
     host send `HOST_RELIABLE_BYTES_PER_S` (4 MiB/s).

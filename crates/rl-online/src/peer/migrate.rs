@@ -669,8 +669,12 @@ impl OnlinePeer {
                         }
                     }
                 }
-                NetEvent::Disconnected { peer, .. } => {
-                    t.lobby.disconnected(peer);
+                NetEvent::Disconnected { peer, why } => {
+                    if why == rl_net::endpoint::Why::Timeout {
+                        t.lobby.timed_out(peer);
+                    } else {
+                        t.lobby.disconnected(peer);
+                    }
                     t.forget(peer);
                     sb.closing.remove(&peer);
                 }

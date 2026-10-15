@@ -197,6 +197,7 @@ impl Rec {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Gone {
     Left,
+    TimedOut,
     Kicked { ban: Ban },
 }
 
@@ -419,6 +420,17 @@ impl LobbyHost {
     pub fn disconnected(&mut self, peer: PeerId) {
         if let Some(Link::Member(id)) = self.links.remove(&peer) {
             self.drop_member(id, Gone::Left);
+        }
+    }
+
+    /// `peer`'s link timed out (the session's `PeerTimedOut`, or the
+    /// transport's timeout): as `disconnected`, announced as
+    /// `Notice::TimedOut` and `HostEvent::TimedOut` (decision N86).
+    ///
+    /// OLX: src/client/Options.cpp:769-770 (HasLeft, HasTimedOut).
+    pub fn timed_out(&mut self, peer: PeerId) {
+        if let Some(Link::Member(id)) = self.links.remove(&peer) {
+            self.drop_member(id, Gone::TimedOut);
         }
     }
 
@@ -1273,6 +1285,10 @@ impl LobbyHost {
             Gone::Left => {
                 self.broadcast(&ToClient::Notice(Notice::Left(id)));
                 self.events.push(HostEvent::Left(id));
+            }
+            Gone::TimedOut => {
+                self.broadcast(&ToClient::Notice(Notice::TimedOut(id)));
+                self.events.push(HostEvent::TimedOut(id));
             }
             Gone::Kicked { ban } => {
                 if ban != Ban::No {

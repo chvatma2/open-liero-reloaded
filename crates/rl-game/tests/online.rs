@@ -678,8 +678,8 @@ fn hosting_and_joining_from_the_shell() {
     frames_until("the host sees the client leave", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
         members(s[0]) == 1
     });
-    assert!(h.data.chat.iter().any(|l| l.text == "Anna left"), "{:?}", h.data.chat);
-    assert!(h.session().unwrap().log.texts().any(|l| l == "Anna left"), "in the host's HUD log too");
+    assert!(h.data.chat.iter().any(|l| l.text == "Anna has left"), "{:?}", h.data.chat);
+    assert!(h.session().unwrap().log.texts().any(|l| l == "Anna has left"), "in the host's HUD log too");
 }
 
 /// Chat typed in game reaches the other player's HUD log as a chat line

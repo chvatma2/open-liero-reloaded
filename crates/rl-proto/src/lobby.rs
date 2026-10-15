@@ -321,6 +321,8 @@ pub enum Notice {
     NotReady(Vec<u8>),
     Started,
     Message(String),
+    /// Member `id` timed out (appended).
+    TimedOut(u8),
 }
 
 /// A reliable-channel payload split by its tag byte.
