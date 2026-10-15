@@ -112,3 +112,5 @@
   fixtures/net/cases/net-mw-1-0-fossilfacility-typical-3s3c1v-seed2454907585-2637e714.ron
 2026-10-15 bless-regression: SK-9: a spectator whose state loaded just before the crash got every frame of the new host malformed
   fixtures/net/cases/net-mw-1-0-fossilfacility-awful-6s4c1v-seed3163848068-e465b7a8.ron
+2026-10-15 bless-regression: SK-10: every survivor host lost, no successor reachable when asked (outages over both windows' asks); a legitimate end
+  fixtures/net/cases/net-classic-castlestrike-typical-16s3c0v-seed2454863382-08923ba3.ron
