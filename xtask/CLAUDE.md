@@ -135,7 +135,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `relays: Some([])`): Multiplayer, the Direct tab, the address typed,
   Join, the lobby's 2 members (the dedicated server is no member), Back,
   then the Internet tab (2 frames for the table's sizing pass), the
-  listed "e2e server" clicked, Join (its announced address, directly),
+  listed "e2e server" clicked until its Join shows (`ClickUntil`), Join (its announced address, directly),
   the lobby's 2 members again, a chat line, Ready, the match with keys
   held, its results, Back to lobby, Back, Quit. Besides the game's checks
   it needs the bot client to exit 0 by itself after its match, the server

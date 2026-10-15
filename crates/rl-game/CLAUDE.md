@@ -693,6 +693,11 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `ui`, `within`): `Click(label)` (the widget found by label in egui's
   AccessKit tree, enabled for the run: `widgets`, `click_point`; a pointer
   press and release injected into the next two frames' `RawInput`),
+  `ClickUntil(label, shows)` (clicks `label` until an enabled widget
+  `shows` appears, again every `RECLICK_FRAMES` (30) frames while it has
+  not: the effect, not the sending, ends the step; the e2e's Internet
+  tab row, whose Join once never showed after one click on a loaded
+  machine, `click_until_clicks_again_until_its_effect_shows`),
   `Key(name)` (egui and `App::key`, as the window delivers a key),
   `Type(text)` (egui's text event to the focused field: click it first),
   `Press`/`Release(action)` (the input path), `WaitFor(screen)`,

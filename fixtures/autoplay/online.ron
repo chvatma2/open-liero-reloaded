@@ -29,7 +29,9 @@
         (ui: Click("Internet")),
         // The tab's table takes no click in its first frame (egui's sizing pass).
         (ui: Wait(2)),
-        (ui: Click("e2e server"), within: 3000),
+        // Selected once its Join shows (a click on a row that changes under
+        // it can be lost: ClickUntil sends it again until then).
+        (ui: ClickUntil("e2e server", "Join"), within: 3000),
         (ui: Screenshot("online-listed")),
         (ui: Click("Join")),
         (ui: WaitFor("Lobby"), within: 3000),

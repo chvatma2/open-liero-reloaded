@@ -43,6 +43,9 @@ pub const DEFAULT_WITHIN: u64 = 600;
 /// menus acted on it and drew the result.
 const INPUT_FRAMES: u64 = 3;
 
+/// A `ClickUntil` clicks again after this many frames without its effect.
+const RECLICK_FRAMES: u64 = 30;
+
 /// The screens' names, as `WaitFor` and `Assert(Screen(..))` give them.
 pub const SCREENS: [(&str, Screen); 13] = [
     ("Main", Screen::Main),
@@ -106,6 +109,13 @@ pub struct Step {
 pub enum Do {
     /// Clicks the widget with this label (waiting for it to show).
     Click(String),
+    /// Clicks the widget labelled `.0` until a widget labelled `.1` shows
+    /// (enabled): the click's effect, not its sending, ends the step. A
+    /// click can be lost in a frame egui discards (a `Grid` laid out anew
+    /// when a listed game's row changes under it: the e2e's Internet tab),
+    /// so one is sent again every `RECLICK_FRAMES` while the effect has not
+    /// shown, until the step's `within`.
+    ClickUntil(String, String),
     /// Taps a key ([`KEYS`]'s names) for the menus and the game.
     Key(String),
     /// Types this text into the field that has the keyboard (click it
@@ -178,6 +188,9 @@ pub fn parse(text: &str) -> Result<Vec<Step>, String> {
             Do::Click(l) | Do::Assert(Check::Label(l)) | Do::Screenshot(l) | Do::Type(l)
                 if l.trim().is_empty() =>
             {
+                return bad("an empty name");
+            }
+            Do::ClickUntil(a, b) if a.trim().is_empty() || b.trim().is_empty() => {
                 return bad("an empty name");
             }
             Do::Screenshot(name) if !name.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) => {
@@ -339,6 +352,8 @@ pub struct Autoplay {
     since: Option<u64>,
     /// No step before this frame (input still being delivered).
     busy_until: u64,
+    /// A `ClickUntil`'s last click, in this frame.
+    clicked_at: Option<u64>,
     /// egui events for the next frame, and for the one after.
     pending: Vec<Event>,
     later: Vec<Event>,
@@ -372,6 +387,7 @@ impl Autoplay {
             next: 0,
             since: None,
             busy_until: 0,
+            clicked_at: None,
             pending: Vec::new(),
             later: Vec::new(),
             keys_later: Vec::new(),
@@ -386,6 +402,16 @@ impl Autoplay {
         self.pending = std::mem::take(&mut self.later);
     }
 
+    /// A primary click at `at`: pressed in the next frame, released in the
+    /// one after.
+    fn click(&mut self, at: Pos2) {
+        let m = Modifiers::NONE;
+        let button = PointerButton::Primary;
+        self.pending.push(Event::PointerMoved(at));
+        self.pending.push(Event::PointerButton { pos: at, button, pressed: true, modifiers: m });
+        self.later.push(Event::PointerButton { pos: at, button, pressed: false, modifiers: m });
+    }
+
     /// The step being played (for messages).
     pub fn current(&self) -> Option<&Step> {
         self.steps.get(self.next)
@@ -398,6 +424,7 @@ impl Autoplay {
         }));
         self.next += 1;
         self.since = None;
+        self.clicked_at = None;
     }
 
     fn fail(&mut self, frame: u64, why: String) -> Vec<Effect> {
@@ -454,24 +481,34 @@ impl Autoplay {
             let waited = seen.frame - since;
             let late = waited > step.within;
             match &step.ui {
+                Do::ClickUntil(label, shows) => {
+                    let ws = widgets.as_deref().unwrap_or_default();
+                    if click_point(ws, shows).is_some() {
+                        let clicks = if self.clicked_at.is_some() { "clicked" } else { "already shown" };
+                        self.done(seen.frame, clicks);
+                        continue;
+                    }
+                    let due = self.clicked_at.is_none_or(|f| seen.frame >= f + RECLICK_FRAMES);
+                    match click_point(ws, label) {
+                        _ if late => {
+                            let mut names: Vec<String> = ws.iter().map(|w| w.name.clone()).collect();
+                            names.dedup();
+                            let what = format!("no {shows:?} after clicking {label:?}; showing: {names:?}");
+                            out.extend(self.fail(seen.frame, what));
+                        }
+                        Some(at) if due => {
+                            self.click(at);
+                            self.clicked_at = Some(seen.frame);
+                            self.busy_until = seen.frame + INPUT_FRAMES;
+                        }
+                        _ => {}
+                    }
+                    return out;
+                }
                 Do::Click(label) => {
                     match widgets.as_deref().and_then(|w| click_point(w, label)) {
                         Some(at) => {
-                            let m = Modifiers::NONE;
-                            let button = PointerButton::Primary;
-                            self.pending.push(Event::PointerMoved(at));
-                            self.pending.push(Event::PointerButton {
-                                pos: at,
-                                button,
-                                pressed: true,
-                                modifiers: m,
-                            });
-                            self.later.push(Event::PointerButton {
-                                pos: at,
-                                button,
-                                pressed: false,
-                                modifiers: m,
-                            });
+                            self.click(at);
                             self.done(seen.frame, &format!("at ({:.0}, {:.0})", at.x, at.y));
                             self.busy_until = seen.frame + INPUT_FRAMES;
                         }
@@ -793,6 +830,48 @@ mod tests {
         let mut a = Autoplay::from_steps(parse(r#"(steps: [(ui: WaitForExit, within: 2)])"#).unwrap());
         assert!(a.step(&seen(0, None, None)).is_empty());
         assert!(matches!(&a.step(&seen(3, None, None))[..], [Effect::Fail(_)]));
+    }
+
+    /// A click lost (a frame egui discarded) is sent again until its effect
+    /// shows: the step waits on the state, not on the click's sending.
+    #[test]
+    fn click_until_clicks_again_until_its_effect_shows() {
+        let steps =
+            parse(r#"(steps: [(ui: ClickUntil("e2e server", "Join"), within: 100), (ui: Quit)])"#).unwrap();
+        let row = tree(vec![(1, node(Role::Button, Some("e2e server"), None, (0.0, 0.0)))]);
+        let joined = tree(vec![
+            (1, node(Role::Button, Some("e2e server"), None, (0.0, 0.0))),
+            (2, node(Role::Button, Some("Join"), None, (0.0, 40.0))),
+        ]);
+        let presses = |a: &mut Autoplay| {
+            let mut raw = RawInput::default();
+            a.input(&mut raw);
+            raw.events.iter().filter(|e| matches!(e, Event::PointerButton { pressed: true, .. })).count()
+        };
+        let mut a = Autoplay::from_steps(steps);
+        assert!(a.step(&seen(0, None, Some(&row))).is_empty());
+        assert_eq!(presses(&mut a), 1, "clicked");
+        presses(&mut a);
+        // The click was lost: no Join. Not clicked again before RECLICK_FRAMES.
+        assert!(a.step(&seen(5, None, Some(&row))).is_empty());
+        assert_eq!(presses(&mut a), 0);
+        assert!(a.step(&seen(RECLICK_FRAMES, None, Some(&row))).is_empty());
+        assert_eq!(presses(&mut a), 1, "clicked again");
+        presses(&mut a);
+        // Its effect shows: done, and the next step runs.
+        assert_eq!(a.step(&seen(RECLICK_FRAMES + 5, None, Some(&joined))), [Effect::Quit]);
+
+        // Never shown within the step's frames: fails naming both.
+        let mut a = Autoplay::from_steps(
+            parse(r#"(steps: [(ui: ClickUntil("e2e server", "Join"), within: 50)])"#).unwrap(),
+        );
+        assert!(a.step(&seen(0, None, Some(&row))).is_empty());
+        let out = a.step(&seen(60, None, Some(&row)));
+        assert!(
+            matches!(&out[..], [Effect::Fail(m)] if m.contains("Join") && m.contains("e2e server")),
+            "{out:?}"
+        );
+        assert!(parse(r#"(steps: [(ui: ClickUntil("a", " "))])"#).is_err());
     }
 
     #[test]

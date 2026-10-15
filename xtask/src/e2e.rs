@@ -584,7 +584,7 @@ mod tests {
         let online = std::fs::read_to_string(root().join(ONLINE_SCRIPT)).unwrap();
         assert!(online.contains(r#"Type("127.0.0.1:{port}")"#));
         // Then the server as listed on the run's relay.
-        assert!(online.contains(r#"Click("e2e server")"#));
+        assert!(online.contains(r#"ClickUntil("e2e server", "Join")"#));
         assert!(online.contains(&format!("Type({CHAT:?})")));
         assert!(shots(&online).contains(&"online".to_string()));
         let err = "rl-game: GPU x\nwarning: no gamepads\nthread 'main' panicked at x\nerror: y\nMesa: fine\n";
