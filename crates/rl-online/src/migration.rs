@@ -28,11 +28,13 @@ pub const ANSWER_OPEN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The same for a join through the relays (plan 12c Task 7): after the
 /// answer, ICE checks its candidate pairs (host, server-reflexive, a TURN
-/// relay's), whose lost checks are sent again 250 ms, then 0.5, 1 and 2 s
-/// later (str0m's backoff), then DTLS and SCTP open over the pair, each a
-/// round trip or two of a relayed path. A slow but healthy successor is
-/// waited for one window.
-pub const RELAYS_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+/// relay's), whose lost checks are sent again 0.25, 0.75, 1.75 and 3.75 s
+/// after the first (str0m's backoff), then DTLS and SCTP open over the
+/// pair, each a round trip or two of a relayed path, and rl-net reports
+/// the link `Connected` once its stats name the pair (up to 1.5 s after
+/// it opened). A slow but healthy successor is waited for; a dead one holds
+/// its joiners this long, within the give-up.
+pub const RELAYS_OPEN_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// How long a join to a successor through `route` may take from the
 /// successor's answer to its link's opening ([`ANSWER_OPEN_TIMEOUT`],
@@ -116,6 +118,15 @@ impl MigrationConfig {
     }
 }
 
+/// N64 on the receiving side: a succession's direct address is one the
+/// host saw on its own network (not a global address) with a standby port
+/// (at least `MIN_STANDBY_PORT`). An honest host lists no other; a hostile
+/// one cannot aim its members' connects at an internet address.
+#[doc(hidden)]
+pub fn n64_direct(ip: [u8; 4], port: u16) -> bool {
+    !rl_proto::is_global(std::net::IpAddr::from(ip)) && port >= rl_proto::MIN_STANDBY_PORT
+}
+
 /// The route of a join to a successor (N73): its direct address, or its
 /// key through the relays.
 #[doc(hidden)]
@@ -170,16 +181,17 @@ struct Live<A> {
 /// - At most one attempt at a time; a step moving to another entry, to its
 ///   own turn or past the windows discards it; none starts past the
 ///   give-up.
-/// - Direct first when the entry has an address (and the test hook does
-///   not skip it), with `MIGRATION_CONNECT_TIMEOUT`; a direct route that
-///   failed is not tried again in its window.
+/// - Direct first when the entry has an address N64 allows ([`n64_direct`]:
+///   not global, a port of at least 1024; and the test hook does not skip
+///   it), with `MIGRATION_CONNECT_TIMEOUT`; a direct route that failed is
+///   not tried again in its window.
 /// - Then through the relays: the entry's, then this peer's own, cut to
 ///   [`MAX_JOIN_RELAYS`](crate::join::MAX_JOIN_RELAYS) (`join_relays`),
 ///   expecting the entry's key. Without relays on either side: direct
 ///   only.
-/// - `NotHost` is asked again `RETRY_US` later; any other failure is not
-///   tried again in its window; an entry with no route left waits for the
-///   next window.
+/// - `NotHost` directly is asked again `RETRY_US` later (not its turn
+///   yet); through the relays, and any other failure, is not tried again
+///   in its window; an entry with no route left waits for the next window.
 /// - An answered join whose link does not open within
 ///   [`answer_open_timeout`] of its route lapses (lost contact).
 #[doc(hidden)]
@@ -286,6 +298,7 @@ impl<A> Planner<A> {
         let window_end = self.m.window_end(now_us);
         let direct = entry
             .direct
+            .filter(|&(ip, port)| n64_direct(ip, port))
             .filter(|_| !self.ignore_direct && !until(&self.direct_failed))
             .map(|(ip, port)| SocketAddr::from((ip, port)));
         let (route, join) = match (direct, self.nostr(entry)) {
@@ -384,7 +397,10 @@ impl<A> Planner<A> {
         }
         let until = self.m.window_end(now_us);
         match (why, l.route) {
-            (Failure::NotHost, _) => self.retry = Some((l.to, now_us.saturating_add(RETRY_US))),
+            // A successor listens on its relays only in its turn: `NotHost`
+            // through them is no honest answer (a hostile key's), so not
+            // asked again in the window.
+            (Failure::NotHost, Route::Direct) => self.retry = Some((l.to, now_us.saturating_add(RETRY_US))),
             (Failure::Unreached, Route::Direct) => {
                 self.direct_failed.insert(l.to, until);
             }
@@ -513,6 +529,33 @@ mod tests {
         p.step(0, &mut c);
         assert!(p.attempt().is_none());
         assert_eq!(c.0.len(), 2);
+    }
+
+    #[test]
+    fn a_direct_address_n64_forbids_is_never_connected() {
+        let mut c = Joins::default();
+        for (ip, port) in [([93, 184, 216, 34], 4000), ([8, 8, 8, 8], 4000), ([192, 168, 1, 5], 1023)] {
+            let mut e = entry(false, &["ws://a"]);
+            e.direct = Some((ip, port));
+            let mut p = planner(e, &[]);
+            p.step(0, &mut c);
+            assert_eq!(p.attempt(), Some((0, Route::Relays)), "{ip:?}:{port}: the relays alone");
+        }
+        assert!(c.0.iter().all(|(direct, _)| direct.is_none()));
+        assert!(n64_direct([192, 168, 1, 5], 1024) && n64_direct([10, 0, 0, 1], 4000));
+        assert!(n64_direct([127, 0, 0, 1], 4000), "loopback is no global address");
+        assert!(!n64_direct([1, 1, 1, 1], 4000) && !n64_direct([10, 0, 0, 1], 80));
+    }
+
+    #[test]
+    fn not_host_through_the_relays_is_not_asked_again() {
+        let mut p = planner(entry(false, &["ws://a"]), &[]);
+        let mut c = Joins::default();
+        p.step(0, &mut c);
+        p.failed(S, Failure::NotHost, &mut c);
+        p.step(S + 2 * RETRY_US, &mut c);
+        p.step(4 * S, &mut c);
+        assert_eq!(c.0.len(), 1, "once in its window");
     }
 
     #[test]

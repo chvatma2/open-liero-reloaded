@@ -44,9 +44,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   `Moving(name)`, `TakingOver`; `Display` the HUD's texts),
   `MIGRATION_CONNECT_TIMEOUT` (1 s, N73), `ANSWER_OPEN_TIMEOUT` (2 s: a
   direct join answered whose link does not open is lost contact),
-  `RELAYS_OPEN_TIMEOUT` (5 s, the same through the relays: ICE's checks
-  sent again 0.25, 0.5, 1, 2 s later, then DTLS over a relayed pair;
-  `answer_open_timeout(route)`), `REPORT_WAIT`
+  `RELAYS_OPEN_TIMEOUT` (6 s, the same through the relays: ICE's lost
+  checks sent again 0.25, 0.75, 1.75, 3.75 s after the first, DTLS over a
+  relayed pair, rl-net's up to 1.5 s wait for the pair's stats before
+  `Connected`; `answer_open_timeout(route)`), `REPORT_WAIT`
   (1 s: the reports' wait past the window), `HOST_LOST`, `HOST_BACK`
   (N69's log line), `stepped_down(secs)`; `HOST_BACK` and the
   timeouts in `migration::` only, the rest at the crate root as well.
@@ -266,7 +267,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       fifth is host lost.
     - **`Try(i)`** (the `Planner`; Review Focus 3's bounds): one attempt
       at a time, `Migrating(Moving(name))`. Its route: **direct** first
-      when the entry has an address (a `Joiner` with `Join::direct`,
+      when the entry has an address N64 allows (`n64_direct`: not global,
+      a port of at least 1024; a hostile host cannot aim its members at an
+      internet address) (a `Joiner` with `Join::direct`,
       `connect_timeout` `MIGRATION_CONNECT_TIMEOUT`), **then through the
       relays** (`Join { nostr: NostrJoin { host: entry.key, pool:
       join_relays(entry.relays, own relays) (at most 8, the own pool's
@@ -274,10 +277,12 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       }`); without relays on either side, direct only. Both with the
       client's endpoint config, `migration.ice`, and a fresh `LobbyClient`
       expecting the entry's key (reporting the standby). The joins'
-      `Joining` steps are reported, each once until another comes.
+      `Joining` steps are reported, each once until another comes (a
+      `NotHost` retry's join is not said again; another entry's is).
       `NetEvent::Answered` (direct: the TCP answer; relays: the answer
-      taken, `Connecting`) is contact. `Refused(NotHost)` is asked again
-      `RETRY_US` later; an unreached direct route (a connect refused or
+      taken, `Connecting`) is contact. `Refused(NotHost)` directly is asked
+      again `RETRY_US` later (through the relays it is no honest answer: a
+      successor listens there only in its turn, so it is a refusal); an unreached direct route (a connect refused or
       timed out, a link closed before it opened, an answered link not
       open in time) is not tried again in its window and the relays are
       next; any other failure (a refusal, a failed join through the
@@ -328,14 +333,18 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     - **Late rejoiners** (N72): a migrated lobby keeps an away member's id
       only until its resume (`drop_away`); a member welcomed after it
       gets a new id, `Waiting`. Its client sees the id change at the
-      welcome: it drops its old `Game` (the session; no replay, as a
-      mid-match joiner), says `Migrated { me: false }` and the new link's
-      `Connected` at once, keeps the match's migration count for its next
-      session, and watches as a mid-match joiner (its content list,
+      welcome: it makes the replay of what it confirmed (as at a host lost,
+      N18) and drops its old `Game`, says `Migrated { me: false }` and the
+      new link's `Connected` at once, keeps the match's migration count for
+      its mid-match session (cleared at the match's `Ended`, so the next
+      match counts from 0), and watches as a mid-match joiner (its content list,
       `Have`, `ContentComplete`, `Start`, `Role::Joining`, a state); the
       next gathering seats it. Its old slot stays `Keys(0)` (abandoned at
       the resume).
-    - **Resume**: when `away_in_match()` is empty (A10) or the window
+    - **Resume**: first the lobby's pending events are handled (a member
+      taken back in the poll the window ends is rejoined in the session,
+      its `Collect` sent, not left without one), then when
+      `away_in_match()` is empty (A10) or the window
       ended, and `awaiting_reports()` is empty (C1) or the window ended
       `REPORT_WAIT` ago (a report later is merged late, N67): `drop_away`,
       `resume`, `playing(R)`, `Migrated { host: its name, me: true }`; an
@@ -363,7 +372,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       messages, its `Hello`, held `d` after its link opened),
       `test_withhold_reports()` (a client drops a new host's `Collect`),
       `test_ignore_direct()` (joins to successors skip direct addresses,
-      so a loopback test exercises the relays).
+      so a loopback test exercises the relays), `test_set_migrations(n)`
+      (the match counts `n` so far), `test_joins()` (each join started:
+      member id, direct or not). `migrations()`: the running match's count.
 - **`replay.rs`**: `MatchRecord { start, rows, checksums }` (rows below the
   last tick, the session's confirmed checksums); `make` re-simulates the
   rows from `build_match`'s start world with its `Recorder` and returns the
@@ -620,26 +631,37 @@ its `Hello` held) goes back to the host when its successor calls off
 joins skip direct addresses): `Relays` then `Asking`, Anna welcomes him,
 listening only from her turn, his `Connected` to her standby, records
 equal (fails without the standby answering in its turn); a slow relayed
-link (Bert's datagrams blacked out 2.5 s from his `Asking`: open about
-4 s after the answer) is waited for and Anna takes the match (fails with
-2 s for the relays); a late rejoiner (its `Hello` held 6 s) welcomed
-`Waiting` after Anna's resume watches from a state, its slot `Keys(0)`
-from the resume, seated and playing Anna's next match, never host lost
-(fails while the state loads into the old rehosted session); a second
-migration (Anna freezes 4 s after her resume) moves the match to Bert,
-Cid following, records equal, Anna's succession without Anna (fails
-without the succession at a rejoin); the planner with a fake connector
-and clock: 48 hostile entries, every direct connect refused, the relays
-silent, over 11 s: one attempt at a time, each address once a window,
-at most 8 relays a join, four joins in all, nothing past the give-up,
-`GiveUp` at 10 s (fails retrying a failed direct route); on real
-sockets, a closed loopback port costs one connect, refused (`Closed`)
-within its window.
+link (Cid commits Anna directly; Bert's datagrams blacked out 2.5 s from
+Anna's answer, `Connecting`: `Connected` about 4.2 s after it) is waited
+for, Bert welcomed by Anna and never hosting, Anna's and Cid's records
+equal (fails with 2 s for the relays; it also lands Bert's rejoin in
+Anna's resume poll: fails without the lobby's events before the resume);
+a late rejoiner (its `Hello` held 6 s) welcomed `Waiting` after Anna's
+resume makes its replay of what it played, watches from a state counting
+the migration, its slot `Keys(0)` from the resume, seated and playing
+Anna's next match with a count of 0, never host lost (fails while the
+state loads into the old rehosted session; without the replay; with the
+count carried on); a second migration (Anna freezes 4 s after her
+resume) moves the match to Bert, Cid following, records equal, Anna's
+succession without Anna (fails without the succession at a rejoin); N74
+on the real path: three migrations counted (`test_set_migrations`), the
+fourth to Anna counted by `take_over` and `rejoin`, the fifth host lost
+at once with replays (fails without the counts); a successor gone with
+its standby (its port closed) costs Bert and Cid one direct connect each
+in its window (`test_joins`), then the match moves to Bert, Cid's two
+`Joining(Direct)` said; the planner with a fake connector and clock: 48
+hostile entries, every direct connect refused, the relays silent or
+answering `NotHost`, over 11 s: one attempt at a time, each route of an
+entry once a window, at most 8 relays a join, four joins in all, nothing
+past the give-up, `GiveUp` at 10 s (fails retrying a failed direct
+route, or `NotHost` through the relays).
 `migrate.rs`' unit test: `stall_gap` (C3); `migration.rs`': the texts,
 the planner's routes (direct, then the relays: the entry's first, each
 once; neither again in its window; direct only without relays; the
-relays alone without an address), `NotHost` asked again after
-`RETRY_US`, the lapse per route, N69's remembered `HostHeard`.
+relays alone without an address), N64's direct addresses (a global one
+or a port below 1024 never connected), `NotHost` asked again after
+`RETRY_US` directly and not through the relays, the lapse per route,
+N69's remembered `HostHeard`.
 Content (each peer a cache in a temporary directory; `common::
 partial_content` copies the match's packs but some, `with_test_skin`
 adds a skin pack of another hash): a client without the level, or the mod,

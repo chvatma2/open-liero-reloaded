@@ -226,7 +226,8 @@ struct ClientSide {
     /// A new host welcomed it: that host's name, until its `Resume`.
     rejoined: Option<String>,
     /// The match's migrations so far, carried to the session of a member
-    /// back after its new host's resume (N72, N74: its next `Start`).
+    /// back after its new host's resume (N72, N74: its mid-match `Start`;
+    /// cleared at the match's end, so the next match counts from 0).
     migrations: u32,
 }
 
@@ -315,6 +316,9 @@ pub struct OnlinePeer {
     /// Test hook: joins to successors skip direct addresses.
     #[cfg(feature = "test-hooks")]
     ignore_direct: bool,
+    /// Test hook: the joins to successors started (`test_joins`).
+    #[cfg(feature = "test-hooks")]
+    joins: Vec<(u8, bool)>,
 }
 
 impl OnlinePeer {
@@ -428,6 +432,8 @@ impl OnlinePeer {
             withhold_reports: false,
             #[cfg(feature = "test-hooks")]
             ignore_direct: false,
+            #[cfg(feature = "test-hooks")]
+            joins: Vec::new(),
         })
     }
 
@@ -1190,6 +1196,10 @@ impl OnlinePeer {
             }
             ClientEvent::Start(start) => self.client_start(start),
             ClientEvent::Ended(end) => {
+                // A late rejoiner's carried count belongs to this match.
+                if let Side::Client(c) = &mut self.side {
+                    c.migrations = 0;
+                }
                 if let Some(g) = &mut self.game
                     && g.ended.is_none()
                 {

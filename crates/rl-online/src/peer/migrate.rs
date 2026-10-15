@@ -46,8 +46,10 @@ pub(super) struct Migrating {
     /// The step last reported.
     reported: Option<MigrationStep>,
     /// The joins' step last reported (a `NotHost` retry every `RETRY_US`
-    /// starts its join again: its step is not said again).
+    /// starts its join again: its step is not said again), and the entry
+    /// it was for (another entry's steps are said afresh).
     joining: Option<JoinStep>,
+    joining_to: Option<usize>,
 }
 
 impl Migrating {
@@ -97,6 +99,8 @@ struct Connect<'a> {
     outage: Option<Instant>,
     hello_delay: Duration,
     events: &'a mut Vec<OnlineEvent>,
+    /// The joins started: the entry's member, direct or not.
+    started: Vec<(u8, bool)>,
 }
 
 impl Connector for Connect<'_> {
@@ -109,6 +113,7 @@ impl Connector for Connect<'_> {
             ice: self.migration.ice.clone(),
             ..self.base.clone()
         };
+        let direct = join.direct.is_some();
         let (joiner, ep, step) = Joiner::start(join, cfg).ok()?;
         let look = my_look(self.lobby, self.my_key);
         let mut lobby = LobbyClient::new(self.me.clone(), look, None, Some(entry.key));
@@ -118,6 +123,7 @@ impl Connector for Connect<'_> {
         let mut out = ep.map_or_else(Outbox::empty, Outbox::new);
         darken(self.outage, &mut out);
         self.events.push(OnlineEvent::Joining(step));
+        self.started.push((entry.member, direct));
         Some(Box::new(Attempt {
             joiner,
             out,
@@ -280,6 +286,29 @@ impl OnlinePeer {
         Duration::ZERO
     }
 
+    /// The running match's migrations so far (N74: a rejoin and a take-over
+    /// each count; past `MAX_MIGRATIONS` the next is host lost); `None`
+    /// without a match.
+    pub fn migrations(&self) -> Option<u32> {
+        self.game.as_ref().filter(|g| g.ended.is_none()).map(|g| g.migrations)
+    }
+
+    /// Tests only (`test-hooks`): the running match counts `n` migrations
+    /// so far (N74's cap without playing them all).
+    #[cfg(feature = "test-hooks")]
+    pub fn test_set_migrations(&mut self, n: u32) {
+        if let Some(g) = &mut self.game {
+            g.migrations = n;
+        }
+    }
+
+    /// Tests only (`test-hooks`): every join to a successor this peer
+    /// started, in order: the entry's member id, and whether it was direct.
+    #[cfg(feature = "test-hooks")]
+    pub fn test_joins(&self) -> &[(u8, bool)] {
+        &self.joins
+    }
+
     /// Tests only (`test-hooks`): this peer's joins to successors skip
     /// direct addresses (a loopback test then exercises the relays).
     #[cfg(feature = "test-hooks")]
@@ -386,7 +415,7 @@ impl OnlinePeer {
         if ignore_direct {
             plan.ignore_direct();
         }
-        c.migrating = Some(Box::new(Migrating { plan, reported: None, joining: None }));
+        c.migrating = Some(Box::new(Migrating { plan, reported: None, joining: None, joining_to: None }));
         self.report_step(MigrationStep::Finding);
         true
     }
@@ -410,7 +439,7 @@ impl OnlinePeer {
         self.standby_tasks(now);
         self.attempt_tasks(now);
         self.step_migration(now);
-        self.resume_check();
+        self.resume_check(now);
     }
 
     /// The standby, polled every poll: closed, no link stays; on its turn
@@ -663,9 +692,23 @@ impl OnlinePeer {
             outage,
             hello_delay,
             events: &mut steps,
+            started: Vec::new(),
         };
         let step = mg.plan.step(now_us, &mut conn);
+        let started = std::mem::take(&mut conn.started);
+        let to = match step {
+            Step::Try(i) => Some(i),
+            _ => None,
+        };
+        if mg.joining_to != to {
+            mg.joining_to = to;
+            mg.joining = None;
+        }
         mg.report_joins(steps, &mut self.events);
+        #[cfg(feature = "test-hooks")]
+        self.joins.extend(started);
+        #[cfg(not(feature = "test-hooks"))]
+        let _ = started;
         let moving = match step {
             Step::Try(i) => mg.plan.order().get(i).map(|e| e.member),
             _ => None,
@@ -840,8 +883,15 @@ impl OnlinePeer {
     /// window's end it stops waiting for those not back, but not for the
     /// reports of those back (C1). Then the away members leave, the
     /// session resumes, the lobby plays on: `Migrated { me: true }`.
-    fn resume_check(&mut self) {
+    fn resume_check(&mut self, now: Instant) {
         let now_us = self.now_us;
+        if !self.game.as_ref().is_some_and(|g| g.collecting.is_some()) {
+            return;
+        }
+        // A member the lobby took back in this poll is rejoined in the
+        // session first (its `Collect`): it is back before the resume, not
+        // left without one (`rejoined` is refused after it).
+        self.host_lobby_events(now);
         let Side::Host(h) = &mut self.side else { return };
         let Some(g) = self.game.as_mut() else { return };
         let Some(window_end) = g.collecting else { return };
@@ -886,6 +936,14 @@ impl OnlinePeer {
         // A migrated lobby keeps a member's id until its resume; one back
         // after it is taken as a new member.
         let late = c.lobby.me().is_some_and(|old| lobby.me() != Some(old));
+        // Late: the match it played up to here makes its replay (N18), as at
+        // a host lost, before its member id changes; the match's migrations
+        // so far still count for the session it watches from (N74).
+        let carried = if late { self.game.take() } else { None }.map(|g| {
+            self.make_replay(record_of(&g.session, &g.start, g.session.frontier()));
+            g.migrations + 1
+        });
+        let Side::Client(c) = &mut self.side else { return };
         let old = std::mem::replace(&mut self.endpoint, out);
         drop_off_thread(old);
         c.lobby = lobby;
@@ -896,8 +954,7 @@ impl OnlinePeer {
         self.closing.clear();
         self.content.host_changed();
         if late {
-            // The match's migrations so far still count (N74).
-            c.migrations = self.game.take().map_or(0, |g| g.migrations + 1);
+            c.migrations = carried.unwrap_or(0);
             self.events.push(OnlineEvent::Migrated { host: name, me: false });
             if let Some((path, remote)) = connection {
                 self.events.push(OnlineEvent::Connected { path, remote });
