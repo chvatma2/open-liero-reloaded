@@ -44,6 +44,8 @@ pub const BIN: &str = "target/debug";
 const LABEL: &str = "rl-nat";
 /// Each scenario's bound, from its first container to its verdict.
 pub const LIMIT: Duration = Duration::from_secs(60);
+/// The migration's bound: the match (0.5 minutes) plays on after the crash.
+pub const MIGRATION_LIMIT: Duration = Duration::from_secs(90);
 /// Every container's own lifetime in seconds (`RL_NAT_LIFE`, `timeout`):
 /// past [`LIMIT`] and the host's stop, so a run that was killed leaves
 /// nothing running for long.
@@ -52,6 +54,9 @@ pub const LIFE: u32 = 120;
 pub const KEEP_LIFE: u32 = 3600;
 /// A joiner gives up after this (its `--timeout`), inside [`LIMIT`].
 const JOINER_TIMEOUT: &str = "40";
+/// A migration's clients give up after this, inside [`MIGRATION_LIMIT`]: the
+/// match plays on 30 s after the crash.
+const MIGRATION_TIMEOUT: &str = "80";
 /// How often logs and states are looked at.
 const POLL: Duration = Duration::from_millis(200);
 /// Lines of each container's log a failure prints.
@@ -140,10 +145,13 @@ pub enum Config {
     /// Invite only on the WAN at 203.0.113.40, no NAT and no configured
     /// address: STUN shows its own address (N47-a, a VPS).
     Open,
+    /// Invite only, no port mapping, one fill bot and a 0.5-minute match
+    /// that starts when two players are ready (`migration`).
+    Migrate,
 }
 
 impl Config {
-    pub const ALL: [Config; 7] = [
+    pub const ALL: [Config; 8] = [
         Config::Relay,
         Config::Public,
         Config::Mapped,
@@ -151,11 +159,20 @@ impl Config {
         Config::Listed,
         Config::RelayBeside,
         Config::Open,
+        Config::Migrate,
     ];
 
     pub fn file(self) -> &'static str {
-        ["relay.ron", "public.ron", "mapped.ron", "invite.ron", "listed.ron", "relay-beside.ron", "open.ron"]
-            [self as usize]
+        [
+            "relay.ron",
+            "public.ron",
+            "mapped.ron",
+            "invite.ron",
+            "listed.ron",
+            "relay-beside.ron",
+            "open.ron",
+            "migrate.ron",
+        ][self as usize]
     }
 
     /// The config's text (RON, `rl-server`'s `Config`): every one on the
@@ -171,15 +188,18 @@ impl Config {
             Config::Listed => (LISTED_NAME, "Public", false, None, &STUN[..], 2),
             Config::RelayBeside => ("nat relay f", "Invite", false, Some("203.0.113.106"), &STUN[..1], 0),
             Config::Open => ("nat open", "Invite", false, None, &STUN[..1], 2),
+            Config::Migrate => ("nat migrate", "Invite", false, None, &STUN[..], 1),
         };
+        // The migration's match runs 0.5 minutes and waits for both players.
+        let (minutes, min_players) = if self == Config::Migrate { ("0.5", 2) } else { ("0.2", 1) };
         let quoted = |items: &[&str]| items.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", ");
         let address = address.map_or_else(|| "None".into(), |a| format!("Some({a:?})"));
         format!(
             "// Written by `cargo xtask net-nat` (xtask/src/nat.rs).\n(\n    name: {name:?},\n    \
              visibility: {visibility},\n    relays: [{}],\n    stun: [{}],\n    allow_local: true,\n    \
              port_mapping: {mapping},\n    public_address: {address},\n    max_players: 4,\n    \
-             fill_bots: {bots},\n    min_players: 1,\n    start_when_ready: true,\n    rotation: [\n        \
-             (mod: \"olx-classic\", level: \"olx-level-dirt-level\", time_limit: 0.2, kill_limit: 0, \
+             fill_bots: {bots},\n    min_players: {min_players},\n    start_when_ready: true,\n    rotation: [\n        \
+             (mod: \"olx-classic\", level: \"olx-level-dirt-level\", time_limit: {minutes}, kill_limit: 0, \
              lives: -2, bonuses: true),\n    ],\n)\n",
             quoted(&[RELAY_URL]),
             quoted(stun),
@@ -226,10 +246,21 @@ pub enum Way {
 /// `rl-cli net-client` in a LAN (at `.20`).
 #[derive(Clone, Copy, Debug)]
 pub struct Joiner {
+    /// Its `--name`.
+    pub name: &'static str,
     pub lan: Lan,
     pub way: Way,
     /// More flags (`--lobby-only`, `--no-nostr-turn`, `--matches 1`).
     pub flags: &'static [&'static str],
+}
+
+/// A second client for a host migration: it joins once the first one is
+/// in the lobby, and the host is killed `kill_after` after both print
+/// their match start.
+#[derive(Clone, Copy, Debug)]
+pub struct Migration {
+    pub other: Joiner,
+    pub kill_after: Duration,
 }
 
 /// Which invite line the host prints.
@@ -260,6 +291,11 @@ pub struct Expect {
     pub code: Option<Code>,
     /// The host is stopped (SIGTERM) after the joiner and must exit 0.
     pub host_stops: bool,
+    /// The second client's stdout holds each (a migration; its exit
+    /// status is `exit`, as the joiner's).
+    pub other_stdout: &'static [&'static str],
+    /// The two clients printed equal `checksum` lines (a migration).
+    pub checksums_equal: bool,
 }
 
 const EXPECT: Expect = Expect {
@@ -270,6 +306,8 @@ const EXPECT: Expect = Expect {
     relay_allocates: false,
     code: None,
     host_stops: false,
+    other_stdout: &[],
+    checksums_equal: false,
 };
 
 /// One scenario: its own fresh containers, bounded by [`LIMIT`].
@@ -279,25 +317,42 @@ pub struct Scenario {
     pub host: Host,
     pub joiner: Option<Joiner>,
     pub relay: RelayAt,
+    /// A second client and the host's crash (`joiner` is the first
+    /// client, the first successor).
+    pub migration: Option<Migration>,
     pub expect: Expect,
+}
+
+impl Scenario {
+    /// The bound, from the first container to the verdict.
+    pub fn limit(&self) -> Duration {
+        if self.migration.is_some() { MIGRATION_LIMIT } else { LIMIT }
+    }
 }
 
 /// The scenarios, in the order they run (spec §9.7; its "browser host"
 /// is plan 13's, ruling PL12b-3). Each path is checked on both ends: the
 /// joiner's `path:` line and the host's `via` (N49).
-pub const SCENARIOS: [Scenario; 11] = [
+pub const SCENARIOS: [Scenario; 12] = [
     Scenario {
         name: "direct",
         host: Host::Public,
-        joiner: Some(Joiner { lan: Lan::A, way: Way::Join("203.0.113.30:23400"), flags: &["--lobby-only"] }),
+        joiner: Some(Joiner {
+            name: "nat joiner",
+            lan: Lan::A,
+            way: Way::Join("203.0.113.30:23400"),
+            flags: &["--lobby-only"],
+        }),
         relay: RelayAt::Wan,
+        migration: None,
         expect: Expect { stdout: &["path: direct"], host_log: &[&["via direct"]], ..EXPECT },
     },
     Scenario {
         name: "upnp",
         host: Host::Server(Lan::C, Config::Mapped),
-        joiner: Some(Joiner { lan: Lan::A, way: Way::Invite, flags: &["--lobby-only"] }),
+        joiner: Some(Joiner { name: "nat joiner", lan: Lan::A, way: Way::Invite, flags: &["--lobby-only"] }),
         relay: RelayAt::Wan,
+        migration: None,
         expect: Expect {
             stdout: &["path: direct"],
             host_log: &[&["reach: Port 23400 is open on your router (UPnP)"], &["via open port"]],
@@ -308,8 +363,9 @@ pub const SCENARIOS: [Scenario; 11] = [
     Scenario {
         name: "pcp",
         host: Host::Server(Lan::D, Config::Mapped),
-        joiner: Some(Joiner { lan: Lan::A, way: Way::Invite, flags: &["--lobby-only"] }),
+        joiner: Some(Joiner { name: "nat joiner", lan: Lan::A, way: Way::Invite, flags: &["--lobby-only"] }),
         relay: RelayAt::Wan,
+        migration: None,
         expect: Expect {
             stdout: &["path: direct"],
             host_log: &[&["reach: Port 23400 is open on your router (PCP)"], &["via open port"]],
@@ -320,8 +376,9 @@ pub const SCENARIOS: [Scenario; 11] = [
     Scenario {
         name: "nat-pmp",
         host: Host::Server(Lan::E, Config::Mapped),
-        joiner: Some(Joiner { lan: Lan::A, way: Way::Invite, flags: &["--lobby-only"] }),
+        joiner: Some(Joiner { name: "nat joiner", lan: Lan::A, way: Way::Invite, flags: &["--lobby-only"] }),
         relay: RelayAt::Wan,
+        migration: None,
         expect: Expect {
             stdout: &["path: direct"],
             host_log: &[&["reach: Port 23400 is open on your router (NAT-PMP)"], &["via open port"]],
@@ -332,8 +389,14 @@ pub const SCENARIOS: [Scenario; 11] = [
     Scenario {
         name: "hole-punching",
         host: Host::Server(Lan::A, Config::Invite),
-        joiner: Some(Joiner { lan: Lan::C, way: Way::Invite, flags: &["--lobby-only", "--no-nostr-turn"] }),
+        joiner: Some(Joiner {
+            name: "nat joiner",
+            lan: Lan::C,
+            way: Way::Invite,
+            flags: &["--lobby-only", "--no-nostr-turn"],
+        }),
         relay: RelayAt::Wan,
+        migration: None,
         expect: Expect {
             stdout: &["path: punched"],
             host_log: &[&["via punched"]],
@@ -344,8 +407,14 @@ pub const SCENARIOS: [Scenario; 11] = [
     Scenario {
         name: "relay",
         host: Host::Server(Lan::A, Config::Invite),
-        joiner: Some(Joiner { lan: Lan::B, way: Way::Invite, flags: &["--matches", "1"] }),
+        joiner: Some(Joiner {
+            name: "nat joiner",
+            lan: Lan::B,
+            way: Way::Invite,
+            flags: &["--matches", "1"],
+        }),
         relay: RelayAt::Wan,
+        migration: None,
         expect: Expect {
             stdout: &["path: relayed", "match 1:"],
             host_log: &[&["via relayed"], &["match end"]],
@@ -358,8 +427,14 @@ pub const SCENARIOS: [Scenario; 11] = [
     Scenario {
         name: "no-relay",
         host: Host::Server(Lan::A, Config::Invite),
-        joiner: Some(Joiner { lan: Lan::B, way: Way::Invite, flags: &["--no-nostr-turn"] }),
+        joiner: Some(Joiner {
+            name: "nat joiner",
+            lan: Lan::B,
+            way: Way::Invite,
+            flags: &["--no-nostr-turn"],
+        }),
         relay: RelayAt::Wan,
+        migration: None,
         expect: Expect {
             exit: 1,
             stderr: &["no network path to the game"],
@@ -370,8 +445,14 @@ pub const SCENARIOS: [Scenario; 11] = [
     Scenario {
         name: "finding",
         host: Host::Server(Lan::A, Config::Listed),
-        joiner: Some(Joiner { lan: Lan::B, way: Way::Listed(LISTED_NAME), flags: &["--lobby-only"] }),
+        joiner: Some(Joiner {
+            name: "nat joiner",
+            lan: Lan::B,
+            way: Way::Listed(LISTED_NAME),
+            flags: &["--lobby-only"],
+        }),
         relay: RelayAt::Wan,
+        migration: None,
         expect: Expect { stdout: &["path: relayed"], host_log: &[&["via relayed"]], ..EXPECT },
     },
     Scenario {
@@ -379,13 +460,15 @@ pub const SCENARIOS: [Scenario; 11] = [
         host: Host::NatCheck(Lan::B),
         joiner: None,
         relay: RelayAt::Wan,
+        migration: None,
         expect: Expect { stdout: &["NAT: symmetric NAT"], ..EXPECT },
     },
     Scenario {
         name: "no-nat",
         host: Host::Open,
-        joiner: Some(Joiner { lan: Lan::A, way: Way::Invite, flags: &["--lobby-only"] }),
+        joiner: Some(Joiner { name: "nat joiner", lan: Lan::A, way: Way::Invite, flags: &["--lobby-only"] }),
         relay: RelayAt::Wan,
+        migration: None,
         expect: Expect {
             stdout: &["path: direct"],
             host_log: &[
@@ -399,11 +482,34 @@ pub const SCENARIOS: [Scenario; 11] = [
     Scenario {
         name: "relay-beside",
         host: Host::Server(Lan::F, Config::Invite),
-        joiner: Some(Joiner { lan: Lan::B, way: Way::Invite, flags: &["--lobby-only"] }),
+        joiner: Some(Joiner { name: "nat joiner", lan: Lan::B, way: Way::Invite, flags: &["--lobby-only"] }),
         relay: RelayAt::Beside(Lan::F),
+        migration: None,
         expect: Expect {
             stdout: &["path: relayed"],
             host_log: &[&["via relayed", "via punched"]],
+            relay_allocates: true,
+            code: Some(Code::Relays),
+            ..EXPECT
+        },
+    },
+    // B5: `succ` joins first, so it is the first successor; `other` (behind
+    // the symmetric NAT) follows it through the relays. The host's crash
+    // is silence (`docker kill`).
+    Scenario {
+        name: "migration",
+        host: Host::Server(Lan::A, Config::Migrate),
+        joiner: Some(Joiner { name: "succ", lan: Lan::C, way: Way::Invite, flags: &["--matches", "1"] }),
+        relay: RelayAt::Wan,
+        migration: Some(Migration {
+            other: Joiner { name: "other", lan: Lan::B, way: Way::Invite, flags: &["--matches", "1"] },
+            kill_after: Duration::from_secs(8),
+        }),
+        expect: Expect {
+            stdout: &["migrated: hosting"],
+            // The path line after the migration: relayed (symmetric NAT).
+            other_stdout: &["migrated: succ hosts\npath: relayed"],
+            checksums_equal: true,
             relay_allocates: true,
             code: Some(Code::Relays),
             ..EXPECT
@@ -530,6 +636,39 @@ pub fn allocations(log: &str) -> u32 {
         .unwrap_or(0)
 }
 
+/// The `checksum <tick> <hex>` lines of a client's stdout.
+pub fn checksums(out: &str) -> Vec<(u64, String)> {
+    out.lines()
+        .filter_map(|l| {
+            let mut words = l.split_whitespace();
+            (words.next()? == "checksum").then_some(())?;
+            let tick = words.next()?.parse().ok()?;
+            let hex = words.next()?;
+            words.next().is_none().then(|| (tick, hex.to_string()))
+        })
+        .collect()
+}
+
+/// How two clients' checksum lines differ (the first difference by tick),
+/// or `None` when equal. Printing none at all is a difference too: it
+/// would make equal vacuous.
+pub fn checksum_difference(a: &str, b: &str) -> Option<String> {
+    let (a, b) = (checksums(a), checksums(b));
+    if a.is_empty() || b.is_empty() {
+        return Some(format!("no checksum lines ({} and {})", a.len(), b.len()));
+    }
+    for (tick, hex) in &a {
+        match b.iter().find(|(t, _)| t == tick) {
+            Some((_, other)) if other == hex => {}
+            Some((_, other)) => return Some(format!("tick {tick}: {hex} against {other}")),
+            None => return Some(format!("the second lacks tick {tick} ({hex})")),
+        }
+    }
+    b.iter()
+        .find(|(t, _)| !a.iter().any(|(u, _)| u == t))
+        .map(|(t, h)| format!("the first lacks tick {t} ({h})"))
+}
+
 /// The last `n` lines of `text`.
 fn tail(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
@@ -547,6 +686,9 @@ pub struct Seen {
     pub relay_log: String,
     /// The host's exit status once stopped (when stopped).
     pub host_exit: Option<i64>,
+    /// The second client's exit status and stdout (a migration).
+    pub other_exit: Option<i64>,
+    pub other_stdout: String,
 }
 
 /// Everything `seen` misses of `expect`, in words (empty: passed).
@@ -555,12 +697,31 @@ pub fn verdict(expect: &Expect, seen: &Seen) -> Vec<String> {
     match seen.exit {
         Some(code) if code == i64::from(expect.exit) => {}
         Some(code) => wrong.push(format!("exited with {code}, not {}", expect.exit)),
-        None => wrong.push(format!("did not exit within {} s", LIMIT.as_secs())),
+        None => wrong.push("did not exit within its bound".into()),
     }
     for want in expect.stdout {
         if !seen.stdout.contains(want) {
             wrong.push(format!("stdout lacks {want:?}"));
         }
+    }
+    for want in expect.other_stdout {
+        if !seen.other_stdout.contains(want) {
+            wrong.push(format!("the second client's stdout lacks {want:?}"));
+        }
+    }
+    if !expect.other_stdout.is_empty() {
+        match seen.other_exit {
+            Some(code) if code == i64::from(expect.exit) => {}
+            Some(code) => wrong.push(format!("the second client exited with {code}, not {}", expect.exit)),
+            None => {
+                wrong.push(format!("the second client did not exit within {} s", MIGRATION_LIMIT.as_secs()))
+            }
+        }
+    }
+    if expect.checksums_equal
+        && let Some(why) = checksum_difference(&seen.stdout, &seen.other_stdout)
+    {
+        wrong.push(format!("the clients' checksums differ: {why}"));
     }
     for want in expect.stderr {
         if !seen.stderr.contains(want) {
@@ -783,7 +944,12 @@ pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
         RelayAt::Wan => None,
         RelayAt::Beside(lan) => Some(lan),
     };
-    let mut lans: Vec<Lan> = host_lan.into_iter().chain(relay_lan).chain(sc.joiner.map(|j| j.lan)).collect();
+    let mut lans: Vec<Lan> = host_lan
+        .into_iter()
+        .chain(relay_lan)
+        .chain(sc.joiner.map(|j| j.lan))
+        .chain(sc.migration.map(|m| m.other.lan))
+        .collect();
     lans.sort_by_key(|l| *l as u8);
     lans.dedup();
     for lan in lans {
@@ -838,13 +1004,19 @@ pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
             Ready::Exit,
         )),
     }
-    if let Some(j) = sc.joiner {
+    // A migration's first client is waited for in the lobby (its `path:`
+    // line), not for its exit: the second joins after it (B5).
+    let clients = sc
+        .joiner
+        .map(|j| (j, "joiner", 3, sc.migration.map_or(Ready::Exit, |_| Ready::Lines(vec!["path:"]))));
+    let others = sc.migration.map(|m| (m.other, "other", 4, Ready::Lines(vec!["path:"])));
+    for (j, role, stage, ready) in clients.into_iter().chain(others) {
         let mut cmd = strings(&[
             "/rl/bin/rl-cli",
             "net-client",
             "--bot",
             "--name",
-            "nat joiner",
+            j.name,
             "--content",
             "/rl/content",
             "--relay",
@@ -855,7 +1027,7 @@ pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
             STUN[1],
             "--allow-local",
             "--timeout",
-            JOINER_TIMEOUT,
+            if sc.migration.is_some() { MIGRATION_TIMEOUT } else { JOINER_TIMEOUT },
         ]);
         cmd.extend(match j.way {
             Way::Join(addr) => strings(&["--join", addr]),
@@ -864,12 +1036,12 @@ pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
         });
         cmd.extend(strings(j.flags));
         out.push(unit(
-            "joiner",
-            3,
+            role,
+            stage,
             &[(run.lan(j.lan), j.lan.addr(20))],
             &node_opts,
             on_lan(j.lan, cmd),
-            Ready::Exit,
+            ready,
         ));
     }
     out
@@ -1087,10 +1259,16 @@ fn play(sc: &Scenario, run: &Run, dir: &Path, keep: bool) -> Result<(), String> 
     remove_containers(&format!("{LABEL}={}", run.id));
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let deadline = Instant::now() + LIMIT;
+    let deadline = Instant::now() + sc.limit();
     let mut started = Containers { run, dir, roles: Vec::new(), keep };
     let result = run_units(sc, run, &units(sc, run), deadline, &mut started).and_then(|()| {
         let mut seen = Seen::default();
+        if let Some(m) = sc.migration {
+            crash_host(sc, run, &m, deadline)?;
+            let other = run.container("other");
+            seen.other_exit = exited(&other);
+            seen.other_stdout = logs(&other).0;
+        }
         let main = run.container(if sc.joiner.is_some() { "joiner" } else { "host" });
         seen.exit = exited(&main);
         (seen.stdout, seen.stderr) = logs(&main);
@@ -1105,6 +1283,39 @@ fn play(sc: &Scenario, run: &Run, dir: &Path, keep: bool) -> Result<(), String> 
         if wrong.is_empty() { Ok(()) } else { Err(wrong.join("; ")) }
     });
     result.map_err(|why| format!("{why}\n{}", started.tails()))
+}
+
+/// The migration's crash: once both clients print their match start, the
+/// host is killed (`docker kill`: silence, no goodbye) `kill_after` later,
+/// and both clients are waited for until they exit.
+fn crash_host(sc: &Scenario, run: &Run, m: &Migration, deadline: Instant) -> Result<(), String> {
+    let (joiner, other) = (run.container("joiner"), run.container("other"));
+    for name in [&joiner, &other] {
+        loop {
+            interrupted()?;
+            if logs(name).1.contains("match starts:") {
+                break;
+            }
+            if let Some(code) = exited(name) {
+                return Err(format!("{name} exited with {code} before its match started"));
+            }
+            if Instant::now() >= deadline {
+                return Err(format!("{name} printed no match start within {} s", sc.limit().as_secs()));
+            }
+            std::thread::sleep(POLL);
+        }
+    }
+    let until = Instant::now() + m.kill_after;
+    while Instant::now() < until {
+        interrupted()?;
+        std::thread::sleep(POLL);
+    }
+    docker(&["kill", &run.container("host")])?;
+    for (role, name) in [("joiner", &joiner), ("other", &other)] {
+        let wait = Unit { role: role.into(), stage: 0, args: Vec::new(), ready: Ready::Exit };
+        wait_ready(&wait, name, deadline, sc.limit())?;
+    }
+    Ok(())
 }
 
 /// Starts `units` stage by stage, waiting for each to be ready.
@@ -1132,7 +1343,7 @@ fn run_units(
             docker(&args)?;
         }
         for u in &now {
-            let found = wait_ready(u, &run.container(&u.role), deadline)?;
+            let found = wait_ready(u, &run.container(&u.role), deadline, sc.limit())?;
             if found.is_some() {
                 invite = found;
             }
@@ -1143,7 +1354,7 @@ fn run_units(
 
 /// Waits until `u` (the container `name`) is ready; an invite code when
 /// it was waited for.
-fn wait_ready(u: &Unit, name: &str, deadline: Instant) -> Result<Option<String>, String> {
+fn wait_ready(u: &Unit, name: &str, deadline: Instant, limit: Duration) -> Result<Option<String>, String> {
     loop {
         interrupted()?;
         let (out, _) = logs(name);
@@ -1165,7 +1376,7 @@ fn wait_ready(u: &Unit, name: &str, deadline: Instant) -> Result<Option<String>,
             return Err(format!("{} exited with {code} before it was ready", u.role));
         }
         if Instant::now() >= deadline {
-            let secs = LIMIT.as_secs();
+            let secs = limit.as_secs();
             return Err(match &u.ready {
                 Ready::Lines(l) => format!("{} logged no {l:?} within {secs} s", u.role),
                 Ready::Invite(Some(Code::Address)) => {
@@ -1424,14 +1635,65 @@ mod tests {
                 "finding",
                 "nat-check",
                 "no-nat",
-                "relay-beside"
+                "relay-beside",
+                "migration"
             ]
         );
-        assert_eq!(select(&[]).unwrap().len(), 11);
+        assert_eq!(select(&[]).unwrap().len(), 12);
         let two = select(&["relay".into(), "direct".into()]).unwrap();
         assert_eq!(two.iter().map(|s| s.name).collect::<Vec<_>>(), ["direct", "relay"], "in table order");
         let why = select(&["browser".into()]).unwrap_err();
         assert!(why.contains("browser") && why.contains("hole-punching"), "{why}");
+    }
+
+    #[test]
+    fn the_migration_scenario_is_listed_and_selectable() {
+        let only = select(&["migration".into()]).unwrap();
+        assert_eq!(only.len(), 1);
+        let sc = only[0];
+        assert_eq!(sc.host, Host::Server(Lan::A, Config::Migrate));
+        let succ = sc.joiner.unwrap();
+        let other = sc.migration.unwrap().other;
+        assert_eq!((succ.lan, succ.name), (Lan::C, "succ"));
+        assert_eq!((other.lan, other.name), (Lan::B, "other"));
+        assert!(!other.flags.contains(&"--no-nostr-turn"), "TURN notes are used");
+        assert_eq!(sc.limit(), Duration::from_secs(90));
+        assert_eq!(scenario("relay").limit(), LIMIT);
+        let units = units(sc, &run(LIFE));
+        let roles: Vec<(&str, u8)> = units.iter().map(|u| (u.role.as_str(), u.stage)).collect();
+        assert!(roles.contains(&("joiner", 3)) && roles.contains(&("other", 4)), "{roles:?}");
+        for role in ["router-a", "router-b", "router-c"] {
+            assert!(roles.iter().any(|(r, _)| *r == role), "{role}");
+        }
+        // The successor joins first and is waited for in the lobby; both run
+        // the full match (`--matches 1`) and name themselves.
+        let get = |role: &str| units.iter().find(|u| u.role == role).unwrap();
+        assert_eq!(get("joiner").ready, Ready::Lines(vec!["path:"]));
+        assert_eq!(get("other").ready, Ready::Lines(vec!["path:"]));
+        for (role, name) in [("joiner", "succ"), ("other", "other")] {
+            let a = &get(role).args;
+            assert!(a.windows(2).any(|w| w == ["--name", name]), "{role}");
+            assert!(a.windows(2).any(|w| w == ["--matches", "1"]), "{role}");
+        }
+        assert!(Config::Migrate.text().contains("time_limit: 0.5"));
+    }
+
+    #[test]
+    fn checksum_lines_are_compared() {
+        let a = "match 1: x\n  checksum 10 00000000000000aa\n  checksum 20 00000000000000bb\n";
+        assert_eq!(
+            checksums(a),
+            [(10, "00000000000000aa".to_string()), (20, "00000000000000bb".to_string())]
+        );
+        assert_eq!(checksum_difference(a, a), None);
+        let b = "  checksum 10 00000000000000aa\n  checksum 20 00000000000000cc\n";
+        let why = checksum_difference(a, b).unwrap();
+        assert!(why.contains("tick 20") && why.contains("bb") && why.contains("cc"), "{why}");
+        let short = "  checksum 10 00000000000000aa\n";
+        let why = checksum_difference(a, short).unwrap();
+        assert!(why.contains("tick 20") && why.contains("lacks"), "{why}");
+        let why = checksum_difference("path: relayed\n", "path: relayed\n").unwrap();
+        assert!(why.contains("no checksum"), "{why}");
     }
 
     fn run(life: u32) -> Run {
@@ -1515,7 +1777,8 @@ mod tests {
                 let joiner = units.iter().find(|u| u.role == "joiner");
                 assert_eq!(joiner.is_some(), sc.joiner.is_some());
                 if let Some(j) = joiner {
-                    assert!(j.args.iter().any(|a| a == "--allow-local") && j.ready == Ready::Exit);
+                    assert!(j.args.iter().any(|a| a == "--allow-local"));
+                    assert_eq!(j.ready == Ready::Exit, sc.migration.is_none(), "{}", sc.name);
                     assert_eq!(
                         j.args.iter().any(|a| a == "{invite}"),
                         sc.joiner.unwrap().way == Way::Invite,
@@ -1646,6 +1909,41 @@ mod tests {
         let unmapped = Seen { host_log: "invite code (joins through the relays): rlx1c\n".into(), ..mapped };
         let wrong = verdict(pcp, &unmapped).join("; ");
         assert!(wrong.contains("(PCP)") && wrong.contains("lacks an address"), "{wrong}");
+    }
+
+    /// A broken migration fails the verdict: a successor that did not
+    /// host, a client that did not follow, a checksum that differs.
+    #[test]
+    fn the_migration_verdict_names_what_is_missing() {
+        let expect = &scenario("migration").expect;
+        let good = Seen {
+            exit: Some(0),
+            stdout: "path: relayed\nmigrated: hosting\nmatch 1: x\n  checksum 10 aa\n  checksum 20 bb\n"
+                .into(),
+            other_exit: Some(0),
+            other_stdout:
+                "path: relayed\nmigrated: succ hosts\npath: relayed\nmatch 1: x\n  checksum 10 aa\n  checksum 20 bb\n".into(),
+            host_log: "invite code (joins through the relays): rlx1a\n".into(),
+            relay_log: "relay: 1 allocations\n".into(),
+            ..Seen::default()
+        };
+        assert!(verdict(expect, &good).is_empty(), "{:?}", verdict(expect, &good));
+        let lost = Seen {
+            exit: Some(1),
+            stdout: "host lost: x\n".into(),
+            other_exit: None,
+            other_stdout: "path: relayed\nmigrated: other hosts\n".into(),
+            ..good.clone()
+        };
+        let wrong = verdict(expect, &lost).join("; ");
+        for want in
+            ["exited with 1", "migrated: hosting", "migrated: succ hosts", "did not exit", "no checksum"]
+        {
+            assert!(wrong.contains(want), "{want}: {wrong}");
+        }
+        let forked = Seen { other_stdout: good.other_stdout.replace("bb", "cc"), ..good };
+        let wrong = verdict(expect, &forked).join("; ");
+        assert!(wrong.contains("checksums differ") && wrong.contains("tick 20"), "{wrong}");
     }
 
     #[test]

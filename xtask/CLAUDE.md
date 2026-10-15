@@ -19,7 +19,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `rl-cli`'s `render_golden` and `gpu_bench` (plan 8's `gpu-bench` on the
   software adapter), `rl-game`'s `soak`, `rl-ui`'s `hud_snapshots`) and the
   audio step, then `e2e`, `net-nat`, `bench`, `stress` and `net-feel`.
-  Each step prints `ok   <name> (<s>s)` (`net-nat`: `ok   net-nat (11
+  Each step prints `ok   <name> (<s>s)` (`net-nat`: `ok   net-nat (12
   scenarios, <s>s)`, `run_with`'s `finish` with a detail) or `FAIL` and
   its output.
 - `bench` (`bench.rs`, also `cargo xtask bench [--offline]`, spec §21 G8):
@@ -197,8 +197,13 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `configs_are_ron_on_our_servers_only`,
   `the_verdict_names_what_is_missing`,
   `allocations_are_read_from_the_relay_log`,
-  `image_build_failures_that_skip`, `network_failures_that_skip`. About
-  84 s here once built.
+  `image_build_failures_that_skip`, `network_failures_that_skip`,
+  `the_migration_scenario_is_listed_and_selectable`,
+  `checksum_lines_are_compared`, `the_migration_verdict_names_what_is_missing`.
+  The `migration` scenario (`Scenario::migration`: a second client, `Joiner::name`;
+  `limit()` 90 s; `crash_host` kills the host with `docker kill` 8 s after
+  both clients' `match starts:`; `Expect::other_stdout`,
+  `checksums_equal`) is in `tools/net-nat/CLAUDE.md`. About 146 s here once built.
 - `windows` (`winbuild.rs`, plan 8): the native Windows build run from
   WSL, for `envelope --gpu windows`. `missing()` says why it cannot run
   here (no `cmd.exe` or `WSLInterop`/`WSLInterop-late` not enabled, no

@@ -112,7 +112,7 @@ Two details a real router has and the test needs:
 ## Scenarios
 
 Each starts its own containers (stage by stage: infra; relay, routers,
-public; host; joiner), is bounded at 60 s, saves every container's
+public; host; joiner), is bounded at 60 s (`migration`: 90 s), saves every container's
 stdout and stderr to `target/net-nat/<scenario>/<role>.{out,err}`, and is
 removed by its label (`docker rm -f`) even when it fails. A failure names
 the scenario, what was missing and the last 40 lines of each container's
@@ -131,6 +131,7 @@ output.
 | `nat-check` | `rl-server --nat-check` in LAN B | — | `NAT: symmetric NAT` | 5.4 s |
 | `no-nat` | Invite on the WAN at .40, no NAT (N47-a) | LAN A, `--invite --lobby-only` | `reach: No router: players reach you directly at 203.0.113.40:23400`, the code has an address, `path: direct`, `via direct` | 4.3 s |
 | `relay-beside` | Invite in LAN F, its TURN relay beside it at 10.6.0.30 (TR-5; the WAN relay not run) | LAN B (symmetric), `--invite --lobby-only` | `path: relayed`, the relay's allocation, the host's `via relayed` or `via punched` (below) | 9.3 s |
+| `migration` | Invite in LAN A (`Config::Migrate`: one fill bot, `min_players` 2, a 0.5-minute match) | `succ` in LAN C, then `other` in LAN B (symmetric), both `--invite --matches 1` | host killed 8 s after both print `match starts:`; `succ` `migrated: hosting`, `other` `migrated: succ hosts` then `path: relayed`, both exit 0, equal `checksum` lines, the relay's allocation | 48.9 s |
 
 `relay-beside` runs with `allow_local`, as every scenario must
 (203.0.113.0/24 is not global), and `allow_local` lifted TR-1's refusal
@@ -144,10 +145,25 @@ peer-reflexive address of the relay's (10.6.0.30) and names the path
 `punched`; through the hairpin (no `allow_local`) it would see the WAN
 address, a port the hairpin chose.
 
+`migration` (plan 12c Task 10, spec §3.7) is the only scenario with two
+clients and a crash. The runner starts `succ` (role `joiner`) and waits
+for its `path:` line (in the lobby), so it joined first and is the first
+successor (B5); then `other` (role `other`). Once both stderrs show
+`match starts:` it waits 8 s and `docker kill`s the host (silence, no
+goodbye), then waits for both to exit (`crash_host`; the clients'
+`--timeout` is 80 s). The verdict reads the clients' stdout: `succ`
+`migrated: hosting`; `other` `migrated: succ hosts` followed by a new
+`path: relayed` line (it reconnected to `succ` through the TURN relay,
+behind its symmetric NAT); both exit 0; their `checksum <tick> <hex>`
+lines equal (`checksum_difference`: the first differing tick, and none at
+all is a difference); the relay logged an allocation. `succ` (cone, LAN
+C) reaches the host punched; it is the standby that hosts on after the
+host is gone, announced on the WAN relay.
+
 A browser host is plan 13's (ruling PL12b-3).
 
 Times measured here (WSL2, Docker 29.1.3, 2026-10-14): all nine about
-84 s once built (the dev binaries); the image 196 MB (51 MB content),
+84 s once built (the dev binaries; `migration` added 48.9 s: twelve, 146 s); the image 196 MB (51 MB content),
 built in 12 s from a pulled base. `no-nat` and `relay-beside` (the final
 review's fix pass, 2026-10-15) 4.3 s and 9.3 s.
 
