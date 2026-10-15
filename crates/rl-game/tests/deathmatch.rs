@@ -10,7 +10,7 @@ use rl_game::drive::percentile_ms;
 use rl_game::session::{Driver, Session};
 use rl_game::setup::{self, DeathmatchOptions};
 use rl_scene::{DrawList, Interpolation, Viewport};
-use rl_sim::{EndReason, Keys};
+use rl_sim::{EndReason, EventKind, Keys};
 use rl_ui::hud::clock;
 
 fn content() -> Option<PathBuf> {
@@ -55,8 +55,16 @@ fn deathmatch_session_ends_with_results() {
     assert_eq!((s.names.of(0), s.names.of(1)), ("You".into(), "Bot 1".into()));
     let mut list = DrawList::new();
     let mut t = 0;
+    // Every death and suicide by worm, from the kill events.
+    let (mut died, mut killed_self) = ([0; 4], [0; 4]);
     while s.results.is_none() && t < 2000 {
         s.tick(player_keys(t));
+        for e in s.events.iter() {
+            if let EventKind::Kill { victim, killer } = e.kind {
+                died[victim as usize] += 1;
+                killed_self[victim as usize] += i32::from(killer == victim);
+            }
+        }
         s.build(0.5, &mut list);
         t += 1;
     }
@@ -69,7 +77,11 @@ fn deathmatch_session_ends_with_results() {
     for (row, score) in r.rows.iter().zip(s.world.scores()) {
         assert_eq!(row.worm, score.worm, "the mode's order");
         let w = &s.world.worms()[row.worm as usize];
-        assert_eq!((row.kills, row.deaths, row.suicides), (w.kills, w.deaths, w.suicides));
+        // Deaths and suicides are every one, not the worm's score-gated
+        // counts (`docs/porting/STATUS.md`).
+        let i = row.worm as usize;
+        assert_eq!((row.kills, row.deaths, row.suicides), (w.kills, died[i], killed_self[i]));
+        assert!(row.deaths >= w.deaths && row.suicides >= w.suicides);
         assert_eq!(row.name, s.names.of(row.worm));
     }
     assert_eq!(r.time_left_ms, Some(0));

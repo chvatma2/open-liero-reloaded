@@ -114,3 +114,7 @@
   fixtures/net/cases/net-mw-1-0-fossilfacility-awful-6s4c1v-seed3163848068-e465b7a8.ron
 2026-10-15 bless-regression: SK-10: every survivor host lost, no successor reachable when asked (outages over both windows' asks); a legitimate end
   fixtures/net/cases/net-classic-castlestrike-typical-16s3c0v-seed2454863382-08923ba3.ron
+2026-10-15 bless-regression: the board shows every death and suicide, not OLX's score-gated iDeaths (user decision)
+  fixtures/matches/classic-dirt-level-8dm.ron
+  fixtures/matches/classic-fossilfacility-4xtreme-kill-limit.ron
+  fixtures/matches/mw-castlestrike-8chaos.ron

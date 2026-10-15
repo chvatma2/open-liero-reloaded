@@ -181,6 +181,10 @@ pub struct Score {
     pub score: i32,
     pub lives: i32,
     pub kills: i32,
+    /// The times the worm died and killed itself, as the mode counts them
+    /// (Deathmatch: every one; not the worm's `deaths`/`suicides`, OLX's
+    /// `iDeaths`/`iSuicides`, which the score reads and which count
+    /// nothing at a score of 0 without `AllowNegativeScore`).
     pub deaths: i32,
     pub suicides: i32,
     /// `fDamage`.

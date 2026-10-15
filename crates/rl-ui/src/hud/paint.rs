@@ -251,7 +251,8 @@ fn scoreboard(ui: &Ui, rows: &[Row], offset: egui::Vec2) {
 
 /// The rows of a scoreboard or of the results as a grid: name, lives,
 /// score, kills, deaths, suicides, damage (OLX's results columns plus
-/// the deaths and suicides it counts); the followed worm's (the
+/// the score and every death and suicide, the mode's counts, not OLX's
+/// score-gated `iDeaths`; `docs/porting/STATUS.md`); the followed worm's (the
 /// player's own) in yellow.
 pub fn table(ui: &mut Ui, rows: &[Row]) {
     let head = |ui: &mut Ui, t: &str| {

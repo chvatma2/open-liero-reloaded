@@ -11,7 +11,9 @@ pub(crate) const WRM_UNLIM: i32 = -2;
 
 /// The scoreboard row of `w`: `CWorm::getScore` with the match's settings,
 /// the lives, kills, deaths, suicides and the damage score; not left (the
-/// mode marks the rows of the worms that left).
+/// mode marks the rows of the worms that left). The deaths and suicides
+/// are the worm's score-gated ones; Deathmatch's board replaces them with
+/// its counts of every one.
 pub(crate) fn row(w: &Worm, s: &SimSettings) -> Score {
     Score {
         worm: w.id,

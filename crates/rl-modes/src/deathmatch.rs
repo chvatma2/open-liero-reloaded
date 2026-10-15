@@ -172,6 +172,13 @@ pub struct Deathmatch {
     kills_in_row: [i32; MAX_WORMS],
     /// `iDeathsInRow`, by worm id.
     deaths_in_row: [i32; MAX_WORMS],
+    /// Every death and suicide, by worm id: the board's `deaths` and
+    /// `suicides` (a deviation: OLX's `iDeaths`/`iSuicides`, the worm's,
+    /// count nothing at a score of 0 without `AllowNegativeScore`, and OLX
+    /// never shows them; the score still reads those). Kept when a worm
+    /// leaves: its left row shows them.
+    died: [i32; MAX_WORMS],
+    killed_self: [i32; MAX_WORMS],
     /// How many times each worm has spawned, by worm id (the chaos
     /// rotation's lives).
     spawns: [u32; MAX_WORMS],
@@ -195,6 +202,8 @@ struct DeathmatchState {
     first_blood: bool,
     kills_in_row: [i32; MAX_WORMS],
     deaths_in_row: [i32; MAX_WORMS],
+    died: [i32; MAX_WORMS],
+    killed_self: [i32; MAX_WORMS],
     spawns: [u32; MAX_WORMS],
     frame: u64,
     over: Option<MatchResult>,
@@ -222,6 +231,8 @@ impl Deathmatch {
             first_blood: true,
             kills_in_row: [0; MAX_WORMS],
             deaths_in_row: [0; MAX_WORMS],
+            died: [0; MAX_WORMS],
+            killed_self: [0; MAX_WORMS],
             spawns: [0; MAX_WORMS],
             frame: 0,
             over: None,
@@ -291,7 +302,8 @@ impl Deathmatch {
 
     /// `CGameMode::Kill` (`CGameMode.cpp:69-206`) for `killer` killing
     /// `victim` (ids; -1 for nobody), from the worms before the kill: the
-    /// credit, the rows of kills and deaths, and the messages.
+    /// credit, the rows of kills and deaths, the board's count of the
+    /// victim's deaths (and suicides), and the messages.
     pub(crate) fn kill(
         &mut self,
         worms: &[Worm],
@@ -325,6 +337,10 @@ impl Deathmatch {
             }
         }
         if let Some(i) = slot(victim) {
+            self.died[i] = self.died[i].wrapping_add(1);
+            if killer == victim {
+                self.killed_self[i] = self.killed_self[i].wrapping_add(1);
+            }
             self.kills_in_row[i] = 0;
             self.deaths_in_row[i] = self.deaths_in_row[i].wrapping_add(1);
             if let Some(t) = self.settings.dying_sprees.iter().position(|&t| t == self.deaths_in_row[i]) {
@@ -369,15 +385,22 @@ impl Deathmatch {
 
     /// The scoreboard from `worms`, best first; the rows of the worms in
     /// `gone` ([`ModeCtx::gone`], bit `i` for worm `i`) are left ones.
+    /// Their deaths and suicides are every one (`died`, `killed_self`, by
+    /// worm id); the score is OLX's, from the worm's gated counters.
     fn refresh(&mut self, worms: &[Worm], s: &SimSettings, gone: u32) {
+        let (died, killed_self) = (&self.died, &self.killed_self);
+        let count =
+            |of: &[i32; MAX_WORMS], id: i32| usize::try_from(id).ok().and_then(|i| of.get(i)).copied();
         self.board.clear();
-        self.board.extend(
-            worms
-                .iter()
-                .take(MAX_WORMS)
-                .enumerate()
-                .map(|(i, w)| Score { left: rules::is_gone(gone, i), ..rules::row(w, s) }),
-        );
+        self.board.extend(worms.iter().take(MAX_WORMS).enumerate().map(|(i, w)| {
+            let row = rules::row(w, s);
+            Score {
+                deaths: count(died, w.id).unwrap_or(0),
+                suicides: count(killed_self, w.id).unwrap_or(0),
+                left: rules::is_gone(gone, i),
+                ..row
+            }
+        }));
         rules::sort(&mut self.board, self.settings.lives, self.settings.kill_limit);
     }
 
@@ -408,6 +431,8 @@ impl GameMode for Deathmatch {
             first_blood,
             kills_in_row,
             deaths_in_row,
+            died,
+            killed_self,
             spawns,
             frame,
             over,
@@ -432,6 +457,7 @@ impl GameMode for Deathmatch {
         h.f32(*death_decreases_score);
         h.bool(*suicide_decreases_score);
         sprees.iter().chain(dying_sprees).chain(kills_in_row).chain(deaths_in_row).for_each(|&n| h.i32(n));
+        died.iter().chain(killed_self).for_each(|&n| h.i32(n));
         respawn_loadout.hash(h);
         spawns.iter().for_each(|&n| h.u32(n));
         h.bool(*first_blood);
@@ -535,6 +561,8 @@ impl GameMode for Deathmatch {
             first_blood,
             kills_in_row,
             deaths_in_row,
+            died,
+            killed_self,
             spawns,
             frame,
             over,
@@ -545,6 +573,8 @@ impl GameMode for Deathmatch {
             first_blood: *first_blood,
             kills_in_row: *kills_in_row,
             deaths_in_row: *deaths_in_row,
+            died: *died,
+            killed_self: *killed_self,
             spawns: *spawns,
             frame: *frame,
             over: *over,
@@ -571,6 +601,8 @@ impl GameMode for Deathmatch {
             first_blood,
             kills_in_row,
             deaths_in_row,
+            died,
+            killed_self,
             spawns,
             frame,
             over,
@@ -579,6 +611,7 @@ impl GameMode for Deathmatch {
         } = s;
         (self.first_blood, self.kills_in_row, self.deaths_in_row, self.spawns) =
             (first_blood, kills_in_row, deaths_in_row, spawns);
+        (self.died, self.killed_self) = (died, killed_self);
         (self.frame, self.over, self.ended_at) = (frame, over, ended_at);
         // `clear` + `extend` keeps the board's capacity: callbacks never allocate.
         self.board.clear();

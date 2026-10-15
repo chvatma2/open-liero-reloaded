@@ -151,6 +151,35 @@ fn lives_out_removes_worm_from_respawn() {
     assert!(r.messages().is_empty());
 }
 
+/// The board counts every death and suicide, also at a score of 0, where
+/// OLX's `iDeaths`/`iSuicides` (the worm's, which the score reads) count
+/// nothing without `AllowNegativeScore` (`CWorm.cpp:1430-1442`); OLX never
+/// shows them (`CClient::UpdateScore`). A user decision, in STATUS.md.
+#[test]
+fn board_counts_every_death_and_suicide() {
+    let row = |r: &Run, worm: i32| {
+        let s = r.w.scores().iter().find(|s| s.worm == worm).copied().expect("a row");
+        (s.score, s.lives, s.kills, s.deaths, s.suicides)
+    };
+    // Lives 1: worm 2 dies twice at a score of 0, then it is out.
+    let xs = [(50, LASER), (200, LASER), (300, LASER)];
+    let mut r = settled(DeathmatchSettings { lives: 1, ..dm() }, &xs);
+    r.w.set_health(2, 0.0);
+    r.tick(&[]);
+    r.idle_until(400, |w| w.worms()[2].alive);
+    r.w.set_health(2, 0.0);
+    r.tick(&[]);
+    assert_eq!(stats(&r.w, 2), (0, 0, 0, -1), "OLX's gated counters stay");
+    assert_eq!(row(&r, 2), (0, -1, 0, 2, 0), "both deaths shown");
+
+    // A suicide at a score of 0: one death and one suicide on the board,
+    // none on the worm, and the score stays 0.
+    let mut r = settled(dm(), &[(50, BOMB), (300, LASER)]);
+    r.fire(&[0], 10);
+    assert_eq!(stats(&r.w, 0), (0, 0, 0, -2));
+    assert_eq!(row(&r, 0), (0, -2, 0, 1, 1));
+}
+
 /// `CGameMode::Kill`'s messages (`CGameMode.cpp:75-206`): the kill, first
 /// blood once, killing sprees at 3, 5, 7, 9 and 10 kills in a row (the
 /// killer), dying sprees at as many deaths in a row (the victim, whoever

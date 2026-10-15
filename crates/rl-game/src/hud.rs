@@ -162,10 +162,16 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
     if let Some(w) = worm.as_mut().filter(|_| f.selecting) {
         w.slots.clear();
     }
-    if let (Driver::Online(_), Some(w)) = (&s.driver, worm.as_mut())
+    // The deaths and suicides are the board's (every one, not the worm's
+    // score-gated counters: `docs/porting/STATUS.md`); online, the lives
+    // and kills too (the confirmed tick's).
+    if let Some(w) = worm.as_mut()
         && let Some(c) = s.scores().iter().find(|c| c.worm == followed)
     {
-        (w.lives, w.kills, w.deaths, w.suicides) = (c.lives, c.kills, c.deaths, c.suicides);
+        (w.deaths, w.suicides) = (c.deaths, c.suicides);
+        if let Driver::Online(_) = &s.driver {
+            (w.lives, w.kills) = (c.lives, c.kills);
+        }
     }
     let mut notices = Vec::new();
     if let Some(speed) = speed.filter(|_| !s.human()) {

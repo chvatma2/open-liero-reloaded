@@ -106,6 +106,21 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   10 ms a frame (`skipProjectiles` adds the real frame time), and
   `GameMode::on_spawn` runs after the spawn (OLX asks `CGameMode::Spawn`
   first; Deathmatch's always agrees).
+- **The board counts every death and suicide** (user decision, 2026-10-15,
+  after a playtest read "11 deaths" for three worms and "7" for a fourth
+  that was also out, with 10 lives). OLX's `iDeaths` and `iSuicides`
+  (`CWorm::addDeath`/`addSuicide`, `src/common/CWorm.cpp:1430-1442`)
+  count nothing while the worm's score is 0 or less without
+  `AllowNegativeScore` (the default). They are scoring counters: OLX never
+  shows them (`CClient::UpdateScore`, `CClient_Draw.cpp:1851-1950`, shows
+  lives, kills and damage). `rl-sim` keeps them on the worm
+  (`Worm::deaths`/`suicides`, the oracle's), and the score, ranking and
+  winner still read them (`olx_score`). Deathmatch also counts every death
+  and suicide (`died`, `killed_self`, in `Deathmatch::kill`), and the
+  board's `Score::deaths`/`suicides`, which the results and the Tab
+  scoreboard show, are those. A worm that leaves keeps its counts on its
+  left row. With `Lives` N, a worm that is out has died N + 1 times, as in
+  OLX.
 - **Mode commands have no OLX equivalent** (spec §12.1 H1): they are applied
   after `CGameMode::Simulate`, in queue order. `give_weapon` makes the slot
   full and ready, `LastFire` included (a weapon bonus keeps `LastFire`).
@@ -2815,7 +2830,9 @@ Open items (deferred minors):
   `SendSpawnWorm` sends it nothing.
 - **Deaths at a score of 0 are not counted** without `AllowNegativeScore`
   (`die-before-delivery`, most weapon scenarios: the dummy gets no death);
-  a killer that is already dead still gets the kill.
+  a killer that is already dead still gets the kill. These are the worm's
+  counters, which the score reads. The board counts every death (see
+  "Deliberate deviations").
 - **Gibs draw 4 `rand()` while the entity pool has room, 2 after** (the
   dedicated server's pool never frees; `disease-bomb`, `nuclear-bomb` and
   `sunray-beamer` kill with a full pool). The gib image exists in dedicated

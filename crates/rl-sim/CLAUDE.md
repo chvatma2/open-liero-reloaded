@@ -28,6 +28,9 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   uses `box_clone`; `is_over(&World)` sees the whole world, the mode
   included (`World::scores`); `World::mode_state().as_any()` downcasts to
   the mode's own type. `Score::left` marks a row whose worm left.
+  `Score::deaths`/`suicides` are the mode's counts (Deathmatch: every
+  one). `Worm::deaths`/`suicides` are OLX's score-gated counters, which
+  the oracle checks.
 - **Leaving players** (decision N82): `World::withdraw(i)` takes worm `i`
   out for good, between ticks (OLX `RemoveClientWorms`): dead, `WRM_OUT`,
   rope, input state and latches cleared, never respawned, still slot `i`;

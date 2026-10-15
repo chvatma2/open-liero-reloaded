@@ -122,7 +122,9 @@ fn the_local_slot_drives_everything() {
     let view = hud::view(&s, &frame);
     let w = &s.world.worms()[2];
     let worm = view.worm.expect("the player's");
-    assert_eq!((worm.kills, worm.deaths, worm.lives), (w.kills, w.deaths, w.lives));
+    // The HUD's deaths are every one (the board's), not the worm's
+    // score-gated count.
+    assert_eq!((worm.kills, worm.deaths, worm.lives), (w.kills, deaths as i32, w.lives));
 }
 
 /// A game nobody here plays (bots alone) has no local slot: the camera

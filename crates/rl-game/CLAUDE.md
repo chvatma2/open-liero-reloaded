@@ -670,8 +670,8 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   (`Session::weapon_name`, `worm_label`; the change noted by
   `Session::tick` and `Session::frame` from the player's keys,
   `tests/weapon_name.rs`), summed damage popups
-  (`Damage.dealt`), the HUD (OLX's kills, deaths and suicides, which a
-  zero score does not count), and F2's counters: FPS, frame and *busy* ms
+  (`Damage.dealt`), the HUD (OLX's kills; the board's deaths and
+  suicides, every one, not the worm's score-gated counters), and F2's counters: FPS, frame and *busy* ms
   (the frame without the VSync wait), tick ms, entities, projectiles,
   voices. egui allocates per frame; the world path does not.
 - **Scripts** (`script.rs`): `--script <file>` or `--demo` press keys

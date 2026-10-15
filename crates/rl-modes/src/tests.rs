@@ -76,6 +76,8 @@ fn kill_rows_and_messages_like_olx() {
     let (_, t) = dm.kill(&w, &s, 1, 0);
     assert_eq!(said(&t), [m(KILLED, [0, 1, -1])]);
     assert_eq!((&dm.kills_in_row[..3], &dm.deaths_in_row[..3]), (&[1, 0, 0][..], &[0, 1, 2][..]));
+    // The board counts every death and suicide, whoever (or nobody) killed.
+    assert_eq!((&dm.died[..3], &dm.killed_self[..3]), (&[1, 2, 2][..], &[0, 0, 1][..]));
     // A worm on its last life is out after the kill.
     let mut w = worms(2);
     w[1].lives = 0;
@@ -132,6 +134,7 @@ fn drop_resets_the_runs_like_olx() {
     dm.drop_worm(2);
     dm.drop_worm(0);
     assert_eq!((dm.kills_in_row[2], dm.deaths_in_row[0]), (0, 0));
+    assert_eq!(dm.died[..3], [1, 1, 1], "a left row keeps its deaths (decision N85)");
     let (kills, deaths) = (dm.kills_in_row, dm.deaths_in_row);
     assert_eq!(deaths[1], 1, "a run left to keep");
     dm.drop_worm(-1);

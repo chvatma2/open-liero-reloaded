@@ -148,7 +148,10 @@ fn results_match_world_scores() {
         );
         assert_eq!(row.damage, rl_modes::olx_round(score.damage));
         let w = &s.world.worms()[row.worm as usize];
-        assert_eq!((row.kills, row.deaths, row.suicides), (w.kills, w.deaths, w.suicides));
+        // Deaths and suicides are every one: at least the worm's
+        // score-gated counts (`docs/porting/STATUS.md`).
+        assert_eq!(row.kills, w.kills);
+        assert!(row.deaths >= w.deaths && row.suicides >= w.suicides, "{row:?}");
         assert_eq!(row.name, s.names.of(row.worm));
     }
     let result = s.world.result().unwrap();

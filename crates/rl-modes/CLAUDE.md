@@ -19,6 +19,13 @@ port of the bare `CGameMode` (`src/server/CGameMode.cpp`) at commit
   on it). `is_over` is `CheckGameOver`, every frame (OLX's `recheckGame`
   stays set during a match): kill limit, then time limit
   (`serverFrame · 10 > TimeLimit`), then fewer than two worms not out.
+- **The board's deaths and suicides are every one** (a deviation, user
+  decision, `docs/porting/STATUS.md`): `Deathmatch::kill` counts them in
+  `died` and `killed_self` (by worm id, hashed and transferred, kept when
+  a worm leaves), and `refresh` puts them in the rows. The worm's
+  `deaths`/`suicides` are OLX's `iDeaths`/`iSuicides`, which count nothing
+  at a score of 0 without `AllowNegativeScore`. The score, ranking and
+  winner still read those (`olx_score`, `rules::row`).
 - **Leaving players:** `on_drop` is `CGameMode::Drop`
   (`CGameMode.cpp:254-263`): `drop_worm` zeroes the worm's kills and
   deaths in a row, then the board is refreshed. `refresh` takes the gone
