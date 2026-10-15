@@ -256,7 +256,7 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   chat, end, connection) are handed back for the shell. On
   `Disconnected`, `Kicked` or `Refused` the peer has dropped its match,
   so the session would draw its start world: the shell must leave the
-  match view before the next build (Task 12); `OnlineDriver::into_handle`
+  match view before the next build; `OnlineDriver::into_handle`
   gives the peer back (its pump still running). An online match is never fast-forwarded (`human()`).
   A `MatchStarting` among a poll's events and everything after it are
   handed back unpresented (`present_events`): they are the next match's.
@@ -393,7 +393,9 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `auto_save`), `MenuData::host_lost` (why), `host_lost_hosting` (this
   player hosted: its own step-down, or `CUT_OFF`, ruling SB-2: it heard
   none of its players), `host_lost_replay` set once the
-  replay is saved (`Shell::host_lost_pending`, `save_online_replay`; none
+  replay is saved (`Shell::host_lost_pending`, that replay's number in
+  `Shell::replays`, so an earlier match's replay finishing first does not
+  say it: `save_online_replay`; none
   for a mid-match watcher or without a data directory), then
   `UiAction::HostLost` (the Host lost screen), never `OnlineFailed`.
   The playfield's top line is `overlay::top_line(migrating, lagging)`.

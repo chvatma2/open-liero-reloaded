@@ -483,19 +483,83 @@ fn all_nodes(h: &Harness<'static, App>) -> Vec<(String, Rect)> {
 /// changes by a pixel or two when I highlight a control").
 #[test]
 fn hovering_a_widget_never_changes_the_layout() {
+    type Setup = Box<dyn Fn(&mut Harness<'static, App>)>;
+    // Every screen, then the ones a screen alone does not show: the lobby
+    // with its members (Start, Kick, Ban, the seat buttons), the Internet
+    // tab with games (the selectable rows, the selected one's Join) and
+    // the Host lost screen. `must`: widgets each has to offer, so a case
+    // that stops reaching its screen fails.
+    let mut cases: Vec<(String, Setup, &[&str])> = Vec::new();
+    for (screen, tab) in SCREENS.into_iter().chain([(Screen::Main, None)]) {
+        cases.push((
+            format!("{screen:?} {tab:?}"),
+            Box::new(move |h| {
+                reach(h, screen);
+                if let Some(tab) = tab {
+                    h.get_by_label(tab).click();
+                    h.run();
+                }
+            }),
+            if screen == Screen::Lobby { &["Start", "Kick", "Ban", "To spectators"] } else { &[] },
+        ));
+    }
+    cases.push((
+        "Internet games".into(),
+        Box::new(|h| {
+            use rl_ui::{InternetEntry, InternetStatus, InternetView, PingView, Region};
+            reach(h, Screen::Multiplayer);
+            let games = (0..3u8)
+                .map(|i| InternetEntry {
+                    key: [i + 1; 32],
+                    name: format!("Game {i}"),
+                    map: "Dirt Level".into(),
+                    mod_name: "Classic".into(),
+                    players: 2,
+                    max_players: 8,
+                    bots: 1,
+                    ping: PingView::Ms(40),
+                    region: Region::ALL[0],
+                    password: i == 1,
+                    addr: Some(format!("81.2.69.{i}:23400").parse().unwrap()),
+                    incompatible: None,
+                    playing: false,
+                })
+                .collect();
+            h.state_mut().data.internet = InternetView { status: InternetStatus::Listed, games };
+            h.run();
+            h.get_by_label("Game 0").click();
+            h.run();
+        }),
+        &["Game 0", "Game 1", "Join"],
+    ));
+    cases.push((
+        "Host lost".into(),
+        Box::new(|h| {
+            reach(h, Screen::Lobby);
+            let why = "The host left and no other player could take over the game.";
+            let app = h.state_mut();
+            app.ui.update(UiAction::MatchStarted);
+            app.data.host_lost = Some(why.into());
+            app.data.host_lost_replay = true;
+            app.ui.update(UiAction::HostLost(why.into()));
+            h.run();
+            h.step();
+            h.step();
+        }),
+        &["Replays", "Back"],
+    ));
     for (w, h, ppp) in [(1280.0, 720.0, 1.0), (3440.0, 1440.0, 2.0)] {
         let mut harness = harness(egui::vec2(w / ppp, h / ppp), ppp);
-        for (screen, tab) in SCREENS.into_iter().chain([(Screen::Main, None)]) {
-            reach(&mut harness, screen);
-            if let Some(tab) = tab {
-                harness.get_by_label(tab).click();
-                harness.run();
-            }
+        for (screen, setup, must) in &cases {
+            setup(&mut harness);
             harness.hover_at(pos2(1.0, 1.0));
             harness.run();
             let before = all_nodes(&harness);
             let targets: Vec<(String, Rect)> =
                 widgets(&harness).into_iter().filter(|(n, _)| !n.is_empty()).collect();
+            for label in *must {
+                assert!(targets.iter().any(|(n, _)| n == label), "{screen} at {w}x{h}: no {label:?}");
+            }
             let mut bad = Vec::new();
             for (name, r) in targets {
                 harness.hover_at(r.center() / ppp);
@@ -516,7 +580,7 @@ fn hovering_a_widget_never_changes_the_layout() {
             bad.dedup();
             assert!(
                 bad.is_empty(),
-                "{screen:?} {tab:?} at {w}x{h}: {} changes, e.g.\n{}",
+                "{screen} at {w}x{h}: {} changes, e.g.\n{}",
                 bad.len(),
                 bad[..bad.len().min(8)].join("\n")
             );

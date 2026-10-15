@@ -26,8 +26,16 @@ All notable changes to rust-liero are recorded here. The format follows
     network cut it off from its players ("Connection lost: the others
     play on under a new host."), sees this screen: the match moved on
     without it, and its replay is kept.
-  - A migration takes about 2.5 s on a LAN and up to about 10 s through
-    the relays; a match is moved at most 4 times.
+  - A migration takes about 2.5 s on a LAN; through the public relays it
+    has not been measured. A match is moved at most 4 times.
+  - **Two players only:** with one player and the host a short blip is a
+    stall, not a migration; a host that crashes leaves the player on the
+    Host lost screen after about 12 s (a host that quits hands over at
+    once).
+  - **When it fails:** the Host lost screen says which case it was (too
+    many moves, the host left while you were still joining, nobody could
+    take over, with the last try), and the console and log say each
+    attempt (`rl-game: migration: …`).
 - **A network pump:** the game polls its online connection on its own
   thread whenever its window has not for 100 ms, so dragging or resizing
   the window, or a long match load, no longer silences a host (its
@@ -42,6 +50,19 @@ All notable changes to rust-liero are recorded here. The format follows
   `--migration`; `net-client` migrates by default (`--no-standby` makes
   it a follower only); `cargo xtask net-nat` gains the `migration`
   scenario (a host killed behind a router).
+
+### Fixed
+
+- `rl-game --net-sim bad` loses datagrams one at a time, as the spec
+  defines the profile, not in bursts.
+- A spectator who joined mid-match whose host goes sees Host lost instead
+  of hanging.
+- Hovering a control no longer resizes it; the Internet games fit narrow
+  windows; Start and Force start stack, and Kick and Ban wrap, when the
+  window is narrow.
+- Copy and paste work in the text fields, bots are counted apart from
+  players in game lists ("1/8 +3 bots"), and the skin preview's speed no
+  longer depends on the display's refresh rate.
 
 ### Added — through routers
 

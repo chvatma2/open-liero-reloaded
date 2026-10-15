@@ -180,7 +180,7 @@ pub struct Shell {
     /// Every link impaired with this profile (`--net-sim`).
     impair: Option<Profile>,
     /// Replays of online matches whose peer is gone, still being made.
-    replays: Vec<PendingReplay>,
+    replays: Vec<(u64, PendingReplay)>,
     /// The download cache every peer shares (plan 11, ruling PF11-3).
     cache: SharedCache,
     /// When the Options' cache row last read the cache's sizes (`None`
@@ -218,9 +218,12 @@ pub struct Shell {
     /// Tests only: clients this shell starts never host (no standby, N79:
     /// `test_no_standby`).
     no_standby: bool,
-    /// The Host lost screen waits for its match's replay: the next one
-    /// saved sets `MenuData::host_lost_replay`.
-    host_lost_pending: bool,
+    /// The number the next replay handed to `replays` gets.
+    next_replay: u64,
+    /// The Host lost screen waits for its match's replay (its number in
+    /// `replays`): when that one is saved `MenuData::host_lost_replay` is
+    /// set, no other replay's saving does.
+    host_lost_pending: Option<u64>,
 }
 
 /// A change to an endpoint's ICE settings (tests: a loopback base, a
@@ -293,7 +296,8 @@ impl Shell {
             held_keys: Keys(u8::MAX),
             migration: true,
             no_standby: false,
-            host_lost_pending: false,
+            next_replay: 0,
+            host_lost_pending: None,
         };
         shell.data.default_relays = DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect();
         shell.data.default_stun = DEFAULT_STUN.iter().map(|s| s.to_string()).collect();
@@ -355,7 +359,8 @@ impl Shell {
             held_keys: Keys(u8::MAX),
             migration: true,
             no_standby: false,
-            host_lost_pending: false,
+            next_replay: 0,
+            host_lost_pending: None,
         }
     }
 

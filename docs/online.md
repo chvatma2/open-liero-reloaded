@@ -468,19 +468,23 @@ is off: …", and the joiner's tag should be `punched`.
 ## When the host leaves
 
 A match does not end when its host does. If the host quits, crashes, loses
-its network or freezes during a match, the other players move the game to
-a new host and play on. This works in a hosted game and on a dedicated
+its network or freezes during a match, the players who are left move the
+game to a new host and play on, provided there are enough of them (see
+"Two players only" below). This works in a hosted game and on a dedicated
 server (`rl-server`), over the LAN, direct links and the relays.
 
 **What you see.** The top line of the match reads "The host is gone:
-finding who takes over…" and then "The host is gone: moving the game to
-Anna…" (on the player who takes over: "…you are taking over the game…").
+finding who takes over…" and then, depending on who you are:
+- the player who takes over: "The host is gone: you are taking over the
+  game…", and in the log "You are now hosting";
+- every other player: "The host is gone: moving the game to Anna…", and
+  in the log "Anna is now hosting".
+
 The game stands still for those seconds and then goes on from where it
-was; your own ship and the others keep their positions and nothing is
-replayed. The log says "Anna is now hosting" (the new host sees "You are
-now hosting"). If the old host comes back before anyone took over (its
-own network blipped), the log says "The host is back: the match goes on"
-and nothing moves.
+was; your own worm and the others keep their positions and nothing is
+replayed. If the old host comes back before anyone took over (its own
+network blipped), the log says "The host is back: the match goes on" and
+nothing moves.
 
 **Who takes over.** The first player who joined, then the next, then the
 spectators who got the match's start; a player whose game could not open
@@ -491,89 +495,173 @@ can take over within 10 seconds, the match ends with "Host lost".
 **How long it takes.** A host that quits (or whose game window you close)
 is followed at once. A host that just vanished (a crash, a pulled cable)
 is noticed after 2 seconds of silence, then the match resumes about half a
-second later: about 2.5 seconds on a LAN, up to about 10 seconds through
-the relays (the new host's relay connections included). Poor links
-(`bad`, `awful`) can add a second or two; the longer a migration takes,
-the more time the players who were still behind spend waiting.
+second later: about 2.5 seconds on a LAN. Through the relays it may take
+longer; how much longer on the public relays has not been measured (the
+tests use a relay on the same PC), so the playtest below is the first
+real number. Poor links (`bad`, `awful`) can add a second or two; the
+longer a migration takes, the more time the players who were still behind
+spend waiting. Every game with relays keeps one connection open to each
+of them (at most 8) from the match's start to its end, so that a
+migration through them does not start from nothing.
+
+**Two players only.** With one player and the host (or the host and a
+spectator) neither side can tell its own network dropping from the other's,
+so a short blip, a few seconds, is a stall, never a migration: the
+player sees "…you are taking over the game…" until it hears the host
+again, then "The host is back: the match goes on".
+Only a host that quits or steps down (it says goodbye first) hands the
+game over at once. A host that crashes leaves the player with the
+**Host lost** screen about 12 seconds later (2 s of silence, then the 10 s
+it waits for somebody to take over): with nobody else, nobody can. With
+two or more other players the match moves as described above.
 
 **The new host's game is closed.** It takes back only this match's
-players, with the same names and seats, and nobody else: no password, not
-listed, no router port opened. Its lobby reads "Taken over from the host:
-closed to new players". A player who comes back after the handover (a
-slow link, a long outage) is let in and watches until the next match; its
-ship stays idle for the rest of this one.
+members, the players and the spectators, with the same names and seats
+and nobody else: no password, not listed, no router port opened. Its
+lobby reads "Taken over from the host: closed to new players". A player
+who comes back after the handover (a slow link, a long outage) is let in
+and, in the log, "You reached Anna after the match resumed: you watch
+until the next match"; its worm stays idle for the rest of this one
+(after the match ended: "…after the match ended: you play the next one").
 
 **Host lost** is a screen with the reason and, when the match's replay is
 saved, "The match's replay is saved in Replays." Replays opens the Replays
 screen. The replay is the inputs your game confirmed, saved like any
-online match's, and it plays like the others'.
+online match's, and it plays like the others'. The reasons:
+- "The host left and no other player could take over the game." The
+  successors were tried and none took the match; when this game tried
+  one, it adds " Last try: …" with that attempt's line (below).
+- "The host left, and this match has moved to a new host 4 times already:
+  it cannot move again."
+- "The host left while you were still joining the match, so you could not
+  follow it." (A spectator who joined mid-match and was still loading its
+  state.)
 
 **Match lost** is the same screen for the host itself, when the match went
-on without it: its own game stopped for 1.5 seconds ("Your game stopped
-for 1.5 s, so the match moved on without you."), or its network cut it off
-from all its players ("Connection lost: the others play on under a new
-host."). Its replay is kept too.
+on without it: its own game stopped for a while ("Your game stopped for
+1.7 s, so the match moved on without you.", with the measured time, from
+1.5 s up), or its network cut it off from all its players, once at least
+two of them (players or spectators) were silent for 2 seconds ("Connection
+lost: the others play on under a new host."; with only one player the host
+plays on and the blip stays a stall). It shows when the host sees it:
+while it is still cut off. Its replay is kept too.
+
+**If a migration fails: the attempt lines.** The console (the terminal
+where you started `./rl-game | tee rl-game.txt`) and the log file say
+what each try to reach a successor did, as `rl-game: migration: …`
+(`migration: …` in `rl-server`'s log and `rl-cli`'s stderr). These lines
+include the address of the player tried, so they appear only on your own
+PC: they are never sent to another player. Each line is said once per
+successor, route and window:
+- "could not reach Anna directly at 192.168.1.5:40123: <why>" (or "…
+  through the relays: <why>"): the route did not reach her (connection
+  refused or timed out, no reply through the relays).
+- "Anna (directly at …) was not taking the game over": her game was not
+  hosting yet (not her turn, or it still hears the old host).
+- "Anna (…) refused: <why>" and "the link to Anna (…) closed: <why>".
+- "Anna (…) answered, but the link did not open within 6 s": the answer
+  came but no path opened (a firewall or NAT).
+- "Anna (…) did not answer before its turn ended", or "…answered, but did
+  not take this player back in time".
+- On the successor's own game: "taking over: refused a join from
+  <address>: <why>".
+- "You are now hosting" / "Anna is now hosting" and "host lost: <the
+  screen's text>" close the story.
+
+The last attempt's line is also the end of the Host lost text. Keep these
+lines with the test report.
 
 **What to expect on poor links and busy PCs.**
-- Dragging or resizing the game's window, or a long match load, does not
-  cost the match: the game keeps its online connection on a thread of its
-  own (the network pump), so a host or a client is not dropped. The
-  pump keeps the keys you hold for a quarter of a second, then lets go (a
-  long drag does not keep shooting). Only a whole PC that stopped for
-  1.5 seconds (a suspended laptop, an overloaded VPS) loses its match as
-  a host.
-- A host that disappears for more than 2 seconds (its own Wi-Fi) hands
-  the match on and sees "Match lost" when it is back; the others play on
-  without it. A blip shorter than that, or one of the old host that ends
-  before anyone took over, is ridden out.
-- A player whose own link is down while its host is fine is waited for
-  only up to about 3 seconds of outage; longer, the match may move on
-  without it, and it comes back, if its links do, as a watcher.
+- Moving the game's window, or a long match load, does not cost the match:
+  the game keeps its online connection on a thread of its own (the network
+  pump), so a host or a client is not dropped. The pump keeps the keys you
+  hold for a quarter of a second, then lets go (a long drag does not keep
+  shooting). Only a whole PC that stopped for 1.5 seconds (a suspended
+  laptop, an overloaded VPS) loses its match as a host.
+- A host that disappears for more than 2 seconds (its own Wi-Fi) while it
+  has two or more other members hands the match on and sees "Match lost"
+  while it is still cut off; the others play on without it. A blip
+  shorter than that, or one of the old host that ends before anyone took
+  over, is ridden out.
+- A player whose own link is down while its host is fine never moves the
+  match: the host and the others stay together. Its game tries to
+  migrate; if it hears the host again within a few seconds the log says
+  "The host is back: the match goes on" and it plays on, and if not (a
+  link down for more than about 12 seconds) it sees Host lost, with its
+  replay, and can join the game again by hand: it then watches until the
+  next match.
 - On `bad` links a successor can take up to 6 seconds to open a link
   after it answered: players wait for it before moving to the next one.
 - A host and its successor on different networks reach each other through
   the relays unless they share a LAN, which costs a few more seconds; a
   game with no relays at all (a LAN game) migrates only to players it
   reaches directly.
+- On Windows, every PC opens a standby port when it joins a lobby, so the
+  first time Windows may ask whether to allow rust-liero on the network:
+  allow it (private networks), or migration to that PC can only go
+  through the relays (or fails without them). See "Windows Firewall".
 
 **Trying it.** `cargo xtask net-soak` plays seeded online cases with host
 crashes, departures and freezes; `rl-cli net-sim --exit 0:600:crash`,
-`--host-freeze from:until` and `--profile-change` replay one by hand, and
+`--host-freeze from:until` and `--profile-change` make such a case, `rl-cli
+net-sim --from <case>` replays a kept one (`fixtures/net/cases`), and
 `rl-cli net-client --no-standby` is a follower that never takes over.
 
 ### Try a migration (playtest)
 
 This adds to "Two PCs across home routers" and needs three players: three
 PCs, or two PCs and a dedicated server (`rl-server`, see "Dedicated
-server") on a third machine or a VPS. Use the release zips.
+server") on a third machine or a VPS. Use the release zips. A migration
+through the public relays is unmeasured, so with PCs on different
+networks note how long each step took.
 
 1. **Three PCs:** the first hosts (Multiplayer → Host a game, Invite
    only), the other two join with the invite code. Start the game with
    `./rl-game | tee rl-game.txt` (Windows: `.\rl-game.exe | Tee-Object
-   -FilePath rl-game.txt`) on all three so the output is kept.
-   **Two PCs and a server:** run `rl-server` with `visibility: Invite`
-   and `fill_bots: 1` (see "Dedicated server"), the two PCs join it with
-   the invite code, and the server is the host.
+   -FilePath rl-game.txt`) on all three so the output is kept. On
+   Windows, allow rust-liero through the firewall when asked (private
+   networks): every PC opens a standby port on joining, and without it a
+   migration to that PC can only go through the relays.
+   **Two PCs and a server:** run `rl-server` with `visibility: Invite`,
+   `fill_bots: 1` and `min_players: 2` (see "Dedicated server" and
+   `fixtures/server/example.ron`: with 1 it would start with the first
+   player alone), the two PCs join it with the invite code and both press
+   Ready (a dedicated server has no Start button; it starts on Ready),
+   and the server is the host.
 2. **Start a match** with the three (or two plus the server's bots) and
    let it run for about 10 seconds.
 3. **Quit the host mid-match.** Close the host's game window (or kill the
    server: `Ctrl+C` is a leave, `kill -9` or pulling the network cable is a
    crash; try each in turn, in separate matches).
-4. **Check the others.** Both should see "The host is gone: …moving the
-   game to <name>…", the game stands still for a few seconds and goes on,
-   and the log says "<name> is now hosting". The new host's lobby, after
-   the match, shows "Taken over from the host: closed to new players" and
-   the host's controls.
+4. **Check the others.** On the player who takes over, the top line reads
+   "The host is gone: you are taking over the game…" and the log "You are
+   now hosting". On the other player it reads "The host is gone: moving
+   the game to <name>…" and the log "<name> is now hosting". (Of the two
+   remaining players one is the successor, the first who joined, so both
+   texts should show once, one on each PC.) The game stands still for a
+   few seconds and goes on. The new host's lobby, after the match, shows
+   "Taken over from the host: closed to new players" and the host's
+   controls.
 5. **At the results, compare the replays.** Both players' Replays screens
    list the match; the replays, played, should end the same (equal
    scores). The online results' scores are equal on both PCs.
 6. **If anything differs** (a stall of more than a few seconds, the
-   screens, the replays, a desync), keep both PCs' `desyncs/` folders and
-   `rl-game.txt` files and note what the top line said and for how long.
-7. **Also try:** drag the host's window around for 5 seconds mid-match
-   (no migration should happen), and unplug a player's cable for 5 seconds
-   (the others should play on; that player is let in as a watcher when it
-   is back).
+   screens, the replays, a desync, or a Host lost screen), keep both PCs'
+   `desyncs/` folders and `rl-game.txt` files and note what the top line
+   said and for how long, and the `migration:` lines of both PCs (the
+   attempt lines above give the reason).
+7. **Also try, each in its own match:**
+   - Move the host's window around for 5 seconds mid-match: no migration
+     should happen.
+   - Two players and the host's game only (a 1-vs-host match): quit the
+     host with its window (the player takes over at once), then in a new
+     match crash it (`kill -9` or the cable): the player sees "Host lost"
+     after about 12 seconds, with its replay.
+   - Unplug one player's cable for 2 to 3 seconds: the others play on
+     with no migration; that player sees "…" and then "The host is back:
+     the match goes on". (Longer than about 12 seconds it gets the Host
+     lost screen and can join again by hand; it then watches until the
+     next match.)
 
 ## Missing content
 

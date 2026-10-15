@@ -745,7 +745,9 @@ succession without Anna (fails without the succession at a rejoin); N74
 on the real path: three migrations counted (`test_set_migrations`), the
 fourth to Anna counted by `take_over` and `rejoin`, the fifth host lost
 at once with replays (fails without the counts); a successor gone with
-its standby (its port closed) costs Bert and Cid one direct connect each
+its standby (its port held by a listener that never accepts, so no other
+test's standby can take it: a free port answered `NotHost` 19 times) costs
+Bert and Cid one direct connect each
 in its window (`test_joins`), then the match moves to Bert, Cid's two
 `Joining(Direct)` said; the planner with a fake connector and clock: 48
 hostile entries, every direct connect refused, the relays silent or

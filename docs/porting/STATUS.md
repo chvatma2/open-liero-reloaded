@@ -2159,8 +2159,9 @@ Decided in `docs/superpowers/plans/2026-10-15-plan-12c-host-migration.md`
 during its execution: PL12c-0 (the plan's decisions accepted without
 asking), PF12c-1 to PF12c-3 (pre-flight), MG-1 to MG-3 (the lobby), PU-1
 and PU-2 (the pump), RS-1 and RS-2 (the time sync after a resume), SB-1
-and SB-2 (the soak's real-transport bugs) and SK-1 to SK-4 (the soak's
-stall rules). Where a ruling changed a decision, the decision below says
+and SB-2 (the soak's real-transport bugs), SK-1 to SK-10 (the soak's
+stall rules and what it found), UI-2 (the hover fix) and FR12c-1 to
+FR12c-5, with FR12c-1a and FR12c-3a (the final review's fixes). Where a ruling changed a decision, the decision below says
 so and gives its final form. "If wrong" is the cost of the decision being
 wrong. Spec §3.7 and §10 are the source; the code's constants are
 `rl_netcode::migration` (timing), `rl_online::migration` (the open
@@ -2251,8 +2252,10 @@ timeout, the texts) and `rl_game::net::pump`.
   (a leave, a step-down, a closing link: N76) is followed at once with no
   2 s wait. A departed peer the new host still waits for costs up to its
   window (5 s). In the real game a migration takes about 2.5 s on a LAN
-  (2 s of silence and the resume's hold) and, through the relays, up to
-  about 10 s, the successor's relay connections included. If wrong: a
+  (2 s of silence and the resume's hold); through the public relays it is
+  unmeasured (the tests' relay is on the same PC; **ruling FR12c-5**: the
+  relay connections are open from the match's start, so an attempt pays
+  the handshake and ICE only, and the playtest gives the first number). If wrong: a
   stricter reading (3 s from the host's last message) cannot be met with
   the spec's own 2 s detection on anything but LAN.
 - **N67 - the merge.** The new host takes, per slot, the union of every
@@ -2276,15 +2279,23 @@ timeout, the texts) and `rl_game::net::pump`.
   a peer with a cut report shows a correction after the resume.
 - **N68 - collection.** The successor commits (drops its old host and
   becomes the host) at the first proven rejoin, or at once when it expects
-  nobody. It expects the succession entries holding a slot or a spectator
+  nobody **and its old host is known gone** (its `Bye` came: the session's
+  `PeerLeft` or the lobby's `Closed`; **ruling FR12c-1**, below, which
+  changed this: before, a successor that expected nobody committed at
+  once). It expects the succession entries holding a slot or a spectator
   seat from the start (`LobbyHost::away_in_match`); followers are never
   waited for. It resumes when every expected peer rejoined and reported;
   the window's end stops the wait only for peers not yet back, and the
   reports of peers already back are waited for `REPORT_WAIT` (1 s, in
   rl-online) past it, later ones merged as late reports. A successor
   nobody rejoined by its window's end, while it expected someone, closes
-  its gate (D8). If wrong: a 1-vs-host match continues for the lone
-  survivor against bots.
+  its gate (D8). **N68's case changed (FR12c-1):** a 1-vs-host match whose
+  host crashes, or host plus spectator only, no longer continues for the
+  lone survivor against bots: it ends in Host lost about 12 s after the
+  crash (2 s of silence, then `GIVE_UP_US`; the text is plain `HOST_LOST`,
+  no last try, as the player's own turn found nobody). A host that quits
+  or steps down sends its `Bye`, so the player still takes over at once.
+  If wrong: a crash in a two-peer match ends it, for the survivor too.
 - **N69 - the old host speaks again.** A peer that has not committed
   returns to its old host (`HostHeard`) unless its attempt has contact
   with a hosting successor; a successor that has not committed closes its
@@ -2295,7 +2306,10 @@ timeout, the texts) and `rl_game::net::pump`.
   cliff: longer, the peer's links close and it cannot return). **SB-2
   narrows N69:** see SB-2. If wrong: a peer whose own link blipped for
   2-5 s rejoins its host instead of the match moving; a peer in contact
-  with a successor follows it.
+  with a successor follows it. **FR12c-1:** in a two-peer match a blip of
+  2 s or more on either side, below the transport's cliff, is a stall, not
+  a migration: the client's top line reads "you are taking over the
+  game…" until it hears the host, then `HOST_BACK`, and nobody hosts.
 - **N70 - a stalled host steps down.** A host whose own polls stop for
   `STEP_DOWN_US` (1.5 s, below `HOST_SILENT_US`) leaves the match with a
   `Bye` to everyone, when its succession has a `can_host` entry. The gap
@@ -2369,7 +2383,8 @@ timeout, the texts) and `rl_game::net::pump`.
   the answer (Task 7 had 2 s for a direct link and 6 s through relays,
   measured to rl-net's delayed `Connected`, up to 1.5 s after the link
   opened). A direct join runs the same ICE, DTLS and SCTP handshake as a
-  relayed one: on `bad` (150 ms, bursty 5 % loss) str0m's lost checks go
+  relayed one: on `bad` (150 ms, 5 % loss; its losses were bursty when this was
+  measured, before SK-5 made them independent) str0m's lost checks go
   again 0.25, 0.75, 1.75 and 3.75 s after the first, and direct links
   opened 0.75-3.3 s after the answer (soak-transport-125 lost live
   clients as "host lost" at 2 s, 3 of 3 reruns; 6 s passes). A successor
@@ -2400,8 +2415,9 @@ timeout, the texts) and `rl_game::net::pump`.
   failure is kept in `target/failures/` (a `NetCase`, replayable with
   `rl-cli net-sim --from`; a transport failure is `soak-transport-<seed>/`),
   at most 32 per invocation, and the soak stops at the cap. A
-  `bless-regression --from` makes a failing case a golden; two soak finds
-  are in `fixtures/net/cases`. The memory test (`allocation_counter`)
+  `bless-regression --from` makes a failing case a golden; 20 cases are
+  kept in `fixtures/net/cases` (the soak's finds, each with its line in
+  `fixtures/blessings.log`). The memory test (`allocation_counter`)
   catches only multi-MiB leaks. If wrong: soak-only bugs surface
   overnight, not in `full`.
 - **N78 - protocol stays 2** (appended variants; plan 12b's reasoning:
@@ -2417,13 +2433,18 @@ timeout, the texts) and `rl_game::net::pump`.
   host is gone: finding who takes over…", then "…moving the game to
   <name>…" or "…you are taking over the game…". After it the log says
   "<name> is now hosting" or "You are now hosting"; a call-off logs "The
-  host is back: the match goes on"; a late rejoiner "You came back after
-  the handover: you watch until the next match". The new host's lobby
+  host is back: the match goes on"; a late rejoiner "You reached <host>
+  after the match resumed: you watch until the next match" (or "…after
+  the match ended: you play the next one"). The new host's lobby
   shows host controls and, in its Invite section, the final text of
   `MIGRATED_LISTING`: "Taken over from the host: closed to new players"
   (the plan said "only this match's players can join"). **Host lost:** a
-  screen titled "Host lost" with the reason ("The host left and no other
-  player could take over the game."), "The match's replay is saved in
+  screen titled "Host lost" with the reason (**FR12c-4**: one text per
+  case, `LostWhy`: "The host left and no other player could take over
+  the game." plus " Last try: <attempt>." when this game tried a
+  successor; "The host left, and this match has moved to a new host 4
+  times already: it cannot move again."; "The host left while you were
+  still joining the match, so you could not follow it."), "The match's replay is saved in
   Replays." once saved, and Replays and Back; the replay is the peer's
   confirmed inputs. For the host itself, whose own game stalled (N70:
   "Your game stopped for N.N s, so the match moved on without you.") or
@@ -2464,11 +2485,13 @@ timeout, the texts) and `rl_game::net::pump`.
   its match.** A host that hears none of its players for `HOST_SILENT_US`
   during a match, with migration on, ends its match view with
   `CUT_OFF` ("Connection lost: the others play on under a new host."),
-  keeping its replay (`Session::players_silent`; the server logs it and
+  keeping its replay (`Session::members_silent`, renamed by FR12c-1; the server logs it and
   opens its lobby again) instead of playing alone. Its peers, finding it
   silent at the same moment, move on, so a host's own network drop must not
   leave it playing a ghost match. This narrows N69: a host's own drop of
-  more than 2 s always hands the match on. The harness models it. If
+  more than 2 s always hands the match on, **but only with two or more
+  remote members** (FR12c-1: with one player it plays on, since neither
+  side can tell whose network dropped). The harness models it. If
   wrong: a host whose players all crashed at once sees that text instead of
   "everyone left".
 - **SK-1 to SK-3 - the soak's stall rules.** Outage windows join the
@@ -2489,16 +2512,98 @@ timeout, the texts) and `rl_game::net::pump`.
   or noted: rl-server's `nat_check` timing test (`close_within`) and the
   e2e `Click("Join")` (autoplay's `ClickUntil` waits for a click's effect;
   the mechanism is unproven). If wrong: none (rules only).
-- **SK-4 - open: bad-link stalls with drifting clocks.** Under
-  investigation. Four soak cases, all `bad` with 4-6 clients and drifting
-  clocks, stall outside any outage window and fail on the pre-round
-  netcode too: `bad-9s6c0v-seed24272975`, `bad-9s5c2v-seed1365992821`,
-  `bad-14s6c1v-seed1148502858` and `bad-13s4c1v-seed2917608641` (in
-  `target/failures`, not committed). Bad links are a target profile
-  (net-feel: no stalls), so this blocks nothing in plan 12c but remains a
-  defect until fixed. The controller amends this item with the outcome.
-  If wrong (a harness artefact rather than a netcode defect): a soak that
-  fails on bad links for the wrong reason.
+- **SK-4 - bad-link stalls with drifting clocks: fixed or explained.**
+  Soak cases on `bad` with 4-6 clients and drifting clocks stalled
+  outside any outage window (and failed on the pre-round netcode too).
+  - Real netcode fixes:
+    - a peer back from its host's silence catches up the pause
+      (`45ed63e`, accepted by SK-7);
+    - a frame datagram ahead of the frontier waits for its predecessor,
+      at most 16 kept (`c9dfdda`);
+    - a peer's overlapping outages join (`85c0779`);
+    - an outage begun during a migration starts at its tick (`29bb3b7`).
+  - Three of the four cases were net-sim's burst-loss tail: 13-15
+    datagrams in a row reached `MAX_PREDICTION` 28. SK-5 makes `bad` lose
+    datagrams independently, as spec §9 defines it (`dffe613`).
+  - SK-6: cases where a link worsens mid-match are no longer judged from
+    the change on.
+  - The soak then found and fixed two more: SK-8 (a mid-match joiner whose
+    host goes is Host lost, `eaecaf2`) and SK-9 (`InputsReport.origin`,
+    `78985f1`); SK-10 accepts a legitimate "every survivor host lost"
+    (`34d0f30`).
+  - Every case is kept in `fixtures/net/cases`. The last soak ran 16 runs
+    with 0 failures.
+- **SK-5 - `bad` has no bursts.** The spec defines `bad` as 150 +/- 50 ms,
+  5 % loss and reordering, with bursts only in `awful` (§9 Profiles);
+  net-sim's `bad` with `burst: 2` deviated from it, so its bursts are
+  dropped (`dffe613`), `MAX_PREDICTION` 28 (N1) kept, and net-feel
+  re-blessed. Re-bless reason: "bad loses independently (SK-5): bad's
+  rollback p99 18 -> 17; good's `up_bytes_per_s` 7206 -> 7207, from the
+  SK-2/SK-4 netcode changes between the previous bless (`ecb7622`) and
+  this one (the final review's A-M3; not bisected)". Net-feel is
+  otherwise unchanged. If wrong: real bursty links stall like `awful`
+  (accepted by the spec); N1 can be revisited with envelope numbers.
+- **SK-6 - a link that worsens mid-match.** A mid-match profile change to
+  a worse profile is judged like the awful-change cases: no no-stall
+  expectation from the change on for players whose input delay was chosen
+  on the better profile (input delay is fixed per match; real links that
+  worsen stall). Deferred minor: it is broad (any change to a worse link,
+  lan to good too, stops the check). If wrong: a stall bug that shows only
+  after a profile change hides in the soak.
+- **SK-7 - unsuspend catches up the pause** (accepted, since the host ran
+  on); the API comment and rl-netcode's CLAUDE.md say so (`4613a96`).
+- **SK-8 - a joining session detects host silence.** A spectator that
+  joined mid-match and has no world yet finds its host silent like a
+  member and ends with Host lost ("…while you were still joining the
+  match…", `eaecaf2`); following the migration as a joiner is deferred.
+  If wrong: such a joiner rejoins by hand.
+- **SK-9 - a report says where the reporter's log begins**
+  (`InputsReport.origin`; the decoder refuses an origin past the ack): a
+  spectator that follows a migration after its state loaded got frames
+  encoded against a base it never had (4,433 `Malformed`); the new host's
+  first frames to it are sent without a base (`78985f1`). Appended to a
+  protocol that is unreleased.
+- **SK-10 - the verdict accepts "every survivor host lost"** only when the
+  harness's own link model shows no successor was reachable through its
+  window, the survivors' rows agree as far as they go, and every survivor
+  gave up within N68's bound (`34d0f30`). FR12c-3 generalises it.
+- **UI-2 - hover.** The theme makes every widget state's stroke equal so
+  hovering never resizes a control (`d0d0a3a`,
+  `90603b8`: a themed layout harness and tab rows that fit). TextEdit
+  keeps its focus outline but loses only its hover border; a Slider shows
+  hover by its handle's fill: a per-TextEdit scoped style (about 15
+  sites) is not worth it. If wrong: a slightly weaker hover affordance on
+  text fields.
+- **FR12c-1 - a blip in a two-peer match is a stall** (final review A-C1
+  and B-I2). A successor commits only once at least one other peer has
+  rejoined it, unless its old host is known gone (its `Bye`); SB-2's
+  cut-off fires only for a host with at least two remote members. Neither
+  side can tell its own drop from the other's in a two-peer match. Cost:
+  N68's case (above) ends in Host lost. **FR12c-1a** (the implementer's
+  reading, accepted): spectators count among the members that must all be
+  silent, else host, player and spectator could never be a stall. Code:
+  `Migrating::gone`, `Session::members_silent`.
+- **FR12c-2 - a rehost drops what belongs to the old host:** `suspend`,
+  `rehost` and `take_over` clear the ahead buffer and `rehost` clears the
+  queue (final review A-I1; `28f9cca`). If wrong: none.
+- **FR12c-3 - the verdict judges every host-lost survivor** (A-I2,
+  `cdf7038`): one lost while the match continues must show no successor
+  was reachable for it, else it fails. **FR12c-3a** (accepted): the test
+  is `Report::could_join` (a hosting successor within the peer's reach
+  longer than one ask), generalising SK-10's outage-at-the-ask test, which
+  would fail a legitimate window whose successor never hosts; SK-10's
+  all-lost rule is unchanged. If wrong: a reach-model gap.
+- **FR12c-4 - a failed migration is diagnosable** (B-I1, `42b4471`): every
+  attempt's outcome is kept and logged with the successor's name, address
+  and reason (`OnlineEvent::MigrationLog`, to the console and log only);
+  `HostLost` carries `LostWhy` (see N81). docs/online.md lists the lines.
+- **FR12c-5 - standing relay connections** (B-I3, `90afed4`): each client
+  with relays holds one WebSocket per relay (at most 8) from the match's
+  start to its end and fetches the TURN list then and every 2 minutes,
+  subscribing to nothing keyed to it (N80); an attempt through the relays
+  borrows the pool. The timing of a relayed migration over the public
+  relays stays unmeasured for the playtest. If wrong: idle relay
+  connections during every online match.
 
 **Measurements.**
 - Harness resume after detection per profile: see N66 (Task 3's table),
@@ -2517,8 +2622,12 @@ timeout, the texts) and `rl_game::net::pump`.
   server freeze and leave transport cases 23.7-23.9 s each.
 - The added `full` time (net_sim's and transport's migration cases and the
   `net-nat` scenario): about 2 minutes by the plan's estimate plus the
-  scenario's 49 s; the plan's one `full` run's total and share are
-  recorded by the controller below once measured.
+  scenario's 49 s.
+- **The plan's full run, at `5114219`:** passed, about 14.5 minutes. Per
+  step: test 124 s, bot-grid 141 s, gpu 39 s, e2e 35 s, net-nat 147 s (12
+  scenarios), bench 161 s (the worst +3.2 %), stress 21 s, net-feel 44 s,
+  determinism-windows 141 s. The final review's fix pass changed code
+  after it, so a re-run follows that pass.
 - A 3-minute `net-soak` found one real desync (the soak-bug chain above);
   after the fixes seeds 101, 201, 301 and 401 ran with 0 failures (the
   SK-4 cases appeared in later runs).

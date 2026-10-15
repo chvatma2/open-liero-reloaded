@@ -594,7 +594,8 @@ impl Shell {
         let mut peer = handle.into_peer();
         peer.leave();
         if let Some(r) = peer.take_replay() {
-            self.replays.push(r);
+            self.replays.push((self.next_replay, r));
+            self.next_replay += 1;
         }
         self.unmapping.push(peer.shutdown());
         self.prune_unmapping();
@@ -604,16 +605,16 @@ impl Shell {
     /// (with their desync bundles and notices).
     fn poll_replays(&mut self) {
         let mut done = Vec::new();
-        self.replays.retain(|r| match r.poll() {
+        self.replays.retain(|(id, r)| match r.poll() {
             Some(events) => {
-                done.extend(events);
+                done.extend(events.into_iter().map(|e| (*id, e)));
                 false
             }
             None => true,
         });
-        for e in done {
+        for (id, e) in done {
             match e {
-                OnlineEvent::ReplayReady(bytes) => self.save_online_replay(&bytes),
+                OnlineEvent::ReplayReady(bytes) => self.save_online_replay(&bytes, Some(id)),
                 OnlineEvent::DesyncBundle(bytes) => self.save_bundle(&bytes),
                 OnlineEvent::Notice(text) => self.log([text]),
                 _ => {}
@@ -735,13 +736,15 @@ impl Shell {
         let hosting = self.net.as_ref().is_some_and(|n| n.host);
         self.end();
         self.close_hosted();
-        let pending = self.replays.len();
+        let pending = self.next_replay;
         if let Some(p) = self.net.take().and_then(|n| n.peer) {
             self.release(p);
         }
-        // Said once the replay is saved (`save_online_replay`): none for a
-        // watcher that joined mid-match, nor without a data directory.
-        self.host_lost_pending = self.store.replays_dir().is_some() && self.replays.len() > pending;
+        // Said once this match's replay is saved (`save_online_replay`, by
+        // its number): none for a watcher that joined mid-match, nor
+        // without a data directory.
+        self.host_lost_pending =
+            (self.store.replays_dir().is_some() && self.next_replay > pending).then_some(pending);
         self.data.host_lost_replay = false;
         self.data.host_lost_hosting = hosting;
         self.data.host_lost = Some(why.clone());
@@ -852,7 +855,7 @@ impl Shell {
                     return self.lost(why.into(), out);
                 }
                 OnlineEvent::Refused(why) | OnlineEvent::Disconnected(why) => return self.lost(why, out),
-                OnlineEvent::ReplayReady(bytes) => self.save_online_replay(&bytes),
+                OnlineEvent::ReplayReady(bytes) => self.save_online_replay(&bytes, None),
                 OnlineEvent::DesyncBundle(bytes) => self.save_bundle(&bytes),
                 OnlineEvent::Downloads(list) => {
                     if let Some(n) = &mut self.net {
@@ -1093,13 +1096,15 @@ impl Shell {
     }
 
     /// A finished online match's replay, with the automatic ones.
-    fn save_online_replay(&mut self, bytes: &[u8]) {
+    /// `id`: its number in `replays`, `None` for one from a live peer.
+    fn save_online_replay(&mut self, bytes: &[u8], id: Option<u64>) {
         let Some(dir) = self.store.replays_dir() else { return };
         match rl_ui::replays::auto_save(&dir, bytes) {
             Ok(path) => {
                 println!("rl-game: saved replay {}", path.display());
                 // The Host lost screen says so once it is there.
-                if std::mem::take(&mut self.host_lost_pending) {
+                if id.is_some() && self.host_lost_pending == id {
+                    self.host_lost_pending = None;
                     self.data.host_lost_replay = true;
                 }
             }

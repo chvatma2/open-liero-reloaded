@@ -96,7 +96,7 @@
   fixtures/net/cases/net-classic-liero-factory-bad-3s2c0v-seed2700572210-53aa4c33.ron
 2026-10-15 bless-regression: SK-4: a peer's overlapping outages were judged as two windows; a stall through both was in neither
   fixtures/net/cases/net-mw-1-0-dirt-level-typical-8s4c0v-seed2732616080-68374c94.ron
-2026-10-15 net-feel: bad has no burst loss, as the spec defines it (SK-5)
+2026-10-15 net-feel: bad has no burst loss, as the spec defines it (SK-5); good's up_bytes_per_s 7206 -> 7207 from the SK-2/SK-4 netcode changes since the previous bless
   fixtures/net/feel.ron
 2026-10-15 bless-regression: SK-5: a downlink burst of 13-14 lost datagrams on bad stalled a player; bad's losses are independent now, as the spec defines it
   fixtures/net/cases/net-classic-dirt-level-bad-14s6c1v-seed1148502858-f07f8e01.ron

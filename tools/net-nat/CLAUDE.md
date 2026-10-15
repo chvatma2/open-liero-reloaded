@@ -162,8 +162,8 @@ host is gone, announced on the WAN relay.
 
 A browser host is plan 13's (ruling PL12b-3).
 
-Times measured here (WSL2, Docker 29.1.3, 2026-10-14): all nine about
-84 s once built (the dev binaries; `migration` added 48.9 s: twelve, 146 s); the image 196 MB (51 MB content),
+Times measured here (WSL2, Docker 29.1.3, 2026-10-14): the nine without `migration` about
+84 s once built (the dev binaries); `migration` takes 48.9 s, so the twelve take about 146 s; the image 196 MB (51 MB content),
 built in 12 s from a pulled base. `no-nat` and `relay-beside` (the final
 review's fix pass, 2026-10-15) 4.3 s and 9.3 s.
 

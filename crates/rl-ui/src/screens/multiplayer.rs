@@ -245,14 +245,18 @@ fn cells_of(g: &InternetEntry) -> [String; 7] {
 /// column its widest text, headers and every game's, up to its cap), else
 /// `None`: the games take two lines each (`row`).
 fn table_widths(ui: &Ui, games: &[InternetEntry]) -> Option<[f32; 7]> {
-    let font = egui::TextStyle::Body.resolve(ui.style());
-    let measure = |t: &str| ui.painter().layout_no_wrap(t.to_string(), font.clone(), Color32::WHITE).size().x;
+    let measure_in = |style: egui::TextStyle, t: &str| {
+        let font = style.resolve(ui.style());
+        ui.painter().layout_no_wrap(t.to_string(), font, Color32::WHITE).size().x
+    };
+    let measure = |t: &str| measure_in(egui::TextStyle::Body, t);
     let pad = 2.0 * ui.spacing().button_padding.x;
     let mut widths = HEADERS.map(|h| if h.is_empty() { 0.0 } else { measure(h) * 1.1 });
     for g in games {
         for (i, t) in cells_of(g).iter().enumerate() {
-            let extra = if i == 0 { pad } else { 0.0 };
-            widths[i] = widths[i].max(measure(t) + extra);
+            // The name cell is a selectable button, drawn in the Button style.
+            let w = if i == 0 { measure_in(egui::TextStyle::Button, t) + pad } else { measure(t) };
+            widths[i] = widths[i].max(w);
         }
     }
     for (w, cap) in widths.iter_mut().zip(CAPS) {
