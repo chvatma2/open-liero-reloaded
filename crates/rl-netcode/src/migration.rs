@@ -146,6 +146,7 @@ impl Migration {
 #[allow(clippy::too_many_arguments)]
 pub fn fit_report(
     ack: u32,
+    origin: u32,
     first: u32,
     upto: u32,
     slots: usize,
@@ -156,7 +157,7 @@ pub fn fit_report(
 ) -> InputsReport {
     // The decoder refuses a span past `u32::MAX`.
     own.truncate(MAX_REPORT_OWN.min((u32::MAX - own_first) as usize));
-    let mut report = InputsReport { ack, first, frames: Vec::new(), own_first, own };
+    let mut report = InputsReport { ack, origin, first, frames: Vec::new(), own_first, own };
     fit_frames(first, upto, &mut |n| {
         report.frames = encode_frames(first, n, slots, value, base);
         encode_control(&Control::Report(report.clone())).len()

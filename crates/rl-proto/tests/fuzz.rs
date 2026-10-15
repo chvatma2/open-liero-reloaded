@@ -67,9 +67,11 @@ fn migration_control() -> impl Strategy<Value = Control> {
         prop::collection::vec(edge.clone(), 0..=MAX_SLOTS + 1).prop_map(|known| Control::Collect { known }),
         (edge.clone(), edge.clone(), edge.clone(), frames.clone())
             .prop_map(|(tick, at_ms, first, frames)| Control::Resume { tick, at_ms, first, frames }),
-        (edge.clone(), edge.clone(), frames, edge, own).prop_map(|(ack, first, frames, own_first, own)| {
-            Control::Report(InputsReport { ack, first, frames, own_first, own })
-        }),
+        (edge.clone(), edge.clone(), edge.clone(), frames, edge, own).prop_map(
+            |(ack, origin, first, frames, own_first, own)| {
+                Control::Report(InputsReport { ack, origin, first, frames, own_first, own })
+            }
+        ),
     ]
 }
 
@@ -99,6 +101,9 @@ proptest! {
         let mut b = encode_control(&c);
         for (i, v) in &edits { let i = i.index(b.len()); b[i] = *v; }
         if let Ok(m) = decode_control(&b) {
+            if let Control::Report(r) = &m {
+                prop_assert!(r.origin <= r.ack, "a report's origin is bounded by its ack");
+            }
             prop_assert_eq!(decode_control(&encode_control(&m)), Ok(m));
         }
     }

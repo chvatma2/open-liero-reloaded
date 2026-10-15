@@ -243,9 +243,15 @@ model that tests it in one process (spec §9.1).
     `MAX_AHEAD` (6000) ticks past our tick. A `Collect` (whose `known` must have one entry per slot, else
     `Malformed`) is answered with a `Report`: final inputs from
     `max(min(known), origin)` to our horizon, our own provisional inputs
-    from our slot's prefix, our frontier as `ack`; `fit_report` halves the
+    from our slot's prefix, our frontier as `ack`, our log's start as
+    `origin`; `fit_report` halves the
     span from its end until it fits `MAX_REPORT_FRAMES` and `MAX_CONTROL`,
-    own cut to `MAX_REPORT_OWN`.
+    own cut to `MAX_REPORT_OWN`. The new host keeps the `origin` as the
+    peer's: its `Resume` and frames to it start no lower and, starting
+    there, carry no base (`frames_base`, the first host's rule for a joined
+    spectator; ruling SK-9: a spectator whose state loaded just before the
+    crash got every frame `Malformed`, encoded against a tick it never
+    knew; `a_spectator_whose_state_just_loaded_follows_the_migration`).
   - `take_over(bots, now)`: a client or spectator becomes the host; its
     local slots are its own slot (if a player; it keeps the match's input
     delay, N2: its keys go `d` ticks ahead to `own` and are final when

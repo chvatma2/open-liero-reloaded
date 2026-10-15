@@ -5,7 +5,7 @@ use rl_proto::*;
 fn report(frames: usize, own: usize) -> InputsReport {
     let f =
         encode_frames(100, frames as u32, 32, &|t, s| Some(((t as usize * 7 + s) % 251) as u8), &|_| Some(0));
-    InputsReport { ack: 90, first: 100, frames: f, own_first: 120, own: vec![3; own] }
+    InputsReport { ack: 90, origin: 40, first: 100, frames: f, own_first: 120, own: vec![3; own] }
 }
 
 #[test]
@@ -28,6 +28,7 @@ fn migration_controls_out_of_bounds_are_refused() {
         Control::Report(InputsReport { own: vec![0; MAX_REPORT_OWN + 1], ..report(1, 0) }),
         Control::Report(InputsReport { first: u32::MAX, ..report(2, 0) }),
         Control::Report(InputsReport { own_first: u32::MAX, ..report(1, 2) }),
+        Control::Report(InputsReport { origin: 91, ..report(1, 0) }),
         Control::Report(InputsReport {
             frames: vec![Frame { known: 1, changed: 2, keys: vec![1] }],
             ..report(0, 0)
@@ -65,6 +66,7 @@ fn migration_controls_out_of_bounds_are_refused() {
     // The bounds themselves are accepted.
     let mut edge = report(1, MAX_REPORT_OWN);
     edge.frames = vec![Frame { known: 0, changed: 0, keys: vec![] }; MAX_REPORT_FRAMES];
+    edge.origin = edge.ack;
     let c = Control::Report(edge);
     assert_eq!(decode_control(&encode_control(&c)), Ok(c));
     let c = Control::Collect { known: vec![7; MAX_SLOTS] };

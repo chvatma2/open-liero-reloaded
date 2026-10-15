@@ -19,7 +19,9 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   fill episodes included; `from < to` or `Invalid`), `Desync`,
   `StateBegin`, `StateChunk`, `Bye`, `StateLoaded`, `StateRefused`; plan 12c
   (host migration, spec §3.7): `Collect { known }` (1..=`MAX_SLOTS`),
-  `Report(InputsReport { ack, first, frames, own_first, own })` (frames <=
+  `Report(InputsReport { ack, origin, first, frames, own_first, own })`
+  (`origin`: where the reporter's log begins, 0 or a joined spectator's
+  first tick after its state, at most `ack`, ruling SK-9; frames <=
   `MAX_REPORT_FRAMES` 3000, own <= `MAX_REPORT_OWN` 256, no `u32` overflow of
   `first + len` or `own_first + len`, each frame `changed ⊆ known` with a key
   per changed bit) and `Resume { tick, at_ms, first, frames }` (`at_ms`:

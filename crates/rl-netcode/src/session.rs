@@ -1307,12 +1307,7 @@ impl<S: Simulation> Session<S> {
                     };
                     let stamp = self.stamp(id, now_us);
                     let log = &self.log;
-                    // A joined spectator knows nothing before its origin.
-                    let base = |s: usize| match first {
-                        0 => Some(0),
-                        f if f == origin => None,
-                        f => log.get(f - 1, s as u8),
-                    };
+                    let base = |s: usize| frames_base(log, first, origin, s);
                     let mut n = horizon.saturating_sub(first).min(MAX_FRAMES as u32);
                     let bytes = loop {
                         let frames = encode_frames(first, n, slots, &|t, s| log.get(t, s as u8), &base);
@@ -1974,8 +1969,21 @@ impl<S: Simulation> Session<S> {
 /// A new host's `Datagram::Resume` (ruling RS-1): its `Resuming` and the
 /// final inputs from `first` to `horizon`, at most `MAX_FRAMES`, halved
 /// until it fits `MAX_DATAGRAM`.
+/// The base a peer whose log begins at `origin` decodes frames from
+/// `first` with, slot `s`: the frame delta rule's value at `first - 1`; 0
+/// before tick 0; none at its log's start (a joined spectator knows
+/// nothing before its state: the frames list every known slot).
+pub(crate) fn frames_base(log: &InputLog, first: u32, origin: u32, s: usize) -> Option<u8> {
+    match first {
+        0 => Some(0),
+        f if f == origin => None,
+        f => log.get(f - 1, s as u8),
+    }
+}
+
 fn resume_datagram(log: &InputLog, r: Resuming, first: u32, horizon: u32, slots: usize) -> Vec<u8> {
-    let base = |s: usize| first.checked_sub(1).and_then(|t| log.get(t, s as u8));
+    // A player's log begins at 0.
+    let base = |s: usize| frames_base(log, first, 0, s);
     let mut n = horizon.saturating_sub(first).min(MAX_FRAMES as u32);
     loop {
         let frames = encode_frames(first, n, slots, &|t, s| log.get(t, s as u8), &base);

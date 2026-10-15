@@ -14,7 +14,7 @@ use rl_proto::{
 };
 use rl_sim::Keys;
 
-use super::{MAX_AHEAD, PeerState, Resuming, Role, Seat, Session, TICK_US, TimeSync};
+use super::{MAX_AHEAD, PeerState, Resuming, Role, Seat, Session, TICK_US, TimeSync, frames_base};
 use crate::clock::{Pace, TARGET_MARGIN};
 use crate::inputs::SetResult;
 use crate::migration::{
@@ -284,10 +284,11 @@ impl<S: Simulation> Session<S> {
             let Some(p) = self.peers.get(&id) else { continue };
             // 0 is "unknown" on the wire: a real moment is at least 1.
             let at_ms = p.offsets.median_i32().map_or(0, |o| start_ms.wrapping_sub(o as u32).max(1));
-            // It holds every slot below its ack, and so do we below our frontier.
-            let first = p.ack.min(frontier).max(self.log.origin());
-            let log = &self.log;
-            let base = |s: usize| first.checked_sub(1).and_then(|t| log.get(t, s as u8));
+            // It holds every slot below its ack, and so do we below our
+            // frontier; nothing below its log's start (SK-9).
+            let first = p.ack.min(frontier).max(self.log.origin()).max(p.origin);
+            let (log, origin) = (&self.log, p.origin);
+            let base = |s: usize| frames_base(log, first, origin, s);
             let resume = fit_resume(r, at_ms, first, horizon, slots, &|t, s| log.get(t, s as u8), &base);
             self.push_out(id, Channel::Reliable, encode_control(&resume));
             // Its unreliable twin in every datagram until its inputs come.
@@ -333,7 +334,17 @@ impl<S: Simulation> Session<S> {
             None => (0, Vec::new()),
         };
         let slots = self.cfg.slots as usize;
-        let report = fit_report(log.frontier(), first, log.horizon(), slots, &value, &base, own_first, own);
+        let report = fit_report(
+            log.frontier(),
+            log.origin(),
+            first,
+            log.horizon(),
+            slots,
+            &value,
+            &base,
+            own_first,
+            own,
+        );
         self.push_out(host, Channel::Reliable, encode_control(&Control::Report(report)));
     }
 
@@ -384,6 +395,9 @@ impl<S: Simulation> Session<S> {
         self.scratch = scratch;
         let Some(p) = self.peers.get_mut(&from) else { return };
         p.ack = r.ack;
+        // Its log's start (a spectator's state; at most its ack, the
+        // decoder's bound): our first frames to it there carry no base.
+        p.origin = r.origin;
         // Our `Collect` and its answer are a round trip (a reliable one: a
         // retransmission lengthens it), the measure until stamps give one.
         if p.rtt_x8.is_none() {

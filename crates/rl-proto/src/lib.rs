@@ -120,6 +120,11 @@ pub struct Frame {
 pub struct InputsReport {
     /// The reporter's frontier: the new host's frames to it start there.
     pub ack: u32,
+    /// Where the reporter's log begins: 0, or a spectator's first tick
+    /// after the state it joined from (it knows nothing before it, so the
+    /// new host's frames starting there carry no base, as the first host's
+    /// did; ruling SK-9). At most `ack`.
+    pub origin: u32,
     /// `frames[k]` holds tick `first + k`'s final inputs as the reporter
     /// knows them (the frame delta rule; `base` is the new host's value at
     /// `first - 1`).
@@ -263,6 +268,7 @@ pub fn decode_control(b: &[u8]) -> Result<Control, ProtoError> {
         Control::Collect { known } => (1..=MAX_SLOTS).contains(&known.len()),
         Control::Report(r) => {
             valid_report_frames(r.first, &r.frames)
+                && r.origin <= r.ack
                 && r.own.len() <= MAX_REPORT_OWN
                 && r.own_first.checked_add(r.own.len() as u32).is_some()
         }
