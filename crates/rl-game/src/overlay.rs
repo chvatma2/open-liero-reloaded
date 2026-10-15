@@ -146,15 +146,17 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
     let world_p = ui.painter().with_clip_rect(o.map.points_rect());
     let p = &world_p;
     let s = o.session;
-    let world = s.world();
     let small = FontId::proportional(13.0);
     let k = o.map.scale();
     let worms = crate::hud::worms_on_screen(s, &o.map, o.alpha);
     if o.names {
         let bounds = o.map.points_rect().intersect(ui.max_rect());
         let weapon = s.weapon_name(o.changing);
-        for &(i, at) in &worms {
-            let name = s.names.of(world.worms()[i].id);
+        let ids: Vec<i32> = s.with_world(|w| {
+            worms.iter().map(|&(i, _)| w.worms().get(i).map_or(i as i32, |w| w.id)).collect()
+        });
+        for (&(i, at), &id) in worms.iter().zip(&ids) {
+            let name = s.names.of(id);
             let (text, colour) = worm_label(i, &name, weapon.as_ref());
             let galley = p.layout_no_wrap(text.to_string(), small.clone(), colour);
             let r = name_rect(at - egui::vec2(0.0, 12.0 * k), galley.size(), bounds);
@@ -267,8 +269,8 @@ fn debug(p: &Painter, rect: egui::Rect, o: &Overlay) {
         format!(
             "entities {}   projectiles {}   worms {}   voices {}",
             s.present.fx.len(),
-            s.world().projectiles().count(),
-            s.world().worms().iter().filter(|w| w.alive).count(),
+            s.with_world(|w| w.projectiles().count()),
+            s.with_world(|w| w.worms().iter().filter(|w| w.alive).count()),
             s.audio.playing()
         ),
         format!("{:?} interpolation, alpha {:.2}", s.present.scene.options.interpolation, o.alpha),

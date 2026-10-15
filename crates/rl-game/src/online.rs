@@ -19,23 +19,31 @@
 //!    the scoreboard, the results and the popups (spec §3.4: never a
 //!    predicted tick).
 //!
-//! The newest predicted world is drawn (`OnlineDriver::world`).
+//! The newest predicted world is drawn (`OnlineDriver::with_world`).
+//!
+//! The peer is shared with its network pump (`net::pump`, ruling
+//! PF12c-2), which polls it while the UI thread does not: its ticks are not
+//! presented, and the next poll's presentation starts again from the world
+//! as after a loaded state (`PolledEvents::pumped`).
 
 use std::time::Instant;
 
 use rl_netcode::world_sim::{ConfirmedTick, TickedTick};
-use rl_online::{OnlineEvent, OnlinePeer};
+use rl_online::OnlineEvent;
 use rl_present::Presentation;
 use rl_present::net::NetPresenter;
 use rl_proto::MatchStartWire;
 use rl_sim::{Event, Keys, Score, World};
 use rl_terrain::Area;
 
+use crate::net::{PeerHandle, PolledEvents};
+
 /// Who plays an online match's worms: the peer (the local player's keys,
 /// the host's bots, everyone else's over the network), and what the
 /// presentation has shown of its ticks.
 pub struct OnlineDriver {
-    peer: OnlinePeer,
+    /// The peer, shared with its network pump (`net::pump`).
+    peer: PeerHandle,
     presenter: NetPresenter,
     /// The scores after the last confirmed tick (the HUD's scoreboard).
     confirmed_scores: Vec<Score>,
@@ -49,10 +57,20 @@ pub struct OnlineDriver {
     jumped: bool,
 }
 
+/// What [`OnlineDriver::present`] gives back: the confirmed ticks, the
+/// shell's events, the peer's newest tick, and whether the presentation
+/// started again from the world (the pump ran ticks).
+pub(crate) struct Shown {
+    pub confirmed: Vec<ConfirmedTick>,
+    pub rest: Vec<OnlineEvent>,
+    pub current_tick: Option<u32>,
+    pub resynced: bool,
+}
+
 impl OnlineDriver {
     /// The match `start` that `peer` has just started (its
     /// `OnlineEvent::MatchStarting`).
-    pub fn new(peer: OnlinePeer, start: &MatchStartWire) -> OnlineDriver {
+    pub fn new(peer: PeerHandle, start: &MatchStartWire) -> OnlineDriver {
         let bots =
             (0..start.slots.len()).filter(|&i| start.slots[i].member.is_none()).map(|i| i as i32).collect();
         OnlineDriver {
@@ -74,25 +92,24 @@ impl OnlineDriver {
         if self.jumped {
             return 1.0;
         }
-        self.peer.tick_phase(now).unwrap_or(1.0)
+        self.peer.with(|p| p.tick_phase(now)).unwrap_or(1.0)
     }
 
-    pub fn peer(&self) -> &OnlinePeer {
+    /// The peer's handle (its lock: `PeerHandle::with`).
+    pub fn handle(&self) -> &PeerHandle {
         &self.peer
     }
 
-    pub fn peer_mut(&mut self) -> &mut OnlinePeer {
-        &mut self.peer
-    }
-
-    /// The peer back (the match is over: the lobby goes on).
-    pub fn into_peer(self) -> OnlinePeer {
+    /// The peer back (the match is over: the lobby goes on), its pump
+    /// still running.
+    pub fn into_handle(self) -> PeerHandle {
         self.peer
     }
 
-    /// The newest predicted world, while the peer plays the match.
-    pub fn world(&self) -> Option<&World> {
-        self.peer.match_session().map(|s| s.sim().world())
+    /// `f` with the newest predicted world, while the peer plays the
+    /// match (the peer's lock held meanwhile: `f` must not use the peer).
+    pub fn with_world<R>(&self, f: impl FnOnce(Option<&World>) -> R) -> R {
+        self.peer.with(|p| f(p.match_session().map(|s| s.sim().world())))
     }
 
     /// The scores after the last confirmed tick (none before the first).
@@ -110,6 +127,12 @@ impl OnlineDriver {
         self.bots.contains(&worm)
     }
 
+    /// Advances after which the colour terrain had drifted from the
+    /// world's (debug builds: `NetPresenter::drifts`).
+    pub fn drifts(&self) -> u64 {
+        self.presenter.drifts()
+    }
+
     /// One poll of the peer at `now`: the local player's keys from
     /// `local_keys` (called once per new tick: the input latch), the scene
     /// reading every simulated tick.
@@ -118,7 +141,7 @@ impl OnlineDriver {
         now: Instant,
         local_keys: &mut dyn FnMut() -> Keys,
         present: &mut Presentation,
-    ) -> Vec<OnlineEvent> {
+    ) -> PolledEvents {
         self.peer.poll(now, local_keys, &mut |world, events, info| {
             if info.resim {
                 present.scene.after_tick_resimulated(world, events);
@@ -132,17 +155,48 @@ impl OnlineDriver {
     /// through `play` (with the camera's listener); the confirmed ticks
     /// for the HUD, and the events that are not the presentation's (the
     /// lobby's, the match's end, the connection's) for the shell.
+    ///
+    /// `pumped` is the poll's (`PolledEvents::pumped`): the pump ran ticks
+    /// before it, so the presentation starts again from the world as after
+    /// a loaded state, then the poll's own ticks follow. Ticks the pump ran
+    /// after the poll (`PeerHandle::with_pumped`, under the same lock) make
+    /// the poll's ticks stale: the presentation starts again from the world
+    /// without them (the next poll reports those ticks pumped too).
     pub(crate) fn present(
         &mut self,
-        events: Vec<OnlineEvent>,
+        mut events: Vec<OnlineEvent>,
+        pumped: Option<u32>,
         present: &mut Presentation,
         play: &mut dyn FnMut(&[Event], &Presentation),
-    ) -> (Vec<ConfirmedTick>, Vec<OnlineEvent>) {
-        let session = self.peer.match_session();
-        let world = session.map(|s| s.sim().world());
-        let confirmed_below = session.map(|s| s.confirmed());
-        self.sounds.clear();
-        let p = present_poll(&mut self.presenter, present, world, confirmed_below, events, &mut self.sounds);
+    ) -> Shown {
+        let OnlineDriver { peer, presenter, sounds, .. } = self;
+        sounds.clear();
+        let (p, current_tick, resynced) = peer.with_pumped(|peer, since| {
+            let session = peer.match_session();
+            let world = session.map(|s| s.sim().world());
+            let resync = match since {
+                Some(t) => {
+                    events.retain(|e| {
+                        !matches!(
+                            e,
+                            OnlineEvent::Ticked(_)
+                                | OnlineEvent::Restored(_)
+                                | OnlineEvent::StateLoaded { .. }
+                        )
+                    });
+                    Some(pumped.map_or(t, |p| p.max(t)))
+                }
+                None => pumped,
+            };
+            if let (Some(tick), Some(w)) = (resync, world) {
+                let t = w.terrain();
+                let whole = Area { x0: 0, y0: 0, x1: t.width() as i32, y1: t.height() as i32 };
+                events.splice(0..0, [OnlineEvent::StateLoaded { tick }, OnlineEvent::Restored(vec![whole])]);
+            }
+            let confirmed_below = session.map(|s| s.confirmed());
+            let p = present_poll(presenter, present, world, confirmed_below, events, sounds);
+            (p, session.map(|s| s.current_tick()), resync.is_some())
+        });
         self.jumped = p.jumped;
         if !self.sounds.is_empty() {
             play(&self.sounds, present);
@@ -151,7 +205,7 @@ impl OnlineDriver {
             self.confirmed_scores.clone_from(&last.scores);
             self.confirmed_tick = Some(last.tick);
         }
-        (p.confirmed, p.rest)
+        Shown { confirmed: p.confirmed, rest: p.rest, current_tick, resynced }
     }
 }
 

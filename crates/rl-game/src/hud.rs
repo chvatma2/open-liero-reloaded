@@ -109,13 +109,15 @@ pub struct Frame<'a> {
 /// their names go there.
 pub fn worms_on_screen(s: &Session, map: &ScreenMap, alpha: f32) -> Vec<(usize, Pos2)> {
     let blend = Blend::new(s.present.scene.prev(), alpha, s.present.scene.options.interpolation);
-    s.world()
-        .worms()
-        .iter()
-        .enumerate()
-        .filter(|(_, w)| w.alive)
-        .map(|(i, w)| (i, map.to_points(blend.worm(i, w))))
-        .collect()
+    s.with_world(|world| {
+        world
+            .worms()
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| w.alive)
+            .map(|(i, w)| (i, map.to_points(blend.worm(i, w))))
+            .collect()
+    })
 }
 
 /// What the HUD shows of `s` with frame `f`: the followed worm (the
@@ -128,11 +130,35 @@ pub fn worms_on_screen(s: &Session, map: &ScreenMap, alpha: f32) -> Vec<(usize, 
 /// (spec §3.4); its health and weapons the newest predicted tick's.
 pub fn view(s: &Session, f: &Frame) -> HudView {
     let Frame { scores, minimap, time, menus, speed, .. } = *f;
-    let world = s.world();
     let followed = s.followed();
     let local = s.local().map(i32::from);
-    let mut worm =
-        usize::try_from(followed).ok().and_then(|i| WormHud::of(world, i, &s.names, local == Some(followed)));
+    // The world read once, under an online peer's lock.
+    let (mut worm, map, dots) = s.with_world(|world| {
+        let worm = usize::try_from(followed)
+            .ok()
+            .and_then(|i| WormHud::of(world, i, &s.names, local == Some(followed)));
+        let t = world.terrain();
+        let map = vec2(t.width() as f32, t.height() as f32);
+        let dots: Vec<Dot> = minimap
+            .map(|_| {
+                world
+                    .worms()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, w)| w.alive)
+                    .map(|(i, w)| {
+                        let [r, g, b] = s.colour(i);
+                        Dot {
+                            pos: pos2(w.pos.x, w.pos.y),
+                            colour: Color32::from_rgb(r, g, b),
+                            big: local.unwrap_or(followed) == i as i32,
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        (worm, map, dots)
+    });
     if let Some(w) = worm.as_mut().filter(|_| f.selecting) {
         w.slots.clear();
     }
@@ -161,25 +187,10 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
             notices.push(Notice { text, warn: true });
         }
     }
-    let t = world.terrain();
-    let map = vec2(t.width() as f32, t.height() as f32);
     let minimap = minimap.map(|texture| MinimapView {
         texture,
         map,
-        dots: world
-            .worms()
-            .iter()
-            .enumerate()
-            .filter(|(_, w)| w.alive)
-            .map(|(i, w)| {
-                let [r, g, b] = s.colour(i);
-                Dot {
-                    pos: pos2(w.pos.x, w.pos.y),
-                    colour: Color32::from_rgb(r, g, b),
-                    big: local.unwrap_or(followed) == i as i32,
-                }
-            })
-            .collect(),
+        dots,
         blink: (time % f64::from(minimap::BLINK_PERIOD)) as f32,
     });
     let hint = match s.driver {

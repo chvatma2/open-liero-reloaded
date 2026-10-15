@@ -133,7 +133,7 @@ fn big_downloads_wait_for_the_prompt() {
     let port = h.local_port().expect("the host's port");
     let mut c = menus(partial.path(), Store::open(data.path()), "Anna", 1.0);
     join(&mut c, port);
-    c.peer_mut().expect("joining").test_prompt_limit(1);
+    c.with_peer(|p| p.test_prompt_limit(1)).expect("joining");
     frames_until("the prompt shows", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
         s[1].data.lobby.as_ref().is_some_and(|l| l.prompt.is_some())
     });

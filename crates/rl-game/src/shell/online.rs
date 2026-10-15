@@ -24,7 +24,7 @@ use rl_ui::{HostPrefs, InternetView, LobbyCommand, Screen, UiAction, Visibility}
 
 use super::{MAX_SPECTATORS, NET_SIM_BOTS, Outcome, Playing, Shell};
 use crate::finding::{Hosted, Internet, RELAY_LINGER, local_relays, relays_of, stun_of};
-use crate::net::{self, Net, NetView};
+use crate::net::{self, Net, NetView, PeerHandle, PolledEvents};
 use crate::online::OnlineDriver;
 use crate::session::{Driver, Session};
 use crate::setup::{self, DEFAULT_SKIN};
@@ -116,20 +116,22 @@ impl Shell {
 
     /// The online game's port (a host's: the one to join).
     pub fn local_port(&self) -> Option<u16> {
-        self.peer().map(OnlinePeer::local_port)
+        self.with_peer(|p| p.local_port())
     }
 
     /// The network overlay's numbers while an online match plays (F3;
     /// spec §7.3).
     pub fn net_view(&self) -> Option<NetView> {
         let net = self.net.as_ref()?;
-        let peer = self.peer()?;
-        let s = peer.match_session()?;
+        let (stats, frontier_lag) = self.with_peer(|peer| {
+            let s = peer.match_session()?;
+            Some((peer.stats(), s.current_tick().saturating_sub(s.frontier())))
+        })??;
         Some(NetView {
-            stats: peer.stats(),
+            stats,
             rollback_last: net.meter.last_depth,
             rollback_p99: net.meter.p99(),
-            frontier_lag: s.current_tick().saturating_sub(s.frontier()),
+            frontier_lag,
             lagging: net.lagging,
         })
     }
@@ -154,25 +156,35 @@ impl Shell {
         self.net.as_ref().is_some_and(|n| n.lagging)
     }
 
-    fn peer(&self) -> Option<&OnlinePeer> {
-        if let Some(p) = self.net.as_ref().and_then(|n| n.peer.as_ref()) {
-            return Some(p);
+    /// The online game's peer handle (its match's while one plays).
+    fn handle(&self) -> Option<&PeerHandle> {
+        if let Some(h) = self.net.as_ref().and_then(|n| n.peer.as_ref()) {
+            return Some(h);
         }
         match &self.play.as_ref()?.session.driver {
-            Driver::Online(d) => Some(d.peer()),
+            Driver::Online(d) => Some(d.handle()),
             _ => None,
         }
     }
 
-    /// The online game's peer (its match's while one plays), if any.
-    pub fn peer_mut(&mut self) -> Option<&mut OnlinePeer> {
-        if self.net.as_ref().is_some_and(|n| n.peer.is_some()) {
-            return self.net.as_mut().and_then(|n| n.peer.as_mut());
-        }
-        match &mut self.play.as_mut()?.session.driver {
-            Driver::Online(d) => Some(d.peer_mut()),
-            _ => None,
-        }
+    /// `f` on the online game's peer (its match's while one plays), under
+    /// the peer's lock (`PeerHandle::with`: the network pump waits
+    /// meanwhile); `None` without one.
+    pub fn with_peer<R>(&self, f: impl FnOnce(&mut OnlinePeer) -> R) -> Option<R> {
+        self.handle().map(|h| h.with(f))
+    }
+
+    /// Whether the online game's peer has a running network pump.
+    pub fn pumped(&self) -> bool {
+        self.handle().is_some_and(PeerHandle::is_pumped)
+    }
+
+    /// Tests only: `start_online` (a match's load) takes `d` longer, as
+    /// a slow machine's would (Task 5: the pump keeps the match's network
+    /// alive meanwhile).
+    #[cfg(feature = "test-hooks")]
+    pub fn test_slow_load(&mut self, d: std::time::Duration) {
+        self.slow_load = Some(d);
     }
 
     /// `--host [name]`: hosts at once with the profile's look and the saved
@@ -242,7 +254,7 @@ impl Shell {
         host.lobby().set_spectate(true);
         let port = host.local_port();
         println!("rl-game: net-sim {}: a host on port {port} with {NET_SIM_BOTS} bots", profile.name);
-        self.sim_host = Some(host);
+        self.sim_host = Some(PeerHandle::pumped(host));
         self.impair = Some(profile);
         self.join_from_flag(&format!("127.0.0.1:{port}"));
         let net = self
@@ -417,9 +429,7 @@ impl Shell {
     /// lobby's status.
     pub(super) fn lobby_command(&mut self, c: LobbyCommand) {
         if c == LobbyCommand::ApproveDownloads {
-            if let Some(peer) = self.peer_mut() {
-                peer.approve_downloads();
-            }
+            self.with_peer(OnlinePeer::approve_downloads);
             if let Some(l) = &mut self.data.lobby {
                 l.prompt = None;
             }
@@ -441,47 +451,52 @@ impl Shell {
             }
             _ => None,
         };
-        let Some(peer) = self.peer_mut() else { return };
-        let mut lobby = peer.lobby();
-        let state = lobby.state().cloned();
-        let why = |e: rl_online::StartError| match &state {
-            Some(s) => net::start_reason(&e, s),
-            None => e.to_string(),
-        };
-        let result = match c {
-            LobbyCommand::Ready(on) => {
-                lobby.set_ready(on);
-                Ok(())
+        let Some(result) = self.with_peer(|peer| {
+            let mut lobby = peer.lobby();
+            let state = lobby.state().cloned();
+            let why = |e: rl_online::StartError| match &state {
+                Some(s) => net::start_reason(&e, s),
+                None => e.to_string(),
+            };
+            match c {
+                LobbyCommand::Ready(on) => {
+                    lobby.set_ready(on);
+                    Ok(())
+                }
+                LobbyCommand::Spectate(on) => {
+                    lobby.set_spectate(on);
+                    Ok(())
+                }
+                LobbyCommand::Chat(text) => {
+                    lobby.chat(&text);
+                    Ok(())
+                }
+                LobbyCommand::Setup(_) => match setup {
+                    Some(Ok(s)) => {
+                        lobby.set_setup(s).map_err(|e| format!("the lobby refuses that setup: {e}"))
+                    }
+                    Some(Err(e)) => Err(format!("{e:#}")),
+                    None => Ok(()),
+                },
+                LobbyCommand::Kick { member, ban } => {
+                    lobby.kick(member, ban);
+                    Ok(())
+                }
+                LobbyCommand::Move { member, spectator } => {
+                    lobby.move_seat(member, spectator);
+                    Ok(())
+                }
+                LobbyCommand::Start => lobby.start(seed).map_err(why),
+                LobbyCommand::ForceStart => lobby.force_start(seed).map_err(why),
+                LobbyCommand::Loadout(w) => {
+                    lobby.set_loadout(w);
+                    Ok(())
+                }
+                // Carried out above (the peer's, not its lobby's).
+                LobbyCommand::ApproveDownloads => Ok(()),
             }
-            LobbyCommand::Spectate(on) => {
-                lobby.set_spectate(on);
-                Ok(())
-            }
-            LobbyCommand::Chat(text) => {
-                lobby.chat(&text);
-                Ok(())
-            }
-            LobbyCommand::Setup(_) => match setup {
-                Some(Ok(s)) => lobby.set_setup(s).map_err(|e| format!("the lobby refuses that setup: {e}")),
-                Some(Err(e)) => Err(format!("{e:#}")),
-                None => Ok(()),
-            },
-            LobbyCommand::Kick { member, ban } => {
-                lobby.kick(member, ban);
-                Ok(())
-            }
-            LobbyCommand::Move { member, spectator } => {
-                lobby.move_seat(member, spectator);
-                Ok(())
-            }
-            LobbyCommand::Start => lobby.start(seed).map_err(why),
-            LobbyCommand::ForceStart => lobby.force_start(seed).map_err(why),
-            LobbyCommand::Loadout(w) => {
-                lobby.set_loadout(w);
-                Ok(())
-            }
-            // Carried out above (the peer's, not its lobby's).
-            LobbyCommand::ApproveDownloads => Ok(()),
+        }) else {
+            return;
         };
         self.data.online_status = result.err();
     }
@@ -491,7 +506,7 @@ impl Shell {
     pub(super) fn leave_online(&mut self) {
         self.leave_net();
         if let Some(h) = self.sim_host.take() {
-            self.unmapping.push(h.shutdown());
+            self.unmapping.push(h.into_peer().shutdown());
             self.prune_unmapping();
         }
         self.impair = None;
@@ -514,11 +529,13 @@ impl Shell {
         self.data.weapons = None;
     }
 
-    /// Lets `peer` go: its goodbye, the replay it is making kept (it is
-    /// saved when done: [`Shell::poll_replays`]), and its shutdown started
-    /// (ruling NT-2: never blocking; its router mapping deleted on a
-    /// thread, which the exit waits for).
-    fn release(&mut self, mut peer: OnlinePeer) {
+    /// Lets the peer go: its pump stopped (joined within one of its
+    /// polls), its goodbye, the replay it is making kept (it is saved when
+    /// done: [`Shell::poll_replays`]), and its shutdown started (ruling
+    /// NT-2: never blocking; its router mapping deleted on a thread, which
+    /// the exit waits for).
+    fn release(&mut self, handle: PeerHandle) {
+        let mut peer = handle.into_peer();
         peer.leave();
         if let Some(r) = peer.take_replay() {
             self.replays.push(r);
@@ -573,7 +590,7 @@ impl Shell {
             self.release(p);
         }
         if let Some(h) = self.sim_host.take() {
-            self.unmapping.push(h.shutdown());
+            self.unmapping.push(h.into_peer().shutdown());
             self.prune_unmapping();
         }
         self.impair = None;
@@ -609,14 +626,14 @@ impl Shell {
         let held = self.paused || self.ui.screen() != Screen::InGame || self.data.ingame_chat.is_some();
         let mut none = || Keys(0);
         let keys: &mut dyn FnMut() -> Keys = if held { &mut none } else { keys };
-        let events = match &mut self.play {
+        let polled = match &mut self.play {
             Some(p) if matches!(p.session.driver, Driver::Online(_)) => p.session.frame(now, keys),
-            _ => match self.net.as_mut().and_then(|n| n.peer.as_mut()) {
+            _ => match self.net.as_ref().and_then(|n| n.peer.as_ref()) {
                 Some(peer) => peer.poll(now, &mut || Keys(0), &mut |_, _, _| {}),
-                None => Vec::new(),
+                None => PolledEvents::default(),
             },
         };
-        self.on_net_events(events, &mut out);
+        self.on_net_events(polled.events, polled.pumped, &mut out);
         self.poll_hosted(now);
         self.poll_connection();
         let Some(n) = &mut self.net else { return out };
@@ -625,7 +642,7 @@ impl Shell {
         }
         let hist = match &self.play {
             Some(p) => match &p.session.driver {
-                Driver::Online(d) => d.peer().match_session().map(|s| s.stats().depth_hist),
+                Driver::Online(d) => d.handle().with(|p| p.match_session().map(|s| s.stats().depth_hist)),
                 _ => None,
             },
             None => None,
@@ -636,8 +653,9 @@ impl Shell {
         out
     }
 
-    /// The poll's events, in order.
-    fn on_net_events(&mut self, events: Vec<OnlineEvent>, out: &mut Vec<Outcome>) {
+    /// The poll's events, in order (`pumped`: the poll's
+    /// `PolledEvents::pumped`, for a match starting among them).
+    fn on_net_events(&mut self, events: Vec<OnlineEvent>, pumped: Option<u32>, out: &mut Vec<Outcome>) {
         let mut queue: VecDeque<OnlineEvent> = events.into();
         while let Some(e) = queue.pop_front() {
             match e {
@@ -649,7 +667,7 @@ impl Shell {
                 OnlineEvent::Left(name) => self.chat_line(LogLine::event(format!("{name} left"))),
                 OnlineEvent::MatchStarting { start, my_slot } => {
                     let after: Vec<OnlineEvent> = queue.drain(..).collect();
-                    let rest = self.start_online(start, my_slot, after, out);
+                    let rest = self.start_online(start, my_slot, after, pumped, out);
                     queue.extend(rest);
                 }
                 OnlineEvent::MatchEnded(_) => {
@@ -710,7 +728,7 @@ impl Shell {
     /// The lobby's download rows and prompt (plan 11): the downloads as
     /// last reported, the prompt as the peer has it now.
     fn show_downloads(&mut self) {
-        let prompt = self.peer().and_then(OnlinePeer::download_prompt);
+        let prompt = self.with_peer(|p| p.download_prompt()).flatten();
         let (Some(n), Some(l)) = (&self.net, &mut self.data.lobby) else { return };
         l.downloads.clone_from(&n.downloads);
         l.prompt = prompt;
@@ -720,11 +738,13 @@ impl Shell {
     /// opens), the weapon screen's menu for its mod (from the peer's
     /// content: a downloaded mod counts), the LAN announcement.
     fn show_lobby(&mut self, state: &LobbyState, out: &mut Vec<Outcome>) {
-        let Some(peer) = self.peer_mut() else { return };
-        let port = peer.local_port();
-        let (content, prompt) = (peer.content(), peer.download_prompt());
-        let lobby = peer.lobby();
-        let (me, can) = (lobby.me(), lobby.can_start());
+        let Some((port, content, prompt, me, can)) = self.with_peer(|peer| {
+            let lobby = peer.lobby();
+            let (me, can) = (lobby.me(), lobby.can_start());
+            (peer.local_port(), peer.content(), peer.download_prompt(), me, can)
+        }) else {
+            return;
+        };
         let Some(n) = &mut self.net else { return };
         let key = net::WeaponsKey {
             mod_id: state.setup.mod_id.clone(),
@@ -782,8 +802,8 @@ impl Shell {
         let auto_ready = n.auto_ready
             && state.phase == rl_proto::Phase::Gathering
             && mine.is_some_and(|m| !m.ready && matches!(m.seat, rl_proto::SeatWire::Player { .. }));
-        if auto_ready && let Some(peer) = self.peer_mut() {
-            peer.lobby().set_ready(true);
+        if auto_ready {
+            self.with_peer(|peer| peer.lobby().set_ready(true));
         }
         if self.play.is_none() {
             self.data.weapons = weapons;
@@ -813,15 +833,18 @@ impl Shell {
     }
 
     /// The host started a match (`MatchStarting`; the events after it in
-    /// that poll are its): the last match's view goes, the match's assets
-    /// load (mod, level, theme, every slot's skin) and its session starts
-    /// with `Driver::Online`; the menus go in game. Returns the events
-    /// that are not the match's presentation.
+    /// that poll are its, `pumped` that poll's): the last match's view
+    /// goes, the match's assets load (mod, level, theme, every slot's
+    /// skin: without the peer's lock, so its pump keeps the match's
+    /// network alive meanwhile) and its session starts with
+    /// `Driver::Online`; the menus go in game. Returns the events that are
+    /// not the match's presentation.
     fn start_online(
         &mut self,
         start: MatchStartWire,
         my_slot: Option<u8>,
         after: Vec<OnlineEvent>,
+        pumped: Option<u32>,
         out: &mut Vec<Outcome>,
     ) -> Vec<OnlineEvent> {
         if self.play.is_some() {
@@ -829,7 +852,12 @@ impl Shell {
         }
         let Some(peer) = self.net.as_mut().and_then(|n| n.peer.take()) else { return after };
         self.launches += 1;
-        let mut assets = match setup::load_online(peer.content(), &start, my_slot) {
+        // An `Arc`: the lock is held for the clone alone.
+        let content = peer.with(|p| p.content());
+        if let Some(d) = self.slow_load {
+            std::thread::sleep(d);
+        }
+        let mut assets = match setup::load_online(content, &start, my_slot) {
             Ok(a) => a,
             Err(e) => {
                 self.release(peer);
@@ -844,7 +872,7 @@ impl Shell {
         let mut session = match made {
             Ok(s) => s,
             Err((e, driver)) => {
-                self.release(driver.into_peer());
+                self.release(driver.into_handle());
                 self.lost(format!("cannot show the match: {e:#}"), out);
                 return Vec::new();
             }
@@ -854,7 +882,9 @@ impl Shell {
         audio.load(&assets.m, assets.content.core());
         self.log(audio.take_warnings());
         session.audio = audio;
-        let rest = session.present_events(after);
+        // The ticks the pump ran during the load are not presented: the
+        // presentation starts from the world as it is (`present_polled`).
+        let rest = session.present_polled(after, pumped);
         self.play = Some(Playing { assets, session });
         self.paused = false;
         self.over_reported = false;
@@ -1016,7 +1046,7 @@ impl Shell {
         });
         if edited == Some(true) {
             let pool = (!relays.is_empty()).then(|| PoolConfig { relays, ..PoolConfig::default() });
-            if let Some(Err(e)) = self.peer_mut().map(|p| p.listen_on(pool)) {
+            if let Some(Err(e)) = self.with_peer(|p| p.listen_on(pool)) {
                 self.log([format!("cannot listen on the edited relays: {e}")]);
             }
         }
@@ -1070,7 +1100,7 @@ impl Shell {
     /// A client's path to its host, following ICE (N49): the lobby's
     /// connection line when it changed.
     fn poll_connection(&mut self) {
-        let now = self.peer().and_then(OnlinePeer::connection);
+        let now = self.with_peer(|p| p.connection()).flatten();
         let Some(n) = self.net.as_mut().filter(|n| !n.host && n.connection != now) else { return };
         n.connection = now;
         if let Some(l) = &mut self.data.lobby {
@@ -1111,15 +1141,15 @@ impl Shell {
 
     /// `--net-sim`'s host: polled; it starts whenever every player is ready.
     fn poll_sim_host(&mut self, now: Instant) {
-        let Some(h) = &mut self.sim_host else { return };
-        for e in h.poll(now, &mut || Keys(0), &mut |_, _, _| {}) {
+        let Some(h) = &self.sim_host else { return };
+        for e in h.poll(now, &mut || Keys(0), &mut |_, _, _| {}).events {
             if let OnlineEvent::DesyncBundle(b) = e {
                 self.save_bundle(&b);
             }
         }
-        if self.sim_host.as_mut().is_some_and(|h| h.lobby().can_start().is_ok()) {
+        if self.sim_host.as_ref().is_some_and(|h| h.with(|p| p.lobby().can_start().is_ok())) {
             let seed = self.ui.take_seed();
-            if let Some(Err(e)) = self.sim_host.as_mut().map(|h| h.lobby().start(seed)) {
+            if let Some(Err(e)) = self.sim_host.as_ref().map(|h| h.with(|p| p.lobby().start(seed))) {
                 self.log([format!("net-sim: the host cannot start: {e}")]);
             }
         }

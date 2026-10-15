@@ -23,10 +23,12 @@ use rl_present::{PresentSetup, Presentation, default_colour};
 use rl_replay::Replay;
 use rl_scene::{DrawList, Interpolation, SceneOptions, Viewport};
 use rl_sim::{Event, EventKind, Keys, MatchResult, Score, TickEvents, World};
+use rl_terrain::Area;
 
 use rl_ui::hud::{Log, LogLine, Names, Results, message_text};
 
 use crate::drive::{MatchDriver, ReplayDriver};
+use crate::net::PolledEvents;
 use crate::online::OnlineDriver;
 use crate::setup::{Assets, Game};
 
@@ -304,18 +306,18 @@ impl Session {
         interpolation: Interpolation,
         audio: Audio,
     ) -> Result<Session, (anyhow::Error, Box<OnlineDriver>)> {
-        let checked = (|| {
+        let checked = driver.handle().with(|peer| {
             let Game::Online { start, my_slot } = &a.game else { anyhow::bail!("not an online match") };
-            let world = driver.world().ok_or_else(|| anyhow::anyhow!("the peer plays no match"))?;
+            let s = peer.match_session().ok_or_else(|| anyhow::anyhow!("the peer plays no match"))?;
+            let world = s.sim().world();
             anyhow::ensure!(world.worms().len() == start.slots.len(), "the match's worms are not its slots");
-            anyhow::ensure!(driver.peer().my_slot() == *my_slot, "the peer plays another slot");
-            Ok((world.clone(), start.seed))
-        })();
-        let (world, seed) = match checked {
+            anyhow::ensure!(peer.my_slot() == *my_slot, "the peer plays another slot");
+            Ok((world.clone(), start.seed, u64::from(s.current_tick())))
+        });
+        let (world, seed, ticks) = match checked {
             Ok(c) => c,
             Err(e) => return Err((e, Box::new(driver))),
         };
-        let ticks = driver.peer().match_session().map_or(0, |s| u64::from(s.current_tick()));
         let mut s = Session::assemble(
             a,
             world,
@@ -392,7 +394,7 @@ impl Session {
     /// bots alone: OLX draws the crosshair of its local worms), an online
     /// match watched's none.
     fn show_new_worms(&mut self) {
-        let n = self.world().worms().len();
+        let n = self.with_world(|w| w.worms().len());
         let online = matches!(self.driver, Driver::Online(_));
         let crosshair = self.local.or(if online { None } else { Some(0) });
         while self.shown < n {
@@ -421,11 +423,13 @@ impl Session {
         }
     }
 
-    /// The world drawn: the session's, or an online match's newest
-    /// predicted one (its peer's) until the match ended there, then the
-    /// one presented last, kept ([`Session::present_events`]).
-    pub fn world(&self) -> &World {
-        drawn(&self.driver, &self.world, self.frozen)
+    /// `f` with the world drawn: the session's, or an online match's
+    /// newest predicted one (its peer's, under the peer's lock: `f` must
+    /// not use the session's peer, nor call `with_world` again) until the
+    /// match ended there, then the one presented last, kept
+    /// ([`Session::present_events`]).
+    pub fn with_world<R>(&self, f: impl FnOnce(&World) -> R) -> R {
+        with_drawn(&self.driver, &self.world, self.frozen, f)
     }
 
     /// The scores the HUD shows: the world's, an online match's after its
@@ -451,8 +455,8 @@ impl Session {
 
     /// The player's worm's current weapon index, while it is alive.
     fn local_weapon(&self) -> Option<i32> {
-        let w = self.world().worms().get(usize::from(self.local?))?;
-        w.alive.then_some(w.current_weapon)
+        let i = usize::from(self.local?);
+        self.with_world(|world| world.worms().get(i).filter(|w| w.alive).map(|w| w.current_weapon))
     }
 
     /// After a tick (or an online frame's ticks) whose player keys were
@@ -485,10 +489,11 @@ impl Session {
         if !(held || forced) {
             return None;
         }
-        let world = self.world();
-        let w = world.worms().get(i).filter(|w| w.alive && !w.slots.is_empty())?;
-        let weapon = world.sim_mod().weapon(w.current_slot().weapon)?;
-        Some((i, weapon.name.clone()))
+        self.with_world(|world| {
+            let w = world.worms().get(i).filter(|w| w.alive && !w.slots.is_empty())?;
+            let weapon = world.sim_mod().weapon(w.current_slot().weapon)?;
+            Some((i, weapon.name.clone()))
+        })
     }
 
     /// Whether nobody here plays this game (a replay, bots alone, an
@@ -506,7 +511,7 @@ impl Session {
     /// A watcher's next (`step` 1) or previous (-1) worm to follow, in
     /// worm order, round; the player's camera stays on its own worm.
     pub fn follow_next(&mut self, step: i32) {
-        let n = self.world().worms().len() as i64;
+        let n = self.with_world(|w| w.worms().len()) as i64;
         if self.local.is_some() || n == 0 {
             return;
         }
@@ -516,7 +521,9 @@ impl Session {
 
     /// The Deathmatch's kill limit, if on.
     pub fn kill_limit(&self) -> Option<i32> {
-        let k = self.world().mode_state().as_any().downcast_ref::<Deathmatch>()?.settings().kill_limit;
+        let k = self.with_world(|w| {
+            Some(w.mode_state().as_any().downcast_ref::<Deathmatch>()?.settings().kill_limit)
+        })?;
         (k > 0).then_some(k)
     }
 
@@ -777,19 +784,25 @@ impl Session {
     /// popups). Returns the events that are not the match's presentation
     /// (the lobby's, chat, the match's end, the connection's) for the
     /// shell.
-    pub fn frame(&mut self, now: Instant, local_keys: &mut dyn FnMut() -> Keys) -> Vec<OnlineEvent> {
+    ///
+    /// The poll is the peer's handle's (`net::pump`): the pump's events
+    /// queued since the UI's last poll come first, and when the pump ran
+    /// ticks the presentation starts again from the world
+    /// ([`PolledEvents::pumped`], handed back with the shell's events: a
+    /// next match's session starts again too).
+    pub fn frame(&mut self, now: Instant, local_keys: &mut dyn FnMut() -> Keys) -> PolledEvents {
         let weapon = self.local_weapon();
-        let Driver::Online(d) = &mut self.driver else { return Vec::new() };
+        let Driver::Online(d) = &mut self.driver else { return PolledEvents::default() };
         let mut pressed = Keys(0);
         let mut keys = || {
             let k = local_keys();
             pressed.0 |= k.0;
             k
         };
-        let events = d.poll(now, &mut keys, &mut self.present);
-        let rest = self.present_events(events);
+        let PolledEvents { events, pumped } = d.poll(now, &mut keys, &mut self.present);
+        let rest = self.present_polled(events, pumped);
         self.note_weapon_change(weapon, pressed);
-        rest
+        PolledEvents { events: rest, pumped }
     }
 
     /// An online match's polled `events` presented, as [`Session::frame`]
@@ -798,7 +811,15 @@ impl Session {
     /// A next match's `MatchStarting` and what follows it are not this
     /// match's: they are handed back as they are (the shell starts that
     /// match's session with them).
-    pub fn present_events(&mut self, mut events: Vec<OnlineEvent>) -> Vec<OnlineEvent> {
+    pub fn present_events(&mut self, events: Vec<OnlineEvent>) -> Vec<OnlineEvent> {
+        self.present_polled(events, None)
+    }
+
+    /// [`Session::present_events`] of a poll whose `pumped` says the pump
+    /// ran ticks before it (`PolledEvents::pumped`): the presentation
+    /// starts again from the world, as after a loaded state, then the
+    /// poll's ticks follow (`OnlineDriver::present`).
+    pub fn present_polled(&mut self, mut events: Vec<OnlineEvent>, pumped: Option<u32>) -> Vec<OnlineEvent> {
         let next = match events.iter().position(|e| matches!(e, OnlineEvent::MatchStarting { .. })) {
             Some(i) => events.split_off(i),
             None => Vec::new(),
@@ -813,9 +834,10 @@ impl Session {
                 audio.play(sounds, p.scene.camera.listener());
             }
         };
-        let (confirmed, rest) = d.present(events, &mut self.present, &mut play);
-        if let Some(s) = d.peer().match_session() {
-            self.ticks = u64::from(s.current_tick());
+        let shown = d.present(events, pumped, &mut self.present, &mut play);
+        let (confirmed, rest, resynced) = (shown.confirmed, shown.rest, shown.resynced);
+        if let Some(t) = shown.current_tick {
+            self.ticks = u64::from(t);
         }
         self.show_new_worms();
         for c in &confirmed {
@@ -828,10 +850,18 @@ impl Session {
             && rest.iter().any(|e| matches!(e, OnlineEvent::MatchEnded(_)))
             && let Driver::Online(d) = &mut self.driver
         {
-            if let Some(w) = d.peer_mut().take_ended_world() {
+            if let Some(w) = d.handle().with(|p| p.take_ended_world()) {
                 self.world = w;
             }
             self.frozen = true;
+            if resynced || pumped.is_some() {
+                // The pump ran ticks this presentation never saw: the
+                // world drawn from now on gets its own colour terrain.
+                let t = self.world.terrain();
+                let whole = Area { x0: 0, y0: 0, x1: t.width() as i32, y1: t.height() as i32 };
+                self.present.state_loaded(&self.world);
+                self.present.color_mut().rebuild_area(whole, self.world.terrain());
+            }
         }
         let mut rest = rest;
         rest.extend(next);
@@ -852,17 +882,19 @@ impl Session {
     /// One drawn frame at `alpha` between the last two ticks: the scene,
     /// then the cosmetic entities.
     pub fn build(&mut self, alpha: f32, list: &mut DrawList) {
-        self.present.build(drawn(&self.driver, &self.world, self.frozen), alpha, list);
+        let Session { driver, world, frozen, present, .. } = self;
+        with_drawn(driver, world, *frozen, |w| present.build(w, alpha, list));
     }
 }
 
-/// The world a session draws: its own, or an online match's peer's while
-/// it plays and the session is not `frozen` (the match over there; its
-/// own, the one presented last, then, or its start if the peer has none).
-fn drawn<'a>(driver: &'a Driver, world: &'a World, frozen: bool) -> &'a World {
+/// `f` with the world a session draws: its own, or an online match's
+/// peer's (under its lock) while it plays and the session is not `frozen`
+/// (the match over there; its own, the one presented last, then, or its
+/// start if the peer has none).
+fn with_drawn<R>(driver: &Driver, world: &World, frozen: bool, f: impl FnOnce(&World) -> R) -> R {
     match driver {
-        Driver::Online(d) if !frozen => d.world().unwrap_or(world),
-        _ => world,
+        Driver::Online(d) if !frozen => d.with_world(|w| f(w.unwrap_or(world))),
+        _ => f(world),
     }
 }
 

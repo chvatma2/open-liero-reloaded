@@ -20,3 +20,11 @@ pub use events::{NetStats, OnlineEvent};
 pub use join::{Join, JoinStep, NostrJoin};
 pub use peer::{LobbyHandle, OnlinePeer, PeerRole, Shutdown, StartError};
 pub use reach::{HostListen, Listening, Reachability, RelayJoin};
+
+// The game polls a peer from its UI thread and from its network pump
+// (rl-game's `net::pump`, ruling PF12c-2): no `Rc` or other `!Send` part
+// may enter the peer's stack.
+const _: () = {
+    fn send<T: Send>() {}
+    let _ = send::<OnlinePeer>;
+};

@@ -106,7 +106,9 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
 - **Single thread** (spec §8.6): the device is created and used only on
   the main (event-loop) thread; under WSL's d3d12 GL driver a thread that
   used the device crashes when it exits. kira runs its own audio thread;
-  an import runs on its own (`olx-import`), which touches no device.
+  an import runs on its own (`olx-import`), which touches no device, and
+  each online peer's network pump on its own (`rl-game net`, below),
+  which touches no device either.
 - **WSL** (`wsl.rs`): on a WSL kernel, unless the user set `WGPU_BACKEND`
   or `GALLIUM_DRIVER`, the game starts itself again with
   `GALLIUM_DRIVER=d3d12 WGPU_BACKEND=gl` (Mesa reads the variable when the
@@ -211,17 +213,24 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   popups) reads a `TickView`: a local tick's world and events, or an
   online match's `ConfirmedTick`.
 - **Online** (`online.rs`, plan 10 task 10; spec §3.4, decision N20):
-  `Session::online(assets, OnlineDriver::new(peer, &start), ..)` after the
-  peer's `MatchStarting` (the events after it in that poll go to
-  `Session::present_events`); then `Session::frame(now, local_keys)` once a
-  frame instead of `Session::tick`: one `OnlinePeer::poll` (the local keys
+  `Session::online(assets, OnlineDriver::new(handle, &start), ..)` after the
+  peer's `MatchStarting` (`handle`: the peer's `net::PeerHandle`, below;
+  the events after it in that poll go to `Session::present_events`, or
+  `present_polled` with that poll's `pumped`); then
+  `Session::frame(now, local_keys)` once a frame instead of
+  `Session::tick`: one `PeerHandle::poll` (`OnlinePeer::poll` with the
+  pump's queued events first; the local keys
   from `local_keys`, which the netcode calls once per new tick: the input
   latch; the scene reads every simulated tick inside it,
   `after_tick_resimulated` for a re-simulated one), then the poll's events
   in a fixed order whatever their order in the poll (`online::present_poll`,
   pinned by `a_loaded_state_is_presented_before_the_polls_ticks`): a
   loaded state (`OnlineEvent::StateLoaded`: `Presentation::state_loaded`,
-  `NetPresenter::reset`), the restored areas and ticks
+  `NetPresenter::reset`; also when the pump ran ticks, `OnlineDriver::
+  present`: a `StateLoaded` at the pumped tick and the whole map restored
+  come first, and ticks the pump ran after the poll, `PeerHandle::
+  with_pumped` under the same lock, drop the poll's own ticks), the
+  restored areas and ticks
   (`NetPresenter::apply`, its sounds at the camera; debug builds check the
   colour terrain after every advance, about 1 ms a frame at worst in
   `an_online_match_runs_headless`), `NetPresenter::confirmed`, and the
@@ -230,16 +239,21 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   confirmed tick's positions). The HUD's scoreboard and the followed
   worm's lives, kills and deaths are the last confirmed tick's
   (`Session::scores`); the newest predicted world is drawn
-  (`Session::world`). At `MatchEnded` the peer stops presenting while its
+  (`Session::with_world(f)`: `f` reads it under the peer's lock, so it
+  must not use the peer or `with_world` again: a nested lock panics
+  instead of deadlocking; one frame's reads may straddle a pump poll, which
+  the scene and HUD bear: they look worms up by index with `get`, and the
+  next poll starts the presentation again). At `MatchEnded` the peer stops presenting while its
   session goes on to confirm and drain: `present_events` takes the world
   presented last once (`OnlinePeer::take_ended_world`) into
   `Session::world` and freezes there (`frozen`; no clone per frame),
-  pinned by `an_online_match_runs_headless`. The other events (lobby,
+  pinned by `an_online_match_runs_headless` (when the pump ran ticks, the
+  frozen world's colour terrain is rebuilt from it). The other events (lobby,
   chat, end, connection) are handed back for the shell. On
   `Disconnected`, `Kicked` or `Refused` the peer has dropped its match,
   so the session would draw its start world: the shell must leave the
-  match view before the next build (Task 12); `OnlineDriver::into_peer`
-  gives the peer back. An online match is never fast-forwarded (`human()`).
+  match view before the next build (Task 12); `OnlineDriver::into_handle`
+  gives the peer back (its pump still running). An online match is never fast-forwarded (`human()`).
   A `MatchStarting` among a poll's events and everything after it are
   handed back unpresented (`present_events`): they are the next match's.
 - **Online from the menus** (`shell/online.rs`, `net.rs`; plan
@@ -254,13 +268,49 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   address (`choose_address`; an IPv4-mapped one counts); an IPv6 literal
   or an IPv6-only name is refused with `IPV6_UNSUPPORTED` (the host binds
   `0.0.0.0`, the client's UDP socket is IPv4).
+  **The network pump** (`net/pump.rs`, plan 12c Task 5, ruling PF12c-2):
+  every online peer (a host's, a client's, `--net-sim`'s host) lives
+  behind a `PeerHandle` (`Net::peer`, then the match's `OnlineDriver`,
+  `Shell::sim_host`) from its start (`PeerHandle::pumped`) to its release
+  (`into_peer`: the pump stopped and joined within one of its polls, then
+  `release`'s leave, replay and NT-2 shutdown as before). Its thread
+  `rl-game net` wakes every `PUMP_AFTER / 2` and polls the peer whenever
+  the UI thread has not for `PUMP_AFTER` (20 ms; the UI's last poll an
+  atomic): a dragged window (Windows' modal loop blocks winit), a long
+  match load or a slow frame no longer silences the peer. Meanwhile the
+  local player's keys are `Keys(0)` (the input latch untouched), nothing
+  is drawn, the host's bots think inside the peer; its events wait for the
+  UI's next poll (at most `PUMP_QUEUE`, 4 096: the oldest `Confirmed`
+  goes first, then the oldest; each loss counted, the first logged),
+  except the presentation's (`Ticked`, `Restored`, `StateLoaded`), which
+  are dropped: that poll's `PolledEvents::pumped` (the newest pumped
+  tick) starts the presentation again as after a loaded state. One
+  `Mutex`, held for one poll (the UI's or the pump's) or one
+  `PeerHandle::with` (lobby actions, stats, the world read), never across
+  rendering and never while waiting on anything else: the UI waits at most
+  one pump poll. The pump's time goes on from the UI's last `now` (a
+  test's clock too), and no poll is given a time before the last one
+  given. `Shell::with_peer(f)` is the peer's lock (tests:
+  `test_prompt_limit`); `Shell::pumped()` whether it has a pump.
+  `start_online` takes the content from the peer (`with`: an `Arc`) and
+  loads without the lock, so the pump keeps the match's network alive
+  meanwhile (`Shell::test_slow_load(d)`, `test-hooks`: each load `d`
+  longer). The ticks the pump runs are the netcode's like any other
+  (`rl-online`'s `OnlinePeer: Send`, pinned there): the peer cannot tell
+  which thread polled it. The hidden window (N21) is unchanged: while
+  hidden and online it still runs `hidden_frame` every `HIDDEN_FRAME`, so
+  the UI keeps polling and the pump stays idle; a hidden frame does more
+  than the peer's poll (the LAN announcer, a Public game's notes, the
+  replays, `--net-sim`'s host's start, the lobby and match flow), and a
+  slower wake would make every hidden frame rebuild the colour terrain
+  after pumped ticks.
   `Shell::net_frame(now, keys)` (every frame, before the ticks; while an
   online match plays its peer runs the ticks and the local clock rests)
   polls `--net-sim`'s host, the LAN `Listener` on `LAN_PORT` while the
   Multiplayer screen shows (games of another `FINGERPRINT` hidden), then
   the peer once: through `Session::frame` while a match plays (the
   input latch; `Keys(0)` while the match's menu, the chat or another
-  screen has the keys), else `OnlinePeer::poll`. Events: `Lobby` →
+  screen has the keys), else `PeerHandle::poll`. Events: `Lobby` →
   `MenuData::lobby` (`net::lobby_view`: `PHASE_LOBBY` while gathering or
   showing results, `SEAT_SPECTATOR`, the host's `can_start` reason, a
   client's "Waiting for the host"; the peer sends its `Have` itself), the
@@ -275,11 +325,13 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   the content the match was built from), `Session::try_online` (a
   failure hands the peer back to say goodbye) with the
   events after it, `MatchStarted` (InGame), `Outcome::Started`;
+  (the delivering poll's `pumped` with them: `present_polled`);
   `MatchEnded` → the results if they did not show yet; `Results`' Back →
   `EndMatch`: the peer back to `Net` (`end`), the Lobby; `Lagging` → the
   warning; `Kicked`/`Refused`/`Disconnected` → the match view goes at
   once (`lost`), then `OnlineFailed` (Multiplayer with the reason);
-  `ReplayReady` → `replays::auto_save` (a peer let go, `release`, hands
+  `ReplayReady` → `replays::auto_save` (a peer let go, `release`, its pump
+  stopped first, hands
   its replay being made to `Shell::replays`, polled every frame and
   waited for at quitting, at most `REPLAY_STOP_WAIT` 2 s: leaving right
   after a match keeps its replay); `DesyncBundle` → `<data>/desyncs/
@@ -649,7 +701,20 @@ host's confirmed ones, the end from a confirmed tick; two `Shell`s, one
 hosting on port 0 and one joining, to the lobby, a bot, ready, start,
 equal confirmed scores, the results, the replay saved, back to the
 lobby and leaving; chat in game reaching the other's HUD log; the
-hidden window's `App::hidden_frame` ticking the match; `--net-sim
+hidden window's `App::hidden_frame` ticking the match; the network pump
+through the apps' frames (`App::hidden_frame`, real clock, a 0.2-minute
+match with a bot): `a_host_whose_frames_stop_keeps_hosting` (3 s without
+the host's frames: the client confirms 250 ticks more, then both reach
+the same results, no colour drift), `a_client_whose_frames_stop_stays_joined`
+(3 s without the client's: the host fills fewer than 50 of its inputs, no
+"Connection problem", still in), `a_match_load_does_not_silence_the_host`
+(`test_slow_load` 2.5 s: the client confirmed 150 ticks during it), each
+RED without the pump; `net/pump.rs`' unit tests on a fake peer (a
+`Poll`): the pump stands back while the UI polls every 5 ms and polls
+about every 10 ms once it stops, each at least `PUMP_AFTER` after the
+UI's; the queue's bound; the UI's poll starts as the pump's in flight
+ends; stopping joins within 100 ms and gives the peer back; a nested
+lock panics; `--net-sim
 typical`'s setup playing and starting the next match; leaving right
 after the end keeps both replays; the flags not remembered; LAN off:
 `Shell::set_lan(false)`; each under 20 s), `tests/downloads.rs` (a

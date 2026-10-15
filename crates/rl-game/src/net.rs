@@ -4,7 +4,11 @@
 //! views (`rl_ui::{LobbyView, MemberView, MatchPrefs, LanEntry}`), the
 //! network overlay's numbers ([`NetMeter`], [`NetView`]), the desync
 //! bundles' files ([`save_bundle`]) and the download cache
-//! ([`open_download_cache`], plan 11).
+//! ([`open_download_cache`], plan 11). Every online peer is polled behind
+//! a [`pump::PeerHandle`], whose network pump keeps it polled while the UI
+//! thread is busy (ruling PF12c-2).
+
+pub mod pump;
 
 use std::collections::VecDeque;
 use std::io;
@@ -27,6 +31,7 @@ use rl_ui::{
 };
 
 use crate::setup::DEFAULT_SKIN;
+pub use pump::{PeerHandle, PolledEvents};
 
 /// The lobby's chat lines the menus keep (oldest go first).
 pub const CHAT_KEEP: usize = 200;
@@ -75,8 +80,9 @@ impl PartialEq for WeaponsKey {
 /// it: a match's is its session's `OnlineDriver`), whether it hosts, and
 /// what it showed last.
 pub struct Net {
-    /// The peer; `None` while a match session plays it.
-    pub peer: Option<OnlinePeer>,
+    /// The peer behind its handle, its pump running from the peer's start
+    /// to its release; `None` while a match session plays it.
+    pub peer: Option<PeerHandle>,
     pub host: bool,
     /// The lobby is up (`LobbyJoined` reported).
     pub joined: bool,
@@ -134,9 +140,10 @@ impl Net {
 }
 
 impl Net {
+    /// The game's `peer`, its pump started.
     pub fn new(peer: OnlinePeer, host: bool) -> Net {
         Net {
-            peer: Some(peer),
+            peer: Some(PeerHandle::pumped(peer)),
             host,
             joined: false,
             lagging: false,

@@ -4,6 +4,10 @@ Online play over real connections (networking spec §4): from the lobby to
 the match and back, a host peer and its clients through `rl-net`'s
 endpoint, each match through `rl-netcode`'s session, its replay after it.
 
+- **`OnlinePeer: Send`** (a compile-time assert in `lib.rs`): rl-game
+  polls a peer from its UI thread and from its network pump (`rl-game
+  net`, ruling PF12c-2), so no `Rc` or other `!Send` part may enter the
+  peer's stack.
 - **Layer 5, std; not wasm.** Depends on `rl-net` (same layer: the
   endpoint, its gate and limits, `random_bytes`), `rl-discovery` (same
   layer, ruling N55: the relay `Pool`, `Inbox`/`Asker`, `TurnList`), `rl-netcode` (`Session`,

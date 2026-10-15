@@ -12,6 +12,7 @@ use rl_audio::Audio;
 use rl_bots::{BotConfig, Difficulty};
 use rl_content::{Content, DEFAULT_PRESET, MatchOptions, Player};
 use rl_game::hud::{self, Frame};
+use rl_game::net::PeerHandle;
 use rl_game::online::OnlineDriver;
 use rl_game::session::{Driver, Session, WEAPON_NAME_TICKS};
 use rl_game::setup::{self, PlayerLook};
@@ -23,7 +24,7 @@ use rl_online::matches::{bot_wire, rules_wire, setup_packs};
 use rl_online::{HostListen, Join, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{Look, MatchSetupWire, SeatWire};
 use rl_scene::{DrawList, Interpolation, Viewport};
-use rl_sim::{EventKind, Keys, Score};
+use rl_sim::{EventKind, Keys, Score, World};
 
 pub(crate) const MOD: &str = "olx-classic";
 pub(crate) const LEVEL: &str = "olx-level-dirt-level";
@@ -282,7 +283,7 @@ fn an_online_match_runs_headless() {
     assert_eq!(my_slot, Some(1), "the host plays slot 0, the client slot 1, then the bot");
 
     let a = setup::load_online(client.content(), &start, my_slot).unwrap();
-    let driver = OnlineDriver::new(client, &start);
+    let driver = OnlineDriver::new(PeerHandle::new(client), &start);
     let mut s = Session::online(&a, driver, viewport(), Interpolation::Linear, Audio::silent()).unwrap();
     let left = s.present_events(rest);
     assert!(left.iter().all(|e| !matches!(e, OnlineEvent::Ticked(_) | OnlineEvent::Confirmed(_))));
@@ -326,7 +327,7 @@ fn an_online_match_runs_headless() {
         let events = s.frame(now, &mut keys);
         slowest = slowest.max(busy.elapsed());
         assert!(
-            events.iter().all(|e| !matches!(
+            events.events.iter().all(|e| !matches!(
                 e,
                 OnlineEvent::Refused(_) | OnlineEvent::Disconnected(_) | OnlineEvent::Kicked { .. }
             )),
@@ -359,7 +360,7 @@ fn an_online_match_runs_headless() {
     assert!(confirmed > 200, "the client confirmed {confirmed} ticks");
     assert!(checked > 50, "the HUD's scores were checked against the host's {checked} times");
     assert!(s.ticks() >= u64::from(confirmed), "the newest predicted tick is drawn");
-    assert!(!s.present.terrain_drift(s.world()), "the colour terrain is the world's");
+    assert!(!s.with_world(|w| s.present.terrain_drift(w)), "the colour terrain is the world's");
     // 1.2 s: the match ended on a confirmed tick, with the host's scores.
     let r = s.results.clone().expect("the time limit ended the match");
     assert_eq!(r.reason, "time limit");
@@ -380,21 +381,21 @@ fn an_online_match_runs_headless() {
         host.poll(now, &mut || Keys(0), &mut |_, _, _| {});
         let events = s.frame(now, &mut || Keys(0));
         s.build(1.0, &mut list);
-        if events.iter().any(|e| matches!(e, OnlineEvent::MatchEnded(_))) {
-            ended = Some(s.world().clone());
+        if events.events.iter().any(|e| matches!(e, OnlineEvent::MatchEnded(_))) {
+            ended = Some(s.with_world(World::clone));
         }
     }
     let kept = ended.unwrap();
-    assert!(std::ptr::eq(s.world(), &s.world), "the session's own world is drawn, not the peer's");
-    assert!(!s.present.terrain_drift(s.world()), "the world kept is the one presented");
+    assert!(s.with_world(|w| std::ptr::eq(w, &s.world)), "the session's own world is drawn, not the peer's");
+    assert!(!s.with_world(|w| s.present.terrain_drift(w)), "the world kept is the one presented");
     for _ in 0..100 {
         i += 1;
         let now = t0 + Duration::from_millis(10 * i);
         host.poll(now, &mut || Keys(0), &mut |_, _, _| {});
         s.frame(now, &mut || Keys(0));
         s.build(1.0, &mut list);
-        assert!(std::ptr::eq(s.world(), &s.world));
-        assert!(*s.world() == kept, "frame {i}: the world drawn no longer changes");
+        assert!(s.with_world(|w| std::ptr::eq(w, &s.world)));
+        assert!(s.with_world(|w| *w == kept), "frame {i}: the world drawn no longer changes");
     }
     // A next match's start in a poll, and everything after it, are handed
     // back unpresented (that match's session presents them); the ticks
@@ -729,7 +730,7 @@ fn net_sim_flag_starts_a_local_match() {
         s[0].plays_online() && s[0].ui.screen() == Screen::InGame
     });
     let s = sh.session().unwrap();
-    assert_eq!(s.world().worms().len(), 4, "this player and three bots: the host watches");
+    assert_eq!(s.with_world(|w| w.worms().len()), 4, "this player and three bots: the host watches");
     assert_eq!(s.local(), Some(0));
     let from = s.ticks();
     frames_until("the match plays", Duration::from_secs(5), &mut [&mut sh], |s| {
@@ -814,4 +815,169 @@ fn flags_are_not_remembered() {
     let saved = Store::open(data.path()).load_settings().value;
     assert_eq!(saved.video.ui_scale, 1.5, "the options' change is saved");
     assert_eq!(saved.online, online, "the flag's choices are not");
+}
+
+// ---- The network pump (plan 12c Task 5, ruling PF12c-2) ----
+
+/// One frame of `app` as its loop runs one that draws nothing
+/// (`App::hidden_frame`: `App::network_frame`, then the menus' poll).
+fn app_frame(app: &mut App) {
+    app.hidden_frame();
+}
+
+/// The confirmed ticks and scores `sh` shows, noted by tick.
+fn note_confirmed(sh: &Shell, seen: &mut BTreeMap<u32, Vec<Score>>) {
+    if let Some((t, s)) = confirmed(sh) {
+        seen.insert(t, s);
+    }
+}
+
+/// The results' rows without the highlighted (own) one.
+fn result_rows(sh: &Shell) -> Vec<(i32, i32, i32, i32, i32)> {
+    let r = sh.session().and_then(|s| s.results.as_ref()).expect("the results");
+    r.rows.iter().map(|r| (r.worm, r.score, r.kills, r.deaths, r.suicides)).collect()
+}
+
+/// The colour terrain's drifts an online session counted (debug builds).
+fn drifts(sh: &Shell) -> u64 {
+    match sh.session().map(|s| &s.driver) {
+        Some(Driver::Online(d)) => d.drifts(),
+        _ => 0,
+    }
+}
+
+/// Both apps' frames on the real clock for `d`, noting what each confirms.
+fn both_frames(apps: [&mut App; 2], seen: &mut [BTreeMap<u32, Vec<Score>>; 2], d: Duration) {
+    let [a, b] = apps;
+    let start = Instant::now();
+    while start.elapsed() < d {
+        app_frame(a);
+        app_frame(b);
+        note_confirmed(a.shell(), &mut seen[0]);
+        note_confirmed(b.shell(), &mut seen[1]);
+        std::thread::sleep(Duration::from_millis(3));
+    }
+}
+
+/// Ruling PF12c-2: a host whose app runs no frame for 3 s (a dragged
+/// window) keeps hosting: its pump polls the peer, so the client goes on
+/// confirming ticks; when its frames resume the host's presentation starts
+/// again from the world, and the match reaches its results with the same
+/// confirmed scores on both. RED without the pump: the host sends nothing
+/// for 3 s and the client's confirmed tick stands still.
+#[test]
+fn a_host_whose_frames_stop_keeps_hosting() {
+    let Some(dir) = content_dir() else { return };
+    let (mut h, mut c) = host_and_client(&dir, 0.2, None);
+    start_match(&mut h, &mut c);
+    assert!(h.pumped() && c.pumped(), "every online peer has its pump");
+    let (mut host, mut client) = (app_of(h), app_of(c));
+    let mut seen: [BTreeMap<u32, Vec<Score>>; 2] = Default::default();
+    both_frames([&mut host, &mut client], &mut seen, Duration::from_millis(500));
+    let before = confirmed(client.shell()).expect("the client confirms ticks").0;
+    // The host's app: no frame for 3 s. The client's frames go on.
+    let stopped = Instant::now();
+    while stopped.elapsed() < Duration::from_secs(3) {
+        app_frame(&mut client);
+        note_confirmed(client.shell(), &mut seen[1]);
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    let during = confirmed(client.shell()).unwrap().0;
+    assert!(
+        during >= before + 250,
+        "the client confirmed ticks {before} to {during} while the host drew nothing"
+    );
+    assert!(client.shell().plays_online() && client.shell().ui.screen() == Screen::InGame);
+    // The host's frames resume: its first poll hands it the pump's events.
+    let start = Instant::now();
+    while [&host, &client].iter().any(|a| a.shell().ui.screen() != Screen::Results) {
+        assert!(start.elapsed() < Duration::from_secs(15), "both reach the results");
+        both_frames([&mut host, &mut client], &mut seen, Duration::from_millis(10));
+    }
+    let host_seen = confirmed(host.shell()).unwrap().0;
+    assert!(host_seen > during, "the host's view caught up: {host_seen}");
+    let common: Vec<u32> = seen[0].keys().filter(|t| seen[1].contains_key(t)).copied().collect();
+    assert!(common.iter().any(|&t| t > during), "both confirmed ticks after the stop: {common:?}");
+    for t in &common {
+        assert_eq!(seen[0][t], seen[1][t], "the confirmed scores of tick {t}");
+    }
+    assert_eq!(result_rows(host.shell()), result_rows(client.shell()), "the same results");
+    assert_eq!((drifts(host.shell()), drifts(client.shell())), (0, 0), "the colour terrain followed");
+}
+
+/// Ruling PF12c-2: a client whose app runs no frame for 3 s stays joined:
+/// its pump sends its `Keys(0)` in time, so the host fills almost none of
+/// its inputs, nobody drops it, and its HUD never shows "Connection
+/// problem". RED without the pump: the host fills about 300 inputs and
+/// tells the client it lags.
+#[test]
+fn a_client_whose_frames_stop_stays_joined() {
+    let Some(dir) = content_dir() else { return };
+    let (mut h, mut c) = host_and_client(&dir, 0.2, None);
+    start_match(&mut h, &mut c);
+    let (mut host, mut client) = (app_of(h), app_of(c));
+    let fills =
+        |a: &App| a.shell().with_peer(|p| p.match_session().map(|s| s.stats().fills)).flatten().unwrap();
+    let mut seen: [BTreeMap<u32, Vec<Score>>; 2] = Default::default();
+    both_frames([&mut host, &mut client], &mut seen, Duration::from_millis(500));
+    assert!(!client.shell().lagging());
+    let (before, confirmed_before) = (fills(&host), confirmed(client.shell()).unwrap().0);
+    // The client's app: no frame for 3 s. The host's frames go on.
+    let stopped = Instant::now();
+    while stopped.elapsed() < Duration::from_secs(3) {
+        app_frame(&mut host);
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    let filled = fills(&host) - before;
+    assert!(filled < 50, "the host filled {filled} of the client's inputs while it drew nothing");
+    // Frames again: the client is still in the match, never lagging.
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(2) {
+        both_frames([&mut host, &mut client], &mut seen, Duration::from_millis(10));
+        assert!(!client.shell().lagging(), "the client's HUD shows no connection problem");
+    }
+    assert!(client.shell().plays_online() && client.shell().ui.screen() == Screen::InGame, "not dropped");
+    assert_eq!(members(host.shell()), 2, "the host keeps it");
+    let after = confirmed(client.shell()).unwrap().0;
+    assert!(after > confirmed_before + 300, "its match went on: {confirmed_before} to {after}");
+    assert_eq!((drifts(host.shell()), drifts(client.shell())), (0, 0), "the colour terrain followed");
+}
+
+/// Ruling PF12c-2: the host's match load (`start_online`, slowed here by
+/// 2.5 s) runs without the peer's lock, so its pump keeps the match's
+/// network alive: when the client's frames resume it has confirmed the
+/// ticks played meanwhile. RED without the pump: the host is silent for
+/// the load and the client confirms nothing.
+#[test]
+fn a_match_load_does_not_silence_the_host() {
+    let Some(dir) = content_dir() else { return };
+    let (mut h, mut c) = host_and_client(&dir, 0.2, None);
+    let mut setup = h.data.lobby.as_ref().unwrap().setup.clone();
+    setup.bots = 1;
+    h.act(UiAction::LobbySetup(setup));
+    frames_until("the client sees the bot", Duration::from_secs(3), &mut [&mut h, &mut c], |s| {
+        s[1].data.lobby.as_ref().is_some_and(|l| l.setup.bots == 1)
+    });
+    c.act(UiAction::LobbyReady(true));
+    h.act(UiAction::LobbyReady(true));
+    frames_until("the host can start", Duration::from_secs(3), &mut [&mut h, &mut c], |s| {
+        s[0].data.lobby.as_ref().is_some_and(|l| l.can_start.is_ok())
+    });
+    h.test_slow_load(Duration::from_millis(2_500));
+    h.act(UiAction::LobbyStart);
+    // The host's frame that starts the match loads for 2.5 s; the client's
+    // frame after it finds what its pump confirmed meanwhile.
+    let mut first = None;
+    frames_until("both play", Duration::from_secs(10), &mut [&mut h, &mut c], |s| {
+        if first.is_none() && s[1].plays_online() {
+            first = Some(confirmed(s[1]).map_or(0, |c| c.0));
+        }
+        s.iter().all(|sh| sh.ui.screen() == Screen::InGame && sh.plays_online())
+    });
+    let first = first.unwrap();
+    assert!(first >= 150, "the client confirmed {first} ticks while the host loaded the match");
+    frames_until("the match goes on", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
+        confirmed(s[0]).is_some_and(|c| c.0 > first + 100)
+    });
+    assert_eq!((drifts(&h), drifts(&c)), (0, 0), "the colour terrain followed");
 }

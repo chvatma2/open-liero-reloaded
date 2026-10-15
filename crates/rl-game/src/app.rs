@@ -716,7 +716,8 @@ impl App {
             }
             s.build(alpha, &mut self.list);
             self.meter.peak_entities = self.meter.peak_entities.max(s.present.fx.len());
-            self.meter.peak_projectiles = self.meter.peak_projectiles.max(s.world().projectiles().count());
+            let projectiles = s.with_world(|w| w.projectiles().count());
+            self.meter.peak_projectiles = self.meter.peak_projectiles.max(projectiles);
         }
         if self.meter.frame(elapsed, &mut self.stats) {
             self.stats.dropped = self.clock.dropped();

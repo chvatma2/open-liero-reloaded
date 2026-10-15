@@ -67,8 +67,8 @@ use rl_lobby::Identity;
 use rl_net::endpoint::IceConfig;
 use rl_net::lan::Listener;
 use rl_netcode::netsim::Profile;
+use rl_online::Shutdown;
 use rl_online::replay::PendingReplay;
-use rl_online::{OnlinePeer, Shutdown};
 use rl_scene::{Interpolation, Viewport};
 use rl_sim::{Keys, MAX_SLOTS};
 use rl_ui::import::{ImportJob, ImportProgress};
@@ -160,8 +160,8 @@ pub struct Shell {
     import: Option<ImportJob>,
     /// The online game (its lobby and match), if any.
     net: Option<Net>,
-    /// `--net-sim`'s host, in this process (spec §9.10).
-    sim_host: Option<OnlinePeer>,
+    /// `--net-sim`'s host, in this process (spec §9.10), with its pump.
+    sim_host: Option<crate::net::PeerHandle>,
     /// The key this install plays online with (loaded once).
     identity: Option<Identity>,
     /// LAN announcements and the LAN list (tests turn them off: fixed port).
@@ -206,6 +206,9 @@ pub struct Shell {
     /// Tests only: applied to the ICE settings of every endpoint the shell
     /// makes (`test_ice`, feature `test-hooks`).
     ice_hook: Option<IceHook>,
+    /// Tests only: each match's load takes this much longer
+    /// (`test_slow_load`, feature `test-hooks`).
+    slow_load: Option<Duration>,
 }
 
 /// A change to an endpoint's ICE settings (tests: a loopback base, a
@@ -274,6 +277,7 @@ impl Shell {
             resolving: None,
             unmapping: Vec::new(),
             ice_hook: None,
+            slow_load: None,
         };
         shell.data.default_relays = DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect();
         shell.data.default_stun = DEFAULT_STUN.iter().map(|s| s.to_string()).collect();
@@ -331,6 +335,7 @@ impl Shell {
             resolving: None,
             unmapping: Vec::new(),
             ice_hook: None,
+            slow_load: None,
         }
     }
 
@@ -750,7 +755,7 @@ impl Shell {
             if let Driver::Online(d) = std::mem::replace(&mut p.session.driver, Driver::Sandbox)
                 && let Some(n) = &mut self.net
             {
-                n.peer = Some(d.into_peer());
+                n.peer = Some(d.into_handle());
                 n.lagging = false;
                 n.meter.clear();
             }
