@@ -108,3 +108,5 @@
   fixtures/net/cases/net-classic-castlestrike-good-14s5c2v-seed697424034-ba910340.ron
 2026-10-15 bless-regression: SK-6: a player switched to a worse link mid-match keeps its input delay; its stalls from the change on are not judged
   fixtures/net/cases/net-mw-1-0-liero-factory-lan-10s6c1v-seed335636286-21c7878e.ron
+2026-10-15 bless-regression: SK-4: an outage begun during a migration was placed after it; the stall it caused was in no window
+  fixtures/net/cases/net-mw-1-0-fossilfacility-typical-3s3c1v-seed2454907585-2637e714.ron
