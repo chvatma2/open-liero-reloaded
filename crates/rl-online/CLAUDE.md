@@ -42,11 +42,19 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   ending, every test not about migration, D7; `direct()`: a standby on
   port 0, no STUN, no relays), `MigrationStep` (`Finding`,
   `Moving(name)`, `TakingOver`; `Display` the HUD's texts),
-  `MIGRATION_CONNECT_TIMEOUT` (1 s, N73), `ANSWER_OPEN_TIMEOUT` (2 s: an
-  answered join whose link does not open is lost contact), `REPORT_WAIT`
+  `MIGRATION_CONNECT_TIMEOUT` (1 s, N73), `ANSWER_OPEN_TIMEOUT` (2 s: a
+  direct join answered whose link does not open is lost contact),
+  `RELAYS_OPEN_TIMEOUT` (5 s, the same through the relays: ICE's checks
+  sent again 0.25, 0.5, 1, 2 s later, then DTLS over a relayed pair;
+  `answer_open_timeout(route)`), `REPORT_WAIT`
   (1 s: the reports' wait past the window), `HOST_LOST`, `HOST_BACK`
-  (N69's log line), `stepped_down(secs)`; `HOST_BACK` and the two
+  (N69's log line), `stepped_down(secs)`; `HOST_BACK` and the
   timeouts in `migration::` only, the rest at the crate root as well.
+  The attempt planner (`#[doc(hidden)] pub` for its unit test): `Planner<A>`
+  over `rl_netcode`'s `Migration` and the old host's order, its joins
+  behind a `Connector` (`connect(entry, join) -> Option<A>`, `discard`),
+  `Route` (`Direct`, `Relays`), `Failure` (`NotHost`, `Unreached`,
+  `Refused`); below under Migration.
 - **`peer.rs`, `OnlinePeer`** (its `LobbyHandle` in `peer/lobby_handle.rs`): `start(role, endpoint, me, look, content,
   setup, content_cfg)` (`PeerRole::Host { lobby, listen }`, `Server {
   lobby, listen }`: a host without a local player, the dedicated
@@ -232,9 +240,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     failed send, is "this game could not send to the host", not the
     host's fault); during a match with migration on, the host's loss
     migrates instead (below).
-  - **Migration** (`peer/migrate.rs`, plan 12c Task 6: direct links;
-    spec §3.7, N63-N76; every rule `rl_netcode::migration`'s and
-    `rl_lobby`'s):
+  - **Migration** (`peer/migrate.rs`, plan 12c Tasks 6-7; spec §3.7,
+    N63-N76; every timing rule `rl_netcode::migration`'s, the routes
+    `migration::Planner`'s, the lobby's `rl_lobby`'s):
     - **Standby** (N63): at its welcome a client with `migration.enabled`
       and `standby: Some` opens `Endpoint::host` (port 0, port mapping
       off, `max_peers` `MAX_MEMBERS`), its gate refusing `NotHost` until
@@ -251,22 +259,39 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       only with a standby; past `MAX_MIGRATIONS` in the match: host lost
       at once): `Migrating(Finding)`. Off, outside a match or without a
       succession: the old ending. The old endpoint stays, polled and fed
-      to the session (`HostHeard`).
-    - **`Try(i)`**: one attempt at a time, a `Joiner` to the entry's
-      direct address (`connect_timeout` `MIGRATION_CONNECT_TIMEOUT`, the
-      client's endpoint config with `migration.ice`) and a fresh
-      `LobbyClient` expecting the entry's key: `Migrating(Moving(name))`.
-      `NetEvent::Answered` is contact; a `Refused(NotHost)` is asked again
-      `RETRY_US` later; any other failure (or an entry without a direct
-      address) is not tried again in its window (N73); a failure after
-      contact is `lost_contact` (D8: a successor whose window ends
-      uncommitted refuses its answered joins, `Endpoint::refuse_pending`,
-      and closes the links it did not welcome, so contact past a window
-      lasts only with a committed one); an answered join whose link has
-      not opened `ANSWER_OPEN_TIMEOUT` after the answer fails too (a
-      successor dead after answering is left, not waited for past the
-      give-up). A step moving on drops the attempt (its endpoint on a
-      thread).
+      to the session (`HostHeard`). A later migration (N74) starts the
+      same way from the new host's succession (it lists everyone but
+      itself; a rejoiner gets it with its welcome); the match's
+      migrations are counted (a rejoin and a take-over each one), so the
+      fifth is host lost.
+    - **`Try(i)`** (the `Planner`; Review Focus 3's bounds): one attempt
+      at a time, `Migrating(Moving(name))`. Its route: **direct** first
+      when the entry has an address (a `Joiner` with `Join::direct`,
+      `connect_timeout` `MIGRATION_CONNECT_TIMEOUT`), **then through the
+      relays** (`Join { nostr: NostrJoin { host: entry.key, pool:
+      join_relays(entry.relays, own relays) (at most 8, the own pool's
+      other settings), migration.region, turn_from_nostr, allow_local }
+      }`); without relays on either side, direct only. Both with the
+      client's endpoint config, `migration.ice`, and a fresh `LobbyClient`
+      expecting the entry's key (reporting the standby). The joins'
+      `Joining` steps are reported, each once until another comes.
+      `NetEvent::Answered` (direct: the TCP answer; relays: the answer
+      taken, `Connecting`) is contact. `Refused(NotHost)` is asked again
+      `RETRY_US` later; an unreached direct route (a connect refused or
+      timed out, a link closed before it opened, an answered link not
+      open in time) is not tried again in its window and the relays are
+      next; any other failure (a refusal, a failed join through the
+      relays, a closed link) is not that entry again in its window
+      (N73), nor is an entry with no route; a failure after contact is
+      `lost_contact` (D8: a successor whose window ends uncommitted
+      refuses its answered TCP joins, `Endpoint::refuse_pending`, drops
+      its signalled ones and closes the links it did not welcome, so
+      contact past a window lasts only with a committed one); an answered
+      join whose link has not opened `answer_open_timeout(route)` after
+      the answer fails too (a successor dead after answering is left, not
+      waited for past the give-up; a relayed path's slower ICE is waited
+      for). A step moving on, its own turn or the give-up discards the
+      attempt (its endpoint on a thread); none starts past `GIVE_UP_US`.
     - **Rejoin** (the attempt's `Welcome`): the `Migration` goes (A9: only
       the new host's `Resume`, or its own loss, a further migration, ends
       the wait), the old endpoint shuts down on a thread, the attempt's
@@ -291,6 +316,25 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       `restart_bots`; each `Rejoined` member's welcome is drained, then
       its content list and `rejoined(peer, its slot or Spectator)`
       (`Collect` after `Welcome`).
+    - **Relays** (N73 as amended by A15): with `migration.relays` the
+      successor listens on them from its gate's opening (its turn:
+      `HostReach::start(HostListen { pool: relays, public_address: None
+      })`), answers their offers on its standby (`answer_signalled`, the
+      gate open) and reports `RelayJoin` and `ListenRelay` lines as a
+      host does; the listener goes with the host side at the commit, and
+      stops when the gate closes (the window's end uncommitted, a cancel).
+      Without relays it listens on none. Its relays' connections add
+      about 1-2 s to a migration through Nostr.
+    - **Late rejoiners** (N72): a migrated lobby keeps an away member's id
+      only until its resume (`drop_away`); a member welcomed after it
+      gets a new id, `Waiting`. Its client sees the id change at the
+      welcome: it drops its old `Game` (the session; no replay, as a
+      mid-match joiner), says `Migrated { me: false }` and the new link's
+      `Connected` at once, keeps the match's migration count for its next
+      session, and watches as a mid-match joiner (its content list,
+      `Have`, `ContentComplete`, `Start`, `Role::Joining`, a state); the
+      next gathering seats it. Its old slot stays `Keys(0)` (abandoned at
+      the resume).
     - **Resume**: when `away_in_match()` is empty (A10) or the window
       ended, and `awaiting_reports()` is empty (C1) or the window ended
       `REPORT_WAIT` ago (a report later is merged late, N67): `drop_away`,
@@ -314,9 +358,12 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       lobby). A start's own world build does not count.
     - Test hooks (`test-hooks`): `test_outage(until)` (every endpoint of
       the peer, and those it makes before then, in rl-net's
-      `test_blackout`), `test_delay_rejoin(d)` (an attempt's lobby
+      `test_blackout`; a signalled endpoint an attempt makes later too),
+      `test_delay_rejoin(d)` (an attempt's lobby
       messages, its `Hello`, held `d` after its link opened),
-      `test_withhold_reports()` (a client drops a new host's `Collect`).
+      `test_withhold_reports()` (a client drops a new host's `Collect`),
+      `test_ignore_direct()` (joins to successors skip direct addresses,
+      so a loopback test exercises the relays).
 - **`replay.rs`**: `MatchRecord { start, rows, checksums }` (rows below the
   last tick, the session's confirmed checksums); `make` re-simulates the
   rows from `build_match`'s start world with its `Recorder` and returns the
@@ -546,7 +593,8 @@ clock, no content needed). The test network (`Net`, `Peer`: `frozen`
 peers not polled, `join_with_migration` waiting for each welcome, so the
 succession is the call order, `outage`, `host_index`) is
 `tests/common/net.rs`'s, shared with `tests/migration.rs` (plan 12c,
-direct links on 127.0.0.1, `base_override` 127.0.0.1, under 30 s each): a
+on 127.0.0.1, `base_override` 127.0.0.1 on the standbys and the joins,
+an in-process `TestRelay` for the relays, under 30 s each): a
 frozen host hands a 0.1-minute match to Anna within 2 + 3.5 s, Bert moves
 to her, both records equal, every input each survivor held at the freeze kept, the old
 host's slot `Keys(0)` after, the bot, Anna and Bert playing on, then
@@ -568,8 +616,30 @@ rows Anna lacks (Anna's 0.7 s outage before the freeze) keeps every one
 reports holds the resume only to the window's end plus `REPORT_WAIT`; a
 follower in contact when the host returns (the host's own 2.8 s outage,
 its `Hello` held) goes back to the host when its successor calls off
-(fails without the remembered `HostHeard`).
-`migrate.rs`' unit test: `stall_gap` (C3); `migration.rs`': the texts.
+(fails without the remembered `HostHeard`); through the relays (Bert's
+joins skip direct addresses): `Relays` then `Asking`, Anna welcomes him,
+listening only from her turn, his `Connected` to her standby, records
+equal (fails without the standby answering in its turn); a slow relayed
+link (Bert's datagrams blacked out 2.5 s from his `Asking`: open about
+4 s after the answer) is waited for and Anna takes the match (fails with
+2 s for the relays); a late rejoiner (its `Hello` held 6 s) welcomed
+`Waiting` after Anna's resume watches from a state, its slot `Keys(0)`
+from the resume, seated and playing Anna's next match, never host lost
+(fails while the state loads into the old rehosted session); a second
+migration (Anna freezes 4 s after her resume) moves the match to Bert,
+Cid following, records equal, Anna's succession without Anna (fails
+without the succession at a rejoin); the planner with a fake connector
+and clock: 48 hostile entries, every direct connect refused, the relays
+silent, over 11 s: one attempt at a time, each address once a window,
+at most 8 relays a join, four joins in all, nothing past the give-up,
+`GiveUp` at 10 s (fails retrying a failed direct route); on real
+sockets, a closed loopback port costs one connect, refused (`Closed`)
+within its window.
+`migrate.rs`' unit test: `stall_gap` (C3); `migration.rs`': the texts,
+the planner's routes (direct, then the relays: the entry's first, each
+once; neither again in its window; direct only without relays; the
+relays alone without an address), `NotHost` asked again after
+`RETRY_US`, the lapse per route, N69's remembered `HostHeard`.
 Content (each peer a cache in a temporary directory; `common::
 partial_content` copies the match's packs but some, `with_test_skin`
 adds a skin pack of another hash): a client without the level, or the mod,

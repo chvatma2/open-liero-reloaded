@@ -4,11 +4,18 @@
 //! NT-1: `base_override` on the standby and the joins' ICE); every wait is
 //! bounded, each test under 30 s.
 
-use std::net::Ipv4Addr;
+use std::collections::BTreeMap;
+use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::time::{Duration, Instant};
 
-use rl_online::migration::HOST_BACK;
-use rl_online::{HOST_LOST, MigrationConfig, MigrationStep, OnlineEvent, StartError};
+use rl_discovery::{PoolConfig, Region, TestRelay};
+use rl_net::endpoint::{Endpoint, EndpointConfig, NetEvent, Why};
+use rl_netcode::migration::{GIVE_UP_US, Step, WINDOW_US};
+use rl_online::migration::{
+    ANSWER_OPEN_TIMEOUT, Connector, Failure, HOST_BACK, MIGRATION_CONNECT_TIMEOUT, Planner, Route,
+};
+use rl_online::{HOST_LOST, Join, JoinStep, MigrationConfig, MigrationStep, OnlineEvent, StartError};
+use rl_proto::SuccessorWire;
 
 use crate::common::net::{Net, content, ended, replay_ready};
 
@@ -388,4 +395,364 @@ fn a_follower_in_contact_when_the_host_returns_goes_back_too() {
     );
     assert!(!net.peers[a].has(migrated) && !net.peers[b].has(migrated));
     assert!(net.host().peer().is_host());
+}
+
+/// N72: a member welcomed after the new host's resume is a mid-match
+/// joiner. Bert keeps contact with Anna but sends his `Hello` 6 s after his
+/// link opened (`test_delay_rejoin`), so Anna, committed by Cid's rejoin,
+/// resumes without him at her window's end. Bert is welcomed `Waiting`,
+/// drops his old session, watches from a state, and plays the next match;
+/// his slot stays `Keys(0)` from the resume.
+#[test]
+fn a_late_rejoiner_watches_from_a_state() {
+    let Some(content) = content() else { return };
+    let (mut net, [a, b, c]) = started3(content, 0.15);
+    let bert_slot = net.peers[b].peer().my_slot().unwrap() as usize;
+    let bert_key = net.peers[b].key;
+    net.peers[b].peer().test_delay_rejoin(Duration::from_secs(6));
+    let marks = [a, b, c].map(|i| net.peers[i].events.len());
+    net.peers[0].frozen = true;
+    net.run_until(Duration::from_secs(10), "Anna resumes with Cid", |n| {
+        n.peers[a].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
+            && n.peers[c].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Anna"))
+    });
+    // Anna's tick at her resume (at least `R`): Bert's slot is `Keys(0)` from it.
+    let resumed = net.peers[a].peer().match_session().unwrap().current_tick();
+    assert!(!net.peers[b].has(migrated), "Bert is not back yet");
+    net.run_until(Duration::from_secs(8), "Bert is welcomed as a mid-match joiner and watches", |n| {
+        n.peers[b].events[marks[1]..].iter().any(|e| matches!(e, OnlineEvent::StateLoaded { .. }))
+    });
+    let state = net.peers[b].peer().lobby().state().cloned().unwrap();
+    let me = state.members.iter().find(|m| m.key == bert_key).unwrap();
+    assert!(
+        matches!(me.seat, rl_proto::SeatWire::Waiting),
+        "welcomed waiting for the next match: {:?}",
+        me.seat
+    );
+    assert!(net.peers[b].peer().match_session().is_some_and(|s| s.input_log().origin() > 0), "from a state");
+    assert_eq!(net.peers[b].started().last(), Some(&None), "it watches");
+    net.run_until(Duration::from_secs(20), "the match ends for all three", |n| {
+        [a, b, c].iter().all(|&i| n.peers[i].events[marks[0].min(marks[1])..].iter().any(ended))
+            && n.peers[a].has(replay_ready)
+    });
+    let ra = net.peers[a].peer().last_record().cloned().unwrap();
+    assert!(ra.rows.len() > resumed as usize + 100, "{} rows, resumed at {resumed}", ra.rows.len());
+    assert!(ra.rows[resumed as usize..].iter().all(|row| row[bert_slot] == 0), "Bert's slot stands still");
+    // Gathering again: Bert takes a seat and plays Anna's next match.
+    net.run_until(Duration::from_secs(14), "Bert is seated", |n| {
+        n.peers[a].peer().lobby().state().is_some_and(|s| {
+            s.phase == rl_proto::Phase::Gathering
+                && s.members
+                    .iter()
+                    .any(|m| m.key == bert_key && matches!(m.seat, rl_proto::SeatWire::Player { .. }))
+        })
+    });
+    for i in [b, c] {
+        net.peers[i].peer().lobby().set_ready(true);
+    }
+    net.run_until(Duration::from_secs(10), "Anna can start", |n| {
+        n.peers[a].peer().lobby().can_start().is_ok()
+    });
+    net.peers[a].peer().lobby().start(9).unwrap();
+    net.run_until(Duration::from_secs(10), "the next match starts for Bert", |n| {
+        n.peers[b].started().last().is_some_and(Option::is_some)
+    });
+    for i in [a, b, c] {
+        assert!(!net.peers[i].has(|e| matches!(e, OnlineEvent::HostLost(_))), "{:?}", net.peers[i].events);
+    }
+}
+
+/// N74: a later migration uses the new host's succession, which lists
+/// everyone but itself. The host freezes and Anna takes over; 4 s after her
+/// resume Anna freezes too, and the match moves to Bert, Cid following.
+#[test]
+fn a_second_migration_moves_the_match_again() {
+    let Some(content) = content() else { return };
+    let (mut net, [a, b, c]) = started3(content, 0.3);
+    net.peers[0].frozen = true;
+    net.run_until(Duration::from_secs(8), "the match moves to Anna", |n| {
+        n.peers[a].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
+            && [b, c].iter().all(|&i| {
+                n.peers[i].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Anna"))
+            })
+    });
+    let anna = net.peers[a].key;
+    let order = net.peers[a].peer().lobby().succession();
+    assert!(order.iter().all(|e| e.key != anna), "the host is no successor: {order:?}");
+    assert_eq!(
+        order.iter().map(|e| e.key).collect::<Vec<_>>(),
+        vec![net.peers[b].key, net.peers[c].key],
+        "Bert, then Cid"
+    );
+    let t = Instant::now();
+    net.run_until(Duration::from_secs(6), "4 s of Anna's hosting", |_| t.elapsed() > Duration::from_secs(4));
+    let mark = net.peers[c].events.len();
+    net.peers[a].frozen = true;
+    net.run_until(Duration::from_secs(8), "the match moves to Bert", |n| {
+        n.peers[b].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
+            && n.peers[c].events[mark..]
+                .iter()
+                .any(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Bert"))
+    });
+    assert!(
+        net.peers[c].events[mark..]
+            .iter()
+            .any(|e| matches!(e, OnlineEvent::Migrating(MigrationStep::Moving(n)) if n == "Bert"))
+    );
+    assert!(net.peers[b].peer().is_host());
+    records_agree(&mut net, [b, c]);
+}
+
+/// `direct()` with a pool on `relay` (local relays allowed): the relays a
+/// successor listens on in its turn, and its joins' second route.
+fn relayed(relay: &TestRelay) -> MigrationConfig {
+    MigrationConfig {
+        relays: Some(PoolConfig { relays: vec![relay.url()], ..PoolConfig::default() }),
+        allow_local: true,
+        ..direct()
+    }
+}
+
+fn listening(e: &OnlineEvent) -> bool {
+    matches!(e, OnlineEvent::ListenRelay { status, .. } if status == "connected")
+}
+
+/// A host and two clients on a `TestRelay`, Bert's joins to successors
+/// through the relays only (`test_ignore_direct`), in a 0.1-minute match.
+fn started_relayed(content: rl_content::Content, relay: &TestRelay) -> (Net, [usize; 2]) {
+    let mut net = Net::new(content, 0.1);
+    let a = net.join_with_migration("Anna", relayed(relay));
+    let b = net.join_with_migration("Bert", relayed(relay));
+    net.peers[b].peer().test_ignore_direct();
+    net.ready(&[a, b]);
+    net.host().peer().lobby().start(7).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() > 300);
+    (net, [a, b])
+}
+
+/// N73: Bert reaches Anna, his successor, through the relays: Anna listens
+/// on hers once her turn comes (not before), answers on her standby, and
+/// Bert's new link is to her standby.
+#[test]
+fn a_successor_is_reached_through_the_relays() {
+    let Some(content) = content() else { return };
+    let relay = TestRelay::start();
+    let (mut net, [a, b]) = started_relayed(content, &relay);
+    let order = net.host().peer().lobby().succession();
+    assert!(order.iter().all(|e| e.relays == [relay.url()]), "each reports its relays: {order:?}");
+    let port = net.peers[a].peer().standby_port().unwrap();
+    assert!(!net.peers[a].has(listening), "Anna listens only once her turn comes");
+    let marks = [a, b].map(|i| net.peers[i].events.len());
+    net.peers[0].frozen = true;
+    let froze = Instant::now();
+    net.run_until(Duration::from_secs(12), "both resume under Anna", |n| {
+        n.peers[a].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
+            && n.peers[b].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Anna"))
+    });
+    // 2 s of silence, then the relays' few seconds (a hang guard).
+    assert!(froze.elapsed() < Duration::from_secs(2 + 6), "{:?}", froze.elapsed());
+    let after = &net.peers[b].events[marks[1]..];
+    let steps: Vec<JoinStep> = after
+        .iter()
+        .filter_map(|e| match e {
+            OnlineEvent::Joining(s) => Some(*s),
+            _ => None,
+        })
+        .collect();
+    let at = |s: JoinStep| steps.iter().position(|&t| t == s);
+    assert!(at(JoinStep::Relays).is_some_and(|r| at(JoinStep::Asking).is_some_and(|q| r < q)), "{steps:?}");
+    assert!(at(JoinStep::Direct).is_none(), "{steps:?}");
+    assert!(net.peers[a].events[marks[0]..].iter().any(listening), "Anna listens in her turn");
+    let migrated = after.iter().position(migrated).unwrap();
+    assert!(
+        after[migrated..]
+            .iter()
+            .any(|e| matches!(e, OnlineEvent::Connected { remote, .. } if remote.port() == port)),
+        "Bert's path line names his link to Anna's standby (port {port}): {:?}",
+        &after[migrated..]
+    );
+    net.run_until(Duration::from_secs(20), "the match ends and both make replays", |n| {
+        [a, b].iter().all(|&i| n.peers[i].has(ended) && n.peers[i].has(replay_ready))
+    });
+    let ra = net.peers[a].peer().last_record().cloned().unwrap();
+    let rb = net.peers[b].peer().last_record().cloned().unwrap();
+    assert_eq!(ra.rows, rb.rows);
+    assert_eq!(ra.checksums, rb.checksums);
+}
+
+/// Carried from Task 6: a link through the relays opens slower than a
+/// direct one (ICE's checks, sent again 250 ms, 0.5, 1, 2 s later, then
+/// DTLS). Bert's datagrams black out for 2.5 s from his `Asking`, so his
+/// link to Anna opens only on a check sent again after it, well past a
+/// direct link's `ANSWER_OPEN_TIMEOUT` after the answer: Anna, slow but
+/// healthy, is waited for (`RELAYS_OPEN_TIMEOUT`) and takes the match.
+#[test]
+fn a_slow_link_through_the_relays_is_waited_for() {
+    let Some(content) = content() else { return };
+    let relay = TestRelay::start();
+    let (mut net, [a, b]) = started_relayed(content, &relay);
+    let mark = net.peers[b].events.len();
+    net.peers[0].frozen = true;
+    net.run_until(Duration::from_secs(5), "Bert asks Anna through the relays", |n| {
+        n.peers[b].events[mark..].contains(&OnlineEvent::Joining(JoinStep::Asking))
+    });
+    net.outage(b, Duration::from_millis(2_500));
+    let mut answered = None;
+    net.run_until(Duration::from_secs(10), "both resume under Anna", |n| {
+        if answered.is_none()
+            && n.peers[b].events[mark..].contains(&OnlineEvent::Joining(JoinStep::Connecting))
+        {
+            answered = Some(Instant::now());
+        }
+        n.peers[a].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
+            && n.peers[b].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Anna"))
+    });
+    let took = answered.expect("Anna answered through the relays").elapsed();
+    assert!(took > ANSWER_OPEN_TIMEOUT, "the link opened {took:?} after the answer: not a slow path");
+    assert!(
+        !net.peers[b].has(|e| *e == OnlineEvent::Migrating(MigrationStep::TakingOver)),
+        "Bert never hosts"
+    );
+}
+
+/// A fake [`Connector`] for the planner: every join counted with when, to
+/// whom and how (direct, or the relays' pool size); a join started is live
+/// until discarded.
+#[derive(Default)]
+struct Fake {
+    now: u64,
+    /// `(when, member, direct, relays)`.
+    joins: Vec<(u64, u8, bool, usize)>,
+    live: usize,
+    most_live: usize,
+}
+
+impl Connector for Fake {
+    type Attempt = u8;
+
+    fn connect(&mut self, entry: &SuccessorWire, join: Join) -> Option<u8> {
+        let relays = join.nostr.as_ref().map_or(0, |n| n.pool.relays.len());
+        self.joins.push((self.now, entry.member, join.direct.is_some(), relays));
+        self.live += 1;
+        self.most_live = self.most_live.max(self.live);
+        Some(entry.member)
+    }
+
+    fn discard(&mut self, _: u8) {
+        self.live -= 1;
+    }
+}
+
+/// Review Focus 3: a hostile succession (48 entries, each with an address
+/// and 2 relays) whose every direct connect is refused and whose relays
+/// never answer, over 10 s of a fake clock: one attempt at a time, each
+/// direct address once per window, at most 8 relays a join, nothing past
+/// the give-up, and the host lost.
+#[test]
+fn a_hostile_succession_is_bounded() {
+    let order: Vec<SuccessorWire> = (0..48u8)
+        .map(|i| SuccessorWire {
+            member: i,
+            key: [i + 1; 32],
+            direct: Some(([10, 0, 0, i], 2000 + u16::from(i))),
+            relays: vec![format!("wss://a{i}.example"), format!("wss://b{i}.example")],
+            can_host: true,
+        })
+        .collect();
+    let own = PoolConfig {
+        relays: (0..10).map(|i| format!("wss://own{i}.example")).collect(),
+        ..Default::default()
+    };
+    let cfg = MigrationConfig { relays: Some(own), region: Region::Europe, ..MigrationConfig::direct() };
+    let mut plan: Planner<u8> = Planner::new(order, vec![true; 48], None, &cfg, 0);
+    let mut fake = Fake::default();
+    let mut lost = None;
+    for t in (0..=11_000_000).step_by(10_000) {
+        fake.now = t;
+        if plan.step(t, &mut fake) == Step::GiveUp {
+            lost.get_or_insert(t);
+        }
+        // Every direct connect is refused at once; the relays never answer.
+        if plan.attempt().is_some_and(|(_, route)| route == Route::Direct) {
+            assert!(!plan.failed(t, Failure::Unreached, &mut fake));
+        }
+    }
+    assert_eq!(lost, Some(GIVE_UP_US), "the host is lost at the give-up");
+    assert_eq!(fake.most_live, 1, "one attempt at a time");
+    assert_eq!(fake.live, 0, "none left after the give-up");
+    assert!(fake.joins.iter().all(|&(t, ..)| t < GIVE_UP_US), "nothing past the give-up");
+    assert!(fake.joins.iter().all(|&(.., relays)| relays <= 8), "{:?}", fake.joins);
+    assert!(fake.joins.iter().any(|&(.., relays)| relays == 8), "the entry's 2 and 6 of its own");
+    let mut direct: BTreeMap<(u64, u8), u32> = BTreeMap::new();
+    for &(t, member, is_direct, _) in &fake.joins {
+        if is_direct {
+            *direct.entry((t / WINDOW_US, member)).or_default() += 1;
+        }
+    }
+    assert!(direct.values().all(|&n| n == 1), "{direct:?}");
+    // Two windows in 10 s: the first two entries, each once directly, then
+    // once through the relays.
+    assert_eq!(fake.joins.len(), 4, "{:?}", fake.joins);
+}
+
+/// [`Connector`] on real sockets: a direct join's TCP connect.
+#[derive(Default)]
+struct Loopback {
+    connects: u32,
+}
+
+impl Connector for Loopback {
+    type Attempt = Endpoint;
+
+    fn connect(&mut self, _: &SuccessorWire, join: Join) -> Option<Endpoint> {
+        self.connects += 1;
+        let cfg = EndpointConfig {
+            port: 0,
+            connect_timeout: MIGRATION_CONNECT_TIMEOUT,
+            ..EndpointConfig::default()
+        };
+        Endpoint::connect(cfg, join.direct?).ok()
+    }
+
+    fn discard(&mut self, _: Endpoint) {}
+}
+
+/// The real check of the bound on 127.0.0.1: an entry whose direct address
+/// is a closed port costs one connect, refused at once (not the connect's
+/// timeout), and is not tried again in its window.
+#[test]
+fn a_closed_direct_address_costs_one_connect() {
+    let closed = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap().local_addr().unwrap();
+    let SocketAddr::V4(addr) = closed else { unreachable!() };
+    let order = vec![SuccessorWire {
+        member: 1,
+        key: [7; 32],
+        direct: Some((addr.ip().octets(), addr.port())),
+        relays: Vec::new(),
+        can_host: true,
+    }];
+    let mut plan: Planner<Endpoint> = Planner::new(order, vec![true], None, &direct(), 0);
+    let mut c = Loopback::default();
+    let start = Instant::now();
+    let mut refused = None;
+    while start.elapsed() < Duration::from_millis(1_500) {
+        let now_us = start.elapsed().as_micros() as u64;
+        assert_eq!(plan.step(now_us, &mut c), Step::Try(0));
+        let mut events = Vec::new();
+        if let Some(ep) = plan.attempt_mut() {
+            ep.poll(Instant::now(), &mut events);
+        }
+        for e in events {
+            if let NetEvent::Disconnected { why, .. } = e {
+                refused.get_or_insert((start.elapsed(), why));
+                plan.failed(now_us, Failure::Unreached, &mut c);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let (after, why) = refused.expect("the connect is refused");
+    assert_eq!(why, Why::Closed, "refused, not timed out ({after:?})");
+    assert!(after < Duration::from_micros(WINDOW_US), "within its window: {after:?}");
+    assert_eq!(c.connects, 1, "one connect in the window");
+    assert!(plan.attempt().is_none());
 }

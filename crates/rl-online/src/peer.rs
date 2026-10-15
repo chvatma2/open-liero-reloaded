@@ -225,6 +225,9 @@ struct ClientSide {
     migrating: Option<Box<migrate::Migrating>>,
     /// A new host welcomed it: that host's name, until its `Resume`.
     rejoined: Option<String>,
+    /// The match's migrations so far, carried to the session of a member
+    /// back after its new host's resume (N72, N74: its next `Start`).
+    migrations: u32,
 }
 
 enum Side {
@@ -309,6 +312,9 @@ pub struct OnlinePeer {
     /// Tests only (`test-hooks`): `test_withhold_reports`.
     #[cfg(feature = "test-hooks")]
     withhold_reports: bool,
+    /// Test hook: joins to successors skip direct addresses.
+    #[cfg(feature = "test-hooks")]
+    ignore_direct: bool,
 }
 
 impl OnlinePeer {
@@ -390,6 +396,7 @@ impl OnlinePeer {
                     standby: None,
                     migrating: None,
                     rejoined: None,
+                    migrations: 0,
                 };
                 (endpoint, Side::Client(Box::new(client)))
             }
@@ -419,6 +426,8 @@ impl OnlinePeer {
             rejoin_delay: Duration::ZERO,
             #[cfg(feature = "test-hooks")]
             withhold_reports: false,
+            #[cfg(feature = "test-hooks")]
+            ignore_direct: false,
         })
     }
 
@@ -1322,7 +1331,11 @@ impl OnlinePeer {
         };
         let session = Session::new(cfg, role, world.sim, self.now_us);
         self.ended_world = None;
-        self.game = Some(Game::new(session, None, start.clone(), my_slot));
+        let mut game = Game::new(session, None, start.clone(), my_slot);
+        if let Side::Client(c) = &mut self.side {
+            game.migrations = std::mem::take(&mut c.migrations);
+        }
+        self.game = Some(game);
         self.events.push(OnlineEvent::MatchStarting { start, my_slot });
     }
 
