@@ -142,7 +142,8 @@ The headless command-line tool. Its commands:
   spectator excuses nothing.
   Outages are in virtual time, windows in host ticks: `host_tick_at`
   converts (from the last migration's resume, or less a host freeze that
-  did not migrate). A migration called off (N69: the old host heard
+  did not migrate; a time during a migration, from its `silent_us` to its
+  resume, is the migration's tick: SK-4's `typical-3s3c1v-seed2454907585`). A migration called off (N69: the old host heard
   again) has no window of its own: only an outage (the peer's, or its
   host's while that peer hosts) silences a host 2 s on a profile up to
   `bad` without a step-down, and that outage's window covers it (the kept

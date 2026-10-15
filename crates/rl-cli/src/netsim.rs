@@ -492,15 +492,23 @@ fn host_at(r: &Report, tick: u32) -> PeerId {
 }
 
 /// The host tick reached at the virtual time `tick * TICK_US` of an outage
-/// (the harness's outages are in virtual time): after a migration the new
-/// host counts on from its resume tick at its resume time; before, a host
-/// that froze (and did not step down) is behind the clock by the freeze.
+/// (the harness's outages are in virtual time): during a migration (from
+/// the first peer finding its host gone to the resume) the migration's
+/// tick; after one the new host counts on from its resume tick at its
+/// resume time; before, a host that froze (and did not step down) is
+/// behind the clock by the freeze.
 fn host_tick_at(spec: &NetSpec, r: &Report, outage_tick: u32) -> u32 {
     let us = u64::from(outage_tick) * TICK_US;
     let ticks = |from_us: u64, at: u32| {
         let ahead = us.saturating_sub(from_us) / TICK_US;
         at.saturating_add(u32::try_from(ahead).unwrap_or(u32::MAX))
     };
+    // The match stands at a migration's tick from its departure to its
+    // resume (SK-4's `typical-3s3c1v-seed2454907585`: an outage begun
+    // meanwhile was placed 6 s of ticks later).
+    if let Some(m) = r.migrations.iter().find(|m| m.silent_us <= us && us < m.resumed_us) {
+        return m.tick;
+    }
     if let Some(m) = r.migrations.iter().rfind(|m| m.resumed_us <= us) {
         return ticks(m.resumed_us, m.tick);
     }
@@ -1050,12 +1058,20 @@ mod tests {
         late.migrations.push(harness::Migrated {
             from: HOST,
             to: 1,
-            silent_us: 0,
+            silent_us: 95 * TICK_US,
             resumed_us: 160 * TICK_US,
             tick: 100,
         });
         assert_eq!(host_tick_at(&s, &late, 200), 140);
-        assert_eq!(host_tick_at(&s, &late, 150), 150, "before the resume: the clock");
+        assert_eq!(host_tick_at(&s, &late, 90), 90, "before the departure: the clock");
+        // SK-4's `typical-3s3c1v-seed2454907585`: the match stands at the
+        // migration's tick until the resume, so an outage begun meanwhile
+        // begins there (not 50 ticks on, as if the host had run).
+        assert_eq!(host_tick_at(&s, &late, 150), 100, "during the migration: its tick");
+        let cut = NetSpec { outages: vec![(1, 150, 190)], ..s.clone() };
+        let rec = Profile::TYPICAL.outage_recovery_ticks(130 - 100, CLIENT_FRAME_US).max(MAX_PREDICTION);
+        let e = [StallEpisode { peer: 1, tick: 110, ended: Some(130 + rec) }];
+        assert!(stalls_within_windows(&cut, &late, &e).is_ok());
         let frozen = NetSpec { host_freeze: Some((100, 130)), ..spec() };
         assert_eq!(host_tick_at(&frozen, &empty_report(), 200), 170, "a freeze that did not migrate");
         // The slowest link the peer has in the run counts: bad from tick
