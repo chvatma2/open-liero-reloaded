@@ -277,11 +277,14 @@ model that tests it in one process (spec §9.1).
   arrivals wait; `Scenario::host_freeze` freezes the host for `until -
   from` ticks' worth of time, its own tick standing still), spectators
   joining at `join_tick` (`Role::Joining`, `add_spectator`, at the current
-  host), exits (`Exit { peer, tick, how }` at the current host's tick:
+  host), exits (`Exit { peer, tick, after_us, how }`: `after_us` of virtual
+  time after the current host's tick reached `tick`, which stands still
+  during a migration, so a peer can die between its rejoin and the resume;
   `Crash`, no frame and nothing in or out from then; `Leave`,
   `Session::leave` transmitted), profile changes (`ProfileChange`, on the
-  peer's link to whoever hosts it then; outages too, and a link made during
-  an outage has it), planted
+  peer's link to whoever hosts it then; outages too, an outage naming a
+  host covers all its peers' links, and a link made during an outage has
+  it), planted
   faults (`corrupt`: at the peer's first frame
   after the host's tick `t` with `t` confirmed,
   `Factory::corrupt(sim, index)` through `change_confirmed`), an
@@ -292,7 +295,8 @@ model that tests it in one process (spec §9.1).
   sessions' confirmed `checksums`, stats, events, `dropped`). The host
   drops a peer it reports timed out, left (`PeerLeft`) or failed to
   repair (`RepairFailed`, `Report::repair_failed`); any host does (a new
-  one too). The run ends when the current host is past `ticks +
+  one too), but only of the peers that follow it (an old host left alone
+  drops nobody). The run ends when the current host is past `ticks +
   settle_ticks` and every other peer not dropped, gone or lost re-simulated
   `ticks` confirmed ticks, or when every peer not dropped is gone or lost
   (no host remains; still `Ok`).
@@ -333,16 +337,21 @@ model that tests it in one process (spec §9.1).
     `HostSilent`/`PeerLeft` to the resume), `host_lost`, `exited` (crashed,
     left, stepped down), `late`, `held` (what each migration's survivors
     held: the new host as it took over, each peer back at the resume; per
-    slot its known prefix). `host_log` is the last host's.
+    slot its known prefix), `left_from` (the host each exited or host-lost
+    peer followed as it went; an exited host: itself). `host_log` is the
+    last host's.
   - `verdict` checks every survivor (not dropped, exited or host lost)
     confirmed the last host's inputs and matches an offline replay of them
     (a joined spectator from its state, a late peer from its last, a
     corrupted peer from its last loaded state), with no desync but a
     corrupted peer's, no refused state, no malformed message or
     inconsistent input (at any peer not dropped); every `held` value is in
-    the last host's log; an exited host's confirmed rows agree with it only
-    up to, per slot, the furthest prefix its migration's survivors held
-    (its last frames may have reached nobody, B3). A host gone stalls its
+    the last host's log; a peer that went (`left_from`: an exited host, an
+    exited or host-lost peer) confirmed rows that agree with it up to, per
+    slot, the furthest prefix the survivors of its host's migration held
+    (an exited host's last frames may have reached nobody, B3), or all of
+    them when its host is the last (a joined or late spectator from its
+    last state). A host gone stalls its
     clients at the prediction limit: `expect_no_stalls` flags those too.
   - `ToyFactory` drives `ToySim` with seeded keys; its fault moves slot 0.
 

@@ -251,6 +251,7 @@ fn empty_report() -> Report {
         exited: Default::default(),
         late: Default::default(),
         held: Vec::new(),
+        left_from: BTreeMap::new(),
     }
 }
 

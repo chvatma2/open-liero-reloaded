@@ -680,6 +680,7 @@ proptest! {
 // The harness's migrations (Task 3): the drivers' part, played over the
 // network model, every rule in virtual time.
 
+use rl_netcode::SILENCE_TIMEOUT_US;
 use rl_netcode::harness::{
     self, Exit, ExitHow, HOST, MigrationPlan, Outage, PeerPlan, ProfileChange, Report, Scenario,
 };
@@ -734,7 +735,7 @@ fn a_crashed_or_leaving_host_is_replaced_in_every_profile() {
         for seed in 1..=12 {
             for how in [ExitHow::Crash, ExitHow::Leave] {
                 let mut sc = mscenario(seed, profile, 3);
-                sc.exits.push(Exit { peer: HOST, tick: 300 + (seed as u32 * 37) % 400, how });
+                sc.exits.push(Exit { peer: HOST, tick: 300 + (seed as u32 * 37) % 400, after_us: 0, how });
                 let r = run_checked(&sc);
                 assert_eq!(r.hosts, vec![HOST, 1], "seed {seed} {how:?}");
                 assert_eq!(r.migrations.len(), 1);
@@ -755,7 +756,7 @@ fn a_crashed_or_leaving_host_is_replaced_in_every_profile() {
 #[test]
 fn a_leaving_host_is_followed_without_the_two_second_wait() {
     let mut sc = mscenario(3, Profile::GOOD, 2);
-    sc.exits.push(Exit { peer: HOST, tick: 500, how: ExitHow::Leave });
+    sc.exits.push(Exit { peer: HOST, tick: 500, after_us: 0, how: ExitHow::Leave });
     let r = run_checked(&sc);
     let left_us = 500 * 10_000;
     assert!(r.migrations[0].silent_us < left_us + 200_000, "{:?}", r.migrations[0]);
@@ -764,8 +765,8 @@ fn a_leaving_host_is_followed_without_the_two_second_wait() {
 #[test]
 fn the_second_successor_takes_over_when_the_first_is_dead() {
     let mut sc = mscenario(5, Profile::TYPICAL, 3);
-    sc.exits.push(Exit { peer: HOST, tick: 400, how: ExitHow::Crash });
-    sc.exits.push(Exit { peer: 1, tick: 400, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: 1, tick: 400, after_us: 0, how: ExitHow::Crash });
     let r = run_checked(&sc);
     assert_eq!(r.hosts, vec![HOST, 2]);
     let m = &r.migrations[0];
@@ -777,8 +778,8 @@ fn nobody_reachable_is_host_lost_after_ten_seconds() {
     // One client and a spectator that joined mid-match (a follower): the client dies with the host.
     let mut sc = mscenario(6, Profile::GOOD, 1);
     sc.peers[1].join_tick = Some(100);
-    sc.exits.push(Exit { peer: HOST, tick: 400, how: ExitHow::Crash });
-    sc.exits.push(Exit { peer: 1, tick: 400, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: 1, tick: 400, after_us: 0, how: ExitHow::Crash });
     let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
     let r = harness::run(&sc, &mut f).unwrap();
     assert_eq!(r.host_lost, [100].into());
@@ -837,7 +838,7 @@ fn a_successor_outage_does_not_take_the_match() {
 #[test]
 fn a_late_peer_watches_from_a_state() {
     let mut sc = mscenario(11, Profile::GOOD, 3);
-    sc.exits.push(Exit { peer: HOST, tick: 400, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
     // Peer 3's join to the successor takes 7 s after contact (slow relays):
     // the successor resumes without it at its window's end.
     sc.migration.as_mut().unwrap().slow_joins.push((3, 7_000_000));
@@ -845,6 +846,7 @@ fn a_late_peer_watches_from_a_state() {
     assert_eq!(r.hosts, vec![HOST, 1]);
     let m = &r.migrations[0];
     assert!(m.resumed_us >= m.silent_us + WINDOW_US - 100_000, "it waited for peer 3 until its window's end");
+    assert!(m.resumed_us <= m.silent_us + WINDOW_US + 300_000, "and no longer: {m:?}");
     assert!(r.events[&3].iter().any(|e| matches!(e, Event::StateLoaded { .. })), "it watches from a state");
     assert!(!r.host_lost.contains(&3));
     // Its slot (4) stays Keys(0) from the resume on.
@@ -855,8 +857,8 @@ fn a_late_peer_watches_from_a_state() {
 fn a_second_migration_moves_the_match_again() {
     let mut sc = mscenario(12, Profile::TYPICAL, 3);
     sc.ticks = 2_500;
-    sc.exits.push(Exit { peer: HOST, tick: 400, how: ExitHow::Crash });
-    sc.exits.push(Exit { peer: 1, tick: 1_500, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: 1, tick: 1_500, after_us: 0, how: ExitHow::Crash });
     let r = run_checked(&sc);
     assert_eq!(r.hosts, vec![HOST, 1, 2]);
     assert_eq!(r.migrations.len(), 2);
@@ -868,7 +870,7 @@ fn the_fifth_migration_in_a_match_is_host_lost() {
     let mut sc = mscenario(16, Profile::LAN, 6);
     sc.ticks = 4_000;
     for (k, peer) in [HOST, 1, 2, 3, 4].into_iter().enumerate() {
-        sc.exits.push(Exit { peer, tick: 300 + 600 * k as u32, how: ExitHow::Crash });
+        sc.exits.push(Exit { peer, tick: 300 + 600 * k as u32, after_us: 0, how: ExitHow::Crash });
     }
     let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
     let r = harness::run(&sc, &mut f).unwrap();
@@ -879,7 +881,7 @@ fn the_fifth_migration_in_a_match_is_host_lost() {
 #[test]
 fn a_spectator_takes_over_when_no_player_can() {
     let mut sc = mscenario(13, Profile::LAN, 0); // the host and a spectator only
-    sc.exits.push(Exit { peer: HOST, tick: 400, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
     let r = run_checked(&sc);
     assert_eq!(r.hosts, vec![HOST, 100]);
     let after = &r.host_log[600..900];
@@ -891,7 +893,7 @@ fn profiles_change_mid_run() {
     let mut sc = mscenario(14, Profile::GOOD, 3);
     sc.profile_changes.push(ProfileChange { tick: 300, peer: 2, profile: Profile::AWFUL });
     sc.profile_changes.push(ProfileChange { tick: 900, peer: 2, profile: Profile::GOOD });
-    sc.exits.push(Exit { peer: HOST, tick: 600, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: HOST, tick: 600, after_us: 0, how: ExitHow::Crash });
     let r = run_checked(&sc);
     assert_eq!(r.hosts, vec![HOST, 1]);
     // The change at 900 reached peer 2's link to its new host: it lost far
@@ -908,7 +910,7 @@ fn a_successor_nobody_joined_in_its_window_takes_no_one_after_it() {
     // 6 s: it closes at its window's end, uncommitted, and they follow
     // the next window (peer 2's own), which peer 1 joins in time.
     let mut sc = mscenario(17, Profile::GOOD, 2);
-    sc.exits.push(Exit { peer: HOST, tick: 400, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
     sc.migration.as_mut().unwrap().slow_joins.extend([(2, 6_000_000), (100, 6_000_000)]);
     let r = run_checked(&sc);
     assert_eq!(r.hosts, vec![HOST, 2]);
@@ -923,7 +925,7 @@ fn an_exited_hosts_last_rows_that_reached_nobody_are_not_the_match() {
     for peer in [1, 2, 3, 100] {
         sc.outages.push(Outage { peer, from_tick: 390, until_tick: 450 });
     }
-    sc.exits.push(Exit { peer: HOST, tick: 400, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
     let r = run_checked(&sc);
     assert_eq!(r.hosts, vec![HOST, 1]);
     let old = &r.logs[&HOST];
@@ -933,7 +935,7 @@ fn an_exited_hosts_last_rows_that_reached_nobody_are_not_the_match() {
 #[test]
 fn the_verdict_finds_every_value_a_survivor_held() {
     let mut sc = mscenario(19, Profile::GOOD, 3);
-    sc.exits.push(Exit { peer: HOST, tick: 400, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
     let mut r = run_checked(&sc);
     let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
     // A value a survivor held beyond its frontier, changed: lost.
@@ -947,9 +949,69 @@ fn the_verdict_finds_every_value_a_survivor_held() {
 #[test]
 fn migration_runs_are_deterministic() {
     let mut sc = mscenario(15, Profile::BAD, 3);
-    sc.exits.push(Exit { peer: HOST, tick: 500, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: HOST, tick: 500, after_us: 0, how: ExitHow::Crash });
     let (a, b) = (run_checked(&sc), run_checked(&sc));
     assert_eq!(a.host_log, b.host_log);
     assert_eq!(a.migrations, b.migrations);
     assert_eq!(a.checksums, b.checksums);
+}
+
+#[test]
+fn the_verdict_bounds_exited_and_lost_peers_rows() {
+    // Peer 1 crashes with the host; peer 100 is host lost (the D8 run).
+    let mut dead = mscenario(5, Profile::TYPICAL, 3);
+    dead.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    dead.exits.push(Exit { peer: 1, tick: 400, after_us: 0, how: ExitHow::Crash });
+    let mut lost = mscenario(17, Profile::GOOD, 2);
+    lost.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    lost.migration.as_mut().unwrap().slow_joins.extend([(2, 6_000_000), (100, 6_000_000)]);
+    for (sc, peer) in [(dead, 1), (lost, 100)] {
+        let mut r = run_checked(&sc);
+        assert!(r.exited.contains(&peer) || r.host_lost.contains(&peer));
+        // A row it confirmed long before it went, changed: it must agree
+        // with the survivors as far as they go.
+        r.logs.get_mut(&peer).unwrap()[100][2] ^= 1;
+        let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+        let e = harness::verdict(&sc, &r, &mut f).expect_err("a wrong row of a peer that went");
+        assert!(e.what.contains(&format!("peer {peer}")), "{e:?}");
+    }
+}
+
+#[test]
+fn a_peer_in_contact_follows_its_successor_when_the_old_host_returns() {
+    // N69: the host's own network drops for 2.5 s; its peers move to
+    // successor 1. Peer 2's join takes 2 s, so it hears the old host again
+    // while in contact: it keeps going to the successor.
+    let mut sc = mscenario(21, Profile::GOOD, 3);
+    sc.outages.push(Outage { peer: HOST, from_tick: 500, until_tick: 750 });
+    sc.migration.as_mut().unwrap().slow_joins.push((2, 2_000_000));
+    let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+    let r = harness::run(&sc, &mut f).unwrap();
+    assert_eq!(r.hosts, vec![HOST, 1]);
+    let heard = r.events[&2].iter().position(|e| *e == Event::HostHeard).expect("it heard the old host");
+    assert!(r.events[&2][heard..].iter().any(|e| matches!(e, Event::Resumed { .. })), "{:?}", r.events[&2]);
+    let m = &r.migrations[0];
+    assert!(m.resumed_us - m.silent_us < 3_000_000, "the successor did not wait for it: {m:?}");
+    // The old host, alone again, times its former peers out: it drops none
+    // of them (they follow another host now).
+    assert!(r.dropped.is_empty(), "{:?}", r.dropped);
+}
+
+#[test]
+fn a_new_host_waits_past_its_window_for_a_rejoined_peers_report() {
+    // C1: spectator 100 runs a frame every 0.8 s, so it answers the new
+    // host's Collect only at its next frame; it crashes between its rejoin
+    // and that frame. The new host still waits for its report after its
+    // window's end, until the dead peer times out.
+    let mut sc = mscenario(20, Profile::LAN, 2);
+    sc.peers[2].frame_us = 800_000;
+    sc.migration.as_mut().unwrap().slow_joins.push((100, 300_000));
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: 100, tick: 400, after_us: 2_950_000, how: ExitHow::Crash });
+    let r = run_checked(&sc);
+    assert_eq!(r.hosts, vec![HOST, 1]);
+    assert!(r.exited.contains(&100));
+    let m = &r.migrations[0];
+    assert!(m.resumed_us > m.silent_us + WINDOW_US + 1_000_000, "it waited for the report: {m:?}");
+    assert!(m.resumed_us < m.silent_us + SILENCE_TIMEOUT_US + 1_000_000, "until the peer timed out: {m:?}");
 }

@@ -94,13 +94,16 @@ pub enum ExitHow {
     Leave,
 }
 
-/// `peer` (the host, `HOST`, or any other) leaves at the current host's
-/// tick `tick`: `Crash` (no frame, nothing sent or received from then on)
-/// or `Leave` (`Session::leave`, transmitted, then gone).
+/// `peer` (the host, `HOST`, or any other) leaves `after_us` of virtual
+/// time after the current host's tick reached `tick` (the host's tick
+/// stands still during a migration, time does not): `Crash` (no frame,
+/// nothing sent or received from then on) or `Leave` (`Session::leave`,
+/// transmitted, then gone).
 #[derive(Clone, Debug)]
 pub struct Exit {
     pub peer: PeerId,
     pub tick: u32,
+    pub after_us: u64,
     pub how: ExitHow,
 }
 
@@ -213,6 +216,10 @@ pub struct Report {
     pub late: BTreeSet<PeerId>,
     /// What each migration's survivors held.
     pub held: Vec<Held>,
+    /// The host each exited or host-lost peer followed as it went (an
+    /// exited host: itself): the verdict bounds its rows by what that
+    /// host's migration's survivors held.
+    pub left_from: BTreeMap<PeerId, PeerId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -531,6 +538,7 @@ struct Shared {
     host_lost: BTreeSet<PeerId>,
     exited: BTreeSet<PeerId>,
     late: BTreeSet<PeerId>,
+    left_from: BTreeMap<PeerId, PeerId>,
     /// Per old host, when each peer found it gone.
     began: BTreeMap<PeerId, BTreeMap<PeerId, u64>>,
 }
@@ -596,6 +604,8 @@ pub fn run_observed<S: Simulation>(
     let mut exits: Vec<&Exit> = sc.exits.iter().collect();
     exits.sort_by_key(|e| e.tick);
     exits.reverse();
+    // Exits whose tick came, by the virtual time they fall due.
+    let mut timed: Vec<(u64, &Exit)> = Vec::new();
     let mut dropped: BTreeSet<PeerId> = BTreeSet::new();
     let mut repair_failed: BTreeSet<PeerId> = BTreeSet::new();
 
@@ -622,6 +632,7 @@ pub fn run_observed<S: Simulation>(
         host_lost: BTreeSet::new(),
         exited: BTreeSet::new(),
         late: BTreeSet::new(),
+        left_from: BTreeMap::new(),
         began: BTreeMap::new(),
     };
 
@@ -670,13 +681,18 @@ pub fn run_observed<S: Simulation>(
                 _ => {}
             }
         }
-        // Exits at the current host's tick.
+        // Exits: the current host's tick came, then their time.
         while let Some(e) = exits.last().copied().filter(|e| host_tick >= e.tick) {
             exits.pop();
+            timed.push((now.saturating_add(e.after_us), e));
+        }
+        while let Some(k) = timed.iter().position(|&(at, _)| now >= at) {
+            let (_, e) = timed.remove(k);
             let Some(p) = index.get(&e.peer).map(|&i| &mut peers[i]) else { continue };
             if p.gone {
                 continue;
             }
+            w.left_from.insert(p.id, p.host);
             if e.how == ExitHow::Leave {
                 p.session.leave();
                 let id = p.id;
@@ -696,7 +712,14 @@ pub fn run_observed<S: Simulation>(
             let free = w.installed.get(&peer).is_none_or(|&(_, until)| now >= until);
             if free && let Some((a, b)) = list.pop() {
                 let host = index.get(&peer).map_or(HOST, |&i| peers[i].host);
-                w.net.outage(host, peer, a, b);
+                if host == peer {
+                    // A host's own network: every link of its peers.
+                    for q in peers.iter().filter(|q| q.host == peer && q.id != peer) {
+                        w.net.outage(peer, q.id, a, b);
+                    }
+                } else {
+                    w.net.outage(host, peer, a, b);
+                }
                 w.installed.insert(peer, (a, b));
             }
         }
@@ -717,6 +740,8 @@ pub fn run_observed<S: Simulation>(
         if let Some(plan) = plan {
             migrate(sc, plan, f, &mut peers, &index, &mut w, now);
         }
+        // Whom each peer follows: a host drops only its own peers.
+        let following: BTreeMap<PeerId, PeerId> = peers.iter().map(|p| (p.id, p.host)).collect();
         for p in peers.iter_mut() {
             let local = p.local(now);
             if p.gone || p.frozen_at.is_some() || local < p.next_frame {
@@ -737,6 +762,7 @@ pub fn run_observed<S: Simulation>(
                 p.session.transmit(&mut |to, ch: Channel, bytes| w.net.send(now, id, to, ch, bytes));
                 p.gone = true;
                 w.exited.insert(id);
+                w.left_from.insert(id, id);
                 continue;
             }
             while let Some(i) = p.faults.iter().position(|&(_, t)| host_tick > t && p.session.frontier() > t)
@@ -750,7 +776,13 @@ pub fn run_observed<S: Simulation>(
             let id = p.id;
             let new = p.session.drain_events();
             if p.session.is_host() {
-                for e in &new {
+                let ours = |peer: PeerId| following.get(&peer).is_none_or(|&h| h == id);
+                for e in new.iter().filter(|e| match **e {
+                    Event::PeerTimedOut { peer }
+                    | Event::PeerLeft { peer }
+                    | Event::RepairFailed { peer } => ours(peer),
+                    _ => false,
+                }) {
                     match *e {
                         Event::PeerTimedOut { peer } => {
                             p.session.peer_lost(peer);
@@ -825,6 +857,9 @@ pub fn run_observed<S: Simulation>(
         for p in &peers {
             next = next.min(p.next_frame_at()).min(p.thaws_at().unwrap_or(u64::MAX)).min(p.attempt_due());
         }
+        for &(at, _) in &timed {
+            next = next.min(at);
+        }
         for (peer, &(_, until)) in &w.installed {
             if until > now && outages.get(peer).is_some_and(|l| !l.is_empty()) {
                 next = next.min(until);
@@ -851,6 +886,7 @@ pub fn run_observed<S: Simulation>(
         exited: w.exited,
         late: w.late,
         held: w.held,
+        left_from: w.left_from,
     };
     for p in peers {
         let log = p.session.input_log();
@@ -894,6 +930,7 @@ fn begin<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, now: u64) {
     if p.migrations >= MAX_MIGRATIONS {
         p.gone = true;
         w.host_lost.insert(p.id);
+        w.left_from.insert(p.id, from);
         return;
     }
     let order = w.successions.get(&from).cloned().unwrap_or_default();
@@ -942,6 +979,7 @@ fn migrate<S: Simulation>(
                 p.migrating = None;
                 p.gone = true;
                 w.host_lost.insert(p.id);
+                w.left_from.insert(p.id, p.host);
             }
             Step::Wait => {
                 mg.gate = false;
@@ -1157,9 +1195,11 @@ fn resume<S: Simulation>(
 /// state on (inputs from its first, checksums from its last), a late peer
 /// from its last; a corrupted peer's checksums from its last loaded state
 /// on. Migrations: every final input a survivor held ([`Report::held`]) is
-/// in the last host's log; an exited host's confirmed rows agree with it
-/// only up to, per slot, the furthest prefix its migration's survivors
-/// held (its last frames may have reached nobody, pre-flight B3).
+/// in the last host's log; a peer that went (exited or host lost) confirmed
+/// rows that agree with it up to, per slot, the furthest prefix the
+/// survivors of its host's migration held (an exited host's last frames
+/// may have reached nobody, pre-flight B3), or all of them when its host
+/// is the last.
 pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>) -> Result<(), Failure> {
     let ticks = sc.ticks;
     let kept =
@@ -1219,20 +1259,45 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
             }
         }
     }
-    // An exited host: up to what its migration's survivors held.
-    for (k, m) in r.migrations.iter().enumerate().filter(|(_, m)| r.exited.contains(&m.from)) {
+    // A peer that went (an exited host, an exited or host-lost peer): its
+    // confirmed rows agree with the last host's as far as the survivors of
+    // its host's migration held (that host's last frames may have reached
+    // nobody, B3); all of them when its host is the last.
+    let last_host = r.hosts.last().copied().unwrap_or(HOST);
+    for (&peer, &host) in r.left_from.iter().filter(|(p, _)| !r.dropped.contains(p)) {
         let mut upto = [0usize; 32];
-        for h in r.held.iter().filter(|h| h.migration == k) {
-            for (s, values) in h.slots.iter().enumerate() {
-                upto[s] = upto[s].max(h.origin as usize + values.len());
+        match r.migrations.iter().position(|m| m.from == host) {
+            Some(k) => {
+                for h in r.held.iter().filter(|h| h.migration == k) {
+                    for (s, values) in h.slots.iter().enumerate().take(32) {
+                        upto[s] = upto[s].max(h.origin as usize + values.len());
+                    }
+                }
             }
+            None if host == last_host => upto = [usize::MAX; 32],
+            None => continue,
         }
-        let rows = r.logs.get(&m.from).map_or(&[][..], |v| &v[..]);
-        for (t, row) in rows.iter().enumerate().take(last.len()) {
+        // A spectator that joined or came late: from its last state on.
+        let start = if joined(peer) || late(peer) {
+            let loaded = r.events.get(&peer).and_then(|e| {
+                e.iter().rev().find_map(|e| match *e {
+                    Event::StateLoaded { tick } => Some(tick as usize + 1),
+                    _ => None,
+                })
+            });
+            match loaded {
+                Some(t) => t,
+                None => continue,
+            }
+        } else {
+            0
+        };
+        let rows = r.logs.get(&peer).map_or(&[][..], |v| &v[..]);
+        for (t, row) in rows.iter().enumerate().take(last.len()).skip(start) {
             if let Some(s) = (0..sc.slots as usize).find(|&s| t < upto[s] && row[s] != last[t][s]) {
                 return Err(fail(
                     t as u32,
-                    format!("exited host {} confirmed slot {s} otherwise than the last host", m.from),
+                    format!("peer {peer}, gone, confirmed slot {s} otherwise than the last host"),
                 ));
             }
         }
