@@ -200,7 +200,8 @@ pub struct Replay {
     pub checksums: Vec<(u32, u64)>,
     /// `(t, worm)`: `worm` withdrawn ([`rl_sim::World::withdraw`]) right
     /// before tick `t` (0-based) is played; in order of `t`, each worm at
-    /// most once, `t` below [`Replay::ticks`].
+    /// most once, `t` at most [`Replay::ticks`] (`t == ticks`: after the last
+    /// tick, before the final checksum).
     pub withdrawals: Vec<(u32, u8)>,
     /// How many ticks it holds (at most [`MAX_TICKS`]).
     ticks: u32,

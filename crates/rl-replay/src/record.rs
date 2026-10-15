@@ -146,6 +146,13 @@ impl Recorder {
         let Recorder { setup, mode, ticks, columns, mut checksums, withdrawals, .. } = self;
         if checksums.last().is_none_or(|c| c.0 != ticks) {
             checksums.push((ticks, world.checksum()));
+        } else if withdrawals.last().is_some_and(|w| w.0 == ticks) {
+            // Withdrawn after the last tick: the final checksum (replayed
+            // after the trailing withdrawals) is the world's now, not the
+            // periodic one `push` took before them.
+            if let Some(last) = checksums.last_mut() {
+                last.1 = world.checksum();
+            }
         }
         let width = columns.len();
         let mut keys = Vec::with_capacity(ticks as usize * width);

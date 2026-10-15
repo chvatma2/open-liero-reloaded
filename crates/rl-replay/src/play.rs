@@ -126,6 +126,13 @@ impl Player<'_> {
     }
 }
 
+/// Withdraws the worms recorded for tick `t`, in order.
+fn withdraw_at(replay: &Replay, t: u32, world: &mut World) {
+    for &(_, worm) in replay.withdrawals.iter().filter(|w| w.0 == t) {
+        world.withdraw(usize::from(worm));
+    }
+}
+
 /// How far a replay was played: a [`Player`] without the borrow, for a
 /// caller that owns the replay next to it (a game drawing the replay).
 /// Every call must pass the same replay.
@@ -160,16 +167,22 @@ impl Cursor {
         out: &mut TickEvents,
     ) -> Result<bool, Mismatch> {
         if self.tick == 0 {
+            if replay.ticks() == 0 {
+                // No tick to play: the withdrawals "after the last tick".
+                withdraw_at(replay, 0, world);
+            }
             self.verify(replay, world)?;
         }
         if self.is_done(replay) {
             return Ok(false);
         }
-        for &(_, worm) in replay.withdrawals.iter().filter(|w| w.0 == self.tick) {
-            world.withdraw(usize::from(worm));
-        }
+        withdraw_at(replay, self.tick, world);
         world.tick(replay.row(self.tick), out);
         self.tick += 1;
+        if self.is_done(replay) {
+            // Withdrawals after the last tick (the final checksum includes them).
+            withdraw_at(replay, self.tick, world);
+        }
         self.verify(replay, world)?;
         Ok(true)
     }

@@ -30,9 +30,9 @@ ticks and at the end.
   `Recorder::withdraw(&mut world, worm)` (`World::withdraw`, recorded as
   `(next tick, worm)`; `NotStarted` before `start`, `NoWorm` for a worm the
   world lacks or has withdrawn): it ends in `Replay::withdrawals`, which
-  `finish_failed` keeps. A withdrawal after the last pushed tick is not
-  decodable (`t` must be below `ticks`): withdraw only before a tick that
-  is then pushed. `push` and `finish` refuse a world whose server frame
+  `finish_failed` keeps. A withdrawal after the last pushed tick has
+  `t == ticks` and is valid: `finish` then takes the final checksum after it
+  (replacing a periodic one at `ticks`). `push` and `finish` refuse a world whose server frame
   is not `start`'s plus the ticks pushed (a tick played unrecorded).
   `finish_failed(&world, &failing_keys)` saves a match whose next tick
   failed (spec §7.3): that tick's keys with no checksum after them, so the
@@ -47,18 +47,19 @@ ticks and at the end.
   `rl-content` returns `Mismatch` and `ReplayError` inside `anyhow::Error`
   typed: `downcast_ref::<Mismatch>()` gives the tick.
 - **Withdrawals in play:** `Cursor::step` withdraws every `(t, worm)` with
-  `t` the tick about to be played, in order, before `World::tick`.
-- **Format** (`wire.rs`, `mirror.rs`): `RLRP`, `FORMAT_VERSION` (u16 LE; 3
-  since withdrawals),
+  `t` the tick about to be played, in order, before `World::tick`; those
+  with `t == ticks` after the last tick, before its checksum is checked.
+- **Format** (`wire.rs`, `mirror.rs`): `RLRP`, `FORMAT_VERSION` (u16 LE; 3 since
+  withdrawals),
   then postcard; keys by worm, deflated. Other versions are refused, never
   migrated, while no replay is published. The format has its own copies of
   `SimSettings`, `WormSetup`, `Loadout`, `Slot` and `DeathmatchSettings`,
   converted by naming every field: a new field there does not compile until
   it is recorded and `FORMAT_VERSION` is bumped.
 - **Never panic on a replay:** `decode` checks every bound (`MAX_TICKS`,
-  `MAX_WORMS`, `MAX_SLOTS`, `MAX_SETUP_CALLS`, ordered checksums, withdrawals (at most `MAX_WORMS`, `t` ascending and below
-  `ticks`, worm below `MAX_WORMS`, none twice), the keys'
-  exact size, inflated with a limit, settings and mode numbers in OLX's
+  `MAX_WORMS`, `MAX_SLOTS`, `MAX_SETUP_CALLS`, ordered checksums,
+  withdrawals (at most `MAX_WORMS`, `t` ascending and at most `ticks`, worm
+  below `MAX_WORMS`, none twice), the keys' exact size, inflated with a limit, settings and mode numbers in OLX's
   ranges: `SimSettings::validate`, `ModeSpec::validate`); `Replay::world`
   checks the mode again and refuses off-level spawns and bad setup calls;
   `World::new` checks the settings. `Replay::check_header(bytes)` checks

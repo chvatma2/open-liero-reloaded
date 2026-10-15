@@ -141,8 +141,8 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
     let mut seen = 0u32;
     let mut prev = 0;
     for &(t, worm) in &withdrawals {
-        if t >= ticks || t < prev {
-            return invalid(format!("withdrawal at tick {t} out of order or past the end"));
+        if t > ticks || t < prev {
+            return invalid(format!("withdrawal at tick {t} out of order or past the end (tick {ticks})"));
         }
         if usize::from(worm) >= MAX_WORMS || seen & (1 << worm) != 0 {
             return invalid(format!("withdrawal of worm {worm}: no such worm, or withdrawn twice"));

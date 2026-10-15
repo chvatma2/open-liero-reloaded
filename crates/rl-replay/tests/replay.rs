@@ -90,11 +90,78 @@ fn a_withdrawal_replays_at_its_tick() {
     assert!(cut.play(new_world()).is_err());
 }
 
+/// A withdrawal after the last tick stays valid and replays exactly, with
+/// or without a periodic checksum at the last tick.
+#[test]
+fn a_withdrawal_after_the_last_tick_replays() {
+    let (setup, mode) = deathmatch(4, 4);
+    let new_world = || World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
+    for ticks in [150u32, 200] {
+        let mut world = new_world();
+        let mut rec = Recorder::new(packs(), &setup, &mode);
+        rec.start(&world).unwrap();
+        let mut keys = KeyGen::new(4, 4, 12);
+        let mut out = TickEvents::new();
+        for _ in 0..ticks {
+            let row = keys.row();
+            world.tick(&row, &mut out);
+            rec.push(&row, &world).unwrap();
+        }
+        rec.withdraw(&mut world, 2).unwrap();
+        let replay = rec.finish(&world).unwrap();
+        assert_eq!(replay.withdrawals, [(ticks, 2)]);
+        assert_eq!(replay.checksums.last(), Some(&(ticks, world.checksum())));
+        let back = Replay::decode(&replay.encode()).unwrap();
+        assert_eq!(back, replay);
+        let run = back.play(new_world()).unwrap();
+        assert_eq!(run.world.gone(), 0b100, "{ticks}");
+        assert_eq!(run.world.checksum(), world.checksum());
+    }
+    // No ticks at all.
+    let mut world = new_world();
+    let mut rec = Recorder::new(packs(), &setup, &mode);
+    rec.start(&world).unwrap();
+    rec.withdraw(&mut world, 0).unwrap();
+    let back = Replay::decode(&rec.finish(&world).unwrap().encode()).unwrap();
+    assert_eq!(back.play(new_world()).unwrap().world.gone(), 1);
+}
+
+/// Stepping a `Player` across a withdrawal withdraws at its tick, not before.
+#[test]
+fn stepping_across_a_withdrawal() {
+    let (setup, mode) = deathmatch(4, 9);
+    let new_world = || World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
+    let mut world = new_world();
+    let mut rec = Recorder::new(packs(), &setup, &mode);
+    rec.start(&world).unwrap();
+    let mut keys = KeyGen::new(9, 4, 12);
+    let mut out = TickEvents::new();
+    for t in 0..150u32 {
+        if t == 120 {
+            rec.withdraw(&mut world, 1).unwrap();
+        }
+        let row = keys.row();
+        world.tick(&row, &mut out);
+        rec.push(&row, &world).unwrap();
+    }
+    let replay = rec.finish(&world).unwrap();
+    let mut w = new_world();
+    let mut player = replay.player();
+    while player.tick() < 120 {
+        assert!(player.step(&mut w, &mut out).unwrap());
+    }
+    assert_eq!(w.gone(), 0, "not before its tick");
+    assert!(player.step(&mut w, &mut out).unwrap());
+    assert_eq!((player.tick(), w.gone()), (121, 0b10), "withdrawn right before tick 120 is played");
+    while player.step(&mut w, &mut out).unwrap() {}
+    assert_eq!(w.checksum(), world.checksum());
+}
+
 #[test]
 fn withdrawals_are_checked_on_decode() {
     let base = record(5, 2).0;
     for bad in [
-        vec![(base.ticks(), 0)],
+        vec![(base.ticks() + 1, 0)],
         vec![(2, 0), (1, 1)],
         vec![(1, 0), (2, 0)],
         vec![(1, 40)],
