@@ -24,7 +24,8 @@ fn config(failures: &Path, runs: u32) -> SoakConfig {
 
 #[test]
 fn cases_are_deterministic_and_within_bounds() {
-    let (mut crash, mut leave, mut freeze, mut none, mut client_leaves) = (0, 0, 0, 0, 0);
+    let (mut crash, mut leave, mut freeze, mut none) = (0, 0, 0, 0);
+    let (mut departures, mut client_leaves, mut client_crashes) = (0, 0, 0);
     for seed in 0..200 {
         let spec = case(seed);
         assert_eq!(spec, case(seed), "seed {seed}");
@@ -43,18 +44,21 @@ fn cases_are_deterministic_and_within_bounds() {
             assert!(until <= spec.ticks, "outage {from}..{until} of {}", spec.ticks);
         }
         let middle = spec.ticks / 5..=spec.ticks * 4 / 5;
-        // Plan 12d: at most one client leaves, in the middle 60 %.
-        let (host, clients): (Vec<_>, Vec<_>) = spec.exits.iter().cloned().partition(|e| e.0 == 0);
-        assert!(clients.len() <= 1, "seed {seed}: {clients:?}");
-        for (peer, tick, how) in &clients {
-            assert!(
-                (1..=u32::from(spec.clients)).contains(peer) && how == "leave",
-                "seed {seed}: {clients:?}"
-            );
-            assert!(middle.contains(tick), "client exit at {tick} of {}", spec.ticks);
-            client_leaves += 1;
+        // Plan 12d: a client departure (a leave or a crash) in about one
+        // case in four, naming a client, in the middle 60 %; at most one.
+        let host_exits: Vec<_> = spec.exits.iter().filter(|e| e.0 == 0).cloned().collect();
+        assert!(spec.exits.len() - host_exits.len() <= 1, "seed {seed}: {:?}", spec.exits);
+        for e in spec.exits.iter().filter(|e| e.0 != 0) {
+            assert!((1..=u32::from(spec.clients)).contains(&e.0) && middle.contains(&e.1), "{e:?}");
+            assert!(spec.clients >= 2, "seed {seed}: the only client departs: {e:?}");
+            if e.2 == "crash" {
+                client_crashes += 1
+            } else {
+                client_leaves += 1
+            }
+            departures += 1;
         }
-        match (host.as_slice(), spec.host_freeze) {
+        match (host_exits.as_slice(), spec.host_freeze) {
             ([], None) => none += 1,
             ([(0, tick, how)], None) => {
                 assert!(middle.contains(tick), "exit at {tick} of {}", spec.ticks);
@@ -69,7 +73,8 @@ fn cases_are_deterministic_and_within_bounds() {
         }
     }
     assert!(crash > 0 && leave > 0 && freeze > 0, "{crash} crashes, {leave} leaves, {freeze} freezes");
-    assert!(client_leaves > 20, "{client_leaves} client leaves");
+    assert!((25..=75).contains(&departures), "about a quarter of the cases: {departures}");
+    assert!(client_leaves > 0 && client_crashes > 0, "{client_leaves} leaves, {client_crashes} crashes");
     assert!((60..=140).contains(&(200 - none)), "about half have a host exit: {}", 200 - none);
     let mods: std::collections::BTreeSet<_> = (0..200).map(|s| case(s).mod_id).collect();
     assert_eq!(mods.len(), 2, "{mods:?}");

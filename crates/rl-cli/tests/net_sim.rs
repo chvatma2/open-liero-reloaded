@@ -138,3 +138,58 @@ fn net_migration_grid() {
         }
     }
 }
+
+/// Plan 12d on the real simulation: a client leaving mid-match is withdrawn
+/// at one tick on every peer, the verdict's offline replay (the real world)
+/// agrees, and the world after it holds the worm out. Coverage: green since
+/// Task 4.
+#[test]
+fn a_client_leave_withdraws_its_worm_in_a_real_match() {
+    let Some(c) = content() else { return };
+    let s = NetSpec { ticks: 800, exits: vec![(2, 300, "leave".into())], ..spec("typical", 4) };
+    let r = pass(&c, &s);
+    let t = r.report.host_gone.iter().find(|g| g.1 == 1).expect("client 2 is slot 1").0;
+    let mut f = rl_cli::netsim::WorldFactory::new(&c, &s).unwrap();
+    let mut sim = rl_netcode::harness::Factory::sim(&mut f, 0);
+    for (tick, row) in r.report.host_log.iter().enumerate().take(t as usize + 1) {
+        if tick as u32 == t {
+            rl_netcode::Simulation::withdraw(&mut sim, 1);
+        }
+        let keys: Vec<rl_sim::Keys> = row[..usize::from(s.slots)].iter().map(|&k| rl_sim::Keys(k)).collect();
+        rl_netcode::Simulation::tick(&mut sim, &keys);
+    }
+    let w = sim.world();
+    assert!(!w.worms()[1].alive && w.gone() == 0b10);
+}
+
+/// N87, ruling PF12d-5: a client that crashes on `bad` stalls the other
+/// players for its timeout's fills; the verdict excuses exactly that.
+/// RED before the window: "player peer 2 stalled".
+#[test]
+fn a_client_crash_on_bad_passes() {
+    let Some(c) = content() else { return };
+    pass(&c, &NetSpec { ticks: 1_600, exits: vec![(1, 300, "crash".into())], ..spec("bad", 5) });
+}
+
+/// A net-sim desync bundle carries the withdrawals, and `net-repro`
+/// withdraws: its replay meets the host's state, and the planted fault's
+/// divergence comes at the fault, not at the withdrawal near 200. RED: the
+/// bundle has no `gone`, and the replay diverges at the withdrawal.
+#[test]
+fn a_bundle_with_a_withdrawal_reproduces_to_the_fault() {
+    let Some(c) = content() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let s = NetSpec {
+        ticks: 800,
+        exits: vec![(2, 200, "leave".into())],
+        faults: vec![(1, 500, 0, 1.0)],
+        ..spec("typical", 6)
+    };
+    let r = rl_cli::netsim::run_with(&c, &s, Some(dir.path())).unwrap();
+    let path = r.bundles.first().expect("the planted desync wrote a bundle");
+    let b = rl_cli::bundle::DesyncBundle::decode(&std::fs::read(path).unwrap()).unwrap();
+    assert!(b.gone.iter().any(|g| g.1 == 1));
+    let repro = rl_cli::bundle::reproduce(&c, &b).unwrap();
+    assert!(repro.first_local_divergence.is_some_and(|t| t >= 500), "{:?}", repro.first_local_divergence);
+    assert!(repro.host_diff.is_none(), "{:?}", repro.host_diff);
+}

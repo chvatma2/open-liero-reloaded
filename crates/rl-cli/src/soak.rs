@@ -123,14 +123,16 @@ fn generate(seed: u64, min_ticks: u32, max_ticks: u32) -> NetSpec {
             _ => host_freeze = Some((tick, tick + freeze_ticks)),
         }
     }
-    // Plan 12d: in one case in four a client leaves (its `Bye`: withdrawn
-    // at once) at a random tick of the middle 60 %. Drawn last, so every
-    // draw above stays as it was for a seed. A client's crash waits for
-    // net-sim's crash window (ruling PF12d-5).
-    if r.below(4) == 0 {
+    // Plan 12d: in one case in four with two clients or more, a client
+    // departs (a leave, its `Bye`: withdrawn at once; or a crash: withdrawn
+    // at its timeout, net-sim's crash window excusing the fills' stalls,
+    // ruling PF12d-5) at a random tick of the middle 60 %. Drawn last, so
+    // every draw above stays as it was for a seed.
+    if clients >= 2 && r.below(4) == 0 {
         let peer = 1 + r.below(u64::from(clients)) as u32;
         let tick = ticks / 5 + r.below(u64::from(ticks) * 6 / 10 + 1) as u32;
-        exits.push((peer, tick, "leave".to_string()));
+        let how = if r.below(2) == 0 { "leave" } else { "crash" };
+        exits.push((peer, tick, how.to_string()));
     }
     NetSpec {
         mod_id,

@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::netsim::{NetSpec, WorldFactory};
 
 pub const BUNDLE_MAGIC: [u8; 4] = *b"RLDS";
-/// 2: `NetSpec` gained its migration fields (plan 12c).
-pub const BUNDLE_VERSION: u16 = 2;
+/// 2: `NetSpec` gained its migration fields (plan 12c). 3: withdrawals
+/// (`DesyncBundle::gone`, plan 12d).
+pub const BUNDLE_VERSION: u16 = 3;
 
 /// A peer's record of a desync.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -35,6 +36,10 @@ pub struct DesyncBundle {
     pub local_state: Option<(u32, Vec<u8>)>,
     /// The state the host sent.
     pub host_state: Option<(u32, Vec<u8>)>,
+    /// The withdrawals (plan 12d) below the inputs' end, `(tick, slot)` by
+    /// tick then slot (`InputLog::gone_marks`): [`reproduce`] withdraws each
+    /// before its tick.
+    pub gone: Vec<(u32, u8)>,
 }
 
 impl DesyncBundle {
@@ -109,7 +114,8 @@ pub const FIELDS: &[&str] = &[
     "gone",
 ];
 
-/// Replays the bundle's inputs from the start world.
+/// Replays the bundle's inputs from the start world, withdrawing each
+/// recorded slot before its tick (as the harness's offline replay does).
 pub fn reproduce(content: &Content, b: &DesyncBundle) -> anyhow::Result<Repro> {
     ensure!(!b.inputs.is_empty(), "the bundle holds no inputs");
     ensure!((1..=32).contains(&b.spec.slots), "{} slots: a match has 1 to 32", b.spec.slots);
@@ -130,6 +136,11 @@ pub fn reproduce(content: &Content, b: &DesyncBundle) -> anyhow::Result<Repro> {
     let (mut first_local_divergence, mut local_diff, mut host_diff) = (None, None, None);
     for (t, row) in b.inputs.iter().enumerate() {
         let t = t as u32;
+        // Plan 12d: the withdrawals at `t`, before its tick (a slot out of
+        // range is the world's to ignore: the bundle is untrusted).
+        for &(_, slot) in b.gone.iter().filter(|g| g.0 == t) {
+            sim.withdraw(slot);
+        }
         let keys: Vec<Keys> = row[..slots].iter().map(|&k| Keys(k)).collect();
         sim.tick(&keys);
         if t % 10 == 9

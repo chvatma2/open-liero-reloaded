@@ -26,8 +26,8 @@ use rl_netcode::harness::{
 use rl_netcode::migration::WINDOW_US;
 use rl_netcode::netsim::{LinkStats, Profile};
 use rl_netcode::{
-    Driver, Event, FILL_WINDOW, MAX_PREDICTION, PeerId, Seat, Session, Stats, TARGET_MARGIN, TICK_US,
-    WorldSim, input_delay,
+    Driver, Event, FILL_WINDOW, MAX_PREDICTION, PeerId, SILENCE_TIMEOUT_US, Seat, Session, Stats,
+    TARGET_MARGIN, TICK_US, WorldSim, input_delay,
 };
 use rl_online::matches::{self, HostBots};
 use rl_sim::Keys;
@@ -450,7 +450,8 @@ fn judge(
     f: &mut WorldFactory<'_>,
 ) -> Result<(), Failure> {
     let worsened = spec.profile_changes.iter().any(|c| worsened_from(spec, c.1).is_some());
-    if sc.migration.is_none() && sc.outages.is_empty() && !worsened {
+    let client_crash = spec.exits.iter().any(|e| e.0 != HOST && e.2 == "crash");
+    if sc.migration.is_none() && sc.outages.is_empty() && !worsened && !client_crash {
         return harness::verdict(sc, r, f);
     }
     harness::verdict(&Scenario { expect_no_stalls: false, ..sc.clone() }, r, f)?;
@@ -530,7 +531,13 @@ fn host_tick_at(spec: &NetSpec, r: &Report, outage_tick: u32) -> u32 {
 /// `MAX_PREDICTION` before it to its recovery after (SK-1, SK-2); an outage
 /// of a spectator excuses nothing: no player waits for it. A migration
 /// called off (N69) needs none of its own: only an outage silences a host
-/// for 2 s without a step-down, and its window covers it.
+/// for 2 s without a step-down, and its window covers it. Per client crash
+/// (N87, ruling PF12d-5), from its tick (a host tick already) to the
+/// host's timeout (`SILENCE_TIMEOUT_US`) plus the recovery on the crashed
+/// peer's slowest link, as an outage of the crashed peer: the host fills
+/// its slot meanwhile, which stalls the players whose links cannot bear
+/// the fills (`fills_stall`). A client's leave needs none: it is withdrawn
+/// at once.
 fn excused_windows(spec: &NetSpec, r: &Report) -> Vec<Window> {
     let mut windows: Vec<Window> =
         migration_windows(spec, r).into_iter().map(|ticks| Window { ticks, peer: None }).collect();
@@ -543,6 +550,21 @@ fn excused_windows(spec: &NetSpec, r: &Report) -> Vec<Window> {
                 .max(MAX_PREDICTION);
             windows.push(Window {
                 ticks: from.saturating_sub(MAX_PREDICTION)..=until.saturating_add(recovery),
+                peer: Some(peer),
+            });
+        }
+    }
+    for &(peer, tick, ref how) in &spec.exits {
+        if how == "crash" && (1..=PeerId::from(spec.clients)).contains(&peer) {
+            // N87: the host fills a crashed client's slot with its last keys until
+            // its timeout, then withdraws it; players whose link cannot bear the
+            // fills stall meanwhile (`fills_stall`), and recover after.
+            let timeout = (SILENCE_TIMEOUT_US / TICK_US) as u32;
+            let recovery = slowest_profile(spec, peer)
+                .outage_recovery_ticks(timeout, CLIENT_FRAME_US)
+                .max(MAX_PREDICTION);
+            windows.push(Window {
+                ticks: tick..=tick.saturating_add(timeout).saturating_add(recovery),
                 peer: Some(peer),
             });
         }
@@ -721,6 +743,8 @@ impl harness::Observer<WorldSim> for BundleRecorder<'_> {
             let log = s.input_log();
             (0..log.frontier()).map(|t| log.row(t).unwrap_or([0; 32])).collect()
         };
+        // Plan 12d: the withdrawals within those rows.
+        let gone = |s: &Session<WorldSim>| s.input_log().gone_marks(s.input_log().frontier());
         match *event {
             Event::Desync { tick, remote, .. }
                 if !self.pending.contains_key(&peer) && !self.done.iter().any(|d| d.0 == peer) =>
@@ -737,6 +761,7 @@ impl harness::Observer<WorldSim> for BundleRecorder<'_> {
                         host: (tick, remote),
                         local_state: session.encode_confirmed_state(),
                         host_state: None,
+                        gone: gone(session),
                     },
                 );
             }
@@ -750,6 +775,7 @@ impl harness::Observer<WorldSim> for BundleRecorder<'_> {
                     // The inputs may have grown since the report: the host's
                     // state can be past them.
                     b.inputs = rows(session);
+                    b.gone = gone(session);
                 }
                 self.write(peer);
             }
@@ -1108,6 +1134,30 @@ mod tests {
         // An outage of a peer that is not in the match excuses nothing.
         let ghost = NetSpec { outages: vec![(7, from, until)], ..spec() };
         assert!(judge(&ghost, &[(1, 200, Some(210))], false).is_err());
+    }
+
+    /// N87, ruling PF12d-5: a client crash excuses, from its tick to the host's
+    /// timeout plus the recovery, the stalls of every player whose link cannot
+    /// bear the host's fills for its slot (`bad`); the same stall with no crash
+    /// in the spec, or past the window, fails.
+    #[test]
+    fn a_client_crash_excuses_the_fills_stalls_until_its_timeout() {
+        let crash = NetSpec { profile: "bad".into(), exits: vec![(1, 300, "crash".into())], ..spec() };
+        let judge = |s: &NetSpec, stalls: &[(PeerId, u32, Option<u32>)]| {
+            let mut r = empty_report();
+            r.exited.insert(1);
+            let e: Vec<StallEpisode> =
+                stalls.iter().map(|&(peer, tick, ended)| StallEpisode { peer, tick, ended }).collect();
+            stalls_within_windows(s, &r, &e)
+        };
+        let timeout = (SILENCE_TIMEOUT_US / TICK_US) as u32;
+        assert!(judge(&crash, &[(2, 400, Some(460)), (HOST, 900, Some(950))]).is_ok());
+        let none = NetSpec { exits: vec![], ..crash.clone() };
+        assert!(judge(&none, &[(2, 400, Some(460))]).is_err(), "the twin: no crash, no window");
+        let leave = NetSpec { exits: vec![(1, 300, "leave".into())], ..crash.clone() };
+        assert!(judge(&leave, &[(2, 400, Some(460))]).is_err(), "a leave is withdrawn at once: no fills");
+        assert!(judge(&crash, &[(2, 300 + timeout + 400, Some(300 + timeout + 410))]).is_err(), "past it");
+        assert!(judge(&crash, &[(2, 299, Some(310))]).is_err(), "before it");
     }
 
     /// A peer's overlapping outages cut its link until the last is over

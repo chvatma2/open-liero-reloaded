@@ -31,6 +31,7 @@ fn bundles_round_trip_and_bad_ones_are_named() {
         host: (9, 2),
         local_state: Some((3, vec![1, 2])),
         host_state: None,
+        gone: vec![(2, 0)],
     };
     let bytes = b.encode();
     assert_eq!(&bytes[..4], b"RLDS");
@@ -123,6 +124,7 @@ fn valid_bundle() -> Vec<u8> {
         host: (9, 2),
         local_state: Some((3, vec![1, 2, 3])),
         host_state: Some((4, vec![9; 40])),
+        gone: vec![(5, 1)],
     }
     .encode()
 }

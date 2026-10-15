@@ -139,7 +139,16 @@ The headless command-line tool. Its commands:
   the host's fills for the peer, `fills_stall`: two trips plus
   `FILL_WINDOW` and `TARGET_MARGIN` reaching `MAX_PREDICTION`, true on
   `bad`, soak case `bad-16s4c0v-seed3660989505`); an outage of a
-  spectator excuses nothing.
+  spectator excuses nothing. Per client crash (N87, ruling PF12d-5) a
+  window as an outage of the crashed peer, from the exit's tick (a host
+  tick already) to `SILENCE_TIMEOUT_US / TICK_US` plus the recovery of an
+  outage that long on its slowest link (at least `MAX_PREDICTION`): the
+  host fills its slot with its last keys until the timeout withdraws it,
+  which stalls the players whose links cannot bear the fills
+  (`fills_stall`); a client crash sends the run through `judge`'s own
+  stall rule too. A client's leave has none (withdrawn at once); the unit
+  test `a_client_crash_excuses_the_fills_stalls_until_its_timeout` pins
+  it with its negative twins (no crash, a leave, before, past).
   Outages are in virtual time, windows in host ticks: `host_tick_at`
   converts (from the last migration's resume, or less a host freeze that
   did not migrate; a time during a migration, from its `silent_us` to its
@@ -172,7 +181,15 @@ The headless command-line tool. Its commands:
   1.7 s freeze: the host exited, no peer ever `HostSilent`; a 2.4 s freeze
   fails it), about 1.5 s each; in `full`, the profile grid and
   `net_migration_grid` (5 profiles × a crash, a leave and a 2 s freeze at
-  tick 800 of 2000, seed 1, MW 1.0 for the freezes; about 29 s).
+  tick 800 of 2000, seed 1, MW 1.0 for the freezes; about 29 s). Plan
+  12d (check): `a_client_leave_withdraws_its_worm_in_a_real_match` (the
+  host's withdrawal of slot 1 replayed on a real world holds the worm
+  out), `a_client_crash_on_bad_passes` (a client crash on `bad`, 1600
+  ticks: fails without the crash window, "player peer 3 stalled") and
+  `a_bundle_with_a_withdrawal_reproduces_to_the_fault` (a leave at 200, a
+  fault at 500: the bundle holds the withdrawal, `reproduce` first
+  diverges at or after 500 and the host's state is equal; without the
+  withdrawal it diverges at 209).
   `net-sim --feel <out.ron>` measures the **feel numbers** instead (plan 9
   task 11, spec §9.2, `feel.rs`): `feel_spec(profile, seed)` (16 worms, 7
   clients, Classic on Castle Strike, 3000 ticks) for every profile ×
@@ -203,9 +220,11 @@ The headless command-line tool. Its commands:
   1-min(slots, 7) clients, 0-2 spectators (one in two arriving mid-match),
   a base profile, 0-3 profile changes, 0-2 outages of 0.5-6 s, in half of
   them a host crash, departure or 1.6-2.5 s freeze at a random tick in the
-  middle 60 %, in one in four a client's departure (plan 12d: withdrawn;
-  drawn last, so the other draws of a seed stay; client crashes wait for
-  net-sim's crash window, PF12d-5), 1500-6000 ticks; `case_short` (tests) the same with 600.
+  middle 60 %, in one in four with two clients or more a client's
+  departure, a leave or a crash (plan 12d: withdrawn at once or at its
+  timeout, the crash window excusing the fills, PF12d-5; drawn last, so
+  the other draws of a seed stay; client exits turn `n66` off for that
+  case), 1500-6000 ticks; `case_short` (tests) the same with 600.
   Case `n` (from 0) has seed `seed + n`; every `--transport-every`th run
   (the 5th, 10th, ..) is `soak::transport_case(seed)`: 2-4 clients through
   good, typical or bad, 0.3-0.5 minutes, 127.0.0.1 only, in half of them a
@@ -231,7 +250,8 @@ The headless command-line tool. Its commands:
   that an outage of 0.5 s or more stalls the peer it cuts off on any
   profile: outage windows excuse that (SK-1, above).
   `tests/net_soak.rs` (check): the cases' determinism and bounds (200
-  seeds, every exit kind, every profile valid), a short soak's lines and
+  seeds, every exit kind, every profile valid; the host's exits matched
+  apart from the client departures, 25-75 of them, leaves and crashes), a short soak's lines and
   summary, a failing case kept and counted (and the cap), the error
   writer's round trip, `TransportSpec` through RON and a real outage match; `netsim`'s unit
   tests pin the excused windows, the negative twins included.
@@ -565,4 +585,4 @@ one migration named alike by all to a client, the bots playing on there,
 the verdict above, the server's rows as it went at least 500 ticks;
 about 24 s each (fails with the clients' migration off: all dropped).
 
-**Desync bundles** (`bundle.rs`, `BUNDLE_VERSION` 2 since `NetSpec`'s migration fields): `.rlds` files from `net-sim` (and, in plan 10, real games); `rl-cli net-repro <file>` names the first diverging tick and world field. `net-sim` writes them to `--failures` when a client reports a desync (`netsim::run_with`; `NetSpec::faults` plants one: `(peer, host tick, worm, health)`). A state diff lists the first differing path of every differing `WorldState` field, in its declaration order (`worms[3].health, ents`; `bundle::FIELDS`, kept equal to the real field set by a test), so the cause is read from the whole list, not the first entry.
+**Desync bundles** (`bundle.rs`, `BUNDLE_VERSION` 3: 2 for `NetSpec`'s migration fields, 3 for withdrawals, plan 12d): `.rlds` files from `net-sim` (and, in plan 10, real games); `rl-cli net-repro <file>` names the first diverging tick and world field. `net-sim` writes them to `--failures` when a client reports a desync (`netsim::run_with`; `NetSpec::faults` plants one: `(peer, host tick, worm, health)`). A bundle's `gone` holds the peer's withdrawals below its rows' end (`InputLog::gone_marks`, taken at the desync and again when the state loads, with the rows); `reproduce` withdraws each before its tick, as the harness's offline replay does. A state diff lists the first differing path of every differing `WorldState` field, in its declaration order (`worms[3].health, ents`; `bundle::FIELDS`, kept equal to the real field set by a test), so the cause is read from the whole list, not the first entry.
