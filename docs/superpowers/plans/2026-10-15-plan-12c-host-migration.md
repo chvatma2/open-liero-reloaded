@@ -434,8 +434,8 @@ fn the_new_refusals_round_trip() {
       /// Stops advancing (the migration began): no new tick and no input frames. A frame-less keepalive datagram every `KEEPALIVE_US` and every reliable control still go; an owed rollback or a loaded state still re-simulates up to the current tick; states arriving are still taken.
       pub fn suspend(&mut self);
       pub fn suspended(&self) -> bool;
-      /// The old host is back before any rehost (N69): advancing again, the pace restarting at `now_us` (the pause is not caught up).
-      pub fn unsuspend(&mut self, now_us: u64);
+      /// The old host is back before any rehost (N69): advancing again. The host ran on meanwhile, so the pace ran on while suspended and the pause is caught up at `MAX_CATCHUP` ticks an advance, as after an outage without migration (ruling SK-7; restarting the pace at the peer's own stale tick left it seconds behind its host, SK-4).
+      pub fn unsuspend(&mut self);
       /// Client or spectator: its host is now `host` (a new link). The host's state (acks, round trip, silence) starts afresh; the session stays suspended until `Control::Resume`, answers `Control::Collect` with `Control::Report`, and takes nothing from any other peer.
       pub fn rehost(&mut self, host: PeerId, now_us: u64);
       /// This peer becomes the host (spec §3.7). Its local slots are its own slot (if a player) and `bots`; every other slot is awaited from a rejoining peer or abandoned at the resume. Suspended until `resume`. Nothing is filled here (N67: a later report may carry final values for any slot).

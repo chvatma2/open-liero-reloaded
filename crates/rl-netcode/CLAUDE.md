@@ -223,7 +223,7 @@ model that tests it in one process (spec §9.1).
     host is back, N69): the pace ran on while suspended, as the host did,
     so the pause is caught up at `MAX_CATCHUP` ticks an advance, as after
     an outage without migration; nothing after `rehost` or `take_over`
-    (ruling SK-4: restarting the pace at our stale tick left a peer whose
+    (rulings SK-4, SK-7: restarting the pace at our stale tick left a peer whose
     link blipped seconds behind until a margin jump, its slot filled and
     every other `bad` player stalling past the outage's recovery; pinned by
     `tests/timing.rs`' `a_player_back_from_its_hosts_silence_catches_up_the_pause`).
