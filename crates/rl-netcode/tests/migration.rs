@@ -869,7 +869,7 @@ fn mscenario(seed: u64, profile: Profile, clients: u8) -> Scenario {
         corrupt: vec![],
         host_freeze: None,
         exits: vec![],
-        migration: Some(MigrationPlan { host_human: Some(0), slow_joins: vec![] }),
+        migration: Some(MigrationPlan { host_human: Some(0), ..MigrationPlan::default() }),
         profile_changes: vec![],
     }
 }
@@ -879,6 +879,10 @@ fn run_checked(sc: &Scenario) -> Report {
     let r = harness::run(sc, &mut f).unwrap_or_else(|e| panic!("seed {}: {e:?}", sc.seed));
     harness::verdict(sc, &r, &mut f)
         .unwrap_or_else(|e| panic!("seed {} {:?}: {e:?}", sc.seed, sc.peers[0].profile.name));
+    // Ruling FR12c-3: an honest run never leaves a peer asking a successor
+    // it could reach for longer than an ask takes (whether or not it was
+    // lost): the detection has no false alarm in any migration test.
+    assert!(r.could_join.is_empty(), "seed {}: {:?}", sc.seed, r.could_join);
     r
 }
 
@@ -1519,4 +1523,89 @@ fn every_survivor_host_lost_with_a_reachable_successor_fails() {
     let reachable = Scenario { outages: sc.outages[..1].to_vec(), ..sc.clone() };
     let e = harness::verdict(&reachable, &r, &mut f).unwrap_err();
     assert!(e.what.contains("the host confirmed"), "{e:?}");
+}
+
+/// Ruling FR12c-3 (final review A-I2): the verdict judges every host-lost
+/// peer, the match going on or not. Peer 100's join to peer 2 takes 6 s, so
+/// it gives up (the D8 run): legitimate, it asked a successor it could join
+/// no longer than an ask takes. The same run with peer 100 not having given
+/// up, or with peer 1 (a survivor) host lost, or with a successor hosting
+/// within peer 100's reach, fails; before, any host-lost peer of a match
+/// that went on passed unjudged.
+#[test]
+fn every_host_lost_peer_is_judged() {
+    let mut sc = mscenario(17, Profile::GOOD, 2);
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    sc.migration.as_mut().unwrap().slow_joins.extend([(2, 6_000_000), (100, 6_000_000)]);
+    let r = run_checked(&sc);
+    assert_eq!(r.host_lost, [100].into());
+    let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+    let mut no_give_up = r.clone();
+    no_give_up.gave_up.clear();
+    let e = harness::verdict(&sc, &no_give_up, &mut f).unwrap_err();
+    assert!(e.what.contains("peer 100 host lost without giving up"), "{e:?}");
+    let mut survivor = r.clone();
+    survivor.host_lost.insert(1);
+    let e = harness::verdict(&sc, &survivor, &mut f).unwrap_err();
+    assert!(e.what.contains("peer 1 host lost without giving up"), "{e:?}");
+    let mut reachable = r.clone();
+    reachable.could_join.insert(100, (2, 7_000_000));
+    let e = harness::verdict(&sc, &reachable, &mut f).unwrap_err();
+    assert!(e.what.contains("peer 100 host lost, though successor 2 hosted"), "{e:?}");
+    let mut slow = r.clone();
+    slow.gave_up.get_mut(&100).unwrap().at_us += 2_000_000;
+    assert!(harness::verdict(&sc, &slow, &mut f).is_err(), "gave up past GIVE_UP_US");
+    // The exemptions are checked, not assumed: a peer that never joined is
+    // no joiner, and one migration is no cap.
+    let mut joining = r.clone();
+    joining.gave_up.clear();
+    joining.lost_joining.insert(100);
+    let e = harness::verdict(&sc, &joining, &mut f).unwrap_err();
+    assert!(e.what.contains("never joined"), "{e:?}");
+    let mut capped = r.clone();
+    capped.gave_up.clear();
+    capped.lost_capped.insert(100);
+    let e = harness::verdict(&sc, &capped, &mut f).unwrap_err();
+    assert!(e.what.contains("MAX_MIGRATIONS"), "{e:?}");
+}
+
+/// Final review A-M1: a match every survivor lost legitimately (SK-10)
+/// skips only the confirmed ticks and the replay; a malformed message
+/// before the loss still fails it (the early return skipped every check).
+#[test]
+fn an_all_lost_match_is_still_checked() {
+    let sc = all_host_lost();
+    let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+    let r = harness::run(&sc, &mut f).unwrap();
+    harness::verdict(&sc, &r, &mut f).unwrap();
+    let mut malformed = r.clone();
+    malformed.events.get_mut(&2).unwrap().push(Event::Malformed { peer: 1 });
+    let e = harness::verdict(&sc, &malformed, &mut f).unwrap_err();
+    assert!(e.what.contains("malformed"), "{e:?}");
+}
+
+/// Final review A-M4: a new host waits for every away member of the
+/// match's start, as rl-lobby's `away_in_match` does, a player without a
+/// standby (N79: it never hosts) too, not only the entries that can host.
+/// Peer 2 has none and its join takes 3 s: successor 1 waits for it, and
+/// it rejoins in time (not late, N72).
+#[test]
+fn a_new_host_waits_for_a_player_without_a_standby() {
+    let mut sc = mscenario(39, Profile::GOOD, 2);
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    let plan = sc.migration.as_mut().unwrap();
+    plan.no_standby.push(2);
+    plan.slow_joins.push((2, 3_000_000));
+    let r = run_checked(&sc);
+    assert_eq!(r.hosts, vec![HOST, 1]);
+    assert!(r.late.is_empty(), "peer 2 was waited for: {:?}", r.late);
+    let m = &r.migrations[0];
+    assert!(m.resumed_us - m.silent_us >= 3_000_000, "{m:?}");
+    // It never hosts: with successor 1 dead too, the spectator takes over.
+    let mut sc = mscenario(40, Profile::GOOD, 2);
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: 1, tick: 400, after_us: 0, how: ExitHow::Crash });
+    sc.migration.as_mut().unwrap().no_standby.push(2);
+    let r = run_checked(&sc);
+    assert_eq!(r.hosts, vec![HOST, 100]);
 }

@@ -418,7 +418,8 @@ model that tests it in one process (spec §9.1).
   `ticks` confirmed ticks, or when every peer not dropped is gone or lost
   (no host remains; still `Ok`).
   - **Migrations** (`Scenario::migration: Some(MigrationPlan { host_human,
-    slow_joins })`; with `None` a host gone moves nothing, as before), as
+    slow_joins, no_standby })`; with `None` a host gone moves nothing, as
+    before; `no_standby`: peers that never host, N79, their entry cannot), as
     rl-online drives them, every rule in virtual time:
     - succession: players in `peers` order, spectators from the start (can
       host), joined spectators (followers); a new host's is the same
@@ -442,8 +443,11 @@ model that tests it in one process (spec §9.1).
       `rejoined`; the peer `rehost`s and drops its migration. After the
       resume `rejoined` is false: the peer gets a new `Role::Joining`
       session and the host's `add_spectator` (N72, `Report::late`);
-    - the new host resumes when every expected peer (every other
-      succession entry that can host, dead ones too: it cannot know) is
+    - the new host resumes when every expected peer (every other member
+      of the match's start not back late, rl-lobby's `away_in_match`: one
+      without a standby too, final review A-M4,
+      `a_new_host_waits_for_a_player_without_a_standby`; dead ones too: it
+      cannot know) is
       back and every peer back reported, or at its window's end with every
       peer back reported (N68, C1); expecting nobody, it commits and
       resumes at once only when its old host is known gone (its `Bye`,
@@ -470,8 +474,18 @@ model that tests it in one process (spec §9.1).
       net-soak's `bad-14s3c1v-seed974389837`);
     - `GiveUp`: `Report::host_lost` and `Report::gave_up` (`GaveUp`: the
       host it found gone, when, when it gave up, the succession), no more
-      frames.
-  - `Report` gains `hosts` (in order, `HOST` first), `migrations`
+      frames; host lost at once past `MAX_MIGRATIONS` is
+      `Report::lost_capped`, as a spectator still joining
+      `Report::lost_joining`;
+    - ruling FR12c-3: a migrating peer asking its window's successor (its
+      attempt not unanswered, not in contact) while that successor hosts
+      (gate open, alive, not frozen) with no outage of either, for longer
+      than an honest ask takes (`RETRY_US`, two of its slowest pings, two
+      steps and 50 ms), is `Report::could_join` (the successor, since
+      when): an honest run has none (`run_checked` asserts it in every
+      migration test; a retry that never comes fills it).
+  - `Report` gains `hosts` (in order, `HOST` first), `lost_capped`,
+    `lost_joining`, `could_join` (above), `migrations`
     (`Migrated { from, to, silent_us, resumed_us, tick }`: the first peer's
     `HostSilent`/`PeerLeft` to the resume), `host_lost`, `exited` (crashed,
     left, stepped down), `late`, `held` (what each migration's survivors
@@ -499,6 +513,16 @@ model that tests it in one process (spec §9.1).
     (as the first host and as the second, net-soak's
     `lan-8s2c0v-seed1433102928`). A host gone stalls its
     clients at the prediction limit: `expect_no_stalls` flags those too.
+    Ruling FR12c-3 (final review A-I2: a peer giving up wrongly passed
+    while the match went on): every host-lost peer not dropped is judged
+    (`every_host_lost_is_legitimate`): past `MAX_MIGRATIONS` only when the
+    run had that many (`lost_capped`), a joiner only when it joined or came
+    late (`lost_joining`), else it gave up within `GIVE_UP_US` plus a step
+    and has no `could_join`; pinned by `every_host_lost_peer_is_judged`
+    (its negative twins on the D8 run). A match every survivor lost skips
+    only the confirmed ticks and the replay; the held values, the rows of
+    peers that went and the events are checked (final review A-M1,
+    `an_all_lost_match_is_still_checked`).
     Ruling SK-10 (net-soak's `typical-16s3c0v-seed2454863382`): a host that
     confirmed fewer than `ticks` passes only when every survivor is host
     lost legitimately (`every_survivor_lost_legitimately`): each gave up

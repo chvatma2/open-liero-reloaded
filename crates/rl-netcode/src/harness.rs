@@ -120,6 +120,10 @@ pub struct MigrationPlan {
     /// `(peer, µs)`: this peer's joins to a successor take this long after
     /// contact (a slow path through relays), instead of three pings.
     pub slow_joins: Vec<(PeerId, u64)>,
+    /// Peers without a standby (N79): they follow a migration, never host
+    /// (their succession entry cannot), and a new host still waits for them
+    /// (final review A-M4).
+    pub no_standby: Vec<PeerId>,
 }
 
 /// From the current host's tick `tick`, `peer`'s link to whoever hosts
@@ -195,11 +199,7 @@ fn every_survivor_lost_legitimately(sc: &Scenario, r: &Report) -> bool {
     if survivors.is_empty() || !survivors.iter().all(|p| r.host_lost.contains(p)) {
         return false;
     }
-    let ping_us = |peer: PeerId| {
-        let base = sc.peers.iter().filter(|p| p.id == peer).map(|p| p.profile.ping_ms);
-        let changes = sc.profile_changes.iter().filter(|c| c.peer == peer).map(|c| c.profile.ping_ms);
-        u64::from(base.chain(changes).max().unwrap_or(0)) * 1_000
-    };
+    let ping_us = |peer: PeerId| slowest_ping_us(sc, peer);
     let cut = |a: PeerId, b: PeerId, from_us: u64, until_us: u64| {
         sc.outages.iter().any(|o| {
             (o.peer == a || o.peer == b)
@@ -208,11 +208,9 @@ fn every_survivor_lost_legitimately(sc: &Scenario, r: &Report) -> bool {
                 && o.until_tick as u64 * TICK_US >= until_us
         })
     };
-    // Steps come with frames: a give-up lands up to a frame late.
-    let step = sc.peers.iter().map(|p| p.frame_us).chain([HOST_FRAME_US]).max().unwrap_or(0) + 1_000;
     for &q in &survivors {
         let Some(g) = r.gave_up.get(&q) else { return false };
-        if g.at_us.saturating_sub(g.began_us) > GIVE_UP_US + step {
+        if g.at_us.saturating_sub(g.began_us) > GIVE_UP_US + step_us(sc) {
             return false;
         }
         // The windows before the give-up (one beginning at it never opens).
@@ -232,6 +230,65 @@ fn every_survivor_lost_legitimately(sc: &Scenario, r: &Report) -> bool {
     let mut logs: Vec<&[[u8; 32]]> = survivors.iter().map(|&p| rows(p)).collect();
     logs.push(&r.host_log[..]);
     logs.iter().all(|a| logs.iter().all(|b| a.iter().zip(b.iter()).all(|(x, y)| x == y)))
+}
+
+/// The harness's step: steps come with frames, so a give-up lands up to a
+/// frame (and a millisecond) late.
+fn step_us(sc: &Scenario) -> u64 {
+    sc.peers.iter().map(|p| p.frame_us).chain([HOST_FRAME_US]).max().unwrap_or(0) + 1_000
+}
+
+/// `peer`'s slowest ping in the run (its profile, or one a change gives it).
+fn slowest_ping_us(sc: &Scenario, peer: PeerId) -> u64 {
+    let base = sc.peers.iter().filter(|p| p.id == peer).map(|p| p.profile.ping_ms);
+    let changes = sc.profile_changes.iter().filter(|c| c.peer == peer).map(|c| c.profile.ping_ms);
+    u64::from(base.chain(changes).max().unwrap_or(0)) * 1_000
+}
+
+/// Ruling FR12c-3 (final review A-I2): every host-lost peer (not dropped)
+/// lost its host legitimately, whether the match goes on or not:
+/// - past [`MAX_MIGRATIONS`] (`Report::lost_capped`), when the run had
+///   that many;
+/// - a spectator still joining (`Report::lost_joining`, ruling SK-8), when
+///   it joined mid-match or came late;
+/// - else it gave up (`Report::gave_up`) within N68's bound, and no window
+///   of its migration had its successor within its reach: hosting (its
+///   gate open, alive, not frozen), no outage of either, the peer asking it
+///   (not unanswered, not in contact) for longer than an honest ask takes
+///   (`Report::could_join`, SK-10's reachability per peer: a dead, frozen or
+///   cut-off successor, or one that never hosted, leaves it unreachable).
+fn every_host_lost_is_legitimate(sc: &Scenario, r: &Report) -> Result<(), Failure> {
+    let joined = |peer: PeerId| sc.peers.iter().any(|p| p.id == peer && p.join_tick.is_some());
+    for &q in r.host_lost.iter().filter(|p| !r.dropped.contains(p)) {
+        if r.lost_capped.contains(&q) {
+            if r.migrations.len() < MAX_MIGRATIONS as usize {
+                return Err(fail(
+                    0,
+                    format!("peer {q} host lost past MAX_MIGRATIONS after {}", r.migrations.len()),
+                ));
+            }
+            continue;
+        }
+        if r.lost_joining.contains(&q) {
+            if !joined(q) && !r.late.contains(&q) {
+                return Err(fail(0, format!("peer {q} host lost while joining, but it never joined")));
+            }
+            continue;
+        }
+        let Some(g) = r.gave_up.get(&q) else {
+            return Err(fail(0, format!("peer {q} host lost without giving up")));
+        };
+        if g.at_us.saturating_sub(g.began_us) > GIVE_UP_US + step_us(sc) {
+            return Err(fail(0, format!("peer {q} gave up {} µs after its host went", g.at_us - g.began_us)));
+        }
+        if let Some(&(s, at_us)) = r.could_join.get(&q) {
+            return Err(fail(
+                0,
+                format!("peer {q} host lost, though successor {s} hosted within its reach from {at_us} µs"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The observer that sees nothing.
@@ -283,6 +340,16 @@ pub struct Report {
     /// (`Step::GiveUp`): what the verdict needs to judge whether a
     /// successor was reachable (ruling SK-10).
     pub gave_up: BTreeMap<PeerId, GaveUp>,
+    /// Of those, each lost at once past [`MAX_MIGRATIONS`] (N74) ...
+    pub lost_capped: BTreeSet<PeerId>,
+    /// ... and each lost as a spectator still joining (ruling SK-8).
+    pub lost_joining: BTreeSet<PeerId>,
+    /// Ruling FR12c-3: a migrating peer that had its window's successor
+    /// within reach (hosting, alive, not frozen, no outage of either, the
+    /// peer asking it, not in contact) for longer than an honest ask takes:
+    /// the successor and when that began. The first per peer. An honest run
+    /// has none; the verdict fails a host-lost peer with one.
+    pub could_join: BTreeMap<PeerId, (PeerId, u64)>,
     /// Peers that crashed, left or stepped down.
     pub exited: BTreeSet<PeerId>,
     /// Peers that reached a new host after its resume and watch from a
@@ -399,6 +466,9 @@ struct Migrating {
     /// N69: it heard its old host while in contact with a successor; if
     /// that contact is lost, it goes back (rl-online's `Planner`).
     heard: bool,
+    /// Since when its window's successor has been within its reach
+    /// (ruling FR12c-3, `Report::could_join`), and which.
+    reach: Option<(PeerId, u64)>,
     /// Its old host is known gone: its `Bye` came (ruling FR12c-1: a
     /// successor expecting nobody commits only then).
     gone: bool,
@@ -426,7 +496,8 @@ enum Stage {
 struct Taking {
     from: PeerId,
     /// Every other succession entry holding a slot or a spectator seat from
-    /// the start (rl-lobby's `away_in_match`); dead ones too.
+    /// the start, not back late (rl-lobby's `away_in_match`), whether it can
+    /// host or not; dead ones too.
     expected: BTreeSet<PeerId>,
     back: BTreeSet<PeerId>,
     /// Its window's end: no waiting for peers not yet back after it (N68).
@@ -630,6 +701,8 @@ pub fn run<S: Simulation>(sc: &Scenario, f: &mut dyn Factory<S>) -> Result<Repor
 /// What a run keeps besides its peers.
 struct Shared {
     net: Network,
+    /// The match's members from its start, the first host aside.
+    start: BTreeSet<PeerId>,
     /// Each host's succession: (peer, can host).
     successions: BTreeMap<PeerId, Vec<(PeerId, bool)>>,
     /// Each peer's link profile now.
@@ -643,6 +716,9 @@ struct Shared {
     held: Vec<Held>,
     host_lost: BTreeSet<PeerId>,
     gave_up: BTreeMap<PeerId, GaveUp>,
+    lost_capped: BTreeSet<PeerId>,
+    lost_joining: BTreeSet<PeerId>,
+    could_join: BTreeMap<PeerId, (PeerId, u64)>,
     exited: BTreeSet<PeerId>,
     late: BTreeSet<PeerId>,
     left_from: BTreeMap<PeerId, PeerId>,
@@ -721,18 +797,29 @@ pub fn run_observed<S: Simulation>(
     let mut repair_failed: BTreeSet<PeerId> = BTreeSet::new();
 
     // The succession: players, spectators from the start, followers.
-    let mut order: Vec<(PeerId, bool)> =
-        sc.peers.iter().filter(|p| matches!(p.seat, Seat::Player(_))).map(|p| (p.id, true)).collect();
+    let plan = sc.migration.as_ref();
+    let standby = |id: PeerId| plan.is_none_or(|m| !m.no_standby.contains(&id));
+    let mut order: Vec<(PeerId, bool)> = sc
+        .peers
+        .iter()
+        .filter(|p| matches!(p.seat, Seat::Player(_)))
+        .map(|p| (p.id, standby(p.id)))
+        .collect();
     order.extend(
-        sc.peers.iter().filter(|p| p.seat == Seat::Spectator && p.join_tick.is_none()).map(|p| (p.id, true)),
+        sc.peers
+            .iter()
+            .filter(|p| p.seat == Seat::Spectator && p.join_tick.is_none())
+            .map(|p| (p.id, standby(p.id))),
     );
     order.extend(sc.peers.iter().filter(|p| p.join_tick.is_some()).map(|p| (p.id, false)));
-    let plan = sc.migration.as_ref();
+    // The match's members from its start (rl-lobby's `in_start`).
+    let start: BTreeSet<PeerId> = sc.peers.iter().filter(|p| p.join_tick.is_none()).map(|p| p.id).collect();
     let human = plan.and_then(|m| m.host_human);
     let held_slots: Vec<u8> =
         sc.peers.iter().filter_map(|p| if let Seat::Player(s) = p.seat { Some(s) } else { None }).collect();
     let mut w = Shared {
         net,
+        start,
         successions: [(HOST, order)].into(),
         profiles: sc.peers.iter().map(|p| (p.id, p.profile)).collect(),
         installed: BTreeMap::new(),
@@ -742,6 +829,9 @@ pub fn run_observed<S: Simulation>(
         held: Vec::new(),
         host_lost: BTreeSet::new(),
         gave_up: BTreeMap::new(),
+        lost_capped: BTreeSet::new(),
+        lost_joining: BTreeSet::new(),
+        could_join: BTreeMap::new(),
         exited: BTreeSet::new(),
         late: BTreeSet::new(),
         left_from: BTreeMap::new(),
@@ -1028,6 +1118,9 @@ pub fn run_observed<S: Simulation>(
         migrations: w.migrations,
         host_lost: w.host_lost,
         gave_up: w.gave_up,
+        lost_capped: w.lost_capped,
+        lost_joining: w.lost_joining,
+        could_join: w.could_join,
         exited: w.exited,
         late: w.late,
         held: w.held,
@@ -1082,6 +1175,7 @@ fn begin<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, now: u64, gone: bool) {
     if p.session.is_joining() {
         p.gone = true;
         w.host_lost.insert(p.id);
+        w.lost_joining.insert(p.id);
         w.left_from.insert(p.id, from);
         return;
     }
@@ -1089,6 +1183,7 @@ fn begin<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, now: u64, gone: bool) {
     if p.migrations >= MAX_MIGRATIONS {
         p.gone = true;
         w.host_lost.insert(p.id);
+        w.lost_capped.insert(p.id);
         w.left_from.insert(p.id, from);
         return;
     }
@@ -1105,6 +1200,7 @@ fn begin<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, now: u64, gone: bool) {
         gate: false,
         heard: false,
         gone,
+        reach: None,
     });
 }
 
@@ -1252,6 +1348,32 @@ fn migrate<S: Simulation>(
             None => lost_contact(&mut peers[i], w, to),
         }
     }
+    // Ruling FR12c-3: a peer asking a hosting successor it can reach (not
+    // unanswered, not in contact) joins it within an ask's time; for longer
+    // is a defect the verdict holds against a host-lost peer.
+    let open: BTreeSet<PeerId> =
+        peers.iter().filter(|p| p.hosting() && p.frozen_at.is_none()).map(|p| p.id).collect();
+    for p in peers.iter_mut() {
+        let id = p.id;
+        let frozen = p.gone || p.frozen_at.is_some();
+        let Some(mg) = p.migrating.as_mut() else { continue };
+        let asking = match &mg.attempt {
+            Some(Attempt { to, stage: Stage::Ask(_) | Stage::Retry(_) }) => Some(mg.order[*to].0),
+            _ => None,
+        };
+        let within = asking.filter(|&s| !frozen && open.contains(&s) && !outage(id) && !outage(s));
+        mg.reach = match (within, mg.reach) {
+            (Some(s), Some((r, since))) if r == s => Some((s, since)),
+            (Some(s), _) => Some((s, now)),
+            (None, _) => None,
+        };
+        let slack = RETRY_US + 2 * slowest_ping_us(sc, id) + 2 * step_us(sc) + 50_000;
+        if let Some((s, since)) = mg.reach
+            && now.saturating_sub(since) > slack
+        {
+            w.could_join.entry(id).or_insert((s, since));
+        }
+    }
     // Resumes: every expected peer back (or the window ended) and every
     // peer back reported.
     for i in 0..peers.len() {
@@ -1283,7 +1405,14 @@ fn lost_contact<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, to: usize) {
 fn commit<S: Simulation>(f: &mut dyn Factory<S>, peers: &mut [Peer<S>], w: &mut Shared, i: usize, now: u64) {
     let p = &mut peers[i];
     let Some(mg) = p.migrating.take() else { return };
-    let expected = mg.order.iter().filter(|e| e.1 && e.0 != p.id).map(|e| e.0).collect();
+    // Every other member of the match's start not seated late (rl-lobby's
+    // `away_in_match`): one without a standby too (final review A-M4).
+    let expected = mg
+        .order
+        .iter()
+        .filter(|e| e.0 != p.id && w.start.contains(&e.0) && !w.late.contains(&e.0))
+        .map(|e| e.0)
+        .collect();
     let deadline = mg.m.window_end(now);
     let own = match p.seat {
         Some(Seat::Player(s)) => Some(s),
@@ -1392,6 +1521,9 @@ fn resume<S: Simulation>(
 /// furthest prefix the survivors of its host's migration held (an exited
 /// host's last frames may have reached nobody, pre-flight B3; a host cut
 /// off confirms its own fills), or all of them when its host is the last.
+/// Every host-lost peer lost its host legitimately (ruling FR12c-3,
+/// [`every_host_lost_is_legitimate`]); a match every survivor lost
+/// (SK-10) skips only the confirmed ticks and the replay (A-M1).
 pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>) -> Result<(), Failure> {
     let ticks = sc.ticks;
     let kept = |peer: &PeerId| {
@@ -1431,13 +1563,14 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
             ));
         }
     }
-    if r.host_log.len() < ticks as usize {
-        // Ruling SK-10: a match every survivor lost, legitimately, ends here.
-        if every_survivor_lost_legitimately(sc, r) {
-            return Ok(());
-        }
+    // Ruling SK-10: a match every survivor lost, legitimately, confirms
+    // fewer ticks; the replay is not compared then (final review A-M1:
+    // every other check still runs).
+    let all_lost = r.host_log.len() < ticks as usize;
+    if all_lost && !every_survivor_lost_legitimately(sc, r) {
         return Err(fail(r.host_log.len() as u32, format!("the host confirmed {} ticks", r.host_log.len())));
     }
+    every_host_lost_is_legitimate(sc, r)?;
     // No final value a survivor held at a migration is lost.
     let last = &r.host_log;
     for h in &r.held {
@@ -1509,6 +1642,22 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
             return Err(fail(t as u32, format!("peer {peer} confirmed other inputs than the host")));
         }
     }
+    if !all_lost {
+        replayed(sc, r, f, &kept, &from_of)?;
+    }
+    events_clean(sc, r, &kept)
+}
+
+/// The verdict's replay: every kept peer's recorded and confirmed
+/// checksums equal an offline replay of the last host's inputs.
+fn replayed<S: Simulation>(
+    sc: &Scenario,
+    r: &Report,
+    f: &mut dyn Factory<S>,
+    kept: &dyn Fn(&PeerId) -> bool,
+    from_of: &dyn Fn(&PeerId) -> (u32, u32),
+) -> Result<(), Failure> {
+    let ticks = sc.ticks;
     let mut sim = f.sim(HOST);
     let slots = sc.slots as usize;
     let mut replay = BTreeMap::new();
@@ -1545,6 +1694,14 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
             }
         }
     }
+    Ok(())
+}
+
+/// No stalls (when expected), malformed messages, inconsistent inputs,
+/// refused states, or desyncs but of corrupted (or not kept) peers, at any
+/// peer not dropped.
+fn events_clean(sc: &Scenario, r: &Report, kept: &dyn Fn(&PeerId) -> bool) -> Result<(), Failure> {
+    let corrupted = |peer: PeerId| sc.corrupt.iter().any(|c| c.0 == peer);
     let players: Vec<PeerId> = core::iter::once(HOST)
         .chain(sc.peers.iter().filter(|p| matches!(p.seat, Seat::Player(_))).map(|p| p.id))
         .collect();
