@@ -51,6 +51,46 @@ fn replay_viewed_by(dir: &Path, ticks: u64, viewer: Option<u8>) -> Assets {
     r.unwrap()
 }
 
+/// A replay of three bots (Classic, Dirt Level, seed 5) in which worm 1 is
+/// withdrawn before tick `k` (as an online match's record makes one, with
+/// `Recorder::withdraw`), loaded as the Replays screen loads one.
+fn replay_withdrawing(dir: &Path, k: u32, ticks: u32) -> Assets {
+    let content = rl_content::Content::open(dir).unwrap();
+    let o = DeathmatchOptions { bots: 3, spectate: true, seed: 5, ..DeathmatchOptions::default() };
+    let built =
+        content.build_match(&setup::match_options(&o, "olx-classic", "olx-level-dirt-level")).unwrap();
+    let (mut world, mut rec) = (built.world, built.recorder);
+    let (keys, mut out) = (vec![Keys(0); world.worms().len()], rl_sim::TickEvents::new());
+    for t in 0..ticks {
+        if t == k {
+            rec.withdraw(&mut world, 1).unwrap();
+        }
+        world.tick(&keys, &mut out);
+        rec.push(&keys, &world).unwrap();
+    }
+    let replay = rec.finish(&world).unwrap();
+    let file = std::env::temp_dir().join(format!("rl-game-watch-gone-{}.rlrp", std::process::id()));
+    std::fs::write(&file, replay.encode()).unwrap();
+    let r = setup::load_replay(&[dir], &file, "default", &[]);
+    std::fs::remove_file(&file).unwrap();
+    r.unwrap()
+}
+
+/// N89: the watched worm leaving moves the camera on; following skips it.
+#[test]
+fn the_watched_worm_moves_on_when_it_leaves() {
+    let Some(dir) = content_dir() else { return };
+    let mut s = session(&replay_withdrawing(&dir, 100, 200));
+    s.follow_next(1);
+    assert_eq!(s.followed(), 1);
+    while s.ticks() < 101 {
+        s.tick(Keys(0));
+    }
+    assert_eq!(s.followed(), 2, "moved on");
+    s.follow_next(-1);
+    assert_eq!(s.followed(), 0, "worm 1 is skipped");
+}
+
 /// The worm the camera, the HUD and the minimap's big dot are on.
 fn on(s: &Session) -> (i32, i32, Option<String>, Vec<usize>) {
     let frame = Frame { minimap: Some(egui::TextureId::default()), ..Frame::default() };

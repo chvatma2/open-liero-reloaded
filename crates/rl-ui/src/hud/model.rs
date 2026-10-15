@@ -135,25 +135,29 @@ pub struct Row {
     /// The worm the HUD follows (the player's own; a watched game's
     /// followed worm): its row is highlighted.
     pub followed: bool,
+    /// The worm left the match: a results row only, its lives "left" (N85).
+    pub left: bool,
 }
 
-/// The scoreboard: the mode's rows (`World::scores`, best first), worm
-/// `followed`'s highlighted.
+fn row(s: &Score, names: &Names, followed: Option<i32>) -> Row {
+    Row {
+        worm: s.worm,
+        name: names.of(s.worm),
+        score: s.score,
+        lives: if s.left { "left".into() } else { lives_text(s.lives) },
+        kills: s.kills,
+        deaths: s.deaths,
+        suicides: s.suicides,
+        damage: rl_modes::olx_round(s.damage),
+        followed: Some(s.worm) == followed,
+        left: s.left,
+    }
+}
+
+/// The live scoreboard: the mode's rows (`World::scores`, best first) but
+/// those of worms that left, worm `followed`'s highlighted.
 pub fn rows(scores: &[Score], names: &Names, followed: Option<i32>) -> Vec<Row> {
-    scores
-        .iter()
-        .map(|s| Row {
-            worm: s.worm,
-            name: names.of(s.worm),
-            score: s.score,
-            lives: lives_text(s.lives),
-            kills: s.kills,
-            deaths: s.deaths,
-            suicides: s.suicides,
-            damage: rl_modes::olx_round(s.damage),
-            followed: Some(s.worm) == followed,
-        })
-        .collect()
+    scores.iter().filter(|s| !s.left).map(|s| row(s, names, followed)).collect()
 }
 
 /// A finished match, as the results overlay shows it (OLX's results
@@ -199,7 +203,7 @@ impl Results {
         Results {
             winner: (r.winner >= 0).then(|| names.of(r.winner)),
             reason,
-            rows: rows(scores, names, followed),
+            rows: scores.iter().map(|s| row(s, names, followed)).collect(),
             time_left_ms,
         }
     }
@@ -213,6 +217,31 @@ mod tests {
 
     fn names() -> Names {
         Names(vec!["You".into(), "Bot 1".into()])
+    }
+
+    fn score(worm: i32, kills: i32) -> Score {
+        Score { worm, score: kills, lives: -2, kills, deaths: 1, suicides: 0, damage: 0.0, left: false }
+    }
+
+    #[test]
+    fn a_left_row_is_off_the_scoreboard_and_left_in_the_results() {
+        let names = names();
+        let mut scores = [score(0, 3), score(1, 1)];
+        scores[1].left = true;
+        scores[1].lives = -1;
+        let live = rows(&scores, &names, Some(0));
+        assert_eq!(live.iter().map(|r| r.worm).collect::<Vec<_>>(), [0]);
+        let r = Results::new(
+            MatchResult { winner: 0, reason: EndReason::TimeLimit },
+            &scores,
+            &names,
+            None,
+            Some(0),
+        );
+        let left: Vec<(i32, &str, bool)> =
+            r.rows.iter().map(|r| (r.worm, r.lives.as_str(), r.left)).collect();
+        assert_eq!(left[1], (1, "left", true));
+        assert_eq!((r.rows[1].kills, r.rows[1].deaths), (1, 1), "its counts so far");
     }
 
     #[test]

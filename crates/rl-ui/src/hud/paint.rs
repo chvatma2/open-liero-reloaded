@@ -264,7 +264,13 @@ pub fn table(ui: &mut Ui, rows: &[Row]) {
         }
         ui.end_row();
         for (i, r) in rows.iter().enumerate() {
-            let colour = if r.followed { Color32::from_rgb(255, 230, 120) } else { Color32::WHITE };
+            let colour = if r.left {
+                Color32::from_gray(140)
+            } else if r.followed {
+                Color32::from_rgb(255, 230, 120)
+            } else {
+                Color32::WHITE
+            };
             let cell = |ui: &mut Ui, t: String| {
                 ui.label(RichText::new(t).monospace().color(colour));
             };

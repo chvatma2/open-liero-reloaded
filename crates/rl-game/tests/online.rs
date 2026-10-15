@@ -682,6 +682,37 @@ fn hosting_and_joining_from_the_shell() {
     assert!(h.session().unwrap().log.texts().any(|l| l == "Anna has left"), "in the host's HUD log too");
 }
 
+/// N85, user decision 2: Anna leaves mid-match; the host's log says so,
+/// its live scoreboard has no Anna row, and its results keep one, "left",
+/// with her counts. RED: Anna's row stays on the scoreboard.
+#[test]
+fn a_player_who_leaves_is_off_the_scoreboard_and_left_in_the_results() {
+    let Some(dir) = content_dir() else { return };
+    let (mut h, mut c) = host_and_client(&dir, 0.1, None);
+    start_match(&mut h, &mut c);
+    frames_until("the match runs", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
+        confirmed(s[0]).is_some_and(|(t, _)| t > 150)
+    });
+    c.act(UiAction::Back);
+    c.act(UiAction::LeaveMatch);
+    frames_until("the host says so", Duration::from_secs(5), &mut [&mut h], |s| {
+        s[0].session().is_some_and(|x| x.log.texts().any(|l| l == "Anna has left"))
+    });
+    frames_until("Anna's worm is gone", Duration::from_secs(3), &mut [&mut h], |s| {
+        s[0].session().is_some_and(|x| x.with_world(|w| w.gone()) & 0b10 != 0)
+            && confirmed(s[0]).is_some_and(|(_, sc)| sc.iter().any(|r| r.worm == 1 && r.left))
+    });
+    let view = hud::view(h.session().unwrap(), &Frame { scores: true, ..Frame::default() });
+    let names: Vec<String> = view.scoreboard.unwrap().iter().map(|r| r.name.clone()).collect();
+    assert!(!names.contains(&"Anna".to_string()), "{names:?}");
+    frames_until("the results", Duration::from_secs(15), &mut [&mut h], |s| {
+        s[0].ui.screen() == Screen::Results
+    });
+    let r = h.session().and_then(|s| s.results.as_ref()).unwrap();
+    let anna = r.rows.iter().find(|r| r.name == "Anna").expect("Anna's row");
+    assert!(anna.left && anna.lives == "left");
+}
+
 /// Chat typed in game reaches the other player's HUD log as a chat line
 /// ("name: text"), and its lobby chat.
 #[test]

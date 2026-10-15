@@ -305,7 +305,11 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   message texts, `Log` of `LogLine { text, kind: LineKind::{Event, Chat} }`
   (the last `LOG_KEEP` 64; `Chat` is for a multiplayer chat later),
   `clock`, scoreboard `rows(scores, names, followed)` with the followed
-  worm's `Row::followed` (yellow in `table`), `Results::of`/`new`), `view.rs`
+  worm's `Row::followed` (yellow in `table`) and without the rows of
+  worms that left; `Results::of`/`new` keep them (plan 12d, N85: `Row::left`,
+  lives "left", kills and deaths so far, grey in `table`; ranked as the
+  mode orders them, an out worm's place); test
+  `a_left_row_is_off_the_scoreboard_and_left_in_the_results`), `view.rs`
   (`HudView`, the frame's data; `WormHud::of(world, i, names, ..)`: health,
   lives, kills, slots with OLX's bar states), `layout.rs`
   (`HudLayout::new(screen, arrangement)`: the game is designed for 16:9:

@@ -532,14 +532,23 @@ impl Session {
     }
 
     /// A watcher's next (`step` 1) or previous (-1) worm to follow, in
-    /// worm order, round; the player's camera stays on its own worm.
+    /// worm order, round, skipping worms that left (`World::gone`); the
+    /// player's camera stays on its own worm, and a watcher stays where it
+    /// is when every worm is gone.
     pub fn follow_next(&mut self, step: i32) {
-        let n = self.with_world(|w| w.worms().len()) as i64;
+        let (n, gone) = self.with_world(|w| (w.worms().len() as i64, w.gone()));
         if self.local.is_some() || n == 0 {
             return;
         }
-        let next = (i64::from(self.followed()) + i64::from(step)).rem_euclid(n);
-        self.present.follow(next as i32);
+        let from = i64::from(self.followed());
+        let step = if step < 0 { -1 } else { 1 };
+        for k in 1..=n {
+            let next = (from + step * k).rem_euclid(n);
+            if gone.checked_shr(next as u32).unwrap_or(0) & 1 == 0 {
+                self.present.follow(next as i32);
+                return;
+            }
+        }
     }
 
     /// The Deathmatch's kill limit, if on.
@@ -799,6 +808,14 @@ impl Session {
             } else if popups.len() < popups.capacity() {
                 popups.push(Popup { worm, amount: dealt, pos, age: 0 });
             }
+        }
+        // A watcher's camera moves on from a worm that left (N89).
+        let f = self.followed();
+        if self.local.is_none()
+            && f >= 0
+            && self.with_world(|w| w.gone().checked_shr(f as u32).unwrap_or(0) & 1 != 0)
+        {
+            self.follow_next(1);
         }
     }
 

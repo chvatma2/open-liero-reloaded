@@ -192,7 +192,9 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   (`Presentation::follow`), the HUD, the big minimap dot, the highlighted scoreboard and results row (`Row::followed`), the
   tally's player kills and `player_deaths`/`player_spawns`. Without one
   the camera and the HUD follow the worm chosen (`follow`, `follow_next`,
-  worm 0 at first); the left and right arrows choose it in any game nobody
+  worm 0 at first; `follow_next` skips worms that left, `World::gone`, and `after_tick` moves a watcher on from a followed worm that
+  left, N89: `watch::the_watched_worm_moves_on_when_it_leaves` through a recorded replay with `Recorder::withdraw`, and
+  `online::a_player_who_leaves_is_off_the_scoreboard_and_left_in_the_results`); the left and right arrows choose it in any game nobody
   plays (`Session::spectating`, `app::watch_key`: not in a menu, never a
   played game's; "Watching <name>" on the HUD; `app::game_has_screen`: a
   command-line `--spectate` or `--replay` always has the screen, though

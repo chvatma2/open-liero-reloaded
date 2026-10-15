@@ -55,6 +55,7 @@ fn row(worm: i32, name: &str, kills: i32, deaths: i32, damage: i32) -> Row {
         suicides: 0,
         damage,
         followed,
+        left: false,
     }
 }
 
