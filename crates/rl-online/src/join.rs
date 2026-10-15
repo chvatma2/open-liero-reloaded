@@ -25,7 +25,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rl_discovery::{Asker, Pool, PoolConfig, PoolEvent, Region, TurnList};
+use rl_discovery::{Asker, Pool, PoolConfig, PoolEvent, Region, TurnList, TurnPick};
 use rl_net::endpoint::{Endpoint, EndpointConfig, TurnServerSpec, Why};
 use rl_net::probe::NatBehaviour;
 use rl_net::relayed::RelayState;
@@ -38,16 +38,26 @@ use crate::reach::Relays;
 /// At most this many relays carry a join (N46).
 pub const MAX_JOIN_RELAYS: usize = 8;
 /// TURN notes are collected this long after the first relay's `EOSE` …
-const TURN_AFTER_EOSE: Duration = Duration::from_secs(1);
+pub(crate) const TURN_AFTER_EOSE: Duration = Duration::from_secs(1);
 /// … and at most this long after the join's start.
-const TURN_AT_MOST: Duration = Duration::from_secs(4);
+pub(crate) const TURN_AT_MOST: Duration = Duration::from_secs(4);
 /// The offer leaves at the latest this long after the answer's
 /// subscription, without any relay's `EOSE`.
 const EOSE_WAIT: Duration = Duration::from_secs(2);
 /// At most this many TURN servers are allocated on (N48).
-const MAX_TURN: usize = 2;
-const TURN_SUB: &str = "turn";
-const ANSWER_SUB: &str = "answer";
+pub(crate) const MAX_TURN: usize = 2;
+pub(crate) const TURN_SUB: &str = "turn";
+pub(crate) const ANSWER_SUB: &str = "answer";
+
+/// A pool connected beforehand, lent to a join through the relays (ruling
+/// FR12c-5: a client's standing migration relays): its relays (the join's
+/// ask on these, in this order) and the announced TURN relays already
+/// picked, so the join pays only the handshake and ICE.
+pub(crate) struct Lent {
+    pub(crate) pool: Pool,
+    pub(crate) relays: Vec<String>,
+    pub(crate) picks: Vec<TurnPick>,
+}
 
 /// A join through Nostr: the host's key, the relays to ask on, where the
 /// player is (for announced TURN relays), and whether to use them.
@@ -197,7 +207,7 @@ fn rand() -> [u8; 32] {
 /// Drops `pool` on a thread of its own (it waits up to 2 s for its
 /// drivers; ruling R10-10). If no thread can start, the closure, and the
 /// pool with it, is dropped here.
-fn drop_pool(pool: Pool) {
+pub(crate) fn drop_pool(pool: Pool) {
     let _ = std::thread::Builder::new().name("rl-online pool drop".into()).spawn(move || drop(pool));
 }
 
@@ -243,6 +253,11 @@ struct Nostr {
     turn: Option<(TurnList, Option<Instant>)>,
     /// TURN servers to allocate on, once the notes are in.
     turn_servers: Option<Vec<TurnServerSpec>>,
+    /// A lent pool's TURN relays, picked beforehand (FR12c-5): taken with
+    /// the caller's own at the first poll.
+    picks: Option<Vec<TurnPick>>,
+    /// The pool was lent ([`Lent`]): it goes back, not dropped.
+    lent: bool,
     endpoint_made: bool,
     asker: Option<Asker>,
     /// When the answer's subscription was made, and whether a relay sent
@@ -262,14 +277,36 @@ struct Nostr {
 }
 
 impl Nostr {
-    fn start(mut join: NostrJoin) -> Nostr {
-        join.pool.relays = join_relays(&join.pool.relays, &[]);
+    fn start(join: NostrJoin) -> Nostr {
+        Nostr::start_with(join, None)
+    }
+
+    /// A join on its own pool, or on a `lent` one (FR12c-5): already
+    /// connected (its relays' states taken as they are), its TURN relays
+    /// picked, so nothing is collected.
+    fn start_with(mut join: NostrJoin, lent: Option<Lent>) -> Nostr {
+        let (pool, picks, was_lent) = match lent {
+            Some(l) => {
+                join.pool.relays = l.relays;
+                (l.pool, Some(l.picks), true)
+            }
+            None => {
+                join.pool.relays = join_relays(&join.pool.relays, &[]);
+                let mut pool = Pool::start(join.pool.clone());
+                if join.turn_from_nostr {
+                    pool.subscribe(TURN_SUB, vec![TurnList::filter(unix_now())]);
+                }
+                (pool, None, false)
+            }
+        };
         let n = join.pool.relays.len();
-        let mut pool = Pool::start(join.pool.clone());
-        if join.turn_from_nostr {
-            pool.subscribe(TURN_SUB, vec![TurnList::filter(unix_now())]);
+        let mut relays = Relays::new(n);
+        if was_lent {
+            for (i, (_, status)) in pool.statuses().iter().enumerate() {
+                relays.status(i, status);
+            }
         }
-        let turn = join.turn_from_nostr.then(|| {
+        let turn = (join.turn_from_nostr && !was_lent).then(|| {
             let mut list = TurnList::new();
             list.allow_local(join.allow_local);
             (list, None)
@@ -277,10 +314,12 @@ impl Nostr {
         Nostr {
             join,
             pool: Some(pool),
-            relays: Relays::new(n),
+            relays,
             started: None,
             turn,
             turn_servers: None,
+            picks,
+            lent: was_lent,
             endpoint_made: false,
             asker: None,
             asked: None,
@@ -386,7 +425,18 @@ impl Nostr {
             let invalid = self.verdicts.contains(&Verdict::Invalid);
             return Err(if invalid { RELAYS_INVALID } else { RELAYS_REFUSED }.into());
         }
-        // 1. The TURN notes, then the servers to allocate on.
+        // 1. The TURN notes, then the servers to allocate on (a lent
+        // pool's picked already).
+        if let Some(picks) = self.picks.take() {
+            let mut servers: Vec<TurnServerSpec> = cfg.ice.turn.iter().take(MAX_TURN).cloned().collect();
+            let room = MAX_TURN.saturating_sub(servers.len());
+            servers.extend(picks.into_iter().take(room).map(|p| TurnServerSpec {
+                addr: p.addr.to_string(),
+                user: p.user,
+                pass: p.pass,
+            }));
+            self.turn_servers = Some(servers);
+        }
         if let Some((list, eose)) = &self.turn {
             let done = eose.is_some_and(|t| now >= t + TURN_AFTER_EOSE) || now >= started + TURN_AT_MOST;
             if !done {
@@ -457,6 +507,19 @@ impl Drop for Nostr {
     }
 }
 
+impl Nostr {
+    /// A lent pool, back (its answer's subscription ended); `None` for one
+    /// of its own.
+    fn give_back(&mut self) -> Option<Pool> {
+        if !self.lent {
+            return None;
+        }
+        let mut pool = self.pool.take()?;
+        pool.unsubscribe(ANSWER_SUB);
+        Some(pool)
+    }
+}
+
 enum Stage {
     /// The direct attempt's endpoint is in the outbox.
     Direct,
@@ -487,13 +550,23 @@ impl Joiner {
     /// attempt's endpoint (to put in the outbox), or Nostr's pool; the
     /// first step to report.
     pub(crate) fn start(join: Join, cfg: EndpointConfig) -> io::Result<(Joiner, Option<Endpoint>, JoinStep)> {
+        Joiner::start_lent(join, cfg, None)
+    }
+
+    /// [`Joiner::start`]; a join through Nostr alone takes `lent` (FR12c-5:
+    /// a pool connected beforehand), which [`Joiner::give_back`] returns.
+    pub(crate) fn start_lent(
+        join: Join,
+        cfg: EndpointConfig,
+        lent: Option<Lent>,
+    ) -> io::Result<(Joiner, Option<Endpoint>, JoinStep)> {
         match join {
             Join { direct: Some(addr), nostr } => {
                 let ep = Endpoint::connect(cfg.clone(), addr)?;
                 Ok((Joiner { cfg, nostr, stage: Stage::Direct, clock: 0 }, Some(ep), JoinStep::Direct))
             }
             Join { direct: None, nostr: Some(n) } => {
-                let stage = Stage::Nostr(Box::new(Nostr::start(n)));
+                let stage = Stage::Nostr(Box::new(Nostr::start_with(n, lent)));
                 Ok((Joiner { cfg, nostr: None, stage, clock: 0 }, None, JoinStep::Relays))
             }
             Join { direct: None, nostr: None } => {
@@ -509,6 +582,15 @@ impl Joiner {
         self.clock = secs;
         if let Stage::Nostr(n) = &mut self.stage {
             n.clock = secs;
+        }
+    }
+
+    /// The pool [`Joiner::start_lent`] took, back; `None` for one of its
+    /// own (dropped with the join) or none.
+    pub(crate) fn give_back(&mut self) -> Option<Pool> {
+        match &mut self.stage {
+            Stage::Nostr(n) => n.give_back(),
+            Stage::Direct => None,
         }
     }
 

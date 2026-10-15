@@ -327,6 +327,17 @@ pub(crate) struct Listener {
 impl Listener {
     /// Listens on `cfg`'s relays for handshakes addressed to `me`.
     pub(crate) fn start(cfg: PoolConfig, me: Identity) -> io::Result<Listener> {
+        Listener::start_on(cfg, me, None)
+    }
+
+    /// [`Listener::start`]; with `lent`, on that pool (connected
+    /// beforehand on `cfg`'s relays, ruling FR12c-5), which the thread
+    /// sends back, unsubscribed, when it stops (else drops it there).
+    pub(crate) fn start_on(
+        cfg: PoolConfig,
+        me: Identity,
+        lent: Option<(Pool, Sender<Pool>)>,
+    ) -> io::Result<Listener> {
         #[cfg(test)]
         if FAIL_START.with(std::cell::Cell::get) {
             return Err(io::Error::other("no thread (a test)"));
@@ -341,7 +352,7 @@ impl Listener {
         let to = ToPeer { offers: offer_tx, skews: skew_tx, relays: news_tx };
         thread::Builder::new()
             .name("rl-online listen".into())
-            .spawn(move || listen(cfg, me, &to, &answer_rx, &s, &st))?;
+            .spawn(move || listen(cfg, me, lent, &to, &answer_rx, &s, &st))?;
         Ok(Listener { offers, skews, relay_news, answers, status, stop })
     }
 
@@ -412,7 +423,19 @@ pub(crate) struct HostReach {
 impl HostReach {
     /// Listens as `listen` says, on `me`'s key.
     pub(crate) fn start(listen: HostListen, me: &Identity) -> io::Result<HostReach> {
-        let listener = listen.pool.clone().map(|pool| Listener::start(pool, me.clone())).transpose()?;
+        HostReach::start_on(listen, me, None)
+    }
+
+    /// [`HostReach::start`], its listener on `lent` (a pool connected
+    /// beforehand on `listen`'s relays, and where to send it back: ruling
+    /// FR12c-5, a successor's standing relays).
+    pub(crate) fn start_on(
+        listen: HostListen,
+        me: &Identity,
+        lent: Option<(Pool, Sender<Pool>)>,
+    ) -> io::Result<HostReach> {
+        let listener =
+            listen.pool.clone().map(|pool| Listener::start_on(pool, me.clone(), lent)).transpose()?;
         Ok(HostReach {
             listener,
             pool: listen.pool,
@@ -531,6 +554,7 @@ struct ToPeer {
 fn listen(
     cfg: PoolConfig,
     me: Identity,
+    lent: Option<(Pool, Sender<Pool>)>,
     to: &ToPeer,
     answers: &Receiver<Answered>,
     status: &Mutex<Listening>,
@@ -541,7 +565,22 @@ fn listen(
     let urls = cfg.relays.clone();
     let mut news_said: Vec<Option<String>> = vec![None; urls.len()];
     let mut relays = Relays::new(cfg.relays.len());
-    let mut pool = Pool::start(cfg);
+    let (mut pool, back) = match lent {
+        Some((pool, back)) => (pool, Some(back)),
+        None => (Pool::start(cfg), None),
+    };
+    // A lent pool's relays are connected already: their states as they
+    // are, said as news (FR12c-5).
+    if back.is_some() {
+        for (i, (_, st)) in pool.statuses().iter().enumerate() {
+            relays.status(i, st);
+            if let (RelayStatus::Connected, Some(url)) = (st, urls.get(i)) {
+                let _ = to.relays.send((url.clone(), "connected".into()));
+                news_said[i] = Some("connected".into());
+            }
+        }
+        *status.lock().unwrap_or_else(PoisonError::into_inner) = relays.listening();
+    }
     let mut inbox = Inbox::new(me);
     let mut rand = || rl_net::random_bytes::<32>().unwrap_or([0; 32]);
     pool.subscribe(INBOX_SUB, vec![inbox.filter(unix_now())]);
@@ -624,7 +663,16 @@ fn listen(
             subscribed = now;
         }
     }
-    // The pool's drop (up to 2 s) happens here, off the peer's thread.
+    // A lent pool goes back, its handshakes no longer asked for; else (or
+    // its owner gone) the pool's drop (up to 2 s) happens here, off the
+    // peer's thread.
+    if let Some(back) = back {
+        pool.unsubscribe(INBOX_SUB);
+        if let Err(mpsc::SendError(pool)) = back.send(pool) {
+            drop(pool);
+        }
+        return;
+    }
     drop(pool);
 }
 

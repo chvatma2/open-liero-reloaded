@@ -191,7 +191,11 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   no writes, new connections held without a handshake; Drip: one byte per 40 ms,
   forever: an endless handshake response on new connections (on the TCP
   stream, under any TLS), an endless 64 KiB frame on established ones),
-  `set_time(unix)` (the clock for NIP-40; default the system clock).
+  `set_time(unix)` (the clock for NIP-40; default the system clock),
+  `connections()` (accepted so far), `open_connections()` and
+  `subscriptions()` (each live
+  one's connection and filters: rl-online's standing migration relays,
+  ruling FR12c-5).
   Verifies events; regular events dedupe by id,
   replaceable kinds by (key, kind), addressable by (key, kind, `d`), newest
   wins; ephemeral 20000-29999 only forwarded; expired events are refused on

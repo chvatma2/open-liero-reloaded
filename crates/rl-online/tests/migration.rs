@@ -731,6 +731,56 @@ fn a_successor_is_reached_through_the_relays() {
     assert_eq!(ra.checksums, rb.checksums);
 }
 
+/// Ruling FR12c-5 (final review B-I3): each client's migration relays
+/// connect at its match's start and fetch the TURN notes there, asking for
+/// nothing keyed to it before its turn (N80); a migration through the
+/// relays reuses those pools: Anna's listener subscribes to her handshakes
+/// on her open connection in her turn, Bert asks on his. The relay sees no
+/// new connection during the migration, and Bert's closes at his match's
+/// end (Anna's stays: she hosts and listens there).
+#[test]
+fn the_migration_relays_connect_at_the_match_start() {
+    let Some(content) = content() else { return };
+    let relay = TestRelay::start();
+    let turned = MigrationConfig { turn_from_nostr: true, ..relayed(&relay) };
+    let mut net = Net::new(content, 0.1);
+    let a = net.join_with_migration("Anna", turned.clone());
+    let b = net.join_with_migration("Bert", turned);
+    net.peers[b].peer().test_ignore_direct();
+    let keys = [a, b].map(|i| hex::encode(net.peers[i].key));
+    assert_eq!(relay.connections(), 0, "no pool before the match");
+    net.ready(&[a, b]);
+    net.host().peer().lobby().start(7).unwrap();
+    let mut subs: Vec<Vec<rl_discovery::Filter>> = Vec::new();
+    let keyed = |subs: &[Vec<rl_discovery::Filter>], key: &str| {
+        subs.iter().flatten().any(|f| f.tags.iter().any(|(c, v)| *c == 'p' && v.iter().any(|k| k == key)))
+    };
+    net.run_until(Duration::from_secs(10), "both pools connect and fetch the TURN notes", |n| {
+        subs.extend(relay.subscriptions().into_iter().map(|s| s.1));
+        relay.connections() == 2
+            && subs.iter().flatten().filter(|f| f.kinds == [rl_discovery::KIND_TURN]).count() >= 2
+            && relay.subscriptions().is_empty()
+            && n.host_tick() > 300
+    });
+    assert!(!keys.iter().any(|k| keyed(&subs, k)), "nothing keyed to a client before its turn: {subs:?}");
+    net.peers[0].frozen = true;
+    net.run_until(Duration::from_secs(12), "both resume under Anna", |n| {
+        subs.extend(relay.subscriptions().into_iter().map(|s| s.1));
+        n.peers[a].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
+            && n.peers[b].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Anna"))
+    });
+    assert!(keyed(&subs, &keys[0]), "Anna listened in her turn");
+    assert!(
+        net.peers[b].has(|e| *e == OnlineEvent::Joining(JoinStep::Asking)),
+        "Bert asked through the relays"
+    );
+    assert_eq!(relay.connections(), 2, "the migration reused both pools");
+    net.run_until(Duration::from_secs(20), "the match ends and Bert's pool closes", |n| {
+        [a, b].iter().all(|&i| n.peers[i].has(ended) && n.peers[i].has(replay_ready))
+            && relay.open_connections() == 1
+    });
+}
+
 /// Carried from Task 6: a link through the relays opens slowly on a lossy
 /// path (ICE's lost checks sent again 0.25, 0.75, 1.75, 3.75 s after the
 /// first, then DTLS, then rl-net's wait for the pair's stats). Cid

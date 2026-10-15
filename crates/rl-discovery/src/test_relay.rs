@@ -352,6 +352,23 @@ impl TestRelay {
         self.shared.lock().events.clone()
     }
 
+    /// How many connections the relay accepted so far (tests: a pool
+    /// connected beforehand and reused opens none).
+    pub fn connections(&self) -> u64 {
+        self.shared.lock().next_conn
+    }
+
+    /// How many connections are open now.
+    pub fn open_connections(&self) -> usize {
+        self.shared.lock().conns.iter().filter(|h| !h.is_finished()).count()
+    }
+
+    /// The live subscriptions: each one's connection (numbered from 0 in
+    /// the order accepted) and filters.
+    pub fn subscriptions(&self) -> Vec<(u64, Vec<Filter>)> {
+        self.shared.lock().subs.iter().map(|s| (s.conn, s.filters.clone())).collect()
+    }
+
     /// Makes the relay misbehave from now on, on every connection.
     pub fn set_misbehaviour(&self, m: Misbehaviour) {
         let mut st = self.shared.lock();

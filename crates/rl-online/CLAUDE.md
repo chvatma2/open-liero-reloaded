@@ -348,13 +348,37 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       (`Collect` after `Welcome`).
     - **Relays** (N73 as amended by A15): with `migration.relays` the
       successor listens on them from its gate's opening (its turn:
-      `HostReach::start(HostListen { pool: relays, public_address: None
-      })`), answers their offers on its standby (`answer_signalled`, the
+      `HostReach::start_on(HostListen { pool, public_address: None },
+      me, lent)`), answers their offers on its standby (`answer_signalled`, the
       gate open) and reports `RelayJoin` and `ListenRelay` lines as a
       host does; the listener goes with the host side at the commit, and
       stops when the gate closes (the window's end uncommitted, a cancel).
-      Without relays it listens on none. Its relays' connections add
-      about 1-2 s to a migration through Nostr.
+      Without relays it listens on none.
+    - **Standing relays** (`peer/relays.rs`, ruling FR12c-5, final review
+      B-I3: every attempt through the relays paid a pool's connects and
+      the TURN notes' wait, 1-4 s, inside a 5 s window): at its match's
+      start (`client_start`) a client with `migration.enabled` and relays
+      connects `MigrationRelays` (a `Pool` on its relays, each once, at
+      most `MAX_JOIN_RELAYS`) and, with `turn_from_nostr`, fetches the
+      TURN notes (`TURN_AFTER_EOSE` after the first `EOSE`, `TURN_AT_MOST`
+      at the latest, again every `TURN_REFRESH`, 2 min); it subscribes to
+      nothing keyed to it (N80). An attempt whose join asks only relays it
+      has borrows the pool (`lend`: `join::Lent`, the TURN relays picked,
+      `Joiner::start_lent`: no TURN wait, the relays' states as they are)
+      and gives it back when it ends (`end_attempt`, `give_back`); the
+      successor's listener borrows it in its turn (`lend_to_listener`,
+      `Listener::start_on`: its relays said `connected` at once) and sends
+      it back, unsubscribed, when its gate closes (kept at the commit:
+      the host listens there). Without it (no relays, lent, or a join
+      asking another relay) a pool of its own, as before. Closed (on a
+      thread) at the match's end (`finish_client`) or the peer's
+      (`drop_migration`). Idle cost: a WebSocket per relay and a TURN
+      request every 2 minutes. The public relays' timing stays a
+      residual for the playtest. Pinned by
+      `the_migration_relays_connect_at_the_match_start` (a `TestRelay`:
+      two connections at the start, the TURN notes asked for, nothing
+      keyed to a client before its turn, none new during the migration,
+      Bert's closed at his match's end; fails on the old driver).
     - **Late rejoiners** (N72): a migrated lobby keeps an away member's id
       only until its resume (`drop_away`); a member welcomed after it
       gets a new id, `Waiting`. Its client sees the id change at the

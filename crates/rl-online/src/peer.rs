@@ -44,6 +44,7 @@ use crate::replay::{MatchRecord, PendingReplay};
 
 mod lobby_handle;
 mod migrate;
+mod relays;
 pub use lobby_handle::LobbyHandle;
 
 /// The host sends its lobby's messages at most this often: changes in
@@ -229,6 +230,9 @@ struct ClientSide {
     /// back after its new host's resume (N72, N74: its mid-match `Start`;
     /// cleared at the match's end, so the next match counts from 0).
     migrations: u32,
+    /// Its migration relays, connected from its match's start to its end
+    /// (ruling FR12c-5).
+    relays: Option<Box<relays::MigrationRelays>>,
 }
 
 enum Side {
@@ -401,6 +405,7 @@ impl OnlinePeer {
                     migrating: None,
                     rejoined: None,
                     migrations: 0,
+                    relays: None,
                 };
                 (endpoint, Side::Client(Box::new(client)))
             }
@@ -1349,6 +1354,12 @@ impl OnlinePeer {
         let mut game = Game::new(session, None, start.clone(), my_slot);
         if let Side::Client(c) = &mut self.side {
             game.migrations = std::mem::take(&mut c.migrations);
+            // Ruling FR12c-5: the migration's relays connect now, not at a
+            // migration (a late rejoiner's are open already).
+            if c.relays.is_none() {
+                let now = self.now.unwrap_or_else(Instant::now);
+                c.relays = relays::MigrationRelays::start(&c.migration, now).map(Box::new);
+            }
         }
         self.game = Some(game);
         self.events.push(OnlineEvent::MatchStarting { start, my_slot });
@@ -1549,6 +1560,10 @@ impl OnlinePeer {
     /// A client's match is over: its replay, from the ticks it confirmed
     /// up to the match's last.
     fn finish_client(&mut self) {
+        // The match is over: its migration relays close (FR12c-5).
+        if let Side::Client(c) = &mut self.side {
+            c.relays = None;
+        }
         let Some(g) = self.game.take() else { return };
         let confirmed = g.session.confirmed();
         let upto = g.end_at.map_or(confirmed, |e| (e + 1).min(confirmed));

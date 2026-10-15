@@ -16,8 +16,9 @@ use rl_net::endpoint::IceConfig;
 use rl_netcode::migration::{HOST_SILENT_US, MAX_MIGRATIONS, STEP_DOWN_US, Step};
 use rl_proto::{MAX_MEMBERS, MAX_SPECTATORS, SuccessorWire};
 
+use super::relays::MigrationRelays;
 use super::*;
-use crate::join::JoinStep;
+use crate::join::{JoinStep, drop_pool};
 use crate::migration::{
     ANSWER_OPEN_TIMEOUT, AttemptOutcome, Attempted, Connector, Failure, HOST_BACK, LostWhy,
     MIGRATION_CONNECT_TIMEOUT, MigrationStep, Planner, REPORT_WAIT, Route, n64_direct,
@@ -149,6 +150,10 @@ struct Connect<'a> {
     events: &'a mut Vec<OnlineEvent>,
     /// The joins started: the entry's member, direct or not.
     started: Vec<(u8, bool)>,
+    /// The standing relays (FR12c-5): a join through them borrows their
+    /// pool.
+    relays: Option<&'a mut MigrationRelays>,
+    now: Instant,
 }
 
 impl Connector for Connect<'_> {
@@ -162,7 +167,17 @@ impl Connector for Connect<'_> {
             ..self.base.clone()
         };
         let direct = join.direct.is_some();
-        let (joiner, ep, step) = Joiner::start(join, cfg).ok()?;
+        // Through the relays, on the standing pool when it has them (FR12c-5).
+        let lent = match (&join.nostr, self.relays.as_deref_mut()) {
+            (Some(n), Some(r)) if join.direct.is_none() => r.lend(&n.pool.relays, self.now),
+            _ => None,
+        };
+        let (joiner, ep, step) = match Joiner::start_lent(join, cfg, lent) {
+            Ok(started) => started,
+            // A lent pool went with the failed start: the next join makes
+            // its own (never on the caller's thread: `drop_pool`).
+            Err(_) => return None,
+        };
         let look = my_look(self.lobby, self.my_key);
         let mut lobby = LobbyClient::new(self.me.clone(), look, None, Some(entry.key));
         if let Some(port) = self.standby {
@@ -184,14 +199,15 @@ impl Connector for Connect<'_> {
     }
 
     fn discard(&mut self, attempt: Box<Attempt>) {
-        drop_off_thread(attempt.out);
+        end_attempt(attempt, self.relays.as_deref_mut());
     }
 }
 
-/// Attempts given up, their endpoints dropped on threads.
-struct OffThread;
+/// Attempts given up, their endpoints dropped on threads, a lent pool
+/// back to the standing relays.
+struct OffThread<'a>(Option<&'a mut MigrationRelays>);
 
-impl Connector for OffThread {
+impl Connector for OffThread<'_> {
     type Attempt = Box<Attempt>;
 
     fn connect(&mut self, _: &SuccessorWire, _: Join) -> Option<Box<Attempt>> {
@@ -199,7 +215,25 @@ impl Connector for OffThread {
     }
 
     fn discard(&mut self, attempt: Box<Attempt>) {
-        drop_off_thread(attempt.out);
+        end_attempt(attempt, self.0.as_deref_mut());
+    }
+}
+
+/// An attempt ends: a pool it borrowed goes back to the standing relays
+/// (FR12c-5; without them, dropped on a thread), its endpoint dropped on a
+/// thread.
+fn end_attempt(mut a: Box<Attempt>, relays: Option<&mut MigrationRelays>) {
+    give_back(&mut a, relays);
+    drop_off_thread(a.out);
+}
+
+/// The pool the attempt borrowed, back to the standing relays.
+fn give_back(a: &mut Attempt, relays: Option<&mut MigrationRelays>) {
+    if let Some(pool) = a.joiner.give_back() {
+        match relays {
+            Some(r) => r.give_back(pool),
+            None => drop_pool(pool),
+        }
     }
 }
 
@@ -260,8 +294,9 @@ fn drop_off_thread(out: Outbox) {
 /// standby's endpoints on threads, the successor's listener stopped.
 pub(super) fn drop_migration(c: &mut ClientSide) {
     if let Some(a) = c.migrating.take().and_then(|mut mg| mg.plan.take_attempt()) {
-        drop_off_thread(a.out);
+        end_attempt(a, None);
     }
+    c.relays = None;
     if let Some(sb) = c.standby.take() {
         let Standby { out, taking, .. } = *sb;
         if let Some(mut t) = taking {
@@ -522,6 +557,11 @@ impl OnlinePeer {
         if self.closed {
             return;
         }
+        if let Side::Client(c) = &mut self.side
+            && let Some(r) = c.relays.as_deref_mut()
+        {
+            r.poll(now);
+        }
         self.standby_tasks(now);
         self.attempt_tasks(now);
         self.step_migration(now);
@@ -658,7 +698,8 @@ impl OnlinePeer {
         let now_us = self.now_us;
         let outage = self.outage();
         let Side::Client(c) = &mut self.side else { return };
-        let Some(mg) = c.migrating.as_deref_mut() else { return };
+        let ClientSide { migrating, relays, .. } = &mut **c;
+        let Some(mg) = migrating.as_deref_mut() else { return };
         let Some((to, route)) = mg.plan.attempt() else { return };
         let Some(a) = mg.plan.attempt_mut() else { return };
         let mut steps = Vec::new();
@@ -761,7 +802,7 @@ impl OnlinePeer {
                 // N69: the old host was heard while this contact held it
                 // here; the successor that answered has gone back to it (or
                 // is gone): so does this peer.
-                if mg.plan.failed(now_us, why, &mut OffThread) {
+                if mg.plan.failed(now_us, why, &mut OffThread(relays.as_deref_mut())) {
                     self.call_off();
                 }
             }
@@ -778,7 +819,7 @@ impl OnlinePeer {
         let outage = self.outage();
         let hello_delay = self.hello_delay();
         let Side::Client(c) = &mut self.side else { return };
-        let ClientSide { migrating, me, cfg, migration, lobby, standby, .. } = &mut **c;
+        let ClientSide { migrating, me, cfg, migration, lobby, standby, relays, .. } = &mut **c;
         let Some(mg) = migrating.as_deref_mut() else { return };
         let mut steps = Vec::new();
         let mut conn = Connect {
@@ -792,6 +833,8 @@ impl OnlinePeer {
             hello_delay,
             events: &mut steps,
             started: Vec::new(),
+            relays: relays.as_deref_mut(),
+            now,
         };
         let before = mg.plan.attempt().map(|(to, route)| (to, route, mg.plan.in_contact()));
         let step = mg.plan.step(now_us, &mut conn);
@@ -846,11 +889,11 @@ impl OnlinePeer {
         }
     }
 
-    /// The attempt goes (its endpoint on a thread).
+    /// The attempt goes (its endpoint on a thread, a lent pool back).
     fn drop_attempt(&mut self) {
         let Side::Client(c) = &mut self.side else { return };
         if let Some(a) = c.migrating.as_mut().and_then(|mg| mg.plan.take_attempt()) {
-            drop_off_thread(a.out);
+            end_attempt(a, c.relays.as_deref_mut());
         }
     }
 
@@ -881,10 +924,19 @@ impl OnlinePeer {
             // It cannot host: its window passes.
             return false;
         };
-        let listen = HostListen { pool: c.migration.relays.clone(), public_address: None };
-        let Ok(reach) =
-            HostReach::start(listen, &c.me).or_else(|_| HostReach::start(HostListen::off(), &c.me))
-        else {
+        // Its listener on the standing relays' pool, connected since the
+        // match's start (FR12c-5); without them, a pool of its own.
+        let now = self.now.unwrap_or_else(Instant::now);
+        let lent = c.relays.as_deref_mut().and_then(|r| Some((r.config().clone(), r.lend_to_listener(now)?)));
+        let reach = match lent {
+            Some((pool, lent)) => {
+                HostReach::start_on(HostListen { pool: Some(pool), public_address: None }, &c.me, Some(lent))
+            }
+            None => {
+                HostReach::start(HostListen { pool: c.migration.relays.clone(), public_address: None }, &c.me)
+            }
+        };
+        let Ok(reach) = reach.or_else(|_| HostReach::start(HostListen::off(), &c.me)) else {
             return false;
         };
         let nobody = lobby.away_in_match().is_empty();
@@ -939,7 +991,7 @@ impl OnlinePeer {
         };
         let window_end = c.migrating.as_ref().map_or(now_us, |mg| mg.plan.window_end(now_us));
         if let Some(a) = c.migrating.take().and_then(|mut mg| mg.plan.take_attempt()) {
-            drop_off_thread(a.out);
+            end_attempt(a, c.relays.as_deref_mut());
         }
         let old = std::mem::replace(&mut self.endpoint, out);
         drop_off_thread(old);
@@ -1038,7 +1090,10 @@ impl OnlinePeer {
         let Side::Client(c) = &mut self.side else { return };
         let Some(mut mg) = c.migrating.take() else { return };
         let to = mg.plan.attempt().map(|(to, _)| to);
-        let Some(a) = mg.plan.take_attempt() else { return };
+        let Some(mut a) = mg.plan.take_attempt() else { return };
+        // A pool it borrowed goes back: the match goes on, and a further
+        // migration (N74) may need it (FR12c-5).
+        give_back(&mut a, c.relays.as_deref_mut());
         let Attempt { out, lobby, connection, .. } = *a;
         let member = to.and_then(|to| mg.plan.order().get(to)).map(|e| e.member);
         let name = member.map_or_else(
