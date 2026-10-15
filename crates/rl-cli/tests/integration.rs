@@ -5,7 +5,7 @@
 //! Kept as their own binaries:
 //! - `golden`: `bless-regression`;
 //! - `gpu_bench`: the GPU tier (`check::GPU_TESTS`);
-//! - `grid`: the full tier's bot-match grid (`check::FULL_TESTS`);
+//! - `grid`: the full tier's bot-match grid (`check::TIMED_TESTS`);
 //! - `net_cases`: `bless-regression --from`;
 //! - `net_sim`: the full tier's online grid (`check::FULL_TESTS`);
 //! - `net_soak_memory`: reads the process's memory (process-global state);

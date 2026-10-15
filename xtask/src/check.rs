@@ -61,13 +61,17 @@ pub fn full(offline: bool) -> anyhow::Result<bool> {
 /// (`rl-cli`'s `transport`, spec §9.4; two clients in `check`), and
 /// rl-game's integration tests again for its full-tier migration case
 /// (plan 12c Task 9: `a_client_whose_frames_stop_stays_joined_with_migration`).
-pub const FULL_TESTS: &[(&str, &str)] = &[
-    ("rl-cli", "grid"),
-    ("rl-cli", "net_sim"),
-    ("rl-cli", "transport"),
-    ("rl-net", "link"),
-    ("rl-game", "integration"),
-];
+///
+/// [`TIMED_TESTS`] are not in this list: they run first and alone.
+pub const FULL_TESTS: &[(&str, &str)] =
+    &[("rl-cli", "net_sim"), ("rl-cli", "transport"), ("rl-net", "link"), ("rl-game", "integration")];
+
+/// The full tier's tests that assert wall-clock budgets (`grid`'s p99 tick
+/// of 10 ms): a budget measures the code only when nothing else runs, so
+/// `bot-grid` runs these in their own nextest invocation, one test at a
+/// time, before [`FULL_TESTS`] (beside the online tests the grid's p99
+/// doubled, from 4.3 ms to 9 ms, and went over 10 ms in `full`).
+pub const TIMED_TESTS: &[(&str, &str)] = &[("rl-cli", "grid")];
 
 /// The test targets of the GPU tier as `(package, test target)`.
 pub const GPU_TESTS: &[(&str, &str)] = &[
@@ -116,19 +120,27 @@ fn gpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
     cargo(&args, &envs)
 }
 
-/// The full tier's long CPU tests ([`FULL_TESTS`]).
+/// The full tier's long CPU tests: [`TIMED_TESTS`] alone and one at a time,
+/// then [`FULL_TESTS`] together.
 fn full_cpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
-    let mut args =
-        vec!["nextest", "run", "--no-fail-fast", "--status-level", "fail", "--final-status-level", "fail"];
-    if !has_nextest() {
-        args = vec!["test", "--quiet"];
-    }
-    for (package, test) in FULL_TESTS {
-        args.extend(["-p", package, "--test", test]);
-    }
     let mut envs = envs.to_vec();
     envs.push(("RL_FULL_TESTS", PathBuf::from("1")));
-    cargo(&args, &envs)
+    let nextest = has_nextest();
+    for (tests, serial) in [(TIMED_TESTS, true), (FULL_TESTS, false)] {
+        let mut args = if nextest {
+            vec!["nextest", "run", "--no-fail-fast", "--status-level", "fail", "--final-status-level", "fail"]
+        } else {
+            vec!["test", "--quiet"]
+        };
+        for (package, test) in tests {
+            args.extend(["-p", package, "--test", test]);
+        }
+        if serial {
+            args.extend(if nextest { ["--test-threads", "1"] } else { ["--", "--test-threads=1"] });
+        }
+        cargo(&args, &envs)?;
+    }
+    Ok(())
 }
 
 /// `rl-audio`'s `device_check` example: plays two OLX sounds on the default

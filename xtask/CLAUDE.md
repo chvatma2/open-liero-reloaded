@@ -10,8 +10,9 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   also `bench`, `stress`, `e2e`) imports into `target/content-fresh` and
   fails listing the files (`differences`) if `content/packs` is stale.
   `--offline` skips it: the tests run on the committed packs.
-- `full` runs `check`, then `bot-grid` (`check::FULL_TESTS`: `rl-cli`'s
-  `tests/grid.rs`, `tests/net_sim.rs`' online grid and `tests/transport.rs`'
+- `full` runs `check`, then `bot-grid` (`check::TIMED_TESTS`: `rl-cli`'s
+  `tests/grid.rs`, alone and one test at a time, its p99 tick budget being
+  wall time; then `check::FULL_TESTS`: `tests/net_sim.rs`' online grid and `tests/transport.rs`'
   real-transport matches (spec §9.4), `rl-net`'s `link`, and `rl-game`'s
   `integration` again for its full-tier migration case, with
   `RL_FULL_TESTS=1`), then the GPU step
