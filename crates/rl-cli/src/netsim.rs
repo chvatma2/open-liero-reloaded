@@ -550,7 +550,12 @@ fn slowest_profile(spec: &NetSpec, peer: PeerId) -> Profile {
 fn stalls_within_windows(spec: &NetSpec, r: &Report, episodes: &[StallEpisode]) -> Result<(), Failure> {
     let windows = excused_windows(spec, r);
     let player = |p: PeerId| p == HOST || (1..=PeerId::from(spec.clients)).contains(&p);
-    for e in episodes.iter().filter(|e| player(e.peer) && !r.dropped.contains(&e.peer)) {
+    // A peer that went (host lost, crashed, left) runs no tick again: its
+    // last episode never ends, and is no stall of the match's.
+    let went = |e: &&StallEpisode| {
+        e.ended.is_none() && (r.host_lost.contains(&e.peer) || r.exited.contains(&e.peer))
+    };
+    for e in episodes.iter().filter(|e| player(e.peer) && !r.dropped.contains(&e.peer) && !went(e)) {
         let covering: Vec<&Window> = windows
             .iter()
             .filter(|w| {
@@ -1027,6 +1032,14 @@ mod tests {
         assert!(judge(&bad, &[(2, 200, Some(210))], false).is_ok());
         assert!(judge(&bad, &[(2, 100, Some(110))], false).is_err(), "outside the window");
         assert!(fills_stall(&Profile::BAD) && !fills_stall(&Profile::TYPICAL));
+        // A peer that went (host lost) never ends its last episode: no
+        // stall of the match's. One still in the match does.
+        let mut lost = empty_report();
+        lost.host_lost.insert(1);
+        let gone =
+            |r: &Report| stalls_within_windows(&s, r, &[StallEpisode { peer: 1, tick: 200, ended: None }]);
+        assert!(gone(&lost).is_ok());
+        assert!(gone(&empty_report()).is_err());
         // A spectator's outage excuses no player.
         let sp = NetSpec { outages: vec![(FIRST_SPECTATOR, from, until)], ..spec() };
         assert!(judge(&sp, &[(1, 200, Some(210))], false).is_err());

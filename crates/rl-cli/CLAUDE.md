@@ -143,7 +143,10 @@ The headless command-line tool. Its commands:
   again) has no window of its own: only an outage (the peer's, or its
   host's while that peer hosts) silences a host 2 s on a profile up to
   `bad` without a step-down, and that outage's window covers it (the kept
-  case `bad-4s3c1v-seed562805195`). Any
+  case `bad-4s3c1v-seed562805195`). The last episode of a player that
+  went (host lost, crashed, left) never ends and is not judged (soak case
+  `good-5s4c2v-seed1973712135`: host lost in a 5.5 s outage during the
+  migration). Any
   other stall, a longer one or one that never ends fails. Since
   rl-netcode's resume settles the time sync (RS-1), no profile stalls after a
   resume. `n66` always runs (bounds each migration by N66 (`N66_US`) when
