@@ -1,0 +1,32 @@
+(
+    spec: (
+        mod_id: "olx-mw-1-0",
+        level_id: "olx-level-fossilfacility",
+        seed: 3163848068,
+        slots: 6,
+        clients: 4,
+        spectators: 1,
+        join_tick: Some(1037),
+        profile: "awful",
+        drift_ppm: 2000,
+        ticks: 2539,
+        outages: [
+            (2, 125, 605),
+            (4, 1323, 1832),
+        ],
+        net_seed: 2856290454862921812,
+        difficulty: Some("medium"),
+        faults: [],
+        exits: [
+            (0, 1041, "crash"),
+        ],
+        host_freeze: None,
+        profile_changes: [
+            (257, 3, "typical"),
+            (275, 2, "bad"),
+            (1721, 4, "good"),
+        ],
+        migration: false,
+    ),
+    failure: Some("peer 100 reached only tick 1037 (frontier 1037) of 2539 in time at tick 16618"),
+)
