@@ -301,7 +301,10 @@ pub fn run_bot_client(
                     progress(Progress::Migrated { host: &host, me });
                     run.migrated.push(format!("{host} hosts"));
                 }
+                // Ruling FR12c-4: each attempt to reach a successor, said.
+                OnlineEvent::MigrationLog(text) => eprintln!("migration: {text}"),
                 OnlineEvent::HostLost(why) => {
+                    let why = why.to_string();
                     progress(Progress::HostLost(&why));
                     run.dropped = Some(format!("host lost: {why}"));
                     run.host_lost = Some(why);

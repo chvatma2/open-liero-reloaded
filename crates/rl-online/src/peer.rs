@@ -37,7 +37,7 @@ use crate::content::{Download, PeerContent};
 use crate::events::{NetStats, OnlineEvent};
 use crate::join::{BUSY, Join, Joiner, Lost};
 use crate::matches::{self, HostBots};
-use crate::migration::{HOST_LOST, MigrationConfig, stepped_down};
+use crate::migration::MigrationConfig;
 use crate::outbox::{Outbox, Part};
 use crate::reach::{HostListen, HostReach, Reachability, RelayJoin};
 use crate::replay::{MatchRecord, PendingReplay};

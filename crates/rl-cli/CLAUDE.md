@@ -430,6 +430,7 @@ the server's observer takes `Server::confirmed_rows()` (`TransportRun::
 server_rows`) and freezes (stops polling and stays until the run ends,
 holding its sockets: a hung host) or sets the server's own stop flag
 (`Server::shutdown`, `Bye`); the run then waits for no server record.
+Each `MigrationLog` line goes to stderr as `migration: …` (FR12c-4).
 `ClientRun` gains `migrated` (`"<name> hosts"` per migration, in order),
 `host_lost` (then `dropped` too) and `held` (per slot `known_upto` at its
 first `Migrating`); `Progress` gains `Migrated { host, me }` and

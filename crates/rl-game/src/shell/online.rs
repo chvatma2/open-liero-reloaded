@@ -727,7 +727,9 @@ impl Shell {
     /// 12c, ruling SB-2): the match view goes at once
     /// (as at a lost connection), the peer is let go (its replay of the
     /// match saved when made), and the Host lost screen says `why`.
-    fn host_lost(&mut self, why: String, out: &mut Vec<Outcome>) {
+    fn host_lost(&mut self, why: rl_online::LostWhy, out: &mut Vec<Outcome>) {
+        // Ruling FR12c-4: each reason its own text on the Host lost screen.
+        let why = why.to_string();
         println!("rl-game: migration: host lost: {why}");
         // A host lost is this player's own step-down (N70) or cut-off (SB-2).
         let hosting = self.net.as_ref().is_some_and(|n| n.host);
@@ -899,6 +901,9 @@ impl Shell {
                 }
                 OnlineEvent::Migrated { host, me } => self.migrated(&host, me, out),
                 OnlineEvent::HostLost(why) => return self.host_lost(why, out),
+                // Ruling FR12c-4: each attempt to reach a successor, and a
+                // join the migrated lobby refused, on the console only.
+                OnlineEvent::MigrationLog(text) => println!("rl-game: migration: {text}"),
             }
         }
     }

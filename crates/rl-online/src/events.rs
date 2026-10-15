@@ -8,7 +8,7 @@ use rl_terrain::Area;
 
 use crate::content::Download;
 use crate::join::JoinStep;
-use crate::migration::MigrationStep;
+use crate::migration::{LostWhy, MigrationStep};
 use crate::reach::{Reachability, RelayJoin};
 
 /// What happened during one [`crate::OnlinePeer::poll`], in order.
@@ -95,11 +95,16 @@ pub enum OnlineEvent {
     Migrating(MigrationStep),
     /// The match resumed under `host` (a name; `me`: this peer hosts now).
     Migrated { host: String, me: bool },
-    /// No successor took over ([`crate::HOST_LOST`]), this host stepped
-    /// down ([`crate::stepped_down`]), or this host heard none of its
-    /// players ([`crate::CUT_OFF`]): the match is over for this peer; its
-    /// replay follows (`ReplayReady`).
-    HostLost(String),
+    /// No successor took over (why: [`LostWhy`], its `Display` the Host
+    /// lost screen's text), this host stepped down, or this host heard
+    /// none of its members: the match is over for this peer; its replay
+    /// follows (`ReplayReady`).
+    HostLost(LostWhy),
+    /// A line about a migration for the console and the log only (ruling
+    /// FR12c-4): how each attempt to reach a successor ended, with its
+    /// name, its address and why; a join the successor's migrated lobby
+    /// refused. Never shown to other players.
+    MigrationLog(String),
 }
 
 /// The connection's numbers for the overlay, over the last second of a

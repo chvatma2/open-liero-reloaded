@@ -19,7 +19,8 @@ use rl_proto::{MAX_MEMBERS, MAX_SPECTATORS, SuccessorWire};
 use super::*;
 use crate::join::JoinStep;
 use crate::migration::{
-    CUT_OFF, Connector, Failure, HOST_BACK, MIGRATION_CONNECT_TIMEOUT, MigrationStep, Planner, REPORT_WAIT,
+    ANSWER_OPEN_TIMEOUT, AttemptOutcome, Attempted, Connector, Failure, HOST_BACK, LostWhy,
+    MIGRATION_CONNECT_TIMEOUT, MigrationStep, Planner, REPORT_WAIT, Route, n64_direct,
 };
 
 /// A client's standby endpoint (N63): a host endpoint on its own port whose
@@ -54,9 +55,52 @@ pub(super) struct Migrating {
     /// lobby's) came. Ruling FR12c-1: a successor expecting nobody commits
     /// only then; its own drop would look the same.
     gone: bool,
+    /// The last attempt to reach a successor, how it ended (ruling
+    /// FR12c-4): a host lost names it.
+    last: Option<Attempted>,
+    /// The attempts' outcomes said: (entry, route, window end, kind), each
+    /// once (a `NotHost` asked again every `RETRY_US` is said once).
+    said: BTreeSet<(usize, Route, u64, u8)>,
 }
 
 impl Migrating {
+    /// Ruling FR12c-4: how an attempt to entry `to` by `route` ended, kept
+    /// as the last, and said once per entry, route, window and kind, with
+    /// the successor's name and address.
+    fn note(
+        &mut self,
+        to: usize,
+        route: Route,
+        outcome: AttemptOutcome,
+        now_us: u64,
+        names: &BTreeMap<u8, String>,
+        out: &mut Vec<OnlineEvent>,
+    ) {
+        let entry = self.plan.order().get(to);
+        let successor = entry.map_or_else(
+            || "the successor".into(),
+            |e| names.get(&e.member).cloned().unwrap_or_else(|| format!("member {}", e.member)),
+        );
+        let direct = entry
+            .and_then(|e| e.direct)
+            .filter(|_| route == Route::Direct)
+            .filter(|&(ip, port)| n64_direct(ip, port))
+            .map(|(ip, port)| SocketAddr::from((ip, port)));
+        let kind = match outcome {
+            AttemptOutcome::Unreached(_) => 0,
+            AttemptOutcome::NotHosting => 1,
+            AttemptOutcome::Refused(_) => 2,
+            AttemptOutcome::Closed(_) => 3,
+            AttemptOutcome::Lapsed { .. } => 4,
+            AttemptOutcome::TimedOut { .. } => 5,
+        };
+        let attempted = Attempted { successor, direct, outcome };
+        if self.said.insert((to, route, self.plan.window_end(now_us), kind)) {
+            out.push(OnlineEvent::MigrationLog(attempted.to_string()));
+        }
+        self.last = Some(attempted);
+    }
+
     /// The joins' events to `out`, each step once until another comes.
     fn report_joins(&mut self, steps: Vec<OnlineEvent>, out: &mut Vec<OnlineEvent>) {
         for e in steps {
@@ -176,8 +220,32 @@ impl Attempt {
 enum Outcome {
     /// Welcomed: these lobby events (the poll's other events follow).
     Welcome(Vec<ClientEvent>),
-    /// It failed.
-    Failed(Failure),
+    /// It failed: what the planner makes of it, and why in words.
+    Failed(Failure, AttemptOutcome),
+}
+
+/// A successor's link lost, in words (not the host's: `why_text`'s).
+fn link_text(why: rl_net::endpoint::Why) -> &'static str {
+    use rl_net::endpoint::Why;
+    match why {
+        Why::Closed => "the connection was refused or closed",
+        Why::Timeout => "no answer in time",
+        Why::Limits => "it sent too much",
+        Why::Malformed => "it sent a malformed message",
+        Why::Refused => "it refused the link",
+        Why::Unsent => "this game could not send to it",
+    }
+}
+
+/// What a successor's lobby said in refusing the join, in words.
+fn lobby_refusal(e: &ClientEvent) -> Option<String> {
+    Some(match e {
+        ClientEvent::Refused(why) => refusal_text(*why).into(),
+        ClientEvent::WrongHost { .. } => "another game answered at its address".into(),
+        ClientEvent::Closed => "it closed the join".into(),
+        ClientEvent::Kicked { .. } => "it kicked this player".into(),
+        _ => return None,
+    })
 }
 
 /// Drops an outbox's endpoint on a thread (`rl-online drop`): never on the
@@ -408,7 +476,8 @@ impl OnlinePeer {
         // A spectator still joining has no world to follow a migration
         // with (ruling SK-8): host lost, not stranded on its join.
         if g.migrations >= MAX_MIGRATIONS || g.session.is_joining() {
-            self.host_lost(HOST_LOST.into());
+            let why = if g.session.is_joining() { LostWhy::StillJoining } else { LostWhy::TooManyMigrations };
+            self.host_lost(why);
             return true;
         }
         let order = c.lobby.succession().to_vec();
@@ -424,8 +493,15 @@ impl OnlinePeer {
         if ignore_direct {
             plan.ignore_direct();
         }
-        c.migrating =
-            Some(Box::new(Migrating { plan, reported: None, joining: None, joining_to: None, gone }));
+        c.migrating = Some(Box::new(Migrating {
+            plan,
+            reported: None,
+            joining: None,
+            joining_to: None,
+            gone,
+            last: None,
+            said: BTreeSet::new(),
+        }));
         self.report_step(MigrationStep::Finding);
         true
     }
@@ -544,6 +620,13 @@ impl OnlinePeer {
             if matches!(msg, ToClient::Challenge { .. }) {
                 t.challenged.insert(peer, now);
             }
+            // Ruling FR12c-4: a join its migrated lobby refuses is logged
+            // here (the joiner's side says it too).
+            if let ToClient::Refused(why) = &msg {
+                let from = t.addrs.get(&peer).map_or_else(|| "a joiner".into(), |a| a.to_string());
+                let text = format!("taking over: refused a join from {from}: {}", refusal_text(*why));
+                self.events.push(OnlineEvent::MigrationLog(text));
+            }
             send_tagged(&mut sb.out, peer, TAG_TO_CLIENT, &encode_to_client(&msg));
         }
         t.last_drain = Some(now);
@@ -576,16 +659,21 @@ impl OnlinePeer {
         let outage = self.outage();
         let Side::Client(c) = &mut self.side else { return };
         let Some(mg) = c.migrating.as_deref_mut() else { return };
+        let Some((to, route)) = mg.plan.attempt() else { return };
         let Some(a) = mg.plan.attempt_mut() else { return };
         let mut steps = Vec::new();
-        let mut outcome =
-            a.joiner.poll(now, &mut a.out, &mut steps).err().map(|_| Outcome::Failed(Failure::Unreached));
+        let mut outcome = a
+            .joiner
+            .poll(now, &mut a.out, &mut steps)
+            .err()
+            .map(|why| Outcome::Failed(Failure::Unreached, AttemptOutcome::Unreached(why)));
         // A signalled endpoint made just now is in the test hook's outage too.
         darken(outage, &mut a.out);
         let mut net = Vec::new();
         a.out.poll(now, &mut net);
         let (mut answered, mut opened) = (false, false);
         let mut events = net.into_iter();
+        let refused = |why: String| Some(Outcome::Failed(Failure::Refused, AttemptOutcome::Refused(why)));
         while outcome.is_none()
             && let Some(e) = events.next()
         {
@@ -601,43 +689,38 @@ impl OnlinePeer {
                             a.opened_at.get_or_insert(now);
                             opened = true;
                         }
-                        None => outcome = Some(Outcome::Failed(Failure::Refused)),
+                        None => outcome = refused("its link gave no DTLS fingerprints".into()),
                     }
                 }
                 NetEvent::Message { channel: Channel::Reliable, bytes, .. } => {
                     let Some(Tagged::ToClient(b)) = tag(&bytes) else { continue };
                     let Ok(msg) = decode_to_client(b) else {
-                        outcome = Some(Outcome::Failed(Failure::Refused));
+                        outcome = refused("it sent a message this game cannot read".into());
                         continue;
                     };
                     a.lobby.receive(msg, random_bytes::<32>().unwrap_or([0; 32]));
                     a.flush(now);
                     let lobby_events = a.lobby.events();
                     let welcome = lobby_events.iter().any(|e| matches!(e, ClientEvent::Welcome { .. }));
-                    let refused = lobby_events.iter().any(|e| {
-                        matches!(
-                            e,
-                            ClientEvent::Refused(_)
-                                | ClientEvent::WrongHost { .. }
-                                | ClientEvent::Closed
-                                | ClientEvent::Kicked { .. }
-                        )
-                    });
                     if welcome {
                         outcome = Some(Outcome::Welcome(lobby_events));
-                    } else if refused {
-                        outcome = Some(Outcome::Failed(Failure::Refused));
+                    } else if let Some(why) = lobby_events.iter().find_map(lobby_refusal) {
+                        outcome = refused(why);
                     }
                 }
-                NetEvent::Refused { why } => {
-                    let why = if why == Refusal::NotHost { Failure::NotHost } else { Failure::Refused };
-                    outcome = Some(Outcome::Failed(why));
+                NetEvent::Refused { why: Refusal::NotHost } => {
+                    outcome = Some(Outcome::Failed(Failure::NotHost, AttemptOutcome::NotHosting))
                 }
+                NetEvent::Refused { why } => outcome = refused(refusal_text(why).into()),
                 // Before its link opened its route did not reach the
                 // successor; after, the successor closed it.
-                NetEvent::Disconnected { .. } => {
-                    let why = if a.opened_at.is_some() { Failure::Refused } else { Failure::Unreached };
-                    outcome = Some(Outcome::Failed(why));
+                NetEvent::Disconnected { why, .. } => {
+                    let text = link_text(why).to_string();
+                    outcome = Some(if a.opened_at.is_some() {
+                        Outcome::Failed(Failure::Refused, AttemptOutcome::Closed(text))
+                    } else {
+                        Outcome::Failed(Failure::Unreached, AttemptOutcome::Unreached(text))
+                    });
                 }
                 _ => {}
             }
@@ -657,7 +740,8 @@ impl OnlinePeer {
         // so this peer moves on with the others instead of waiting for its
         // setup's timeout, past the give-up.
         if outcome.is_none() && mg.plan.lapsed(now_us) {
-            outcome = Some(Outcome::Failed(Failure::Unreached));
+            let secs = ANSWER_OPEN_TIMEOUT.as_secs();
+            outcome = Some(Outcome::Failed(Failure::Unreached, AttemptOutcome::Lapsed { secs }));
         }
         match outcome {
             None => {}
@@ -672,11 +756,15 @@ impl OnlinePeer {
                     self.on_net(e, now);
                 }
             }
-            // N69: the old host was heard while this contact held it here;
-            // the successor that answered has gone back to it (or is gone):
-            // so does this peer.
-            Some(Outcome::Failed(why)) if mg.plan.failed(now_us, why, &mut OffThread) => self.call_off(),
-            Some(Outcome::Failed(_)) => {}
+            Some(Outcome::Failed(why, said)) => {
+                mg.note(to, route, said, now_us, &self.names, &mut self.events);
+                // N69: the old host was heard while this contact held it
+                // here; the successor that answered has gone back to it (or
+                // is gone): so does this peer.
+                if mg.plan.failed(now_us, why, &mut OffThread) {
+                    self.call_off();
+                }
+            }
         }
     }
 
@@ -705,8 +793,16 @@ impl OnlinePeer {
             events: &mut steps,
             started: Vec::new(),
         };
+        let before = mg.plan.attempt().map(|(to, route)| (to, route, mg.plan.in_contact()));
         let step = mg.plan.step(now_us, &mut conn);
         let started = std::mem::take(&mut conn.started);
+        // An attempt the step moved past (its window ended, its own turn,
+        // the give-up) ended unfinished: said and kept too (FR12c-4).
+        if let Some((to, route, answered)) = before
+            && mg.plan.attempt().map(|a| a.0) != Some(to)
+        {
+            mg.note(to, route, AttemptOutcome::TimedOut { answered }, now_us, &self.names, &mut self.events);
+        }
         let to = match step {
             Step::Try(i) => Some(i),
             _ => None,
@@ -725,11 +821,12 @@ impl OnlinePeer {
             _ => None,
         };
         let gone = mg.gone;
+        let last = mg.last.clone();
         if step != Step::Host {
             self.close_gate();
         }
         match step {
-            Step::GiveUp => self.host_lost(HOST_LOST.into()),
+            Step::GiveUp => self.host_lost(LostWhy::NobodyReachable(last)),
             Step::Wait => self.report_step(MigrationStep::Finding),
             Step::Host => {
                 self.report_step(MigrationStep::TakingOver);
@@ -1028,7 +1125,7 @@ impl OnlinePeer {
     /// match is over for this peer. Its replay of the rows it confirmed
     /// (`ReplayReady` later; none for a spectator that joined mid-match),
     /// `HostLost(why)`, and every connection closed.
-    pub(super) fn host_lost(&mut self, why: String) {
+    pub(super) fn host_lost(&mut self, why: LostWhy) {
         if let Some(g) = self.game.take() {
             self.ended_world = Some(g.session.sim().world().clone());
             self.make_replay(record_of(&g.session, &g.start, g.session.frontier()));
@@ -1051,7 +1148,7 @@ impl OnlinePeer {
         if gap < Duration::from_micros(STEP_DOWN_US) || !h.lobby.succession().iter().any(|s| s.can_host) {
             return;
         }
-        self.leave_match(stepped_down(gap.as_secs_f32()), now);
+        self.leave_match(LostWhy::SteppedDown { secs: gap.as_secs_f32() }, now);
     }
 
     /// Rulings SB-2 and FR12c-1, after each advance: a host during a match,
@@ -1066,7 +1163,7 @@ impl OnlinePeer {
         let Side::Host(h) = &self.side else { return };
         let Some(g) = self.game.as_ref().filter(|g| g.ended.is_none()) else { return };
         if g.session.members_silent(self.now_us) && h.lobby.succession().iter().any(|s| s.can_host) {
-            self.leave_match(CUT_OFF.into(), now);
+            self.leave_match(LostWhy::CutOff, now);
         }
     }
 
@@ -1076,7 +1173,7 @@ impl OnlinePeer {
     /// them (its results first, as at an end), the replay of what it
     /// confirmed, and `HostLost(why)`. It does not rejoin the match; a
     /// dedicated server's lobby stays open.
-    fn leave_match(&mut self, why: String, now: Instant) {
+    fn leave_match(&mut self, why: LostWhy, now: Instant) {
         let now_us = self.now_us;
         let Some(mut g) = self.game.take() else { return };
         g.session.leave();

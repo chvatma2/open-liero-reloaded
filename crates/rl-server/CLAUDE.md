@@ -207,13 +207,14 @@ beside the executable, else in the working directory).
   it logs `"succession: … can take over"` (`LobbyHandle::succession`'s
   `can_host` entries, players by the start's slots and spectators apart:
   `succession_line`, "2 players", "1 player and 1 spectator", "nobody");
-  on `HostLost` (N70:
+  on `HostLost(LostWhy::SteppedDown { secs })` (N70:
   a server stalled past `STEP_DOWN_US` during a match with someone to
   take over; a server is never a client, so its host losses are this and
-  `CUT_OFF`)
-  `"stalled for {s:.1} s: the match moved to the next player; the lobby
-  is open again"`, `s` the gap between its last two polls; on
-  `HostLost(CUT_OFF)` (ruling SB-2: it heard none of its two or more
+  `CutOff`; any other is logged `"host lost: {why}"`, final review B-M6)
+  `"stalled for {secs:.1} s: the match moved to the next player; the lobby
+  is open again"`, `secs` rl-online's gap; `OnlineEvent::MigrationLog` is
+  `"migration: {line}"`; on
+  `HostLost(LostWhy::CutOff)` (ruling SB-2: it heard none of its two or more
   members for `HOST_SILENT_US`, its own network down; FR12c-1: with one
   it plays on) `"heard none of the players:
   the match moved to the next player; the lobby is open again"`.

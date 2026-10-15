@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use rl_discovery::{PoolConfig, Region};
 use rl_net::endpoint::{EndpointConfig, IceConfig};
-use rl_netcode::migration::{Migration, RETRY_US, Step};
+use rl_netcode::migration::{MAX_MIGRATIONS, Migration, RETRY_US, Step};
 use rl_proto::SuccessorWire;
 
 use crate::join::{Join, NostrJoin, join_relays};
@@ -55,6 +55,103 @@ pub const CUT_OFF: &str = "Connection lost: the others play on under a new host.
 /// Why a host that stalled `secs` seconds stepped down (N70).
 pub fn stepped_down(secs: f32) -> String {
     format!("Your game stopped for {secs:.1} s, so the match moved on without you.")
+}
+
+/// Why a match ended for a peer without it (spec §3.7's "host lost"
+/// screen; ruling FR12c-4: each case its own text, so a failed migration
+/// on real PCs can be told apart).
+#[derive(Clone, Debug, PartialEq)]
+pub enum LostWhy {
+    /// N74: the match moved hosts [`MAX_MIGRATIONS`] times already.
+    TooManyMigrations,
+    /// Ruling SK-8: the host went while this spectator was still joining
+    /// (no world to follow the match with).
+    StillJoining,
+    /// No successor took over within `GIVE_UP_US`: the last attempt to
+    /// reach one, if any.
+    NobodyReachable(Option<Attempted>),
+    /// N70: this host's game stopped this long (seconds), so it stepped
+    /// down.
+    SteppedDown { secs: f32 },
+    /// Ruling SB-2: this host heard none of its members (its own network).
+    CutOff,
+}
+
+impl std::fmt::Display for LostWhy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LostWhy::TooManyMigrations => write!(
+                f,
+                "The host left, and this match has moved to a new host {MAX_MIGRATIONS} times already: it \
+                 cannot move again."
+            ),
+            LostWhy::StillJoining => {
+                write!(f, "The host left while you were still joining the match, so you could not follow it.")
+            }
+            LostWhy::NobodyReachable(None) => f.write_str(HOST_LOST),
+            LostWhy::NobodyReachable(Some(last)) => write!(f, "{HOST_LOST} Last try: {last}."),
+            LostWhy::SteppedDown { secs } => f.write_str(&stepped_down(*secs)),
+            LostWhy::CutOff => f.write_str(CUT_OFF),
+        }
+    }
+}
+
+/// One attempt to reach a successor and how it ended (ruling FR12c-4):
+/// each is logged once (`OnlineEvent::MigrationLog`), the last kept and
+/// named by [`LostWhy::NobodyReachable`]. The address reaches only this
+/// PC's console and log.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Attempted {
+    /// The successor's name.
+    pub successor: String,
+    /// Directly at this address; `None`: through the relays.
+    pub direct: Option<SocketAddr>,
+    pub outcome: AttemptOutcome,
+}
+
+/// How an attempt to reach a successor ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AttemptOutcome {
+    /// Its route did not reach it: why (a connect refused or timed out, no
+    /// reply through the relays, a link closed before it opened).
+    Unreached(String),
+    /// Not taking the match over (`NotHost`): not its turn, or its own
+    /// game still hears the host.
+    NotHosting,
+    /// It refused the join: why.
+    Refused(String),
+    /// Its link closed after it opened: why.
+    Closed(String),
+    /// It answered, but the link did not open within this many seconds.
+    Lapsed { secs: u64 },
+    /// Its window ended (or the give-up came) with the attempt still under
+    /// way: unanswered, or `answered` but not taken back.
+    TimedOut { answered: bool },
+}
+
+impl std::fmt::Display for Attempted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = &self.successor;
+        let route = match self.direct {
+            Some(addr) => format!("directly at {addr}"),
+            None => "through the relays".into(),
+        };
+        match &self.outcome {
+            AttemptOutcome::Unreached(why) => write!(f, "could not reach {name} {route}: {why}"),
+            AttemptOutcome::NotHosting => write!(f, "{name} ({route}) was not taking the game over"),
+            AttemptOutcome::Refused(why) => write!(f, "{name} ({route}) refused: {why}"),
+            AttemptOutcome::Closed(why) => write!(f, "the link to {name} ({route}) closed: {why}"),
+            AttemptOutcome::Lapsed { secs } => {
+                write!(f, "{name} ({route}) answered, but the link did not open within {secs} s")
+            }
+            AttemptOutcome::TimedOut { answered: false } => {
+                write!(f, "{name} ({route}) did not answer before its turn ended")
+            }
+            AttemptOutcome::TimedOut { answered: true } => {
+                write!(f, "{name} ({route}) answered, but did not take this player back in time")
+            }
+        }
+    }
 }
 
 /// How a client takes part in a host migration (spec §3.7).
@@ -122,7 +219,7 @@ pub fn n64_direct(ip: [u8; 4], port: u16) -> bool {
 /// The route of a join to a successor (N73): its direct address, or its
 /// key through the relays.
 #[doc(hidden)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Route {
     Direct,
     Relays,
@@ -449,6 +546,71 @@ mod tests {
         assert_eq!(MigrationStep::TakingOver.to_string(), "The host is gone: you are taking over the game…");
         assert_eq!(stepped_down(1.73), "Your game stopped for 1.7 s, so the match moved on without you.");
         assert_eq!(HOST_LOST, "The host left and no other player could take over the game.");
+    }
+
+    /// Ruling FR12c-4: each host lost and each attempt has its own text.
+    #[test]
+    fn the_host_lost_texts_tell_the_cases_apart() {
+        let at: SocketAddr = "192.168.1.5:40123".parse().unwrap();
+        let attempt = |direct, outcome| Attempted { successor: "Anna".into(), direct, outcome };
+        let texts = [
+            (
+                attempt(Some(at), AttemptOutcome::Unreached("no answer".into())),
+                "could not reach Anna directly at 192.168.1.5:40123: no answer",
+            ),
+            (
+                attempt(None, AttemptOutcome::Unreached("no reply".into())),
+                "could not reach Anna through the relays: no reply",
+            ),
+            (
+                attempt(Some(at), AttemptOutcome::NotHosting),
+                "Anna (directly at 192.168.1.5:40123) was not taking the game over",
+            ),
+            (
+                attempt(None, AttemptOutcome::Refused("full".into())),
+                "Anna (through the relays) refused: full",
+            ),
+            (
+                attempt(Some(at), AttemptOutcome::Closed("it left".into())),
+                "the link to Anna (directly at 192.168.1.5:40123) closed: it left",
+            ),
+            (
+                attempt(None, AttemptOutcome::Lapsed { secs: 6 }),
+                "Anna (through the relays) answered, but the link did not open within 6 s",
+            ),
+            (
+                attempt(Some(at), AttemptOutcome::TimedOut { answered: false }),
+                "Anna (directly at 192.168.1.5:40123) did not answer before its turn ended",
+            ),
+            (
+                attempt(None, AttemptOutcome::TimedOut { answered: true }),
+                "Anna (through the relays) answered, but did not take this player back in time",
+            ),
+        ];
+        for (a, text) in &texts {
+            assert_eq!(a.to_string(), *text);
+        }
+        let lost = [
+            LostWhy::TooManyMigrations,
+            LostWhy::StillJoining,
+            LostWhy::NobodyReachable(None),
+            LostWhy::NobodyReachable(Some(texts[0].0.clone())),
+            LostWhy::SteppedDown { secs: 1.73 },
+            LostWhy::CutOff,
+        ]
+        .map(|w| w.to_string());
+        assert_eq!(
+            lost,
+            [
+                "The host left, and this match has moved to a new host 4 times already: it cannot move again.",
+                "The host left while you were still joining the match, so you could not follow it.",
+                HOST_LOST,
+                "The host left and no other player could take over the game. Last try: could not reach Anna \
+                 directly at 192.168.1.5:40123: no answer.",
+                "Your game stopped for 1.7 s, so the match moved on without you.",
+                CUT_OFF,
+            ]
+        );
     }
 
     const S: u64 = 1_000_000;

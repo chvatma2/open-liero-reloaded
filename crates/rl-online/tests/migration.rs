@@ -12,7 +12,7 @@ use rl_discovery::{PoolConfig, Region, TestRelay};
 use rl_netcode::migration::{GIVE_UP_US, HOST_SILENT_US, Step, WINDOW_US};
 use rl_online::migration::{ANSWER_OPEN_TIMEOUT, Connector, Failure, HOST_BACK, Planner, Route};
 use rl_online::{
-    CUT_OFF, HOST_LOST, Join, JoinStep, MigrationConfig, MigrationStep, OnlineEvent, StartError,
+    HOST_LOST, Join, JoinStep, LostWhy, MigrationConfig, MigrationStep, OnlineEvent, StartError,
 };
 use rl_proto::SuccessorWire;
 
@@ -142,7 +142,8 @@ fn a_stalled_host_steps_down_and_the_match_moves() {
     std::thread::sleep(Duration::from_millis(1_700)); // nobody polls: the host's own stall
     net.peers[0].frozen = false;
     net.run_until(Duration::from_secs(8), "the host steps down and the match moves", |n| {
-        n.peers[0].has(|e| matches!(e, OnlineEvent::HostLost(t) if t.starts_with("Your game stopped")))
+        n.peers[0]
+            .has(|e| matches!(e, OnlineEvent::HostLost(t) if t.to_string().starts_with("Your game stopped")))
             && n.peers[a].has(migrated)
             && n.peers[b].has(migrated)
     });
@@ -168,9 +169,27 @@ fn nobody_to_take_over_is_host_lost_with_a_replay() {
     net.peers[a].frozen = true; // Anna, the only successor, is gone too
     let froze = Instant::now();
     net.run_until(Duration::from_secs(14), "Bert gives up", |n| {
-        n.peers[b].has(|e| *e == OnlineEvent::HostLost(HOST_LOST.into()))
+        n.peers[b].has(|e| matches!(e, OnlineEvent::HostLost(LostWhy::NobodyReachable(_))))
     });
     let took = froze.elapsed();
+    // Ruling FR12c-4: his attempt's outcome was said (the successor's name,
+    // her address and why), and his host lost names it.
+    let port = net.peers[a].peer().standby_port().unwrap();
+    let said = format!("Anna (directly at 127.0.0.1:{port}) did not answer before its turn ended");
+    let logs: Vec<&String> = net.peers[b]
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            OnlineEvent::MigrationLog(l) => Some(l),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(logs, [&said], "once");
+    let lost = net.peers[b].events.iter().find_map(|e| match e {
+        OnlineEvent::HostLost(why) => Some(why.to_string()),
+        _ => None,
+    });
+    assert_eq!(lost, Some(format!("{HOST_LOST} Last try: {said}.")));
     // 2 s of silence, then `GIVE_UP_US`: not before; the upper bound only
     // guards against a hang.
     assert!(took >= Duration::from_millis(11_900) && took < Duration::from_millis(13_500), "{took:?}");
@@ -504,7 +523,7 @@ fn a_host_cut_off_from_its_players_ends_its_match() {
     let cut = Instant::now();
     net.outage(0, Duration::from_secs(6));
     net.run_until(Duration::from_secs(5), "the old host is cut off", |n| {
-        n.peers[0].has(|e| *e == OnlineEvent::HostLost(CUT_OFF.into()))
+        n.peers[0].has(|e| *e == OnlineEvent::HostLost(LostWhy::CutOff))
     });
     let took = cut.elapsed();
     // The last datagrams heard came just before the cut.
@@ -814,7 +833,7 @@ fn the_fifth_migration_in_a_match_is_host_lost() {
     let marks = [b, c].map(|i| net.peers[i].events.len());
     net.peers[a].frozen = true;
     net.run_until(Duration::from_secs(6), "the fifth is host lost", |n| {
-        [b, c].iter().all(|&i| n.peers[i].has(|e| *e == OnlineEvent::HostLost(HOST_LOST.into())))
+        [b, c].iter().all(|&i| n.peers[i].has(|e| *e == OnlineEvent::HostLost(LostWhy::TooManyMigrations)))
     });
     for (k, i) in [b, c].into_iter().enumerate() {
         assert!(
@@ -958,7 +977,7 @@ fn a_joiner_still_loading_when_its_host_crashes_is_host_lost() {
     let crashed = Instant::now();
     assert!(net.peers[c].peer().match_session().is_some_and(|s| s.is_joining()), "still loading");
     net.run_until(Duration::from_secs(8), "the joiner is host lost", |n| {
-        n.peers[c].has(|e| matches!(e, OnlineEvent::HostLost(why) if why == HOST_LOST))
+        n.peers[c].has(|e| *e == OnlineEvent::HostLost(LostWhy::StillJoining))
     });
     let took = crashed.elapsed();
     let silent = Duration::from_micros(HOST_SILENT_US);

@@ -38,7 +38,7 @@ use rl_net::portmap::DROP_WAIT;
 use rl_net::turn::TurnStats;
 use rl_online::join::path_tag;
 use rl_online::replay::MatchRecord;
-use rl_online::{HostListen, OnlineEvent, OnlinePeer, PeerRole, Reachability, StartError};
+use rl_online::{HostListen, LostWhy, OnlineEvent, OnlinePeer, PeerRole, Reachability, StartError};
 use rl_proto::{
     LobbyState, Look, MAX_CHAT, MatchEndWire, MatchStartWire, Path as LinkPath, Phase, PublicKey, SeatWire,
 };
@@ -494,10 +494,10 @@ impl Server {
             }
             OnlineEvent::MatchStarting { start, .. } => self.started(&start, log),
             OnlineEvent::MatchEnded(end) => self.ended(&end, log),
-            // Ruling SB-2: the server heard none of its players for
+            // Ruling SB-2: the server heard none of its members for
             // `HOST_SILENT_US` during a match (its own network down);
             // rl-online left the match as at a step-down.
-            OnlineEvent::HostLost(why) if why == rl_online::CUT_OFF => line(
+            OnlineEvent::HostLost(LostWhy::CutOff) => line(
                 log,
                 format_args!(
                     "heard none of the players: the match moved to the next player; the lobby is open again"
@@ -505,15 +505,17 @@ impl Server {
             ),
             // N70: the server stalled past `STEP_DOWN_US` during a match
             // with someone to take over; rl-online stepped down (its `Bye`,
-            // its replay, the lobby gathering again). A server is never a
-            // client, so this and the above are its only host lost.
-            OnlineEvent::HostLost(_) => line(
+            // its replay, the lobby gathering again), `secs` its gap.
+            OnlineEvent::HostLost(LostWhy::SteppedDown { secs }) => line(
                 log,
                 format_args!(
-                    "stalled for {:.1} s: the match moved to the next player; the lobby is open again",
-                    self.gap.as_secs_f32()
+                    "stalled for {secs:.1} s: the match moved to the next player; the lobby is open again"
                 ),
             ),
+            // A server is never a client, so the above are its only host
+            // lost; any other is said as it is (final review B-M6).
+            OnlineEvent::HostLost(why) => line(log, format_args!("host lost: {why}")),
+            OnlineEvent::MigrationLog(text) => line(log, format_args!("migration: {text}")),
             OnlineEvent::DesyncBundle(bytes) => self.save_bundle(&bytes, log),
             OnlineEvent::Reachability(r) => self.reached(r, log),
             // FR12b-3: what became of a join through the relays.

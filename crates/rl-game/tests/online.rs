@@ -1477,7 +1477,9 @@ fn the_host_lost_screen_shows_and_the_replay_is_saved() {
     });
     eprintln!("host gone {:?} after the hang, lost {:?} after that", found - hung, found.elapsed());
     let bert = rig.bert().shell();
-    assert_eq!(bert.data.host_lost.as_deref(), Some(rl_online::HOST_LOST));
+    // Ruling FR12c-4: the text names his last try (Anna, unreached).
+    let lost = bert.data.host_lost.as_deref().unwrap_or_default();
+    assert!(lost.starts_with(rl_online::HOST_LOST) && lost.contains("Last try: Anna"), "{lost}");
     assert!(!bert.data.host_lost_hosting, "a player's host is lost, not its own game");
     assert!(bert.session().is_none() && !bert.ui.is_online(), "the match view went");
     rig.until("Bert's replay is saved", Duration::from_secs(5), |r| {

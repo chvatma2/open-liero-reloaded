@@ -385,7 +385,10 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `leave_late_view`: the view goes, `UiAction::MatchLeft`, the Lobby (a
   host whose match ended sends no start: review Important 1); the
   `HOST_BACK` notice (N69, called off) clears the
-  line; `HostLost(why)` → `host_lost`: the match view goes at once, the
+  line; each `MigrationLog` (ruling FR12c-4: an attempt to reach a
+  successor, its name, address and outcome) only as `rl-game: migration:
+  …` on the console; `HostLost(why)` (`LostWhy`, its text on the screen:
+  FR12c-4) → `host_lost`: the match view goes at once, the
   peer is let go (`release`: its replay to `Shell::replays`, saved by
   `auto_save`), `MenuData::host_lost` (why), `host_lost_hosting` (this
   player hosted: its own step-down, or `CUT_OFF`, ruling SB-2: it heard

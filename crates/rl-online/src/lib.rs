@@ -20,7 +20,8 @@ pub use content::PeerContent;
 pub use events::{NetStats, OnlineEvent};
 pub use join::{Join, JoinStep, NostrJoin};
 pub use migration::{
-    CUT_OFF, HOST_LOST, MIGRATION_CONNECT_TIMEOUT, MigrationConfig, MigrationStep, stepped_down,
+    AttemptOutcome, Attempted, CUT_OFF, HOST_LOST, LostWhy, MIGRATION_CONNECT_TIMEOUT, MigrationConfig,
+    MigrationStep, stepped_down,
 };
 pub use peer::{LobbyHandle, OnlinePeer, PeerRole, Shutdown, StartError};
 pub use reach::{HostListen, Listening, Reachability, RelayJoin};

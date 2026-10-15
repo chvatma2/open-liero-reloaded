@@ -54,7 +54,19 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   (N69's log line), `stepped_down(secs)`, `CUT_OFF` (ruling SB-2:
   "Connection lost: the others play on under a new host."); `HOST_BACK`
   and the timeouts in `migration::` only, the rest at the crate root as
-  well.
+  well. **Ruling FR12c-4** (final review B-I1: a failed migration on real
+  PCs must be diagnosable): `LostWhy` (`TooManyMigrations`,
+  `StillJoining`, `NobodyReachable(Option<Attempted>)`, `SteppedDown {
+  secs }`, `CutOff`; its `Display` the Host lost screen's text, each its
+  own: "…moved to a new host 4 times already…", "…while you were still
+  joining…", `HOST_LOST` then " Last try: <attempt>.", `stepped_down`,
+  `CUT_OFF`); `Attempted { successor (its name), direct (its address, or
+  `None` through the relays), outcome }` and `AttemptOutcome`
+  (`Unreached(why)`, `NotHosting`, `Refused(why)`, `Closed(why)`,
+  `Lapsed { secs }`, `TimedOut { answered }`), its `Display` a log line
+  ("could not reach Anna directly at 192.168.1.5:40123: no answer in
+  time", "Anna (through the relays) answered, but the link did not open
+  within 6 s", …; `the_host_lost_texts_tell_the_cases_apart`).
   The attempt planner (`#[doc(hidden)] pub` for its unit test): `Planner<A>`
   over `rl_netcode`'s `Migration` and the old host's order, its joins
   behind a `Connector` (`connect(entry, join) -> Option<A>`, `discard`),
@@ -369,8 +381,20 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       heard while in contact it is remembered, and the cancel comes when
       that contact is lost (the successor went back to the host too).
     - **Host lost**: `GiveUp`: the replay of its confirmed rows
-      (`record_of(.., frontier)`), `HostLost(HOST_LOST)`, every connection
-      closed.
+      (`record_of(.., frontier)`), `HostLost(LostWhy::NobodyReachable(the
+      last attempt))`, every connection closed (past `MAX_MIGRATIONS`:
+      `TooManyMigrations`; a joiner still loading: `StillJoining`).
+    - **Attempts said** (ruling FR12c-4): each attempt's end (`Outcome::
+      Failed`: the joiner's text, a refusal's `refusal_text`, a lost
+      link's `link_text`, the lapse; an attempt the step moved past,
+      `TimedOut`) is `Migrating::note`d: kept as the last, and said as
+      `OnlineEvent::MigrationLog(line)` once per entry, route, window and
+      kind (a `NotHost` asked every `RETRY_US` once). A successor's
+      migrated lobby refusing a join says "taking over: refused a join
+      from <address>: <why>" the same way. Lines for the console and log
+      only (N80: an address reaches no other player);
+      `nobody_to_take_over_is_host_lost_with_a_replay` pins the line and
+      the host lost's text.
     - **Step-down** (N70): first in every poll, a host during a match
       whose gap since its last poll (monotonic; the wall clock's only
       beyond it plus `HOST_SILENT_US`, never a backward step, C3:
@@ -605,7 +629,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   `RelayJoin { join, more }`, `ListenRelay { url, status }`: a host's
   listener's relay "connected" or "unreachable: why", once until it
   changes, final review B-M4); plan 12c: `Migrating(MigrationStep)`,
-  `Migrated { host, me }`, `HostLost(why)`; `NetStats` (round trip, input delay, the
+  `Migrated { host, me }`, `HostLost(LostWhy)`, `MigrationLog(line)`
+  (FR12c-4); `NetStats` (round trip, input delay, the
   last second's deepest rollback, a client's datagram loss, corrections
   per second, stall episodes).
 
