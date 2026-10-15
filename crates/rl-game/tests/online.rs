@@ -411,6 +411,7 @@ fn an_online_match_runs_headless() {
 
 use rl_game::app::{App, Config};
 use rl_game::shell::{Outcome, Shell, ShellConfig};
+use rl_input::Action;
 use rl_ui::hud::LineKind;
 use rl_ui::{HostPrefs, Profiles, Screen, Settings, Store, UiAction, UiState, Visibility};
 
@@ -888,7 +889,12 @@ fn a_host_whose_frames_stop_keeps_hosting() {
         "the client confirmed ticks {before} to {during} while the host drew nothing"
     );
     assert!(client.shell().plays_online() && client.shell().ui.screen() == Screen::InGame);
-    // The host's frames resume: its first poll hands it the pump's events.
+    // The host's frames resume: its first poll hands it the pump's events,
+    // and the F2 meter counts only the ticks that frame ran (minor 9).
+    let measured = host.ticks_measured();
+    app_frame(&mut host);
+    let counted = host.ticks_measured() - measured;
+    assert!(counted < 50, "the first frame after the stop counted {counted} ticks");
     let start = Instant::now();
     while [&host, &client].iter().any(|a| a.shell().ui.screen() != Screen::Results) {
         assert!(start.elapsed() < Duration::from_secs(15), "both reach the results");
@@ -933,8 +939,11 @@ fn a_client_whose_frames_stop_stays_joined() {
     // Frames again: the client is still in the match, never lagging.
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(2) {
-        both_frames([&mut host, &mut client], &mut seen, Duration::from_millis(10));
+        // Every frame's HUD (minor 8).
+        app_frame(&mut host);
+        app_frame(&mut client);
         assert!(!client.shell().lagging(), "the client's HUD shows no connection problem");
+        std::thread::sleep(Duration::from_millis(3));
     }
     assert!(client.shell().plays_online() && client.shell().ui.screen() == Screen::InGame, "not dropped");
     assert_eq!(members(host.shell()), 2, "the host keeps it");
@@ -943,41 +952,135 @@ fn a_client_whose_frames_stop_stays_joined() {
     assert_eq!((drifts(host.shell()), drifts(client.shell())), (0, 0), "the colour terrain followed");
 }
 
+/// Both apps' frames on the real clock until `done`; panics after `limit`.
+fn apps_until(what: &str, limit: Duration, apps: [&mut App; 2], mut done: impl FnMut([&App; 2]) -> bool) {
+    let [a, b] = apps;
+    let start = Instant::now();
+    loop {
+        assert!(start.elapsed() < limit, "{what} within {limit:?}");
+        app_frame(a);
+        app_frame(b);
+        if done([&*a, &*b]) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
 /// Ruling PF12c-2: the host's match load (`start_online`, slowed here by
 /// 2.5 s) runs without the peer's lock, so its pump keeps the match's
 /// network alive: when the client's frames resume it has confirmed the
-/// ticks played meanwhile. RED without the pump: the host is silent for
-/// the load and the client confirms nothing.
+/// ticks played meanwhile. Every frame is the apps' (`App::network_frame`,
+/// minor 7). RED without the pump: the host is silent for the load and
+/// the client confirms nothing.
 #[test]
 fn a_match_load_does_not_silence_the_host() {
     let Some(dir) = content_dir() else { return };
-    let (mut h, mut c) = host_and_client(&dir, 0.2, None);
-    let mut setup = h.data.lobby.as_ref().unwrap().setup.clone();
+    let (h, c) = host_and_client(&dir, 0.2, None);
+    let (mut host, mut client) = (app_of(h), app_of(c));
+    let mut setup = host.shell().data.lobby.as_ref().unwrap().setup.clone();
     setup.bots = 1;
-    h.act(UiAction::LobbySetup(setup));
-    frames_until("the client sees the bot", Duration::from_secs(3), &mut [&mut h, &mut c], |s| {
-        s[1].data.lobby.as_ref().is_some_and(|l| l.setup.bots == 1)
+    host.shell_mut().act(UiAction::LobbySetup(setup));
+    apps_until("the client sees the bot", Duration::from_secs(3), [&mut host, &mut client], |a| {
+        a[1].shell().data.lobby.as_ref().is_some_and(|l| l.setup.bots == 1)
     });
-    c.act(UiAction::LobbyReady(true));
-    h.act(UiAction::LobbyReady(true));
-    frames_until("the host can start", Duration::from_secs(3), &mut [&mut h, &mut c], |s| {
-        s[0].data.lobby.as_ref().is_some_and(|l| l.can_start.is_ok())
+    client.shell_mut().act(UiAction::LobbyReady(true));
+    host.shell_mut().act(UiAction::LobbyReady(true));
+    apps_until("the host can start", Duration::from_secs(3), [&mut host, &mut client], |a| {
+        a[0].shell().data.lobby.as_ref().is_some_and(|l| l.can_start.is_ok())
     });
-    h.test_slow_load(Duration::from_millis(2_500));
-    h.act(UiAction::LobbyStart);
+    host.shell_mut().test_slow_load(Duration::from_millis(2_500));
+    host.shell_mut().act(UiAction::LobbyStart);
     // The host's frame that starts the match loads for 2.5 s; the client's
     // frame after it finds what its pump confirmed meanwhile.
     let mut first = None;
-    frames_until("both play", Duration::from_secs(10), &mut [&mut h, &mut c], |s| {
-        if first.is_none() && s[1].plays_online() {
-            first = Some(confirmed(s[1]).map_or(0, |c| c.0));
+    apps_until("both play", Duration::from_secs(10), [&mut host, &mut client], |a| {
+        if first.is_none() && a[1].shell().plays_online() {
+            first = Some(confirmed(a[1].shell()).map_or(0, |c| c.0));
         }
-        s.iter().all(|sh| sh.ui.screen() == Screen::InGame && sh.plays_online())
+        a.iter().all(|x| x.shell().ui.screen() == Screen::InGame && x.shell().plays_online())
     });
     let first = first.unwrap();
     assert!(first >= 150, "the client confirmed {first} ticks while the host loaded the match");
-    frames_until("the match goes on", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
-        confirmed(s[0]).is_some_and(|c| c.0 > first + 100)
+    apps_until("the match goes on", Duration::from_secs(5), [&mut host, &mut client], |a| {
+        confirmed(a[0].shell()).is_some_and(|c| c.0 > first + 100)
     });
-    assert_eq!((drifts(&h), drifts(&c)), (0, 0), "the colour terrain followed");
+    assert_eq!((drifts(host.shell()), drifts(client.shell())), (0, 0), "the colour terrain followed");
+}
+
+/// The resyncs an online session made after pumped ticks.
+fn resyncs(sh: &Shell) -> u64 {
+    match sh.session().map(|s| &s.driver) {
+        Some(Driver::Online(d)) => d.resyncs(),
+        _ => 0,
+    }
+}
+
+/// Ruling PU-1: both players hold Right while both apps draw a frame only
+/// every `every` (a slow machine or display): the slow frames play as
+/// before. No pump poll, no resync (so no tick's sounds or effects lost),
+/// and every confirmed final input of both players' slots holds Right.
+fn slow_frames_play_as_before(every: Duration) {
+    let Some(dir) = content_dir() else { return };
+    let (mut h, mut c) = host_and_client(&dir, 0.2, None);
+    start_match(&mut h, &mut c);
+    let (mut host, mut client) = (app_of(h), app_of(c));
+    host.press(Action::Right, true);
+    client.press(Action::Right, true);
+    let mut seen: [BTreeMap<u32, Vec<Score>>; 2] = Default::default();
+    both_frames([&mut host, &mut client], &mut seen, Duration::from_millis(500));
+    let confirmed_below =
+        |a: &App| a.shell().with_peer(|p| p.match_session().map(|s| s.confirmed())).flatten();
+    let mut next = confirmed_below(&host).expect("the host's match");
+    let (mut checked, mut widest) = (0, Duration::ZERO);
+    let start = Instant::now();
+    let mut last = Instant::now();
+    while start.elapsed() < Duration::from_secs(2) {
+        widest = widest.max(last.elapsed());
+        last = Instant::now();
+        app_frame(&mut host);
+        app_frame(&mut client);
+        let rows = host
+            .shell()
+            .with_peer(|p| {
+                let s = p.match_session()?;
+                let log = s.input_log();
+                let rows: Vec<(u32, [Option<u8>; 2])> =
+                    (next..s.confirmed()).map(|t| (t, [log.get(t, 0), log.get(t, 1)])).collect();
+                Some(rows)
+            })
+            .flatten()
+            .expect("the host's match");
+        for (t, keys) in rows {
+            for (slot, k) in keys.into_iter().enumerate() {
+                let k = k.unwrap_or_else(|| panic!("tick {t}: slot {slot}'s final input is kept"));
+                assert!(
+                    k & Keys::RIGHT != 0,
+                    "tick {t}: slot {slot}'s final input {k:#04x} lost the held Right"
+                );
+            }
+            checked += 1;
+            next = t + 1;
+        }
+        std::thread::sleep(every.saturating_sub(last.elapsed()));
+    }
+    assert!(checked > 100, "{checked} confirmed ticks checked");
+    if widest < every + Duration::from_millis(15) {
+        let polls = (host.shell().pump_polls(), client.shell().pump_polls());
+        assert_eq!(polls, (0, 0), "frames every {every:?} ({widest:?} at most): the pumps never polled");
+        let resynced = (resyncs(host.shell()), resyncs(client.shell()));
+        assert_eq!(resynced, (0, 0), "no tick's presentation was dropped");
+    } else {
+        eprintln!("a loaded machine: frames up to {widest:?} apart");
+    }
+}
+
+#[test]
+fn frames_every_30_ms_play_as_before() {
+    slow_frames_play_as_before(Duration::from_millis(30));
+}
+
+#[test]
+fn frames_every_45_ms_play_as_before() {
+    slow_frames_play_as_before(Duration::from_millis(45));
 }

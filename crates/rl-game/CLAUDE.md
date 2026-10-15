@@ -268,30 +268,55 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   address (`choose_address`; an IPv4-mapped one counts); an IPv6 literal
   or an IPv6-only name is refused with `IPV6_UNSUPPORTED` (the host binds
   `0.0.0.0`, the client's UDP socket is IPv4).
-  **The network pump** (`net/pump.rs`, plan 12c Task 5, ruling PF12c-2):
+  **The network pump** (`net/pump.rs`, plan 12c Task 5, rulings PF12c-2,
+  PU-1, PU-2):
   every online peer (a host's, a client's, `--net-sim`'s host) lives
   behind a `PeerHandle` (`Net::peer`, then the match's `OnlineDriver`,
   `Shell::sim_host`) from its start (`PeerHandle::pumped`) to its release
   (`into_peer`: the pump stopped and joined within one of its polls, then
   `release`'s leave, replay and NT-2 shutdown as before). Its thread
-  `rl-game net` wakes every `PUMP_AFTER / 2` and polls the peer whenever
-  the UI thread has not for `PUMP_AFTER` (20 ms; the UI's last poll an
-  atomic): a dragged window (Windows' modal loop blocks winit), a long
-  match load or a slow frame no longer silences the peer. Meanwhile the
-  local player's keys are `Keys(0)` (the input latch untouched), nothing
-  is drawn, the host's bots think inside the peer; its events wait for the
-  UI's next poll (at most `PUMP_QUEUE`, 4 096: the oldest `Confirmed`
-  goes first, then the oldest; each loss counted, the first logged),
-  except the presentation's (`Ticked`, `Restored`, `StateLoaded`), which
-  are dropped: that poll's `PolledEvents::pumped` (the newest pumped
-  tick) starts the presentation again as after a loaded state. One
+  `rl-game net` wakes every `PUMP_EVERY` (10 ms) and polls the peer
+  whenever the UI thread has not for `PUMP_AFTER` (100 ms; the UI's last
+  poll an atomic): a dragged window (Windows' modal loop blocks winit) or
+  a long match load no longer silences the peer, while a slow frame (any
+  above 10 fps) is no stall and plays exactly as before (PU-1:
+  `frames_every_30_ms_play_as_before`, `..._45_ms_...`). Meanwhile the
+  local player presses the keys the UI last latched (`PeerHandle::poll`
+  keeps the last its `local_keys` gave) for `PUMP_HOLD` (250 ms) of the
+  stall, then `Keys(0)` (a long drag does not keep firing); the input
+  latch is untouched, nothing is drawn, the host's bots think inside the
+  peer; its events wait for the UI's next poll, except the presentation's
+  (`Ticked`, `Restored`, `StateLoaded`), which are dropped: that poll's
+  `PolledEvents::pumped` (the newest pumped tick) starts the presentation
+  again as after a loaded state (`OnlineDriver::resyncs` counts it; never
+  once the session froze its ended world). At most `PUMP_QUEUE` (4 096)
+  events wait: beyond it the second oldest `Confirmed` is thinned into the
+  oldest (only the ticks with a kill, spawn, message or the end, without
+  damage or positions; scores only with the end), so the HUD's log, the
+  tally's kills and the results survive a stall of any length (bound:
+  the exit summary's match time misses the thinned ticks, and their damage
+  popups are gone); then the oldest chat-like event goes (`Chat`,
+  `Notice`, `Left`, `Downloads`, `Reachability`, `RelayJoin`,
+  `ListenRelay`); control events (all others: a match's start and end,
+  the lobby, lagging, a lost connection, a replay) never go (PU-2), so
+  only they can pass the bound; each loss counted, the first logged. A
+  pump poll that panics stops the pump at once: a console warning, a
+  lobby/HUD notice at the UI's next poll, `is_pumped` false; the frames
+  poll on. The F2 meter counts only the ticks a frame's own poll ran
+  (`Session::polled_ticks`). One
   `Mutex`, held for one poll (the UI's or the pump's) or one
   `PeerHandle::with` (lobby actions, stats, the world read), never across
   rendering and never while waiting on anything else: the UI waits at most
-  one pump poll. The pump's time goes on from the UI's last `now` (a
+  one pump poll. A peer locked again on a thread that holds it (directly
+  or through another peer's lock) panics instead of deadlocking.
+  `PeerHandle::with_pumped` hands the pending pumped tick to the
+  presentation and takes it, so a frame starts again once. The pump's time goes on from the UI's last `now` (a
   test's clock too), and no poll is given a time before the last one
   given. `Shell::with_peer(f)` is the peer's lock (tests:
-  `test_prompt_limit`); `Shell::pumped()` whether it has a pump.
+  `test_prompt_limit`); `Shell::pumped()` whether it has a pump,
+  `Shell::pump_polls()` its polls; `App::press(action, down)` presses a
+  bound key through the input path (autoplay's `Press`, tests),
+  `App::ticks_measured()` the meter's ticks.
   `start_online` takes the content from the peer (`with`: an `Arc`) and
   loads without the lock, so the pump keeps the match's network alive
   meanwhile (`Shell::test_slow_load(d)`, `test-hooks`: each load `d`
@@ -704,23 +729,30 @@ lobby and leaving; chat in game reaching the other's HUD log; the
 hidden window's `App::hidden_frame` ticking the match; the network pump
 through the apps' frames (`App::hidden_frame`, real clock, a 0.2-minute
 match with a bot): `a_host_whose_frames_stop_keeps_hosting` (3 s without
-the host's frames: the client confirms 250 ticks more, then both reach
-the same results, no colour drift), `a_client_whose_frames_stop_stays_joined`
+the host's frames: the client confirms 250 ticks more, the host's first
+frame after counts fewer than 50 ticks on the meter, then both reach the
+same results, no colour drift), `a_client_whose_frames_stop_stays_joined`
 (3 s without the client's: the host fills fewer than 50 of its inputs, no
-"Connection problem", still in), `a_match_load_does_not_silence_the_host`
+"Connection problem" on any frame, still in), `a_match_load_does_not_silence_the_host`
 (`test_slow_load` 2.5 s: the client confirmed 150 ticks during it), each
-RED without the pump; `net/pump.rs`' unit tests on a fake peer (a
-`Poll`): the pump stands back while the UI polls every 5 ms and polls
-about every 10 ms once it stops, each at least `PUMP_AFTER` after the
-UI's; the queue's bound; the UI's poll starts as the pump's in flight
-ends; stopping joins within 100 ms and gives the peer back; a nested
-lock panics; `--net-sim
+RED without the pump; `frames_every_30_ms_play_as_before` and `_45_ms_`
+(both players hold Right: every confirmed final input of both slots
+holds it, no pump poll, no resync; RED at the old 20 ms); `net/pump.rs`'
+unit tests on a fake peer (a `Poll`): the pump stands back while the UI
+polls every 5, 30 and 45 ms and polls about every 10 ms once it stops,
+each at least `PUMP_AFTER` after the UI's; it presses the last latched
+keys for `PUMP_HOLD`, then none; the queue's bound (confirmed ticks
+thinned first, every kill and chat kept); control events never let go;
+`with_pumped` takes the mark; a panicking pump poll said at once; the
+UI's poll starts as the pump's in flight ends; stopping joins within
+100 ms and gives the peer back; a nested lock panics, through another
+peer's too; `--net-sim
 typical`'s setup playing and starting the next match; leaving right
 after the end keeps both replays; the flags not remembered; LAN off:
 `Shell::set_lan(false)`; each under 20 s), `tests/downloads.rs` (a
 joiner whose content lacks Dirt Level downloads it in the lobby into its
 `Store::open` cache and plays the match from it; over the prompt
-(`OnlinePeer::test_prompt_limit` through `Shell::peer_mut`: rl-online's
+(`OnlinePeer::test_prompt_limit` through `Shell::with_peer`: rl-online's
 `test-hooks` in the dev-dependencies) it waits, queued, until Download;
 a replay of that level,
 the level only in the cache (`downloads`, or `downloads-2` while the

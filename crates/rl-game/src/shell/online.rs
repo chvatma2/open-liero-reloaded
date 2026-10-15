@@ -174,6 +174,12 @@ impl Shell {
         self.handle().map(|h| h.with(f))
     }
 
+    /// The polls the online game's network pump made so far (none
+    /// without one).
+    pub fn pump_polls(&self) -> u64 {
+        self.handle().map_or(0, PeerHandle::pump_polls)
+    }
+
     /// Whether the online game's peer has a running network pump.
     pub fn pumped(&self) -> bool {
         self.handle().is_some_and(PeerHandle::is_pumped)

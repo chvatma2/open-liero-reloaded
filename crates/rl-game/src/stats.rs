@@ -60,6 +60,11 @@ impl Meter {
         }
     }
 
+    /// The ticks counted since the start.
+    pub fn run_ticks(&self) -> u64 {
+        self.run_ticks
+    }
+
     /// A tick took `seconds`.
     pub fn tick(&mut self, seconds: f64) {
         self.ticks += 1;

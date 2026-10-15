@@ -52,6 +52,11 @@ pub struct OnlineDriver {
     bots: Vec<i32>,
     /// The sounds one poll plays (reused).
     sounds: Vec<Event>,
+    /// Times the presentation started again from the world after the
+    /// pump ran ticks.
+    resyncs: u64,
+    /// The new ticks the last poll ran itself (the F2 meter's).
+    polled_ticks: u32,
     /// The last poll loaded a state or put map areas back (a rollback):
     /// its frame draws the newest tick as it is.
     jumped: bool,
@@ -80,6 +85,8 @@ impl OnlineDriver {
             confirmed_tick: None,
             bots,
             sounds: Vec::new(),
+            resyncs: 0,
+            polled_ticks: 0,
             jumped: false,
         }
     }
@@ -127,6 +134,12 @@ impl OnlineDriver {
         self.bots.contains(&worm)
     }
 
+    /// Times the presentation started again from the world because the
+    /// network pump ran ticks it never saw.
+    pub fn resyncs(&self) -> u64 {
+        self.resyncs
+    }
+
     /// Advances after which the colour terrain had drifted from the
     /// world's (debug builds: `NetPresenter::drifts`).
     pub fn drifts(&self) -> u64 {
@@ -142,13 +155,23 @@ impl OnlineDriver {
         local_keys: &mut dyn FnMut() -> Keys,
         present: &mut Presentation,
     ) -> PolledEvents {
-        self.peer.poll(now, local_keys, &mut |world, events, info| {
+        let mut ran = 0;
+        let polled = self.peer.poll(now, local_keys, &mut |world, events, info| {
             if info.resim {
                 present.scene.after_tick_resimulated(world, events);
             } else {
+                ran += 1;
                 present.scene.after_tick(world, events);
             }
-        })
+        });
+        self.polled_ticks = ran;
+        polled
+    }
+
+    /// The new ticks the last poll ran itself (not the pump's, nor
+    /// re-simulated ones): what the F2 meter counts.
+    pub fn polled_ticks(&self) -> u32 {
+        self.polled_ticks
     }
 
     /// A poll's `events` presented ([`present_poll`]), its sounds played
@@ -161,11 +184,14 @@ impl OnlineDriver {
     /// a loaded state, then the poll's own ticks follow. Ticks the pump ran
     /// after the poll (`PeerHandle::with_pumped`, under the same lock) make
     /// the poll's ticks stale: the presentation starts again from the world
-    /// without them (the next poll reports those ticks pumped too).
+    /// without them (`with_pumped` takes the mark, so the next poll does not
+    /// start again for them). Once the session drew its frozen world
+    /// (`frozen`: the match ended here) nothing starts again (minor 1).
     pub(crate) fn present(
         &mut self,
         mut events: Vec<OnlineEvent>,
         pumped: Option<u32>,
+        frozen: bool,
         present: &mut Presentation,
         play: &mut dyn FnMut(&[Event], &Presentation),
     ) -> Shown {
@@ -174,7 +200,7 @@ impl OnlineDriver {
         let (p, current_tick, resynced) = peer.with_pumped(|peer, since| {
             let session = peer.match_session();
             let world = session.map(|s| s.sim().world());
-            let resync = match since {
+            let resync = match since.filter(|_| !frozen) {
                 Some(t) => {
                     events.retain(|e| {
                         !matches!(
@@ -186,7 +212,7 @@ impl OnlineDriver {
                     });
                     Some(pumped.map_or(t, |p| p.max(t)))
                 }
-                None => pumped,
+                None => pumped.filter(|_| !frozen),
             };
             if let (Some(tick), Some(w)) = (resync, world) {
                 let t = w.terrain();
@@ -198,6 +224,7 @@ impl OnlineDriver {
             (p, session.map(|s| s.current_tick()), resync.is_some())
         });
         self.jumped = p.jumped;
+        self.resyncs += u64::from(resynced);
         if !self.sounds.is_empty() {
             play(&self.sounds, present);
         }

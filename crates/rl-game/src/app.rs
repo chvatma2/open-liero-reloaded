@@ -339,16 +339,15 @@ impl App {
             latency.latched();
             input.latch_tick()
         };
-        let ticks = |shell: &Shell| shell.session().filter(|_| shell.plays_online()).map(Session::ticks);
-        let (before, t0) = (ticks(&self.shell), Instant::now());
+        let t0 = Instant::now();
         let mut out = self.shell.net_frame(now, &mut keys);
-        // The F2 panel's and the summary's ticks: the poll's new ones, its
-        // time shared among them (re-simulated ticks included in it).
-        if let (Some(a), Some(b)) = (before, ticks(&self.shell))
-            && b > a
-        {
-            let each = t0.elapsed().as_secs_f64() / (b - a) as f64;
-            for _ in a..b {
+        // The F2 panel's and the summary's ticks: the new ones the frame's
+        // poll ran (never the network pump's, minor 9), its time shared
+        // among them (re-simulated ticks included in it).
+        let ran = self.shell.session().filter(|_| self.shell.plays_online()).map_or(0, Session::polled_ticks);
+        if ran > 0 {
+            let each = t0.elapsed().as_secs_f64() / f64::from(ran);
+            for _ in 0..ran {
                 self.meter.tick(each);
             }
         }
@@ -589,6 +588,19 @@ impl App {
     /// window made again and closed (its last `Resized` or `Focused`).
     fn current(&self, id: winit::window::WindowId) -> bool {
         self.win.as_ref().is_none_or(|w| w.window.id() == id)
+    }
+
+    /// Presses (or releases) the key bound to `action` through the input
+    /// path, as a player would (autoplay's `Press`, tests).
+    pub fn press(&mut self, action: Action, pressed: bool) {
+        if let Some(k) = self.key_of(action) {
+            self.input.on_key(k, pressed);
+        }
+    }
+
+    /// The ticks the F2 panel and the exit summary counted so far.
+    pub fn ticks_measured(&self) -> u64 {
+        self.meter.run_ticks()
     }
 
     /// The key bound to `action` (the script presses keys as a player would).
@@ -967,11 +979,7 @@ impl App {
                 self.input.on_key(code, pressed);
                 self.key(el, code, pressed, false)?;
             }
-            Effect::Action(a, pressed) => {
-                if let Some(k) = self.key_of(a) {
-                    self.input.on_key(k, pressed);
-                }
-            }
+            Effect::Action(a, pressed) => self.press(a, pressed),
             Effect::Quit => {
                 println!("rl-game: autoplay passed ({} frames)", self.frames);
                 el.exit();

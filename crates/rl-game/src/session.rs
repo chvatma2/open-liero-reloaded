@@ -834,7 +834,7 @@ impl Session {
                 audio.play(sounds, p.scene.camera.listener());
             }
         };
-        let shown = d.present(events, pumped, &mut self.present, &mut play);
+        let shown = d.present(events, pumped, self.frozen, &mut self.present, &mut play);
         let (confirmed, rest, resynced) = (shown.confirmed, shown.rest, shown.resynced);
         if let Some(t) = shown.current_tick {
             self.ticks = u64::from(t);
@@ -866,6 +866,15 @@ impl Session {
         let mut rest = rest;
         rest.extend(next);
         rest
+    }
+
+    /// The new ticks an online match's last poll ran itself (its pump's
+    /// excepted): the F2 meter's count; 0 for a local game.
+    pub fn polled_ticks(&self) -> u32 {
+        match &self.driver {
+            Driver::Online(d) => d.polled_ticks(),
+            _ => 0,
+        }
     }
 
     /// An online match's alpha for the frame at `now` (`OnlineDriver::alpha`;
