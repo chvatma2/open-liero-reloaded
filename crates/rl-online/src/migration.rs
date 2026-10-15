@@ -18,33 +18,20 @@ use crate::join::{Join, NostrJoin, join_relays};
 /// A direct join to a successor gives up after this long (N73).
 pub const MIGRATION_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// A direct join to a successor whose answer came but whose link did not
-/// open within this is lost contact: a successor that died or froze after
+/// A join to a successor whose answer came but whose link did not open
+/// within this is lost contact: a successor that died or froze after
 /// answering does not hold its joiners until their setup's timeout (past
-/// the give-up), they move on with the others. On a direct link (one
-/// network, TCP signalling to the address) the link opens within
-/// milliseconds of the answer.
-pub const ANSWER_OPEN_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// The same for a join through the relays (plan 12c Task 7): after the
-/// answer, ICE checks its candidate pairs (host, server-reflexive, a TURN
-/// relay's), whose lost checks are sent again 0.25, 0.75, 1.75 and 3.75 s
-/// after the first (str0m's backoff), then DTLS and SCTP open over the
-/// pair, each a round trip or two of a relayed path, and rl-net reports
-/// the link `Connected` once its stats name the pair (up to 1.5 s after
-/// it opened). A slow but healthy successor is waited for; a dead one holds
-/// its joiners this long, within the give-up.
-pub const RELAYS_OPEN_TIMEOUT: Duration = Duration::from_secs(6);
-
-/// How long a join to a successor through `route` may take from the
-/// successor's answer to its link's opening ([`ANSWER_OPEN_TIMEOUT`],
-/// [`RELAYS_OPEN_TIMEOUT`]).
-pub fn answer_open_timeout(route: Route) -> Duration {
-    match route {
-        Route::Direct => ANSWER_OPEN_TIMEOUT,
-        Route::Relays => RELAYS_OPEN_TIMEOUT,
-    }
-}
+/// the give-up), they move on with the others. One for every route
+/// (ruling SB-1; Task 7 had 2 s for a direct link): directly or through
+/// the relays, after the answer ICE checks its candidate pairs, whose lost
+/// checks are sent again 0.25, 0.75, 1.75 and 3.75 s after the first
+/// (str0m's backoff), then DTLS and SCTP open over the pair, each a round
+/// trip or two, and rl-net reports the link `Connected` once its stats
+/// name the pair (up to 1.5 s after it opened). A slow but healthy
+/// successor is waited for (a direct link on `bad` opened 3.3 s after its
+/// answer in net-soak's `soak-transport-125`); a dead one holds its
+/// joiners this long, within the successor's window and the give-up.
+pub const ANSWER_OPEN_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// A new host awaits the reports of the members back at most this long
 /// past its window's end (N68, C1: one round trip and more); a rejoined
@@ -193,7 +180,7 @@ struct Live<A> {
 ///   yet); through the relays, and any other failure, is not tried again
 ///   in its window; an entry with no route left waits for the next window.
 /// - An answered join whose link does not open within
-///   [`answer_open_timeout`] of its route lapses (lost contact).
+///   [`ANSWER_OPEN_TIMEOUT`] lapses (lost contact).
 #[doc(hidden)]
 pub struct Planner<A> {
     m: Migration,
@@ -374,11 +361,11 @@ impl<A> Planner<A> {
         self.attempt.as_ref().is_some_and(|l| l.answered_us.is_some())
     }
 
-    /// The attempt's answer came [`answer_open_timeout`] ago and its link
+    /// The attempt's answer came [`ANSWER_OPEN_TIMEOUT`] ago and its link
     /// has not opened: the successor died or froze after answering.
     pub fn lapsed(&self, now_us: u64) -> bool {
         self.attempt.as_ref().is_some_and(|l| {
-            let limit = answer_open_timeout(l.route).as_micros() as u64;
+            let limit = ANSWER_OPEN_TIMEOUT.as_micros() as u64;
             !l.opened && l.answered_us.is_some_and(|t| now_us >= t.saturating_add(limit))
         })
     }
@@ -572,21 +559,19 @@ mod tests {
     }
 
     #[test]
-    fn an_answered_join_lapses_in_its_routes_time() {
+    fn an_answered_join_lapses_alike_on_every_route() {
         let mut c = Joins::default();
         for (e, route) in [(entry(true, &[]), Route::Direct), (entry(false, &["ws://a"]), Route::Relays)] {
             let mut p = planner(e, &[]);
             p.step(0, &mut c);
             p.answered(S);
             assert!(p.in_contact());
-            let limit = answer_open_timeout(route).as_micros() as u64;
+            let limit = ANSWER_OPEN_TIMEOUT.as_micros() as u64;
             assert!(!p.lapsed(S + limit - 1) && p.lapsed(S + limit), "{route:?}");
             p.opened();
             assert!(!p.lapsed(S + 2 * limit), "{route:?}: open");
         }
-        assert_eq!(answer_open_timeout(Route::Direct), ANSWER_OPEN_TIMEOUT);
-        assert_eq!(answer_open_timeout(Route::Relays), RELAYS_OPEN_TIMEOUT);
-        assert!(RELAYS_OPEN_TIMEOUT > ANSWER_OPEN_TIMEOUT);
+        assert_eq!(ANSWER_OPEN_TIMEOUT, Duration::from_secs(6), "ruling SB-1");
     }
 
     #[test]

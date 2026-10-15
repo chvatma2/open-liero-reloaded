@@ -293,14 +293,16 @@ fn a_successors_unwelcomed_links_close_at_its_windows_end() {
 
 /// A successor that dies after answering (Anna answers Bert's and Cid's
 /// joins while cut off on UDP, then freezes: she never refuses them): the
-/// contact lapses `ANSWER_OPEN_TIMEOUT` after the answer, so they move on
-/// with the others at her window's end, not to a false host lost once
-/// their setups time out past the give-up.
+/// contact lapses `ANSWER_OPEN_TIMEOUT` (6 s, ruling SB-1) after the
+/// answer, past her window's end, so they move on in Bert's window and
+/// within the give-up, not to a false host lost once their setups time
+/// out past it.
 #[test]
 fn a_successor_dead_after_its_answer_is_left() {
     let Some(content) = content() else { return };
     let (mut net, [a, b, c]) = started3(content, 0.5);
     net.peers[0].frozen = true;
+    let froze = Instant::now();
     net.outage(a, Duration::from_secs(60));
     net.run_until(Duration::from_secs(5), "both try Anna", |n| {
         [b, c].iter().all(|&i| {
@@ -311,10 +313,20 @@ fn a_successor_dead_after_its_answer_is_left() {
     let t = Instant::now();
     net.run_until(Duration::from_secs(2), "Anna answers", |_| t.elapsed() > Duration::from_millis(700));
     net.peers[a].frozen = true;
-    net.run_until(Duration::from_secs(14), "Bert hosts and Cid follows", |n| {
+    // Bert's window opens 7 s after the freeze, but his contact with Anna
+    // holds him until it lapses, `ANSWER_OPEN_TIMEOUT` after her answer.
+    net.run_until(ANSWER_OPEN_TIMEOUT + Duration::from_secs(2), "Bert takes over", |n| {
+        n.peers[b].has(|e| *e == OnlineEvent::Migrating(MigrationStep::TakingOver))
+    });
+    let lapsed = t.elapsed();
+    assert!(lapsed > ANSWER_OPEN_TIMEOUT - Duration::from_secs(1), "{lapsed:?} after her answers");
+    // He resumes at his window's end (Anna, expected, never comes back),
+    // before anyone's give-up.
+    net.run_until(Duration::from_secs(8), "Bert hosts and Cid follows", |n| {
         n.peers[b].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
             && n.peers[c].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Bert"))
     });
+    assert!(froze.elapsed() < Duration::from_secs(14), "{:?}", froze.elapsed());
     for i in [b, c] {
         assert!(!net.peers[i].has(|e| matches!(e, OnlineEvent::HostLost(_))));
     }
@@ -589,14 +601,13 @@ fn a_successor_is_reached_through_the_relays() {
     assert_eq!(ra.checksums, rb.checksums);
 }
 
-/// Carried from Task 6: a link through the relays opens slower than a
-/// direct one (ICE's lost checks sent again 0.25, 0.75, 1.75, 3.75 s after
-/// the first, then DTLS, then rl-net's wait for the pair's stats). Cid
+/// Carried from Task 6: a link through the relays opens slowly on a lossy
+/// path (ICE's lost checks sent again 0.25, 0.75, 1.75, 3.75 s after the
+/// first, then DTLS, then rl-net's wait for the pair's stats). Cid
 /// commits Anna directly; Bert's datagrams black out for 2.5 s
 /// from Anna's answer through the relays (`Connecting`), so his link opens
-/// only on ICE's check sent again 3.75 s after it, well past a direct
-/// link's `ANSWER_OPEN_TIMEOUT`: Bert keeps his contact
-/// (`RELAYS_OPEN_TIMEOUT`) and is welcomed by Anna, never hosting. With
+/// only on ICE's check sent again 3.75 s after it: Bert keeps his contact
+/// (`ANSWER_OPEN_TIMEOUT`) and is welcomed by Anna, never hosting. With
 /// Anna committed, her window is no limit: a link opening after it is
 /// welcomed all the same (late), so the timeout is what is tested.
 #[test]
@@ -625,13 +636,49 @@ fn a_slow_link_through_the_relays_is_waited_for() {
                 .any(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Anna"))
     });
     let took = answered.elapsed();
-    assert!(took > ANSWER_OPEN_TIMEOUT, "the link opened {took:?} after the answer: not a slow path");
+    assert!(took > Duration::from_secs(2), "the link opened {took:?} after the answer: not a slow path");
     for i in [b, c] {
         assert!(!net.peers[i].has(|e| *e == OnlineEvent::Migrating(MigrationStep::TakingOver)), "{i} hosts");
         assert!(!net.peers[i].has(|e| matches!(e, OnlineEvent::HostLost(_))));
     }
     assert!(net.peers[c].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Anna")));
     records_agree(&mut net, [a, c]);
+}
+
+/// Ruling SB-1 (net-soak's `soak-transport-125`): a direct link runs the
+/// same handshake as a relayed one (ICE's lost checks sent again 0.25,
+/// 0.75, 1.75, 3.75 s after the first, DTLS, rl-net's wait for the pair's
+/// stats), so on a lossy path it opens seconds after the answer too.
+/// Bert's datagrams black out for 2.5 s from his attempt at Anna (no
+/// relays: direct only; the signalling's TCP answers): his link opens
+/// only on ICE's check sent again 3.75 s after the first. He keeps his
+/// contact and is welcomed by Anna; with 2 s for a direct link he lost
+/// it, could not try Anna directly again in her window, and ended host
+/// lost in his own.
+#[test]
+fn a_slow_direct_link_is_waited_for() {
+    let Some(content) = content() else { return };
+    let (mut net, [a, b, c]) = started3(content, 0.2);
+    let mark = net.peers[b].events.len();
+    net.peers[0].frozen = true;
+    net.run_until(Duration::from_secs(6), "Bert tries Anna", |n| {
+        n.peers[b].events[mark..].contains(&OnlineEvent::Migrating(MigrationStep::Moving("Anna".into())))
+    });
+    let tried = Instant::now();
+    net.outage(b, Duration::from_millis(2_500));
+    net.run_until(Duration::from_secs(10), "Bert is welcomed by Anna", |n| {
+        n.peers[a].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
+            && n.peers[b].events[mark..]
+                .iter()
+                .any(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Anna"))
+    });
+    let took = tried.elapsed();
+    assert!(took > Duration::from_secs(2), "the link opened {took:?} after the attempt: not a slow path");
+    for i in [b, c] {
+        assert!(!net.peers[i].has(|e| *e == OnlineEvent::Migrating(MigrationStep::TakingOver)), "{i} hosts");
+        assert!(!net.peers[i].has(|e| matches!(e, OnlineEvent::HostLost(_))));
+    }
+    records_agree(&mut net, [a, b]);
 }
 
 /// N74 on the real path: the match has counted three migrations (the test

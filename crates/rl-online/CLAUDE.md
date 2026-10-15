@@ -42,12 +42,14 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   ending, every test not about migration, D7; `direct()`: a standby on
   port 0, no STUN, no relays), `MigrationStep` (`Finding`,
   `Moving(name)`, `TakingOver`; `Display` the HUD's texts),
-  `MIGRATION_CONNECT_TIMEOUT` (1 s, N73), `ANSWER_OPEN_TIMEOUT` (2 s: a
-  direct join answered whose link does not open is lost contact),
-  `RELAYS_OPEN_TIMEOUT` (6 s, the same through the relays: ICE's lost
-  checks sent again 0.25, 0.75, 1.75, 3.75 s after the first, DTLS over a
-  relayed pair, rl-net's up to 1.5 s wait for the pair's stats before
-  `Connected`; `answer_open_timeout(route)`), `REPORT_WAIT`
+  `MIGRATION_CONNECT_TIMEOUT` (1 s, N73), `ANSWER_OPEN_TIMEOUT` (6 s for
+  every route, ruling SB-1: a join answered whose link does not open
+  within it is lost contact; directly or through the relays, ICE's lost
+  checks are sent again 0.25, 0.75, 1.75, 3.75 s after the first, then
+  DTLS and SCTP, and rl-net waits up to 1.5 s for the pair's stats before
+  `Connected`: a direct link on `bad` opened 3.3 s after its answer in
+  net-soak's `soak-transport-125`, which Task 7's 2 s for direct links
+  left host lost), `REPORT_WAIT`
   (1 s: the reports' wait past the window), `HOST_LOST`, `HOST_BACK`
   (N69's log line), `stepped_down(secs)`; `HOST_BACK` and the
   timeouts in `migration::` only, the rest at the crate root as well.
@@ -292,7 +294,7 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       refuses its answered TCP joins, `Endpoint::refuse_pending`, drops
       its signalled ones and closes the links it did not welcome, so
       contact past a window lasts only with a committed one); an answered
-      join whose link has not opened `answer_open_timeout(route)` after
+      join whose link has not opened `ANSWER_OPEN_TIMEOUT` after
       the answer fails too (a successor dead after answering is left, not
       waited for past the give-up; a relayed path's slower ICE is waited
       for). A step moving on, its own turn or the give-up discards the
@@ -623,7 +625,14 @@ the survivors' records equal (fails without the lost contact); D8 with
 open links: a join whose `Hello` is held past the successor's window is
 closed at its end, the joiner takes over in its own window, records
 equal (fails without the gate closing); a successor frozen after
-answering is left (fails without `ANSWER_OPEN_TIMEOUT`); C1: Bert holding
+answering is left, Bert taking over only once his contact lapsed
+`ANSWER_OPEN_TIMEOUT` after her answer, past his window's opening (fails
+without `ANSWER_OPEN_TIMEOUT`, and with 2 s); a slow direct link (no
+relays; Bert's datagrams blacked out 2.5 s from his attempt at Anna, the
+signalling's TCP answering: his link opens on ICE's 3.75 s resend) is
+waited for, Bert welcomed by Anna, never hosting nor host lost, records
+equal (`a_slow_direct_link_is_waited_for`, ruling SB-1: fails with 2 s
+for direct links); C1: Bert holding
 rows Anna lacks (Anna's 0.7 s outage before the freeze) keeps every one
 (fails resuming without the reports); a rejoined member that never
 reports holds the resume only to the window's end plus `REPORT_WAIT`; a
@@ -636,7 +645,7 @@ equal (fails without the standby answering in its turn); a slow relayed
 link (Cid commits Anna directly; Bert's datagrams blacked out 2.5 s from
 Anna's answer, `Connecting`: `Connected` about 4.2 s after it) is waited
 for, Bert welcomed by Anna and never hosting, Anna's and Cid's records
-equal (fails with 2 s for the relays; it also lands Bert's rejoin in
+equal (fails with 2 s; it also lands Bert's rejoin in
 Anna's resume poll: fails without the lobby's events before the resume);
 a late rejoiner (its `Hello` held 6 s) welcomed `Waiting` after Anna's
 resume makes its replay of what it played, watches from a state counting
@@ -662,7 +671,7 @@ the planner's routes (direct, then the relays: the entry's first, each
 once; neither again in its window; direct only without relays; the
 relays alone without an address), N64's direct addresses (a global one
 or a port below 1024 never connected), `NotHost` asked again after
-`RETRY_US` directly and not through the relays, the lapse per route,
+`RETRY_US` directly and not through the relays, the lapse (alike on every route),
 N69's remembered `HostHeard`.
 Content (each peer a cache in a temporary directory; `common::
 partial_content` copies the match's packs but some, `with_test_skin`
