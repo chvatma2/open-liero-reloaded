@@ -80,6 +80,8 @@ fn samples() -> Vec<Vec<u8>> {
         ToHost::Have { revision: 2, missing: vec!["olx-skin-a".into(), "olx-skin-b".into()] },
         ToHost::Admin(AdminCommand::Settings(setup())),
         ToHost::Admin(AdminCommand::Kick([1; 32])),
+        ToHost::Standby { port: 40_000, relays: vec!["wss://relay.example/x".into()] },
+        ToHost::Standby { port: MIN_STANDBY_PORT, relays: vec![] },
     ] {
         v.push(encode_to_host(&m));
     }
@@ -89,6 +91,16 @@ fn samples() -> Vec<Vec<u8>> {
         ToClient::Welcome { you: 1, lobby: lobby() },
         ToClient::Lobby(lobby()),
         ToClient::Chat { from: 1, text: "hi".into() },
+        ToClient::Succession(vec![
+            SuccessorWire {
+                member: 1,
+                key: [1; 32],
+                direct: Some(([10, 0, 0, 1], 40_000)),
+                relays: vec!["wss://a.example".into(), "ws://b.example/".into()],
+                can_host: true,
+            },
+            SuccessorWire { member: 2, key: [2; 32], direct: None, relays: vec![], can_host: false },
+        ]),
         ToClient::Notice(Notice::NotReady(vec![1, 2])),
         ToClient::Ended(MatchEndWire {
             reason: "limit".into(),

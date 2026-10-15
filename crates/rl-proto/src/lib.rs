@@ -47,6 +47,10 @@ pub const STATE_CHUNK: usize = 32 * 1024;
 pub const MAX_STATE: usize = 64 * 1024 * 1024;
 /// Per-datagram bytes on the wire (DTLS + SCTP + UDP + IPv4), for budgets.
 pub const OVERHEAD: usize = 48;
+/// Most ticks of final inputs one `Control::Report` carries (30 s).
+pub const MAX_REPORT_FRAMES: usize = 3_000;
+/// Most provisional inputs of its own slot a report carries.
+pub const MAX_REPORT_OWN: usize = 256;
 /// Hash of the simulation's source: peers only play with an equal one (spec §2.2).
 pub const FINGERPRINT: u64 = include!(concat!(env!("OUT_DIR"), "/fingerprint.rs"));
 
@@ -96,6 +100,22 @@ pub struct Frame {
     pub keys: Vec<u8>,
 }
 
+/// What a peer knows, for the new host after a migration (spec §3.7).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputsReport {
+    /// The reporter's frontier: the new host's frames to it start there.
+    pub ack: u32,
+    /// `frames[k]` holds tick `first + k`'s final inputs as the reporter
+    /// knows them (the frame delta rule; `base` is the new host's value at
+    /// `first - 1`).
+    pub first: u32,
+    pub frames: Vec<Frame>,
+    /// The reporter's own provisional inputs for its slot, ticks
+    /// `own_first..` (empty for a spectator).
+    pub own_first: u32,
+    pub own: Vec<u8>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Control {
     Checksum {
@@ -132,6 +152,17 @@ pub enum Control {
     /// A client or spectator refused the host's state after `tick` (its
     /// transfer, or the bytes).
     StateRefused {
+        tick: u32,
+    },
+    /// New host to a rejoined peer: per slot, the first tick it lacks
+    /// (`known.len()` = the match's slots, at most `MAX_SLOTS`).
+    Collect {
+        known: Vec<u32>,
+    },
+    /// A rejoined peer to its new host: the answer to `Collect`.
+    Report(InputsReport),
+    /// New host to its peers: the match resumes at `tick`.
+    Resume {
         tick: u32,
     },
 }
@@ -193,6 +224,16 @@ pub fn decode_control(b: &[u8]) -> Result<Control, ProtoError> {
             *len as usize <= MAX_STATE && *chunks as usize == (*len as usize).div_ceil(STATE_CHUNK)
         }
         Control::Late { from, to } => from < to,
+        Control::Collect { known } => (1..=MAX_SLOTS).contains(&known.len()),
+        Control::Report(r) => {
+            r.frames.len() <= MAX_REPORT_FRAMES
+                && r.own.len() <= MAX_REPORT_OWN
+                && r.first.checked_add(r.frames.len() as u32).is_some()
+                && r.own_first.checked_add(r.own.len() as u32).is_some()
+                && r.frames
+                    .iter()
+                    .all(|f| f.changed & !f.known == 0 && f.keys.len() == f.changed.count_ones() as usize)
+        }
         _ => true,
     };
     if ok { Ok(c) } else { Err(ProtoError::Invalid) }

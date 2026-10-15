@@ -13,10 +13,17 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   **Control** (reliable channel): `Checksum`, `Late { from, to }` (one per
   answered datagram, spanning its filled ticks, on-time ones between two
   fill episodes included; `from < to` or `Invalid`), `Desync`,
-  `StateBegin`, `StateChunk`, `Bye`, `StateLoaded`, `StateRefused`.
+  `StateBegin`, `StateChunk`, `Bye`, `StateLoaded`, `StateRefused`; plan 12c
+  (host migration, spec §3.7): `Collect { known }` (1..=`MAX_SLOTS`),
+  `Report(InputsReport { ack, first, frames, own_first, own })` (frames <=
+  `MAX_REPORT_FRAMES` 3000, own <= `MAX_REPORT_OWN` 256, no `u32` overflow of
+  `first + len` or `own_first + len`, each frame `changed ⊆ known` with a key
+  per changed bit) and `Resume { tick }`. A worst-case report exceeds
+  `MAX_CONTROL`: the sender trims it (rl-netcode).
 - **Signalling** (`signal.rs`, WebSocket, one postcard message per frame,
   `MAX_SIGNAL`): `Signal::{Offer, Answer, Refused}`, `Refusal` (`Version`,
-  `Full`, `Banned`, `Busy`, `Malformed`, `Password`, `Exhausted`, `Throttled`: also the lobby's
+  `Full`, `Banned`, `Busy`, `Malformed`, `Password`, `Exhausted`, `Throttled`, `NotHost` (a standby before its peer took over),
+  `Closed` (a migrated lobby takes back its own players only, N72): also the lobby's
   `ToClient::Refused`); sdp <= 8 KiB.
 - **Lobby** (`lobby.rs`, reliable channel, `MAX_LOBBY` = 60 KiB: a full
   lobby at every bound is about 40 KB, `worst_case_messages_fit`): `ToHost`,
@@ -29,6 +36,15 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   `1` `ToHost`, `2` `ToClient`; `tag()` splits it (`Tagged`), `None` for an
   empty payload or unknown tag. The netcode session still sends untagged
   `Control`; rl-online tags and untags at the boundary.
+- **Migration lobby messages** (plan 12c): `ToHost::Standby { port, relays }`
+  (port >= `MIN_STANDBY_PORT` 1024; relays valid, <= `MAX_STANDBY_RELAYS` 2) and
+  `ToClient::Succession(Vec<SuccessorWire { member, key, direct, relays,
+  can_host }>)` (`valid_succession`: <= `MAX_MEMBERS`, unique ids and keys,
+  relays valid, direct ports >= 1024). `valid_relay_url`: `ws://` or `wss://`,
+  printable ASCII without spaces, <= `MAX_RELAY_URL` 128 bytes. A worst-case
+  `Succession` fits `MAX_LOBBY` (`tests/migration.rs`). The host counts
+  `Standby` changes at most once per `STANDBY_WINDOW_US` (rl-lobby): the
+  decoder bounds one message only.
 - **Content** (`content.rs`, plan 11, N32): `TAG_CONTENT = 3` carries
   `ContentMsg::{List, Want, Begin, Chunk, Unavailable, Cancel}` both ways
   (`encode_content` with the tag, `decode_content` without; `valid_content`);

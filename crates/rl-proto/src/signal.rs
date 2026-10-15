@@ -27,6 +27,10 @@ pub enum Refusal {
     Exhausted,
     /// Too many wrong passwords from this address: try again in a minute.
     Throttled,
+    /// A standby was dialled before its peer took over hosting.
+    NotHost,
+    /// A migrated lobby takes back its own players only (N72).
+    Closed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

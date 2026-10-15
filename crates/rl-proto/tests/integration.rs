@@ -9,4 +9,5 @@ mod addr;
 mod fingerprint;
 mod fuzz;
 mod fuzz_lobby;
+mod migration;
 mod stun;

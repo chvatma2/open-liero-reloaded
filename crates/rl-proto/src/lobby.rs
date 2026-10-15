@@ -36,6 +36,14 @@ pub const MAX_INPUT_DELAY: u8 = 3;
 /// Longest restrictions string, in bytes.
 pub const MAX_RESTRICTIONS: usize = 256;
 
+/// Most relays a member lists for itself as a successor.
+pub const MAX_STANDBY_RELAYS: usize = 2;
+/// Longest relay URL, in bytes.
+pub const MAX_RELAY_URL: usize = 128;
+/// Standby ports below this are no successor's (N64: a hostile host cannot
+/// aim peers at a privileged service).
+pub const MIN_STANDBY_PORT: u16 = 1024;
+
 /// Reliable-channel tag bytes.
 pub const TAG_NETCODE: u8 = 0;
 pub const TAG_TO_HOST: u8 = 1;
@@ -122,6 +130,12 @@ pub enum ToHost {
     },
     Admin(AdminCommand),
     Bye,
+    /// The member's standby endpoint's port and the relays it listens on
+    /// once it hosts (N63).
+    Standby {
+        port: u16,
+        relays: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -165,6 +179,22 @@ pub enum ToClient {
         #[serde(with = "sig64")]
         signature: Signature,
     },
+    /// The succession order (spec §3.7), whole, on every change during a
+    /// match.
+    Succession(Vec<SuccessorWire>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SuccessorWire {
+    pub member: u8,
+    pub key: PublicKey,
+    /// Its standby endpoint, IPv4 octets and port, when the host saw it on
+    /// its own network (N64).
+    pub direct: Option<([u8; 4], u16)>,
+    /// At most `MAX_STANDBY_RELAYS` relays it listens on once it hosts.
+    pub relays: Vec<String>,
+    /// It may host (a standby and a world); `false`: it follows only.
+    pub can_host: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -412,6 +442,29 @@ fn unique(it: impl Iterator<Item = u8>) -> bool {
 
 /// A chat line, notice or end reason: at most `MAX_CHAT` characters, no
 /// control characters or bidi controls.
+/// `ws://` or `wss://`, printable ASCII without spaces, at most
+/// `MAX_RELAY_URL` bytes.
+pub fn valid_relay_url(s: &str) -> bool {
+    s.len() <= MAX_RELAY_URL
+        && (s.starts_with("ws://") || s.starts_with("wss://"))
+        && s.bytes().all(|b| b.is_ascii_graphic())
+}
+
+fn valid_relays(r: &[String]) -> bool {
+    r.len() <= MAX_STANDBY_RELAYS && r.iter().all(|u| valid_relay_url(u))
+}
+
+/// At most `MAX_MEMBERS` entries, unique member ids and keys, relays valid
+/// and at most 2, direct ports >= `MIN_STANDBY_PORT`.
+pub fn valid_succession(list: &[SuccessorWire]) -> bool {
+    list.len() <= MAX_MEMBERS
+        && list.iter().enumerate().all(|(i, s)| {
+            valid_relays(&s.relays)
+                && s.direct.is_none_or(|(_, port)| port >= MIN_STANDBY_PORT)
+                && list[..i].iter().all(|o| o.member != s.member && o.key != s.key)
+        })
+}
+
 pub fn valid_chat(s: &str) -> bool {
     valid_text(s, MAX_CHAT) && !s.chars().any(is_bidi)
 }
@@ -430,6 +483,7 @@ pub fn decode_to_host(b: &[u8]) -> Result<ToHost, ProtoError> {
         ToHost::Chat(t) => valid_chat(t),
         ToHost::Have { missing, .. } => valid_missing(missing),
         ToHost::Admin(AdminCommand::Settings(s)) => valid_setup(s),
+        ToHost::Standby { port, relays } => *port >= MIN_STANDBY_PORT && valid_relays(relays),
         _ => true,
     };
     if ok { Ok(m) } else { Err(ProtoError::Invalid) }
@@ -450,6 +504,7 @@ pub fn decode_to_client(b: &[u8]) -> Result<ToClient, ProtoError> {
         ToClient::Notice(Notice::Message(t)) => valid_chat(t),
         ToClient::Notice(Notice::NotReady(ids)) => ids.len() <= MAX_MEMBERS,
         ToClient::Start(s) => valid_start(s),
+        ToClient::Succession(list) => valid_succession(list),
         ToClient::Ended(e) => valid_chat(&e.reason) && e.rows.len() <= MAX_PLAYERS && e.last_tick < u32::MAX,
         _ => true,
     };

@@ -48,6 +48,30 @@ fn the_fingerprint_is_set() {
     assert_ne!(FINGERPRINT, 0);
 }
 
+fn migration_control() -> impl Strategy<Value = Control> {
+    let edge = prop_oneof![Just(0u32), Just(1), Just(u32::MAX), Just(u32::MAX - 1), any::<u32>()];
+    let frame = (any::<u32>(), any::<u32>(), prop::collection::vec(any::<u8>(), 0..4))
+        .prop_map(|(known, changed, keys)| Frame { known, changed, keys });
+    let frames = prop_oneof![
+        prop::collection::vec(frame, 0..8),
+        Just(vec![Frame { known: 0, changed: 0, keys: vec![] }; MAX_REPORT_FRAMES - 1]),
+        Just(vec![Frame { known: 0, changed: 0, keys: vec![] }; MAX_REPORT_FRAMES]),
+        Just(vec![Frame { known: 0, changed: 0, keys: vec![] }; MAX_REPORT_FRAMES + 1]),
+    ];
+    let own = prop_oneof![
+        prop::collection::vec(any::<u8>(), 0..8),
+        Just(vec![1u8; MAX_REPORT_OWN]),
+        Just(vec![1u8; MAX_REPORT_OWN + 1]),
+    ];
+    prop_oneof![
+        prop::collection::vec(edge.clone(), 0..=MAX_SLOTS + 1).prop_map(|known| Control::Collect { known }),
+        edge.clone().prop_map(|tick| Control::Resume { tick }),
+        (edge.clone(), edge.clone(), frames, edge, own).prop_map(|(ack, first, frames, own_first, own)| {
+            Control::Report(InputsReport { ack, first, frames, own_first, own })
+        }),
+    ]
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 256, failure_persistence: None, ..ProptestConfig::default() })]
 
@@ -63,6 +87,18 @@ proptest! {
         for (i, v) in &edits { let i = i.index(b.len()); b[i] = *v; }
         if let Ok(Datagram::Host(h)) = decode_datagram(&b, 8) {
             let _ = decode_frames(h.first, &h.frames, 8, &|_| Some(0), &mut |_, _, _| {});
+        }
+    }
+
+    #[test]
+    fn mutated_migration_controls_never_panic(
+        c in migration_control(),
+        edits in prop::collection::vec((any::<prop::sample::Index>(), any::<u8>()), 0..4),
+    ) {
+        let mut b = encode_control(&c);
+        for (i, v) in &edits { let i = i.index(b.len()); b[i] = *v; }
+        if let Ok(m) = decode_control(&b) {
+            prop_assert_eq!(decode_control(&encode_control(&m)), Ok(m));
         }
     }
 }

@@ -229,6 +229,8 @@ fn refusal_words(r: Refusal) -> &'static str {
         Refusal::Password => "a wrong password",
         Refusal::Exhausted => "no connection ids left: restart the game",
         Refusal::Throttled => "too many wrong passwords",
+        Refusal::NotHost => "this player is not hosting the game",
+        Refusal::Closed => "this game takes back its own players only",
     }
 }
 

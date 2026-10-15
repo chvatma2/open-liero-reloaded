@@ -1646,6 +1646,8 @@ fn refusal_text(r: Refusal) -> &'static str {
         Refusal::Password => "wrong password",
         Refusal::Exhausted => "the host ran out of connection ids and must restart",
         Refusal::Throttled => "too many wrong passwords: try again in a minute",
+        Refusal::NotHost => "this player is not hosting the game",
+        Refusal::Closed => "this game takes back its own players only",
     }
 }
 

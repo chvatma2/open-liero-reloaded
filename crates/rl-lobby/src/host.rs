@@ -1080,6 +1080,8 @@ impl LobbyHost {
                 self.drop_member(id, Gone::Left);
                 self.events.push(HostEvent::Close { peer });
             }
+            // Plan 12c task 4 records the member's standby.
+            ToHost::Standby { .. } => {}
         }
     }
 

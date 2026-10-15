@@ -194,6 +194,8 @@ impl LobbyClient {
             ToClient::Challenge { .. }
             | ToClient::HostProof { .. }
             | ToClient::Welcome { .. }
+            // Plan 12c task 4 takes the succession.
+            | ToClient::Succession(_)
             | ToClient::Refused(_) => return,
         };
         self.events.push(event);
