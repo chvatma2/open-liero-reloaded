@@ -162,6 +162,43 @@ The headless command-line tool. Its commands:
   `Stats::bytes_in`/`bytes_out`, `OVERHEAD` per datagram included). A
   failed verdict is an error. `cargo xtask net-feel` gates them (see
   xtask); `tests/feel.rs` checks the definitions on a short run.
+- `rl-cli net-soak [--minutes 10] [--seed 1] [--transport-every 5] [--runs N]
+  [--content DIR] [--failures DIR]` (plan 12c Task 11, N77, `soak.rs`,
+  the command in `net_soak_cmd.rs`; `cargo xtask net-soak` runs it, not a
+  `full` step): seeded online cases one after the other until the time
+  (or `--runs`) is up. `soak::case(seed)` is a pure function of the seed
+  (all draws from `rl_netcode::Rng`): both mods, the 4 levels, 2-16 slots,
+  1-min(slots, 7) clients, 0-2 spectators (one in two arriving mid-match),
+  a base profile, 0-3 profile changes, 0-2 outages of 0.5-6 s, in half of
+  them a host crash, departure or 1.6-2.5 s freeze at a random tick in the
+  middle 60 %, 1500-6000 ticks; `case_short` (tests) the same with 600.
+  Case `n` (from 0) has seed `seed + n`; every `--transport-every`th run
+  (the 5th, 10th, ..) is `soak::transport_case(seed)`: 2-4 clients through
+  good, typical or bad, 0.3-0.5 minutes, 127.0.0.1 only, in half of them a
+  server freeze or departure at 25-70 % of the match (migration on, the
+  server's own bots playing on), the others clean control runs (migration
+  off; N77's "every transport case has a server exit" is the brief's
+  half). One line per case, `run <n> seed <s> <stem>: ok (<secs>s)` or
+  `... FAIL <what> at tick <t> (<file>)`, then `soak: <runs> runs (<k>
+  transport), <f> failures in <m> min`; exit 1 if any failed. **Bounded:**
+  each case's report is dropped before the next, a failure is a file (at
+  most `MAX_FAILURES` 32, then the soak stops with its summary), nothing
+  else accumulates (`tests/net_soak_memory.rs`, its own `[[test]]`: `VmRSS`
+  after 2 and after 8 runs within 16 MiB, Linux only). A `net-sim` failure
+  is `net-<stem>.ron` (`netsim::write_failure`); a case that cannot run,
+  or panics, `soak::write_error_case` (a `NetCase` whose note names the
+  error, since `write_failure` keeps only failed verdicts); a transport
+  failure `soak-transport-<seed>/` with `spec.ron` (`TransportSpec`, now
+  serde: its `difficulty` by name, `easy`..`xtreme`, through
+  `difficulty_name`), `failure.txt`, `server.log` and any desync bundles.
+  `run_cases(cfg, cases, out)` takes the case function (tests; a transport
+  case gets a temporary data directory of its own). The first minute found
+  that an outage of 0.5 s or more stalls a peer on any profile:
+  `NetSpec::expect_no_stalls` is now off with any outage.
+  `tests/net_soak.rs` (check): the cases' determinism and bounds (200
+  seeds, every exit kind, every profile valid), a short soak's lines and
+  summary, a failing case kept and counted (and the cap), the error
+  writer's round trip, `TransportSpec` through RON and the outage rule.
 - `rl-cli net-client --bot (--join <host[:port]> | --invite rlx1… | --key
   <64 hex> | --listed "<name>") [--relay URL]... [--stun host:port]...
   [--turn user:pass@host:port]... [--no-nostr-turn] [--region R]
@@ -418,7 +455,8 @@ with the asker's address, then are killed); the unit tests of
 `net_client_cmd.rs` check the target's resolution, the migration
 configuration (a standby unless `--no-standby`) and the printed lines. The tests are modules of one binary,
 `tests/integration.rs`, except those xtask runs by name (`golden`,
-`net_cases`, `grid`, `net_sim`, `transport`, `render_golden`, `gpu_bench`): one module's
+`net_cases`, `grid`, `net_sim`, `transport`, `render_golden`, `gpu_bench`) and
+`net_soak_memory` (it reads the process's memory): one module's
 tests are `cargo nextest run -p rl-cli --test integration corpus::`.
 `tests/corpus.rs` checks every imported
 pack when `RL_CONTENT_DIR` is set. To accept a reviewed snapshot change, run

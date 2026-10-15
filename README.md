@@ -331,7 +331,10 @@ The two whole-program-optimised builds take several minutes from cold.
   adapter, device or Xvfb is missing. Several minutes warm.
 - `cargo xtask e2e`, `cargo xtask net-nat`, `cargo xtask bench [--bless
   --reason "<why>"]` and `cargo xtask stress [--seconds N]` run those
-  steps alone; `stress` plays
+  steps alone; `cargo xtask net-soak [--minutes N] [--seed S]` (not part of
+  `full`) plays seeded online cases, host crashes, departures and freezes
+  among them, for N minutes (default 10) and keeps each failure as a case in
+  `target/failures`; `stress` plays
   32 chaos bots on Castle Strike past OLX's limits and prints a report.
 - `cargo xtask envelope [--quick] [--only <part>] [--gpu
   wsl|windows|both|none]` measures how far the game goes on this machine

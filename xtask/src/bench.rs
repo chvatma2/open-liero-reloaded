@@ -474,10 +474,17 @@ fn measure_benches(
 
 /// `rl-cli` in the release profile, built.
 pub fn rl_cli() -> Result<PathBuf, String> {
-    let out = cargo()
-        .args(["build", "--quiet", "--release", "-p", "rl-cli"])
-        .output()
-        .map_err(|e| format!("cannot run cargo: {e}"))?;
+    rl_cli_with(false)
+}
+
+/// [`rl_cli`]; `offline` builds without the network (cargo's `--offline`).
+pub fn rl_cli_with(offline: bool) -> Result<PathBuf, String> {
+    let mut build = cargo();
+    build.args(["build", "--quiet", "--release", "-p", "rl-cli"]);
+    if offline {
+        build.arg("--offline");
+    }
+    let out = build.output().map_err(|e| format!("cannot run cargo: {e}"))?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).into_owned());
     }

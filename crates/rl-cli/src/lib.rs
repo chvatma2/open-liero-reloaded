@@ -15,6 +15,7 @@ pub mod netsim;
 pub mod nostr_probe;
 pub mod rollback_cost;
 pub mod runner;
+pub mod soak;
 pub mod spec;
 pub mod stress;
 pub mod timing;

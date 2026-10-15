@@ -88,6 +88,9 @@ name = "net_cases"
 name = "net_sim"
 
 [[test]]
+name = "net_soak_memory"
+
+[[test]]
 name = "render_golden"
 
 [[test]]

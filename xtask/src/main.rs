@@ -130,6 +130,21 @@ enum Command {
         #[arg(long)]
         reason: Option<String>,
     },
+    /// Seeded online cases for as long as asked (plan 12c, spec §9.10): host crashes,
+    /// departures and freezes, outages, profile changes and spectators in `net-sim`, every
+    /// 5th case a real-transport match on 127.0.0.1. Failures are kept in target/failures.
+    /// Not a step of `full`.
+    NetSoak {
+        /// How long to run.
+        #[arg(long, default_value_t = 10.0)]
+        minutes: f64,
+        /// The first case's seed.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// Build without the network.
+        #[arg(long)]
+        offline: bool,
+    },
     /// The Docker NAT tests (plan 12b, spec §9.7; also a step of `full`): home routers
     /// (cone, symmetric, UPnP, PCP, NAT-PMP) on isolated networks, a Nostr relay, STUN and a TURN
     /// relay; direct joins, port mapping, hole punching, relays, finding and --nat-check.
@@ -231,6 +246,7 @@ fn main() -> ExitCode {
             envelope::run(&envelope::Opts { quick, only, gpu, bless: reason.filter(|_| bless), report, from })
         }
         Command::NetFeel { bless, reason } => net::run(reason.as_deref().filter(|_| bless)),
+        Command::NetSoak { minutes, seed, offline } => net::soak(minutes, seed, offline),
         Command::NetNat { keep, offline, only } => nat::command(&only, keep, offline),
         Command::InstallHooks => install_hooks().map(|()| true),
         Command::OracleRecord { check, names } => oracle::run(&names, check),

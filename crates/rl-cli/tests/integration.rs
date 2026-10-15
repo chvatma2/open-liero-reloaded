@@ -8,6 +8,7 @@
 //! - `grid`: the full tier's bot-match grid (`check::FULL_TESTS`);
 //! - `net_cases`: `bless-regression --from`;
 //! - `net_sim`: the full tier's online grid (`check::FULL_TESTS`);
+//! - `net_soak_memory`: reads the process's memory (process-global state);
 //! - `render_golden`: the GPU tier (`check::GPU_TESTS`) and `bless-render`;
 //! - `transport`: the full tier's real-transport matches (`check::FULL_TESTS`).
 
@@ -20,6 +21,7 @@ mod feel;
 mod hits;
 mod matches;
 mod net_repro;
+mod net_soak;
 mod nostr_probe;
 mod scenario;
 mod state_transfer;

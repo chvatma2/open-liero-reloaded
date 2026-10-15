@@ -220,6 +220,39 @@ pub fn run(bless: Option<&str>) -> anyhow::Result<bool> {
     Ok(true)
 }
 
+/// `rl-cli net-soak`'s command line for `cargo xtask net-soak`: the
+/// packs in `content/packs` and the failures in `target/failures`
+/// (relative: the command runs in the workspace root).
+pub fn soak_args(minutes: f64, seed: u64) -> Vec<String> {
+    let mut args: Vec<String> = ["net-soak", "--minutes"].map(String::from).into();
+    args.extend([
+        minutes.to_string(),
+        "--seed".into(),
+        seed.to_string(),
+        "--content".into(),
+        "content/packs".into(),
+        "--failures".into(),
+        "target/failures".into(),
+    ]);
+    args
+}
+
+/// `cargo xtask net-soak [--minutes N] [--seed S] [--offline]` (plan 12c,
+/// N77; not a `full` step): builds `rl-cli` in release and runs `net-soak`
+/// on `content/packs`, its output streaming; failures are kept as cases in
+/// `target/failures` (`rl-cli net-sim --from <case>` replays one, `cargo
+/// xtask bless-regression --from` keeps it). Nothing leaves the machine.
+pub fn soak(minutes: f64, seed: u64, offline: bool) -> anyhow::Result<bool> {
+    anyhow::ensure!(minutes.is_finite() && minutes >= 0.0, "--minutes {minutes} is not a duration");
+    let cli = crate::bench::rl_cli_with(offline).map_err(anyhow::Error::msg)?;
+    let status = Command::new(&cli)
+        .args(soak_args(minutes, seed))
+        .current_dir(root())
+        .status()
+        .map_err(|e| anyhow::anyhow!("cannot run {}: {e}", cli.display()))?;
+    Ok(status.success())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +268,23 @@ mod tests {
             down_bytes_per_s: down,
             up_bytes_per_s: 900,
         }
+    }
+
+    #[test]
+    fn net_soak_args_are_parsed() {
+        let args = soak_args(0.5, 9);
+        let at = |flag: &str| args.iter().position(|a| a == flag).map(|i| args[i + 1].as_str());
+        assert_eq!(args[0], "net-soak");
+        assert_eq!((at("--minutes"), at("--seed")), (Some("0.5"), Some("9")));
+        assert_eq!((at("--content"), at("--failures")), (Some("content/packs"), Some("target/failures")));
+        use clap::Parser as _;
+        let cli =
+            crate::Cli::try_parse_from(["xtask", "net-soak", "--minutes", "0.5", "--seed", "9", "--offline"]);
+        assert!(matches!(
+            cli.map(|c| c.command),
+            Ok(crate::Command::NetSoak { minutes, seed: 9, offline: true }) if minutes == 0.5
+        ));
+        assert!(crate::Cli::try_parse_from(["xtask", "net-soak", "--minutes", "x"]).is_err());
     }
 
     #[test]

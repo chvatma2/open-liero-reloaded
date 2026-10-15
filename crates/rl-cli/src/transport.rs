@@ -448,8 +448,41 @@ pub struct ServerExit {
     pub how: ServerExitHow,
 }
 
-/// A server and its bot clients over localhost (spec §9.4).
-#[derive(Clone, Debug)]
+/// `TransportSpec::difficulty` as its name (`easy`, `medium`, `hard`,
+/// `xtreme`, as `--difficulty` reads them): `rl_bots::Difficulty` has no
+/// serde and rl-bots takes no dependency for it.
+mod difficulty_name {
+    use rl_bots::Difficulty;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(d: &Option<Difficulty>, s: S) -> Result<S::Ok, S::Error> {
+        d.map(|d| match d {
+            Difficulty::Easy => "easy",
+            Difficulty::Medium => "medium",
+            Difficulty::Hard => "hard",
+            Difficulty::Xtreme => "xtreme",
+        })
+        .serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Difficulty>, D::Error> {
+        Option::<String>::deserialize(d)?
+            .map(|name| match name.as_str() {
+                "easy" => Ok(Difficulty::Easy),
+                "medium" => Ok(Difficulty::Medium),
+                "hard" => Ok(Difficulty::Hard),
+                "xtreme" => Ok(Difficulty::Xtreme),
+                other => Err(serde::de::Error::custom(format!(
+                    "unknown difficulty {other:?} (easy, medium, hard, xtreme)"
+                ))),
+            })
+            .transpose()
+    }
+}
+
+/// A server and its bot clients over localhost (spec §9.4). Serializable
+/// (RON), so `net-soak` keeps a failing run's spec.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TransportSpec {
     pub mod_id: String,
     pub level_id: String,
@@ -468,6 +501,7 @@ pub struct TransportSpec {
     /// `good`, `typical`, `bad` or `awful`; `None`: localhost as it is.
     pub profile: Option<String>,
     /// The clients' bots; `None`: client `i` Easy, Medium, Hard, Xtreme in turn.
+    #[serde(with = "difficulty_name")]
     pub difficulty: Option<Difficulty>,
     /// Client `i`'s impairment seed is `net_seed + i`.
     pub net_seed: u64,

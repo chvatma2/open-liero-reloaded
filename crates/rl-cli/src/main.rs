@@ -8,6 +8,7 @@ mod nat_tools;
 mod net_client_cmd;
 mod net_repro_cmd;
 mod net_sim_cmd;
+mod net_soak_cmd;
 mod render;
 mod replay_cmd;
 mod rollback_cost_cmd;
@@ -42,6 +43,9 @@ enum Command {
     /// Plays an online match in one process over a simulated network (bots on every peer)
     /// and checks that every peer agrees; exits with status 1 on a failure.
     NetSim(net_sim_cmd::Args),
+    /// Seeded online cases (host crashes, departures, freezes, outages; some over real
+    /// connections on 127.0.0.1) for as long as asked; keeps failures; exits with status 1 on any.
+    NetSoak(net_soak_cmd::Args),
     /// A headless bot client over real connections: joins a server (by address, invite
     /// code, key or listed name), plays its matches, prints its path and each match's
     /// confirmed checksums; exits with status 1 if it was dropped.
@@ -87,6 +91,7 @@ fn main() -> ExitCode {
         Command::Render(args) => render::run(&args),
         Command::Match(args) => match_cmd::run(&args),
         Command::NetSim(args) => net_sim_cmd::run_cmd(args),
+        Command::NetSoak(args) => net_soak_cmd::run_cmd(args),
         Command::NetClient(args) => net_client_cmd::run(&args),
         Command::NetRepro(args) => net_repro_cmd::run(&args),
         Command::Replay(args) => replay_cmd::run(&args),

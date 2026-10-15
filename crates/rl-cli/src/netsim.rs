@@ -167,10 +167,14 @@ impl NetSpec {
     }
 
     /// No player may stall on a profile up to `bad` (spec §9.2), unless a
-    /// link changes to `awful` mid-run.
+    /// link changes to `awful` mid-run or an outage cuts a peer off (an
+    /// outage of 0.28 s, `MAX_PREDICTION` ticks, or more stalls its peer
+    /// whatever the profile: found by `net-soak`, which draws outages of
+    /// 0.5 s and more).
     fn expect_no_stalls(&self) -> bool {
         matches!(self.profile.as_str(), "lan" | "good" | "typical" | "bad")
             && !self.profile_changes.iter().any(|c| c.2 == "awful")
+            && self.outages.is_empty()
     }
 
     /// The options every peer builds its world from.

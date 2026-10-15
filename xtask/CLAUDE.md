@@ -2,7 +2,7 @@
 
 Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `oracle-record`, `tidy`, `bless-render`, `bless-regression`, `fetch-olx-content`,
-`e2e`, `net-nat`, `bench`, `stress`, `net-feel`, `windows`, `envelope`,
+`e2e`, `net-nat`, `bench`, `stress`, `net-feel`, `net-soak`, `windows`, `envelope`,
 `determinism`, `dist`.
 
 - `fetch-olx-content` (`fetch.rs`) imports the manifest into the
@@ -85,6 +85,20 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `--bless` writes the baseline (note `NOTE`) only when the absolute rules
   pass (else the netcode has a problem to fix, not the gate) and logs the
   reason in `fixtures/blessings.log`. About 40 s once built.
+- `net-soak [--minutes 10] [--seed 1] [--offline]` (`net::soak`, plan 12c,
+  N77, spec §9.10; **not** a `full` step): builds `rl-cli` in release
+  (`bench::rl_cli_with`; `--offline` builds with cargo's `--offline`) and
+  runs `rl-cli net-soak --minutes M --seed S --content content/packs
+  --failures target/failures` (`soak_args`), its output streaming (one line
+  per case, a summary), and exits 1 if a case failed. Seeded host crashes,
+  departures and freezes, outages, profile changes and spectators over
+  `net-sim`'s virtual time, every 5th case a real-transport match on
+  127.0.0.1 (nothing leaves the machine). Each failure is kept in
+  `target/failures` as a case (`net-<stem>.ron`: replay it with `rl-cli
+  net-sim --from`, keep it with `bless-regression --from`) or, for a
+  transport case, `soak-transport-<seed>/` (spec, verdict, server log);
+  at most 32, then it stops. A failure is a finding to fix in its task,
+  not a gate to loosen. Unit test `net_soak_args_are_parsed`.
 - `e2e` (`e2e.rs`, also `cargo xtask e2e [--offline]`): builds
   (`build_binaries`, shared with `net-nat`) `rl-game`
   and `rl-server` (dev profile), and `rl-cli --features nat-tools` in a
