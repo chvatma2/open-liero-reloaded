@@ -82,3 +82,5 @@
   fixtures/net/cases/net-classic-fossilfacility-typical-4s4c2v-seed1641548929-585e3eb2.ron
 2026-10-15 bless-regression: net-sim's stall clock followed a left-behind old host, not the current one
   fixtures/net/cases/net-classic-liero-factory-lan-10s1c0v-seed3202236798-7b5a787d.ron
+2026-10-15 bless-regression: SB-2 in the harness: a follower came back to an old host cut off from its players, still playing alone
+  fixtures/net/cases/net-classic-castlestrike-bad-14s3c1v-seed974389837-5cabaf85.ron

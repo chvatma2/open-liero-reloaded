@@ -55,6 +55,10 @@ pub struct Outage {
     pub peer: PeerId,
     pub from_tick: u32,
     pub until_tick: u32,
+    /// Only what the peer's host sends it is lost (for a host: what it
+    /// sends its peers); the host still hears it. A migration's attempts
+    /// are not cut by it.
+    pub one_way: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -220,10 +224,10 @@ pub struct Report {
     /// went (an exited or left-behind host: itself): the verdict bounds its
     /// rows by what that host's migration's survivors held.
     pub left_from: BTreeMap<PeerId, PeerId>,
-    /// Former hosts still running at the end: cut off from their peers
-    /// (their own network down past `HOST_SILENT_US` while they ran on),
-    /// they cannot know the peers moved to a successor, and confirm their
-    /// own fills for the peers' slots. Not survivors, as an exited host.
+    /// Former hosts still running at the end: their peers moved to a
+    /// successor while they ran on, confirming their own fills for the
+    /// peers' slots. Not survivors, as an exited host. (A host cut off from
+    /// its players leaves, SB-2: only one that never heard a player stays.)
     pub left_behind: BTreeSet<PeerId>,
 }
 
@@ -523,6 +527,8 @@ fn check_scenario(sc: &Scenario) -> Result<(), Failure> {
 ///   successor went back too), as rl-online's `Planner` does.
 /// - **N70:** a host whose frame gap reaches [`STEP_DOWN_US`] and whose
 ///   succession has an entry that can host leaves.
+/// - **SB-2:** so does a host that hears none of its players
+///   (`Session::players_silent`: its own network is down).
 /// - **Give-up:** host lost; the peer runs no more frames.
 ///
 /// Profile changes and outages apply to the link between the peer and
@@ -538,8 +544,8 @@ struct Shared {
     successions: BTreeMap<PeerId, Vec<(PeerId, bool)>>,
     /// Each peer's link profile now.
     profiles: BTreeMap<PeerId, Profile>,
-    /// Each peer's outage now installed (virtual times).
-    installed: BTreeMap<PeerId, (u64, u64)>,
+    /// Each peer's outage now installed (virtual times; one-way).
+    installed: BTreeMap<PeerId, (u64, u64, bool)>,
     /// The bot slots a new host plays.
     bots: Vec<u8>,
     hosts: Vec<PeerId>,
@@ -560,10 +566,14 @@ impl Shared {
         let profile = self.profiles.get(&peer).copied().unwrap_or(Profile::LAN);
         self.net.connect(peer, host, profile);
         for x in [peer, host] {
-            if let Some(&(a, b)) = self.installed.get(&x)
+            if let Some(&(a, b, one_way)) = self.installed.get(&x)
                 && b > now
             {
-                self.net.outage(peer, host, a, b);
+                if one_way {
+                    self.net.outage_one_way(host, peer, a, b);
+                } else {
+                    self.net.outage(peer, host, a, b);
+                }
             }
         }
     }
@@ -598,10 +608,10 @@ pub fn run_observed<S: Simulation>(
     events.insert(HOST, Vec::new());
 
     // Outages, per peer in start order; one is installed at a time.
-    let mut outages: BTreeMap<PeerId, Vec<(u64, u64)>> = BTreeMap::new();
+    let mut outages: BTreeMap<PeerId, Vec<(u64, u64, bool)>> = BTreeMap::new();
     for o in &sc.outages {
         let (a, b) = (o.from_tick as u64 * TICK_US, o.until_tick as u64 * TICK_US);
-        outages.entry(o.peer).or_default().push((a, b));
+        outages.entry(o.peer).or_default().push((a, b, o.one_way));
     }
     for list in outages.values_mut() {
         list.sort();
@@ -719,18 +729,24 @@ pub fn run_observed<S: Simulation>(
             w.net.set_profile(host, c.peer, c.profile);
         }
         for (&peer, list) in outages.iter_mut() {
-            let free = w.installed.get(&peer).is_none_or(|&(_, until)| now >= until);
-            if free && let Some((a, b)) = list.pop() {
+            let free = w.installed.get(&peer).is_none_or(|&(_, until, _)| now >= until);
+            if free && let Some((a, b, one_way)) = list.pop() {
                 let host = index.get(&peer).map_or(HOST, |&i| peers[i].host);
                 if host == peer {
                     // A host's own network: every link of its peers.
                     for q in peers.iter().filter(|q| q.host == peer && q.id != peer) {
-                        w.net.outage(peer, q.id, a, b);
+                        if one_way {
+                            w.net.outage_one_way(peer, q.id, a, b);
+                        } else {
+                            w.net.outage(peer, q.id, a, b);
+                        }
                     }
+                } else if one_way {
+                    w.net.outage_one_way(host, peer, a, b);
                 } else {
                     w.net.outage(host, peer, a, b);
                 }
-                w.installed.insert(peer, (a, b));
+                w.installed.insert(peer, (a, b, one_way));
             }
         }
         w.net.deliver_due(now, &mut |from, to, ch, bytes| {
@@ -828,6 +844,21 @@ pub fn run_observed<S: Simulation>(
                 p.session.transmit(&mut |to, ch: Channel, bytes| w.net.send(now, id, to, ch, bytes));
             }
             events.entry(id).or_default().extend(new);
+            // Ruling SB-2, as rl-online's `cut_off_check`: a host that hears
+            // none of its players (its own network down) leaves the match
+            // when someone can take over, instead of playing on alone.
+            if plan.is_some()
+                && !p.gone
+                && p.session.is_host()
+                && p.session.players_silent(local)
+                && w.successions.get(&id).is_some_and(|o| o.iter().any(|e| e.1))
+            {
+                p.session.leave();
+                p.session.transmit(&mut |to, ch: Channel, bytes| w.net.send(now, id, to, ch, bytes));
+                p.gone = true;
+                w.exited.insert(id);
+                w.left_from.insert(id, id);
+            }
         }
         let current = w.hosts.last().copied().unwrap_or(HOST);
         let ci = index.get(&current).copied().unwrap_or(0);
@@ -870,7 +901,7 @@ pub fn run_observed<S: Simulation>(
         for &(at, _) in &timed {
             next = next.min(at);
         }
-        for (peer, &(_, until)) in &w.installed {
+        for (peer, &(_, until, _)) in &w.installed {
             if until > now && outages.get(peer).is_some_and(|l| !l.is_empty()) {
                 next = next.min(until);
             }
@@ -1055,7 +1086,10 @@ fn migrate<S: Simulation>(
     // Attempts whose stage is due.
     let outage = |peer: PeerId| {
         sc.outages.iter().any(|o| {
-            o.peer == peer && now >= o.from_tick as u64 * TICK_US && now < o.until_tick as u64 * TICK_US
+            o.peer == peer
+                && !o.one_way
+                && now >= o.from_tick as u64 * TICK_US
+                && now < o.until_tick as u64 * TICK_US
         })
     };
     for i in 0..peers.len() {

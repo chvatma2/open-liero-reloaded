@@ -132,12 +132,24 @@ impl LinkModel {
 struct Link {
     model: LinkModel,
     last_reliable: u64,
-    outage: Option<(u64, u64)>,
+    /// Every outage set on it, each `[from, until)`: a link can be in two at
+    /// once (the peer's own network and its host's).
+    outages: Vec<(u64, u64)>,
 }
 
 impl Link {
     fn in_outage(&self, t: u64) -> bool {
-        self.outage.is_some_and(|(a, b)| t >= a && t < b)
+        self.outages.iter().any(|&(a, b)| t >= a && t < b)
+    }
+
+    /// When the outages covering `t` are over (overlapping ones chained).
+    fn outage_end(&self, t: u64) -> Option<u64> {
+        let mut end = self.outages.iter().filter(|&&(a, b)| t >= a && t < b).map(|o| o.1).max()?;
+        while let Some(later) = self.outages.iter().filter(|&&(a, b)| end >= a && end < b).map(|o| o.1).max()
+        {
+            end = later;
+        }
+        Some(end)
     }
 }
 
@@ -193,8 +205,10 @@ impl Network {
     pub fn connect(&mut self, a: PeerId, b: PeerId, profile: Profile) {
         for key in [(a, b), (b, a)] {
             let rng = self.rng.fork();
-            self.links
-                .insert(key, Link { model: LinkModel::new(profile, rng), last_reliable: 0, outage: None });
+            self.links.insert(
+                key,
+                Link { model: LinkModel::new(profile, rng), last_reliable: 0, outages: Vec::new() },
+            );
         }
     }
 
@@ -206,12 +220,18 @@ impl Network {
         }
     }
 
-    /// Nothing arrives between the two peers from `from_us` until `until_us`.
+    /// Nothing arrives between the two peers from `from_us` until `until_us`
+    /// (besides any outage already set on their link).
     pub fn outage(&mut self, a: PeerId, b: PeerId, from_us: u64, until_us: u64) {
-        for key in [(a, b), (b, a)] {
-            if let Some(l) = self.links.get_mut(&key) {
-                l.outage = Some((from_us, until_us));
-            }
+        self.outage_one_way(a, b, from_us, until_us);
+        self.outage_one_way(b, a, from_us, until_us);
+    }
+
+    /// Nothing that `from` sends reaches `to` from `from_us` until
+    /// `until_us`; the other way is untouched.
+    pub fn outage_one_way(&mut self, from: PeerId, to: PeerId, from_us: u64, until_us: u64) {
+        if let Some(l) = self.links.get_mut(&(from, to)) {
+            l.outages.push((from_us, until_us));
         }
     }
 
@@ -256,9 +276,7 @@ impl Network {
                     tries += 1;
                 }
                 let mut at = now_us + d;
-                if let Some((_, until)) = link.outage
-                    && (link.in_outage(now_us) || link.in_outage(at))
-                {
+                if let Some(until) = link.outage_end(now_us).or_else(|| link.outage_end(at)) {
                     at = until + d;
                 }
                 at = at.max(link.last_reliable);

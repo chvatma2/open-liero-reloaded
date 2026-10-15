@@ -74,6 +74,40 @@ fn an_outage_drops_datagrams_and_delays_messages() {
     assert_eq!(got, vec![2]);
 }
 
+/// A link in two outages at once (a peer's own network and its host's,
+/// net-soak's `bad-14s3c1v-seed974389837`) is cut until both are over: the
+/// second did not replace the first.
+#[test]
+fn outages_on_one_link_add_up() {
+    let mut net = Network::new(1);
+    net.connect(0, 1, Profile::LAN);
+    net.outage(0, 1, 0, 100_000);
+    net.outage(0, 1, 50_000, 60_000);
+    net.send(70_000, 0, 1, Channel::Unreliable, vec![1]);
+    // A reliable message in the first, chained through the second: after both.
+    net.outage(0, 1, 90_000, 150_000);
+    net.send(10_000, 0, 1, Channel::Reliable, vec![2]);
+    net.send(160_000, 0, 1, Channel::Unreliable, vec![3]);
+    let mut got = Vec::new();
+    net.deliver_due(149_000, &mut |_, _, _, b| got.push(b[0]));
+    assert!(got.is_empty(), "{got:?}");
+    net.deliver_due(1_000_000, &mut |_, _, _, b| got.push(b[0]));
+    assert_eq!(got, vec![2, 3]);
+}
+
+/// A one-way outage cuts what one side sends, not what the other does.
+#[test]
+fn a_one_way_outage_cuts_one_direction() {
+    let mut net = Network::new(1);
+    net.connect(0, 1, Profile::LAN);
+    net.outage_one_way(0, 1, 0, 100_000);
+    net.send(10_000, 0, 1, Channel::Unreliable, vec![1]);
+    net.send(10_000, 1, 0, Channel::Unreliable, vec![2]);
+    let mut got = Vec::new();
+    net.deliver_due(50_000, &mut |_, to, _, b| got.push((to, b[0])));
+    assert_eq!(got, vec![(0, 2)]);
+}
+
 #[test]
 fn profiles_are_found_by_name() {
     for p in Profile::ALL {

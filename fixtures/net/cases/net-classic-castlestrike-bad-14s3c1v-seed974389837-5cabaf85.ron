@@ -1,0 +1,30 @@
+(
+    spec: (
+        mod_id: "olx-classic",
+        level_id: "olx-level-castlestrike",
+        seed: 974389837,
+        slots: 14,
+        clients: 3,
+        spectators: 1,
+        join_tick: Some(948),
+        profile: "bad",
+        drift_ppm: 0,
+        ticks: 3418,
+        outages: [
+            (1, 1996, 2332),
+            (100, 2178, 2661),
+        ],
+        net_seed: 6437482911124355459,
+        difficulty: Some("xtreme"),
+        faults: [],
+        exits: [
+            (0, 1589, "crash"),
+        ],
+        host_freeze: None,
+        profile_changes: [
+            (2315, 1, "lan"),
+        ],
+        migration: false,
+    ),
+    failure: Some("peer 100 confirmed other inputs than the host at tick 1673"),
+)

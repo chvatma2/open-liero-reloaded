@@ -957,7 +957,7 @@ fn a_host_frozen_briefly_keeps_hosting() {
 #[test]
 fn a_client_outage_does_not_move_the_match() {
     let mut sc = mscenario(9, Profile::TYPICAL, 3);
-    sc.outages.push(Outage { peer: 3, from_tick: 500, until_tick: 800 }); // 3 s
+    sc.outages.push(Outage { peer: 3, from_tick: 500, until_tick: 800, one_way: false }); // 3 s
     let r = run_checked(&sc);
     assert_eq!(r.hosts, vec![HOST]);
     assert!(r.events[&3].contains(&Event::HostSilent) && r.events[&3].contains(&Event::HostHeard));
@@ -967,7 +967,7 @@ fn a_client_outage_does_not_move_the_match() {
 #[test]
 fn a_successor_outage_does_not_take_the_match() {
     let mut sc = mscenario(10, Profile::TYPICAL, 3);
-    sc.outages.push(Outage { peer: 1, from_tick: 500, until_tick: 800 });
+    sc.outages.push(Outage { peer: 1, from_tick: 500, until_tick: 800, one_way: false });
     let r = run_checked(&sc);
     assert_eq!(r.hosts, vec![HOST]);
     assert!(r.events.values().flatten().all(|e| !matches!(e, Event::Resumed { .. })));
@@ -1062,7 +1062,7 @@ fn an_exited_hosts_last_rows_that_reached_nobody_are_not_the_match() {
     // 100 ms; it confirms rows (its clients' slots filled) nobody gets.
     let mut sc = mscenario(18, Profile::GOOD, 3);
     for peer in [1, 2, 3, 100] {
-        sc.outages.push(Outage { peer, from_tick: 390, until_tick: 450 });
+        sc.outages.push(Outage { peer, from_tick: 390, until_tick: 450, one_way: false });
     }
     sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
     let r = run_checked(&sc);
@@ -1120,11 +1120,12 @@ fn the_verdict_bounds_exited_and_lost_peers_rows() {
 
 #[test]
 fn a_peer_in_contact_follows_its_successor_when_the_old_host_returns() {
-    // N69: the host's own network drops for 2.5 s; its peers move to
+    // N69: nothing the host sends gets through for 2.5 s (it still hears
+    // its players: one-way, so it hosts on, SB-2); its peers move to
     // successor 1. Peer 2's join takes 2 s, so it hears the old host again
     // while in contact: it keeps going to the successor.
     let mut sc = mscenario(21, Profile::GOOD, 3);
-    sc.outages.push(Outage { peer: HOST, from_tick: 500, until_tick: 750 });
+    sc.outages.push(Outage { peer: HOST, from_tick: 500, until_tick: 750, one_way: true });
     sc.migration.as_mut().unwrap().slow_joins.push((2, 2_000_000));
     let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
     let r = harness::run(&sc, &mut f).unwrap();
@@ -1140,15 +1141,16 @@ fn a_peer_in_contact_follows_its_successor_when_the_old_host_returns() {
 
 #[test]
 fn peers_in_contact_return_with_their_successor_to_the_old_host() {
-    // N69 as rl-online's `Planner` has it: the host's own network drops for
-    // 2.5 s; peers 2, 3 and 100 contact successor 1, but their joins take
+    // N69 as rl-online's `Planner` has it: nothing the host sends gets
+    // through for 2.5 s (one-way: it still hears its players, so it hosts
+    // on, SB-2); peers 2, 3 and 100 contact successor 1, but their joins take
     // 2 s, so the old host is heard again first. In contact, they remember
     // it; successor 1, uncommitted, goes back to it and closes its gate, and
     // the contacts it breaks take them back to it too. Nobody is stranded
     // to commit elsewhere later (net-soak's `bad-4s3c1v-seed562805195`).
     for seed in [24, 25] {
         let mut sc = mscenario(seed, Profile::GOOD, 3);
-        sc.outages.push(Outage { peer: HOST, from_tick: 500, until_tick: 750 });
+        sc.outages.push(Outage { peer: HOST, from_tick: 500, until_tick: 750, one_way: true });
         sc.migration.as_mut().unwrap().slow_joins.extend([(2, 2_000_000), (3, 2_000_000), (100, 2_000_000)]);
         let r = run_checked(&sc);
         assert_eq!(r.hosts, vec![HOST], "seed {seed}: {:?}", r.migrations);
@@ -1161,29 +1163,33 @@ fn peers_in_contact_return_with_their_successor_to_the_old_host() {
 }
 
 #[test]
-fn a_host_cut_off_while_its_peers_move_on_is_left_behind() {
+fn a_host_cut_off_from_its_players_leaves_the_match() {
     // A host's own network drops for 3 s while it keeps running: its peers
-    // find it silent and move to a successor; it cannot know and confirms
-    // its own fills for their slots. Not a survivor: its rows agree with
-    // the match only as far as the survivors of its migration held. Once as
-    // the first host, once as the second (the first stepped down, N70; the
-    // net-soak case `lan-8s2c0v-seed1433102928`).
+    // find it silent and move to a successor, as it finds them silent: it
+    // leaves the match (ruling SB-2, as rl-online's `cut_off_check`)
+    // instead of playing on alone, and is no survivor. Its rows (fills for
+    // its players' slots at the end) agree with the match only as far as
+    // the survivors of its migration held. Once as the first host, once as
+    // the second (the first stepped down, N70; the net-soak cases
+    // `lan-8s2c0v-seed1433102928` and `bad-14s3c1v-seed974389837`, where a
+    // follower came back to the old host still playing alone).
     let mut first = mscenario(22, Profile::LAN, 3);
-    first.outages.push(Outage { peer: HOST, from_tick: 500, until_tick: 800 });
+    first.outages.push(Outage { peer: HOST, from_tick: 500, until_tick: 800, one_way: false });
     let mut second = mscenario(23, Profile::LAN, 3);
     second.host_freeze = Some((400, 600));
-    second.outages.push(Outage { peer: 1, from_tick: 1_000, until_tick: 1_300 });
+    second.outages.push(Outage { peer: 1, from_tick: 1_000, until_tick: 1_300, one_way: false });
     for (sc, hosts, behind) in [(first, vec![HOST, 1], HOST), (second, vec![HOST, 1, 2], 1)] {
         let mut r = run_checked(&sc);
         assert_eq!(r.hosts, hosts, "seed {}", sc.seed);
-        assert!(!r.exited.contains(&behind) && !r.host_lost.contains(&behind), "seed {}", sc.seed);
+        assert!(r.exited.contains(&behind) && r.left_behind.is_empty(), "seed {}", sc.seed);
+        assert_eq!(r.left_from.get(&behind), Some(&behind), "seed {}", sc.seed);
         let old = &r.logs[&behind];
         assert!(old.iter().zip(&r.host_log).any(|(a, b)| a != b), "seed {}: its own rows differ", sc.seed);
         // A row it confirmed long before it was cut off, changed: it must
         // agree with the survivors as far as they go.
         r.logs.get_mut(&behind).unwrap()[100][2] ^= 1;
         let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
-        let e = harness::verdict(&sc, &r, &mut f).expect_err("a wrong row of a host left behind");
+        let e = harness::verdict(&sc, &r, &mut f).expect_err("a wrong row of a host cut off");
         assert!(e.what.contains(&format!("peer {behind}")), "{e:?}");
     }
 }

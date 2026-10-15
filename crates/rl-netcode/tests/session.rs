@@ -91,7 +91,7 @@ fn rollbacks_happen_and_are_counted() {
 #[test]
 fn an_outage_recovers() {
     let mut sc = scenario(5, Profile::GOOD, 2, 0);
-    sc.outages.push(Outage { peer: 1, from_tick: 400, until_tick: 450 });
+    sc.outages.push(Outage { peer: 1, from_tick: 400, until_tick: 450, one_way: false });
     check(&sc);
 }
 

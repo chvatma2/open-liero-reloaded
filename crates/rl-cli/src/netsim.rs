@@ -243,7 +243,7 @@ impl NetSpec {
             outages: self
                 .outages
                 .iter()
-                .map(|&(peer, from_tick, until_tick)| Outage { peer, from_tick, until_tick })
+                .map(|&(peer, from_tick, until_tick)| Outage { peer, from_tick, until_tick, one_way: false })
                 .collect(),
             expect_no_stalls: self.expect_no_stalls(),
             corrupt: self.faults.iter().map(|f| (f.0, f.1)).collect(),

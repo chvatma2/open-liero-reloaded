@@ -15,7 +15,10 @@ model that tests it in one process (spec §9.1).
   `StateRejected`.
 - **Network model** (`netsim`): `Network` carries datagrams between peers
   with per-direction latency, jitter, Gilbert-Elliott loss, duplication,
-  outages; reliable messages arrive in order. Deterministic from its seed.
+  outages (`outage`, both ways; `outage_one_way`; a link in several at
+  once is cut until all are over: a second no longer replaced the first,
+  net-soak's `bad-14s3c1v-seed974389837`); reliable messages arrive in
+  order. Deterministic from its seed.
   Each direction's loss, delay and duplication is a pub `LinkModel`
   (profile + its own `Rng`), which `rl-net`'s impairment stage reuses over
   real sockets (spec §9.4).
@@ -214,10 +217,8 @@ model that tests it in one process (spec §9.1).
     `HOST_SILENT_US` (counted from `silence_from_us`, as `HostSilent`),
     and there is one at least; spectators and players gone by `Bye` count
     for nothing. rl-online ends a host's match on it
-    (`a_host_knows_when_it_hears_none_of_its_players`). The harness does
-    not: its cut-off old host plays on and is judged left behind (its
-    N69 cases need the old host back after its own outage, which only the
-    harness's two-way outages model).
+    (`a_host_knows_when_it_hears_none_of_its_players`), and so does the
+    harness (below).
   - `rehost(host, now)`: a client's or spectator's host is now `host`, its
     peer state (acks, round trip, silence, time sync) fresh; suspended until
     that host's `Control::Resume` or its `Datagram::Resume`. `Collect`/
@@ -364,7 +365,8 @@ model that tests it in one process (spec §9.1).
   `Session::leave` transmitted), profile changes (`ProfileChange`, on the
   peer's link to whoever hosts it then; outages too, an outage naming a
   host covers all its peers' links, and a link made during an outage has
-  it), planted
+  it; `Outage::one_way`: only what the host sends is lost, so a host
+  still hears its players and the old host can return, N69), planted
   faults (`corrupt`: at the peer's first frame
   after the host's tick `t` with `t` confirmed,
   `Factory::corrupt(sim, index)` through `change_confirmed`), an
@@ -416,6 +418,11 @@ model that tests it in one process (spec §9.1).
       `peers_in_contact_return_with_their_successor_to_the_old_host`);
     - N70: a host whose virtual frame gap reaches `STEP_DOWN_US` (its
       freeze included), with an entry that can host, `leave`s and is gone;
+    - SB-2: a host whose session says `players_silent` (its own network
+      down), with an entry that can host, `leave`s and is gone, as
+      rl-online's `cut_off_check` (without it a follower came back to the
+      old host still playing alone, N69, and split from the match:
+      net-soak's `bad-14s3c1v-seed974389837`);
     - `GiveUp`: `Report::host_lost`, no more frames.
   - `Report` gains `hosts` (in order, `HOST` first), `migrations`
     (`Migrated { from, to, silent_us, resumed_us, tick }`: the first peer's
@@ -425,9 +432,9 @@ model that tests it in one process (spec §9.1).
     slot its known prefix), `left_from` (the host each exited, host-lost
     or left-behind peer followed as it went; an exited or left-behind host:
     itself), `left_behind` (former hosts still running at the end: their
-    own network was down past `HOST_SILENT_US` while they ran on, so their
-    peers moved to a successor and they, unable to know, confirmed their
-    own fills for the peers' slots; a partition's residual, as D8's).
+    peers moved to a successor while they ran on, confirming their own
+    fills for the peers' slots; since SB-2 a host cut off from its players
+    leaves, so only one that never heard a player could stay).
     `host_log` is the last host's.
   - `verdict` checks every survivor (not dropped, exited, host lost or left
     behind) confirmed the last host's inputs and matches an offline replay
@@ -441,7 +448,7 @@ model that tests it in one process (spec §9.1).
     host's migration held (an exited host's last frames may have reached
     nobody, B3; a host left behind fills its peers' slots), or all of them
     when its host is the last (a joined or late spectator from its last
-    state). Pinned by `a_host_cut_off_while_its_peers_move_on_is_left_behind`
+    state). Pinned by `a_host_cut_off_from_its_players_leaves_the_match`
     (as the first host and as the second, net-soak's
     `lan-8s2c0v-seed1433102928`). A host gone stalls its
     clients at the prediction limit: `expect_no_stalls` flags those too.

@@ -70,7 +70,7 @@ fn players_within_the_window_never_stall() {
 fn late_inputs_lose_to_the_fill() {
     // Peer 1 loses its link for 0.5 s: the host fills its slot; every peer, peer 1 included, ends with the fill.
     let mut sc = scenario(4, vec![plan(1, 2, Profile::GOOD, 0), plan(2, 3, Profile::GOOD, 0)], 1_500);
-    sc.outages.push(Outage { peer: 1, from_tick: 500, until_tick: 550 });
+    sc.outages.push(Outage { peer: 1, from_tick: 500, until_tick: 550, one_way: false });
     let r = run(&sc);
     assert!(r.stats[&HOST].fills > 0);
     assert!(r.events[&1].iter().any(|e| matches!(e, Event::Late { .. })));
@@ -92,7 +92,7 @@ fn a_frozen_client_catches_up() {
 #[test]
 fn a_silent_peer_times_out() {
     let mut sc = scenario(8, vec![plan(1, 2, Profile::GOOD, 0)], 2_000);
-    sc.outages.push(Outage { peer: 1, from_tick: 300, until_tick: 1_400 });
+    sc.outages.push(Outage { peer: 1, from_tick: 300, until_tick: 1_400, one_way: false });
     let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
     let r = harness::run(&sc, &mut f).unwrap();
     assert!(r.events[&HOST].iter().any(|e| matches!(e, Event::PeerTimedOut { peer: 1 })));
@@ -176,7 +176,7 @@ fn a_player_cut_off_plays_on_once_its_link_is_back() {
             let ppm = [0, 500, -2_000][seed as usize % 3];
             let mut sc =
                 scenario(seed, vec![plan(1, 2, profile, ppm), plan(2, 3, profile, -ppm)], until + 600);
-            sc.outages.push(Outage { peer: 2, from_tick: from, until_tick: until });
+            sc.outages.push(Outage { peer: 2, from_tick: from, until_tick: until, one_way: false });
             let mut f = ToyFactory { slots: sc.slots, seed };
             let mut obs = Episodes { peer: 2, ..Episodes::default() };
             let r = harness::run_observed(&sc, &mut f, &mut obs).unwrap();
