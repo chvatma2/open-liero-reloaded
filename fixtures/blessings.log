@@ -84,3 +84,5 @@
   fixtures/net/cases/net-classic-liero-factory-lan-10s1c0v-seed3202236798-7b5a787d.ron
 2026-10-15 bless-regression: SB-2 in the harness: a follower came back to an old host cut off from its players, still playing alone
   fixtures/net/cases/net-classic-castlestrike-bad-14s3c1v-seed974389837-5cabaf85.ron
+2026-10-15 bless-regression: on bad links the host's fills for a player cut off stall the others too
+  fixtures/net/cases/net-mw-1-0-castlestrike-bad-16s4c0v-seed3660989505-19263fa4.ron

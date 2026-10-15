@@ -132,7 +132,11 @@ The headless command-line tool. Its commands:
   (SK-2: `Profile::outage_recovery_ticks` of the outage on the peer's
   slowest link, `slowest_profile`, with `CLIENT_FRAME_US`, at least
   `MAX_PREDICTION`) excusing only the peer it cuts off (everyone's while that peer is the
-  current host, `host_at`); an outage of a spectator excuses nothing.
+  current host, `host_at`; and every player whose slowest link stalls on
+  the host's fills for the peer, `fills_stall`: two trips plus
+  `FILL_WINDOW` and `TARGET_MARGIN` reaching `MAX_PREDICTION`, true on
+  `bad`, soak case `bad-16s4c0v-seed3660989505`); an outage of a
+  spectator excuses nothing.
   Outages are in virtual time, windows in host ticks: `host_tick_at`
   converts (from the last migration's resume, or less a host freeze that
   did not migrate). A migration called off (N69: the old host heard

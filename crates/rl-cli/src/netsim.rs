@@ -26,7 +26,8 @@ use rl_netcode::harness::{
 use rl_netcode::migration::WINDOW_US;
 use rl_netcode::netsim::{LinkStats, Profile};
 use rl_netcode::{
-    Driver, Event, MAX_PREDICTION, PeerId, Seat, Session, Stats, TICK_US, WorldSim, input_delay,
+    Driver, Event, FILL_WINDOW, MAX_PREDICTION, PeerId, Seat, Session, Stats, TARGET_MARGIN, TICK_US,
+    WorldSim, input_delay,
 };
 use rl_online::matches::{self, HostBots};
 use rl_sim::Keys;
@@ -464,9 +465,23 @@ pub struct StallEpisode {
 /// excused.
 struct Window {
     ticks: core::ops::RangeInclusive<u32>,
-    /// `None`: every player's stall; `Some(p)`: peer `p`'s, and everyone's
-    /// while `p` is the current host (an outage cuts a host off from all).
+    /// `None`: every player's stall; `Some(p)`: peer `p`'s, everyone's
+    /// while `p` is the current host (an outage cuts a host off from all),
+    /// and that of every player whose link stalls on `p`'s fills
+    /// ([`fills_stall`]).
     peer: Option<PeerId>,
+}
+
+/// Whether a player on `profile` stalls while the host fills another
+/// player's slot (that player cut off): the host's frames then confirm only
+/// up to `FILL_WINDOW` ticks behind its tick, and reach the player one
+/// trip later, while the player runs a trip and `TARGET_MARGIN` ahead of
+/// the host; at `MAX_PREDICTION` past what it has confirmed it stalls.
+/// True on `bad` (two trips of up to 10 ticks: 33), not on `typical` (25);
+/// net-soak's `bad-16s4c0v-seed3660989505`, the toy harness alike.
+fn fills_stall(profile: &Profile) -> bool {
+    let trip = (u64::from(profile.ping_ms + profile.jitter_ms) * 1000 / 2).div_ceil(TICK_US) as u32;
+    2 * trip + FILL_WINDOW + TARGET_MARGIN.unsigned_abs() >= MAX_PREDICTION
 }
 
 /// The host at the host tick `tick`: the last migration's successor before
@@ -539,7 +554,10 @@ fn stalls_within_windows(spec: &NetSpec, r: &Report, episodes: &[StallEpisode]) 
         let covering: Vec<&Window> = windows
             .iter()
             .filter(|w| {
-                w.ticks.contains(&e.tick) && w.peer.is_none_or(|p| p == e.peer || p == host_at(r, e.tick))
+                w.ticks.contains(&e.tick)
+                    && w.peer.is_none_or(|p| {
+                        p == e.peer || p == host_at(r, e.tick) || fills_stall(&slowest_profile(spec, e.peer))
+                    })
             })
             .collect();
         if covering.is_empty() {
@@ -1002,6 +1020,13 @@ mod tests {
         let bad = Profile::BAD.outage_recovery_ticks(until - from, CLIENT_FRAME_US);
         assert!(judge(&slow, &[(1, 200, Some(until + bad))], false).is_ok());
         assert!(judge(&slow, &[(1, 200, Some(until + bad + 1))], false).is_err());
+        // On bad links the host's fills for the peer cut off stall the
+        // others too (`fills_stall`): theirs are excused alike; on typical
+        // ones they are not (above).
+        let bad = NetSpec { profile: "bad".into(), ..s.clone() };
+        assert!(judge(&bad, &[(2, 200, Some(210))], false).is_ok());
+        assert!(judge(&bad, &[(2, 100, Some(110))], false).is_err(), "outside the window");
+        assert!(fills_stall(&Profile::BAD) && !fills_stall(&Profile::TYPICAL));
         // A spectator's outage excuses no player.
         let sp = NetSpec { outages: vec![(FIRST_SPECTATOR, from, until)], ..spec() };
         assert!(judge(&sp, &[(1, 200, Some(210))], false).is_err());

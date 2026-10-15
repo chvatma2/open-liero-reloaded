@@ -1,0 +1,30 @@
+(
+    spec: (
+        mod_id: "olx-mw-1-0",
+        level_id: "olx-level-castlestrike",
+        seed: 3660989505,
+        slots: 16,
+        clients: 4,
+        spectators: 0,
+        join_tick: None,
+        profile: "bad",
+        drift_ppm: 1500,
+        ticks: 2589,
+        outages: [
+            (1, 1858, 2142),
+            (4, 298, 362),
+        ],
+        net_seed: 6700620378206333515,
+        difficulty: None,
+        faults: [],
+        exits: [
+            (0, 1481, "leave"),
+        ],
+        host_freeze: None,
+        profile_changes: [
+            (1060, 1, "bad"),
+        ],
+        migration: false,
+    ),
+    failure: Some("player peer 2 stalled at tick 328"),
+)
