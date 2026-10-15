@@ -29,6 +29,9 @@ fn scenario(seed: u64, peers: Vec<PeerPlan>, ticks: u32) -> Scenario {
         expect_no_stalls: false,
         corrupt: vec![],
         host_freeze: None,
+        exits: vec![],
+        migration: None,
+        profile_changes: vec![],
     }
 }
 

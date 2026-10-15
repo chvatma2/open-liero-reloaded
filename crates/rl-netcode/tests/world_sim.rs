@@ -187,6 +187,9 @@ fn the_world_plays_over_the_network_with_a_late_spectator() {
         expect_no_stalls: true,
         corrupt: vec![],
         host_freeze: None,
+        exits: vec![],
+        migration: None,
+        profile_changes: vec![],
     };
     let mut f = Worlds { content: &c };
     let r = harness::run(&sc, &mut f).unwrap();
@@ -314,6 +317,9 @@ fn colour_maps_follow_rollbacks_and_loads() {
         expect_no_stalls: false,
         corrupt: vec![],
         host_freeze: None,
+        exits: vec![],
+        migration: None,
+        profile_changes: vec![],
     };
     let painted = Rc::new(RefCell::new(Painted::default()));
     let mut f = PaintingWorlds { content: &c, painted: painted.clone() };
@@ -424,6 +430,9 @@ fn tick_records_follow_rollbacks() {
         expect_no_stalls: false,
         corrupt: vec![],
         host_freeze: None,
+        exits: vec![],
+        migration: None,
+        profile_changes: vec![],
     };
     let records = Rc::new(RefCell::new(Records::default()));
     let mut f = RecordingWorlds { content: &c, records: records.clone() };

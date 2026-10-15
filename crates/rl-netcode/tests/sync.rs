@@ -41,6 +41,9 @@ fn confirmed_checksums_agree_and_are_exchanged() {
         expect_no_stalls: true,
         corrupt: vec![],
         host_freeze: None,
+        exits: vec![],
+        migration: None,
+        profile_changes: vec![],
     };
     let mut f = ToyFactory { slots: 3, seed: 2 };
     let r = harness::run(&sc, &mut f).unwrap();
@@ -67,6 +70,9 @@ fn a_spectator_joins_mid_match() {
         expect_no_stalls: true,
         corrupt: vec![],
         host_freeze: None,
+        exits: vec![],
+        migration: None,
+        profile_changes: vec![],
     };
     let mut f = ToyFactory { slots: 3, seed: 3 };
     let r = harness::run(&sc, &mut f).unwrap();
@@ -88,6 +94,9 @@ fn a_desync_is_detected_and_repaired() {
         expect_no_stalls: true,
         corrupt: vec![],
         host_freeze: None,
+        exits: vec![],
+        migration: None,
+        profile_changes: vec![],
     };
     sc.corrupt.push((1, 500));
     let mut f = ToyFactory { slots: 3, seed: 9 };
@@ -133,6 +142,9 @@ fn an_uncorrupted_desync_fails_the_verdict() {
         expect_no_stalls: true,
         corrupt: vec![(1, 500)],
         host_freeze: None,
+        exits: vec![],
+        migration: None,
+        profile_changes: vec![],
     };
     let mut f = ToyFactory { slots: 3, seed: 9 };
     let r = harness::run(&sc, &mut f).unwrap();
@@ -284,6 +296,9 @@ fn failing_repairs(fault: Fault, ticks: u32) -> (harness::Report, Vec<u32>, Vec<
         expect_no_stalls: true,
         corrupt: vec![(1, 500)],
         host_freeze: None,
+        exits: vec![],
+        migration: None,
+        profile_changes: vec![],
     };
     let mut f = FaultyFactory { toy: ToyFactory { slots: 4, seed: 11 }, fault };
     let r = harness::run(&sc, &mut f).unwrap();
@@ -501,6 +516,9 @@ fn an_observer_sees_events_and_frames_as_they_happen() {
         expect_no_stalls: true,
         corrupt: vec![(1, 500)],
         host_freeze: None,
+        exits: vec![],
+        migration: None,
+        profile_changes: vec![],
     };
     let mut f = ToyFactory { slots: 3, seed: 9 };
     let mut w = Watcher::default();
