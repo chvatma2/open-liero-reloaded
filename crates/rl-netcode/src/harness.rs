@@ -314,6 +314,12 @@ pub trait Factory<S: Simulation> {
 pub struct Report {
     /// The last host's confirmed inputs.
     pub host_log: Vec<[u8; 32]>,
+    /// The last host's withdrawals, `(tick, slot)` (its `InputLog::gone_marks` below its frontier).
+    pub host_gone: Vec<(u32, u8)>,
+    /// Every peer's withdrawals below its frontier.
+    pub gone: BTreeMap<PeerId, Vec<(u32, u8)>>,
+    /// When each exited peer went (virtual µs).
+    pub exited_us: BTreeMap<PeerId, u64>,
     /// Every peer's confirmed inputs (its log rows below its frontier; a
     /// joined spectator's are zero before its state).
     pub logs: BTreeMap<PeerId, Vec<[u8; 32]>>,
@@ -720,6 +726,7 @@ struct Shared {
     lost_joining: BTreeSet<PeerId>,
     could_join: BTreeMap<PeerId, (PeerId, u64)>,
     exited: BTreeSet<PeerId>,
+    exited_us: BTreeMap<PeerId, u64>,
     late: BTreeSet<PeerId>,
     left_from: BTreeMap<PeerId, PeerId>,
     /// Per old host, when each peer found it gone.
@@ -833,6 +840,7 @@ pub fn run_observed<S: Simulation>(
         lost_joining: BTreeSet::new(),
         could_join: BTreeMap::new(),
         exited: BTreeSet::new(),
+        exited_us: BTreeMap::new(),
         late: BTreeSet::new(),
         left_from: BTreeMap::new(),
         began: BTreeMap::new(),
@@ -902,6 +910,7 @@ pub fn run_observed<S: Simulation>(
             }
             p.gone = true;
             w.exited.insert(e.peer);
+            w.exited_us.insert(e.peer, now);
         }
         // Profile changes, on the link to the peer's host now.
         while let Some(c) = changes.last().copied().filter(|c| host_tick >= c.tick) {
@@ -970,6 +979,7 @@ pub fn run_observed<S: Simulation>(
                 p.session.transmit(&mut |to, ch: Channel, bytes| w.net.send(now, id, to, ch, bytes));
                 p.gone = true;
                 w.exited.insert(id);
+                w.exited_us.insert(id, now);
                 w.left_from.insert(id, id);
                 continue;
             }
@@ -1040,6 +1050,7 @@ pub fn run_observed<S: Simulation>(
                 p.session.transmit(&mut |to, ch: Channel, bytes| w.net.send(now, id, to, ch, bytes));
                 p.gone = true;
                 w.exited.insert(id);
+                w.exited_us.insert(id, now);
                 w.left_from.insert(id, id);
             }
         }
@@ -1105,6 +1116,9 @@ pub fn run_observed<S: Simulation>(
     }
     let mut report = Report {
         host_log: Vec::new(),
+        host_gone: Vec::new(),
+        gone: BTreeMap::new(),
+        exited_us: w.exited_us,
         logs: BTreeMap::new(),
         sims: BTreeMap::new(),
         stats: BTreeMap::new(),
@@ -1131,10 +1145,13 @@ pub fn run_observed<S: Simulation>(
         let log = p.session.input_log();
         // A joined spectator's log begins at its state: zeros before.
         let rows: Vec<[u8; 32]> = (0..log.frontier()).map(|t| log.row(t).unwrap_or([0; 32])).collect();
+        let gone = log.gone_marks(log.frontier());
         report.checksums.insert(p.id, p.session.checksums().to_vec());
         if p.id == last {
             report.host_log = rows.clone();
+            report.host_gone = gone.clone();
         }
+        report.gone.insert(p.id, gone);
         report.logs.insert(p.id, rows);
         report.events.entry(p.id).or_default().extend({
             let mut s = p.session;
@@ -1635,11 +1652,33 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
                 ));
             }
         }
+        // N83: its withdrawals agree with the last host's as far as its rows do.
+        let end = rows.len().min(last.len());
+        let within = |&&(t, s): &&(u32, u8)| {
+            let t = t as usize;
+            t >= start && t < end && t < upto.get(s as usize).copied().unwrap_or(0)
+        };
+        let mine: Vec<&(u32, u8)> =
+            r.gone.get(&peer).map_or(&[][..], |v| &v[..]).iter().filter(within).collect();
+        let host: Vec<&(u32, u8)> = r.host_gone.iter().filter(within).collect();
+        if mine != host {
+            let t = mine.iter().chain(&host).map(|g| g.0).min().unwrap_or(0);
+            return Err(fail(t, format!("peer {peer}, gone, withdrew {mine:?}, the last host {host:?}")));
+        }
     }
     for (&peer, rows) in r.logs.iter().filter(|(p, _)| kept(p)) {
         let start = from_of(&peer).0 as usize;
         if let Some(t) = (start..ticks as usize).find(|&t| rows[t] != r.host_log[t]) {
             return Err(fail(t as u32, format!("peer {peer} confirmed other inputs than the host")));
+        }
+        // N83: and the same withdrawals there.
+        let within = |g: &&(u32, u8)| (start as u32..ticks).contains(&g.0);
+        let mine: Vec<&(u32, u8)> =
+            r.gone.get(&peer).map_or(&[][..], |v| &v[..]).iter().filter(within).collect();
+        let host: Vec<&(u32, u8)> = r.host_gone.iter().filter(within).collect();
+        if mine != host {
+            let t = mine.iter().chain(&host).map(|g| g.0).min().unwrap_or(0);
+            return Err(fail(t, format!("peer {peer} withdrew {mine:?}, the host {host:?}")));
         }
     }
     if !all_lost {
@@ -1664,6 +1703,10 @@ fn replayed<S: Simulation>(
     for t in 0..ticks {
         let row = &r.host_log[t as usize];
         let keys: Vec<Keys> = row[..slots].iter().map(|&k| Keys(k)).collect();
+        // N83: the last host's withdrawals, before their tick.
+        for &(_, s) in r.host_gone.iter().filter(|g| g.0 == t) {
+            sim.withdraw(s);
+        }
         sim.tick(&keys);
         if t % 10 != 9 {
             continue;

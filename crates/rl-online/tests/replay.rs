@@ -13,6 +13,11 @@ use rl_sim::Keys;
 /// 300 ticks of a start with changing keys, and the sync checksums a
 /// session would confirm (after ticks `t` with `(t + 1) % 10 == 0`).
 fn record(c: &rl_content::Content) -> MatchRecord {
+    record_gone(c, None)
+}
+
+/// [`record`], slot 1's worm withdrawn before tick `gone` when given.
+fn record_gone(c: &rl_content::Content, gone: Option<u32>) -> MatchRecord {
     let start = start(setup(c, 0.1), 3);
     let mut sim = matches::build(c, &start).unwrap().sim;
     let (mut rows, mut checksums) = (Vec::new(), Vec::new());
@@ -20,13 +25,32 @@ fn record(c: &rl_content::Content) -> MatchRecord {
         let mut row = [0u8; 32];
         row[0] = ((t / 20).wrapping_mul(97) as u8) & !Keys::CHANGE;
         row[1] = ((t / 30).wrapping_mul(31) as u8) & !Keys::CHANGE;
+        if gone == Some(t) {
+            sim.withdraw(1);
+        }
         sim.tick(&[Keys(row[0]), Keys(row[1])]);
         if (t + 1) % 10 == 0 {
             checksums.push((t, sim.checksum()));
         }
         rows.push(row);
     }
-    MatchRecord { start, rows, checksums }
+    MatchRecord { start, rows, checksums, gone: gone.map(|t| (t, 1)).into_iter().collect() }
+}
+
+/// N83: a record's withdrawals replay at their ticks; without them the
+/// re-simulation misses the match's checksums.
+#[test]
+fn a_withdrawal_replays_at_its_tick() {
+    let Some(c) = content() else { return };
+    let r = record_gone(&c, Some(150));
+    let made = make(&c, &r, None).unwrap();
+    assert_eq!(made.warning, None);
+    let replay = Replay::decode(&made.bytes).unwrap();
+    assert_eq!(replay.withdrawals, [(150, 1)]);
+    c.play_replay(&replay).unwrap();
+    let lost = MatchRecord { gone: vec![], ..r };
+    let warning = make(&c, &lost, None).unwrap().warning.expect("a warning");
+    assert!(warning.contains("after tick 159"), "{warning}");
 }
 
 #[test]

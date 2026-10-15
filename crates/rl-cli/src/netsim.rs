@@ -374,6 +374,9 @@ pub struct NetRun {
 fn empty_report() -> Report {
     Report {
         host_log: Vec::new(),
+        host_gone: Vec::new(),
+        gone: BTreeMap::new(),
+        exited_us: BTreeMap::new(),
         logs: BTreeMap::new(),
         sims: BTreeMap::new(),
         stats: BTreeMap::new(),

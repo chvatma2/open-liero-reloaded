@@ -1434,6 +1434,7 @@ impl OnlinePeer {
             start: g.start.clone(),
             rows: Vec::new(),
             checksums: g.session.checksums().to_vec(),
+            gone: Vec::new(),
         });
         let what = if host {
             format!("peer {peer}'s checksum of tick {tick} differs from the host's")
@@ -1693,7 +1694,9 @@ fn record_of(s: &Session<WorldSim>, start: &MatchStartWire, upto: u32) -> Option
     let rows: Vec<[u8; 32]> = (0..upto).map_while(|t| log.row(t)).collect();
     let n = rows.len() as u32;
     let checksums = s.checksums().iter().copied().filter(|&(t, _)| t < n).collect();
-    Some(MatchRecord { start: start.clone(), rows, checksums })
+    // N83: the withdrawals, at ticks of those rows.
+    let gone = log.gone_marks(n);
+    Some(MatchRecord { start: start.clone(), rows, checksums, gone })
 }
 
 /// The results of the last confirmed tick: why it ended, and each worm's
@@ -1842,7 +1845,7 @@ mod tests {
         let slots =
             (0..2).map(|i| SlotWire { member: None, bot: Some(i), look: look(), loadout: None }).collect();
         let start = MatchStartWire { seed: 1, setup, slots, input_delay: vec![], start_checksum: 0 };
-        MatchRecord { start, rows: vec![[0; 32]; 50], checksums: vec![] }
+        MatchRecord { start, rows: vec![[0; 32]; 50], checksums: vec![], gone: vec![] }
     }
 
     /// A client whose host is not there: nothing but its replays happens.

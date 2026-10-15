@@ -113,6 +113,12 @@ impl Simulation for WorldSim {
         let s = WorldState::decode(bytes).map_err(|_| StateRejected)?;
         self.world.load_state(s).map_err(|_| StateRejected)
     }
+
+    /// `World::withdraw` (decision N83): idempotent, a slot past the worms
+    /// ignored.
+    fn withdraw(&mut self, slot: u8) {
+        self.world.withdraw(usize::from(slot));
+    }
 }
 
 /// One simulated tick for the presentation (plan 10's sounds, effects and

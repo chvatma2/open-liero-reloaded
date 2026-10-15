@@ -22,7 +22,7 @@ use crate::replay::MatchRecord;
 /// The first bytes of a game desync bundle.
 pub const GAME_BUNDLE_MAGIC: [u8; 4] = *b"RLDG";
 /// The format's version.
-pub const GAME_BUNDLE_VERSION: u16 = 1;
+pub const GAME_BUNDLE_VERSION: u16 = 2;
 /// The extension of a game desync bundle's file.
 pub const GAME_BUNDLE_EXTENSION: &str = "rldg";
 /// At most this many bundles a match, per peer (a desync the host repairs
@@ -53,6 +53,9 @@ pub struct GameBundle {
     /// The final input rows from tick 0 that this peer confirmed (empty
     /// for a spectator that joined mid-match).
     pub rows: Vec<[u8; 32]>,
+    /// The withdrawals at ticks below `rows.len()`, `(tick, slot)`
+    /// (decision N83; version 2).
+    pub gone: Vec<(u32, u8)>,
     /// This peer's confirmed sync checksums (`(tick, checksum)`).
     pub checksums: Vec<(u32, u64)>,
     /// The other side's stream as this peer knows it: on the host, the
@@ -77,6 +80,7 @@ impl GameBundle {
             platform: platform(),
             start: record.start,
             rows: record.rows,
+            gone: record.gone,
             checksums: record.checksums,
             other_checksums: Vec::new(),
             mismatch: None,
@@ -215,7 +219,8 @@ mod tests {
             input_delay: vec![],
             start_checksum: 9,
         };
-        let record = MatchRecord { start, rows: vec![[1; 32], [2; 32]], checksums: vec![(9, 77)] };
+        let record =
+            MatchRecord { start, rows: vec![[1; 32], [2; 32]], checksums: vec![(9, 77)], gone: vec![(1, 3)] };
         let mut b = GameBundle::of(record, "desync".into(), false, Some(1));
         b.mismatch = Some((9, 77, 78));
         let bytes = b.encode();
@@ -224,7 +229,7 @@ mod tests {
         assert!(GameBundle::decode(b"RLDS\x01\x00").is_err(), "rl-cli's bundles are another format");
         assert!(GameBundle::decode(&bytes[..5]).is_err());
         let mut newer = bytes.clone();
-        newer[4] = 2;
+        newer[4] = 3;
         assert!(GameBundle::decode(&newer).is_err());
     }
 }

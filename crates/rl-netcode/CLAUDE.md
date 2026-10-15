@@ -10,9 +10,14 @@ model that tests it in one process (spec §9.1).
 - **Sans-IO**: no sockets, no clock, no threads; time is an argument
   (`now_us`).
 - **`Simulation`** is what the session drives (tick, save/restore,
-  checksum, state transfer); `ToySim` is a tiny deterministic implementation
+  checksum, state transfer, `withdraw`); `ToySim` is a tiny deterministic implementation
   for the session's tests. `decode_state` never panics: it returns
-  `StateRejected`.
+  `StateRejected`. `withdraw(slot)` (plan 12d, N83) takes a slot's worm out
+  for good before the next tick; called again after a rollback, it changes
+  nothing the second time (`WorldSim`: `World::withdraw`; `ToySim`: a
+  `gone` bit, the slot stands still and the hash chains `0x1_0000 | i` in
+  place of its keys, `checksum` folds the bits in, the state carries them:
+  20 + 8·n bytes; `ToySim::gone`).
 - **Network model** (`netsim`): `Network` carries datagrams between peers
   with per-direction latency, jitter, Gilbert-Elliott loss, duplication,
   outages (`outage`, both ways; `outage_one_way`; a link in several at
@@ -58,7 +63,15 @@ model that tests it in one process (spec §9.1).
     both decode through `decode_marked`. A mark whose (slot, tick) has no
     value in the frames is dropped (an honest sender lists a mark only with
     its value; `a_mark_without_its_value_is_dropped`).
-    Nothing sets a mark yet, and nothing reacts to one (plan 12d Task 4).
+    **Who marks, who reacts** (plan 12d Task 4): the host, when it fills an
+    abandoned slot (below); every peer withdraws a slot in `simulate` after
+    the tick's snapshot and before `Simulation::tick` (so a rollback
+    restores the worm and withdraws it again), and `on_gone(t)` rolls back
+    to `t` when a mark for a tick already simulated becomes known (even
+    with a value equal to the prediction, which `on_final` alone would
+    not roll back): a client's `take_frames` and the merge's new marks.
+    A state loaded past the mark holds the withdrawal (a joined spectator
+    learns no earlier mark: `a_spectator_joining_after_a_withdrawal_loads_it_with_the_state`).
   - The host orders inputs: its local slots (those no peer holds) are final
     when simulated; a client's keys become final in arrival order (the first
     value stays). A client applies its own input `d = input_delay(rtt)`
@@ -153,8 +166,11 @@ model that tests it in one process (spec §9.1).
     ticks within `LAGGING_WINDOW_US` (4 s), `Lagging(false)` after
     `LAGGING_CLEAR_US` (2 s) without one. Silence for
     `SILENCE_TIMEOUT_US`: `Event::PeerTimedOut` (host and client). The
-    driver decides; `peer_lost` abandons a peer: its slot is `Keys(0)` at
-    every new tick (decision N6), nothing more is sent to it or taken.
+    driver decides; `peer_lost` abandons a peer: its slot is withdrawn at
+    its first unknown tick (N83) and `Keys(0)` from there at every new tick
+    (decision N6, amended), nothing more is sent to it or taken. A crash is
+    withdrawn at its `PeerTimedOut` (N87: until then the lagging rule
+    repeats its keys), a `Bye` at once.
     `leave()` says `Control::Bye` (a client to its host, the host to every
     peer) and abandons them; a `Bye` received is `peer_lost` at once
     (no 10 s timeout) and `Event::PeerLeft`.
@@ -294,7 +310,16 @@ model that tests it in one process (spec §9.1).
     peers without a report.
   - The merge (N67): a report's frames decode with our values at `first -
     1` and are taken in tick order (`New` extends, `Same` fine, `Conflict`
-    ignored, `Stats::report_conflicts`). A report that does not decode for
+    ignored, `Stats::report_conflicts`). Withdrawal marks (ruling PF12d-8: a
+    forged report must never remove a live player): a new mark (its slot
+    not withdrawn, at the slot's next tick) is held with its value until
+    the resume (`Collection::held`; the slot's prefix stops there, and a
+    report's values at or past it are skipped, the held tick otherwise is
+    a conflict); at the resume it is applied (rolling back to it) when the
+    slot's player is absent (not a peer not lost, not our own or a bot),
+    else refused and counted. After the resume a present player's new mark
+    is refused alike. `withdrawal_marks_travel_through_a_migration`,
+    `a_forged_withdrawal_never_removes_a_present_player`. A report that does not decode for
     the match's slots (the decoder cannot check a frame's `known` bits
     against them) or starts below our log's origin is `Malformed`, takes
     nothing and ends the wait for it. A report from a peer not rejoined, or
@@ -305,9 +330,11 @@ model that tests it in one process (spec §9.1).
     reaches past the old host's horizon.
   - `resume(now)` (once) returns R, our current tick: reported own inputs
     extend their slots, then bot slots below R get their previous final
-    value and our own slot our pressed keys; awaited slots nobody took are
-    abandoned (`Keys(0)` from their first unknown tick, as a lost peer's,
-    N6), and the lagging rule for R runs at once (our tick can be
+    value and our own slot our pressed keys (the held marks first, above);
+    awaited slots nobody took are abandoned (withdrawn at their first
+    unknown tick and `Keys(0)` from there, as a lost peer's, N6, N88: the
+    old host's player silently, players who did not come back), and the
+    lagging rule for R runs at once (our tick can be
     `MAX_PREDICTION` past an absent slot: stalled there, the tick's own
     fill would never run). Both push `Event::Resumed { tick }` and count
     `Stats::migrations`.
@@ -515,7 +542,9 @@ model that tests it in one process (spec §9.1).
     peers moved to a successor while they ran on, confirming their own
     fills for the peers' slots; since SB-2 a host cut off from its players
     leaves, so only one that never heard a player could stay).
-    `host_log` is the last host's.
+    `host_log` is the last host's; plan 12d: `host_gone` its withdrawals
+    (`InputLog::gone_marks` below its frontier), `gone` every peer's,
+    `exited_us` when each exited peer went.
   - `verdict` checks every survivor (not dropped, exited, host lost or left
     behind) confirmed the last host's inputs and matches an offline replay
     of them (a joined spectator from its state, a late peer from its last,
@@ -528,7 +557,15 @@ model that tests it in one process (spec §9.1).
     host's migration held (an exited host's last frames may have reached
     nobody, B3; a host left behind fills its peers' slots), or all of them
     when its host is the last (a joined or late spectator from its last
-    state). Pinned by `a_host_cut_off_from_its_players_leaves_the_match`
+    state). Withdrawals (N83): a kept peer's marks in its compared range
+    equal the last host's there, a peer that went agrees with the last
+    host's within the bounds of its rows, and the offline replay withdraws
+    at the last host's marks before their ticks (pinned by
+    `a_leaving_client_is_withdrawn_at_one_tick_everywhere`, every profile,
+    `a_crashed_client_is_withdrawn_at_its_timeout`,
+    `a_leave_during_a_migration_is_withdrawn_alike`,
+    `a_leave_just_before_the_host_crashes_is_kept`,
+    `a_leave_after_a_migration_is_withdrawn_by_the_new_host`). Pinned by `a_host_cut_off_from_its_players_leaves_the_match`
     (as the first host and as the second, net-soak's
     `lan-8s2c0v-seed1433102928`). A host gone stalls its
     clients at the prediction limit: `expect_no_stalls` flags those too.

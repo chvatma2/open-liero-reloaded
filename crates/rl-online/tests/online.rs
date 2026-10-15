@@ -266,16 +266,25 @@ fn a_client_vanishes_mid_match() {
     let (Some(sa), Some(sb)) = (net.peers[a].started()[0], net.peers[b].started()[0]) else {
         panic!("both play")
     };
+    let known = |n: &mut Net| n.host().peer().match_session().unwrap().input_log().known_upto(sb);
+    let before = known(&mut net);
     let (sa, sb) = (usize::from(sa), usize::from(sb));
     net.peers[b].p = None;
+    net.run_until(Duration::from_secs(14), "the host hears Bert gone", |n| {
+        n.peers[0].has(|e| matches!(e, OnlineEvent::Left(name) if name == "Bert"))
+    });
+    let heard = known(&mut net);
     net.run_until(Duration::from_secs(28), "the host and the other client finish", |n| {
         [0, a].iter().all(|&i| n.peers[i].has(ended) && n.peers[i].has(replay_ready))
     });
-    assert!(net.peers[0].has(|e| matches!(e, OnlineEvent::Left(name) if name == "Bert")));
     let host = net.peers[0].peer().last_record().cloned().unwrap();
     let anna = net.peers[a].peer().last_record().cloned().unwrap();
     assert_eq!(host.rows, anna.rows);
     assert_eq!(host.checksums, anna.checksums);
+    // N83: withdrawn at one tick, its first unknown one when the host heard it gone.
+    let t = host.gone.iter().find(|g| usize::from(g.1) == sb).expect("withdrawn").0;
+    assert!((before..=heard).contains(&t), "{t} in {before}..={heard}");
+    assert_eq!(host.gone, anna.gone);
     assert!(rl_online::replay::same_match(net.peers[0].replays()[0], net.peers[a].replays()[0]));
     let rows = &host.rows;
     assert!(rows[..gone_at as usize].iter().any(|r| r[sb] != 0), "it played");
@@ -284,6 +293,66 @@ fn a_client_vanishes_mid_match() {
     assert!(rows.len() > from + 300, "{} rows, gone at {gone_at}", rows.len());
     assert!(rows[from..].iter().all(|r| r[sb] == 0), "the vanished slot presses nothing");
     assert!(rows[from..].iter().any(|r| r[sa] != 0), "the other client plays on");
+}
+
+/// The playtest (plan 12d): a player who leaves mid-match is removed at
+/// once, at one tick, on every peer; the match goes on; the records and
+/// replays carry the withdrawal and agree. RED: Bert's worm stays, alive.
+#[test]
+fn a_leaving_player_is_removed_from_every_world() {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 0.15);
+    let clients = net.join_all(&["Anna", "Bert"]);
+    let (a, b) = (clients[0], clients[1]);
+    net.ready(&clients);
+    net.host().peer().lobby().start(9).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() >= 200);
+    let sb = net.peers[b].started()[0].unwrap();
+    let known = |n: &mut Net| n.host().peer().match_session().unwrap().input_log().known_upto(sb);
+    let before = known(&mut net);
+    net.peers[b].peer().leave();
+    net.run_until(Duration::from_secs(3), "the host hears Bert leave", |n| {
+        n.peers[0].has(|e| matches!(e, OnlineEvent::Left(x) if x == "Bert"))
+    });
+    let heard = known(&mut net);
+    net.run_until(Duration::from_secs(3), "both withdraw Bert", |n| {
+        [0, a].iter().all(|&i| {
+            n.peers[i]
+                .p
+                .as_ref()
+                .and_then(|p| p.match_session())
+                .is_some_and(|s| s.input_log().gone_at(sb).is_some_and(|t| t < s.confirmed()))
+        })
+    });
+    let ticks: Vec<u32> = [0, a]
+        .iter()
+        .map(|&i| net.peers[i].peer().match_session().unwrap().input_log().gone_at(sb).unwrap())
+        .collect();
+    assert_eq!(ticks[0], ticks[1], "one tick on every peer");
+    assert!((before..=heard).contains(&ticks[0]), "at once: {} in {before}..={heard}", ticks[0]);
+    for i in [0, a] {
+        let s = net.peers[i].peer().match_session().unwrap();
+        let w = s.sim().world();
+        assert_eq!(w.gone() & (1 << sb), 1 << sb);
+        assert!(!w.worms()[usize::from(sb)].alive);
+        assert!(w.scores().iter().any(|r| r.worm == i32::from(sb) && r.left));
+    }
+    net.run_until(Duration::from_secs(30), "the others finish", |n| {
+        [0, a].iter().all(|&i| n.peers[i].has(ended) && n.peers[i].has(replay_ready))
+    });
+    let host = net.peers[0].peer().last_record().cloned().unwrap();
+    let anna = net.peers[a].peer().last_record().cloned().unwrap();
+    assert_eq!(host, anna, "rows, checksums and withdrawals");
+    assert_eq!(host.gone, [(ticks[0], sb)]);
+    for i in [0, a] {
+        assert!(
+            !net.peers[i].has(|e| matches!(e, OnlineEvent::DesyncBundle(_))),
+            "the replay meets every checksum"
+        );
+    }
+    let replay = rl_replay::Replay::decode(net.peers[0].replays()[0]).unwrap();
+    assert_eq!(replay.withdrawals, [(ticks[0], sb)]);
+    net.content().play_replay(&replay).unwrap();
 }
 
 /// Presses nothing: a planted change's re-simulation.

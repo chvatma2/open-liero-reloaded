@@ -415,8 +415,8 @@ player's confirmed checksums and input rows equal the server's, its replay
 bytes equal the server's (made from its record with
 `rl_online::replay::make`), a late spectator's checksums equal the
 server's at their ticks and reach the match's end; no desync bundle; the
-server's replay played back (`replay_checksums`) meets every server
-checksum; every server record holds at least `min_checksums` (at least
+server's replay played back (`replay_checksums`, its withdrawals before
+their ticks, plan 12d) meets every server checksum; every server record holds at least `min_checksums` (at least
 one: an empty record proves nothing). The server observer tells a new
 record by a cheap key (seed, start checksum, rows, checksums), not by
 comparing whole records every poll.

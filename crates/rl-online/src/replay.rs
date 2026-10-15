@@ -38,6 +38,8 @@ pub struct MatchRecord {
     /// The session's confirmed sync checksums (`Session::checksums`) of
     /// those ticks.
     pub checksums: Vec<(u32, u64)>,
+    /// The withdrawals at ticks below `rows.len()`, `(tick, slot)` (decision N83).
+    pub gone: Vec<(u32, u8)>,
 }
 
 /// A replay made: its bytes, and a warning when the re-simulation missed a
@@ -64,6 +66,10 @@ pub fn make(content: &Content, record: &MatchRecord, viewer: Option<u8>) -> anyh
     for (t, row) in record.rows.iter().enumerate() {
         for (k, &v) in keys.iter_mut().zip(row.iter()) {
             *k = Keys(v);
+        }
+        // N83: each withdrawal before its tick, as every peer did.
+        for &(_, s) in record.gone.iter().filter(|g| g.0 as usize == t) {
+            recorder.withdraw(&mut world, s).map_err(|e| anyhow!("{e}")).context("recording a withdrawal")?;
         }
         world.tick(&keys, &mut events);
         recorder.push(&keys, &world).map_err(|e| anyhow!("{e}")).context("recording")?;

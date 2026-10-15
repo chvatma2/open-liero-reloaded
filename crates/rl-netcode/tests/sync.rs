@@ -251,6 +251,9 @@ impl Simulation for Faulty {
         self.relapse = self.fault == Fault::Relapse;
         Ok(())
     }
+    fn withdraw(&mut self, slot: u8) {
+        self.toy.withdraw(slot);
+    }
 }
 
 /// The toy match where peer 1's simulation has `fault`.

@@ -50,6 +50,11 @@ pub(super) struct Collection {
     rejoined: BTreeMap<PeerId, Rejoin>,
     /// [`Session::resume`] ran: no more rejoins; late reports are still taken.
     resumed: bool,
+    /// Ruling PF12d-8: withdrawal marks reports carried, per slot `(tick,
+    /// value)`, held until the resume (the slot's prefix stops there):
+    /// applied then to a slot whose player is absent, refused for a present
+    /// one, so a forged report never removes a live player.
+    held: BTreeMap<u8, (u32, u8)>,
 }
 
 impl<S: Simulation> Session<S> {
@@ -163,7 +168,8 @@ impl<S: Simulation> Session<S> {
         self.peers.clear();
         self.out.clear();
         self.ahead.clear();
-        self.collection = Some(Collection { awaited, rejoined: BTreeMap::new(), resumed: false });
+        self.collection =
+            Some(Collection { awaited, rejoined: BTreeMap::new(), resumed: false, held: BTreeMap::new() });
         self.abandoned.clear();
         self.rehosted = false;
         self.suspend();
@@ -253,6 +259,17 @@ impl<S: Simulation> Session<S> {
             }
         }
         let awaited: Vec<u8> = c.awaited.iter().copied().collect();
+        let held = core::mem::take(&mut c.held);
+        // Ruling PF12d-8: the reported marks, for absent players only (a
+        // present one's is refused, a conflict).
+        for (s, (t, v)) in held {
+            if self.present(s) {
+                self.stats.report_conflicts += 1;
+            } else if self.log.set_final(t, s, v, true) == SetResult::New {
+                self.on_final(t, s, v);
+                self.on_gone(t);
+            }
+        }
         for (s, own_first, own) in owns {
             self.extend_own(s, own_first, &own);
         }
@@ -391,13 +408,8 @@ impl<S: Simulation> Session<S> {
         }
         let limit = self.current.saturating_add(MAX_AHEAD);
         for &(t, s, v, g) in &scratch {
-            if t >= limit {
-                continue;
-            }
-            match self.log.set_final(t, s, v, g) {
-                SetResult::New => self.on_final(t, s, v),
-                SetResult::Conflict => self.stats.report_conflicts += 1,
-                SetResult::Same | SetResult::Gap => {}
+            if t < limit {
+                self.take_reported(t, s, v, g);
             }
         }
         self.scratch = scratch;
@@ -533,6 +545,56 @@ impl<S: Simulation> Session<S> {
 
     /// `own` (inputs of `slot` from tick `own_first`) where it extends the
     /// slot's known prefix, and nothing beyond a gap or `MAX_AHEAD`.
+    /// New host: one final value a report carries, with its withdrawal mark
+    /// (N67, N88, ruling PF12d-8). A slot with a held mark takes nothing at
+    /// or past it (the held tick again, otherwise: a conflict). A new mark
+    /// (its slot not withdrawn, at its next tick) is held until the resume;
+    /// after it, a present player's is refused (a conflict). Anything else
+    /// as the log takes it: `New` extends (a mark rolls back to its tick),
+    /// `Conflict` (another value, or a mark for a tick final without one)
+    /// is counted.
+    fn take_reported(&mut self, t: u32, s: u8, v: u8, g: bool) {
+        let Some(c) = self.collection.as_ref() else { return };
+        let resumed = c.resumed;
+        if let Some(&(ht, hv)) = c.held.get(&s)
+            && t >= ht
+        {
+            if t == ht && !(g && v == hv) {
+                self.stats.report_conflicts += 1;
+            }
+            return;
+        }
+        let fresh = g && s < self.log.slots() && self.log.gone_at(s).is_none() && t == self.log.known_upto(s);
+        if fresh && !resumed {
+            if let Some(c) = self.collection.as_mut() {
+                c.held.insert(s, (t, v));
+            }
+            return;
+        }
+        if fresh && self.present(s) {
+            self.stats.report_conflicts += 1;
+            return;
+        }
+        match self.log.set_final(t, s, v, g) {
+            SetResult::New => {
+                self.on_final(t, s, v);
+                if g && self.log.gone_at(s) == Some(t) {
+                    self.on_gone(t);
+                }
+            }
+            SetResult::Conflict => self.stats.report_conflicts += 1,
+            SetResult::Same | SetResult::Gap => {}
+        }
+    }
+
+    /// Whether `slot`'s player is present: one of our local slots (our own,
+    /// a bot), or a peer's that is not lost.
+    fn present(&self, slot: u8) -> bool {
+        self.local.contains(&slot)
+            || self.own_slot == Some(slot)
+            || self.peers.values().any(|p| !p.lost && p.seat == Seat::Player(slot))
+    }
+
     fn extend_own(&mut self, slot: u8, own_first: u32, own: &[u8]) {
         let limit = self.current.saturating_add(MAX_AHEAD);
         for (k, &v) in own.iter().enumerate() {

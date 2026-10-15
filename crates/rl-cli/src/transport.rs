@@ -1091,7 +1091,9 @@ fn differ(a: &[(u32, u64)], b: &[(u32, u64)]) -> String {
 }
 
 /// Plays replay `bytes` on `content` and checks the world's sync checksum
-/// after every tick in `expected` (the server's confirmed checksums).
+/// after every tick in `expected` (the server's confirmed checksums). Its
+/// withdrawals (decision N83) come before their ticks, as in the match (a
+/// session's checksum of tick `t` is taken before a withdrawal at `t + 1`).
 pub fn replay_checksums(content: &Content, bytes: &[u8], expected: &[(u32, u64)]) -> anyhow::Result<()> {
     let replay = Replay::decode(bytes).map_err(|e| anyhow!("{e}"))?;
     let mut world = content.world_for_replay(&replay)?;
@@ -1099,6 +1101,9 @@ pub fn replay_checksums(content: &Content, bytes: &[u8], expected: &[(u32, u64)]
     let mut events = TickEvents::new();
     let mut checked = 0;
     for t in 0..replay.ticks() {
+        for &(_, w) in replay.withdrawals.iter().filter(|g| g.0 == t) {
+            world.withdraw(usize::from(w));
+        }
         world.tick(replay.row(t), &mut events);
         if let Some(&c) = want.get(&t) {
             let got = world.sync_checksum();
@@ -1154,5 +1159,55 @@ mod tests {
         assert!(err.contains("compared with nothing"), "{err}");
         let unseen = ClientRun { name: "E".into(), ..ClientRun::default() };
         assert!(run(rows.clone()).server_prefix(&[&unseen], &rows).unwrap_err().contains("never found"));
+    }
+
+    /// N83: a replay's withdrawals come before their ticks, so the
+    /// server's checksums of a match a player left are met.
+    #[test]
+    fn a_replay_with_a_withdrawal_meets_the_servers_checksums() {
+        use rl_netcode::Simulation;
+        let Some(dir) = std::env::var("RL_CONTENT_DIR").ok().filter(|d| Path::new(d).is_dir()) else {
+            eprintln!("RL_CONTENT_DIR not set; skipping");
+            return;
+        };
+        let c = Content::open(Path::new(&dir)).unwrap();
+        let (m, level) = ("olx-classic", "olx-level-dirt-level");
+        let look = |name: &str| Look {
+            name: name.into(),
+            colour: [200, 80, 40],
+            skin: "olx-skin-default".into(),
+            skin_hash: rl_proto::NO_HASH.into(),
+        };
+        let setup = rl_proto::MatchSetupWire {
+            mod_id: m.into(),
+            level_id: level.into(),
+            packs: rl_online::matches::setup_packs(&c, m, level).unwrap(),
+            rules: rl_online::matches::rules_wire(&rl_modes::DeathmatchSettings::default()),
+            bonuses: false,
+            loading_time: 100,
+            restrictions: String::new(),
+            bots: vec![],
+        };
+        let slot = |m: u8| rl_proto::SlotWire { member: Some(m), bot: None, look: look("P"), loadout: None };
+        let slots = vec![slot(0), slot(1), slot(2)];
+        let start = MatchStartWire { seed: 4, setup, slots, input_delay: vec![], start_checksum: 0 };
+        let mut sim = rl_online::matches::build(&c, &start).unwrap().sim;
+        let (mut rows, mut checksums) = (Vec::new(), Vec::new());
+        for t in 0..200u32 {
+            let mut row = [0u8; 32];
+            row[1] = ((t / 20).wrapping_mul(97) as u8) & !Keys::CHANGE;
+            if t == 120 {
+                sim.withdraw(2);
+            }
+            sim.tick(&[Keys(row[0]), Keys(row[1]), Keys(row[2])]);
+            if (t + 1) % 10 == 0 {
+                checksums.push((t, sim.checksum()));
+            }
+            rows.push(row);
+        }
+        let record = MatchRecord { start, rows, checksums: checksums.clone(), gone: vec![(120, 2)] };
+        let made = rl_online::replay::make(&c, &record, None).unwrap();
+        assert_eq!(made.warning, None);
+        replay_checksums(&c, &made.bytes, &checksums).unwrap();
     }
 }

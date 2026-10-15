@@ -1035,7 +1035,8 @@ impl<S: Simulation> Session<S> {
 
     /// The host's lagging-player rule (spec §3.2) before its new tick `t`: a
     /// player's input still unknown `fill_window` ticks later becomes its
-    /// previous final value; an abandoned slot's becomes `Keys(0)` at once.
+    /// previous final value; an abandoned slot's becomes `Keys(0)` at once,
+    /// its worm withdrawn at its first unknown tick (decision N83).
     /// A run of fills of [`LATE_WARNING_US`] pushes [`Event::PeerLate`].
     fn fill(&mut self, t: u32) {
         let window = self.cfg.fill_window;
@@ -1048,8 +1049,11 @@ impl<S: Simulation> Session<S> {
             if p.lost {
                 while self.log.known_upto(s) <= t {
                     let k = self.log.known_upto(s);
-                    self.log.set(k, s, 0);
-                    scratch.push((k, s, 0, false));
+                    // N83: its worm is withdrawn at its first unknown tick, with the
+                    // `Keys(0)` N6 fills from there.
+                    let gone = self.log.gone_at(s).is_none();
+                    self.log.set_final(k, s, 0, gone);
+                    scratch.push((k, s, 0, gone));
                 }
                 continue;
             }
@@ -1080,12 +1084,17 @@ impl<S: Simulation> Session<S> {
         for &s in &self.abandoned {
             while self.log.known_upto(s) <= t {
                 let k = self.log.known_upto(s);
-                self.log.set(k, s, 0);
-                scratch.push((k, s, 0, false));
+                // N83, N88: as a lost player's.
+                let gone = self.log.gone_at(s).is_none();
+                self.log.set_final(k, s, 0, gone);
+                scratch.push((k, s, 0, gone));
             }
         }
-        for &(k, s, v, _) in &scratch {
+        for &(k, s, v, gone) in &scratch {
             self.on_final(k, s, v);
+            if gone {
+                self.on_gone(k);
+            }
         }
         self.scratch = scratch;
     }
@@ -1119,6 +1128,13 @@ impl<S: Simulation> Session<S> {
             keys[s as usize] = Keys(row[s as usize]);
         }
         let all_final = self.log.complete(t);
+        // N83: a withdrawal is part of tick `t`'s input: after the snapshot
+        // (a rollback restores the worm and withdraws it again), before the tick.
+        for s in 0..slots {
+            if self.log.gone_at(s) == Some(t) {
+                self.sim.withdraw(s);
+            }
+        }
         self.sim.tick(&keys[..slots as usize]);
         if (t + 1).is_multiple_of(self.checksum_every()) {
             self.checks.record(t, self.sim.checksum());
@@ -1222,6 +1238,15 @@ impl<S: Simulation> Session<S> {
             && let Some(row) = self.used.get((tick - self.base) as usize)
             && row[slot as usize] != v
         {
+            self.rollback_from = Some(self.rollback_from.map_or(tick, |r| r.min(tick)));
+        }
+    }
+
+    /// A withdrawal at `tick` became known (decision N83). A tick already
+    /// simulated was simulated without it: roll back to it. (Its value is
+    /// `on_final`'s; equal to the prediction, it would roll back nothing.)
+    fn on_gone(&mut self, tick: u32) {
+        if tick < self.current && tick >= self.base {
             self.rollback_from = Some(self.rollback_from.map_or(tick, |r| r.min(tick)));
         }
     }
@@ -1655,7 +1680,12 @@ impl<S: Simulation> Session<S> {
                     continue;
                 }
                 match self.log.set_final(t, s, v, g) {
-                    SetResult::New => self.on_final(t, s, v),
+                    SetResult::New => {
+                        self.on_final(t, s, v);
+                        if g && self.log.gone_at(s) == Some(t) {
+                            self.on_gone(t);
+                        }
+                    }
                     SetResult::Conflict => {
                         self.events.push(Event::Inconsistent { peer: from, tick: t, slot: s })
                     }
@@ -2078,6 +2108,37 @@ mod tests {
         c.receive(0, Channel::Unreliable, &host_inputs_marked(20, 0, 0, frames, vec![(0, 12)]), 1_000);
         assert_eq!(c.input_log().gone_at(0), Some(12));
         assert_eq!(c.input_log().gone_at(1), None);
+    }
+
+    /// N83, Review Focus 1: a client that predicted a slot as `Keys(0)` past T
+    /// learns, with that same value at T, that the slot is withdrawn there: it
+    /// rolls back to T. The values agree, so only the mark can roll it back
+    /// (RED without `on_gone`).
+    #[test]
+    fn a_withdrawal_learned_late_rolls_back_to_it() {
+        let (mut c, mut twin) = (client(), client());
+        // One driver each, alike: the twin presses the same keys.
+        let (mut d, mut dt) = (driver(), driver());
+        let zeros =
+            |first, n| rl_proto::encode_frames(first, n, 3, &|_, s| (s < 2).then_some(0), &|_| Some(0));
+        for s in [&mut c, &mut twin] {
+            s.receive(0, Channel::Unreliable, &host_inputs(10, 0, 0, zeros(0, 10)), 1_000);
+        }
+        let mut now = 1_000;
+        while c.current_tick() < 20 {
+            now += 10_000;
+            c.advance(now, d.as_mut());
+            twin.advance(now, dt.as_mut());
+        }
+        assert_eq!(c.sim().checksum(), twin.sim().checksum());
+        c.drain_events();
+        c.receive(0, Channel::Unreliable, &host_inputs_marked(20, 0, 10, zeros(10, 10), vec![(0, 12)]), now);
+        twin.receive(0, Channel::Unreliable, &host_inputs(20, 0, 10, zeros(10, 10)), now);
+        now += 10_000;
+        c.advance(now, d.as_mut());
+        twin.advance(now, dt.as_mut());
+        assert!(c.drain_events().iter().any(|e| matches!(*e, Event::Rollback { from: 12, .. })));
+        assert_ne!(c.sim().checksum(), twin.sim().checksum(), "the toy world withdrew slot 0 at 12");
     }
 
     /// N83: a mark for a tick the client holds final without one is the
@@ -2511,6 +2572,7 @@ mod tests {
         fn decode_state(&mut self, _bytes: &[u8]) -> Result<(), crate::StateRejected> {
             Ok(())
         }
+        fn withdraw(&mut self, _slot: u8) {}
     }
 
     #[test]

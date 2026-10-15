@@ -464,9 +464,12 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       so a loopback test exercises the relays), `test_set_migrations(n)`
       (the match counts `n` so far), `test_joins()` (each join started:
       member id, direct or not). `migrations()`: the running match's count.
-- **`replay.rs`**: `MatchRecord { start, rows, checksums }` (rows below the
-  last tick, the session's confirmed checksums); `make` re-simulates the
-  rows from `build_match`'s start world with its `Recorder` and returns the
+- **`replay.rs`**: `MatchRecord { start, rows, checksums, gone }` (rows below the
+  last tick, the session's confirmed checksums, the withdrawals at ticks
+  of those rows, `(tick, slot)`: `InputLog::gone_marks`, plan 12d N83);
+  `make` re-simulates the rows from `build_match`'s start world with its
+  `Recorder`, each withdrawal (`Recorder::withdraw`, an error as `push`'s)
+  before its tick, and returns the
   `.rlrp` bytes, with a warning when a confirmed checksum differs (the
   replay is kept; the peer reports it as a `Notice`); `ReplayJob::spawn`
   runs it on a thread (`rl-online-replay`); a peer runs one at a time (a
@@ -477,7 +480,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   `Notice`, then `ReplayReady`, or the failure's `Notice`.
 - **`bundle.rs`** (spec §3.5, §9.10): `GameBundle` (what happened, host
   or not, `my_slot`, `FINGERPRINT`, platform `<arch>-<os>`, the
-  `MatchStartWire`, the confirmed input rows from tick 0, this peer's
+  `MatchStartWire`, the confirmed input rows from tick 0, the withdrawals
+  (`gone`, `GAME_BUNDLE_VERSION` 2), this peer's
   checksums, the other side's stream (`other_checksums`: on the host the
   peer's compared reports, `Session::peer_checksums`; on a client the
   host's checksum of the mismatch), the mismatch `(tick, local,
@@ -675,7 +679,10 @@ notice without it; each under 20 s, every wait bounded): a host and two
 clients play a 6 s match to equal confirmed inputs, checksums and replay
 bytes; a late joiner watches from a state, then plays the next match; a
 client whose world differs is refused at the start; a client that vanishes
-mid-match leaves `Keys(0)` in its slot while the others finish; a banned
+mid-match leaves `Keys(0)` in its slot while the others finish, withdrawn
+at one tick on both; a player who leaves is removed at once from every
+world at one tick, the records, replays and their checksums agreeing
+(`a_leaving_player_is_removed_from_every_world`, the playtest); a banned
 player cannot rejoin; an admin's setup is taken or refused with a notice;
 a health planted in a client's world makes a bundle on both sides; a
 dedicated server (`PeerRole::Server`) has no member of its own, hears chat

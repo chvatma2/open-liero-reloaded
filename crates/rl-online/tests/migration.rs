@@ -87,6 +87,11 @@ fn a_frozen_host_hands_the_match_to_the_first_player() {
         }
     }
     let held = held.into_iter().max().unwrap();
+    // N88: the old host's player is withdrawn at the resume, at its first
+    // unknown tick, alike on both.
+    let g0 = ra.gone.iter().find(|g| g.1 == 0).expect("the old host's player is withdrawn");
+    assert!(g0.0 >= held, "withdrawn at {} before what a survivor held, {held}", g0.0);
+    assert_eq!(ra.gone, rb.gone);
     // The old host's player stands still after the migration; the bot
     // (slot 3) still plays, and so does Anna (slot 1, her own keys ahead by
     // her input delay, the bots' at the tick: the driver is called twice).

@@ -1638,9 +1638,10 @@ fn a_new_host_waits_for_a_player_without_a_standby() {
     assert_eq!(r.hosts, vec![HOST, 100]);
 }
 
-/// N83: a rejoined peer's report carries its withdrawal marks, the new host
-/// merges them with the values (a mark for a tick final without one is a
-/// conflict, counted), and its resume hands them to a peer that lacks them.
+/// N83, ruling PF12d-8: a rejoined peer's report carries its withdrawal
+/// marks; the new host holds one (its slot's prefix stops there) until the
+/// resume, where it applies it to a slot whose player is absent (here the
+/// old host's). A mark for a tick final without one is a conflict, counted.
 #[test]
 fn withdrawal_marks_travel_through_a_migration() {
     let mut m = Mesh::new(10, 11);
@@ -1676,7 +1677,8 @@ fn withdrawal_marks_travel_through_a_migration() {
     m.until(2_500, "silence", |m| m.first(B, |e| *e == Event::HostSilent).is_some());
     m.migrate_to_a();
     m.until(1_000, "B's report", |m| m.s[&A].awaiting_reports().is_empty());
-    assert_eq!(m.s[&A].input_log().gone_at(0), Some(mark), "the report's mark is merged");
+    assert_eq!(m.s[&A].input_log().gone_at(0), None, "held until the resume");
+    assert_eq!(m.s[&A].input_log().known_upto(0), mark, "the slot's prefix stops at the held mark");
     // A rejoined spectator claims a withdrawal at a tick A holds without one.
     let us = m.now_ms * 1000;
     assert!(m.s.get_mut(&A).unwrap().rejoined(9, Seat::Spectator, us));
@@ -1695,23 +1697,186 @@ fn withdrawal_marks_travel_through_a_migration() {
     m.s.get_mut(&A).unwrap().receive(9, Channel::Reliable, &encode_control(&Control::Report(report)), us);
     assert_eq!(m.s[&A].stats().report_conflicts, 1);
     assert_eq!(m.s[&A].input_log().gone_at(1), None, "the first value stays");
-    // Another holds slot 1 one tick further than A, withdrawn there: B
-    // lacks it and gets it with the resume.
-    assert!(m.s.get_mut(&A).unwrap().rejoined(8, Seat::Spectator, us));
-    let k1 = m.s[&A].input_log().known_upto(1);
-    let base: Vec<Option<u8>> = (0..SLOTS).map(|s| m.s[&A].final_input(k1 - 1, s).map(|k| k.0)).collect();
-    let frames = encode_frames(k1, 1, SLOTS as usize, &|_, s| (s == 1).then_some(0), &|s| base[s]);
-    let report =
-        InputsReport { ack: 0, origin: 0, first: k1, frames, gone: vec![(1, k1)], own_first: 0, own: vec![] };
-    m.s.get_mut(&A).unwrap().receive(8, Channel::Reliable, &encode_control(&Control::Report(report)), us);
-    assert_eq!(m.s[&A].input_log().gone_at(1), Some(k1));
-    assert_eq!(m.s[&B].input_log().known_upto(1), k1, "B lacks it");
     m.s.get_mut(&A).unwrap().resume(m.now_ms * 1000);
+    assert_eq!(
+        m.s[&A].input_log().gone_at(0),
+        Some(mark),
+        "applied at the resume: slot 0's player is absent"
+    );
     m.until(1_000, "B resumes", |m| m.first(B, |e| matches!(e, Event::Resumed { .. })).is_some());
-    assert_eq!(m.s[&B].input_log().gone_at(1), Some(k1), "the resume's mark");
     m.run_ms(500);
     for id in [A, B] {
         assert_eq!(m.count(id, |e| matches!(e, Event::Inconsistent { .. } | Event::Malformed { .. })), 0);
+        assert_eq!(m.s[&id].sim().gone(), 1, "peer {id}: slot 0 withdrawn");
     }
     assert_eq!(m.s[&B].input_log().gone_at(0), Some(mark));
+}
+
+/// Ruling PF12d-8: a forged report never removes a player who is present
+/// (rejoined, or the new host's own: its bots too); a mark for an absent
+/// player's slot (the old host's) is applied at the resume and reaches a
+/// peer that lacked it. A refused mark is a conflict, counted.
+#[test]
+fn a_forged_withdrawal_never_removes_a_present_player() {
+    let mut m = Mesh::new(10, 12);
+    m.run_ms(2_000);
+    m.alive.insert(H, false);
+    m.until(2_500, "silence", |m| m.first(B, |e| *e == Event::HostSilent).is_some());
+    m.migrate_to_a();
+    m.until(1_000, "B's report", |m| m.s[&A].awaiting_reports().is_empty());
+    // Spectators that "held" one more tick of a slot, withdrawn there: B's
+    // own (present), A's bot (present), the old host's player (absent).
+    let us = m.now_ms * 1000;
+    let forge = |m: &mut Mesh, from: PeerId, slot: u8, v: u8| -> u32 {
+        assert!(m.s.get_mut(&A).unwrap().rejoined(from, Seat::Spectator, us));
+        let k = m.s[&A].input_log().known_upto(slot);
+        let base: Vec<Option<u8>> = (0..SLOTS).map(|s| m.s[&A].final_input(k - 1, s).map(|x| x.0)).collect();
+        let frames =
+            encode_frames(k, 1, SLOTS as usize, &|_, s| (s == slot as usize).then_some(v), &|s| base[s]);
+        let gone = vec![(slot, k)];
+        let report = InputsReport { ack: 0, origin: 0, first: k, frames, gone, own_first: 0, own: vec![] };
+        m.s.get_mut(&A).unwrap().receive(
+            from,
+            Channel::Reliable,
+            &encode_control(&Control::Report(report)),
+            us,
+        );
+        k
+    };
+    forge(&mut m, 9, 3, 0x55);
+    forge(&mut m, 7, 1, 0);
+    let k0 = forge(&mut m, 8, 0, 0);
+    assert_eq!(m.s[&B].input_log().known_upto(0), k0, "B lacks the absent slot's mark");
+    assert_eq!(m.s[&A].stats().report_conflicts, 0, "decided at the resume");
+    m.s.get_mut(&A).unwrap().resume(m.now_ms * 1000);
+    assert_eq!(m.s[&A].stats().report_conflicts, 2, "both present players' marks refused");
+    m.until(1_000, "B resumes", |m| m.first(B, |e| matches!(e, Event::Resumed { .. })).is_some());
+    m.run_ms(1_000);
+    for id in [A, B] {
+        let log = m.s[&id].input_log();
+        assert_eq!((log.gone_at(0), log.gone_at(1), log.gone_at(3)), (Some(k0), None, None), "peer {id}");
+        assert_eq!(m.s[&id].sim().gone(), 1, "peer {id}: only the absent slot is withdrawn");
+        assert_eq!(m.count(id, |e| matches!(e, Event::Inconsistent { .. } | Event::Malformed { .. })), 0);
+    }
+    let r = m.s[&A].input_log().known_upto(3);
+    assert!(r > 0 && (0..r).rev().take(50).any(|t| m.s[&A].final_input(t, 3) != Some(Keys(0))), "B plays on");
+}
+
+/// A host (slot 0 its player, slot 1 its bot), `clients` players and one spectator, no migration.
+fn scenario(seed: u64, profile: Profile, clients: u8) -> Scenario {
+    Scenario { migration: None, ..mscenario(seed, profile, clients) }
+}
+
+/// The withdrawal of `slot` the last host confirmed, and that every
+/// survivor confirmed it alike (the verdict checks it too: this names it).
+fn withdrawn(r: &Report, slot: u8) -> u32 {
+    let t = r.host_gone.iter().find(|g| g.1 == slot).map(|g| g.0).expect("the slot is withdrawn");
+    for (peer, marks) in &r.gone {
+        if let Some(m) = marks.iter().find(|g| g.1 == slot) {
+            assert_eq!(m.0, t, "peer {peer} withdrew slot {slot} at another tick");
+        }
+    }
+    t
+}
+
+/// N83, user decision 1: a client that leaves is withdrawn at one tick on
+/// every peer, after its `Bye` reached the host; the offline replay withdraws
+/// there too (the verdict). RED: no peer withdraws.
+#[test]
+fn a_leaving_client_is_withdrawn_at_one_tick_everywhere() {
+    for profile in Profile::ALL {
+        for seed in 1..=4 {
+            let mut sc = scenario(seed, profile, 3);
+            sc.exits.push(Exit { peer: 2, tick: 400, after_us: 0, how: ExitHow::Leave });
+            let r = run_checked(&sc);
+            let t = withdrawn(&r, 3);
+            // Its first unknown tick: about the host's tick when the `Bye` came, less
+            // at most the fill window on a lagging link. On `awful` (15 % loss in
+            // bursts of 4) the reliable `Bye` itself can be lost and resent:
+            // seed 2's came over a second late (withdrawn at 522).
+            let latest = if profile.name == "awful" { 640 } else { 520 };
+            assert!((380..latest).contains(&t), "seed {seed} {}: {t}", profile.name);
+            assert!(r.host_log[t as usize..].iter().all(|row| row[3] == 0));
+        }
+    }
+}
+
+/// N87, user decision 4: a client that crashes is withdrawn when the host's
+/// timeout fires, not before: until then its slot repeats its last keys.
+#[test]
+fn a_crashed_client_is_withdrawn_at_its_timeout() {
+    let mut sc = scenario(7, Profile::TYPICAL, 2);
+    sc.ticks = 2_000;
+    sc.exits.push(Exit { peer: 1, tick: 300, after_us: 0, how: ExitHow::Crash });
+    let r = run_checked(&sc);
+    let t = withdrawn(&r, 2);
+    let timeout = (rl_netcode::SILENCE_TIMEOUT_US / rl_netcode::TICK_US) as u32;
+    assert!(t >= 300 + timeout - 20 && t <= 300 + timeout + 60, "{t}");
+}
+
+/// N88, Review Focus 2: a client leaving while the match moves to a new
+/// host is withdrawn alike on every survivor (the mark one held, or the
+/// resume's fill), at least once during the migration over the offsets.
+#[test]
+fn a_leave_during_a_migration_is_withdrawn_alike() {
+    let mut during = 0;
+    for after_us in [0, 500_000, 1_500_000, 2_050_000, 2_200_000, 2_600_000, 3_200_000, 4_500_000] {
+        let mut sc = mscenario(11, Profile::GOOD, 3);
+        sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+        sc.exits.push(Exit { peer: 3, tick: 400, after_us, how: ExitHow::Leave });
+        let r = run_checked(&sc);
+        withdrawn(&r, 4);
+        withdrawn(&r, 0); // the old host's player, abandoned at the resume (user decision 5)
+        let m = &r.migrations[0];
+        let left = r.exited_us[&3];
+        during += usize::from(m.silent_us < left && left < m.resumed_us);
+    }
+    assert!(during > 0, "no leave fell inside a migration: change the offsets");
+}
+
+/// N88: a mark the old host made just before it crashed, which a survivor
+/// held when the match moved, is kept by the merge. Otherwise the new host
+/// would withdraw the slot later, and the holder's mark would differ (the
+/// verdict). The crash tick is swept so the client's `Bye` (a trip) lands
+/// before it in some runs.
+#[test]
+fn a_leave_just_before_the_host_crashes_is_kept() {
+    let mut held = 0;
+    for crash in 404..=420 {
+        let mut sc = mscenario(1, Profile::TYPICAL, 3);
+        sc.exits.push(Exit { peer: 2, tick: 400, after_us: 0, how: ExitHow::Leave });
+        sc.exits.push(Exit { peer: HOST, tick: crash, after_us: 0, how: ExitHow::Crash });
+        let r = run_checked(&sc);
+        let t = withdrawn(&r, 3);
+        // A survivor held slot 3's value at `t` when the match moved: it held the mark.
+        held += usize::from(r.held.iter().any(|h| {
+            h.peer != HOST && h.slots.get(3).is_some_and(|v| h.origin as usize + v.len() > t as usize)
+        }));
+    }
+    assert!(held > 0, "no survivor held the old host's mark: move the crash ticks");
+}
+
+#[test]
+fn a_leave_after_a_migration_is_withdrawn_by_the_new_host() {
+    let mut sc = mscenario(5, Profile::TYPICAL, 3);
+    sc.exits.push(Exit { peer: HOST, tick: 300, after_us: 0, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: 3, tick: 700, after_us: 0, how: ExitHow::Leave });
+    let r = run_checked(&sc);
+    assert_eq!(r.hosts, vec![HOST, 1]);
+    assert!(withdrawn(&r, 4) >= 700);
+}
+
+/// N83: a spectator that joins after a withdrawal learns no mark before its
+/// state: the withdrawal comes with the state it loads (the verdict
+/// compares its checksums from there).
+#[test]
+fn a_spectator_joining_after_a_withdrawal_loads_it_with_the_state() {
+    let mut sc = scenario(3, Profile::TYPICAL, 3);
+    sc.peers.iter_mut().filter(|p| p.id == 100).for_each(|p| p.join_tick = Some(700));
+    sc.exits.push(Exit { peer: 2, tick: 400, after_us: 0, how: ExitHow::Leave });
+    let r = run_checked(&sc);
+    let t = withdrawn(&r, 3);
+    assert!(t < 700);
+    assert!(r.gone[&100].is_empty(), "no mark before its log's origin");
+    assert!(r.checksums[&100].iter().any(|&(c, _)| c > 700), "it confirmed checksums after its state");
 }
