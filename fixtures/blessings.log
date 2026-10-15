@@ -104,3 +104,7 @@
   fixtures/net/cases/net-classic-fossilfacility-bad-9s6c0v-seed24272975-69d38530.ron
 2026-10-15 bless-regression: SK-5: a downlink burst of 13-14 lost datagrams on bad stalled a player; bad's losses are independent now, as the spec defines it
   fixtures/net/cases/net-mw-1-0-liero-factory-bad-9s5c2v-seed1365992821-e0db6721.ron
+2026-10-15 bless-regression: SK-6: a player switched to a worse link mid-match keeps its input delay; its stalls from the change on are not judged
+  fixtures/net/cases/net-classic-castlestrike-good-14s5c2v-seed697424034-ba910340.ron
+2026-10-15 bless-regression: SK-6: a player switched to a worse link mid-match keeps its input delay; its stalls from the change on are not judged
+  fixtures/net/cases/net-mw-1-0-liero-factory-lan-10s6c1v-seed335636286-21c7878e.ron
