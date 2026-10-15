@@ -1105,6 +1105,34 @@ fn a_peer_in_contact_follows_its_successor_when_the_old_host_returns() {
 }
 
 #[test]
+fn a_host_cut_off_while_its_peers_move_on_is_left_behind() {
+    // A host's own network drops for 3 s while it keeps running: its peers
+    // find it silent and move to a successor; it cannot know and confirms
+    // its own fills for their slots. Not a survivor: its rows agree with
+    // the match only as far as the survivors of its migration held. Once as
+    // the first host, once as the second (the first stepped down, N70; the
+    // net-soak case `lan-8s2c0v-seed1433102928`).
+    let mut first = mscenario(22, Profile::LAN, 3);
+    first.outages.push(Outage { peer: HOST, from_tick: 500, until_tick: 800 });
+    let mut second = mscenario(23, Profile::LAN, 3);
+    second.host_freeze = Some((400, 600));
+    second.outages.push(Outage { peer: 1, from_tick: 1_000, until_tick: 1_300 });
+    for (sc, hosts, behind) in [(first, vec![HOST, 1], HOST), (second, vec![HOST, 1, 2], 1)] {
+        let mut r = run_checked(&sc);
+        assert_eq!(r.hosts, hosts, "seed {}", sc.seed);
+        assert!(!r.exited.contains(&behind) && !r.host_lost.contains(&behind), "seed {}", sc.seed);
+        let old = &r.logs[&behind];
+        assert!(old.iter().zip(&r.host_log).any(|(a, b)| a != b), "seed {}: its own rows differ", sc.seed);
+        // A row it confirmed long before it was cut off, changed: it must
+        // agree with the survivors as far as they go.
+        r.logs.get_mut(&behind).unwrap()[100][2] ^= 1;
+        let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+        let e = harness::verdict(&sc, &r, &mut f).expect_err("a wrong row of a host left behind");
+        assert!(e.what.contains(&format!("peer {behind}")), "{e:?}");
+    }
+}
+
+#[test]
 fn a_new_host_waits_past_its_window_for_a_rejoined_peers_report() {
     // C1: spectator 100 runs a frame every 0.8 s, so it answers the new
     // host's Collect only at its next frame; it crashes between its rejoin

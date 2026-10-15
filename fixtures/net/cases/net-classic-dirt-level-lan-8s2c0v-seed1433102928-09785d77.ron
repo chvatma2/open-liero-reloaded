@@ -1,0 +1,28 @@
+(
+    spec: (
+        mod_id: "olx-classic",
+        level_id: "olx-level-dirt-level",
+        seed: 1433102928,
+        slots: 8,
+        clients: 2,
+        spectators: 0,
+        join_tick: None,
+        profile: "lan",
+        drift_ppm: 1000,
+        ticks: 3519,
+        outages: [
+            (1, 180, 598),
+            (1, 2864, 3362),
+        ],
+        net_seed: 2174459033575661147,
+        difficulty: Some("medium"),
+        faults: [],
+        exits: [],
+        host_freeze: Some((2051, 2278)),
+        profile_changes: [
+            (569, 1, "awful"),
+        ],
+        migration: false,
+    ),
+    failure: Some("peer 1 confirmed other inputs than the host at tick 2637"),
+)

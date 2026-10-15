@@ -216,10 +216,15 @@ pub struct Report {
     pub late: BTreeSet<PeerId>,
     /// What each migration's survivors held.
     pub held: Vec<Held>,
-    /// The host each exited or host-lost peer followed as it went (an
-    /// exited host: itself): the verdict bounds its rows by what that
-    /// host's migration's survivors held.
+    /// The host each exited, host-lost or left-behind peer followed as it
+    /// went (an exited or left-behind host: itself): the verdict bounds its
+    /// rows by what that host's migration's survivors held.
     pub left_from: BTreeMap<PeerId, PeerId>,
+    /// Former hosts still running at the end: cut off from their peers
+    /// (their own network down past `HOST_SILENT_US` while they ran on),
+    /// they cannot know the peers moved to a successor, and confirm their
+    /// own fills for the peers' slots. Not survivors, as an exited host.
+    pub left_behind: BTreeSet<PeerId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -869,6 +874,16 @@ pub fn run_observed<S: Simulation>(
     }
 
     let last = w.hosts.last().copied().unwrap_or(HOST);
+    // Former hosts still running: their peers moved on without them.
+    let left_behind: BTreeSet<PeerId> = w
+        .hosts
+        .iter()
+        .filter(|&&h| h != last && index.get(&h).is_some_and(|&i| !peers[i].gone))
+        .copied()
+        .collect();
+    for &h in &left_behind {
+        w.left_from.insert(h, h);
+    }
     let mut report = Report {
         host_log: Vec::new(),
         logs: BTreeMap::new(),
@@ -887,6 +902,7 @@ pub fn run_observed<S: Simulation>(
         late: w.late,
         held: w.held,
         left_from: w.left_from,
+        left_behind,
     };
     for p in peers {
         let log = p.session.input_log();
@@ -1195,15 +1211,19 @@ fn resume<S: Simulation>(
 /// state on (inputs from its first, checksums from its last), a late peer
 /// from its last; a corrupted peer's checksums from its last loaded state
 /// on. Migrations: every final input a survivor held ([`Report::held`]) is
-/// in the last host's log; a peer that went (exited or host lost) confirmed
-/// rows that agree with it up to, per slot, the furthest prefix the
-/// survivors of its host's migration held (an exited host's last frames
-/// may have reached nobody, pre-flight B3), or all of them when its host
-/// is the last.
+/// in the last host's log; a peer that went (exited, host lost, or a former
+/// host left behind) confirmed rows that agree with it up to, per slot, the
+/// furthest prefix the survivors of its host's migration held (an exited
+/// host's last frames may have reached nobody, pre-flight B3; a host cut
+/// off confirms its own fills), or all of them when its host is the last.
 pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>) -> Result<(), Failure> {
     let ticks = sc.ticks;
-    let kept =
-        |peer: &PeerId| !r.dropped.contains(peer) && !r.exited.contains(peer) && !r.host_lost.contains(peer);
+    let kept = |peer: &PeerId| {
+        !r.dropped.contains(peer)
+            && !r.exited.contains(peer)
+            && !r.host_lost.contains(peer)
+            && !r.left_behind.contains(peer)
+    };
     let corrupted = |peer: PeerId| sc.corrupt.iter().any(|c| c.0 == peer);
     let late = |peer: PeerId| r.late.contains(&peer);
     let joined = |peer: PeerId| sc.peers.iter().any(|p| p.id == peer && p.join_tick.is_some());
@@ -1259,10 +1279,11 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
             }
         }
     }
-    // A peer that went (an exited host, an exited or host-lost peer): its
-    // confirmed rows agree with the last host's as far as the survivors of
-    // its host's migration held (that host's last frames may have reached
-    // nobody, B3); all of them when its host is the last.
+    // A peer that went (an exited or left-behind host, an exited or
+    // host-lost peer): its confirmed rows agree with the last host's as far
+    // as the survivors of its host's migration held (that host's last
+    // frames may have reached nobody, B3; a host cut off fills its peers'
+    // slots); all of them when its host is the last.
     let last_host = r.hosts.last().copied().unwrap_or(HOST);
     for (&peer, &host) in r.left_from.iter().filter(|(p, _)| !r.dropped.contains(p)) {
         let mut upto = [0usize; 32];

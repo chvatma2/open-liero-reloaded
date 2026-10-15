@@ -383,21 +383,28 @@ model that tests it in one process (spec §9.1).
     `HostSilent`/`PeerLeft` to the resume), `host_lost`, `exited` (crashed,
     left, stepped down), `late`, `held` (what each migration's survivors
     held: the new host as it took over, each peer back at the resume; per
-    slot its known prefix), `left_from` (the host each exited or host-lost
-    peer followed as it went; an exited host: itself). `host_log` is the
-    last host's.
-  - `verdict` checks every survivor (not dropped, exited or host lost)
-    confirmed the last host's inputs and matches an offline replay of them
-    (a joined spectator from its state, a late peer from its last, a
-    corrupted peer from its last loaded state), with no desync but a
+    slot its known prefix), `left_from` (the host each exited, host-lost
+    or left-behind peer followed as it went; an exited or left-behind host:
+    itself), `left_behind` (former hosts still running at the end: their
+    own network was down past `HOST_SILENT_US` while they ran on, so their
+    peers moved to a successor and they, unable to know, confirmed their
+    own fills for the peers' slots; a partition's residual, as D8's).
+    `host_log` is the last host's.
+  - `verdict` checks every survivor (not dropped, exited, host lost or left
+    behind) confirmed the last host's inputs and matches an offline replay
+    of them (a joined spectator from its state, a late peer from its last,
+    a corrupted peer from its last loaded state), with no desync but a
     corrupted peer's, no refused state, no malformed message or
     inconsistent input (at any peer not dropped); every `held` value is in
-    the last host's log; a peer that went (`left_from`: an exited host, an
-    exited or host-lost peer) confirmed rows that agree with it up to, per
-    slot, the furthest prefix the survivors of its host's migration held
-    (an exited host's last frames may have reached nobody, B3), or all of
-    them when its host is the last (a joined or late spectator from its
-    last state). A host gone stalls its
+    the last host's log; a peer that went (`left_from`: an exited or
+    left-behind host, an exited or host-lost peer) confirmed rows that
+    agree with it up to, per slot, the furthest prefix the survivors of its
+    host's migration held (an exited host's last frames may have reached
+    nobody, B3; a host left behind fills its peers' slots), or all of them
+    when its host is the last (a joined or late spectator from its last
+    state). Pinned by `a_host_cut_off_while_its_peers_move_on_is_left_behind`
+    (as the first host and as the second, net-soak's
+    `lan-8s2c0v-seed1433102928`). A host gone stalls its
     clients at the prediction limit: `expect_no_stalls` flags those too.
   - `ToyFactory` drives `ToySim` with seeded keys; its fault moves slot 0.
 

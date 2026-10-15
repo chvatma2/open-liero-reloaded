@@ -390,6 +390,7 @@ fn empty_report() -> Report {
         late: Default::default(),
         held: Vec::new(),
         left_from: BTreeMap::new(),
+        left_behind: Default::default(),
     }
 }
 
