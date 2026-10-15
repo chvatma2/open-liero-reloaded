@@ -440,13 +440,11 @@ fn unique(it: impl Iterator<Item = u8>) -> bool {
     true
 }
 
-/// A chat line, notice or end reason: at most `MAX_CHAT` characters, no
-/// control characters or bidi controls.
 /// `ws://` or `wss://`, printable ASCII without spaces, at most
 /// `MAX_RELAY_URL` bytes.
 pub fn valid_relay_url(s: &str) -> bool {
     s.len() <= MAX_RELAY_URL
-        && (s.starts_with("ws://") || s.starts_with("wss://"))
+        && ["ws://", "wss://"].iter().any(|p| s.strip_prefix(p).is_some_and(|h| !h.is_empty()))
         && s.bytes().all(|b| b.is_ascii_graphic())
 }
 
@@ -454,17 +452,26 @@ fn valid_relays(r: &[String]) -> bool {
     r.len() <= MAX_STANDBY_RELAYS && r.iter().all(|u| valid_relay_url(u))
 }
 
-/// At most `MAX_MEMBERS` entries, unique member ids and keys, relays valid
+/// Not the unspecified, broadcast or multicast address (loopback and
+/// private ones are fine: LAN and local play).
+fn valid_direct_addr(a: [u8; 4]) -> bool {
+    a != [0; 4] && a != [255; 4] && !(224..=239).contains(&a[0])
+}
+
+/// At most `MAX_MEMBERS` entries, member ids below `MAX_MEMBERS`, unique ids and keys, relays valid
 /// and at most 2, direct ports >= `MIN_STANDBY_PORT`.
 pub fn valid_succession(list: &[SuccessorWire]) -> bool {
     list.len() <= MAX_MEMBERS
         && list.iter().enumerate().all(|(i, s)| {
-            valid_relays(&s.relays)
-                && s.direct.is_none_or(|(_, port)| port >= MIN_STANDBY_PORT)
+            (s.member as usize) < MAX_MEMBERS
+                && valid_relays(&s.relays)
+                && s.direct.is_none_or(|(a, port)| port >= MIN_STANDBY_PORT && valid_direct_addr(a))
                 && list[..i].iter().all(|o| o.member != s.member && o.key != s.key)
         })
 }
 
+/// A chat line, notice or end reason: at most `MAX_CHAT` characters, no
+/// control characters or bidi controls.
 pub fn valid_chat(s: &str) -> bool {
     valid_text(s, MAX_CHAT) && !s.chars().any(is_bidi)
 }

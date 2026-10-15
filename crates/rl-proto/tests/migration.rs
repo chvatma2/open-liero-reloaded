@@ -89,7 +89,24 @@ fn successions_and_standbys_out_of_bounds_are_refused() {
     let not_ws = SuccessorWire { relays: vec!["https://a.example".into()], ..successor(1) };
     let spaced = SuccessorWire { relays: vec!["wss://a b.example".into()], ..successor(1) };
     let long = SuccessorWire { relays: vec![format!("wss://{}", "a".repeat(MAX_RELAY_URL))], ..successor(1) };
-    for s in [low_port, three, not_ws, spaced, long] {
+    let bare = SuccessorWire { relays: vec!["ws://".into()], ..successor(1) };
+    let bare_s = SuccessorWire { relays: vec!["wss://".into()], ..successor(1) };
+    let direct = |a: [u8; 4], p| SuccessorWire { direct: Some((a, p)), ..successor(1) };
+    let bad_member = SuccessorWire { member: MAX_MEMBERS as u8, ..successor(1) };
+    for s in [
+        low_port,
+        three,
+        not_ws,
+        spaced,
+        long,
+        bare,
+        bare_s,
+        direct([0, 0, 0, 0], 40_000),
+        direct([255, 255, 255, 255], 40_000),
+        direct([224, 0, 0, 1], 40_000),
+        direct([10, 0, 0, 1], 0),
+        bad_member,
+    ] {
         let bytes = encode_to_client(&ToClient::Succession(vec![s.clone()]));
         assert_eq!(decode_to_client(&bytes), Err(ProtoError::Invalid), "{s:?}");
     }
@@ -119,4 +136,13 @@ fn the_new_refusals_round_trip() {
         let c = ToClient::Refused(r);
         assert_eq!(decode_to_client(&encode_to_client(&c)), Ok(c));
     }
+}
+
+#[test]
+fn loopback_and_private_successors_are_accepted() {
+    for a in [[127, 0, 0, 1], [192, 168, 1, 5]] {
+        let s = SuccessorWire { direct: Some((a, 40_000)), ..successor(1) };
+        assert!(valid_succession(&[s]));
+    }
+    assert!(valid_succession(&[SuccessorWire { member: MAX_MEMBERS as u8 - 1, ..successor(1) }]));
 }
