@@ -1,0 +1,28 @@
+(
+    spec: (
+        mod_id: "olx-classic",
+        level_id: "olx-level-liero-factory",
+        seed: 2700572210,
+        slots: 3,
+        clients: 2,
+        spectators: 0,
+        join_tick: None,
+        profile: "bad",
+        drift_ppm: 2000,
+        ticks: 3866,
+        outages: [
+            (1, 2336, 2715),
+            (2, 1504, 1945),
+        ],
+        net_seed: 14967986724810020726,
+        difficulty: Some("medium"),
+        faults: [],
+        exits: [
+            (0, 2818, "leave"),
+        ],
+        host_freeze: None,
+        profile_changes: [],
+        migration: false,
+    ),
+    failure: Some("player peer 2 stalled at tick 2022"),
+)

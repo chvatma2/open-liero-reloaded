@@ -90,3 +90,7 @@
   fixtures/net/cases/net-mw-1-0-liero-factory-good-5s4c2v-seed1973712135-ba4ff09f.ron
 2026-10-15 bless-regression: SK-4: a client cut off 2 s on bad (migration on) unsuspended at its stale tick; its slot's fills stalled the other players past the outage's recovery
   fixtures/net/cases/net-mw-1-0-liero-factory-bad-13s4c1v-seed2917608641-0454e791.ron
+2026-10-15 bless-regression: SK-4: a backlog datagram overtaking its predecessor was dropped with every later one; the peer back from its outage stalled past the recovery
+  fixtures/net/cases/net-classic-dirt-level-typical-11s6c0v-seed3117434416-9b92f7e1.ron
+2026-10-15 bless-regression: SK-4: a peer back from its host's silence (bad, 4.4 s outage) stalled a tick past its recovery on reordered backlog datagrams
+  fixtures/net/cases/net-classic-liero-factory-bad-3s2c0v-seed2700572210-53aa4c33.ron
