@@ -12,6 +12,18 @@ use rl_net::endpoint::{EndpointConfig, IceConfig};
 /// A direct join to a successor gives up after this long (N73).
 pub const MIGRATION_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// A join to a successor whose answer came but whose link did not open
+/// within this is lost contact: a successor that died or froze after
+/// answering does not hold its joiners until their setup's timeout (past
+/// the give-up), they move on with the others.
+pub const ANSWER_OPEN_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// A new host awaits the reports of the members back at most this long
+/// past its window's end (N68, C1: one round trip and more); a rejoined
+/// member that never reports holds nobody longer, and its report, should
+/// it come, is merged late (N67).
+pub const REPORT_WAIT: Duration = Duration::from_secs(1);
+
 /// Why a match ends for a peer that found no successor (spec §3.7: the
 /// "host lost" screen).
 pub const HOST_LOST: &str = "The host left and no other player could take over the game.";

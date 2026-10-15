@@ -15,7 +15,9 @@ use rl_netcode::migration::{HOST_SILENT_US, MAX_MIGRATIONS, Migration, RETRY_US,
 use rl_proto::{MAX_MEMBERS, MAX_SPECTATORS, SuccessorWire};
 
 use super::*;
-use crate::migration::{HOST_BACK, MIGRATION_CONNECT_TIMEOUT, MigrationStep};
+use crate::migration::{
+    ANSWER_OPEN_TIMEOUT, HOST_BACK, MIGRATION_CONNECT_TIMEOUT, MigrationStep, REPORT_WAIT,
+};
 
 /// A client's standby endpoint (N63): a host endpoint on its own port whose
 /// gate refuses `NotHost` until this peer's turn comes.
@@ -49,6 +51,10 @@ pub(super) struct Migrating {
     retry: Option<(usize, u64)>,
     /// The step last reported.
     reported: Option<MigrationStep>,
+    /// The old host was heard while in contact with a successor (N69
+    /// ignores it then): should that contact be lost, the migration is
+    /// called off, as the successor itself called it off.
+    host_heard: bool,
 }
 
 /// A join to successor `order[to]`: its own endpoint and lobby client,
@@ -62,6 +68,26 @@ struct Attempt {
     contact: bool,
     /// How the new link goes, once open.
     connection: Option<(Path, SocketAddr)>,
+    /// When the successor answered, and when the link opened.
+    answered_at: Option<Instant>,
+    opened_at: Option<Instant>,
+    /// The lobby's messages wait this long after the link opened (the
+    /// test hook `test_delay_rejoin`; zero otherwise), held meanwhile.
+    hello_delay: Duration,
+    held: Vec<ToHost>,
+}
+
+impl Attempt {
+    /// The lobby's messages to the successor: sent once the link has been
+    /// open `hello_delay`, held until then.
+    fn flush(&mut self, now: Instant) {
+        self.held.extend(self.lobby.outgoing());
+        if self.opened_at.is_some_and(|t| now >= t + self.hello_delay) {
+            for m in self.held.drain(..) {
+                send_tagged(&mut self.out, HOST, TAG_TO_HOST, &encode_to_host(&m));
+            }
+        }
+    }
 }
 
 /// How an attempt's poll ended.
@@ -159,6 +185,29 @@ impl OnlinePeer {
         }
     }
 
+    /// Tests only (`test-hooks`): once an attempt's link to a successor
+    /// opens, this peer sends its `Hello` only `d` later (a slow path: a
+    /// peer late while it keeps contact).
+    #[cfg(feature = "test-hooks")]
+    pub fn test_delay_rejoin(&mut self, d: Duration) {
+        self.rejoin_delay = d;
+    }
+
+    /// Tests only (`test-hooks`): this client never answers a new host's
+    /// `Collect` (a rejoined peer that never reports).
+    #[cfg(feature = "test-hooks")]
+    pub fn test_withhold_reports(&mut self) {
+        self.withhold_reports = true;
+    }
+
+    /// The test hook's delay of a rejoin's `Hello` (zero without it).
+    fn hello_delay(&self) -> Duration {
+        #[cfg(feature = "test-hooks")]
+        return self.rejoin_delay;
+        #[cfg(not(feature = "test-hooks"))]
+        Duration::ZERO
+    }
+
     /// The test hook's outage (`None` without `test-hooks`).
     fn outage(&self) -> Option<Instant> {
         #[cfg(feature = "test-hooks")]
@@ -252,6 +301,7 @@ impl OnlinePeer {
             failed: BTreeMap::new(),
             retry: None,
             reported: None,
+            host_heard: false,
         }));
         self.report_step(MigrationStep::Finding);
         true
@@ -285,6 +335,9 @@ impl OnlinePeer {
     fn standby_tasks(&mut self, now: Instant) {
         let now_us = self.now_us;
         let Side::Client(c) = &mut self.side else { return };
+        // A rejoin commits only within this peer's turn: one handled in the
+        // poll its window ended is not (the gate closes after it, D8).
+        let its_turn = c.migrating.as_mut().is_some_and(|mg| mg.m.step(now_us) == Step::Host);
         let Some(sb) = c.standby.as_deref_mut() else { return };
         let mut net = Vec::new();
         sb.out.poll(now, &mut net);
@@ -298,7 +351,9 @@ impl OnlinePeer {
             sb.closing.remove(&peer);
             sb.out.close(peer);
         }
-        let Some(t) = sb.taking.as_deref_mut() else {
+        // Past its turn the gate closes in this poll's step: nothing is
+        // answered or welcomed meanwhile.
+        let Some(t) = sb.taking.as_deref_mut().filter(|_| its_turn) else {
             // Not its turn: no link stays (one that opened as the gate closed).
             for e in net {
                 if let NetEvent::Connected { peer, .. } = e {
@@ -402,6 +457,7 @@ impl OnlinePeer {
             match e {
                 NetEvent::Answered => {
                     a.contact = true;
+                    a.answered_at.get_or_insert(now);
                     mg.m.contact(a.to);
                 }
                 NetEvent::Connected { addr, path, .. } => {
@@ -411,6 +467,7 @@ impl OnlinePeer {
                         Some(fps) => {
                             a.lobby.connected(fps);
                             a.connection = Some((path, remote));
+                            a.opened_at.get_or_insert(now);
                         }
                         None => outcome = Some(Outcome::Failed { retry: false }),
                     }
@@ -422,9 +479,7 @@ impl OnlinePeer {
                         continue;
                     };
                     a.lobby.receive(msg, random_bytes::<32>().unwrap_or([0; 32]));
-                    for m in a.lobby.outgoing() {
-                        send_tagged(&mut a.out, HOST, TAG_TO_HOST, &encode_to_host(&m));
-                    }
+                    a.flush(now);
                     let lobby_events = a.lobby.events();
                     let welcome = lobby_events.iter().any(|e| matches!(e, ClientEvent::Welcome { .. }));
                     let refused = lobby_events.iter().any(|e| {
@@ -447,6 +502,16 @@ impl OnlinePeer {
                 }
                 NetEvent::Disconnected { .. } => outcome = Some(Outcome::Failed { retry: false }),
                 _ => {}
+            }
+        }
+        if outcome.is_none() {
+            a.flush(now);
+            // A successor that answered but whose link does not open (it
+            // died or froze after its answer): contact lapses, so this peer
+            // moves on with the others instead of waiting for its setup's
+            // timeout, past the give-up.
+            if a.opened_at.is_none() && a.answered_at.is_some_and(|t| now >= t + ANSWER_OPEN_TIMEOUT) {
+                outcome = Some(Outcome::Failed { retry: false });
             }
         }
         match outcome {
@@ -474,6 +539,12 @@ impl OnlinePeer {
                     mg.failed.insert(a.to, until);
                 }
                 drop_off_thread(a.out);
+                // N69: the old host was heard while this contact held it
+                // here; the successor that answered has gone back to it (or
+                // is gone): so does this peer.
+                if a.contact && mg.host_heard {
+                    self.call_off();
+                }
             }
         }
     }
@@ -529,6 +600,7 @@ impl OnlinePeer {
     fn try_successor(&mut self, i: usize) {
         let now_us = self.now_us;
         let outage = self.outage();
+        let hello_delay = self.hello_delay();
         let Side::Client(c) = &mut self.side else { return };
         let look = my_look(c, &self.my_key);
         let Some(mg) = c.migrating.as_deref_mut() else { return };
@@ -565,7 +637,18 @@ impl OnlinePeer {
                 }
                 let mut out = ep.map_or_else(Outbox::empty, Outbox::new);
                 darken(outage, &mut out);
-                let a = Attempt { to: i, joiner, out, lobby, contact: false, connection: None };
+                let a = Attempt {
+                    to: i,
+                    joiner,
+                    out,
+                    lobby,
+                    contact: false,
+                    connection: None,
+                    answered_at: None,
+                    opened_at: None,
+                    hello_delay,
+                    held: Vec::new(),
+                };
                 mg.attempt = Some(Box::new(a));
             }
             Err(_) => {
@@ -721,7 +804,11 @@ impl OnlinePeer {
         let Some(g) = self.game.as_mut() else { return };
         let Some(window_end) = g.collecting else { return };
         let waiting = !h.lobby.away_in_match().is_empty() && now_us < window_end;
-        if waiting || !g.session.awaiting_reports().is_empty() {
+        // The reports of those back are awaited one round trip past the
+        // window at most: a rejoined peer that never reports holds nobody
+        // longer (a late report is merged all the same, N67).
+        let reports_due = now_us < window_end.saturating_add(REPORT_WAIT.as_micros() as u64);
+        if waiting || (reports_due && !g.session.awaiting_reports().is_empty()) {
             return;
         }
         h.lobby.drop_away();
@@ -780,12 +867,20 @@ impl OnlinePeer {
     /// with a hosting successor, the migration is called off: the attempt
     /// closes (or the gate), the session goes on with its host; a log line.
     pub(super) fn host_heard(&mut self) {
-        let now_us = self.now_us;
         let Side::Client(c) = &mut self.side else { return };
-        let Some(mg) = c.migrating.as_deref() else { return };
+        let Some(mg) = c.migrating.as_deref_mut() else { return };
         if mg.attempt.as_ref().is_some_and(|a| a.contact) {
+            // Remembered: should that contact be lost, it is called off then.
+            mg.host_heard = true;
             return;
         }
+        self.call_off();
+    }
+
+    /// The migration is called off (N69): back to the old host, which the
+    /// session still follows (nothing rehosted).
+    fn call_off(&mut self) {
+        let now_us = self.now_us;
         self.drop_attempt();
         self.close_gate();
         let Side::Client(c) = &mut self.side else { return };

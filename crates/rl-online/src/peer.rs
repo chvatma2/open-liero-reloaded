@@ -303,6 +303,12 @@ pub struct OnlinePeer {
     /// then (`test_outage`).
     #[cfg(feature = "test-hooks")]
     outage: Option<Instant>,
+    /// Tests only (`test-hooks`): `test_delay_rejoin`'s delay.
+    #[cfg(feature = "test-hooks")]
+    rejoin_delay: Duration,
+    /// Tests only (`test-hooks`): `test_withhold_reports`.
+    #[cfg(feature = "test-hooks")]
+    withhold_reports: bool,
 }
 
 impl OnlinePeer {
@@ -409,6 +415,10 @@ impl OnlinePeer {
             last_poll: None,
             #[cfg(feature = "test-hooks")]
             outage: None,
+            #[cfg(feature = "test-hooks")]
+            rejoin_delay: Duration::ZERO,
+            #[cfg(feature = "test-hooks")]
+            withhold_reports: false,
         })
     }
 
@@ -750,6 +760,10 @@ impl OnlinePeer {
                 }
                 NetEvent::Message { channel: Channel::Reliable, bytes, .. } => match tag(&bytes) {
                     Some(Tagged::Netcode(b)) => {
+                        #[cfg(feature = "test-hooks")]
+                        if self.withhold_reports && matches!(decode_control(b), Ok(Control::Collect { .. })) {
+                            return;
+                        }
                         if let Some(g) = &mut self.game {
                             if let Ok(Control::StateBegin { len, .. }) = decode_control(b)
                                 && let Some(ep) = self.endpoint.endpoint_mut()

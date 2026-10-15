@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use rl_net::endpoint::{Endpoint, EndpointConfig, Gate, HOST, NetEvent, Why};
+use rl_net::endpoint::{Endpoint, EndpointConfig, Gate, HOST, NetEvent, SILENCE_TIMEOUT, Why};
 use rl_netcode::netsim::Profile;
 use rl_netcode::{Channel, PeerId};
 use rl_proto::Refusal;
@@ -289,8 +289,10 @@ fn floods_and_oversized_messages_drop_the_peer() {
     });
     assert_eq!(net.host_disconnect(flooder_id), Some(Why::Limits));
     assert_eq!(net.host_disconnect(big_id), Some(Why::Malformed));
-    // The bad clients see their link end.
-    net.run_until(Duration::from_secs(10), "the bad clients see the close", |n| {
+    // The bad clients see their link end: at once from the host's close,
+    // or, should that one datagram be lost (a loaded machine), at their own
+    // `SILENCE_TIMEOUT`, plus a few polls.
+    net.run_until(SILENCE_TIMEOUT + Duration::from_secs(2), "the bad clients see the close", |n| {
         [flooder, big]
             .iter()
             .all(|&c| n.clients[c].1.iter().any(|e| matches!(e, NetEvent::Disconnected { peer: HOST, .. })))
@@ -870,7 +872,9 @@ fn the_connect_timeout_is_the_configs() {
         std::thread::sleep(Duration::from_millis(1));
     }
     let took = start.elapsed();
-    assert!(took >= Duration::from_millis(300) && took < Duration::from_millis(800), "{took:?}");
+    // Not before the config's 300 ms; well before `CONNECT_TIMEOUT`'s 5 s
+    // (the upper bound only guards a loaded machine).
+    assert!(took >= Duration::from_millis(300) && took < Duration::from_secs(2), "{took:?}");
     assert_eq!(events, [NetEvent::Disconnected { peer: HOST, why: Why::Timeout }]);
     drop(held);
 }
@@ -921,7 +925,8 @@ fn a_hosts_refusal_after_its_answer_ends_the_join() {
     net.run_until(Duration::from_secs(5), "the client hears the refusal", |n| {
         n.clients[c].1.iter().any(|e| matches!(e, NetEvent::Refused { .. }))
     });
-    assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
+    // At once, not at the setup's `SETUP_TIMEOUT` (10 s).
+    assert!(start.elapsed() < Duration::from_secs(5), "{:?}", start.elapsed());
     let tail: Vec<_> = net.clients[c].1.iter().skip_while(|e| **e != NetEvent::Answered).collect();
     assert_eq!(tail, [&NetEvent::Answered, &NetEvent::Refused { why: Refusal::NotHost }]);
     assert!(net.host_connections().is_empty());

@@ -817,7 +817,7 @@ a host's ids past
 65 535 and exhausted,
 raw junk from a connected peer's address; plan 12c: `Answered` before
 `Connected`, once; a 300 ms `connect_timeout` (the `connect_stall` hook)
-ending within 300-800 ms; a blackout dropping both ways until it ends,
+ending within 300 ms-2 s; a blackout dropping both ways until it ends,
 the link living through it; `refuse_pending` after an answer heard by the
 client as `Refused { NotHost }` at once).
 Cross-build: `cargo build --release --target x86_64-pc-windows-gnu -p rl-net`.

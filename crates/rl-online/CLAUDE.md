@@ -42,8 +42,11 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   ending, every test not about migration, D7; `direct()`: a standby on
   port 0, no STUN, no relays), `MigrationStep` (`Finding`,
   `Moving(name)`, `TakingOver`; `Display` the HUD's texts),
-  `MIGRATION_CONNECT_TIMEOUT` (1 s, N73), `HOST_LOST`, `HOST_BACK` (N69's
-  log line), `stepped_down(secs)`; all but `HOST_BACK` at the crate root.
+  `MIGRATION_CONNECT_TIMEOUT` (1 s, N73), `ANSWER_OPEN_TIMEOUT` (2 s: an
+  answered join whose link does not open is lost contact), `REPORT_WAIT`
+  (1 s: the reports' wait past the window), `HOST_LOST`, `HOST_BACK`
+  (N69's log line), `stepped_down(secs)`; `HOST_BACK` and the two
+  timeouts in `migration::` only, the rest at the crate root as well.
 - **`peer.rs`, `OnlinePeer`** (its `LobbyHandle` in `peer/lobby_handle.rs`): `start(role, endpoint, me, look, content,
   setup, content_cfg)` (`PeerRole::Host { lobby, listen }`, `Server {
   lobby, listen }`: a host without a local player, the dedicated
@@ -258,8 +261,12 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       address) is not tried again in its window (N73); a failure after
       contact is `lost_contact` (D8: a successor whose window ends
       uncommitted refuses its answered joins, `Endpoint::refuse_pending`,
-      so contact past a window lasts only with a committed one). A step
-      moving on drops the attempt (its endpoint on a thread).
+      and closes the links it did not welcome, so contact past a window
+      lasts only with a committed one); an answered join whose link has
+      not opened `ANSWER_OPEN_TIMEOUT` after the answer fails too (a
+      successor dead after answering is left, not waited for past the
+      give-up). A step moving on drops the attempt (its endpoint on a
+      thread).
     - **Rejoin** (the attempt's `Welcome`): the `Migration` goes (A9: only
       the new host's `Resume`, or its own loss, a further migration, ends
       the wait), the old endpoint shuts down on a thread, the attempt's
@@ -272,7 +279,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       `HostConfig`: the state's name, the start's member slots,
       `MAX_SPECTATORS`, the marked admins, no password, A13) taking
       members back on the standby (their proofs answered at once):
-      `Migrating(TakingOver)`. It commits at the first `Rejoined`, or at
+      `Migrating(TakingOver)`. It commits at the first `Rejoined` within
+      its turn (the standby answers nothing in the poll its window ended), or at
       once when `away_in_match()` is empty (N68); not committed when the
       step leaves `Host`, the gate closes (D8: answered joins refused
       `NotHost`, links not welcomed closed, the lobby gone). The commit:
@@ -284,11 +292,14 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       its content list and `rejoined(peer, its slot or Spectator)`
       (`Collect` after `Welcome`).
     - **Resume**: when `away_in_match()` is empty (A10) or the window
-      ended, and `awaiting_reports()` is empty (C1): `drop_away`,
+      ended, and `awaiting_reports()` is empty (C1) or the window ended
+      `REPORT_WAIT` ago (a report later is merged late, N67): `drop_away`,
       `resume`, `playing(R)`, `Migrated { host: its name, me: true }`; an
       ordinary host from then on.
     - **Cancel** (N69): `HostHeard` before the commit without contact
-      closes the attempt or the gate, `unsuspend`s, and logs `HOST_BACK`.
+      closes the attempt or the gate, `unsuspend`s, and logs `HOST_BACK`;
+      heard while in contact it is remembered, and the cancel comes when
+      that contact is lost (the successor went back to the host too).
     - **Host lost**: `GiveUp`: the replay of its confirmed rows
       (`record_of(.., frontier)`), `HostLost(HOST_LOST)`, every connection
       closed.
@@ -301,8 +312,11 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       gathering), makes its replay and reports
       `HostLost(stepped_down(secs))`; the peer stays open (a server's
       lobby). A start's own world build does not count.
-    - Test hook `test_outage(until)` (`test-hooks`): every endpoint of the
-      peer, and those it makes before then, in rl-net's `test_blackout`.
+    - Test hooks (`test-hooks`): `test_outage(until)` (every endpoint of
+      the peer, and those it makes before then, in rl-net's
+      `test_blackout`), `test_delay_rejoin(d)` (an attempt's lobby
+      messages, its `Hello`, held `d` after its link opened),
+      `test_withhold_reports()` (a client drops a new host's `Collect`).
 - **`replay.rs`**: `MatchRecord { start, rows, checksums }` (rows below the
   last tick, the session's confirmed checksums); `make` re-simulates the
   rows from `build_match`'s start world with its `Recorder` and returns the
@@ -534,16 +548,27 @@ succession is the call order, `outage`, `host_index`) is
 `tests/common/net.rs`'s, shared with `tests/migration.rs` (plan 12c,
 direct links on 127.0.0.1, `base_override` 127.0.0.1, under 30 s each): a
 frozen host hands a 0.1-minute match to Anna within 2 + 3.5 s, Bert moves
-to her, both records equal, every input held at the freeze kept, the old
+to her, both records equal, every input each survivor held at the freeze kept, the old
 host's slot `Keys(0)` after, the bot, Anna and Bert playing on, then
-Anna's lobby without the old host; a leaving host followed within 1.5 s,
-nobody ended by its lobby's `Bye` (A7); a host stalled 1.7 s steps down
+Anna's lobby without the old host; a leaving host followed at once (both
+`Migrating` within 1.9 s, under `HOST_SILENT_US`), nobody ended by its
+lobby's `Bye` (A7); a host stalled 1.7 s steps down
 (`HostLost("Your game stopped…")`, its replay, its lobby emptied) and the
-match moves; the only successor frozen too: host lost 11.9-13 s after the
-freeze, with a replay; a successor's own 3 s outage called off
-(`HostHeard`), nobody migrated; D8: a successor cut off on UDP answers
-joins it cannot open, closes at its window's end, and the next one takes
-the match (fails without the refusal or the lost contact).
+match moves; the only successor frozen too: host lost 11.9-13.5 s after the
+freeze, with a replay; a successor's own 2.5 s outage called off in its
+turn (`HOST_BACK` within 4 s), nobody migrated; D8: a successor cut off
+on UDP answers joins it cannot open, and the next one takes the match,
+the survivors' records equal (fails without the lost contact); D8 with
+open links: a join whose `Hello` is held past the successor's window is
+closed at its end, the joiner takes over in its own window, records
+equal (fails without the gate closing); a successor frozen after
+answering is left (fails without `ANSWER_OPEN_TIMEOUT`); C1: Bert holding
+rows Anna lacks (Anna's 0.7 s outage before the freeze) keeps every one
+(fails resuming without the reports); a rejoined member that never
+reports holds the resume only to the window's end plus `REPORT_WAIT`; a
+follower in contact when the host returns (the host's own 2.8 s outage,
+its `Hello` held) goes back to the host when its successor calls off
+(fails without the remembered `HostHeard`).
 `migrate.rs`' unit test: `stall_gap` (C3); `migration.rs`': the texts.
 Content (each peer a cache in a temporary directory; `common::
 partial_content` copies the match's packs but some, `with_test_skin`
