@@ -1034,9 +1034,15 @@ fn hostile_succession(relays_refuse: bool) {
 }
 
 /// The bound on the real path (127.0.0.1): Anna, the first successor, is
-/// gone with her standby, so its port is closed. Bert and Cid each try her
-/// address once in her window (refused, not tried again), then the match
+/// gone with her standby, so nobody answers at its port. Bert and Cid each
+/// try her address once in her window (not tried again), then the match
 /// moves to Bert in his.
+///
+/// The port stays ours: a free ephemeral port could be taken by another
+/// test's standby (its closed gate answers `NotHost`, asked again every
+/// `RETRY_US`: 19 joins instead of one), so a listener that never accepts
+/// holds it. The connects wait in its backlog and give up at
+/// `MIGRATION_CONNECT_TIMEOUT`.
 #[test]
 fn a_successor_gone_costs_one_connect_each() {
     let Some(content) = content() else { return };
@@ -1045,8 +1051,17 @@ fn a_successor_gone_costs_one_connect_each() {
     let anna = net.peers[b].member_id(anna).unwrap();
     let bert = net.peers[c].member_id(bert).unwrap();
     let mark = net.peers[c].events.len();
+    let port = net.peers[a].peer().standby_port().unwrap();
     net.peers[0].frozen = true;
     drop(net.peers[a].p.take());
+    let held = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))
+        .unwrap_or_else(|e| panic!("Anna's freed port {port} was taken at once: {e}"));
+    // Nobody else can stand at her address now.
+    let usurper = rl_net::endpoint::Endpoint::host(
+        rl_net::endpoint::EndpointConfig { port, ..Default::default() },
+        Box::new(|_, _| Err(rl_proto::Refusal::NotHost)),
+    );
+    assert!(usurper.is_err(), "the held port is bound once");
     net.run_until(Duration::from_secs(16), "Bert hosts and Cid follows", |n| {
         n.peers[b].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
             && n.peers[c].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Bert"))
@@ -1056,6 +1071,7 @@ fn a_successor_gone_costs_one_connect_each() {
     // Each successor's join is said afresh (the HUD's and the log's line).
     let direct = |e: &&OnlineEvent| **e == OnlineEvent::Joining(JoinStep::Direct);
     assert_eq!(net.peers[c].events[mark..].iter().filter(direct).count(), 2);
+    drop(held);
 }
 
 /// Ruling SK-8: a spectator joining mid-match whose host crashes before its

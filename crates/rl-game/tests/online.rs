@@ -1125,13 +1125,25 @@ fn slow_frames_play_as_before(every: Duration) {
         |a: &App| a.shell().with_peer(|p| p.match_session().map(|s| s.confirmed())).flatten();
     let mut next = confirmed_below(&host).expect("the host's match");
     let (mut checked, mut widest) = (0, Duration::ZERO);
+    // The counts inside the measured window: from the end of the first
+    // iteration (the gap before it, in setup, is not measured) to the end
+    // of the last one's frames (the sleep after it is not measured either).
+    let counts = |h: &App, c: &App| {
+        (h.shell().pump_polls(), c.shell().pump_polls(), resyncs(h.shell()), resyncs(c.shell()))
+    };
+    type Counts = (u64, u64, u64, u64);
+    let mut window: Option<(Counts, Counts)> = None;
     let start = Instant::now();
     let mut last = Instant::now();
     while start.elapsed() < Duration::from_secs(2) {
-        widest = widest.max(last.elapsed());
+        if window.is_some() {
+            widest = widest.max(last.elapsed());
+        }
         last = Instant::now();
         app_frame(&mut host);
         app_frame(&mut client);
+        let now = counts(&host, &client);
+        window = Some(window.map_or((now, now), |(from, _)| (from, now)));
         let rows = host
             .shell()
             .with_peer(|p| {
@@ -1158,9 +1170,10 @@ fn slow_frames_play_as_before(every: Duration) {
     }
     assert!(checked > 100, "{checked} confirmed ticks checked");
     if widest < every + Duration::from_millis(15) {
-        let polls = (host.shell().pump_polls(), client.shell().pump_polls());
+        let (from, to) = window.expect("the loop ran");
+        let polls = (to.0 - from.0, to.1 - from.1);
         assert_eq!(polls, (0, 0), "frames every {every:?} ({widest:?} at most): the pumps never polled");
-        let resynced = (resyncs(host.shell()), resyncs(client.shell()));
+        let resynced = (to.2 - from.2, to.3 - from.3);
         assert_eq!(resynced, (0, 0), "no tick's presentation was dropped");
     } else {
         eprintln!("a loaded machine: frames up to {widest:?} apart");
