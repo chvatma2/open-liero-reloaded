@@ -196,7 +196,17 @@ beside the executable, else in the working directory).
   and port, else `public_address` on the local port, else (ruling N47-a:
   a VPS) STUN's address when it is the machine's own, on the local port;
   never one STUN learned through a NAT),
-  `relay_addr()` and `relay_stats()` (the TURN server's, once it runs).
+  `relay_addr()` and `relay_stats()` (the TURN server's, once it runs),
+  `confirmed_rows()` (the running match's rows below its session's
+  frontier: what `rl-cli`'s real-transport verdict holds a server that
+  freezes or leaves to). **Host migration** (plan 12c): the server sends
+  succession lists and steps down through rl-online; at each match start
+  it logs `"succession: {n} players can take over"` (`LobbyHandle::
+  succession`'s `can_host` entries; "1 player can"); on `HostLost` (N70:
+  a server stalled past `STEP_DOWN_US` during a match with someone to
+  take over; a server is never a client, so this is its only host lost)
+  `"stalled for {s:.1} s: the match moved to the next player; the lobby
+  is open again"`, `s` the gap between its last two polls.
   Each `OnlineEvent::Reachability` is kept and every new line of its
   `lines()` logged once, `"reach: …"`; each `OnlineEvent::RelayJoin` is
   `"relays: {line}"` (ruling FR12b-3: answered, refused, not connected,
@@ -289,7 +299,12 @@ and keeps the identity and the ban; a joiner on a server full of bots
 leaves the others ready (T13-C); a rotation the content cannot build
 skipped once per entry, then no more starts; non-admins refused with
 `NOT_ADMIN`, `/players` and `/help` for anyone; `/settings` and `/next`;
-`run` stopping on its flag with `Bye`; the example and e2e configs parse and their
+`run` stopping on its flag with `Bye`; plan 12c's
+`the_server_logs_its_succession` (two loopback clients with
+`MigrationConfig::direct()`, each welcomed before the next joins: the
+log counts 2 once; the server not polled for 1.7 s steps down, its
+`stalled for 1.7 s` line, one client hosts and both migrate, nobody loses
+its host; about 2.5 s); the example and e2e configs parse and their
 rotations are in the committed packs; `upload_kib_s` (default, clamped);
 a member lacking Dirt Level downloads it from the server and plays,
 another's skin the server lacks lands in `<data>/downloads` (held:

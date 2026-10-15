@@ -432,6 +432,66 @@ fn a_server_runs_a_rotation() {
     assert!(log.contains("127.0.0.1"), "joins name the address:\n{log}");
 }
 
+/// Plan 12c: with clients that can take over (`MigrationConfig::direct()`:
+/// a standby on 127.0.0.1), the server logs the succession at the match's
+/// start; a server stalled 1.7 s (past `STEP_DOWN_US`, short of the
+/// clients' 2 s silence) steps down when it polls again, says so, and the
+/// match moves to one of the clients (which one is not fixed: N70, B5).
+#[test]
+fn the_server_logs_its_succession() {
+    let Some(dir) = content_dir() else { return };
+    let mut rig = Rig::new(dir, config(&[], 0, true, 0.2));
+    let addr = SocketAddr::from(([127, 0, 0, 1], rig.server().local_port()));
+    let mut clients = Vec::new();
+    for name in ["Anna", "Bert"] {
+        let role = PeerRole::Client {
+            join: Join::direct(addr),
+            password: None,
+            expected_host: None,
+            migration: MigrationConfig::direct(),
+        };
+        let c = content(&rig.content_dir);
+        let i = rig.join_role(identity(), look(name), c, no_downloads(), role);
+        // Each welcomed before the next joins (pre-flight B5).
+        rig.run_until(Duration::from_secs(10), "the client joins", |r| r.clients[i].welcomed());
+        rig.clients[i].auto_ready = true;
+        clients.push(i);
+    }
+    rig.run_until(Duration::from_secs(10), "the match runs", |r| {
+        clients.iter().all(|&c| r.clients[c].has(|e| matches!(e, OnlineEvent::Confirmed(t) if !t.is_empty())))
+    });
+    let log = rig.log_text();
+    assert_eq!(log.matches("succession: 2 players can take over").count(), 1, "{log}");
+    // The server stalls 1.7 s while its clients go on.
+    let frozen = Instant::now();
+    while frozen.elapsed() < Duration::from_millis(1_700) {
+        let now = Instant::now();
+        for c in &mut rig.clients {
+            c.poll(now);
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    rig.run_until(Duration::from_secs(10), "the match moves to a client", |r| {
+        clients.iter().all(|&c| r.clients[c].has(|e| matches!(e, OnlineEvent::Migrated { .. })))
+    });
+    let log = rig.log_text();
+    let stalled = log.lines().find(|l| l.contains("stalled for ")).unwrap_or_else(|| panic!("{log}"));
+    assert!(
+        stalled.ends_with(" s: the match moved to the next player; the lobby is open again"),
+        "{stalled}"
+    );
+    let secs: f32 = stalled.split("stalled for ").nth(1).unwrap().split(' ').next().unwrap().parse().unwrap();
+    assert!((1.6..2.0).contains(&secs), "{stalled}");
+    let hosts = clients
+        .iter()
+        .filter(|&&c| rig.clients[c].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. })))
+        .count();
+    assert_eq!(hosts, 1, "one client hosts");
+    for &c in &clients {
+        assert!(!rig.clients[c].has(|e| matches!(e, OnlineEvent::HostLost(_))), "client {c} lost its host");
+    }
+}
+
 #[test]
 fn admins_kick_and_ban_by_chat() {
     let Some(dir) = content_dir() else { return };

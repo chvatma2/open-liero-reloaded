@@ -33,6 +33,7 @@ use rl_proto::{Look, MatchStartWire, Phase, PublicKey, SeatWire};
 use rl_replay::Replay;
 use rl_server::config::{Config, Entry, Visibility};
 use rl_sim::{Keys, TickEvents, World};
+use serde::{Deserialize, Serialize};
 
 /// A client polls this often (the server polls every `rl_server::POLL_EVERY`).
 pub const CLIENT_POLL: Duration = Duration::from_millis(1);
@@ -73,6 +74,10 @@ pub struct ClientSpec {
     /// of a match it downloads from the server into it. `None`: no
     /// downloads (content lacking a match's packs sits it out).
     pub cache: Option<PathBuf>,
+    /// Its part in a host migration (spec §3.7): `MigrationConfig::off()`
+    /// ends it with its host, as before (D7); with a standby it can take
+    /// the match over.
+    pub migration: MigrationConfig,
 }
 
 /// One match as a client confirmed it.
@@ -103,6 +108,16 @@ pub struct ClientRun {
     pub dropped: Option<String>,
     /// Desync bundles it made (spec §3.5).
     pub desync_bundles: u32,
+    /// Each migration it went through, in order: `"<name> hosts"` (its own
+    /// name when it took the match over).
+    pub migrated: Vec<String>,
+    /// Why it lost its host (no successor took the match over: spec §3.7's
+    /// host lost; it is then `dropped` too).
+    pub host_lost: Option<String>,
+    /// Per slot, how far its match's input log was known when it first
+    /// found its host gone (`InputLog::known_upto`): the final inputs it
+    /// held, which the new host must keep (pre-flight B3).
+    pub held: Option<Vec<u32>>,
 }
 
 /// What a client tells its caller as it goes.
@@ -113,6 +128,13 @@ pub enum Progress<'a> {
     /// A match starts: the slot it plays (`None`: it watches).
     Started(&'a MatchStartWire, Option<u8>),
     Finished(&'a PeerMatch),
+    /// The match resumed under `host` (a name; `me`: this client hosts).
+    Migrated {
+        host: &'a str,
+        me: bool,
+    },
+    /// No successor took the match over (spec §3.7): why.
+    HostLost(&'a str),
 }
 
 /// The bot of a client's slot, thinking on the world each newest tick
@@ -204,12 +226,11 @@ pub fn run_bot_client(
         skin: rl_lobby::DEFAULT_SKIN.into(),
         skin_hash: rl_proto::NO_HASH.into(),
     };
-    // Plan 12c Task 8 gives the migration cases their configuration (D7).
     let role = PeerRole::Client {
         join: spec.join.clone(),
         password: None,
         expected_host: spec.expected_host,
-        migration: MigrationConfig::off(),
+        migration: spec.migration.clone(),
     };
     let downloads = match &spec.cache {
         Some(dir) => {
@@ -232,6 +253,8 @@ pub fn run_bot_client(
     let mut current: Option<Current> = None;
     let mut replays: Vec<Vec<u8>> = Vec::new();
     let mut asked: Option<Instant> = None;
+    // A migration began in this poll; this client hosts the match now.
+    let (mut found_gone, mut hosting) = (false, false);
     loop {
         let now = Instant::now();
         if stop.load(Ordering::Relaxed) {
@@ -272,8 +295,26 @@ pub fn run_bot_client(
                 }
                 OnlineEvent::Disconnected(why) => run.dropped = Some(format!("disconnected: {why}")),
                 OnlineEvent::Connected { path, remote } => progress(Progress::Connected(path, remote)),
+                OnlineEvent::Migrating(_) => found_gone = true,
+                OnlineEvent::Migrated { host, me } => {
+                    hosting |= me;
+                    progress(Progress::Migrated { host: &host, me });
+                    run.migrated.push(format!("{host} hosts"));
+                }
+                OnlineEvent::HostLost(why) => {
+                    progress(Progress::HostLost(&why));
+                    run.dropped = Some(format!("host lost: {why}"));
+                    run.host_lost = Some(why);
+                }
                 _ => {}
             }
+        }
+        if std::mem::take(&mut found_gone)
+            && run.held.is_none()
+            && let Some(s) = peer.match_session()
+        {
+            let log = s.input_log();
+            run.held = Some((0..log.slots()).map(|slot| log.known_upto(slot)).collect());
         }
         if run.dropped.is_none() && peer.is_closed() {
             run.dropped = Some("the connection closed".into());
@@ -313,7 +354,12 @@ pub fn run_bot_client(
                 }
             }
         }
-        if run.dropped.is_some() || run.matches.len() >= spec.matches as usize {
+        if run.dropped.is_some() {
+            break;
+        }
+        // Done; a client that took a match over hosts on until its members
+        // left (they finish their match on it), at most to its deadline.
+        if run.matches.len() >= spec.matches as usize && !(hosting && has_members(&mut peer)) {
             break;
         }
         if spec.lobby_only {
@@ -341,6 +387,13 @@ pub fn run_bot_client(
     // today, so the wait ends at once; it holds should one ever map.
     peer.shutdown().wait(Instant::now() + SHUTDOWN_WAIT);
     Ok(run)
+}
+
+/// Whether this peer's lobby holds anyone besides itself.
+fn has_members(peer: &mut OnlinePeer) -> bool {
+    let lobby = peer.lobby();
+    let me = lobby.me();
+    lobby.state().is_some_and(|s| s.members.iter().any(|m| Some(m.id) != me))
 }
 
 /// What a join is to, for an error.
@@ -375,6 +428,24 @@ fn waiting_for(run: &ClientRun, current: Option<&Current>) -> String {
         Some(c) if c.finished.is_none() => format!("match {n} ended but left no record"),
         Some(_) => format!("match {n}'s replay was not made"),
     }
+}
+
+/// How the server goes in a run with a [`ServerExit`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ServerExitHow {
+    /// It stops polling and stays alive until the run ends, holding its
+    /// sockets: a hung host. Its clients find it silent (spec §3.7).
+    Freeze,
+    /// It shuts down (`Server::shutdown`: `Bye` to everyone).
+    Leave,
+}
+
+/// The server going mid-match (plan 12c): its clients carry the match on.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ServerExit {
+    /// Seconds after the first match started (a client's `Started`).
+    pub after_s: f32,
+    pub how: ServerExitHow,
 }
 
 /// A server and its bot clients over localhost (spec §9.4).
@@ -415,6 +486,15 @@ pub struct TransportSpec {
     /// download the rest from the server (plan 11). The others open the
     /// run's content directory.
     pub client_content: BTreeMap<usize, PathBuf>,
+    /// The server freezes or leaves during the first match (plan 12c;
+    /// needs `migration`): the verdict then holds the clients to each
+    /// other, and the server to them only up to what they held.
+    pub server_exit: Option<ServerExit>,
+    /// The clients take part in host migration (`MigrationConfig::direct()`,
+    /// a standby on loopback through the same impairment); `false`:
+    /// `MigrationConfig::off()`, the old ending (D7: no new failure mode
+    /// for the gates).
+    pub migration: bool,
 }
 
 impl TransportSpec {
@@ -437,6 +517,8 @@ impl TransportSpec {
             may_drop: Vec::new(),
             min_checksums: 1,
             client_content: BTreeMap::new(),
+            server_exit: None,
+            migration: false,
         }
     }
 
@@ -499,6 +581,9 @@ impl TransportSpec {
 pub struct TransportRun {
     /// The server's finished matches, in order.
     pub server: Vec<MatchRecord>,
+    /// With a [`ServerExit`]: the server's confirmed input rows as it froze
+    /// or left (its observer's last view; `None` when it never went).
+    pub server_rows: Option<Vec<[u8; 32]>>,
     /// The players, then the spectators.
     pub clients: Vec<ClientRun>,
     /// The server's log.
@@ -542,16 +627,23 @@ pub fn run_transport(content_dir: &Path, spec: &TransportSpec) -> anyhow::Result
         None => None,
     };
     let stop = Arc::new(AtomicBool::new(false));
+    // The server's own stop: set at the end, or by its `Leave`.
+    let server_stop = Arc::new(AtomicBool::new(false));
     let log = SharedLog::default();
     let records: Arc<Mutex<Vec<MatchRecord>>> = Arc::default();
+    let server_rows: Arc<Mutex<Option<Vec<[u8; 32]>>>> = Arc::default();
+    let first_start: Arc<Mutex<Option<Instant>>> = Arc::default();
     let (port_tx, port_rx) = mpsc::channel();
     let server = {
         let (config, data_dir) = (spec.server_config(), spec.data_dir.clone());
         let content = Content::open(content_dir)?;
-        let (stop, mut log, records) = (Arc::clone(&stop), log.clone(), Arc::clone(&records));
+        let (stop, server_stop, mut log, records) =
+            (Arc::clone(&stop), Arc::clone(&server_stop), log.clone(), Arc::clone(&records));
+        let (rows, first_start, mut exit) =
+            (Arc::clone(&server_rows), Arc::clone(&first_start), spec.server_exit);
         std::thread::Builder::new().name("rl-server".into()).spawn(move || {
             let mut last = None;
-            rl_server::run_with(config, content, &data_dir, &stop, &mut log, &mut |s| {
+            rl_server::run_with(config, content, &data_dir, &server_stop, &mut log, &mut |s| {
                 let _ = port_tx.send(s.local_port());
                 if let Some(r) = s.last_record() {
                     // A record is made once, at its match's end, and replaced
@@ -566,11 +658,29 @@ pub fn run_transport(content_dir: &Path, spec: &TransportSpec) -> anyhow::Result
                         records.lock().expect("records").push(r.clone());
                     }
                 }
+                let due = exit.filter(|e| {
+                    let started = *first_start.lock().expect("first start");
+                    started.is_some_and(|t| t.elapsed().as_secs_f32() >= e.after_s)
+                });
+                if let Some(e) = due {
+                    exit = None;
+                    *rows.lock().expect("server rows") = Some(s.confirmed_rows());
+                    match e.how {
+                        // A hung host: no poll, its sockets held, until the run ends.
+                        ServerExitHow::Freeze => {
+                            while !stop.load(Ordering::Relaxed) {
+                                std::thread::sleep(Duration::from_millis(5));
+                            }
+                        }
+                        ServerExitHow::Leave => server_stop.store(true, Ordering::Relaxed),
+                    }
+                }
             })
         })?
     };
     let Ok(port) = port_rx.recv_timeout(Duration::from_secs(20)) else {
         stop.store(true, Ordering::Relaxed);
+        server_stop.store(true, Ordering::Relaxed);
         let why = match server.join() {
             Ok(Err(e)) => format!("{e:#}"),
             Ok(Ok(())) => "it stopped".into(),
@@ -579,7 +689,6 @@ pub fn run_transport(content_dir: &Path, spec: &TransportSpec) -> anyhow::Result
         return Err(anyhow!("the server did not start: {why}\n{}", log.text()));
     };
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let first_start: Arc<Mutex<Option<Instant>>> = Arc::default();
     let mut threads = Vec::new();
     let levels = [Difficulty::Easy, Difficulty::Medium, Difficulty::Hard, Difficulty::Xtreme];
     let clients = (0..usize::from(spec.players))
@@ -599,6 +708,7 @@ pub fn run_transport(content_dir: &Path, spec: &TransportSpec) -> anyhow::Result
             spectate: join_after.is_some(),
             deadline,
             cache: Some(spec.client_cache(i)),
+            migration: client_migration(spec.migration, impair, spec.net_seed.wrapping_add(i as u64)),
         };
         let content_dir = spec.client_content.get(&i).map_or(content_dir, PathBuf::as_path).to_path_buf();
         let (stop, first_start) = (Arc::clone(&stop), Arc::clone(&first_start));
@@ -641,18 +751,35 @@ pub fn run_transport(content_dir: &Path, spec: &TransportSpec) -> anyhow::Result
         };
         runs.push(run);
     }
-    // The server keeps its record once its drain is over (after the clients').
-    while records.lock().expect("records").len() < spec.matches as usize && Instant::now() < deadline {
+    // The server keeps its record once its drain is over (after the
+    // clients'); one that went keeps none.
+    while spec.server_exit.is_none()
+        && records.lock().expect("records").len() < spec.matches as usize
+        && Instant::now() < deadline
+    {
         std::thread::sleep(Duration::from_millis(5));
     }
     stop.store(true, Ordering::Relaxed);
+    server_stop.store(true, Ordering::Relaxed);
     match server.join() {
         Ok(Ok(())) => {}
         Ok(Err(e)) => return Err(e.context("the server")),
         Err(_) => return Err(anyhow!("the server panicked\n{}", log.text())),
     }
     let server = std::mem::take(&mut *records.lock().expect("records"));
-    Ok(TransportRun { server, clients: runs, server_log: log.text(), elapsed: begun.elapsed() })
+    let server_rows = server_rows.lock().expect("server rows").take();
+    Ok(TransportRun { server, server_rows, clients: runs, server_log: log.text(), elapsed: begun.elapsed() })
+}
+
+/// A transport client's migration: off (D7), or a standby on loopback
+/// whose datagrams pass the client's own impairment (every datagram a
+/// client sends does, spec §9.4), no STUN, no relays.
+fn client_migration(on: bool, impair: Option<Profile>, impair_seed: u64) -> MigrationConfig {
+    if !on {
+        return MigrationConfig::off();
+    }
+    let standby = EndpointConfig { port: 0, impair, impair_seed, ..EndpointConfig::default() };
+    MigrationConfig { standby: Some(standby), ..MigrationConfig::direct() }
 }
 
 impl TransportRun {
@@ -666,6 +793,9 @@ impl TransportRun {
     /// rl-online makes it); and that replay played back reproduces the
     /// server's checksums. `Err` lists every failure.
     pub fn verdict(&self, content: &Content, spec: &TransportSpec) -> Result<(), String> {
+        if spec.server_exit.is_some() {
+            return self.verdict_after_exit(content, spec);
+        }
         let mut fails = Vec::new();
         if self.server.len() != spec.matches as usize {
             fails.push(format!("the server finished {} matches, not {}", self.server.len(), spec.matches));
@@ -761,6 +891,138 @@ impl TransportRun {
             }
         }
         if fails.is_empty() { Ok(()) } else { Err(fails.join("\n")) }
+    }
+}
+
+impl TransportRun {
+    /// The verdict when the server froze or left mid-match (plan 12c, spec
+    /// §3.7): no client dropped (unless `spec.may_drop` names it) and each
+    /// finished its matches under the same successor (one migration, the
+    /// same host named by all: which client took over is not fixed, the
+    /// clients join concurrently); their confirmed checksums, input rows
+    /// and replays agree, and the replay played back reproduces the
+    /// checksums; no desync bundle; and the server's confirmed rows as it
+    /// went agree with theirs, per slot, as far as a client held them when
+    /// it found the server gone (pre-flight B3: the server's last frames may
+    /// have reached nobody).
+    fn verdict_after_exit(&self, content: &Content, spec: &TransportSpec) -> Result<(), String> {
+        let mut fails = Vec::new();
+        let kept: Vec<&ClientRun> = self
+            .clients
+            .iter()
+            .filter(|c| match &c.dropped {
+                Some(why) => {
+                    if !spec.may_drop.contains(&c.name) {
+                        fails.push(format!("{} dropped: {why}", c.name));
+                    }
+                    false
+                }
+                None => true,
+            })
+            .collect();
+        let Some(first) = kept.first() else {
+            fails.push("no client finished".into());
+            return Err(fails.join("\n"));
+        };
+        for c in &kept {
+            if c.matches.len() != spec.matches as usize {
+                fails.push(format!("{} finished {} matches, not {}", c.name, c.matches.len(), spec.matches));
+            }
+            if c.desync_bundles > 0 {
+                fails.push(format!("{} made {} desync bundles", c.name, c.desync_bundles));
+            }
+            if c.migrated.len() != 1 || c.migrated != first.migrated {
+                fails.push(format!(
+                    "{} went through migrations {:?}, {} through {:?}",
+                    c.name, c.migrated, first.name, first.migrated
+                ));
+            }
+        }
+        for (k, m) in first.matches.iter().enumerate() {
+            let Some(rec) = &m.record else {
+                fails.push(format!("{}'s match {}: no record", first.name, k + 1));
+                continue;
+            };
+            let least = spec.min_checksums.max(1);
+            if rec.checksums.len() < least {
+                fails.push(format!("match {}: {} checksums, fewer than {least}", k + 1, rec.checksums.len()));
+            }
+            let made = match rl_online::replay::make(content, rec, None) {
+                Ok(made) => {
+                    if let Some(w) = made.warning {
+                        fails.push(format!("{}'s match {}: {w}", first.name, k + 1));
+                    }
+                    if let Err(e) = replay_checksums(content, &made.bytes, &rec.checksums) {
+                        fails.push(format!("{}'s match {}'s replay: {e}", first.name, k + 1));
+                    }
+                    Some(made.bytes)
+                }
+                Err(e) => {
+                    fails.push(format!("{}'s match {}: no replay: {e:#}", first.name, k + 1));
+                    None
+                }
+            };
+            for c in &kept {
+                let what = format!("{}'s match {}", c.name, k + 1);
+                let Some(cm) = c.matches.get(k) else { continue };
+                let Some(r) = &cm.record else {
+                    fails.push(format!("{what}: no record"));
+                    continue;
+                };
+                if cm.start != m.start {
+                    fails.push(format!("{what}: another start than {}'s", first.name));
+                }
+                if r.checksums != rec.checksums {
+                    fails.push(format!("{what}: {}", differ(&r.checksums, &rec.checksums)));
+                }
+                if r.rows != rec.rows {
+                    let n = r.rows.iter().zip(&rec.rows).take_while(|(a, b)| a == b).count();
+                    fails.push(format!(
+                        "{what}: its inputs differ from {}'s from tick {n} ({} and {} ticks)",
+                        first.name,
+                        r.rows.len(),
+                        rec.rows.len()
+                    ));
+                }
+                match (&cm.replay, &made) {
+                    (Some(a), Some(b)) if rl_online::replay::same_match(a, b) => {}
+                    (Some(_), Some(_)) => {
+                        fails.push(format!("{what}: its replay differs from {}'s", first.name))
+                    }
+                    (None, _) => fails.push(format!("{what}: no replay")),
+                    (Some(_), None) => {}
+                }
+            }
+            if k == 0 {
+                fails.extend(self.server_prefix(&kept, &rec.rows).err());
+            }
+        }
+        if fails.is_empty() { Ok(()) } else { Err(fails.join("\n")) }
+    }
+
+    /// The server's confirmed rows as it went agree with the clients'
+    /// `rows`, per slot, up to the furthest any client held at its
+    /// migration.
+    fn server_prefix(&self, kept: &[&ClientRun], rows: &[[u8; 32]]) -> Result<(), String> {
+        let server = match &self.server_rows {
+            Some(r) if !r.is_empty() => r,
+            _ => return Err("the server went before it confirmed a tick (or never went)".into()),
+        };
+        let mut upto = [0u32; 32];
+        for c in kept {
+            let Some(held) = &c.held else { return Err(format!("{} never found the server gone", c.name)) };
+            for (u, &h) in upto.iter_mut().zip(held) {
+                *u = (*u).max(h);
+            }
+        }
+        for (t, (srv, row)) in server.iter().zip(rows).enumerate() {
+            if let Some(s) = (0..32).find(|&s| (t as u32) < upto[s] && srv[s] != row[s]) {
+                return Err(format!(
+                    "the server confirmed slot {s} at tick {t} otherwise than the clients (they held it)"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 

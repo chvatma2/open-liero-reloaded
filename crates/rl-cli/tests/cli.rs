@@ -348,3 +348,63 @@ fn nostr_relay_and_stun_server_run_until_killed() {
         child.wait().unwrap();
     }
 }
+
+/// `rl-cli net-sim` with `args` (and the test's content and a failures
+/// directory of its own): its status, stdout and stderr.
+fn net_sim(args: &[&str], content: &str, failures: &Path) -> (bool, String, String) {
+    let out = rl_cli()
+        .args(["net-sim", "--content", content])
+        .arg("--failures")
+        .arg(failures)
+        .args(args)
+        .output()
+        .unwrap();
+    let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+    (out.status.success(), text(&out.stdout), text(&out.stderr))
+}
+
+/// Plan 12c: `net-sim --exit 0:300:crash` migrates the match to peer 1 and
+/// passes; the same spec kept as a `NetCase` and played with `--from` prints
+/// the same summary; a bad `--exit`, `--host-freeze` or `--profile-change`
+/// is an error naming the flag.
+#[test]
+fn net_sim_migration_flags_run_and_replay() {
+    let Some(dir) = content_dir() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let (ok, stdout, stderr) = net_sim(&["--exit", "0:300:crash", "--ticks", "800"], &dir, tmp.path());
+    assert!(ok, "net-sim failed:\n{stdout}\n{stderr}");
+    assert!(stdout.lines().any(|l| l == "ok"), "{stdout}");
+    assert!(stdout.lines().any(|l| l.starts_with("migrated: 0 -> 1 at tick ")), "{stdout}");
+    let spec = rl_cli::netsim::NetSpec {
+        mod_id: "olx-classic".into(),
+        level_id: "olx-level-castlestrike".into(),
+        seed: 1,
+        slots: 8,
+        clients: 3,
+        spectators: 1,
+        join_tick: None,
+        profile: "typical".into(),
+        drift_ppm: 0,
+        ticks: 800,
+        outages: vec![],
+        net_seed: 0,
+        difficulty: None,
+        faults: vec![],
+        exits: vec![(0, 300, "crash".into())],
+        host_freeze: None,
+        profile_changes: vec![],
+        migration: false,
+    };
+    let case = rl_cli::netsim::NetCase { spec, failure: None };
+    let path = tmp.path().join("case.ron");
+    std::fs::write(&path, ron::ser::to_string_pretty(&case, ron::ser::PrettyConfig::default()).unwrap())
+        .unwrap();
+    let (ok, replayed, stderr) = net_sim(&["--from", path.to_str().unwrap()], &dir, tmp.path());
+    assert!(ok, "net-sim --from failed:\n{replayed}\n{stderr}");
+    assert_eq!(replayed, stdout, "the kept case plays the same run");
+    for (flag, value) in [("--exit", "0:300:explode"), ("--host-freeze", "5"), ("--profile-change", "1:2")] {
+        let (ok, out, err) = net_sim(&[flag, value], &dir, tmp.path());
+        assert!(!ok, "{flag} {value} is refused:\n{out}");
+        assert!(err.contains(flag), "{flag} named in:\n{err}");
+    }
+}

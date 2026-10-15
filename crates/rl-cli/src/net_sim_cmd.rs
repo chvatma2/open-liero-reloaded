@@ -69,6 +69,23 @@ struct NetSpecArgs {
     /// easy, medium, hard, xtreme or mixed (default).
     #[arg(long)]
     difficulty: Option<String>,
+    /// `peer:tick:crash|leave`: the peer (0 the host) crashes or leaves when
+    /// the current host's tick reaches `tick` (repeatable). An exit of the
+    /// host turns host migration on.
+    #[arg(long = "exit", value_parser = parse_exit)]
+    exits: Vec<(u32, u32, String)>,
+    /// `from:until`: the host frozen from its tick `from` for `until - from`
+    /// ticks' worth of time (it steps down past 1.5 s). Turns host
+    /// migration on.
+    #[arg(long, value_parser = parse_freeze)]
+    host_freeze: Option<(u32, u32)>,
+    /// `tick:peer:profile`: from the host's tick `tick`, the peer's link to
+    /// whoever hosts takes the profile (repeatable).
+    #[arg(long = "profile-change", value_parser = parse_profile_change)]
+    profile_changes: Vec<(u32, u32, String)>,
+    /// Host migration on (spec §3.7) even without a host exit or freeze.
+    #[arg(long)]
+    migration: bool,
 }
 
 impl From<NetSpecArgs> for NetSpec {
@@ -88,6 +105,10 @@ impl From<NetSpecArgs> for NetSpec {
             net_seed: a.net_seed,
             difficulty: a.difficulty,
             faults: Vec::new(),
+            exits: a.exits,
+            host_freeze: a.host_freeze,
+            profile_changes: a.profile_changes,
+            migration: a.migration,
         }
     }
 }
@@ -97,6 +118,36 @@ fn parse_outage(s: &str) -> Result<(u32, u32, u32), String> {
     let [p, a, b] = parts[..] else { return Err("expected peer:from_tick:until_tick".into()) };
     let num = |x: &str| x.parse::<u32>().map_err(|e| e.to_string());
     Ok((p.parse::<u32>().map_err(|e| e.to_string())?, num(a)?, num(b)?))
+}
+
+fn parse_exit(s: &str) -> Result<(u32, u32, String), String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    let [p, t, how] = parts[..] else { return Err("expected peer:tick:crash|leave".into()) };
+    if !matches!(how, "crash" | "leave") {
+        return Err(format!("{how:?} is neither crash nor leave"));
+    }
+    let num = |x: &str| x.parse::<u32>().map_err(|e| e.to_string());
+    Ok((num(p)?, num(t)?, how.to_string()))
+}
+
+fn parse_freeze(s: &str) -> Result<(u32, u32), String> {
+    let (a, b) = s.split_once(':').ok_or("expected from_tick:until_tick")?;
+    let num = |x: &str| x.parse::<u32>().map_err(|e| e.to_string());
+    let (from, until) = (num(a)?, num(b)?);
+    if until <= from {
+        return Err(format!("the freeze ends at tick {until}, not after it begins at {from}"));
+    }
+    Ok((from, until))
+}
+
+fn parse_profile_change(s: &str) -> Result<(u32, u32, String), String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    let [t, p, profile] = parts[..] else { return Err("expected tick:peer:profile".into()) };
+    if rl_netcode::netsim::Profile::by_name(profile).is_none() {
+        return Err(format!("no network profile {profile:?} (lan, good, typical, bad, awful)"));
+    }
+    let num = |x: &str| x.parse::<u32>().map_err(|e| e.to_string());
+    Ok((num(t)?, num(p)?, profile.to_string()))
 }
 
 fn parse_seeds(s: &str) -> Result<Range<u32>, String> {

@@ -9,17 +9,27 @@
 //! with `rl_online::matches`' world building and `HostBots`: the online
 //! game's own.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
 
 use anyhow::{Context as _, bail, ensure};
 use clap::ValueEnum as _;
-use rl_bots::Bot;
-use rl_content::{Content, MatchOptions};
-use rl_netcode::harness::{self, Factory, Failure, HOST, Outage, PeerPlan, Report, Scenario};
+use rl_bots::{AreaCache, Bot};
+use rl_content::{Content, MatchOptions, Player};
+use rl_netcode::harness::{
+    self, Exit, ExitHow, Factory, Failure, HOST, MigrationPlan, Outage, PeerPlan, ProfileChange, Report,
+    Scenario,
+};
+use rl_netcode::migration::{HOST_SILENT_US, WINDOW_US};
 use rl_netcode::netsim::{LinkStats, Profile};
-use rl_netcode::{Driver, Event, PeerId, Seat, Session, Stats, WorldSim, input_delay};
+use rl_netcode::{
+    Driver, Event, MAX_PREDICTION, PeerId, Seat, Session, Stats, TICK_US, WorldSim, input_delay,
+};
 use rl_online::matches::{self, HostBots};
+use rl_sim::Keys;
 use serde::{Deserialize, Serialize};
 
 use crate::bundle::DesyncBundle;
@@ -66,6 +76,21 @@ pub struct NetSpec {
     /// last confirmed tick (a desync for the harness to repair).
     #[serde(default)]
     pub faults: Vec<(u32, u32, u8, f32)>,
+    /// `(peer, host tick, "crash" | "leave")`: peers leaving (peer 0 the
+    /// host) when the current host's tick reaches `tick`.
+    #[serde(default)]
+    pub exits: Vec<(u32, u32, String)>,
+    /// The host frozen from tick `.0` for `.1 - .0` ticks' worth of time.
+    #[serde(default)]
+    pub host_freeze: Option<(u32, u32)>,
+    /// `(host tick, peer, profile)`: from then, that peer's link to whoever
+    /// hosts takes the profile.
+    #[serde(default)]
+    pub profile_changes: Vec<(u32, u32, String)>,
+    /// Host migration on (spec §3.7); `exits` naming the host and
+    /// `host_freeze` turn it on too.
+    #[serde(default)]
+    pub migration: bool,
 }
 
 impl NetSpec {
@@ -98,6 +123,58 @@ impl NetSpec {
         Profile::by_name(&self.profile).with_context(|| format!("unknown network profile {:?}", self.profile))
     }
 
+    /// Whether `peer` is in this spec's match: the host, a client or a spectator.
+    fn has_peer(&self, peer: PeerId) -> bool {
+        peer <= PeerId::from(self.clients)
+            || (FIRST_SPECTATOR..FIRST_SPECTATOR + PeerId::from(self.spectators)).contains(&peer)
+    }
+
+    /// Host migration is on: asked for, or needed by an exit of the host or
+    /// a host freeze (a host gone with migration off ends the match for
+    /// nobody, and the verdict would fail on the stalled clients).
+    pub fn migrates(&self) -> bool {
+        self.migration || self.host_freeze.is_some() || self.exits.iter().any(|e| e.0 == HOST)
+    }
+
+    /// The exits as the harness takes them (an exit's `after_us` is 0: at
+    /// the tick itself).
+    fn harness_exits(&self) -> anyhow::Result<Vec<Exit>> {
+        self.exits
+            .iter()
+            .map(|(peer, tick, how)| {
+                ensure!(self.has_peer(*peer), "an exit names peer {peer}, not in the match");
+                let how = match how.as_str() {
+                    "crash" => ExitHow::Crash,
+                    "leave" => ExitHow::Leave,
+                    other => bail!("an exit is \"crash\" or \"leave\", not {other:?}"),
+                };
+                Ok(Exit { peer: *peer, tick: *tick, after_us: 0, how })
+            })
+            .collect()
+    }
+
+    fn harness_profile_changes(&self) -> anyhow::Result<Vec<ProfileChange>> {
+        self.profile_changes
+            .iter()
+            .map(|(tick, peer, name)| {
+                ensure!(
+                    *peer != HOST && self.has_peer(*peer),
+                    "a profile change names peer {peer}, not a client or spectator"
+                );
+                let profile =
+                    Profile::by_name(name).with_context(|| format!("unknown network profile {name:?}"))?;
+                Ok(ProfileChange { tick: *tick, peer: *peer, profile })
+            })
+            .collect()
+    }
+
+    /// No player may stall on a profile up to `bad` (spec §9.2), unless a
+    /// link changes to `awful` mid-run.
+    fn expect_no_stalls(&self) -> bool {
+        matches!(self.profile.as_str(), "lan" | "good" | "typical" | "bad")
+            && !self.profile_changes.iter().any(|c| c.2 == "awful")
+    }
+
     /// The options every peer builds its world from.
     pub fn match_options(&self) -> anyhow::Result<MatchOptions> {
         let difficulty = match &self.difficulty {
@@ -119,6 +196,11 @@ impl NetSpec {
         ensure!((2..=32).contains(&self.slots), "{} slots: a match has 2 to 32", self.slots);
         ensure!(self.clients <= self.slots, "{} clients for {} slots", self.clients, self.slots);
         ensure!(self.spectators <= 100, "at most 100 spectators");
+        if let Some((from, until)) = self.host_freeze {
+            ensure!(from < until, "a host freeze {from}:{until} ends before it begins");
+        }
+        let exits = self.harness_exits()?;
+        let profile_changes = self.harness_profile_changes()?;
         let mut peers = Vec::new();
         let n = i64::from(self.clients);
         for k in 0..self.clients {
@@ -162,12 +244,13 @@ impl NetSpec {
                 .iter()
                 .map(|&(peer, from_tick, until_tick)| Outage { peer, from_tick, until_tick })
                 .collect(),
-            expect_no_stalls: matches!(self.profile.as_str(), "lan" | "good" | "typical" | "bad"),
+            expect_no_stalls: self.expect_no_stalls(),
             corrupt: self.faults.iter().map(|f| (f.0, f.1)).collect(),
-            host_freeze: None,
-            exits: vec![],
-            migration: None,
-            profile_changes: vec![],
+            host_freeze: self.host_freeze,
+            exits,
+            // Every worm is a bot: the host has no player of its own to abandon.
+            migration: self.migrates().then(MigrationPlan::default),
+            profile_changes,
         })
     }
 }
@@ -179,6 +262,9 @@ pub struct WorldFactory<'c> {
     spec: NetSpec,
     /// The bots of a peer's world by slot, from `sim` to `driver`.
     bots: BTreeMap<PeerId, BTreeMap<u8, Bot>>,
+    /// Each client's own bot, shared with its driver: a client that takes
+    /// the match over keeps it (`host_driver`).
+    own: BTreeMap<PeerId, (u8, Rc<RefCell<Bot>>)>,
 }
 
 impl<'c> WorldFactory<'c> {
@@ -186,7 +272,27 @@ impl<'c> WorldFactory<'c> {
     pub fn new(content: &'c Content, spec: &NetSpec) -> anyhow::Result<Self> {
         let options = spec.match_options()?;
         content.build_match(&options).with_context(|| format!("setting up {}", spec.stem()))?;
-        Ok(WorldFactory { content, options, spec: spec.clone(), bots: BTreeMap::new() })
+        Ok(WorldFactory { content, options, spec: spec.clone(), bots: BTreeMap::new(), own: BTreeMap::new() })
+    }
+}
+
+/// A peer's bots: those it hosts (`hosted`) and a client's own (`own`),
+/// kept apart so that a client that takes the match over keeps its own bot
+/// while the host's bots restart (spec §3.7, N75).
+struct PeerBots {
+    hosted: HostBots,
+    own: Option<(u8, Rc<RefCell<Bot>>)>,
+}
+
+impl Driver<WorldSim> for PeerBots {
+    fn local_inputs(&mut self, sim: &WorldSim, _tick: u32, slots: &[u8], out: &mut [Keys]) {
+        match &self.own {
+            Some((slot, bot)) => {
+                let mut think = || bot.borrow_mut().think(sim.world(), sim.events());
+                self.hosted.press(sim, slots, out, Some((*slot, &mut think)));
+            }
+            None => self.hosted.press(sim, slots, out, None),
+        }
     }
 }
 
@@ -205,12 +311,42 @@ impl Factory<WorldSim> for WorldFactory<'_> {
         // The harness makes a peer's sim before its driver.
         let mut bots = self.bots.remove(&peer).expect("a peer's sim is made before its driver");
         let clients = self.spec.clients;
-        bots.retain(|&slot, _| match seat {
-            None => slot >= clients,
-            Some(Seat::Player(s)) => slot == s,
-            Some(Seat::Spectator) => false,
-        });
-        Box::new(HostBots::new(bots))
+        let own = match seat {
+            Some(Seat::Player(s)) => bots.remove(&s).map(|b| (s, Rc::new(RefCell::new(b)))),
+            _ => None,
+        };
+        self.own.remove(&peer);
+        if let Some(o) = &own {
+            self.own.insert(peer, o.clone());
+        }
+        bots.retain(|&slot, _| seat.is_none() && slot >= clients);
+        Box::new(PeerBots { hosted: HostBots::new(bots), own })
+    }
+
+    /// A client that took over: its own bot kept, the host's bots (the
+    /// slots no client plays) restarted as `rl_online::matches::
+    /// restart_bots` restarts them: on the current world, the match's seed,
+    /// one new area cache.
+    fn host_driver(&mut self, peer: PeerId, own: Option<u8>, sim: &WorldSim) -> Box<dyn Driver<WorldSim>> {
+        let world = sim.world();
+        let cache = AreaCache::new(world.terrain());
+        let clients = usize::from(self.spec.clients);
+        let seed = self.options.seed;
+        let bots = self
+            .options
+            .players
+            .iter()
+            .enumerate()
+            .skip(clients)
+            .filter_map(|(i, p)| match p {
+                Player::Bot(cfg) => {
+                    Some((i as u8, Bot::with_cache(i, *cfg, seed, world, Arc::clone(&cache))))
+                }
+                Player::Human | Player::HumanWith(_) => None,
+            })
+            .collect();
+        let own = self.own.get(&peer).filter(|o| Some(o.0) == own).cloned();
+        Box::new(PeerBots { hosted: HostBots::new(bots), own })
     }
 
     /// Fault `index` of the spec: a worm's health. A fault naming no worm is
@@ -269,13 +405,108 @@ pub fn run_with(content: &Content, spec: &NetSpec, bundles: Option<&Path>) -> an
     let mut recorder = BundleRecorder { spec, dir: bundles, pending: BTreeMap::new(), done: Vec::new() };
     let (report, verdict) = match harness::run_observed(&scenario, &mut factory, &mut recorder) {
         Ok(report) => {
-            let verdict = harness::verdict(&scenario, &report, &mut factory);
+            let verdict = judge(spec, &scenario, &report, &mut factory);
             (report, verdict)
         }
         Err(f) => (empty_report(), Err(f)),
     };
     let written = recorder.finish()?;
     Ok(NetRun { spec: spec.clone(), report, verdict, bundles: written })
+}
+
+/// N66: on LAN, good and typical links the match continues within 3 s of
+/// the peers finding their host gone (from the first `HostSilent` or
+/// `PeerLeft` to the new host's resume), when nothing but hosts left; on
+/// `bad` and `awful` links within the first successor's window.
+pub const N66_US: u64 = 3_000_000;
+
+/// After a resume, a player's pace restarts at `max(its tick, R)` and its
+/// time sync starts over ("as after a jump": no margin until the new host
+/// holds 16 inputs made after it), so a player ahead of the new host runs
+/// into the prediction limit again until its pace is corrected: on `bad`
+/// links seen up to 123 ticks past the resume. Stalls up to 2 s of ticks past it
+/// are the migration's.
+pub const RESYNC_TICKS: u32 = (HOST_SILENT_US / TICK_US) as u32;
+
+/// The run's verdict: `harness::verdict`, and with host migration on a
+/// rule of its own for stalls (plan 12c Task 8's decision). A host gone
+/// stalls its players at the prediction limit before they find it gone
+/// (and again after the resume, until their time sync settles): the
+/// harness's `expect_no_stalls` would flag those. So a stall
+/// at a tick from its migration's departure (the old host's exit or
+/// freeze, less `MAX_PREDICTION`) to its resume tick (plus
+/// [`RESYNC_TICKS`]) is excused, any other still fails, and the
+/// migration's length is bounded instead ([`N66_US`]).
+fn judge(spec: &NetSpec, sc: &Scenario, r: &Report, f: &mut WorldFactory<'_>) -> Result<(), Failure> {
+    if sc.migration.is_none() || !sc.expect_no_stalls {
+        return harness::verdict(sc, r, f);
+    }
+    harness::verdict(&Scenario { expect_no_stalls: false, ..sc.clone() }, r, f)?;
+    stalls_within_migrations(spec, r)?;
+    n66(spec, r)
+}
+
+/// Every player's stall (the host's and the clients', not dropped) lies in
+/// a migration's window ([`migration_windows`]).
+fn stalls_within_migrations(spec: &NetSpec, r: &Report) -> Result<(), Failure> {
+    let windows = migration_windows(spec, r);
+    let players = core::iter::once(HOST).chain(1..=PeerId::from(spec.clients));
+    for peer in players.filter(|p| !r.dropped.contains(p)) {
+        let stalls = r.events.get(&peer).into_iter().flatten().filter_map(|e| match *e {
+            Event::Stalled { tick } => Some(tick),
+            _ => None,
+        });
+        for tick in stalls {
+            if !windows.iter().any(|w| w.contains(&tick)) {
+                return Err(Failure { tick, what: format!("player peer {peer} stalled") });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Each migration within [`N66_US`] on LAN, good and typical links (else
+/// `WINDOW_US`), when only hosts left: no other exit, outage or profile
+/// change (a successor waits for a departed peer up to its window).
+fn n66(spec: &NetSpec, r: &Report) -> Result<(), Failure> {
+    let clean = spec.outages.is_empty()
+        && spec.profile_changes.is_empty()
+        && spec.exits.iter().all(|e| r.hosts.contains(&e.0));
+    if clean {
+        let fast = matches!(spec.profile.as_str(), "lan" | "good" | "typical");
+        let bound = if fast { N66_US } else { WINDOW_US };
+        for (k, m) in r.migrations.iter().enumerate() {
+            let took = m.resumed_us.saturating_sub(m.silent_us);
+            if took > bound {
+                return Err(Failure {
+                    tick: m.tick,
+                    what: format!(
+                        "migration {k} from peer {} to peer {} took {} ms, over {} ms (N66)",
+                        m.from,
+                        m.to,
+                        took / 1_000,
+                        bound / 1_000
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The ticks at which each migration excuses a stall: from its old host's
+/// departure (its exit's tick, or the host freeze's start; else the resume
+/// tick) less `MAX_PREDICTION` to the resume tick plus [`RESYNC_TICKS`].
+fn migration_windows(spec: &NetSpec, r: &Report) -> Vec<core::ops::RangeInclusive<u32>> {
+    r.migrations
+        .iter()
+        .map(|m| {
+            let exit = spec.exits.iter().filter(|e| e.0 == m.from && e.1 <= m.tick).map(|e| e.1).max();
+            let freeze = spec.host_freeze.filter(|f| m.from == HOST && f.0 <= m.tick).map(|f| f.0);
+            let gone = exit.into_iter().chain(freeze).max().unwrap_or(m.tick);
+            gone.saturating_sub(MAX_PREDICTION)..=m.tick.saturating_add(RESYNC_TICKS)
+        })
+        .collect()
 }
 
 /// Collects a client's desync bundle: started at its `Desync`, completed by
@@ -435,6 +666,19 @@ impl NetRun {
                 st.bytes_in.max(recv.bytes) as f64 / secs,
             );
         }
+        for m in &self.report.migrations {
+            out += &format!(
+                "\nmigrated: {} -> {} at tick {} ({} ms after the host was found gone)",
+                m.from,
+                m.to,
+                m.tick,
+                m.resumed_us.saturating_sub(m.silent_us) / 1_000
+            );
+        }
+        if !self.report.host_lost.is_empty() {
+            let lost: Vec<String> = self.report.host_lost.iter().map(PeerId::to_string).collect();
+            out += &format!("\nhost lost: {}", lost.join(", "));
+        }
         out
     }
 }
@@ -459,6 +703,10 @@ mod tests {
             net_seed: 1,
             difficulty: None,
             faults: vec![],
+            exits: vec![],
+            host_freeze: None,
+            profile_changes: vec![],
+            migration: false,
         }
     }
 
@@ -473,10 +721,102 @@ mod tests {
             NetSpec { join_tick: Some(5), ..spec() },
             NetSpec { difficulty: Some("hard".into()), ..spec() },
             NetSpec { net_seed: 2, ..spec() },
+            NetSpec { exits: vec![(0, 300, "crash".into())], ..spec() },
+            NetSpec { exits: vec![(0, 300, "leave".into())], ..spec() },
+            NetSpec { host_freeze: Some((300, 470)), ..spec() },
+            NetSpec { profile_changes: vec![(300, 1, "bad".into())], ..spec() },
+            NetSpec { migration: true, ..spec() },
         ];
         let stems: std::collections::BTreeSet<_> = variants.iter().map(NetSpec::stem).collect();
         assert_eq!(stems.len(), variants.len());
         assert!(!stems.contains(&a.stem()));
         assert_eq!(a.stem(), spec().stem(), "the stem is stable");
+    }
+
+    /// A migration's stall window, from a report alone.
+    fn migrated(spec: &NetSpec, stalls: &[(PeerId, u32)]) -> Result<(), Failure> {
+        let mut r = empty_report();
+        r.hosts = vec![HOST, 1];
+        r.migrations.push(harness::Migrated { from: HOST, to: 1, silent_us: 0, resumed_us: 0, tick: 420 });
+        for &(peer, tick) in stalls {
+            r.events.entry(peer).or_default().push(Event::Stalled { tick });
+        }
+        stalls_within_migrations(spec, &r)
+    }
+
+    /// Plan 12c Task 8's decision: the stalls a host's departure causes are
+    /// excused from its exit (less `MAX_PREDICTION`) to the resume (plus
+    /// `RESYNC_TICKS`); any other stall still fails.
+    #[test]
+    fn only_stalls_within_a_migration_are_excused() {
+        let s = NetSpec { exits: vec![(0, 400, "crash".into())], ..spec() };
+        assert!(migrated(&s, &[(1, 400 - MAX_PREDICTION), (2, 410), (1, 420 + RESYNC_TICKS)]).is_ok());
+        let early = migrated(&s, &[(2, 400 - MAX_PREDICTION - 1)]).unwrap_err();
+        assert_eq!(early.what, "player peer 2 stalled");
+        let late = migrated(&s, &[(HOST, 420 + RESYNC_TICKS + 1)]).unwrap_err();
+        assert_eq!(late.tick, 420 + RESYNC_TICKS + 1);
+        // A frozen host's migration counts from the freeze.
+        let f = NetSpec { host_freeze: Some((300, 470)), ..spec() };
+        assert!(migrated(&f, &[(1, 300 - MAX_PREDICTION)]).is_ok());
+        assert!(migrated(&f, &[(1, 300 - MAX_PREDICTION - 1)]).is_err());
+        // A spectator never stalls the verdict; a dropped player neither.
+        assert!(migrated(&s, &[(FIRST_SPECTATOR, 10)]).is_ok());
+    }
+
+    /// N66: on a typical link a migration of more than 3 s fails, unless
+    /// something besides the host left (a successor waits for a departed
+    /// peer up to its window).
+    #[test]
+    fn a_slow_migration_fails_n66() {
+        let mut r = empty_report();
+        r.hosts = vec![HOST, 1];
+        let m = |took| harness::Migrated {
+            from: HOST,
+            to: 1,
+            silent_us: 1_000_000,
+            resumed_us: 1_000_000 + took,
+            tick: 420,
+        };
+        let s = NetSpec { exits: vec![(0, 400, "crash".into())], ..spec() };
+        r.migrations = vec![m(N66_US)];
+        assert!(n66(&s, &r).is_ok());
+        r.migrations = vec![m(N66_US + 1_000)];
+        assert!(n66(&s, &r).unwrap_err().what.contains("N66"));
+        let other = NetSpec { exits: vec![(0, 400, "crash".into()), (2, 300, "leave".into())], ..spec() };
+        assert!(n66(&other, &r).is_ok());
+        let bad = NetSpec { profile: "bad".into(), ..s.clone() };
+        assert!(n66(&bad, &r).is_ok(), "bad links: the first successor's window");
+        r.migrations = vec![m(WINDOW_US + 1_000)];
+        assert!(n66(&bad, &r).is_err());
+    }
+
+    #[test]
+    fn exits_and_profile_changes_are_checked() {
+        let bad = |s: NetSpec| s.scenario().unwrap_err().to_string();
+        assert!(bad(NetSpec { exits: vec![(0, 300, "explode".into())], ..spec() }).contains("explode"));
+        assert!(bad(NetSpec { exits: vec![(4, 300, "crash".into())], ..spec() }).contains("peer 4"));
+        assert!(bad(NetSpec { host_freeze: Some((300, 300)), ..spec() }).contains("freeze"));
+        assert!(
+            bad(NetSpec { profile_changes: vec![(300, 1, "dreadful".into())], ..spec() })
+                .contains("dreadful")
+        );
+        assert!(bad(NetSpec { profile_changes: vec![(300, 0, "bad".into())], ..spec() }).contains("peer 0"));
+        let sc = NetSpec { exits: vec![(0, 300, "leave".into()), (100, 200, "crash".into())], ..spec() }
+            .scenario()
+            .unwrap();
+        assert!(sc.migration.is_some(), "an exit of the host turns migration on");
+        assert_eq!(sc.exits.len(), 2);
+        assert!(spec().scenario().unwrap().migration.is_none());
+        assert!(
+            NetSpec { exits: vec![(1, 300, "crash".into())], ..spec() }
+                .scenario()
+                .unwrap()
+                .migration
+                .is_none()
+        );
+        assert!(NetSpec { host_freeze: Some((300, 470)), ..spec() }.scenario().unwrap().migration.is_some());
+        assert!(NetSpec { migration: true, ..spec() }.scenario().unwrap().migration.is_some());
+        let awful = NetSpec { profile_changes: vec![(300, 1, "awful".into())], ..spec() };
+        assert!(!awful.scenario().unwrap().expect_no_stalls);
     }
 }

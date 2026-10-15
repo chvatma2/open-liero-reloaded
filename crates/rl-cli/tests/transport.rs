@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use common::{content, content_dir, full_tier, partial_content};
-use rl_cli::transport::{SharedLog, TransportRun, TransportSpec, run_transport};
+use rl_cli::transport::{ServerExit, ServerExitHow, SharedLog, TransportRun, TransportSpec, run_transport};
 use rl_online::replay::MatchRecord;
 
 /// Runs `spec` and panics with every failure and the server's log unless
@@ -214,4 +214,49 @@ fn a_spectator_joins_mid_match_over_real_connections() {
     let first = m.checksums.first().expect("its confirmed checksums").0;
     assert!(first >= 300, "from the state it joined with, not tick 0: tick {first}");
     assert_played(&run);
+}
+
+/// Plan 12c (spec §3.7): three clients through `profile` and two of the
+/// server's bots play a 0.3-minute match on a server that goes `how` 8 s
+/// in; the match moves to
+/// one of them (the clients join concurrently: which one is not fixed),
+/// its bots restarted there, every client finishes it there, their
+/// records and replays agree, and the server's confirmed rows agree with
+/// them as far as they held them (its bots' last rows may have reached
+/// nobody, pre-flight B3).
+fn a_server_hands_its_match_to_a_client(profile: &str, how: ServerExitHow) {
+    let data = tempfile::tempdir().unwrap();
+    let mut spec = TransportSpec::new(3, 0.3, Some(profile), data.path());
+    spec.fill_bots = 5;
+    spec.migration = true;
+    spec.server_exit = Some(ServerExit { after_s: 8.0, how });
+    spec.min_checksums = 3;
+    let run = pass(&spec);
+    let hosts: Vec<&str> = run.clients[0].migrated.iter().map(String::as_str).collect();
+    let host = hosts.first().and_then(|h| h.strip_suffix(" hosts")).expect("one migration");
+    assert!(run.clients.iter().any(|c| c.name == host), "a client hosts: {hosts:?}");
+    assert!(run.server.is_empty(), "the server finished no match");
+    let rows = run.server_rows.as_ref().expect("the server's rows as it went");
+    assert!(rows.len() >= 500, "it went mid-match, {} ticks in", rows.len());
+    let record = run.clients[0].matches[0].record.as_ref().unwrap();
+    assert!(record.rows.len() >= 1_800 + 300, "the whole match and its results: {} ticks", record.rows.len());
+    let after = &record.rows[rows.len() + 300..];
+    assert!((3..5).all(|s| after.iter().any(|r| r[s] != 0)), "the bots play on at the new host");
+    assert_played(&run);
+}
+
+#[test]
+fn a_frozen_server_hands_its_match_to_a_client() {
+    if !full_tier() || content_dir().is_none() {
+        return;
+    }
+    a_server_hands_its_match_to_a_client("good", ServerExitHow::Freeze);
+}
+
+#[test]
+fn a_leaving_server_hands_its_match_to_a_client() {
+    if !full_tier() || content_dir().is_none() {
+        return;
+    }
+    a_server_hands_its_match_to_a_client("bad", ServerExitHow::Leave);
 }

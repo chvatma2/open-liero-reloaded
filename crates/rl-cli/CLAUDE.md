@@ -83,7 +83,9 @@ The headless command-line tool. Its commands:
   xtask stress` runs both mods × pool 3000/20 000 on Castle Strike.
 - `rl-cli net-sim [--mod M --level L --seed N --slots 8 --clients 3
   --spectators 1 --join-tick T --profile typical --drift-ppm P --ticks 1000
-  --outage peer:from:until --net-seed N --difficulty D] [--from CASE.ron]
+  --outage peer:from:until --net-seed N --difficulty D --exit
+  peer:tick:crash|leave --host-freeze from:until --profile-change
+  tick:peer:profile --migration] [--from CASE.ron]
   [--seeds a..b] [--content DIR] [--failures DIR]` (plan 9, `netsim.rs`, the
   command in `net_sim_cmd.rs`): an online match of bots in one process over
   `rl-netcode`'s network model. Every peer (host, clients, spectators) builds
@@ -95,10 +97,45 @@ The headless command-line tool. Its commands:
   one implementation). Prints per peer rollbacks (depth p50/p99), fills,
   stalls, desyncs and bytes/s received, then `ok` or `FAIL <what> at tick
   <t>`; a failure writes `target/failures/net-<stem>.ron` (a `NetCase`) and
-  exits 1. `fixtures/net/cases/*.ron` are kept cases that must pass
+  exits 1. **Host migration** (plan 12c, spec §3.7; `NetSpec`'s `exits`,
+  `host_freeze`, `profile_changes`, `migration`, all `#[serde(default)]`
+  so older cases load, each a harness `Scenario` field; `--exit` and
+  `--profile-change` repeatable, every value checked by its parser so a
+  bad one is an error naming the flag, and again by `scenario`, the spec
+  being untrusted): an exit naming the host (peer 0) or a host freeze
+  turns migration on (`MigrationPlan::default()`: every worm a bot, no
+  `host_human`); the succession is the harness's (clients in order, then
+  spectators). `WorldFactory::host_driver` keeps the peer's own bot
+  (`PeerBots`: the hosted bots and a client's own, shared with the
+  factory through an `Rc`, pressed through `HostBots::press`'s human
+  callback) and restarts the host's bots (the slots no client plays) as
+  `rl_online::matches::restart_bots` does: `Bot::with_cache` on the
+  current world, the match's seed, one new `AreaCache`. One line per
+  migration, `migrated: <from> -> <to> at tick <t> (<ms> ms after the
+  host was found gone)`, and `host lost: <peers>` (in `summary`).
+  **Stalls (the Task 8 decision):** a host gone stalls its players at the
+  prediction limit before they find it gone, and again after the resume
+  until their time sync settles (on `bad`, up to 123 ticks past it), so
+  with migration on the verdict (`judge`) runs the harness's without
+  `expect_no_stalls` and then excuses only stalls at ticks from the
+  departure (the exit's tick or the freeze's start) less `MAX_PREDICTION`
+  to the resume tick plus `RESYNC_TICKS` (2 s of ticks); any other stall
+  of the host or a client fails. The window is bounded instead by N66
+  (`N66_US`): when nothing but hosts left (no other exit, outage or
+  profile change), each migration within 3 s from the first `HostSilent`
+  or `PeerLeft` to the resume on `lan`, `good` and `typical`, within
+  `WINDOW_US` on `bad` and `awful`. A profile change to `awful` turns
+  `expect_no_stalls` off. `fixtures/net/cases/*.ron` are kept cases that must pass
   (`tests/net_cases.rs`); `cargo xtask bless-regression --from
-  target/failures/net-*.ron` keeps one. `tests/net_sim.rs`: two short runs in
-  `check`, the profile grid in `full`.
+  target/failures/net-*.ron` keeps one. `tests/net_sim.rs`: in `check`, two
+  short runs, a spectator joining, `a_host_crash_migrates_a_real_match`
+  (typical, the host crashes at tick 400 of 1000: `hosts` `[0, 1]`, a
+  restarted bot plays on; fails without the stall rule or without the
+  restarted bots) and `a_frozen_host_steps_down_in_a_real_match` (good, a
+  1.7 s freeze: the host exited, no peer ever `HostSilent`; a 2.4 s freeze
+  fails it), about 1.5 s each; in `full`, the profile grid and
+  `net_migration_grid` (5 profiles × a crash, a leave and a 2 s freeze at
+  tick 800 of 2000, seed 1, MW 1.0 for the freezes; about 29 s).
   `net-sim --feel <out.ron>` measures the **feel numbers** instead (plan 9
   task 11, spec §9.2, `feel.rs`): `feel_spec(profile, seed)` (16 worms, 7
   clients, Classic on Castle Strike, 3000 ticks) for every profile ×
@@ -121,7 +158,7 @@ The headless command-line tool. Its commands:
 - `rl-cli net-client --bot (--join <host[:port]> | --invite rlx1… | --key
   <64 hex> | --listed "<name>") [--relay URL]... [--stun host:port]...
   [--turn user:pass@host:port]... [--no-nostr-turn] [--region R]
-  [--allow-local] [--lobby-only] [--difficulty
+  [--allow-local] [--lobby-only] [--no-standby] [--difficulty
   easy|medium|hard|xtreme] [--name N] [--matches 1] [--spectate] [--impair
   <profile>] [--impair-seed S] [--timeout 3600] [--content DIR] [--cache
   DIR]` (plan 10,
@@ -157,7 +194,16 @@ The headless command-line tool. Its commands:
   prints each finished match: `match <n>: <mod> on <level>, seed S, slot
   K|watching, <T> ticks|joined mid-match, <C> checksums, replay <B>
   bytes|no replay`, then `  checksum <tick> <16 hex>` per confirmed
-  checksum. `--impair` sends its datagrams through a netsim profile. What
+  checksum. **Host migration** (plan 12c) is on by default
+  (`migration_config`): a standby on port 0 (through `--impair`) asking
+  the `--stun` servers, the `--relay`s to listen on once it hosts (none:
+  no Nostr), its joins to a successor through the relays with the
+  `--stun`/`--turn` ICE, `--region`, TURN notes and `--allow-local`;
+  `--no-standby` follows only (never hosts). It prints `migrated: <name>
+  hosts` (or `migrated: hosting` when it took the match over) and `host
+  lost: <why>` (then exit 1) on stdout (`migration_line`). A client that
+  took a match over hosts on until its members left (they finish their
+  match on it), bounded by `--timeout`. `--impair` sends its datagrams through a netsim profile. What
   `--content` lacks of a match it downloads from the host (plan 11) into
   `--cache` (by default a fresh temporary directory, removed at exit).
   Exits 1 when refused, kicked, disconnected or past `--timeout` seconds;
@@ -290,6 +336,28 @@ checksum; every server record holds at least `min_checksums` (at least
 one: an empty record proves nothing). The server observer tells a new
 record by a cheap key (seed, start checksum, rows, checksums), not by
 comparing whole records every poll.
+**Migration** (plan 12c): `ClientSpec::migration` (a `MigrationConfig`);
+`TransportSpec::migration` (`false`: every client `MigrationConfig::off()`,
+D7, so the transport, stress and feel gates gain no failure mode; `true`:
+`direct()` with the standby through the client's impairment) and
+`server_exit: Option<ServerExit { after_s, how: Freeze | Leave }>`
+(serde): `after_s` after the first match started (a client's `Started`)
+the server's observer takes `Server::confirmed_rows()` (`TransportRun::
+server_rows`) and freezes (stops polling and stays until the run ends,
+holding its sockets: a hung host) or sets the server's own stop flag
+(`Server::shutdown`, `Bye`); the run then waits for no server record.
+`ClientRun` gains `migrated` (`"<name> hosts"` per migration, in order),
+`host_lost` (then `dropped` too) and `held` (per slot `known_upto` at its
+first `Migrating`); `Progress` gains `Migrated { host, me }` and
+`HostLost(why)`. With a server exit the verdict
+(`verdict_after_exit`) names no successor (the clients join
+concurrently): no client dropped, each finished its matches through one
+migration named alike by all, their records (start, rows, checksums) and
+replays agree, the replay made from the first's record meets its
+checksums (at least `min_checksums`), no desync bundle, and the server's
+rows as it went agree with theirs per slot up to the furthest any client
+held (pre-flight B3; in the runs so far never load-bearing: the server's
+confirmed rows had all reached the clients).
 
 **Generated levels** (`genlevel.rs`, plan 8; bench only, a game never
 loads one): `GenLevel` makes seeded noise caves in memory, no pack written,
@@ -326,10 +394,16 @@ Invite rl-server, `public_address` 127.0.0.1 with `allow_local`, the
 `TestRelay` its code's hint: `--invite --lobby-only` prints `path:
 direct`), `net_client_joins_a_listed_game` (a Public one found by
 `--listed` on the relay; a name nobody announces fails within
-`--timeout 1`), `nostr_relay_and_stun_server_run_until_killed` (the
+`--timeout 1`), `net_sim_migration_flags_run_and_replay` (plan 12c:
+`net-sim --exit 0:300:crash --ticks 800` prints `ok` and `migrated: 0 ->
+1`, the same spec kept as a `NetCase` plays the same output with
+`--from`, bad `--exit`, `--host-freeze` and `--profile-change` values are
+errors naming the flag; about 1.6 s),
+`nostr_relay_and_stun_server_run_until_killed` (the
 binary's two dev tools on loopback answer a REQ with EOSE and a binding
 with the asker's address, then are killed); the unit tests of
-`net_client_cmd.rs` check the target's resolution. The tests are modules of one binary,
+`net_client_cmd.rs` check the target's resolution, the migration
+configuration (a standby unless `--no-standby`) and the printed lines. The tests are modules of one binary,
 `tests/integration.rs`, except those xtask runs by name (`golden`,
 `net_cases`, `grid`, `net_sim`, `transport`, `render_golden`, `gpu_bench`): one module's
 tests are `cargo nextest run -p rl-cli --test integration corpus::`.
@@ -392,7 +466,13 @@ level) downloads it into its temporary cache (`TMPDIR` empty after it
 exits), plays a 0.05-minute match and
 prints the server's checksums (about 7 s); in `full`
 (`RL_FULL_TESTS=1`, `check::FULL_TESTS`), 8 clients per profile `good`,
-`typical`, `bad` (0.5 minutes each, about 106 s in all) and a spectator
-joining 4 s into a match (about 19 s).
+`typical`, `bad` (0.5 minutes each, about 106 s in all), a spectator
+joining 4 s into a match (about 19 s), and plan 12c's
+`a_frozen_server_hands_its_match_to_a_client` (`good`) and
+`a_leaving_server_hands_its_match_to_a_client` (`bad`): 3 clients with
+migration and 2 server bots, a 0.3-minute match, the server going 8 s in;
+one migration named alike by all to a client, the bots playing on there,
+the verdict above, the server's rows as it went at least 500 ticks;
+about 24 s each (fails with the clients' migration off: all dropped).
 
-**Desync bundles** (`bundle.rs`): `.rlds` files from `net-sim` (and, in plan 10, real games); `rl-cli net-repro <file>` names the first diverging tick and world field. `net-sim` writes them to `--failures` when a client reports a desync (`netsim::run_with`; `NetSpec::faults` plants one: `(peer, host tick, worm, health)`). A state diff lists the first differing path of every differing `WorldState` field, in its declaration order (`worms[3].health, ents`; `bundle::FIELDS`, kept equal to the real field set by a test), so the cause is read from the whole list, not the first entry.
+**Desync bundles** (`bundle.rs`, `BUNDLE_VERSION` 2 since `NetSpec`'s migration fields): `.rlds` files from `net-sim` (and, in plan 10, real games); `rl-cli net-repro <file>` names the first diverging tick and world field. `net-sim` writes them to `--failures` when a client reports a desync (`netsim::run_with`; `NetSpec::faults` plants one: `(peer, host tick, worm, health)`). A state diff lists the first differing path of every differing `WorldState` field, in its declaration order (`worms[3].health, ents`; `bundle::FIELDS`, kept equal to the real field set by a test), so the cause is read from the whole list, not the first entry.

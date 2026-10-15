@@ -61,6 +61,10 @@ fn a_planted_desync_is_repaired_and_pinpointed() {
         outages: vec![],
         net_seed: 4,
         difficulty: None,
+        exits: vec![],
+        host_freeze: None,
+        profile_changes: vec![],
+        migration: false,
         faults: vec![(1, 400, 3, 7.0)],
     };
     let dir = tempfile::tempdir().unwrap();

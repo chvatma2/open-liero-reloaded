@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use crate::netsim::{NetSpec, WorldFactory};
 
 pub const BUNDLE_MAGIC: [u8; 4] = *b"RLDS";
-pub const BUNDLE_VERSION: u16 = 1;
+/// 2: `NetSpec` gained its migration fields (plan 12c).
+pub const BUNDLE_VERSION: u16 = 2;
 
 /// A peer's record of a desync.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

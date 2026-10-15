@@ -86,6 +86,10 @@ pub fn feel_spec(profile: &str, seed: u32) -> NetSpec {
         outages: vec![],
         net_seed: u64::from(seed),
         difficulty: None,
+        exits: vec![],
+        host_freeze: None,
+        profile_changes: vec![],
+        migration: false,
         faults: vec![],
     }
 }

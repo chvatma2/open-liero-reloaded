@@ -120,6 +120,9 @@ pub struct Server {
     bans_warned: Option<Instant>,
     /// The last poll's time.
     now: Option<Instant>,
+    /// The time since the poll before this one: how long a stall that made
+    /// the server step down lasted (N70).
+    gap: Duration,
     /// Rotation entries the content could not build since the last start.
     failed: BTreeSet<usize>,
     /// Every entry failed in a row: no start until the server restarts.
@@ -297,6 +300,7 @@ impl Server {
             bans_checked: None,
             bans_warned: None,
             now: None,
+            gap: Duration::ZERO,
             failed: BTreeSet::new(),
             halted: false,
             announcer,
@@ -388,9 +392,19 @@ impl Server {
         self.peer.last_record()
     }
 
+    /// The running match's confirmed input rows (the ticks below the
+    /// session's frontier; none without a match): what `rl-cli`'s
+    /// real-transport verdict holds a server that freezes or leaves to.
+    pub fn confirmed_rows(&self) -> Vec<[u8; 32]> {
+        let Some(s) = self.peer.match_session() else { return Vec::new() };
+        let log = s.input_log();
+        (0..log.frontier()).map(|t| log.row(t).unwrap_or([0; 32])).collect()
+    }
+
     /// Does what the network, the lobby and the match have for `now`, and
     /// what the server decides: commands, bots, starts, bans, the log.
     pub fn poll(&mut self, now: Instant, log: &mut dyn Write) {
+        self.gap = self.now.map_or(Duration::ZERO, |t| now.saturating_duration_since(t));
         self.now = Some(now);
         self.relays(log);
         let events = self.peer.poll(now, &mut || Keys(0), &mut |_, _, _| {});
@@ -480,6 +494,17 @@ impl Server {
             }
             OnlineEvent::MatchStarting { start, .. } => self.started(&start, log),
             OnlineEvent::MatchEnded(end) => self.ended(&end, log),
+            // N70: the server stalled past `STEP_DOWN_US` during a match
+            // with someone to take over; rl-online stepped down (its `Bye`,
+            // its replay, the lobby gathering again). A server is never a
+            // client, so this is its only host lost.
+            OnlineEvent::HostLost(_) => line(
+                log,
+                format_args!(
+                    "stalled for {:.1} s: the match moved to the next player; the lobby is open again",
+                    self.gap.as_secs_f32()
+                ),
+            ),
             OnlineEvent::DesyncBundle(bytes) => self.save_bundle(&bytes, log),
             OnlineEvent::Reachability(r) => self.reached(r, log),
             // FR12b-3: what became of a join through the relays.
@@ -780,6 +805,11 @@ impl Server {
         }
         self.counters = MatchCounters::default();
         self.start_names = start.slots.iter().map(|s| s.look.name.clone()).collect();
+        // Spec §3.7: the members with a standby and a world, who could host
+        // this match should the server go.
+        let n = self.peer.lobby().succession().iter().filter(|s| s.can_host).count();
+        let players = if n == 1 { "player can" } else { "players can" };
+        line(log, format_args!("succession: {n} {players} take over"));
     }
 
     fn ended(&mut self, end: &MatchEndWire, log: &mut dyn Write) {

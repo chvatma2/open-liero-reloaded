@@ -12,17 +12,20 @@ use clap::ArgGroup;
 use rl_cli::transport::{ClientSpec, PeerMatch, Progress, run_bot_client};
 use rl_content::Content;
 use rl_discovery::{GameList, Invite, ListedGame, Pool, PoolConfig, PoolEvent};
-use rl_net::endpoint::{DEFAULT_PORT, IceConfig, TurnServerSpec};
+use rl_net::endpoint::{DEFAULT_PORT, EndpointConfig, IceConfig, TurnServerSpec};
 use rl_netcode::netsim::Profile;
 use rl_online::join::{join_relays, path_tag};
-use rl_online::{Join, NostrJoin};
+use rl_online::{Join, MigrationConfig, NostrJoin};
 use rl_proto::{FINGERPRINT, PublicKey};
 
 /// Joins a server (or a hosted game), readies whenever the lobby gathers,
 /// plays its matches with a bot, prints each match's confirmed checksums
 /// and leaves; exits with status 1 when it was refused, kicked, lost or
 /// timed out. Prints `path: <path>` once its link to the host opened
-/// (direct, open port, punched, relayed).
+/// (direct, open port, punched, relayed). Should the host go mid-match it
+/// follows the match to another player, or takes it over (spec §3.7):
+/// `migrated: <name> hosts` (or `migrated: hosting`); `host lost: <why>`
+/// when nobody did (exit 1).
 #[derive(clap::Args)]
 #[command(group(ArgGroup::new("game").required(true).args(["join", "invite", "key", "listed"])))]
 pub struct Args {
@@ -68,6 +71,10 @@ pub struct Args {
     /// Leaves as soon as it is in the lobby (exit 0): the join alone.
     #[arg(long)]
     lobby_only: bool,
+    /// Opens no standby: should the host go mid-match, this client follows
+    /// the match to another player but never takes it over (spec §3.7).
+    #[arg(long)]
+    no_standby: bool,
     /// A bot plays this client's worm (the only kind of client for now).
     #[arg(long, required = true)]
     bot: bool,
@@ -301,6 +308,49 @@ fn address(join: &str, deadline: Instant) -> anyhow::Result<SocketAddr> {
     resolved.with_context(|| format!("resolving {join}"))?.ok_or_else(|| anyhow!("{join} has no address"))
 }
 
+/// This client's part in a host migration (spec §3.7), on by default: a
+/// standby on port 0 (its datagrams through `--impair`) that asks the
+/// `--stun` servers, the `--relay`s to listen on once it hosts (none: no
+/// Nostr), and for its joins to a successor through the relays the same
+/// ICE, region, TURN notes and `--allow-local` as its first join;
+/// `--no-standby`: a follower only.
+fn migration_config(args: &Args, impair: Option<Profile>, turn: &[TurnServerSpec]) -> MigrationConfig {
+    let ice = IceConfig {
+        stun: args.stun.clone(),
+        turn: turn.to_vec(),
+        allow_local: args.allow_local,
+        ..IceConfig::default()
+    };
+    let standby = (!args.no_standby).then(|| EndpointConfig {
+        port: 0,
+        impair,
+        impair_seed: args.impair_seed,
+        ice: IceConfig { stun: args.stun.clone(), allow_local: args.allow_local, ..IceConfig::default() },
+        ..EndpointConfig::default()
+    });
+    MigrationConfig {
+        standby,
+        relays: (!args.relays.is_empty())
+            .then(|| PoolConfig { relays: args.relays.clone(), ..PoolConfig::default() }),
+        ice,
+        region: args.region.into(),
+        turn_from_nostr: !args.no_nostr_turn,
+        allow_local: args.allow_local,
+        enabled: true,
+    }
+}
+
+/// The stdout line a migration or a host lost prints (`None` for other
+/// progress).
+fn migration_line(p: &Progress<'_>) -> Option<String> {
+    match *p {
+        Progress::Migrated { me: true, .. } => Some("migrated: hosting".into()),
+        Progress::Migrated { host, me: false } => Some(format!("migrated: {host} hosts")),
+        Progress::HostLost(why) => Some(format!("host lost: {why}")),
+        _ => None,
+    }
+}
+
 /// Prints one finished match: a header line, then `  checksum <tick> <hex>`
 /// per confirmed checksum.
 fn print_match(n: usize, m: &PeerMatch) {
@@ -351,9 +401,12 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     // A join through the relays gathers candidates (N48): STUN from the
     // game's socket, this player's TURN servers; a direct one needs none.
     let ice = match &join.nostr {
-        Some(_) => {
-            IceConfig { stun: args.stun.clone(), turn, allow_local: args.allow_local, ..IceConfig::default() }
-        }
+        Some(_) => IceConfig {
+            stun: args.stun.clone(),
+            turn: turn.clone(),
+            allow_local: args.allow_local,
+            ..IceConfig::default()
+        },
         None => IceConfig::default(),
     };
     let content =
@@ -382,20 +435,27 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         spectate: args.spectate,
         deadline,
         cache,
+        migration: migration_config(args, impair, &turn),
     };
     let mut finished = 0;
-    let run = run_bot_client(content, &spec, &AtomicBool::new(false), &mut |p| match p {
-        Progress::Connected(path, remote) => {
-            println!("path: {}", path_tag(path));
-            eprintln!("connected to {remote}");
+    let run = run_bot_client(content, &spec, &AtomicBool::new(false), &mut |p| {
+        if let Some(line) = migration_line(&p) {
+            println!("{line}");
         }
-        Progress::Started(start, slot) => {
-            let slot = slot.map_or_else(|| "watching".into(), |s| format!("slot {s}"));
-            eprintln!("match starts: {} on {}, {slot}", start.setup.mod_id, start.setup.level_id);
-        }
-        Progress::Finished(m) => {
-            finished += 1;
-            print_match(finished, m);
+        match p {
+            Progress::Connected(path, remote) => {
+                println!("path: {}", path_tag(path));
+                eprintln!("connected to {remote}");
+            }
+            Progress::Started(start, slot) => {
+                let slot = slot.map_or_else(|| "watching".into(), |s| format!("slot {s}"));
+                eprintln!("match starts: {} on {}, {slot}", start.setup.mod_id, start.setup.level_id);
+            }
+            Progress::Finished(m) => {
+                finished += 1;
+                print_match(finished, m);
+            }
+            Progress::Migrated { .. } | Progress::HostLost(_) => {}
         }
     })?;
     if run.desync_bundles > 0 {
@@ -533,5 +593,62 @@ mod tests {
         for bad in ["u@h:1", ":p@h:1", "u:@h:1", "u:p@h", "u:p@"] {
             assert!(turn_server(bad).is_err(), "{bad}");
         }
+    }
+
+    /// Plan 12c: migration is on by default, a standby asking the `--stun`
+    /// servers and listening on the `--relay`s once it hosts; `--no-standby`
+    /// follows only.
+    #[test]
+    fn a_standby_unless_no_standby() {
+        let args = parse(&[
+            "--bot",
+            "--join",
+            "127.0.0.1",
+            "--stun",
+            "127.0.0.1:3478",
+            "--relay",
+            RELAY,
+            "--allow-local",
+            "--region",
+            "europe",
+            "--impair",
+            "bad",
+            "--impair-seed",
+            "9",
+        ])
+        .unwrap();
+        let m = migration_config(&args, Profile::by_name("bad"), &[]);
+        assert!(m.enabled);
+        let standby = m.standby.expect("a standby");
+        assert_eq!(standby.port, 0);
+        assert_eq!(standby.ice.stun, ["127.0.0.1:3478"]);
+        assert!(standby.ice.allow_local);
+        assert_eq!((standby.impair.map(|p| p.name), standby.impair_seed), (Some("bad"), 9));
+        assert_eq!(m.relays.expect("its relays").relays, [RELAY]);
+        assert_eq!(m.ice.stun, ["127.0.0.1:3478"]);
+        assert_eq!(m.region, rl_discovery::Region::Europe);
+        assert!(m.allow_local && m.turn_from_nostr);
+        let args = parse(&["--bot", "--join", "127.0.0.1", "--no-standby", "--no-nostr-turn"]).unwrap();
+        let m = migration_config(&args, None, &[]);
+        assert!(m.enabled && m.standby.is_none(), "a follower");
+        assert!(m.relays.is_none() && !m.turn_from_nostr);
+    }
+
+    #[test]
+    fn migrations_print_their_lines() {
+        assert_eq!(
+            migration_line(&Progress::Migrated { host: "Anna", me: false }).unwrap(),
+            "migrated: Anna hosts"
+        );
+        assert_eq!(
+            migration_line(&Progress::Migrated { host: "Cli", me: true }).unwrap(),
+            "migrated: hosting"
+        );
+        assert_eq!(
+            migration_line(&Progress::HostLost(rl_online::HOST_LOST)).unwrap(),
+            format!("host lost: {}", rl_online::HOST_LOST)
+        );
+        let connected = Progress::Connected(rl_proto::Path::Direct, "127.0.0.1:23400".parse().unwrap());
+        assert_eq!(migration_line(&connected), None);
     }
 }
