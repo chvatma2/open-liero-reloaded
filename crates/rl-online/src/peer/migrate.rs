@@ -398,7 +398,9 @@ impl OnlinePeer {
         if !c.migration.enabled || c.lobby.succession().is_empty() {
             return false;
         }
-        if g.migrations >= MAX_MIGRATIONS {
+        // A spectator still joining has no world to follow a migration
+        // with (ruling SK-8): host lost, not stranded on its join.
+        if g.migrations >= MAX_MIGRATIONS || g.session.is_joining() {
             self.host_lost(HOST_LOST.into());
             return true;
         }

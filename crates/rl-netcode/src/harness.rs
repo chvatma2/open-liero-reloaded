@@ -972,12 +972,20 @@ fn held_of<S: Simulation>(migration: usize, peer: PeerId, session: &Session<S>) 
 }
 
 /// `p` found its host gone (`HostSilent`, `PeerLeft`): its migration
-/// begins, suspended; past [`MAX_MIGRATIONS`] it is host lost at once.
+/// begins, suspended; past [`MAX_MIGRATIONS`] it is host lost at once, and
+/// so is a spectator still joining (ruling SK-8: no world to follow a
+/// migration with, as rl-online's).
 fn begin<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, now: u64) {
     if p.migrating.is_some() || p.taking.is_some() || p.session.is_host() {
         return;
     }
     let from = p.host;
+    if p.session.is_joining() {
+        p.gone = true;
+        w.host_lost.insert(p.id);
+        w.left_from.insert(p.id, from);
+        return;
+    }
     w.began.entry(from).or_default().entry(p.id).or_insert(now);
     if p.migrations >= MAX_MIGRATIONS {
         p.gone = true;

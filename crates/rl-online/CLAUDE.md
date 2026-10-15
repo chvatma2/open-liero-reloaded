@@ -261,8 +261,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       lobby's `Closed` (A7: a leaving or stepping-down host's `Bye` may
       come first) suspend the session and begin a `Migration` from
       `LobbyClient::succession()` (`can_host` as listed, its own entry
-      only with a standby; past `MAX_MIGRATIONS` in the match: host lost
-      at once): `Migrating(Finding)`. Off, outside a match or without a
+      only with a standby; past `MAX_MIGRATIONS` in the match, or a
+      spectator still joining (`Session::is_joining`, ruling SK-8: no world
+      to follow it with; `a_joiner_still_loading_when_its_host_crashes_is_host_lost`):
+      host lost at once): `Migrating(Finding)`. Off, outside a match or without a
       succession: the old ending. The old endpoint stays, polled and fed
       to the session (`HostHeard`). A later migration (N74) starts the
       same way from the new host's succession (it lists everyone but

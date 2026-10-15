@@ -766,6 +766,12 @@ impl<S: Simulation> Session<S> {
         matches!(self.role, Role::Host { .. })
     }
 
+    /// A spectator joining mid-match whose state has not loaded: it has no
+    /// world yet (ruling SK-8: its host gone, it cannot follow a migration).
+    pub fn is_joining(&self) -> bool {
+        matches!(self.role, Role::Joining { .. })
+    }
+
     fn is_spectator(&self) -> bool {
         matches!(self.role, Role::Spectator { .. })
     }
@@ -926,12 +932,17 @@ impl<S: Simulation> Session<S> {
         }
     }
 
-    /// Client or spectator: [`Event::HostSilent`] once its host has sent
+    /// Client, spectator or joiner: [`Event::HostSilent`] once its host has sent
     /// nothing for [`HOST_SILENT_US`], counted only over time this peer
     /// advanced (from `silence_from_us`): a frozen peer that wakes up does
     /// not blame its host for its own sleep.
     fn check_host_silence(&mut self, now_us: u64) {
-        let (Role::Client { host, .. } | Role::Spectator { host }) = self.role else { return };
+        // A joiner too (ruling SK-8): a host that crashed before its state
+        // arrived says no `Bye`.
+        let (Role::Client { host, .. } | Role::Spectator { host } | Role::Joining { host }) = self.role
+        else {
+            return;
+        };
         let from = self.silence_from_us;
         if let Some(p) = self.peers.get_mut(&host)
             && !p.lost

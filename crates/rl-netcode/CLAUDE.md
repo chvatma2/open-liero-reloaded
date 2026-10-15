@@ -205,7 +205,9 @@ model that tests it in one process (spec §9.1).
 - **Migration (session)** (`session/migrate.rs`, constants and
   `fit_report` in `migration.rs`; spec §3.7, N67, N69, N76). Who takes
   over and who rejoins whom is the drivers' part (harness, rl-online).
-  - Silence: a client or spectator pushes `Event::HostSilent` once when its
+  - Silence: a client, spectator or joiner (`Role::Joining`, ruling SK-8:
+    a host crashed before the state arrived says no `Bye`; `is_joining()`)
+    pushes `Event::HostSilent` once when its
     host sent nothing for `HOST_SILENT_US` (2 s), counted only over time it
     advanced (a gap over 1 s between two of its own `advance` calls restarts
     the clock: its own sleep is not its host's silence); a datagram from the
@@ -405,7 +407,9 @@ model that tests it in one process (spec §9.1).
       without itself, and a late peer moves to its end as a follower;
     - a peer's `HostSilent`, or `PeerLeft` from its host, begins its
       `Migration` (virtual time) and `suspend`s it; with `MAX_MIGRATIONS`
-      behind it, host lost at once;
+      behind it, host lost at once, and so is a spectator still joining
+      (SK-8: no world to follow a migration with;
+      `a_joiner_whose_host_goes_is_host_lost`);
     - attempts (the peer's current profile): a successor whose gate is open
       (its `Host` step, or a host) answers after one ping (`contact`) and
       welcomes it two pings later (or `slow_joins`' time); one alive but

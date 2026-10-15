@@ -1278,3 +1278,73 @@ fn no_peer_stalls_after_a_resume_on_bad_links() {
     assert!(stalls.is_empty(), "{} post-resume stall episodes: {stalls:?}", stalls.len());
     assert!(lates.is_empty(), "{} post-resume late inputs: {lates:?}", lates.len());
 }
+
+/// Ruling SK-8 (net-soak's `awful-6s4c1v-seed3163848068`): a spectator
+/// joining mid-match (`Role::Joining`, its state not loaded) finds its host
+/// silent like a member: a host that crashes before the state arrives sent
+/// no `Bye`, and the joiner waited for ever. It has no world to follow a
+/// migration with; its driver ends it (host lost).
+#[test]
+fn a_joiner_finds_its_host_silent() {
+    const J: PeerId = 9;
+    let mut f = ToyFactory { slots: SLOTS, seed: 3 };
+    let host_role = Role::Host { peers: vec![] };
+    let mut h = Session::new(Config::new(SLOTS, 0), host_role, ToySim::new(SLOTS as usize), 0);
+    let mut j =
+        Session::new(Config::new(SLOTS, 0), Role::Joining { host: H }, ToySim::new(SLOTS as usize), 0);
+    let (mut hd, mut jd) = (f.driver(H, None), f.driver(J, Some(Seat::Spectator)));
+    assert!(j.is_joining());
+    h.add_spectator(J, 0);
+    let mut events = Vec::new();
+    for ms in 1..=4_000u64 {
+        let us = ms * 1000;
+        h.advance(us, hd.as_mut());
+        let mut out = Vec::new();
+        h.transmit(&mut |to, ch, b| out.push((to, ch, b)));
+        // The host's datagrams reach the joiner until it crashes at 1 s;
+        // its state never does.
+        if ms < 1_000 {
+            for (_, ch, b) in out.into_iter().filter(|m| m.1 == Channel::Unreliable) {
+                j.receive(H, ch, &b, us);
+            }
+        }
+        j.advance(us, jd.as_mut());
+        j.transmit(&mut |_, _, _| {});
+        events.extend(j.drain_events().into_iter().map(|e| (ms, e)));
+    }
+    let silent: Vec<u64> = events.iter().filter(|e| e.1 == Event::HostSilent).map(|e| e.0).collect();
+    let silent_ms = HOST_SILENT_US / 1000;
+    assert!(
+        matches!(silent[..], [at] if (1_000 + silent_ms - 20..=1_000 + silent_ms + 20).contains(&at)),
+        "once, 2 s after the host's last datagram: {silent:?}"
+    );
+    assert!(j.is_joining(), "still without a state");
+}
+
+/// Ruling SK-8: a spectator still joining (its state not loaded: its link
+/// cut from before it joined) when its host crashes or leaves has no world
+/// to follow the migration with: it is host lost once it finds its host
+/// silent, not a peer stranded at its join (the run never ended in time).
+#[test]
+fn a_joiner_whose_host_goes_is_host_lost() {
+    for profile in [Profile::TYPICAL, Profile::AWFUL] {
+        for how in [ExitHow::Crash, ExitHow::Leave] {
+            let mut sc = mscenario(5, profile, 2);
+            let mut joiner = plan(101, Seat::Spectator, profile);
+            joiner.join_tick = Some(600);
+            sc.peers.push(joiner);
+            sc.outages.push(Outage { peer: 101, from_tick: 590, until_tick: 1_100, one_way: false });
+            sc.exits.push(Exit { peer: HOST, tick: 700, after_us: 0, how });
+            let r = run_checked(&sc);
+            let what = format!("{} {how:?}", profile.name);
+            assert!(
+                !r.events[&101].iter().any(|e| matches!(e, Event::StateLoaded { .. })),
+                "{what}: the joiner got no state"
+            );
+            assert!(r.events[&101].contains(&Event::HostSilent), "{what}");
+            assert_eq!(r.hosts, vec![HOST, 1], "{what}: the others moved on");
+            assert!(r.host_lost.contains(&101), "{what}: {:?}", r.host_lost);
+            assert_eq!(r.left_from.get(&101), Some(&HOST), "{what}");
+        }
+    }
+}

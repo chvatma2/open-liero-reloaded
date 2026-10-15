@@ -869,3 +869,34 @@ fn a_successor_gone_costs_one_connect_each() {
     let direct = |e: &&OnlineEvent| **e == OnlineEvent::Joining(JoinStep::Direct);
     assert_eq!(net.peers[c].events[mark..].iter().filter(direct).count(), 2);
 }
+
+/// Ruling SK-8: a spectator joining mid-match whose host crashes before its
+/// state loads has no world to follow the migration with: it finds its
+/// host silent and ends with `HostLost` (the text the UI already shows),
+/// instead of waiting on its join for ever.
+#[test]
+fn a_joiner_still_loading_when_its_host_crashes_is_host_lost() {
+    let Some(content) = content() else { return };
+    let (mut net, [a, _]) = started(content);
+    let c = net.join_with_migration("Cleo", direct());
+    net.run_until(Duration::from_secs(10), "the joiner's match starts", |n| {
+        n.peers[c].has(|e| matches!(e, OnlineEvent::MatchStarting { .. }))
+    });
+    // Crashed before it sent the joiner its state.
+    net.peers[0].frozen = true;
+    let crashed = Instant::now();
+    assert!(net.peers[c].peer().match_session().is_some_and(|s| s.is_joining()), "still loading");
+    net.run_until(Duration::from_secs(8), "the joiner is host lost", |n| {
+        n.peers[c].has(|e| matches!(e, OnlineEvent::HostLost(why) if why == HOST_LOST))
+    });
+    let took = crashed.elapsed();
+    let silent = Duration::from_micros(HOST_SILENT_US);
+    // Its silence counts from the host's last datagram, just before the crash.
+    assert!(
+        took + Duration::from_millis(100) >= silent && took < silent + Duration::from_secs(2),
+        "{took:?}"
+    );
+    assert!(!net.peers[c].has(|e| matches!(e, OnlineEvent::StateLoaded { .. })));
+    assert!(!net.peers[c].has(|e| matches!(e, OnlineEvent::Migrating(_))), "it does not follow");
+    net.run_until(Duration::from_secs(8), "the players move on", |n| n.peers[a].has(migrated));
+}
