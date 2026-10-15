@@ -831,7 +831,7 @@ pub fn run_observed<S: Simulation>(
                     match *e {
                         Event::HostSilent => begin(p, &mut w, now),
                         Event::PeerLeft { peer } if peer == p.host => begin(p, &mut w, now),
-                        Event::HostHeard => give_back(p, &mut w, local),
+                        Event::HostHeard => give_back(p, &mut w),
                         _ => {}
                     }
                 }
@@ -1002,24 +1002,24 @@ fn begin<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, now: u64) {
 /// N69: `p` hears its old host again. Neither committed nor in contact,
 /// it returns to it; in contact, it remembers, and returns when that
 /// contact is lost ([`lost_contact`]).
-fn give_back<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, local: u64) {
+fn give_back<S: Simulation>(p: &mut Peer<S>, w: &mut Shared) {
     let Some(m) = p.migrating.as_mut() else { return };
     if matches!(m.attempt, Some(Attempt { stage: Stage::Join(_), .. })) {
         m.heard = true;
         return;
     }
-    call_off(p, w, local);
+    call_off(p, w);
 }
 
 /// `p`'s migration is called off (N69): back to its old host, which its
 /// session still follows.
-fn call_off<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, local: u64) {
+fn call_off<S: Simulation>(p: &mut Peer<S>, w: &mut Shared) {
     let Some(m) = &p.migrating else { return };
     if let Some(b) = w.began.get_mut(&m.from) {
         b.remove(&p.id);
     }
     p.migrating = None;
-    p.session.unsuspend(local);
+    p.session.unsuspend();
 }
 
 /// One step of every migration at virtual time `now`: steps, closed gates,
@@ -1080,7 +1080,7 @@ fn migrate<S: Simulation>(
         if let Some(Attempt { to, stage: Stage::Join(_) }) = mg.attempt
             && !open.contains(&mg.order[to].0)
         {
-            lost_contact(p, w, to, now);
+            lost_contact(p, w, to);
         }
     }
     // Attempts whose stage is due.
@@ -1134,7 +1134,7 @@ fn migrate<S: Simulation>(
                 }
                 mg.attempt = Some(Attempt { to, stage });
             }
-            None => lost_contact(&mut peers[i], w, to, now),
+            None => lost_contact(&mut peers[i], w, to),
         }
     }
     // Resumes: every expected peer back (or the window ended) and every
@@ -1154,13 +1154,12 @@ fn migrate<S: Simulation>(
 
 /// `p`'s contact with succession entry `to` is lost; having heard its old
 /// host meanwhile, it goes back to it (N69).
-fn lost_contact<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, to: usize, now: u64) {
+fn lost_contact<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, to: usize) {
     let Some(mg) = p.migrating.as_mut() else { return };
     mg.m.lost_contact(to);
     mg.attempt = None;
     if mg.heard {
-        let local = p.local(now);
-        call_off(p, w, local);
+        call_off(p, w);
     }
 }
 

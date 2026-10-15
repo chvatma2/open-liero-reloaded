@@ -89,16 +89,21 @@ impl<S: Simulation> Session<S> {
             && players.all(|p| now_us.saturating_sub(p.heard_us.max(from)) >= HOST_SILENT_US)
     }
 
-    /// The old host is back before any rehost (N69): advancing again, the
-    /// pace restarting at `now_us` (the pause is not caught up). Nothing
+    /// The old host is back before any rehost (N69): advancing again. Its
+    /// host ran on meanwhile (a host stopped for `STEP_DOWN_US` steps down,
+    /// one cut off from its players leaves), so the pause is caught up, as
+    /// after an outage without migration: the pace ran on while suspended,
+    /// and the ticks it is behind run at `MAX_CATCHUP` an advance (ruling
+    /// SK-4: restarted at our own stale tick, a peer whose link blipped
+    /// played on seconds behind until a fresh median of margins jumped it,
+    /// and on `bad` its slot's fills stalled every other player). Nothing
     /// for a session that rehosted or took over (its resume ends the wait).
-    pub fn unsuspend(&mut self, now_us: u64) {
+    pub fn unsuspend(&mut self) {
         let collecting = self.collection.as_ref().is_some_and(|c| !c.resumed);
         if !self.suspended || self.rehosted || collecting {
             return;
         }
         self.suspended = false;
-        self.restart_pace(now_us, 0);
     }
 
     /// Client or spectator: its host is now `host` (a new link). The host's

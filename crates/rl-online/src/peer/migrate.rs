@@ -999,13 +999,12 @@ impl OnlinePeer {
     /// The migration is called off (N69): back to the old host, which the
     /// session still follows (nothing rehosted).
     fn call_off(&mut self) {
-        let now_us = self.now_us;
         self.drop_attempt();
         self.close_gate();
         let Side::Client(c) = &mut self.side else { return };
         c.migrating = None;
         if let Some(g) = &mut self.game {
-            g.session.unsuspend(now_us);
+            g.session.unsuspend();
         }
         self.events.push(OnlineEvent::Notice(HOST_BACK.into()));
     }

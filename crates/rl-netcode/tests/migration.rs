@@ -262,7 +262,7 @@ fn a_suspended_session_runs_no_tick_sends_no_inputs_and_never_stalls() {
         }
     }
     assert_eq!(m.count(B, |e| matches!(e, Event::Stalled { .. })), 0);
-    m.s.get_mut(&B).unwrap().unsuspend(m.now_ms * 1000);
+    m.s.get_mut(&B).unwrap().unsuspend();
     m.run_ms(200);
     assert!(m.s[&B].current_tick() > tick, "it runs again");
 }

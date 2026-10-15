@@ -209,9 +209,14 @@ model that tests it in one process (spec §9.1).
     `KEEPALIVE_US` (250 ms; a rehosted peer every `REHOSTED_KEEPALIVE_US`,
     20 ms, from the rehost on: each stamp samples its clock at the new
     host), so a collecting new host never looks silent.
-    Margins are not taken; `tick_phase` is `None`. `unsuspend(now)` (the old
-    host is back, N69) restarts the pace at the current tick; nothing after
-    `rehost` or `take_over`.
+    Margins are not taken; `tick_phase` is `None`. `unsuspend()` (the old
+    host is back, N69): the pace ran on while suspended, as the host did,
+    so the pause is caught up at `MAX_CATCHUP` ticks an advance, as after
+    an outage without migration; nothing after `rehost` or `take_over`
+    (ruling SK-4: restarting the pace at our stale tick left a peer whose
+    link blipped seconds behind until a margin jump, its slot filled and
+    every other `bad` player stalling past the outage's recovery; pinned by
+    `tests/timing.rs`' `a_player_back_from_its_hosts_silence_catches_up_the_pause`).
   - `players_silent(now)` (host, ruling SB-2): every player peer heard in
     the match (a stamped datagram) and not abandoned sent nothing for
     `HOST_SILENT_US` (counted from `silence_from_us`, as `HostSilent`),

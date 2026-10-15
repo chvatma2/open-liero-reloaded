@@ -1,9 +1,11 @@
 //! Time sync and the lagging-player rule (spec §3.2) with the toy simulation.
 
-use rl_netcode::harness::{self, HOST, Outage, PeerPlan, Scenario};
+use std::collections::BTreeMap;
+
+use rl_netcode::harness::{self, HOST, MigrationPlan, Outage, PeerPlan, Scenario};
 use rl_netcode::netsim::Profile;
 use rl_netcode::toy::ToyFactory;
-use rl_netcode::{Event, Seat, input_delay};
+use rl_netcode::{Event, FILL_WINDOW, MAX_PREDICTION, Seat, Session, ToySim, input_delay};
 
 fn plan(id: u32, slot: u8, profile: Profile, ppm: i32) -> PeerPlan {
     PeerPlan {
@@ -194,4 +196,92 @@ fn a_player_cut_off_plays_on_once_its_link_is_back() {
         }
     }
     assert!(late.is_empty(), "stalls past the outage (profile, seed, ticks, from, until, limit): {late:?}");
+}
+
+/// Every player's stall episodes, as rl-cli's `StallTracker` sees them
+/// (the host's tick when each began and when the player ran a tick
+/// again), and the host's last tick filling one slot.
+#[derive(Default)]
+struct Watch {
+    host_tick: u32,
+    open: BTreeMap<u32, (u32, u32)>,
+    done: Vec<(u32, u32, Option<u32>)>,
+    slot: u8,
+    last_fill: u32,
+}
+
+impl harness::Observer<ToySim> for Watch {
+    fn on_event(&mut self, peer: u32, e: &Event, s: &mut Session<ToySim>) {
+        if let Event::Stalled { .. } = e {
+            self.open.insert(peer, (self.host_tick, s.current_tick()));
+        }
+    }
+
+    fn on_frame(&mut self, peer: u32, s: &mut Session<ToySim>) {
+        if peer == HOST {
+            self.host_tick = s.current_tick();
+            if s.current_tick().saturating_sub(s.input_log().known_upto(self.slot)) >= FILL_WINDOW {
+                self.last_fill = s.current_tick();
+            }
+        }
+        if let Some(&(from, at)) = self.open.get(&peer)
+            && s.current_tick() > at
+        {
+            self.done.push((peer, from, Some(self.host_tick)));
+            self.open.remove(&peer);
+        }
+    }
+}
+
+/// Ruling SK-4 (net-soak's `bad-13s4c1v-seed2917608641`): with migration
+/// on, a player cut off for over `HOST_SILENT_US` finds its host silent and
+/// suspends; its link back, it hears the host again and unsuspends (N69).
+/// The host ran on meanwhile, so the player catches up the pause, as one
+/// cut off without migration does, and the host stops filling its slot
+/// within the outage's recovery (`Profile::outage_recovery_ticks`).
+/// `unsuspend` restarted the pace at the player's own stale tick instead:
+/// it played on seconds behind until a fresh median of margins jumped it,
+/// its inputs reaching the host that late, and on `bad` every other player
+/// stalled on the host's fills past the recovery (5 clients, 2.3-3.5 s
+/// outages, drifting clocks: the fills ended 13-21 ticks past it).
+#[test]
+fn a_player_back_from_its_hosts_silence_catches_up_the_pause() {
+    let mut late = Vec::new();
+    for seed in 1..=6u64 {
+        let len = 230 + (seed as u32 * 37) % 120;
+        let (from, until) = (600, 600 + len);
+        let peers = (0..5)
+            .map(|i| plan(1 + i, 2 + i as u8, Profile::BAD, [2_000, -2_000, 500][i as usize % 3]))
+            .collect();
+        let mut sc = scenario(seed, peers, until + 600);
+        sc.migration = Some(MigrationPlan::default());
+        sc.outages.push(Outage { peer: 3, from_tick: from, until_tick: until, one_way: false });
+        let mut f = ToyFactory { slots: sc.slots, seed };
+        let mut obs = Watch { slot: 4, ..Watch::default() };
+        let r = harness::run_observed(&sc, &mut f, &mut obs).unwrap();
+        harness::verdict(&sc, &r, &mut f).unwrap();
+        assert_eq!(r.hosts, vec![HOST], "seed {seed}: the match stayed with its host");
+        assert!(
+            r.events[&3].iter().any(|e| matches!(e, Event::HostSilent)),
+            "seed {seed}: the cut-off player found its host silent"
+        );
+        let limit = until + MAX_PREDICTION.max(Profile::BAD.outage_recovery_ticks(len, sc.peers[2].frame_us));
+        if obs.last_fill > limit {
+            late.push(format!(
+                "seed {seed}: the host filled peer 3's slot until {} (limit {limit})",
+                obs.last_fill
+            ));
+        }
+        for (&peer, &(start, _)) in &obs.open {
+            obs.done.push((peer, start, None));
+        }
+        for &(peer, start, end) in &obs.done {
+            if start + MAX_PREDICTION >= from && start <= limit && end.is_none_or(|e| e > limit) {
+                late.push(format!(
+                    "seed {seed}: peer {peer} stalled from {start} until {end:?} (limit {limit})"
+                ));
+            }
+        }
+    }
+    assert!(late.is_empty(), "past the outage's recovery: {late:#?}");
 }
