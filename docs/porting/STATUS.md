@@ -2152,6 +2152,399 @@ Open items (deferred minors):
 - A relay restarted on its router's new address (FR12b-2) drops its
   allocations: they were on the old address, which no peer reaches.
 
+## Host migration decisions (plan 12c)
+
+Decided in `docs/superpowers/plans/2026-10-15-plan-12c-host-migration.md`
+("Decisions this plan makes", N63-N81, PL12c-1 and PL12c-2) and by rulings
+during its execution: PL12c-0 (the plan's decisions accepted without
+asking), PF12c-1 to PF12c-3 (pre-flight), MG-1 to MG-3 (the lobby), PU-1
+and PU-2 (the pump), RS-1 and RS-2 (the time sync after a resume), SB-1
+and SB-2 (the soak's real-transport bugs) and SK-1 to SK-4 (the soak's
+stall rules). Where a ruling changed a decision, the decision below says
+so and gives its final form. "If wrong" is the cost of the decision being
+wrong. Spec §3.7 and §10 are the source; the code's constants are
+`rl_netcode::migration` (timing), `rl_online::migration` (the open
+timeout, the texts) and `rl_game::net::pump`.
+
+- **PL12c-0 - the plan's decisions are accepted** without asking the user
+  (as for plan 12b: all are within the spec), with N70 sent to the
+  pre-flight scan as a named risk (a Windows window drag or resize blocks
+  the event loop). If wrong: rework of one decision.
+- **PF12c-1 - the pre-flight scan's 24 problems** (`preflight.md`, 61
+  rows) were fixed in the plan before Task 1 (12 tasks; `MAX_AHEAD` 6000
+  for a resume; the hooks `test_delay_rejoin` and `test_stop_pump`; the
+  fifth-migration test). If wrong: plan rework only.
+- **N63 - the standby endpoint.** Every client (player or spectator)
+  opens an `Endpoint::host` on port 0 (TCP and UDP, port mapping off, its
+  STUN servers as configured) when it is welcomed. Its gate refuses every
+  offer `NotHost` until the peer takes over (a shared `AtomicBool`, then
+  the lobby's banned set). It reports `ToHost::Standby { port, relays }`
+  (its first 2 Nostr relays) after each `Welcome`; the host takes at most
+  one change per member per `STANDBY_WINDOW_US` (5 s) and holds a later
+  one for `tick`. A client whose standby cannot bind, or that has none
+  (`MigrationConfig::standby = None`, `rl-cli net-client --no-standby`),
+  cannot host but still follows a migration (N79). If wrong: one more
+  listening socket per client while it is online.
+- **N64 - the succession list.** Order: the match's players in join
+  order, then its spectators, then members waiting for the next match
+  (followers only). `can_host`: a `Standby` arrived and the member holds a
+  world (a player, or a spectator that got this match's `Start`: ruling
+  MG-3). A direct address only when the host saw the member at a
+  non-global IPv4 address, its path is not `Relayed` (N59) and its port
+  is at least `MIN_STANDBY_PORT` (1024); anyone else is reached through
+  Nostr. At most 2 relays per entry, each `ws://` or `wss://` of at most
+  128 bytes (a bare `ws://` is refused). The receiving side repeats the
+  address check (`n64_direct`), so a hostile host cannot aim its members'
+  connects at an internet address or a privileged service. `Succession`
+  goes out with the match's `Start` and whenever it changes, coalesced
+  like `Lobby`. **Ruling MG-1** dropped the plan's `member <
+  MAX_MEMBERS` bound on a `SuccessorWire` (member ids grow to 255 before
+  wrapping, so players with an id of 48 or more were left out of the
+  succession and refused `Closed` from their own match; nothing indexes by
+  id): the list stays capped by its length, unique ids and keys. If wrong
+  (N64): a successor on another network is never tried directly, its join
+  takes the relays' few seconds.
+- **N65 - timing.** `HOST_SILENT_US` 2 s (nothing from the host while the
+  peer itself kept advancing); each `can_host` successor has a window of
+  `WINDOW_US` 5 s, in order, from the moment the migration began;
+  `GIVE_UP_US` 10 s after it began (a host is lost at most 12 s after its
+  last message); a `NotHost` is tried again after `RETRY_US` 250 ms. A
+  successor that answered as a host (contact) is kept past its window
+  until the give-up, but only while it commits: one that has not
+  committed by its window's end closes its gate, its pending joins fail
+  (`Endpoint::refuse_pending`) and the peers follow the later windows
+  (pre-flight D8). A peer welcomed by the new host drops its `Migration`.
+  Suspended peers stay where they are (at most `MAX_PREDICTION` past their
+  confirmed tick) and send a frame-less keepalive every 250 ms.
+  **Residual races:**
+  - A peer that contacts a successor in the last moment of its window can
+    see that successor close; it goes on to the next window (D8). The
+    peers' `began_us` differ by their detection skew, which widens the
+    window's edge, and a rejoin handled in the poll where the window just
+    ended still commits (one poll more; the mutation "commit outside the
+    turn" survives the suite).
+  - Two successors can each commit only if their peers reached them in
+    disjoint windows with each failing to reach the other. That needs a
+    network partition between peers, which the harness does not model.
+    The same is the D8 residual: a successor reachable by some peers
+    only (A reachable by C but not by B or D) splits the match; the
+    peers' contact ordering decides.
+  - Through relays D8's closed gate is learned only when the open timeout
+    lapses (6 s, ruling SB-1), so a failed successor costs liveness, not a
+    split. A slow relayed follower makes "reachable by some peers only"
+    likelier.
+  - Breaking the contacts the moment a successor's gate closes is
+    unpinned (mutation M16 of Task 3 survives): a player may wait longer
+    before it reaches the next successor.
+
+  If wrong: only two successors fit in 10 s; when both die with the host,
+  the third is never tried.
+- **N66 - "the match continues within 3 s".** Read as: from the moment
+  the peers find the host gone to the new host's resume, on LAN, good and
+  typical links, when every other peer survives. Measured in the harness
+  (worst of 12 seeds, crash and leave, from the first `HostSilent` or
+  `PeerLeft` to the resume; Task 3): lan 22 ms, good 143 ms, typical
+  422 ms, bad 996 ms, awful 2997 ms; the harness gates 3 s on lan, good
+  and typical and `WINDOW_US` on bad and awful. rl-online's loopback test
+  (a frozen host, real clocks) bounds the resume at 2 s of silence plus
+  3.5 s (its measured time was not recorded). A host that sends `Bye`
+  (a leave, a step-down, a closing link: N76) is followed at once with no
+  2 s wait. A departed peer the new host still waits for costs up to its
+  window (5 s). In the real game a migration takes about 2.5 s on a LAN
+  (2 s of silence and the resume's hold) and, through the relays, up to
+  about 10 s, the successor's relay connections included. If wrong: a
+  stricter reading (3 s from the host's last message) cannot be met with
+  the spec's own 2 s detection on anything but LAN.
+- **N67 - the merge.** The new host takes, per slot, the union of every
+  report's final inputs; all came from the old host, so they cannot differ
+  (a differing value is ignored and counted in `Stats::report_conflicts`;
+  its reporter is repaired by the desync path). A reporter's provisional
+  inputs are taken only where they extend its slot's known prefix. Nothing
+  is filled before the reports are in; at the resume bot slots get their
+  previous final value, the new host's own slot the keys it pressed and
+  abandoned slots (the old host's player, players not back) `Keys(0)`
+  (N6). A report is bounded by `MAX_REPORT_FRAMES` (3000 ticks) and
+  `MAX_CONTROL`, cut from its end; a cut value the host decides otherwise
+  is repaired. A report's known bits are checked against the match's slot
+  count (an out-of-slot report is `Malformed`). **The trust bound:** a
+  rejoined, key-proven member's report sets final values for any slot,
+  the new host's own and the bots' included, for every tick the host
+  lacks, up to `current + MAX_AHEAD` (6000 ticks). An honest reporter
+  never reaches past the old host's horizon, but a hostile member could
+  forge other players' inputs in that gap; the merge trusts members, as
+  the decision says (a hostile host can already end the match). If wrong:
+  a peer with a cut report shows a correction after the resume.
+- **N68 - collection.** The successor commits (drops its old host and
+  becomes the host) at the first proven rejoin, or at once when it expects
+  nobody. It expects the succession entries holding a slot or a spectator
+  seat from the start (`LobbyHost::away_in_match`); followers are never
+  waited for. It resumes when every expected peer rejoined and reported;
+  the window's end stops the wait only for peers not yet back, and the
+  reports of peers already back are waited for `REPORT_WAIT` (1 s, in
+  rl-online) past it, later ones merged as late reports. A successor
+  nobody rejoined by its window's end, while it expected someone, closes
+  its gate (D8). If wrong: a 1-vs-host match continues for the lone
+  survivor against bots.
+- **N69 - the old host speaks again.** A peer that has not committed
+  returns to its old host (`HostHeard`) unless its attempt has contact
+  with a hosting successor; a successor that has not committed closes its
+  standby again. A follower in contact remembers the news and goes back
+  when its contact is lost (rl-online's `Planner::host_heard`; the harness
+  does the same since `d0a1a31`, soak bug 2). **The ~3 s outage cliff:**
+  a peer's own outage is covered only up to about 3 s (a transport
+  cliff: longer, the peer's links close and it cannot return). **SB-2
+  narrows N69:** see SB-2. If wrong: a peer whose own link blipped for
+  2-5 s rejoins its host instead of the match moving; a peer in contact
+  with a successor follows it.
+- **N70 - a stalled host steps down.** A host whose own polls stop for
+  `STEP_DOWN_US` (1.5 s, below `HOST_SILENT_US`) leaves the match with a
+  `Bye` to everyone, when its succession has a `can_host` entry. The gap
+  is measured between two polls from whichever thread (the pump's, PF12c-2).
+  The monotonic gap counts; a wall-clock gap counts only beyond the
+  monotonic gap plus `HOST_SILENT_US` (a suspend), and a backward step
+  never counts (C3). A game host shows "Match lost"; a dedicated server
+  logs it and opens its lobby again. It does not rejoin. If wrong: a host
+  whose whole machine stalled for 1.5 s loses that match.
+- **PF12c-2 - the network pump** (amended by PU-1 and PU-2, beside N70).
+  rl-game's `PeerHandle` holds each online peer (host and client alike,
+  `--net-sim`'s host too) behind one lock shared by the UI thread and a
+  thread `rl-game net`, which polls the peer whenever the UI has not for
+  `PUMP_AFTER`. A Windows window drag or resize, a long match load
+  (`start_online`) or a slow frame blocks the UI thread and, without it,
+  silences a host for 2 s (its peers migrate away from a healthy host and
+  N70 steps it down): this is spec §10's worker idea, on native. The
+  pump's `Keys(0)` and bots still think for the bot slots; its events wait
+  in a bounded queue (`PUMP_QUEUE`, 4096). Nested locking of one peer on a
+  thread panics instead of deadlocking. **Ruling PU-1 (the review's
+  Critical 1)** replaced the plan's 20 ms: `PUMP_AFTER` is **100 ms**
+  (`PUMP_EVERY` 10 ms), well inside N70's 1.5 s and the 2 s host-silent
+  window, because at 20 ms any UI frame slower than about 20 ms (30-45
+  fps) let the pump run ticks with the player's keys zeroed (40-60 % of
+  ticks lost their input). The pump presses the keys the UI last latched
+  (and still held) for up to `PUMP_HOLD` (250 ms), then `Keys(0)` (a long
+  drag must not keep firing). Frames of 17-99 ms poll the pump zero times
+  (an app-path test at 30 and 45 ms). **Ruling PU-2:** the queue never
+  evicts control events (`MatchStarting`, `MatchEnded`, `Disconnected`,
+  `Kicked`, `Refused`, lobby events); it thins the oldest `Confirmed`
+  within a match first (keeping kills, spawns, messages and the end, never
+  the newest), then the oldest other event. N21's hidden-window 4 ms wake
+  is kept: a hidden frame does more than poll. App-path tests:
+  `a_host_whose_frames_stop_keeps_hosting`,
+  `a_client_whose_frames_stop_stays_joined`,
+  `a_match_load_does_not_silence_the_host`. If wrong: a stall under 100 ms
+  is not covered (peers tolerate 2 s), and a lock shared between two
+  threads has to be maintained.
+- **PF12c-3 - no "former hosts skipped" rule.** A former host is never in
+  a later succession (it left or stepped down and does not rejoin), so the
+  plan's rule was untestable and was dropped; N74's cap stays. If wrong: a
+  former host may host again after rejoining.
+- **N71 - migration happens only during a match** (from `Start` until the
+  host's `Ended`); a host lost in the lobby or on the results ends the
+  game as before ("the connection to the host was lost"). If wrong: a
+  group whose host quits between matches must host again.
+- **N72 - the migrated game is closed.** It takes back the succession's
+  members by key with their member ids, seats and admin marks, and nobody
+  else (`Refusal::Closed`); it has no password, is not announced and maps
+  no port. A member rejoining after the resume is welcomed as a mid-match
+  joiner (waiting, then watching from a state, then playing the next
+  match; its slot stays `Keys(0)`), keeps its replay, and its migration
+  count is cleared at `Ended`. A late rejoiner welcomed after the new
+  host's match has ended goes to the lobby (`UiAction::MatchLeft`).
+  **Ruling MG-2** (amends the brief's signature): `LobbyHost::migrated`
+  also takes the match's member ids (from the `MatchStartWire`) and
+  reserves them all, so a departed player's id cannot go to a new member
+  while its slot is still in the match. **Ruling MG-3:** the lobby
+  records per member whether it got this match's `Start`; `can_host` and
+  `away_in_match` use it (`migrated` approximates it from the state), so a
+  world-less mid-match spectator is never waited for or chosen. If wrong:
+  new players need a fresh hosted game.
+- **N73 - the joins to a successor.** Direct first when the entry has an
+  address (`MIGRATION_CONNECT_TIMEOUT`, 1 s; a failed direct connect is
+  not tried again within the window), then through Nostr (the entry's
+  relays first, then the peer's own, cut to 8, with the successor's key
+  expected). A successor listens on its own relays from the moment its
+  gate opens and stops if it cancels. A `NotHost` through the relays is
+  refused for the window. **Ruling SB-1 (amends the Task 7 timeouts):**
+  one open timeout for every route, `ANSWER_OPEN_TIMEOUT` **6 s** after
+  the answer (Task 7 had 2 s for a direct link and 6 s through relays,
+  measured to rl-net's delayed `Connected`, up to 1.5 s after the link
+  opened). A direct join runs the same ICE, DTLS and SCTP handshake as a
+  relayed one: on `bad` (150 ms, bursty 5 % loss) str0m's lost checks go
+  again 0.25, 0.75, 1.75 and 3.75 s after the first, and direct links
+  opened 0.75-3.3 s after the answer (soak-transport-125 lost live
+  clients as "host lost" at 2 s, 3 of 3 reruns; 6 s passes). A successor
+  that died or froze after answering holds its joiners that long, bounded
+  by its window and the give-up; a follower can be held up to 6 s through
+  relays. If wrong: up to 1 s more on a stale direct address, 1-2 s more
+  through the relays than a listener kept open all match, and 6 s instead
+  of 2 s for a dead-after-answer successor.
+- **N74 - repeated migrations.** At most `MAX_MIGRATIONS` (4) per match;
+  past that, host lost (the count is carried by a late rejoiner). The
+  new host's succession lists everyone but itself. If wrong: a fifth
+  migration in one match ends it.
+- **N75 - bots restart** at the new host (`Bot::with_cache` for the bot
+  slots of the `MatchStartWire`, on the world as it stands, a new lazy
+  area cache). Only the host thinks for bots, so nobody's simulation
+  changes. If wrong: bots forget their routes once per migration.
+- **N76 - the host's `Bye`, or its link closing, during a match starts the
+  migration at once**, with no 2 s wait (also the lobby client's `Closed`,
+  pre-flight A7). If wrong: none known.
+- **N77 - net-soak.** `cargo xtask net-soak [--minutes N] [--seed S]`
+  (default 10 minutes, a clock seed printed and replayable; release
+  build; not in `full`) runs seeded random net-sim cases on the real
+  simulation (both mods, the 4 bundled levels, 2-16 worms, 1-7 clients,
+  0-2 spectators, 0-3 profile changes, 0-2 outages, a host crash, leave
+  or freeze in half of them, a spectator arriving) with every 5th run a
+  real-transport case on 127.0.0.1, half of them with a server freeze or
+  leave (the other half a clean control run with migration off). A
+  failure is kept in `target/failures/` (a `NetCase`, replayable with
+  `rl-cli net-sim --from`; a transport failure is `soak-transport-<seed>/`),
+  at most 32 per invocation, and the soak stops at the cap. A
+  `bless-regression --from` makes a failing case a golden; two soak finds
+  are in `fixtures/net/cases`. The memory test (`allocation_counter`)
+  catches only multi-MiB leaks. If wrong: soak-only bugs surface
+  overnight, not in `full`.
+- **N78 - protocol stays 2** (appended variants; plan 12b's reasoning:
+  online play is unreleased); no new dependency. Task 8b appended
+  `Control::Resume`'s fields and `Datagram::Resume`, equally unreleased.
+- **N79 - a peer that cannot host** (no standby) follows a migration but
+  is never a successor.
+- **N80 - privacy of the succession.** A member's LAN address and standby
+  port reach only the other members of its match, and only when the host
+  saw it on a private network (N64). A successor's Nostr listener answers
+  with its own identity key, as any host's does.
+- **N81 - what the players see.** The HUD's top line, while moving: "The
+  host is gone: finding who takes over…", then "…moving the game to
+  <name>…" or "…you are taking over the game…". After it the log says
+  "<name> is now hosting" or "You are now hosting"; a call-off logs "The
+  host is back: the match goes on"; a late rejoiner "You came back after
+  the handover: you watch until the next match". The new host's lobby
+  shows host controls and, in its Invite section, the final text of
+  `MIGRATED_LISTING`: "Taken over from the host: closed to new players"
+  (the plan said "only this match's players can join"). **Host lost:** a
+  screen titled "Host lost" with the reason ("The host left and no other
+  player could take over the game."), "The match's replay is saved in
+  Replays." once saved, and Replays and Back; the replay is the peer's
+  confirmed inputs. For the host itself, whose own game stalled (N70:
+  "Your game stopped for N.N s, so the match moved on without you.") or
+  whose network cut it off (SB-2), the same screen is titled "Match lost".
+- **PL12c-1 / PL12c-2.** 12 tasks, the wire and the sans-IO netcode with
+  its harness first so every rule has a seeded test before any socket
+  (PL12c-1); spec §9.7's scenarios gain `migration` (PL12c-2, below).
+- **RS-1 / Task 8b - the time sync after a resume.** Task 8's review found
+  that on bad links clients stalled again after a resume (clients restarted
+  one trip late and `Jumped` acted on stale margins): 22 of 80 toy
+  migrations, up to 119 ticks. Fixed in rl-netcode, with Resume's wire
+  extended: the new host holds its first tick `D` behind R (the longest
+  rejoined round trip, whole ticks, at most `MAX_RESUME_HOLD_US` 500 ms);
+  `Control::Resume { tick, at_ms, first, frames }` places each player's
+  pace on its own clock (`at_ms` = the moment its inputs reach the new
+  host, from the median of `arrival - sent` per peer, clamped to
+  ±`RESUME_AT_BOUND_MS` 2 s) and carries the finals the player lacks;
+  `Datagram::Resume` is an unreliable twin in every datagram to a rejoined
+  player until its keys arrive or `RESUME_REPEAT_US` (2 s), because a
+  reliable message lost once arrives a ping late; rehosted peers' keepalives
+  go every 20 ms (about 3 KB/s per player during a collection); jumps
+  ignore out-of-order margins; `tick_phase` is `None` while a pace is held.
+  Measured, before and after: the pin test's 80 bad migrations 35 post-resume
+  stall episodes to 0; 400 toy bad runs 233 to 0; 90 real-world net-sim bad
+  runs (24 runs, 56 episodes) to 0; the grid's bad crash/leave/freeze 8/0/2
+  to 0/0/0. Normal play is unchanged (net-feel byte-identical to the
+  baseline). `awful` stalls after a resume as it does without one (its
+  steady state: 2332 episodes in ticks 800-1500 of 20 seeds with no
+  departure, 2413 migrated). The integral term is still zeroed at a rehost
+  (keeping it left 3 stall episodes in 400 runs). If wrong: a medium change
+  to Task 2's code.
+- **RS-2 - net-sim's stall excusal is bounded.** `RESYNC_TICKS` is gone: a
+  stall is excused only if its episode starts and ends inside the window
+  from the old host's departure (less `MAX_PREDICTION`) to the resume plus
+  `MAX_PREDICTION` (`StallTracker`, rl-cli); N66 bounds the migration
+  itself. If wrong: unrelated stalls pass inside a long window.
+- **SB-1** is under N73. **SB-2 - a host cut off from its players leaves
+  its match.** A host that hears none of its players for `HOST_SILENT_US`
+  during a match, with migration on, ends its match view with
+  `CUT_OFF` ("Connection lost: the others play on under a new host."),
+  keeping its replay (`Session::players_silent`; the server logs it and
+  opens its lobby again) instead of playing alone. Its peers, finding it
+  silent at the same moment, move on, so a host's own network drop must not
+  leave it playing a ghost match. This narrows N69: a host's own drop of
+  more than 2 s always hands the match on. The harness models it. If
+  wrong: a host whose players all crashed at once sees that text instead of
+  "everyone left".
+- **SK-1 to SK-3 - the soak's stall rules.** Outage windows join the
+  migration windows in one episode check (SK-1): for the peer cut off (all
+  peers while it is the current host) `from - MAX_PREDICTION ..= until +
+  outage_recovery_ticks`; a spectator's outage excuses nothing; every stall
+  rule stays on in soak cases. Two real netcode defects were found after an
+  outage (SK-2, commit `552b6f0`): the catch-up inputs came late, and the
+  first margin jump went into the prediction limit; missed inputs were
+  resent one 64-frame datagram per round trip, now one per tick.
+  `Profile::outage_recovery_ticks` is two worst-case round trips plus
+  re-simulation at the catch-up rate; a called-off migration's window is
+  excused, outages add up, on `bad` the host's fills stall others
+  (excused), and a player that left is not judged by its last stall (SK-3).
+  The soak also found harness bugs: a host cut off while its peers move on
+  is "left behind" and its rows bounded like an exited host's, and the
+  harness's N69 remembers contact as rl-online does. Two flakes were fixed
+  or noted: rl-server's `nat_check` timing test (`close_within`) and the
+  e2e `Click("Join")` (autoplay's `ClickUntil` waits for a click's effect;
+  the mechanism is unproven). If wrong: none (rules only).
+- **SK-4 - open: bad-link stalls with drifting clocks.** Under
+  investigation. Four soak cases, all `bad` with 4-6 clients and drifting
+  clocks, stall outside any outage window and fail on the pre-round
+  netcode too: `bad-9s6c0v-seed24272975`, `bad-9s5c2v-seed1365992821`,
+  `bad-14s6c1v-seed1148502858` and `bad-13s4c1v-seed2917608641` (in
+  `target/failures`, not committed). Bad links are a target profile
+  (net-feel: no stalls), so this blocks nothing in plan 12c but remains a
+  defect until fixed. The controller amends this item with the outcome.
+  If wrong (a harness artefact rather than a netcode defect): a soak that
+  fails on bad links for the wrong reason.
+
+**Measurements.**
+- Harness resume after detection per profile: see N66 (Task 3's table),
+  and Task 8b's `bad` figures under RS-1.
+- rl-online's loopback tests (real clocks, `127.0.0.0/8`, in `check`):
+  4-17 s each (the frozen host 16.7 s with the match's end and results;
+  D8's 15.2 s; host lost 11.9-13.5 s after the freeze); a slow relayed
+  link opened about 3.75 s after the answer and the resume came about
+  4.0 s after `Connecting`.
+- `cargo xtask net-nat`: 12 scenarios 145.6 s (11 took about 97 s); the
+  `migration` scenario alone 48.9 s (the host killed 8 s into the match,
+  the first successor hosts, the other client rejoins relayed, 331
+  identical checksum lines, 2 relay allocations). It also fails without the
+  successor's standby (`--no-standby`), checked once.
+- Net-sim grid in the full tier (`net_migration_grid`): 28.8-30.3 s; the
+  server freeze and leave transport cases 23.7-23.9 s each.
+- The added `full` time (net_sim's and transport's migration cases and the
+  `net-nat` scenario): about 2 minutes by the plan's estimate plus the
+  scenario's 49 s; the plan's one `full` run's total and share are
+  recorded by the controller below once measured.
+- A 3-minute `net-soak` found one real desync (the soak-bug chain above);
+  after the fixes seeds 101, 201, 301 and 401 ran with 0 failures (the
+  SK-4 cases appeared in later runs).
+
+Open items (deferred minors):
+
+- Task 3: breaking contacts the moment a successor's gate closes is
+  unpinned (a player waits longer before reaching the next successor if it
+  broke).
+- Task 8b: a hostile host's `Resume` with a tick far below ours can hold a
+  client up to 60 s (a hostile host can already end the match).
+- Task 8b: the unreliable `Resume` copy bursts 35-49 KB/s for 0.1-2 s per
+  migration (no 1-second window exceeds 24 KiB/s).
+- Task 8b: its determinism test covers one scenario and no stats; one
+  interpolation step back remains at the resume hold's end.
+- Task 9: the lobby's setup panels overflow 320- and 384-point windows
+  (older than this plan; not at 4K or ultrawide).
+- Task 10: the net-nat migration scenario's `relay_allocates` is satisfied
+  before the crash (the post-migration `path: relayed` line is the real
+  proof); the first successor's order relies on Docker's start latency; a
+  hardcoded `MIGRATION_LIMIT` in a message; a bound message drops its
+  seconds.
+- Task 6: the dead-successor timeout (6 s after SB-1) and the resume's
+  one-poll commit check are the residuals under N65; the resume's report
+  deadline `REPORT_WAIT` is decided in rl-online, not rl-netcode.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

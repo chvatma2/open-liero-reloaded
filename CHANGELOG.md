@@ -6,6 +6,43 @@ All notable changes to rust-liero are recorded here. The format follows
 
 ## Unreleased
 
+### Added — host migration
+
+- A match goes on when its host crashes, leaves or freezes: the players
+  move it to a new host (the first player who joined, then the next).
+  See "When the host leaves" in `docs/online.md`.
+- **What players see:**
+  - While the match moves, the top line reads "The host is gone: finding
+    who takes over…", then "…moving the game to <name>…" (or "…you are
+    taking over the game…"). The log then says "<name> is now hosting"
+    (or "You are now hosting"); if the old host comes back first, "The
+    host is back: the match goes on".
+  - The new host's lobby is closed: only this match's players are taken
+    back ("Taken over from the host: closed to new players"). A player
+    who comes back late watches until the next match.
+  - **Host lost:** when no player can take over, a screen says why and
+    where the match's replay is saved (Replays, Back).
+  - **Match lost:** the host whose own game stalled for 1.5 s, or whose
+    network cut it off from its players ("Connection lost: the others
+    play on under a new host."), sees this screen: the match moved on
+    without it, and its replay is kept.
+  - A migration takes about 2.5 s on a LAN and up to about 10 s through
+    the relays; a match is moved at most 4 times.
+- **A network pump:** the game polls its online connection on its own
+  thread whenever its window has not for 100 ms, so dragging or resizing
+  the window, or a long match load, no longer silences a host (its
+  players used to migrate away from a healthy host) or drops a client.
+  Only a stalled machine does.
+- `cargo xtask net-soak [--minutes N] [--seed S]` plays seeded online
+  cases for N minutes (default 10), host crashes, departures and freezes
+  among them, and keeps each failure as a replayable case in
+  `target/failures`. It is not part of `full`.
+- `rl-cli net-sim` takes `--exit peer:tick:crash|leave`,
+  `--host-freeze from:until`, `--profile-change tick:peer:profile` and
+  `--migration`; `net-client` migrates by default (`--no-standby` makes
+  it a follower only); `cargo xtask net-nat` gains the `migration`
+  scenario (a host killed behind a router).
+
 ### Added — through routers
 
 - Two players behind ordinary home routers play each other with no manual

@@ -209,7 +209,8 @@ beside the executable, else in the working directory).
   `succession_line`, "2 players", "1 player and 1 spectator", "nobody");
   on `HostLost` (N70:
   a server stalled past `STEP_DOWN_US` during a match with someone to
-  take over; a server is never a client, so this is its only host lost)
+  take over; a server is never a client, so its host losses are this and
+  `CUT_OFF`)
   `"stalled for {s:.1} s: the match moved to the next player; the lobby
   is open again"`, `s` the gap between its last two polls; on
   `HostLost(CUT_OFF)` (ruling SB-2: it heard none of its players for

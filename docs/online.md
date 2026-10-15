@@ -465,6 +465,116 @@ untick "Open the game's port on my router (UPnP/NAT-PMP/PCP)" in Options
 → Online on the host and host again: the lobby then says "Port mapping
 is off: …", and the joiner's tag should be `punched`.
 
+## When the host leaves
+
+A match does not end when its host does. If the host quits, crashes, loses
+its network or freezes during a match, the other players move the game to
+a new host and play on. This works in a hosted game and on a dedicated
+server (`rl-server`), over the LAN, direct links and the relays.
+
+**What you see.** The top line of the match reads "The host is gone:
+finding who takes over…" and then "The host is gone: moving the game to
+Anna…" (on the player who takes over: "…you are taking over the game…").
+The game stands still for those seconds and then goes on from where it
+was; your own ship and the others keep their positions and nothing is
+replayed. The log says "Anna is now hosting" (the new host sees "You are
+now hosting"). If the old host comes back before anyone took over (its
+own network blipped), the log says "The host is back: the match goes on"
+and nothing moves.
+
+**Who takes over.** The first player who joined, then the next, then the
+spectators who got the match's start; a player whose game could not open
+its standby port (a "follower") never takes over but follows. Each gets 5
+seconds in turn. A match moves at most 4 times; after that, or when nobody
+can take over within 10 seconds, the match ends with "Host lost".
+
+**How long it takes.** A host that quits (or whose game window you close)
+is followed at once. A host that just vanished (a crash, a pulled cable)
+is noticed after 2 seconds of silence, then the match resumes about half a
+second later: about 2.5 seconds on a LAN, up to about 10 seconds through
+the relays (the new host's relay connections included). Poor links
+(`bad`, `awful`) can add a second or two; the longer a migration takes,
+the more time the players who were still behind spend waiting.
+
+**The new host's game is closed.** It takes back only this match's
+players, with the same names and seats, and nobody else: no password, not
+listed, no router port opened. Its lobby reads "Taken over from the host:
+closed to new players". A player who comes back after the handover (a
+slow link, a long outage) is let in and watches until the next match; its
+ship stays idle for the rest of this one.
+
+**Host lost** is a screen with the reason and, when the match's replay is
+saved, "The match's replay is saved in Replays." Replays opens the Replays
+screen. The replay is the inputs your game confirmed, saved like any
+online match's, and it plays like the others'.
+
+**Match lost** is the same screen for the host itself, when the match went
+on without it: its own game stopped for 1.5 seconds ("Your game stopped
+for 1.5 s, so the match moved on without you."), or its network cut it off
+from all its players ("Connection lost: the others play on under a new
+host."). Its replay is kept too.
+
+**What to expect on poor links and busy PCs.**
+- Dragging or resizing the game's window, or a long match load, does not
+  cost the match: the game keeps its online connection on a thread of its
+  own (the network pump), so a host or a client is not dropped. The
+  pump keeps the keys you hold for a quarter of a second, then lets go (a
+  long drag does not keep shooting). Only a whole PC that stopped for
+  1.5 seconds (a suspended laptop, an overloaded VPS) loses its match as
+  a host.
+- A host that disappears for more than 2 seconds (its own Wi-Fi) hands
+  the match on and sees "Match lost" when it is back; the others play on
+  without it. A blip shorter than that, or one of the old host that ends
+  before anyone took over, is ridden out.
+- A player whose own link is down while its host is fine is waited for
+  only up to about 3 seconds of outage; longer, the match may move on
+  without it, and it comes back, if its links do, as a watcher.
+- On `bad` links a successor can take up to 6 seconds to open a link
+  after it answered: players wait for it before moving to the next one.
+- A host and its successor on different networks reach each other through
+  the relays unless they share a LAN, which costs a few more seconds; a
+  game with no relays at all (a LAN game) migrates only to players it
+  reaches directly.
+
+**Trying it.** `cargo xtask net-soak` plays seeded online cases with host
+crashes, departures and freezes; `rl-cli net-sim --exit 0:600:crash`,
+`--host-freeze from:until` and `--profile-change` replay one by hand, and
+`rl-cli net-client --no-standby` is a follower that never takes over.
+
+### Try a migration (playtest)
+
+This adds to "Two PCs across home routers" and needs three players: three
+PCs, or two PCs and a dedicated server (`rl-server`, see "Dedicated
+server") on a third machine or a VPS. Use the release zips.
+
+1. **Three PCs:** the first hosts (Multiplayer → Host a game, Invite
+   only), the other two join with the invite code. Start the game with
+   `./rl-game | tee rl-game.txt` (Windows: `.\rl-game.exe | Tee-Object
+   -FilePath rl-game.txt`) on all three so the output is kept.
+   **Two PCs and a server:** run `rl-server` with `visibility: Invite`
+   and `fill_bots: 1` (see "Dedicated server"), the two PCs join it with
+   the invite code, and the server is the host.
+2. **Start a match** with the three (or two plus the server's bots) and
+   let it run for about 10 seconds.
+3. **Quit the host mid-match.** Close the host's game window (or kill the
+   server: `Ctrl+C` is a leave, `kill -9` or pulling the network cable is a
+   crash; try each in turn, in separate matches).
+4. **Check the others.** Both should see "The host is gone: …moving the
+   game to <name>…", the game stands still for a few seconds and goes on,
+   and the log says "<name> is now hosting". The new host's lobby, after
+   the match, shows "Taken over from the host: closed to new players" and
+   the host's controls.
+5. **At the results, compare the replays.** Both players' Replays screens
+   list the match; the replays, played, should end the same (equal
+   scores). The online results' scores are equal on both PCs.
+6. **If anything differs** (a stall of more than a few seconds, the
+   screens, the replays, a desync), keep both PCs' `desyncs/` folders and
+   `rl-game.txt` files and note what the top line said and for how long.
+7. **Also try:** drag the host's window around for 5 seconds mid-match
+   (no migration should happen), and unplug a player's cable for 5 seconds
+   (the others should play on; that player is let in as a watcher when it
+   is back).
+
 ## Missing content
 
 You need not have the host's packs. When a game uses a mod, level or
