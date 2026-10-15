@@ -845,12 +845,21 @@ impl Session {
         }
         // At the end the peer stops presenting (its session goes on to
         // confirm and drain): the world presented last is drawn from then
-        // on, taken once, until the shell leaves the match.
+        // on, taken once, until the shell leaves the match. So too for a
+        // player back after a migration's resume (a late rejoiner, plan 12c
+        // N72): its peer dropped the match it played, and it watches once
+        // the next start comes (the match drawn as it last was meanwhile,
+        // never its start world).
+        let ended = rest.iter().any(|e| matches!(e, OnlineEvent::MatchEnded(_)));
+        let late = rest.iter().any(|e| matches!(e, OnlineEvent::Migrated { me: false, .. }));
         if !self.frozen
-            && rest.iter().any(|e| matches!(e, OnlineEvent::MatchEnded(_)))
+            && (ended || late)
             && let Driver::Online(d) = &mut self.driver
+            && let Some(taken) = d.handle().with(|p| {
+                if ended || p.match_session().is_none() { Some(p.take_ended_world()) } else { None }
+            })
         {
-            if let Some(w) = d.handle().with(|p| p.take_ended_world()) {
+            if let Some(w) = taken {
                 self.world = w;
             }
             self.frozen = true;

@@ -28,6 +28,10 @@ pub const CHAT_CHARS: usize = 200;
 /// any other phase is a match under way, which Back asks about first.
 pub const PHASE_LOBBY: &str = "Lobby";
 
+/// The [`LobbyView::listing`] of a lobby whose host took the match over
+/// from a lost host (plan 12c, N72): nobody new may join it.
+pub const MIGRATED_LISTING: &str = "Taken over from the host: only this match's players can join";
+
 /// A [`MemberView::seat`] that watches instead of playing.
 pub const SEAT_SPECTATOR: &str = "Spectator";
 

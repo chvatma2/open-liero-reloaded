@@ -107,6 +107,11 @@ impl OnlineDriver {
         &self.peer
     }
 
+    /// The peer's handle, to change (tests stop its pump).
+    pub fn handle_mut(&mut self) -> &mut PeerHandle {
+        &mut self.peer
+    }
+
     /// The peer back (the match is over: the lobby goes on), its pump
     /// still running.
     pub fn into_handle(self) -> PeerHandle {

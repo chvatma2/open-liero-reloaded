@@ -658,10 +658,12 @@ fn the_apps_internet_tab_lists_games_without_an_online_game() {
     let mut app = app_of(sh);
     app.shell_mut().act(UiAction::Open(Screen::Multiplayer));
     assert!(!app.shell().online_active(), "no online game");
+    // The note may show before the relay's end of stored events (`EOSE`),
+    // which turns the tab from Searching to Listed: both are waited for.
     app_until("listed", Duration::from_secs(10), &mut app, &mut [], |s| {
         s.data.internet.games.iter().any(|g| g.name == "Office game")
+            && s.data.internet.status == InternetStatus::Listed
     });
-    assert_eq!(app.shell().data.internet.status, InternetStatus::Listed);
 }
 
 /// The real app fills the LAN list with no online game: an announcement

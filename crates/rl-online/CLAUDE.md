@@ -334,7 +334,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       only until its resume (`drop_away`); a member welcomed after it
       gets a new id, `Waiting`. Its client sees the id change at the
       welcome: it makes the replay of what it confirmed (as at a host lost,
-      N18) and drops its old `Game`, says `Migrated { me: false }` and the
+      N18), keeps its world for the game to draw (`take_ended_world`,
+      plan 12c Task 9: never the start world while it waits to watch) and
+      drops its old `Game`, says `Migrated { me: false }` and the
       new link's `Connected` at once, keeps the match's migration count for
       its mid-match session (cleared at the match's `Ended`, so the next
       match counts from 0), and watches as a mid-match joiner (its content list,

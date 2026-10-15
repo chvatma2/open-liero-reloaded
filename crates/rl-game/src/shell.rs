@@ -89,6 +89,7 @@ use crate::video::{self, Overrides};
 mod joining;
 mod online;
 pub use joining::{NO_WAY_TO_JOIN, UNMAP_WAIT, Unmapping, resolve};
+pub use online::LATE_REJOIN;
 
 /// What the shell needs besides the menus' state.
 #[derive(Clone, Debug)]
@@ -211,6 +212,12 @@ pub struct Shell {
     slow_load: Option<Duration>,
     /// The local player's keys held now (`set_held_keys`; all until told).
     held_keys: Keys,
+    /// Clients this shell starts take part in host migration (plan 12c;
+    /// tests turn it off, `test_migration`: D7).
+    migration: bool,
+    /// Tests only: clients this shell starts never host (no standby, N79:
+    /// `test_no_standby`).
+    no_standby: bool,
 }
 
 /// A change to an endpoint's ICE settings (tests: a loopback base, a
@@ -281,6 +288,8 @@ impl Shell {
             ice_hook: None,
             slow_load: None,
             held_keys: Keys(u8::MAX),
+            migration: true,
+            no_standby: false,
         };
         shell.data.default_relays = DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect();
         shell.data.default_stun = DEFAULT_STUN.iter().map(|s| s.to_string()).collect();
@@ -340,6 +349,8 @@ impl Shell {
             ice_hook: None,
             slow_load: None,
             held_keys: Keys(u8::MAX),
+            migration: true,
+            no_standby: false,
         }
     }
 

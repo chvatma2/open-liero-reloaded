@@ -98,6 +98,9 @@ pub struct Overlay<'a> {
     /// The host says this client's inputs are late (spec §3.2): the
     /// warning at the top.
     pub lagging: bool,
+    /// The host is gone and the match is moving (plan 12c,
+    /// `Shell::migration_line`): said at the top instead.
+    pub migrating: Option<String>,
 }
 
 /// Where a name label of `size` goes for a worm at `at` (points): centred
@@ -199,16 +202,25 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
     if let Some(net) = &o.net {
         network(ui.painter(), o.map.points_rect().intersect(ui.max_rect()), net);
     }
-    if o.lagging {
+    // The playfield's top line: a migration under way, else lagging.
+    let top = match (&o.migrating, o.lagging) {
+        (Some(m), _) => Some((m.as_str(), MIGRATING_COLOUR)),
+        (None, true) => Some((CONNECTION_PROBLEM, Color32::from_rgb(255, 90, 60))),
+        (None, false) => None,
+    };
+    if let Some((text, colour)) = top {
         let r = o.map.points_rect();
-        shadowed(
-            ui.painter(),
-            r.center_top() + egui::vec2(0.0, 28.0),
-            Align2::CENTER_TOP,
-            CONNECTION_PROBLEM,
-            FontId::proportional(20.0),
-            Color32::from_rgb(255, 90, 60),
+        // A long line (a long name) is cut to the picture, never past it.
+        let font = FontId::proportional(20.0);
+        let p = ui.painter().with_clip_rect(r);
+        let galley = p.layout(text.to_string(), font, colour, (r.width() - 16.0).max(40.0));
+        let at = egui::pos2(r.center().x - galley.size().x / 2.0, r.top() + 28.0);
+        p.galley_with_override_text_color(
+            at + egui::vec2(1.0, 1.0),
+            galley.clone(),
+            Color32::from_black_alpha(200),
         );
+        p.galley(at, galley, colour);
     }
     // With the menus, the results are their screen (buttons); without,
     // OLX's keys under them. OLX shows "Game Over" for `GAMEOVER_WAIT`
@@ -227,6 +239,9 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
 
 /// The warning while the host fills this client's late inputs (spec §3.2).
 pub const CONNECTION_PROBLEM: &str = "Connection problem";
+
+/// A host migration's line (plan 12c): amber, news rather than a fault.
+const MIGRATING_COLOUR: Color32 = Color32::from_rgb(255, 200, 80);
 
 /// F3: the network's numbers (spec §7.3) at the playfield's top right.
 fn network(p: &Painter, field: egui::Rect, net: &crate::net::NetView) {

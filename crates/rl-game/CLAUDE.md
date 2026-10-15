@@ -248,7 +248,11 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   presented last once (`OnlinePeer::take_ended_world`) into
   `Session::world` and freezes there (`frozen`; no clone per frame),
   pinned by `an_online_match_runs_headless` (when the pump ran ticks, the
-  frozen world's colour terrain is rebuilt from it). The other events (lobby,
+  frozen world's colour terrain is rebuilt from it); so too at a late
+  rejoiner's `Migrated { me: false }` (plan 12c, N72: its peer dropped
+  the match it played and kept its world, `take_ended_world`), until the
+  new host's start replaces the view (it watches; never its start world:
+  `a_late_rejoiner_watches_until_the_next_match`). The other events (lobby,
   chat, end, connection) are handed back for the shell. On
   `Disconnected`, `Kicked` or `Refused` the peer has dropped its match,
   so the session would draw its start world: the shell must leave the
@@ -360,6 +364,34 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `EndMatch`: the peer back to `Net` (`end`), the Lobby; `Lagging` → the
   warning; `Kicked`/`Refused`/`Disconnected` → the match view goes at
   once (`lost`), then `OnlineFailed` (Multiplayer with the reason);
+  **host migration** (plan 12c Task 9, spec §3.7): `Migrating(step)` →
+  `Net::migrating`, the step's text (rl-online's `MigrationStep`: "The
+  host is gone: moving the game to Anna…") as the playfield's top line
+  (`Shell::migration_line`, in place of "Connection problem"; amber,
+  wrapped to the picture) and `rl-game: migration: …` on
+  the console; a successor join's `Joining` steps meanwhile only on the
+  console (the menus wait for no join); `Migrated { host, me }` → the line
+  goes, "<host> is now hosting" or "You are now hosting" in the HUD and
+  lobby log and on the console; `me`: `Net::host`, `Net::migrated` (no
+  announcer, no `Hosted`, no connection line: the migrated game is closed,
+  N72; its lobby view, made again at once, the host's with `listing`
+  `MIGRATED_LISTING`); a late rejoiner (the peer without its match) also
+  logs `LATE_REJOIN` ("You came back after the handover: you watch until
+  the next match"); the `HOST_BACK` notice (N69, called off) clears the
+  line; `HostLost(why)` → `host_lost`: the match view goes at once, the
+  peer is let go (`release`: its replay to `Shell::replays`, saved by
+  `auto_save`), `MenuData::host_lost` (why) and `host_lost_replay` (a
+  replay is being made and there is a data directory), then
+  `UiAction::HostLost` (the Host lost screen), never `OnlineFailed`.
+  Every client the shell starts takes part (`joining::migration_config`,
+  N81): `MigrationConfig { standby: a port-0 endpoint (the settings'
+  STUN, no port mapping, `allow_local` when every relay is local, the
+  `--net-sim` impairment, `Shell::ice`), relays: the settings' (none:
+  `None`), ice: STUN and the player's TURN (`Shell::ice`), region,
+  turn_from_nostr, allow_local, enabled }`; test hooks (`test-hooks`):
+  `test_migration(on)` (off: `MigrationConfig::off()`, D7),
+  `test_no_standby()` (N79: it follows, never hosts), `test_stop_pump()`
+  (`PeerHandle::stop_pump`: with no frames, as silent as a crashed game);
   `ReplayReady` → `replays::auto_save` (a peer let go, `release`, its pump
   stopped first, hands
   its replay being made to `Shell::replays`, polled every frame and
@@ -420,7 +452,8 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   rollback depth last and p99 over 5 s (`net::NetMeter` on the session's
   depth histogram), the last second's deepest, loss, corrections per
   second, the frontier lag (`current_tick - frontier`); "Connection
-  problem" at the playfield's top while `Lagging`. Online frames are
+  problem" at the playfield's top while `Lagging` (a migration's line
+  instead while one is under way: `Overlay::migrating`). Online frames are
   interpolated by the pace's own tick phase (`Session::online_alpha` →
   `OnlineDriver::alpha` → `OnlinePeer::tick_phase`; the local clock's
   phase is not the netcode's), 1 (the newest tick as it is) while the
@@ -683,7 +716,8 @@ endpoint's candidates on 127.0.0.1 (`Shell::test_ice`, this crate's
 `test-hooks` feature, enabled by its own dev-dependency, ruling NT-1):
 nothing leaves the machine, and `online::menus` sets no relay, no STUN
 server and no port mapping for every other test, as
-`fixtures/autoplay/settings.ron` does):
+`fixtures/autoplay/settings.ron` does, and turns host migration off,
+`test_migration(false)`, D7):
 `a_listed_server_is_joined_from_the_internet_tab` (listed with its name,
 map, region and address, pinged, an impostor key refused, the listed
 key's lobby, the server's invite in upper case joins, blocked),
@@ -751,6 +785,28 @@ bound (confirmed ticks thinned first, every kill and chat kept, never
 across a control event); control events never let go;
 `a_tap_before_a_stall_is_not_repeated` (app path: a Fire tapped before
 the host's frames stop shows on one tick, the held Right on all);
+plan 12c Task 9's host migration through the apps' frames, against an
+in-process `rl-server` (port 0, no relay or STUN, no port mapping, its
+base 127.0.0.1, one bot; `MigrationRig`: each player welcomed before the
+next joins, so the first is the first successor):
+`a_frozen_server_hands_the_match_to_the_first_player` (the server no
+longer polled 3 s in: Anna's HUD line "The host is gone: you are taking
+over the game…", then "You are now hosting", Bert's "Anna is now
+hosting" within 8 s; both to the results with equal confirmed scores and
+results, both replays saved and the same match (`same_match`: but for
+the viewer), Anna's lobby a host's with `MIGRATED_LISTING`; about 12 s),
+`the_host_lost_screen_shows_and_the_replay_is_saved` (the server and
+Anna frozen, her pump stopped; Bert without a standby gets the Host lost
+screen with `HOST_LOST` within 13 s and his replay saved; about 16 s),
+`a_late_rejoiner_watches_until_the_next_match` (Cid's rejoin held 6 s:
+`LATE_REJOIN` in his log, his view kept as last seen until the new
+host's start, then he watches; RED without the freeze or rl-online's
+kept world; about 11 s), and the pump's two tests run again with
+migration on, `a_host_whose_frames_stop_keeps_hosting_with_migration`
+and `a_client_whose_frames_stop_stays_joined_with_migration` (ruling
+PF12c-2: no migration line, handover, call-off or Host lost on either
+during or after the 3 s, the match to its results; the host's RED
+without the pump: the client's "finding who takes over…" line);
 `with_pumped` takes the mark; a panicking pump poll said at once; the
 UI's poll starts as the pump's in flight ends; stopping joins within
 100 ms and gives the peer back; a nested lock panics, through another

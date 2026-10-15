@@ -100,8 +100,7 @@ impl Shell {
             (Some(to), Some(_)) => format!("{to}, then through the relays"),
             (None, _) => "through the relays".to_string(),
         };
-        // Plan 12c Task 9 gives the game its migration configuration (D7).
-        let migration = MigrationConfig::off();
+        let migration = self.migration_config();
         let role = PeerRole::Client { join, password: password.map(|p| p.0), expected_host, migration };
         let endpoint =
             EndpointConfig { port: 0, impair: self.impair, ice: self.ice(ice), ..EndpointConfig::default() };
@@ -109,6 +108,45 @@ impl Shell {
         println!("rl-game: joining {what}");
         self.net = Some(Net::new(peer, false));
         Ok(())
+    }
+
+    /// How a client this shell starts takes part in host migration (plan
+    /// 12c, N81): a standby on a free port (no port mapping, the settings'
+    /// STUN, local addresses when every relay is local; none with
+    /// `test_no_standby`, N79), the settings' relays to listen on once it
+    /// hosts and to join a successor through (none: direct joins only),
+    /// those joins asking the settings' STUN and the player's TURN servers
+    /// in the settings' region; every ICE setting through [`Shell::ice`]
+    /// (tests: 127.0.0.1 alone, C4). Off (`test_migration(false)`, D7):
+    /// `MigrationConfig::off()`.
+    fn migration_config(&self) -> MigrationConfig {
+        if !self.migration {
+            return MigrationConfig::off();
+        }
+        let finding = &self.ui.settings().online.finding;
+        let relays = relays_of(finding);
+        let allow_local = local_relays(&relays);
+        let standby_ice =
+            IceConfig { stun: stun_of(finding), port_mapping: false, allow_local, ..IceConfig::default() };
+        let standby = (!self.no_standby).then(|| EndpointConfig {
+            port: 0,
+            impair: self.impair,
+            ice: self.ice(standby_ice),
+            ..EndpointConfig::default()
+        });
+        MigrationConfig {
+            standby,
+            relays: (!relays.is_empty()).then(|| PoolConfig { relays, ..PoolConfig::default() }),
+            ice: self.ice(IceConfig {
+                stun: stun_of(finding),
+                turn: turn_of(finding),
+                ..IceConfig::default()
+            }),
+            region: region(finding.region),
+            turn_from_nostr: true,
+            allow_local,
+            enabled: true,
+        }
     }
 
     /// The typed host name looked up (a frame of `net_frame`): its join

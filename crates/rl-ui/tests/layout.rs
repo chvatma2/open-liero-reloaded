@@ -383,3 +383,73 @@ fn the_internet_table_fits_and_a_game_can_be_joined() {
         assert!(sent, "{at}: Join sent no JoinListed: {cmds:?}");
     }
 }
+
+/// Plan 12c Task 9: the Host lost screen and a migrated lobby's listing
+/// line at 4K, on the user's ultrawide screen, in a 1280 × 720 window at
+/// UI scale 3 and in borderless fullscreen on 16:10 and 4:3 desktops at
+/// UI scale 3 (384 and 320 points wide): every widget in the window, the
+/// screen a centred column (its title centred, Back at its left), the
+/// reason and the listing wrapping.
+#[test]
+fn the_host_lost_screen_and_a_migrated_lobby_fit() {
+    let why = "The host left and no other player could take over the game.";
+    let fullscreen = |w: f32, h: f32| (w, h, rl_ui::theme::pixels_per_point(h, 3.0));
+    for (w, h, ppp) in [
+        (3840.0, 2160.0, 2.0),
+        (3440.0, 1440.0, 2.0),
+        (1280.0, 720.0, 3.0),
+        fullscreen(1920.0, 1200.0),
+        fullscreen(1024.0, 768.0),
+    ] {
+        let at = format!("{w}x{h} at {ppp} pixels a point");
+        let window = Rect::from_min_max(pos2(0.0, 0.0), pos2(w, h));
+        // `down`: also within the window's height (the lobby's lists
+        // scroll, so its rows are checked across only).
+        let inside = |name: &str, r: Rect, down: bool| {
+            let across = r.left() >= -0.5 && r.right() <= w + 0.5;
+            let along = r.top() >= -0.5 && r.bottom() <= h + 0.5;
+            assert!(across && (along || !down), "{name:?} at {r:?} leaves the window: {at}");
+        };
+        let mut harness = harness(egui::vec2(w / ppp, h / ppp), ppp);
+        reach(&mut harness, Screen::Lobby);
+        let mut v = crate::online::lobby_view(true);
+        v.listing = Some(rl_ui::MIGRATED_LISTING.into());
+        harness.state_mut().data.lobby = Some(v);
+        harness.run();
+        harness.step();
+        // The host's controls and the listing line (the setup's panels
+        // scroll in their column).
+        let found = widgets(&harness);
+        for label in [rl_ui::MIGRATED_LISTING, "Start", "Force start", "Kick", "Ban", "To spectators"] {
+            let r = found.iter().find(|(n, _)| n == label).map(|(_, r)| *r);
+            inside(label, r.unwrap_or_else(|| panic!("{at}: {label:?} in {found:?}")), false);
+        }
+        // The match starts, its host is lost: the Host lost screen.
+        let app = harness.state_mut();
+        app.ui.update(UiAction::MatchStarted);
+        app.data.host_lost = Some(why.into());
+        app.data.host_lost_replay = true;
+        app.ui.update(UiAction::HostLost(why.into()));
+        harness.run();
+        harness.step();
+        harness.step();
+        assert_eq!(harness.state().ui.screen(), Screen::HostLost, "{at}");
+        let found = widgets(&harness);
+        for (name, r) in &found {
+            inside(name, *r, true);
+        }
+        for label in [why, rl_ui::screens::HOST_LOST_REPLAY, "Replays", "Back", "Host lost"] {
+            assert!(found.iter().any(|(n, _)| n == label), "{at}: {label:?} in {found:?}");
+        }
+        let all = found.iter().fold(Rect::NOTHING, |u, (_, r)| u.union(*r));
+        let off = all.center().x - window.center().x;
+        assert!(off.abs() <= 4.0 * ppp, "{at}: the content's centre is {off} px off, {all:?}");
+        let title = found.iter().find(|(n, _)| n == "Host lost").map(|(_, r)| *r).unwrap();
+        assert!((title.center().x - window.center().x).abs() <= 4.0 * ppp, "{at}: the title is off centre");
+        let back = harness.get_by_label("Back").accesskit_node().bounding_box().unwrap();
+        assert!((back.x0 as f32 - all.left()).abs() <= 1.0, "{at}: Back is not at the column's left");
+        if w / ppp > 2000.0 {
+            assert!(all.width() < 0.5 * w, "{at}: the content spans {} of {w}", all.width());
+        }
+    }
+}

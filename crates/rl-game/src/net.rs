@@ -116,6 +116,13 @@ pub struct Net {
     pub meter: NetMeter,
     /// `--net-sim`: ready whenever the lobby gathers.
     pub auto_ready: bool,
+    /// The host is gone and the match is moving (plan 12c): the HUD's top
+    /// line (`MigrationStep`'s text) until the handover (`Migrated`) or the
+    /// call-off (`HOST_BACK`).
+    pub migrating: Option<String>,
+    /// This player took the match over from a lost host: it hosts a lobby
+    /// closed to newcomers (N72, `rl_ui::MIGRATED_LISTING`).
+    pub migrated: bool,
 }
 
 impl Net {
@@ -159,6 +166,8 @@ impl Net {
             meter: NetMeter::default(),
             auto_ready: false,
             paths_said: std::collections::BTreeMap::new(),
+            migrating: None,
+            migrated: false,
         }
     }
 }

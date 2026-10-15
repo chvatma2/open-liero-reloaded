@@ -29,7 +29,10 @@
 //!   the Lobby (`EndMatch`; no rematch, no replay kept: the app saves
 //!   each match's replay). `LobbyChat` works in game and on the results
 //!   too. `OnlineFailed` (the connection lost, a kick) ends the match and
-//!   returns to Multiplayer from any screen.
+//!   returns to Multiplayer from any screen. `HostLost` (plan 12c: the host
+//!   gone and nobody could take the match over) ends it too and opens the
+//!   Host lost screen, whose Replays opens the Replays screen and whose
+//!   Back returns to Multiplayer.
 //! - **Matches:** Start emits one `StartMatch` with the next seed; until
 //!   the app reports `MatchStarted` or `MatchFailed`, starting again and
 //!   Back do nothing (no double matches). A Deathmatch starts with OLX's
@@ -87,6 +90,9 @@ pub enum Screen {
     Host,
     /// The lobby of a hosted or joined game.
     Lobby,
+    /// The match ended because its host was lost and nobody could take it
+    /// over (plan 12c): why, and where its replay is.
+    HostLost,
 }
 
 impl Screen {
@@ -206,6 +212,11 @@ pub enum UiAction {
     OnlineFailed(String),
     /// The app: the lobby is up (hosted, or joined and accepted).
     LobbyJoined,
+    /// The app: the match's host is gone and no player could take the
+    /// match over (spec §3.7), or this host stepped down: the online game
+    /// is over, the Host lost screen opens with the reason (the app puts
+    /// it in `MenuData::host_lost`).
+    HostLost(String),
 }
 
 /// What the app must do.
@@ -430,7 +441,9 @@ impl UiState {
                     self.screen == Screen::Multiplayer && s == Screen::Host && !self.is_connecting();
                 // The lobby's weapon choice (plan 10 ruling N19).
                 let to_weapons = self.screen == Screen::Lobby && s == Screen::WeaponSelect;
-                if from_main || to_host || to_weapons {
+                // The Host lost screen's Replays (the match's replay is there).
+                let to_replays = self.screen == Screen::HostLost && s == Screen::Replays;
+                if from_main || to_host || to_weapons || to_replays {
                     self.go(s);
                 } else if self.screen == Screen::InGame && self.paused && s == Screen::Options {
                     self.options_in_game = true;
@@ -646,6 +659,14 @@ impl UiState {
                 }
                 Vec::new()
             }
+            UiAction::HostLost(_) if self.online && self.connecting.is_none() => {
+                self.online = false;
+                self.paused = false;
+                let ended = std::mem::replace(&mut self.play, Play::None) == Play::Running(Game::Online);
+                self.go(Screen::HostLost);
+                if ended { vec![AppCommand::EndMatch] } else { Vec::new() }
+            }
+            UiAction::HostLost(_) => Vec::new(),
             UiAction::LeaveLobby => self.leave_online(),
             UiAction::LobbyReady(on) => self.lobby(LobbyCommand::Ready(on)),
             UiAction::LobbySpectate(on) => self.lobby(LobbyCommand::Spectate(on)),
@@ -798,6 +819,10 @@ impl UiState {
                 Vec::new()
             }
             Screen::Lobby => self.leave_online(),
+            Screen::HostLost => {
+                self.go(Screen::Multiplayer);
+                Vec::new()
+            }
             // The lobby's weapon choice returns to the lobby.
             Screen::WeaponSelect if self.online => {
                 self.go(Screen::Lobby);

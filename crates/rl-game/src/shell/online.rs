@@ -20,7 +20,7 @@ use rl_online::{HostListen, OnlineEvent, OnlinePeer, PeerContent, PeerRole, Reac
 use rl_proto::{LobbyState, Look, MatchStartWire};
 use rl_sim::Keys;
 use rl_ui::hud::{LineKind, LogLine};
-use rl_ui::{HostPrefs, InternetView, LobbyCommand, Screen, UiAction, Visibility};
+use rl_ui::{HostPrefs, InternetView, LobbyCommand, MIGRATED_LISTING, Screen, UiAction, Visibility};
 
 use super::{MAX_SPECTATORS, NET_SIM_BOTS, Outcome, Playing, Shell};
 use crate::finding::{Hosted, Internet, RELAY_LINGER, local_relays, relays_of, stun_of};
@@ -154,6 +154,49 @@ impl Shell {
     /// warns "Connection problem".
     pub fn lagging(&self) -> bool {
         self.net.as_ref().is_some_and(|n| n.lagging)
+    }
+
+    /// The HUD's line about a host migration under way (plan 12c: "The
+    /// host is gone: moving the game to Anna…"), until the handover.
+    pub fn migration_line(&self) -> Option<&str> {
+        self.net.as_ref().and_then(|n| n.migrating.as_deref())
+    }
+
+    /// Tests only: the clients this shell starts from now on take part in
+    /// host migration (`on`, as the game does) or not (D7: no standby, the
+    /// host's loss ends them as before).
+    #[cfg(feature = "test-hooks")]
+    pub fn test_migration(&mut self, on: bool) {
+        self.migration = on;
+    }
+
+    /// Tests only: the clients this shell starts from now on never host
+    /// (no standby, N79); they still follow a migration.
+    #[cfg(feature = "test-hooks")]
+    pub fn test_no_standby(&mut self) {
+        self.no_standby = true;
+    }
+
+    /// Tests only: the online game's network pump stops (with no frames,
+    /// the peer is then as silent as a crashed game's).
+    #[cfg(feature = "test-hooks")]
+    pub fn test_stop_pump(&mut self) {
+        if let Some(h) = self.handle_mut() {
+            h.stop_pump();
+        }
+    }
+
+    /// The online game's peer handle, to change (its match's while one
+    /// plays).
+    #[cfg(feature = "test-hooks")]
+    fn handle_mut(&mut self) -> Option<&mut PeerHandle> {
+        if let Some(h) = self.net.as_mut().and_then(|n| n.peer.as_mut()) {
+            return Some(h);
+        }
+        match &mut self.play.as_mut()?.session.driver {
+            Driver::Online(d) => Some(d.handle_mut()),
+            _ => None,
+        }
     }
 
     /// The online game's peer handle (its match's while one plays).
@@ -615,6 +658,61 @@ impl Shell {
         }
     }
 
+    /// The match moved to a new host (plan 12c): the migration's line goes,
+    /// the log says who hosts now. This player took it over (`me`): it
+    /// hosts from now on, a lobby closed to newcomers (N72: no announcer,
+    /// no listing, `MIGRATED_LISTING`). A player back after the new host
+    /// resumed (a late rejoiner, N72) lost its place in the match: it
+    /// watches until the next one.
+    fn migrated(&mut self, host: &str, me: bool, out: &mut Vec<Outcome>) {
+        let text = if me { "You are now hosting".to_string() } else { format!("{host} is now hosting") };
+        println!("rl-game: migration: {text}");
+        let late =
+            !me && self.plays_online() && self.with_peer(|p| p.match_session().is_none()) == Some(true);
+        let Some(n) = &mut self.net else { return };
+        n.migrating = None;
+        n.lagging = false;
+        if me {
+            n.host = true;
+            n.migrated = true;
+            n.connection = None;
+            n.announcer = None;
+            n.announce = None;
+            n.hosted = None;
+        }
+        self.chat_line(LogLine::event(text));
+        if late {
+            let text = LATE_REJOIN;
+            println!("rl-game: migration: {text}");
+            self.chat_line(LogLine::event(text));
+        }
+        if me && let Some(state) = self.with_peer(|p| p.lobby().state().cloned()).flatten() {
+            self.show_lobby(&state, out);
+        }
+    }
+
+    /// No player could take the match over, or this host stalled and the
+    /// match moved on without it (plan 12c): the match view goes at once
+    /// (as at a lost connection), the peer is let go (its replay of the
+    /// match saved when made), and the Host lost screen says `why`.
+    fn host_lost(&mut self, why: String, out: &mut Vec<Outcome>) {
+        println!("rl-game: migration: host lost: {why}");
+        self.end();
+        self.close_hosted();
+        let pending = self.replays.len();
+        if let Some(p) = self.net.take().and_then(|n| n.peer) {
+            self.release(p);
+        }
+        self.data.host_lost_replay = self.store.replays_dir().is_some() && self.replays.len() > pending;
+        self.data.host_lost = Some(why.clone());
+        self.data.lobby = None;
+        self.data.joining = None;
+        self.data.weapons = None;
+        for c in self.ui.update(UiAction::HostLost(why)) {
+            self.carry(c, out);
+        }
+    }
+
     /// One frame of the network at `now` while it is live
     /// ([`Shell::network_live`]; the app's loop, and its hidden window's
     /// frames: decision N21): the LAN list while the Multiplayer
@@ -679,7 +777,17 @@ impl Shell {
                 OnlineEvent::Chat { from, text, .. } => {
                     self.chat_line(LogLine { text: format!("{from}: {text}"), kind: LineKind::Chat });
                 }
-                OnlineEvent::Notice(text) => self.chat_line(LogLine::event(text)),
+                OnlineEvent::Notice(text) => {
+                    // N69: the old host was heard again, the migration
+                    // called off: its line goes.
+                    if text == rl_online::migration::HOST_BACK
+                        && let Some(n) = self.net.as_mut().filter(|n| n.migrating.is_some())
+                    {
+                        n.migrating = None;
+                        println!("rl-game: migration: {text}");
+                    }
+                    self.chat_line(LogLine::event(text));
+                }
                 OnlineEvent::Left(name) => self.chat_line(LogLine::event(format!("{name} left"))),
                 OnlineEvent::MatchStarting { start, my_slot } => {
                     let after: Vec<OnlineEvent> = queue.drain(..).collect();
@@ -719,6 +827,11 @@ impl Shell {
                 | OnlineEvent::Restored(_)
                 | OnlineEvent::Ticked(_)
                 | OnlineEvent::Confirmed(_) => {}
+                // A join to a successor during a migration (plan 12c Task
+                // 7) is the console's: the menus wait for no join.
+                OnlineEvent::Joining(step) if self.net.as_ref().is_some_and(|n| n.migrating.is_some()) => {
+                    println!("rl-game: migration: {step}");
+                }
                 OnlineEvent::Joining(step) => {
                     println!("rl-game: {step}");
                     self.data.joining = Some(step.to_string());
@@ -737,15 +850,17 @@ impl Shell {
                     println!("rl-game: {}", path_text(path, remote));
                     self.poll_connection();
                 }
-                // Plan 12c: a host migration's lines in the log (Task 9 puts
-                // them on the HUD and shows the Host lost screen).
-                OnlineEvent::Migrating(step) => self.chat_line(LogLine::event(step.to_string())),
-                OnlineEvent::Migrated { host, me } => {
-                    let text =
-                        if me { "You are now hosting".to_string() } else { format!("{host} is now hosting") };
-                    self.chat_line(LogLine::event(text));
+                // Plan 12c: the host is gone and the match moves; the HUD's
+                // top line says where to, until the handover.
+                OnlineEvent::Migrating(step) => {
+                    let text = step.to_string();
+                    println!("rl-game: migration: {text}");
+                    if let Some(n) = &mut self.net {
+                        n.migrating = Some(text);
+                    }
                 }
-                OnlineEvent::HostLost(why) => return self.lost(why, out),
+                OnlineEvent::Migrated { host, me } => self.migrated(&host, me, out),
+                OnlineEvent::HostLost(why) => return self.host_lost(why, out),
             }
         }
     }
@@ -780,7 +895,7 @@ impl Shell {
             let menu = net::weapon_menu(&key.content, &key.mod_id, &key.restrictions);
             n.weapons = Some((key, menu));
         }
-        let host = n.host;
+        let (host, migrated) = (n.host, n.migrated);
         let downloads = n.downloads.clone();
         if host {
             for line in net::path_news(&mut n.paths_said, &state.members) {
@@ -836,6 +951,9 @@ impl Shell {
         self.data.lobby = me.map(|me| net::lobby_view(state, me, host, can_start, downloads, prompt));
         if let Some(l) = &mut self.data.lobby {
             l.connection = connection;
+            if migrated {
+                l.listing = Some(MIGRATED_LISTING.into());
+            }
         }
         if welcomed {
             self.data.joining = None;
@@ -1180,6 +1298,10 @@ impl Shell {
         }
     }
 }
+
+/// The log's line for a player back after the new host resumed the match
+/// (a late rejoiner, plan 12c N72): its slot plays no more.
+pub const LATE_REJOIN: &str = "You came back after the handover: you watch until the next match";
 
 /// The wall-clock unix time now, read at each use: notes' `created_at` and
 /// the list's ages (never anchored to the frames' monotonic clock, which

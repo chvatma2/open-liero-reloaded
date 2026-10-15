@@ -26,6 +26,9 @@ use crate::theme;
 const WIDTH: f32 = 1100.0;
 const SECTION_GAP: f32 = 8.0;
 const RED: Color32 = Color32::from_rgb(255, 110, 90);
+/// The host's Start (`primary`'s size) and Force start buttons.
+const START: egui::Vec2 = egui::Vec2::new(220.0, 44.0);
+const FORCE: egui::Vec2 = egui::Vec2::new(110.0, 44.0);
 
 /// What the Force start button says, enabled.
 pub const FORCE_HINT: &str = "Players who are not ready, or lack the content, watch this match.";
@@ -89,7 +92,10 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     };
     let mut ui = footer(ui, "lobby", |ui| {
         if view.host {
-            ui.horizontal(|ui| {
+            // Start and Force start side by side, one above the other in a
+            // column too narrow for both (UI scale 3 on a 4:3 desktop).
+            let both = START.x + FORCE.x + ui.spacing().item_spacing.x;
+            let row = |ui: &mut Ui| {
                 let startable = view.phase == PHASE_LOBBY && view.can_start.is_ok();
                 let start = primary(ui, "Start", startable);
                 let start = match &view.can_start {
@@ -99,15 +105,19 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
                 if start.clicked() {
                     out.push(UiAction::LobbyStart);
                 }
-                let force =
-                    ui.add_enabled(can_force(&view), Button::new("Force start").min_size(vec2(110.0, 44.0)));
+                let force = ui.add_enabled(can_force(&view), Button::new("Force start").min_size(FORCE));
                 let force = force
                     .on_hover_text(FORCE_HINT)
                     .on_disabled_hover_text("Needs at least two players or bots");
                 if force.clicked() {
                     out.push(UiAction::LobbyForceStart);
                 }
-            });
+            };
+            if ui.available_width() >= both {
+                ui.horizontal(row);
+            } else {
+                ui.vertical_centered(row);
+            }
         } else if view.phase == PHASE_LOBBY {
             ui.label(RichText::new("Waiting for the host").size(18.0));
         } else {
@@ -398,7 +408,7 @@ fn member(ui: &mut Ui, view: &LobbyView, m: &MemberView, v: &mut View, out: &mut
             }
         });
         if view.host && m.id != view.me {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if ui.small_button("Kick").clicked() {
                     out.push(UiAction::LobbyKick { member: m.id, ban: false });
                 }

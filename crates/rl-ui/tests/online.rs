@@ -6,11 +6,12 @@ use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use rl_content::{Catalog, LevelInfo, ModInfo};
+use rl_ui::screens::HOST_LOST_REPLAY;
 use rl_ui::screens::{self, MenuData};
 use rl_ui::{
     AppCommand, DownloadView, HostPrefs, InternetEntry, InternetStatus, InternetView, LanEntry, LobbyCommand,
-    LobbyView, MatchPrefs, MemberView, PHASE_LOBBY, PingView, Profiles, Region, SEAT_SPECTATOR, Screen,
-    Settings, UiAction, UiState, Visibility, key_hex,
+    LobbyView, MIGRATED_LISTING, MatchPrefs, MemberView, PHASE_LOBBY, PingView, Profiles, Region,
+    SEAT_SPECTATOR, Screen, Settings, UiAction, UiState, Visibility, key_hex,
 };
 
 /// The Direct tab's field.
@@ -1164,4 +1165,79 @@ fn the_lobby_shows_reach_lines_and_path_tags() {
     h.get_by_label("connected by hole punching through both routers");
     h.get_by_label("punched");
     assert!(h.query_by_label("Copy").is_none(), "a client has no invite");
+}
+
+/// The menus of an online match playing (`in_lobby`, then its start).
+fn in_match(app: &mut App) {
+    while app.ui.screen() != Screen::Main {
+        app.ui.update(UiAction::Back);
+    }
+    in_lobby(app, lobby_view(false));
+    app.ui.update(UiAction::MatchStarted);
+    assert_eq!(app.ui.screen(), Screen::InGame);
+}
+
+/// Plan 12c Task 9: when no player could take the match over, the app
+/// reports `HostLost(why)`: the match ends, the Host lost screen says so,
+/// why, and where the replay is; its Replays opens the Replays screen, its
+/// Back (or Esc) the Multiplayer screen. Outside an online game it is
+/// ignored.
+#[test]
+fn the_host_lost_screen_says_why_and_goes_back() {
+    let why = "The host left and no other player could take over the game.";
+    let lost = |h: &mut Harness<'static, App>, replay: bool| {
+        let app = h.state_mut();
+        in_match(app);
+        app.data.host_lost = Some(why.into());
+        app.data.host_lost_replay = replay;
+        let c = app.ui.update(UiAction::HostLost(why.into()));
+        assert_eq!(c, [AppCommand::EndMatch], "the match ends");
+        assert_eq!((app.ui.screen(), app.ui.is_online(), app.ui.game()), (Screen::HostLost, false, None));
+        settle(h);
+    };
+    let mut h = harness();
+    lost(&mut h, true);
+    h.get_by_label("Host lost");
+    h.get_by_label(why);
+    h.get_by_label(HOST_LOST_REPLAY);
+    h.get_by_role_and_label(Role::Button, "Replays").click();
+    settle(&mut h);
+    assert_eq!(h.state().ui.screen(), Screen::Replays);
+    // Back: the Multiplayer screen; no replay (a watcher that joined
+    // mid-match keeps none): not said.
+    lost(&mut h, false);
+    assert!(h.query_by_label(HOST_LOST_REPLAY).is_none(), "no replay, none said");
+    h.get_by_role_and_label(Role::Button, "Back").click();
+    settle(&mut h);
+    assert_eq!(h.state().ui.screen(), Screen::Multiplayer);
+    // Esc too.
+    lost(&mut h, true);
+    h.key_press(egui::Key::Escape);
+    settle(&mut h);
+    assert_eq!(h.state().ui.screen(), Screen::Multiplayer);
+    // No online game: nothing happens.
+    let app = h.state_mut();
+    assert!(app.ui.update(UiAction::HostLost(why.into())).is_empty());
+    assert_eq!(app.ui.screen(), Screen::Multiplayer);
+}
+
+/// Plan 12c Task 9: a player who took the match over hosts the lobby
+/// after it as any host does (Start, Force start, kick, the setup), and
+/// its listing line says the game is closed to newcomers
+/// (`MIGRATED_LISTING`).
+#[test]
+fn a_migrated_lobby_shows_host_controls() {
+    let mut h = harness();
+    let mut v = lobby_view(true);
+    v.listing = Some(MIGRATED_LISTING.into());
+    v.can_start = Ok(());
+    in_lobby(h.state_mut(), v);
+    settle(&mut h);
+    h.get_by_label(MIGRATED_LISTING);
+    h.get_by_label("Kick");
+    assert!(!h.get_by_role_and_label(Role::Button, "Force start").accesskit_node().is_disabled());
+    h.get_by_role_and_label(Role::Button, "Start").click();
+    settle(&mut h);
+    assert_eq!(lobby_commands(&h), [&LobbyCommand::Start]);
+    assert_eq!(MIGRATED_LISTING, "Taken over from the host: only this match's players can join");
 }

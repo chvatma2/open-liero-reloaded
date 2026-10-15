@@ -937,9 +937,12 @@ impl OnlinePeer {
         // after it is taken as a new member.
         let late = c.lobby.me().is_some_and(|old| lobby.me() != Some(old));
         // Late: the match it played up to here makes its replay (N18), as at
-        // a host lost, before its member id changes; the match's migrations
-        // so far still count for the session it watches from (N74).
+        // a host lost, before its member id changes, and its world is kept
+        // for the game to draw until it watches (`take_ended_world`); the
+        // match's migrations so far still count for the session it watches
+        // from (N74).
         let carried = if late { self.game.take() } else { None }.map(|g| {
+            self.ended_world = Some(g.session.sim().world().clone());
             self.make_replay(record_of(&g.session, &g.start, g.session.frontier()));
             g.migrations + 1
         });

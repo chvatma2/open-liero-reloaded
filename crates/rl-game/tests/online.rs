@@ -425,7 +425,9 @@ use rl_ui::{HostPrefs, Profiles, Screen, Settings, Store, UiAction, UiState, Vis
 /// (tests use no fixed port), hosting on an ephemeral port, no relay or
 /// STUN server, no port mapping and every endpoint's address on
 /// 127.0.0.1 (ruling NT-1: nothing leaves the machine, the router is
-/// never asked).
+/// never asked), and no host migration (D7: its clients use
+/// `MigrationConfig::off()`; the migration tests turn it on, its standby
+/// then on 127.0.0.1 alone).
 pub(crate) fn menus(dir: &std::path::Path, store: Store, name: &str, minutes: f32) -> Shell {
     let mut settings = Settings::default();
     settings.online.finding.relays = Some(Vec::new());
@@ -448,6 +450,7 @@ pub(crate) fn menus(dir: &std::path::Path, store: Store, name: &str, minutes: f3
     sh.set_lan(false);
     sh.set_port(Some(0));
     sh.test_ice(loopback);
+    sh.test_migration(false);
     sh
 }
 
@@ -532,12 +535,25 @@ pub(crate) fn members(sh: &Shell) -> usize {
 
 /// A host and a client in its lobby, both on the Lobby screen.
 fn host_and_client(dir: &std::path::Path, minutes: f32, data: Option<&std::path::Path>) -> (Shell, Shell) {
+    host_and_client_with(dir, minutes, data, false)
+}
+
+/// [`host_and_client`], the client with host migration on (`migration`:
+/// its standby on 127.0.0.1, the host's successor).
+fn host_and_client_with(
+    dir: &std::path::Path,
+    minutes: f32,
+    data: Option<&std::path::Path>,
+    migration: bool,
+) -> (Shell, Shell) {
     let store = || data.map_or_else(Store::in_memory, Store::open);
     let mut h = menus(dir, store(), "Hosty", minutes);
+    h.test_migration(migration);
     host(&mut h);
     assert_eq!(h.ui.screen(), Screen::Lobby, "hosting opens the lobby: {:?}", h.ui.message());
     let port = h.local_port().expect("the host's port");
     let mut c = menus(dir, Store::in_memory(), "Anna", minutes);
+    c.test_migration(migration);
     join(&mut c, port);
     assert!(c.ui.is_connecting());
     frames_until("the client joins", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
@@ -873,8 +889,38 @@ fn both_frames(apps: [&mut App; 2], seen: &mut [BTreeMap<u32, Vec<Score>>; 2], d
 /// for 3 s and the client's confirmed tick stands still.
 #[test]
 fn a_host_whose_frames_stop_keeps_hosting() {
+    host_frames_stop(false);
+}
+
+/// Plan 12c Task 9 (ruling PF12c-2): the same with host migration on
+/// (the client the host's successor): during the 3 s the client never
+/// starts a migration and the host never steps down; the match ends
+/// normally. RED without the pump: the client takes the match over after
+/// 2 s, and the host steps down when its frames resume.
+#[test]
+fn a_host_whose_frames_stop_keeps_hosting_with_migration() {
+    host_frames_stop(true);
+}
+
+/// No sign of a host migration on `sh` (`at`: when): no migration line on
+/// its HUD, not the Host lost screen, and no handover or call-off in its
+/// log (a migration made, or called off, within one poll).
+fn no_migration(sh: &Shell, at: &str) {
+    assert_eq!(sh.migration_line(), None, "{at}");
+    assert_ne!(sh.ui.screen(), Screen::HostLost, "{at}: {:?}", sh.data.host_lost);
+    let said: Vec<&str> = sh
+        .data
+        .chat
+        .iter()
+        .map(|l| l.text.as_str())
+        .filter(|t| t.ends_with("now hosting") || *t == rl_online::migration::HOST_BACK)
+        .collect();
+    assert!(said.is_empty(), "{at}: {said:?}");
+}
+
+fn host_frames_stop(migration: bool) {
     let Some(dir) = content_dir() else { return };
-    let (mut h, mut c) = host_and_client(&dir, 0.2, None);
+    let (mut h, mut c) = host_and_client_with(&dir, 0.2, None, migration);
     start_match(&mut h, &mut c);
     assert!(h.pumped() && c.pumped(), "every online peer has its pump");
     let (mut host, mut client) = (app_of(h), app_of(c));
@@ -886,6 +932,7 @@ fn a_host_whose_frames_stop_keeps_hosting() {
     while stopped.elapsed() < Duration::from_secs(3) {
         app_frame(&mut client);
         note_confirmed(client.shell(), &mut seen[1]);
+        no_migration(client.shell(), "the client, while the host drew nothing");
         std::thread::sleep(Duration::from_millis(3));
     }
     let during = confirmed(client.shell()).unwrap().0;
@@ -904,6 +951,8 @@ fn a_host_whose_frames_stop_keeps_hosting() {
     while [&host, &client].iter().any(|a| a.shell().ui.screen() != Screen::Results) {
         assert!(start.elapsed() < Duration::from_secs(15), "both reach the results");
         both_frames([&mut host, &mut client], &mut seen, Duration::from_millis(10));
+        no_migration(host.shell(), "the host, after its frames resumed");
+        no_migration(client.shell(), "the client, after the host's frames resumed");
     }
     let host_seen = confirmed(host.shell()).unwrap().0;
     assert!(host_seen > during, "the host's view caught up: {host_seen}");
@@ -923,8 +972,21 @@ fn a_host_whose_frames_stop_keeps_hosting() {
 /// tells the client it lags.
 #[test]
 fn a_client_whose_frames_stop_stays_joined() {
+    client_frames_stop(false);
+}
+
+/// Plan 12c Task 9 (ruling PF12c-2): the same with host migration on: the
+/// host sees no migration, the client never takes the match over nor
+/// loses its host, and the match ends normally on both. RED without the
+/// pump: a client silent for 3 s is dropped, or migrates away.
+#[test]
+fn a_client_whose_frames_stop_stays_joined_with_migration() {
+    client_frames_stop(true);
+}
+
+fn client_frames_stop(migration: bool) {
     let Some(dir) = content_dir() else { return };
-    let (mut h, mut c) = host_and_client(&dir, 0.2, None);
+    let (mut h, mut c) = host_and_client_with(&dir, 0.2, None, migration);
     start_match(&mut h, &mut c);
     let (mut host, mut client) = (app_of(h), app_of(c));
     let fills =
@@ -937,6 +999,7 @@ fn a_client_whose_frames_stop_stays_joined() {
     let stopped = Instant::now();
     while stopped.elapsed() < Duration::from_secs(3) {
         app_frame(&mut host);
+        no_migration(host.shell(), "the host, while the client drew nothing");
         std::thread::sleep(Duration::from_millis(3));
     }
     let filled = fills(&host) - before;
@@ -948,6 +1011,7 @@ fn a_client_whose_frames_stop_stays_joined() {
         app_frame(&mut host);
         app_frame(&mut client);
         assert!(!client.shell().lagging(), "the client's HUD shows no connection problem");
+        no_migration(client.shell(), "the client, after its frames resumed");
         std::thread::sleep(Duration::from_millis(3));
     }
     assert!(client.shell().plays_online() && client.shell().ui.screen() == Screen::InGame, "not dropped");
@@ -955,6 +1019,14 @@ fn a_client_whose_frames_stop_stays_joined() {
     let after = confirmed(client.shell()).unwrap().0;
     assert!(after > confirmed_before + 300, "its match went on: {confirmed_before} to {after}");
     assert_eq!((drifts(host.shell()), drifts(client.shell())), (0, 0), "the colour terrain followed");
+    if migration {
+        // The match ends normally on both.
+        apps_until("both reach the results", Duration::from_secs(15), [&mut host, &mut client], |a| {
+            a.iter().all(|x| x.shell().ui.screen() == Screen::Results)
+        });
+        no_migration(host.shell(), "the host at the end");
+        no_migration(client.shell(), "the client at the end");
+    }
 }
 
 /// Both apps' frames on the real clock until `done`; panics after `limit`.
@@ -1136,4 +1208,300 @@ fn a_tap_before_a_stall_is_not_repeated() {
         fired += usize::from(k & Keys::FIRE != 0);
     }
     assert!((1..=1).contains(&fired), "the tap fired on {fired} ticks");
+}
+
+// ---- Host migration in the game (plan 12c Task 9) ----
+
+/// An in-process dedicated server on 127.0.0.1 (port 0; no relay, no STUN
+/// server, no port mapping, its candidates on 127.0.0.1: ruling NT-1)
+/// playing Classic on Dirt Level for `minutes` with one bot beside two
+/// players, started once both are ready.
+fn dedicated_server(dir: &std::path::Path, data: &std::path::Path, minutes: f32) -> rl_server::Server {
+    let text = format!(
+        r#"(
+            name: "Office server",
+            visibility: Invite,
+            relays: [],
+            stun: [],
+            port_mapping: false,
+            port: 0,
+            max_players: 8,
+            max_spectators: 4,
+            fill_bots: 3,
+            rotation: [(mod: "{MOD}", level: "{LEVEL}", time_limit: {minutes:?}, kill_limit: -1, lives: -2, bonuses: false)],
+            start_when_ready: true,
+            min_players: 2,
+        )"#
+    );
+    let mut cfg = rl_server::config::Config::parse(&text).unwrap();
+    let closed = SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 9));
+    cfg.test_gateway = Some(rl_server::config::TestGateway {
+        pmp: closed,
+        ssdp: closed,
+        base: std::net::Ipv4Addr::LOCALHOST,
+        lifetime: None,
+    });
+    rl_server::Server::start(cfg, Content::open(dir).unwrap(), data, &mut std::io::sink()).unwrap()
+}
+
+/// A server's match with players (`MigrationRig::new`), each with host
+/// migration on and a data directory of their own, each welcomed before
+/// the next joins, so the first is the first successor (pre-flight B5).
+struct MigrationRig {
+    server: rl_server::Server,
+    /// The server is no longer polled (a hung host: its sockets stay open).
+    server_frozen: bool,
+    /// The players' apps, in the order they joined.
+    apps: Vec<App>,
+    /// Which apps run no frame.
+    frozen: Vec<bool>,
+    /// The server's data directory, then each player's.
+    dirs: Vec<tempfile::TempDir>,
+}
+
+impl MigrationRig {
+    /// `players` (a name, and whether it can host: else `test_no_standby`,
+    /// it only follows) in the server's match, all playing.
+    fn new(dir: &std::path::Path, minutes: f32, players: &[(&str, bool)]) -> MigrationRig {
+        let dirs: Vec<tempfile::TempDir> =
+            (0..=players.len()).map(|_| tempfile::tempdir().unwrap()).collect();
+        let server = dedicated_server(dir, dirs[0].path(), minutes);
+        let port = server.local_port();
+        let apps = players
+            .iter()
+            .zip(&dirs[1..])
+            .map(|(&(name, standby), data)| {
+                let mut sh = menus(dir, Store::open(data.path()), name, minutes);
+                sh.test_migration(true);
+                if !standby {
+                    sh.test_no_standby();
+                }
+                app_of(sh)
+            })
+            .collect();
+        let frozen = vec![false; players.len()];
+        let mut rig = MigrationRig { server, server_frozen: false, apps, frozen, dirs };
+        for (i, (name, _)) in players.iter().enumerate() {
+            join(rig.apps[i].shell_mut(), port);
+            rig.until(&format!("{name} is welcomed"), Duration::from_secs(5), |r| {
+                r.apps[i].shell().ui.screen() == Screen::Lobby && members(r.apps[0].shell()) == i + 1
+            });
+        }
+        for a in &mut rig.apps {
+            a.shell_mut().act(UiAction::LobbyReady(true));
+        }
+        rig.until("all play", Duration::from_secs(8), |r| {
+            r.apps.iter().all(|a| a.shell().ui.screen() == Screen::InGame && a.shell().plays_online())
+        });
+        rig
+    }
+
+    fn anna(&self) -> &App {
+        &self.apps[0]
+    }
+
+    fn bert(&self) -> &App {
+        &self.apps[1]
+    }
+
+    /// One frame: the server polled, then each app's frame (`App::hidden_frame`,
+    /// the app's own network frame), unless frozen.
+    fn frame(&mut self) {
+        if !self.server_frozen {
+            self.server.poll(Instant::now(), &mut std::io::sink());
+        }
+        for (a, frozen) in self.apps.iter_mut().zip(&self.frozen) {
+            if !frozen {
+                app_frame(a);
+            }
+        }
+    }
+
+    /// Frames until `done`; panics after `limit` with `what`.
+    fn until(&mut self, what: &str, limit: Duration, mut done: impl FnMut(&MigrationRig) -> bool) {
+        let start = Instant::now();
+        loop {
+            assert!(start.elapsed() < limit, "{what} within {limit:?}");
+            self.frame();
+            if done(self) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// Frames for `d`, noting each frame with `each`.
+    fn run(&mut self, d: Duration, mut each: impl FnMut(&MigrationRig)) {
+        let start = Instant::now();
+        while start.elapsed() < d {
+            self.frame();
+            each(self);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+}
+
+/// What Anna's and Bert's HUDs show: the confirmed scores by tick, and each
+/// migration line as it changes.
+fn note_rig(r: &MigrationRig, seen: &mut [BTreeMap<u32, Vec<Score>>; 2], lines: &mut [Vec<String>; 2]) {
+    for (i, app) in r.apps.iter().take(2).enumerate() {
+        note_confirmed(app.shell(), &mut seen[i]);
+        if let Some(l) = app.shell().migration_line()
+            && lines[i].last().is_none_or(|last| last != l)
+        {
+            lines[i].push(l.to_string());
+        }
+    }
+}
+
+/// The replays saved in `data`'s `replays/`, their bytes.
+fn saved_replays(data: &std::path::Path) -> Vec<Vec<u8>> {
+    let Ok(dir) = std::fs::read_dir(data.join("replays")) else { return Vec::new() };
+    let mut files: Vec<PathBuf> = dir.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    files.sort();
+    files.iter().map(|f| std::fs::read(f).unwrap()).collect()
+}
+
+/// Plan 12c Task 9 (spec §3.7): a dedicated server hangs 3 s into its
+/// match; Anna, its first successor, takes the match over ("The host is
+/// gone: you are taking over the game…" on her HUD, then "You are now
+/// hosting" in her log), Bert follows ("Anna is now hosting"), both play
+/// on to the results with the same confirmed scores, both replays are
+/// saved and equal (but for their viewer), and Anna's lobby after it is a host's, closed to
+/// newcomers.
+#[test]
+fn a_frozen_server_hands_the_match_to_the_first_player() {
+    let Some(dir) = content_dir() else { return };
+    let began = Instant::now();
+    let mut rig = MigrationRig::new(&dir, 0.1, &[("Anna", true), ("Bert", true)]);
+    let mut seen: [BTreeMap<u32, Vec<Score>>; 2] = Default::default();
+    let mut lines: [Vec<String>; 2] = Default::default();
+    rig.run(Duration::from_secs(3), |r| note_rig(r, &mut seen, &mut lines));
+    for app in &rig.apps {
+        no_migration(app.shell(), "before the server hangs");
+    }
+    let frozen_at = confirmed(rig.bert().shell()).unwrap().0;
+    rig.server_frozen = true;
+    let hosting = |a: &App, text: &str| a.shell().session().is_some_and(|s| s.log.texts().any(|l| l == text));
+    let hung = Instant::now();
+    while !(hosting(rig.anna(), "You are now hosting") && hosting(rig.bert(), "Anna is now hosting")) {
+        assert!(hung.elapsed() < Duration::from_secs(8), "the match moves to Anna: {lines:?}");
+        rig.frame();
+        note_rig(&rig, &mut seen, &mut lines);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    eprintln!("the migration lines: {lines:?}, the handover {:?} after the hang", hung.elapsed());
+    assert!(
+        lines[0].iter().any(|l| l == "The host is gone: you are taking over the game…"),
+        "Anna's HUD: {:?}",
+        lines[0]
+    );
+    for app in &rig.apps {
+        assert_eq!(app.shell().migration_line(), None, "the line goes at the handover");
+        assert_eq!(app.shell().ui.screen(), Screen::InGame);
+    }
+    // On to the results, the same confirmed scores on both.
+    while rig.apps.iter().any(|a| a.shell().ui.screen() != Screen::Results) {
+        assert!(hung.elapsed() < Duration::from_secs(15), "both reach the results");
+        rig.frame();
+        note_rig(&rig, &mut seen, &mut lines);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let common: Vec<u32> = seen[0].keys().filter(|t| seen[1].contains_key(t)).copied().collect();
+    assert!(common.iter().any(|&t| t > frozen_at + 100), "both confirmed ticks after the hang: {common:?}");
+    for t in &common {
+        assert_eq!(seen[0][t], seen[1][t], "the confirmed scores of tick {t}");
+    }
+    assert_eq!(result_rows(rig.anna().shell()), result_rows(rig.bert().shell()), "the same results");
+    // Both replays saved, equal.
+    rig.until("both replays are saved", Duration::from_secs(8), |r| {
+        r.dirs[1..].iter().all(|d| !saved_replays(d.path()).is_empty())
+    });
+    let (a, b) = (saved_replays(rig.dirs[1].path()), saved_replays(rig.dirs[2].path()));
+    assert_eq!((a.len(), b.len()), (1, 1));
+    // Equal but for the viewer, each player's own slot.
+    assert!(
+        rl_online::replay::same_match(&a[0], &b[0]),
+        "the replays are equal ({} and {} bytes)",
+        a[0].len(),
+        b[0].len()
+    );
+    // Anna's lobby: a host's, closed to newcomers.
+    let lobby = rig.anna().shell().data.lobby.clone().expect("Anna's lobby");
+    assert!(lobby.host, "Anna hosts the lobby");
+    assert_eq!(lobby.listing.as_deref(), Some(rl_ui::MIGRATED_LISTING));
+    assert!(!rig.bert().shell().data.lobby.as_ref().unwrap().host);
+    rig.apps[0].shell_mut().act(UiAction::Back);
+    assert_eq!(rig.anna().shell().ui.screen(), Screen::Lobby);
+    assert!(began.elapsed() < Duration::from_secs(25), "bounded: {:?}", began.elapsed());
+}
+
+/// Plan 12c Task 9 (spec §3.7): the server hangs 3 s into its match and so
+/// does Anna, its only successor (no frame, her pump stopped: silent as a
+/// crashed game); Bert, who cannot host (`test_no_standby`), finds nobody
+/// to take over and gets the Host lost screen with `HOST_LOST` within the
+/// silence (2 s), the give-up (10 s) and a second; his replay is saved.
+#[test]
+fn the_host_lost_screen_shows_and_the_replay_is_saved() {
+    let Some(dir) = content_dir() else { return };
+    let mut rig = MigrationRig::new(&dir, 1.0, &[("Anna", true), ("Bert", false)]);
+    rig.run(Duration::from_secs(3), |_| {});
+    rig.server_frozen = true;
+    rig.frozen[0] = true;
+    rig.apps[0].shell_mut().test_stop_pump();
+    assert!(!rig.anna().shell().pumped(), "Anna's pump stopped");
+    let hung = Instant::now();
+    rig.until("Bert's Host lost screen", Duration::from_secs(13), |r| {
+        r.bert().shell().ui.screen() == Screen::HostLost
+    });
+    eprintln!("host lost {:?} after the hang", hung.elapsed());
+    let bert = rig.bert().shell();
+    assert_eq!(bert.data.host_lost.as_deref(), Some(rl_online::HOST_LOST));
+    assert!(bert.data.host_lost_replay, "the screen says the replay is in Replays");
+    assert!(bert.session().is_none() && !bert.ui.is_online(), "the match view went");
+    rig.until("Bert's replay is saved", Duration::from_secs(5), |r| {
+        !saved_replays(r.dirs[2].path()).is_empty()
+    });
+}
+
+/// Plan 12c Task 9 (N72): Cid comes back only after the new host resumed
+/// the match (his rejoin held 6 s): he lost his place in it. His log says
+/// who hosts and why he watches (`LATE_REJOIN`), his view keeps the match
+/// as he last saw it (never its start) until the new host's state comes,
+/// then he watches the match from it.
+#[test]
+fn a_late_rejoiner_watches_until_the_next_match() {
+    let Some(dir) = content_dir() else { return };
+    let mut rig = MigrationRig::new(&dir, 0.3, &[("Anna", true), ("Bert", true), ("Cid", true)]);
+    rig.apps[2].shell().with_peer(|p| p.test_delay_rejoin(Duration::from_secs(6)));
+    rig.run(Duration::from_secs(2), |_| {});
+    let time = |a: &App| a.shell().session().map(|s| s.with_world(|w| w.time()));
+    let before = time(&rig.apps[2]).unwrap();
+    let launches = rig.apps[2].shell().launches();
+    rig.server_frozen = true;
+    let said = |a: &App, text: &str| a.shell().data.chat.iter().any(|l| l.text == text);
+    rig.until("Cid is back, late", Duration::from_secs(15), |r| {
+        said(&r.apps[2], rl_game::shell::LATE_REJOIN)
+    });
+    let cid = rig.apps[2].shell();
+    assert!(said(&rig.apps[2], "Anna is now hosting"), "{:?}", cid.data.chat);
+    let log = &cid.session().expect("his match view stays").log;
+    assert!(log.texts().any(|l| l == rl_game::shell::LATE_REJOIN), "on his HUD too");
+    let kept = time(&rig.apps[2]).unwrap();
+    assert!(kept >= before, "the match as he last saw it, not its start: {kept:?} < {before:?}");
+    // Until the new host's state comes, the view stays as it is.
+    rig.until("Cid watches from the new host's state", Duration::from_secs(8), |r| {
+        let cid = &r.apps[2];
+        if cid.shell().launches() == launches {
+            assert_eq!(time(cid), Some(kept), "the kept view does not move");
+            assert_eq!(cid.shell().ui.screen(), Screen::InGame);
+        }
+        cid.shell().launches() > launches && cid.shell().plays_online()
+    });
+    assert_eq!(rig.apps[2].shell().session().unwrap().local(), None, "he watches");
+    let from = time(&rig.apps[2]).unwrap();
+    rig.until("the watched match goes on", Duration::from_secs(5), |r| time(&r.apps[2]).unwrap() > from);
+    for a in &rig.apps[..2] {
+        assert!(a.shell().plays_online() && a.shell().ui.screen() == Screen::InGame);
+    }
 }

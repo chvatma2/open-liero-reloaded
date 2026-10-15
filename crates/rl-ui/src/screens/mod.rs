@@ -12,6 +12,7 @@
 
 pub mod about;
 mod host;
+mod host_lost;
 mod import;
 mod ingame;
 mod keys;
@@ -25,6 +26,7 @@ mod replays;
 pub mod results;
 mod weapon_select;
 
+pub use host_lost::HOST_LOST_REPLAY;
 pub use keys::GAME_KEYS;
 
 use std::collections::BTreeMap;
@@ -116,6 +118,12 @@ pub struct MenuData {
     /// The options' download cache row (the app keeps it current while the
     /// options show); `Err(why)`: there is none.
     pub download_cache: Result<DownloadCacheView, String>,
+    /// Why the online match's host was lost (plan 12c): the Host lost
+    /// screen's reason, set by the app with [`UiAction::HostLost`].
+    pub host_lost: Option<String>,
+    /// That match left a replay to save (a watcher that joined mid-match
+    /// has none): the Host lost screen says it is in Replays.
+    pub host_lost_replay: bool,
     /// A text field had the focus as the last frame ended.
     typing: bool,
     /// The weapon selection in progress.
@@ -164,6 +172,8 @@ impl MenuData {
             joining: None,
             ingame_chat: None,
             download_cache: Err("there is no download cache".into()),
+            host_lost: None,
+            host_lost_replay: false,
             typing: false,
             select: None,
             thumbs: BTreeMap::new(),
@@ -303,6 +313,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
                 Screen::Multiplayer => multiplayer::show(ui, state, data, &mut out),
                 Screen::Host => host::show(ui, state, data, &mut out),
                 Screen::Lobby => lobby::show(ui, state, data, &mut out),
+                Screen::HostLost => host_lost::show(ui, data, &mut out),
                 _ => {}
             });
         }

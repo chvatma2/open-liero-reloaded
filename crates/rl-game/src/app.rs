@@ -794,6 +794,7 @@ impl App {
             arrangement: self.shell.ui.settings().video.hud_layout,
             net: self.net_overlay.then(|| self.shell.net_view()).flatten(),
             lagging: self.shell.lagging(),
+            migrating: self.shell.migration_line().map(str::to_string),
         });
         let (ui_state, data) = (&self.shell.ui, &mut self.shell.data);
         let menus = self.cfg.menus;
