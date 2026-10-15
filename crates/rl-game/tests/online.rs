@@ -978,10 +978,25 @@ fn a_client_whose_frames_stop_stays_joined() {
 /// Plan 12c Task 9 (ruling PF12c-2): the same with host migration on: the
 /// host sees no migration, the client never takes the match over nor
 /// loses its host, and the match ends normally on both. RED without the
-/// pump: a client silent for 3 s is dropped, or migrates away.
+/// pump: Task 5's fills bound; its migration checks guard rl-online's
+/// order (a poll receives before it judges the host silent: without the
+/// pump they pass), so it runs in the full tier only (`RL_FULL_TESTS`,
+/// review minor 9).
 #[test]
 fn a_client_whose_frames_stop_stays_joined_with_migration() {
+    if !full_tier() {
+        return;
+    }
     client_frames_stop(true);
+}
+
+/// The full tier (`cargo xtask full`'s `RL_FULL_TESTS`): else a notice.
+fn full_tier() -> bool {
+    let on = std::env::var_os("RL_FULL_TESTS").is_some();
+    if !on {
+        eprintln!("RL_FULL_TESTS not set (runs in `cargo xtask full`); skipping");
+    }
+    on
 }
 
 fn client_frames_stop(migration: bool) {
@@ -1439,8 +1454,10 @@ fn a_frozen_server_hands_the_match_to_the_first_player() {
 /// Plan 12c Task 9 (spec §3.7): the server hangs 3 s into its match and so
 /// does Anna, its only successor (no frame, her pump stopped: silent as a
 /// crashed game); Bert, who cannot host (`test_no_standby`), finds nobody
-/// to take over and gets the Host lost screen with `HOST_LOST` within the
-/// silence (2 s), the give-up (10 s) and a second; his replay is saved.
+/// to take over and gets the Host lost screen with `HOST_LOST`: the silence
+/// (2 s) and the give-up (10 s), each bound with a second's margin (review
+/// minor 10: a stalled test thread is not charged twice). His replay is
+/// saved, and only then the screen says so.
 #[test]
 fn the_host_lost_screen_shows_and_the_replay_is_saved() {
     let Some(dir) = content_dir() else { return };
@@ -1451,22 +1468,27 @@ fn the_host_lost_screen_shows_and_the_replay_is_saved() {
     rig.apps[0].shell_mut().test_stop_pump();
     assert!(!rig.anna().shell().pumped(), "Anna's pump stopped");
     let hung = Instant::now();
-    rig.until("Bert's Host lost screen", Duration::from_secs(13), |r| {
+    rig.until("Bert finds the host gone", Duration::from_secs(3), |r| {
+        r.bert().shell().migration_line().is_some()
+    });
+    let found = Instant::now();
+    rig.until("Bert's Host lost screen", Duration::from_secs(11), |r| {
         r.bert().shell().ui.screen() == Screen::HostLost
     });
-    eprintln!("host lost {:?} after the hang", hung.elapsed());
+    eprintln!("host gone {:?} after the hang, lost {:?} after that", found - hung, found.elapsed());
     let bert = rig.bert().shell();
     assert_eq!(bert.data.host_lost.as_deref(), Some(rl_online::HOST_LOST));
-    assert!(bert.data.host_lost_replay, "the screen says the replay is in Replays");
+    assert!(!bert.data.host_lost_hosting, "a player's host is lost, not its own game");
     assert!(bert.session().is_none() && !bert.ui.is_online(), "the match view went");
     rig.until("Bert's replay is saved", Duration::from_secs(5), |r| {
         !saved_replays(r.dirs[2].path()).is_empty()
     });
+    assert!(rig.bert().shell().data.host_lost_replay, "then the screen says it is in Replays");
 }
 
 /// Plan 12c Task 9 (N72): Cid comes back only after the new host resumed
 /// the match (his rejoin held 6 s): he lost his place in it. His log says
-/// who hosts and why he watches (`LATE_REJOIN`), his view keeps the match
+/// who hosts and why he watches (`late_rejoin`), his view keeps the match
 /// as he last saw it (never its start) until the new host's state comes,
 /// then he watches the match from it.
 #[test]
@@ -1480,13 +1502,12 @@ fn a_late_rejoiner_watches_until_the_next_match() {
     let launches = rig.apps[2].shell().launches();
     rig.server_frozen = true;
     let said = |a: &App, text: &str| a.shell().data.chat.iter().any(|l| l.text == text);
-    rig.until("Cid is back, late", Duration::from_secs(15), |r| {
-        said(&r.apps[2], rl_game::shell::LATE_REJOIN)
-    });
+    let late = rl_game::shell::late_rejoin("Anna", true);
+    rig.until("Cid is back, late", Duration::from_secs(15), |r| said(&r.apps[2], &late));
     let cid = rig.apps[2].shell();
     assert!(said(&rig.apps[2], "Anna is now hosting"), "{:?}", cid.data.chat);
     let log = &cid.session().expect("his match view stays").log;
-    assert!(log.texts().any(|l| l == rl_game::shell::LATE_REJOIN), "on his HUD too");
+    assert!(log.texts().any(|l| l == late), "on his HUD too");
     let kept = time(&rig.apps[2]).unwrap();
     assert!(kept >= before, "the match as he last saw it, not its start: {kept:?} < {before:?}");
     // Until the new host's state comes, the view stays as it is.
@@ -1504,4 +1525,89 @@ fn a_late_rejoiner_watches_until_the_next_match() {
     for a in &rig.apps[..2] {
         assert!(a.shell().plays_online() && a.shell().ui.screen() == Screen::InGame);
     }
+}
+
+/// Review Important 1 (N72): Cid's rejoin is held (7 s) past the end of
+/// the match, which the new host ends early (`end_match`, a server's
+/// `/next`): no start will come for him to watch. His match view goes
+/// and the Lobby shows, where he readies for the next match as anyone
+/// does. RED before the fix: he stays on the match's frozen view.
+#[test]
+fn a_late_rejoiner_after_the_match_goes_to_the_lobby() {
+    let Some(dir) = content_dir() else { return };
+    let mut rig = MigrationRig::new(&dir, 0.3, &[("Anna", true), ("Bert", true), ("Cid", true)]);
+    rig.apps[2].shell().with_peer(|p| p.test_delay_rejoin(Duration::from_secs(7)));
+    rig.run(Duration::from_secs(2), |_| {});
+    rig.server_frozen = true;
+    let hosting = |a: &App, text: &str| a.shell().data.chat.iter().any(|l| l.text == text);
+    rig.until("the match moves to Anna", Duration::from_secs(8), |r| {
+        hosting(r.anna(), "You are now hosting") && hosting(r.bert(), "Anna is now hosting")
+    });
+    assert!(rig.apps[0].shell().with_peer(|p| p.lobby().end_match()).unwrap(), "Anna ends the match");
+    rig.until("Anna's match is over", Duration::from_secs(8), |r| {
+        r.anna().shell().data.lobby.as_ref().is_some_and(|l| l.phase == rl_ui::PHASE_LOBBY)
+    });
+    let late = rl_game::shell::late_rejoin("Anna", false);
+    let back = |a: &App| a.shell().data.chat.iter().any(|l| l.text == late);
+    rig.until("Cid is back, after the match", Duration::from_secs(15), |r| back(&r.apps[2]));
+    rig.until("Cid's Lobby shows", Duration::from_secs(5), |r| {
+        r.apps[2].shell().ui.screen() == Screen::Lobby
+    });
+    let cid = rig.apps[2].shell();
+    assert!(cid.session().is_none() && cid.ui.is_online(), "his match view went, he is in the lobby");
+    // Anna leaves her results: the lobby gathers, and Cid readies.
+    rig.until("Anna's results", Duration::from_secs(8), |r| r.anna().shell().ui.screen() == Screen::Results);
+    rig.apps[0].shell_mut().act(UiAction::Back);
+    let seated = |a: &App| {
+        a.shell()
+            .data
+            .lobby
+            .as_ref()
+            .is_some_and(|l| l.members.iter().any(|m| m.name == "Cid" && m.seat.starts_with("Player")))
+    };
+    rig.until("Cid is seated for the next match", Duration::from_secs(8), |r| seated(&r.apps[2]));
+    assert_eq!(rig.apps[2].shell().ui.screen(), Screen::Lobby);
+    rig.apps[2].shell_mut().act(UiAction::LobbyReady(true));
+    rig.until("Anna sees Cid ready", Duration::from_secs(5), |r| {
+        r.anna()
+            .shell()
+            .data
+            .lobby
+            .as_ref()
+            .is_some_and(|l| l.members.iter().any(|m| m.name == "Cid" && m.ready))
+    });
+}
+
+/// Review minor 7 (N69): Bert hears nothing for 3.5 s (every datagram of
+/// his dropped; the server and Anna go on): he finds the host gone and
+/// starts a migration (his HUD's line), but Anna's turn never comes, she
+/// still hears the server. When the server is heard again the migration
+/// is called off: `HOST_BACK` in his log, the line gone, the match going
+/// on, and Anna never migrates.
+#[test]
+fn a_host_heard_again_calls_the_migration_off() {
+    let Some(dir) = content_dir() else { return };
+    let mut rig = MigrationRig::new(&dir, 0.3, &[("Anna", true), ("Bert", true)]);
+    rig.run(Duration::from_secs(1), |_| {});
+    let until = Instant::now() + Duration::from_millis(3_500);
+    rig.apps[1].shell().with_peer(|p| p.test_outage(until));
+    rig.until("Bert finds the host gone", Duration::from_secs(5), |r| {
+        r.bert().shell().migration_line().is_some()
+    });
+    let back = rl_online::migration::HOST_BACK;
+    rig.until("the migration is called off", Duration::from_secs(6), |r| {
+        r.bert().shell().data.chat.iter().any(|l| l.text == back)
+    });
+    let bert = rig.bert().shell();
+    assert_eq!(bert.migration_line(), None, "the line goes");
+    assert!(bert.session().unwrap().log.texts().any(|l| l == back), "on his HUD too");
+    let from = confirmed(bert).map_or(0, |c| c.0);
+    rig.until("Bert's match goes on", Duration::from_secs(5), |r| {
+        confirmed(r.bert().shell()).is_some_and(|c| c.0 > from + 100)
+    });
+    for a in &rig.apps {
+        assert!(a.shell().plays_online() && a.shell().ui.screen() == Screen::InGame);
+        assert!(!a.shell().data.chat.iter().any(|l| l.text.ends_with("now hosting")), "nobody took over");
+    }
+    no_migration(rig.anna().shell(), "Anna");
 }

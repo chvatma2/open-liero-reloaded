@@ -58,9 +58,16 @@ pub fn full(offline: bool) -> anyhow::Result<bool> {
 /// 10 000 unreliable datagrams over real sockets (`rl-net`'s `link`,
 /// 2 000 in `check`), and real-transport matches of `rl-server` and 8 bot
 /// clients per network profile and a spectator joining mid-match
-/// (`rl-cli`'s `transport`, spec §9.4; two clients in `check`).
-pub const FULL_TESTS: &[(&str, &str)] =
-    &[("rl-cli", "grid"), ("rl-cli", "net_sim"), ("rl-cli", "transport"), ("rl-net", "link")];
+/// (`rl-cli`'s `transport`, spec §9.4; two clients in `check`), and
+/// rl-game's integration tests again for its full-tier migration case
+/// (plan 12c Task 9: `a_client_whose_frames_stop_stays_joined_with_migration`).
+pub const FULL_TESTS: &[(&str, &str)] = &[
+    ("rl-cli", "grid"),
+    ("rl-cli", "net_sim"),
+    ("rl-cli", "transport"),
+    ("rl-net", "link"),
+    ("rl-game", "integration"),
+];
 
 /// The test targets of the GPU tier as `(package, test target)`.
 pub const GPU_TESTS: &[(&str, &str)] = &[

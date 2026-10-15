@@ -594,14 +594,22 @@ mod tests {
     use rl_sim::{Event, EventKind};
 
     /// One poll of the fake: who (the pump's thread or not), when it
-    /// started and ended, and the keys it pressed.
+    /// started and ended, the time it was given (the pump's own clock),
+    /// and the keys it pressed.
     #[derive(Clone, Copy, Debug)]
     struct Polled {
         pump: bool,
         start: Instant,
         end: Instant,
+        at: Instant,
         keys: Keys,
     }
+
+    /// A gated fake's gate (`Fake::gate`): closed, open for one pump poll,
+    /// or open for good.
+    const CLOSED: u8 = 0;
+    const OPEN_ONCE: u8 = 1;
+    const OPEN: u8 = 2;
 
     /// A peer that records its polls (pressing the local keys once each,
     /// as a poll running one tick), takes `delay` for each, and hands the
@@ -614,27 +622,42 @@ mod tests {
         /// A pump's poll is running (the tests aim the UI's poll into it).
         busy: Arc<AtomicBool>,
         panics: bool,
+        /// A pump poll, once started (and `busy`), waits for this gate to
+        /// open (closing a gate open once behind it), holding the peer:
+        /// a UI poll called before the gate opens meets it, by construction.
+        gate: Option<Arc<std::sync::atomic::AtomicU8>>,
     }
 
     impl Poll for Fake {
         fn poll(
             &mut self,
-            _now: Instant,
+            now: Instant,
             local_keys: &mut dyn FnMut() -> Keys,
             _on_tick: &mut dyn FnMut(&World, &TickEvents, TickInfo),
         ) -> Vec<OnlineEvent> {
+            let start = Instant::now();
             let pump = std::thread::current().name() == Some(PUMP_THREAD);
             if pump {
                 assert!(!self.panics, "a fake peer's poll panics");
                 self.busy.store(true, Ordering::Release);
+                if let Some(gate) = &self.gate {
+                    let waiting = Instant::now();
+                    while gate
+                        .compare_exchange(OPEN_ONCE, CLOSED, Ordering::AcqRel, Ordering::Acquire)
+                        .is_err()
+                        && gate.load(Ordering::Acquire) != OPEN
+                    {
+                        assert!(waiting.elapsed() < Duration::from_secs(10), "the test opens the gate");
+                        std::thread::yield_now();
+                    }
+                }
             }
             let keys = local_keys();
-            let start = Instant::now();
             if !self.delay.is_zero() {
                 std::thread::sleep(self.delay);
             }
             let end = Instant::now();
-            self.log.lock().unwrap().push(Polled { pump, start, end, keys });
+            self.log.lock().unwrap().push(Polled { pump, start, end, at: now, keys });
             self.busy.store(false, Ordering::Release);
             if pump { self.batches.pop_front().unwrap_or_default() } else { Vec::new() }
         }
@@ -651,6 +674,7 @@ mod tests {
             batches: VecDeque::from([batch]),
             busy: Arc::clone(&busy),
             panics: false,
+            gate: None,
         };
         (f, log, busy)
     }
@@ -663,11 +687,12 @@ mod tests {
         h.poll(Instant::now(), &mut || keys, &mut |_, _, _| {})
     }
 
-    /// Waits (at most 2 s) until the pump polled `n` times.
+    /// Waits (at most 5 s: a loaded machine) until the pump polled `n`
+    /// times.
     fn until_pumped<P: Poll>(h: &PeerHandle<P>, n: u64) {
         let start = Instant::now();
         while h.pump_polls() < n {
-            assert!(start.elapsed() < Duration::from_secs(2), "the pump polls an idle UI's peer");
+            assert!(start.elapsed() < Duration::from_secs(5), "the pump polls an idle UI's peer");
             std::thread::sleep(Duration::from_millis(2));
         }
     }
@@ -732,13 +757,16 @@ mod tests {
                 eprintln!("a loaded machine: the UI's polls were up to {widest:?} apart");
             }
         }
+        // The UI stops: the pump polls (at least 10 times, however loaded
+        // the machine), never more often than once a `PUMP_EVERY` from
+        // `PUMP_AFTER` on (it wakes no more often).
         let busy_ui = h.pump_polls();
         let quiet = Instant::now();
-        std::thread::sleep(Duration::from_millis(400));
+        until_pumped(&h, busy_ui + 10);
         let pumped = h.pump_polls() - busy_ui;
         let took = quiet.elapsed();
         let most = (took.saturating_sub(PUMP_AFTER).as_millis() / PUMP_EVERY.as_millis()) as u64 + 2;
-        assert!((10..=most).contains(&pumped), "{pumped} pump polls in {took:?} without the UI");
+        assert!(pumped <= most, "{pumped} pump polls in {took:?} without the UI");
         drop(h);
         pump_polls_wait_for_the_ui(&log.lock().unwrap());
     }
@@ -755,22 +783,34 @@ mod tests {
         for latched in [held, Keys(0)] {
             ui_poll_with(&h, latched);
             let from = log.lock().unwrap().len();
-            std::thread::sleep(PUMP_AFTER + PUMP_HOLD + Duration::from_millis(250));
-            let polls: Vec<Polled> = log.lock().unwrap()[from..].to_vec();
+            // Until the pump let go for 5 polls (however loaded the
+            // machine); each poll judged on the time the pump gave it.
+            let start = Instant::now();
+            let polls = loop {
+                assert!(start.elapsed() < Duration::from_secs(5), "the pump polls through the stall");
+                std::thread::sleep(Duration::from_millis(10));
+                let polls: Vec<Polled> = log.lock().unwrap()[from..].to_vec();
+                let first = polls.first().map(|p| p.at);
+                let late =
+                    polls.iter().filter(|p| first.is_some_and(|f| p.at.duration_since(f) >= PUMP_HOLD));
+                if late.count() >= 5 {
+                    break polls;
+                }
+            };
             assert!(polls.iter().all(|p| p.pump));
-            let first = polls.first().expect("the pump polled").start;
+            let first = polls[0].at;
             let (mut kept, mut zeroed) = (0, 0);
             for p in &polls {
-                let into = p.start.saturating_duration_since(first);
-                if into + Duration::from_millis(5) < PUMP_HOLD {
+                let into = p.at.duration_since(first);
+                if into < PUMP_HOLD {
                     assert_eq!(p.keys, latched, "{into:?} into the stall: the last latched keys");
                     kept += 1;
-                } else if into > PUMP_HOLD + Duration::from_millis(5) {
+                } else {
                     assert_eq!(p.keys, Keys(0), "{into:?} into the stall: nothing");
                     zeroed += 1;
                 }
             }
-            assert!(kept >= 5 && zeroed >= 5, "{kept} polls held, {zeroed} let go");
+            assert!(kept >= 1 && zeroed >= 5, "{kept} polls held, {zeroed} let go");
         }
     }
 
@@ -952,7 +992,7 @@ mod tests {
         h.set_held(Keys(Keys::RIGHT));
         ui_poll_with(&h, Keys(Keys::FIRE | Keys::RIGHT));
         let from = log.lock().unwrap().len();
-        std::thread::sleep(PUMP_AFTER + Duration::from_millis(100));
+        until_pumped(&h, 3);
         let polls: Vec<Polled> = log.lock().unwrap()[from..].to_vec();
         assert!(polls.len() >= 3, "the pump polled");
         assert!(polls.iter().all(|p| p.keys == Keys(Keys::RIGHT)), "only Right is held: {polls:?}");
@@ -980,7 +1020,7 @@ mod tests {
         let h = PeerHandle::pumped(f);
         let start = Instant::now();
         while h.is_pumped() {
-            assert!(start.elapsed() < Duration::from_secs(2), "the pump's end is known at once");
+            assert!(start.elapsed() < Duration::from_secs(5), "the pump's end is known at once");
             std::thread::sleep(Duration::from_millis(5));
         }
         let p = ui_poll(&h);
@@ -990,45 +1030,45 @@ mod tests {
         assert!(!ui_poll(&h).events.iter().any(|e| matches!(e, OnlineEvent::Notice(_))), "said once");
     }
 
-    /// A pump poll takes 5 ms: the UI's poll, called while one runs,
-    /// waits for that poll alone (it starts within a millisecond or two
-    /// of that poll's end), never for the pump's sleep or a second poll.
+    /// The UI's poll, called while a pump poll holds the peer, waits for
+    /// that poll alone: it begins once that poll ended, and no other pump
+    /// poll comes between (never a second poll; the pump's sleep is
+    /// outside the lock). Every round is contended by construction: the
+    /// pump's poll waits on a gate the test opens only as it calls the
+    /// UI's poll. Order, not milliseconds: the scheduler cannot fail it.
     #[test]
     fn the_ui_waits_at_most_one_pump_poll() {
-        let delay = Duration::from_millis(5);
-        let (f, log, busy) = fake(delay, Vec::new());
+        let (mut f, log, busy) = fake(Duration::from_millis(5), Vec::new());
+        let gate = Arc::new(std::sync::atomic::AtomicU8::new(CLOSED));
+        f.gate = Some(Arc::clone(&gate));
         let h = PeerHandle::pumped(f);
-        let mut contended = 0;
         for round in 0..10 {
-            // Idle until a pump poll runs, then poll into it.
+            // A pump poll holds the peer, waiting at its gate.
             let start = Instant::now();
             while !busy.load(Ordering::Acquire) {
-                assert!(start.elapsed() < Duration::from_secs(2), "round {round}: the pump polls");
+                assert!(start.elapsed() < Duration::from_secs(5), "round {round}: the pump polls");
                 std::thread::yield_now();
             }
             let called = Instant::now();
+            gate.store(OPEN_ONCE, Ordering::Release);
             ui_poll(&h);
             let returned = called.elapsed();
             let polls = log.lock().unwrap().clone();
             let mine = polls.iter().rev().find(|p| !p.pump).copied().unwrap();
             let theirs = polls.iter().rev().find(|p| p.pump && p.start <= called).copied().unwrap();
-            let waited = mine.start.saturating_duration_since(called);
-            let own = mine.end.saturating_duration_since(mine.start);
-            // Its own poll began once the pump's ended, not later.
-            let after_theirs = mine.start.saturating_duration_since(theirs.end);
-            assert!(
-                after_theirs < Duration::from_millis(2),
-                "round {round}: started {after_theirs:?} after the pump's poll"
-            );
-            assert!(waited <= theirs.end.saturating_duration_since(called) + Duration::from_millis(2));
-            assert!(returned >= own, "{returned:?} {own:?}");
-            contended += usize::from(waited >= Duration::from_millis(1));
+            assert!(theirs.end >= called, "round {round}: the pump's poll held the peer when the UI called");
+            assert!(mine.start >= theirs.end, "round {round}: the UI's poll began once the pump's ended");
+            let between = polls.iter().filter(|p| p.pump && p.start > called && p.start < mine.start).count();
+            assert_eq!(between, 0, "round {round}: no second pump poll before the UI's");
+            assert!(returned >= mine.end.saturating_duration_since(mine.start));
         }
-        assert!(contended >= 5, "the UI's polls met the pump's: {contended} of 10");
+        // Open for good: the pump's next poll does not hold the stop.
+        gate.store(OPEN, Ordering::Release);
     }
 
-    /// Stopping the pump joins its thread within 100 ms, and the handle
-    /// gives the peer back.
+    /// Stopping the pump joins its thread (within one of its polls and a
+    /// wake, far below the 1 s bound a loaded machine is given), the handle
+    /// gives the peer back, and nothing polls it after.
     #[test]
     fn stopping_the_pump_joins_it() {
         let (f, log, _) = fake(Duration::from_millis(5), Vec::new());
@@ -1040,7 +1080,7 @@ mod tests {
         }
         let stopping = Instant::now();
         let peer = h.into_peer();
-        assert!(stopping.elapsed() < Duration::from_millis(100), "joined in {:?}", stopping.elapsed());
+        assert!(stopping.elapsed() < Duration::from_secs(1), "joined in {:?}", stopping.elapsed());
         let n = log.lock().unwrap().len();
         assert!(Arc::ptr_eq(&peer.log, &log), "the same peer back");
         std::thread::sleep(Duration::from_millis(50));

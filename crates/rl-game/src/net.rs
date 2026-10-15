@@ -123,6 +123,10 @@ pub struct Net {
     /// This player took the match over from a lost host: it hosts a lobby
     /// closed to newcomers (N72, `rl_ui::MIGRATED_LISTING`).
     pub migrated: bool,
+    /// This player reached the new host after its resume (N72): its match
+    /// view is frozen until the new host's start lets it watch, or the
+    /// lobby leaves the match (results, gathering: then the Lobby shows).
+    pub late: bool,
 }
 
 impl Net {
@@ -168,6 +172,7 @@ impl Net {
             paths_said: std::collections::BTreeMap::new(),
             migrating: None,
             migrated: false,
+            late: false,
         }
     }
 }

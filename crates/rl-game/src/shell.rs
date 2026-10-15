@@ -89,7 +89,7 @@ use crate::video::{self, Overrides};
 mod joining;
 mod online;
 pub use joining::{NO_WAY_TO_JOIN, UNMAP_WAIT, Unmapping, resolve};
-pub use online::LATE_REJOIN;
+pub use online::late_rejoin;
 
 /// What the shell needs besides the menus' state.
 #[derive(Clone, Debug)]
@@ -218,6 +218,9 @@ pub struct Shell {
     /// Tests only: clients this shell starts never host (no standby, N79:
     /// `test_no_standby`).
     no_standby: bool,
+    /// The Host lost screen waits for its match's replay: the next one
+    /// saved sets `MenuData::host_lost_replay`.
+    host_lost_pending: bool,
 }
 
 /// A change to an endpoint's ICE settings (tests: a loopback base, a
@@ -290,6 +293,7 @@ impl Shell {
             held_keys: Keys(u8::MAX),
             migration: true,
             no_standby: false,
+            host_lost_pending: false,
         };
         shell.data.default_relays = DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect();
         shell.data.default_stun = DEFAULT_STUN.iter().map(|s| s.to_string()).collect();
@@ -351,6 +355,7 @@ impl Shell {
             held_keys: Keys(u8::MAX),
             migration: true,
             no_standby: false,
+            host_lost_pending: false,
         }
     }
 

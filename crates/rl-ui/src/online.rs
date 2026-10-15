@@ -29,8 +29,9 @@ pub const CHAT_CHARS: usize = 200;
 pub const PHASE_LOBBY: &str = "Lobby";
 
 /// The [`LobbyView::listing`] of a lobby whose host took the match over
-/// from a lost host (plan 12c, N72): nobody new may join it.
-pub const MIGRATED_LISTING: &str = "Taken over from the host: only this match's players can join";
+/// from a lost host (plan 12c, N72): only the match's members (players,
+/// spectators, those waiting) may come back, for the lobby's life.
+pub const MIGRATED_LISTING: &str = "Taken over from the host: closed to new players";
 
 /// A [`MemberView::seat`] that watches instead of playing.
 pub const SEAT_SPECTATOR: &str = "Spectator";

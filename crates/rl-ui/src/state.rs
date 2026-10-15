@@ -32,7 +32,8 @@
 //!   returns to Multiplayer from any screen. `HostLost` (plan 12c: the host
 //!   gone and nobody could take the match over) ends it too and opens the
 //!   Host lost screen, whose Replays opens the Replays screen and whose
-//!   Back returns to Multiplayer.
+//!   Back returns to Multiplayer. `MatchLeft` (a late rejoiner whose match
+//!   is over) ends it and shows the Lobby.
 //! - **Matches:** Start emits one `StartMatch` with the next seed; until
 //!   the app reports `MatchStarted` or `MatchFailed`, starting again and
 //!   Back do nothing (no double matches). A Deathmatch starts with OLX's
@@ -217,6 +218,10 @@ pub enum UiAction {
     /// is over, the Host lost screen opens with the reason (the app puts
     /// it in `MenuData::host_lost`).
     HostLost(String),
+    /// The app: this player's online match view ends without results (a
+    /// late rejoiner's, plan 12c N72: the match it reached is over): the
+    /// Lobby shows.
+    MatchLeft,
 }
 
 /// What the app must do.
@@ -667,6 +672,13 @@ impl UiState {
                 if ended { vec![AppCommand::EndMatch] } else { Vec::new() }
             }
             UiAction::HostLost(_) => Vec::new(),
+            UiAction::MatchLeft if self.online && self.play == Play::Running(Game::Online) => {
+                self.play = Play::None;
+                self.paused = false;
+                self.go(Screen::Lobby);
+                vec![AppCommand::EndMatch]
+            }
+            UiAction::MatchLeft => Vec::new(),
             UiAction::LeaveLobby => self.leave_online(),
             UiAction::LobbyReady(on) => self.lobby(LobbyCommand::Ready(on)),
             UiAction::LobbySpectate(on) => self.lobby(LobbyCommand::Spectate(on)),

@@ -93,8 +93,10 @@ impl OnlineDriver {
 
     /// What to draw the frame at `now` with between the last two ticks
     /// (spec §3.4): the pace's tick phase (`OnlinePeer::tick_phase`), or 1
-    /// (the newest tick as it is) while the match stalls or catches up, for
-    /// a spectator, and on the frame after a loaded state or a rollback.
+    /// (the newest tick as it is) while the match stalls or catches up,
+    /// while its pace is held (a new host's resume hold, a jump back: no
+    /// tick runs, `tick_phase` is `None`, plan 12c Task 8b), for a
+    /// spectator, and on the frame after a loaded state or a rollback.
     pub fn alpha(&self, now: Instant) -> f32 {
         if self.jumped {
             return 1.0;

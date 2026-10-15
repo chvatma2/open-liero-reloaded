@@ -26,7 +26,7 @@ mod replays;
 pub mod results;
 mod weapon_select;
 
-pub use host_lost::HOST_LOST_REPLAY;
+pub use host_lost::{HOST_LOST_REPLAY, HOST_LOST_TITLE, STEPPED_DOWN_TITLE};
 pub use keys::GAME_KEYS;
 
 use std::collections::BTreeMap;
@@ -121,9 +121,13 @@ pub struct MenuData {
     /// Why the online match's host was lost (plan 12c): the Host lost
     /// screen's reason, set by the app with [`UiAction::HostLost`].
     pub host_lost: Option<String>,
-    /// That match left a replay to save (a watcher that joined mid-match
-    /// has none): the Host lost screen says it is in Replays.
+    /// That match's replay is saved (the app sets it once the file is
+    /// written; a watcher that joined mid-match has none): the Host lost
+    /// screen says it is in Replays.
     pub host_lost_replay: bool,
+    /// This player was the match's host and stepped down (its game
+    /// stalled, N70): the screen's title is [`STEPPED_DOWN_TITLE`].
+    pub host_lost_hosting: bool,
     /// A text field had the focus as the last frame ended.
     typing: bool,
     /// The weapon selection in progress.
@@ -174,6 +178,7 @@ impl MenuData {
             download_cache: Err("there is no download cache".into()),
             host_lost: None,
             host_lost_replay: false,
+            host_lost_hosting: false,
             typing: false,
             select: None,
             thumbs: BTreeMap::new(),

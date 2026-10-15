@@ -12,7 +12,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `--offline` skips it: the tests run on the committed packs.
 - `full` runs `check`, then `bot-grid` (`check::FULL_TESTS`: `rl-cli`'s
   `tests/grid.rs`, `tests/net_sim.rs`' online grid and `tests/transport.rs`'
-  real-transport matches (spec §9.4), and `rl-net`'s `link`, with
+  real-transport matches (spec §9.4), `rl-net`'s `link`, and `rl-game`'s
+  `integration` again for its full-tier migration case, with
   `RL_FULL_TESTS=1`), then the GPU step
   (`check::GPU_TESTS` with `RL_GPU_TESTS=1`: `rl-render`'s `gpu`,
   `rl-cli`'s `render_golden` and `gpu_bench` (plan 8's `gpu-bench` on the

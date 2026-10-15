@@ -174,13 +174,18 @@ these widgets and carries out their commands (`rl-game/src/shell.rs`).
   Task 9): the app's `HostLost(why)` (the host gone and nobody could take
   the match over, or this host stalled and stepped down) while online ends
   the match (`EndMatch`) and opens `Screen::HostLost` (`host_lost.rs`, a
-  page: "Host lost", `MenuData::host_lost` (the app's reason), then
-  `HOST_LOST_REPLAY` ("The match's replay is saved in Replays.") when
-  `MenuData::host_lost_replay`, and Replays, which opens the Replays
-  screen; Back or Esc returns to Multiplayer); ignored outside an online
-  game. A lobby whose player took the match over is an ordinary host's
-  (Start, Force start, kick, the setup), its `listing` `MIGRATED_LISTING`
-  ("Taken over from the host: only this match's players can join"). The
+  page: `HOST_LOST_TITLE` "Host lost", or `STEPPED_DOWN_TITLE` "Match
+  lost" when `MenuData::host_lost_hosting` (this player's own stalled
+  game stepped down), `MenuData::host_lost` (the app's reason), then
+  `HOST_LOST_REPLAY` ("The match's replay is saved in Replays.") once
+  `MenuData::host_lost_replay` (the app sets it when the file is written),
+  and Replays, which opens the Replays screen; Back or Esc returns to
+  Multiplayer); ignored outside an online game. `MatchLeft` (the app: a
+  late rejoiner's match is over before it could watch) ends the online
+  match (`EndMatch`) and shows the Lobby, the game still on. A lobby
+  whose player took the match over is an ordinary host's (Start, Force
+  start, kick, the setup), its `listing` `MIGRATED_LISTING` ("Taken over
+  from the host: closed to new players"). The
   host's Start and Force start stand one above the other in a column too
   narrow for both, and a member's Kick, Ban and move buttons wrap (UI
   scale 3 on a 4:3 desktop). The lobby reuses Local
@@ -398,8 +403,9 @@ settings sanitized (TURN entries, `port_mapping` on for an older file),
 the join's step as the waiting text), `the_lobby_shows_reach_lines_and_path_tags`,
 `listed_games_show_bots_apart_and_only_seats_fill`;
 `the_host_lost_screen_says_why_and_goes_back` (the reason, the replay
-line only with a replay, Replays, Back and Esc, ignored offline),
-`a_migrated_lobby_shows_host_controls`;
+line only with a replay, the stepped-down title, Replays, Back and Esc,
+ignored offline), `a_migrated_lobby_shows_host_controls`,
+`a_match_left_shows_the_lobby` (Ready works there);
 `tests/layout.rs`'s `the_host_lost_screen_and_a_migrated_lobby_fit` (4K,
 3440 × 1440, 1280 × 720 at 3, and borderless 16:10 and 4:3 at UI scale
 3: the Host lost screen a centred column with every widget in the

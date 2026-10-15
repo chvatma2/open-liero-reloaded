@@ -202,13 +202,7 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
     if let Some(net) = &o.net {
         network(ui.painter(), o.map.points_rect().intersect(ui.max_rect()), net);
     }
-    // The playfield's top line: a migration under way, else lagging.
-    let top = match (&o.migrating, o.lagging) {
-        (Some(m), _) => Some((m.as_str(), MIGRATING_COLOUR)),
-        (None, true) => Some((CONNECTION_PROBLEM, Color32::from_rgb(255, 90, 60))),
-        (None, false) => None,
-    };
-    if let Some((text, colour)) = top {
+    if let Some((text, colour)) = top_line(o.migrating.as_deref(), o.lagging) {
         let r = o.map.points_rect();
         // A long line (a long name) is cut to the picture, never past it.
         let font = FontId::proportional(20.0);
@@ -241,7 +235,21 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
 pub const CONNECTION_PROBLEM: &str = "Connection problem";
 
 /// A host migration's line (plan 12c): amber, news rather than a fault.
-const MIGRATING_COLOUR: Color32 = Color32::from_rgb(255, 200, 80);
+pub const MIGRATING_COLOUR: Color32 = Color32::from_rgb(255, 200, 80);
+
+/// "Connection problem"'s colour: a fault.
+pub const LAGGING_COLOUR: Color32 = Color32::from_rgb(255, 90, 60);
+
+/// The playfield's top line and its colour: a host migration under way
+/// (`migrating`, plan 12c), else "Connection problem" while the host says
+/// this client lags, else none.
+pub fn top_line(migrating: Option<&str>, lagging: bool) -> Option<(&str, Color32)> {
+    match (migrating, lagging) {
+        (Some(m), _) => Some((m, MIGRATING_COLOUR)),
+        (None, true) => Some((CONNECTION_PROBLEM, LAGGING_COLOUR)),
+        (None, false) => None,
+    }
+}
 
 /// F3: the network's numbers (spec §7.3) at the playfield's top right.
 fn network(p: &Painter, field: egui::Rect, net: &crate::net::NetView) {
@@ -321,6 +329,18 @@ fn debug(p: &Painter, rect: egui::Rect, o: &Overlay) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Review minor 7: a migration's line takes the top line, in amber,
+    /// over "Connection problem" (a client whose host is gone may still be
+    /// flagged lagging); without one, lagging shows in red; else nothing.
+    #[test]
+    fn the_top_line_is_the_migrations_else_lagging() {
+        let moving = "The host is gone: moving the game to Anna…";
+        assert_eq!(top_line(Some(moving), true), Some((moving, MIGRATING_COLOUR)));
+        assert_eq!(top_line(Some(moving), false), Some((moving, MIGRATING_COLOUR)));
+        assert_eq!(top_line(None, true), Some((CONNECTION_PROBLEM, LAGGING_COLOUR)));
+        assert_eq!(top_line(None, false), None);
+    }
 
     /// A worm's name sits centred above it, moved inside the view when
     /// the worm is at its edge (never clipped there).

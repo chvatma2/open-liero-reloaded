@@ -17,7 +17,7 @@ use rl_online::content::HOST_RATE;
 use rl_online::join::path_text;
 use rl_online::matches::setup_packs;
 use rl_online::{HostListen, OnlineEvent, OnlinePeer, PeerContent, PeerRole, Reachability};
-use rl_proto::{LobbyState, Look, MatchStartWire};
+use rl_proto::{LobbyState, Look, MatchStartWire, Phase};
 use rl_sim::Keys;
 use rl_ui::hud::{LineKind, LogLine};
 use rl_ui::{HostPrefs, InternetView, LobbyCommand, MIGRATED_LISTING, Screen, UiAction, Visibility};
@@ -669,6 +669,14 @@ impl Shell {
         println!("rl-game: migration: {text}");
         let late =
             !me && self.plays_online() && self.with_peer(|p| p.match_session().is_none()) == Some(true);
+        // The new host's lobby: still in its match (a start will come to
+        // watch it from), or past it.
+        let playing = self
+            .with_peer(|p| {
+                p.lobby().state().map(|s| matches!(s.phase, Phase::Starting | Phase::Playing { .. }))
+            })
+            .flatten()
+            .unwrap_or(false);
         let Some(n) = &mut self.net else { return };
         n.migrating = None;
         n.lagging = false;
@@ -682,12 +690,35 @@ impl Shell {
         }
         self.chat_line(LogLine::event(text));
         if late {
-            let text = LATE_REJOIN;
+            let text = late_rejoin(host, playing);
             println!("rl-game: migration: {text}");
             self.chat_line(LogLine::event(text));
+            if playing {
+                if let Some(n) = &mut self.net {
+                    n.late = true;
+                }
+            } else {
+                self.leave_late_view(out);
+            }
         }
         if me && let Some(state) = self.with_peer(|p| p.lobby().state().cloned()).flatten() {
             self.show_lobby(&state, out);
+        }
+    }
+
+    /// A late rejoiner's frozen match view goes (its match is over: no
+    /// start will come to watch it from) and the Lobby shows, where it
+    /// readies for the next match.
+    fn leave_late_view(&mut self, out: &mut Vec<Outcome>) {
+        if let Some(n) = &mut self.net {
+            n.late = false;
+        }
+        if !self.plays_online() {
+            return;
+        }
+        self.end();
+        for c in self.ui.update(UiAction::MatchLeft) {
+            self.carry(c, out);
         }
     }
 
@@ -697,13 +728,19 @@ impl Shell {
     /// match saved when made), and the Host lost screen says `why`.
     fn host_lost(&mut self, why: String, out: &mut Vec<Outcome>) {
         println!("rl-game: migration: host lost: {why}");
+        // A host lost is this player's own step-down (N70).
+        let hosting = self.net.as_ref().is_some_and(|n| n.host);
         self.end();
         self.close_hosted();
         let pending = self.replays.len();
         if let Some(p) = self.net.take().and_then(|n| n.peer) {
             self.release(p);
         }
-        self.data.host_lost_replay = self.store.replays_dir().is_some() && self.replays.len() > pending;
+        // Said once the replay is saved (`save_online_replay`): none for a
+        // watcher that joined mid-match, nor without a data directory.
+        self.host_lost_pending = self.store.replays_dir().is_some() && self.replays.len() > pending;
+        self.data.host_lost_replay = false;
+        self.data.host_lost_hosting = hosting;
         self.data.host_lost = Some(why.clone());
         self.data.lobby = None;
         self.data.joining = None;
@@ -896,6 +933,8 @@ impl Shell {
             n.weapons = Some((key, menu));
         }
         let (host, migrated) = (n.host, n.migrated);
+        // A late rejoiner's frozen view, while its lobby leaves the match.
+        let over = n.late && matches!(state.phase, Phase::Results | Phase::Gathering);
         let downloads = n.downloads.clone();
         if host {
             for line in net::path_news(&mut n.paths_said, &state.members) {
@@ -954,6 +993,9 @@ impl Shell {
             if migrated {
                 l.listing = Some(MIGRATED_LISTING.into());
             }
+        }
+        if over {
+            self.leave_late_view(out);
         }
         if welcomed {
             self.data.joining = None;
@@ -1034,6 +1076,7 @@ impl Shell {
         self.data.results = None;
         if let Some(n) = &mut self.net {
             n.lagging = false;
+            n.late = false;
             n.meter.clear();
         }
         let watch = if my_slot.is_some() { "plays" } else { "watches" };
@@ -1047,7 +1090,13 @@ impl Shell {
     fn save_online_replay(&mut self, bytes: &[u8]) {
         let Some(dir) = self.store.replays_dir() else { return };
         match rl_ui::replays::auto_save(&dir, bytes) {
-            Ok(path) => println!("rl-game: saved replay {}", path.display()),
+            Ok(path) => {
+                println!("rl-game: saved replay {}", path.display());
+                // The Host lost screen says so once it is there.
+                if std::mem::take(&mut self.host_lost_pending) {
+                    self.data.host_lost_replay = true;
+                }
+            }
             Err(e) => eprintln!("warning: saving the replay in {}: {e}", dir.display()),
         }
     }
@@ -1299,9 +1348,17 @@ impl Shell {
     }
 }
 
-/// The log's line for a player back after the new host resumed the match
-/// (a late rejoiner, plan 12c N72): its slot plays no more.
-pub const LATE_REJOIN: &str = "You came back after the handover: you watch until the next match";
+/// The log's line for a player whose game reached the new host `host`
+/// only after it resumed the match (a late rejoiner, plan 12c N72): its
+/// slot plays no more; it watches the match (`playing`), else the match
+/// is over and the Lobby shows.
+pub fn late_rejoin(host: &str, playing: bool) -> String {
+    if playing {
+        format!("You reached {host} after the match resumed: you watch until the next match")
+    } else {
+        format!("You reached {host} after the match ended: you play the next one")
+    }
+}
 
 /// The wall-clock unix time now, read at each use: notes' `created_at` and
 /// the list's ages (never anchored to the frames' monotonic clock, which

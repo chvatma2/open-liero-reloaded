@@ -6,8 +6,8 @@ use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use rl_content::{Catalog, LevelInfo, ModInfo};
-use rl_ui::screens::HOST_LOST_REPLAY;
 use rl_ui::screens::{self, MenuData};
+use rl_ui::screens::{HOST_LOST_REPLAY, HOST_LOST_TITLE, STEPPED_DOWN_TITLE};
 use rl_ui::{
     AppCommand, DownloadView, HostPrefs, InternetEntry, InternetStatus, InternetView, LanEntry, LobbyCommand,
     LobbyView, MIGRATED_LISTING, MatchPrefs, MemberView, PHASE_LOBBY, PingView, Profiles, Region,
@@ -1197,7 +1197,7 @@ fn the_host_lost_screen_says_why_and_goes_back() {
     };
     let mut h = harness();
     lost(&mut h, true);
-    h.get_by_label("Host lost");
+    h.get_by_label(HOST_LOST_TITLE);
     h.get_by_label(why);
     h.get_by_label(HOST_LOST_REPLAY);
     h.get_by_role_and_label(Role::Button, "Replays").click();
@@ -1210,8 +1210,14 @@ fn the_host_lost_screen_says_why_and_goes_back() {
     h.get_by_role_and_label(Role::Button, "Back").click();
     settle(&mut h);
     assert_eq!(h.state().ui.screen(), Screen::Multiplayer);
-    // Esc too.
+    // A host that stepped down: its own title.
     lost(&mut h, true);
+    assert!(h.query_by_label(STEPPED_DOWN_TITLE).is_none());
+    h.state_mut().data.host_lost_hosting = true;
+    settle(&mut h);
+    h.get_by_label(STEPPED_DOWN_TITLE);
+    assert!(h.query_by_label(HOST_LOST_TITLE).is_none());
+    // Esc too.
     h.key_press(egui::Key::Escape);
     settle(&mut h);
     assert_eq!(h.state().ui.screen(), Screen::Multiplayer);
@@ -1239,5 +1245,23 @@ fn a_migrated_lobby_shows_host_controls() {
     h.get_by_role_and_label(Role::Button, "Start").click();
     settle(&mut h);
     assert_eq!(lobby_commands(&h), [&LobbyCommand::Start]);
-    assert_eq!(MIGRATED_LISTING, "Taken over from the host: only this match's players can join");
+    assert_eq!(MIGRATED_LISTING, "Taken over from the host: closed to new players");
+}
+
+/// Review Important 1 (plan 12c, N72): a late rejoiner's match is over
+/// before it could watch: the app reports `MatchLeft`, the match ends and
+/// the Lobby shows (the online game goes on, Ready works); outside an
+/// online match it does nothing.
+#[test]
+fn a_match_left_shows_the_lobby() {
+    let mut h = harness();
+    let app = h.state_mut();
+    in_match(app);
+    assert_eq!(app.ui.update(UiAction::MatchLeft), [AppCommand::EndMatch]);
+    assert_eq!((app.ui.screen(), app.ui.is_online(), app.ui.game()), (Screen::Lobby, true, None));
+    assert!(app.ui.update(UiAction::MatchLeft).is_empty(), "once");
+    settle(&mut h);
+    h.get_by_label("Ready").click();
+    settle(&mut h);
+    assert_eq!(lobby_commands(&h), [&LobbyCommand::Ready(true)]);
 }

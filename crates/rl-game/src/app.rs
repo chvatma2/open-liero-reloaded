@@ -724,7 +724,9 @@ impl App {
         let mut alpha = 1.0;
         if let Some(s) = self.shell.session_mut() {
             // Online the pace's own tick phase (the local clock's is not the
-            // netcode's): 1 while it stalls, catches up or rolls back.
+            // netcode's): 1 while it stalls, catches up or rolls back, and
+            // while the pace is held (a migration's resume hold, a jump
+            // back: `tick_phase` is `None`, plan 12c Task 8b).
             if s.present.scene.options.interpolation != Interpolation::Latest {
                 alpha = s.online_alpha(now).unwrap_or(interpolate);
             }
