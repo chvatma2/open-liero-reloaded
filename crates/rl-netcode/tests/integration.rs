@@ -4,6 +4,7 @@
 
 mod common;
 
+mod migration;
 mod netsim;
 mod play;
 mod session;

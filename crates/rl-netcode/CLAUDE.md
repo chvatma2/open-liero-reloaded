@@ -161,6 +161,62 @@ model that tests it in one process (spec §9.1).
   there with no base (`origin`). A frame datagram from before the
   joiner's origin (sent before the state, arriving after it) cannot be
   decoded (its base is before the log) and is ignored, not `Malformed`.
+- **Migration (session)** (`session/migrate.rs`, constants and
+  `fit_report` in `migration.rs`; spec §3.7, N67, N69, N76). Who takes
+  over and who rejoins whom is the drivers' part (harness, rl-online).
+  - Silence: a client or spectator pushes `Event::HostSilent` once when its
+    host sent nothing for `HOST_SILENT_US` (2 s), counted only over time it
+    advanced (a gap over 1 s between two of its own `advance` calls restarts
+    the clock: its own sleep is not its host's silence); a message from the
+    host after it is `Event::HostHeard` (once). A host's `Bye` stays
+    `PeerLeft`.
+  - `suspend()`: `advance` runs no new tick, queues no frames and never
+    stalls; it still re-simulates an owed rollback or loaded state,
+    confirms and sends checksums, and sends a frame-less keepalive
+    (`ClientInputs` without keys, `HostInputs` without frames) every
+    `KEEPALIVE_US` (250 ms), so a collecting new host never looks silent.
+    Margins are not taken; `tick_phase` is `None`. `unsuspend(now)` (the old
+    host is back, N69) restarts the pace at the current tick; nothing after
+    `rehost` or `take_over`.
+  - `rehost(host, now)`: a client's or spectator's host is now `host`, its
+    peer state (acks, round trip, silence, time sync) fresh; suspended until
+    that host's `Control::Resume`. `Collect`/`Resume` from anyone else are
+    ignored, and so is a `Resume` more than `MAX_AHEAD` (6000) ticks past
+    our tick. A `Collect` (whose `known` must have one entry per slot, else
+    `Malformed`) is answered with a `Report`: final inputs from
+    `max(min(known), origin)` to our horizon, our own provisional inputs
+    from our slot's prefix, our frontier as `ack`; `fit_report` halves the
+    span from its end until it fits `MAX_REPORT_FRAMES` and `MAX_CONTROL`,
+    own cut to `MAX_REPORT_OWN`.
+  - `take_over(bots, now)`: a client or spectator becomes the host; its
+    local slots are its own slot (if a player; it keeps the match's input
+    delay, N2: its keys go `d` ticks ahead to `own` and are final when
+    simulated, so the driver is called twice a tick, own slot at `t + d`,
+    bots at `t`) and the bots; every other slot is awaited. Nothing is
+    filled until the resume. `rejoined(peer, seat, now)` (false after the
+    resume, for a seat out of range or held, or a peer already back) sends
+    `Collect` with our `known_upto`s; `awaiting_reports()` lists rejoined
+    peers without a report.
+  - The merge (N67): a report's frames decode with our values at `first -
+    1` and are taken in tick order (`New` extends, `Same` fine, `Conflict`
+    ignored, `Stats::report_conflicts`). A report that does not decode for
+    the match's slots (the decoder cannot check a frame's `known` bits
+    against them) or starts below our log's origin is `Malformed`, takes
+    nothing and ends the wait for it. A report from a peer not rejoined, or
+    a second one, changes nothing; one after the resume is taken the same
+    way (its own inputs at once).
+  - `resume(now)` (once) returns R, our current tick: reported own inputs
+    extend their slots, then bot slots below R get their previous final
+    value and our own slot our pressed keys; awaited slots nobody took are
+    abandoned (`Keys(0)` from their first unknown tick, as a lost peer's,
+    N6), and the lagging rule for R runs at once (our tick can be
+    `MAX_PREDICTION` past an absent slot: stalled there, the tick's own
+    fill would never run). Each rejoined peer gets `Resume { tick: R }`
+    and frames from its report's `ack` (`resend`); the pace restarts at R
+    and `now`. A client's `Resume` restarts its pace at `max(current, R)`
+    (the pause is not caught up) with time sync as after a jump. Both push
+    `Event::Resumed { tick }` and count `Stats::migrations`.
+  - `tests/migration.rs`: three sessions over a wire the test controls.
 - **WorldSim** (`world_sim.rs`): the `rl_sim::World` adapter, rollback
   on (`enable_rollback`); `save`/`restore`/`forget_before` are the
   world's (`restore` refused is a session bug: `expect`); `checksum` is

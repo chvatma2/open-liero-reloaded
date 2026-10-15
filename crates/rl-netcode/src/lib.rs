@@ -12,6 +12,7 @@ extern crate alloc;
 mod clock;
 pub mod harness;
 mod inputs;
+pub mod migration;
 pub mod netsim;
 mod rng;
 mod session;

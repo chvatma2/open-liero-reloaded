@@ -17,11 +17,14 @@ use rl_sim::Keys;
 
 use crate::clock::{JUMP_TICKS, MARGIN_SAMPLES, MAX_ADJUST_PPM, Margins, Pace, TARGET_MARGIN};
 use crate::inputs::{InputLog, SetResult};
+use crate::migration::HOST_SILENT_US;
 use crate::sync::{
     Checks, Incoming, LOAD_TIMEOUT_US, MAX_REPAIRS, PEER_STREAM_KEEP, REPAIR_MARGIN, REPORT_WINDOW, Remote,
     Repair, state_controls,
 };
 use crate::{Channel, PeerId, Simulation};
+
+mod migrate;
 
 /// One tick lasts 10 ms (100 ticks per second, OLX's `FRAME_MS`).
 pub const TICK_US: u64 = 10_000;
@@ -208,6 +211,16 @@ pub enum Event {
     /// Host: `add_spectator` for a peer that holds a player's slot: refused,
     /// the peer stays a player.
     JoinRefused { peer: PeerId },
+    /// Client or spectator: nothing from its host for
+    /// [`HOST_SILENT_US`](crate::migration::HOST_SILENT_US) while this peer
+    /// kept advancing (once per silence; spec §3.7).
+    HostSilent,
+    /// Client or spectator: its host spoke again after `HostSilent` (before
+    /// any [`Session::rehost`]).
+    HostHeard,
+    /// The timeline resumed after a migration at `tick` (the new host's
+    /// [`Session::resume`]; a client's `Control::Resume`).
+    Resumed { tick: u32 },
 }
 
 #[derive(Clone, Debug)]
@@ -243,6 +256,10 @@ pub struct Stats {
     pub states_sent: u64,
     /// Client or spectator: states loaded.
     pub states_loaded: u64,
+    /// Resumes after a take-over or a rehost (spec §3.7).
+    pub migrations: u64,
+    /// New host: reported final inputs that differed from ours (ignored, N67).
+    pub report_conflicts: u64,
 }
 
 impl Default for Stats {
@@ -266,6 +283,8 @@ impl Default for Stats {
             desyncs: 0,
             states_sent: 0,
             states_loaded: 0,
+            migrations: 0,
+            report_conflicts: 0,
         }
     }
 }
@@ -286,6 +305,9 @@ struct PeerState {
     heard_us: u64,
     /// [`Event::PeerTimedOut`] was pushed for the current silence.
     timed_out: bool,
+    /// Client or spectator, for its host: [`Event::HostSilent`] was pushed
+    /// for the current silence.
+    silent: bool,
     /// Abandoned ([`Session::peer_lost`]): nothing more is sent or taken.
     lost: bool,
     /// Host: the arrival margins of a player's inputs.
@@ -330,6 +352,7 @@ impl PeerState {
             rtt_x8: None,
             heard_us: now_us,
             timed_out: false,
+            silent: false,
             lost: false,
             margins: Margins::default(),
             sampled: None,
@@ -420,6 +443,26 @@ pub struct Session<S: Simulation> {
     /// Host: the lowest tick of the input log that changed since our last
     /// datagrams (`u32::MAX`: none).
     dirty: u32,
+    /// The slot whose keys this peer presses `input_delay` ticks ahead: a
+    /// client's, and a new host's own after it took over (decision N2: the
+    /// delay is fixed for the match).
+    own_slot: Option<u8>,
+    /// A migration stopped the timeline ([`Session::suspend`]).
+    suspended: bool,
+    /// Suspended: when the last keepalive datagram went.
+    keepalive_us: Option<u64>,
+    /// When the last [`Session::advance`] ran: a longer gap than half of
+    /// [`HOST_SILENT_US`] restarts the host's silence clock (`silence_from_us`).
+    last_advance_us: Option<u64>,
+    silence_from_us: u64,
+    /// Client or spectator: rehosted ([`Session::rehost`]), waiting for the
+    /// new host's `Control::Resume`.
+    rehosted: bool,
+    /// New host: the migration it collects (take-over to resume and after).
+    collection: Option<migrate::Collection>,
+    /// Host: slots no peer plays on (a migration's absent players): `Keys(0)`
+    /// from their first unknown tick, as a lost peer's (decision N6).
+    abandoned: BTreeSet<u8>,
 }
 
 /// A driver that presses nothing and sees nothing: re-simulations that
@@ -435,6 +478,7 @@ impl<S: Simulation> Session<S> {
         let slots = cfg.slots;
         let mut peers = BTreeMap::new();
         let mut own = Vec::new();
+        let mut own_slot = None;
         let local: Vec<u8> = match &role {
             Role::Host { peers: list } => {
                 for &(id, seat) in list {
@@ -447,6 +491,7 @@ impl<S: Simulation> Session<S> {
             }
             Role::Client { host, slot } => {
                 assert!(*slot < slots, "the client plays slot {slot} of {slots}");
+                own_slot = Some(*slot);
                 peers.insert(*host, PeerState::new(Seat::Spectator, now_us));
                 own = vec![0; cfg.input_delay as usize];
                 vec![*slot]
@@ -489,6 +534,14 @@ impl<S: Simulation> Session<S> {
             restart_to: None,
             incoming: None,
             dirty: u32::MAX,
+            own_slot,
+            suspended: false,
+            keepalive_us: None,
+            last_advance_us: None,
+            silence_from_us: now_us,
+            rehosted: false,
+            collection: None,
+            abandoned: BTreeSet::new(),
         }
     }
 
@@ -656,7 +709,8 @@ impl<S: Simulation> Session<S> {
         }
     }
 
-    fn is_host(&self) -> bool {
+    /// Whether this peer orders the inputs (the first host, or one that took over).
+    pub fn is_host(&self) -> bool {
         matches!(self.role, Role::Host { .. })
     }
 
@@ -676,10 +730,7 @@ impl<S: Simulation> Session<S> {
     }
 
     fn own_slot(&self) -> Option<u8> {
-        match self.role {
-            Role::Client { slot, .. } => Some(slot),
-            _ => None,
-        }
+        self.own_slot
     }
 
     /// The delay between pressing and applying a local input.
@@ -695,14 +746,19 @@ impl<S: Simulation> Session<S> {
     /// newest predicted tick, interpolated like local play's). `None` when
     /// it would mislead, the caller drawing the newest tick as it is: the
     /// last [`Session::advance`] left due ticks unrun (a stall at the
-    /// prediction limit, or catching up), or a spectator, whose ticks
-    /// follow the host's frames, not the pace.
+    /// prediction limit, or catching up), a suspended session (the last
+    /// frame stays), or a spectator, whose ticks follow the host's frames,
+    /// not the pace.
     pub fn tick_phase(&self, now_us: u64) -> Option<f32> {
         let paced = matches!(self.role, Role::Host { .. } | Role::Client { .. });
-        (paced && !self.behind && !self.stalling).then(|| self.pace.phase(now_us))
+        (paced && !self.behind && !self.stalling && !self.suspended).then(|| self.pace.phase(now_us))
     }
 
     /// Runs the ticks that are due: first a pending rollback, then new ticks.
+    /// Suspended ([`Session::suspend`]): no new tick and no input frames, but
+    /// an owed rollback or a loaded state still re-simulates up to the
+    /// current tick, checksums are confirmed and sent, and a frame-less
+    /// keepalive goes every [`KEEPALIVE_US`](crate::migration::KEEPALIVE_US).
     pub fn advance(&mut self, now_us: u64, driver: &mut dyn Driver<S>) {
         if let Some(to) = self.restart_to.take() {
             // A loaded state: the ticks after it again, on what we know.
@@ -714,6 +770,23 @@ impl<S: Simulation> Session<S> {
         }
         if let Some(from) = self.rollback_from.take() {
             self.resimulate(from, driver);
+        }
+        // A peer's own sleep is not its host's silence: a long gap between
+        // two advances restarts the clock.
+        if self.last_advance_us.is_some_and(|last| now_us.saturating_sub(last) > HOST_SILENT_US / 2) {
+            self.silence_from_us = now_us;
+        }
+        self.last_advance_us = Some(now_us);
+        if self.suspended {
+            self.confirm_checksums();
+            self.send_owed_states(now_us);
+            self.trim_snapshots();
+            self.check_silence(now_us);
+            self.check_host_silence(now_us);
+            self.check_loads(now_us);
+            self.check_lagging(now_us);
+            self.keepalive(now_us);
+            return;
         }
         let due = self.pace.due(now_us, self.ticks_run);
         let mut ran = 0;
@@ -756,6 +829,7 @@ impl<S: Simulation> Session<S> {
         self.send_owed_states(now_us);
         self.trim_snapshots();
         self.check_silence(now_us);
+        self.check_host_silence(now_us);
         self.check_loads(now_us);
         self.check_lagging(now_us);
         // At most one datagram per tick of the pace. A stalled peer sends
@@ -776,6 +850,23 @@ impl<S: Simulation> Session<S> {
                 p.timed_out = true;
                 self.events.push(Event::PeerTimedOut { peer: id });
             }
+        }
+    }
+
+    /// Client or spectator: [`Event::HostSilent`] once its host has sent
+    /// nothing for [`HOST_SILENT_US`], counted only over time this peer
+    /// advanced (from `silence_from_us`): a frozen peer that wakes up does
+    /// not blame its host for its own sleep.
+    fn check_host_silence(&mut self, now_us: u64) {
+        let (Role::Client { host, .. } | Role::Spectator { host }) = self.role else { return };
+        let from = self.silence_from_us;
+        if let Some(p) = self.peers.get_mut(&host)
+            && !p.lost
+            && !p.silent
+            && now_us.saturating_sub(p.heard_us.max(from)) >= HOST_SILENT_US
+        {
+            p.silent = true;
+            self.events.push(Event::HostSilent);
         }
     }
 
@@ -891,6 +982,13 @@ impl<S: Simulation> Session<S> {
                 p.late_warned = false;
             }
         }
+        for &s in &self.abandoned {
+            while self.log.known_upto(s) <= t {
+                let k = self.log.known_upto(s);
+                self.log.set(k, s, 0);
+                scratch.push((k, s, 0));
+            }
+        }
         for &(k, s, v) in &scratch {
             self.on_final(k, s, v);
         }
@@ -938,6 +1036,22 @@ impl<S: Simulation> Session<S> {
     /// A new tick: the local inputs, then the tick itself.
     fn new_tick(&mut self, driver: &mut dyn Driver<S>) {
         let t = self.current;
+        if self.is_host()
+            && let Some(o) = self.own_slot
+        {
+            // A host that took over: its own slot keeps the match's input
+            // delay (decision N2), its keys final when simulated.
+            let at = t + self.cfg.input_delay as u32;
+            let mut k = [Keys(0)];
+            driver.local_inputs(&self.sim, at, &[o], &mut k);
+            if self.own.len() == at as usize {
+                self.own.push(k[0].0);
+            }
+            let v = self.own.get(t as usize).copied().unwrap_or_else(|| self.log.predicted(t, o));
+            if self.log.set(t, o, v) == SetResult::New {
+                self.dirty = self.dirty.min(t);
+            }
+        }
         let at = t + self.delay();
         self.local_keys.iter_mut().for_each(|k| *k = Keys(0));
         driver.local_inputs(&self.sim, at, &self.local, &mut self.local_keys);
@@ -1165,6 +1279,10 @@ impl<S: Simulation> Session<S> {
             Some(p) if !p.lost => {
                 p.heard_us = now_us;
                 p.timed_out = false;
+                // Only a client's or spectator's host is ever `silent`.
+                if mem::take(&mut p.silent) {
+                    self.events.push(Event::HostHeard);
+                }
             }
             _ => return,
         }
@@ -1343,7 +1461,10 @@ impl<S: Simulation> Session<S> {
         if let Some(p) = self.peers.get_mut(&from) {
             p.ack = p.ack.max(h.your_ack);
         }
-        self.sync(&h);
+        // Suspended, the pace stands still: no margin is ours to steer by.
+        if !self.suspended {
+            self.sync(&h);
+        }
     }
 
     /// A reliable message from `from`. Each is taken by the role it is for;
@@ -1392,6 +1513,9 @@ impl<S: Simulation> Session<S> {
                     }
                 }
             }
+            Control::Collect { known } if !host => self.on_collect(from, &known),
+            Control::Report(r) if host => self.on_report(from, r),
+            Control::Resume { tick } if !host => self.on_resume(from, tick, now_us),
             _ => {}
         }
     }
