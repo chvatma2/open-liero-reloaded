@@ -54,7 +54,10 @@ model that tests it in one process (spec §9.1).
     `fit_report`/`fit_resume`'s `marks(first, n)`), the list is for the span
     that fits. A receiver takes each mark with its tick's value: a client's
     `take_frames` (a `Conflict`: `Event::Inconsistent`; frames kept ahead
-    keep their marks), the new host's merge (`Stats::report_conflicts`).
+    keep their marks), the new host's merge (`Stats::report_conflicts`);
+    both decode through `decode_marked`. A mark whose (slot, tick) has no
+    value in the frames is dropped (an honest sender lists a mark only with
+    its value; `a_mark_without_its_value_is_dropped`).
     Nothing sets a mark yet, and nothing reacts to one (plan 12d Task 4).
   - The host orders inputs: its local slots (those no peer holds) are final
     when simulated; a client's keys become final in arrival order (the first

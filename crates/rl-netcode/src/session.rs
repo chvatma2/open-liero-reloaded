@@ -1639,27 +1639,15 @@ impl<S: Simulation> Session<S> {
 
     /// Client or spectator: the host's final inputs for ticks `first..`
     /// (its datagram's, or its `Control::Resume`'s), each with its
-    /// withdrawal mark from `gone` (decision N83, part of the value):
-    /// `false`, nothing taken, when they do not decode. The first value
-    /// stays final; a differing one, or a mark for a tick final without
-    /// it, is [`Event::Inconsistent`].
+    /// withdrawal mark from `gone` (decision N83, part of the value;
+    /// [`decode_marked`]: a mark without its value is dropped): `false`,
+    /// nothing taken, when they do not decode. The first value stays final;
+    /// a differing one, or a mark for a tick final without it, is
+    /// [`Event::Inconsistent`].
     fn take_frames(&mut self, from: PeerId, first: u32, frames: &[Frame], gone: &[(u8, u32)]) -> bool {
         let slots = self.cfg.slots as usize;
         let mut scratch = mem::take(&mut self.scratch);
-        scratch.clear();
-        let log = &self.log;
-        // A slot we lack before `first` (its datagrams were lost) takes none
-        // of these values (they are beyond its known prefix: `Gap`), so any
-        // base decodes them; the host resends from our ack.
-        let base = |s: usize| match first {
-            0 => Some(0),
-            f => log.get(f - 1, s as u8).or_else(|| (log.known_upto(s as u8) < f).then_some(0)),
-        };
-        let decoded = decode_frames(first, frames, slots, &base, &mut |t, s, v| {
-            let s = s as u8;
-            scratch.push((t, s, v, gone.contains(&(s, t))))
-        })
-        .is_ok();
+        let decoded = decode_marked(&self.log, first, frames, slots, gone, &mut scratch);
         if decoded {
             let limit = self.current.saturating_add(MAX_AHEAD);
             for &(t, s, v, g) in &scratch {
@@ -2001,6 +1989,35 @@ pub(crate) fn frames_base(log: &InputLog, first: u32, origin: u32, s: usize) -> 
     }
 }
 
+/// Decodes final inputs for ticks `first..` (a host's frames, or a
+/// report's) into `scratch` as `(tick, slot, value, withdrawn there)`, each
+/// value with its mark from `gone` (decision N83); `false` when they do not
+/// decode. A slot `log` lacks before `first` (its datagrams were lost, or
+/// the reporter knew more) takes none of these values (they are beyond its
+/// known prefix: `Gap`), so any base decodes it. A mark whose (slot, tick)
+/// has no value in the frames is dropped: an honest sender lists a mark
+/// only with its value (`InputLog::marks_within` over the frames it sends),
+/// and it carries no state on its own.
+fn decode_marked(
+    log: &InputLog,
+    first: u32,
+    frames: &[Frame],
+    slots: usize,
+    gone: &[(u8, u32)],
+    scratch: &mut Vec<(u32, u8, u8, bool)>,
+) -> bool {
+    scratch.clear();
+    let base = |s: usize| match first {
+        0 => Some(0),
+        f => log.get(f - 1, s as u8).or_else(|| (log.known_upto(s as u8) < f).then_some(0)),
+    };
+    decode_frames(first, frames, slots, &base, &mut |t, s, v| {
+        let s = s as u8;
+        scratch.push((t, s, v, gone.contains(&(s, t))))
+    })
+    .is_ok()
+}
+
 fn resume_datagram(log: &InputLog, r: Resuming, first: u32, horizon: u32, slots: usize) -> Vec<u8> {
     // A player's log begins at 0.
     let base = |s: usize| frames_base(log, first, 0, s);
@@ -2075,6 +2092,23 @@ mod tests {
         assert_eq!(c.drain_events(), vec![Event::Inconsistent { peer: 0, tick: 12, slot: 0 }]);
     }
 
+    /// N83: a mark whose tick has no value for its slot in the frames is
+    /// dropped (no state, no event); the value, when it comes, is unmarked.
+    #[test]
+    fn a_mark_without_its_value_is_dropped() {
+        let mut c = client();
+        let value = |t, s: usize| (s < 2 && (s == 1 || t < 12)).then_some(0);
+        let frames = rl_proto::encode_frames(0, 20, 3, &value, &|_| Some(0));
+        c.receive(0, Channel::Unreliable, &host_inputs_marked(20, 0, 0, frames, vec![(0, 15)]), 1_000);
+        assert_eq!(c.input_log().known_upto(0), 12);
+        assert_eq!(c.input_log().gone_at(0), None);
+        let rest = rl_proto::encode_frames(12, 8, 3, &|_, s| (s < 2).then_some(0), &|_| Some(0));
+        c.receive(0, Channel::Unreliable, &host_inputs(20, 0, 12, rest), 2_000);
+        assert_eq!(c.input_log().known_upto(0), 20);
+        assert_eq!(c.input_log().gone_at(0), None);
+        assert!(c.drain_events().is_empty(), "neither malformed nor inconsistent");
+    }
+
     /// N83: frames kept ahead of the frontier keep their marks.
     #[test]
     fn frames_kept_ahead_keep_their_marks() {
@@ -2094,12 +2128,15 @@ mod tests {
     /// carry, and its client takes them.
     #[test]
     fn the_hosts_datagrams_carry_its_marks() {
-        let role = Role::Host { peers: vec![(1, Seat::Player(0))] };
+        let role = Role::Host { peers: vec![(1, Seat::Player(0)), (2, Seat::Player(3))] };
         let mut h = Session::new(Config::new(4, 0), role, ToySim::new(4), 0);
         let mut c = Session::new(Config::new(4, 0), Role::Client { host: 0, slot: 0 }, ToySim::new(4), 0);
         let mut f = ToyFactory { slots: 4, seed: 1 };
         let (mut hd, mut cd) = (f.driver(0, None), f.driver(1, Some(Seat::Player(0))));
-        // A local slot's worm withdrawn at tick 3 (Task 4's host sets it so).
+        // Slot 3's player is lost: its slot is `Keys(0)` at every tick (N6),
+        // the values planted here, its worm withdrawn at tick 3 (Task 4's
+        // host marks it so; until then the mark is planted with them).
+        h.peer_lost(2);
         for t in 0..=3 {
             assert_eq!(h.log.set_final(t, 3, 0, t == 3), SetResult::New);
         }
@@ -2122,6 +2159,8 @@ mod tests {
             assert_eq!(d.gone, if spans { vec![(3, 3)] } else { vec![] }, "{} +{}", d.first, d.frames.len());
         }
         assert!(sent.iter().any(|d| !d.gone.is_empty()));
+        assert!(h.log.known_upto(3) > 20, "the fills went on from the planted ticks");
+        assert!((0..20).all(|t| h.log.get(t, 3) == Some(0)), "as a lost player's slot is filled");
         assert_eq!(c.input_log().gone_at(3), Some(3));
         assert!(!c.drain_events().iter().any(|e| matches!(e, Event::Inconsistent { .. })));
     }

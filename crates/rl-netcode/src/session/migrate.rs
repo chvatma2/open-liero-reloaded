@@ -10,11 +10,13 @@ use alloc::vec::Vec;
 
 use rl_proto::{
     ClientInputs, Control, Datagram, HostInputs, HostResume, InputsReport, MAX_KEYS, MAX_REPORT_OWN,
-    decode_frames, encode_control, encode_datagram,
+    encode_control, encode_datagram,
 };
 use rl_sim::Keys;
 
-use super::{MAX_AHEAD, PeerState, Resuming, Role, Seat, Session, TICK_US, TimeSync, frames_base};
+use super::{
+    MAX_AHEAD, PeerState, Resuming, Role, Seat, Session, TICK_US, TimeSync, decode_marked, frames_base,
+};
 use crate::clock::{Pace, TARGET_MARGIN};
 use crate::inputs::SetResult;
 use crate::migration::{
@@ -378,21 +380,10 @@ impl<S: Simulation> Session<S> {
         let slots = self.cfg.slots as usize;
         let first = r.first;
         let mut scratch = core::mem::take(&mut self.scratch);
-        scratch.clear();
-        let log = &self.log;
         // An honest reporter starts at the least of our known prefixes, so
-        // we hold every slot at `first - 1`; a slot we lack there takes none
-        // of these values (`Gap`), so any base decodes it.
-        let base = |s: usize| match first {
-            0 => Some(0),
-            f => log.get(f - 1, s as u8).or_else(|| (log.known_upto(s as u8) < f).then_some(0)),
-        };
-        let decoded = (first == 0 || first >= log.origin())
-            && decode_frames(first, &r.frames, slots, &base, &mut |t, s, v| {
-                let s = s as u8;
-                scratch.push((t, s, v, r.gone.contains(&(s, t))))
-            })
-            .is_ok();
+        // we hold every slot at `first - 1` (any base decodes a slot we lack).
+        let decoded = (first == 0 || first >= self.log.origin())
+            && decode_marked(&self.log, first, &r.frames, slots, &r.gone, &mut scratch);
         if !decoded {
             self.scratch = scratch;
             self.malformed(from);
