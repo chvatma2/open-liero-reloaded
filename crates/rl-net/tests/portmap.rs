@@ -297,6 +297,25 @@ mod fake_gateway_misbehaviours_are_reported {
         );
         assert_eq!(fake.mappings(), vec![]);
     }
+
+    #[test]
+    fn close_within_waits_as_long_as_it_is_told() {
+        // The deletions' answers take 500 ms in all: 100 ms is too short to
+        // see them confirmed, 30 s ends as soon as they are (rl-server's
+        // nat-check tests wait so: `DROP_WAIT`'s 1 s was overrun on a
+        // loaded machine).
+        let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::SlowDelete);
+        let mut mapper = PortMapper::start(upnp_only(&fake, 23712));
+        mapped(&settle(&mut mapper, Duration::from_secs(5)));
+        assert!(!mapper.close_within(Duration::from_millis(100)), "not confirmed in 100 ms");
+        let fake = FakeGateway::start(true, false, false, EXTERNAL, Misbehaviour::SlowDelete);
+        let mut mapper = PortMapper::start(upnp_only(&fake, 23714));
+        mapped(&settle(&mut mapper, Duration::from_secs(5)));
+        let closed = Instant::now();
+        assert!(mapper.close_within(Duration::from_secs(30)), "confirmed");
+        assert!(closed.elapsed() < Duration::from_secs(10), "{:?}: not the whole wait", closed.elapsed());
+        assert_eq!(fake.mappings(), vec![]);
+    }
 }
 
 #[test]

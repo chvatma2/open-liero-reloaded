@@ -148,7 +148,10 @@ beside the executable, else in the working directory).
   greps); the router (`PortMapper` on a random port of 49152-65535, UDP,
   exact; at most 5 s; its result, a non-public external address said;
   `close`d: "router: the mapping is deleted" only when the router
-  confirmed it, else "the router did not confirm it within 1 s"); the relays (a
+  confirmed it, else "the router did not confirm it within 1 s"; under
+  `test-hooks`, aimed at a fake router that always answers, it waits up to
+  `TEST_CLOSE_WAIT`, 30 s, for that answer: the 1 s was overrun once on a
+  loaded machine, failing `nat_check_reports_every_step`); the relays (a
   `Pool` subscribed to `TurnList::filter`; each one's status once all
   answered or `deadline`, each connected one with its clock against this
   PC's (`Pool::clocks`, the handshake's `Date`: "connected, its clock

@@ -47,6 +47,12 @@ struct Hooks {
     base: Ipv4Addr,
 }
 
+/// A test's fake router always confirms a deletion: the check waits for it
+/// up to this, not `DROP_WAIT`'s 1 s, which a loaded machine's threads can
+/// overrun (a flake of `nat_check_reports_every_step` under `check`).
+#[cfg(feature = "test-hooks")]
+const TEST_CLOSE_WAIT: Duration = Duration::from_secs(30);
+
 /// Runs every check with the config's servers and writes the report to
 /// `out`; each wait is bounded by `deadline` (the binary passes
 /// [`NAT_CHECK_WAIT`]) but the router's (5 s). An error only when `out`
@@ -236,6 +242,9 @@ fn router(
         }
     }
     // Deleted, waiting at most 1 s for the router to confirm it.
+    #[cfg(feature = "test-hooks")]
+    let confirmed = if hooks.is_some() { mapper.close_within(TEST_CLOSE_WAIT) } else { mapper.close() };
+    #[cfg(not(feature = "test-hooks"))]
     let confirmed = mapper.close();
     match (&state, confirmed) {
         (MappingState::Mapped { .. }, true) => writeln!(out, "router: the mapping is deleted")?,

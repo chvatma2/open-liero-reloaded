@@ -796,8 +796,15 @@ impl PortMapper {
     /// Deletes the mappings (as the drop does, waiting at most `DROP_WAIT`)
     /// and says whether the router confirmed every deletion (true when
     /// nothing was held).
-    pub fn close(mut self) -> bool {
-        let finished = self.stop_and_wait();
+    pub fn close(self) -> bool {
+        self.close_within(DROP_WAIT)
+    }
+
+    /// [`close`](Self::close), waiting at most `wait` (a test whose fake
+    /// router always answers waits for the answer, not for a budget a
+    /// loaded machine can overrun).
+    pub fn close_within(mut self, wait: Duration) -> bool {
+        let finished = self.stop_and_wait(wait);
         finished && !self.shared.board().unconfirmed
     }
 
@@ -813,11 +820,11 @@ impl PortMapper {
     /// Tells the threads to delete their mappings and waits at most
     /// `DROP_WAIT` for those that asked their router for one: whether
     /// every one finished.
-    fn stop_and_wait(&mut self) -> bool {
+    fn stop_and_wait(&mut self, wait: Duration) -> bool {
         self.begin_delete();
         self.shared.board().stop = true;
         self.shared.wake.notify_all();
-        let end = Instant::now() + DROP_WAIT;
+        let end = Instant::now() + wait;
         let finished = loop {
             let touched = self.shared.board().touched;
             let waiting = self.threads.iter().any(|(w, h)| touched[*w as usize] && !h.is_finished());
@@ -899,7 +906,7 @@ impl Drop for PortMapper {
     /// still searching holds nothing, and one stuck in a router's HTTP is
     /// detached (it deletes what it maps if it ever gets an answer).
     fn drop(&mut self) {
-        self.stop_and_wait();
+        self.stop_and_wait(DROP_WAIT);
     }
 }
 

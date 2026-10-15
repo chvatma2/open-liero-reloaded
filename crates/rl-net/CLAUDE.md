@@ -426,7 +426,10 @@ for tests.
     at its first renewal (not counted).
   - **Drop** (and `close(self) -> bool`, which also says whether the
     router confirmed every deletion: false when one was not answered, or
-    a thread did not finish within `DROP_WAIT`) sets the board's stop,
+    a thread did not finish within `DROP_WAIT`; `close_within(wait)` the
+    same with another wait: rl-server's nat-check tests wait for their
+    fake router's answer, not 1 s, which a loaded machine overran,
+    `close_within_waits_as_long_as_it_is_told`) sets the board's stop,
     wakes the threads, and waits at most
     `DROP_WAIT` (1 s) for those that asked for a mapping (`touched`) to
     delete it (PCP/NAT-PMP: lifetime 0, two sends 200 ms apart; UPnP:
