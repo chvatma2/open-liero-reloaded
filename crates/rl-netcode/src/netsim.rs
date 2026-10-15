@@ -5,7 +5,7 @@ use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec::Vec;
 use core::cmp::Reverse;
 
-use crate::{Channel, PeerId, Rng};
+use crate::{Channel, MAX_CATCHUP, PeerId, Rng, TICK_US};
 
 /// One network condition. A profile's latency is the ping: each direction
 /// takes half of it, with half of the jitter.
@@ -42,6 +42,23 @@ impl Profile {
 
     pub fn rtt_ms(&self) -> u32 {
         self.ping_ms
+    }
+
+    /// How many ticks past the end of an outage of `outage_ticks` a player
+    /// cut off by it may still stall on this link, its frames every
+    /// `frame_us` (ruling SK-2; `tests/timing.rs`'
+    /// `a_player_cut_off_plays_on_once_its_link_is_back`):
+    /// - a round trip until the host hears it again and resends what it
+    ///   lacks (a datagram a tick from its ack on), and another until its
+    ///   own new inputs reach the host and the host stops filling its slot,
+    ///   each at most the ping plus its jitter and a tick to be sent;
+    /// - re-simulating what it missed, `MAX_CATCHUP` ticks a frame while the
+    ///   host runs on.
+    pub fn outage_recovery_ticks(&self, outage_ticks: u32, frame_us: u64) -> u32 {
+        let trip = (u64::from(self.ping_ms + self.jitter_ms) * 1000).div_ceil(TICK_US) + 1;
+        let run = (u64::from(MAX_CATCHUP) * TICK_US / frame_us.max(1)).saturating_sub(1).max(1);
+        let ticks = 2 * trip + u64::from(outage_ticks).div_ceil(run);
+        u32::try_from(ticks).unwrap_or(u32::MAX)
     }
 }
 

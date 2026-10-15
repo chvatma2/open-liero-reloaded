@@ -25,7 +25,9 @@ use rl_netcode::harness::{
 };
 use rl_netcode::migration::WINDOW_US;
 use rl_netcode::netsim::{LinkStats, Profile};
-use rl_netcode::{Driver, Event, MAX_PREDICTION, PeerId, Seat, Session, Stats, WorldSim, input_delay};
+use rl_netcode::{
+    Driver, Event, MAX_PREDICTION, PeerId, Seat, Session, Stats, TICK_US, WorldSim, input_delay,
+};
 use rl_online::matches::{self, HostBots};
 use rl_sim::Keys;
 use serde::{Deserialize, Serialize};
@@ -167,14 +169,11 @@ impl NetSpec {
     }
 
     /// No player may stall on a profile up to `bad` (spec §9.2), unless a
-    /// link changes to `awful` mid-run or an outage cuts a peer off (an
-    /// outage of 0.28 s, `MAX_PREDICTION` ticks, or more stalls its peer
-    /// whatever the profile: found by `net-soak`, which draws outages of
-    /// 0.5 s and more).
+    /// link changes to `awful` mid-run. Stalls the run itself causes (a
+    /// migration, an outage) are excused by [`judge`]'s windows instead.
     fn expect_no_stalls(&self) -> bool {
         matches!(self.profile.as_str(), "lan" | "good" | "typical" | "bad")
             && !self.profile_changes.iter().any(|c| c.2 == "awful")
-            && self.outages.is_empty()
     }
 
     /// The options every peer builds its world from.
@@ -425,17 +424,16 @@ pub fn run_with(content: &Content, spec: &NetSpec, bundles: Option<&Path>) -> an
 /// `bad` and `awful` links within the first successor's window.
 pub const N66_US: u64 = 3_000_000;
 
-/// The run's verdict: `harness::verdict`, and with host migration on a
-/// rule of its own for stalls (plan 12c Task 8's decision, ruling RS-2). A
-/// host gone stalls its players at the prediction limit before they find
-/// it gone, and that episode lasts until the new host's resume reaches
-/// them: the harness's `expect_no_stalls` would flag it. So a stall
-/// episode is excused only when it begins between its migration's
-/// departure (the old host's exit or freeze) less `MAX_PREDICTION` and the
-/// resume tick plus `MAX_PREDICTION`, and ends (the player runs a tick
-/// again) by the current host's tick resume plus `MAX_PREDICTION`; any
-/// other stall, or one lasting longer, fails, and the migration's length
-/// is bounded instead ([`N66_US`]).
+/// The run's verdict: `harness::verdict`, with a stall rule of its own
+/// when stalls are expected at all (`expect_no_stalls`: no `awful` link) and
+/// a run causes some itself (plan 12c Task 8's decision RS-2, Task 11's
+/// SK-1). A host gone stalls its players at the prediction limit before they
+/// find it gone, until the new host's resume reaches them; an outage stalls
+/// the peer it cuts off (more than `MAX_PREDICTION` ticks of it always do).
+/// The harness's `expect_no_stalls` would flag both, so every stall episode
+/// is judged by [`stalls_within_windows`] instead: it must begin and end
+/// (the player runs a tick again, by the current host's tick) inside one
+/// excused window. With migration on, [`n66`] bounds each migration's length.
 fn judge(
     spec: &NetSpec,
     sc: &Scenario,
@@ -443,11 +441,13 @@ fn judge(
     episodes: &[StallEpisode],
     f: &mut WorldFactory<'_>,
 ) -> Result<(), Failure> {
-    if sc.migration.is_none() || !sc.expect_no_stalls {
+    if sc.migration.is_none() && sc.outages.is_empty() {
         return harness::verdict(sc, r, f);
     }
     harness::verdict(&Scenario { expect_no_stalls: false, ..sc.clone() }, r, f)?;
-    stalls_within_migrations(spec, r, episodes)?;
+    if sc.expect_no_stalls {
+        stalls_within_windows(spec, r, episodes)?;
+    }
     n66(spec, r)
 }
 
@@ -460,24 +460,99 @@ pub struct StallEpisode {
     pub ended: Option<u32>,
 }
 
+/// A span of the current host's ticks in which some peers' stalls are
+/// excused.
+struct Window {
+    ticks: core::ops::RangeInclusive<u32>,
+    /// `None`: every player's stall; `Some(p)`: peer `p`'s, and everyone's
+    /// while `p` is the current host (an outage cuts a host off from all).
+    peer: Option<PeerId>,
+}
+
+/// The host at the host tick `tick`: the last migration's successor before
+/// it, else the first host.
+fn host_at(r: &Report, tick: u32) -> PeerId {
+    r.migrations.iter().rfind(|m| m.tick <= tick).map_or(HOST, |m| m.to)
+}
+
+/// The host tick reached at the virtual time `tick * TICK_US` of an outage
+/// (the harness's outages are in virtual time): after a migration the new
+/// host counts on from its resume tick at its resume time; before, a host
+/// that froze (and did not step down) is behind the clock by the freeze.
+fn host_tick_at(spec: &NetSpec, r: &Report, outage_tick: u32) -> u32 {
+    let us = u64::from(outage_tick) * TICK_US;
+    let ticks = |from_us: u64, at: u32| {
+        let ahead = us.saturating_sub(from_us) / TICK_US;
+        at.saturating_add(u32::try_from(ahead).unwrap_or(u32::MAX))
+    };
+    if let Some(m) = r.migrations.iter().rfind(|m| m.resumed_us <= us) {
+        return ticks(m.resumed_us, m.tick);
+    }
+    match spec.host_freeze {
+        Some((from, until)) if outage_tick >= until => outage_tick - (until - from),
+        _ => outage_tick,
+    }
+}
+
+/// The excused windows: each migration's ([`migration_windows`]) and, per
+/// outage of a player, its span in host ticks ([`host_tick_at`]) from
+/// `MAX_PREDICTION` before it to its recovery after (SK-1, SK-2); an outage
+/// of a spectator excuses nothing: no player waits for it. A migration
+/// called off (N69) needs none of its own: only an outage silences a host
+/// for 2 s without a step-down, and its window covers it.
+fn excused_windows(spec: &NetSpec, r: &Report) -> Vec<Window> {
+    let mut windows: Vec<Window> =
+        migration_windows(spec, r).into_iter().map(|ticks| Window { ticks, peer: None }).collect();
+    for &(peer, from, until) in &spec.outages {
+        if (1..=PeerId::from(spec.clients)).contains(&peer) {
+            let (from, until) = (host_tick_at(spec, r, from), host_tick_at(spec, r, until));
+            // SK-2: past its end, the peer's recovery on its slowest link.
+            let recovery = slowest_profile(spec, peer)
+                .outage_recovery_ticks(until.saturating_sub(from), CLIENT_FRAME_US)
+                .max(MAX_PREDICTION);
+            windows.push(Window {
+                ticks: from.saturating_sub(MAX_PREDICTION)..=until.saturating_add(recovery),
+                peer: Some(peer),
+            });
+        }
+    }
+    windows
+}
+
+/// The slowest link (ping plus jitter) `peer` has in the run: the spec's
+/// profile, or one a profile change gives it.
+fn slowest_profile(spec: &NetSpec, peer: PeerId) -> Profile {
+    let base = spec.profile().unwrap_or(Profile::LAN);
+    spec.profile_changes
+        .iter()
+        .filter(|c| c.1 == peer)
+        .filter_map(|c| Profile::by_name(&c.2))
+        .fold(base, |a, b| if b.ping_ms + b.jitter_ms > a.ping_ms + a.jitter_ms { b } else { a })
+}
+
 /// Every player's stall episode (the host's and the clients', not
-/// dropped) begins and ends within a migration's window
-/// ([`migration_windows`]).
-fn stalls_within_migrations(spec: &NetSpec, r: &Report, episodes: &[StallEpisode]) -> Result<(), Failure> {
-    let windows = migration_windows(spec, r);
+/// dropped) begins and ends within one excused window ([`excused_windows`]).
+fn stalls_within_windows(spec: &NetSpec, r: &Report, episodes: &[StallEpisode]) -> Result<(), Failure> {
+    let windows = excused_windows(spec, r);
     let player = |p: PeerId| p == HOST || (1..=PeerId::from(spec.clients)).contains(&p);
     for e in episodes.iter().filter(|e| player(e.peer) && !r.dropped.contains(&e.peer)) {
-        let Some(w) = windows.iter().find(|w| w.contains(&e.tick)) else {
+        let covering: Vec<&Window> = windows
+            .iter()
+            .filter(|w| {
+                w.ticks.contains(&e.tick) && w.peer.is_none_or(|p| p == e.peer || p == host_at(r, e.tick))
+            })
+            .collect();
+        if covering.is_empty() {
             return Err(Failure { tick: e.tick, what: format!("player peer {} stalled", e.peer) });
-        };
-        if e.ended.is_none_or(|end| end > *w.end()) {
+        }
+        if !covering.iter().any(|w| e.ended.is_some_and(|end| end <= *w.ticks.end())) {
             let until = e.ended.map_or_else(|| "the run's end".into(), |t| format!("host tick {t}"));
+            let last = covering.iter().map(|w| *w.ticks.end()).max().unwrap_or(0);
             return Err(Failure {
                 tick: e.tick,
                 what: format!(
-                    "player peer {} stalled until {until}, past its migration's resume plus MAX_PREDICTION ({})",
-                    e.peer,
-                    w.end()
+                    "player peer {} stalled until {until}, past its window's end plus MAX_PREDICTION ({last})",
+                    e.peer
                 ),
             });
         }
@@ -826,7 +901,7 @@ mod tests {
         r.migrations.push(harness::Migrated { from: HOST, to: 1, silent_us: 0, resumed_us: 0, tick: R });
         let episodes: Vec<StallEpisode> =
             stalls.iter().map(|&(peer, tick, ended)| StallEpisode { peer, tick, ended }).collect();
-        stalls_within_migrations(spec, &r, &episodes)
+        stalls_within_windows(spec, &r, &episodes)
     }
 
     /// Plan 12c Task 8's decision, narrowed by ruling RS-2: a stall episode
@@ -846,7 +921,7 @@ mod tests {
         assert_eq!(late.tick, end + 1);
         // Begun inside the window but running past it.
         let long = migrated(&s, &[(1, 410, Some(end + 1))]).unwrap_err();
-        assert!(long.what.contains("past its migration's resume"), "{}", long.what);
+        assert!(long.what.contains("past its window"), "{}", long.what);
         assert!(migrated(&s, &[(1, 410, None)]).is_err(), "an episode that never ended");
         // The review's case: an unrelated 0.6 s outage just after the
         // resume stalls a client from R + 5 for 60 ticks of the host.
@@ -857,6 +932,71 @@ mod tests {
         assert!(migrated(&f, &[(1, 300 - MAX_PREDICTION - 1, Some(R))]).is_err());
         // A spectator never stalls the verdict.
         assert!(migrated(&s, &[(FIRST_SPECTATOR, 10, None)]).is_ok());
+    }
+
+    /// Task 11's SK-1: an outage excuses the stalls of the peer it cuts off
+    /// (everyone's while that peer hosts), from `MAX_PREDICTION` before it to
+    /// its recovery after (SK-2: `Profile::outage_recovery_ticks` on the
+    /// peer's slowest link, at least `MAX_PREDICTION`), and nothing else.
+    #[test]
+    fn only_stalls_within_an_outage_are_excused() {
+        let (from, until) = (150, 270);
+        let s = NetSpec { outages: vec![(1, from, until)], ..spec() };
+        let judge = |s: &NetSpec, stalls: &[(PeerId, u32, Option<u32>)], migrated: bool| {
+            let mut r = empty_report();
+            if migrated {
+                r.hosts = vec![HOST, 1];
+                r.migrations.push(harness::Migrated {
+                    from: HOST,
+                    to: 1,
+                    silent_us: 0,
+                    resumed_us: 100 * TICK_US,
+                    tick: 100,
+                });
+            }
+            let e: Vec<StallEpisode> =
+                stalls.iter().map(|&(peer, tick, ended)| StallEpisode { peer, tick, ended }).collect();
+            stalls_within_windows(s, &r, &e)
+        };
+        // Typical, 120 ticks: two round trips of 10 + 1 ticks, 120 ticks
+        // re-simulated 13 ticks a host tick: 32.
+        let recovery = Profile::TYPICAL.outage_recovery_ticks(until - from, CLIENT_FRAME_US);
+        assert_eq!(recovery, 32);
+        let end = until + recovery;
+        assert!(judge(&s, &[(1, from - MAX_PREDICTION, Some(end)), (1, 200, Some(210))], false).is_ok());
+        // Before the window, past it, never ended, or another peer's.
+        assert!(judge(&s, &[(1, from - MAX_PREDICTION - 1, Some(from))], false).is_err());
+        assert!(judge(&s, &[(1, 200, Some(end + 1))], false).is_err());
+        assert!(judge(&s, &[(1, 200, None)], false).is_err());
+        assert_eq!(judge(&s, &[(2, 200, Some(210))], false).unwrap_err().what, "player peer 2 stalled");
+        assert!(judge(&s, &[(HOST, 200, Some(210))], false).is_err(), "the host is not the outage's peer");
+        // Peer 1 hosting after a migration: the outage cuts everyone off from it.
+        assert!(judge(&s, &[(2, 200, Some(210)), (HOST, 200, Some(210))], true).is_ok());
+        // The outage is in virtual time, the windows in host ticks: a host
+        // that resumed at tick 100 at virtual tick 160 is 60 ticks behind it.
+        let mut late = empty_report();
+        late.migrations.push(harness::Migrated {
+            from: HOST,
+            to: 1,
+            silent_us: 0,
+            resumed_us: 160 * TICK_US,
+            tick: 100,
+        });
+        assert_eq!(host_tick_at(&s, &late, 200), 140);
+        assert_eq!(host_tick_at(&s, &late, 150), 150, "before the resume: the clock");
+        let frozen = NetSpec { host_freeze: Some((100, 130)), ..spec() };
+        assert_eq!(host_tick_at(&frozen, &empty_report(), 200), 170, "a freeze that did not migrate");
+        // The slowest link the peer has counts: bad from tick 10 on.
+        let slow = NetSpec { profile_changes: vec![(10, 1, "bad".into())], ..s.clone() };
+        let bad = Profile::BAD.outage_recovery_ticks(until - from, CLIENT_FRAME_US);
+        assert!(judge(&slow, &[(1, 200, Some(until + bad))], false).is_ok());
+        assert!(judge(&slow, &[(1, 200, Some(until + bad + 1))], false).is_err());
+        // A spectator's outage excuses no player.
+        let sp = NetSpec { outages: vec![(FIRST_SPECTATOR, from, until)], ..spec() };
+        assert!(judge(&sp, &[(1, 200, Some(210))], false).is_err());
+        // An outage of a peer that is not in the match excuses nothing.
+        let ghost = NetSpec { outages: vec![(7, from, until)], ..spec() };
+        assert!(judge(&ghost, &[(1, 200, Some(210))], false).is_err());
     }
 
     /// N66: on a typical link a migration of more than 3 s fails, unless

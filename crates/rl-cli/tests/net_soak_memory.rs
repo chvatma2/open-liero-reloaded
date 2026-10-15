@@ -1,6 +1,8 @@
-//! `net-soak` keeps nothing between its cases (plan 12c Task 11): the
-//! process's resident memory after 8 runs is that after 2 (within 16 MiB).
-//! Its own test binary: it reads process-global state.
+//! `net-soak` keeps nothing between its cases (plan 12c Task 11): the live
+//! heap after 9 runs is that after 3 (within 256 KiB), counted by
+//! `allocation_counter` (its global allocator), and the process's resident memory is within 16 MiB (a coarse
+//! backstop, Linux only). Its own test binary: a global allocator and
+//! process memory are process-global state.
 
 mod common;
 
@@ -14,13 +16,12 @@ fn rss() -> Option<u64> {
     Some(kib * 1024)
 }
 
+/// The seeds the runs cycle through, the same in both phases.
+const SEEDS: [u64; 3] = [3, 4, 5];
+
 #[test]
 fn memory_stays_flat_over_cases() {
     let Some(dir) = common::content_dir() else { return };
-    let Some(_) = rss() else {
-        eprintln!("no /proc/self/status: skipping");
-        return;
-    };
     let failures = tempfile::tempdir().unwrap();
     let soak = |runs: u32| {
         let cfg = SoakConfig {
@@ -32,14 +33,25 @@ fn memory_stays_flat_over_cases() {
             failures: failures.path().to_path_buf(),
             content_dir: dir.clone().into(),
         };
-        // The same case every time: any growth is the soak's.
-        let summary = run_cases(&cfg, &mut |_, _| SoakCase::Net(case_short(3)), &mut Vec::new()).unwrap();
+        let cases = &mut |n: u32, _| SoakCase::Net(case_short(SEEDS[n as usize % SEEDS.len()]));
+        let summary = run_cases(&cfg, cases, &mut Vec::new()).unwrap();
         assert_eq!((summary.runs, summary.failures.len()), (runs, 0));
     };
-    soak(2);
-    let after_2 = rss().unwrap();
-    soak(6);
-    let after_8 = rss().unwrap();
-    let grew = after_8.saturating_sub(after_2);
-    assert!(grew <= 16 << 20, "RSS {} MiB after 2 runs, {} MiB after 8", after_2 >> 20, after_8 >> 20);
+    // What each phase leaves allocated (`bytes_current`: net of what it freed),
+    // a leak of the soak's or of anything it builds. The cases cycle the same
+    // seeds in both phases.
+    let first = allocation_counter::measure(|| soak(3));
+    let rss_3 = rss();
+    let second = allocation_counter::measure(|| soak(9));
+    let rss_9 = rss();
+    let grew = second.bytes_current - first.bytes_current;
+    assert!(
+        grew <= 256 << 10,
+        "{} B live after 3 runs, {} B after 9 runs",
+        first.bytes_current,
+        second.bytes_current
+    );
+    if let (Some(a), Some(b)) = (rss_3, rss_9) {
+        assert!(b.saturating_sub(a) <= 16 << 20, "RSS {} MiB after 3 runs, {} MiB after 9", a >> 20, b >> 20);
+    }
 }

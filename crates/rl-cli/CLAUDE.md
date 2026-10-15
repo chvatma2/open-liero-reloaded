@@ -113,26 +113,38 @@ The headless command-line tool. Its commands:
   current world, the match's seed, one new `AreaCache`. One line per
   migration, `migrated: <from> -> <to> at tick <t> (<ms> ms after the
   host was found gone)`, and `host lost: <peers>` (in `summary`).
-  **Stalls (the Task 8 decision, ruling RS-2):** a host gone stalls its
+  **Stalls (Task 8's RS-2, Task 11's SK-1):** a host gone stalls its
   players at the prediction limit before they find it gone, an episode
-  lasting until the new host's resume reaches them, so with migration on
-  the verdict (`judge`) runs the harness's without `expect_no_stalls` and
-  then judges every stall episode of the host and the clients (not
-  dropped) as `StallTracker` (an observer beside the bundle recorder) saw
-  it: its start (`Event::Stalled`'s tick) and its end, the furthest host
-  tick reached when the player ran a tick again. An episode is excused
-  only when it begins from the departure (the exit's tick or the
-  freeze's start) less `MAX_PREDICTION` to the resume tick plus
-  `MAX_PREDICTION` and ends by the resume plus `MAX_PREDICTION` too; any
-  other stall, a longer one (an outage just after the resume) or one
-  that never ends fails. Since rl-netcode's resume settles the time sync
-  (RS-1), no profile stalls after a resume (the grid's episodes all end
-  by the resume tick plus 1). The window is bounded instead by N66
-  (`N66_US`): when nothing but hosts left (no other exit, outage or
-  profile change), each migration within 3 s from the first `HostSilent`
-  or `PeerLeft` to the resume on `lan`, `good` and `typical`, within
-  `WINDOW_US` on `bad` and `awful`. A profile change to `awful` turns
-  `expect_no_stalls` off. `fixtures/net/cases/*.ron` are kept cases that must pass
+  lasting until the new host's resume reaches them, and an outage stalls
+  the peer it cuts off. So with migration or an outage in the spec the
+  verdict (`judge`) runs the harness's without `expect_no_stalls` and then
+  judges every stall episode of the host and the clients (not dropped) as
+  `StallTracker` (an observer beside the bundle recorder) saw it: its start
+  (`Event::Stalled`'s tick) and its end, the furthest host tick reached when
+  the player ran a tick again. An episode must begin and end inside one
+  excused window (`excused_windows`, `stalls_within_windows`): a migration's,
+  from the departure (the exit's tick or the freeze's start) less
+  `MAX_PREDICTION` to the resume tick plus `MAX_PREDICTION`, excusing every
+  player; or an outage's, `from - MAX_PREDICTION ..= until + recovery`
+  (SK-2: `Profile::outage_recovery_ticks` of the outage on the peer's
+  slowest link, `slowest_profile`, with `CLIENT_FRAME_US`, at least
+  `MAX_PREDICTION`) excusing only the peer it cuts off (everyone's while that peer is the
+  current host, `host_at`); an outage of a spectator excuses nothing.
+  Outages are in virtual time, windows in host ticks: `host_tick_at`
+  converts (from the last migration's resume, or less a host freeze that
+  did not migrate). A migration called off (N69: the old host heard
+  again) has no window of its own: only an outage (the peer's, or its
+  host's while that peer hosts) silences a host 2 s on a profile up to
+  `bad` without a step-down, and that outage's window covers it (the kept
+  case `bad-4s3c1v-seed562805195`). Any
+  other stall, a longer one or one that never ends fails. Since
+  rl-netcode's resume settles the time sync (RS-1), no profile stalls after a
+  resume. `n66` always runs (bounds each migration by N66 (`N66_US`) when
+  nothing but hosts left: no other exit, outage or profile change; within
+  3 s from the first `HostSilent` or `PeerLeft` to the resume on `lan`,
+  `good` and `typical`, within `WINDOW_US` on `bad` and `awful`). Only a
+  profile change to `awful` (or an `awful` base) turns the stall rule off
+  (`expect_no_stalls`). `fixtures/net/cases/*.ron` are kept cases that must pass
   (`tests/net_cases.rs`); `cargo xtask bless-regression --from
   target/failures/net-*.ron` keeps one. `tests/net_sim.rs`: in `check`, two
   short runs, a spectator joining, `a_host_crash_migrates_a_real_match`
@@ -162,11 +174,13 @@ The headless command-line tool. Its commands:
   `Stats::bytes_in`/`bytes_out`, `OVERHEAD` per datagram included). A
   failed verdict is an error. `cargo xtask net-feel` gates them (see
   xtask); `tests/feel.rs` checks the definitions on a short run.
-- `rl-cli net-soak [--minutes 10] [--seed 1] [--transport-every 5] [--runs N]
+- `rl-cli net-soak [--minutes 10] [--seed S] [--transport-every 5] [--runs N]
   [--content DIR] [--failures DIR]` (plan 12c Task 11, N77, `soak.rs`,
   the command in `net_soak_cmd.rs`; `cargo xtask net-soak` runs it, not a
   `full` step): seeded online cases one after the other until the time
-  (or `--runs`) is up. `soak::case(seed)` is a pure function of the seed
+  (or `--runs`) is up (checked between cases, so up to one case late; `--minutes`
+  must be above 0). The seed defaults to the clock and is printed first
+  (`net-soak: seed N`), `--seed N` replays it. `soak::case(seed)` is a pure function of the seed
   (all draws from `rl_netcode::Rng`): both mods, the 4 levels, 2-16 slots,
   1-min(slots, 7) clients, 0-2 spectators (one in two arriving mid-match),
   a base profile, 0-3 profile changes, 0-2 outages of 0.5-6 s, in half of
@@ -179,12 +193,13 @@ The headless command-line tool. Its commands:
   server's own bots playing on), the others clean control runs (migration
   off; N77's "every transport case has a server exit" is the brief's
   half). One line per case, `run <n> seed <s> <stem>: ok (<secs>s)` or
-  `... FAIL <what> at tick <t> (<file>)`, then `soak: <runs> runs (<k>
+  `FAIL <what> at tick <t> (<file>)` (no tick for a transport or error case), then `soak: <runs> runs (<k>
   transport), <f> failures in <m> min`; exit 1 if any failed. **Bounded:**
   each case's report is dropped before the next, a failure is a file (at
-  most `MAX_FAILURES` 32, then the soak stops with its summary), nothing
-  else accumulates (`tests/net_soak_memory.rs`, its own `[[test]]`: `VmRSS`
-  after 2 and after 8 runs within 16 MiB, Linux only). A `net-sim` failure
+  most `MAX_FAILURES` 32 per invocation: files of earlier runs stay and do not count; then the soak stops with its summary; a failure that cannot be written is reported, counted and the soak goes on), nothing
+  else accumulates (`tests/net_soak_memory.rs`, its own `[[test]]`: bytes
+  left allocated, by `allocation_counter`, after 3 and after 9 runs of 3
+  cycled seeds within 256 KiB, `VmRSS` within 16 MiB as a backstop). A `net-sim` failure
   is `net-<stem>.ron` (`netsim::write_failure`); a case that cannot run,
   or panics, `soak::write_error_case` (a `NetCase` whose note names the
   error, since `write_failure` keeps only failed verdicts); a transport
@@ -193,12 +208,13 @@ The headless command-line tool. Its commands:
   `difficulty_name`), `failure.txt`, `server.log` and any desync bundles.
   `run_cases(cfg, cases, out)` takes the case function (tests; a transport
   case gets a temporary data directory of its own). The first minute found
-  that an outage of 0.5 s or more stalls a peer on any profile:
-  `NetSpec::expect_no_stalls` is now off with any outage.
+  that an outage of 0.5 s or more stalls the peer it cuts off on any
+  profile: outage windows excuse that (SK-1, above).
   `tests/net_soak.rs` (check): the cases' determinism and bounds (200
   seeds, every exit kind, every profile valid), a short soak's lines and
   summary, a failing case kept and counted (and the cap), the error
-  writer's round trip, `TransportSpec` through RON and the outage rule.
+  writer's round trip, `TransportSpec` through RON and a real outage match; `netsim`'s unit
+  tests pin the excused windows, the negative twins included.
 - `rl-cli net-client --bot (--join <host[:port]> | --invite rlx1… | --key
   <64 hex> | --listed "<name>") [--relay URL]... [--stun host:port]...
   [--turn user:pass@host:port]... [--no-nostr-turn] [--region R]

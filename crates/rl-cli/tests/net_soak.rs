@@ -127,7 +127,8 @@ fn a_failing_case_is_kept_and_counted() {
     assert_eq!(kept.spec.mod_id, "no-such-mod");
     let why = kept.failure.expect("names the error");
     assert!(why.contains("no-such-mod"), "{why}");
-    assert!(text.contains("FAIL") && text.contains("1 failures"), "{text}");
+    assert!(text.lines().any(|l| l.starts_with("FAIL error: ")), "{text}");
+    assert!(text.contains("1 failures"), "{text}");
 
     // The cap: the soak stops right after the failure it counts.
     let other = tempfile::tempdir().unwrap();

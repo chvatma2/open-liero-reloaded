@@ -65,7 +65,12 @@ model that tests it in one process (spec §9.1).
     lacking a slot's input before `first` decodes that slot from a dummy
     base: its values there are `Gap`s anyway. `bandwidth32` (32 worms,
     typical) went from 28.7 to 16.7 KB/s received; the feel numbers did
-    not change.
+    not change. **A backlog** longer than one datagram (a peer back from an
+    outage lacks its whole length) goes on where the last datagram stopped
+    (`PeerState::cursor`), one datagram a tick, not one per round trip as a
+    resend alone did (ruling SK-2: typical stalled 30 ticks past a 2.15 s
+    outage, bad 2.3 s past a 6 s one); a lost one shows in the peer's echo
+    and the resend starts from its ack again.
   - Pace (`clock.rs`, `Pace`): local time to due ticks (minus ticks run,
     at most `MAX_CATCHUP` per `advance`), adjustable by ±1 % (re-anchored,
     so a change affects only later time) and shiftable by whole ticks (a
@@ -84,9 +89,19 @@ model that tests it in one process (spec §9.1).
     host's current tick); `HostInputs.margin` is the median of the last 16
     (`Margins`). The client steers to `TARGET_MARGIN`: an error beyond
     `JUMP_TICKS` shifts the pace (margins are then stale until the host
-    holds 16 of its inputs made after the jump; no jump on a datagram whose
-    host tick is older than the last taken: a reordered one's margin is
-    stale, ruling RS-1), a smaller one sets the
+    echoes the 16th of our datagrams carrying a newer input than the last,
+    `samples_sent`: a median's worth of samples made since; not the host's
+    `your_ack`, which its fills move without any input of ours, SK-2; no
+    jump on a datagram whose host tick is older than the last taken: a
+    reordered one's margin is stale, ruling RS-1). Margins are stale the
+    same way, for 32 such datagrams (half of them may be no sample there on
+    `bad`: lost, or behind a newer one), after a deficit of more than
+    `MAX_PREDICTION` ticks run off (`deficit`, its pace's ticks not run,
+    uncapped; an outage's: its catch-up's inputs reached the host late by
+    the deficit, and the first margin after it jumped the pace ahead into
+    the prediction limit, 63 ticks after a 4.65 s outage on lan, SK-2;
+    every deficit so judged made `awful`'s own corrections 13 % worse).
+    A smaller one sets the
     speed to `2000 ppm × error` plus an integral term (no lasting error
     from a drifting clock). A client always sends its newest input, so a
     client the host filled past still yields samples.
@@ -114,6 +129,16 @@ model that tests it in one process (spec §9.1).
     with more unacknowledged inputs than `MAX_KEYS` sends the newest ones.
     `peer_lost` also drops what is queued for the peer.
   - `receive` never panics: undecodable input is `Event::Malformed`.
+  - **After an outage** (ruling SK-2): `Profile::outage_recovery_ticks(
+    outage, frame_us)` bounds how long a player cut off may still stall
+    past the outage's end: two round trips at the ping plus its jitter and
+    a tick each (the host hears it and resends; its own inputs reach the
+    host, which stops filling its slot) and the outage re-simulated at
+    `MAX_CATCHUP` ticks a frame while the host runs on. rl-cli's net-sim
+    verdict excuses no longer (`tests/timing.rs`'
+    `a_player_cut_off_plays_on_once_its_link_is_back`: lan to bad, 12
+    seeds, outages of 0.6-4.6 s, drifting clocks; each of the three
+    fixes above fails it when undone).
 - **Sync** (`sync.rs`, spec §3.5, §3.6): after simulating tick `t` with
   `(t + 1) % checksum_every == 0` (every 10) the session records
   `Simulation::checksum` as pending; a rollback drops pending ticks from

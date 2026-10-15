@@ -339,7 +339,9 @@ struct PeerState {
     /// spectator's): frames from it carry every value, no base.
     origin: u32,
     /// Host: our recent datagrams to the peer, oldest first: their
-    /// `sent_ms` and our frontier when we sent them.
+    /// `sent_ms` and our frontier when we sent them. Client, for its host:
+    /// their `sent_ms` and our `samples_sent` then, to know when the host's
+    /// margins are fresh again.
     sends: VecDeque<(u32, u32)>,
     /// Host: where our input log changed before each of our last
     /// [`COPIES`] datagrams to the peer (`u32::MAX`: nowhere).
@@ -351,6 +353,9 @@ struct PeerState {
     resuming: Option<Resuming>,
     /// Host: the `sent_ms` of our last such datagram.
     resent_ms: u32,
+    /// Host: what the peer lacks did not fit our last datagram, which ended
+    /// before this tick: the next one goes on from it (0: nothing left).
+    cursor: u32,
 }
 
 impl PeerState {
@@ -380,6 +385,7 @@ impl PeerState {
             resend: false,
             resuming: None,
             resent_ms: 0,
+            cursor: 0,
         }
     }
 }
@@ -400,7 +406,9 @@ enum TimeSync {
     Free,
     /// Jumped; the pace is still catching up.
     Jumped,
-    /// Margins are stale until the host has our input for this tick (`your_ack`).
+    /// Margins are stale until the host echoes our datagram that was this
+    /// sample of ours (`samples_sent`): its median then holds a median's
+    /// worth of samples made since we set it.
     Until(u32),
 }
 
@@ -432,6 +440,15 @@ pub struct Session<S: Simulation> {
     sync: TimeSync,
     /// The last `advance` left due ticks unrun (a stall, or catching up).
     behind: bool,
+    /// Client: the most ticks due and not run after an advance (uncapped)
+    /// since the last one that left none (the deficit being run off; 0:
+    /// none).
+    deficit: u32,
+    /// Client: our datagrams so far whose newest input was newer than the
+    /// last one's: each that reaches the host is one margin sample there.
+    samples_sent: u32,
+    /// Client: `own.len()` in our last datagram.
+    last_sent_len: usize,
     /// The prediction limit stopped the last advance that ran or stalled:
     /// a stall episode is on ([`Event::Stalled`] once per episode).
     stalling: bool,
@@ -541,6 +558,9 @@ impl<S: Simulation> Session<S> {
             sent_at: None,
             sync: TimeSync::Free,
             behind: false,
+            deficit: 0,
+            samples_sent: 0,
+            last_sent_len: 0,
             stalling: false,
             lates: VecDeque::new(),
             lagging: false,
@@ -841,13 +861,30 @@ impl<S: Simulation> Session<S> {
         }
         self.ticks_run += ran;
         self.behind = self.pace.due(now_us, self.ticks_run) > 0;
+        // The whole deficit, not one advance's catch-up (`due` is capped).
+        let left =
+            self.pace.ticks(now_us).saturating_sub(i64::from(self.ticks_run)).clamp(0, i64::from(u32::MAX));
+        let deficit = if self.behind { self.deficit.max(left as u32) } else { 0 };
+        let ran_off = mem::replace(&mut self.deficit, deficit);
+        let fresh_from = self.samples_sent.saturating_add(MARGIN_SAMPLES as u32);
         if self.sync == TimeSync::Jumped && (!self.behind || stalled) {
             // Caught up, or as far as the prediction limit lets it (else a
             // stall-limited client would wait for ever): margins are fresh
             // once the host has a median's worth of inputs made from now on.
             // Samples from before and during the catch-up would trigger
             // further jumps (an oscillation).
-            self.sync = TimeSync::Until((self.own.len() as u32).saturating_add(MARGIN_SAMPLES as u32));
+            self.sync = TimeSync::Until(fresh_from);
+        } else if self.sync == TimeSync::Free && !self.behind && ran_off > MAX_PREDICTION {
+            // Caught up after a deficit longer than a stall at the
+            // prediction limit runs up on its own (an outage): the inputs
+            // it ran meanwhile reached the host late by the deficit, not by
+            // its pace, and the host's median still holds them. Taken now,
+            // they would jump the pace ahead by the deficit just run off,
+            // into a stall at the prediction limit (SK-2: 63 ticks after a
+            // 4.65 s outage on lan). Fresh as after a jump. (Every deficit
+            // so judged, `awful`'s steady stalls made 13 % more own
+            // corrections.)
+            self.sync = TimeSync::Until(fresh_from.saturating_add(MARGIN_SAMPLES as u32));
         }
         self.confirm_checksums();
         self.send_owed_states(now_us);
@@ -1234,6 +1271,14 @@ impl<S: Simulation> Session<S> {
                     let changed = p.recent.iter().copied().min().unwrap_or(u32::MAX);
                     let short = p.rtt_x8.is_some_and(|r| r <= i64::from(COPIES_MAX_RTT_MS) * 8);
                     let first = if resend || !short { acked } else { acked.max(changed).min(horizon) };
+                    // A backlog longer than a datagram (after an outage) goes
+                    // on from where the last datagram stopped, one datagram a
+                    // tick, not one a round trip (a resend's): the peer runs
+                    // again a round trip after its link is back, not one per
+                    // `MAX_FRAMES` it lacks (SK-2). A lost one shows in its
+                    // echo, and the resend starts from its ack again.
+                    let first =
+                        if !resend && p.cursor > acked && p.cursor < horizon { p.cursor } else { first };
                     let (seat, margin, origin) = (p.seat, p.margins.median().unwrap_or(0), p.origin);
                     let your_ack = match seat {
                         Seat::Player(s) => self.log.known_upto(s),
@@ -1265,6 +1310,8 @@ impl<S: Simulation> Session<S> {
                         n /= 2;
                     };
                     if let Some(p) = self.peers.get_mut(&id) {
+                        let end = first.saturating_add(n);
+                        p.cursor = if end < horizon { end } else { 0 };
                         if p.sends.len() == SENDS_KEPT {
                             p.sends.pop_front();
                         }
@@ -1299,6 +1346,16 @@ impl<S: Simulation> Session<S> {
                     keys,
                 });
                 self.push_out(host, Channel::Unreliable, encode_datagram(&d));
+                if let Some(p) = self.peers.get_mut(&host) {
+                    if p.sends.len() == SENDS_KEPT {
+                        p.sends.pop_front();
+                    }
+                    if len > self.last_sent_len {
+                        self.last_sent_len = len;
+                        self.samples_sent += 1;
+                    }
+                    p.sends.push_back((stamp.sent_ms, self.samples_sent));
+                }
             }
         }
     }
@@ -1435,7 +1492,10 @@ impl<S: Simulation> Session<S> {
         let error = TARGET_MARGIN - h.margin as i32;
         match self.sync {
             TimeSync::Jumped => return,
-            TimeSync::Until(t) if h.your_ack < t => return,
+            // Not the host's `your_ack`: it fills a lagging player's ticks
+            // without any input of ours, so its median can still hold the
+            // stale samples (SK-2: a jump 30 ticks after an outage on bad).
+            TimeSync::Until(t) if self.echoed_samples(h.stamp.echo_ms) < t => return,
             // Behind its own pace, a client's inputs are late because it is
             // behind: speeding it up would only pile up a deficit it cannot run.
             _ if self.behind && error > 0 => return,
@@ -1467,6 +1527,16 @@ impl<S: Simulation> Session<S> {
         if fresh {
             self.sync_tick = Some(h.tick);
         }
+    }
+
+    /// Client: which of our samples (`samples_sent`) the datagram of ours
+    /// the host echoes (`echo_ms`) was; 0 when unknown.
+    fn echoed_samples(&self, echo_ms: u32) -> u32 {
+        let (Role::Client { host, .. } | Role::Spectator { host } | Role::Joining { host }) = self.role
+        else {
+            return 0;
+        };
+        self.peers.get(&host).and_then(|p| p.sends.iter().rev().find(|s| s.0 == echo_ms)).map_or(0, |s| s.1)
     }
 
     /// Client or spectator: the host's final inputs.

@@ -6,7 +6,10 @@
 //! **Bounded.** Each case's report is dropped before the next, and nothing
 //! else is kept per run, so an overnight run's memory stays flat
 //! (`tests/net_soak_memory.rs` pins it). A failure is a file, at most
-//! [`MAX_FAILURES`] of them; then the soak stops with its summary. A
+//! [`MAX_FAILURES`] of them per invocation (files of earlier runs stay and
+//! are not counted); then the soak stops with its summary. Time is checked
+//! between cases, so a run ends up to one case (a transport one: about a
+//! minute) late. A
 //! `net-sim` failure is a `NetCase` (`net-<stem>.ron`, replayed with
 //! `rl-cli net-sim --from`; kept as a regression with `cargo xtask
 //! bless-regression --from`); a real-transport one a directory
@@ -199,8 +202,8 @@ enum Outcome {
 }
 
 /// Runs cases until the time or `runs` is up, one line each to `out`:
-/// `run <n> seed <s> <stem>: ok (<secs>s)` or `run <n> seed <s> <stem>:
-/// FAIL <what> at tick <t> (<file>)`; then the summary line. A case that
+/// `run <n> seed <s> <stem>: ok (<secs>s)` or `FAIL <what> at tick <t>
+/// (<file>)` (a transport or error case has no tick); then the summary line. A case that
 /// cannot even run (an error, or a panic) is a failure too, kept like the
 /// others. `run` with the cases from [`case`] and [`transport_case`].
 pub fn run(cfg: &SoakConfig, out: &mut dyn Write) -> anyhow::Result<SoakSummary> {
@@ -243,18 +246,22 @@ pub fn run_cases(
         let seed = cfg.seed.wrapping_add(u64::from(n));
         let started = Instant::now();
         let (stem, outcome) = match cases(n, seed) {
-            SoakCase::Net(spec) => (spec.stem(), run_net(cfg, &content, &spec)?),
+            SoakCase::Net(spec) => (spec.stem(), run_net(cfg, &content, &spec)),
             SoakCase::Transport(spec) => {
                 summary.transport_runs += 1;
-                (format!("soak-transport-{seed}"), run_transport_case(cfg, &content, spec, seed)?)
+                (format!("soak-transport-{seed}"), run_transport_case(cfg, &content, spec, seed))
             }
         };
         summary.runs += 1;
-        let head = format!("run {} seed {seed} {stem}:", n + 1);
         match outcome {
-            Outcome::Ok => writeln!(out, "{head} ok ({:.1}s)", started.elapsed().as_secs_f64())?,
+            Outcome::Ok => writeln!(
+                out,
+                "run {} seed {seed} {stem}: ok ({:.1}s)",
+                n + 1,
+                started.elapsed().as_secs_f64()
+            )?,
             Outcome::Failed(what, file) => {
-                writeln!(out, "{head} FAIL {what} ({})", file.display())?;
+                writeln!(out, "FAIL {what} ({})", file.display())?;
                 summary.failures.push(file);
             }
         }
@@ -287,22 +294,23 @@ fn panic_text(p: &(dyn Any + Send)) -> String {
         .unwrap_or_else(|| "a panic".into())
 }
 
-fn run_net(cfg: &SoakConfig, content: &Content, spec: &NetSpec) -> anyhow::Result<Outcome> {
+fn run_net(cfg: &SoakConfig, content: &Content, spec: &NetSpec) -> Outcome {
     let run = catch_unwind(AssertUnwindSafe(|| netsim::run_with(content, spec, Some(&cfg.failures))))
         .unwrap_or_else(|p| Err(anyhow::anyhow!("panic: {}", panic_text(&*p))));
-    Ok(match run {
+    let intended = cfg.failures.join(format!("net-{}.ron", spec.stem()));
+    let (mut what, kept) = match run {
         Ok(run) => match &run.verdict {
-            Ok(()) => Outcome::Ok,
-            Err(f) => {
-                let file = netsim::write_failure(&cfg.failures, &run)?;
-                Outcome::Failed(format!("{} at tick {}", f.what, f.tick), file)
-            }
+            Ok(()) => return Outcome::Ok,
+            Err(f) => (format!("{} at tick {}", f.what, f.tick), netsim::write_failure(&cfg.failures, &run)),
         },
-        Err(e) => {
-            let file = write_error_case(&cfg.failures, spec, &e)?;
-            Outcome::Failed(format!("error: {e:#}"), file)
-        }
-    })
+        Err(e) => (format!("error: {e:#}"), write_error_case(&cfg.failures, spec, &e)),
+    };
+    // A failure that cannot be kept (a full disk) is still reported and counted.
+    let file = kept.unwrap_or_else(|e| {
+        what += &format!("; not kept: {e:#}");
+        intended
+    });
+    Outcome::Failed(what, file)
 }
 
 /// Keeps a case that could not run, as `<dir>/net-<stem>.ron`: a `NetCase`
@@ -317,36 +325,51 @@ pub fn write_error_case(dir: &Path, spec: &NetSpec, error: &anyhow::Error) -> an
     Ok(path)
 }
 
-fn run_transport_case(
-    cfg: &SoakConfig,
-    content: &Content,
-    mut spec: TransportSpec,
-    seed: u64,
-) -> anyhow::Result<Outcome> {
-    let data = tempfile::tempdir().context("a data directory for the transport case")?;
+fn run_transport_case(cfg: &SoakConfig, content: &Content, mut spec: TransportSpec, seed: u64) -> Outcome {
+    let data = match tempfile::tempdir() {
+        Ok(d) => d,
+        Err(e) => {
+            let what = format!("error: no data directory for the transport case: {e}");
+            return Outcome::Failed(what, cfg.failures.join(format!("soak-transport-{seed}")));
+        }
+    };
     spec.data_dir = data.path().to_path_buf();
     let run = catch_unwind(AssertUnwindSafe(|| run_transport(&cfg.content_dir, &spec)))
         .unwrap_or_else(|p| Err(anyhow::anyhow!("panic: {}", panic_text(&*p))));
     let (what, log) = match run {
         Ok(run) => match run.verdict(content, &spec) {
-            Ok(()) => return Ok(Outcome::Ok),
+            Ok(()) => return Outcome::Ok,
             Err(why) => (why, run.server_log),
         },
         Err(e) => (format!("error: {e:#}"), String::new()),
     };
     let dir = cfg.failures.join(format!("soak-transport-{seed}"));
-    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let mut first = what.lines().next().unwrap_or("").to_string();
+    if let Err(e) = keep_transport(&dir, &mut spec, &what, &log, data.path()) {
+        first += &format!("; not kept: {e:#}");
+    }
+    Outcome::Failed(first, dir)
+}
+
+/// Writes a failed transport case's files to `dir`.
+fn keep_transport(
+    dir: &Path,
+    spec: &mut TransportSpec,
+    what: &str,
+    log: &str,
+    data: &Path,
+) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     // The spec as it ran, its data directory a placeholder (a temporary one, gone).
     spec.data_dir = PathBuf::from("data");
-    let ron = ron::ser::to_string_pretty(&spec, ron::ser::PrettyConfig::default())?;
+    let ron = ron::ser::to_string_pretty(spec, ron::ser::PrettyConfig::default())?;
     std::fs::write(dir.join("spec.ron"), ron + "\n")?;
     std::fs::write(dir.join("failure.txt"), format!("{what}\n"))?;
     std::fs::write(dir.join("server.log"), log)?;
-    for (i, bundle) in desync_bundles(data.path()).iter().enumerate().take(8) {
+    for (i, bundle) in desync_bundles(data).iter().enumerate().take(8) {
         let _ = std::fs::copy(bundle, dir.join(format!("desync-{i}.rlds")));
     }
-    let first = what.lines().next().unwrap_or("").to_string();
-    Ok(Outcome::Failed(first, dir))
+    Ok(())
 }
 
 /// The desync bundles under `dir` (a few levels down), in path order.

@@ -85,7 +85,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `--bless` writes the baseline (note `NOTE`) only when the absolute rules
   pass (else the netcode has a problem to fix, not the gate) and logs the
   reason in `fixtures/blessings.log`. About 40 s once built.
-- `net-soak [--minutes 10] [--seed 1] [--offline]` (`net::soak`, plan 12c,
+- `net-soak [--minutes 10] [--seed S] [--offline]` (`net::soak`, plan 12c,
   N77, spec §9.10; **not** a `full` step): builds `rl-cli` in release
   (`bench::rl_cli_with`; `--offline` builds with cargo's `--offline`) and
   runs `rl-cli net-soak --minutes M --seed S --content content/packs

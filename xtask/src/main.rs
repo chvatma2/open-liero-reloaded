@@ -138,9 +138,9 @@ enum Command {
         /// How long to run.
         #[arg(long, default_value_t = 10.0)]
         minutes: f64,
-        /// The first case's seed.
-        #[arg(long, default_value_t = 1)]
-        seed: u64,
+        /// The first case's seed (default: from the clock, printed).
+        #[arg(long)]
+        seed: Option<u64>,
         /// Build without the network.
         #[arg(long)]
         offline: bool,
