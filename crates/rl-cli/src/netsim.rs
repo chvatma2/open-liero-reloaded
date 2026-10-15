@@ -442,7 +442,8 @@ fn judge(
     episodes: &[StallEpisode],
     f: &mut WorldFactory<'_>,
 ) -> Result<(), Failure> {
-    if sc.migration.is_none() && sc.outages.is_empty() {
+    let worsened = spec.profile_changes.iter().any(|c| worsened_from(spec, c.1).is_some());
+    if sc.migration.is_none() && sc.outages.is_empty() && !worsened {
         return harness::verdict(sc, r, f);
     }
     harness::verdict(&Scenario { expect_no_stalls: false, ..sc.clone() }, r, f)?;
@@ -562,8 +563,25 @@ fn slowest_profile(spec: &NetSpec, peer: PeerId) -> Profile {
         .fold(base, |a, b| if b.ping_ms + b.jitter_ms > a.ping_ms + a.jitter_ms { b } else { a })
 }
 
+/// The host tick from which `peer`'s link is worse (ping plus jitter) than
+/// the match's profile, on which every input delay was chosen (fixed per
+/// match, N2): its first profile change to one. Ruling SK-6: from then on
+/// its stalls are not judged, as no stall is after a change to `awful`.
+fn worsened_from(spec: &NetSpec, peer: PeerId) -> Option<u32> {
+    let base = spec.profile().unwrap_or(Profile::LAN);
+    let slow = |p: &Profile| p.ping_ms + p.jitter_ms;
+    spec.profile_changes
+        .iter()
+        .filter(|c| c.1 == peer)
+        .filter(|c| Profile::by_name(&c.2).is_some_and(|p| slow(&p) > slow(&base)))
+        .map(|c| c.0)
+        .min()
+}
+
 /// Every player's stall episode (the host's and the clients', not
-/// dropped) begins and ends within one excused window ([`excused_windows`]).
+/// dropped) begins and ends within one excused window ([`excused_windows`]),
+/// but for a player whose link worsened, from the change on
+/// ([`worsened_from`]).
 fn stalls_within_windows(spec: &NetSpec, r: &Report, episodes: &[StallEpisode]) -> Result<(), Failure> {
     let windows = excused_windows(spec, r);
     let player = |p: PeerId| p == HOST || (1..=PeerId::from(spec.clients)).contains(&p);
@@ -572,7 +590,10 @@ fn stalls_within_windows(spec: &NetSpec, r: &Report, episodes: &[StallEpisode]) 
     let went = |e: &&StallEpisode| {
         e.ended.is_none() && (r.host_lost.contains(&e.peer) || r.exited.contains(&e.peer))
     };
-    for e in episodes.iter().filter(|e| player(e.peer) && !r.dropped.contains(&e.peer) && !went(e)) {
+    let worse = |e: &&StallEpisode| worsened_from(spec, e.peer).is_some_and(|t| e.tick >= t);
+    for e in
+        episodes.iter().filter(|e| player(e.peer) && !r.dropped.contains(&e.peer) && !went(e) && !worse(e))
+    {
         let covering: Vec<&Window> = windows
             .iter()
             .filter(|w| {
@@ -1037,8 +1058,9 @@ mod tests {
         assert_eq!(host_tick_at(&s, &late, 150), 150, "before the resume: the clock");
         let frozen = NetSpec { host_freeze: Some((100, 130)), ..spec() };
         assert_eq!(host_tick_at(&frozen, &empty_report(), 200), 170, "a freeze that did not migrate");
-        // The slowest link the peer has counts: bad from tick 10 on.
-        let slow = NetSpec { profile_changes: vec![(10, 1, "bad".into())], ..s.clone() };
+        // The slowest link the peer has in the run counts: bad from tick
+        // 400 on (after it, SK-6 judges none of its stalls).
+        let slow = NetSpec { profile_changes: vec![(400, 1, "bad".into())], ..s.clone() };
         let bad = Profile::BAD.outage_recovery_ticks(until - from, CLIENT_FRAME_US);
         assert!(judge(&slow, &[(1, 200, Some(until + bad))], false).is_ok());
         assert!(judge(&slow, &[(1, 200, Some(until + bad + 1))], false).is_err());
@@ -1085,6 +1107,34 @@ mod tests {
         let next = 650 + Profile::TYPICAL.outage_recovery_ticks(50, CLIENT_FRAME_US).max(MAX_PREDICTION);
         assert!(judge(&[(1, 600, Some(next))]).is_ok());
         assert!(judge(&[(1, 160, Some(next))]).is_err(), "two outages apart are two windows");
+    }
+
+    /// Ruling SK-6: a player whose link turns worse mid-match keeps the
+    /// input delay chosen on the better one (fixed per match), so from the
+    /// change on its stalls are not judged, as an `awful` change's are not
+    /// (net-soak's `lan-10s6c1v-seed335636286`: lan to bad, `d` 0). Before
+    /// the change, other players, and a change to a better link are judged
+    /// as before.
+    #[test]
+    fn a_player_whose_link_worsens_is_not_judged_from_the_change() {
+        let s = NetSpec { profile: "good".into(), profile_changes: vec![(300, 1, "bad".into())], ..spec() };
+        let judge = |s: &NetSpec, stalls: &[(PeerId, u32, Option<u32>)]| {
+            let e: Vec<StallEpisode> =
+                stalls.iter().map(|&(peer, tick, ended)| StallEpisode { peer, tick, ended }).collect();
+            stalls_within_windows(s, &empty_report(), &e)
+        };
+        assert!(judge(&s, &[(1, 300, Some(310)), (1, 500, None)]).is_ok());
+        assert!(judge(&s, &[(1, 299, Some(301))]).is_err(), "before the change");
+        assert!(judge(&s, &[(2, 310, Some(311))]).is_err(), "another player");
+        let better =
+            NetSpec { profile: "typical".into(), profile_changes: vec![(300, 1, "good".into())], ..spec() };
+        assert!(judge(&better, &[(1, 310, Some(311))]).is_err(), "a better link");
+        // Then back to a better one: still the worse change's player.
+        let back =
+            NetSpec { profile_changes: vec![(300, 1, "bad".into()), (400, 1, "good".into())], ..s.clone() };
+        assert!(judge(&back, &[(1, 450, Some(451))]).is_ok());
+        assert_eq!(worsened_from(&s, 1), Some(300));
+        assert_eq!(worsened_from(&better, 1), None);
     }
 
     /// N66: on a typical link a migration of more than 3 s fails, unless

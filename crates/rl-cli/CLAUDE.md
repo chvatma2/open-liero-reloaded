@@ -157,7 +157,11 @@ The headless command-line tool. Its commands:
   3 s from the first `HostSilent` or `PeerLeft` to the resume on `lan`,
   `good` and `typical`, within `WINDOW_US` on `bad` and `awful`). Only a
   profile change to `awful` (or an `awful` base) turns the stall rule off
-  (`expect_no_stalls`). `fixtures/net/cases/*.ron` are kept cases that must pass
+  (`expect_no_stalls`). A player whose link changes to a worse profile than
+  the match's (ping plus jitter; its input delay was chosen on the
+  match's, fixed per match) is not judged from that change on
+  (`worsened_from`, ruling SK-6; net-soak's `lan-10s6c1v-seed335636286`),
+  and such a change sends the run through `judge`'s own stall rule. `fixtures/net/cases/*.ron` are kept cases that must pass
   (`tests/net_cases.rs`); `cargo xtask bless-regression --from
   target/failures/net-*.ron` keeps one. `tests/net_sim.rs`: in `check`, two
   short runs, a spectator joining, `a_host_crash_migrates_a_real_match`
