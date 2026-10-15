@@ -90,7 +90,11 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     // The tabs, centred over the column.
     ui.horizontal(|ui| {
         let (tab_size, indent) = tab_row(ui, TAB, Tab::ALL.len());
-        ui.add_space(indent);
+        if indent > 0.0 {
+            ui.add_space(indent);
+        }
+        // A narrow tab holds its label: less padding (the tab's size is set).
+        ui.spacing_mut().button_padding.x = 2.0;
         for t in Tab::ALL {
             let tab = Button::selectable(v.tab == t, RichText::new(t.label()).size(18.0));
             if ui.add_sized(tab_size, tab).clicked() {

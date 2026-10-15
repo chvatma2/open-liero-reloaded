@@ -43,7 +43,7 @@ struct App {
 fn harness(size: egui::Vec2, ppp: f32) -> Harness<'static, App> {
     let ui = UiState::new(Settings::default(), Profiles::default(), 1);
     let app = App { ui, data: MenuData::new(catalog(), None), commands: Vec::new() };
-    Harness::builder().with_size(size).with_pixels_per_point(ppp).build_ui_state(
+    let h = Harness::builder().with_size(size).with_pixels_per_point(ppp).build_ui_state(
         |ui, app: &mut App| {
             for a in screens::show(ui, &app.ui, &mut app.data) {
                 let c = app.ui.update(a);
@@ -51,7 +51,10 @@ fn harness(size: egui::Vec2, ppp: f32) -> Harness<'static, App> {
             }
         },
         app,
-    )
+    );
+    // The game's look, as players get it: the theme's text sizes and spacing.
+    rl_ui::theme::apply(&h.ctx);
+    h
 }
 
 /// The widgets' bounding rectangles (containers left out), as the
@@ -202,7 +205,15 @@ fn the_primary_action_is_centred_below() {
             assert!(b.y1 as f32 > h * 0.6, "{at}: {label} is low, not at {}", b.y1);
             // Below everything else on the page.
             let others = widgets(&harness).into_iter().filter(|(n, _)| n != label);
-            let lowest = others.map(|(_, r)| r.bottom()).fold(0.0, f32::max);
+            // The page's panels (the scroll areas of the body) end where
+            // the footer begins, 10 points above its button: what a scroll
+            // area has scrolled past that line is clipped, not on the page
+            // (the accessibility tree still has its bounds), so a widget
+            // starting above the line counts down to the line. One starting
+            // in the footer is below Start's panel, and counts in full.
+            let footer = b.y0 as f32 - 10.0;
+            let shown = |r: Rect| if r.top() < footer { r.bottom().min(footer) } else { r.bottom() };
+            let lowest = others.map(|(_, r)| shown(r)).fold(0.0, f32::max);
             assert!(b.y0 as f32 >= lowest - 0.5, "{at}: {label} at {} is above a widget at {lowest}", b.y0);
             assert!(b.height() >= 36.0 && b.width() >= 160.0, "{at}: {label} is large: {b:?}");
         }
@@ -474,8 +485,6 @@ fn all_nodes(h: &Harness<'static, App>) -> Vec<(String, Rect)> {
 fn hovering_a_widget_never_changes_the_layout() {
     for (w, h, ppp) in [(1280.0, 720.0, 1.0), (3440.0, 1440.0, 2.0)] {
         let mut harness = harness(egui::vec2(w / ppp, h / ppp), ppp);
-        // The game's look: the widgets have the theme's visuals.
-        rl_ui::theme::apply(&harness.ctx);
         for (screen, tab) in SCREENS.into_iter().chain([(Screen::Main, None)]) {
             reach(&mut harness, screen);
             if let Some(tab) = tab {
