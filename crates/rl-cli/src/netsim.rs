@@ -23,11 +23,9 @@ use rl_netcode::harness::{
     self, Exit, ExitHow, Factory, Failure, HOST, MigrationPlan, Outage, PeerPlan, ProfileChange, Report,
     Scenario,
 };
-use rl_netcode::migration::{HOST_SILENT_US, WINDOW_US};
+use rl_netcode::migration::WINDOW_US;
 use rl_netcode::netsim::{LinkStats, Profile};
-use rl_netcode::{
-    Driver, Event, MAX_PREDICTION, PeerId, Seat, Session, Stats, TICK_US, WorldSim, input_delay,
-};
+use rl_netcode::{Driver, Event, MAX_PREDICTION, PeerId, Seat, Session, Stats, WorldSim, input_delay};
 use rl_online::matches::{self, HostBots};
 use rl_sim::Keys;
 use serde::{Deserialize, Serialize};
@@ -402,15 +400,17 @@ pub fn run(content: &Content, spec: &NetSpec) -> anyhow::Result<NetRun> {
 pub fn run_with(content: &Content, spec: &NetSpec, bundles: Option<&Path>) -> anyhow::Result<NetRun> {
     let scenario = spec.scenario()?;
     let mut factory = WorldFactory::new(content, spec)?;
-    let mut recorder = BundleRecorder { spec, dir: bundles, pending: BTreeMap::new(), done: Vec::new() };
-    let (report, verdict) = match harness::run_observed(&scenario, &mut factory, &mut recorder) {
+    let recorder = BundleRecorder { spec, dir: bundles, pending: BTreeMap::new(), done: Vec::new() };
+    let mut watch = Watch { bundles: recorder, stalls: StallTracker::default() };
+    let (report, verdict) = match harness::run_observed(&scenario, &mut factory, &mut watch) {
         Ok(report) => {
-            let verdict = judge(spec, &scenario, &report, &mut factory);
+            let episodes = watch.stalls.episodes();
+            let verdict = judge(spec, &scenario, &report, &episodes, &mut factory);
             (report, verdict)
         }
         Err(f) => (empty_report(), Err(f)),
     };
-    let written = recorder.finish()?;
+    let written = watch.bundles.finish()?;
     Ok(NetRun { spec: spec.clone(), report, verdict, bundles: written })
 }
 
@@ -420,46 +420,61 @@ pub fn run_with(content: &Content, spec: &NetSpec, bundles: Option<&Path>) -> an
 /// `bad` and `awful` links within the first successor's window.
 pub const N66_US: u64 = 3_000_000;
 
-/// After a resume, a player's pace restarts at `max(its tick, R)` and its
-/// time sync starts over ("as after a jump": no margin until the new host
-/// holds 16 inputs made after it), so a player ahead of the new host runs
-/// into the prediction limit again until its pace is corrected: on `bad`
-/// links seen up to 123 ticks past the resume. Stalls up to 2 s of ticks past it
-/// are the migration's.
-pub const RESYNC_TICKS: u32 = (HOST_SILENT_US / TICK_US) as u32;
-
 /// The run's verdict: `harness::verdict`, and with host migration on a
-/// rule of its own for stalls (plan 12c Task 8's decision). A host gone
-/// stalls its players at the prediction limit before they find it gone
-/// (and again after the resume, until their time sync settles): the
-/// harness's `expect_no_stalls` would flag those. So a stall
-/// at a tick from its migration's departure (the old host's exit or
-/// freeze, less `MAX_PREDICTION`) to its resume tick (plus
-/// [`RESYNC_TICKS`]) is excused, any other still fails, and the
-/// migration's length is bounded instead ([`N66_US`]).
-fn judge(spec: &NetSpec, sc: &Scenario, r: &Report, f: &mut WorldFactory<'_>) -> Result<(), Failure> {
+/// rule of its own for stalls (plan 12c Task 8's decision, ruling RS-2). A
+/// host gone stalls its players at the prediction limit before they find
+/// it gone, and that episode lasts until the new host's resume reaches
+/// them: the harness's `expect_no_stalls` would flag it. So a stall
+/// episode is excused only when it begins between its migration's
+/// departure (the old host's exit or freeze) less `MAX_PREDICTION` and the
+/// resume tick plus `MAX_PREDICTION`, and ends (the player runs a tick
+/// again) by the current host's tick resume plus `MAX_PREDICTION`; any
+/// other stall, or one lasting longer, fails, and the migration's length
+/// is bounded instead ([`N66_US`]).
+fn judge(
+    spec: &NetSpec,
+    sc: &Scenario,
+    r: &Report,
+    episodes: &[StallEpisode],
+    f: &mut WorldFactory<'_>,
+) -> Result<(), Failure> {
     if sc.migration.is_none() || !sc.expect_no_stalls {
         return harness::verdict(sc, r, f);
     }
     harness::verdict(&Scenario { expect_no_stalls: false, ..sc.clone() }, r, f)?;
-    stalls_within_migrations(spec, r)?;
+    stalls_within_migrations(spec, r, episodes)?;
     n66(spec, r)
 }
 
-/// Every player's stall (the host's and the clients', not dropped) lies in
-/// a migration's window ([`migration_windows`]).
-fn stalls_within_migrations(spec: &NetSpec, r: &Report) -> Result<(), Failure> {
+/// A player's stall episode: the tick it stalled before, and the current
+/// host's tick when it ran a tick again (`None`: it never did).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StallEpisode {
+    pub peer: PeerId,
+    pub tick: u32,
+    pub ended: Option<u32>,
+}
+
+/// Every player's stall episode (the host's and the clients', not
+/// dropped) begins and ends within a migration's window
+/// ([`migration_windows`]).
+fn stalls_within_migrations(spec: &NetSpec, r: &Report, episodes: &[StallEpisode]) -> Result<(), Failure> {
     let windows = migration_windows(spec, r);
-    let players = core::iter::once(HOST).chain(1..=PeerId::from(spec.clients));
-    for peer in players.filter(|p| !r.dropped.contains(p)) {
-        let stalls = r.events.get(&peer).into_iter().flatten().filter_map(|e| match *e {
-            Event::Stalled { tick } => Some(tick),
-            _ => None,
-        });
-        for tick in stalls {
-            if !windows.iter().any(|w| w.contains(&tick)) {
-                return Err(Failure { tick, what: format!("player peer {peer} stalled") });
-            }
+    let player = |p: PeerId| p == HOST || (1..=PeerId::from(spec.clients)).contains(&p);
+    for e in episodes.iter().filter(|e| player(e.peer) && !r.dropped.contains(&e.peer)) {
+        let Some(w) = windows.iter().find(|w| w.contains(&e.tick)) else {
+            return Err(Failure { tick: e.tick, what: format!("player peer {} stalled", e.peer) });
+        };
+        if e.ended.is_none_or(|end| end > *w.end()) {
+            let until = e.ended.map_or_else(|| "the run's end".into(), |t| format!("host tick {t}"));
+            return Err(Failure {
+                tick: e.tick,
+                what: format!(
+                    "player peer {} stalled until {until}, past its migration's resume plus MAX_PREDICTION ({})",
+                    e.peer,
+                    w.end()
+                ),
+            });
         }
     }
     Ok(())
@@ -494,9 +509,10 @@ fn n66(spec: &NetSpec, r: &Report) -> Result<(), Failure> {
     Ok(())
 }
 
-/// The ticks at which each migration excuses a stall: from its old host's
-/// departure (its exit's tick, or the host freeze's start; else the resume
-/// tick) less `MAX_PREDICTION` to the resume tick plus [`RESYNC_TICKS`].
+/// The ticks within which each migration excuses a stall episode: from its
+/// old host's departure (its exit's tick, or the host freeze's start; else
+/// the resume tick) less `MAX_PREDICTION` to the resume tick plus
+/// `MAX_PREDICTION`.
 fn migration_windows(spec: &NetSpec, r: &Report) -> Vec<core::ops::RangeInclusive<u32>> {
     r.migrations
         .iter()
@@ -504,7 +520,7 @@ fn migration_windows(spec: &NetSpec, r: &Report) -> Vec<core::ops::RangeInclusiv
             let exit = spec.exits.iter().filter(|e| e.0 == m.from && e.1 <= m.tick).map(|e| e.1).max();
             let freeze = spec.host_freeze.filter(|f| m.from == HOST && f.0 <= m.tick).map(|f| f.0);
             let gone = exit.into_iter().chain(freeze).max().unwrap_or(m.tick);
-            gone.saturating_sub(MAX_PREDICTION)..=m.tick.saturating_add(RESYNC_TICKS)
+            gone.saturating_sub(MAX_PREDICTION)..=m.tick.saturating_add(MAX_PREDICTION)
         })
         .collect()
 }
@@ -583,6 +599,67 @@ impl harness::Observer<WorldSim> for BundleRecorder<'_> {
             }
             _ => {}
         }
+    }
+}
+
+/// Follows every player's stall episodes as they happen: when each began
+/// (`Event::Stalled`, its tick standing still while stalled) and the
+/// current host's tick when the player ran a tick again (the episode's end;
+/// the event marks only its start).
+#[derive(Default)]
+struct StallTracker {
+    /// The furthest tick a host (old or new) reached so far.
+    clock: u32,
+    episodes: Vec<StallEpisode>,
+    /// Each peer's episode still running.
+    open: BTreeMap<PeerId, usize>,
+}
+
+impl StallTracker {
+    fn episodes(&self) -> Vec<StallEpisode> {
+        self.episodes.clone()
+    }
+}
+
+impl harness::Observer<WorldSim> for StallTracker {
+    fn on_event(&mut self, peer: PeerId, event: &Event, _session: &mut Session<WorldSim>) {
+        if let Event::Stalled { tick } = *event {
+            if let Some(i) = self.open.remove(&peer) {
+                self.episodes[i].ended = Some(self.clock);
+            }
+            self.open.insert(peer, self.episodes.len());
+            self.episodes.push(StallEpisode { peer, tick, ended: None });
+        }
+    }
+
+    fn on_frame(&mut self, peer: PeerId, session: &mut Session<WorldSim>) {
+        if session.is_host() {
+            self.clock = self.clock.max(session.current_tick());
+        }
+        if let Some(&i) = self.open.get(&peer)
+            && session.current_tick() > self.episodes[i].tick
+        {
+            self.episodes[i].ended = Some(self.clock);
+            self.open.remove(&peer);
+        }
+    }
+}
+
+/// The run's observers: the desync bundles and the stall episodes.
+struct Watch<'a> {
+    bundles: BundleRecorder<'a>,
+    stalls: StallTracker,
+}
+
+impl harness::Observer<WorldSim> for Watch<'_> {
+    fn on_event(&mut self, peer: PeerId, event: &Event, session: &mut Session<WorldSim>) {
+        self.bundles.on_event(peer, event, session);
+        self.stalls.on_event(peer, event, session);
+    }
+
+    fn on_frame(&mut self, peer: PeerId, session: &mut Session<WorldSim>) {
+        self.bundles.on_frame(peer, session);
+        self.stalls.on_frame(peer, session);
     }
 }
 
@@ -733,34 +810,48 @@ mod tests {
         assert_eq!(a.stem(), spec().stem(), "the stem is stable");
     }
 
-    /// A migration's stall window, from a report alone.
-    fn migrated(spec: &NetSpec, stalls: &[(PeerId, u32)]) -> Result<(), Failure> {
+    /// The resume tick of [`migrated`]'s migration.
+    const R: u32 = 420;
+
+    /// Stall episodes `(peer, tick, ended)` judged against one migration
+    /// resumed at tick [`R`], from a report alone.
+    fn migrated(spec: &NetSpec, stalls: &[(PeerId, u32, Option<u32>)]) -> Result<(), Failure> {
         let mut r = empty_report();
         r.hosts = vec![HOST, 1];
-        r.migrations.push(harness::Migrated { from: HOST, to: 1, silent_us: 0, resumed_us: 0, tick: 420 });
-        for &(peer, tick) in stalls {
-            r.events.entry(peer).or_default().push(Event::Stalled { tick });
-        }
-        stalls_within_migrations(spec, &r)
+        r.migrations.push(harness::Migrated { from: HOST, to: 1, silent_us: 0, resumed_us: 0, tick: R });
+        let episodes: Vec<StallEpisode> =
+            stalls.iter().map(|&(peer, tick, ended)| StallEpisode { peer, tick, ended }).collect();
+        stalls_within_migrations(spec, &r, &episodes)
     }
 
-    /// Plan 12c Task 8's decision: the stalls a host's departure causes are
-    /// excused from its exit (less `MAX_PREDICTION`) to the resume (plus
-    /// `RESYNC_TICKS`); any other stall still fails.
+    /// Plan 12c Task 8's decision, narrowed by ruling RS-2: a stall episode
+    /// the host's departure causes is excused when it begins from the exit
+    /// (less `MAX_PREDICTION`) to the resume plus `MAX_PREDICTION` and ends
+    /// by then too; any other, or a longer one, fails.
     #[test]
     fn only_stalls_within_a_migration_are_excused() {
         let s = NetSpec { exits: vec![(0, 400, "crash".into())], ..spec() };
-        assert!(migrated(&s, &[(1, 400 - MAX_PREDICTION), (2, 410), (1, 420 + RESYNC_TICKS)]).is_ok());
-        let early = migrated(&s, &[(2, 400 - MAX_PREDICTION - 1)]).unwrap_err();
+        let end = R + MAX_PREDICTION;
+        // The departure's episodes, ended by the resume's frames.
+        let inside = [(1, 400 - MAX_PREDICTION, Some(R + 3)), (2, 410, Some(end)), (1, end, Some(end))];
+        assert!(migrated(&s, &inside).is_ok());
+        let early = migrated(&s, &[(2, 400 - MAX_PREDICTION - 1, Some(401))]).unwrap_err();
         assert_eq!(early.what, "player peer 2 stalled");
-        let late = migrated(&s, &[(HOST, 420 + RESYNC_TICKS + 1)]).unwrap_err();
-        assert_eq!(late.tick, 420 + RESYNC_TICKS + 1);
+        let late = migrated(&s, &[(HOST, end + 1, Some(end + 2))]).unwrap_err();
+        assert_eq!(late.tick, end + 1);
+        // Begun inside the window but running past it.
+        let long = migrated(&s, &[(1, 410, Some(end + 1))]).unwrap_err();
+        assert!(long.what.contains("past its migration's resume"), "{}", long.what);
+        assert!(migrated(&s, &[(1, 410, None)]).is_err(), "an episode that never ended");
+        // The review's case: an unrelated 0.6 s outage just after the
+        // resume stalls a client from R + 5 for 60 ticks of the host.
+        assert!(migrated(&s, &[(2, R + 5, Some(R + 65))]).is_err());
         // A frozen host's migration counts from the freeze.
         let f = NetSpec { host_freeze: Some((300, 470)), ..spec() };
-        assert!(migrated(&f, &[(1, 300 - MAX_PREDICTION)]).is_ok());
-        assert!(migrated(&f, &[(1, 300 - MAX_PREDICTION - 1)]).is_err());
-        // A spectator never stalls the verdict; a dropped player neither.
-        assert!(migrated(&s, &[(FIRST_SPECTATOR, 10)]).is_ok());
+        assert!(migrated(&f, &[(1, 300 - MAX_PREDICTION, Some(R))]).is_ok());
+        assert!(migrated(&f, &[(1, 300 - MAX_PREDICTION - 1, Some(R))]).is_err());
+        // A spectator never stalls the verdict.
+        assert!(migrated(&s, &[(FIRST_SPECTATOR, 10, None)]).is_ok());
     }
 
     /// N66: on a typical link a migration of more than 3 s fails, unless

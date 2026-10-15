@@ -806,10 +806,17 @@ impl Server {
         self.counters = MatchCounters::default();
         self.start_names = start.slots.iter().map(|s| s.look.name.clone()).collect();
         // Spec §3.7: the members with a standby and a world, who could host
-        // this match should the server go.
-        let n = self.peer.lobby().succession().iter().filter(|s| s.can_host).count();
-        let players = if n == 1 { "player can" } else { "players can" };
-        line(log, format_args!("succession: {n} {players} take over"));
+        // this match should the server go: its players (a slot of the
+        // start) and its spectators.
+        let (mut players, mut spectators) = (0, 0);
+        for e in self.peer.lobby().succession().iter().filter(|e| e.can_host) {
+            if start.slots.iter().any(|s| s.member == Some(e.member)) {
+                players += 1;
+            } else {
+                spectators += 1;
+            }
+        }
+        line(log, format_args!("succession: {}", succession_line(players, spectators)));
     }
 
     fn ended(&mut self, end: &MatchEndWire, log: &mut dyn Write) {
@@ -1115,6 +1122,19 @@ fn aux() -> [u8; 32] {
     rl_net::random_bytes::<32>().unwrap_or([0; 32])
 }
 
+/// Who can take a match over, in words: "2 players can take over", "1
+/// player and 1 spectator can take over", "nobody can take over".
+fn succession_line(players: usize, spectators: usize) -> String {
+    let count = |n: usize, one: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {one}s") };
+    let who = match (players, spectators) {
+        (0, 0) => return "nobody can take over".into(),
+        (p, 0) => count(p, "player"),
+        (0, s) => count(s, "spectator"),
+        (p, s) => format!("{} and {}", count(p, "player"), count(s, "spectator")),
+    };
+    format!("{who} can take over")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1129,5 +1149,15 @@ mod tests {
             lines.iter().flat_map(|l| l["players: ".len()..].split(", ").map(String::from)).collect();
         assert_eq!(joined, items);
         assert_eq!(chunks("players: ", &[]), vec!["players: ".to_string()]);
+    }
+
+    #[test]
+    fn the_succession_line_counts_players_and_spectators() {
+        assert_eq!(succession_line(2, 0), "2 players can take over");
+        assert_eq!(succession_line(1, 0), "1 player can take over");
+        assert_eq!(succession_line(1, 1), "1 player and 1 spectator can take over");
+        assert_eq!(succession_line(3, 2), "3 players and 2 spectators can take over");
+        assert_eq!(succession_line(0, 2), "2 spectators can take over");
+        assert_eq!(succession_line(0, 0), "nobody can take over");
     }
 }

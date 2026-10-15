@@ -487,8 +487,9 @@ pub struct TransportSpec {
     /// run's content directory.
     pub client_content: BTreeMap<usize, PathBuf>,
     /// The server freezes or leaves during the first match (plan 12c;
-    /// needs `migration`): the verdict then holds the clients to each
-    /// other, and the server to them only up to what they held.
+    /// needs `migration` and one match: `run_transport` refuses more):
+    /// the verdict then holds the clients to each other, and the server to
+    /// them only up to what they held.
     pub server_exit: Option<ServerExit>,
     /// The clients take part in host migration (`MigrationConfig::direct()`,
     /// a standby on loopback through the same impairment); `false`:
@@ -620,6 +621,11 @@ impl SharedLog {
 /// finished (or dropped) and the server finished as many matches (all
 /// bounded by `spec.timeout`); then stops the server.
 pub fn run_transport(content_dir: &Path, spec: &TransportSpec) -> anyhow::Result<TransportRun> {
+    // A client that takes the match over hosts no further match: its
+    // followers would wait in its lobby until the timeout.
+    if spec.server_exit.is_some() && spec.matches > 1 {
+        return Err(anyhow!("a server exit plays one match, not {}", spec.matches));
+    }
     let begun = Instant::now();
     let deadline = begun + spec.timeout;
     let impair = match &spec.profile {
@@ -1015,12 +1021,24 @@ impl TransportRun {
                 *u = (*u).max(h);
             }
         }
+        let mut compared = 0;
         for (t, (srv, row)) in server.iter().zip(rows).enumerate() {
-            if let Some(s) = (0..32).find(|&s| (t as u32) < upto[s] && srv[s] != row[s]) {
-                return Err(format!(
-                    "the server confirmed slot {s} at tick {t} otherwise than the clients (they held it)"
-                ));
+            for s in (0..32).filter(|&s| (t as u32) < upto[s]) {
+                if srv[s] != row[s] {
+                    return Err(format!(
+                        "the server confirmed slot {s} at tick {t} otherwise than the clients (they held it)"
+                    ));
+                }
+                compared += 1;
             }
+        }
+        // Held prefixes of zero (or rows of none) would make this vacuous.
+        if compared == 0 {
+            return Err(format!(
+                "the server's {} rows were compared with nothing: the clients held no inputs ({:?})",
+                server.len(),
+                &upto[..]
+            ));
         }
         Ok(())
     }
@@ -1061,4 +1079,43 @@ pub fn replay_checksums(content: &Content, bytes: &[u8], expected: &[(u32, u64)]
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(server_rows: Vec<[u8; 32]>) -> TransportRun {
+        TransportRun {
+            server: Vec::new(),
+            server_rows: Some(server_rows),
+            clients: Vec::new(),
+            server_log: String::new(),
+            elapsed: Duration::ZERO,
+        }
+    }
+
+    fn held(name: &str, held: Vec<u32>) -> ClientRun {
+        ClientRun { name: name.into(), held: Some(held), ..ClientRun::default() }
+    }
+
+    /// Pre-flight B3 in the transport verdict: the server's rows are held
+    /// to the clients' only as far as a client held them, a difference
+    /// there fails, and a comparison of nothing fails too (review m3).
+    #[test]
+    fn the_servers_rows_are_compared_as_far_as_the_clients_held_them() {
+        let mut server = vec![[1u8; 32]; 10];
+        let rows = vec![[1u8; 32]; 10];
+        server[7][2] = 9;
+        let (a, b) = (held("A", vec![5, 5, 7]), held("B", vec![4, 9, 3]));
+        assert!(run(server.clone()).server_prefix(&[&a, &b], &rows).is_ok(), "slot 2 held to tick 7 only");
+        let c = held("C", vec![0, 0, 8]);
+        let err = run(server).server_prefix(&[&a, &c], &rows).unwrap_err();
+        assert!(err.contains("slot 2 at tick 7"), "{err}");
+        let nothing = held("D", vec![0; 32]);
+        let err = run(rows.clone()).server_prefix(&[&nothing], &rows).unwrap_err();
+        assert!(err.contains("compared with nothing"), "{err}");
+        let unseen = ClientRun { name: "E".into(), ..ClientRun::default() };
+        assert!(run(rows.clone()).server_prefix(&[&unseen], &rows).unwrap_err().contains("never found"));
+    }
 }

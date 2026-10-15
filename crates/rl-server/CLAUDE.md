@@ -201,8 +201,10 @@ beside the executable, else in the working directory).
   frontier: what `rl-cli`'s real-transport verdict holds a server that
   freezes or leaves to). **Host migration** (plan 12c): the server sends
   succession lists and steps down through rl-online; at each match start
-  it logs `"succession: {n} players can take over"` (`LobbyHandle::
-  succession`'s `can_host` entries; "1 player can"); on `HostLost` (N70:
+  it logs `"succession: … can take over"` (`LobbyHandle::succession`'s
+  `can_host` entries, players by the start's slots and spectators apart:
+  `succession_line`, "2 players", "1 player and 1 spectator", "nobody");
+  on `HostLost` (N70:
   a server stalled past `STEP_DOWN_US` during a match with someone to
   take over; a server is never a client, so this is its only host lost)
   `"stalled for {s:.1} s: the match moved to the next player; the lobby
@@ -345,7 +347,7 @@ relay's checks (capacity against the port count), `allow_local`'s public
 address; only exactly-mapped relay ports handed out (one mapper, a held
 port said and not shifted, the TURN server on port 0 given the other
 three, capacity 3 announced, the closing note, every deletion confirmed),
-port runs in words; a relay on its mapping's address restarted and
+port runs in words; the succession line's counts; a relay on its mapping's address restarted and
 announced on the router's new address (FR12b-2); `--nat-check`'s report with a `TurnServer` as STUN (`NAT: no
 NAT`), a `FakeGateway` (the mapping made, said not public, deleted), a
 `TestRelay` with a TURN note (and its handshake probe echoed), one

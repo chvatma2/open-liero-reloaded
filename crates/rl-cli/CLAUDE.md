@@ -113,14 +113,21 @@ The headless command-line tool. Its commands:
   current world, the match's seed, one new `AreaCache`. One line per
   migration, `migrated: <from> -> <to> at tick <t> (<ms> ms after the
   host was found gone)`, and `host lost: <peers>` (in `summary`).
-  **Stalls (the Task 8 decision):** a host gone stalls its players at the
-  prediction limit before they find it gone, and again after the resume
-  until their time sync settles (on `bad`, up to 123 ticks past it), so
-  with migration on the verdict (`judge`) runs the harness's without
-  `expect_no_stalls` and then excuses only stalls at ticks from the
-  departure (the exit's tick or the freeze's start) less `MAX_PREDICTION`
-  to the resume tick plus `RESYNC_TICKS` (2 s of ticks); any other stall
-  of the host or a client fails. The window is bounded instead by N66
+  **Stalls (the Task 8 decision, ruling RS-2):** a host gone stalls its
+  players at the prediction limit before they find it gone, an episode
+  lasting until the new host's resume reaches them, so with migration on
+  the verdict (`judge`) runs the harness's without `expect_no_stalls` and
+  then judges every stall episode of the host and the clients (not
+  dropped) as `StallTracker` (an observer beside the bundle recorder) saw
+  it: its start (`Event::Stalled`'s tick) and its end, the furthest host
+  tick reached when the player ran a tick again. An episode is excused
+  only when it begins from the departure (the exit's tick or the
+  freeze's start) less `MAX_PREDICTION` to the resume tick plus
+  `MAX_PREDICTION` and ends by the resume plus `MAX_PREDICTION` too; any
+  other stall, a longer one (an outage just after the resume) or one
+  that never ends fails. Since rl-netcode's resume settles the time sync
+  (RS-1), no profile stalls after a resume (the grid's episodes all end
+  by the resume tick plus 1). The window is bounded instead by N66
   (`N66_US`): when nothing but hosts left (no other exit, outage or
   profile change), each migration within 3 s from the first `HostSilent`
   or `PeerLeft` to the resume on `lan`, `good` and `typical`, within
@@ -194,8 +201,12 @@ The headless command-line tool. Its commands:
   prints each finished match: `match <n>: <mod> on <level>, seed S, slot
   K|watching, <T> ticks|joined mid-match, <C> checksums, replay <B>
   bytes|no replay`, then `  checksum <tick> <16 hex>` per confirmed
-  checksum. **Host migration** (plan 12c) is on by default
-  (`migration_config`): a standby on port 0 (through `--impair`) asking
+  checksum. **Host migration** (plan 12c) is on by default, a change of
+  behaviour: a client whose server stops or restarts mid-match no longer
+  ends with "disconnected" (exit 1) but carries the match on with the
+  others, or takes it over as the first successor (alone, if it was the
+  only client); `--no-standby` never takes it over but still follows it
+  to another player. Its configuration (`migration_config`): a standby on port 0 (through `--impair`) asking
   the `--stun` servers, the `--relay`s to listen on once it hosts (none:
   no Nostr), its joins to a successor through the relays with the
   `--stun`/`--turn` ICE, `--region`, TURN notes and `--allow-local`;
@@ -349,7 +360,8 @@ holding its sockets: a hung host) or sets the server's own stop flag
 `ClientRun` gains `migrated` (`"<name> hosts"` per migration, in order),
 `host_lost` (then `dropped` too) and `held` (per slot `known_upto` at its
 first `Migrating`); `Progress` gains `Migrated { host, me }` and
-`HostLost(why)`. With a server exit the verdict
+`HostLost(why)`. A server exit plays one match (`run_transport` refuses
+`matches > 1`: a client-turned-host starts no further match). With a server exit the verdict
 (`verdict_after_exit`) names no successor (the clients join
 concurrently): no client dropped, each finished its matches through one
 migration named alike by all, their records (start, rows, checksums) and
@@ -357,7 +369,8 @@ replays agree, the replay made from the first's record meets its
 checksums (at least `min_checksums`), no desync bundle, and the server's
 rows as it went agree with theirs per slot up to the furthest any client
 held (pre-flight B3; in the runs so far never load-bearing: the server's
-confirmed rows had all reached the clients).
+confirmed rows had all reached the clients), a comparison of nothing
+(held prefixes of zero) failing.
 
 **Generated levels** (`genlevel.rs`, plan 8; bench only, a game never
 loads one): `GenLevel` makes seeded noise caves in memory, no pack written,
