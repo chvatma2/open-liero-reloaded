@@ -524,8 +524,13 @@ for tests.
     no candidate left. Test hooks (`EndpointConfig`'s `fingerprint_override`,
     `offer_ip_override`, `answer_addr_override`, `first_peer_id`; the first
     and last are `CoreConfig`'s too; `connect_stall`: a client's TCP
-    connect sends nothing and fails `TimedOut` after `CONNECT_TIMEOUT`, a
+    connect sends nothing and fails `TimedOut` after `connect_timeout`, a
     router that does not hairpin, for rl-online's fallback test;
+    `Endpoint::test_blackout(until)`: every datagram the endpoint sends or
+    receives is dropped until then, both ways, at the socket (outgoing ones
+    counted as sent and lost; incoming ones read and dropped before
+    `Core::receive`; the signalling's TCP untouched), rl-online's
+    `test_outage`;
     `IceConfig::setup_timeout`, `CoreConfig::signalled_setup_timeout`: a
     signalled setup's time to open instead of `SIGNALLED_SETUP_TIMEOUT`,
     for rl-online's `no_path` test) exist only
@@ -533,7 +538,11 @@ for tests.
     dev-dependency (never in a shipped build). Accepted:
     `Link::answerer` with the candidate (the TCP connection's local IP, the
     UDP port; decision N16), `Signal::Answer`, the WebSocket kept until the
-    link opens; any further frame drops the joiner. At most 64 connections
+    link opens; any further frame drops the joiner. `refuse_pending(why)`
+    (plan 12c, D8: a migration's successor whose turn ended uncommitted)
+    refuses every join not open yet: a TCP join's WebSocket carries
+    `Signal::Refused { why }` even after its answer, then lingers; a
+    signalled setup is dropped; nothing on a client. At most 64 connections
     wait for their offer, each `OFFER_TIMEOUT` (3 s); at most `MAX_PER_IP`
     (8) not-yet-open connections (waiting or linking) per source IP —
     more are closed as they come. A refused or finished connection gets a
@@ -545,9 +554,14 @@ for tests.
     frame of at most `max_signal_bytes` (+ 14) at a time; tungstenite's
     handshake reader stops at 64 KiB.
   - **Client** (`Endpoint::connect(cfg, host)`): the TCP connect runs on
-    its own thread (`connect_timeout`, 5 s), then the client handshake, the
-    offer (candidate: the TCP local IP, the UDP port), the answer or
-    `NetEvent::Refused`. Every `a=candidate` line of the answer is
+    its own thread (`EndpointConfig::connect_timeout`, `CONNECT_TIMEOUT`
+    5 s by default; rl-online's joins to a migration's successor give 1 s),
+    then the client handshake, the offer (candidate: the TCP local IP, the
+    UDP port), the answer or `NetEvent::Refused`. The answer taken is
+    `NetEvent::Answered` (the host is there and admitted us; a signalled
+    client's `take_reply` too), once, before the link's `Connected`; a
+    `Refused` frame after it (the host's `refuse_pending`) is
+    `NetEvent::Refused` and ends the setup, any other frame `Malformed`. Every `a=candidate` line of the answer is
     rewritten to the address the client dialled, IP and port (ruling F-G):
     a host behind NAT (a port forward, Docker, a cloud VM) answers with its
     private address, and its TCP and UDP share the port, so a forward of
@@ -801,5 +815,9 @@ sends to, a client "behind NAT" connecting peer-reflexive, a host "behind
 NAT" (its answer naming 192.0.2.1:9) joined by a client behind NAT or not,
 a host's ids past
 65 535 and exhausted,
-raw junk from a connected peer's address).
+raw junk from a connected peer's address; plan 12c: `Answered` before
+`Connected`, once; a 300 ms `connect_timeout` (the `connect_stall` hook)
+ending within 300-800 ms; a blackout dropping both ways until it ends,
+the link living through it; `refuse_pending` after an answer heard by the
+client as `Refused { NotHost }` at once).
 Cross-build: `cargo build --release --target x86_64-pc-windows-gnu -p rl-net`.

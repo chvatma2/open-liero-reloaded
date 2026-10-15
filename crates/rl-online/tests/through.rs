@@ -34,7 +34,7 @@ use rl_online::join::{
 };
 use rl_online::matches::{bot_wire, rules_wire, setup_packs};
 use rl_online::reach::{HostListen, Listening};
-use rl_online::{OnlineEvent, OnlinePeer, PeerContent, PeerRole, RelayJoin};
+use rl_online::{MigrationConfig, OnlineEvent, OnlinePeer, PeerContent, PeerRole, RelayJoin};
 use rl_proto::{FINGERPRINT, Look, MatchSetupWire, PROTOCOL_VERSION, Path, PublicKey, SeatWire, Signal};
 use rl_sim::Keys;
 
@@ -220,7 +220,8 @@ impl Net {
     ) -> usize {
         let me = identity();
         let key = me.public();
-        let role = PeerRole::Client { join, password: None, expected_host };
+        let role =
+            PeerRole::Client { join, password: None, expected_host, migration: MigrationConfig::off() };
         let p = OnlinePeer::start(
             role,
             cfg,

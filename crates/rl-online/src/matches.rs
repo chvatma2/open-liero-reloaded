@@ -3,14 +3,15 @@
 //! pressing their keys (spec §3.6: bots think on the host only).
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow, bail, ensure};
-use rl_bots::{Bot, BotConfig, Difficulty, LoadoutPolicy, Personality};
+use rl_bots::{AreaCache, Bot, BotConfig, Difficulty, LoadoutPolicy, Personality};
 use rl_content::{Content, DEFAULT_PRESET, MatchOptions, Player};
 use rl_modes::DeathmatchSettings;
 use rl_netcode::{Driver, TickInfo, WorldSim};
 use rl_proto::{BotWire, Look, MatchSetupWire, MatchStartWire, RulesWire};
-use rl_sim::{Keys, MatchSetup, SimSettings};
+use rl_sim::{Keys, MatchSetup, SimSettings, World};
 
 /// The bots' wire numbers: `BotWire::difficulty` is OLX's level, 0 (Easy)
 /// to 3 (Xtreme); `personality` 0 OLX's bot, 1 chaos; `loadout` 0 OLX's
@@ -191,6 +192,28 @@ pub fn build_options(content: &Content, o: &MatchOptions) -> anyhow::Result<Matc
     let built = content.build_match(o)?;
     let bots = built.bots.into_iter().map(|b| (b.worm() as u8, b)).collect();
     Ok(MatchWorld { sim: WorldSim::new(built.world), bots })
+}
+
+/// The bots of `start` restarted on `world` (spec §3.7, N75): a new host
+/// takes them over with `Bot::with_cache` per bot slot, the match's seed
+/// and a new area cache (empty: it fills as they think), so they forget
+/// their routes once per migration. Only the host thinks for bots: nobody
+/// else's simulation changes.
+pub fn restart_bots(start: &MatchStartWire, world: &World) -> anyhow::Result<HostBots> {
+    let o = options(start)?;
+    let cache = AreaCache::new(world.terrain());
+    let bots = o
+        .players
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| match p {
+            Player::Bot(cfg) => {
+                Some((i as u8, Bot::with_cache(i, *cfg, start.seed, world, Arc::clone(&cache))))
+            }
+            Player::Human | Player::HumanWith(_) => None,
+        })
+        .collect();
+    Ok(HostBots::new(bots))
 }
 
 /// The host's bots (spec §3.6): each thinks for its slot, in slot order,

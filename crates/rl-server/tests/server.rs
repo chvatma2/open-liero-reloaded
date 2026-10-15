@@ -27,7 +27,7 @@ use rl_net::endpoint::{EndpointConfig, IceConfig};
 use rl_net::portmap::fake::{FakeGateway, Misbehaviour};
 use rl_online::content::DownloadState;
 use rl_online::join::NostrJoin;
-use rl_online::{Join, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
+use rl_online::{Join, MigrationConfig, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{Look, Path as LinkPath, Phase, PublicKey, SeatWire};
 use rl_server::config::{Config, RelayConfig, TestGateway, Visibility};
 use rl_server::files::{IDENTITY_FILE, hex};
@@ -224,7 +224,12 @@ impl Rig {
     /// A client of its own look, content and download cache.
     fn join_with(&mut self, me: Identity, look: Look, content: Content, downloads: PeerContent) -> usize {
         let addr = SocketAddr::from(([127, 0, 0, 1], self.server().local_port()));
-        let role = PeerRole::Client { join: Join::direct(addr), password: None, expected_host: None };
+        let role = PeerRole::Client {
+            join: Join::direct(addr),
+            password: None,
+            expected_host: None,
+            migration: MigrationConfig::off(),
+        };
         self.join_role(me, look, content, downloads, role)
     }
 
@@ -262,6 +267,7 @@ impl Rig {
             join: Join { direct: None, nostr: Some(nostr) },
             password: None,
             expected_host: None,
+            migration: MigrationConfig::off(),
         };
         let ice = IceConfig {
             base_override: Some(Ipv4Addr::LOCALHOST),
@@ -693,7 +699,12 @@ fn run_stops_on_its_flag_and_says_bye() {
     };
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let cfg = EndpointConfig { port: 0, ..EndpointConfig::default() };
-    let role = PeerRole::Client { join: Join::direct(addr), password: None, expected_host: None };
+    let role = PeerRole::Client {
+        join: Join::direct(addr),
+        password: None,
+        expected_host: None,
+        migration: MigrationConfig::off(),
+    };
     let mut p =
         OnlinePeer::start(role, cfg, identity(), look("Anna"), content(&dir), None, no_downloads()).unwrap();
     let mut events = Vec::new();
@@ -1024,6 +1035,7 @@ fn the_invite_joins_the_server() {
             join: Join::direct(invite.addr.unwrap()),
             password: None,
             expected_host: Some(invite.key),
+            migration: MigrationConfig::off(),
         };
         let c = content(&rig.content_dir);
         rig.join_role(me, look(name), c, no_downloads(), role)

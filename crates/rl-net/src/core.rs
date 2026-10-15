@@ -86,10 +86,15 @@ pub enum NetEvent {
         peer: PeerId,
         why: Why,
     },
-    /// Client side: the host refused us.
+    /// Client side: the host refused us (also after its answer: a host
+    /// that stopped hosting, `Endpoint::refuse_pending`).
     Refused {
         why: Refusal,
     },
+    /// Client side: the host answered our offer (direct or signalled): it
+    /// is there and admitted us; the link opens next (`Connected`), or
+    /// fails. Once per setup, before its `Connected`.
+    Answered,
     /// Host side: a join through signalling (an answered signalled offer,
     /// `answer_signalled`) did not open: `Timeout` (not within
     /// `SIGNALLED_SETUP_TIMEOUT`, or evicted from a full pending table,
@@ -536,6 +541,11 @@ impl Core {
             impair,
         });
         setup
+    }
+
+    /// The setups not open yet, oldest first.
+    pub(crate) fn pending_setups(&self) -> Vec<SetupId> {
+        self.pending.iter().map(|p| p.setup).collect()
     }
 
     /// Has connecting setup `setup` broken a limit (it fails at the next

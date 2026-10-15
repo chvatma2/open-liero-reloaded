@@ -737,6 +737,15 @@ impl Shell {
                     println!("rl-game: {}", path_text(path, remote));
                     self.poll_connection();
                 }
+                // Plan 12c: a host migration's lines in the log (Task 9 puts
+                // them on the HUD and shows the Host lost screen).
+                OnlineEvent::Migrating(step) => self.chat_line(LogLine::event(step.to_string())),
+                OnlineEvent::Migrated { host, me } => {
+                    let text =
+                        if me { "You are now hosting".to_string() } else { format!("{host} is now hosting") };
+                    self.chat_line(LogLine::event(text));
+                }
+                OnlineEvent::HostLost(why) => return self.lost(why, out),
             }
         }
     }

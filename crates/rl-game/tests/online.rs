@@ -245,7 +245,12 @@ fn an_online_match_runs_headless() {
     )
     .unwrap();
     let addr = SocketAddr::from(([127, 0, 0, 1], host.local_port()));
-    let role = PeerRole::Client { join: Join::direct(addr), password: None, expected_host: None };
+    let role = PeerRole::Client {
+        join: Join::direct(addr),
+        password: None,
+        expected_host: None,
+        migration: rl_online::MigrationConfig::off(),
+    };
     let mut client = OnlinePeer::start(
         role,
         endpoint(),

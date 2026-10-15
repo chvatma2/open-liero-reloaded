@@ -8,6 +8,7 @@ use rl_terrain::Area;
 
 use crate::content::Download;
 use crate::join::JoinStep;
+use crate::migration::MigrationStep;
 use crate::reach::{Reachability, RelayJoin};
 
 /// What happened during one [`crate::OnlinePeer::poll`], in order.
@@ -89,6 +90,15 @@ pub enum OnlineEvent {
     /// the host's end, or for `Relayed` the TURN relay's address (the
     /// server its allocation is on, ruling FR12b-4). Once.
     Connected { path: Path, remote: SocketAddr },
+    /// The host is gone during a match and the match is moving (spec §3.7):
+    /// the HUD's line ([`MigrationStep`]'s `Display`), each time it changes.
+    Migrating(MigrationStep),
+    /// The match resumed under `host` (a name; `me`: this peer hosts now).
+    Migrated { host: String, me: bool },
+    /// No successor took over ([`crate::HOST_LOST`]), or this host stepped
+    /// down ([`crate::stepped_down`]): the match is over for this peer; its
+    /// replay follows (`ReplayReady`).
+    HostLost(String),
 }
 
 /// The connection's numbers for the overlay, over the last second of a

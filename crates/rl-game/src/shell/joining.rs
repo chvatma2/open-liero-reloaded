@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use rl_discovery::{Invite, PoolConfig};
 use rl_net::endpoint::{EndpointConfig, IceConfig};
 use rl_online::join::join_relays;
-use rl_online::{Join, NostrJoin, OnlinePeer, PeerRole, Shutdown};
+use rl_online::{Join, MigrationConfig, NostrJoin, OnlinePeer, PeerRole, Shutdown};
 use rl_ui::{FindingSettings, Password, is_invite};
 
 use super::{Outcome, Shell};
@@ -100,7 +100,9 @@ impl Shell {
             (Some(to), Some(_)) => format!("{to}, then through the relays"),
             (None, _) => "through the relays".to_string(),
         };
-        let role = PeerRole::Client { join, password: password.map(|p| p.0), expected_host };
+        // Plan 12c Task 9 gives the game its migration configuration (D7).
+        let migration = MigrationConfig::off();
+        let role = PeerRole::Client { join, password: password.map(|p| p.0), expected_host, migration };
         let endpoint =
             EndpointConfig { port: 0, impair: self.impair, ice: self.ice(ice), ..EndpointConfig::default() };
         let peer = OnlinePeer::start(role, endpoint, id, look, content, None, self.peer_content())?;

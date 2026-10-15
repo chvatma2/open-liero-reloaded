@@ -1,321 +1,29 @@
 //! Online play over localhost (networking spec §4): a host peer and its
 //! clients join, start, play, end and make their replays over real
 //! connections. Classic on Dirt Level from `RL_CONTENT_DIR` (skipped with a
-//! notice without it); every wait is bounded, every test under 20 s.
+//! notice without it); every wait is bounded, every test under 20 s. The test network
+//! (`Net`, `Peer`) is `common::net`'s.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use rl_bots::BotConfig;
-use rl_content::{Content, DEFAULT_PRESET, DownloadCache};
+use rl_content::Content;
 use rl_lobby::{HostConfig, Identity};
-use rl_modes::DeathmatchSettings;
-use rl_net::endpoint::EndpointConfig;
 use rl_netcode::{Driver, WorldSim};
 use rl_online::bundle::GameBundle;
 use rl_online::content::{Download, DownloadState};
-use rl_online::matches::{bot_wire, rules_wire, setup_packs};
 use rl_online::peer::{MISMATCH, SETUP_REFUSED, WRONG_HOST};
-use rl_online::{HostListen, Join, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
-use rl_proto::{Look, MatchSetupWire, Phase, PublicKey, SeatWire};
+use rl_online::{HostListen, Join, MigrationConfig, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
+use rl_proto::{Phase, PublicKey, SeatWire};
 use rl_replay::Replay;
 use rl_sim::Keys;
 use tempfile::TempDir;
 
+use crate::common::net::{
+    LEVEL, MOD, Net, Peer, content, ended, endpoint, identity, look, replay_ready, setup,
+};
 use crate::common::{TEST_SKIN, cache, partial_content, peer_content, with_skin, with_test_skin};
-
-const MOD: &str = "olx-classic";
-const LEVEL: &str = "olx-level-dirt-level";
-
-fn content() -> Option<Content> {
-    let Some(dir) = std::env::var("RL_CONTENT_DIR").ok().filter(|d| std::path::Path::new(d).is_dir()) else {
-        eprintln!("RL_CONTENT_DIR not set or missing (run `cargo xtask fetch-olx-content`); skipping");
-        return None;
-    };
-    Some(Content::open(std::path::Path::new(&dir)).unwrap())
-}
-
-fn identity() -> Identity {
-    loop {
-        if let Some(id) = Identity::from_secret(rl_net::random_bytes::<32>().unwrap()) {
-            return id;
-        }
-    }
-}
-
-fn look(name: &str) -> Look {
-    Look {
-        name: name.into(),
-        colour: [200, 80, 40],
-        skin: "olx-skin-default".into(),
-        skin_hash: rl_proto::NO_HASH.into(),
-    }
-}
-
-/// Classic on Dirt Level, one bot, ending after `minutes`.
-fn setup(content: &Content, minutes: f32) -> MatchSetupWire {
-    MatchSetupWire {
-        mod_id: MOD.into(),
-        level_id: LEVEL.into(),
-        packs: setup_packs(content, MOD, LEVEL).unwrap(),
-        rules: rules_wire(&DeathmatchSettings { time_limit: minutes, ..DeathmatchSettings::default() }),
-        bonuses: false,
-        loading_time: 100,
-        restrictions: DEFAULT_PRESET.into(),
-        bots: vec![bot_wire(&BotConfig::default(), look("Bot"))],
-    }
-}
-
-fn endpoint() -> EndpointConfig {
-    EndpointConfig { port: 0, ..EndpointConfig::default() }
-}
-
-/// One peer of the test, with everything it reported.
-struct Peer {
-    p: Option<OnlinePeer>,
-    key: PublicKey,
-    events: Vec<OnlineEvent>,
-    /// Keys pressed so far: they change every 25 ticks.
-    pressed: u32,
-    /// Its download cache.
-    cache: Option<Arc<Mutex<DownloadCache>>>,
-}
-
-impl Peer {
-    fn new(p: OnlinePeer, key: PublicKey) -> Peer {
-        Peer { p: Some(p), key, events: Vec::new(), pressed: 0, cache: None }
-    }
-
-    fn peer(&mut self) -> &mut OnlinePeer {
-        self.p.as_mut().expect("the peer is there")
-    }
-
-    fn poll(&mut self, now: Instant) {
-        let Some(p) = &mut self.p else { return };
-        let pressed = &mut self.pressed;
-        let seed = self.key[0] as u32;
-        let mut keys = || {
-            *pressed += 1;
-            let k = (*pressed / 25).wrapping_mul(2_654_435_761).wrapping_add(seed) >> 24;
-            Keys((k as u8) & !Keys::CHANGE)
-        };
-        self.events.extend(p.poll(now, &mut keys, &mut |_, _, _| {}));
-    }
-
-    fn count(&self, f: impl Fn(&OnlineEvent) -> bool) -> usize {
-        self.events.iter().filter(|e| f(e)).count()
-    }
-
-    fn has(&self, f: impl Fn(&OnlineEvent) -> bool) -> bool {
-        self.count(f) > 0
-    }
-
-    fn started(&self) -> Vec<Option<u8>> {
-        self.events
-            .iter()
-            .filter_map(|e| match e {
-                OnlineEvent::MatchStarting { my_slot, .. } => Some(*my_slot),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn replays(&self) -> Vec<&Vec<u8>> {
-        self.events
-            .iter()
-            .filter_map(|e| match e {
-                OnlineEvent::ReplayReady(b) => Some(b),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn member_id(&mut self, key: PublicKey) -> Option<u8> {
-        let lobby = self.peer().lobby();
-        lobby.state()?.members.iter().find(|m| m.key == key).map(|m| m.id)
-    }
-}
-
-/// The host and its clients, polled together on the real clock.
-struct Net {
-    content_dir: String,
-    port: u16,
-    peers: Vec<Peer>,
-    /// Caches and partial contents, removed at the end.
-    dirs: Vec<TempDir>,
-}
-
-impl Net {
-    fn new(content: Content, minutes: f32) -> Net {
-        Net::with_admins(content, minutes, Vec::new())
-    }
-
-    fn with_admins(content: Content, minutes: f32, admins: Vec<PublicKey>) -> Net {
-        let cfg = HostConfig {
-            name: "Test lobby".into(),
-            password: None,
-            max_players: 8,
-            max_spectators: 4,
-            admins,
-        };
-        Net::hosted(content, minutes, PeerRole::Host { lobby: cfg, listen: HostListen::off() })
-    }
-
-    /// A dedicated server's lobby: no local player (`PeerRole::Server`).
-    fn server(content: Content, minutes: f32) -> Net {
-        let cfg = HostConfig {
-            name: "Server".into(),
-            password: None,
-            max_players: 8,
-            max_spectators: 4,
-            admins: vec![],
-        };
-        Net::hosted(content, minutes, PeerRole::Server { lobby: cfg, listen: HostListen::off() })
-    }
-
-    fn hosted(content: Content, minutes: f32, role: PeerRole) -> Net {
-        let setup = setup(&content, minutes);
-        Net::hosted_with(content, setup, role)
-    }
-
-    fn hosted_with(content: Content, setup: MatchSetupWire, role: PeerRole) -> Net {
-        let content_dir = std::env::var("RL_CONTENT_DIR").unwrap();
-        let me = identity();
-        let key = me.public();
-        let (dir, cache) = cache();
-        let host =
-            OnlinePeer::start(role, endpoint(), me, look("Host"), content, Some(setup), peer_content(&cache))
-                .unwrap();
-        let port = host.local_port();
-        let mut peer = Peer::new(host, key);
-        peer.cache = Some(cache);
-        Net { content_dir, port, peers: vec![peer], dirs: vec![dir] }
-    }
-
-    fn content(&self) -> Content {
-        Content::open(std::path::Path::new(&self.content_dir)).unwrap()
-    }
-
-    /// A client joining as `me`, with every pack and a cache of its own;
-    /// its index.
-    fn join_as(&mut self, me: Identity, name: &str) -> usize {
-        let content = self.content();
-        self.join_with(me, look(name), content, None)
-    }
-
-    /// A client joining as `me` with `look` and `content`, and `cfg` or a
-    /// cache of its own; its index.
-    fn join_with(&mut self, me: Identity, look: Look, content: Content, cfg: Option<PeerContent>) -> usize {
-        self.join_expecting_with(me, look, content, cfg, None)
-    }
-
-    /// A client expecting the host's key `expected` (an invite's), with
-    /// every pack and a cache of its own; its index.
-    fn join_expecting(&mut self, name: &str, expected: PublicKey) -> usize {
-        let content = self.content();
-        self.join_expecting_with(identity(), look(name), content, None, Some(expected))
-    }
-
-    fn join_expecting_with(
-        &mut self,
-        me: Identity,
-        look: Look,
-        content: Content,
-        cfg: Option<PeerContent>,
-        expected_host: Option<PublicKey>,
-    ) -> usize {
-        let key = me.public();
-        let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
-        let role = PeerRole::Client { join: Join::direct(addr), password: None, expected_host };
-        let mut own = None;
-        let cfg = cfg.unwrap_or_else(|| {
-            let (dir, cache) = cache();
-            self.dirs.push(dir);
-            own = Some(Arc::clone(&cache));
-            peer_content(&cache)
-        });
-        let p = OnlinePeer::start(role, endpoint(), me, look, content, None, cfg).unwrap();
-        let mut peer = Peer::new(p, key);
-        peer.cache = own;
-        self.peers.push(peer);
-        self.peers.len() - 1
-    }
-
-    /// A client whose content lacks the packs `leave_out` (a cache of
-    /// its own); its index.
-    fn join_lacking(&mut self, name: &str, leave_out: &[&str]) -> usize {
-        let (dir, content) = partial_content(leave_out);
-        self.dirs.push(dir);
-        self.join_with(identity(), look(name), content, None)
-    }
-
-    fn join(&mut self, name: &str) -> usize {
-        self.join_as(identity(), name)
-    }
-
-    fn poll(&mut self) {
-        let now = Instant::now();
-        for p in &mut self.peers {
-            p.poll(now);
-        }
-    }
-
-    /// Polls until `done` holds; panics after `limit` with `what`.
-    fn run_until(&mut self, limit: Duration, what: &str, mut done: impl FnMut(&mut Net) -> bool) {
-        let start = Instant::now();
-        while !done(self) {
-            assert!(start.elapsed() < limit, "{what} within {limit:?}");
-            self.poll();
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-
-    fn host(&mut self) -> &mut Peer {
-        &mut self.peers[0]
-    }
-
-    /// Members in the host's lobby.
-    fn members(&mut self) -> usize {
-        self.host().peer().lobby().state().map_or(0, |s| s.members.len())
-    }
-
-    /// Joins clients and waits until the host's lobby lists them.
-    fn join_all(&mut self, names: &[&str]) -> Vec<usize> {
-        let before = self.members();
-        let ids: Vec<usize> = names.iter().map(|n| self.join(n)).collect();
-        let want = before + names.len();
-        self.run_until(Duration::from_secs(10), "the clients join", |n| {
-            n.members() == want && ids.iter().all(|&c| n.peers[c].has(|e| matches!(e, OnlineEvent::Lobby(_))))
-        });
-        ids
-    }
-
-    /// Readies the clients and waits until the host's lobby can start.
-    fn ready(&mut self, clients: &[usize]) {
-        for &c in clients {
-            self.peers[c].peer().lobby().set_ready(true);
-        }
-        self.run_until(Duration::from_secs(10), "everyone is ready", |n| {
-            n.host().peer().lobby().state().is_some_and(|s| {
-                s.members.iter().filter(|m| matches!(m.seat, SeatWire::Player { .. })).all(|m| m.ready)
-            })
-        });
-    }
-
-    fn host_tick(&mut self) -> u32 {
-        self.host().peer().match_session().map_or(0, |s| s.current_tick())
-    }
-}
-
-fn ended(e: &OnlineEvent) -> bool {
-    matches!(e, OnlineEvent::MatchEnded(_))
-}
-
-fn replay_ready(e: &OnlineEvent) -> bool {
-    matches!(e, OnlineEvent::ReplayReady(_))
-}
 
 #[test]
 fn a_host_and_two_clients_play_a_short_match() {
@@ -1262,7 +970,12 @@ fn a_silent_host_is_given_up() {
     let addr = SocketAddr::from(([127, 0, 0, 1], host.local_port()));
     let empty = TempDir::new().unwrap();
     let content = Content::open(empty.path()).unwrap();
-    let role = PeerRole::Client { join: Join::direct(addr), password: None, expected_host: None };
+    let role = PeerRole::Client {
+        join: Join::direct(addr),
+        password: None,
+        expected_host: None,
+        migration: MigrationConfig::off(),
+    };
     let cfg = PeerContent::without_downloads("a test");
     let mut client =
         OnlinePeer::start(role, endpoint(), identity(), look("Anna"), content, None, cfg).unwrap();

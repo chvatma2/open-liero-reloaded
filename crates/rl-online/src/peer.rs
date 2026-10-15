@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use rl_content::Content;
 use rl_lobby::{
@@ -37,11 +37,13 @@ use crate::content::{Download, PeerContent};
 use crate::events::{NetStats, OnlineEvent};
 use crate::join::{BUSY, Join, Joiner, Lost};
 use crate::matches::{self, HostBots};
+use crate::migration::{HOST_LOST, MigrationConfig, stepped_down};
 use crate::outbox::{Outbox, Part};
 use crate::reach::{HostListen, HostReach, Reachability, RelayJoin};
 use crate::replay::{MatchRecord, PendingReplay};
 
 mod lobby_handle;
+mod migrate;
 pub use lobby_handle::LobbyHandle;
 
 /// The host sends its lobby's messages at most this often: changes in
@@ -102,7 +104,9 @@ pub const JOIN_DEADLINE: Duration = Duration::from_secs(10);
 /// Why a client gave up after [`JOIN_DEADLINE`].
 pub const NO_ANSWER: &str = "the game did not answer";
 
-/// Which end of online play a peer is.
+/// Which end of online play a peer is. Made once per peer, so a large
+/// `Client` (its migration's endpoint configurations) costs nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum PeerRole {
     /// Hosts a lobby on the endpoint's port, listening on Nostr as
     /// `listen` says (N54).
@@ -114,8 +118,15 @@ pub enum PeerRole {
     /// Joins a host as `join` says (N46: its address, then Nostr); with
     /// `expected_host` (an invite's key), only a host proving that key
     /// (`WRONG_HOST` otherwise). A join through Nostr expects its host's
-    /// key without it. Every host proves the key it names.
-    Client { join: Join, password: Option<String>, expected_host: Option<PublicKey> },
+    /// key without it. Every host proves the key it names. `migration`:
+    /// how it takes part when its host is lost during a match (spec §3.7;
+    /// `MigrationConfig::off()`, the old ending).
+    Client {
+        join: Join,
+        password: Option<String>,
+        expected_host: Option<PublicKey>,
+        migration: MigrationConfig,
+    },
 }
 
 /// A peer shutting down (ruling NT-2): its endpoint's mapping is being
@@ -202,6 +213,18 @@ struct ClientSide {
     joiner: Option<Box<Joiner>>,
     /// How the link reaches the host, once open.
     connection: Option<(Path, SocketAddr)>,
+    /// Its identity: a successor's joins and lobby (plan 12c).
+    me: Identity,
+    /// The endpoint configuration it joined with: a successor's joins'.
+    cfg: EndpointConfig,
+    migration: MigrationConfig,
+    /// Its standby endpoint (N63), from its first welcome with migration on.
+    standby: Option<Box<migrate::Standby>>,
+    /// The migration under way, from the host's loss until a new host
+    /// welcomed it (A9), it took over, or the old host was back (N69).
+    migrating: Option<Box<migrate::Migrating>>,
+    /// A new host welcomed it: that host's name, until its `Resume`.
+    rejoined: Option<String>,
 }
 
 enum Side {
@@ -238,6 +261,11 @@ struct Game {
     window: Window,
     /// Desync bundles made this match ([`MAX_BUNDLES_PER_MATCH`] at most).
     bundles: u32,
+    /// Migrations this peer went through in this match (N74).
+    migrations: u32,
+    /// A host that took the match over: its window's end (the wait for
+    /// members not yet back, N68), until its resume.
+    collecting: Option<u64>,
 }
 
 /// One end of online play: the lobby, the match, the replay.
@@ -268,6 +296,13 @@ pub struct OnlinePeer {
     /// Left, refused, kicked or disconnected: nothing more happens.
     closed: bool,
     test_seed: Option<u32>,
+    /// The last poll's time, monotonic and wall-clock (a host's step-down,
+    /// N70).
+    last_poll: Option<(Instant, SystemTime)>,
+    /// Tests only (`test-hooks`): every endpoint drops every datagram until
+    /// then (`test_outage`).
+    #[cfg(feature = "test-hooks")]
+    outage: Option<Instant>,
 }
 
 impl OnlinePeer {
@@ -296,7 +331,9 @@ impl OnlinePeer {
         let hosting = match role {
             PeerRole::Host { lobby, listen } => Ok((lobby, listen, Some(look))),
             PeerRole::Server { lobby, listen } => Ok((lobby, listen, None)),
-            PeerRole::Client { join, password, expected_host } => Err((join, password, expected_host, look)),
+            PeerRole::Client { join, password, expected_host, migration } => {
+                Err((join, password, expected_host, look, migration))
+            }
         };
         let mut events = Vec::new();
         let (endpoint, side) = match hosting {
@@ -324,7 +361,7 @@ impl OnlinePeer {
                 };
                 (Some(Endpoint::host(endpoint, gate)?), Side::Host(Box::new(side)))
             }
-            Err((join, password, expected_host, look)) => {
+            Err((join, password, expected_host, look, migration)) => {
                 let mut cfg = endpoint;
                 cfg.limits.max_reliable_bytes_per_s =
                     cfg.limits.max_reliable_bytes_per_s.max(HOST_RELIABLE_BYTES_PER_S);
@@ -332,15 +369,21 @@ impl OnlinePeer {
                 // the encrypted answer both bind it).
                 let expected_host = expected_host.or(join.nostr.as_ref().map(|n| n.host));
                 let expected = expected_host.is_some();
-                let (joiner, endpoint, step) = Joiner::start(join, cfg)?;
+                let (joiner, endpoint, step) = Joiner::start(join, cfg.clone())?;
                 events.push(OnlineEvent::Joining(step));
-                let lobby = LobbyClient::new(me, look, password, expected_host);
+                let lobby = LobbyClient::new(me.clone(), look, password, expected_host);
                 let client = ClientSide {
                     lobby,
                     expected,
                     waiting_since: None,
                     joiner: Some(Box::new(joiner)),
                     connection: None,
+                    me,
+                    cfg,
+                    migration,
+                    standby: None,
+                    migrating: None,
+                    rejoined: None,
                 };
                 (endpoint, Side::Client(Box::new(client)))
             }
@@ -363,6 +406,9 @@ impl OnlinePeer {
             stats: NetStats::default(),
             closed: false,
             test_seed: None,
+            last_poll: None,
+            #[cfg(feature = "test-hooks")]
+            outage: None,
         })
     }
 
@@ -439,6 +485,8 @@ impl OnlinePeer {
         self.now = Some(now);
         self.now_us = now.saturating_duration_since(epoch).as_micros() as u64;
         if !self.closed {
+            // N70: before anything is received or sent.
+            self.step_down_check(now);
             self.join_tasks(now);
             self.listen_tasks(now);
             let mut net = Vec::new();
@@ -447,6 +495,7 @@ impl OnlinePeer {
                 self.on_net(e, now);
             }
             self.session_events();
+            self.migration_tasks(now);
             self.sync_paths();
             if let Side::Host(h) = &mut self.side {
                 h.lobby.tick(self.now_us);
@@ -605,6 +654,11 @@ impl OnlinePeer {
 
     fn on_net(&mut self, e: NetEvent, now: Instant) {
         let now_us = self.now_us;
+        // A client's open link lost during a match: the migration begins
+        // (N76), or goes on.
+        if matches!(e, NetEvent::Disconnected { .. }) && self.client_link_open() && self.begin_migration() {
+            return;
+        }
         match &mut self.side {
             Side::Host(h) => match e {
                 NetEvent::Connected { peer, addr, path } => {
@@ -660,7 +714,7 @@ impl OnlinePeer {
                     _ => self.drop_peer(peer),
                 },
                 NetEvent::Disconnected { peer, .. } => self.forget_peer(peer),
-                NetEvent::Refused { .. } => {}
+                NetEvent::Refused { .. } | NetEvent::Answered => {}
                 NetEvent::JoinFailed { .. } => {
                     let mut notes = Vec::new();
                     h.reach.note(RelayJoin::NotConnected, now, &mut notes);
@@ -742,8 +796,9 @@ impl OnlinePeer {
                     let text = if nostr && why == Refusal::Busy { BUSY } else { refusal_text(why) };
                     self.end_with(OnlineEvent::Refused(text.into()));
                 }
-                // A host's only.
-                NetEvent::JoinFailed { .. } => {}
+                // A host's only; the answer matters to a successor's join
+                // alone (`migrate`).
+                NetEvent::JoinFailed { .. } | NetEvent::Answered => {}
             },
         }
     }
@@ -829,10 +884,14 @@ impl OnlinePeer {
         for peer in peers {
             self.endpoint.close(peer);
         }
-        // The listener's and the joiner's pools go on threads of their own.
+        // The listener's and the joiner's pools go on threads of their own,
+        // a successor's endpoints too.
         match &mut self.side {
             Side::Host(h) => h.reach.stop(),
-            Side::Client(c) => c.joiner = None,
+            Side::Client(c) => {
+                c.joiner = None;
+                migrate::drop_migration(c);
+            }
         }
         self.closing.clear();
         self.game = None;
@@ -943,6 +1002,12 @@ impl OnlinePeer {
     fn host_lobby_events(&mut self, now: Instant) {
         let Side::Host(h) = &mut self.side else { return };
         let events = h.lobby.events();
+        self.on_host_events(events, now);
+    }
+
+    /// The host's lobby events, in order.
+    fn on_host_events(&mut self, events: Vec<HostEvent>, now: Instant) {
+        let Side::Host(h) = &mut self.side else { return };
         if events.is_empty() {
             return;
         }
@@ -989,7 +1054,8 @@ impl OnlinePeer {
                 HostEvent::Notice(text) => self.events.push(OnlineEvent::Notice(text)),
                 // Plan 12c: a migrated lobby's rejoin is the online layer's to
                 // act on (tasks 6 and 7).
-                HostEvent::Admin { .. } | HostEvent::StartRequested | HostEvent::Rejoined(_) => {}
+                HostEvent::Rejoined(id) => self.host_rejoined(id, now),
+                HostEvent::Admin { .. } | HostEvent::StartRequested => {}
             }
         }
     }
@@ -1080,6 +1146,7 @@ impl OnlinePeer {
                 if let Side::Client(c) = &mut self.side {
                     c.waiting_since = None;
                 }
+                self.open_standby();
                 if let Side::Client(c) = &self.side
                     && let Some(state) = c.lobby.state().cloned()
                 {
@@ -1121,8 +1188,12 @@ impl OnlinePeer {
                 let expected = matches!(&self.side, Side::Client(c) if c.expected);
                 self.end_with(OnlineEvent::Refused(wrong_host_text(expected).into()));
             }
+            // A7: during a match the host's `Bye` (it left or stepped down)
+            // starts the migration.
             ClientEvent::Closed => {
-                self.end_with(OnlineEvent::Disconnected("the host closed the lobby".into()))
+                if !self.begin_migration() {
+                    self.end_with(OnlineEvent::Disconnected("the host closed the lobby".into()))
+                }
             }
         }
     }
@@ -1181,6 +1252,9 @@ impl OnlinePeer {
         if let Some(now) = self.now {
             self.drain_lobby(now);
         }
+        // The world's build is the start's own pause, not a stall (N70):
+        // the peers hear the start only now.
+        self.last_poll = None;
         self.ended_world = None;
         self.game = Some(Game::new(session, Some(HostBots::new(world.bots)), start.clone(), my_slot));
         self.events.push(OnlineEvent::MatchStarting { start, my_slot });
@@ -1271,11 +1345,20 @@ impl OnlinePeer {
             Event::Lagging(on) if !host => self.events.push(OnlineEvent::Lagging(on)),
             Event::Desync { tick, local, remote, peer } => self.desync_bundle(tick, local, remote, peer),
             Event::PeerLeft { .. } if !host => {
-                self.end_with(OnlineEvent::Disconnected("the host left".into()));
+                if !self.begin_migration() {
+                    self.end_with(OnlineEvent::Disconnected("the host left".into()));
+                }
             }
             Event::PeerTimedOut { .. } if !host => {
-                self.end_with(OnlineEvent::Disconnected("the host stopped answering".into()));
+                if !self.begin_migration() {
+                    self.end_with(OnlineEvent::Disconnected("the host stopped answering".into()));
+                }
             }
+            Event::HostSilent if !host => {
+                self.begin_migration();
+            }
+            Event::HostHeard if !host => self.host_heard(),
+            Event::Resumed { .. } if !host => self.resumed(),
             _ => {}
         }
     }
@@ -1524,6 +1607,8 @@ impl Game {
             ended: None,
             window: Window::default(),
             bundles: 0,
+            migrations: 0,
+            collecting: None,
         }
     }
 }
@@ -1704,6 +1789,7 @@ mod tests {
             join: Join::direct(SocketAddr::from(([127, 0, 0, 1], 9))),
             password: None,
             expected_host: None,
+            migration: MigrationConfig::off(),
         };
         let cfg = EndpointConfig { port: 0, ..EndpointConfig::default() };
         OnlinePeer::start(role, cfg, me, look(), c, None, PeerContent::without_downloads("a test")).unwrap()
@@ -1750,6 +1836,7 @@ mod tests {
             join: Join { direct: None, nostr: Some(nostr) },
             password: None,
             expected_host: None,
+            migration: MigrationConfig::off(),
         };
         let cfg = EndpointConfig { port: 0, ..EndpointConfig::default() };
         let me = Identity::from_secret([7; 32]).unwrap();

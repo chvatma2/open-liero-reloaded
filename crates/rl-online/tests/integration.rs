@@ -6,6 +6,7 @@ mod common;
 
 mod content;
 mod matches;
+mod migration;
 mod online;
 mod replay;
 mod through;

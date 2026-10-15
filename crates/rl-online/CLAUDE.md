@@ -32,12 +32,24 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   start)` → `MatchWorld { sim, bots }` (its own area cache), `build_options`
   (`rl-cli`'s `net-sim` builds with it too) and `HostBots` (bots by slot,
   thinking in slot order; `press` with the host player's keys from a
-  callback; `Driver<WorldSim>` for bots alone, `rl-cli`'s).
+  callback, for any set of local slots: a host that took over is asked
+  twice a tick, its own slot at `t + d`, then the bots at `t`;
+  `Driver<WorldSim>` for bots alone, `rl-cli`'s); `restart_bots(start,
+  world)` (N75: `Bot::with_cache` per bot slot of the start, its seed, a
+  new empty area cache; a new host's bots).
+- **`migration.rs`** (plan 12c): `MigrationConfig { standby, relays, ice,
+  region, turn_from_nostr, allow_local, enabled }` (`off()`: the old
+  ending, every test not about migration, D7; `direct()`: a standby on
+  port 0, no STUN, no relays), `MigrationStep` (`Finding`,
+  `Moving(name)`, `TakingOver`; `Display` the HUD's texts),
+  `MIGRATION_CONNECT_TIMEOUT` (1 s, N73), `HOST_LOST`, `HOST_BACK` (N69's
+  log line), `stepped_down(secs)`; all but `HOST_BACK` at the crate root.
 - **`peer.rs`, `OnlinePeer`** (its `LobbyHandle` in `peer/lobby_handle.rs`): `start(role, endpoint, me, look, content,
   setup, content_cfg)` (`PeerRole::Host { lobby, listen }`, `Server {
   lobby, listen }`: a host without a local player, the dedicated
   server's, `look` unused; `listen: HostListen`, `reach.rs`; `Client {
-  join, password, expected_host }`: `join: Join`, `join.rs`; a join
+  join, password, expected_host, migration }`: `join: Join`, `join.rs`;
+  `migration: MigrationConfig`, below; a join
   through Nostr expects its host's key without `expected_host`; a host
   whose key is not `expected_host`, or
   whose `HostProof` fails, ends it with `Refused(WRONG_HOST)`, "this is not
@@ -87,7 +99,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   none: the relays edited in the game's Options while hosting; the old
   listener's thread drops its pool, a new one starts; nothing on a
   client, a closed peer or the same relays; never blocks);
-  `LobbyHandle::revision` (the host's `LobbyHost::revision`).
+  `LobbyHandle::revision` (the host's `LobbyHost::revision`),
+  `LobbyHandle::succession` (a host's order, a client's latest).
   `test_seed_override`, `test_serve_instead` (a host serves another
   pack's archive for a pack) and `test_prompt_limit` (a client's prompt
   bytes) exist only with the `test-hooks` feature (this crate's own
@@ -214,7 +227,82 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     closed. Refusals, kicks and lost connections end a client the same way,
     each with its reason in words (`rl_net::endpoint::Why::Unsent`, its own
     failed send, is "this game could not send to the host", not the
-    host's fault).
+    host's fault); during a match with migration on, the host's loss
+    migrates instead (below).
+  - **Migration** (`peer/migrate.rs`, plan 12c Task 6: direct links;
+    spec §3.7, N63-N76; every rule `rl_netcode::migration`'s and
+    `rl_lobby`'s):
+    - **Standby** (N63): at its welcome a client with `migration.enabled`
+      and `standby: Some` opens `Endpoint::host` (port 0, port mapping
+      off, `max_peers` `MAX_MEMBERS`), its gate refusing `NotHost` until
+      its turn (an `AtomicBool`; the lobby's banned set once it hosts),
+      and reports `LobbyClient::standby(port, first 2 relays)` (said
+      again after every welcome); a bind failure is a `Notice` and no
+      standby (N79). Polled every poll, closed at the end.
+      `standby_port()`.
+    - **Start** (during a match only, N71): the session's `HostSilent`,
+      `PeerLeft`, `PeerTimedOut`, the open link's `Disconnected`, or the
+      lobby's `Closed` (A7: a leaving or stepping-down host's `Bye` may
+      come first) suspend the session and begin a `Migration` from
+      `LobbyClient::succession()` (`can_host` as listed, its own entry
+      only with a standby; past `MAX_MIGRATIONS` in the match: host lost
+      at once): `Migrating(Finding)`. Off, outside a match or without a
+      succession: the old ending. The old endpoint stays, polled and fed
+      to the session (`HostHeard`).
+    - **`Try(i)`**: one attempt at a time, a `Joiner` to the entry's
+      direct address (`connect_timeout` `MIGRATION_CONNECT_TIMEOUT`, the
+      client's endpoint config with `migration.ice`) and a fresh
+      `LobbyClient` expecting the entry's key: `Migrating(Moving(name))`.
+      `NetEvent::Answered` is contact; a `Refused(NotHost)` is asked again
+      `RETRY_US` later; any other failure (or an entry without a direct
+      address) is not tried again in its window (N73); a failure after
+      contact is `lost_contact` (D8: a successor whose window ends
+      uncommitted refuses its answered joins, `Endpoint::refuse_pending`,
+      so contact past a window lasts only with a committed one). A step
+      moving on drops the attempt (its endpoint on a thread).
+    - **Rejoin** (the attempt's `Welcome`): the `Migration` goes (A9: only
+      the new host's `Resume`, or its own loss, a further migration, ends
+      the wait), the old endpoint shuts down on a thread, the attempt's
+      endpoint and lobby client are the peer's, `rehost(HOST)`, the
+      content follows the new host (`ContentSide::host_changed`:
+      `source_left`, its skin offered again); at `Resumed`,
+      `Migrated { host, me: false }` and the new link's `Connected`.
+    - **`Host`** (its turn): the gate opens over a `LobbyHost::migrated`
+      (the client lobby's state and succession, the start's member ids,
+      `HostConfig`: the state's name, the start's member slots,
+      `MAX_SPECTATORS`, the marked admins, no password, A13) taking
+      members back on the standby (their proofs answered at once):
+      `Migrating(TakingOver)`. It commits at the first `Rejoined`, or at
+      once when `away_in_match()` is empty (N68); not committed when the
+      step leaves `Host`, the gate closes (D8: answered joins refused
+      `NotHost`, links not welcomed closed, the lobby gone). The commit:
+      the old endpoint shuts down on a thread, the standby is the peer's
+      endpoint, the side a `HostSide` (`HostReach` with `HostListen {
+      pool: migration.relays }`), the content a host's
+      (`ContentSide::become_host`), `take_over(bot slots)`,
+      `restart_bots`; each `Rejoined` member's welcome is drained, then
+      its content list and `rejoined(peer, its slot or Spectator)`
+      (`Collect` after `Welcome`).
+    - **Resume**: when `away_in_match()` is empty (A10) or the window
+      ended, and `awaiting_reports()` is empty (C1): `drop_away`,
+      `resume`, `playing(R)`, `Migrated { host: its name, me: true }`; an
+      ordinary host from then on.
+    - **Cancel** (N69): `HostHeard` before the commit without contact
+      closes the attempt or the gate, `unsuspend`s, and logs `HOST_BACK`.
+    - **Host lost**: `GiveUp`: the replay of its confirmed rows
+      (`record_of(.., frontier)`), `HostLost(HOST_LOST)`, every connection
+      closed.
+    - **Step-down** (N70): first in every poll, a host during a match
+      whose gap since its last poll (monotonic; the wall clock's only
+      beyond it plus `HOST_SILENT_US`, never a backward step, C3:
+      `stall_gap`) reaches `STEP_DOWN_US`, with a `can_host` entry, says
+      `Bye` (the session's and the lobby's), closes every link after
+      `CLOSE_LINGER`, drops the members from its lobby (results, then
+      gathering), makes its replay and reports
+      `HostLost(stepped_down(secs))`; the peer stays open (a server's
+      lobby). A start's own world build does not count.
+    - Test hook `test_outage(until)` (`test-hooks`): every endpoint of the
+      peer, and those it makes before then, in rl-net's `test_blackout`.
 - **`replay.rs`**: `MatchRecord { start, rows, checksums }` (rows below the
   last tick, the session's confirmed checksums); `make` re-simulates the
   rows from `build_match`'s start world with its `Recorder` and returns the
@@ -414,7 +502,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
   `Reachability(Reachability)`, `Connected { path, remote }`,
   `RelayJoin { join, more }`, `ListenRelay { url, status }`: a host's
   listener's relay "connected" or "unreachable: why", once until it
-  changes, final review B-M4), `NetStats` (round trip, input delay, the
+  changes, final review B-M4); plan 12c: `Migrating(MigrationStep)`,
+  `Migrated { host, me }`, `HostLost(why)`; `NetStats` (round trip, input delay, the
   last second's deepest rollback, a client's datagram loss, corrections
   per second, stall episodes).
 
@@ -439,7 +528,23 @@ a client expecting another host key is refused (`WRONG_HOST`), one
 expecting the host's joins; a host that opens the link and stays silent
 is given up `JOIN_DEADLINE` after the link opened, not before
 (`a_silent_host_is_given_up`: a bare `rl_net` endpoint, one virtual
-clock, no content needed).
+clock, no content needed). The test network (`Net`, `Peer`: `frozen`
+peers not polled, `join_with_migration` waiting for each welcome, so the
+succession is the call order, `outage`, `host_index`) is
+`tests/common/net.rs`'s, shared with `tests/migration.rs` (plan 12c,
+direct links on 127.0.0.1, `base_override` 127.0.0.1, under 30 s each): a
+frozen host hands a 0.1-minute match to Anna within 2 + 3.5 s, Bert moves
+to her, both records equal, every input held at the freeze kept, the old
+host's slot `Keys(0)` after, the bot, Anna and Bert playing on, then
+Anna's lobby without the old host; a leaving host followed within 1.5 s,
+nobody ended by its lobby's `Bye` (A7); a host stalled 1.7 s steps down
+(`HostLost("Your game stopped…")`, its replay, its lobby emptied) and the
+match moves; the only successor frozen too: host lost 11.9-13 s after the
+freeze, with a replay; a successor's own 3 s outage called off
+(`HostHeard`), nobody migrated; D8: a successor cut off on UDP answers
+joins it cannot open, closes at its window's end, and the next one takes
+the match (fails without the refusal or the lost contact).
+`migrate.rs`' unit test: `stall_gap` (C3); `migration.rs`': the texts.
 Content (each peer a cache in a temporary directory; `common::
 partial_content` copies the match's packs but some, `with_test_skin`
 adds a skin pack of another hash): a client without the level, or the mod,

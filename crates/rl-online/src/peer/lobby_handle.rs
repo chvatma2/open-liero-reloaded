@@ -26,6 +26,16 @@ impl LobbyHandle<'_> {
         }
     }
 
+    /// The succession order (N64): a host's `LobbyHost::succession`, a
+    /// client's `LobbyClient::succession` (the host's latest; rl-server logs
+    /// it, tests read it).
+    pub fn succession(&self) -> Vec<rl_proto::SuccessorWire> {
+        match &self.peer.side {
+            Side::Host(h) => h.lobby.succession(),
+            Side::Client(c) => c.lobby.succession().to_vec(),
+        }
+    }
+
     /// This peer's member id.
     pub fn me(&self) -> Option<u8> {
         self.peer.me()

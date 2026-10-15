@@ -3,6 +3,8 @@
 //! it, a generated skin pack and download caches for the content tests.
 #![allow(dead_code)]
 
+pub mod net;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 

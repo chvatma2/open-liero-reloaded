@@ -28,7 +28,7 @@ use rl_netcode::netsim::Profile;
 use rl_online::content::HOST_RATE;
 use rl_online::peer::RECORD_AFTER_END;
 use rl_online::replay::MatchRecord;
-use rl_online::{Join, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
+use rl_online::{Join, MigrationConfig, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{Look, MatchStartWire, Phase, PublicKey, SeatWire};
 use rl_replay::Replay;
 use rl_server::config::{Config, Entry, Visibility};
@@ -204,8 +204,13 @@ pub fn run_bot_client(
         skin: rl_lobby::DEFAULT_SKIN.into(),
         skin_hash: rl_proto::NO_HASH.into(),
     };
-    let role =
-        PeerRole::Client { join: spec.join.clone(), password: None, expected_host: spec.expected_host };
+    // Plan 12c Task 8 gives the migration cases their configuration (D7).
+    let role = PeerRole::Client {
+        join: spec.join.clone(),
+        password: None,
+        expected_host: spec.expected_host,
+        migration: MigrationConfig::off(),
+    };
     let downloads = match &spec.cache {
         Some(dir) => {
             let cache =

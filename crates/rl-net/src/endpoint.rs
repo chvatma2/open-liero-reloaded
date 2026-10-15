@@ -40,7 +40,8 @@ use crate::signal::SignalConn;
 
 /// The host's default TCP and UDP port (spec §5.1).
 pub const DEFAULT_PORT: u16 = 23400;
-/// The client's TCP connect gives up after this long.
+/// The client's TCP connect gives up after this long by default
+/// (`EndpointConfig::connect_timeout`).
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// A host's signalling connection must deliver its offer within this time.
 pub const OFFER_TIMEOUT: Duration = Duration::from_secs(3);
@@ -180,10 +181,13 @@ pub struct EndpointConfig {
     #[cfg(feature = "test-hooks")]
     pub answer_addr_override: Option<SocketAddr>,
     /// Tests only (`test-hooks`): a client's TCP connect never completes
-    /// (no SYN leaves): it fails with `TimedOut` after `CONNECT_TIMEOUT`,
+    /// (no SYN leaves): it fails with `TimedOut` after `connect_timeout`,
     /// as toward a router that does not hairpin (rl-online's fallback).
     #[cfg(feature = "test-hooks")]
     pub connect_stall: bool,
+    /// A client's TCP connect gives up after this long ([`CONNECT_TIMEOUT`];
+    /// rl-online's joins to a migration's successor take 1 s, N73).
+    pub connect_timeout: Duration,
     /// Signalled setups' candidates (default: nothing asked).
     pub ice: IceConfig,
 }
@@ -210,6 +214,7 @@ impl Default for EndpointConfig {
             answer_addr_override: None,
             #[cfg(feature = "test-hooks")]
             connect_stall: false,
+            connect_timeout: CONNECT_TIMEOUT,
             ice: IceConfig::default(),
         }
     }
@@ -303,6 +308,10 @@ pub struct Endpoint {
     queued: Vec<CoreEvent>,
     /// The latest time `poll` was given.
     now: Instant,
+    /// Tests only (`test-hooks`): every datagram is dropped both ways
+    /// until then (`test_blackout`).
+    #[cfg(feature = "test-hooks")]
+    blackout: Option<Instant>,
 }
 
 fn bind_udp(port: u16) -> io::Result<UdpSocket> {
@@ -328,11 +337,13 @@ fn bind_both(port: u16) -> io::Result<(TcpListener, UdpSocket, u16)> {
     }
 }
 
-/// Sends the core's datagrams and counts them in their peers' stats.
-fn send_datagrams(udp: &UdpSocket, core: &mut Core, out: &mut Vec<Datagram>) {
+/// Sends the core's datagrams and counts them in their peers' stats; in a
+/// blackout (`dark`, a test hook) each is lost on the way, as on a cut
+/// network.
+fn send_datagrams(udp: &UdpSocket, core: &mut Core, out: &mut Vec<Datagram>, dark: bool) {
     for d in out.drain(..) {
         // A full socket buffer loses the datagram, as a network would.
-        let ok = udp.send_to(&d.bytes, d.to).is_ok();
+        let ok = dark || udp.send_to(&d.bytes, d.to).is_ok();
         core.sent(&d, ok);
     }
 }
@@ -488,6 +499,8 @@ impl Endpoint {
             gathering,
             queued: Vec::new(),
             now,
+            #[cfg(feature = "test-hooks")]
+            blackout: None,
         };
         if let Some(ip) = base_override {
             endpoint.take_base(vec![ip], None);
@@ -523,12 +536,13 @@ impl Endpoint {
         let stall = cfg.connect_stall;
         #[cfg(not(feature = "test-hooks"))]
         let stall = false;
+        let timeout = cfg.connect_timeout;
         std::thread::Builder::new().name("rl-net connect".into()).spawn(move || {
             let result = if stall {
-                std::thread::sleep(CONNECT_TIMEOUT);
+                std::thread::sleep(timeout);
                 Err(io::ErrorKind::TimedOut.into())
             } else {
-                TcpStream::connect_timeout(&host, CONNECT_TIMEOUT)
+                TcpStream::connect_timeout(&host, timeout)
             };
             let _ = tx.send(result);
         })?;
@@ -552,7 +566,8 @@ impl Endpoint {
         self.poll_setups(events, &mut core_events);
         let mut out = Vec::new();
         self.core.poll(now, &mut out, &mut core_events);
-        send_datagrams(&self.udp, &mut self.core, &mut out);
+        let dark = self.dark(now);
+        send_datagrams(&self.udp, &mut self.core, &mut out, dark);
         self.on_core_events(core_events, now, events);
         self.lingering.retain_mut(|(conn, deadline)| {
             let _ = conn.poll();
@@ -590,7 +605,50 @@ impl Endpoint {
     pub fn close(&mut self, peer: PeerId) {
         let mut out = Vec::new();
         self.core.close(peer, &mut out);
-        send_datagrams(&self.udp, &mut self.core, &mut out);
+        let dark = self.dark(self.now);
+        send_datagrams(&self.udp, &mut self.core, &mut out, dark);
+    }
+
+    /// Host: refuses every join not open yet with `why` (a migration's
+    /// successor whose turn ended uncommitted, plan 12c D8): a TCP join's
+    /// signalling connection carries `Signal::Refused` even after its
+    /// answer (the client hears `NetEvent::Refused` at once, not its
+    /// setup's timeout), a signalled one is dropped. Its link's last
+    /// datagrams leave with the next poll. Nothing on a client.
+    pub fn refuse_pending(&mut self, why: Refusal) {
+        if !matches!(self.role, Role::Host { .. }) {
+            return;
+        }
+        let now = self.now;
+        for (id, setup) in std::mem::take(&mut self.setups) {
+            if let Some(mut ws) = setup.ws {
+                ws.send(encode_signal(&Signal::Refused { reason: why }));
+                self.linger(ws, now);
+            }
+            self.core.cancel(id, Why::Refused, &mut Vec::new());
+        }
+        for id in self.core.pending_setups() {
+            self.core.cancel(id, Why::Refused, &mut Vec::new());
+        }
+    }
+
+    /// Tests only (`test-hooks`): every datagram this endpoint sends or
+    /// receives is dropped until `until` (a cut network both ways; the
+    /// signalling's TCP is untouched). rl-online's `test_outage`.
+    #[cfg(feature = "test-hooks")]
+    pub fn test_blackout(&mut self, until: Instant) {
+        self.blackout = Some(until);
+    }
+
+    /// In a blackout at `now` (a test hook; never otherwise).
+    fn dark(&self, now: Instant) -> bool {
+        #[cfg(feature = "test-hooks")]
+        return self.blackout.is_some_and(|until| now < until);
+        #[cfg(not(feature = "test-hooks"))]
+        {
+            let _ = now;
+            false
+        }
     }
 
     /// The open peers, by id.
@@ -658,7 +716,9 @@ impl Endpoint {
         }
         let setup = *setup;
         match reply {
-            Signal::Answer { sdp } if self.core.accept_answer_ice(setup, sdp, mapped_hint).is_ok() => {}
+            Signal::Answer { sdp } if self.core.accept_answer_ice(setup, sdp, mapped_hint).is_ok() => {
+                self.queued.push(CoreEvent::Net(NetEvent::Answered));
+            }
             Signal::Refused { reason } => {
                 self.queued.push(CoreEvent::Net(NetEvent::Refused { why: *reason }));
                 // Refused is all the client hears.
@@ -888,7 +948,7 @@ impl Endpoint {
                 let started = *started.get_or_insert(now);
                 let result = match rx.try_recv() {
                     Ok(result) => result,
-                    Err(TryRecvError::Empty) if now < started + CONNECT_TIMEOUT + LINGER => return,
+                    Err(TryRecvError::Empty) if now < started + self.cfg.connect_timeout + LINGER => return,
                     Err(TryRecvError::Empty) => Err(io::ErrorKind::TimedOut.into()),
                     Err(TryRecvError::Disconnected) => Err(io::Error::other("the connect thread ended")),
                 };
@@ -969,9 +1029,11 @@ impl Endpoint {
         }
     }
 
-    /// Hands each received datagram to the core.
+    /// Hands each received datagram to the core (in a blackout, a test
+    /// hook, each is read and dropped).
     fn receive(&mut self, now: Instant) {
         let mut buf = [0u8; 2048];
+        let dark = self.dark(now);
         for _ in 0..MAX_DATAGRAMS_PER_POLL {
             let (n, from) = match self.udp.recv_from(&mut buf) {
                 Ok(got) => got,
@@ -979,7 +1041,9 @@ impl Endpoint {
                 // E.g. Windows reports an earlier datagram's ICMP error here.
                 Err(_) => continue,
             };
-            self.core.receive(from, &buf[..n], now);
+            if !dark {
+                self.core.receive(from, &buf[..n], now);
+            }
         }
     }
 
@@ -1009,9 +1073,16 @@ impl Endpoint {
         let Some(ws) = &mut setup.ws else { return true };
         if let Some(frame) = ws.poll() {
             // After the offer (host) or the answer (client) nothing more
-            // may come: one more frame is a violation.
+            // may come but a client's refusal (a host that stopped hosting,
+            // `refuse_pending`): one more frame is a violation.
             if setup.answered {
-                self.core.cancel(id, Why::Malformed, core_events);
+                match decode_signal(&frame) {
+                    Ok(Signal::Refused { reason }) if !matches!(self.role, Role::Host { .. }) => {
+                        events.push(NetEvent::Refused { why: reason });
+                        self.core.cancel(id, Why::Refused, &mut Vec::new());
+                    }
+                    _ => self.core.cancel(id, Why::Malformed, core_events),
+                }
                 return false;
             }
             match decode_signal(&frame) {
@@ -1030,7 +1101,8 @@ impl Endpoint {
                         )
                         .is_ok() =>
                 {
-                    setup.answered = true
+                    setup.answered = true;
+                    events.push(NetEvent::Answered);
                 }
                 Ok(Signal::Refused { reason }) => {
                     events.push(NetEvent::Refused { why: reason });
@@ -1159,7 +1231,8 @@ impl Drop for Endpoint {
     fn drop(&mut self) {
         let mut out = Vec::new();
         self.core.close_all(&mut out);
-        send_datagrams(&self.udp, &mut self.core, &mut out);
+        let dark = self.dark(self.now);
+        send_datagrams(&self.udp, &mut self.core, &mut out, dark);
         if let Some(mut mapper) = self.gathering.mapper.take() {
             mapper.begin_delete();
             unmap(mapper);

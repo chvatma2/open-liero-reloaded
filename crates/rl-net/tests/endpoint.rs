@@ -837,3 +837,92 @@ fn raw_junk_from_a_peer_drops_it() {
     assert_eq!(host.peers().map(|p| p.0).collect::<Vec<_>>(), [1]);
     assert!(!ge.iter().any(|e| matches!(e, NetEvent::Disconnected { .. })), "{ge:?}");
 }
+
+/// A direct join's client hears the host's answer (`Answered`: the host is
+/// there) before its link opens (`Connected`).
+#[test]
+fn answered_comes_before_connected() {
+    let mut net = Net::new(config());
+    let (c, _) = net.join_and_wait(config());
+    let events = &net.clients[c].1;
+    let answered = events.iter().position(|e| *e == NetEvent::Answered).expect("the host answered");
+    let connected =
+        events.iter().position(|e| matches!(e, NetEvent::Connected { peer: HOST, .. })).expect("connected");
+    assert!(answered < connected, "{events:?}");
+    assert_eq!(events.iter().filter(|e| **e == NetEvent::Answered).count(), 1, "once");
+    assert!(!net.host_events.contains(&NetEvent::Answered), "a client's event only");
+}
+
+/// The TCP connect gives up after the config's `connect_timeout` (here
+/// 300 ms, not `CONNECT_TIMEOUT`'s 5 s): a connect that never completes
+/// (rl-net's `connect_stall` hook, a held and silent port).
+#[test]
+fn the_connect_timeout_is_the_configs() {
+    let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = held.local_addr().unwrap();
+    let cfg = EndpointConfig { connect_timeout: Duration::from_millis(300), connect_stall: true, ..config() };
+    let start = Instant::now();
+    let mut client = Endpoint::connect(cfg, addr).unwrap();
+    let mut events = Vec::new();
+    while events.is_empty() {
+        assert!(start.elapsed() < Duration::from_secs(3), "the connect gives up");
+        client.poll(Instant::now(), &mut events);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let took = start.elapsed();
+    assert!(took >= Duration::from_millis(300) && took < Duration::from_millis(800), "{took:?}");
+    assert_eq!(events, [NetEvent::Disconnected { peer: HOST, why: Why::Timeout }]);
+    drop(held);
+}
+
+/// The test hook's blackout drops every datagram both ways until it ends:
+/// neither end receives a message meanwhile, both do after.
+#[test]
+fn a_blackout_drops_both_ways_until_it_ends() {
+    let mut net = Net::new(config());
+    let (c, id) = net.join_and_wait(config());
+    let until = Instant::now() + Duration::from_millis(700);
+    net.clients[c].0.test_blackout(until);
+    let sent = |n: &mut Net| {
+        n.host.send(id, Channel::Unreliable, b"to the client");
+        n.clients[c].0.send(HOST, Channel::Unreliable, b"to the host");
+    };
+    sent(&mut net);
+    while Instant::now() + Duration::from_millis(50) < until {
+        net.poll();
+        sent(&mut net);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(messages(&net.clients[c].1, Channel::Unreliable).is_empty(), "nothing in");
+    assert!(messages(&net.host_events, Channel::Unreliable).is_empty(), "nothing out");
+    std::thread::sleep(until.saturating_duration_since(Instant::now()));
+    net.run_until(Duration::from_secs(5), "both hear again", |n| {
+        sent(n);
+        !messages(&n.clients[c].1, Channel::Unreliable).is_empty()
+            && !messages(&n.host_events, Channel::Unreliable).is_empty()
+    });
+    assert!(net.host_disconnect(id).is_none(), "the link lived through it");
+}
+
+/// A host's `refuse_pending` (a successor whose turn ended, plan 12c D8)
+/// refuses a join it answered whose link has not opened: the client hears
+/// `Refused` with the reason at once, not a setup timeout 10 s later.
+#[test]
+fn a_hosts_refusal_after_its_answer_ends_the_join() {
+    let mut net = Net::new(config());
+    // The host hears nothing on UDP: the answered link cannot open.
+    net.host.test_blackout(Instant::now() + Duration::from_secs(30));
+    let c = net.join(config());
+    net.run_until(Duration::from_secs(5), "the host answers", |n| {
+        n.clients[c].1.contains(&NetEvent::Answered)
+    });
+    let start = Instant::now();
+    net.host.refuse_pending(Refusal::NotHost);
+    net.run_until(Duration::from_secs(5), "the client hears the refusal", |n| {
+        n.clients[c].1.iter().any(|e| matches!(e, NetEvent::Refused { .. }))
+    });
+    assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
+    let tail: Vec<_> = net.clients[c].1.iter().skip_while(|e| **e != NetEvent::Answered).collect();
+    assert_eq!(tail, [&NetEvent::Answered, &NetEvent::Refused { why: Refusal::NotHost }]);
+    assert!(net.host_connections().is_empty());
+}

@@ -195,6 +195,28 @@ struct HostContent {
 }
 
 impl HostContent {
+    /// A host's content state: nothing listed yet, `look` its player's.
+    fn new(cache: Option<&Arc<Mutex<DownloadCache>>>, look: Option<Look>, upload_rate: u64) -> HostContent {
+        HostContent {
+            list: None,
+            keeper: cache.map(Keeper::new),
+            revision: 1,
+            skins: BTreeMap::new(),
+            skin_started: BTreeMap::new(),
+            skin_starts: VecDeque::new(),
+            fetched: BTreeMap::new(),
+            sent: BTreeMap::new(),
+            look,
+            look_set: None,
+            said: BTreeSet::new(),
+            changes: 0,
+            built: None,
+            #[cfg(feature = "test-hooks")]
+            tamper: BTreeMap::new(),
+            upload_rate,
+        }
+    }
+
     /// The pack whose archive is served for pack `id`: none but in tests
     /// (`serve_instead`).
     fn served_for(&self, id: &str) -> Option<&String> {
@@ -259,6 +281,8 @@ pub(crate) struct ContentSide {
     prompted: Option<u64>,
     /// Downloaded packs refused to be laid over (said once).
     refused: BTreeSet<String>,
+    /// A host's upload rate (a client's, should it take a match over).
+    upload_rate: u64,
 }
 
 impl ContentSide {
@@ -271,24 +295,7 @@ impl ContentSide {
         };
         let base = Arc::new(base);
         let role = if host {
-            Role::Host(Box::new(HostContent {
-                list: None,
-                keeper: cache.as_ref().map(Keeper::new),
-                revision: 1,
-                skins: BTreeMap::new(),
-                skin_started: BTreeMap::new(),
-                skin_starts: VecDeque::new(),
-                fetched: BTreeMap::new(),
-                sent: BTreeMap::new(),
-                look,
-                look_set: None,
-                said: BTreeSet::new(),
-                changes: 0,
-                built: None,
-                #[cfg(feature = "test-hooks")]
-                tamper: BTreeMap::new(),
-                upload_rate: cfg.upload_rate,
-            }))
+            Role::Host(Box::new(HostContent::new(cache.as_ref(), look, cfg.upload_rate)))
         } else {
             let look = look.unwrap_or_else(|| Look {
                 name: String::new(),
@@ -332,6 +339,7 @@ impl ContentSide {
             reported_at: None,
             prompted: None,
             refused: BTreeSet::new(),
+            upload_rate: cfg.upload_rate,
         };
         // The player's skin is hashed from the start (its `Hello` carries it
         // when the hash comes first).
@@ -339,6 +347,34 @@ impl ContentSide {
             side.local.hash_of(&skin);
         }
         side
+    }
+
+    /// This client took its host's match over (plan 12c): from now on a
+    /// host's content, the same packs and cache (downloads stay laid over),
+    /// served at its upload rate; its list goes to each member after its
+    /// welcome (`joined`). Nothing on a host.
+    pub(crate) fn become_host(&mut self) {
+        let Role::Client(c) = &self.role else { return };
+        let look = Some(c.look.clone());
+        self.role = Role::Host(Box::new(HostContent::new(self.cache.as_ref(), look, self.upload_rate)));
+        self.server = Server::new(self.upload_rate);
+        self.prompted = None;
+    }
+
+    /// A client's host changed (a migration's new host, plan 12c): what
+    /// came from the old one stops (partials stay, `Fetcher::source_left`;
+    /// the new host's list resumes them), and this peer's skin is offered
+    /// to the new one.
+    pub(crate) fn host_changed(&mut self) {
+        self.server.peer_left(HOST);
+        if let Role::Client(c) = &mut self.role {
+            if let Some(f) = &mut c.fetcher {
+                f.source_left();
+            }
+            c.pending = None;
+            c.told = None;
+            c.offer_sent = None;
+        }
     }
 
     fn my_look(&self) -> Option<&Look> {
