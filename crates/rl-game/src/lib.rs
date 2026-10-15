@@ -27,6 +27,7 @@ pub mod shell;
 pub mod speed;
 pub mod stats;
 pub mod surface;
+pub mod throw_sound;
 pub mod video;
 pub mod window;
 pub mod wsl;

@@ -15,5 +15,6 @@ mod online;
 mod options;
 mod profiles;
 mod speed;
+mod throw_sound;
 mod watch;
 mod weapon_name;

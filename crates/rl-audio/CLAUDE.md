@@ -12,6 +12,8 @@ OpenAL driver does (spec §8.4, §19 E1/E12; presentation note §8).
   listener `LISTENER_DISTANCE` (20 px) out at the view centre; pan `dx / d`.
   The master volume is OLX's `Audio.Volume / 100` (default 0.7). THROW and
   PICKUP (`is_global`) start at the listener with gain 1.0 (OLX's `play`).
+  The game passes only the player's own THROW sounds (`rl-game`'s
+  `throw_sound`: OLX plays none for a bot's or a remote worm's throw).
 - **Voices** (`voices.rs`, pure): `max_plays` is OLX's `maxplaying` (throw
   4, other game sounds 2, mod sounds 10), `GLOBAL_VOICES` 256 (OpenAL
   Soft's default source count); `admit` says `Start`, `Steal(victim)` or

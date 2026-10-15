@@ -24,7 +24,7 @@ use rl_online::matches::{bot_wire, rules_wire, setup_packs};
 use rl_online::{HostListen, Join, OnlineEvent, OnlinePeer, PeerContent, PeerRole};
 use rl_proto::{Look, MatchSetupWire, SeatWire};
 use rl_scene::{DrawList, Interpolation, Viewport};
-use rl_sim::{EventKind, Keys, Score, World};
+use rl_sim::{EventKind, Keys, Score, SoundId, World};
 
 pub(crate) const MOD: &str = "olx-classic";
 pub(crate) const LEVEL: &str = "olx-level-dirt-level";
@@ -224,7 +224,8 @@ fn setup(content: &Content, minutes: f32) -> MatchSetupWire {
 /// colour terrain never drifts (debug builds check after every advance),
 /// the HUD follows the client's slot and shows the confirmed scores (the
 /// host's for the same tick), and the match's end comes from a confirmed
-/// tick.
+/// tick. Both players throw the rope now and then: only the client's own
+/// throws are heard there (OLX's), not the host's nor the bot's.
 #[test]
 fn an_online_match_runs_headless() {
     let Some(dir) = content_dir() else { return };
@@ -310,11 +311,13 @@ fn an_online_match_runs_headless() {
     let mut checked = 0;
     let mut slowest = Duration::ZERO;
     let mut named = 0u64;
+    let mut heard_throws = 0;
     for i in 1..=300u64 {
         let now = t0 + Duration::from_millis(10 * i);
         let mut host_keys = || {
             host_pressed += 1;
-            player_keys(host_pressed + 1000)
+            let rope = if host_pressed.is_multiple_of(40) { Keys::ROPE } else { 0 };
+            Keys(player_keys(host_pressed + 1000).0 | rope)
         };
         for e in host.poll(now, &mut host_keys, &mut |_, _, _| {}) {
             if let OnlineEvent::Confirmed(c) = e {
@@ -327,12 +330,18 @@ fn an_online_match_runs_headless() {
             match pressed {
                 50 | 52 => Keys(Keys::CHANGE),
                 51 => Keys(Keys::CHANGE | Keys::RIGHT),
+                100 | 170 | 240 => Keys(player_keys(pressed).0 | Keys::ROPE),
                 _ => player_keys(pressed),
             }
         };
         let busy = Instant::now();
         let events = s.frame(now, &mut keys);
         slowest = slowest.max(busy.elapsed());
+        heard_throws += s
+            .sounds()
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::Sound { id: SoundId::THROW, .. }))
+            .count();
         assert!(
             events.events.iter().all(|e| !matches!(
                 e,
@@ -358,6 +367,9 @@ fn an_online_match_runs_headless() {
         }
     }
     eprintln!("the slowest online frame took {slowest:?}");
+    let thrown: Vec<u32> = s.with_world(|w| w.worms().iter().map(|w| w.rope.throws()).collect());
+    assert!(thrown[1] > 0 && thrown[0] + thrown[2] > thrown[1], "the ropes were thrown: {thrown:?}");
+    assert_eq!(heard_throws, thrown[1] as usize, "only the client's own throws are heard");
     assert!(
         (1..=WEAPON_NAME_TICKS + 5).contains(&named),
         "the client's weapon change showed its name for {named} frames"

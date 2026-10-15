@@ -31,6 +31,7 @@ use crate::drive::{MatchDriver, ReplayDriver};
 use crate::net::PolledEvents;
 use crate::online::OnlineDriver;
 use crate::setup::{Assets, Game};
+use crate::throw_sound::ThrowSounds;
 
 /// How often (ticks) debug builds check that the colour terrain's material
 /// is the world's (`Presentation::terrain_drift`): a terrain change
@@ -145,6 +146,10 @@ pub struct Session {
     /// The ticks play their sounds (the app thins them out when the game
     /// runs fast: `Speed::sound`). The world never sees it.
     pub sound: bool,
+    /// The sounds the last tick or poll played ([`Session::sounds`]).
+    heard: Vec<Event>,
+    /// Whose rope throws are heard: the player's own (OLX's).
+    throws: ThrowSounds,
     keys: Vec<Keys>,
     /// Ticks since the match (re)started.
     ticks: u64,
@@ -158,6 +163,15 @@ pub struct Session {
     shown: usize,
     /// OLX's default skin (a worm spawned mid-match wears it).
     default_skin: LoadedSkin,
+}
+
+/// The worm whose rope throws are heard ([`ThrowSounds`]): the player's,
+/// or a replay's viewer's (the player whose game it was).
+fn hears_throws_of(a: &Assets) -> Option<u8> {
+    match &a.game {
+        Game::Replay(r) => r.setup.viewer,
+        _ => a.local_slot(),
+    }
 }
 
 /// The world and driver `a` starts with, rematch `n`.
@@ -353,6 +367,7 @@ impl Session {
         };
         let mut present = Presentation::new(&setup, &world);
         let local = a.local_slot();
+        let throws = ThrowSounds::new(hears_throws_of(a), &world);
         present.follow(i32::from(a.first_followed()));
         let n = world.worms().len();
         let looks = looks(a, n.max(a.worms()));
@@ -376,6 +391,8 @@ impl Session {
             frozen: false,
             looks,
             sound: true,
+            heard: Vec::new(),
+            throws,
             keys: vec![Keys(0); n],
             ticks: 0,
             ended_at: None,
@@ -439,6 +456,12 @@ impl Session {
             Driver::Online(d) => d.confirmed_scores(),
             _ => self.world.scores(),
         }
+    }
+
+    /// The `Sound` events the last tick or poll played, or would have
+    /// played with [`Session::sound`] off.
+    pub fn sounds(&self) -> &[Event] {
+        &self.heard
     }
 
     /// The slot this player controls; `None` when nobody here plays (a
@@ -563,6 +586,7 @@ impl Session {
         self.rematches = n;
         self.world = world;
         self.driver = driver;
+        self.throws = ThrowSounds::new(hears_throws_of(a), &self.world);
         self.present.restart(&self.world, &a.level, &a.theme);
         self.audio.stop_all();
         self.popups.clear();
@@ -659,8 +683,11 @@ impl Session {
             Driver::Online(_) => return false,
         }
         self.show_new_worms();
+        self.heard.clear();
+        self.heard.extend(self.events.iter().filter(|e| matches!(e.kind, EventKind::Sound { .. })));
+        self.throws.retain(&self.world, &mut self.heard);
         if self.sound {
-            self.audio.play_events(&self.events, self.present.scene.camera.listener());
+            self.audio.play(&self.heard, self.present.scene.camera.listener());
         }
         self.present.on_tick(&self.world, &self.events);
         self.ticks += 1;
@@ -828,13 +855,15 @@ impl Session {
             events.extend(next);
             return events;
         };
-        let (sound, audio) = (self.sound, &mut self.audio);
+        let (sound, audio, heard) = (self.sound, &mut self.audio, &mut self.heard);
+        heard.clear();
         let mut play = |sounds: &[Event], p: &Presentation| {
+            heard.extend_from_slice(sounds);
             if sound {
                 audio.play(sounds, p.scene.camera.listener());
             }
         };
-        let shown = d.present(events, pumped, self.frozen, &mut self.present, &mut play);
+        let shown = d.present(events, pumped, self.frozen, &mut self.present, &mut self.throws, &mut play);
         let (confirmed, rest, resynced) = (shown.confirmed, shown.rest, shown.resynced);
         if let Some(t) = shown.current_tick {
             self.ticks = u64::from(t);

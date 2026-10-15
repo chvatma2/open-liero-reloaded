@@ -37,6 +37,7 @@ use rl_sim::{Event, Keys, Score, World};
 use rl_terrain::Area;
 
 use crate::net::{PeerHandle, PolledEvents};
+use crate::throw_sound::ThrowSounds;
 
 /// Who plays an online match's worms: the peer (the local player's keys,
 /// the host's bots, everyone else's over the network), and what the
@@ -182,7 +183,8 @@ impl OnlineDriver {
     }
 
     /// A poll's `events` presented ([`present_poll`]), its sounds played
-    /// through `play` (with the camera's listener); the confirmed ticks
+    /// through `play` (with the camera's listener; of the rope throws only
+    /// those `throws` keeps, read on the newest predicted world); the confirmed ticks
     /// for the HUD, and the events that are not the presentation's (the
     /// lobby's, the match's end, the connection's) for the shell.
     ///
@@ -200,6 +202,7 @@ impl OnlineDriver {
         pumped: Option<u32>,
         frozen: bool,
         present: &mut Presentation,
+        throws: &mut ThrowSounds,
         play: &mut dyn FnMut(&[Event], &Presentation),
     ) -> Shown {
         let OnlineDriver { peer, presenter, sounds, .. } = self;
@@ -228,6 +231,9 @@ impl OnlineDriver {
             }
             let confirmed_below = session.map(|s| s.confirmed());
             let p = present_poll(presenter, present, world, confirmed_below, events, sounds);
+            if let Some(w) = world {
+                throws.retain(w, sounds);
+            }
             (p, session.map(|s| s.current_tick()), resync.is_some())
         });
         self.jumped = p.jumped;

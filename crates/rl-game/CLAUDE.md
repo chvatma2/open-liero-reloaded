@@ -140,7 +140,7 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `predicted_dt`: the game never asks egui for a repaint, so egui's
   `stable_dt`, which menu animations and the skin preview step by, would
   otherwise be 1/60 s at any frame rate). Per tick: script steps, `input.latch_tick()`, `Session::tick` (`world.tick` →
-  `audio.play_events` at the view centre → `Presentation::on_tick`, see
+  its sounds, without others' rope throws, `audio.play` at the view centre → `Presentation::on_tick`, see
   `rl-present` → damage popups). Per frame: `Session::build` (scene,
   entities), the overlay, `Presentation::upload` (atlas if a worm was
   added, terrain dirty rectangles), `Gpu::present`, then a screenshot if
@@ -212,6 +212,17 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   A tick's bookkeeping (`after_tick`: clock, tally, log, end and results,
   popups) reads a `TickView`: a local tick's world and events, or an
   online match's `ConfirmedTick`.
+  **Whose rope throws are heard** (`throw_sound.rs`, the user's playtest
+  report 2026-10-16): only the player's own, as OLX plays `smpNinja` in
+  the human input handler alone (a bot's or a remote worm's throw is
+  silent): the local slot's, a replay's viewer's, nobody's for bots
+  alone or an online match watched. The simulation's THROW sounds carry
+  no owner, so `ThrowSounds::retain` keeps as many as that worm's
+  `NinjaRope::throws` grew since the last tick or poll (on the newest
+  predicted world online, inside `OnlineDriver::present`; a rollback that
+  takes throws back plays none); every other sound plays as before.
+  `Session::sounds` is what the last tick or poll played (or would have,
+  with `sound` off).
 - **Online** (`online.rs`, plan 10 task 10; spec §3.4, decision N20):
   `Session::online(assets, OnlineDriver::new(handle, &start), ..)` after the
   peer's `MatchStarting` (`handle`: the peer's `net::PeerHandle`, below;
@@ -777,7 +788,10 @@ address, leaving returns at once with the mapping still there, the
 new game's TCP and UDP mapping still there after the old deletion took
 effect),
 `tests/deathmatch.rs` (a Deathmatch to its results, the bots' think
-budget, a recording replayed through a replay session), `tests/menu.rs`
+budget, a recording replayed through a replay session),
+`tests/throw_sound.rs` (only the player's rope throws are heard against
+seven bots, none for bots alone, a replay's viewer's; online, in
+`an_online_match_runs_headless`: the client's own only), `tests/menu.rs`
 (starts with missing or broken content, rapid menu actions) and
 `tests/profiles.rs` (the preview's textures; a menu match wears the
 profile's look), `tests/online.rs` (a local match whose player is slot 2,
