@@ -73,7 +73,13 @@ model that tests it in one process (spec §9.1).
     (`PeerState::cursor`), one datagram a tick, not one per round trip as a
     resend alone did (ruling SK-2: typical stalled 30 ticks past a 2.15 s
     outage, bad 2.3 s past a 6 s one); a lost one shows in the peer's echo
-    and the resend starts from its ack again.
+    and the resend starts from its ack again. Each such datagram begins
+    where the one before ends: one that overtakes it (jitter) begins past
+    the receiver's frontier, so the receiver keeps it (`ahead`, the nearest
+    `AHEAD_KEPT`, 16, one per `first`) and takes it again once its frontier
+    reaches it; dropped, it and every later one waited a round trip for the
+    resend (ruling SK-4, net-soak's `typical-11s6c0v-seed3117434416`;
+    `tests/play.rs`' `a_backlog_datagram_that_overtakes_its_predecessor_is_kept`).
   - Pace (`clock.rs`, `Pace`): local time to due ticks (minus ticks run,
     at most `MAX_CATCHUP` per `advance`), adjustable by ±1 % (re-anchored,
     so a change affects only later time) and shiftable by whole ticks (a

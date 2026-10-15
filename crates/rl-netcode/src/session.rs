@@ -89,6 +89,11 @@ pub const COPIES_MAX_RTT_MS: u32 = 100;
 /// echo (2.56 s at 100 Hz).
 const SENDS_KEPT: usize = 256;
 
+/// Client or spectator: the host's frame datagrams kept while they begin
+/// past what we know, each waiting for the one before it (ruling SK-4).
+/// A backlog of 6 s is 10 `MAX_FRAMES` datagrams.
+const AHEAD_KEPT: usize = 16;
+
 /// The input delay for a round trip (spec §3.2): `min(3, rtt_ms / 40)` ticks.
 pub fn input_delay(rtt_ms: u32) -> u8 {
     (rtt_ms / 40).min(3) as u8
@@ -468,6 +473,10 @@ pub struct Session<S: Simulation> {
     stats: Stats,
     /// Decoded frame values before they are applied.
     scratch: Vec<(u32, u8, u8)>,
+    /// Client or spectator: the host's frames that began past our
+    /// frontier, by `first` (at most [`AHEAD_KEPT`]): taken again once it
+    /// reaches them.
+    ahead: Vec<(PeerId, u32, Vec<Frame>)>,
     /// The sync checksums of our ticks.
     checks: Checks,
     /// The state floor: ticks below it count as confirmed for rollback and
@@ -571,6 +580,7 @@ impl<S: Simulation> Session<S> {
             events: Vec::new(),
             stats: Stats::default(),
             scratch: Vec::new(),
+            ahead: Vec::new(),
             checks: Checks::default(),
             floor: 0,
             restart_to: None,
@@ -1540,7 +1550,7 @@ impl<S: Simulation> Session<S> {
     }
 
     /// Client or spectator: the host's final inputs.
-    fn on_host_inputs(&mut self, from: PeerId, h: HostInputs, now_us: u64) {
+    fn on_host_inputs(&mut self, from: PeerId, mut h: HostInputs, now_us: u64) {
         let first = h.first;
         // Sent before the host had our state (a joined spectator's log
         // begins after it): its base is a tick we never learn, and every
@@ -1550,10 +1560,15 @@ impl<S: Simulation> Session<S> {
             self.on_stamp(from, h.stamp, now_us);
             return;
         }
+        let frontier = self.log.frontier();
         if !self.take_frames(from, first, &h.frames) {
             self.malformed(from);
             return;
         }
+        if first > frontier {
+            self.keep_ahead(from, first, mem::take(&mut h.frames));
+        }
+        self.take_ahead(from);
         self.on_stamp(from, h.stamp, now_us);
         if let Some(p) = self.peers.get_mut(&from) {
             p.ack = p.ack.max(h.your_ack);
@@ -1561,6 +1576,43 @@ impl<S: Simulation> Session<S> {
         // Suspended, the pace stands still: no margin is ours to steer by.
         if !self.suspended {
             self.sync(&h);
+        }
+    }
+
+    /// Client or spectator: keeps the host's frames for ticks `first..`,
+    /// which begin past our frontier, until it reaches them. The host's
+    /// backlog after an outage goes one `MAX_FRAMES` datagram a tick, each
+    /// beginning where the one before ends: one overtaking another (jitter)
+    /// found the slots' values before `first` unknown and took nothing, nor
+    /// did every later one, until the host's resend a round trip later; the
+    /// peer stalled at the prediction limit meanwhile (ruling SK-4,
+    /// net-soak's `typical-11s6c0v-seed3117434416`). The nearest
+    /// [`AHEAD_KEPT`] are kept, one per `first`.
+    fn keep_ahead(&mut self, from: PeerId, first: u32, frames: Vec<Frame>) {
+        if self.ahead.iter().any(|a| a.0 == from && a.1 == first) {
+            return;
+        }
+        let at = self.ahead.partition_point(|a| a.1 < first);
+        self.ahead.insert(at, (from, first, frames));
+        self.ahead.truncate(AHEAD_KEPT);
+    }
+
+    /// Client or spectator: takes the kept frames our frontier reached
+    /// (from `from`, the host; any other's are dropped), in order, and
+    /// drops those it passed.
+    fn take_ahead(&mut self, from: PeerId) {
+        loop {
+            let frontier = self.log.frontier();
+            let origin = self.log.origin();
+            self.ahead.retain(|a| {
+                let end = a.1.saturating_add(a.2.len() as u32);
+                a.0 == from && end > frontier && (a.1 == 0 || a.1 >= origin)
+            });
+            let Some(i) = self.ahead.iter().position(|a| a.1 <= frontier) else { return };
+            let (_, first, frames) = self.ahead.remove(i);
+            // Decoded once already (with the values before `first` it
+            // lacked then): it decodes again.
+            self.take_frames(from, first, &frames);
         }
     }
 

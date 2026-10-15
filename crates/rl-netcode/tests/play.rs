@@ -238,3 +238,22 @@ fn the_host_measures_each_peers_round_trip() {
     assert_eq!(p.host.stats().rtt_ms, Some(rtt), "the largest of one");
     assert_eq!(p.host.peer_rtt_ms(7), None, "not a peer");
 }
+
+/// Ruling SK-4 (net-soak's `typical-11s6c0v-seed3117434416`): a peer back
+/// from an outage gets its backlog one `MAX_FRAMES` datagram a tick, each
+/// chained to the one before (its frames start where that one's end). A
+/// datagram overtaking its predecessor (jitter) began past what the peer
+/// knew and was dropped, and so was every later one: the chain stood until
+/// the host's resend a round trip later, the peer stalled at the
+/// prediction limit meanwhile. A datagram ahead of what we know waits for
+/// the one before it.
+#[test]
+fn a_backlog_datagram_that_overtakes_its_predecessor_is_kept() {
+    let (mut c, _) = client();
+    c.receive(HOST, Channel::Unreliable, &frames(128, 64), 1_000_000);
+    c.receive(HOST, Channel::Unreliable, &frames(64, 64), 1_001_000);
+    assert_eq!(c.frontier(), 0, "nothing before tick 64 yet");
+    c.receive(HOST, Channel::Unreliable, &frames(0, 64), 1_002_000);
+    assert_eq!(c.frontier(), 192, "the overtaking datagrams follow the one they waited for");
+    assert_eq!(c.stats().malformed, 0);
+}
