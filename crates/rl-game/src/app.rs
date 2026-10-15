@@ -334,6 +334,8 @@ impl App {
     }
 
     fn net_step(&mut self, now: Instant) -> Vec<Outcome> {
+        // What is held as the poll latches (no input arrives meanwhile).
+        self.shell.set_held_keys(self.input.held());
         let (input, latency) = (&mut self.input, &mut self.latency);
         let mut keys = || {
             latency.latched();

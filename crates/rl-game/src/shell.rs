@@ -209,6 +209,8 @@ pub struct Shell {
     /// Tests only: each match's load takes this much longer
     /// (`test_slow_load`, feature `test-hooks`).
     slow_load: Option<Duration>,
+    /// The local player's keys held now (`set_held_keys`; all until told).
+    held_keys: Keys,
 }
 
 /// A change to an endpoint's ICE settings (tests: a loopback base, a
@@ -278,6 +280,7 @@ impl Shell {
             unmapping: Vec::new(),
             ice_hook: None,
             slow_load: None,
+            held_keys: Keys(u8::MAX),
         };
         shell.data.default_relays = DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect();
         shell.data.default_stun = DEFAULT_STUN.iter().map(|s| s.to_string()).collect();
@@ -336,6 +339,7 @@ impl Shell {
             unmapping: Vec::new(),
             ice_hook: None,
             slow_load: None,
+            held_keys: Keys(u8::MAX),
         }
     }
 

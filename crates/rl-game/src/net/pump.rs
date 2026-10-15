@@ -19,7 +19,7 @@
 //! so the pump checks it without the lock.
 //!
 //! **While the pump polls**, the local player presses the keys the UI last
-//! latched for [`PUMP_HOLD`] of the stall (a short stall plays as the
+//! latched and still held (a tap is not repeated) for [`PUMP_HOLD`] of the stall (a short stall plays as the
 //! frames would have), then nothing (a long drag does not keep firing); the
 //! input latch is the UI's, untouched; nothing is drawn (no `on_tick`), and
 //! the host's bots think inside the peer as always. Its events wait for
@@ -41,7 +41,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -126,6 +126,9 @@ struct Shared<P> {
     ui_polled: AtomicU64,
     /// The pump's poll panicked: it stopped (said at once, minor 4).
     dead: AtomicBool,
+    /// The local player's keys held now (`PeerHandle::set_held`; all of
+    /// them until told): what the pump may hold of the latched keys.
+    held: AtomicU8,
 }
 
 struct Inner<P> {
@@ -139,7 +142,8 @@ struct Inner<P> {
     ui_clock: Option<(Instant, Instant)>,
     /// The last time given to the peer: never earlier again.
     last_now: Option<Instant>,
-    /// The keys the UI's local player last latched (a tick of its polls).
+    /// The keys the UI's local player last latched (a tick of its polls)
+    /// and still held then.
     latched: Keys,
     /// The time of the pump's first poll since the UI's last: the stall's
     /// start, for [`PUMP_HOLD`].
@@ -196,18 +200,16 @@ fn thin(mut t: ConfirmedTick) -> Option<ConfirmedTick> {
 #[derive(Default)]
 struct Queue {
     events: VecDeque<OnlineEvent>,
-    /// The oldest `Confirmed` holds the thinned ticks (it stays the oldest
-    /// until the UI takes the queue).
-    thinned: bool,
     /// Events let go or thinned into another.
     lost: u64,
 }
 
 impl Queue {
-    /// `e` queued; when the queue is full, room made first: the second
-    /// oldest `Confirmed` thinned into the oldest (which holds the thinned
-    /// ticks, in order), else the oldest evictable event gone, else (only
-    /// control events and one `Confirmed`) the bound passed.
+    /// `e` queued; when the queue is full, room made first: the oldest two
+    /// neighbouring `Confirmed` with no control event between them (the
+    /// newest excepted) thinned into one, in order; else the oldest
+    /// evictable event gone; else (control events and `Confirmed` apart)
+    /// the bound passed.
     fn push(&mut self, e: OnlineEvent) {
         if self.events.len() >= PUMP_QUEUE && self.make_room() {
             self.lost += 1;
@@ -223,24 +225,28 @@ impl Queue {
 
     /// Every event, for the UI.
     fn take(&mut self) -> Vec<OnlineEvent> {
-        self.thinned = false;
         self.events.drain(..).collect()
     }
 
     fn make_room(&mut self) -> bool {
-        let mut confirmed = self
+        // Two neighbouring `Confirmed` with nothing but evictable events
+        // between them (never across a control event: a match's end, a
+        // start, a lost connection, re-review minor A), the newest never
+        // thinned: the later thinned into the earlier.
+        let confirmed: Vec<usize> = self
             .events
             .iter()
             .enumerate()
             .filter(|(_, e)| matches!(e, OnlineEvent::Confirmed(_)))
-            .map(|(i, _)| i);
-        if let (Some(first), Some(second)) = (confirmed.next(), confirmed.next()) {
+            .map(|(i, _)| i)
+            .collect();
+        let pairs = confirmed.windows(2).take(confirmed.len().saturating_sub(2));
+        let pair = pairs.map(|w| (w[0], w[1])).find(|&(a, b)| self.events.range(a + 1..b).all(evictable));
+        if let Some((first, second)) = pair {
             let Some(OnlineEvent::Confirmed(next)) = self.events.remove(second) else { return false };
             if let Some(OnlineEvent::Confirmed(acc)) = self.events.get_mut(first) {
-                if !self.thinned {
-                    *acc = std::mem::take(acc).into_iter().filter_map(thin).collect();
-                    self.thinned = true;
-                }
+                // Thinning is idempotent: an earlier merge's ticks stay.
+                *acc = std::mem::take(acc).into_iter().filter_map(thin).collect();
                 acc.extend(next.into_iter().filter_map(thin));
             }
             return true;
@@ -380,6 +386,7 @@ impl<P: Poll> PeerHandle<P> {
             epoch,
             ui_polled: AtomicU64::new(0),
             dead: AtomicBool::new(false),
+            held: AtomicU8::new(u8::MAX),
         };
         PeerHandle { pump: None, shared: Arc::new(shared) }
     }
@@ -447,11 +454,20 @@ impl<P: Poll> PeerHandle<P> {
             k
         };
         events.extend(inner.peer.poll(now, &mut keys, on_tick));
+        // The pump holds only the keys still down: a tap latched now
+        // (pressed and released since the last tick) is not repeated.
         if let Some(k) = latched {
-            inner.latched = k;
+            inner.latched = Keys(k.0 & self.shared.held.load(Ordering::Acquire));
         }
         self.shared.mark_ui(Instant::now());
         PolledEvents { events, pumped }
+    }
+
+    /// The local player's keys held now (the input's, not latched); a
+    /// key the UI latches that is not held is a tap, never held by the pump.
+    /// Set before each UI poll (the app: `InputState::held`).
+    pub fn set_held(&self, held: Keys) {
+        self.shared.held.store(held.0, Ordering::Release);
     }
 
     /// Anything else on the peer (lobby actions, state, stats, its
@@ -892,6 +908,54 @@ mod tests {
         });
         assert!(first_chat.is_some_and(|t| t > 1_000), "the oldest chat went: {first_chat:?}");
         assert_eq!(h.lost(), (6_000 + 36 - PUMP_QUEUE) as u64);
+    }
+
+    /// Re-review minor A: thinning merges only confirmed ticks with no
+    /// control event between them (never across a match's end, a start, a
+    /// lost connection), and never thins the newest `Confirmed`.
+    #[test]
+    fn thinning_never_crosses_a_control_event() {
+        // A short first match, then a long one: thinning reaches the
+        // boundary early.
+        let mut batch: Vec<OnlineEvent> = (0..100).map(confirmed).collect();
+        batch.push(OnlineEvent::Kicked { banned: false });
+        batch.extend((0..5_000).map(confirmed));
+        let (f, _, _) = fake(Duration::ZERO, batch);
+        let h = PeerHandle::pumped(f);
+        until_pumped(&h, 1);
+        let p = ui_poll(&h);
+        assert!(p.events.len() <= PUMP_QUEUE + 1, "{}", p.events.len());
+        let at =
+            p.events.iter().position(|e| matches!(e, OnlineEvent::Kicked { .. })).expect("the control event");
+        let kills = |ticks: &[&ConfirmedTick]| {
+            ticks.iter().filter(|t| t.events.iter().any(|e| matches!(e.kind, EventKind::Kill { .. }))).count()
+        };
+        for (side, events, want) in [("before", &p.events[..at], 5), ("after", &p.events[at + 1..], 250)] {
+            let ticks = confirmed_ticks(events);
+            assert!(ticks.windows(2).all(|w| w[0].tick < w[1].tick), "{side} the boundary: in order");
+            assert_eq!(kills(&ticks), want, "{side} the boundary: its own kills, all of them");
+        }
+        let last = p.events.iter().rev().find_map(|e| match e {
+            OnlineEvent::Confirmed(c) => c.last(),
+            _ => None,
+        });
+        assert!(last.is_some_and(|t| t.tick == 4_999 && t.positions.len() == 1), "the newest whole");
+    }
+
+    /// Re-review minor B: the pump holds only the latched keys still held
+    /// when they were latched (`PeerHandle::set_held`): a tap latched
+    /// just before a stall is not repeated.
+    #[test]
+    fn the_pump_holds_only_keys_still_down() {
+        let (f, log, _) = fake(Duration::ZERO, Vec::new());
+        let h = PeerHandle::pumped(f);
+        h.set_held(Keys(Keys::RIGHT));
+        ui_poll_with(&h, Keys(Keys::FIRE | Keys::RIGHT));
+        let from = log.lock().unwrap().len();
+        std::thread::sleep(PUMP_AFTER + Duration::from_millis(100));
+        let polls: Vec<Polled> = log.lock().unwrap()[from..].to_vec();
+        assert!(polls.len() >= 3, "the pump polled");
+        assert!(polls.iter().all(|p| p.keys == Keys(Keys::RIGHT)), "only Right is held: {polls:?}");
     }
 
     /// Minor 6: `with_pumped` takes the pump's mark, so a frame that

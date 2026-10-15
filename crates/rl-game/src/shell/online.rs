@@ -180,6 +180,13 @@ impl Shell {
         self.handle().map_or(0, PeerHandle::pump_polls)
     }
 
+    /// The local player's keys held now (the app's input, before each
+    /// network frame): the pump holds only these of the keys last latched
+    /// (`PeerHandle::set_held`).
+    pub fn set_held_keys(&mut self, held: Keys) {
+        self.held_keys = held;
+    }
+
     /// Whether the online game's peer has a running network pump.
     pub fn pumped(&self) -> bool {
         self.handle().is_some_and(PeerHandle::is_pumped)
@@ -630,6 +637,9 @@ impl Shell {
             return out;
         }
         let held = self.paused || self.ui.screen() != Screen::InGame || self.data.ingame_chat.is_some();
+        if let Some(h) = self.handle() {
+            h.set_held(self.held_keys);
+        }
         let mut none = || Keys(0);
         let keys: &mut dyn FnMut() -> Keys = if held { &mut none } else { keys };
         let polled = match &mut self.play {

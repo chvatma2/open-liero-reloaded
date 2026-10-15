@@ -1084,3 +1084,51 @@ fn frames_every_30_ms_play_as_before() {
 fn frames_every_45_ms_play_as_before() {
     slow_frames_play_as_before(Duration::from_millis(45));
 }
+
+/// Re-review minor B: a Fire tapped (pressed and released) right before
+/// the host's frames stop is not repeated by its pump, while the Right it
+/// still holds is: through the app's frames, the host's final inputs show
+/// Fire on one tick at most around the stop, Right on every one.
+#[test]
+fn a_tap_before_a_stall_is_not_repeated() {
+    let Some(dir) = content_dir() else { return };
+    let (mut h, mut c) = host_and_client(&dir, 0.2, None);
+    start_match(&mut h, &mut c);
+    let (mut host, mut client) = (app_of(h), app_of(c));
+    host.press(Action::Right, true);
+    let mut seen: [BTreeMap<u32, Vec<Score>>; 2] = Default::default();
+    both_frames([&mut host, &mut client], &mut seen, Duration::from_millis(500));
+    let current =
+        |a: &App| a.shell().with_peer(|p| p.match_session().map(|s| s.current_tick())).flatten().unwrap();
+    let from = current(&host);
+    // The tap, latched by the host's last frame before the stop.
+    host.press(Action::Shoot, true);
+    host.press(Action::Shoot, false);
+    std::thread::sleep(Duration::from_millis(15));
+    app_frame(&mut host);
+    let stopped = Instant::now();
+    // Within `PUMP_AFTER + PUMP_HOLD`: the pump holds what is held.
+    while stopped.elapsed() < Duration::from_millis(300) {
+        app_frame(&mut client);
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    assert!(host.shell().pump_polls() > 10, "the host's pump played the stall");
+    let to = current(&host);
+    assert!(to > from + 20, "ticks ran during the stop: {from} to {to}");
+    both_frames([&mut host, &mut client], &mut seen, Duration::from_millis(500));
+    let rows = host
+        .shell()
+        .with_peer(|p| {
+            let log = p.match_session()?.input_log();
+            Some((from..to).map(|t| log.get(t, 0)).collect::<Vec<_>>())
+        })
+        .flatten()
+        .unwrap();
+    let mut fired = 0;
+    for (t, k) in (from..to).zip(rows) {
+        let k = k.unwrap_or_else(|| panic!("tick {t}: the host's final input is kept"));
+        assert!(k & Keys::RIGHT != 0, "tick {t}: the held Right {k:#04x}");
+        fired += usize::from(k & Keys::FIRE != 0);
+    }
+    assert!((1..=1).contains(&fired), "the tap fired on {fired} ticks");
+}

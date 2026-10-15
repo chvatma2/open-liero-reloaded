@@ -281,8 +281,11 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   a long match load no longer silences the peer, while a slow frame (any
   above 10 fps) is no stall and plays exactly as before (PU-1:
   `frames_every_30_ms_play_as_before`, `..._45_ms_...`). Meanwhile the
-  local player presses the keys the UI last latched (`PeerHandle::poll`
-  keeps the last its `local_keys` gave) for `PUMP_HOLD` (250 ms) of the
+  local player presses the keys the UI last latched and still held then
+  (`PeerHandle::poll` keeps the last its `local_keys` gave, masked by
+  `PeerHandle::set_held`: `App::net_step` gives `InputState::held` through
+  `Shell::set_held_keys` before each network frame, so a tap is not
+  repeated) for `PUMP_HOLD` (250 ms) of the
   stall, then `Keys(0)` (a long drag does not keep firing); the input
   latch is untouched, nothing is drawn, the host's bots think inside the
   peer; its events wait for the UI's next poll, except the presentation's
@@ -290,8 +293,10 @@ cargo run --release -p rl-game -- --net-sim typical                   # feel a n
   `PolledEvents::pumped` (the newest pumped tick) starts the presentation
   again as after a loaded state (`OnlineDriver::resyncs` counts it; never
   once the session froze its ended world). At most `PUMP_QUEUE` (4 096)
-  events wait: beyond it the second oldest `Confirmed` is thinned into the
-  oldest (only the ticks with a kill, spawn, message or the end, without
+  events wait: beyond it the oldest two neighbouring `Confirmed` with no
+  control event between them (never across a match's end or start; the
+  newest never thinned) are thinned into one (only the ticks with a kill,
+  spawn, message or the end, without
   damage or positions; scores only with the end), so the HUD's log, the
   tally's kills and the results survive a stall of any length (bound:
   the exit summary's match time misses the thinned ticks, and their damage
@@ -741,8 +746,11 @@ holds it, no pump poll, no resync; RED at the old 20 ms); `net/pump.rs`'
 unit tests on a fake peer (a `Poll`): the pump stands back while the UI
 polls every 5, 30 and 45 ms and polls about every 10 ms once it stops,
 each at least `PUMP_AFTER` after the UI's; it presses the last latched
-keys for `PUMP_HOLD`, then none; the queue's bound (confirmed ticks
-thinned first, every kill and chat kept); control events never let go;
+keys for `PUMP_HOLD`, then none, and only those still held; the queue's
+bound (confirmed ticks thinned first, every kill and chat kept, never
+across a control event); control events never let go;
+`a_tap_before_a_stall_is_not_repeated` (app path: a Fire tapped before
+the host's frames stop shows on one tick, the held Right on all);
 `with_pumped` takes the mark; a panicking pump poll said at once; the
 UI's poll starts as the pump's in flight ends; stopping joins within
 100 ms and gives the peer back; a nested lock panics, through another
