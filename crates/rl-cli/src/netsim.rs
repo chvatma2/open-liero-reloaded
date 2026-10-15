@@ -518,7 +518,7 @@ fn host_tick_at(spec: &NetSpec, r: &Report, outage_tick: u32) -> u32 {
 fn excused_windows(spec: &NetSpec, r: &Report) -> Vec<Window> {
     let mut windows: Vec<Window> =
         migration_windows(spec, r).into_iter().map(|ticks| Window { ticks, peer: None }).collect();
-    for &(peer, from, until) in &spec.outages {
+    for (peer, from, until) in merged_outages(&spec.outages) {
         if (1..=PeerId::from(spec.clients)).contains(&peer) {
             let (from, until) = (host_tick_at(spec, r, from), host_tick_at(spec, r, until));
             // SK-2: past its end, the peer's recovery on its slowest link.
@@ -532,6 +532,23 @@ fn excused_windows(spec: &NetSpec, r: &Report) -> Vec<Window> {
         }
     }
     windows
+}
+
+/// Each peer's outages with the overlapping ones joined: the network cuts
+/// a link in several at once until the last is over (rl-netcode's
+/// `Link::outage_end`), so their stalls are one outage's (SK-4, net-soak's
+/// `typical-8s4c0v-seed2732616080`). By peer, then start.
+fn merged_outages(outages: &[(PeerId, u32, u32)]) -> Vec<(PeerId, u32, u32)> {
+    let mut sorted = outages.to_vec();
+    sorted.sort_unstable();
+    let mut out: Vec<(PeerId, u32, u32)> = Vec::new();
+    for (peer, from, until) in sorted {
+        match out.last_mut() {
+            Some(last) if last.0 == peer && from <= last.2 => last.2 = last.2.max(until),
+            _ => out.push((peer, from, until)),
+        }
+    }
+    out
 }
 
 /// The slowest link (ping plus jitter) `peer` has in the run: the spec's
@@ -1046,6 +1063,28 @@ mod tests {
         // An outage of a peer that is not in the match excuses nothing.
         let ghost = NetSpec { outages: vec![(7, from, until)], ..spec() };
         assert!(judge(&ghost, &[(1, 200, Some(210))], false).is_err());
+    }
+
+    /// A peer's overlapping outages cut its link until the last is over
+    /// (the network chains them): one window from the first's start to the
+    /// recovery after the whole, not one per outage (net-soak's
+    /// `typical-8s4c0v-seed2732616080`: 796-1169 and 970-1345, a stall from
+    /// 819 to 1359 was in neither window alone).
+    #[test]
+    fn overlapping_outages_of_a_peer_excuse_as_one() {
+        let s = NetSpec { outages: vec![(1, 300, 500), (1, 150, 400), (1, 600, 650)], ..spec() };
+        let judge = |stalls: &[(PeerId, u32, Option<u32>)]| {
+            let e: Vec<StallEpisode> =
+                stalls.iter().map(|&(peer, tick, ended)| StallEpisode { peer, tick, ended }).collect();
+            stalls_within_windows(&s, &empty_report(), &e)
+        };
+        let end = 500 + Profile::TYPICAL.outage_recovery_ticks(500 - 150, CLIENT_FRAME_US);
+        assert!(judge(&[(1, 150 - MAX_PREDICTION, Some(end))]).is_ok());
+        assert!(judge(&[(1, 160, Some(end + 1))]).is_err(), "past the whole's recovery");
+        // One that begins after the whole's end is its own.
+        let next = 650 + Profile::TYPICAL.outage_recovery_ticks(50, CLIENT_FRAME_US).max(MAX_PREDICTION);
+        assert!(judge(&[(1, 600, Some(next))]).is_ok());
+        assert!(judge(&[(1, 160, Some(next))]).is_err(), "two outages apart are two windows");
     }
 
     /// N66: on a typical link a migration of more than 3 s fails, unless

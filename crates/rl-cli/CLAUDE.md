@@ -129,6 +129,9 @@ The headless command-line tool. Its commands:
   from the departure (the exit's tick or the freeze's start) less
   `MAX_PREDICTION` to the resume tick plus `MAX_PREDICTION`, excusing every
   player; or an outage's, `from - MAX_PREDICTION ..= until + recovery`
+  (a peer's overlapping outages joined first, `merged_outages`: the
+  network cuts the link until the last is over; SK-4's
+  `typical-8s4c0v-seed2732616080`)
   (SK-2: `Profile::outage_recovery_ticks` of the outage on the peer's
   slowest link, `slowest_profile`, with `CLIENT_FRAME_US`, at least
   `MAX_PREDICTION`) excusing only the peer it cuts off (everyone's while that peer is the
