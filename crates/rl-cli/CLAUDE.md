@@ -120,8 +120,11 @@ The headless command-line tool. Its commands:
   verdict (`judge`) runs the harness's without `expect_no_stalls` and then
   judges every stall episode of the host and the clients (not dropped) as
   `StallTracker` (an observer beside the bundle recorder) saw it: its start
-  (`Event::Stalled`'s tick) and its end, the furthest host tick reached when
-  the player ran a tick again. An episode must begin and end inside one
+  (`Event::Stalled`'s tick) and its end, the current host's tick when the
+  player ran a tick again (the first host's, from each resume the new
+  host's: not the furthest any host reached, since an old host cut off
+  from its peers plays on ahead, left behind; soak case
+  `lan-10s1c0v-seed3202236798`). An episode must begin and end inside one
   excused window (`excused_windows`, `stalls_within_windows`): a migration's,
   from the departure (the exit's tick or the freeze's start) less
   `MAX_PREDICTION` to the resume tick plus `MAX_PREDICTION`, excusing every

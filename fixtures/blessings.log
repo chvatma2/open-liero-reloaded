@@ -80,3 +80,5 @@
   fixtures/net/cases/net-classic-fossilfacility-lan-8s2c2v-seed4012509351-c75e0f24.ron
 2026-10-15 bless-regression: SK-2: a player cut off on typical stalled past the outage while its backlog came one datagram a round trip
   fixtures/net/cases/net-classic-fossilfacility-typical-4s4c2v-seed1641548929-585e3eb2.ron
+2026-10-15 bless-regression: net-sim's stall clock followed a left-behind old host, not the current one
+  fixtures/net/cases/net-classic-liero-factory-lan-10s1c0v-seed3202236798-7b5a787d.ron

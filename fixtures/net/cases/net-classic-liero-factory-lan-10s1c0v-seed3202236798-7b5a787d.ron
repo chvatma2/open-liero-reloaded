@@ -1,0 +1,30 @@
+(
+    spec: (
+        mod_id: "olx-classic",
+        level_id: "olx-level-liero-factory",
+        seed: 3202236798,
+        slots: 10,
+        clients: 1,
+        spectators: 0,
+        join_tick: None,
+        profile: "lan",
+        drift_ppm: 0,
+        ticks: 2047,
+        outages: [
+            (1, 491, 804),
+            (1, 907, 1264),
+        ],
+        net_seed: 8011757476106399759,
+        difficulty: Some("xtreme"),
+        faults: [],
+        exits: [
+            (0, 699, "leave"),
+        ],
+        host_freeze: None,
+        profile_changes: [
+            (706, 1, "lan"),
+        ],
+        migration: false,
+    ),
+    failure: Some("player peer 1 stalled until host tick 693, past its window\'s end plus MAX_PREDICTION (658) at tick 518"),
+)

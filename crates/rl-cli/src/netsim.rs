@@ -688,8 +688,13 @@ impl harness::Observer<WorldSim> for BundleRecorder<'_> {
 /// the event marks only its start).
 #[derive(Default)]
 struct StallTracker {
-    /// The furthest tick a host (old or new) reached so far.
+    /// The current host's tick: the first host's, then from each
+    /// migration's resume the new host's. Not the furthest any host
+    /// reached: an old host cut off from its peers plays on alone, ahead
+    /// of the match (left behind), and would end every episode late.
     clock: u32,
+    /// The current host: the first, then whoever resumed a migration.
+    host: PeerId,
     episodes: Vec<StallEpisode>,
     /// Each peer's episode still running.
     open: BTreeMap<PeerId, usize>,
@@ -702,7 +707,13 @@ impl StallTracker {
 }
 
 impl harness::Observer<WorldSim> for StallTracker {
-    fn on_event(&mut self, peer: PeerId, event: &Event, _session: &mut Session<WorldSim>) {
+    fn on_event(&mut self, peer: PeerId, event: &Event, session: &mut Session<WorldSim>) {
+        if let Event::Resumed { .. } = *event
+            && session.is_host()
+        {
+            self.host = peer;
+            self.clock = session.current_tick();
+        }
         if let Event::Stalled { tick } = *event {
             if let Some(i) = self.open.remove(&peer) {
                 self.episodes[i].ended = Some(self.clock);
@@ -713,8 +724,8 @@ impl harness::Observer<WorldSim> for StallTracker {
     }
 
     fn on_frame(&mut self, peer: PeerId, session: &mut Session<WorldSim>) {
-        if session.is_host() {
-            self.clock = self.clock.max(session.current_tick());
+        if peer == self.host {
+            self.clock = session.current_tick();
         }
         if let Some(&i) = self.open.get(&peer)
             && session.current_tick() > self.episodes[i].tick
