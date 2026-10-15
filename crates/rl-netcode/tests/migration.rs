@@ -469,18 +469,21 @@ fn a_spectator_reports_or_takes_over() {
     }
 }
 
-/// Remembers every key its peer pressed: `(tick, slot)` → key.
+/// Remembers every key its peer pressed: `(tick, slot)` → key, and the
+/// tick being simulated when it was pressed (`at`).
 struct Recording {
     inner: Box<dyn Driver<ToySim>>,
     pressed: std::rc::Rc<std::cell::RefCell<BTreeMap<(u32, u8), u8>>>,
+    at: std::rc::Rc<std::cell::RefCell<BTreeMap<(u32, u8), u32>>>,
 }
 
 impl Driver<ToySim> for Recording {
     fn local_inputs(&mut self, sim: &ToySim, tick: u32, slots: &[u8], out: &mut [Keys]) {
         self.inner.local_inputs(sim, tick, slots, out);
-        let mut pressed = self.pressed.borrow_mut();
+        let (mut pressed, mut at) = (self.pressed.borrow_mut(), self.at.borrow_mut());
         for (&s, k) in slots.iter().zip(out.iter()) {
             pressed.insert((tick, s), k.0);
+            at.insert((tick, s), sim.tick_count());
         }
     }
 }
@@ -488,9 +491,10 @@ impl Driver<ToySim> for Recording {
 #[test]
 fn the_resume_fills_bots_with_their_last_keys_and_its_own_slot_with_its_pressed_keys() {
     let mut m = Mesh::new(30, 12);
-    let pressed = std::rc::Rc::default();
+    let (pressed, at) = (std::rc::Rc::default(), std::rc::Rc::default());
     let inner = m.d.remove(&A).unwrap();
-    m.d.insert(A, Box::new(Recording { inner, pressed: std::rc::Rc::clone(&pressed) }));
+    let recording = Recording { inner, pressed: std::rc::Rc::clone(&pressed), at: std::rc::Rc::clone(&at) };
+    m.d.insert(A, Box::new(recording));
     m.run_ms(4_000);
     m.alive.insert(H, false);
     m.until(2_500, "silence", |m| m.first(B, |e| *e == Event::HostSilent).is_some());
@@ -501,10 +505,62 @@ fn the_resume_fills_bots_with_their_last_keys_and_its_own_slot_with_its_pressed_
     assert!(known[1] + 10 < r && known[2] + 10 < r, "ticks to fill: {known:?} below {r}");
     let last = m.s[&A].final_input(known[1] - 1, 1);
     assert!((known[1]..r).all(|t| m.s[&A].final_input(t, 1) == last), "the bot holds its keys");
-    let pressed = pressed.borrow();
     for t in known[2]..r {
-        assert_eq!(m.s[&A].final_input(t, 2).map(|k| k.0), pressed.get(&(t, 2)).copied(), "tick {t}");
+        assert_eq!(
+            m.s[&A].final_input(t, 2).map(|k| k.0),
+            pressed.borrow().get(&(t, 2)).copied(),
+            "tick {t}"
+        );
     }
+    // After the resume its own slot keeps the match's input delay (N2): the
+    // keys pressed for a tick, `d` ticks ahead, are its final input.
+    m.run_ms(2_000);
+    let upto = m.s[&A].frontier();
+    assert!(upto > r + 150, "the match went on: {upto} past {r}");
+    let pressed = pressed.borrow();
+    let finals: Vec<Option<u8>> = (r..upto).map(|t| m.s[&A].final_input(t, 2).map(|k| k.0)).collect();
+    let keys: Vec<Option<u8>> = (r..upto).map(|t| pressed.get(&(t, 2)).copied()).collect();
+    assert_eq!(finals, keys, "ticks {r}..{upto}");
+    assert!(keys.windows(2).any(|w| w[0] != w[1]), "its keys change");
+    let d = m.s[&A].config().input_delay as u32;
+    assert!(d > 0);
+    let at = at.borrow();
+    assert!((r + d..upto).all(|t| at.get(&(t, 2)) == Some(&(t - d))), "pressed {d} ticks ahead");
+}
+
+#[test]
+fn a_report_after_the_resume_is_taken() {
+    let mut m = Mesh::new(30, 15);
+    m.run_ms(4_000);
+    m.alive.insert(H, false);
+    m.until(2_500, "silence", |m| m.first(B, |e| *e == Event::HostSilent).is_some());
+    m.migrate_to_a();
+    // A resumes before B's report: it arrives late, own inputs and all.
+    let us = m.now_ms * 1000;
+    m.s.get_mut(&A).unwrap().resume(us);
+    assert_eq!(m.s[&A].awaiting_reports(), vec![B]);
+    let from = m.s[&A].input_log().known_upto(3);
+    let own = vec![0x21, 0x22, 0x23];
+    let report = InputsReport { ack: 0, first: 0, frames: vec![], own_first: from, own: own.clone() };
+    m.s.get_mut(&A).unwrap().receive(B, Channel::Reliable, &encode_control(&Control::Report(report)), us);
+    assert!(m.s[&A].awaiting_reports().is_empty());
+    let got: Vec<Option<Keys>> = (from..from + 3).map(|t| m.s[&A].final_input(t, 3)).collect();
+    assert_eq!(
+        got,
+        own.into_iter().map(|k| Some(Keys(k))).collect::<Vec<_>>(),
+        "they extend B's slot at once"
+    );
+}
+
+#[test]
+fn a_silent_hosts_bye_is_no_return() {
+    let mut m = Mesh::new(10, 16);
+    m.run_ms(1_000);
+    m.alive.insert(H, false);
+    m.until(2_500, "silence", |m| m.first(A, |e| *e == Event::HostSilent).is_some());
+    let us = m.now_ms * 1000;
+    m.s.get_mut(&A).unwrap().receive(H, Channel::Reliable, &encode_control(&Control::Bye), us);
+    assert_eq!(m.s.get_mut(&A).unwrap().drain_events(), vec![Event::PeerLeft { peer: H }]);
 }
 
 #[test]

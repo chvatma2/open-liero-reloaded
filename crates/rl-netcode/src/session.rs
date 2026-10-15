@@ -156,7 +156,9 @@ pub struct TickInfo {
 /// every tick simulated.
 pub trait Driver<S> {
     /// The keys of the local `slots` (`out[i]` for `slots[i]`) for `tick`,
-    /// from the state before the tick being simulated. Called once per new tick.
+    /// from the state before the tick being simulated. Called once per new
+    /// tick; twice at a host that took over a migration (decision N2): its
+    /// own slot alone for `tick + input_delay`, then the bots for `tick`.
     fn local_inputs(&mut self, sim: &S, tick: u32, slots: &[u8], out: &mut [Keys]);
     fn simulated(&mut self, _sim: &S, _info: TickInfo) {}
 }
@@ -215,8 +217,9 @@ pub enum Event {
     /// [`HOST_SILENT_US`](crate::migration::HOST_SILENT_US) while this peer
     /// kept advancing (once per silence; spec §3.7).
     HostSilent,
-    /// Client or spectator: its host spoke again after `HostSilent` (before
-    /// any [`Session::rehost`]).
+    /// Client or spectator: a datagram from its host after `HostSilent`
+    /// (before any [`Session::rehost`]); a reliable message, such as its
+    /// `Bye` (`PeerLeft`), is none.
     HostHeard,
     /// The timeline resumed after a migration at `tick` (the new host's
     /// [`Session::resume`]; a client's `Control::Resume`).
@@ -1279,8 +1282,9 @@ impl<S: Simulation> Session<S> {
             Some(p) if !p.lost => {
                 p.heard_us = now_us;
                 p.timed_out = false;
-                // Only a client's or spectator's host is ever `silent`.
-                if mem::take(&mut p.silent) {
+                // Only a client's or spectator's host is ever `silent`; it
+                // is heard again by a datagram (its `Bye` is no return).
+                if ch == Channel::Unreliable && mem::take(&mut p.silent) {
                     self.events.push(Event::HostHeard);
                 }
             }

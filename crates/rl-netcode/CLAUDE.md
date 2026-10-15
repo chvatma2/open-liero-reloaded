@@ -167,9 +167,10 @@ model that tests it in one process (spec §9.1).
   - Silence: a client or spectator pushes `Event::HostSilent` once when its
     host sent nothing for `HOST_SILENT_US` (2 s), counted only over time it
     advanced (a gap over 1 s between two of its own `advance` calls restarts
-    the clock: its own sleep is not its host's silence); a message from the
-    host after it is `Event::HostHeard` (once). A host's `Bye` stays
-    `PeerLeft`.
+    the clock: its own sleep is not its host's silence); a datagram from the
+    host after it is `Event::HostHeard` (once). A reliable message is no
+    return: a silent host's `Bye` is `PeerLeft` alone (a driver acting on
+    `HostHeard` never unsuspends toward a leaving host).
   - `suspend()`: `advance` runs no new tick, queues no frames and never
     stalls; it still re-simulates an owed rollback or loaded state,
     confirms and sends checksums, and sends a frame-less keepalive
@@ -192,7 +193,7 @@ model that tests it in one process (spec §9.1).
     local slots are its own slot (if a player; it keeps the match's input
     delay, N2: its keys go `d` ticks ahead to `own` and are final when
     simulated, so the driver is called twice a tick, own slot at `t + d`,
-    bots at `t`) and the bots; every other slot is awaited. Nothing is
+    bots at `t`, as `Driver::local_inputs` says) and the bots; every other slot is awaited. Nothing is
     filled until the resume. `rejoined(peer, seat, now)` (false after the
     resume, for a seat out of range or held, or a peer already back) sends
     `Collect` with our `known_upto`s; `awaiting_reports()` lists rejoined
@@ -204,7 +205,10 @@ model that tests it in one process (spec §9.1).
     against them) or starts below our log's origin is `Malformed`, takes
     nothing and ends the wait for it. A report from a peer not rejoined, or
     a second one, changes nothing; one after the resume is taken the same
-    way (its own inputs at once).
+    way (its own inputs at once). Trust bound (N67): a rejoined, key-proven
+    member's report sets final values for any slot it names, every tick
+    the new host lacks up to `current + MAX_AHEAD`; an honest one never
+    reaches past the old host's horizon.
   - `resume(now)` (once) returns R, our current tick: reported own inputs
     extend their slots, then bot slots below R get their previous final
     value and our own slot our pressed keys; awaited slots nobody took are
