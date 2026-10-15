@@ -88,3 +88,5 @@
   fixtures/net/cases/net-mw-1-0-castlestrike-bad-16s4c0v-seed3660989505-19263fa4.ron
 2026-10-15 bless-regression: a host-lost player's last stall episode never ends: not the match's stall
   fixtures/net/cases/net-mw-1-0-liero-factory-good-5s4c2v-seed1973712135-ba4ff09f.ron
+2026-10-15 bless-regression: SK-4: a client cut off 2 s on bad (migration on) unsuspended at its stale tick; its slot's fills stalled the other players past the outage's recovery
+  fixtures/net/cases/net-mw-1-0-liero-factory-bad-13s4c1v-seed2917608641-0454e791.ron

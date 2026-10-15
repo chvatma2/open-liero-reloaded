@@ -1,0 +1,28 @@
+(
+    spec: (
+        mod_id: "olx-mw-1-0",
+        level_id: "olx-level-liero-factory",
+        seed: 2917608641,
+        slots: 13,
+        clients: 4,
+        spectators: 1,
+        join_tick: None,
+        profile: "bad",
+        drift_ppm: 500,
+        ticks: 3840,
+        outages: [
+            (4, 1320, 1520),
+            (4, 2932, 3483),
+        ],
+        net_seed: 10910099076084583286,
+        difficulty: None,
+        faults: [],
+        exits: [
+            (0, 1800, "crash"),
+        ],
+        host_freeze: None,
+        profile_changes: [],
+        migration: false,
+    ),
+    failure: Some("player peer 4 stalled at tick 1586"),
+)
