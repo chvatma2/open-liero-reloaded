@@ -14,7 +14,7 @@ fn worms(n: i32) -> Vec<Worm> {
 }
 
 fn row(worm: i32, score: i32, lives: i32, damage: f32) -> Score {
-    Score { worm, score, lives, kills: score, deaths: 0, suicides: 0, damage }
+    Score { worm, score, lives, kills: score, deaths: 0, suicides: 0, damage, left: false }
 }
 
 fn said(s: &Said) -> Vec<Message> {
@@ -116,4 +116,22 @@ fn check_order_like_olx() {
     let mut w = worms(2);
     w[0].kills = 1000;
     assert!(off.check(&w, &s, u64::MAX).is_none());
+}
+
+/// `CGameMode::Drop`: the worm's runs start over.
+#[test]
+fn drop_resets_the_runs_like_olx() {
+    let s = SimSettings::lx56();
+    let w = worms(3);
+    let mut dm = Deathmatch::new(DeathmatchSettings::default());
+    dm.kill(&w, &s, 1, 0);
+    dm.kill(&w, &s, 2, 0);
+    dm.kill(&w, &s, 0, 2);
+    assert_eq!((dm.kills_in_row[0], dm.deaths_in_row[0]), (0, 1));
+    assert_eq!(dm.kills_in_row[2], 1);
+    dm.drop_worm(2);
+    dm.drop_worm(0);
+    assert_eq!((dm.kills_in_row[2], dm.deaths_in_row[0]), (0, 0));
+    dm.drop_worm(-1);
+    dm.drop_worm(99); // out of range: nothing
 }

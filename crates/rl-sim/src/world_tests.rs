@@ -296,3 +296,59 @@ fn find_spot_draws_a_position_without_rock() {
     assert!((103..117).contains(&x) && (53..67).contains(&y), "({x}, {y})");
     assert!(w.mt_calls() >= 2 && w.rand_calls() == 0, "two FindSpot draws per try");
 }
+
+/// N82: a withdrawn worm is out of play for good, its slot still its own,
+/// and the mask itself is hashed: a twin made dead and `WRM_OUT` by hand,
+/// without the mask, differs only by it.
+#[test]
+fn a_withdrawn_worm_is_out_for_good() {
+    let mut w = world(Material::Background);
+    w.spawn_worm(60, 20);
+    w.spawn_worm(140, 20);
+    for _ in 0..20 {
+        w.tick_new(&[Keys(0), Keys(0)]);
+    }
+    let mut by_hand = w.clone();
+    {
+        let g = &mut by_hand.worms[1];
+        g.alive = false;
+        g.lives = crate::damage::WRM_OUT;
+        g.can_respawn_now = false;
+        g.respawn_requested = false;
+        g.state = Default::default();
+        g.rope.clear();
+        by_hand.latches[1] = Latches::default();
+    }
+    w.withdraw(1);
+    assert_eq!(w.gone(), 0b10);
+    assert_eq!((by_hand.gone(), &by_hand.worms()[1]), (0, &w.worms()[1]), "the same worm");
+    assert_ne!(w.checksum(), by_hand.checksum(), "the mask is hashed once set");
+    assert_eq!(w.worms().len(), 2, "worm 1 is still slot 1");
+    w.withdraw(1);
+    w.withdraw(7);
+    assert_eq!(w.gone(), 0b10, "again, or no such worm: nothing");
+    // Pressing jump never respawns it.
+    for _ in 0..2_000 {
+        w.tick_new(&[Keys(0), Keys(Keys::JUMP)]);
+    }
+    assert!(!w.worms()[1].alive);
+}
+
+/// N84: a kill credited to a worm that left credits nobody.
+#[test]
+fn a_gone_worms_kill_credits_nobody() {
+    let terrain = Terrain::from_grid(&MaterialGrid::new(200, 200, Material::Background));
+    let s = SimSettings { olx_quirks: false, ..SimSettings::lx56() };
+    let mut w = World::test_new(s, test_mod(), terrain, holes(), AbsTime(0), 1);
+    w.spawn_worm(60, 20);
+    w.spawn_worm(140, 20);
+    w.tick_new(&[Keys(0), Keys(0)]);
+    // Worm 0's damage left worm 1 at exactly 0 health: it dies at the next
+    // frame's start, credited to its last damager (play, spec §18 D9).
+    w.worms[1].health = 0.0;
+    w.worms[1].last_damager = 0;
+    w.withdraw(0);
+    w.tick_new(&[Keys(0), Keys(0)]);
+    assert!(!w.worms()[1].alive, "worm 1 died");
+    assert_eq!(w.worms()[0].kills, 0, "nobody is credited");
+}

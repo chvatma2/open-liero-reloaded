@@ -304,3 +304,38 @@ fn resume_refuses_rules_that_disagree_with_the_settings() {
     let nan = DeathmatchSettings { time_limit: f32::NAN, ..rules };
     assert!(matches!(Deathmatch::resume(nan, &s.settings), Err(DeathmatchError::TimeLimit(_))));
 }
+
+/// N84, N85, user decision 3: a withdrawn worm's row is a left one; with
+/// fewer than two worms not out the match ends at once and the last wins
+/// (`CGameMode::CheckGameOver`, `src/server/CGameMode.cpp:316-336`).
+#[test]
+fn a_withdrawn_worm_leaves_the_board_and_the_last_one_wins() {
+    let mut r = settled(dm(), &[(50, LASER), (200, LASER), (300, LASER)]);
+    r.w.withdraw(1);
+    r.idle(1);
+    let rows: Vec<(i32, bool)> = r.w.scores().iter().map(|s| (s.worm, s.left)).collect();
+    assert_eq!(rows.iter().filter(|r| r.1).collect::<Vec<_>>(), [&(1, true)]);
+    assert!(r.w.result().is_none(), "two worms play on");
+    r.w.withdraw(2);
+    r.idle(1);
+    assert_eq!(r.w.result(), Some(MatchResult { winner: 0, reason: EndReason::LastStanding }));
+}
+
+/// N84 (ruling PF12d-2): a projectile in flight when its worm leaves still
+/// explodes and kills, crediting nobody. A beam cannot show it: its shot is
+/// dropped when its worm is dead at delivery.
+#[test]
+fn a_projectile_of_a_worm_that_left_credits_nobody() {
+    // Worm 0 throws a bomb at its feet (the suicide layout of
+    // `deathmatch_game_over_and_winner_like_olx`); worm 1 stands in the
+    // blast (within 5 px: `CClient::Explosion`'s reach); worm 2 far away
+    // keeps two worms in the match.
+    let mut r = settled(dm(), &[(50, BOMB), (52, LASER), (300, LASER)]);
+    r.fire(&[0], 0);
+    r.idle_until(20, |w| w.projectiles().next().is_some()); // delivered: in flight
+    r.w.withdraw(0);
+    r.idle(200);
+    let kills: Vec<(i32, i32)> = r.kills().iter().map(|k| (k.1, k.2)).collect();
+    assert!(kills.contains(&(1, -1)), "the bomb killed worm 1, credited to nobody: {kills:?}");
+    assert_eq!(r.w.worms()[0].kills, 0);
+}

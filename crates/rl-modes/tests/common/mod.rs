@@ -178,6 +178,18 @@ impl Run {
         }
     }
 
+    /// Ticks with no keys until `pred` holds, at most `max` ticks; panics
+    /// if it never does.
+    pub fn idle_until(&mut self, max: u32, pred: impl Fn(&World) -> bool) {
+        for _ in 0..max {
+            if pred(&self.w) {
+                return;
+            }
+            self.tick(&[]);
+        }
+        assert!(pred(&self.w), "not within {max} ticks");
+    }
+
     /// Worms `who` press fire for one tick; then everyone waits `wait` ticks.
     pub fn fire(&mut self, who: &[usize], wait: u32) {
         let mut keys = vec![Keys(0); self.w.worms().len()];

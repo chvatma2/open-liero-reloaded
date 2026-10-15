@@ -8,6 +8,8 @@
 //! - `on_kill` inside `GameServer::killWorm`, in place of `CGameMode::Kill`;
 //! - `on_damage` at the end of `CClient::InjureWorm`'s health change;
 //! - `on_pickup` after `CWorm::GiveBonus` took a bonus;
+//! - `on_drop` when a worm leaves the match (`World::withdraw`), in place
+//!   of `CGameMode::Drop`;
 //! - `on_spawn` after a worm (re)spawned (`GameServer::SpawnWorm`, which asks
 //!   `CGameMode::Spawn` first; Deathmatch's always agrees);
 //! - `is_over` at the start of `GameServer::SimulateGame`
@@ -78,6 +80,13 @@ pub trait GameMode: fmt::Debug + Send + Sync {
     /// Once a tick, at the end of the server's frame.
     fn on_tick(&mut self, ctx: &mut ModeCtx) {
         let _ = ctx;
+    }
+
+    /// Worm `worm` left the match for good ([`World::withdraw`]), in place
+    /// of OLX's `CGameMode::Drop` (`src/server/CGameMode.cpp:254-263`).
+    /// It is dead and out of lives already.
+    fn on_drop(&mut self, worm: i32, ctx: &mut ModeCtx) {
+        let _ = (worm, ctx);
     }
 
     /// Whether the match is over, and how (`CGameMode::CheckGameOver` and
@@ -171,6 +180,9 @@ pub struct Score {
     pub suicides: i32,
     /// `fDamage`.
     pub damage: f32,
+    /// The worm left the match (`World::withdraw`): off the live
+    /// scoreboard, a "left" row in the results (decision N85).
+    pub left: bool,
 }
 
 /// A message's text, by an id the mode defines (such as "`<killer>` killed
@@ -277,6 +289,8 @@ pub struct ModeCtx<'a> {
     pub(crate) worms: &'a [Worm],
     pub(crate) settings: &'a SimSettings,
     pub(crate) now: AbsTime,
+    /// [`World::gone`].
+    pub(crate) gone: u32,
     pub(crate) commands: &'a mut Commands,
 }
 
@@ -293,6 +307,11 @@ impl ModeCtx<'_> {
     /// The frame clock (`GetPhysicsTime()`).
     pub fn time(&self) -> AbsTime {
         self.now
+    }
+
+    /// The worms withdrawn from the match, bit `i` for worm `i` ([`World::gone`]).
+    pub fn gone(&self) -> u32 {
+        self.gone
     }
 
     /// Spawns a worm with `setup`'s team and loadout, at its position or

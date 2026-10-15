@@ -258,7 +258,13 @@ impl World {
         let r = &mut self.referee;
         r.mode.on_spawn(
             id,
-            &mut ModeCtx { worms: &self.worms, settings: &self.settings, now, commands: &mut r.commands },
+            &mut ModeCtx {
+                worms: &self.worms,
+                settings: &self.settings,
+                now,
+                gone: r.gone,
+                commands: &mut r.commands,
+            },
         );
         Some(i)
     }

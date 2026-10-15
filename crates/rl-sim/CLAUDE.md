@@ -27,7 +27,17 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   play it. A mode's state is hashed by `GameMode::checksum`; `World::clone`
   uses `box_clone`; `is_over(&World)` sees the whole world, the mode
   included (`World::scores`); `World::mode_state().as_any()` downcasts to
-  the mode's own type.
+  the mode's own type. `Score::left` marks a row whose worm left.
+- **Leaving players** (decision N82): `World::withdraw(i)` takes worm `i`
+  out for good, between ticks (OLX `RemoveClientWorms`): dead, `WRM_OUT`,
+  rope, input state and latches cleared, never respawned, still slot `i`;
+  the mode is told by `GameMode::on_drop` (`CGameMode::Drop`), and the
+  next `is_over` counts it out. `World::gone()` is the mask (bit `i` for
+  worm `i`), kept in the `Referee` (never on `Worm`: its 992-byte size
+  stays) and hashed **only when not 0**, so a match nobody left hashes as
+  before (match goldens, oracle). Every `ModeCtx` carries it
+  (`ModeCtx::gone`). A gone killer is nobody: `kill_worm` maps it to -1
+  (decision N84), for the mode and the `Kill` event alike.
 - **Rollback** (`snapshot.rs`, networking spec §3.3): `enable_rollback` +
   `save`/`restore`/`forget_before`; `sync_checksum` is `checksum` with the
   terrain's cell hash. Snapshots carry no events; the caller re-runs ticks
@@ -48,7 +58,9 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `tests/state.rs` fuzzes it, `state_tests.rs` refuses each non-finite
   field, `rl-cli`'s `tests/state_transfer.rs` loads chaos matches' states.
   The receiving world must come from the same setup (`setup_worms`, map
-  size, pool size, bonus weapons are checked).
+  size, pool size, bonus weapons are checked). `WorldState::gone` (the
+  layout's last field) is refused (`StateError::Worms`) when it names no
+  worm, or a worm alive or not `WRM_OUT` (`gone_ok`).
 - **Two clocks.** `tick` is one 100 Hz frame. Inside it, LX56 physics runs in
   `1000 / LX56PhysicsFPS` ms sub-steps (11 ms by default) while the physics
   clock is behind the frame clock, so some frames run no sub-step.

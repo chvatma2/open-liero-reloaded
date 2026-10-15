@@ -365,11 +365,28 @@ impl Deathmatch {
         None
     }
 
-    /// The scoreboard from `worms`, best first.
-    fn refresh(&mut self, worms: &[Worm], s: &SimSettings) {
+    /// The scoreboard from `worms`, best first; the rows of the worms in
+    /// `gone` ([`ModeCtx::gone`], bit `i` for worm `i`) are left ones.
+    fn refresh(&mut self, worms: &[Worm], s: &SimSettings, gone: u32) {
         self.board.clear();
-        self.board.extend(worms.iter().take(MAX_WORMS).map(|w| rules::row(w, s)));
+        self.board.extend(
+            worms
+                .iter()
+                .take(MAX_WORMS)
+                .enumerate()
+                .map(|(i, w)| Score { left: gone & (1 << i) != 0, ..rules::row(w, s) }),
+        );
         rules::sort(&mut self.board, self.settings.lives, self.settings.kill_limit);
+    }
+
+    /// `CGameMode::Drop` (`src/server/CGameMode.cpp:254-263`) for worm id
+    /// `worm`: its kills and deaths in a row start over. An id outside
+    /// `0..MAX_WORMS` changes nothing (OLX logs it and returns).
+    pub(crate) fn drop_worm(&mut self, worm: i32) {
+        if let Some(i) = usize::try_from(worm).ok().filter(|&i| i < MAX_WORMS) {
+            self.kills_in_row[i] = 0;
+            self.deaths_in_row[i] = 0;
+        }
     }
 }
 
@@ -433,9 +450,13 @@ impl GameMode for Deathmatch {
         }
         h.usize(board.len());
         for r in board {
-            let Score { worm, score, lives, kills, deaths, suicides, damage } = *r;
+            let Score { worm, score, lives, kills, deaths, suicides, damage, left } = *r;
             [worm, score, lives, kills, deaths, suicides].into_iter().for_each(|n| h.i32(n));
             h.f32(damage);
+            // Only when true: a match nobody left hashes as before.
+            if left {
+                h.bool(true);
+            }
         }
     }
 
@@ -454,7 +475,7 @@ impl GameMode for Deathmatch {
             }
             *n = n.wrapping_add(1);
         }
-        self.refresh(ctx.worms(), ctx.settings());
+        self.refresh(ctx.worms(), ctx.settings(), ctx.gone());
     }
 
     fn on_kill(&mut self, victim: i32, killer: i32, ctx: &mut ModeCtx) -> KillCredit {
@@ -464,6 +485,13 @@ impl GameMode for Deathmatch {
             let _ = ctx.message(m);
         }
         credit
+    }
+
+    /// `CGameMode::Drop` (`src/server/CGameMode.cpp:254-263`): the worm's
+    /// kills and deaths in a row start over; its row is now a left one.
+    fn on_drop(&mut self, worm: i32, ctx: &mut ModeCtx) {
+        self.drop_worm(worm);
+        self.refresh(ctx.worms(), ctx.settings(), ctx.gone());
     }
 
     fn is_over(&self, world: &World) -> Option<MatchResult> {
@@ -492,7 +520,7 @@ impl GameMode for Deathmatch {
                 let _ = ctx.message(Message { text: text::PLAYER_HAS_WON, args: [end.result.winner, 0, 0] });
             }
         }
-        self.refresh(ctx.worms(), ctx.settings());
+        self.refresh(ctx.worms(), ctx.settings(), ctx.gone());
     }
 
     fn scores(&self, _world: &World) -> &[Score] {

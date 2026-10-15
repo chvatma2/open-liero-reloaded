@@ -170,3 +170,34 @@ fn a_last_damager_past_the_worlds_worms_is_refused() {
         }
     }
 }
+
+/// Two worms over open ground, a few ticks in.
+fn two_worm_world() -> World {
+    let terrain = Terrain::from_grid(&MaterialGrid::new(200, 200, Material::Background));
+    let def = mod_def(vec![projectile_weapon("gun", "pellet")], vec![("pellet", pixel_projectile(None))]);
+    let sim_mod = Arc::new(SimMod::compile(&def, &BTreeMap::new()).unwrap());
+    let mut w = World::test_new(SimSettings::lx56(), sim_mod, terrain, holes(), AbsTime(100_000), 7);
+    w.spawn_worm(60, 20).unwrap();
+    w.spawn_worm(140, 20).unwrap();
+    for _ in 0..5 {
+        w.tick_new(&[Keys(0), Keys(0)]);
+    }
+    w
+}
+
+/// A transferred state keeps the mask; one naming no worm, or a living
+/// worm, is refused.
+#[test]
+fn a_state_naming_no_worm_gone_is_refused() {
+    let mut a = two_worm_world();
+    a.withdraw(1);
+    let mut b = two_worm_world();
+    b.load_state(a.state()).unwrap();
+    assert_eq!((b.gone(), b.checksum()), (a.gone(), a.checksum()));
+    let mut bad = a.state();
+    bad.set_gone_for_test(0b100);
+    assert_eq!(two_worm_world().load_state(bad), Err(StateError::Worms));
+    let mut alive = two_worm_world().state();
+    alive.set_gone_for_test(0b01);
+    assert_eq!(two_worm_world().load_state(alive), Err(StateError::Worms), "a living worm is not gone");
+}

@@ -29,6 +29,10 @@ pub(crate) struct Referee {
     pub over_frame: u64,
     /// `S2C_GAMEOVER` waits for the local client (spec §18 D10).
     pub game_over_sent: bool,
+    /// The worms withdrawn from the match ([`World::withdraw`]), bit `i`
+    /// for worm `i`: hashed only when not 0, so a match nobody left hashes
+    /// as before.
+    pub gone: u32,
 }
 
 impl PartialEq for Referee {
@@ -41,8 +45,8 @@ impl PartialEq for Referee {
         };
         hash(self) == hash(other)
             && (self.commands == other.commands)
-            && (self.over, self.over_frame, self.game_over_sent)
-                == (other.over, other.over_frame, other.game_over_sent)
+            && (self.over, self.over_frame, self.game_over_sent, self.gone)
+                == (other.over, other.over_frame, other.game_over_sent, other.gone)
     }
 }
 
@@ -54,6 +58,7 @@ impl Referee {
             over: None,
             over_frame: 0,
             game_over_sent: false,
+            gone: 0,
         }
     }
 
@@ -71,7 +76,7 @@ impl Referee {
         settings: &'a crate::SimSettings,
         now: rl_math::AbsTime,
     ) -> ModeCtx<'a> {
-        ModeCtx { worms, settings, now, commands: &mut self.commands }
+        ModeCtx { worms, settings, now, gone: self.gone, commands: &mut self.commands }
     }
 
     /// `Game::gameOverTime().seconds() > GAMEOVER_WAIT`
@@ -83,7 +88,7 @@ impl Referee {
     }
 
     pub fn hash(&self, h: &mut Fnv) {
-        let Referee { mode, commands, over, over_frame, game_over_sent } = self;
+        let Referee { mode, commands, over, over_frame, game_over_sent, gone } = self;
         mode.checksum(h);
         // Applied within the tick that queues them, so empty between ticks.
         h.usize(commands.list.len());
@@ -104,6 +109,11 @@ impl Referee {
         }
         h.u64(*over_frame);
         h.bool(*game_over_sent);
+        // Only once someone left: a match nobody left (local play, the
+        // match goldens, the oracle) hashes as it did before the mask.
+        if *gone != 0 {
+            h.u32(*gone);
+        }
     }
 }
 
@@ -179,6 +189,7 @@ impl World {
             worms: &self.worms,
             settings: &self.settings,
             now,
+            gone: r.gone,
             commands: &mut r.commands,
         });
         self.apply_commands();

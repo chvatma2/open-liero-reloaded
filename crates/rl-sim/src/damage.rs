@@ -34,6 +34,7 @@ impl Harm<'_> {
             worms: &*self.worms,
             settings: self.settings,
             now: self.now,
+            gone: r.gone,
             commands: &mut r.commands,
         };
         f(&mut *r.mode, &mut ctx)
@@ -241,12 +242,20 @@ fn clamp(v: f32, lo: f32, hi: f32) -> f32 {
 /// the mode says what the kill counts ([`crate::GameMode::on_kill`], OLX's
 /// `CGameMode::Kill`), and `CWorm::Kill(true)` kills the victim, taking a
 /// life unless they are unlimited. Position, velocity, weapons, input state
-/// and the rope stay as they are (`damage-death-bonuses.md` §2.5). Returns
-/// whether it killed (and emitted [`EventKind::Kill`]).
+/// and the rope stay as they are (`damage-death-bonuses.md` §2.5). A killer
+/// withdrawn from the match ([`crate::World::withdraw`]) is nobody (-1),
+/// to the mode and in the event. Returns whether it killed (and emitted
+/// [`EventKind::Kill`]).
 pub(crate) fn kill_worm(h: &mut Harm, victim: i32, killer: i32) -> bool {
     if h.referee.over.is_some() {
         return false;
     }
+    // A worm withdrawn is no killer (decision N84): OLX's `game.wormById(killer, false)`
+    // is null for a removed worm (`src/server/CServer_Game.cpp:126-127`).
+    let killer = match index(h.worms, killer) {
+        Some(k) if h.referee.gone & (1 << k) != 0 => -1,
+        _ => killer,
+    };
     let s = h.settings;
     let Some(vi) = index(h.worms, victim) else { return false };
     let ki = index(h.worms, killer);

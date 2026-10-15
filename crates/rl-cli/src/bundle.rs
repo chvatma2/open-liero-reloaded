@@ -106,6 +106,7 @@ pub const FIELDS: &[&str] = &[
     "over",
     "over_frame",
     "game_over_sent",
+    "gone",
 ];
 
 /// Replays the bundle's inputs from the start world.

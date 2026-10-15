@@ -84,7 +84,8 @@ fn deathmatch_refuses_bad_bytes() {
         b.extend(postcard::to_allocvec(&rows).unwrap());
         b
     };
-    let row = Score { worm: 0, score: 0, lives: 0, kills: 0, deaths: 0, suicides: 0, damage: 0.0 };
+    let row =
+        Score { worm: 0, score: 0, lives: 0, kills: 0, deaths: 0, suicides: 0, damage: 0.0, left: false };
     m.load_state(&with_board(vec![row; MAX_WORMS])).unwrap();
     let mut m = Deathmatch::resume(dm(), r.w.settings()).unwrap();
     assert_eq!(m.load_state(&with_board(vec![row; 40])), Err(ModeStateError::Invalid), "40 rows");

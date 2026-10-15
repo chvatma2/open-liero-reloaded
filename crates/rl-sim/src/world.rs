@@ -20,7 +20,7 @@ use crate::effects::carve_px;
 use crate::events::{CosmeticKind, EventKind, TerrainOp, TickEvents};
 use crate::input::{Keys, Latches};
 use crate::mod_rt::SimMod;
-use crate::mode::{GameMode, MatchResult, Score};
+use crate::mode::{GameMode, MatchResult, ModeCtx, Score};
 use crate::projectile::{Projectile, ProjectilePool, c_int};
 use crate::referee::Referee;
 use crate::respawn::{SPAWN_HOLE, Spawner, find_spot, simulate_respawns};
@@ -124,6 +124,54 @@ impl World {
     /// How the match ended, once it has (`game.gameOver`).
     pub fn result(&self) -> Option<MatchResult> {
         self.referee.over
+    }
+
+    /// The worms withdrawn from the match ([`World::withdraw`]), bit `i` for worm `i`.
+    pub fn gone(&self) -> u32 {
+        self.referee.gone
+    }
+
+    /// Takes worm `i` out of the match for good (decision N82), as OLX's
+    /// `GameServer::RemoveClientWorms` (`src/server/CServer.cpp:1440-1482`)
+    /// removes a client's worms: the mode is told (`CGameMode::Drop`, here
+    /// [`GameMode::on_drop`]) and the next game-over check counts it out
+    /// (`RecheckGame`). Unlike OLX's `Game::removeWorm` the worm stays in
+    /// [`World::worms`], so worm `i` is still slot `i`: dead, out of lives
+    /// (`WRM_OUT`), its rope, input state and key latches cleared; it never
+    /// respawns, and every path that skips dead worms skips it. Its kills
+    /// from now on credit nobody (`GameServer::killWorm` finds no killer,
+    /// `src/server/CServer_Game.cpp:126-127`). An input between two ticks,
+    /// as the netcode and replays give it: before the tick it belongs to.
+    /// A worm that does not exist, or is gone already, changes nothing.
+    ///
+    /// OLX: `src/server/CServer.cpp:1352-1482` (`DropClient`,
+    /// `RemoveClient`, `RemoveClientWorms`) at `d1ad953f`.
+    pub fn withdraw(&mut self, i: usize) {
+        // `i < MAX_WORMS` (32) once it indexes a worm, so `1 << i` cannot overflow.
+        if i >= self.worms.len() || self.referee.gone & (1 << i) != 0 {
+            return;
+        }
+        self.referee.gone |= 1 << i;
+        let w = &mut self.worms[i];
+        w.alive = false;
+        w.lives = crate::damage::WRM_OUT;
+        w.can_respawn_now = false;
+        w.respawn_requested = false;
+        w.state = Default::default();
+        w.rope.clear();
+        self.latches[i] = Latches::default();
+        let (id, now) = (w.id, self.time);
+        let r = &mut self.referee;
+        // A command the mode queues here is applied at the next tick's
+        // `apply_commands`, as setup's are.
+        let mut ctx = ModeCtx {
+            worms: &self.worms,
+            settings: &self.settings,
+            now,
+            gone: r.gone,
+            commands: &mut r.commands,
+        };
+        r.mode.on_drop(id, &mut ctx);
     }
 
     /// The projectile pool's size ([`crate::MatchSetup::pool_capacity`]).

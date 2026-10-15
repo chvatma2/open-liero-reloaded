@@ -433,6 +433,7 @@ impl GameMode for FirstBlood {
                 deaths: w.deaths,
                 suicides: w.suicides,
                 damage: w.damage,
+                left: false,
             };
             self.table.push(s);
         }

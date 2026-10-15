@@ -19,6 +19,12 @@ port of the bare `CGameMode` (`src/server/CGameMode.cpp`) at commit
   on it). `is_over` is `CheckGameOver`, every frame (OLX's `recheckGame`
   stays set during a match): kill limit, then time limit
   (`serverFrame · 10 > TimeLimit`), then fewer than two worms not out.
+- **Leaving players:** `on_drop` is `CGameMode::Drop`
+  (`CGameMode.cpp:254-263`): `drop_worm` zeroes the worm's kills and
+  deaths in a row, then the board is refreshed. `refresh` takes the gone
+  mask (`ModeCtx::gone`) and marks those rows `Score::left`; the checksum
+  hashes `left` only when true. `check` and `winner` need nothing more: a
+  gone worm is `WRM_OUT`.
 - **Respawn loadouts** (`respawn.rs`, spec §20 F10):
   `DeathmatchSettings::respawn_loadout` is `Keep` (OLX) or `ChaosCycle`:
   `on_spawn` gives chaos bot `i` of `n` the weapons `(i·5 + r·5·n + j) mod

@@ -139,7 +139,13 @@ pub(crate) fn simulate_respawns(worms: &mut [Worm], latches: &mut [Latches], sp:
         if forced || w.respawn_requested {
             if spawn_worm(w, &mut latches[i], sp) {
                 let (id, r) = (w.id, &mut *sp.referee);
-                let mut ctx = ModeCtx { worms: &*worms, settings: s, now: sp.now, commands: &mut r.commands };
+                let mut ctx = ModeCtx {
+                    worms: &*worms,
+                    settings: s,
+                    now: sp.now,
+                    gone: r.gone,
+                    commands: &mut r.commands,
+                };
                 r.mode.on_spawn(id, &mut ctx);
             }
         } else {

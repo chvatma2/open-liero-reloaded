@@ -9,9 +9,9 @@
 //! frame, the sub-step count, the shot lists, the projectile slots ever
 //! taken and the pool's indices, the generators, the entity counter, the
 //! `RotIncrement` bumps, both bonus arrays and their queues, the mode's
-//! bytes ([`crate::GameMode::save_state`]) and the match's end. The rest is setup
-//! (or not state) and must already agree. On the wire it is postcard, then
-//! deflate.
+//! bytes ([`crate::GameMode::save_state`]), the match's end and the worms
+//! withdrawn ([`World::gone`]). The rest is setup (or not state) and must
+//! already agree. On the wire it is postcard, then deflate.
 //!
 //! The state comes from a host that may be a stranger: [`World::load_state`]
 //! checks everything that could index out of bounds, grow a buffer past
@@ -26,6 +26,7 @@ use rl_math::{AbsTime, GlibcRand, Mt19937};
 use serde::{Deserialize, Serialize};
 
 use crate::bonus::{Bonus, Bonuses};
+use crate::damage::WRM_OUT;
 use crate::events::TickEvents;
 use crate::input::Latches;
 use crate::mode::{MatchResult, ModeStateError};
@@ -87,6 +88,8 @@ pub struct WorldState {
     over: Option<MatchResult>,
     over_frame: u64,
     game_over_sent: bool,
+    /// [`World::gone`].
+    gone: u32,
 }
 
 /// Why a [`WorldState`] was refused: it did not decode, or which part of it
@@ -142,6 +145,12 @@ impl fmt::Display for StateError {
 }
 
 impl WorldState {
+    /// Sets the gone mask, for tests of [`World::load_state`]'s check.
+    #[cfg(test)]
+    pub(crate) fn set_gone_for_test(&mut self, gone: u32) {
+        self.gone = gone;
+    }
+
     /// The most bytes a state may inflate to: a 4096 × 4096 map (16 MiB)
     /// and the largest projectile pool fit several times over.
     pub const MAX_INFLATED: usize = 64 * 1024 * 1024;
@@ -209,7 +218,7 @@ impl World {
             setup_worms,
         } = self;
         let Draws { rand, mt, ents, events: _, rot_bumped, spawn_work: _, actions: _, hits: _ } = draws;
-        let Referee { mode, commands: _, over, over_frame, game_over_sent } = referee;
+        let Referee { mode, commands: _, over, over_frame, game_over_sent, gone } = referee;
         WorldState {
             width: terrain.width(),
             height: terrain.height(),
@@ -233,6 +242,7 @@ impl World {
             over: *over,
             over_frame: *over_frame,
             game_over_sent: *game_over_sent,
+            gone: *gone,
         }
     }
 
@@ -269,6 +279,7 @@ impl World {
             over,
             over_frame,
             game_over_sent,
+            gone,
         } = s;
         if !self.terrain.load_cells(&cells) {
             return Err(StateError::Terrain);
@@ -293,7 +304,7 @@ impl World {
         let r = &mut self.referee;
         r.mode = mode;
         r.commands.list.clear();
-        (r.over, r.over_frame, r.game_over_sent) = (over, over_frame, game_over_sent);
+        (r.over, r.over_frame, r.game_over_sent, r.gone) = (over, over_frame, game_over_sent, gone);
         Ok(())
     }
 
@@ -310,7 +321,8 @@ impl World {
             s.setup_worms == self.setup_worms as u64
                 && (self.setup_worms..=MAX_WORMS.min(self.worms.capacity())).contains(&n)
                 && s.latches.len() == n
-                && s.worms.iter().enumerate().all(|(i, w)| worm_ok(i, w, n, num_weapons)),
+                && s.worms.iter().enumerate().all(|(i, w)| worm_ok(i, w, n, num_weapons))
+                && gone_ok(s.gone, &s.worms),
             StateError::Worms,
         )?;
 
@@ -373,6 +385,17 @@ impl World {
             StateError::Rng,
         )
     }
+}
+
+/// Whether the gone mask `gone` names only worms of `worms`, each dead and
+/// out of lives (`WRM_OUT`), as [`World::withdraw`] leaves it: a stranger
+/// cannot mark a living worm gone.
+fn gone_ok(gone: u32, worms: &[Worm]) -> bool {
+    let named = if worms.len() >= 32 { u32::MAX } else { (1u32 << worms.len()) - 1 };
+    gone & !named == 0
+        && worms.iter().enumerate().all(|(i, w)| {
+            gone.checked_shr(i as u32).unwrap_or(0) & 1 == 0 || (!w.alive && w.lives == WRM_OUT)
+        })
 }
 
 /// Whether worm `i` of `worms` is one a match reaches: its id is its
