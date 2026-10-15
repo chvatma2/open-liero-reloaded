@@ -1713,9 +1713,10 @@ fn withdrawal_marks_travel_through_a_migration() {
 }
 
 /// Ruling PF12d-8: a forged report never removes a player who is present
-/// (rejoined, or the new host's own: its bots too); a mark for an absent
-/// player's slot (the old host's) is applied at the resume and reaches a
-/// peer that lacked it. A refused mark is a conflict, counted.
+/// (rejoined, or the new host's own: its bots too), before the resume or
+/// after it (a report that came late); a mark for an absent player's slot
+/// (the old host's) is applied at the resume and reaches a peer that
+/// lacked it. A refused mark is a conflict, counted.
 #[test]
 fn a_forged_withdrawal_never_removes_a_present_player() {
     let mut m = Mesh::new(10, 12);
@@ -1727,8 +1728,8 @@ fn a_forged_withdrawal_never_removes_a_present_player() {
     // Spectators that "held" one more tick of a slot, withdrawn there: B's
     // own (present), A's bot (present), the old host's player (absent).
     let us = m.now_ms * 1000;
-    let forge = |m: &mut Mesh, from: PeerId, slot: u8, v: u8| -> u32 {
-        assert!(m.s.get_mut(&A).unwrap().rejoined(from, Seat::Spectator, us));
+    let report = |m: &mut Mesh, from: PeerId, slot: u8, v: u8| -> u32 {
+        let us = m.now_ms * 1000;
         let k = m.s[&A].input_log().known_upto(slot);
         let base: Vec<Option<u8>> = (0..SLOTS).map(|s| m.s[&A].final_input(k - 1, s).map(|x| x.0)).collect();
         let frames =
@@ -1743,6 +1744,12 @@ fn a_forged_withdrawal_never_removes_a_present_player() {
         );
         k
     };
+    let forge = |m: &mut Mesh, from: PeerId, slot: u8, v: u8| -> u32 {
+        assert!(m.s.get_mut(&A).unwrap().rejoined(from, Seat::Spectator, us));
+        report(m, from, slot, v)
+    };
+    // One more rejoins now and reports only after the resume.
+    assert!(m.s.get_mut(&A).unwrap().rejoined(6, Seat::Spectator, us));
     forge(&mut m, 9, 3, 0x55);
     forge(&mut m, 7, 1, 0);
     let k0 = forge(&mut m, 8, 0, 0);
@@ -1751,6 +1758,10 @@ fn a_forged_withdrawal_never_removes_a_present_player() {
     m.s.get_mut(&A).unwrap().resume(m.now_ms * 1000);
     assert_eq!(m.s[&A].stats().report_conflicts, 2, "both present players' marks refused");
     m.until(1_000, "B resumes", |m| m.first(B, |e| matches!(e, Event::Resumed { .. })).is_some());
+    m.run_ms(200);
+    // After the resume: a late report marks B's next tick. Refused alike.
+    report(&mut m, 6, 3, 0x55);
+    assert_eq!(m.s[&A].stats().report_conflicts, 3, "refused after the resume too");
     m.run_ms(1_000);
     for id in [A, B] {
         let log = m.s[&id].input_log();
@@ -1779,6 +1790,20 @@ fn withdrawn(r: &Report, slot: u8) -> u32 {
     t
 }
 
+/// What the host held of slot 3 when it heard peer 2 leave: its
+/// withdrawal if it marked it already, else its first unknown tick.
+#[derive(Default)]
+struct AtLeft(Option<u32>);
+
+impl harness::Observer<ToySim> for AtLeft {
+    fn on_event(&mut self, peer: PeerId, event: &Event, session: &mut Session<ToySim>) {
+        if peer == HOST && *event == (Event::PeerLeft { peer: 2 }) {
+            let log = session.input_log();
+            self.0 = Some(log.gone_at(3).unwrap_or(log.known_upto(3)));
+        }
+    }
+}
+
 /// N83, user decision 1: a client that leaves is withdrawn at one tick on
 /// every peer, after its `Bye` reached the host; the offline replay withdraws
 /// there too (the verdict). RED: no peer withdraws.
@@ -1788,14 +1813,16 @@ fn a_leaving_client_is_withdrawn_at_one_tick_everywhere() {
         for seed in 1..=4 {
             let mut sc = scenario(seed, profile, 3);
             sc.exits.push(Exit { peer: 2, tick: 400, after_us: 0, how: ExitHow::Leave });
-            let r = run_checked(&sc);
+            let mut f = ToyFactory { slots: sc.slots, seed };
+            let mut at_left = AtLeft::default();
+            let r = harness::run_observed(&sc, &mut f, &mut at_left).unwrap();
+            harness::verdict(&sc, &r, &mut f)
+                .unwrap_or_else(|e| panic!("seed {seed} {}: {e:?}", profile.name));
             let t = withdrawn(&r, 3);
-            // Its first unknown tick: about the host's tick when the `Bye` came, less
-            // at most the fill window on a lagging link. On `awful` (15 % loss in
-            // bursts of 4) the reliable `Bye` itself can be lost and resent:
-            // seed 2's came over a second late (withdrawn at 522).
-            let latest = if profile.name == "awful" { 640 } else { 520 };
-            assert!((380..latest).contains(&t), "seed {seed} {}: {t}", profile.name);
+            // Its first unknown tick at the host when the `Bye` came (on `awful`
+            // a lost `Bye` is resent: seed 2's came over a second late).
+            assert_eq!(Some(t), at_left.0, "seed {seed} {}", profile.name);
+            assert!(t >= 400 - 20, "seed {seed} {}: {t}", profile.name);
             assert!(r.host_log[t as usize..].iter().all(|row| row[3] == 0));
         }
     }
@@ -1879,4 +1906,44 @@ fn a_spectator_joining_after_a_withdrawal_loads_it_with_the_state() {
     assert!(t < 700);
     assert!(r.gone[&100].is_empty(), "no mark before its log's origin");
     assert!(r.checksums[&100].iter().any(|&(c, _)| c > 700), "it confirmed checksums after its state");
+}
+
+/// Ruling PF12d-8a: the old host times out a live client (frozen 11.5 s),
+/// marks it, and crashes; the new host never got that mark (its own link
+/// from the old host cut just before), but a survivor did and withdrew the
+/// player. The client rejoins: present, it stays (its mark refused, a
+/// conflict). Every survivor that withdrew it is repaired by one state
+/// transfer and ends with the player in the match, checksums equal (the
+/// verdict accepts that repair in this case alone).
+#[test]
+fn a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired() {
+    let mut sc = mscenario(2, Profile::GOOD, 3);
+    sc.ticks = 2_400;
+    // B, peer 2 (slot 3), frozen: the old host times it out about 1 300.
+    sc.peers.iter_mut().filter(|p| p.id == 2).for_each(|p| p.freeze = Some((290, 1_300)));
+    // A, peer 1 (the successor), hears nothing of the old host from 1 290.
+    sc.outages.push(Outage { peer: 1, from_tick: 1_282, until_tick: 1_400, one_way: true });
+    sc.exits.push(Exit { peer: HOST, tick: 1_320, after_us: 0, how: ExitHow::Crash });
+    let r = run_checked(&sc);
+    assert_eq!(r.hosts, vec![HOST, 1]);
+    let held: Vec<PeerId> =
+        r.gone.iter().filter(|(_, g)| g.iter().any(|m| m.1 == 3)).map(|(&p, _)| p).collect();
+    assert!(held.contains(&3), "a survivor held the old host's mark: {held:?}");
+    assert!(r.host_gone.iter().all(|g| g.1 != 3), "the new host keeps the rejoined player");
+    assert!(r.stats[&1].report_conflicts >= 1, "its mark refused");
+    assert!(!r.dropped.contains(&2), "back in the match");
+    for p in held.iter().filter(|&&p| p != HOST) {
+        let loads = r.events[p].iter().filter(|e| matches!(e, Event::StateLoaded { .. })).count();
+        assert_eq!(loads, 1, "peer {p}: one repair");
+    }
+    // The verdict compared their checksums from the repair on (`ToySim`'s
+    // fold in its gone slots: the player is present in every world). It
+    // is strict otherwise: a second repair, or no refusal, fails.
+    let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+    let mut twice = r.clone();
+    twice.events.get_mut(&3).unwrap().push(Event::StateLoaded { tick: 1_900 });
+    assert!(harness::verdict(&sc, &twice, &mut f).is_err(), "two repairs");
+    let mut unrefused = r.clone();
+    unrefused.stats.get_mut(&1).unwrap().report_conflicts = 0;
+    assert!(harness::verdict(&sc, &unrefused, &mut f).is_err(), "no refusal");
 }

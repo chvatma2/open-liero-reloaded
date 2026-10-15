@@ -727,6 +727,10 @@ struct Shared {
     could_join: BTreeMap<PeerId, (PeerId, u64)>,
     exited: BTreeSet<PeerId>,
     exited_us: BTreeMap<PeerId, u64>,
+    /// Peers a host dropped (timed out, left, failed to repair), until one
+    /// rejoins a new host (ruling PF12d-8a: a client the old host timed out
+    /// while it was alive comes back with the match).
+    dropped: BTreeSet<PeerId>,
     late: BTreeSet<PeerId>,
     left_from: BTreeMap<PeerId, PeerId>,
     /// Per old host, when each peer found it gone.
@@ -800,7 +804,6 @@ pub fn run_observed<S: Simulation>(
     exits.reverse();
     // Exits whose tick came, by the virtual time they fall due.
     let mut timed: Vec<(u64, &Exit)> = Vec::new();
-    let mut dropped: BTreeSet<PeerId> = BTreeSet::new();
     let mut repair_failed: BTreeSet<PeerId> = BTreeSet::new();
 
     // The succession: players, spectators from the start, followers.
@@ -841,6 +844,7 @@ pub fn run_observed<S: Simulation>(
         could_join: BTreeMap::new(),
         exited: BTreeSet::new(),
         exited_us: BTreeMap::new(),
+        dropped: BTreeSet::new(),
         late: BTreeSet::new(),
         left_from: BTreeMap::new(),
         began: BTreeMap::new(),
@@ -1004,15 +1008,15 @@ pub fn run_observed<S: Simulation>(
                     match *e {
                         Event::PeerTimedOut { peer } => {
                             p.session.peer_lost(peer);
-                            dropped.insert(peer);
+                            w.dropped.insert(peer);
                         }
                         // The session abandoned it already.
                         Event::PeerLeft { peer } => {
-                            dropped.insert(peer);
+                            w.dropped.insert(peer);
                         }
                         Event::RepairFailed { peer } => {
                             p.session.peer_lost(peer);
-                            dropped.insert(peer);
+                            w.dropped.insert(peer);
                             repair_failed.insert(peer);
                         }
                         _ => {}
@@ -1065,12 +1069,12 @@ pub fn run_observed<S: Simulation>(
             }
             settled = true;
         }
-        let behind = peers.iter().find(|p| !p.done && !p.gone && !dropped.contains(&p.id));
+        let behind = peers.iter().find(|p| !p.done && !p.gone && !w.dropped.contains(&p.id));
         if !peers[ci].gone && host_tick >= end && behind.is_none() {
             break;
         }
         // No host remains: every peer left, crashed or gave up.
-        if peers.iter().all(|p| p.gone || dropped.contains(&p.id)) {
+        if peers.iter().all(|p| p.gone || w.dropped.contains(&p.id)) {
             break;
         }
         if now >= limit_us {
@@ -1125,7 +1129,7 @@ pub fn run_observed<S: Simulation>(
         events,
         received: BTreeMap::new(),
         duration_us: now,
-        dropped,
+        dropped: w.dropped,
         repair_failed,
         checksums: BTreeMap::new(),
         hosts: w.hosts,
@@ -1479,6 +1483,8 @@ fn rejoin<S: Simulation>(
     w.link(p.id, s.id, now);
     let seat = p.seat.unwrap_or(Seat::Spectator);
     if s.session.rejoined(p.id, seat, s.local(now)) {
+        // Back in the match (a host that timed it out dropped it).
+        w.dropped.remove(&p.id);
         p.session.rehost(s.id, p.local(now));
         if let Some(t) = s.taking.as_mut() {
             t.back.insert(p.id);
@@ -1541,6 +1547,39 @@ fn resume<S: Simulation>(
 /// Every host-lost peer lost its host legitimately (ruling FR12c-3,
 /// [`every_host_lost_is_legitimate`]); a match every survivor lost
 /// (SK-10) skips only the confirmed ticks and the replay (A-M1).
+/// Ruling PF12d-8a: survivors that withdrew a player the last host kept.
+/// The old host timed out a client that was alive, marked it and went; a
+/// survivor holding that mark withdrew the player, but the player came
+/// back (it rejoined the last migration and is kept), so the last host
+/// refused the mark (`report_conflicts`) and kept it. One repair (a state
+/// transfer) brings such a survivor back to the match: each kept peer with
+/// such a mark and exactly one loaded state, with its mark `(tick, slot)`.
+/// Any other mark that differs from the last host's still fails.
+fn repaired_withdrawals(
+    sc: &Scenario,
+    r: &Report,
+    kept: &dyn Fn(&PeerId) -> bool,
+) -> BTreeMap<PeerId, (u32, u8)> {
+    let last_host = r.hosts.last().copied().unwrap_or(HOST);
+    let Some(last) = r.migrations.len().checked_sub(1) else { return BTreeMap::new() };
+    if r.stats.get(&last_host).is_none_or(|s| s.report_conflicts == 0) {
+        return BTreeMap::new();
+    }
+    let seat = |p: PeerId| sc.peers.iter().find(|x| x.id == p).map(|x| x.seat);
+    let came_back = |s: u8| {
+        r.held.iter().any(|h| h.migration == last && kept(&h.peer) && seat(h.peer) == Some(Seat::Player(s)))
+    };
+    let refused = |s: u8| came_back(s) && !r.host_gone.iter().any(|g| g.1 == s);
+    let loads = |p: PeerId| {
+        r.events.get(&p).map_or(0, |e| e.iter().filter(|e| matches!(e, Event::StateLoaded { .. })).count())
+    };
+    r.gone
+        .iter()
+        .filter(|(p, _)| kept(p) && loads(**p) == 1)
+        .filter_map(|(&p, marks)| marks.iter().find(|g| refused(g.1)).map(|&g| (p, g)))
+        .collect()
+}
+
 pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>) -> Result<(), Failure> {
     let ticks = sc.ticks;
     let kept = |peer: &PeerId| {
@@ -1552,6 +1591,8 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
     let corrupted = |peer: PeerId| sc.corrupt.iter().any(|c| c.0 == peer);
     let late = |peer: PeerId| r.late.contains(&peer);
     let joined = |peer: PeerId| sc.peers.iter().any(|p| p.id == peer && p.join_tick.is_some());
+    let repaired = repaired_withdrawals(sc, r, &kept);
+    let excused = |peer: PeerId| repaired.contains_key(&peer);
     // Where each peer's inputs and checksums are compared from.
     let mut from: BTreeMap<PeerId, (u32, u32)> = BTreeMap::new();
     for (&peer, events) in r.events.iter().filter(|(p, _)| kept(p)) {
@@ -1561,11 +1602,12 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
         });
         let first = loads.next();
         let last = loads.next_back().or(first);
-        let need = joined(peer) || corrupted(peer) || late(peer);
+        let need = joined(peer) || corrupted(peer) || late(peer) || excused(peer);
         let (inputs, sums) = match (need, first, last) {
             (false, ..) => (0, 0),
-            // A late peer's old session's loads came before its new one's.
-            (true, Some(_), Some(b)) if late(peer) => (b, b),
+            // A late peer's old session's loads came before its new one's;
+            // a repaired withdrawal (PF12d-8a) is the match's from its state.
+            (true, Some(_), Some(b)) if late(peer) || excused(peer) => (b, b),
             (true, Some(a), Some(b)) => (if joined(peer) { a } else { 0 }, b),
             _ => return Err(fail(0, format!("peer {peer} never loaded a state"))),
         };
@@ -1595,6 +1637,10 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
             for (k, &v) in values.iter().enumerate() {
                 let t = h.origin as usize + k;
                 if t >= last.len() {
+                    break;
+                }
+                // PF12d-8a: from a repaired withdrawal on, that slot was its own.
+                if repaired.get(&h.peer).is_some_and(|g| g.1 as usize == s && t >= g.0 as usize) {
                     break;
                 }
                 if last[t][s] != v {
@@ -1652,11 +1698,15 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
                 ));
             }
         }
-        // N83: its withdrawals agree with the last host's as far as its rows do.
+        // N83: its withdrawals agree with the last host's as far as its rows
+        // do (but a mark the last host refused, repaired: PF12d-8a).
         let end = rows.len().min(last.len());
         let within = |&&(t, s): &&(u32, u8)| {
-            let t = t as usize;
-            t >= start && t < end && t < upto.get(s as usize).copied().unwrap_or(0)
+            let u = t as usize;
+            u >= start
+                && u < end
+                && u < upto.get(s as usize).copied().unwrap_or(0)
+                && !repaired.values().any(|&g| g == (t, s))
         };
         let mine: Vec<&(u32, u8)> =
             r.gone.get(&peer).map_or(&[][..], |v| &v[..]).iter().filter(within).collect();
@@ -1684,7 +1734,7 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
     if !all_lost {
         replayed(sc, r, f, &kept, &from_of)?;
     }
-    events_clean(sc, r, &kept)
+    events_clean(sc, r, &kept, &excused)
 }
 
 /// The verdict's replay: every kept peer's recorded and confirmed
@@ -1743,7 +1793,12 @@ fn replayed<S: Simulation>(
 /// No stalls (when expected), malformed messages, inconsistent inputs,
 /// refused states, or desyncs but of corrupted (or not kept) peers, at any
 /// peer not dropped.
-fn events_clean(sc: &Scenario, r: &Report, kept: &dyn Fn(&PeerId) -> bool) -> Result<(), Failure> {
+fn events_clean(
+    sc: &Scenario,
+    r: &Report,
+    kept: &dyn Fn(&PeerId) -> bool,
+    excused: &dyn Fn(PeerId) -> bool,
+) -> Result<(), Failure> {
     let corrupted = |peer: PeerId| sc.corrupt.iter().any(|c| c.0 == peer);
     let players: Vec<PeerId> = core::iter::once(HOST)
         .chain(sc.peers.iter().filter(|p| matches!(p.seat, Seat::Player(_))).map(|p| p.id))
@@ -1768,6 +1823,10 @@ fn events_clean(sc: &Scenario, r: &Report, kept: &dyn Fn(&PeerId) -> bool) -> Re
                 }
                 Event::Desync { tick, peer: other, .. } => {
                     let faulty = if peer == HOST { other } else { peer };
+                    // PF12d-8a: a repaired withdrawal's desync, at it or its host.
+                    if excused(peer) || excused(other) {
+                        continue;
+                    }
                     if !corrupted(faulty) && kept(&faulty) {
                         return Err(fail(tick, format!("peer {faulty} desynced at tick {tick}")));
                     }

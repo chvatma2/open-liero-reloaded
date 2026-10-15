@@ -267,13 +267,19 @@ fn a_client_vanishes_mid_match() {
         panic!("both play")
     };
     let known = |n: &mut Net| n.host().peer().match_session().unwrap().input_log().known_upto(sb);
+    // What the host held of Bert's slot when it heard him gone: its
+    // withdrawal if it marked it already, else its first unknown tick.
+    let at_left = |n: &mut Net| {
+        let log = n.host().peer().match_session().unwrap().input_log();
+        log.gone_at(sb).unwrap_or(log.known_upto(sb))
+    };
     let before = known(&mut net);
     let (sa, sb) = (usize::from(sa), usize::from(sb));
     net.peers[b].p = None;
     net.run_until(Duration::from_secs(14), "the host hears Bert gone", |n| {
         n.peers[0].has(|e| matches!(e, OnlineEvent::Left(name) if name == "Bert"))
     });
-    let heard = known(&mut net);
+    let heard = at_left(&mut net);
     net.run_until(Duration::from_secs(28), "the host and the other client finish", |n| {
         [0, a].iter().all(|&i| n.peers[i].has(ended) && n.peers[i].has(replay_ready))
     });
@@ -281,9 +287,11 @@ fn a_client_vanishes_mid_match() {
     let anna = net.peers[a].peer().last_record().cloned().unwrap();
     assert_eq!(host.rows, anna.rows);
     assert_eq!(host.checksums, anna.checksums);
-    // N83: withdrawn at one tick, its first unknown one when the host heard it gone.
+    // N83: withdrawn at one tick, its first unknown one when the host heard
+    // it gone (not before: until then the lagging rule filled it).
     let t = host.gone.iter().find(|g| usize::from(g.1) == sb).expect("withdrawn").0;
-    assert!((before..=heard).contains(&t), "{t} in {before}..={heard}");
+    assert!(t >= before, "{t} before {before}");
+    assert_eq!(t, heard, "withdrawn as the host heard it gone");
     assert_eq!(host.gone, anna.gone);
     assert!(rl_online::replay::same_match(net.peers[0].replays()[0], net.peers[a].replays()[0]));
     let rows = &host.rows;

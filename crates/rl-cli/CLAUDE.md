@@ -203,7 +203,9 @@ The headless command-line tool. Its commands:
   1-min(slots, 7) clients, 0-2 spectators (one in two arriving mid-match),
   a base profile, 0-3 profile changes, 0-2 outages of 0.5-6 s, in half of
   them a host crash, departure or 1.6-2.5 s freeze at a random tick in the
-  middle 60 %, 1500-6000 ticks; `case_short` (tests) the same with 600.
+  middle 60 %, in one in four a client's departure (plan 12d: withdrawn;
+  drawn last, so the other draws of a seed stay; client crashes wait for
+  net-sim's crash window, PF12d-5), 1500-6000 ticks; `case_short` (tests) the same with 600.
   Case `n` (from 0) has seed `seed + n`; every `--transport-every`th run
   (the 5th, 10th, ..) is `soak::transport_case(seed)`: 2-4 clients through
   good, typical or bad, 0.3-0.5 minutes, 127.0.0.1 only, in half of them a

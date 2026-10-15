@@ -312,14 +312,21 @@ model that tests it in one process (spec §9.1).
     1` and are taken in tick order (`New` extends, `Same` fine, `Conflict`
     ignored, `Stats::report_conflicts`). Withdrawal marks (ruling PF12d-8: a
     forged report must never remove a live player): a new mark (its slot
-    not withdrawn, at the slot's next tick) is held with its value until
-    the resume (`Collection::held`; the slot's prefix stops there, and a
-    report's values at or past it are skipped, the held tick otherwise is
-    a conflict); at the resume it is applied (rolling back to it) when the
-    slot's player is absent (not a peer not lost, not our own or a bot),
-    else refused and counted. After the resume a present player's new mark
-    is refused alike. `withdrawal_marks_travel_through_a_migration`,
-    `a_forged_withdrawal_never_removes_a_present_player`. A report that does not decode for
+    not withdrawn, at the slot's next tick) is held with the reported
+    values from it on until the resume (`Collection::held`; the slot's
+    prefix stops there; a value reported again must agree, the held tick's
+    with its mark, else a conflict); at the resume it is applied (rolling
+    back to it) when the slot's player is absent (not a peer not lost, not
+    our own or a bot), else refused and counted, its values taken unmarked.
+    After the resume a present player's new mark is refused alike (its
+    value taken). `withdrawal_marks_travel_through_a_migration`,
+    `a_forged_withdrawal_never_removes_a_present_player` (before and after
+    the resume). **The cost (ruling PF12d-8a):** an honest mark refused (the
+    old host timed out a client that was alive, marked it and went; the
+    client rejoined) leaves each survivor that held the mark with the
+    player withdrawn alone; its rows agree (the values were taken), its
+    world does not: a desync, one state repair, a desync bundle in
+    rl-online. `a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired`. A report that does not decode for
     the match's slots (the decoder cannot check a frame's `known` bits
     against them) or starts below our log's origin is `Malformed`, takes
     nothing and ends the wait for it. A report from a peer not rejoined, or
@@ -544,7 +551,9 @@ model that tests it in one process (spec §9.1).
     leaves, so only one that never heard a player could stay).
     `host_log` is the last host's; plan 12d: `host_gone` its withdrawals
     (`InputLog::gone_marks` below its frontier), `gone` every peer's,
-    `exited_us` when each exited peer went.
+    `exited_us` when each exited peer went. `dropped` loses a peer that
+    rejoins a new host (a client the old host timed out while it was alive
+    is back in the match, PF12d-8a).
   - `verdict` checks every survivor (not dropped, exited, host lost or left
     behind) confirmed the last host's inputs and matches an offline replay
     of them (a joined spectator from its state, a late peer from its last,
@@ -560,12 +569,19 @@ model that tests it in one process (spec §9.1).
     state). Withdrawals (N83): a kept peer's marks in its compared range
     equal the last host's there, a peer that went agrees with the last
     host's within the bounds of its rows, and the offline replay withdraws
-    at the last host's marks before their ticks (pinned by
+    at the last host's marks before their ticks. Ruling PF12d-8a: a kept
+    peer holding a mark the last host refused (its player came back at the
+    last migration, the last host counted a report conflict) and exactly
+    one loaded state is compared from that state, its held values and its
+    desync excused (`repaired_withdrawals`); a second repair, or no refusal,
+    fails (pinned by
     `a_leaving_client_is_withdrawn_at_one_tick_everywhere`, every profile,
     `a_crashed_client_is_withdrawn_at_its_timeout`,
     `a_leave_during_a_migration_is_withdrawn_alike`,
     `a_leave_just_before_the_host_crashes_is_kept`,
-    `a_leave_after_a_migration_is_withdrawn_by_the_new_host`). Pinned by `a_host_cut_off_from_its_players_leaves_the_match`
+    `a_leave_after_a_migration_is_withdrawn_by_the_new_host`,
+    `a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired`
+    with its negative twins). Pinned by `a_host_cut_off_from_its_players_leaves_the_match`
     (as the first host and as the second, net-soak's
     `lan-8s2c0v-seed1433102928`). A host gone stalls its
     clients at the prediction limit: `expect_no_stalls` flags those too.

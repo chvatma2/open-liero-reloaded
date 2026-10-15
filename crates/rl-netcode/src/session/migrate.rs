@@ -50,11 +50,12 @@ pub(super) struct Collection {
     rejoined: BTreeMap<PeerId, Rejoin>,
     /// [`Session::resume`] ran: no more rejoins; late reports are still taken.
     resumed: bool,
-    /// Ruling PF12d-8: withdrawal marks reports carried, per slot `(tick,
-    /// value)`, held until the resume (the slot's prefix stops there):
-    /// applied then to a slot whose player is absent, refused for a present
-    /// one, so a forged report never removes a live player.
-    held: BTreeMap<u8, (u32, u8)>,
+    /// Ruling PF12d-8: withdrawal marks reports carried, per slot the
+    /// mark's tick and the reported values from it on, held until the
+    /// resume (the slot's prefix stops there): applied then to a slot whose
+    /// player is absent, refused for a present one (its values taken
+    /// unmarked, PF12d-8a), so a forged report never removes a live player.
+    held: BTreeMap<u8, (u32, Vec<u8>)>,
 }
 
 impl<S: Simulation> Session<S> {
@@ -260,14 +261,25 @@ impl<S: Simulation> Session<S> {
         }
         let awaited: Vec<u8> = c.awaited.iter().copied().collect();
         let held = core::mem::take(&mut c.held);
-        // Ruling PF12d-8: the reported marks, for absent players only (a
-        // present one's is refused, a conflict).
-        for (s, (t, v)) in held {
-            if self.present(s) {
+        // Ruling PF12d-8: the reported marks, for absent players only. A
+        // present one's is refused (a conflict), its values taken unmarked
+        // (PF12d-8a: a survivor that held the mark then confirmed the same
+        // rows; only its world differs, which one repair mends).
+        for (s, (t, values)) in held {
+            let absent = !self.present(s);
+            if !absent {
                 self.stats.report_conflicts += 1;
-            } else if self.log.set_final(t, s, v, true) == SetResult::New {
-                self.on_final(t, s, v);
-                self.on_gone(t);
+            }
+            for (k, &v) in values.iter().enumerate() {
+                let Some(tk) = u32::try_from(k).ok().and_then(|k| t.checked_add(k)) else { break };
+                let mark = absent && k == 0;
+                if self.log.set_final(tk, s, v, mark) != SetResult::New {
+                    break;
+                }
+                self.on_final(tk, s, v);
+                if mark {
+                    self.on_gone(tk);
+                }
             }
         }
         for (s, own_first, own) in owns {
@@ -543,39 +555,46 @@ impl<S: Simulation> Session<S> {
         }
     }
 
-    /// `own` (inputs of `slot` from tick `own_first`) where it extends the
-    /// slot's known prefix, and nothing beyond a gap or `MAX_AHEAD`.
     /// New host: one final value a report carries, with its withdrawal mark
-    /// (N67, N88, ruling PF12d-8). A slot with a held mark takes nothing at
-    /// or past it (the held tick again, otherwise: a conflict). A new mark
+    /// (N67, N88, ruling PF12d-8). A slot with a held mark keeps the values
+    /// from the mark on beside it, until the resume (one reported again must
+    /// agree, the held tick's with its mark: else a conflict). A new mark
     /// (its slot not withdrawn, at its next tick) is held until the resume;
-    /// after it, a present player's is refused (a conflict). Anything else
-    /// as the log takes it: `New` extends (a mark rolls back to its tick),
-    /// `Conflict` (another value, or a mark for a tick final without one)
-    /// is counted.
+    /// after it, a present player's is refused (a conflict; the value taken
+    /// unmarked). Anything else as the log takes it: `New` extends (a mark
+    /// rolls back to its tick), `Conflict` (another value, or a mark for a
+    /// tick final without one) is counted.
     fn take_reported(&mut self, t: u32, s: u8, v: u8, g: bool) {
-        let Some(c) = self.collection.as_ref() else { return };
+        let Some(c) = self.collection.as_mut() else { return };
         let resumed = c.resumed;
-        if let Some(&(ht, hv)) = c.held.get(&s)
-            && t >= ht
+        if let Some((ht, values)) = c.held.get_mut(&s)
+            && t >= *ht
         {
-            if t == ht && !(g && v == hv) {
+            let k = (t - *ht) as usize;
+            let conflict = match values.get(k) {
+                Some(&hv) => hv != v || (k == 0 && !g),
+                None if k == values.len() => {
+                    values.push(v);
+                    false
+                }
+                None => false, // beyond a gap
+            };
+            if conflict {
                 self.stats.report_conflicts += 1;
             }
             return;
         }
         let fresh = g && s < self.log.slots() && self.log.gone_at(s).is_none() && t == self.log.known_upto(s);
         if fresh && !resumed {
-            if let Some(c) = self.collection.as_mut() {
-                c.held.insert(s, (t, v));
-            }
+            c.held.insert(s, (t, alloc::vec![v]));
             return;
         }
-        if fresh && self.present(s) {
+        // A present player's mark after the resume: refused, the value kept.
+        let refused = fresh && self.present(s);
+        if refused {
             self.stats.report_conflicts += 1;
-            return;
         }
-        match self.log.set_final(t, s, v, g) {
+        match self.log.set_final(t, s, v, g && !refused) {
             SetResult::New => {
                 self.on_final(t, s, v);
                 if g && self.log.gone_at(s) == Some(t) {
@@ -595,6 +614,8 @@ impl<S: Simulation> Session<S> {
             || self.peers.values().any(|p| !p.lost && p.seat == Seat::Player(slot))
     }
 
+    /// `own` (inputs of `slot` from tick `own_first`) where it extends the
+    /// slot's known prefix, and nothing beyond a gap or `MAX_AHEAD`.
     fn extend_own(&mut self, slot: u8, own_first: u32, own: &[u8]) {
         let limit = self.current.saturating_add(MAX_AHEAD);
         for (k, &v) in own.iter().enumerate() {
