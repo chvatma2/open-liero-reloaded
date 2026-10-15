@@ -683,7 +683,10 @@ impl OnlinePeer {
         let now_us = self.now_us;
         // A client's open link lost during a match: the migration begins
         // (N76), or goes on.
-        if matches!(e, NetEvent::Disconnected { .. }) && self.client_link_open() && self.begin_migration() {
+        if matches!(e, NetEvent::Disconnected { .. })
+            && self.client_link_open()
+            && self.begin_migration(false)
+        {
             return;
         }
         match &mut self.side {
@@ -1226,7 +1229,7 @@ impl OnlinePeer {
             // A7: during a match the host's `Bye` (it left or stepped down)
             // starts the migration.
             ClientEvent::Closed => {
-                if !self.begin_migration() {
+                if !self.begin_migration(true) {
                     self.end_with(OnlineEvent::Disconnected("the host closed the lobby".into()))
                 }
             }
@@ -1384,17 +1387,17 @@ impl OnlinePeer {
             Event::Lagging(on) if !host => self.events.push(OnlineEvent::Lagging(on)),
             Event::Desync { tick, local, remote, peer } => self.desync_bundle(tick, local, remote, peer),
             Event::PeerLeft { .. } if !host => {
-                if !self.begin_migration() {
+                if !self.begin_migration(true) {
                     self.end_with(OnlineEvent::Disconnected("the host left".into()));
                 }
             }
             Event::PeerTimedOut { .. } if !host => {
-                if !self.begin_migration() {
+                if !self.begin_migration(false) {
                     self.end_with(OnlineEvent::Disconnected("the host stopped answering".into()));
                 }
             }
             Event::HostSilent if !host => {
-                self.begin_migration();
+                self.begin_migration(false);
             }
             Event::HostHeard if !host => self.host_heard(),
             Event::Resumed { .. } if !host => self.resumed(),

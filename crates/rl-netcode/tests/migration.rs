@@ -195,12 +195,12 @@ fn a_host_knows_when_it_hears_none_of_its_players() {
     // `HOST_SILENT_US` (its own network down: they move on) is not.
     let mut m = Mesh::new(20, 3);
     m.run_ms(2_000);
-    let silent = |m: &Mesh| m.s[&H].players_silent(m.now_ms * 1000);
+    let silent = |m: &Mesh| m.s[&H].members_silent(m.now_ms * 1000);
     assert!(!silent(&m));
     m.cut.insert((B, H), m.now_ms);
     m.run_ms(3_000);
     assert!(!silent(&m), "A is still heard");
-    assert!(!m.s[&A].players_silent(m.now_ms * 1000), "a client never is");
+    assert!(!m.s[&A].members_silent(m.now_ms * 1000), "a client never is");
     m.cut.insert((A, H), m.now_ms);
     let cut = m.now_ms;
     m.until(HOST_SILENT_US / 1000 + 100, "none heard", |m| silent(m));
@@ -221,6 +221,17 @@ fn a_host_knows_when_it_hears_none_of_its_players() {
     m.run_ms(3_000);
     assert_eq!(m.count(H, |e| matches!(e, Event::PeerLeft { .. })), 2);
     assert!(!silent(&m));
+
+    // Ruling FR12c-1: one remote member is never enough. B left; A is
+    // silent for 3 s: the host cannot tell its own drop from A's.
+    let mut m = Mesh::new(20, 5);
+    m.run_ms(2_000);
+    m.s.get_mut(&B).unwrap().leave();
+    m.run_ms(100);
+    m.alive.insert(B, false);
+    m.cut.insert((A, H), m.now_ms);
+    m.run_ms(3_000);
+    assert!(!silent(&m), "a host with one remote member is never cut off");
 }
 
 #[test]
@@ -1022,12 +1033,89 @@ fn the_fifth_migration_in_a_match_is_host_lost() {
 
 #[test]
 fn a_spectator_takes_over_when_no_player_can() {
-    let mut sc = mscenario(13, Profile::LAN, 0); // the host and a spectator only
-    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    // The host and a spectator only: the host leaves (its `Bye`: known gone,
+    // ruling FR12c-1), so the spectator, expecting nobody, takes over.
+    let mut sc = mscenario(13, Profile::LAN, 0);
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Leave });
     let r = run_checked(&sc);
     assert_eq!(r.hosts, vec![HOST, 100]);
     let after = &r.host_log[600..900];
     assert!(after.iter().any(|row| row[1] != 0), "the bot plays at the spectator");
+}
+
+/// A host and one player (slot 2), migration on, no spectator.
+fn two_peers(seed: u64, profile: Profile) -> Scenario {
+    let mut sc = mscenario(seed, profile, 1);
+    sc.peers.retain(|p| p.seat != Seat::Spectator);
+    sc
+}
+
+/// Ruling FR12c-1 (final review A-C1, B-I2): with one other peer, neither
+/// side can tell its own drop from the other's. A 2-5 s blip on either's
+/// link is a stall, as before plan 12c: the client's turn opens its gate
+/// but it commits to nobody (nobody rejoined, and its host is not known
+/// gone), the host plays on (SB-2 needs two remote members), and the client
+/// goes back to it when it hears it (N69). Before, the client took the
+/// match over at once and the host left it.
+#[test]
+fn a_blip_in_a_two_peer_match_is_a_stall() {
+    for profile in [Profile::LAN, Profile::TYPICAL] {
+        for (seed, peer, ticks) in [(31, 1, 300), (32, HOST, 300), (33, 1, 250), (34, HOST, 450)] {
+            let mut sc = two_peers(seed, profile);
+            sc.outages.push(Outage { peer, from_tick: 500, until_tick: 500 + ticks, one_way: false });
+            let r = run_checked(&sc);
+            let what = format!("{} seed {seed}: peer {peer} cut {ticks} ticks", profile.name);
+            assert_eq!(r.hosts, vec![HOST], "{what}");
+            assert!(r.exited.is_empty() && r.host_lost.is_empty() && r.migrations.is_empty(), "{what}");
+            assert!(r.events[&1].contains(&Event::HostSilent), "{what}: it found its host silent");
+            assert!(r.events[&1].contains(&Event::HostHeard), "{what}: and went back to it");
+        }
+    }
+}
+
+/// Ruling FR12c-1 beside a spectator: a host, one player and a spectator
+/// (who can host). The player's or the spectator's own blip is a stall:
+/// the host still hears the other, so it is not cut off, and the lone
+/// migrating peer commits to nobody. The host's own blip is not: it hears
+/// neither (two remote members: SB-2), and the other two move on together.
+#[test]
+fn a_blip_beside_a_spectator_is_a_stall_unless_it_is_the_hosts() {
+    for (seed, peer) in [(35, 1), (36, 100)] {
+        let mut sc = mscenario(seed, Profile::TYPICAL, 1);
+        sc.outages.push(Outage { peer, from_tick: 500, until_tick: 800, one_way: false });
+        let r = run_checked(&sc);
+        assert_eq!(r.hosts, vec![HOST], "peer {peer} cut");
+        assert!(r.exited.is_empty() && r.host_lost.is_empty(), "peer {peer} cut");
+        assert!(r.events[&peer].contains(&Event::HostHeard), "peer {peer} went back");
+    }
+    let mut sc = mscenario(37, Profile::TYPICAL, 1);
+    sc.outages.push(Outage { peer: HOST, from_tick: 500, until_tick: 800, one_way: false });
+    let r = run_checked(&sc);
+    assert_eq!(r.hosts, vec![HOST, 1], "the host's own blip hands the match on");
+    assert!(r.exited.contains(&HOST) && r.host_lost.is_empty());
+}
+
+/// N68's 1-vs-host case under ruling FR12c-1: the host of a two-peer match
+/// crashes (no `Bye`), and its one player cannot tell that from its own
+/// drop: its turn commits to nobody and it is host lost when it gives up
+/// (the ruling's cost). A host that leaves says `Bye`: known gone, its
+/// player takes the match over at once and plays on against the bot.
+#[test]
+fn a_two_peer_match_whose_host_crashes_is_host_lost() {
+    let mut sc = two_peers(38, Profile::GOOD);
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    let r = run_checked(&sc);
+    assert_eq!(r.hosts, vec![HOST]);
+    assert_eq!(r.host_lost, [1].into());
+    let g = &r.gave_up[&1];
+    assert!(g.at_us - g.began_us >= GIVE_UP_US, "{g:?}");
+    let mut sc = two_peers(38, Profile::GOOD);
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Leave });
+    let r = run_checked(&sc);
+    assert_eq!(r.hosts, vec![HOST, 1]);
+    assert!(r.host_lost.is_empty());
+    let m = &r.migrations[0];
+    assert!(m.resumed_us - m.silent_us < 500_000, "at once: {m:?}");
 }
 
 #[test]

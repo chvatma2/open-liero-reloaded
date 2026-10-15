@@ -233,11 +233,14 @@ model that tests it in one process (spec §9.1).
     link blipped seconds behind until a margin jump, its slot filled and
     every other `bad` player stalling past the outage's recovery; pinned by
     `tests/timing.rs`' `a_player_back_from_its_hosts_silence_catches_up_the_pause`).
-  - `players_silent(now)` (host, ruling SB-2): every player peer heard in
-    the match (a stamped datagram) and not abandoned sent nothing for
-    `HOST_SILENT_US` (counted from `silence_from_us`, as `HostSilent`),
-    and there is one at least; spectators and players gone by `Bye` count
-    for nothing. rl-online ends a host's match on it
+  - `members_silent(now)` (host, rulings SB-2 and FR12c-1): at least two
+    remote members (players and spectators) were heard in the match (a
+    stamped datagram) and are not abandoned, and every one sent nothing for
+    `HOST_SILENT_US` (counted from `silence_from_us`, as `HostSilent`);
+    members gone by `Bye` count for nothing. One member still heard shows
+    the host's network is up; with one remote member it is never so
+    (neither side can tell its own drop from the other's: a blip stays a
+    stall). rl-online ends a host's match on it
     (`a_host_knows_when_it_hears_none_of_its_players`), and so does the
     harness (below).
   - `rehost(host, now)`: a client's or spectator's host is now `host`, its
@@ -442,7 +445,14 @@ model that tests it in one process (spec §9.1).
     - the new host resumes when every expected peer (every other
       succession entry that can host, dead ones too: it cannot know) is
       back and every peer back reported, or at its window's end with every
-      peer back reported (N68, C1); expecting nobody, at once;
+      peer back reported (N68, C1); expecting nobody, it commits and
+      resumes at once only when its old host is known gone (its `Bye`,
+      `PeerLeft`, came before or during the migration: ruling FR12c-1),
+      else at a follower's rejoin, or never (its window ends uncommitted
+      and it gives up: a two-peer match whose host crashed is host lost,
+      `a_two_peer_match_whose_host_crashes_is_host_lost`; a blip is a
+      stall, `a_blip_in_a_two_peer_match_is_a_stall`,
+      `a_blip_beside_a_spectator_is_a_stall_unless_it_is_the_hosts`);
     - N69: a peer neither committed nor in contact that gets `HostHeard`
       `unsuspend`s and drops its migration; one in contact remembers it
       and does so when that contact is lost (its successor went back too:
@@ -452,8 +462,9 @@ model that tests it in one process (spec §9.1).
       `peers_in_contact_return_with_their_successor_to_the_old_host`);
     - N70: a host whose virtual frame gap reaches `STEP_DOWN_US` (its
       freeze included), with an entry that can host, `leave`s and is gone;
-    - SB-2: a host whose session says `players_silent` (its own network
-      down), with an entry that can host, `leave`s and is gone, as
+    - SB-2: a host whose session says `members_silent` (its own network
+      down: two or more remote members, none heard), with an entry that
+      can host, `leave`s and is gone, as
       rl-online's `cut_off_check` (without it a follower came back to the
       old host still playing alone, N69, and split from the match:
       net-soak's `bad-14s3c1v-seed974389837`);

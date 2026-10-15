@@ -203,6 +203,77 @@ fn a_successors_own_outage_does_not_take_the_match() {
     assert!(!net.peers[a].peer().is_host());
 }
 
+/// Ruling FR12c-1 (final review A-C1, B-I2): a host and one player. A
+/// 2.5 s blip on either side's link (under the transport's ~3 s cliff) is a
+/// stall, as before plan 12c: Anna's turn opens her gate, but expecting
+/// nobody she commits only to a known-gone host (its `Bye`), and the host,
+/// with one remote member, is never cut off (SB-2). Anna goes back to the
+/// host each time; the match plays to its end, both records alike. Before,
+/// Anna took the match over at once and the host left it (`CUT_OFF`).
+#[test]
+fn a_blip_in_a_two_peer_match_is_a_stall() {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 0.3);
+    let a = net.join_with_migration("Anna", direct());
+    net.ready(&[a]);
+    net.host().peer().lobby().start(7).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() > 300);
+    let back = |e: &OnlineEvent| *e == OnlineEvent::Notice(HOST_BACK.into());
+    for (k, who) in [a, 0].into_iter().enumerate() {
+        net.outage(who, Duration::from_millis(2_500));
+        net.run_until(Duration::from_secs(8), "Anna is back with the host", |n| {
+            n.peers[a].count(back) == k + 1
+                && n.peers[a].peer().match_session().is_some_and(|s| !s.suspended())
+        });
+    }
+    assert!(net.peers[a].has(|e| *e == OnlineEvent::Migrating(MigrationStep::TakingOver)), "her turn came");
+    for i in [0, a] {
+        assert!(!net.peers[i].has(migrated), "{i}: {:?}", net.peers[i].events);
+        assert!(!net.peers[i].has(|e| matches!(e, OnlineEvent::HostLost(_))), "{i}");
+    }
+    assert!(net.host().peer().is_host() && !net.peers[a].peer().is_host());
+    net.run_until(Duration::from_secs(20), "the match ends and both make replays", |n| {
+        [0, a].iter().all(|&i| n.peers[i].has(ended) && n.peers[i].has(replay_ready))
+    });
+    let rh = net.peers[0].peer().last_record().cloned().unwrap();
+    let ra = net.peers[a].peer().last_record().cloned().unwrap();
+    assert_eq!(rh.rows, ra.rows);
+    assert_eq!(rh.checksums, ra.checksums);
+}
+
+/// Ruling FR12c-1 beside a spectator: a host, Anna playing and Cid
+/// watching (both can host). Anna's 2.5 s blip is a stall: the host still
+/// hears Cid, so it is not cut off, and Anna, whom nobody rejoins, goes back
+/// to it. Before, the host left (it heard none of its players) and the
+/// match moved.
+#[test]
+fn a_players_blip_beside_a_spectator_is_a_stall() {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 0.2);
+    let a = net.join_with_migration("Anna", direct());
+    let c = net.join_with_migration("Cid", direct());
+    net.peers[c].peer().lobby().set_spectate(true);
+    let c_key = net.peers[c].key;
+    net.run_until(Duration::from_secs(10), "Cid watches", |n| {
+        n.host().peer().lobby().state().is_some_and(|s| {
+            s.members.iter().any(|m| m.key == c_key && m.seat == rl_proto::SeatWire::Spectator)
+        })
+    });
+    net.ready(&[a]);
+    net.host().peer().lobby().start(7).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() > 300);
+    net.outage(a, Duration::from_millis(2_500));
+    net.run_until(Duration::from_secs(8), "Anna is back with the host", |n| {
+        n.peers[a].has(|e| *e == OnlineEvent::Notice(HOST_BACK.into()))
+            && n.peers[a].peer().match_session().is_some_and(|s| !s.suspended())
+    });
+    for i in [0, a, c] {
+        assert!(!net.peers[i].has(migrated), "{i}: {:?}", net.peers[i].events);
+        assert!(!net.peers[i].has(|e| matches!(e, OnlineEvent::HostLost(_))), "{i}");
+    }
+    assert!(net.host().peer().is_host());
+}
+
 /// Bert and Cid, the survivors, confirmed the same rows and checksums.
 fn records_agree(net: &mut Net, [b, c]: [usize; 2]) {
     net.run_until(Duration::from_secs(25), "the match ends and both make replays", |n| {

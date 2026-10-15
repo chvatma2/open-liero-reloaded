@@ -50,6 +50,10 @@ pub(super) struct Migrating {
     /// it was for (another entry's steps are said afresh).
     joining: Option<JoinStep>,
     joining_to: Option<usize>,
+    /// The old host is known gone: its `Bye` (the session's or the
+    /// lobby's) came. Ruling FR12c-1: a successor expecting nobody commits
+    /// only then; its own drop would look the same.
+    gone: bool,
 }
 
 impl Migrating {
@@ -382,16 +386,19 @@ impl OnlinePeer {
 
     /// The host is gone during a match (its silence, its `Bye`, its link
     /// closed: N71, N76, A7): the session is suspended where it is and the
-    /// migration begins from the host's succession. `true` when one is
-    /// under way (begun now or before, or the host lost past
-    /// `MAX_MIGRATIONS`); `false` when there is none to begin (migration
-    /// off, outside a match, no succession): the caller ends as before.
-    pub(super) fn begin_migration(&mut self) -> bool {
+    /// migration begins from the host's succession. `gone`: its `Bye` came
+    /// (known gone, ruling FR12c-1; also when a migration is under way).
+    /// `true` when one is under way (begun now or before, or the host lost
+    /// past `MAX_MIGRATIONS`); `false` when there is none to begin
+    /// (migration off, outside a match, no succession): the caller ends as
+    /// before.
+    pub(super) fn begin_migration(&mut self, gone: bool) -> bool {
         let now_us = self.now_us;
         let my_key = self.my_key;
         let ignore_direct = self.ignore_direct();
         let Side::Client(c) = &mut self.side else { return false };
-        if c.migrating.is_some() {
+        if let Some(mg) = c.migrating.as_deref_mut() {
+            mg.gone |= gone;
             return true;
         }
         let Some(g) = self.game.as_mut().filter(|g| g.ended.is_none()) else { return false };
@@ -417,7 +424,8 @@ impl OnlinePeer {
         if ignore_direct {
             plan.ignore_direct();
         }
-        c.migrating = Some(Box::new(Migrating { plan, reported: None, joining: None, joining_to: None }));
+        c.migrating =
+            Some(Box::new(Migrating { plan, reported: None, joining: None, joining_to: None, gone }));
         self.report_step(MigrationStep::Finding);
         true
     }
@@ -673,9 +681,10 @@ impl OnlinePeer {
     }
 
     /// The migration's step now: give up (host lost), host (the gate open;
-    /// committed at once when it expects nobody, N68), try a successor, or
-    /// wait. A gate open uncommitted closes once the step is no longer
-    /// `Host` (D8).
+    /// committed at once when it expects nobody and its old host is known
+    /// gone, N68 and ruling FR12c-1; else at the first rejoin), try a
+    /// successor, or wait. A gate open uncommitted closes once the step is
+    /// no longer `Host` (D8).
     fn step_migration(&mut self, now: Instant) {
         let now_us = self.now_us;
         let outage = self.outage();
@@ -715,6 +724,7 @@ impl OnlinePeer {
             Step::Try(i) => mg.plan.order().get(i).map(|e| e.member),
             _ => None,
         };
+        let gone = mg.gone;
         if step != Step::Host {
             self.close_gate();
         }
@@ -723,7 +733,10 @@ impl OnlinePeer {
             Step::Wait => self.report_step(MigrationStep::Finding),
             Step::Host => {
                 self.report_step(MigrationStep::TakingOver);
-                if self.open_gate() {
+                // Expecting nobody, it commits on its own say only when its
+                // old host said `Bye`: in a two-peer match its own blip
+                // looks like the host's loss (ruling FR12c-1).
+                if self.open_gate() && gone {
                     self.take_over(now);
                 }
             }
@@ -1041,16 +1054,18 @@ impl OnlinePeer {
         self.leave_match(stepped_down(gap.as_secs_f32()), now);
     }
 
-    /// Ruling SB-2, after each advance: a host during a match, with an
-    /// entry of its succession that can host, that heard none of its
-    /// players for `HOST_SILENT_US` (`Session::players_silent`: its own
-    /// network is down, so they are moving to a successor) leaves the
-    /// match as a stepped-down host does, `HostLost(CUT_OFF)`, instead of
-    /// playing on alone. Players that all left by `Bye` are not this case.
+    /// Rulings SB-2 and FR12c-1, after each advance: a host during a match,
+    /// with an entry of its succession that can host, that heard none of
+    /// its two or more remote members for `HOST_SILENT_US`
+    /// (`Session::members_silent`: its own network is down, so they are
+    /// moving to a successor) leaves the match as a stepped-down host does,
+    /// `HostLost(CUT_OFF)`, instead of playing on alone. With one remote
+    /// member it plays on (a blip is a stall). Members that all left by
+    /// `Bye` are not this case.
     pub(super) fn cut_off_check(&mut self, now: Instant) {
         let Side::Host(h) = &self.side else { return };
         let Some(g) = self.game.as_ref().filter(|g| g.ended.is_none()) else { return };
-        if g.session.players_silent(self.now_us) && h.lobby.succession().iter().any(|s| s.can_host) {
+        if g.session.members_silent(self.now_us) && h.lobby.succession().iter().any(|s| s.can_host) {
             self.leave_match(CUT_OFF.into(), now);
         }
     }

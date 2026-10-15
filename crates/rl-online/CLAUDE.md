@@ -317,7 +317,14 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       members back on the standby (their proofs answered at once):
       `Migrating(TakingOver)`. It commits at the first `Rejoined` within
       its turn (the standby answers nothing in the poll its window ended), or at
-      once when `away_in_match()` is empty (N68); not committed when the
+      once when `away_in_match()` is empty (N68) and the old host is known
+      gone (`Migrating::gone`: the session's `PeerLeft` or the lobby's
+      `Closed`, its `Bye`, came; `begin_migration(gone)`). Ruling FR12c-1:
+      in a two-peer match its own blip looks like the host's loss, so it
+      waits for a `Bye`, a rejoin or the old host heard again (N69); a host
+      that crashed without one leaves its player host lost
+      (`a_blip_in_a_two_peer_match_is_a_stall`,
+      `a_players_blip_beside_a_spectator_is_a_stall`). Not committed when the
       step leaves `Host`, the gate closes (D8: answered joins refused
       `NotHost`, links not welcomed closed, the lobby gone). The commit:
       the old endpoint shuts down on a thread, the standby is the peer's
@@ -373,11 +380,13 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       gathering), makes its replay and reports
       `HostLost(stepped_down(secs))`; the peer stays open (a server's
       lobby). A start's own world build does not count.
-    - **Cut off** (ruling SB-2, `cut_off_check`, after each advance): a
-      host during a match, with a `can_host` entry, whose session says
-      `players_silent` (every player heard in the match and not gone has
-      sent nothing for `HOST_SILENT_US`: its own network is down, and its
-      players, finding it silent as it finds them, move to a successor)
+    - **Cut off** (rulings SB-2 and FR12c-1, `cut_off_check`, after each
+      advance): a host during a match, with a `can_host` entry, whose
+      session says `members_silent` (two or more remote members, players
+      and spectators, heard in the match and not gone, and none sent
+      anything for `HOST_SILENT_US`: its own network is down, and they,
+      finding it silent as it finds them, move to a successor; with one it
+      plays on)
       leaves the match as a stepping-down host does (`leave_match`: the
       `Bye`s, the lobby gathering, its replay) with `HostLost(CUT_OFF)`,
       instead of playing on alone, filling their slots, until their links

@@ -1487,30 +1487,46 @@ fn the_host_lost_screen_shows_and_the_replay_is_saved() {
 }
 
 /// Ruling SB-2: the hosting game's own network drops (every datagram both
-/// ways, 6 s). It hears none of its players for `HOST_SILENT_US`, as Anna
-/// hears nothing of it: she takes the match over, while the old host's
-/// match view ends on its Host lost screen ("Match lost", `CUT_OFF`) with
-/// its replay saved, instead of playing on alone.
+/// ways, 6 s). It hears none of its two players for `HOST_SILENT_US`, as
+/// they hear nothing of it: Anna takes the match over and Bert follows,
+/// while the old host's match view ends on its Host lost screen ("Match
+/// lost", `CUT_OFF`) with its replay saved, instead of playing on alone.
+/// (Ruling FR12c-1: with one player it plays on, a blip being a stall.)
 #[test]
 fn a_host_cut_off_from_its_players_shows_why() {
     let Some(dir) = content_dir() else { return };
     let data = tempfile::tempdir().unwrap();
     let (mut h, mut c) = host_and_client_with(&dir, 0.3, Some(data.path()), true);
-    start_match(&mut h, &mut c);
-    frames_until("the match runs", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
-        confirmed(s[1]).is_some_and(|(t, _)| t > 200)
+    let mut b = menus(&dir, Store::in_memory(), "Bert", 0.3);
+    b.test_migration(true);
+    join(&mut b, h.local_port().expect("the host's port"));
+    frames_until("Bert joins", Duration::from_secs(5), &mut [&mut h, &mut c, &mut b], |s| {
+        s[2].ui.screen() == Screen::Lobby && members(s[0]) == 3
+    });
+    for sh in [&mut c, &mut b, &mut h] {
+        sh.act(UiAction::LobbyReady(true));
+    }
+    frames_until("the host can start", Duration::from_secs(3), &mut [&mut h, &mut c, &mut b], |s| {
+        s[0].data.lobby.as_ref().is_some_and(|l| l.can_start.is_ok())
+    });
+    h.act(UiAction::LobbyStart);
+    frames_until("the match runs", Duration::from_secs(8), &mut [&mut h, &mut c, &mut b], |s| {
+        confirmed(s[1]).is_some_and(|(t, _)| t > 200) && confirmed(s[2]).is_some()
     });
     h.with_peer(|p| p.test_outage(Instant::now() + Duration::from_secs(6)));
-    frames_until("the old host's Host lost screen", Duration::from_secs(5), &mut [&mut h, &mut c], |s| {
-        s[0].ui.screen() == Screen::HostLost
-    });
+    frames_until(
+        "the old host's Host lost screen",
+        Duration::from_secs(5),
+        &mut [&mut h, &mut c, &mut b],
+        |s| s[0].ui.screen() == Screen::HostLost,
+    );
     assert_eq!(h.data.host_lost.as_deref(), Some(rl_online::CUT_OFF));
     assert!(h.data.host_lost_hosting, "its own match, titled Match lost");
     assert!(h.session().is_none(), "the match view went");
     frames_until(
         "Anna hosts and the old host's replay is saved",
         Duration::from_secs(8),
-        &mut [&mut h, &mut c],
+        &mut [&mut h, &mut c, &mut b],
         |s| {
             s[1].data.chat.iter().any(|l| l.text == "You are now hosting")
                 && !saved_replays(data.path()).is_empty()

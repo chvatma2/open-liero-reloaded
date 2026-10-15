@@ -825,7 +825,8 @@ frozen view stayed; about 15 s), `a_host_heard_again_calls_the_migration_off`
 (Bert's datagrams dropped 3.5 s, `test_outage`: his migration line, then
 `HOST_BACK` in his log and HUD, the line gone, the match on, nobody took
 over; about 9 s), `a_host_cut_off_from_its_players_shows_why` (ruling
-SB-2: the hosting game's network blacked out 6 s: its Host lost screen,
+SB-2: the hosting game with two players, Anna and Bert (FR12c-1: with
+one it plays on), its network blacked out 6 s: its Host lost screen,
 `CUT_OFF`, `host_lost_hosting`, its replay saved, while Anna takes over
 and plays on; RED without rl-online's `cut_off_check`; about 5 s), and
 the pump's two tests run again with

@@ -213,8 +213,9 @@ beside the executable, else in the working directory).
   `CUT_OFF`)
   `"stalled for {s:.1} s: the match moved to the next player; the lobby
   is open again"`, `s` the gap between its last two polls; on
-  `HostLost(CUT_OFF)` (ruling SB-2: it heard none of its players for
-  `HOST_SILENT_US`, its own network down) `"heard none of the players:
+  `HostLost(CUT_OFF)` (ruling SB-2: it heard none of its two or more
+  members for `HOST_SILENT_US`, its own network down; FR12c-1: with one
+  it plays on) `"heard none of the players:
   the match moved to the next player; the lobby is open again"`.
   Each `OnlineEvent::Reachability` is kept and every new line of its
   `lines()` logged once, `"reach: …"`; each `OnlineEvent::RelayJoin` is

@@ -399,6 +399,9 @@ struct Migrating {
     /// N69: it heard its old host while in contact with a successor; if
     /// that contact is lost, it goes back (rl-online's `Planner`).
     heard: bool,
+    /// Its old host is known gone: its `Bye` came (ruling FR12c-1: a
+    /// successor expecting nobody commits only then).
+    gone: bool,
 }
 
 /// An attempt to join `order[to]`.
@@ -605,15 +608,17 @@ fn check_scenario(sc: &Scenario) -> Result<(), Failure> {
 /// - **The resume:** when every expected peer is back and every peer back
 ///   reported, or at the successor's window's end with every peer back
 ///   reported (N68, C1). A successor that expects nobody commits and
-///   resumes at once.
+///   resumes at once only once its old host is known gone (its `Bye` came,
+///   ruling FR12c-1); else at a rejoin (a follower's), or never.
 /// - **N69:** a peer neither committed nor in contact that hears its old
 ///   host again (`HostHeard`) unsuspends and drops its migration; one in
 ///   contact remembers it and does so when that contact is lost (the
 ///   successor went back too), as rl-online's `Planner` does.
 /// - **N70:** a host whose frame gap reaches [`STEP_DOWN_US`] and whose
 ///   succession has an entry that can host leaves.
-/// - **SB-2:** so does a host that hears none of its players
-///   (`Session::players_silent`: its own network is down).
+/// - **SB-2:** so does a host that hears none of its two or more remote
+///   members (`Session::members_silent`: its own network is down; ruling
+///   FR12c-1: with one, it plays on).
 /// - **Give-up:** host lost; the peer runs no more frames.
 ///
 /// Profile changes and outages apply to the link between the peer and
@@ -916,8 +921,8 @@ pub fn run_observed<S: Simulation>(
             } else if plan.is_some() {
                 for e in &new {
                     match *e {
-                        Event::HostSilent => begin(p, &mut w, now),
-                        Event::PeerLeft { peer } if peer == p.host => begin(p, &mut w, now),
+                        Event::HostSilent => begin(p, &mut w, now, false),
+                        Event::PeerLeft { peer } if peer == p.host => begin(p, &mut w, now, true),
                         Event::HostHeard => give_back(p, &mut w),
                         _ => {}
                     }
@@ -931,13 +936,14 @@ pub fn run_observed<S: Simulation>(
                 p.session.transmit(&mut |to, ch: Channel, bytes| w.net.send(now, id, to, ch, bytes));
             }
             events.entry(id).or_default().extend(new);
-            // Ruling SB-2, as rl-online's `cut_off_check`: a host that hears
-            // none of its players (its own network down) leaves the match
-            // when someone can take over, instead of playing on alone.
+            // Rulings SB-2 and FR12c-1, as rl-online's `cut_off_check`: a
+            // host that hears none of its two or more remote members (its
+            // own network down) leaves the match when someone can take
+            // over, instead of playing on alone.
             if plan.is_some()
                 && !p.gone
                 && p.session.is_host()
-                && p.session.players_silent(local)
+                && p.session.members_silent(local)
                 && w.successions.get(&id).is_some_and(|o| o.iter().any(|e| e.1))
             {
                 p.session.leave();
@@ -1059,12 +1065,17 @@ fn held_of<S: Simulation>(migration: usize, peer: PeerId, session: &Session<S>) 
     Held { migration, peer, origin, slots }
 }
 
-/// `p` found its host gone (`HostSilent`, `PeerLeft`): its migration
-/// begins, suspended; past [`MAX_MIGRATIONS`] it is host lost at once, and
-/// so is a spectator still joining (ruling SK-8: no world to follow a
-/// migration with, as rl-online's).
-fn begin<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, now: u64) {
-    if p.migrating.is_some() || p.taking.is_some() || p.session.is_host() {
+/// `p` found its host gone (`HostSilent`, `PeerLeft`: `gone`, its `Bye`
+/// came): its migration begins, suspended; past [`MAX_MIGRATIONS`] it is
+/// host lost at once, and so is a spectator still joining (ruling SK-8: no
+/// world to follow a migration with, as rl-online's). A `Bye` during a
+/// migration marks the old host known gone.
+fn begin<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, now: u64, gone: bool) {
+    if let Some(m) = p.migrating.as_mut() {
+        m.gone |= gone;
+        return;
+    }
+    if p.taking.is_some() || p.session.is_host() {
         return;
     }
     let from = p.host;
@@ -1093,6 +1104,7 @@ fn begin<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, now: u64) {
         attempt: None,
         gate: false,
         heard: false,
+        gone,
     });
 }
 
@@ -1154,8 +1166,11 @@ fn migrate<S: Simulation>(
             Step::Host => {
                 mg.gate = true;
                 mg.attempt = None;
+                // Ruling FR12c-1: it commits at a rejoin, or expecting
+                // nobody once its old host is known gone; never on its own
+                // say (its own drop looks like the host's).
                 let nobody = mg.order.iter().all(|e| !e.1 || e.0 == p.id);
-                if nobody {
+                if nobody && mg.gone {
                     commits.push(i);
                 }
             }
@@ -1167,7 +1182,8 @@ fn migrate<S: Simulation>(
             }
         }
     }
-    // A successor expecting nobody commits and resumes at once (N68).
+    // A successor expecting nobody, its old host known gone, commits and
+    // resumes at once (N68, FR12c-1).
     for i in commits {
         commit(f, peers, w, i, now);
     }

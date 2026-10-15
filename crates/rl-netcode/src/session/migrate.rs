@@ -69,26 +69,29 @@ impl<S: Simulation> Session<S> {
         self.suspended
     }
 
-    /// Host (ruling SB-2): every player peer heard in this match and not
-    /// abandoned has sent nothing for [`HOST_SILENT_US`], counted only over
-    /// time this host advanced (as a client's `HostSilent`), and there is
-    /// one at least. Its own network is down (or every player crashed):
+    /// Host (rulings SB-2, FR12c-1): at least two remote members (players
+    /// and spectators) were heard in this match (a stamped datagram) and
+    /// are not abandoned, and every one has sent nothing for
+    /// [`HOST_SILENT_US`], counted only over time this host advanced (as a
+    /// client's `HostSilent`). Its own network is down (or they all crashed):
     /// its peers find it silent as it finds them, and move to a successor;
     /// with migration on the driver ends its match view rather than play on
-    /// alone. Players gone by `Bye` are abandoned and count for nothing,
-    /// spectators neither.
-    pub fn players_silent(&self, now_us: u64) -> bool {
+    /// alone. One member still heard shows its network is up. With one
+    /// remote member it is never so: neither side can tell its own drop
+    /// from the other's, so a blip stays a stall (FR12c-1). Members gone by
+    /// `Bye` are abandoned and count for nothing.
+    pub fn members_silent(&self, now_us: u64) -> bool {
         if !self.is_host() {
             return false;
         }
         let from = self.silence_from_us;
-        let mut players = self
-            .peers
-            .values()
-            .filter(|p| matches!(p.seat, Seat::Player(_)) && !p.lost && p.echo.is_some())
-            .peekable();
-        players.peek().is_some()
-            && players.all(|p| now_us.saturating_sub(p.heard_us.max(from)) >= HOST_SILENT_US)
+        let mut members = self.peers.values().filter(|p| !p.lost && p.echo.is_some());
+        let silent = |p: &PeerState| now_us.saturating_sub(p.heard_us.max(from)) >= HOST_SILENT_US;
+        let mut n = 0;
+        members.all(|p| {
+            n += 1;
+            silent(p)
+        }) && n >= 2
     }
 
     /// The old host is back before any rehost (N69): advancing again. Its
