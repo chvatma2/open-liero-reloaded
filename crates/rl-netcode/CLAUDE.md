@@ -28,8 +28,12 @@ model that tests it in one process (spec §9.1).
   | lan | 1 | 0 | 0 | 1 | 0 |
   | good | 30 | 5 | 0 | 1 | 0 |
   | typical | 80 | 20 | 0.01 | 1 | 0 |
-  | bad | 150 | 50 | 0.05 | 2 | 0.01 |
+  | bad | 150 | 50 | 0.05 | 1 | 0.01 |
   | awful | 300 | 100 | 0.15 | 4 | 0.02 |
+
+  `bad`'s losses are independent, as the spec defines it (ruling SK-5:
+  plan 9's mean run of 2 lost 13+ datagrams in a row about 3.7 % of
+  link-minutes, past the headroom under `MAX_PREDICTION`).
 
 - **Session** (`session.rs`, `inputs.rs`): one `Session<S>` for host,
   client and spectator; time and messages in, ticks and messages out.

@@ -19,7 +19,7 @@
             own_corrections_per_min: 0.0,
             stalls: 0,
             down_bytes_per_s: 12405,
-            up_bytes_per_s: 7206,
+            up_bytes_per_s: 7207,
         ),
         (
             profile: "typical",
@@ -34,12 +34,12 @@
         (
             profile: "bad",
             rollback_p50: 14,
-            rollback_p99: 18,
-            correction_px_p99: 19.799538,
+            rollback_p99: 17,
+            correction_px_p99: 19.463324,
             own_corrections_per_min: 0.0,
             stalls: 0,
-            down_bytes_per_s: 32299,
-            up_bytes_per_s: 8318,
+            down_bytes_per_s: 32085,
+            up_bytes_per_s: 8308,
         ),
         (
             profile: "awful",

@@ -96,3 +96,5 @@
   fixtures/net/cases/net-classic-liero-factory-bad-3s2c0v-seed2700572210-53aa4c33.ron
 2026-10-15 bless-regression: SK-4: a peer's overlapping outages were judged as two windows; a stall through both was in neither
   fixtures/net/cases/net-mw-1-0-dirt-level-typical-8s4c0v-seed2732616080-68374c94.ron
+2026-10-15 net-feel: bad has no burst loss, as the spec defines it (SK-5)
+  fixtures/net/feel.ron

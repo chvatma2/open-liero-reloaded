@@ -30,8 +30,12 @@ impl Profile {
         Profile { name: "good", ping_ms: 30, jitter_ms: 5, loss: 0.0, burst: 1.0, duplicate: 0.0 };
     pub const TYPICAL: Profile =
         Profile { name: "typical", ping_ms: 80, jitter_ms: 20, loss: 0.01, burst: 1.0, duplicate: 0.0 };
+    /// The spec's `bad` (§9.1): 150 ± 50 ms, 5 % loss, reordering; its
+    /// losses are independent, bursts being `awful`'s (ruling SK-5: with
+    /// plan 9's mean run of 2, runs of 13 or more lost datagrams, about
+    /// 3.7 % per link-minute, outlasted the prediction limit's headroom).
     pub const BAD: Profile =
-        Profile { name: "bad", ping_ms: 150, jitter_ms: 50, loss: 0.05, burst: 2.0, duplicate: 0.01 };
+        Profile { name: "bad", ping_ms: 150, jitter_ms: 50, loss: 0.05, burst: 1.0, duplicate: 0.01 };
     pub const AWFUL: Profile =
         Profile { name: "awful", ping_ms: 300, jitter_ms: 100, loss: 0.15, burst: 4.0, duplicate: 0.02 };
     pub const ALL: [Profile; 5] = [Self::LAN, Self::GOOD, Self::TYPICAL, Self::BAD, Self::AWFUL];
