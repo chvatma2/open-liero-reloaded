@@ -137,6 +137,35 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     whether it changed.
   - Leaving (`Bye`, `disconnected`): removed, `Notice(Left)`,
     `HostEvent::Left`; during a match the slot stays in the match.
+  - Standby and succession (plan 12c): `ToHost::Standby { port, relays }`
+    is kept per member (invalid ones ignored); a change is taken at most
+    once per `STANDBY_WINDOW_US` (5 s), a later one is held, the latest
+    wins, and `tick` takes it (as `SetLook`: a member alternating its
+    endpoint makes the host send at most one `Succession` per window).
+    `succession()` (N64): the match's players in join order, then
+    spectators, then waiting members (`can_host: false`: followers have no
+    world); the host's own member and ids the wire cannot name are left
+    out. `direct` is the address the member joined from when IPv4, not
+    global, its `path` is not `Relayed` (N59/C5) and its port is
+    >= `MIN_STANDBY_PORT`. `Succession` goes to every member after the
+    `Start` and, while `Starting`/`Playing`, whenever the list differs from
+    the last sent (coalesced into `outgoing()`); never while gathering.
+  - Migrated lobby (`host/migrated.rs`, N72): `LobbyHost::migrated(key,
+    state, succession, cfg)` (`NotASuccessor` unless `key` is in both): the
+    successor is the host's own member (ready, admin, its seat); every
+    other member the succession names is kept, away (no link), with its
+    id, look, seat and admin mark; the old host and unnamed members are
+    gone; `cfg.password` is ignored; ids of the state's players stay
+    reserved and `next_id` starts past the highest. A spectator successor
+    keeps its seat and `wants_play` (seated at the next gathering); other
+    spectators keep watching (the wire does not say whether they chose).
+    Closed: a `Hello` whose key is not in the succession is
+    `Refused(Closed)`; an away member's key goes through the usual proofs
+    and `rejoin`s (old id, current state, `HostEvent::Rejoined`,
+    `Notice(Joined)`; its standby stays what the old list said until it
+    reports). `away()`, `away_in_match()` (seat Player or Spectator: the
+    ones N68 waits for) and `drop_away()` (`Left` for each; their keys then
+    join as mid-match joiners).
   - The state never breaks rl-proto's decoders (looks, names, chat, end
     reasons sanitized; setups validated: `LobbyError::InvalidSetup`).
 - **Client** (`client.rs`, `LobbyClient`): `new(.., expected_host)`,
@@ -156,7 +185,10 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   proof is ignored; a `Welcome` or `Lobby` without
   this member closes (`Closed`); `ClientEvent`s for the welcome, refusals, lobby
   changes, chat, notices, start, end, kicks and closing. Actions are sent
-  only once joined; `leave()` sends `Bye`.
+  only once joined; `leave()` sends `Bye`. `standby(port, relays)` reports
+  the member's standby endpoint (now if joined, and again after every
+  welcome); `succession()` is the host's latest order (empty before the
+  first).
 - **Harness** (`harness.rs`, `Net`; behind the `test-hooks` feature,
   enabled by this crate's own dev-dependency): the host and clients in one process,
   messages tagged and encoded through rl-proto, a fixed one-way delay

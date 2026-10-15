@@ -1391,6 +1391,192 @@ fn a_dedicated_server_has_no_player_but_a_key() {
     consistent(&net);
 }
 
+// ---- plan 12c: the succession order and the migrated lobby ----
+
+fn member_by_id_in(state: &LobbyState, id: u8) -> Member {
+    state.members.iter().find(|m| m.id == id).cloned().expect("in the state")
+}
+
+/// Starts a match of the host, Ann and Bob (players) and Cid (spectator):
+/// Ann and Cid report standbys, Bob none.
+fn started_with_standbys() -> (Net, [usize; 3]) {
+    let mut net = lobby_with(HostConfig { max_players: 3, max_spectators: 2, ..cfg() }, 1);
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let c = join(&mut net, 3, "Cid");
+    net.client(a).standby(40_001, vec!["wss://a.example".into()]);
+    net.client(c).standby(40_003, vec![]);
+    for x in [a, b] {
+        net.client(x).set_ready(true);
+    }
+    net.settle();
+    net.start(7, 0).unwrap();
+    net.settle();
+    (net, [a, b, c])
+}
+
+#[test]
+fn the_succession_lists_players_then_spectators_in_join_order() {
+    let (net, [a, b, c]) = started_with_standbys();
+    let list = net.host.succession();
+    let ids: Vec<u8> = list.iter().map(|s| s.member).collect();
+    assert_eq!(ids, vec![id_of(&net, a), id_of(&net, b), id_of(&net, c)]);
+    assert_eq!(list[0].direct, Some(([10, 0, 0, 1], 40_001)), "a private address: direct");
+    assert_eq!(list[0].relays, vec!["wss://a.example".to_string()]);
+    assert!(list[0].can_host && !list[1].can_host && list[2].can_host, "Bob reported no standby");
+    assert!(list.iter().all(|s| s.key != key(HOST)), "the host is no successor");
+    for x in [a, b, c] {
+        assert_eq!(net.peers[x].client.as_ref().unwrap().succession(), &list[..], "client {x}");
+    }
+}
+
+#[test]
+fn the_succession_is_sent_with_the_start_and_on_change_only() {
+    let mut net = lobby_with(HostConfig { max_players: 3, ..cfg() }, 1);
+    let a = join(&mut net, 1, "Ann");
+    net.client(a).standby(40_001, vec![]);
+    net.settle();
+    let sent =
+        |net: &Net| net.peers[a].received.iter().filter(|m| matches!(m, ToClient::Succession(_))).count();
+    assert_eq!(sent(&net), 0, "nothing while gathering");
+    net.client(a).set_ready(true);
+    net.settle();
+    net.start(7, 0).unwrap();
+    net.settle();
+    assert_eq!(sent(&net), 1);
+    net.run(2_000_000);
+    assert_eq!(sent(&net), 1, "unchanged: not sent again");
+    net.client(a).standby(40_002, vec![]);
+    net.run(STANDBY_WINDOW_US);
+    net.settle();
+    assert_eq!(sent(&net), 2);
+}
+
+#[test]
+fn standby_changes_during_a_match_are_bounded() {
+    let mut net = lobby_with(HostConfig { max_players: 3, ..cfg() }, 1);
+    // A member seen at a global address, and one reached through a relay,
+    // get no direct entry.
+    let g = net.join(
+        LobbyClient::new(ident(7), look("Gus"), None, None),
+        IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
+    );
+    let r = net.join_via(LobbyClient::new(ident(8), look("Rex"), None, None), ip(8), Path::Relayed);
+    net.settle();
+    for (c, port) in [(g, 40_007), (r, 40_008)] {
+        net.client(c).standby(port, vec![]);
+        net.client(c).set_ready(true);
+    }
+    net.settle();
+    net.start(7, 0).unwrap();
+    net.host.playing(1);
+    net.settle();
+    let list = net.host.succession();
+    assert_eq!(list.len(), 2);
+    assert!(list.iter().all(|s| s.direct.is_none() && s.can_host), "{list:?}");
+    // During the match, Gus alternates its endpoint 200 times within 2 s
+    // (the relay is what the wire shows of a global member).
+    let sent = |net: &Net, c: usize| {
+        net.peers[c].received.iter().filter(|m| matches!(m, ToClient::Succession(_))).count()
+    };
+    let before = sent(&net, r);
+    for i in 0..200u16 {
+        let relay = if i % 2 == 0 { "wss://b.example" } else { "wss://c.example" };
+        net.send_raw(g, ToHost::Standby { port: 41_000 + i % 2, relays: vec![relay.into()] });
+        net.run(10_000);
+    }
+    net.settle();
+    assert!(sent(&net, r) - before <= 2, "{} successions in one window", sent(&net, r) - before);
+    // The latest is taken once the window allows.
+    net.run(STANDBY_WINDOW_US);
+    net.settle();
+    assert_eq!(net.host.succession()[0].relays, vec!["wss://c.example".to_string()], "the latest wins");
+    assert!(valid_succession(&net.host.succession()));
+    assert!(net.errors.is_empty(), "{:?}", net.errors);
+}
+
+#[test]
+fn hostile_standbys_are_ignored() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    for (port, relays) in [(80, vec![]), (40_000, vec!["ws://".into()]), (40_000, vec!["wss://x".into(); 3])]
+    {
+        net.host.receive(net.peers[a].peer, ToHost::Standby { port, relays }, net.now_us);
+    }
+    assert!(!net.host.succession()[0].can_host);
+    consistent(&net);
+}
+
+#[test]
+fn a_migrated_lobby_takes_back_its_members_by_key() {
+    let (net, [a, b, c]) = started_with_standbys();
+    let state = net.host.state().clone();
+    let list = net.host.succession();
+    let (bob, cid) = (id_of(&net, b), id_of(&net, c));
+    let _ = a;
+    // Ann takes over.
+    let cfg = HostConfig {
+        name: state.name.clone(),
+        password: None,
+        max_players: 3,
+        max_spectators: 16,
+        admins: vec![],
+    };
+    let mut next = Net::new(LobbyHost::migrated(ident(1), &state, &list, cfg.clone()).unwrap(), DELAY_US);
+    assert_eq!(next.host.state().phase, state.phase);
+    assert!(next.host.state().members.iter().all(|m| m.key != key(HOST)), "the old host is gone");
+    assert_eq!(next.host.away(), vec![bob, cid]);
+    assert_eq!(
+        next.host.away_in_match(),
+        vec![bob, cid],
+        "Bob holds a slot, Cid a spectator seat from the start"
+    );
+    let nb = next.join(LobbyClient::new(ident(2), look("Bob"), None, Some(key(1))), ip(2));
+    next.settle();
+    assert!(next.host_events.contains(&HostEvent::Rejoined(bob)));
+    assert!(got(&next, nb, &ClientEvent::Welcome { you: bob }), "its old id");
+    assert_eq!(member_by_id(&next, bob).seat, member_by_id_in(&state, bob).seat, "its seat");
+    assert_eq!(next.host.away(), vec![cid]);
+    // A stranger is refused.
+    let x = next.join(LobbyClient::new(ident(9), look("Xan"), None, Some(key(1))), ip(9));
+    next.settle();
+    assert!(got(&next, x, &ClientEvent::Refused(Refusal::Closed)));
+    // The resume: Cid did not come back; later it joins as a mid-match joiner.
+    next.host.drop_away();
+    next.settle();
+    assert!(got(&next, nb, &ClientEvent::Notice(Notice::Left(cid))));
+    let nc = next.join(LobbyClient::new(ident(3), look("Cid"), None, Some(key(1))), ip(3));
+    next.settle();
+    assert_eq!(member(&next, nc).seat, SeatWire::Waiting);
+    assert!(!next.host_events.contains(&HostEvent::Rejoined(cid)));
+    assert!(next.host.away().is_empty());
+    assert_ne!(id_of(&next, nc), bob, "ids stay unique");
+    assert!(LobbyHost::migrated(ident(9), &state, &list, cfg).is_err(), "not a successor");
+    consistent(&next);
+}
+
+#[test]
+fn a_spectator_successor_hosts_as_a_spectator_and_is_seated_next_gathering() {
+    let (net, [_, _, c]) = started_with_standbys();
+    let state = net.host.state().clone();
+    let cid = id_of(&net, c);
+    let cfg = HostConfig {
+        name: state.name.clone(),
+        password: None,
+        max_players: 3,
+        max_spectators: 16,
+        admins: vec![],
+    };
+    let mut next = LobbyHost::migrated(ident(3), &state, &net.host.succession(), cfg).unwrap();
+    let me = |h: &LobbyHost| h.state().members.iter().find(|m| m.id == cid).cloned().unwrap();
+    assert_eq!(me(&next).seat, SeatWire::Spectator);
+    assert!(me(&next).ready && me(&next).admin);
+    next.playing(5);
+    next.match_ended(MatchEndWire { reason: "x".into(), rows: vec![], last_tick: 9 }, 0);
+    next.tick(RESULTS_US + 1);
+    assert_eq!(me(&next).seat, SeatWire::Player { slot: 0 }, "free: the away players left slot 1 and 2 held");
+}
+
 // ---- robustness: any sequence of messages and host actions ----
 
 /// Peers in the proptest: more than a full lobby.
@@ -1413,6 +1599,9 @@ enum Op {
     Wait(u64),
     /// The content list's revision changes.
     Revision(u32),
+    /// Peer `p`'s member takes over as a migrated lobby (if it can).
+    Migrate(u8),
+    DropAway,
 }
 
 fn to_host() -> impl Strategy<Value = ToHost> {
@@ -1448,6 +1637,10 @@ fn to_host() -> impl Strategy<Value = ToHost> {
         (0u8..PEERS).prop_map(|k| ToHost::Admin(AdminCommand::Kick(key(k + 1)))),
         (0u8..PEERS).prop_map(|k| ToHost::Admin(AdminCommand::Ban(key(k + 1)))),
         Just(ToHost::Admin(AdminCommand::Next)),
+        (any::<u16>(), prop::collection::vec("(wss?://[a-z.]{1,12})|ws://|[a-z ]{0,9}", 0..=3))
+            .prop_map(|(port, relays)| ToHost::Standby { port, relays }),
+        (1024u16..1030, prop::collection::vec("wss://[a-z]{1,8}", 0..=2))
+            .prop_map(|(port, relays)| ToHost::Standby { port, relays }),
         Just(ToHost::Bye),
     ]
 }
@@ -1489,6 +1682,8 @@ fn op() -> impl Strategy<Value = Op> {
         1 => Just(Op::Ended),
         1 => (0u64..12_000_000).prop_map(Op::Wait),
         1 => (0u32..3).prop_map(Op::Revision),
+        1 => (0u8..PEERS).prop_map(Op::Migrate),
+        1 => Just(Op::DropAway),
     ]
 }
 
@@ -1505,7 +1700,9 @@ proptest! {
         crowd_at in prop::option::of(0usize..120),
     ) {
         let cfg = HostConfig { max_players, max_spectators, admins: vec![key(1)], ..cfg() };
-        let mut host = LobbyHost::new(cfg, ident(HOST), Some(look("Host")), setup(0)).unwrap();
+        let mut host = LobbyHost::new(cfg.clone(), ident(HOST), Some(look("Host")), setup(0)).unwrap();
+        // The key the host proves (a migrated lobby's is its successor's).
+        let mut host_key = key(HOST);
         let mut now = 0u64;
         let mut nonces: BTreeMap<u32, [u8; 32]> = BTreeMap::new();
         let mut serial = 0u8;
@@ -1521,7 +1718,7 @@ proptest! {
                     if let Op::Join(p, look) = op {
                         let me = ident(p + 1);
                         host.receive(peer, ToHost::Hello { key: me.public(), look, nonce: [0; 32] }, now);
-                        let signature = me.sign(&challenge_message(&nonce, &key(HOST), &FINGERPRINTS), [0; 32]);
+                        let signature = me.sign(&challenge_message(&nonce, &host_key, &FINGERPRINTS), [0; 32]);
                         host.receive(peer, ToHost::Prove { signature, password: None }, now);
                     }
                 }
@@ -1531,7 +1728,7 @@ proptest! {
                         let (peer, nonce, me) = (u32::from(p), [serial; 32], ident(p + 1));
                         host.connected(peer, ip(p), Path::Direct, now, nonce, FINGERPRINTS);
                         host.receive(peer, ToHost::Hello { key: me.public(), look: long_look(p), nonce: [0; 32] }, now);
-                        let signature = me.sign(&challenge_message(&nonce, &key(HOST), &FINGERPRINTS), [0; 32]);
+                        let signature = me.sign(&challenge_message(&nonce, &host_key, &FINGERPRINTS), [0; 32]);
                         host.receive(peer, ToHost::Prove { signature, password: None }, now);
                         let missing = (0..MAX_MISSING).map(|i| format!("{i}{}", "m".repeat(MAX_ID - 1))).collect();
                         host.receive(peer, ToHost::Have { revision: 0, missing }, now);
@@ -1563,7 +1760,19 @@ proptest! {
                     host.tick(now);
                 }
                 Op::Revision(r) => host.set_content_revision(r),
+                Op::Migrate(p) => {
+                    let (state, list) = (host.state().clone(), host.succession());
+                    prop_assert!(valid_succession(&list));
+                    if let Ok(next) = LobbyHost::migrated(ident(p + 1), &state, &list, cfg.clone()) {
+                        host = next;
+                        host_key = key(p + 1);
+                        nonces.clear();
+                        prop_assert_eq!(host.state().phase, state.phase);
+                    }
+                }
+                Op::DropAway => host.drop_away(),
             }
+            prop_assert!(valid_succession(&host.succession()));
             // A broadcast is a run of one message to many peers: check it once.
             let mut last = None;
             for (_, m) in host.outgoing() {

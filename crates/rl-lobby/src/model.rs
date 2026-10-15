@@ -21,6 +21,11 @@ pub const CHAT_WINDOW_US: u64 = 5_000_000;
 /// more are ignored.
 pub const LOOK_CHANGES: usize = 4;
 pub const LOOK_WINDOW_US: u64 = 1_000_000;
+/// A member's standby change is taken at most once per this window; a later
+/// one is held and taken by `tick` (N63, as [`LOOK_WINDOW_US`]): a member
+/// alternating its port makes the host send the succession to everyone at
+/// most once per window.
+pub const STANDBY_WINDOW_US: u64 = 5_000_000;
 /// A member's download progress changes at most this often in the lobby.
 pub const DOWNLOAD_EVERY_US: u64 = 250_000;
 /// How long the host stays in `Phase::Results` before gathering again.
@@ -84,6 +89,9 @@ pub enum HostEvent {
     /// The lobby became startable: every player is ready (a host that
     /// starts when ready, the dedicated server, starts now).
     StartRequested,
+    /// An away member of a migrated lobby proved its key on a new link: it
+    /// has its old id and seat back (its slot is the match's still).
+    Rejoined(u8),
     /// An admin's `Next` or `Settings`, for the owner to act on (the lobby
     /// does `Kick` and `Ban` itself).
     Admin { from: u8, cmd: AdminCommand },
@@ -150,6 +158,9 @@ pub enum LobbyError {
     InvalidSetup,
     /// The setup changes only while the lobby gathers.
     NotGathering,
+    /// `LobbyHost::migrated` for a key that is not a member of both the
+    /// state and the succession.
+    NotASuccessor,
 }
 
 impl core::fmt::Display for NotStartable {
@@ -170,6 +181,7 @@ impl core::fmt::Display for LobbyError {
         f.write_str(match self {
             LobbyError::InvalidSetup => "the setup is out of bounds",
             LobbyError::NotGathering => "the setup changes only between matches",
+            LobbyError::NotASuccessor => "not a successor of this lobby",
         })
     }
 }
@@ -256,6 +268,7 @@ mod tests {
         let all = [
             format!("{}", LobbyError::InvalidSetup),
             format!("{}", LobbyError::NotGathering),
+            format!("{}", LobbyError::NotASuccessor),
             format!("{}", NotStartable::Phase),
             format!("{}", NotStartable::NoPlayers),
             format!("{}", NotStartable::TooFewWorms),

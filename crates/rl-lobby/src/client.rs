@@ -7,8 +7,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use rl_proto::{
-    AdminCommand, LobbyState, Look, MAX_MISSING, PublicKey, Refusal, ToClient, ToHost, valid_pack_id,
-    valid_setup,
+    AdminCommand, LobbyState, Look, MAX_MISSING, MAX_STANDBY_RELAYS, MIN_STANDBY_PORT, PublicKey, Refusal,
+    SuccessorWire, ToClient, ToHost, valid_pack_id, valid_relay_url, valid_setup, valid_succession,
 };
 
 use crate::identity::{
@@ -48,6 +48,10 @@ pub struct LobbyClient {
     needs_password: bool,
     you: Option<u8>,
     state: Option<LobbyState>,
+    /// The standby endpoint to report (`standby`).
+    standby: Option<(u16, Vec<String>)>,
+    /// The host's latest succession order.
+    succession: Vec<SuccessorWire>,
     out: Vec<ToHost>,
     events: Vec<ClientEvent>,
 }
@@ -82,6 +86,8 @@ impl LobbyClient {
             needs_password: false,
             you: None,
             state: None,
+            standby: None,
+            succession: Vec::new(),
             out: Vec::new(),
             events: Vec::new(),
         }
@@ -166,6 +172,10 @@ impl LobbyClient {
                 self.state = Some(lobby);
                 self.stage = Stage::Joined;
                 self.events.push(ClientEvent::Welcome { you });
+                // Again after every welcome: a new host knows none.
+                if let Some((port, relays)) = self.standby.clone() {
+                    self.out.push(ToHost::Standby { port, relays });
+                }
             }
             (Stage::Joined, msg) => self.receive_joined(msg),
             // Out of order or after the end: a host bug, nothing to act on.
@@ -194,9 +204,13 @@ impl LobbyClient {
             ToClient::Challenge { .. }
             | ToClient::HostProof { .. }
             | ToClient::Welcome { .. }
-            // Plan 12c task 4 takes the succession.
-            | ToClient::Succession(_)
             | ToClient::Refused(_) => return,
+            ToClient::Succession(list) => {
+                if valid_succession(&list) {
+                    self.succession = list;
+                }
+                return;
+            }
         };
         self.events.push(event);
     }
@@ -269,6 +283,21 @@ impl LobbyClient {
         self.send(ToHost::Admin(cmd));
     }
 
+    /// Reports this member's standby endpoint (N63): the `port` it would
+    /// listen on and the `relays` it would listen on as host. Sent now if
+    /// joined, else after the welcome, and again after every welcome. A port
+    /// below `MIN_STANDBY_PORT` is not reported; invalid relays are dropped
+    /// and at most `MAX_STANDBY_RELAYS` kept.
+    pub fn standby(&mut self, port: u16, relays: Vec<String>) {
+        if port < MIN_STANDBY_PORT {
+            return;
+        }
+        let relays: Vec<String> =
+            relays.into_iter().filter(|r| valid_relay_url(r)).take(MAX_STANDBY_RELAYS).collect();
+        self.standby = Some((port, relays.clone()));
+        self.send(ToHost::Standby { port, relays });
+    }
+
     /// Says goodbye; the caller closes the transport after sending.
     pub fn leave(&mut self) {
         if matches!(self.stage, Stage::Connected | Stage::Hello | Stage::Proving | Stage::Joined) {
@@ -292,6 +321,11 @@ impl LobbyClient {
     /// This client's member id, once welcomed (kept after leaving).
     pub fn me(&self) -> Option<u8> {
         self.you
+    }
+
+    /// The host's latest succession order (empty before the first).
+    pub fn succession(&self) -> &[SuccessorWire] {
+        &self.succession
     }
 
     /// The key the host's challenge named (proven once joined).

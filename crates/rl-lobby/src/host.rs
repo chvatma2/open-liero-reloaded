@@ -11,15 +11,18 @@ use core::net::IpAddr;
 
 use rl_netcode::{PeerId, input_delay};
 use rl_proto::{
-    AdminCommand, LobbyState, Look, MAX_INPUT_DELAY, MAX_PLAYERS, MAX_SPECTATORS, MatchEndWire,
-    MatchSetupWire, MatchStartWire, Member, Notice, Path, Phase, PublicKey, Refusal, SeatWire, SlotWire,
-    ToClient, ToHost, valid_setup,
+    AdminCommand, LobbyState, Look, MAX_INPUT_DELAY, MAX_MEMBERS, MAX_PLAYERS, MAX_SPECTATORS,
+    MAX_STANDBY_RELAYS, MIN_STANDBY_PORT, MatchEndWire, MatchSetupWire, MatchStartWire, Member, Notice, Path,
+    Phase, PublicKey, Refusal, SeatWire, SlotWire, SuccessorWire, ToClient, ToHost, is_global,
+    valid_relay_url, valid_setup,
 };
 
 use crate::identity::{
     DtlsFingerprints, Identity, challenge_message, host_proof_message, password_proof, verify,
 };
 use crate::model::*;
+
+mod migrated;
 
 /// A peer whose transport is open but who has not proven its key yet.
 struct Pending {
@@ -37,6 +40,16 @@ enum Link {
     /// Boxed: a pending link carries its nonce and fingerprints.
     Pending(Box<Pending>),
     Member(u8),
+}
+
+/// What a member reported as its standby endpoint (N63), or what a
+/// migrated lobby knows of it from the succession it was built from.
+#[derive(Clone, PartialEq, Eq)]
+struct Standby {
+    /// The port it listens on once it hosts (`None`: only inherited from a
+    /// succession whose entry named no direct address).
+    port: Option<u16>,
+    relays: Vec<String>,
 }
 
 /// A member as the host keeps it.
@@ -83,6 +96,52 @@ struct Rec {
     /// Its latest look beyond them, taken by `tick` once the window
     /// allows (the last of a dragged colour slider is the one chosen).
     look_held: Option<Look>,
+    /// Its standby endpoint (`ToHost::Standby`).
+    standby: Option<Standby>,
+    /// When its standby was last taken.
+    standby_at: Option<u64>,
+    /// Its latest standby beyond the window, taken by `tick` once the
+    /// window allows.
+    standby_held: Option<Standby>,
+}
+
+impl Rec {
+    /// Whether a standby change may be taken at `now_us` (the window starts
+    /// when one is).
+    fn standby_allowed(&self, now_us: u64) -> bool {
+        self.standby_at.is_none_or(|t| now_us.saturating_sub(t) >= STANDBY_WINDOW_US)
+    }
+
+    /// Takes `new` as its standby, now.
+    fn take_standby(&mut self, new: Standby, now_us: u64) {
+        self.standby = Some(new);
+        self.standby_at = Some(now_us);
+        self.standby_held = None;
+    }
+
+    /// Its entry in the succession order (N64).
+    fn successor(&self) -> SuccessorWire {
+        let relays = self.standby.as_ref().map(|s| s.relays.clone()).unwrap_or_default();
+        // The address it joined from, when it is on the host's own network
+        // and the link is not a TURN relay's (N59: that address is the
+        // relay's, C5).
+        let direct = match (self.standby.as_ref().and_then(|s| s.port), self.addr, self.path) {
+            (Some(port), Some(IpAddr::V4(ip)), path)
+                if port >= MIN_STANDBY_PORT && path != Some(Path::Relayed) && !is_global(IpAddr::V4(ip)) =>
+            {
+                Some((ip.octets(), port))
+            }
+            _ => None,
+        };
+        SuccessorWire {
+            member: self.id,
+            key: self.key,
+            direct,
+            relays,
+            // A member waiting for the next match has no world.
+            can_host: self.standby.is_some() && self.seat != SeatWire::Waiting,
+        }
+    }
 }
 
 impl Rec {
@@ -180,6 +239,12 @@ pub struct LobbyHost {
     /// The content list's revision (`set_content_revision`; `None`: no
     /// content layer, every `Have` counts).
     content_revision: Option<u32>,
+    /// The succession order last sent (`None`: send the next one at once,
+    /// the start's).
+    sent_succession: Option<Vec<SuccessorWire>>,
+    /// A migrated lobby (N72): takes back only the keys of the succession
+    /// it was built from.
+    closed: Option<BTreeSet<PublicKey>>,
 }
 
 /// One address's recent wrong password proofs.
@@ -215,12 +280,7 @@ impl LobbyHost {
         if !valid_setup(&setup) {
             return Err(LobbyError::InvalidSetup);
         }
-        let cfg = HostConfig {
-            name: sanitize_name(&cfg.name, "Lobby"),
-            max_players: cfg.max_players.clamp(1, MAX_PLAYERS as u8),
-            max_spectators: cfg.max_spectators.min(MAX_SPECTATORS as u8),
-            ..cfg
-        };
+        let cfg = Self::normalized(cfg);
         let state = LobbyState {
             name: cfg.name.clone(),
             phase: Phase::Gathering,
@@ -251,6 +311,8 @@ impl LobbyHost {
             events: Vec::new(),
             now_us: 0,
             content_revision: None,
+            sent_succession: None,
+            closed: None,
         };
         if let Some(look) = me {
             let id = host.alloc_id().unwrap_or(0);
@@ -277,11 +339,23 @@ impl LobbyHost {
                 chat: VecDeque::new(),
                 looks: VecDeque::new(),
                 look_held: None,
+                standby: None,
+                standby_at: None,
+                standby_held: None,
             });
             host.me = Some(id);
         }
         host.refresh();
         Ok(host)
+    }
+
+    fn normalized(cfg: HostConfig) -> HostConfig {
+        HostConfig {
+            name: sanitize_name(&cfg.name, "Lobby"),
+            max_players: cfg.max_players.clamp(1, MAX_PLAYERS as u8),
+            max_spectators: cfg.max_spectators.min(MAX_SPECTATORS as u8),
+            ..cfg
+        }
     }
 
     // ---- the transport ----
@@ -370,12 +444,22 @@ impl LobbyHost {
             self.set_look(id, &look);
             self.publish();
         }
+        // Held standbys likewise (the succession follows at the next drain).
+        for m in &mut self.members {
+            if m.standby_held.is_some()
+                && m.standby_allowed(now_us)
+                && let Some(held) = m.standby_held.take()
+            {
+                m.take_standby(held, now_us);
+            }
+        }
     }
 
     /// Drains the messages to send, ending with one `Lobby` to every
     /// member if the state changed since the last one.
     pub fn outgoing(&mut self) -> Vec<(PeerId, ToClient)> {
         self.flush();
+        self.flush_succession();
         core::mem::take(&mut self.out)
     }
 
@@ -723,6 +807,8 @@ impl LobbyHost {
         let peers: Vec<PeerId> =
             self.members.iter().filter(|m| m.seat != SeatWire::Waiting).filter_map(|m| m.peer).collect();
         self.out.extend(peers.into_iter().map(|p| (p, start.clone())));
+        // The succession follows the start in the same drain.
+        self.sent_succession = None;
         self.publish();
         Ok(())
     }
@@ -753,6 +839,21 @@ impl LobbyHost {
     }
 
     // ---- queries ----
+
+    /// The succession order now (N64): the match's players in join order,
+    /// then its spectators, then waiting members. The host's own member is
+    /// no successor; a member whose id the wire cannot name is left out.
+    pub fn succession(&self) -> Vec<SuccessorWire> {
+        let mine = self.key.public();
+        let mut order: Vec<&Rec> =
+            self.members.iter().filter(|m| m.key != mine && usize::from(m.id) < MAX_MEMBERS).collect();
+        order.sort_by_key(|m| match m.seat {
+            SeatWire::Player { .. } => 0,
+            SeatWire::Spectator => 1,
+            SeatWire::Waiting => 2,
+        });
+        order.into_iter().map(Rec::successor).collect()
+    }
 
     pub fn state(&self) -> &LobbyState {
         &self.state
@@ -864,7 +965,10 @@ impl LobbyHost {
                 if let Err(r) = self.may_join(&key, addr) {
                     return self.refuse(peer, r);
                 }
-                self.admit(peer, addr, path, key, &look);
+                match self.members.iter().position(|m| m.key == key && m.peer.is_none()) {
+                    Some(i) => self.rejoin(peer, addr, path, i),
+                    None => self.admit(peer, addr, path, key, &look),
+                }
             }
             (ToHost::Bye, _) => {
                 self.links.remove(&peer);
@@ -883,8 +987,18 @@ impl LobbyHost {
         if self.banned_keys.contains(key) || self.banned_ips.contains(&addr) {
             return Err(Refusal::Banned);
         }
-        if *key == self.key.public() || self.members.iter().any(|m| m.key == *key) {
+        // N72: a migrated lobby takes back its own members only.
+        if self.closed.as_ref().is_some_and(|keys| !keys.contains(key)) {
+            return Err(Refusal::Closed);
+        }
+        if *key == self.key.public() {
             return Err(Refusal::Busy);
+        }
+        match self.members.iter().find(|m| m.key == *key) {
+            // An away member of a migrated lobby rejoins (its seat is held).
+            Some(m) if m.peer.is_none() => return Ok(()),
+            Some(_) => return Err(Refusal::Busy),
+            None => {}
         }
         self.admit_seat().map(|_| ()).ok_or(Refusal::Full)
     }
@@ -947,6 +1061,9 @@ impl LobbyHost {
             chat: VecDeque::new(),
             looks: VecDeque::new(),
             look_held: None,
+            standby: None,
+            standby_at: None,
+            standby_held: None,
         });
         self.set_look(id, look);
         self.publish();
@@ -1080,8 +1197,27 @@ impl LobbyHost {
                 self.drop_member(id, Gone::Left);
                 self.events.push(HostEvent::Close { peer });
             }
-            // Plan 12c task 4 records the member's standby.
-            ToHost::Standby { .. } => {}
+            ToHost::Standby { port, relays } => {
+                // The decoder bounds a message; a caller of `receive` may
+                // not have gone through it.
+                if port < MIN_STANDBY_PORT
+                    || relays.len() > MAX_STANDBY_RELAYS
+                    || !relays.iter().all(|r| valid_relay_url(r))
+                {
+                    return;
+                }
+                // A change is taken at most once per window; beyond it only
+                // the latest is held (the succession goes to everyone).
+                let new = Standby { port: Some(port), relays };
+                let m = &mut self.members[i];
+                if m.standby.as_ref() == Some(&new) {
+                    m.standby_held = None;
+                } else if m.standby_allowed(now_us) {
+                    m.take_standby(new, now_us);
+                } else {
+                    m.standby_held = Some(new);
+                }
+            }
         }
     }
 
@@ -1247,6 +1383,20 @@ impl LobbyHost {
 
     fn flush(&mut self) {
         self.flush_except(None);
+    }
+
+    /// While a match starts or runs, sends the succession order to every
+    /// member when it differs from the last one sent.
+    fn flush_succession(&mut self) {
+        if !matches!(self.phase, Phase::Starting | Phase::Playing { .. }) {
+            return;
+        }
+        let list = self.succession();
+        if self.sent_succession.as_ref() == Some(&list) {
+            return;
+        }
+        self.broadcast(&ToClient::Succession(list.clone()));
+        self.sent_succession = Some(list);
     }
 
     /// Sends the changed state to every member but `except`.

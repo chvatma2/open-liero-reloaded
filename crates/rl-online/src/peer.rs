@@ -987,7 +987,9 @@ impl OnlinePeer {
                     self.admin_setup(from, setup)
                 }
                 HostEvent::Notice(text) => self.events.push(OnlineEvent::Notice(text)),
-                HostEvent::Admin { .. } | HostEvent::StartRequested => {}
+                // Plan 12c: a migrated lobby's rejoin is the online layer's to
+                // act on (tasks 6 and 7).
+                HostEvent::Admin { .. } | HostEvent::StartRequested | HostEvent::Rejoined(_) => {}
             }
         }
     }
