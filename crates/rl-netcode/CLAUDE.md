@@ -448,7 +448,9 @@ model that tests it in one process (spec §9.1).
       rl-online's `cut_off_check` (without it a follower came back to the
       old host still playing alone, N69, and split from the match:
       net-soak's `bad-14s3c1v-seed974389837`);
-    - `GiveUp`: `Report::host_lost`, no more frames.
+    - `GiveUp`: `Report::host_lost` and `Report::gave_up` (`GaveUp`: the
+      host it found gone, when, when it gave up, the succession), no more
+      frames.
   - `Report` gains `hosts` (in order, `HOST` first), `migrations`
     (`Migrated { from, to, silent_us, resumed_us, tick }`: the first peer's
     `HostSilent`/`PeerLeft` to the resume), `host_lost`, `exited` (crashed,
@@ -477,6 +479,19 @@ model that tests it in one process (spec §9.1).
     (as the first host and as the second, net-soak's
     `lan-8s2c0v-seed1433102928`). A host gone stalls its
     clients at the prediction limit: `expect_no_stalls` flags those too.
+    Ruling SK-10 (net-soak's `typical-16s3c0v-seed2454863382`): a host that
+    confirmed fewer than `ticks` passes only when every survivor is host
+    lost legitimately (`every_survivor_lost_legitimately`): each gave up
+    (`gave_up`) within `GIVE_UP_US` plus a frame; in each of its windows
+    before then, the window's successor (if another peer) was cut off from
+    it by a two-way outage of either from the window's start until its ask
+    was answered (the asker's slowest ping in the run plus 50 ms: an
+    unreached successor is not asked again in its window, here and in
+    rl-online); and every survivor's confirmed rows agree with the last
+    host's and each other's. Nothing else makes a successor unreachable (a
+    dead one, `awful` links). Pinned by
+    `every_survivor_host_lost_is_accepted_when_no_successor_was_reachable`
+    and `every_survivor_host_lost_with_a_reachable_successor_fails`.
   - `ToyFactory` drives `ToySim` with seeded keys; its fault moves slot 0.
 
 `tests/play.rs` drives a host and one client over a link the test

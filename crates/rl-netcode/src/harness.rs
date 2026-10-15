@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 
 use rl_sim::Keys;
 
-use crate::migration::{MAX_MIGRATIONS, Migration, RETRY_US, STEP_DOWN_US, Step};
+use crate::migration::{GIVE_UP_US, MAX_MIGRATIONS, Migration, RETRY_US, STEP_DOWN_US, Step, WINDOW_US};
 use crate::netsim::{LinkStats, Network, Profile};
 use crate::{
     Channel, Config, Driver, Event, PeerId, Role, Seat, Session, Simulation, Stats, TICK_US, TickInfo,
@@ -168,6 +168,72 @@ pub trait Observer<S: Simulation> {
     fn on_frame(&mut self, _peer: PeerId, _session: &mut Session<S>) {}
 }
 
+/// Ruling SK-10: every survivor (no peer dropped, exited or left behind)
+/// is host lost, legitimately. All three hold:
+/// - **No successor was reachable when asked.** Each survivor gave up at
+///   the end of its windows (`Report::gave_up`, not past
+///   `MAX_MIGRATIONS`), and in each of its windows `k` (from `began_us +
+///   k · WINDOW_US`, before it gave up) the `k`-th entry that can host,
+///   if another peer, was cut off from it by an outage of either (both
+///   ways, as the harness's attempts judge reachability) from the window's
+///   start until its ask was answered: the asker's slowest ping in the run
+///   plus 50 ms. The harness and rl-online's `Planner` ask a successor once
+///   a window (an unreached one is not asked again in it), so an outage
+///   over the ask is one over the window. No other cause counts: a dead or
+///   frozen successor, or a link on any profile (`awful` connects),
+///   leaves it reachable.
+/// - **Their confirmed rows agree** with the last host's and with each
+///   other's as far as each goes.
+/// - **Each gave up within N68's bound**: at most `GIVE_UP_US` (plus a
+///   frame, the harness's step) after it found its host gone.
+fn every_survivor_lost_legitimately(sc: &Scenario, r: &Report) -> bool {
+    let all: Vec<PeerId> = core::iter::once(HOST).chain(sc.peers.iter().map(|p| p.id)).collect();
+    let survivors: Vec<PeerId> = all
+        .into_iter()
+        .filter(|p| !r.dropped.contains(p) && !r.exited.contains(p) && !r.left_behind.contains(p))
+        .collect();
+    if survivors.is_empty() || !survivors.iter().all(|p| r.host_lost.contains(p)) {
+        return false;
+    }
+    let ping_us = |peer: PeerId| {
+        let base = sc.peers.iter().filter(|p| p.id == peer).map(|p| p.profile.ping_ms);
+        let changes = sc.profile_changes.iter().filter(|c| c.peer == peer).map(|c| c.profile.ping_ms);
+        u64::from(base.chain(changes).max().unwrap_or(0)) * 1_000
+    };
+    let cut = |a: PeerId, b: PeerId, from_us: u64, until_us: u64| {
+        sc.outages.iter().any(|o| {
+            (o.peer == a || o.peer == b)
+                && !o.one_way
+                && o.from_tick as u64 * TICK_US <= from_us
+                && o.until_tick as u64 * TICK_US >= until_us
+        })
+    };
+    // Steps come with frames: a give-up lands up to a frame late.
+    let step = sc.peers.iter().map(|p| p.frame_us).chain([HOST_FRAME_US]).max().unwrap_or(0) + 1_000;
+    for &q in &survivors {
+        let Some(g) = r.gave_up.get(&q) else { return false };
+        if g.at_us.saturating_sub(g.began_us) > GIVE_UP_US + step {
+            return false;
+        }
+        // The windows before the give-up (one beginning at it never opens).
+        let end = g.at_us.min(g.began_us + GIVE_UP_US);
+        let hosts = g.order.iter().filter(|e| e.1).map(|e| e.0);
+        for (k, s) in hosts.enumerate() {
+            let start = g.began_us + k as u64 * WINDOW_US;
+            if start >= end {
+                break;
+            }
+            if s != q && !cut(q, s, start, start + ping_us(q) + 50_000) {
+                return false;
+            }
+        }
+    }
+    let rows = |p: PeerId| r.logs.get(&p).map_or(&[][..], |v| &v[..]);
+    let mut logs: Vec<&[[u8; 32]]> = survivors.iter().map(|&p| rows(p)).collect();
+    logs.push(&r.host_log[..]);
+    logs.iter().all(|a| logs.iter().all(|b| a.iter().zip(b.iter()).all(|(x, y)| x == y)))
+}
+
 /// The observer that sees nothing.
 impl<S: Simulation> Observer<S> for () {}
 
@@ -213,6 +279,10 @@ pub struct Report {
     pub migrations: Vec<Migrated>,
     /// Peers that gave up (spec §3.7's host lost).
     pub host_lost: BTreeSet<PeerId>,
+    /// Of those, each that gave up at the end of its migration's windows
+    /// (`Step::GiveUp`): what the verdict needs to judge whether a
+    /// successor was reachable (ruling SK-10).
+    pub gave_up: BTreeMap<PeerId, GaveUp>,
     /// Peers that crashed, left or stepped down.
     pub exited: BTreeSet<PeerId>,
     /// Peers that reached a new host after its resume and watch from a
@@ -229,6 +299,19 @@ pub struct Report {
     /// peers' slots. Not survivors, as an exited host. (A host cut off from
     /// its players leaves, SB-2: only one that never heard a player stays.)
     pub left_behind: BTreeSet<PeerId>,
+}
+
+/// A peer's migration that ended in `Step::GiveUp`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GaveUp {
+    /// The host it found gone.
+    pub from: PeerId,
+    /// Virtual time it found it gone (its windows count from there) and
+    /// gave up.
+    pub began_us: u64,
+    pub at_us: u64,
+    /// That host's succession: (peer, can host).
+    pub order: Vec<(PeerId, bool)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -305,6 +388,8 @@ struct Peer<S: Simulation> {
 /// One peer's migration away from its host `from`.
 struct Migrating {
     from: PeerId,
+    /// Virtual time it found its host gone.
+    began: u64,
     /// `from`'s succession: (peer, can host).
     order: Vec<(PeerId, bool)>,
     m: Migration,
@@ -552,6 +637,7 @@ struct Shared {
     migrations: Vec<Migrated>,
     held: Vec<Held>,
     host_lost: BTreeSet<PeerId>,
+    gave_up: BTreeMap<PeerId, GaveUp>,
     exited: BTreeSet<PeerId>,
     late: BTreeSet<PeerId>,
     left_from: BTreeMap<PeerId, PeerId>,
@@ -650,6 +736,7 @@ pub fn run_observed<S: Simulation>(
         migrations: Vec::new(),
         held: Vec::new(),
         host_lost: BTreeSet::new(),
+        gave_up: BTreeMap::new(),
         exited: BTreeSet::new(),
         late: BTreeSet::new(),
         left_from: BTreeMap::new(),
@@ -934,6 +1021,7 @@ pub fn run_observed<S: Simulation>(
         hosts: w.hosts,
         migrations: w.migrations,
         host_lost: w.host_lost,
+        gave_up: w.gave_up,
         exited: w.exited,
         late: w.late,
         held: w.held,
@@ -1000,6 +1088,7 @@ fn begin<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, now: u64) {
     p.migrating = Some(Migrating {
         from,
         order,
+        began: now,
         m: Migration::new(can_host, me, now),
         attempt: None,
         gate: false,
@@ -1051,6 +1140,8 @@ fn migrate<S: Simulation>(
         let Some(mg) = p.migrating.as_mut() else { continue };
         match mg.m.step(now) {
             Step::GiveUp => {
+                let g = GaveUp { from: mg.from, began_us: mg.began, at_us: now, order: mg.order.clone() };
+                w.gave_up.insert(p.id, g);
                 p.migrating = None;
                 p.gone = true;
                 w.host_lost.insert(p.id);
@@ -1325,6 +1416,10 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
         }
     }
     if r.host_log.len() < ticks as usize {
+        // Ruling SK-10: a match every survivor lost, legitimately, ends here.
+        if every_survivor_lost_legitimately(sc, r) {
+            return Ok(());
+        }
         return Err(fail(r.host_log.len() as u32, format!("the host confirmed {} ticks", r.host_log.len())));
     }
     // No final value a survivor held at a migration is lost.

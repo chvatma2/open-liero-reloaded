@@ -1379,3 +1379,56 @@ fn a_spectator_whose_state_just_loaded_follows_the_migration() {
         }
     }
 }
+
+/// Ruling SK-10 (net-soak's `typical-16s3c0v-seed2454863382`): the host
+/// freezes and steps down; the first successor's link is cut through the
+/// asks of its window, the second's through its own; every survivor gives
+/// up (N68). A legitimate end: the verdict accepts it when the scenario's
+/// outages show no successor was reachable when asked, the survivors'
+/// confirmed rows agree and each gave up within `GIVE_UP_US`.
+fn all_host_lost() -> Scenario {
+    let mut sc = mscenario(7, Profile::TYPICAL, 3);
+    sc.peers.retain(|p| p.seat != Seat::Spectator);
+    sc.host_freeze = Some((400, 600));
+    // Found gone about 2 s into the freeze (virtual tick 600): peer 1's
+    // window runs 6-11 s, peer 2's 11-16 s, the give-up at 16 s.
+    sc.outages.push(Outage { peer: 1, from_tick: 580, until_tick: 1_050, one_way: false });
+    sc.outages.push(Outage { peer: 2, from_tick: 1_050, until_tick: 1_580, one_way: false });
+    sc
+}
+
+#[test]
+fn every_survivor_host_lost_is_accepted_when_no_successor_was_reachable() {
+    let sc = all_host_lost();
+    let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+    let r = harness::run(&sc, &mut f).unwrap();
+    assert_eq!(r.host_lost, [1, 2, 3].into(), "every survivor gave up");
+    assert!(r.exited.contains(&HOST), "the frozen host stepped down");
+    harness::verdict(&sc, &r, &mut f).unwrap();
+    // One survivor's rows differ: not accepted.
+    let mut odd = r.clone();
+    if let Some(rows) = odd.logs.get_mut(&2).filter(|rows| rows.len() > 10) {
+        rows[10][0] ^= 1;
+    }
+    assert!(harness::verdict(&sc, &odd, &mut f).is_err(), "the rows disagree");
+    // A give-up past GIVE_UP_US: not accepted.
+    let mut slow = r.clone();
+    if let Some(g) = slow.gave_up.get_mut(&3) {
+        g.at_us = g.began_us + GIVE_UP_US + 1_000_000;
+    }
+    assert!(harness::verdict(&sc, &slow, &mut f).is_err(), "gave up too late");
+}
+
+/// SK-10's other side: every survivor host lost, but the scenario's links
+/// show a successor reachable when asked (peer 2 in its window): not a
+/// legitimate end, the verdict fails as before.
+#[test]
+fn every_survivor_host_lost_with_a_reachable_successor_fails() {
+    let sc = all_host_lost();
+    let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+    let r = harness::run(&sc, &mut f).unwrap();
+    assert_eq!(r.host_lost, [1, 2, 3].into());
+    let reachable = Scenario { outages: sc.outages[..1].to_vec(), ..sc.clone() };
+    let e = harness::verdict(&reachable, &r, &mut f).unwrap_err();
+    assert!(e.what.contains("the host confirmed"), "{e:?}");
+}

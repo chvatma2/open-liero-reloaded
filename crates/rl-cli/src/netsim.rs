@@ -386,6 +386,7 @@ fn empty_report() -> Report {
         hosts: Vec::new(),
         migrations: Vec::new(),
         host_lost: Default::default(),
+        gave_up: BTreeMap::new(),
         exited: Default::default(),
         late: Default::default(),
         held: Vec::new(),
