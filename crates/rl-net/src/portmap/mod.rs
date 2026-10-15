@@ -182,6 +182,10 @@ struct Board {
     stop: bool,
     /// A deletion at the mapper's end that the router did not confirm.
     unconfirmed: bool,
+    /// How long a deletion may take when the mapper's closer granted more
+    /// than `DROP_WAIT` (`close_within`); zero otherwise: each client's own
+    /// budget, which fits in `DROP_WAIT`.
+    delete_wait: Duration,
     /// A losing thread deleted what it mapped: on a router with one table
     /// for every protocol (miniupnpd) that was the winner's mapping too, so
     /// the winner renews at once (final review A-M1).
@@ -822,7 +826,13 @@ impl PortMapper {
     /// every one finished.
     fn stop_and_wait(&mut self, wait: Duration) -> bool {
         self.begin_delete();
-        self.shared.board().stop = true;
+        {
+            let mut b = self.shared.board();
+            b.stop = true;
+            if wait > DROP_WAIT {
+                b.delete_wait = wait;
+            }
+        }
         self.shared.wake.notify_all();
         let end = Instant::now() + wait;
         let finished = loop {

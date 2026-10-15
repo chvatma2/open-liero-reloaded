@@ -18,9 +18,10 @@
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream, UdpSocket};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use super::{Ctx, Grant, MapError, Method, Router, UPNP_DEADLINE, UPNP_LIFETIME, tidy, try_router};
+use super::{Ctx, Grant, MapError, Method, Router, Shared, UPNP_DEADLINE, UPNP_LIFETIME, tidy, try_router};
 
 /// The SSDP search window when the request names none.
 pub const SEARCH: Duration = Duration::from_secs(2);
@@ -691,6 +692,7 @@ fn attempt(ctx: &Ctx) -> Result<(), String> {
         external: device.external,
         description: ctx.req.description,
         deadline: ctx.deadline,
+        shared: Arc::clone(&ctx.shared),
         renewal: false,
     };
     try_router(&mut router, ctx)
@@ -858,6 +860,8 @@ struct Upnp {
     external: Ipv4Addr,
     description: &'static str,
     deadline: Instant,
+    /// The mapper's board: a closer's longer deletion budget.
+    shared: Arc<Shared>,
     renewal: bool,
 }
 
@@ -905,7 +909,8 @@ impl Router for Upnp {
             ("NewExternalPort", external.to_string()),
             ("NewProtocol", protocol(udp).to_string()),
         ];
-        soap(&self.control, "DeletePortMapping", &args, Instant::now() + DELETE_WAIT, &|| true).is_ok()
+        let wait = DELETE_WAIT.max(self.shared.board().delete_wait);
+        soap(&self.control, "DeletePortMapping", &args, Instant::now() + wait, &|| true).is_ok()
     }
 
     fn external_ip(&self) -> Option<Ipv4Addr> {
