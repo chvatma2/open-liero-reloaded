@@ -214,6 +214,8 @@ struct Inner {
     requests: AtomicUsize,
     streamed: AtomicUsize,
     dripping: AtomicUsize,
+    /// `SlowDelete`'s deletions answered (counted as the answer goes out).
+    slow_deletes: AtomicUsize,
 }
 
 impl Inner {
@@ -306,6 +308,7 @@ impl FakeGateway {
             requests: AtomicUsize::new(0),
             streamed: AtomicUsize::new(0),
             dripping: AtomicUsize::new(0),
+            slow_deletes: AtomicUsize::new(0),
         });
         let addrs = (ssdp.local_addr().expect("SSDP address"), pmp_sock.local_addr().expect("PCP address"));
         let spawn = |name: &str, f: Box<dyn FnOnce() + Send>| {
@@ -392,6 +395,12 @@ impl FakeGateway {
     /// `SoapDrip`'s answers still open (the client has not closed them).
     pub fn dripping(&self) -> usize {
         self.inner.dripping.load(Ordering::Relaxed)
+    }
+
+    /// `SlowDelete`'s deletions answered: counted before each answer is
+    /// written, so a client that read its answers sees them counted.
+    pub fn slow_deletes_answered(&self) -> usize {
+        self.inner.slow_deletes.load(Ordering::SeqCst)
     }
 }
 
@@ -905,6 +914,7 @@ fn respond(inner: &Inner, head: &str, body: &str) -> (&'static str, String) {
             let removed = inner.table().mappings.remove(&(udp, port));
             if inner.cfg.m == Misbehaviour::SlowDelete {
                 std::thread::sleep(SLOW_DELETE);
+                inner.slow_deletes.fetch_add(1, Ordering::SeqCst);
             }
             match removed {
                 Some(_) => soap_ok(service, action, ""),

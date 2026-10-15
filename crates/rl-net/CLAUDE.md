@@ -467,7 +467,8 @@ for tests.
     description; `streamed()`), `DeepNesting` (6000 levels, 42 KB),
     `ForeignLocation` (SSDP from 127.0.0.2 naming 127.0.0.1;
     `http_requests()`), `SlowDelete` (`DeletePortMapping` deletes at once
-    and answers `SLOW_DELETE`, 250 ms, late), `LateUpnp` (UPnP's
+    and answers `SLOW_DELETE`, 250 ms, late; `slow_deletes_answered()`
+    counts them, so `slow_delete` judges the drop's wait by order), `LateUpnp` (UPnP's
     `AddPortMapping` and `DeletePortMapping` take effect and answer only
     `LATE`, 300 ms, after the request: Task 8's NT-2 test), `LateDelete`
     (`DeletePortMapping` takes effect and answers `LATE` after the
