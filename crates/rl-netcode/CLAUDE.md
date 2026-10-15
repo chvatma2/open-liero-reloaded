@@ -374,7 +374,12 @@ model that tests it in one process (spec §9.1).
       back and every peer back reported, or at its window's end with every
       peer back reported (N68, C1); expecting nobody, at once;
     - N69: a peer neither committed nor in contact that gets `HostHeard`
-      `unsuspend`s and drops its migration;
+      `unsuspend`s and drops its migration; one in contact remembers it
+      and does so when that contact is lost (its successor went back too:
+      rl-online's `Planner::host_heard`/`failed`; without it the follower
+      was stranded and committed elsewhere, a split, net-soak's
+      `bad-4s3c1v-seed562805195`; pinned by
+      `peers_in_contact_return_with_their_successor_to_the_old_host`);
     - N70: a host whose virtual frame gap reaches `STEP_DOWN_US` (its
       freeze included), with an entry that can host, `leave`s and is gone;
     - `GiveUp`: `Report::host_lost`, no more frames.

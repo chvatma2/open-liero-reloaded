@@ -74,3 +74,5 @@
   fixtures/bench/envelope/amd-ryzen-5-7600x-6-core-processor-12cpus.ron
 2026-10-15 bless-regression: net-soak: a host cut off while its only client took over (the second of two migrations) is left behind, not a survivor
   fixtures/net/cases/net-classic-dirt-level-lan-8s2c0v-seed1433102928-09785d77.ron
+2026-10-15 bless-regression: net-soak: a follower in contact when its old host returns goes back when the contact is lost (N69, as rl-online's Planner)
+  fixtures/net/cases/net-classic-fossilfacility-bad-4s3c1v-seed562805195-fa5dd939.ron

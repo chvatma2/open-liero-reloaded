@@ -307,6 +307,9 @@ struct Migrating {
     attempt: Option<Attempt>,
     /// Its own turn (`Step::Host`): its gate is open.
     gate: bool,
+    /// N69: it heard its old host while in contact with a successor; if
+    /// that contact is lost, it goes back (rl-online's `Planner`).
+    heard: bool,
 }
 
 /// An attempt to join `order[to]`.
@@ -515,7 +518,9 @@ fn check_scenario(sc: &Scenario) -> Result<(), Failure> {
 ///   reported (N68, C1). A successor that expects nobody commits and
 ///   resumes at once.
 /// - **N69:** a peer neither committed nor in contact that hears its old
-///   host again (`HostHeard`) unsuspends and drops its migration.
+///   host again (`HostHeard`) unsuspends and drops its migration; one in
+///   contact remembers it and does so when that contact is lost (the
+///   successor went back too), as rl-online's `Planner` does.
 /// - **N70:** a host whose frame gap reaches [`STEP_DOWN_US`] and whose
 ///   succession has an entry that can host leaves.
 /// - **Give-up:** host lost; the peer runs no more frames.
@@ -953,17 +958,32 @@ fn begin<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, now: u64) {
     let can_host = order.iter().map(|e| e.1).collect();
     let me = order.iter().position(|e| e.0 == p.id);
     p.session.suspend();
-    p.migrating =
-        Some(Migrating { from, order, m: Migration::new(can_host, me, now), attempt: None, gate: false });
+    p.migrating = Some(Migrating {
+        from,
+        order,
+        m: Migration::new(can_host, me, now),
+        attempt: None,
+        gate: false,
+        heard: false,
+    });
 }
 
 /// N69: `p` hears its old host again. Neither committed nor in contact,
-/// it returns to it.
+/// it returns to it; in contact, it remembers, and returns when that
+/// contact is lost ([`lost_contact`]).
 fn give_back<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, local: u64) {
-    let Some(m) = &p.migrating else { return };
+    let Some(m) = p.migrating.as_mut() else { return };
     if matches!(m.attempt, Some(Attempt { stage: Stage::Join(_), .. })) {
+        m.heard = true;
         return;
     }
+    call_off(p, w, local);
+}
+
+/// `p`'s migration is called off (N69): back to its old host, which its
+/// session still follows.
+fn call_off<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, local: u64) {
+    let Some(m) = &p.migrating else { return };
     if let Some(b) = w.began.get_mut(&m.from) {
         b.remove(&p.id);
     }
@@ -1025,12 +1045,11 @@ fn migrate<S: Simulation>(
     // came back, it gave up or crashed): its contacts break (D8).
     let open: BTreeSet<PeerId> = peers.iter().filter(|p| p.hosting()).map(|p| p.id).collect();
     for p in peers.iter_mut() {
-        let Some(mg) = p.migrating.as_mut() else { continue };
+        let Some(mg) = p.migrating.as_ref() else { continue };
         if let Some(Attempt { to, stage: Stage::Join(_) }) = mg.attempt
             && !open.contains(&mg.order[to].0)
         {
-            mg.m.lost_contact(to);
-            mg.attempt = None;
+            lost_contact(p, w, to, now);
         }
     }
     // Attempts whose stage is due.
@@ -1081,10 +1100,7 @@ fn migrate<S: Simulation>(
                 }
                 mg.attempt = Some(Attempt { to, stage });
             }
-            None => {
-                mg.m.lost_contact(to);
-                mg.attempt = None;
-            }
+            None => lost_contact(&mut peers[i], w, to, now),
         }
     }
     // Resumes: every expected peer back (or the window ended) and every
@@ -1099,6 +1115,18 @@ fn migrate<S: Simulation>(
         if (all_back || now >= t.deadline) && p.session.awaiting_reports().is_empty() {
             resume(peers, index, w, i, now);
         }
+    }
+}
+
+/// `p`'s contact with succession entry `to` is lost; having heard its old
+/// host meanwhile, it goes back to it (N69).
+fn lost_contact<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, to: usize, now: u64) {
+    let Some(mg) = p.migrating.as_mut() else { return };
+    mg.m.lost_contact(to);
+    mg.attempt = None;
+    if mg.heard {
+        let local = p.local(now);
+        call_off(p, w, local);
     }
 }
 

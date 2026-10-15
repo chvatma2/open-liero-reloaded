@@ -1105,6 +1105,28 @@ fn a_peer_in_contact_follows_its_successor_when_the_old_host_returns() {
 }
 
 #[test]
+fn peers_in_contact_return_with_their_successor_to_the_old_host() {
+    // N69 as rl-online's `Planner` has it: the host's own network drops for
+    // 2.5 s; peers 2, 3 and 100 contact successor 1, but their joins take
+    // 2 s, so the old host is heard again first. In contact, they remember
+    // it; successor 1, uncommitted, goes back to it and closes its gate, and
+    // the contacts it breaks take them back to it too. Nobody is stranded
+    // to commit elsewhere later (net-soak's `bad-4s3c1v-seed562805195`).
+    for seed in [24, 25] {
+        let mut sc = mscenario(seed, Profile::GOOD, 3);
+        sc.outages.push(Outage { peer: HOST, from_tick: 500, until_tick: 750 });
+        sc.migration.as_mut().unwrap().slow_joins.extend([(2, 2_000_000), (3, 2_000_000), (100, 2_000_000)]);
+        let r = run_checked(&sc);
+        assert_eq!(r.hosts, vec![HOST], "seed {seed}: {:?}", r.migrations);
+        assert!(r.host_lost.is_empty() && r.left_behind.is_empty(), "seed {seed}");
+        for peer in [1, 2, 3, 100] {
+            assert!(r.events[&peer].contains(&Event::HostSilent), "seed {seed}: peer {peer} migrated");
+            assert!(r.events[&peer].contains(&Event::HostHeard), "seed {seed}: peer {peer} heard it");
+        }
+    }
+}
+
+#[test]
 fn a_host_cut_off_while_its_peers_move_on_is_left_behind() {
     // A host's own network drops for 3 s while it keeps running: its peers
     // find it silent and move to a successor; it cannot know and confirms

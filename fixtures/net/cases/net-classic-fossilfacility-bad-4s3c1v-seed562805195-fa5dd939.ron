@@ -1,0 +1,28 @@
+(
+    spec: (
+        mod_id: "olx-classic",
+        level_id: "olx-level-fossilfacility",
+        seed: 562805195,
+        slots: 4,
+        clients: 3,
+        spectators: 1,
+        join_tick: Some(1033),
+        profile: "bad",
+        drift_ppm: 500,
+        ticks: 5509,
+        outages: [
+            (1, 2777, 3013),
+        ],
+        net_seed: 15482331035403159296,
+        difficulty: None,
+        faults: [],
+        exits: [],
+        host_freeze: Some((2229, 2427)),
+        profile_changes: [
+            (738, 100, "typical"),
+            (2602, 100, "bad"),
+        ],
+        migration: false,
+    ),
+    failure: Some("peer 2 confirmed other inputs than the host at tick 3243"),
+)
