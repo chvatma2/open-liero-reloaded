@@ -141,6 +141,13 @@ fn frame() -> impl Strategy<Value = Frame> {
     })
 }
 
+/// Withdrawal marks (decision N83) for frames from `first`: mostly within
+/// them (some valid for 4 slots), or anywhere.
+fn gone(first: u32) -> impl Strategy<Value = Vec<(u8, u32)>> {
+    let tick = prop_oneof![(0u32..80).prop_map(move |k| first.wrapping_add(k)), edge_u32()];
+    prop::collection::vec((prop_oneof![0u8..4, 0u8..40], tick), 0..4)
+}
+
 /// A well-formed datagram with edge values.
 fn datagram() -> impl Strategy<Value = Datagram> {
     let margin = prop_oneof![Just(i16::MIN), Just(i16::MAX), Just(0i16), -40i16..40, any::<i16>()];
@@ -154,16 +161,18 @@ fn datagram() -> impl Strategy<Value = Datagram> {
                 keys
             })),
         (stamp(), edge_u32(), edge_u32(), margin, edge_u32(), prop::collection::vec(frame(), 0..=MAX_FRAMES))
-            .prop_map(|(stamp, tick, your_ack, margin, first, frames)| Datagram::Host(HostInputs {
-                stamp,
-                tick,
-                your_ack,
-                margin,
-                first,
-                frames
-            })),
-        (edge_u32(), edge_u32(), edge_u32(), prop::collection::vec(frame(), 0..=MAX_FRAMES)).prop_map(
-            |(tick, at_ms, first, frames)| Datagram::Resume(HostResume { tick, at_ms, first, frames })
+            .prop_flat_map(|(stamp, tick, your_ack, margin, first, frames)| {
+                gone(first).prop_map(move |gone| {
+                    let frames = frames.clone();
+                    Datagram::Host(HostInputs { stamp, tick, your_ack, margin, first, frames, gone })
+                })
+            }),
+        (edge_u32(), edge_u32(), edge_u32(), prop::collection::vec(frame(), 0..=MAX_FRAMES)).prop_flat_map(
+            |(tick, at_ms, first, frames)| {
+                gone(first).prop_map(move |gone| {
+                    Datagram::Resume(HostResume { tick, at_ms, first, frames: frames.clone(), gone })
+                })
+            }
         ),
     ]
 }

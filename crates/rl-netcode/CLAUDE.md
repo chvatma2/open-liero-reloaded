@@ -40,6 +40,22 @@ model that tests it in one process (spec §9.1).
   - `InputLog`: per tick one final value per slot; each slot's knowledge is
     a contiguous prefix (`known_upto`), set once (`Same`/`Conflict` below,
     `Gap` beyond); ticks below the `frontier` are confirmed.
+    **Withdrawal marks** (plan 12d, decision N83): `set_final(t, s, v,
+    gone)` records with the value that the slot's worm is withdrawn at `t`
+    (`set` is `set_final(.., false)`); the mark is part of the final value
+    (a known tick is `Same` only when the value and the mark agree, so a
+    mark for a tick final without one is `Conflict`); a second mark for a
+    slot is ignored (its value is stored). `gone_at(slot)`;
+    `gone_marks(below)` as `(tick, slot)` by tick then slot (records',
+    replays' order); `marks_within(first, n)` as `(slot, tick)` (the
+    wire's). Every message that carries final inputs lists, once, the marks
+    within its frames: the host's datagrams, reports, `Control::Resume`,
+    `Datagram::Resume`; where a span is cut to fit (the halving loops,
+    `fit_report`/`fit_resume`'s `marks(first, n)`), the list is for the span
+    that fits. A receiver takes each mark with its tick's value: a client's
+    `take_frames` (a `Conflict`: `Event::Inconsistent`; frames kept ahead
+    keep their marks), the new host's merge (`Stats::report_conflicts`).
+    Nothing sets a mark yet, and nothing reacts to one (plan 12d Task 4).
   - The host orders inputs: its local slots (those no peer holds) are final
     when simulated; a client's keys become final in arrival order (the first
     value stays). A client applies its own input `d = input_delay(rtt)`
@@ -301,7 +317,7 @@ model that tests it in one process (spec §9.1).
       `MAX_RESUME_HOLD_US`, 500 ms, in whole ticks): the pace restarts at
       `now`, that far behind R.
     - **`at_ms`.** Each rejoined peer gets `Control::Resume { tick: R,
-      at_ms, first, frames }` now: the final inputs it lacks from its
+      at_ms, first, frames, gone }` now: the final inputs it lacks from its
       report's `ack` to our horizon (`fit_resume`, cut as a report), so it
       never waits for them, and `at_ms`, the moment on *its* clock from
       which its inputs reach us as R runs: our clock at R's start less the

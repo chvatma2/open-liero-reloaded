@@ -550,8 +550,15 @@ fn frames_older_than_a_joined_spectators_state_are_ignored() {
     for first in [1, 30, 40] {
         // Every slot known and unchanged from the tick before `first`.
         let frames = rl_proto::encode_frames(first, 5, 3, &|_, s| Some(s as u8 + 1), &|s| Some(s as u8 + 1));
-        let h =
-            HostInputs { stamp: Stamp::default(), tick: first + 5, your_ack: 0, margin: 0, first, frames };
+        let h = HostInputs {
+            stamp: Stamp::default(),
+            tick: first + 5,
+            your_ack: 0,
+            margin: 0,
+            first,
+            frames,
+            gone: vec![],
+        };
         s.receive(0, Channel::Unreliable, &encode_datagram(&Datagram::Host(h)), 2_000);
     }
     assert_eq!(s.stats().malformed, 0);

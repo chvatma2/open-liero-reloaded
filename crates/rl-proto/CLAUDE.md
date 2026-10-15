@@ -9,8 +9,8 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
 - **Datagrams** (unreliable inputs channel): `Datagram::Client(ClientInputs)`
   carries the sender's own keys for ticks `first..`, its `ack` and next
   `tick`; `Datagram::Host(HostInputs)` carries `Frame`s for ticks `first..`,
-  `your_ack` and the arrival `margin`. Both carry a `Stamp` for round trips.
-  `Datagram::Resume(HostResume { tick, at_ms, first, frames })` (plan 12c,
+  `your_ack`, the arrival `margin` and `gone`. Both carry a `Stamp` for round trips.
+  `Datagram::Resume(HostResume { tick, at_ms, first, frames, gone })` (plan 12c,
   ruling RS-1, appended): a new host's resume, `Control::Resume`'s
   unreliable twin (frames <= `MAX_FRAMES`, each within the slots), sent
   every tick until the player's inputs come.
@@ -19,16 +19,27 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   fill episodes included; `from < to` or `Invalid`), `Desync`,
   `StateBegin`, `StateChunk`, `Bye`, `StateLoaded`, `StateRefused`; plan 12c
   (host migration, spec §3.7): `Collect { known }` (1..=`MAX_SLOTS`),
-  `Report(InputsReport { ack, origin, first, frames, own_first, own })`
+  `Report(InputsReport { ack, origin, first, frames, gone, own_first, own })`
   (`origin`: where the reporter's log begins, 0 or a joined spectator's
   first tick after its state, at most `ack`, ruling SK-9; frames <=
   `MAX_REPORT_FRAMES` 3000, own <= `MAX_REPORT_OWN` 256, no `u32` overflow of
   `first + len` or `own_first + len`, each frame `changed ⊆ known` with a key
-  per changed bit) and `Resume { tick, at_ms, first, frames }` (`at_ms`:
+  per changed bit) and `Resume { tick, at_ms, first, frames, gone }` (`at_ms`:
   when, on the receiver's own stamp clock, its inputs reach the new host as
   it runs `tick`, 0 unknown; the final inputs the peer lacks, delivered
   with the resume; the same frame bounds as a report's). A worst-case report or resume exceeds `MAX_CONTROL`: the
   sender trims it (rl-netcode).
+- **Withdrawal marks** (plan 12d, decision N83, ruling PF12d-4): every
+  message that carries final inputs (`HostInputs`, `HostResume`,
+  `InputsReport`, `Control::Resume`) has `gone: Vec<(u8, u32)>` after its
+  `frames`: `(slot, tick)` for each worm withdrawn at a tick within the
+  frames, once per message, not a bit per frame (`Frame` and the frame codec
+  are unchanged; an empty list is one byte). `valid_marks(first, len,
+  marks, slots)`: at most `MAX_SLOTS` entries, each slot below `slots` and
+  listed once, each tick in `first..first + len`; else `Invalid`.
+  `decode_datagram` checks it against the match's slots, `decode_control`
+  against `MAX_SLOTS` (the receiver's log ignores a slot beyond its match).
+  The receiver takes a mark with its tick's value (rl-netcode).
 - **Signalling** (`signal.rs`, WebSocket, one postcard message per frame,
   `MAX_SIGNAL`): `Signal::{Offer, Answer, Refused}`, `Refusal` (`Version`,
   `Full`, `Banned`, `Busy`, `Malformed`, `Password`, `Exhausted`, `Throttled`, `NotHost` (a standby before its peer took over),
@@ -102,7 +113,8 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   `out` before a later frame proves invalid: collect, then apply on `Ok`.
 - **Limits:** `MAX_DATAGRAM`, `MAX_CONTROL`, `MAX_FRAMES`, `MAX_KEYS`,
   `STATE_CHUNK`, `MAX_STATE`, `MAX_SLOTS`; `OVERHEAD` is for budgets.
-- **Never panic:** every decoder bounds and validates; `tests/fuzz.rs`, `tests/fuzz_lobby.rs`.
+- **Never panic:** every decoder bounds and validates; `tests/fuzz.rs` (marks
+  included: `host_datagrams_with_marks_never_panic`), `tests/fuzz_lobby.rs`.
 - **Fingerprint** (`build.rs`, `fingerprint_impl.rs`): FNV-1a over the
   sources of rl-math, rl-data, rl-terrain, rl-sim, rl-modes, rl-netcode
   (the session's semantics: checksum cadence, acks, resends, `WorldSim`'s

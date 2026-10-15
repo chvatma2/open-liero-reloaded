@@ -9,11 +9,12 @@ use rl_netcode::harness::Factory;
 use rl_netcode::migration::{HOST_SILENT_US, fit_report};
 use rl_netcode::toy::ToyFactory;
 use rl_netcode::{
-    Channel, Config, Driver, Event, MAX_PREDICTION, PeerId, Role, Seat, Session, ToySim, input_delay,
+    Channel, Config, Driver, Event, MAX_PREDICTION, PeerId, Role, Seat, Session, TARGET_MARGIN, ToySim,
+    input_delay,
 };
 use rl_proto::{
-    Control, Datagram, Frame, InputsReport, MAX_CONTROL, MAX_REPORT_FRAMES, MAX_REPORT_OWN, decode_control,
-    decode_datagram, encode_control, encode_frames,
+    Control, Datagram, Frame, HostInputs, InputsReport, MAX_CONTROL, MAX_REPORT_FRAMES, MAX_REPORT_OWN,
+    Stamp, decode_control, decode_datagram, encode_control, encode_datagram, encode_frames,
 };
 use rl_sim::Keys;
 
@@ -359,8 +360,18 @@ fn a_worst_case_report_is_trimmed_to_fit() {
     // 32 slots, every slot changing every tick, 3000 ticks: about 120 KB untrimmed.
     let value = |t: u32, s: usize| Some(((t as usize + s) % 2) as u8 + 1);
     let upto = 1_000 + MAX_REPORT_FRAMES as u32;
-    let report =
-        fit_report(1_000, 0, 1_000, upto, 32, &value, &|_| Some(0), 1_000, vec![1; MAX_REPORT_OWN + 10]);
+    let report = fit_report(
+        1_000,
+        0,
+        1_000,
+        upto,
+        32,
+        &value,
+        &|_| Some(0),
+        1_000,
+        vec![1; MAX_REPORT_OWN + 10],
+        &|_, _| vec![],
+    );
     let bytes = encode_control(&Control::Report(report.clone()));
     assert!(bytes.len() <= MAX_CONTROL, "{} bytes", bytes.len());
     assert!(
@@ -376,7 +387,7 @@ fn a_worst_case_report_is_trimmed_to_fit() {
     assert_eq!(got.first(), Some(&(1_000, 0, value(1_000, 0).unwrap())), "the earliest ticks are kept");
     assert!(got.iter().all(|&(t, s, v)| Some(v) == value(t, s)));
     // A short report is not trimmed.
-    let short = fit_report(0, 0, 1_000, 1_010, 32, &value, &|_| Some(0), 1_000, vec![]);
+    let short = fit_report(0, 0, 1_000, 1_010, 32, &value, &|_| Some(0), 1_000, vec![], &|_, _| vec![]);
     assert_eq!(short.frames.len(), 10);
 }
 
@@ -392,7 +403,7 @@ fn a_far_resume_is_ignored() {
     m.s.get_mut(&B).unwrap().receive(
         A,
         Channel::Reliable,
-        &encode_control(&Control::Resume { tick: far, at_ms: 0, first: 0, frames: vec![] }),
+        &encode_control(&Control::Resume { tick: far, at_ms: 0, first: 0, frames: vec![], gone: vec![] }),
         us,
     );
     assert!(m.s[&B].suspended(), "a Resume 6001 ticks ahead is ignored");
@@ -425,7 +436,8 @@ fn a_conflicting_report_is_ignored_and_counted() {
     let real = m.s[&A].final_input(100, 0).unwrap().0;
     let base: Vec<Option<u8>> = (0..SLOTS).map(|s| m.s[&A].final_input(99, s).map(|k| k.0)).collect();
     let frames = encode_frames(100, 1, SLOTS as usize, &|_, s| (s == 0).then_some(real ^ 0x10), &|s| base[s]);
-    let report = InputsReport { ack: 0, origin: 0, first: 100, frames, own_first: 0, own: vec![] };
+    let report =
+        InputsReport { ack: 0, origin: 0, first: 100, frames, gone: vec![], own_first: 0, own: vec![] };
     m.s.get_mut(&A).unwrap().receive(9, Channel::Reliable, &encode_control(&Control::Report(report)), us);
     assert_eq!(m.s[&A].final_input(100, 0), Some(Keys(real)), "the first value stays");
     assert_eq!(m.s[&A].stats().report_conflicts, 1);
@@ -441,7 +453,7 @@ fn migration_messages_from_a_non_host_are_ignored() {
     let sent = m.s[&B].stats().datagrams_out;
     for c in [
         Control::Collect { known: vec![0; SLOTS as usize] },
-        Control::Resume { tick: 5, at_ms: 0, first: 0, frames: vec![] },
+        Control::Resume { tick: 5, at_ms: 0, first: 0, frames: vec![], gone: vec![] },
     ] {
         m.s.get_mut(&B).unwrap().receive(A, Channel::Reliable, &encode_control(&c), us);
     }
@@ -453,7 +465,8 @@ fn migration_messages_from_a_non_host_are_ignored() {
     // The host: a report from a peer that never rejoined changes nothing.
     let row = m.s[&H].input_log().row(50);
     let frames = encode_frames(50, 1, SLOTS as usize, &|_, _| Some(0x7f), &|_| Some(0));
-    let report = InputsReport { ack: 0, origin: 0, first: 50, frames, own_first: 0, own: vec![] };
+    let report =
+        InputsReport { ack: 0, origin: 0, first: 50, frames, gone: vec![], own_first: 0, own: vec![] };
     m.s.get_mut(&H).unwrap().receive(B, Channel::Reliable, &encode_control(&Control::Report(report)), us);
     assert_eq!(m.s[&H].input_log().row(50), row);
     assert_eq!(m.s[&H].stats().report_conflicts, 0);
@@ -607,8 +620,15 @@ fn a_report_after_the_resume_is_taken() {
     assert_eq!(m.s[&A].awaiting_reports(), vec![B]);
     let from = m.s[&A].input_log().known_upto(3);
     let own = vec![0x21, 0x22, 0x23];
-    let report =
-        InputsReport { ack: 0, origin: 0, first: 0, frames: vec![], own_first: from, own: own.clone() };
+    let report = InputsReport {
+        ack: 0,
+        origin: 0,
+        first: 0,
+        frames: vec![],
+        gone: vec![],
+        own_first: from,
+        own: own.clone(),
+    };
     m.s.get_mut(&A).unwrap().receive(B, Channel::Reliable, &encode_control(&Control::Report(report)), us);
     assert!(m.s[&A].awaiting_reports().is_empty());
     let got: Vec<Option<Keys>> = (from..from + 3).map(|t| m.s[&A].final_input(t, 3)).collect();
@@ -748,7 +768,7 @@ fn a_report_or_collect_beyond_the_match_slots_is_refused() {
     let before = m.known(A);
     let first = before[3];
     let frames = vec![Frame { known: 0b1_1000, changed: 0b1_1000, keys: vec![0x55, 0x66] }];
-    let report = InputsReport { ack: 0, origin: 0, first, frames, own_first: 0, own: vec![] };
+    let report = InputsReport { ack: 0, origin: 0, first, frames, gone: vec![], own_first: 0, own: vec![] };
     m.s.get_mut(&A).unwrap().receive(9, Channel::Reliable, &encode_control(&Control::Report(report)), us);
     assert_eq!(m.known(A), before, "nothing taken from it");
     assert_eq!(m.s[&A].final_input(first, 3), None);
@@ -761,6 +781,13 @@ fn a_report_or_collect_beyond_the_match_slots_is_refused() {
     m.s.get_mut(&B).unwrap().transmit(&mut |to, ch, b| out.push((to, ch, b)));
     assert!(out.iter().all(|(_, ch, _)| *ch != Channel::Reliable), "no report");
     assert_eq!(m.s.get_mut(&B).unwrap().drain_events(), vec![Event::Malformed { peer: A }]);
+}
+
+/// Withdrawal marks (decision N83) for frames from `first`: mostly within
+/// them, for slots in the match or past it, or anywhere.
+fn gone(first: u32) -> impl Strategy<Value = Vec<(u8, u32)>> {
+    let tick = prop_oneof![(0u32..80).prop_map(move |k| first.wrapping_add(k)), any::<u32>()];
+    prop::collection::vec((prop_oneof![0u8..SLOTS, 0u8..40], tick), 0..4)
 }
 
 fn control() -> impl Strategy<Value = Control> {
@@ -784,19 +811,20 @@ fn control() -> impl Strategy<Value = Control> {
             edge.clone(),
             prop::collection::vec(any::<u8>(), 0..300)
         )
-            .prop_map(|(ack, origin, first, frames, own_first, own)| Control::Report(InputsReport {
-                ack,
-                origin,
+            .prop_flat_map(|(ack, origin, first, frames, own_first, own)| {
+                gone(first).prop_map(move |gone| {
+                    let (frames, own) = (frames.clone(), own.clone());
+                    Control::Report(InputsReport { ack, origin, first, frames, gone, own_first, own })
+                })
+            }),
+        (edge.clone(), any::<u32>(), edge, frames).prop_flat_map(|(tick, at_ms, first, frames)| {
+            gone(first).prop_map(move |gone| Control::Resume {
+                tick,
+                at_ms,
                 first,
-                frames,
-                own_first,
-                own
-            })),
-        (edge.clone(), any::<u32>(), edge, frames).prop_map(|(tick, at_ms, first, frames)| Control::Resume {
-            tick,
-            at_ms,
-            first,
-            frames
+                frames: frames.clone(),
+                gone,
+            })
         }),
     ]
 }
@@ -1608,4 +1636,82 @@ fn a_new_host_waits_for_a_player_without_a_standby() {
     sc.migration.as_mut().unwrap().no_standby.push(2);
     let r = run_checked(&sc);
     assert_eq!(r.hosts, vec![HOST, 100]);
+}
+
+/// N83: a rejoined peer's report carries its withdrawal marks, the new host
+/// merges them with the values (a mark for a tick final without one is a
+/// conflict, counted), and its resume hands them to a peer that lacks them.
+#[test]
+fn withdrawal_marks_travel_through_a_migration() {
+    let mut m = Mesh::new(10, 11);
+    m.run_ms(2_000);
+    m.alive.insert(H, false);
+    m.run_ms(50); // what the old host sent arrives
+    // The old host's last datagram to B: slot 0 one tick past what A and B
+    // hold, its worm withdrawn there.
+    let (ka, kb) = (m.s[&A].input_log().known_upto(0), m.s[&B].input_log().known_upto(0));
+    let mark = ka.max(kb);
+    let value = |t: u32| m.s[&A].final_input(t, 0).map_or(0, |k| k.0);
+    let values: Vec<u8> = (kb..=mark).map(value).collect();
+    let base: Vec<Option<u8>> = (0..SLOTS).map(|s| m.s[&B].final_input(kb - 1, s).map(|k| k.0)).collect();
+    let frames = encode_frames(
+        kb,
+        mark - kb + 1,
+        SLOTS as usize,
+        &|t, s| (s == 0).then(|| values[(t - kb) as usize]),
+        &|s| base[s],
+    );
+    let h = HostInputs {
+        stamp: Stamp::default(),
+        tick: mark + 1,
+        your_ack: 0,
+        margin: TARGET_MARGIN as i16,
+        first: kb,
+        frames,
+        gone: vec![(0, mark)],
+    };
+    let us = m.now_ms * 1000;
+    m.s.get_mut(&B).unwrap().receive(H, Channel::Unreliable, &encode_datagram(&Datagram::Host(h)), us);
+    assert_eq!(m.s[&B].input_log().gone_at(0), Some(mark));
+    m.until(2_500, "silence", |m| m.first(B, |e| *e == Event::HostSilent).is_some());
+    m.migrate_to_a();
+    m.until(1_000, "B's report", |m| m.s[&A].awaiting_reports().is_empty());
+    assert_eq!(m.s[&A].input_log().gone_at(0), Some(mark), "the report's mark is merged");
+    // A rejoined spectator claims a withdrawal at a tick A holds without one.
+    let us = m.now_ms * 1000;
+    assert!(m.s.get_mut(&A).unwrap().rejoined(9, Seat::Spectator, us));
+    let real = m.s[&A].final_input(100, 1).unwrap().0;
+    let base: Vec<Option<u8>> = (0..SLOTS).map(|s| m.s[&A].final_input(99, s).map(|k| k.0)).collect();
+    let frames = encode_frames(100, 1, SLOTS as usize, &|_, s| (s == 1).then_some(real), &|s| base[s]);
+    let report = InputsReport {
+        ack: 0,
+        origin: 0,
+        first: 100,
+        frames,
+        gone: vec![(1, 100)],
+        own_first: 0,
+        own: vec![],
+    };
+    m.s.get_mut(&A).unwrap().receive(9, Channel::Reliable, &encode_control(&Control::Report(report)), us);
+    assert_eq!(m.s[&A].stats().report_conflicts, 1);
+    assert_eq!(m.s[&A].input_log().gone_at(1), None, "the first value stays");
+    // Another holds slot 1 one tick further than A, withdrawn there: B
+    // lacks it and gets it with the resume.
+    assert!(m.s.get_mut(&A).unwrap().rejoined(8, Seat::Spectator, us));
+    let k1 = m.s[&A].input_log().known_upto(1);
+    let base: Vec<Option<u8>> = (0..SLOTS).map(|s| m.s[&A].final_input(k1 - 1, s).map(|k| k.0)).collect();
+    let frames = encode_frames(k1, 1, SLOTS as usize, &|_, s| (s == 1).then_some(0), &|s| base[s]);
+    let report =
+        InputsReport { ack: 0, origin: 0, first: k1, frames, gone: vec![(1, k1)], own_first: 0, own: vec![] };
+    m.s.get_mut(&A).unwrap().receive(8, Channel::Reliable, &encode_control(&Control::Report(report)), us);
+    assert_eq!(m.s[&A].input_log().gone_at(1), Some(k1));
+    assert_eq!(m.s[&B].input_log().known_upto(1), k1, "B lacks it");
+    m.s.get_mut(&A).unwrap().resume(m.now_ms * 1000);
+    m.until(1_000, "B resumes", |m| m.first(B, |e| matches!(e, Event::Resumed { .. })).is_some());
+    assert_eq!(m.s[&B].input_log().gone_at(1), Some(k1), "the resume's mark");
+    m.run_ms(500);
+    for id in [A, B] {
+        assert_eq!(m.count(id, |e| matches!(e, Event::Inconsistent { .. } | Event::Malformed { .. })), 0);
+    }
+    assert_eq!(m.s[&B].input_log().gone_at(0), Some(mark));
 }

@@ -3,6 +3,9 @@
 
 use alloc::vec::Vec;
 
+/// No withdrawal.
+const NONE: u32 = u32::MAX;
+
 /// What [`InputLog::set`] did with a value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetResult {
@@ -29,12 +32,22 @@ pub struct InputLog {
     rows: Vec<[u8; 32]>,
     known: Vec<u32>,
     upto: [u32; 32],
+    /// Per slot, the tick its worm is withdrawn at (decision N83), part of
+    /// that tick's final value; `u32::MAX` for none.
+    gone: [u32; 32],
 }
 
 impl InputLog {
     /// A log for `slots` slots (at most 32; more are cut to 32).
     pub fn new(slots: u8) -> Self {
-        Self { slots: slots.min(32), origin: 0, rows: Vec::new(), known: Vec::new(), upto: [0; 32] }
+        Self {
+            slots: slots.min(32),
+            origin: 0,
+            rows: Vec::new(),
+            known: Vec::new(),
+            upto: [0; 32],
+            gone: [NONE; 32],
+        }
     }
 
     /// Makes an empty log begin at `origin`: a spectator that joined from
@@ -68,7 +81,17 @@ impl InputLog {
 
     /// Records `v` as the final value of `slot` at `tick`: only the slot's
     /// next unknown tick is stored ([`SetResult::Gap`] beyond it).
+    /// [`InputLog::set_final`] without a withdrawal mark.
     pub fn set(&mut self, tick: u32, slot: u8, v: u8) -> SetResult {
+        self.set_final(tick, slot, v, false)
+    }
+
+    /// Records `v` as `slot`'s final value at `tick`, and with `gone` that its
+    /// worm is withdrawn there (decision N83). As `set`: only the slot's next
+    /// unknown tick is stored. A mark for a slot withdrawn already is
+    /// ignored (the value is still stored). For a known tick: `Same` when
+    /// both the value and the mark agree, else `Conflict`.
+    pub fn set_final(&mut self, tick: u32, slot: u8, v: u8, gone: bool) -> SetResult {
         if slot >= self.slots || tick < self.origin {
             return SetResult::Gap;
         }
@@ -76,7 +99,11 @@ impl InputLog {
         let upto = self.upto[s];
         let t = (tick - self.origin) as usize;
         if tick < upto {
-            return if self.rows[t][s] == v { SetResult::Same } else { SetResult::Conflict };
+            // A later mark of a slot withdrawn earlier is ignored, as when new.
+            let marked = self.gone[s] == tick;
+            let ignored = gone && self.gone[s] < tick;
+            let agrees = self.rows[t][s] == v && (marked == gone || ignored);
+            return if agrees { SetResult::Same } else { SetResult::Conflict };
         }
         if tick > upto {
             return SetResult::Gap;
@@ -88,7 +115,33 @@ impl InputLog {
         self.rows[t][s] = v;
         self.known[t] |= 1 << s;
         self.upto[s] = upto + 1;
+        if gone && self.gone[s] == NONE {
+            self.gone[s] = tick;
+        }
         SetResult::New
+    }
+
+    /// The tick `slot`'s worm is withdrawn at, if it is.
+    pub fn gone_at(&self, slot: u8) -> Option<u32> {
+        self.gone.get(slot as usize).copied().filter(|&t| slot < self.slots && t != NONE)
+    }
+
+    /// Every withdrawal at a tick below `below`, as `(tick, slot)`, by tick
+    /// then slot (records' and replays' order).
+    pub fn gone_marks(&self, below: u32) -> Vec<(u32, u8)> {
+        let mut marks: Vec<(u32, u8)> =
+            (0..self.slots).filter_map(|s| self.gone_at(s).filter(|&t| t < below).map(|t| (t, s))).collect();
+        marks.sort_unstable();
+        marks
+    }
+
+    /// The withdrawals at ticks `first..first + n`, as `(slot, tick)` (the
+    /// wire's order), by slot.
+    pub fn marks_within(&self, first: u32, n: u32) -> Vec<(u8, u32)> {
+        let end = u64::from(first) + u64::from(n);
+        (0..self.slots)
+            .filter_map(|s| self.gone_at(s).filter(|&t| t >= first && u64::from(t) < end).map(|t| (s, t)))
+            .collect()
     }
 
     /// The first tick `slot` lacks.
@@ -177,6 +230,26 @@ mod tests {
         let mut used = InputLog::new(1);
         used.set(0, 0, 1);
         assert!(!used.start_at(10));
+    }
+
+    #[test]
+    fn a_withdrawal_mark_is_final() {
+        let mut log = InputLog::new(2);
+        assert_eq!(log.set_final(0, 1, 4, false), SetResult::New);
+        assert_eq!(log.set_final(1, 1, 0, true), SetResult::New);
+        assert_eq!(log.gone_at(1), Some(1));
+        assert_eq!(log.set_final(1, 1, 0, true), SetResult::Same);
+        assert_eq!(log.set_final(1, 1, 0, false), SetResult::Conflict, "the mark is part of the value");
+        assert_eq!(log.set_final(0, 1, 4, true), SetResult::Conflict, "no mark for a tick final without one");
+        assert_eq!(log.set_final(2, 1, 0, true), SetResult::New);
+        assert_eq!(log.gone_at(1), Some(1), "a second mark is ignored");
+        assert_eq!(log.gone_at(0), None);
+        log.set(0, 0, 9);
+        log.set(1, 0, 9);
+        assert_eq!(log.gone_marks(2), [(1, 1)]);
+        assert_eq!(log.gone_marks(1), []);
+        assert_eq!(log.marks_within(0, 2), [(1, 1)]);
+        assert_eq!(log.marks_within(2, 5), []);
     }
 
     #[test]

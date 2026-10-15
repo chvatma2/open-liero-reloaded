@@ -9,7 +9,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use rl_proto::{
-    ClientInputs, Control, Datagram, Frame, HostInputs, InputsReport, MAX_KEYS, MAX_REPORT_OWN,
+    ClientInputs, Control, Datagram, HostInputs, HostResume, InputsReport, MAX_KEYS, MAX_REPORT_OWN,
     decode_frames, encode_control, encode_datagram,
 };
 use rl_sim::Keys;
@@ -300,7 +300,9 @@ impl<S: Simulation> Session<S> {
             let first = p.ack.min(frontier).max(self.log.origin()).max(p.origin);
             let (log, origin) = (&self.log, p.origin);
             let base = |s: usize| frames_base(log, first, origin, s);
-            let resume = fit_resume(r, at_ms, first, horizon, slots, &|t, s| log.get(t, s as u8), &base);
+            let value = |t, s: usize| log.get(t, s as u8);
+            let resume =
+                fit_resume(r, at_ms, first, horizon, slots, &value, &base, &|f, n| log.marks_within(f, n));
             self.push_out(id, Channel::Reliable, encode_control(&resume));
             // Its unreliable twin in every datagram until its inputs come.
             if let Some(p) = self.peers.get_mut(&id)
@@ -355,6 +357,7 @@ impl<S: Simulation> Session<S> {
             &base,
             own_first,
             own,
+            &|f, n| log.marks_within(f, n),
         );
         self.push_out(host, Channel::Reliable, encode_control(&Control::Report(report)));
     }
@@ -385,19 +388,22 @@ impl<S: Simulation> Session<S> {
             f => log.get(f - 1, s as u8).or_else(|| (log.known_upto(s as u8) < f).then_some(0)),
         };
         let decoded = (first == 0 || first >= log.origin())
-            && decode_frames(first, &r.frames, slots, &base, &mut |t, s, v| scratch.push((t, s as u8, v)))
-                .is_ok();
+            && decode_frames(first, &r.frames, slots, &base, &mut |t, s, v| {
+                let s = s as u8;
+                scratch.push((t, s, v, r.gone.contains(&(s, t))))
+            })
+            .is_ok();
         if !decoded {
             self.scratch = scratch;
             self.malformed(from);
             return;
         }
         let limit = self.current.saturating_add(MAX_AHEAD);
-        for &(t, s, v) in &scratch {
+        for &(t, s, v, g) in &scratch {
             if t >= limit {
                 continue;
             }
-            match self.log.set(t, s, v) {
+            match self.log.set_final(t, s, v, g) {
                 SetResult::New => self.on_final(t, s, v),
                 SetResult::Conflict => self.stats.report_conflicts += 1,
                 SetResult::Same | SetResult::Gap => {}
@@ -437,22 +443,15 @@ impl<S: Simulation> Session<S> {
     /// (a hostile or broken host cannot push our timeline to `u32::MAX`);
     /// once resumed (by the first of `Control::Resume` and its
     /// `Datagram::Resume` twin, or never rehosted), its finals alone.
-    pub(super) fn on_resume(
-        &mut self,
-        from: PeerId,
-        tick: u32,
-        at_ms: u32,
-        first: u32,
-        frames: &[Frame],
-        now_us: u64,
-    ) {
+    pub(super) fn on_resume(&mut self, from: PeerId, r: &HostResume, now_us: u64) {
+        let (tick, at_ms, first) = (r.tick, r.at_ms, r.first);
         let (Role::Client { host, .. } | Role::Spectator { host }) = self.role else { return };
         if from != host || tick > self.current.saturating_add(MAX_AHEAD) {
             return;
         }
         // An honest host starts them at our report's ack, within our log.
         let within = first == 0 || first >= self.log.origin();
-        if !within || !self.take_frames(from, first, frames) {
+        if !within || !self.take_frames(from, first, &r.frames, &r.gone) {
             self.malformed(from);
             return;
         }
@@ -514,6 +513,7 @@ impl<S: Simulation> Session<S> {
                         margin,
                         first: frontier,
                         frames: Vec::new(),
+                        gone: Vec::new(),
                     });
                     self.push_out(id, Channel::Unreliable, encode_datagram(&d));
                 }

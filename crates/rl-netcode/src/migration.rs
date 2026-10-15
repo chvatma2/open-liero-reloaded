@@ -142,7 +142,8 @@ impl Migration {
 /// (`value`, `base` as `encode_frames` takes them), the span halved from its
 /// end until the encoded `Control::Report` fits `MAX_CONTROL` and
 /// `MAX_REPORT_FRAMES` (the earliest ticks matter); `own` cut to
-/// `MAX_REPORT_OWN`.
+/// `MAX_REPORT_OWN`. `marks(first, n)`: the withdrawals (decision N83) at
+/// ticks `first..first + n`, listed for the span that fits.
 #[allow(clippy::too_many_arguments)]
 pub fn fit_report(
     ack: u32,
@@ -154,21 +155,26 @@ pub fn fit_report(
     base: &dyn Fn(usize) -> Option<u8>,
     own_first: u32,
     mut own: Vec<u8>,
+    marks: &dyn Fn(u32, u32) -> Vec<(u8, u32)>,
 ) -> InputsReport {
     // The decoder refuses a span past `u32::MAX`.
     own.truncate(MAX_REPORT_OWN.min((u32::MAX - own_first) as usize));
-    let mut report = InputsReport { ack, origin, first, frames: Vec::new(), own_first, own };
+    let mut report =
+        InputsReport { ack, origin, first, frames: Vec::new(), gone: Vec::new(), own_first, own };
     fit_frames(first, upto, &mut |n| {
         report.frames = encode_frames(first, n, slots, value, base);
+        report.gone = marks(first, n);
         encode_control(&Control::Report(report.clone())).len()
     });
     report
 }
 
-/// The new host's `Control::Resume { tick, at_ms, first, frames }` to a
-/// rejoined peer (ruling RS-1): the final inputs it lacks, ticks
-/// `first..upto` (`value`, `base` as `encode_frames` takes them), cut as a
+/// The new host's `Control::Resume { tick, at_ms, first, frames, gone }`
+/// to a rejoined peer (ruling RS-1): the final inputs it lacks, ticks
+/// `first..upto` (`value`, `base` as `encode_frames` takes them), and the
+/// withdrawals among them (`marks`, as [`fit_report`] takes it), cut as a
 /// report is.
+#[allow(clippy::too_many_arguments)]
 pub fn fit_resume(
     tick: u32,
     at_ms: u32,
@@ -177,10 +183,12 @@ pub fn fit_resume(
     slots: usize,
     value: &dyn Fn(u32, usize) -> Option<u8>,
     base: &dyn Fn(usize) -> Option<u8>,
+    marks: &dyn Fn(u32, u32) -> Vec<(u8, u32)>,
 ) -> Control {
-    let mut resume = Control::Resume { tick, at_ms, first, frames: Vec::new() };
+    let mut resume = Control::Resume { tick, at_ms, first, frames: Vec::new(), gone: Vec::new() };
     fit_frames(first, upto, &mut |n| {
-        resume = Control::Resume { tick, at_ms, first, frames: encode_frames(first, n, slots, value, base) };
+        let (frames, gone) = (encode_frames(first, n, slots, value, base), marks(first, n));
+        resume = Control::Resume { tick, at_ms, first, frames, gone };
         encode_control(&resume).len()
     });
     resume

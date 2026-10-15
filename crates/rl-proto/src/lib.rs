@@ -92,6 +92,9 @@ pub struct HostInputs {
     pub margin: i16,
     pub first: u32,
     pub frames: Vec<Frame>,
+    /// Withdrawals (decision N83) at ticks within `frames`, as `(slot,
+    /// tick)`: at most `MAX_SLOTS`, each slot once.
+    pub gone: Vec<(u8, u32)>,
 }
 
 /// A new host's resume to a rejoined player, sent every tick until that
@@ -104,6 +107,9 @@ pub struct HostResume {
     pub at_ms: u32,
     pub first: u32,
     pub frames: Vec<Frame>,
+    /// Withdrawals (decision N83) at ticks within `frames`, as `(slot,
+    /// tick)`: at most `MAX_SLOTS`, each slot once.
+    pub gone: Vec<(u8, u32)>,
 }
 
 /// Slots with a final input (`known`), those differing from the previous
@@ -130,6 +136,9 @@ pub struct InputsReport {
     /// `first - 1`).
     pub first: u32,
     pub frames: Vec<Frame>,
+    /// Withdrawals (decision N83) at ticks within `frames`, as `(slot,
+    /// tick)`: at most `MAX_SLOTS`, each slot once.
+    pub gone: Vec<(u8, u32)>,
     /// The reporter's own provisional inputs for its slot, ticks
     /// `own_first..` (empty for a spectator).
     pub own_first: u32,
@@ -187,11 +196,14 @@ pub enum Control {
     /// (`0`: unknown, the receipt). `frames` are the final inputs from
     /// `first` the peer lacks (the frame delta rule, `base` the peer's
     /// values at `first - 1`), so it never waits for them after the resume.
+    /// `gone`: the withdrawals (decision N83) at ticks within `frames`, as
+    /// `(slot, tick)`: at most `MAX_SLOTS`, each slot once.
     Resume {
         tick: u32,
         at_ms: u32,
         first: u32,
         frames: Vec<Frame>,
+        gone: Vec<(u8, u32)>,
     },
 }
 
@@ -227,14 +239,37 @@ fn validate_frame(f: &Frame, slots: usize) -> bool {
         && f.keys.len() == f.changed.count_ones() as usize
 }
 
+/// Whether `marks` fit a message whose frames are ticks `first..first +
+/// len`: at most `MAX_SLOTS` entries, each slot below `slots` and listed
+/// once, each tick within the frames (decision N83, ruling PF12d-4).
+pub fn valid_marks(first: u32, len: usize, marks: &[(u8, u32)], slots: usize) -> bool {
+    let end = u64::from(first) + len as u64;
+    let mut seen = 0u32;
+    marks.len() <= MAX_SLOTS
+        && marks.iter().all(|&(s, t)| {
+            let ok = (s as usize) < slots.min(MAX_SLOTS)
+                && seen & (1 << s) == 0
+                && t >= first
+                && u64::from(t) < end;
+            if ok {
+                seen |= 1 << s;
+            }
+            ok
+        })
+}
+
 fn validate_datagram(d: &Datagram, slots: usize) -> Result<(), ProtoError> {
     let ok = match d {
         Datagram::Client(c) => c.keys.len() <= MAX_KEYS,
         Datagram::Host(h) => {
-            h.frames.len() <= MAX_FRAMES && h.frames.iter().all(|f| validate_frame(f, slots))
+            h.frames.len() <= MAX_FRAMES
+                && h.frames.iter().all(|f| validate_frame(f, slots))
+                && valid_marks(h.first, h.frames.len(), &h.gone, slots)
         }
         Datagram::Resume(r) => {
-            r.frames.len() <= MAX_FRAMES && r.frames.iter().all(|f| validate_frame(f, slots))
+            r.frames.len() <= MAX_FRAMES
+                && r.frames.iter().all(|f| validate_frame(f, slots))
+                && valid_marks(r.first, r.frames.len(), &r.gone, slots)
         }
     };
     if ok { Ok(()) } else { Err(ProtoError::Invalid) }
@@ -266,13 +301,18 @@ pub fn decode_control(b: &[u8]) -> Result<Control, ProtoError> {
         }
         Control::Late { from, to } => from < to,
         Control::Collect { known } => (1..=MAX_SLOTS).contains(&known.len()),
+        // The match's slots are the receiver's to check (a mark for a slot
+        // beyond them is a `Gap` in its log).
         Control::Report(r) => {
             valid_report_frames(r.first, &r.frames)
+                && valid_marks(r.first, r.frames.len(), &r.gone, MAX_SLOTS)
                 && r.origin <= r.ack
                 && r.own.len() <= MAX_REPORT_OWN
                 && r.own_first.checked_add(r.own.len() as u32).is_some()
         }
-        Control::Resume { first, frames, .. } => valid_report_frames(*first, frames),
+        Control::Resume { first, frames, gone, .. } => {
+            valid_report_frames(*first, frames) && valid_marks(*first, frames.len(), gone, MAX_SLOTS)
+        }
         _ => true,
     };
     if ok { Ok(c) } else { Err(ProtoError::Invalid) }

@@ -31,6 +31,7 @@ fn frames_of(first: u32, n: u32, v: u8, base: u8) -> Vec<u8> {
         margin: TARGET_MARGIN as i16,
         first,
         frames: rl_proto::encode_frames(first, n, 3, &|_, _| Some(v), &|_| Some(base)),
+        gone: vec![],
     };
     encode_datagram(&Datagram::Host(h))
 }
@@ -307,6 +308,7 @@ fn frames_kept_ahead_of_the_old_host_are_dropped_at_a_rehost() {
         at_ms: 0,
         first: 10,
         frames: rl_proto::encode_frames(10, 10, 3, &|_, _| Some(1), &|_| Some(0)),
+        gone: vec![],
     };
     c.receive(HOST, Channel::Reliable, &encode_control(&resume), 2_100_000);
     assert_eq!(c.frontier(), 20);

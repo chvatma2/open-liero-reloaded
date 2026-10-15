@@ -395,6 +395,16 @@ impl PeerState {
     }
 }
 
+/// Client or spectator: a host datagram's frames kept ahead of our
+/// frontier, with their withdrawal marks (decision N83).
+#[derive(Clone, Debug)]
+struct Ahead {
+    from: PeerId,
+    first: u32,
+    frames: Vec<Frame>,
+    gone: Vec<(u8, u32)>,
+}
+
 /// A new host's resume, repeated to one player in every datagram until its
 /// inputs come or `until_us` ([`Session::resume`]).
 #[derive(Clone, Copy, Debug)]
@@ -471,12 +481,13 @@ pub struct Session<S: Simulation> {
     out: Vec<(PeerId, Channel, Vec<u8>)>,
     events: Vec<Event>,
     stats: Stats,
-    /// Decoded frame values before they are applied.
-    scratch: Vec<(u32, u8, u8)>,
+    /// Decoded frame values before they are applied: `(tick, slot, value,
+    /// withdrawn there)`.
+    scratch: Vec<(u32, u8, u8, bool)>,
     /// Client or spectator: the host's frames that began past our
-    /// frontier, by `first` (at most [`AHEAD_KEPT`]): taken again once it
-    /// reaches them.
-    ahead: Vec<(PeerId, u32, Vec<Frame>)>,
+    /// frontier, by `first`, with their withdrawal marks (at most
+    /// [`AHEAD_KEPT`]): taken again once it reaches them.
+    ahead: Vec<Ahead>,
     /// The sync checksums of our ticks.
     checks: Checks,
     /// The state floor: ticks below it count as confirmed for rollback and
@@ -1038,7 +1049,7 @@ impl<S: Simulation> Session<S> {
                 while self.log.known_upto(s) <= t {
                     let k = self.log.known_upto(s);
                     self.log.set(k, s, 0);
-                    scratch.push((k, s, 0));
+                    scratch.push((k, s, 0, false));
                 }
                 continue;
             }
@@ -1047,7 +1058,7 @@ impl<S: Simulation> Session<S> {
                 let k = self.log.known_upto(s);
                 let v = k.checked_sub(1).and_then(|prev| self.log.get(prev, s)).unwrap_or(0);
                 self.log.set(k, s, v);
-                scratch.push((k, s, v));
+                scratch.push((k, s, v, false));
                 p.filled.insert(k);
                 self.stats.fills += 1;
                 filled = true;
@@ -1070,10 +1081,10 @@ impl<S: Simulation> Session<S> {
             while self.log.known_upto(s) <= t {
                 let k = self.log.known_upto(s);
                 self.log.set(k, s, 0);
-                scratch.push((k, s, 0));
+                scratch.push((k, s, 0, false));
             }
         }
-        for &(k, s, v) in &scratch {
+        for &(k, s, v, _) in &scratch {
             self.on_final(k, s, v);
         }
         self.scratch = scratch;
@@ -1318,6 +1329,7 @@ impl<S: Simulation> Session<S> {
                             margin,
                             first,
                             frames,
+                            gone: log.marks_within(first, n),
                         });
                         let bytes = encode_datagram(&d);
                         if bytes.len() <= MAX_DATAGRAM || n == 0 {
@@ -1413,7 +1425,7 @@ impl<S: Simulation> Session<S> {
                 Ok(Datagram::Resume(r))
                     if matches!(self.role, Role::Client { .. } | Role::Spectator { .. }) =>
                 {
-                    self.on_resume(from, r.tick, r.at_ms, r.first, &r.frames, now_us)
+                    self.on_resume(from, &r, now_us)
                 }
                 _ => self.malformed(from),
             },
@@ -1567,12 +1579,12 @@ impl<S: Simulation> Session<S> {
             return;
         }
         let frontier = self.log.frontier();
-        if !self.take_frames(from, first, &h.frames) {
+        if !self.take_frames(from, first, &h.frames, &h.gone) {
             self.malformed(from);
             return;
         }
         if first > frontier {
-            self.keep_ahead(from, first, mem::take(&mut h.frames));
+            self.keep_ahead(from, first, mem::take(&mut h.frames), mem::take(&mut h.gone));
         }
         self.take_ahead(from);
         self.on_stamp(from, h.stamp, now_us);
@@ -1593,15 +1605,16 @@ impl<S: Simulation> Session<S> {
     /// did every later one, until the host's resend a round trip later; the
     /// peer stalled at the prediction limit meanwhile (ruling SK-4,
     /// net-soak's `typical-11s6c0v-seed3117434416`). The nearest
-    /// [`AHEAD_KEPT`] are kept, one per `first`, none without frames.
-    fn keep_ahead(&mut self, from: PeerId, first: u32, frames: Vec<Frame>) {
+    /// [`AHEAD_KEPT`] are kept, one per `first`, none without frames; each
+    /// with its withdrawal marks.
+    fn keep_ahead(&mut self, from: PeerId, first: u32, frames: Vec<Frame>, gone: Vec<(u8, u32)>) {
         // A datagram without frames (a keepalive, or nothing new) would take
         // a place and sort before the backlog's (final review A-M2).
-        if frames.is_empty() || self.ahead.iter().any(|a| a.0 == from && a.1 == first) {
+        if frames.is_empty() || self.ahead.iter().any(|a| a.from == from && a.first == first) {
             return;
         }
-        let at = self.ahead.partition_point(|a| a.1 < first);
-        self.ahead.insert(at, (from, first, frames));
+        let at = self.ahead.partition_point(|a| a.first < first);
+        self.ahead.insert(at, Ahead { from, first, frames, gone });
         self.ahead.truncate(AHEAD_KEPT);
     }
 
@@ -1613,22 +1626,24 @@ impl<S: Simulation> Session<S> {
             let frontier = self.log.frontier();
             let origin = self.log.origin();
             self.ahead.retain(|a| {
-                let end = a.1.saturating_add(a.2.len() as u32);
-                a.0 == from && end > frontier && (a.1 == 0 || a.1 >= origin)
+                let end = a.first.saturating_add(a.frames.len() as u32);
+                a.from == from && end > frontier && (a.first == 0 || a.first >= origin)
             });
-            let Some(i) = self.ahead.iter().position(|a| a.1 <= frontier) else { return };
-            let (_, first, frames) = self.ahead.remove(i);
+            let Some(i) = self.ahead.iter().position(|a| a.first <= frontier) else { return };
+            let Ahead { first, frames, gone, .. } = self.ahead.remove(i);
             // Decoded once already (with the values before `first` it
             // lacked then): it decodes again.
-            self.take_frames(from, first, &frames);
+            self.take_frames(from, first, &frames, &gone);
         }
     }
 
     /// Client or spectator: the host's final inputs for ticks `first..`
-    /// (its datagram's, or its `Control::Resume`'s): `false`, nothing
-    /// taken, when they do not decode. The first value stays final; a
-    /// differing one is [`Event::Inconsistent`].
-    fn take_frames(&mut self, from: PeerId, first: u32, frames: &[Frame]) -> bool {
+    /// (its datagram's, or its `Control::Resume`'s), each with its
+    /// withdrawal mark from `gone` (decision N83, part of the value):
+    /// `false`, nothing taken, when they do not decode. The first value
+    /// stays final; a differing one, or a mark for a tick final without
+    /// it, is [`Event::Inconsistent`].
+    fn take_frames(&mut self, from: PeerId, first: u32, frames: &[Frame], gone: &[(u8, u32)]) -> bool {
         let slots = self.cfg.slots as usize;
         let mut scratch = mem::take(&mut self.scratch);
         scratch.clear();
@@ -1640,15 +1655,18 @@ impl<S: Simulation> Session<S> {
             0 => Some(0),
             f => log.get(f - 1, s as u8).or_else(|| (log.known_upto(s as u8) < f).then_some(0)),
         };
-        let decoded =
-            decode_frames(first, frames, slots, &base, &mut |t, s, v| scratch.push((t, s as u8, v))).is_ok();
+        let decoded = decode_frames(first, frames, slots, &base, &mut |t, s, v| {
+            let s = s as u8;
+            scratch.push((t, s, v, gone.contains(&(s, t))))
+        })
+        .is_ok();
         if decoded {
             let limit = self.current.saturating_add(MAX_AHEAD);
-            for &(t, s, v) in &scratch {
+            for &(t, s, v, g) in &scratch {
                 if t >= limit {
                     continue;
                 }
-                match self.log.set(t, s, v) {
+                match self.log.set_final(t, s, v, g) {
                     SetResult::New => self.on_final(t, s, v),
                     SetResult::Conflict => {
                         self.events.push(Event::Inconsistent { peer: from, tick: t, slot: s })
@@ -1709,8 +1727,8 @@ impl<S: Simulation> Session<S> {
             }
             Control::Collect { known } if !host => self.on_collect(from, &known),
             Control::Report(r) if host => self.on_report(from, r, now_us),
-            Control::Resume { tick, at_ms, first, frames } if !host => {
-                self.on_resume(from, tick, at_ms, first, &frames, now_us)
+            Control::Resume { tick, at_ms, first, frames, gone } if !host => {
+                self.on_resume(from, &HostResume { tick, at_ms, first, frames, gone }, now_us)
             }
             _ => {}
         }
@@ -1989,7 +2007,8 @@ fn resume_datagram(log: &InputLog, r: Resuming, first: u32, horizon: u32, slots:
     let mut n = horizon.saturating_sub(first).min(MAX_FRAMES as u32);
     loop {
         let frames = encode_frames(first, n, slots, &|t, s| log.get(t, s as u8), &base);
-        let d = Datagram::Resume(HostResume { tick: r.tick, at_ms: r.at_ms, first, frames });
+        let gone = log.marks_within(first, n);
+        let d = Datagram::Resume(HostResume { tick: r.tick, at_ms: r.at_ms, first, frames, gone });
         let bytes = encode_datagram(&d);
         if bytes.len() <= MAX_DATAGRAM || n == 0 {
             return bytes;
@@ -2019,8 +2038,111 @@ mod tests {
 
     /// The host's datagram to the client: `frames` from `first`, nothing acknowledged.
     fn host_inputs(tick: u32, margin: i16, first: u32, frames: Vec<Frame>) -> Vec<u8> {
-        let h = HostInputs { stamp: Stamp::default(), tick, your_ack: 0, margin, first, frames };
+        host_inputs_marked(tick, margin, first, frames, vec![])
+    }
+
+    /// [`host_inputs`] with withdrawal marks.
+    fn host_inputs_marked(
+        tick: u32,
+        margin: i16,
+        first: u32,
+        frames: Vec<Frame>,
+        gone: Vec<(u8, u32)>,
+    ) -> Vec<u8> {
+        let h = HostInputs { stamp: Stamp::default(), tick, your_ack: 0, margin, first, frames, gone };
         encode_datagram(&Datagram::Host(h))
+    }
+
+    /// N83: a client keeps the mark that comes with the value at its tick.
+    #[test]
+    fn a_client_keeps_the_hosts_withdrawal_mark() {
+        let mut c = client();
+        let frames = rl_proto::encode_frames(0, 20, 3, &|_, s| (s < 2).then_some(0), &|_| Some(0));
+        c.receive(0, Channel::Unreliable, &host_inputs_marked(20, 0, 0, frames, vec![(0, 12)]), 1_000);
+        assert_eq!(c.input_log().gone_at(0), Some(12));
+        assert_eq!(c.input_log().gone_at(1), None);
+    }
+
+    /// N83: a mark for a tick the client holds final without one is the
+    /// host contradicting itself.
+    #[test]
+    fn a_late_withdrawal_mark_is_inconsistent() {
+        let mut c = client();
+        let frames = || rl_proto::encode_frames(0, 20, 3, &|_, s| (s < 2).then_some(0), &|_| Some(0));
+        c.receive(0, Channel::Unreliable, &host_inputs(20, 0, 0, frames()), 1_000);
+        c.receive(0, Channel::Unreliable, &host_inputs_marked(20, 0, 0, frames(), vec![(0, 12)]), 2_000);
+        assert_eq!(c.input_log().gone_at(0), None, "the first value stays");
+        assert_eq!(c.drain_events(), vec![Event::Inconsistent { peer: 0, tick: 12, slot: 0 }]);
+    }
+
+    /// N83: frames kept ahead of the frontier keep their marks.
+    #[test]
+    fn frames_kept_ahead_keep_their_marks() {
+        let mut c = client();
+        let value = |_, _| Some(0);
+        let later = rl_proto::encode_frames(10, 10, 3, &value, &|_| Some(0));
+        c.receive(0, Channel::Unreliable, &host_inputs_marked(20, 0, 10, later, vec![(1, 15)]), 1_000);
+        assert_eq!(c.input_log().gone_at(1), None, "past the frontier: kept");
+        let earlier = rl_proto::encode_frames(0, 10, 3, &value, &|_| Some(0));
+        c.receive(0, Channel::Unreliable, &host_inputs(20, 0, 0, earlier), 2_000);
+        assert_eq!(c.input_log().known_upto(1), 20);
+        assert_eq!(c.input_log().gone_at(1), Some(15));
+        assert!(c.drain_events().is_empty());
+    }
+
+    /// N83: the host's datagrams list the marks within the frames they
+    /// carry, and its client takes them.
+    #[test]
+    fn the_hosts_datagrams_carry_its_marks() {
+        let role = Role::Host { peers: vec![(1, Seat::Player(0))] };
+        let mut h = Session::new(Config::new(4, 0), role, ToySim::new(4), 0);
+        let mut c = Session::new(Config::new(4, 0), Role::Client { host: 0, slot: 0 }, ToySim::new(4), 0);
+        let mut f = ToyFactory { slots: 4, seed: 1 };
+        let (mut hd, mut cd) = (f.driver(0, None), f.driver(1, Some(Seat::Player(0))));
+        // A local slot's worm withdrawn at tick 3 (Task 4's host sets it so).
+        for t in 0..=3 {
+            assert_eq!(h.log.set_final(t, 3, 0, t == 3), SetResult::New);
+        }
+        let mut sent = Vec::new();
+        for step in 1..=300 {
+            let now = step * 1000;
+            h.advance(now, hd.as_mut());
+            h.transmit(&mut |_, _, b| {
+                if let Ok(Datagram::Host(d)) = decode_datagram(&b, 4) {
+                    sent.push(d);
+                }
+                c.receive(0, Channel::Unreliable, &b, now);
+            });
+            c.advance(now, cd.as_mut());
+            c.transmit(&mut |_, _, b| h.receive(1, Channel::Unreliable, &b, now));
+        }
+        assert!(sent.len() > 10);
+        for d in &sent {
+            let spans = d.first <= 3 && 3 < d.first + d.frames.len() as u32;
+            assert_eq!(d.gone, if spans { vec![(3, 3)] } else { vec![] }, "{} +{}", d.first, d.frames.len());
+        }
+        assert!(sent.iter().any(|d| !d.gone.is_empty()));
+        assert_eq!(c.input_log().gone_at(3), Some(3));
+        assert!(!c.drain_events().iter().any(|e| matches!(e, Event::Inconsistent { .. })));
+    }
+
+    /// N83: the resume datagram lists the marks within the frames that fit.
+    #[test]
+    fn the_resume_datagram_lists_the_marks_it_carries() {
+        let mut log = InputLog::new(32);
+        // Every slot changes every tick: 64 frames do not fit one datagram.
+        for t in 0..64 {
+            for s in 0..32 {
+                let gone = (s == 5 && t == 2) || (s == 6 && t == 60);
+                log.set_final(t, s, (t as u8 + s) % 2 + 1, gone);
+            }
+        }
+        let r = Resuming { until_us: 0, tick: 64, at_ms: 1 };
+        let Ok(Datagram::Resume(d)) = decode_datagram(&resume_datagram(&log, r, 0, 64, 32), 32) else {
+            panic!("a resume")
+        };
+        assert!(d.frames.len() < 60, "halved to {}", d.frames.len());
+        assert_eq!(d.gone, vec![(5, 2)], "the mark past the frames that fit stays out");
     }
 
     /// A host (slots 1 to 3 its own) and a client playing slot 0 over a
@@ -2180,7 +2302,9 @@ mod tests {
     fn a_resumes_moment_moves_the_pace_at_most_its_bound() {
         // `at_ms` five seconds ago, or a hundred to come: the pace moves by
         // at most `RESUME_AT_BOUND_MS` (a hostile host's whim).
-        let resume = |at_ms| encode_control(&Control::Resume { tick: 0, at_ms, first: 0, frames: vec![] });
+        let resume = |at_ms| {
+            encode_control(&Control::Resume { tick: 0, at_ms, first: 0, frames: vec![], gone: vec![] })
+        };
         let now = 5_000_000;
         let mut c = client();
         c.rehost(7, 0);
