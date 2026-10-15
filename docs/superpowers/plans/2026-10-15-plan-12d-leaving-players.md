@@ -13,10 +13,15 @@
   - The mask is hashed only when it is set, so no local match changes.
 - **`rl-modes`**: Deathmatch resets the leaver's streaks and marks its scoreboard row `Score::left`. OLX's "fewer than two worms" game over then follows on its own, because a gone worm is out of lives.
 - **`rl-replay`** records each withdrawal (`Replay::withdrawals`) and replays it before its tick (format version 3).
-- **`rl-proto` + `rl-netcode`**: the host decides the tick. When it abandons a player's slot, the slot's first unknown tick T becomes its withdrawal tick.
-  - The mark rides on tick T's frame (`Frame::gone`) through every path that carries final inputs: the host's datagrams, a migration's reports and resumes. A peer cannot confirm tick T without it.
-  - The session withdraws the worm before simulating T, and rolls back when it learns of a withdrawal it predicted past.
-  - The harness checks every peer withdrew alike, and its offline replay withdraws too.
+- **`rl-proto` + `rl-netcode`**: the host decides the tick. When it abandons a player's slot, the slot's first unknown tick T becomes its withdrawal tick, stored in the input log with the slot's value at T.
+  - **How the mark travels (ruling PF12d-4).** Every message that carries final inputs carries, once, a compact `(slot, tick)` list of the marks whose tick lies within its frames:
+    - the host's datagrams (`HostInputs::gone`);
+    - a migration's report (`InputsReport::gone`);
+    - its resumes (`Control::Resume`, `HostResume`).
+
+    A peer stores the value at T together with the mark, so it cannot confirm tick T without it. `Frame` and the frame codec do not change.
+  - **Withdrawing:** the session withdraws the worm before simulating T, and rolls back when it learns of a withdrawal it predicted past.
+  - **The harness** checks every peer withdrew alike, and its offline replay withdraws too.
 - **`rl-online`**:
   - The match record and its replay carry the withdrawals.
   - A timeout is told apart from a leave (`Notice::TimedOut`, `OnlineEvent::TimedOut`).
@@ -26,8 +31,8 @@
   - The live scoreboard leaves gone worms out; the results keep a "left" row.
   - A watcher's camera moves on from a worm that left.
 - **`rl-cli`**:
-  - The net-sim desync bundle carries the withdrawals: a small, separate hunk in `netsim.rs`.
-  - `net-repro` withdraws.
+  - The net-sim desync bundle carries the withdrawals, and `net-repro` withdraws.
+  - The stall verdict excuses a client crash's 10 s of host fills (ruling PF12d-5).
   - net-soak cases include client departures.
 
 **Tech Stack:** Rust 1.99 (edition 2024). Existing crates only (serde, postcard, proptest, egui_kittest). **No new dependency** and no new system package.
@@ -65,8 +70,8 @@ This plan settles what decision N6 left open: "what happens to the worm (removal
   - No `bless-regression` or `bless-render` in this plan.
   - Every task's check runs them.
 - **Compatibility is broken on purpose** (user rule, 2026-10-15: proof-of-concept stage). No shim, and no old format kept readable:
-  - **`rl_proto::FINGERPRINT`** changes. It hashes the sources of rl-proto, rl-sim, rl-modes and rl-netcode (`crates/rl-proto/build.rs`), so released builds refuse this one at the offer.
-  - **`Frame`** gains a field.
+  - **`rl_proto::FINGERPRINT`** changes. It hashes the sources of rl-math, rl-data, rl-terrain, rl-sim, rl-modes, rl-netcode and rl-proto (`crates/rl-proto/build.rs`), so released builds refuse this one at the offer.
+  - **The wire:** `HostInputs`, `HostResume`, `InputsReport` and `Control::Resume` gain a `gone` list.
   - **`rl_replay::FORMAT_VERSION`** goes 2 → 3.
   - **rl-online's `GAME_BUNDLE_VERSION`** goes 1 → 2.
   - **rl-cli's `BUNDLE_VERSION`** goes 2 → 3.
@@ -79,43 +84,50 @@ This plan settles what decision N6 left open: "what happens to the worm (removal
   - `rl-proto`, `rl-netcode`, `rl-lobby`, `rl-sim`, `rl-modes` and `rl-replay` stay `#![no_std]` + `alloc` and build for `wasm32-unknown-unknown`.
   - One integration-test binary per crate: a new test file is a `mod` of `tests/integration.rs`.
 - **Never panic on network or file input:**
-  - A frame's `gone` bits outside `known` are refused by the decoders.
+  - A `gone` list is refused by the decoders (`ProtoError::Invalid`) when it has:
+    - more than `MAX_SLOTS` entries;
+    - a slot twice;
+    - a slot past the match's;
+    - a tick outside its message's frames.
   - A second withdrawal mark for a slot is ignored.
-  - A mark for a tick already final is `Event::Inconsistent`.
-  - A world state whose gone mask names no worm is refused (`StateError::Worms`).
+  - A mark for a tick already final without it is a conflict:
+    - at a client (`take_frames`), `Event::Inconsistent`;
+    - at a new host's merge, counted in `Stats::report_conflicts`.
+  - A world state whose gone mask names no worm, or a living worm, is refused (`StateError::Worms`).
   - A replay's withdrawals are bounded and checked on decode.
-  - The fuzzers in `crates/rl-proto/tests/fuzz.rs` cover the new field.
+  - The fuzzers in `crates/rl-proto/tests/fuzz.rs` cover the new fields.
 - **Cite OLX** for ported behaviour, in doc comments, at `d1ad953f` (the references above). Faithfulness beats elegance. The one deliberate deviation (the results' "left" row) goes in `docs/porting/STATUS.md`.
 - **Tests must be able to fail, and drive the real path:**
   - Each task's first step writes a test that fails before its change (the expected failure is named).
   - Online tests go through `OnlinePeer::leave`, the session and the real `WorldSim`, and through the shell's `UiAction`s, never a helper that sets the world directly. The sim and mode unit tests are the exception: there, `World::withdraw` *is* the path.
-- **Another agent edits `crates/rl-cli/src/netsim.rs`.** This plan touches it in one small, separate hunk (Task 7), staged on its own (`git add -p`). It never reformats or moves that file's other code.
+  - Online tests bound ticks by state read from the peers (an input log's `known_upto`, a record's marks), never by a tick read off the real clock.
 - **Commits:**
   - Run `cargo xtask check` before every commit (`--offline` without network), chained with `&&`. Redirect its output to a file and read the tail. Never put `| tail` before the commit.
   - Stage files explicitly (`git add <paths>`, never `-A`). Commit on `main`, never push.
-  - **`cargo xtask full` runs once, in Task 8, never mid-plan** (user rule, 2026-10-15). Run nothing else from `full` mid-plan either: no `net-soak`, no `e2e` before Task 8.
+  - **`cargo xtask full` runs once, in Task 8, never mid-plan** (user rule, 2026-10-15). Run nothing else from `full` mid-plan either: no `net-soak`, `e2e`, `net-feel` or `net-nat` before Task 8.
   - Trailers:
   ```
   Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
   Claude-Session: https://claude.ai/code/session_019821i4KFSbhZ4mHYULrhEV
   ```
-- **Start from HEAD.** Plan 12c may still be landing when this plan runs: read the current code, not line numbers. Line numbers below are as of `ac31364` and are hints only.
+- **Start from HEAD.** Plan 12c is finished (HEAD `6a3b273` when this plan was checked). Read the current code, not line numbers: line numbers below are hints only.
 
 ## Decisions this plan makes (recorded as STATUS.md rulings in Task 8)
 
-The user's five decisions are above. These settle the rest.
+The user's five decisions are above. These settle the rest. PF12d-1 to PF12d-5 are the controller's pre-flight rulings (2026-10-15).
 
 - **N82 – withdrawal, not deletion.**
   - `World::withdraw(i)` keeps worm `i` in `World::worms()`: slot `i` stays worm `i`, which the netcode, replays and the presentation index by. The worm is made dead, `lives = WRM_OUT`, its rope cleared, its latches reset and its state cleared.
   - Every gameplay path already ignores a dead `WRM_OUT` worm: physics, hits, beams, rope attachment, bonuses, respawns, bots, drawing, the minimap and the names.
   - OLX deletes the worm (`Game::removeWorm`).
   - **Cost if wrong:** a future reader of `World::worms()` must skip gone worms (`World::gone()`), as it already skips dead ones.
-- **N83 – the withdrawal tick and how it travels.**
+- **N83 – the withdrawal tick and how it travels** (ruling PF12d-4).
   - **Which tick:** when the host abandons a player's slot, the slot's first unknown tick T is its withdrawal tick. Abandoning means `Session::peer_lost`: a `Bye`, a timeout, a kick or a failed repair; and, at a migration's resume, absent players. T is the same tick at which N6's `Keys(0)` began.
-  - **Final, like the input:** the log stores the mark with the slot's value at T (`InputLog::set_final(T, s, 0, true)`). Tick T's frame carries it as a `gone` bit, so no peer can hold the value at T without the mark. After T the slot's value stays `Keys(0)`, which the world ignores.
+  - **Final, like the input:** the log stores the mark with the slot's value at T (`InputLog::set_final(T, s, 0, true)`).
+  - **On the wire:** the mark travels once per message, as an entry of a compact `(slot, tick)` list (`gone`) beside the frames. A message lists the marks whose tick lies within its frames, so the datagram that carries T's value carries the mark too. After T the slot's value stays `Keys(0)`, which the world ignores.
   - **Who withdraws, and when:** every peer (host, clients, spectators, the replay) withdraws before simulating T. A peer that simulated T or later without the mark rolls back to T.
   - **N6 is amended**, not dropped: the slot is still filled with `Keys(0)`, and its worm is gone from T.
-  - **Cost if wrong:** one more varint byte (0) per frame on the wire.
+  - **Cost if wrong:** a slightly more complex encoder; one byte more per datagram (an empty list).
 - **N84 – the mode's side, as OLX.**
   - `GameMode::on_drop` is `CGameMode::Drop`: Deathmatch zeroes the worm's kills and deaths in a row.
   - The game over below two worms is Deathmatch's existing `CheckGameOver` port: a gone worm is out of lives, so it is no longer counted and cannot be the winner.
@@ -127,19 +139,24 @@ The user's five decisions are above. These settle the rest.
   - OLX's results lose the worm, because it is deleted.
   - `MatchEndWire` is unchanged: its rows still list every row, and the dedicated server's log names the first row, never a left one unless every worm left.
   - **Cost if wrong:** one table row.
-- **N86 – the texts.**
+- **N86 – the texts** (ruling PF12d-3 for the resume).
   - OLX's `NetworkTexts` defaults (`Options.cpp:769-770`):
     - "<name> has left" for a `Bye` or a link that closed;
     - "<name> has timed out" for the session's `PeerTimedOut` or the link's `Why::Timeout`.
   - Today's "<name> left" becomes "<name> has left".
   - Kicks and bans keep their notices.
-  - The old host after a migration gets no "has left" line: the migration's own lines ("The host is gone…", "<name> is now hosting") say it.
+  - **At a migration's resume:**
+    - The old host is withdrawn silently. The migration's own lines ("The host is gone…", "<name> is now hosting") say it, and the migrated lobby never keeps the old host's member (`LobbyHost::migrated`), so nothing announces it.
+    - Each player who did not come back gets "<name> has left": `MigratedLobby::drop_away` drops them with `Gone::Left`.
   - **Cost if wrong:** one log line.
 - **N87 – the crash timeout stays 10 s** (user decision 4): `SILENCE_TIMEOUT_US` in the session, `SILENCE_TIMEOUT` in rl-net. Until it fires, the lagging rule repeats the slot's last final keys; at it, the worm is withdrawn.
+  - Those 10 s of fills stall players whose link cannot bear them (`fills_stall`, true on `bad`). net-sim's stall verdict excuses them in a window from the crash tick to the timeout plus the recovery (ruling PF12d-5).
+  - **Cost if wrong:** a stall bug inside that window hides.
 - **N88 – migrations** (user decision 5):
   - **Abandoned at the resume:** the slots the resume abandons (the old host's player, players not back) are withdrawn at their first unknown tick, by the same fill.
   - **Marks are final:** the merge takes every withdrawal mark a report carries, so a survivor's mark is never lost (spec §3.2).
   - **A leave before the resume:** a peer that rejoins and then leaves is withdrawn at the resume's fill.
+  - **A side effect, intended (user decision 3):** a 2-worm match whose host leaves with migration on resumes with one worm and ends `LastStanding`.
   - **Cost if wrong:** none known.
 - **N89 – a watcher's camera** (a spectator, a replay or bots alone) skips gone worms. When the worm it follows is withdrawn, it moves to the next worm not gone. **Cost if wrong:** a watcher presses an arrow key once.
 
@@ -147,7 +164,7 @@ The user's five decisions are above. These settle the rest.
 
 1. **A player leaves while the others have predicted past its withdrawal tick** (`bad` and `awful` links, a 100+ ms trip).
    - **Expected:** every peer rolls back to T, withdraws there, and their checksums agree with an offline replay. No desync, no repair.
-   - **Pinned by:** Task 4's `a_leaving_client_is_withdrawn_at_one_tick_everywhere` (every profile × 4 seeds) and its session test `a_client_rolls_back_to_a_withdrawal_it_predicted_past`.
+   - **Pinned by:** Task 4's `a_leaving_client_is_withdrawn_at_one_tick_everywhere` (every profile × 4 seeds) and its session unit test `a_withdrawal_learned_late_rolls_back_to_it` (it fails without `on_gone`).
 2. **A player leaves during a migration, or just before the host crashes** (the mark may have reached some survivors and not others).
    - **Expected:** every survivor withdraws the worm at the same tick: the mark one survivor held, or the resume's fill.
    - **Pinned by:**
@@ -157,13 +174,13 @@ The user's five decisions are above. These settle the rest.
    - **Expected:** the match ends at once (LastStanding), and the remaining worm wins.
    - **Pinned by:** Task 1's `a_withdrawn_worm_leaves_the_board_and_the_last_one_wins` and Task 5's `the_last_opponent_leaving_ends_the_match`.
 4. **A hostile or broken host's marks:**
-   - `gone` bits outside `known`;
+   - a `gone` list too long, with a slot twice, a slot past the match's or a tick outside its frames;
    - a second mark for one slot;
    - a mark for a tick already final without it;
-   - a world state whose gone mask names no worm;
+   - a world state whose gone mask names no worm or a living one;
    - a replay whose withdrawals are out of order, repeated or past its end.
-   - **Expected:** no panic; refused, ignored or `Inconsistent`, as the Global Constraints say.
-   - **Pinned by:** Task 3's `gone_bits_outside_known_are_refused` and `a_withdrawal_mark_is_final`, Task 1's `a_state_naming_no_worm_gone_is_refused`, Task 2's `withdrawals_are_checked_on_decode`, and the fuzzers.
+   - **Expected:** no panic; refused, ignored or a conflict, as the Global Constraints say.
+   - **Pinned by:** Task 3's `withdrawal_marks_are_bounded` and `a_withdrawal_mark_is_final`, Task 1's `a_state_naming_no_worm_gone_is_refused`, Task 2's `withdrawals_are_checked_on_decode`, and the fuzzers.
 5. **What players see of a leaver:**
    - its rocket still in flight;
    - a watcher following it;
@@ -172,7 +189,7 @@ The user's five decisions are above. These settle the rest.
      - The rocket explodes but credits nobody.
      - The watcher's camera moves on.
      - The results keep its row, marked "left", with its kills and deaths so far.
-   - **Pinned by:** Task 1's `a_gone_worms_kill_credits_nobody`, Task 6's `the_watched_worm_moves_on_when_it_leaves` and `a_player_who_leaves_is_off_the_scoreboard_and_left_in_the_results`.
+   - **Pinned by:** Task 1's `a_projectile_of_a_worm_that_left_credits_nobody` and `a_gone_worms_kill_credits_nobody`, Task 6's `the_watched_worm_moves_on_when_it_leaves` and `a_player_who_leaves_is_off_the_scoreboard_and_left_in_the_results`.
 
 ---
 
@@ -183,13 +200,13 @@ The user's five decisions are above. These settle the rest.
 | `crates/rl-sim/src/{world.rs, referee.rs, mode.rs, damage.rs, respawn.rs, setup.rs, state.rs, world_tests.rs, state_tests.rs}` | `World::withdraw`, `World::gone`, the referee's mask, `ModeCtx::gone`, `GameMode::on_drop`, `Score::left`, gone killers credit nobody, the state transfer (Task 1). |
 | `crates/rl-modes/src/{deathmatch.rs, rules.rs, tests.rs}`, `tests/deathmatch.rs` | Deathmatch's `on_drop` and its board's `left` rows (Task 1). |
 | `crates/rl-replay/src/{lib.rs, record.rs, play.rs, wire.rs, error.rs}`, `tests/replay.rs` | `Replay::withdrawals`, `Recorder::withdraw`, the cursor, format 3 (Task 2). |
-| `crates/rl-proto/src/{lib.rs, frames.rs}`, `tests/fuzz.rs` | `Frame::gone` and its codec (Task 3). |
-| `crates/rl-netcode/src/{inputs.rs, session.rs, session/migrate.rs}` | `InputLog::set_final`/`gone_at`/`gone_marks`; every frame path carries marks (Task 3). |
-| `crates/rl-netcode/src/{sim.rs, world_sim.rs, session.rs, session/migrate.rs, harness.rs}`, `tests/{play.rs, migration.rs, sync.rs}` | The host withdraws, the session simulates and rolls back withdrawals, `Simulation::withdraw`, the harness's report and verdict (Task 4). |
+| `crates/rl-proto/src/lib.rs`, `tests/{fuzz.rs, migration.rs}` | The `gone` lists, `valid_marks`, the decoders' checks (Task 3). |
+| `crates/rl-netcode/src/{inputs.rs, session.rs, session/migrate.rs, migration.rs}`, `tests/{play.rs, sync.rs, migration.rs}` | `InputLog::set_final`/`gone_at`/`gone_marks`/`marks_within`; every message that carries final inputs carries the marks (`fit_report`, `fit_resume`, `resume_datagram` included) (Task 3). |
+| `crates/rl-netcode/src/{sim.rs, world_sim.rs, session.rs, session/migrate.rs, harness.rs}`, `tests/{play.rs, migration.rs, sync.rs}`, `crates/rl-cli/src/netsim.rs` (`empty_report`) | The host withdraws, the session simulates and rolls back withdrawals, `Simulation::withdraw`, the harness's report and verdict (Task 4). |
 | `crates/rl-online/src/{replay.rs, peer.rs, bundle.rs}`, `tests/online.rs` | `MatchRecord::gone`, replays and bundles with withdrawals (Task 4). |
 | `crates/rl-proto/src/lobby.rs`, `crates/rl-lobby/src/{host.rs, model.rs, harness.rs}`, `tests/lobby.rs`, `crates/rl-online/src/{peer.rs, events.rs, peer/migrate.rs}`, `tests/{online.rs, migration.rs}`, `crates/rl-game/src/{shell/online.rs, net/pump.rs}` | `Notice::TimedOut`, `LobbyHost::timed_out`, `OnlineEvent::TimedOut`, the texts; rl-online's leave, timeout, last-opponent and migration tests (Task 5). |
 | `crates/rl-ui/src/hud/{model.rs, paint.rs}`, `crates/rl-game/src/session.rs`, `tests/{online.rs, watch.rs}` | Live scoreboard without left rows, results with them, the watcher's camera (Task 6). |
-| `crates/rl-cli/src/{bundle.rs, netsim.rs (one hunk), soak.rs}`, `tests/{net_sim.rs, net_soak.rs}` | The net-sim bundle's withdrawals, `net-repro`, client departures in net-soak (Task 7). |
+| `crates/rl-cli/src/{bundle.rs, netsim.rs, soak.rs}`, `tests/{net_sim.rs, net_soak.rs, net_repro.rs}` | The net-sim bundle's withdrawals, `net-repro`, the crash window, client departures in net-soak (Task 7). |
 | `docs/porting/STATUS.md`, `CHANGELOG.md`, `docs/online.md`, the crates' `CLAUDE.md` | Records (each task keeps its crates' `CLAUDE.md` current; Task 8 the rest) and the single `full` run (Task 8). |
 
 ---
@@ -197,9 +214,10 @@ The user's five decisions are above. These settle the rest.
 ### Task 1: `rl-sim` and `rl-modes`: withdrawing a worm
 
 **Files:**
-- Modify: `crates/rl-sim/src/referee.rs` (`Referee::gone`, its hash, `PartialEq`, the `ModeCtx` it builds), `crates/rl-sim/src/mode.rs` (`Score::left`, `GameMode::on_drop`, `ModeCtx::gone`), `crates/rl-sim/src/world.rs` (`World::gone`, `World::withdraw`), `crates/rl-sim/src/damage.rs` (`kill_worm`: a gone killer is nobody; `Harm::mode`'s `ModeCtx`), `crates/rl-sim/src/respawn.rs` and `crates/rl-sim/src/setup.rs` (their `ModeCtx`), `crates/rl-sim/src/state.rs` (`WorldState::gone`, its check), `crates/rl-sim/src/world_tests.rs`, `crates/rl-sim/src/state_tests.rs`, `crates/rl-sim/CLAUDE.md`
-- Modify: `crates/rl-modes/src/deathmatch.rs` (`on_drop`, `refresh` with the mask, the checksum), `crates/rl-modes/src/rules.rs` (`row` sets `left: false`), `crates/rl-modes/src/tests.rs`, `crates/rl-modes/tests/deathmatch.rs`, `crates/rl-modes/CLAUDE.md`
-- Modify (compile fixes only: every `Score { .. }` literal gains `left: false`; the compiler lists them): `crates/rl-modes/tests/state.rs`, `crates/rl-sim/src/mode_tests.rs`, `crates/rl-game/tests/*.rs`, `crates/rl-ui/src/**` tests, `crates/rl-netcode/tests/*.rs` (any)
+- Modify: `crates/rl-sim/src/referee.rs` (`Referee::gone`, its hash, `PartialEq`, the `ModeCtx` it builds), `crates/rl-sim/src/mode.rs` (`Score::left`, `GameMode::on_drop`, `ModeCtx::gone`), `crates/rl-sim/src/world.rs` (`World::gone`, `World::withdraw`), `crates/rl-sim/src/damage.rs` (`kill_worm`: a gone killer is nobody; `Harm::mode`'s `ModeCtx`), `crates/rl-sim/src/respawn.rs` and `crates/rl-sim/src/setup.rs` (their `ModeCtx`), `crates/rl-sim/src/state.rs` (`WorldState::gone`, its check), `crates/rl-sim/src/world_tests.rs`, `crates/rl-sim/src/state_tests.rs`, `crates/rl-sim/src/mode_tests.rs` (its `Score` literals), `crates/rl-sim/CLAUDE.md`
+- Modify: `crates/rl-modes/src/deathmatch.rs` (`on_drop`, `refresh` with the mask, the checksum), `crates/rl-modes/src/rules.rs` (`row` sets `left: false`), `crates/rl-modes/src/tests.rs`, `crates/rl-modes/tests/{deathmatch.rs, state.rs}`, `crates/rl-modes/CLAUDE.md`
+
+`Score { .. }` literals exist only in rl-sim and rl-modes. Every one gains `left: false`, and the compiler names them.
 
 **Interfaces:**
 - Consumes: nothing new.
@@ -300,7 +318,9 @@ Context:
   };
   ```
 
-  `die_at_zero_health` goes through `kill_worm`, so a `last_damager` that left is covered too.
+  - `die_at_zero_health` goes through `kill_worm`, so a `last_damager` that left is covered too.
+  - A projectile's explosion goes through `kill_worm` too.
+  - A beam shot whose worm is dead at delivery is dropped already (`shots.rs`: "The shot of a worm that is dead at delivery is dropped").
 - **Deathmatch:**
   - `refresh(&mut self, worms, s, gone: u32)` sets `left` on each row (`r.left = gone & (1 << i) != 0` for worm index `i`). Its callers pass `ctx.gone()`.
   - `on_drop` is OLX's `Drop`:
@@ -321,7 +341,9 @@ Context:
 - [ ] **Step 1: Write the failing tests.** Add to `crates/rl-sim/src/world_tests.rs`:
 
 ```rust
-/// N82: a withdrawn worm is out of play for good, its slot still its own.
+/// N82: a withdrawn worm is out of play for good, its slot still its own,
+/// and the mask itself is hashed: a twin made dead and `WRM_OUT` by hand,
+/// without the mask, differs only by it.
 #[test]
 fn a_withdrawn_worm_is_out_for_good() {
     let mut w = world(Material::Background);
@@ -330,12 +352,21 @@ fn a_withdrawn_worm_is_out_for_good() {
     for _ in 0..20 {
         w.tick_new(&[Keys(0), Keys(0)]);
     }
-    let before = w.checksum();
+    let mut by_hand = w.clone();
+    {
+        let g = &mut by_hand.worms[1];
+        g.alive = false;
+        g.lives = crate::damage::WRM_OUT;
+        g.can_respawn_now = false;
+        g.respawn_requested = false;
+        g.state = Default::default();
+        g.rope.clear();
+        by_hand.latches[1] = Latches::default();
+    }
     w.withdraw(1);
     assert_eq!(w.gone(), 0b10);
-    assert_ne!(w.checksum(), before, "the mask is hashed once set");
-    let gone = &w.worms()[1];
-    assert!(!gone.alive && gone.lives == crate::damage::WRM_OUT);
+    assert_eq!((by_hand.gone(), &by_hand.worms()[1]), (0, &w.worms()[1]), "the same worm");
+    assert_ne!(w.checksum(), by_hand.checksum(), "the mask is hashed once set");
     assert_eq!(w.worms().len(), 2, "worm 1 is still slot 1");
     w.withdraw(1);
     w.withdraw(7);
@@ -345,19 +376,6 @@ fn a_withdrawn_worm_is_out_for_good() {
         w.tick_new(&[Keys(0), Keys(Keys::JUMP)]);
     }
     assert!(!w.worms()[1].alive);
-}
-
-/// The mask is hashed only when set: a world never withdrawn from hashes
-/// as before (the match goldens and the oracle are the wider proof).
-#[test]
-fn no_withdrawal_hashes_nothing_new() {
-    let mut a = world(Material::Background);
-    a.spawn_worm(60, 20);
-    let mut b = a.clone();
-    a.tick_new(&[Keys(0)]);
-    b.tick_new(&[Keys(0)]);
-    assert_eq!(a.checksum(), b.checksum());
-    assert_eq!(a.gone(), 0);
 }
 
 /// N84: a kill credited to a worm that left credits nobody.
@@ -422,19 +440,26 @@ fn a_withdrawn_worm_leaves_the_board_and_the_last_one_wins() {
     assert_eq!(r.w.result(), Some(MatchResult { winner: 0, reason: EndReason::LastStanding }));
 }
 
-/// N84: a beam fired before its owner left kills, crediting nobody.
+/// N84 (ruling PF12d-2): a projectile in flight when its worm leaves still
+/// explodes and kills, crediting nobody. A beam cannot show it: its shot is
+/// dropped when its worm is dead at delivery.
 #[test]
-fn a_shot_of_a_worm_that_left_credits_nobody() {
-    let mut r = settled(dm(), &[(50, LASER), (200, LASER), (80, LASER)]);
-    r.fire(&[0], 0); // the beam is delivered at the next tick's start
+fn a_projectile_of_a_worm_that_left_credits_nobody() {
+    // Worm 0 throws a bomb at its feet (the suicide layout of
+    // `deathmatch_game_over_and_winner_like_olx`); worm 1 stands in the
+    // blast; worm 2 far away keeps two worms in the match.
+    let mut r = settled(dm(), &[(50, BOMB), (58, LASER), (300, LASER)]);
+    r.fire(&[0], 0);
+    r.idle_until(20, |w| w.projectiles().next().is_some()); // delivered: in flight
     r.w.withdraw(0);
-    r.idle(10);
-    assert_eq!(r.kills().iter().map(|k| (k.1, k.2)).collect::<Vec<_>>(), [(2, -1)]);
+    r.idle(200);
+    let kills: Vec<(i32, i32)> = r.kills().iter().map(|k| (k.1, k.2)).collect();
+    assert!(kills.contains(&(1, -1)), "the bomb killed worm 1, credited to nobody: {kills:?}");
     assert_eq!(r.w.worms()[0].kills, 0);
 }
 ```
 
-If the beam does not reach worm 2 at these positions, use the layout of `deathmatch_game_over_and_winner_like_olx`'s simultaneous kills (`(50, LASER)` kills `(80, LASER)`). The test needs a kill, not these numbers.
+`Run::idle_until(max, pred)` is a small helper added to `tests/common`: tick with no keys until `pred(&r.w)` holds, at most `max` ticks, and panic if it never does. If the blast does not reach worm 1 at x 58, move worm 1 to where the suicide bomb of `deathmatch_game_over_and_winner_like_olx` lands. The test needs the bomb to kill worm 1, not these numbers.
 
 Add to `crates/rl-modes/src/tests.rs`:
 
@@ -464,7 +489,7 @@ fn drop_resets_the_runs_like_olx() {
   cargo nextest run -p rl-sim -p rl-modes
   ```
 
-- [ ] **Step 3: Implement** as the Context says: `Referee::gone`, `ModeCtx::gone`, `Score::left`, `GameMode::on_drop`, `World::gone`/`withdraw`, `kill_worm`'s mapping, the state's mask, Deathmatch's `on_drop`/`drop_worm`/`refresh`/checksum. Then add `left: false` to every `Score { .. }` literal the compiler names across the workspace (`cargo check --workspace --all-targets`).
+- [ ] **Step 3: Implement** as the Context says: `Referee::gone`, `ModeCtx::gone`, `Score::left`, `GameMode::on_drop`, `World::gone`/`withdraw`, `kill_worm`'s mapping, the state's mask, Deathmatch's `on_drop`/`drop_worm`/`refresh`/checksum. Then add `left: false` to every `Score { .. }` literal the compiler names.
 
 - [ ] **Step 4: Run them; they pass.** Then run the whole check, which also replays the match goldens and the oracle:
 
@@ -486,7 +511,7 @@ fn drop_resets_the_runs_like_olx() {
 - [ ] **Step 6: Commit.**
 
 ```bash
-cargo xtask check > /tmp/check.log 2>&1 && git add crates/rl-sim crates/rl-modes <every file the Score literals touched> && git commit -m "rl-sim, rl-modes: a worm can be withdrawn from the match
+cargo xtask check > /tmp/check.log 2>&1 && git add crates/rl-sim crates/rl-modes && git commit -m "rl-sim, rl-modes: a worm can be withdrawn from the match
 
 World::withdraw takes a worm out for good (dead, out of lives, never
 respawned) and tells the mode (CGameMode::Drop); its later kills credit
@@ -505,7 +530,7 @@ Claude-Session: https://claude.ai/code/session_019821i4KFSbhZ4mHYULrhEV"
 
 **Interfaces:**
 - Consumes: `World::withdraw`, `World::gone` (Task 1).
-- Produces (Task 4):
+- Produces (Tasks 4, 6):
   ```rust
   pub const FORMAT_VERSION: u16 = 3;
   pub struct Replay {
@@ -603,43 +628,42 @@ The test names the helpers it needs. If the file's existing ones are named other
 
 ### Task 3: `rl-proto` and `rl-netcode`: withdrawal marks on the wire and in the log
 
-Nothing sets a mark yet: this task carries them through every path that carries final inputs, so Task 4 only has to set and use them.
+Nothing sets a mark yet. This task carries the marks through every message that carries final inputs, so Task 4 only has to set and use them. `Frame` and the frame codec (`encode_frames`, `decode_frames`) are unchanged (ruling PF12d-4).
 
 **Files:**
-- Modify: `crates/rl-proto/src/lib.rs` (`Frame::gone`, `validate_frame`, `valid_report_frames`), `crates/rl-proto/src/frames.rs` (the codec), `crates/rl-proto/tests/{fuzz.rs, migration.rs}`, `crates/rl-proto/CLAUDE.md`
-- Modify: `crates/rl-netcode/src/inputs.rs` (`set_final`, `gone_at`, `gone_marks`), `crates/rl-netcode/src/session.rs` (the host's frames, `take_frames`, the scratch list), `crates/rl-netcode/src/session/migrate.rs` (reports, the merge, `Control::Resume`, `Datagram::Resume`), every other `encode_frames`/`decode_frames` caller the compiler names (the session's unit tests, `tests/migration.rs`), `crates/rl-netcode/CLAUDE.md`
+- Modify: `crates/rl-proto/src/lib.rs`:
+  - `HostInputs::gone`, `HostResume::gone`, `InputsReport::gone`, `Control::Resume::gone`;
+  - `valid_marks`;
+  - their checks in `validate_datagram` and `decode_control`.
+- Modify: `crates/rl-proto/tests/{fuzz.rs, migration.rs}`, `crates/rl-proto/CLAUDE.md`.
+- Modify: `crates/rl-netcode/src/inputs.rs`: `set_final`, `gone_at`, `gone_marks`, `marks_within`.
+- Modify: `crates/rl-netcode/src/session.rs`:
+  - the host's `HostInputs` loop;
+  - `resume_datagram`, the source of `Datagram::Resume`;
+  - `take_frames` and its callers;
+  - the scratch list;
+  - the test helper `host_inputs`.
+- Modify: `crates/rl-netcode/src/migration.rs`: `fit_report` and `fit_resume` take the marks.
+- Modify: `crates/rl-netcode/src/session/migrate.rs`: the report sent, the merge, `Control::Resume`.
+- Modify: every struct literal of those messages the compiler names: `tests/{play.rs, sync.rs, migration.rs}` and the session's unit tests.
+- Modify: `crates/rl-netcode/CLAUDE.md`.
 
 **Interfaces:**
 - Produces (Task 4):
   ```rust
   // rl_proto
-  pub struct Frame {
-      pub known: u32,
-      pub changed: u32,
-      pub keys: Vec<u8>,
-      /// Slots whose worm is withdrawn from the match at this tick
-      /// (decision N83): a subset of `known`; the slot's value is final as
-      /// usual.
-      pub gone: u32,
+  pub struct HostInputs {
+      // …the existing fields, then:
+      /// Withdrawals (decision N83) at ticks within `frames`, as `(slot,
+      /// tick)`: at most `MAX_SLOTS`, each slot once.
+      pub gone: Vec<(u8, u32)>,
   }
-  /// `gone(tick, slot)`: the slot is withdrawn at `tick` (only asked where
-  /// `value` is known).
-  pub fn encode_frames(
-      first: u32,
-      ticks: u32,
-      slots: usize,
-      value: &dyn Fn(u32, usize) -> Option<u8>,
-      gone: &dyn Fn(u32, usize) -> bool,
-      base: &dyn Fn(usize) -> Option<u8>,
-  ) -> Vec<Frame>;
-  /// `out(tick, slot, keys, gone)`.
-  pub fn decode_frames(
-      first: u32,
-      frames: &[Frame],
-      slots: usize,
-      base: &dyn Fn(usize) -> Option<u8>,
-      out: &mut dyn FnMut(u32, usize, u8, bool),
-  ) -> Result<(), ProtoError>;
+  // HostResume, InputsReport and Control::Resume gain the same `gone`
+  // field, after their `frames`.
+  /// Whether `marks` fit a message whose frames are ticks `first..first +
+  /// len`: at most `MAX_SLOTS` entries, each slot below `slots` and listed
+  /// once, each tick within the frames.
+  pub fn valid_marks(first: u32, len: usize, marks: &[(u8, u32)], slots: usize) -> bool;
   // rl_netcode::InputLog
   /// Records `v` as `slot`'s final value at `tick`, and with `gone` that its
   /// worm is withdrawn there (decision N83). As `set`: only the slot's next
@@ -649,43 +673,60 @@ Nothing sets a mark yet: this task carries them through every path that carries 
   pub fn set_final(&mut self, tick: u32, slot: u8, v: u8, gone: bool) -> SetResult;
   /// The tick `slot`'s worm is withdrawn at, if it is.
   pub fn gone_at(&self, slot: u8) -> Option<u32>;
-  /// Every withdrawal at a tick below `below`, as `(tick, slot)`, by tick then slot.
+  /// Every withdrawal at a tick below `below`, as `(tick, slot)`, by tick then slot
+  /// (records and replays' order).
   pub fn gone_marks(&self, below: u32) -> Vec<(u32, u8)>;
+  /// The withdrawals at ticks `first..first + n`, as `(slot, tick)` (the wire's order).
+  pub fn marks_within(&self, first: u32, n: u32) -> Vec<(u8, u32)>;
+  // rl_netcode::migration
+  pub fn fit_report(/* …as before…, */ marks: &dyn Fn(u32, u32) -> Vec<(u8, u32)>) -> InputsReport;
+  pub fn fit_resume(/* …as before…, */ marks: &dyn Fn(u32, u32) -> Vec<(u8, u32)>) -> Control;
   ```
   `InputLog::set(t, s, v)` stays and is `set_final(t, s, v, false)`.
 
 Context:
-- **The codec:**
-  - The encoder sets bit `s` of a frame's `gone` when `value(tick, s)` is known and `gone(tick, s)` holds.
-  - The decoder refuses (`ProtoError::Invalid`) a frame with `gone & !known != 0`, and so do `validate_frame` and `valid_report_frames`.
-  - `out` receives the bit.
+- **Checks:**
+  - `validate_datagram` checks `valid_marks(first, frames.len(), &gone, slots)` for `Host` and `Resume`.
+  - `decode_control` checks `Report` and `Resume` with `MAX_SLOTS` as the slot bound. The receiver's log ignores a slot beyond its match (`Gap`).
 - **The log:** `gone: [u32; 32]`, with `u32::MAX` for none. `start_at` leaves it as it is (none).
-- **Every encoder of the session passes the mark:** `&|t, s| log.gone_at(s as u8) == Some(t)`. These are:
-  - the host's datagram frames (`session.rs`, the `HostInputs` loop);
-  - the report (`migrate.rs`, `fit_report`'s frames);
-  - `Control::Resume` and `Datagram::Resume` (`fit_resume`).
-- **Every decoder takes it:**
-  - `take_frames`, the client's: the scratch list becomes `Vec<(u32, u8, u8, bool)>`, `set_final(t, s, v, g)`, `New` → `on_final(t, s, v)` and nothing more yet;
-  - the report merge in `migrate.rs`, the same way.
+- **Every encoder lists the marks within the frames it sends.** Where the span is cut to fit, it is computed again for the span that fits:
+  - the host's datagrams: inside the halving loop, `gone: log.marks_within(first, n)`;
+  - `resume_datagram`: the same;
+  - `fit_report` and `fit_resume`: `marks(first, n)` inside `fit_frames`' closure. Their callers in `migrate.rs` pass `&|f, n| log.marks_within(f, n)`.
+- **Every decoder takes them with the values:**
+  - `take_frames(from, first, frames, gone)` is the client's. Its scratch list becomes `Vec<(u32, u8, u8, bool)>`, with `g = gone.contains(&(s, t))`. Then `set_final(t, s, v, g)`; `New` → `on_final(t, s, v)` and nothing more yet; `Conflict` → `Event::Inconsistent`.
+  - The report merge in `migrate.rs` works the same way. Its `Conflict` is counted in `Stats::report_conflicts`.
 - **Task 4 adds the reaction** (`on_gone`). Here a mark is only stored.
 
-- [ ] **Step 1: Write the failing tests.** In `crates/rl-proto/src/frames.rs`'s tests:
+- [ ] **Step 1: Write the failing tests.** In `crates/rl-proto/tests/migration.rs` (it holds the migration wire's round trips and bounds):
 
 ```rust
+/// N83: the marks travel once per message, within its frames, each slot once.
 #[test]
-fn gone_marks_round_trip() {
-    let t = table(&[&[Some(1), Some(2)], &[Some(0), Some(2)], &[Some(0), Some(2)]]);
-    let frames = encode_frames(10, 3, 2, &|tick, s| t[(tick - 10) as usize][s], &|tick, s| tick == 11 && s == 0, &|_| Some(1));
-    assert_eq!(frames.iter().map(|f| f.gone).collect::<Vec<_>>(), [0, 0b01, 0]);
-    let mut got = Vec::new();
-    decode_frames(10, &frames, 2, &|_| Some(1), &mut |tick, s, v, g| got.push((tick, s, v, g))).unwrap();
-    assert!(got.contains(&(11, 0, 0, true)) && got.iter().filter(|x| x.3).count() == 1);
-}
-
-#[test]
-fn gone_bits_outside_known_are_refused() {
-    let f = Frame { known: 0b01, changed: 0b01, keys: vec![3], gone: 0b10 };
-    assert_eq!(decode_frames(1, &[f], 2, &|_| Some(0), &mut |_, _, _, _| {}), Err(ProtoError::Invalid));
+fn withdrawal_marks_are_bounded() {
+    assert!(valid_marks(10, 5, &[(0, 10), (3, 14)], 4));
+    for bad in [
+        vec![(0, 9)],          // before the frames
+        vec![(0, 15)],         // past them
+        vec![(4, 12)],         // a slot past the match's
+        vec![(1, 11), (1, 12)], // a slot twice
+    ] {
+        assert!(!valid_marks(10, 5, &bad, 4), "{bad:?}");
+    }
+    assert!(!valid_marks(0, 100, &(0..33).map(|s| (s as u8 % 32, s)).collect::<Vec<_>>(), 32));
+    let h = HostInputs {
+        stamp: Stamp::default(),
+        tick: 20,
+        your_ack: 0,
+        margin: 0,
+        first: 10,
+        frames: encode_frames(10, 5, 4, &|_, _| Some(0), &|_| Some(0)),
+        gone: vec![(2, 12)],
+    };
+    let d = Datagram::Host(h.clone());
+    assert_eq!(decode_datagram(&encode_datagram(&d), 4), Ok(d));
+    let bad = Datagram::Host(HostInputs { gone: vec![(2, 15)], ..h });
+    assert_eq!(decode_datagram(&encode_datagram(&bad), 4), Err(ProtoError::Invalid));
 }
 ```
 
@@ -708,47 +749,53 @@ fn a_withdrawal_mark_is_final() {
     log.set(1, 0, 9);
     assert_eq!(log.gone_marks(2), [(1, 1)]);
     assert_eq!(log.gone_marks(1), []);
+    assert_eq!(log.marks_within(0, 2), [(1, 1)]);
+    assert_eq!(log.marks_within(2, 5), []);
 }
 ```
 
-In `crates/rl-netcode/src/session.rs`'s tests, a client takes a mark from a hand-made host datagram. Use the file's `host_inputs(n, ack, first, frames)` helper and its client constructor, as the tests near `encode_frames(0, 15, 3, ..)` do:
+In `crates/rl-netcode/src/session.rs`'s tests, a client takes a mark from a hand-made host datagram. The file's `client()` has 3 slots, slot 2 its own. Its helper `host_inputs(tick, margin, first, frames)` becomes a call of a new `host_inputs_marked(tick, margin, first, frames, gone)` with `vec![]`:
 
 ```rust
+/// N83: a client keeps the mark that comes with the value at its tick.
 #[test]
 fn a_client_keeps_the_hosts_withdrawal_mark() {
-    let mut c = client_session(); // the file's helper: a client of 3 slots, slot 1 its own
-    let frames = rl_proto::encode_frames(0, 20, 3, &|_, _| Some(0), &|t, s| t == 12 && s == 2, &|_| Some(0));
-    c.receive(HOST, Channel::Unreliable, &host_inputs(20, 0, 0, frames), 1_000);
-    assert_eq!(c.input_log().gone_at(2), Some(12));
-    assert_eq!(c.input_log().gone_at(0), None);
+    let mut c = client();
+    let frames = rl_proto::encode_frames(0, 20, 3, &|_, s| (s < 2).then_some(0), &|_| Some(0));
+    c.receive(0, Channel::Unreliable, &host_inputs_marked(20, 0, 0, frames, vec![(0, 12)]), 1_000);
+    assert_eq!(c.input_log().gone_at(0), Some(12));
+    assert_eq!(c.input_log().gone_at(1), None);
 }
 ```
 
-Add a proptest case to `crates/rl-proto/tests/fuzz.rs`: arbitrary `Frame`s, `gone` included, through `decode_datagram` and `decode_control` never panic. The existing strategies gain the field.
+Extend the `HostInputs`, `HostResume` and `Control` strategies of `crates/rl-proto/tests/fuzz.rs` with arbitrary `gone` lists. The decoders must never panic.
 
-- [ ] **Step 2: Run them; they fail to compile** (`no field gone`, the codec's arity): `cargo nextest run -p rl-proto -p rl-netcode`.
+- [ ] **Step 2: Run them; they fail to compile** (`no field gone`, `no function valid_marks`, `no method set_final`): `cargo nextest run -p rl-proto -p rl-netcode`.
 
-- [ ] **Step 3: Implement** as the Context says, updating every caller the compiler names. Each caller passes the log's marks; a test that builds frames by hand passes `&|_, _| false`.
+- [ ] **Step 3: Implement** as the Context says. Update every struct literal and caller the compiler names; a test that builds a message by hand passes `gone: vec![]`.
 
 - [ ] **Step 4: Run `cargo nextest run -p rl-proto -p rl-netcode`: they pass**, and every existing session, sync, migration and timing test still passes (nothing sets a mark yet).
 
 - [ ] **Step 5: Records.**
-  - `crates/rl-proto/CLAUDE.md`: `Frame::gone` and its bound.
+  - `crates/rl-proto/CLAUDE.md`: the `gone` lists and `valid_marks`.
   - `crates/rl-netcode/CLAUDE.md`:
     - `InputLog`'s marks;
-    - "every frame path carries the marks: the host's datagrams, reports, `Control::Resume`, `Datagram::Resume`".
+    - "every message that carries final inputs lists, once, the marks within its frames: the host's datagrams, reports, `Control::Resume`, `Datagram::Resume`".
 
-- [ ] **Step 6: Commit** (`rl-proto, rl-netcode: withdrawal marks ride on final inputs`, the trailers) after `cargo xtask check > /tmp/check.log 2>&1 &&`.
+- [ ] **Step 6: Commit** (`rl-proto, rl-netcode: withdrawal marks travel with final inputs`, the trailers) after `cargo xtask check > /tmp/check.log 2>&1 &&`.
 
 ---
 
 ### Task 4: the session withdraws; the harness and rl-online records follow
 
-The core of the plan: the host decides the withdrawal tick, every peer withdraws there, rollbacks replay it, the harness checks it, and rl-online's records and replays reproduce it. rl-online's record must change in this same commit: once survivors withdraw, a replay made from the rows alone would miss the confirmed checksums. rl-online's migration tests assert there is no `DesyncBundle`.
+The core of the plan: the host decides the withdrawal tick, every peer withdraws there, rollbacks replay it, the harness checks it, and rl-online's records and replays reproduce it.
+
+rl-online's record must change in this same commit. Once survivors withdraw, a replay made from the rows alone would miss the confirmed checksums, and rl-online's migration tests assert there is no `DesyncBundle`. `rl-cli/src/netsim.rs`'s `empty_report()` builds a `harness::Report` field by field, so it gains the new fields here too.
 
 **Files:**
-- Modify: `crates/rl-netcode/src/sim.rs` (`Simulation::withdraw`; `ToySim`'s gone slots), `crates/rl-netcode/src/world_sim.rs` (`WorldSim::withdraw`), `crates/rl-netcode/src/session.rs` (`fill` marks, `simulate` withdraws, `on_gone`), `crates/rl-netcode/src/session/migrate.rs` (the merge's `New` marks call `on_gone`), `crates/rl-netcode/src/harness.rs` (`Report::{host_gone, gone, exited_us}`, the verdict, its offline replay), the test simulations `Faulty` (`tests/sync.rs`) and `Huge` (`session.rs` tests), `crates/rl-netcode/tests/{play.rs, migration.rs}`, `crates/rl-netcode/CLAUDE.md`
-- Modify: `crates/rl-online/src/replay.rs` (`MatchRecord::gone`, `make` withdraws), `crates/rl-online/src/peer.rs` (`record_of`), `crates/rl-online/src/bundle.rs` (`GameBundle::gone`, `GAME_BUNDLE_VERSION = 2`), `crates/rl-online/tests/{online.rs, replay.rs}`, `crates/rl-online/CLAUDE.md`
+- Modify: `crates/rl-netcode/src/sim.rs` (`Simulation::withdraw`; `ToySim`'s gone slots), `crates/rl-netcode/src/world_sim.rs` (`WorldSim::withdraw`), `crates/rl-netcode/src/session.rs` (`fill` marks, `simulate` withdraws, `on_gone`, the unit test `a_withdrawal_learned_late_rolls_back_to_it`), `crates/rl-netcode/src/session/migrate.rs` (the merge's `New` marks call `on_gone`), `crates/rl-netcode/src/harness.rs` (`Report::{host_gone, gone, exited_us}`, the verdict, its offline replay), the test simulations `Faulty` (`tests/sync.rs`) and `Huge` (`session.rs` tests), `crates/rl-netcode/tests/migration.rs`, `crates/rl-netcode/CLAUDE.md`
+- Modify: `crates/rl-cli/src/netsim.rs`: `empty_report()` fills `host_gone`, `gone` and `exited_us` (empty).
+- Modify: `crates/rl-online/src/replay.rs` (`MatchRecord::gone`, `make` withdraws), `crates/rl-online/src/peer.rs` (`record_of`), `crates/rl-online/src/bundle.rs` (`GameBundle::gone`, `GAME_BUNDLE_VERSION = 2`), `crates/rl-online/tests/{online.rs, replay.rs, migration.rs}`, `crates/rl-online/CLAUDE.md`
 
 **Interfaces:**
 - Consumes: Tasks 1-3.
@@ -795,7 +842,7 @@ Context:
   ```
 
   The scratch handler calls `self.on_final(k, s, v)`, then `if gone { self.on_gone(k) }`.
-- **`on_gone(tick)`**: a withdrawal learned for a tick already simulated (it was predicted without it) rolls back there. This is the same rule `on_final` applies to a differing value:
+- **`on_gone(tick)`**: a withdrawal learned for a tick already simulated (it was predicted without it) rolls back there. It fires even when the value at T equals the prediction, where `on_final` alone would not:
 
   ```rust
   /// A withdrawal at `tick` became known (decision N83). A tick already
@@ -837,9 +884,41 @@ Context:
   - `record_of` fills `gone: log.gone_marks(n)` for `n` rows.
   - `make` calls `recorder.withdraw(&mut world, s)` for each `(t, s)` of `record.gone` at `t` before `world.tick`. A `RecordError` is an error, like `push`'s.
   - `GameBundle::of` copies `gone`.
-  - Every `MatchRecord { .. }` literal gains `gone`; the compiler names them, `peer.rs`'s fallback record and the tests included.
+  - Every `MatchRecord { .. }` literal gains `gone`. The compiler names the four: `peer.rs`'s fallback record and test, `bundle.rs`, `replay.rs`, and `tests/replay.rs`.
 
 - [ ] **Step 1: Write the failing tests first.**
+
+`crates/rl-netcode/src/session.rs`'s unit tests: `on_gone` alone.
+
+```rust
+/// N83, Review Focus 1: a client that predicted a slot as `Keys(0)` past T
+/// learns, with that same value at T, that the slot is withdrawn there: it
+/// rolls back to T. The values agree, so only the mark can roll it back
+/// (RED without `on_gone`).
+#[test]
+fn a_withdrawal_learned_late_rolls_back_to_it() {
+    let (mut c, mut twin) = (client(), client());
+    let mut d = driver();
+    let zeros = |first, n| rl_proto::encode_frames(first, n, 3, &|_, s| (s < 2).then_some(0), &|_| Some(0));
+    for s in [&mut c, &mut twin] {
+        s.receive(0, Channel::Unreliable, &host_inputs(10, 0, 0, zeros(0, 10)), 1_000);
+    }
+    let mut now = 1_000;
+    while c.current_tick() < 20 {
+        now += 10_000;
+        c.advance(now, d.as_mut());
+        twin.advance(now, d.as_mut());
+    }
+    c.drain_events();
+    c.receive(0, Channel::Unreliable, &host_inputs_marked(20, 0, 10, zeros(10, 10), vec![(0, 12)]), now);
+    twin.receive(0, Channel::Unreliable, &host_inputs(20, 0, 10, zeros(10, 10)), now);
+    now += 10_000;
+    c.advance(now, d.as_mut());
+    twin.advance(now, d.as_mut());
+    assert!(c.drain_events().iter().any(|e| matches!(*e, Event::Rollback { from: 12, .. })));
+    assert_ne!(c.sim().checksum(), twin.sim().checksum(), "the toy world withdrew slot 0 at 12");
+}
+```
 
 `crates/rl-netcode/tests/migration.rs` (it holds the harness's toy scenarios and `mscenario`). Add a no-migration twin of `mscenario` and the scenarios:
 
@@ -893,17 +972,6 @@ fn a_crashed_client_is_withdrawn_at_its_timeout() {
     assert!(t >= 300 + timeout - 20 && t <= 300 + timeout + 60, "{t}");
 }
 
-/// Review Focus 1: a client that simulated past the withdrawal rolls back to it.
-#[test]
-fn a_client_rolls_back_to_a_withdrawal_it_predicted_past() {
-    let mut sc = scenario(3, Profile::BAD, 3);
-    sc.exits.push(Exit { peer: 3, tick: 500, after_us: 0, how: ExitHow::Leave });
-    let r = run_checked(&sc);
-    let t = withdrawn(&r, 4);
-    let rolled = r.events[&1].iter().any(|e| matches!(*e, Event::Rollback { from, to } if from <= t && t < to));
-    assert!(rolled, "a rollback across {t}");
-}
-
 /// N88, Review Focus 2: a client leaving while the match moves to a new
 /// host is withdrawn alike on every survivor (the mark one held, or the
 /// resume's fill), at least once during the migration over the offsets.
@@ -924,15 +992,26 @@ fn a_leave_during_a_migration_is_withdrawn_alike() {
     assert!(during > 0, "no leave fell inside a migration: change the offsets");
 }
 
+/// N88: a mark the old host made just before it crashed, which a survivor
+/// held when the match moved, is kept by the merge. Otherwise the new host
+/// would withdraw the slot later, and the holder's mark would differ (the
+/// verdict). The crash tick is swept so the client's `Bye` (a trip) lands
+/// before it in some runs.
 #[test]
 fn a_leave_just_before_the_host_crashes_is_kept() {
-    for seed in 1..=6 {
-        let mut sc = mscenario(seed, Profile::TYPICAL, 3);
+    let mut held = 0;
+    for crash in 404..=420 {
+        let mut sc = mscenario(1, Profile::TYPICAL, 3);
         sc.exits.push(Exit { peer: 2, tick: 400, after_us: 0, how: ExitHow::Leave });
-        sc.exits.push(Exit { peer: HOST, tick: 402, after_us: 0, how: ExitHow::Crash });
+        sc.exits.push(Exit { peer: HOST, tick: crash, after_us: 0, how: ExitHow::Crash });
         let r = run_checked(&sc);
-        withdrawn(&r, 3);
+        let t = withdrawn(&r, 3);
+        // A survivor held slot 3's value at `t` when the match moved: it held the mark.
+        held += usize::from(r.held.iter().any(|h| {
+            h.peer != HOST && h.slots.get(3).is_some_and(|v| h.origin as usize + v.len() > t as usize)
+        }));
     }
+    assert!(held > 0, "no survivor held the old host's mark: move the crash ticks");
 }
 
 #[test]
@@ -946,9 +1025,11 @@ fn a_leave_after_a_migration_is_withdrawn_by_the_new_host() {
 }
 ```
 
-The crash test needs `SILENCE_TIMEOUT_US` and `TICK_US` exported from `rl_netcode`. They are `pub const` in `session.rs`: re-export them at the crate root if they are not already.
+`SILENCE_TIMEOUT_US` and `TICK_US` are re-exported at `rl_netcode`'s root already.
 
-`crates/rl-online/tests/online.rs`: the playtest's reproduction, as a test:
+`crates/rl-online/tests/online.rs`: the playtest's reproduction, as a test. Its ticks are bounded by state:
+- the lower bound is the host's `known_upto` of Bert's slot just before he leaves;
+- the upper bound is that value at the poll that first shows `Left("Bert")`.
 
 ```rust
 /// The playtest (plan 12d): a player who leaves mid-match is removed at
@@ -964,8 +1045,13 @@ fn a_leaving_player_is_removed_from_every_world() {
     net.host().peer().lobby().start(9).unwrap();
     net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() >= 200);
     let sb = net.peers[b].started()[0].unwrap();
-    let gone_at = net.host_tick();
+    let known = |n: &mut Net| n.host().peer().match_session().unwrap().input_log().known_upto(sb);
+    let before = known(&mut net);
     net.peers[b].peer().leave();
+    net.run_until(Duration::from_secs(3), "the host hears Bert leave", |n| {
+        n.peers[0].has(|e| matches!(e, OnlineEvent::Left(x) if x == "Bert"))
+    });
+    let heard = known(&mut net);
     net.run_until(Duration::from_secs(3), "both withdraw Bert", |n| {
         [0, a].iter().all(|&i| {
             n.peers[i].p.as_ref().and_then(|p| p.match_session()).is_some_and(|s| {
@@ -978,7 +1064,7 @@ fn a_leaving_player_is_removed_from_every_world() {
         .map(|&i| net.peers[i].peer().match_session().unwrap().input_log().gone_at(sb).unwrap())
         .collect();
     assert_eq!(ticks[0], ticks[1], "one tick on every peer");
-    assert!((gone_at.saturating_sub(20)..gone_at + 100).contains(&ticks[0]), "at once: {} after {gone_at}", ticks[0]);
+    assert!((before..=heard).contains(&ticks[0]), "at once: {} in {before}..={heard}", ticks[0]);
     for i in [0, a] {
         let s = net.peers[i].peer().match_session().unwrap();
         let w = s.sim().world();
@@ -1002,18 +1088,25 @@ fn a_leaving_player_is_removed_from_every_world() {
 }
 ```
 
-`Net::ready` and `Net::host_tick` exist in `tests/common/net.rs`. `a_client_vanishes_mid_match` (same file) gains a check that its record withdraws the vanished slot within a second, at one tick on the host and Anna:
+`Net::ready` and `Net::host_tick` exist in `tests/common/net.rs`.
+
+`a_client_vanishes_mid_match` (same file) gains a check that the vanished slot is withdrawn, at one tick on the host and on Anna. Its bounds come the same way: `before`, the host's `known_upto(sb)` read just before `net.peers[b].p = None`; `heard`, the same at the poll that first shows `Left("Bert")`:
 
 ```rust
     let t = host.gone.iter().find(|g| usize::from(g.1) == sb).expect("withdrawn").0;
-    assert!((gone_at.saturating_sub(20)..gone_at + 100).contains(&t), "{t}");
+    assert!((before..=heard).contains(&t), "{t} in {before}..={heard}");
     assert_eq!(host.gone, anna.gone);
 ```
 
-- [ ] **Step 2: Run them; they fail.** The harness tests fail to compile (`no field host_gone`); give `Report` the fields first and they fail on "the slot is withdrawn". The rl-online test fails on `gone_at(sb)` staying `None`:
+`crates/rl-online/tests/migration.rs`, `a_frozen_host_hands_the_match_to_the_first_player`: add that `ra.gone` holds slot 0 (the old host's player) at a tick at or past the largest `held`.
+
+- [ ] **Step 2: Run them; they fail.**
+  - The session test fails on the missing `Rollback` from 12. It compiles once `Simulation::withdraw` exists.
+  - The harness tests fail to compile (`no field host_gone`). Give `Report` the fields first and they fail on "the slot is withdrawn".
+  - The rl-online test fails on `gone_at(sb)` staying `None`.
 
   ```bash
-  cargo nextest run -p rl-netcode --test integration migration:: ; RL_CONTENT_DIR=$PWD/content/packs cargo nextest run -p rl-online --test integration online::a_leaving_player
+  cargo nextest run -p rl-netcode ; RL_CONTENT_DIR=$PWD/content/packs cargo nextest run -p rl-online --test integration online::a_leaving_player
   ```
 
 - [ ] **Step 3: Implement** as the Context says:
@@ -1021,7 +1114,7 @@ fn a_leaving_player_is_removed_from_every_world() {
   - `WorldSim`, `ToySim`, `Faulty`, `Huge`;
   - `fill`, `on_gone` and `simulate`;
   - the merge's `on_gone`;
-  - the harness;
+  - the harness and `netsim.rs`'s `empty_report`;
   - rl-online's record, replay and bundle.
 
 - [ ] **Step 4: Run them; they pass.** Then the crates' whole suites. Every existing migration and play test must pass:
@@ -1033,7 +1126,7 @@ fn a_leaving_player_is_removed_from_every_world() {
   cargo nextest run -p rl-netcode && RL_CONTENT_DIR=$PWD/content/packs cargo nextest run -p rl-online -p rl-cli
   ```
 
-  An rl-online or rl-cli test that asserted the old behaviour ("the old host's player stands still", "the vanished slot presses nothing") still holds: the slot's value stays `Keys(0)`. Add a withdrawal assertion where it names the slot (`a_frozen_host_hands_the_match_to_the_first_player`: `ra.gone` holds slot 0 at a tick at or past the freeze's `held`).
+  An rl-online or rl-cli test that asserted the old behaviour ("the old host's player stands still", "the vanished slot presses nothing") still holds: the slot's value stays `Keys(0)`.
 
 - [ ] **Step 5: Records.**
   - `crates/rl-netcode/CLAUDE.md`:
@@ -1045,7 +1138,7 @@ fn a_leaving_player_is_removed_from_every_world() {
     - the harness's report fields and verdict.
   - `crates/rl-online/CLAUDE.md`: `MatchRecord::gone`, `make`, `GameBundle` version 2.
 
-- [ ] **Step 6: Commit** (`rl-netcode, rl-online: a player who leaves is withdrawn at one tick everywhere`, a body naming N83, N87 and N88, the trailers) after `cargo xtask check > /tmp/check.log 2>&1 &&`.
+- [ ] **Step 6: Commit** (`rl-netcode, rl-online: a player who leaves is withdrawn at one tick everywhere`, a body naming N83, N87 and N88, the trailers) after `cargo xtask check > /tmp/check.log 2>&1 &&`. Stage `crates/rl-cli/src/netsim.rs` with the rest.
 
 ---
 
@@ -1054,8 +1147,8 @@ fn a_leaving_player_is_removed_from_every_world() {
 **Files:**
 - Modify: `crates/rl-proto/src/lobby.rs` (`Notice::TimedOut(u8)`, appended), `crates/rl-proto/tests/fuzz_lobby.rs` (the strategy gains it)
 - Modify: `crates/rl-lobby/src/host.rs` (`LobbyHost::timed_out`, `Gone::TimedOut`), `crates/rl-lobby/src/model.rs` (`HostEvent::TimedOut(u8)`), `crates/rl-lobby/src/harness.rs` (`Net::time_out(c)`), `crates/rl-lobby/tests/lobby.rs`, `crates/rl-lobby/CLAUDE.md`
-- Modify: `crates/rl-online/src/events.rs` (`OnlineEvent::TimedOut(String)`), `crates/rl-online/src/peer.rs` (the host's timeouts go through `timed_out`; the client maps `Notice::TimedOut`), `crates/rl-online/src/peer/migrate.rs` (its `NetEvent::Disconnected` arms alike), `crates/rl-online/tests/{online.rs, migration.rs}`, `crates/rl-online/CLAUDE.md`
-- Modify: `crates/rl-game/src/shell/online.rs` (the two lines), `crates/rl-game/src/net/pump.rs` (`TimedOut` is chat-like), `crates/rl-game/tests/online.rs` (`"Anna left"` becomes `"Anna has left"`), `crates/rl-game/CLAUDE.md`
+- Modify: `crates/rl-online/src/events.rs` (`OnlineEvent::TimedOut(String)`), `crates/rl-online/src/peer.rs` (`forget_peer_as`; the host's timeouts go through `timed_out`; the client maps `Notice::TimedOut`), `crates/rl-online/src/peer/migrate.rs` (its `NetEvent::Disconnected` arms alike), `crates/rl-online/tests/{online.rs, migration.rs}`, `crates/rl-online/CLAUDE.md`
+- Modify: `crates/rl-game/src/shell/online.rs` (the two lines), `crates/rl-game/src/net/pump.rs` (`TimedOut` is evictable, as `Left` is), `crates/rl-game/tests/online.rs` (`"Anna left"` becomes `"Anna has left"`), `crates/rl-game/CLAUDE.md`
 
 **Interfaces:**
 - Consumes: Task 4.
@@ -1076,28 +1169,33 @@ fn a_leaving_player_is_removed_from_every_world() {
   ```
 
 Context:
-- **rl-lobby:** `drop_member`'s `Gone::TimedOut` broadcasts `ToClient::Notice(Notice::TimedOut(id))` and pushes `HostEvent::TimedOut(id)`. Everything else is as `Gone::Left`. `Notice::TimedOut`'s id is checked by rl-proto's lobby validator, as `Left`'s is: extend the match there.
+- **rl-lobby:** `drop_member`'s `Gone::TimedOut` broadcasts `ToClient::Notice(Notice::TimedOut(id))` and pushes `HostEvent::TimedOut(id)`. Everything else is as `Gone::Left`. rl-proto validates no `Notice` id, so `TimedOut(u8)` needs only the fuzz sample.
 - **rl-online, host side:**
-  - `Event::PeerTimedOut { peer }` gets its own arm: `self.time_out_peer(peer)`. It is `drop_peer` with `h.lobby.timed_out(peer)` in place of `disconnected`.
-  - `NetEvent::Disconnected { peer, why: Why::Timeout }` does the same.
-  - `RepairFailed` and `JoinRefused` keep `drop_peer`.
+  - `forget_peer` becomes `forget_peer_as(peer, timed_out: bool)`. It calls `lobby.timed_out(peer)` or `lobby.disconnected(peer)`, then does the rest as now: `forget`, the content side, `Session::peer_lost`. `forget_peer(peer)` stays as `forget_peer_as(peer, false)`.
+  - `Event::PeerTimedOut { peer }` gets its own arm: close the endpoint (as `drop_peer` does), then `forget_peer_as(peer, true)`.
+  - `NetEvent::Disconnected { peer, why: Why::Timeout }` calls `forget_peer_as(peer, true)` only. The link is gone already.
+  - Every other `Disconnected`, and `RepairFailed`/`JoinRefused`, keep `forget_peer`/`drop_peer`.
   - Both paths reach `Session::peer_lost`, so the worm is withdrawn (N87).
 - **rl-online, client side:** `Notice::TimedOut(id)` → `OnlineEvent::TimedOut(name)`. `HostEvent::TimedOut(id)` → the same on the host.
+- **At a resume (N86, ruling PF12d-3):** nothing changes in the lobby.
+  - `LobbyHost::migrated` never keeps the old host's member, so the old host goes silently.
+  - `MigratedLobby::drop_away` drops each player not back with `Gone::Left`, so they get "<name> has left".
+  - The migration test below pins both.
 - **rl-game:**
   - `OnlineEvent::Left(name)` → `"{name} has left"`.
   - `OnlineEvent::TimedOut(name)` → `"{name} has timed out"` (both `LogLine::event`).
   - Doc comment: `/// OLX's NetworkTexts HasLeft and HasTimedOut (src/client/Options.cpp:769-770).`
-  - The pump's chat-like list (`net/pump.rs`) gains `TimedOut`.
+  - The pump's evictable list (`net/pump.rs`) gains `TimedOut`.
 
 - [ ] **Step 1: Write the failing tests.**
 
-`crates/rl-lobby/tests/lobby.rs` (after the leaving tests; `left` is the helper above it):
+`crates/rl-lobby/tests/lobby.rs` (after the leaving tests; start the lobby with the file's own `lobby()` helper, as its neighbours do):
 
 ```rust
 /// N86: a member whose link timed out is announced as timed out, not left.
 #[test]
 fn a_timed_out_member_is_announced_as_such() {
-    let mut net = Net::new(HOST_CFG); // as the file's other tests start a lobby
+    let mut net = lobby();
     let a = join(&mut net, 1, "Ann");
     let w = join(&mut net, 2, "Wat");
     let id = id_of(&net, a);
@@ -1116,7 +1214,7 @@ fn a_timed_out_member_is_announced_as_such() {
 ```rust
 /// User decision 3: the last opponent leaving ends the match at once
 /// (OLX's CheckGameOver below two worms); the one left wins. RED before
-/// Task 4 (Bert's worm stayed); here it pins the end and the text.
+/// Task 4 (Anna's worm stayed); here it pins the end and the text.
 #[test]
 fn the_last_opponent_leaving_ends_the_match() {
     let Some(content) = content() else { return };
@@ -1127,11 +1225,13 @@ fn the_last_opponent_leaving_ends_the_match() {
     net.ready(&[a]);
     net.host().peer().lobby().start(4).unwrap();
     net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() >= 200);
-    let left_at = net.host_tick();
     net.peers[a].peer().leave();
     net.run_until(Duration::from_secs(8), "the host's match ends", |n| n.peers[0].has(ended));
     let rec = net.peers[0].peer().last_record().cloned().unwrap();
-    assert!(rec.rows.len() < (left_at + 100 + 300 + 50) as usize, "ended at once, not at the limit");
+    let t = rec.gone.iter().find(|g| g.1 == 1).expect("Anna is withdrawn").0;
+    // The end comes in the tick of the withdrawal; the record runs RECORD_AFTER_END
+    // (300) more ticks, and a few for the end to be confirmed.
+    assert!(rec.rows.len() <= (t + 1 + rl_online::RECORD_AFTER_END + 20) as usize, "ended at once, not at the limit");
     assert!(net.peers[0].has(|e| matches!(e, OnlineEvent::Left(n) if n == "Anna")));
     let end = net.peers[0].events.iter().find_map(|e| match e {
         OnlineEvent::MatchEnded(end) => Some(end.clone()),
@@ -1158,12 +1258,15 @@ fn a_member_that_times_out_is_said_to() {
 }
 ```
 
+`RECORD_AFTER_END` is `pub` in `rl-online/src/peer.rs`; re-export it at the crate root if it is not already.
+
 `crates/rl-online/tests/migration.rs`: a leave during a migration, over real connections:
 
 ```rust
-/// N88, Review Focus 2: Cid leaves while the match moves from a frozen
-/// host to Anna; Anna and Bert remove Cid's worm and the old host's at one
-/// tick each, and their records and replays agree.
+/// N86, N88, Review Focus 2: Cid leaves while the match moves from a frozen
+/// host to Anna; Anna and Bert remove Cid's worm and the old host's, their
+/// records and replays agree, and only Cid is said to have left (the old
+/// host goes silently, ruling PF12d-3).
 #[test]
 fn a_player_leaving_during_a_migration_is_removed_at_the_resume() {
     let Some(content) = content() else { return };
@@ -1194,6 +1297,8 @@ fn a_player_leaving_during_a_migration_is_removed_at_the_resume() {
     assert!(slots.contains(&0) && slots.contains(&sc), "the old host and Cid: {:?}", ra.gone);
     for i in [a, b] {
         assert!(!net.peers[i].has(|e| matches!(e, OnlineEvent::DesyncBundle(_))));
+        assert!(net.peers[i].has(|e| matches!(e, OnlineEvent::Left(x) if x == "Cid")));
+        assert!(!net.peers[i].has(|e| matches!(e, OnlineEvent::Left(x) if x == "Host")), "the old host goes silently");
     }
 }
 ```
@@ -1215,8 +1320,8 @@ fn a_player_leaving_during_a_migration_is_removed_at_the_resume() {
   ```
 
 - [ ] **Step 5: Records.**
-  - `crates/rl-lobby/CLAUDE.md`: Leaving: "`Bye`, `disconnected`: `Notice(Left)`; `timed_out`: `Notice(TimedOut)`".
-  - `crates/rl-online/CLAUDE.md`: `OnlineEvent::TimedOut` and which events time out; the new tests in its Test paragraph.
+  - `crates/rl-lobby/CLAUDE.md`, Leaving: "`Bye`, `disconnected`: `Notice(Left)`; `timed_out`: `Notice(TimedOut)`; during a match the slot's worm is withdrawn (rl-netcode)". This replaces "during a match the slot stays in the match".
+  - `crates/rl-online/CLAUDE.md`: `OnlineEvent::TimedOut` and which events time out; `forget_peer_as`; the new tests in its Test paragraph.
   - `crates/rl-game/CLAUDE.md`: "`Left` ("name has left"), `TimedOut` ("name has timed out")".
 
 - [ ] **Step 6: Commit** (`rl-lobby, rl-online, rl-game: say who left and who timed out`, the trailers) after `cargo xtask check > /tmp/check.log 2>&1 &&`.
@@ -1230,7 +1335,7 @@ fn a_player_leaving_during_a_migration_is_removed_at_the_resume() {
 - Modify: `crates/rl-game/src/session.rs` (`follow_next` skips gone worms; a followed worm that goes is left for the next), `crates/rl-game/tests/{online.rs, watch.rs}`, `crates/rl-game/CLAUDE.md`
 
 **Interfaces:**
-- Consumes: `Score::left`, `World::gone`, `World::withdraw` (Task 1); Task 5's shell.
+- Consumes: `Score::left`, `World::gone` (Task 1); `Recorder::withdraw` and `Cursor::step` (Task 2); Task 5's shell.
 - Produces:
   ```rust
   // rl_ui::hud
@@ -1249,13 +1354,17 @@ Context:
 
 - [ ] **Step 1: Write the failing tests.**
 
-`crates/rl-ui/src/hud/model.rs`'s tests:
+`crates/rl-ui/src/hud/model.rs`'s tests, with a local `Score` maker:
 
 ```rust
+fn score(worm: i32, kills: i32) -> Score {
+    Score { worm, score: kills, lives: -2, kills, deaths: 1, suicides: 0, damage: 0.0, left: false }
+}
+
 #[test]
 fn a_left_row_is_off_the_scoreboard_and_left_in_the_results() {
-    let names = Names(vec!["A".into(), "B".into()]);
-    let mut scores = [score(0, 3), score(1, 1)]; // the tests' Score maker
+    let names = Names(vec!["A".into(), "B".into()]); // as the file's other tests make them
+    let mut scores = [score(0, 3), score(1, 1)];
     scores[1].left = true;
     scores[1].lives = -1;
     let live = rows(&scores, &names, Some(0));
@@ -1263,26 +1372,54 @@ fn a_left_row_is_off_the_scoreboard_and_left_in_the_results() {
     let r = Results::new(MatchResult { winner: 0, reason: EndReason::TimeLimit }, &scores, &names, None, Some(0));
     let left: Vec<(i32, &str, bool)> = r.rows.iter().map(|r| (r.worm, r.lives.as_str(), r.left)).collect();
     assert_eq!(left[1], (1, "left", true));
-    assert_eq!((r.rows[1].kills, r.rows[1].deaths), (scores[1].kills, scores[1].deaths), "its counts so far");
+    assert_eq!((r.rows[1].kills, r.rows[1].deaths), (1, 1), "its counts so far");
 }
 ```
 
-`crates/rl-game/tests/watch.rs` (a session nobody plays, as the file's tests make one):
+`crates/rl-game/tests/watch.rs`: a recorded replay with a withdrawal, watched through the real replay path (`setup::load_replay`, the session's `Cursor::step`):
 
 ```rust
+/// A replay of three bots (Classic, Dirt Level, seed 5) in which worm 1 is
+/// withdrawn before tick `k` (as an online match's record makes one, with
+/// `Recorder::withdraw`), loaded as the Replays screen loads one.
+fn replay_withdrawing(dir: &Path, k: u32, ticks: u32) -> Assets {
+    let content = rl_content::Content::open(dir).unwrap();
+    let o = DeathmatchOptions { bots: 3, spectate: true, seed: 5, ..DeathmatchOptions::default() };
+    let built = content.build_match(&setup::match_options(&o, "olx-classic", "olx-level-dirt-level")).unwrap();
+    let (mut world, mut rec) = (built.world, built.recorder);
+    let (keys, mut out) = (vec![Keys(0); world.worms().len()], rl_sim::TickEvents::new());
+    for t in 0..ticks {
+        if t == k {
+            rec.withdraw(&mut world, 1).unwrap();
+        }
+        world.tick(&keys, &mut out);
+        rec.push(&keys, &world).unwrap();
+    }
+    let replay = rec.finish(&world).unwrap();
+    let file = std::env::temp_dir().join(format!("rl-game-watch-gone-{}.rlrp", std::process::id()));
+    std::fs::write(&file, replay.encode()).unwrap();
+    let r = setup::load_replay(&[dir], &file, "default", &[]);
+    std::fs::remove_file(&file).unwrap();
+    r.unwrap()
+}
+
 /// N89: the watched worm leaving moves the camera on; following skips it.
 #[test]
 fn the_watched_worm_moves_on_when_it_leaves() {
-    let Some(mut s) = bots_alone(3) else { return }; // the file's helper for a watched match
+    let Some(dir) = content_dir() else { return };
+    let mut s = session(&replay_withdrawing(&dir, 100, 200));
     s.follow_next(1);
     assert_eq!(s.followed(), 1);
-    s.world.withdraw(1);
-    s.tick(&[]);
+    while s.ticks() < 101 {
+        s.tick(Keys(0));
+    }
     assert_eq!(s.followed(), 2, "moved on");
     s.follow_next(-1);
     assert_eq!(s.followed(), 0, "worm 1 is skipped");
 }
 ```
+
+If `content.build_match` already started the recorder (rl-online's `make` pushes without `start`), keep it so. Otherwise call `rec.start(&world)` first.
 
 `crates/rl-game/tests/online.rs`, through the shells (the real app path):
 
@@ -1317,7 +1454,7 @@ fn a_player_who_leaves_is_off_the_scoreboard_and_left_in_the_results() {
 }
 ```
 
-- [ ] **Step 2: Run them; they fail** (`no field left` on `Row`; the follow test's `followed` stays 1): `cargo nextest run -p rl-ui && RL_CONTENT_DIR=$PWD/content/packs cargo nextest run -p rl-game`.
+- [ ] **Step 2: Run them; they fail** (`no field left` on `Row`; the watch test's `followed` stays 1): `cargo nextest run -p rl-ui && RL_CONTENT_DIR=$PWD/content/packs cargo nextest run -p rl-game`.
 
 - [ ] **Step 3: Implement** as the Context says.
 
@@ -1331,12 +1468,16 @@ fn a_player_who_leaves_is_off_the_scoreboard_and_left_in_the_results() {
 
 ---
 
-### Task 7: `rl-cli`: net-sim bundles, `net-repro`, and client departures in net-soak
+### Task 7: `rl-cli`: net-sim bundles, `net-repro`, the crash window, and client departures in net-soak
 
 **Files:**
 - Modify: `crates/rl-cli/src/bundle.rs` (`DesyncBundle::gone`, `BUNDLE_VERSION = 3`, `reproduce` withdraws)
-- Modify: `crates/rl-cli/src/netsim.rs`: **one hunk**, `BundleRecorder::on_event`. Its `rows` closure gets a sibling filling `gone: session.input_log().gone_marks(log.frontier())` in the `DesyncBundle` it builds, and again where `StateLoaded` refreshes `inputs`. Nothing else in the file.
-- Modify: `crates/rl-cli/src/soak.rs` (a client departure in a quarter of the cases), `crates/rl-cli/tests/{net_sim.rs, net_soak.rs}`, `crates/rl-cli/CLAUDE.md`
+- Modify: `crates/rl-cli/src/netsim.rs`:
+  - `BundleRecorder::on_event` fills the bundle's `gone` with `session.input_log().gone_marks(log.frontier())`, where it builds the `DesyncBundle` and again where `StateLoaded` refreshes `inputs`;
+  - `excused_windows` gets the client-crash windows;
+  - `judge` takes the windows path when the spec has a client crash;
+  - its unit tests.
+- Modify: `crates/rl-cli/src/soak.rs` (a client departure in a quarter of the cases), `crates/rl-cli/tests/{net_sim.rs, net_soak.rs, net_repro.rs}`, `crates/rl-cli/CLAUDE.md`
 
 **Interfaces:**
 - Consumes: Tasks 3-4 (`InputLog::gone_marks`, `Simulation::withdraw`, the harness).
@@ -1344,84 +1485,144 @@ fn a_player_who_leaves_is_off_the_scoreboard_and_left_in_the_results() {
 
 Context:
 - **`reproduce`** withdraws `(t, s)` before `sim.tick` at `t`, as the harness's offline replay does.
+- **The crash window** (N87, ruling PF12d-5). For each exit `(peer, tick, "crash")` of a client (`peer` in `1..=clients`), `excused_windows` adds:
+
+  ```rust
+  // N87: the host fills a crashed client's slot with its last keys until
+  // its timeout, then withdraws it; players whose link cannot bear the
+  // fills stall meanwhile (`fills_stall`), and recover after.
+  let timeout = (SILENCE_TIMEOUT_US / TICK_US) as u32;
+  let recovery = slowest_profile(spec, peer).outage_recovery_ticks(timeout, CLIENT_FRAME_US).max(MAX_PREDICTION);
+  windows.push(Window { ticks: tick..=tick.saturating_add(timeout).saturating_add(recovery), peer: Some(peer) });
+  ```
+
+  `peer: Some(crashed)` excuses the crashed peer and everyone whose slowest link `fills_stall`, as an outage's window does. An exit's tick is a host tick already: no `host_tick_at`. `judge`'s guard gains `|| spec.exits.iter().any(|e| e.0 != 0 && e.2 == "crash")`.
 - **`soak::generate`**: after the host's draw, `if clients >= 2 && r.below(4) == 0`, push `(1 + r.below(u64::from(clients)) as u32, tick, how)`:
   - the tick is drawn as the host's is;
   - `how` is `"leave"` or `"crash"` (one draw).
 
-  It comes after every existing draw, so each seed's earlier fields are unchanged. The kept cases in `fixtures/net/cases/` are full specs, not seeds, and are unaffected. A client crash exercises N87's timeout path on the real simulation.
-- **The net-sim verdict** is the harness's (Task 4), so `judge` needs no change. A departed client's last stall episode is already not judged (it went).
-- **The `netsim.rs` hunk**, as `git add -p` shows it, is only the bundle's `gone` lines. Note it in the commit body: "netsim.rs: one hunk, BundleRecorder's gone marks; nothing else of the file".
+  It comes after every existing draw, so each seed's earlier fields are unchanged. The kept cases in `fixtures/net/cases/` are full specs, not seeds, and are unaffected.
+- **The rest of the verdict** is the harness's (Task 4). A departed client's last stall episode is already not judged (it went). Client exits turn `n66` off for those cases (its `clean` needs host exits only). That is accepted: the cases without one keep it.
 
 - [ ] **Step 1: Write the failing tests.**
 
-`crates/rl-cli/tests/net_sim.rs` (check tier):
+`crates/rl-cli/src/netsim.rs`'s unit tests, beside `only_stalls_within_an_outage_are_excused`, with its twin:
+
+```rust
+/// N87, ruling PF12d-5: a client crash excuses, from its tick to the host's
+/// timeout plus the recovery, the stalls of every player whose link cannot
+/// bear the host's fills for its slot (`bad`); the same stall with no crash
+/// in the spec, or past the window, fails.
+#[test]
+fn a_client_crash_excuses_the_fills_stalls_until_its_timeout() {
+    let crash = NetSpec { profile: "bad".into(), exits: vec![(1, 300, "crash".into())], ..spec() };
+    let judge = |s: &NetSpec, stalls: &[(PeerId, u32, Option<u32>)]| {
+        let mut r = empty_report();
+        r.exited.insert(1);
+        let e: Vec<StallEpisode> =
+            stalls.iter().map(|&(peer, tick, ended)| StallEpisode { peer, tick, ended }).collect();
+        stalls_within_windows(s, &r, &e)
+    };
+    let timeout = (SILENCE_TIMEOUT_US / TICK_US) as u32;
+    assert!(judge(&crash, &[(2, 400, Some(460)), (HOST, 900, Some(950))]).is_ok());
+    let none = NetSpec { exits: vec![], ..crash.clone() };
+    assert!(judge(&none, &[(2, 400, Some(460))]).is_err(), "the twin: no crash, no window");
+    let leave = NetSpec { exits: vec![(1, 300, "leave".into())], ..crash.clone() };
+    assert!(judge(&leave, &[(2, 400, Some(460))]).is_err(), "a leave is withdrawn at once: no fills");
+    assert!(judge(&crash, &[(2, 300 + timeout + 400, Some(300 + timeout + 410))]).is_err(), "past it");
+    assert!(judge(&crash, &[(2, 299, Some(310))]).is_err(), "before it");
+}
+```
+
+`crates/rl-cli/tests/net_sim.rs` (the file's `spec(profile, seed)` and `pass`):
 
 ```rust
 /// Plan 12d on the real simulation: a client leaving mid-match is withdrawn
 /// at one tick on every peer, the verdict's offline replay (the real world)
-/// agrees, and the world after it holds the worm out. RED before Task 4.
+/// agrees, and the world after it holds the worm out. Coverage: green since
+/// Task 4.
 #[test]
 fn a_client_leave_withdraws_its_worm_in_a_real_match() {
-    let Some(content) = content() else { return };
-    let spec = NetSpec { clients: 3, slots: 6, ticks: 800, exits: vec![(2, 300, "leave".into())], ..base_spec() };
-    let r = run_with(&content, &spec, None).unwrap();
-    assert!(r.passed(), "{}", r.summary());
+    let Some(c) = content() else { return };
+    let s = NetSpec { ticks: 800, exits: vec![(2, 300, "leave".into())], ..spec("typical", 4) };
+    let r = pass(&c, &s);
     let t = r.report.host_gone.iter().find(|g| g.1 == 1).expect("client 2 is slot 1").0;
-    let mut f = WorldFactory::new(&content, &spec).unwrap();
-    let mut sim = f.sim(0);
+    let mut f = rl_cli::netsim::WorldFactory::new(&c, &s).unwrap();
+    let mut sim = rl_netcode::harness::Factory::sim(&mut f, 0);
     for (tick, row) in r.report.host_log.iter().enumerate().take(t as usize + 1) {
         if tick as u32 == t {
-            sim.withdraw(1);
+            rl_netcode::Simulation::withdraw(&mut sim, 1);
         }
-        let keys: Vec<Keys> = row[..6].iter().map(|&k| Keys(k)).collect();
-        sim.tick(&keys);
+        let keys: Vec<rl_sim::Keys> = row[..usize::from(s.slots)].iter().map(|&k| rl_sim::Keys(k)).collect();
+        rl_netcode::Simulation::tick(&mut sim, &keys);
     }
     let w = sim.world();
     assert!(!w.worms()[1].alive && w.gone() == 0b10);
 }
 
-/// A net-sim desync bundle carries the withdrawals, and `net-repro` withdraws.
+/// N87, ruling PF12d-5: a client that crashes on `bad` stalls the other
+/// players for its timeout's fills; the verdict excuses exactly that.
+/// RED before the window: "player peer 2 stalled".
 #[test]
-fn a_bundle_with_a_withdrawal_reproduces_clean() {
-    let Some(content) = content() else { return };
+fn a_client_crash_on_bad_passes() {
+    let Some(c) = content() else { return };
+    pass(&c, &NetSpec { ticks: 1_600, exits: vec![(1, 300, "crash".into())], ..spec("bad", 5) });
+}
+
+/// A net-sim desync bundle carries the withdrawals, and `net-repro`
+/// withdraws: its replay meets the host's state, and the planted fault's
+/// divergence comes at the fault, not at the withdrawal near 200. RED: the
+/// bundle has no `gone`, and the replay diverges at the withdrawal.
+#[test]
+fn a_bundle_with_a_withdrawal_reproduces_to_the_fault() {
+    let Some(c) = content() else { return };
     let dir = tempfile::tempdir().unwrap();
-    let spec = NetSpec {
-        clients: 3,
-        slots: 6,
-        ticks: 800,
-        exits: vec![(2, 200, "leave".into())],
-        faults: vec![(1, 500, 0, 1.0)],
-        ..base_spec()
-    };
-    let r = run_with(&content, &spec, Some(dir.path())).unwrap();
+    let s = NetSpec { ticks: 800, exits: vec![(2, 200, "leave".into())], faults: vec![(1, 500, 0, 1.0)], ..spec("typical", 6) };
+    let r = rl_cli::netsim::run_with(&c, &s, Some(dir.path())).unwrap();
     let path = r.bundles.first().expect("the planted desync wrote a bundle");
-    let b = DesyncBundle::decode(&std::fs::read(path).unwrap()).unwrap();
+    let b = rl_cli::bundle::DesyncBundle::decode(&std::fs::read(path).unwrap()).unwrap();
     assert!(b.gone.iter().any(|g| g.1 == 1));
-    assert!(reproduce(&content, &b).unwrap().first_local_divergence.is_none());
+    let repro = rl_cli::bundle::reproduce(&c, &b).unwrap();
+    assert!(repro.first_local_divergence.is_some_and(|t| t >= 500), "{:?}", repro.first_local_divergence);
+    assert!(repro.host_diff.is_none(), "{:?}", repro.host_diff);
 }
 ```
 
-`base_spec`, `content`, `RunReport::passed`/`summary`/`report`/`bundles` stand for what the file's existing tests use. Use their names. `WorldFactory::sim` and `Simulation::withdraw` come from `rl_cli::netsim` and `rl_netcode`.
+`crates/rl-cli/tests/net_repro.rs`: its two `DesyncBundle` literals gain `gone: vec![]`.
 
-`crates/rl-cli/tests/net_soak.rs`: the existing determinism test over 200 seeds gains:
+`crates/rl-cli/tests/net_soak.rs`, `cases_are_deterministic_and_within_bounds`:
+- Match on the host's exits only, so that a client exit no longer panics the match: `let host_exits: Vec<_> = spec.exits.iter().filter(|e| e.0 == 0).cloned().collect();` and `match (host_exits.as_slice(), spec.host_freeze)`.
+- Count the client departures apart, each within the middle 60 % and naming a client:
 
 ```rust
-    let departures = (0..200).filter(|&s| soak::case(s).exits.iter().any(|e| e.0 != 0)).count();
+        for e in spec.exits.iter().filter(|e| e.0 != 0) {
+            assert!((1..=u32::from(spec.clients)).contains(&e.0) && middle.contains(&e.1), "{e:?}");
+            departures += 1;
+        }
+    // after the loop:
     assert!((25..=75).contains(&departures), "about a quarter of the cases: {departures}");
 ```
 
-- [ ] **Step 2: Run them; they fail** (`no field gone` on `DesyncBundle`; no departures in soak cases): `RL_CONTENT_DIR=$PWD/content/packs cargo nextest run -p rl-cli --test net_sim --test integration`.
+- [ ] **Step 2: Run them; they fail:**
+  - `no field gone` on `DesyncBundle`;
+  - no crash window: the unit test and `a_client_crash_on_bad_passes` fail;
+  - no departures in soak cases.
 
-- [ ] **Step 3: Implement** as the Context says. Stage `netsim.rs` with `git add -p crates/rl-cli/src/netsim.rs`, taking only this task's hunk.
+  ```bash
+  RL_CONTENT_DIR=$PWD/content/packs cargo nextest run -p rl-cli --lib --test net_sim --test integration
+  ```
+
+- [ ] **Step 3: Implement** as the Context says.
 
 - [ ] **Step 4: Run them; they pass.** The kept net cases (`tests/net_cases.rs`) pass too.
 
 - [ ] **Step 5: Records.** `crates/rl-cli/CLAUDE.md`:
   - `BUNDLE_VERSION` 3 ("3: withdrawals, plan 12d");
+  - the crash window beside the outage windows (N87, PF12d-5), with its negative twin;
   - net-soak's client departures;
   - the new tests.
 
-- [ ] **Step 6: Commit** (`rl-cli: net-sim bundles and net-soak know departing clients`, the body noting the single `netsim.rs` hunk, the trailers) after `cargo xtask check > /tmp/check.log 2>&1 &&`.
+- [ ] **Step 6: Commit** (`rl-cli: net-sim knows departing clients: bundles, the crash window, net-soak`, the trailers) after `cargo xtask check > /tmp/check.log 2>&1 &&`.
 
 ---
 
@@ -1432,8 +1633,10 @@ fn a_bundle_with_a_withdrawal_reproduces_clean() {
 
 - [ ] **Step 1: `docs/porting/STATUS.md`.**
   - **Amend N6** in "Networking decisions (plan 9)". Keep its text and add: "Amended by plan 12d (N83): the slot is still filled with `Keys(0)`, and from its first unknown tick its worm is withdrawn from the match (`World::withdraw`); the user decided removal over a bot (2026-10-15)."
+  - **Amend N72** (host migration decisions, "Its slot stays `Keys(0)` for the rest of the match"): a late rejoiner's slot is withdrawn at the resume (N88), and its worm leaves the match there.
   - **Add a section** "Leaving players decisions (plan 12d)" with:
     - the user's five decisions (dated 2026-10-15);
+    - the rulings PF12d-1 to PF12d-5;
     - N82-N89 as this plan states them, each with its OLX citation and its cost if wrong;
     - the format bumps (replay 3, game bundle 2, net-sim bundle 3, the fingerprint; protocol 2).
   - **Under "Deliberate deviations"**, add: "Results keep a 'left' row (N85, user decision 2026-10-15): OLX deletes a leaving client's worm (`Game::removeWorm`, `src/game/Game.cpp:1359-1366`), so its results lose it; ours keep its row, its lives 'left', its kills and deaths as it left. The live scoreboard leaves it out, as OLX."
@@ -1452,12 +1655,16 @@ fn a_bundle_with_a_withdrawal_reproduces_clean() {
   - A crashed player's worm keeps its last move for up to 10 s, then goes.
   - Under "Changed": replays and desync bundles from earlier builds no longer open, and earlier builds cannot join (proof-of-concept stage).
 
-- [ ] **Step 3: `docs/online.md`**: a short "When a player leaves" section before "When the host leaves", in the file's voice. It covers:
-  - what players see (the line, the worm gone, the scoreboard, the results' "left" row, the match ending when one worm is left);
-  - the 10 s for a player whose game crashed or lost its network;
-  - that a player leaving while the host is being replaced is removed when the match resumes.
+- [ ] **Step 3: `docs/online.md`.**
+  - **Add a short "When a player leaves" section** before "When the host leaves", in the file's voice. It covers:
+    - what players see (the line, the worm gone, the scoreboard, the results' "left" row, the match ending when one worm is left);
+    - the 10 s for a player whose game crashed or lost its network;
+    - that a player leaving while the host is being replaced is removed when the match resumes.
+  - **Amend the late rejoiner's text** in "When the host leaves" ("its worm stays idle for the rest of this one"): its worm left the match at the resume, and it watches until the next one.
 
-- [ ] **Step 4: Check every touched crate's `CLAUDE.md`** against its code once more: rl-sim, rl-modes, rl-replay, rl-proto, rl-netcode, rl-lobby, rl-online, rl-ui, rl-game, rl-cli.
+- [ ] **Step 4: Check every touched crate's `CLAUDE.md`** against its code once more: rl-sim, rl-modes, rl-replay, rl-proto, rl-netcode, rl-lobby, rl-online, rl-ui, rl-game, rl-cli. These texts become false and must be fixed if a task has not already:
+  - `crates/rl-online/CLAUDE.md`'s late rejoiner: "Its old slot stays `Keys(0)` (abandoned at the resume)" becomes "its old slot's worm is withdrawn at the resume (N88)".
+  - `crates/rl-lobby/CLAUDE.md`'s Leaving: "during a match the slot stays in the match".
 
 - [ ] **Step 5: The single `full` run** (user rule: once per plan, here):
 
@@ -1465,9 +1672,20 @@ fn a_bundle_with_a_withdrawal_reproduces_clean() {
   cargo xtask full > /tmp/full.log 2>&1; tail -60 /tmp/full.log
   ```
 
-  It runs check, the bot grid, the device tier, `e2e` on Xvfb (`fixtures/autoplay/online.ron` plays an online match through the real app), the benches and the short stress run.
+  It runs:
+  - check;
+  - the timed bot grid (alone, before the online tests);
+  - the full-tier tests (`FULL_TESTS`: `net_sim`'s and `transport`'s grids, rl-net's link tests, rl-game's integration tests);
+  - the device tier;
+  - `e2e` on Xvfb (`fixtures/autoplay/online.ron` plays an online match through the real app);
+  - `net-nat`;
+  - the `net-feel` gate;
+  - the determinism windows;
+  - the benches and the short stress run.
+
+  What to expect and do:
   - **Expected:** all pass.
-  - **Bench drift:** the online feel numbers' bytes per second may move by the frame's extra byte. A bench or feel gate failing only on that is re-baselined with `cargo xtask bench --bless --reason "plan 12d: Frame::gone, one byte a frame"`, and the reason is reported.
+  - **Feel drift:** the `gone` list adds one byte to each datagram. If the feel gate's bytes per second move past its tolerance on that alone, re-bless it with `cargo xtask net-feel --bless --reason "plan 12d: a withdrawal list in each datagram, one byte when empty"` (ruling PF12d-4), and report the reason. If it does not move, bless nothing.
   - **Anything else** failing is a bug of this plan: fix it, and run `full` again only after that fix.
 
 - [ ] **Step 6: Commit** (`docs: players leaving a match (plan 12d)`, the trailers) after `cargo xtask check > /tmp/check.log 2>&1 &&`.
