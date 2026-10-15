@@ -150,6 +150,7 @@ fn reach(harness: &mut Harness<'static, App>, screen: Screen) {
     }
     let path: &[Screen] = match screen {
         Screen::Host | Screen::Lobby => &[Screen::Multiplayer, Screen::Host],
+        Screen::Main => &[],
         s => &[s],
     };
     for s in path {
@@ -450,6 +451,66 @@ fn the_host_lost_screen_and_a_migrated_lobby_fit() {
         assert!((back.x0 as f32 - all.left()).abs() <= 1.0, "{at}: Back is not at the column's left");
         if w / ppp > 2000.0 {
             assert!(all.width() < 0.5 * w, "{at}: the content spans {} of {w}", all.width());
+        }
+    }
+}
+
+/// Every node's name, role and bounds, in tree order.
+fn all_nodes(h: &Harness<'static, App>) -> Vec<(String, Rect)> {
+    let mut out = Vec::new();
+    for n in h.root().children_recursive() {
+        let a = n.accesskit_node();
+        let Some(b) = a.bounding_box() else { continue };
+        let name = format!("{:?} {:?}", a.role(), a.label().or(a.value()).unwrap_or_default());
+        out.push((name, Rect::from_min_max(pos2(b.x0 as f32, b.y0 as f32), pos2(b.x1 as f32, b.y1 as f32))));
+    }
+    out
+}
+
+/// Hovering a widget changes only its colours: no widget, container or
+/// text moves or changes size on any screen (the playtest's "the layout
+/// changes by a pixel or two when I highlight a control").
+#[test]
+fn hovering_a_widget_never_changes_the_layout() {
+    for (w, h, ppp) in [(1280.0, 720.0, 1.0), (3440.0, 1440.0, 2.0)] {
+        let mut harness = harness(egui::vec2(w / ppp, h / ppp), ppp);
+        // The game's look: the widgets have the theme's visuals.
+        rl_ui::theme::apply(&harness.ctx);
+        for (screen, tab) in SCREENS.into_iter().chain([(Screen::Main, None)]) {
+            reach(&mut harness, screen);
+            if let Some(tab) = tab {
+                harness.get_by_label(tab).click();
+                harness.run();
+            }
+            harness.hover_at(pos2(1.0, 1.0));
+            harness.run();
+            let before = all_nodes(&harness);
+            let targets: Vec<(String, Rect)> =
+                widgets(&harness).into_iter().filter(|(n, _)| !n.is_empty()).collect();
+            let mut bad = Vec::new();
+            for (name, r) in targets {
+                harness.hover_at(r.center() / ppp);
+                harness.run();
+                let during = all_nodes(&harness);
+                // A tooltip is a new node after the others; the rest stay.
+                if during.len() < before.len() {
+                    bad.push(format!("hover {name:?}: {} nodes became {}", before.len(), during.len()));
+                }
+                for (b, d) in before.iter().zip(&during) {
+                    if b != d {
+                        bad.push(format!("hover {name:?}: {} {:?} became {:?}", b.0, b.1, d.1));
+                    }
+                }
+                harness.hover_at(pos2(1.0, 1.0));
+                harness.run();
+            }
+            bad.dedup();
+            assert!(
+                bad.is_empty(),
+                "{screen:?} {tab:?} at {w}x{h}: {} changes, e.g.\n{}",
+                bad.len(),
+                bad[..bad.len().min(8)].join("\n")
+            );
         }
     }
 }

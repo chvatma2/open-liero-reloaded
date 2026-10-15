@@ -35,6 +35,20 @@ pub fn apply(ctx: &Context) {
     ctx.all_styles_mut(|style| {
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
         style.spacing.button_padding = egui::vec2(10.0, 4.0);
+        // Every state occupies the same space: egui's `Frame` adds its
+        // stroke's width to a widget's size, and its defaults give a
+        // hovered, pressed or open widget a 1 px border an idle one lacks,
+        // so highlighting a control grew it (and what holds it) a pixel or
+        // two. Hover, press and open change only colours.
+        let widgets = &mut style.visuals.widgets;
+        widgets.hovered.bg_stroke.width = widgets.inactive.bg_stroke.width;
+        widgets.active.bg_stroke.width = widgets.inactive.bg_stroke.width;
+        widgets.open.bg_stroke.width = widgets.inactive.bg_stroke.width;
+        for w in [&mut widgets.inactive, &mut widgets.hovered, &mut widgets.active, &mut widgets.open] {
+            w.expansion = 0.0;
+        }
+        widgets.hovered.weak_bg_fill = Color32::from_gray(82);
+        widgets.hovered.bg_fill = Color32::from_gray(82);
         style.text_styles = [
             (TextStyle::Small, FontId::proportional(11.0)),
             (TextStyle::Body, FontId::proportional(15.0)),
