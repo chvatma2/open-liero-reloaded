@@ -2876,8 +2876,10 @@ transport cases each); `net-feel` passes every profile, rollbacks,
 corrections and stalls equal the baseline, down bytes +100 B/s as Task 3.
 Net-sim's soak cases draw a client departure in one case of four.
 
-**The plan's full run, at (pending):** (the controller fills this after
-`cargo xtask full`.)
+**The plan's full run, at 8ff6b51:** passed in about 14.5 min (test
+135 s, bot-grid 151 s, gpu 25 s, e2e 38 s, net-nat 12 scenarios 145 s,
+bench 161 s with the worst +2.6 % on `bots_8_tick`, stress 21 s,
+net-feel 44 s, determinism-windows 126 s).
 
 Open items (deferred minors):
 
