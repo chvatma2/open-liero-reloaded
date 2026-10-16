@@ -713,6 +713,51 @@ fn a_player_who_leaves_is_off_the_scoreboard_and_left_in_the_results() {
     assert!(anna.left && anna.lives == "left");
 }
 
+/// N89 on the online path (final review B-6): Anna watches the match and
+/// follows Bert's worm; Bert leaves, and her camera moves on to the next
+/// worm still in the match.
+#[test]
+fn an_online_watcher_moves_on_when_the_followed_worm_leaves() {
+    let Some(dir) = content_dir() else { return };
+    let (mut h, mut c) = host_and_client(&dir, 0.2, None);
+    let port = h.local_port().expect("the host's port");
+    let mut b = menus(&dir, Store::in_memory(), "Bert", 0.2);
+    join(&mut b, port);
+    frames_until("Bert joins", Duration::from_secs(5), &mut [&mut h, &mut c, &mut b], |s| {
+        s[2].ui.screen() == Screen::Lobby && members(s[0]) == 3
+    });
+    c.act(UiAction::LobbySpectate(true));
+    let mut setup = h.data.lobby.as_ref().unwrap().setup.clone();
+    setup.bots = 1;
+    h.act(UiAction::LobbySetup(setup));
+    b.act(UiAction::LobbyReady(true));
+    h.act(UiAction::LobbyReady(true));
+    frames_until("the host can start", Duration::from_secs(5), &mut [&mut h, &mut c, &mut b], |s| {
+        s[0].data.lobby.as_ref().is_some_and(|l| l.can_start.is_ok())
+    });
+    h.act(UiAction::LobbyStart);
+    frames_until("Anna watches, Bert plays", Duration::from_secs(10), &mut [&mut h, &mut c, &mut b], |s| {
+        s.iter().all(|sh| sh.ui.screen() == Screen::InGame)
+            && s[1].session().is_some_and(|x| x.local().is_none())
+            && s[2].plays_online()
+    });
+    let bert = b.session().and_then(|x| x.local()).expect("Bert's slot");
+    c.session_mut().unwrap().follow(bert);
+    assert_eq!(c.session().unwrap().followed(), i32::from(bert));
+    frames_until("the match runs", Duration::from_secs(5), &mut [&mut h, &mut c, &mut b], |s| {
+        confirmed(s[0]).is_some_and(|(t, _)| t > 150)
+    });
+    b.act(UiAction::Back);
+    b.act(UiAction::LeaveMatch);
+    frames_until("Anna's camera moves on", Duration::from_secs(5), &mut [&mut h, &mut c, &mut b], |s| {
+        s[1].session()
+            .is_some_and(|x| x.with_world(|w| w.gone()) & (1 << bert) != 0 && x.followed() != i32::from(bert))
+    });
+    let s = c.session().unwrap();
+    let f = s.followed();
+    assert!(f >= 0 && s.with_world(|w| w.gone()) & (1 << f) == 0, "a worm still in the match: {f}");
+}
+
 /// Chat typed in game reaches the other player's HUD log as a chat line
 /// ("name: text"), and its lobby chat.
 #[test]

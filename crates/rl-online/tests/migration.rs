@@ -1144,10 +1144,12 @@ fn a_player_leaving_during_a_migration_is_removed_at_the_resume() {
     assert!(slots.contains(&0) && slots.contains(&sc), "the old host and Cid: {:?}", ra.gone);
     for i in [a, b] {
         assert!(!net.peers[i].has(|e| matches!(e, OnlineEvent::DesyncBundle(_))));
-        assert!(net.peers[i].has(|e| matches!(e, OnlineEvent::Left(x) if x == "Cid")));
+        // Final review B-5: once.
+        assert_eq!(net.peers[i].count(|e| matches!(e, OnlineEvent::Left(x) if x == "Cid")), 1);
         assert!(
-            !net.peers[i].has(|e| matches!(e, OnlineEvent::Left(x) if x == "Host")),
-            "the old host goes silently"
+            !net.peers[i]
+                .has(|e| matches!(e, OnlineEvent::Left(x) | OnlineEvent::TimedOut(x) if x == "Host")),
+            "the old host goes silently (B-7: never timed out either)"
         );
     }
 }

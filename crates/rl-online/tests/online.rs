@@ -1114,7 +1114,10 @@ fn the_last_opponent_leaving_ends_the_match() {
         OnlineEvent::MatchEnded(end) => Some(end.clone()),
         _ => None,
     });
-    assert_eq!(end.unwrap().reason, "last worm standing");
+    let end = end.unwrap();
+    assert_eq!(end.reason, "last worm standing");
+    // Final review B-7: the one left (the host, slot 0) wins, first on the board.
+    assert_eq!(end.rows.first().map(|r| r.0), Some(0), "the host wins: {:?}", end.rows);
 }
 
 /// A member goes silent without a `Bye`: `silence` stops it (a frozen peer, or
@@ -1182,6 +1185,33 @@ fn a_spectator_that_times_out_is_said_to() {
 #[test]
 fn a_member_whose_game_goes_silent_is_timed_out_by_the_session() {
     a_silent_member_is_timed_out(false, |net, i| net.peers[i].peer().test_mute_game());
+}
+
+/// Final review B-7: a player kicked mid-match is withdrawn as one who
+/// leaves (`close_later`, then `peer_lost`), on the host and on every
+/// other peer, at one tick.
+#[test]
+fn a_player_kicked_mid_match_is_withdrawn() {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 0.5);
+    let clients = net.join_all(&["Anna", "Bert"]);
+    net.ready(&clients);
+    net.host().peer().lobby().start(7).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() > 300);
+    let slot = net.peers[clients[1]].started()[0].expect("Bert plays");
+    let key = net.peers[clients[1]].key;
+    let id = net.peers[0].member_id(key).expect("Bert is a member");
+    net.host().peer().lobby().kick(id, false);
+    let marked = |n: &mut Net, i: usize| {
+        n.peers[i].peer().match_session().and_then(|s| {
+            let at = s.input_log().gone_at(slot)?;
+            (s.sim().world().gone() & (1 << slot) != 0).then_some(at)
+        })
+    };
+    net.run_until(Duration::from_secs(10), "Bert's worm is withdrawn on both", |n| {
+        marked(n, 0).is_some() && marked(n, clients[0]).is_some()
+    });
+    assert_eq!(marked(&mut net, 0), marked(&mut net, clients[0]), "at one tick");
 }
 
 /// A kick or a ban is not "has left" or "has timed out".

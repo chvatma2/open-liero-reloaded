@@ -246,6 +246,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
     `a_member_whose_game_goes_silent_is_timed_out_by_the_session` (the
     `test_mute_game` hook: the session's arm; each arm fails alone when
     mutated), `a_kicked_player_is_not_said_to_have_left`,
+    `a_player_kicked_mid_match_is_withdrawn` (on the host and another
+    player at one tick; final review B-7),
     `the_last_opponent_leaving_ends_the_match`, and
     `a_player_leaving_during_a_migration_is_removed_at_the_resume` (only Cid
     "has left", the old host goes silently);
