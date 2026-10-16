@@ -52,7 +52,6 @@ pub fn from_canonical<T: DeserializeOwned>(file: &str, text: &str) -> Result<T, 
     })
 }
 
-#[allow(dead_code)] // used by mods::files (plan 13a Task 5)
 pub(crate) fn read_text(src: &dyn ContentSource, file: &str) -> Result<String, FormatError> {
     let io = |message: String| FormatError::Io { file: file.into(), message };
     let path = VPath::new(file).map_err(|e| io(e.to_string()))?;
@@ -60,7 +59,6 @@ pub(crate) fn read_text(src: &dyn ContentSource, file: &str) -> Result<String, F
     String::from_utf8(bytes).map_err(|e| io(format!("not UTF-8: {e}")))
 }
 
-#[allow(dead_code)] // used by mods::files (plan 13a Task 5)
 pub(crate) fn write_text(sink: &mut dyn ContentSink, file: &str, text: &str) -> Result<(), FormatError> {
     let io = |message: String| FormatError::Io { file: file.into(), message };
     let path = VPath::new(file).map_err(|e| io(e.to_string()))?;
