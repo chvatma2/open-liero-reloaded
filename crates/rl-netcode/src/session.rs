@@ -1251,7 +1251,17 @@ impl<S: Simulation> Session<S> {
     /// A withdrawal at `tick` became known (decision N83). A tick already
     /// simulated was simulated without it: roll back to it. (Its value is
     /// `on_final`'s; equal to the prediction, it would roll back nothing.)
+    /// A new mark sits at or past the frontier, so at or past the snapshots
+    /// kept, unless a loaded state's floor lies above it: the state holds
+    /// the withdrawal (final review A-M4: anything else would skip it
+    /// silently).
     fn on_gone(&mut self, tick: u32) {
+        debug_assert!(
+            tick >= self.base || tick < self.floor,
+            "a withdrawal below the snapshots kept: tick {tick}, base {}, floor {}",
+            self.base,
+            self.floor
+        );
         if tick < self.current && tick >= self.base {
             self.rollback_from = Some(self.rollback_from.map_or(tick, |r| r.min(tick)));
         }
@@ -2597,6 +2607,29 @@ mod tests {
         fn withdrawn(&self) -> u32 {
             0
         }
+    }
+
+    /// Final review A-M4: a new mark below the snapshots kept is a broken
+    /// invariant (new values sit at or past the frontier), never skipped
+    /// silently; only a loaded state's floor may lie above it (the state
+    /// holds the withdrawal already).
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "a withdrawal below the snapshots kept")]
+    fn a_mark_below_the_snapshots_is_a_broken_invariant() {
+        let mut h = Session::new(Config::new(1, 0), Role::Host { peers: vec![] }, ToySim::new(1), 0);
+        h.advance(100_000, &mut Quiet);
+        assert!(h.base > 1 && h.floor == 0, "base {}", h.base);
+        h.on_gone(0);
+    }
+
+    #[test]
+    fn a_mark_below_a_loaded_state_is_held_by_it() {
+        let mut h = Session::new(Config::new(1, 0), Role::Host { peers: vec![] }, ToySim::new(1), 0);
+        h.advance(100_000, &mut Quiet);
+        h.sim_mut();
+        h.on_gone(0);
+        assert_eq!(h.rollback_from, None);
     }
 
     #[test]

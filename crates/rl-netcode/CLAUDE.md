@@ -70,7 +70,10 @@ model that tests it in one process (spec §9.1).
     restores the worm and withdraws it again), and `on_gone(t)` rolls back
     to `t` when a mark for a tick already simulated becomes known (even
     with a value equal to the prediction, which `on_final` alone would
-    not roll back): a client's `take_frames` and the merge's new marks.
+    not roll back): a client's `take_frames` and the merge's new marks
+    (a new mark below the snapshots kept is a debug assertion unless a
+    loaded state's floor lies above it, the state holding the withdrawal:
+    final review A-M4).
     A state loaded past the mark holds the withdrawal (a joined spectator
     learns no earlier mark: `a_spectator_joining_after_a_withdrawal_loads_it_with_the_state`).
   - The host orders inputs: its local slots (those no peer holds) are final
