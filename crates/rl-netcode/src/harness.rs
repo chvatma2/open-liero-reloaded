@@ -237,9 +237,15 @@ pub trait Observer<S: Simulation> {
 ///   frame, the harness's step) after it found its host gone.
 fn every_survivor_lost_legitimately(sc: &Scenario, r: &Report) -> bool {
     let all: Vec<PeerId> = core::iter::once(HOST).chain(sc.peers.iter().map(|p| p.id)).collect();
+    // A spectator that never joined (its join tick never came) is none.
     let survivors: Vec<PeerId> = all
         .into_iter()
-        .filter(|p| !r.dropped.contains(p) && !r.exited.contains(p) && !r.left_behind.contains(p))
+        .filter(|p| {
+            !r.dropped.contains(p)
+                && !r.exited.contains(p)
+                && !r.left_behind.contains(p)
+                && r.logs.contains_key(p)
+        })
         .collect();
     if survivors.is_empty() || !survivors.iter().all(|p| r.host_lost.contains(p)) {
         return false;
@@ -1787,11 +1793,15 @@ fn repaired_withdrawals(
 
 pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>) -> Result<(), Failure> {
     let ticks = sc.ticks;
+    // A spectator whose join tick the match never reached (every host gone
+    // before it, net-soak's `awful-8s1c1v-seed963469720`) had no session:
+    // no log, nothing to judge.
     let kept = |peer: &PeerId| {
         !r.dropped.contains(peer)
             && !r.exited.contains(peer)
             && !r.host_lost.contains(peer)
             && !r.left_behind.contains(peer)
+            && r.logs.contains_key(peer)
     };
     let corrupted = |peer: PeerId| sc.corrupt.iter().any(|c| c.0 == peer);
     let late = |peer: PeerId| r.late.contains(&peer);

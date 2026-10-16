@@ -673,7 +673,11 @@ model that tests it in one process (spec §9.1).
     or late spectator's from its last state on: its log has zeros before,
     net-soak's `bad-10s1c2v-seed1616063176`,
     `a_joined_spectator_among_the_lost_is_compared_from_its_state` with its
-    twin). Nothing
+    twin). A spectator whose join tick the match never reached (every
+    host gone before it) had no session and no log: neither a survivor
+    here nor judged anywhere in the verdict (net-soak's
+    `awful-8s1c1v-seed963469720`,
+    `a_spectator_whose_join_never_came_is_no_survivor` with its twin). Nothing
     else makes a successor unreachable (a frozen one, `awful` links).
     Pinned by
     `every_survivor_host_lost_is_accepted_when_no_successor_was_reachable`

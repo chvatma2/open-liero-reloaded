@@ -1,0 +1,27 @@
+(
+    spec: (
+        mod_id: "olx-classic",
+        level_id: "olx-level-dirt-level",
+        seed: 963469720,
+        slots: 8,
+        clients: 1,
+        spectators: 1,
+        join_tick: Some(2493),
+        profile: "awful",
+        drift_ppm: 2000,
+        ticks: 4005,
+        outages: [],
+        net_seed: 2524387037532222638,
+        difficulty: Some("easy"),
+        faults: [],
+        exits: [
+            (0, 1519, "crash"),
+        ],
+        host_freeze: None,
+        profile_changes: [
+            (1277, 1, "lan"),
+        ],
+        migration: false,
+    ),
+    failure: Some("peer 100 never loaded a state at tick 0"),
+)

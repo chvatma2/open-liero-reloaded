@@ -2845,7 +2845,11 @@ player's own rope throws are heard (the porting table).
   spectator's log has zeros before its state. It now compares those rows
   from the spectator's last state on, as the rest of the verdict does
   (`a_joined_spectator_among_the_lost_is_compared_from_its_state` with its
-  twin).
+  twin). Alike (net-soak's `awful-8s1c1v-seed963469720`, kept; it failed
+  before FR12d-Q too): a spectator due to join at a tick the match never
+  reached, its host crashed before, had no session, yet the verdict asked
+  it for a state; a peer without a log is now no survivor and not judged
+  (`a_spectator_whose_join_never_came_is_no_survivor`).
 
 **Decisions.**
 - **N82 - withdrawal, not deletion.** `World::withdraw(i)` keeps worm `i`

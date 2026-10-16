@@ -1707,6 +1707,29 @@ fn a_joined_spectator_among_the_lost_is_compared_from_its_state() {
     assert!(e.what.contains("the host confirmed"), "{e:?}");
 }
 
+/// Net-soak's `awful-8s1c1v-seed963469720`: a spectator due to join at a
+/// tick the match never reaches (its host crashed before it, and its one
+/// player, alone with the crashed host, had no quorum) never joined: it is
+/// no survivor, and the all-lost match passes. Before, the verdict asked it
+/// for a state it never had. The twin: the same spectator with a session
+/// (a log) is judged, and fails without a state.
+#[test]
+fn a_spectator_whose_join_never_came_is_no_survivor() {
+    let mut sc = two_peers(41, Profile::GOOD);
+    let mut spectator = plan(100, Seat::Spectator, Profile::GOOD);
+    spectator.join_tick = Some(1_200);
+    sc.peers.push(spectator);
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+    let r = harness::run(&sc, &mut f).unwrap();
+    assert_eq!(r.host_lost, [1].into());
+    assert!(!r.logs.contains_key(&100), "it never joined");
+    harness::verdict(&sc, &r, &mut f).unwrap();
+    let mut joined = r.clone();
+    joined.logs.insert(100, Vec::new());
+    assert!(harness::verdict(&sc, &joined, &mut f).is_err(), "a joiner with a session is judged");
+}
+
 /// SK-10's other side: every survivor host lost, but the scenario's links
 /// show a successor reachable when asked (peer 2 in its window): not a
 /// legitimate end, the verdict fails as before.
