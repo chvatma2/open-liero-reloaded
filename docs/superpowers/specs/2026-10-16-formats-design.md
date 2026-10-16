@@ -99,37 +99,51 @@ gfx/, sfx/           assets
   supported by this runtime yet"), never a silent change. New mechanics
   after 0.2 add events and effects to both the format and the runtime,
   with no new format overhaul.
-- **Spawns are named.** A projectile's `spawns:` map names each spawn
-  (`shrapnel`), and `Spawn(shrapnel)` refers to it. A projectile trail
-  (`trail: Projectile(every_s: …, spawn: <name>)`) names one too. 0.2
-  compiles what LX56 has: one spawn shared by the events
-  (`ProjectileDef::event_spawn`) and one for the trail (`TrailDef::spawn`).
+- **Spawns.**
+  - **Event spawns are named.** A projectile's `spawns:` map names each
+    one (`"shrapnel"`), and `Spawn("shrapnel")` refers to it.
+  - **A trail's spawn sits inside the trail:**
+    `trail: Projectile(every_s: …, spawn: (…))`.
+  - **What 0.2 compiles** is what LX56 has: one spawn shared by the events
+    (`ProjectileDef::event_spawn`) and one for the trail
+    (`TrailDef::spawn`). A named spawn that no event uses is allowed, since
+    LX56 files can carry one.
+  - **Defaults depend on the context.** LX56 fixes several spawn flags per
+    context: a weapon's shot, an event spawn and a trail spawn. Each
+    context has its own defaults, so imported files carry none of these
+    flags (amended 2026-10-16 from the research,
+    `docs/porting/olx-notes/mod-fields.md` §1.5).
 
 ### Example: OLX's bazooka (today 70 lines and 2 files)
 
 ```ron
 (
     name: "Bazooka",
-    reload: (recharge: 0.171, drain: 33.334, between_shots_s: 1.071),
+    recharge: 0.171,
+    drain: 33.334,
+    between_shots_s: 1.071,
     fire: Projectile(
-        class: Automatic, recoil: 15, sound: "sfx/bazooka.ogg",
-        shot: (speed: 140, random_spin: true, inherit_velocity: true,
+        recoil: 15,
+        sound: "sfx/bazooka.ogg",
+        shot: (
+            speed: 140,
             projectile: (
-                look: Sprite("gfx/missile.png", angles: 18),
-                size: (4, 4), gravity: 0, dampening: 1.001,
-                trail: Smoke(every_s: 0.1),
-                hit_terrain: [Explode(damage: 4, shake: 2, sound: "sfx/exp2.ogg"), Spawn(shrapnel)],
-                hit_worm: [Explode(damage: 27), Spawn(shrapnel)],
-                spawns: { shrapnel: (amount: 12, speed: 105, speed_var: 14.0, spread: 360.0,
-                    projectile: (look: Pixels(["#948800"]), size: (2, 2) /* … */)) },
+                gfx: Image(file: "gfx/missile.png", frames_follow_heading: true, heading_frames: 18),
+                gravity: 0,
+                velocity_factor: 1.001,
+                trail: Smoke,
+                hit_terrain: [Explode(damage: 4, shake: 2, sound: "sfx/exp2.ogg"), Spawn("spawn")],
+                hit_worm: [Explode(damage: 27), Spawn("spawn")],
+                spawns: {"spawn": (amount: 12, speed: 105, speed_var: 14.0, spread: 360.0,
+                    projectile: (gfx: Pixels(["#948800"]) /* … */))},
             ),
         ),
     ),
 )
 ```
 
-The field names in this example are illustrative. The spec's first
-research task fixes every name (below).
+The canonical writer puts one field per line. The names follow plan
+13a's final table (`docs/porting/olx-notes/mod-fields.md` §13).
 
 ### Rules
 
@@ -146,14 +160,24 @@ research task fixes every name (below).
 - **Projectile identity.** `olr_sim::SimMod::compile` expands projectiles
   per occurrence, in OLX's load-order tree, and names each by its path
   from the weapon id (`bazooka`, `bazooka.spawn`). `ModDef::projectiles`'
-  keys are lookups only.
-  - The compiler therefore derives keys freely: a shared projectile keeps
-    its file's id, and an inline projectile gets its tree path.
-  - If the tree has the same structure, the simulation's indices and names
-    come out identical.
-  - The import-equivalence test (§6) checks it.
-- **Look slots:** an optional `look` on each projectile and on effects
-  (for example an explosion's style); empty in 0.2's imports.
+  keys still matter, because `SimMod` keeps copies of the definitions that
+  name their children by key.
+  - **Keys are reproduced exactly.**
+    - A shared projectile's key is its file id.
+    - An inline projectile's key is derived from its place: the weapon id
+      for a shot, then `<parent key>.spawn` or `<parent key>.trail`.
+      These follow `olr-import-lgs`'s naming.
+    - Where today's import used another name (it de-duplicates identical
+      definitions), the projectile carries an explicit `id`.
+  - **Inline or shared.** A projectile used once is written inline. One used
+    twice or more (or never) is shared, in `projectiles/<id>.ron`.
+  - **Cycles between shared projectiles are errors.** OLX's files cannot
+    express one.
+  - The import-equivalence test (§6) checks all of this, `SimMod` included.
+- **`gfx` is simulation data, not only looks.** The simulation reads the
+  pixel colour count, the rotation and the animation. The name `look`
+  stays reserved for render-only data, which the graphics sub-project
+  adds as optional slots on projectiles and effects.
 
 ### Research task: names and units
 
@@ -349,10 +373,13 @@ explicit form. OLX's bitmap fonts and HUD images stay unimported.
   validates a pack.
 - **Shared code:** the loader and the editors' live error list use the
   same code. It never panics.
-- **Errors** name the file, the line and column, and the field path:
+- **Errors** name the file and, for text that does not parse, the line
+  and column. For a valid file with an invalid value, they give the field
+  path (RON gives no positions after parsing):
 
   ```
-  weapons/bazooka.ron:14:9: fire.shot.projectile.hit_worm[1]: Spawn(shrapnel2): no spawn named "shrapnel2" (spawns: shrapnel)
+  weapons/bazooka.ron:14:9: expected a string
+  weapons/bazooka.ron: fire.shot.projectile: no spawn named "shrapnel2" (spawns: spawn)
   ```
 
 - **Warnings:** unused files, unreferenced shared projectiles, objects
