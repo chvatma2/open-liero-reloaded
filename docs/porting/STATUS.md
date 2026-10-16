@@ -3056,7 +3056,10 @@ Open items (deferred minors):
 - Final: minor (deferred): SK-10's reach model stays generous
   (`lacked_quorum`, `reaches`).
 
-**Re-run full after the final fixes, at (pending):**
+**Re-run full after the final fixes, at c76ffad:** passed in about 15 min
+(test 144 s, bot-grid 163 s, gpu 37 s, e2e 47 s, net-nat 12 scenarios
+146 s, bench 162 s with the worst +3.8 % on `bots_8_tick`, stress 21 s,
+net-feel 43 s, determinism-windows 121 s).
 
 ## Kept OLX quirks
 
