@@ -120,6 +120,11 @@ pub(crate) fn check(src: &ThemeSource) -> Result<(), FormatError> {
             ));
         }
     }
+    for (dir, imgs) in [("stones", &src.stones), ("misc", &src.misc)] {
+        for (i, img) in imgs.iter().enumerate() {
+            check_sprite(dir, i, img)?;
+        }
+    }
     for (i, s) in src.holes.iter().enumerate() {
         let path = format!("holes[{i}]");
         check_stamp(&hole_file(i), &path, s)?;
@@ -154,6 +159,39 @@ pub(crate) fn check(src: &ThemeSource) -> Result<(), FormatError> {
                         ),
                     ));
                 }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// OLX keys a sprite by RGB alone, so a visible pixel must not look like the
+/// key, and no corner may be (254, 0, 254) (`RgbaImage::olx_color_key`).
+fn check_sprite(dir: &str, i: usize, img: &RgbaImage) -> Result<(), FormatError> {
+    let (file, path) = (image_file(dir, i), format!("{dir}[{i}]"));
+    for y in 0..img.height() {
+        for x in 0..img.width() {
+            let c = img.get(x, y);
+            if c.a != 0 && c.same_rgb(MAGENTA) {
+                return Err(FormatError::invalid(
+                    &file,
+                    &path,
+                    format!(
+                        "pixel ({x}, {y}) is magenta and not transparent, which would read as transparent"
+                    ),
+                ));
+            }
+        }
+    }
+    if let (Some(w), Some(h)) = (img.width().checked_sub(1), img.height().checked_sub(1)) {
+        for (x, y) in [(0, 0), (w, 0), (0, h), (w, h)] {
+            let c = img.get(x, y);
+            if c.a != 0 && c.same_rgb(Rgba::rgb(254, 0, 254)) {
+                return Err(FormatError::invalid(
+                    &file,
+                    &path,
+                    format!("corner pixel ({x}, {y}) is (254, 0, 254), which would change OLX's colour key"),
+                ));
             }
         }
     }
@@ -427,5 +465,32 @@ pub(crate) mod tests {
         let mut t = base;
         t.stones[0].set(1, 1, Rgba { r: 4, g: 5, b: 6, a: 0 });
         assert!(lift_theme(&t).is_err());
+    }
+
+    #[test]
+    fn sprite_art_cannot_change_meaning() {
+        for (kind, dir) in [(0, "stones/1.png"), (1, "misc/1.png")] {
+            for (x, y, c, why) in [
+                (1, 1, Rgba::rgb(255, 0, 255), "read as transparent"),
+                (1, 1, Rgba { r: 255, g: 0, b: 255, a: 100 }, "read as transparent"),
+                (0, 0, Rgba::rgb(254, 0, 254), "colour key"),
+                (1, 1, Rgba { r: 254, g: 0, b: 254, a: 255 }, "colour key"),
+            ] {
+                let mut src = sample();
+                src.misc = src.stones.clone();
+                let img = if kind == 0 { &mut src.stones[0] } else { &mut src.misc[0] };
+                img.set(x, y, c);
+                let r = compile_theme(&src);
+                // (1,1) is a corner of a 2x2 image, so the 254 case there is rejected too.
+                let e = r.unwrap_err().to_string();
+                assert!(e.contains(dir) && e.contains(&format!("({x}, {y})")) && e.contains(why), "{e}");
+            }
+        }
+        // A (254,0,254) pixel off the corners is fine: OLX keys by corners only.
+        let mut src = sample();
+        let mut big = RgbaImage::new(3, 3);
+        big.set(1, 1, Rgba::rgb(254, 0, 254));
+        src.stones = vec![big];
+        compile_theme(&src).unwrap();
     }
 }
