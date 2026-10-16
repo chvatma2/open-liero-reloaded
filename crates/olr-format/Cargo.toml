@@ -14,6 +14,7 @@ olr-vfs.workspace = true
 serde = { workspace = true, features = ["std"] }
 ron.workspace = true
 thiserror.workspace = true
+png.workspace = true
 
 [dev-dependencies]
 olr-pack.workspace = true

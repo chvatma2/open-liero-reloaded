@@ -3412,6 +3412,7 @@ dependencies = [
  "olr-pack",
  "olr-sim",
  "olr-vfs",
+ "png",
  "proptest",
  "ron",
  "serde",
@@ -3631,6 +3632,7 @@ version = "0.2.0"
 dependencies = [
  "hex",
  "olr-data",
+ "olr-format",
  "olr-vfs",
  "png",
  "proptest",

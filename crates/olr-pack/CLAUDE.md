@@ -1,7 +1,7 @@
 # olr-pack
 
 The native pack format (spec §9.1): `pack.ron` plus kind-specific files, for
-mod, level, skin, theme and core packs; PNG helpers (`image_io`, `png_size` reads a
+mod, level, skin, theme and core packs; PNG helpers (`image_io`, re-exported from `olr-format`; `png_size` reads a
 header's size); content hashing; validation.
 
 - **Layer 2.** Depends on `olr-data`, `olr-vfs`, `ron`, `png`, `sha2`.

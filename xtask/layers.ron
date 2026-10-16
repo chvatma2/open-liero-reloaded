@@ -48,6 +48,8 @@
         // Replays rebuild a `World` and its game mode (spec §20 F8).
         ("olr-replay", "olr-sim"),
         ("olr-replay", "olr-modes"),
+        // Packs read and write images through the authoring crate (plan 13b).
+        ("olr-pack", "olr-format"),
         ("olr-import-lgs", "olr-pack"),
         ("olr-import-lxl", "olr-pack"),
         ("olr-import-gfx", "olr-pack"),
@@ -83,5 +85,5 @@
         ("olr-cli", "olr-server"),
     ],
     no_std: ["olr-math", "olr-data", "olr-terrain", "olr-sim", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby"],
-    wasm: ["olr-math", "olr-data", "olr-terrain", "olr-sim", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby", "olr-vfs", "olr-pack", "olr-import-lgs", "olr-import-lxl", "olr-import-gfx"],
+    wasm: ["olr-math", "olr-data", "olr-terrain", "olr-sim", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby", "olr-vfs", "olr-format", "olr-pack", "olr-import-lgs", "olr-import-lxl", "olr-import-gfx"],
 )
