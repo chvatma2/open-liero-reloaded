@@ -1,0 +1,50 @@
+---
+source: crates/olr-format/tests/equivalence.rs
+expression: "String::from_utf8_lossy(bytes)"
+---
+(
+    name: "Bazooka",
+    recharge: 0.171,
+    drain: 33.334,
+    between_shots_s: 1.071,
+    fire: Projectile(
+        recoil: 15,
+        sound: "sfx/bazooka.ogg",
+        shot: (
+            projectile: (
+                gfx: Image(
+                    file: "gfx/missile.png",
+                    frames_follow_heading: true,
+                    heading_frames: 18,
+                ),
+                gravity: 0,
+                velocity_factor: 1.001,
+                trail: Smoke,
+                hit_terrain: [
+                    Explode(
+                        damage: 4,
+                        shake: 2,
+                        sound: "sfx/exp2.ogg",
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: 27,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        shared: "bazooka.spawn",
+                        amount: 12,
+                        speed: 105,
+                        speed_var: 14.0,
+                        spread: 360.0,
+                    ),
+                },
+            ),
+            speed: 140,
+        ),
+    ),
+)

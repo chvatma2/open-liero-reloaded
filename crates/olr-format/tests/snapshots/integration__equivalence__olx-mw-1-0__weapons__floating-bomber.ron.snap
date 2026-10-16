@@ -1,0 +1,206 @@
+---
+source: crates/olr-format/tests/equivalence.rs
+expression: "String::from_utf8_lossy(bytes)"
+---
+(
+    name: "Floating Bomber",
+    recharge: 0.125,
+    drain: 101.0,
+    between_shots_s: 5.0,
+    fire: Projectile(
+        class: Grenade,
+        recoil: 10,
+        sound: "sfx/throw.ogg",
+        shot: (
+            projectile: (
+                gfx: Image(
+                    file: "gfx/bomber.png",
+                    animation: (
+                        fps: 10.0,
+                        mode: Loop,
+                    ),
+                ),
+                gravity: 0,
+                velocity_factor: 0.99,
+                timer: (
+                    after_s: 0.5,
+                    effects: [
+                        Explode(
+                            damage: -1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 1.0,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/bomber.png",
+                                animation: (
+                                    fps: 10.0,
+                                    mode: Loop,
+                                ),
+                            ),
+                            gravity: 0,
+                            velocity_factor: 0.99,
+                            timer: (
+                                after_s: 12.5,
+                                variation_s: 2.5,
+                                effects: [
+                                    Explode(
+                                        damage: -1,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            trail: Projectile(
+                                every_s: 0.075,
+                                spawn: (
+                                    projectile: (
+                                        gfx: Pixels([
+                                            "#ffffff",
+                                        ]),
+                                        hit_terrain: [
+                                            Explode(
+                                                damage: 5,
+                                                sound: "sfx/sm_explode.ogg",
+                                            ),
+                                        ],
+                                        hit_worm: [
+                                            Injure(
+                                                damage: 20,
+                                            ),
+                                        ],
+                                    ),
+                                    speed: 15,
+                                    speed_var: 5.0,
+                                    spread: 360.0,
+                                ),
+                            ),
+                            hit_terrain: [
+                                Bounce(
+                                    factor: 1.0,
+                                ),
+                            ],
+                            hit_worm: [
+                                Injure(
+                                    damage: 25,
+                                ),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/bomber2.png",
+                                            animation: (
+                                                fps: 10.0,
+                                                mode: Loop,
+                                            ),
+                                        ),
+                                        gravity: 30,
+                                        trail: Projectile(
+                                            every_s: 0.15,
+                                            spawn: (
+                                                shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
+                                                speed: 5,
+                                                speed_var: 5.0,
+                                                spread: 360.0,
+                                            ),
+                                        ),
+                                        hit_terrain: [
+                                            Explode(
+                                                damage: 5,
+                                            ),
+                                            Spawn("spawn"),
+                                        ],
+                                        spawns: {
+                                            "spawn": (
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/bomber2.png",
+                                                        animation: (
+                                                            fps: 10.0,
+                                                            mode: Loop,
+                                                        ),
+                                                    ),
+                                                    gravity: 0,
+                                                    timer: (
+                                                        after_s: 0.01,
+                                                        effects: [
+                                                            Explode(
+                                                                damage: 5,
+                                                            ),
+                                                            Spawn("spawn"),
+                                                        ],
+                                                    ),
+                                                    trail: Projectile(
+                                                        every_s: 0.15,
+                                                        spawn: (
+                                                            shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
+                                                            speed: 5,
+                                                            speed_var: 5.0,
+                                                            spread: 360.0,
+                                                        ),
+                                                    ),
+                                                    spawns: {
+                                                        "spawn": (
+                                                            projectile: (
+                                                                gfx: Image(
+                                                                    file: "gfx/metalsmall.png",
+                                                                    frames_follow_heading: true,
+                                                                    heading_frames: 6,
+                                                                ),
+                                                                gravity: 100,
+                                                                trail: Projectile(
+                                                                    every_s: 0.15,
+                                                                    spawn: (
+                                                                        shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
+                                                                        speed: 1,
+                                                                        spread: 360.0,
+                                                                    ),
+                                                                ),
+                                                                hit_terrain: [
+                                                                    Explode(
+                                                                        damage: 5,
+                                                                        shake: 1,
+                                                                        sound: "sfx/exp2.ogg",
+                                                                    ),
+                                                                ],
+                                                                hit_worm: [
+                                                                    Injure(
+                                                                        damage: 15,
+                                                                    ),
+                                                                ],
+                                                            ),
+                                                            amount: 5,
+                                                            speed: 80,
+                                                            speed_var: 10.0,
+                                                            spread: 90.0,
+                                                            angle: -90,
+                                                        ),
+                                                    },
+                                                ),
+                                                speed: 150,
+                                                spread: 90.0,
+                                                angle: -90,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            },
+                        ),
+                        speed: 50,
+                        relative_to_parent: true,
+                    ),
+                },
+            ),
+            speed: 60,
+            spread: 5.0,
+        ),
+    ),
+)
