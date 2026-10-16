@@ -488,7 +488,8 @@ not come back to the new host is too ("Anna has left").
 
 ## When the host leaves
 
-A match does not end when its host does. If the host quits, crashes, loses
+A match does not end when its host does (unless the host's worm was one of
+the last two: see "Two players only" below). If the host quits, crashes, loses
 its network or freezes during a match, the players who are left move the
 game to a new host and play on, provided there are enough of them (see
 "Two players only" below). This works in a hosted game and on a dedicated
@@ -531,7 +532,8 @@ so a short blip, a few seconds, is a stall, never a migration: the
 player sees "…you are taking over the game…" until it hears the host
 again, then "The host is back: the match goes on".
 Only a host that quits or steps down (it says goodbye first) hands the
-game over at once. A host that crashes leaves the player with the
+game over at once. The old host's worm then leaves the match, so in a
+1-vs-1 without bots the match ends at once and the remaining player wins. A host that crashes leaves the player with the
 **Host lost** screen about 12 seconds later (2 s of silence, then the 10 s
 it waits for somebody to take over): with nobody else, nobody can. With
 two or more other players the match moves as described above.

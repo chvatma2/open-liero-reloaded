@@ -10,7 +10,8 @@ All notable changes to rust-liero are recorded here. The format follows
 
 - A player who leaves, times out or is kicked is removed from the match at
   once on every screen, as in OpenLieroX: no frozen worm is left to shoot,
-  and its rope, shots in flight and score credit go with it.
+  and its rope and the credit for its shots go with it; shots already
+  fired still explode.
 - The log says "<name> has left" or "<name> has timed out".
 - The live scoreboard drops the player; the final results keep a "left"
   row with its kills and deaths so far (OpenLieroX loses the row; see the
@@ -26,9 +27,6 @@ All notable changes to rust-liero are recorded here. The format follows
 - The results and the Tab scoreboard count every death and suicide: with 10
   lives a worm that is out shows 11 deaths, never fewer than it died
   (OpenLieroX counted none while a worm's score was 0 or below).
-- A host that quits just after a player crashed leaves the last player at
-  "Host lost" about 12 seconds later, instead of risking two hosts for one
-  match.
 
 ### Changed — leaving players
 
@@ -61,7 +59,10 @@ All notable changes to rust-liero are recorded here. The format follows
   - **Two players only:** with one player and the host a short blip is a
     stall, not a migration; a host that crashes leaves the player on the
     Host lost screen after about 12 s (a host that quits hands over at
-    once).
+    once; with no bots the match then ends, and the player left wins).
+  - **Known limit:** a host that quits just after a player crashed leaves
+    the last player at "Host lost" about 12 seconds later: it still waits
+    for the crashed player, so the match never splits in two.
   - **When it fails:** the Host lost screen says which case it was (too
     many moves, the host left while you were still joining, nobody could
     take over, with the last try), and the console and log say each

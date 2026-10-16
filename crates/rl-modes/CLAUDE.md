@@ -27,8 +27,9 @@ port of the bare `CGameMode` (`src/server/CGameMode.cpp`) at commit
   at a score of 0 without `AllowNegativeScore`. The score, ranking and
   winner still read those (`olx_score`, `rules::row`).
 - **Leaving players:** `on_drop` is `CGameMode::Drop`
-  (`CGameMode.cpp:254-263`): `drop_worm` zeroes the worm's kills and
-  deaths in a row, then the board is refreshed. `refresh` takes the gone
+  (`CGameMode.cpp:254-263`): `drop_worm` zeroes the worm's runs (its kills and
+  deaths in a row, `kills_in_row`/`deaths_in_row`; its row keeps its kills
+  and deaths), then the board is refreshed. `refresh` takes the gone
   mask (`ModeCtx::gone`) and marks those rows `Score::left`; the checksum
   hashes `left` only when true. `check` takes the mask too: a gone worm
   is `WRM_OUT` (so out of the last-standing count), and `rules::in_game`

@@ -164,7 +164,7 @@ fn a_client_leave_withdraws_its_worm_in_a_real_match() {
 
 /// N87, ruling PF12d-5: a client that crashes on `bad` stalls the other
 /// players for its timeout's fills; the verdict excuses exactly that.
-/// RED before the window: "player peer 2 stalled".
+/// RED before the window: "player peer 3 stalled".
 #[test]
 fn a_client_crash_on_bad_passes() {
     let Some(c) = content() else { return };
