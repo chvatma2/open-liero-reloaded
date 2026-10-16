@@ -2294,21 +2294,18 @@ timeout, the texts) and `rl_game::net::pump`.
   the decision says (a hostile host can already end the match). If wrong:
   a peer with a cut report shows a correction after the resume.
 - **N68 - collection.** The successor commits (drops its old host and
-  becomes the host) at the first proven rejoin, or at once in its turn
-  when **its old host is known gone** (its `Bye` came: the session's
+  becomes the host) at the first proven rejoin, or at once when it expects
+  nobody **and its old host is known gone** (its `Bye` came: the session's
   `PeerLeft` or the lobby's `Closed`; **ruling FR12c-1**, below, which
   changed this: before, a successor that expected nobody committed at
-  once), whoever it still expects (plan 12d's soak, `good-15s2c0v-
-  seed960552337`: a successor still expecting a crashed player waited for
-  its rejoin and was host lost; it now waits for it until its window's
-  end, and its slot is withdrawn at the resume). It expects the succession entries holding a slot or a spectator
+  once). It expects the succession entries holding a slot or a spectator
   seat from the start (`LobbyHost::away_in_match`); followers are never
   waited for. It resumes when every expected peer rejoined and reported;
   the window's end stops the wait only for peers not yet back, and the
   reports of peers already back are waited for `REPORT_WAIT` (1 s, in
   rl-online) past it, later ones merged as late reports. A successor
-  nobody rejoined by its window's end, while it expected someone and its
-  old host was not known gone, closes its gate (D8). **N68's case changed (FR12c-1):** a 1-vs-host match whose
+  nobody rejoined by its window's end, while it expected someone, closes
+  its gate (D8). **N68's case changed (FR12c-1):** a 1-vs-host match whose
   host crashes, or host plus spectator only, no longer continues for the
   lone survivor against bots: it ends in Host lost about 12 s after the
   crash (2 s of silence, then `GIVE_UP_US`; the text is plain `HOST_LOST`,

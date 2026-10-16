@@ -355,12 +355,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       members back on the standby (their proofs answered at once):
       `Migrating(TakingOver)`. It commits at the first `Rejoined` within
       its turn (the standby answers nothing in the poll its window ended), or at
-      once when the old host is known gone (`Migrating::gone`: the
-      session's `PeerLeft` or the lobby's `Closed`, its `Bye`, came;
-      `begin_migration(gone)`), whoever `away_in_match()` still lists (they
-      are waited for until the window's end:
-      `a_leaving_host_is_replaced_while_a_crashed_player_is_still_expected`,
-      net-soak's `good-15s2c0v-seed960552337`). Ruling FR12c-1:
+      once when `away_in_match()` is empty (N68) and the old host is known
+      gone (`Migrating::gone`: the session's `PeerLeft` or the lobby's
+      `Closed`, its `Bye`, came; `begin_migration(gone)`). Ruling FR12c-1:
       in a two-peer match its own blip looks like the host's loss, so it
       waits for a `Bye`, a rejoin or the old host heard again (N69); a host
       that crashed without one leaves its player host lost
