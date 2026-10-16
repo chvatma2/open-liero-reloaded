@@ -78,6 +78,13 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 
 ## Deliberate deviations
 
+- **Left-facing skin frames mirror the right-facing frame exactly.** OLX
+  draws the source columns one to the right (`CGameSkin.cpp:597-601`),
+  showing a column of the frame's spacing and losing one of the sprite.
+  Dropped 2026-10-16 (the user's ruling); render goldens re-blessed.
+  `olr_content::skin_source`; `left_is_the_mirror_of_right`,
+  `every_bundled_skin_mirrors`.
+
 - **Results keep a "left" row** (N85, user decision 2026-10-15): OLX
   deletes a leaving client's worm (`Game::removeWorm`,
   `src/game/Game.cpp:1359-1366`), so its results lose it; ours keep its

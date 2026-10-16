@@ -30,16 +30,18 @@ pub struct SkinSource {
     pub mirrored: bool,
 }
 
-/// Frame `f`'s sprite facing `face`. Facing left, OLX blits from its
-/// mirrored sheet at `w − sx − 20 − 1`, which shows the source columns one
-/// to the right of the right-facing sprite (an OLX quirk, kept).
+/// Frame `f`'s sprite facing `face`. Facing left is the exact mirror of
+/// the right-facing rectangle. OLX blits from its mirrored sheet one column
+/// to the right (`w − sx − 20 − 1`), showing a column of the frame's
+/// spacing and losing one of the sprite; that offset is dropped (spec
+/// 2026-10-16 formats §4).
 ///
 /// OLX: src/client/CGameSkin.cpp:584-600
 pub fn skin_source(f: u32, face: Dir) -> SkinSource {
     let sx = f * FRAME_WIDTH + FRAME_SPACING;
     let (x, mirrored) = match face {
         Dir::Right => (sx, false),
-        Dir::Left => (sx + 1, true),
+        Dir::Left => (sx, true),
     };
     SkinSource { x, y: 0, w: SKIN_WIDTH, h: SKIN_HEIGHT, mirrored }
 }
@@ -114,19 +116,28 @@ impl Content {
 mod tests {
     use super::*;
 
+    /// A left-facing frame is the exact mirror of the right-facing one
+    /// (OLX's one-column offset, `CGameSkin.cpp:597-601`, dropped: spec
+    /// 2026-10-16 formats §4).
     #[test]
-    fn left_shows_the_columns_one_to_the_right_mirrored() {
-        let mut sheet = RgbaImage::new(64, 18);
-        for x in 0..64 {
-            sheet.set(x, 0, Rgba::rgb(x as u8, 0, 0));
+    fn left_is_the_mirror_of_right() {
+        let mut sheet = RgbaImage::new(672, 18);
+        for x in 0..672 {
+            for y in 0..18 {
+                sheet.set(x, y, Rgba { r: (x % 251) as u8, g: y as u8, b: (x / 251) as u8, a: 255 });
+            }
         }
-        let right = skin_sprite(&sheet, 1, Dir::Right);
-        let left = skin_sprite(&sheet, 1, Dir::Left);
-        assert_eq!(right.get(0, 0).r, 36);
-        assert_eq!(left.get(0, 0).r, 36 + 20);
-        assert_eq!(left.get(19, 0).r, 37);
+        for f in 0..21 {
+            let (r, l) = (skin_sprite(&sheet, f, Dir::Right), skin_sprite(&sheet, f, Dir::Left));
+            for y in 0..18 {
+                for x in 0..20 {
+                    assert_eq!(l.get(x, y), r.get(19 - x, y), "frame {f} ({x}, {y})");
+                }
+            }
+        }
         // Off the sheet: transparent, no panic.
-        assert_eq!(skin_sprite(&sheet, 5, Dir::Left).get(0, 0), Rgba::TRANSPARENT);
+        let small = RgbaImage::new(64, 18);
+        assert_eq!(skin_sprite(&small, 5, Dir::Left).get(0, 0), Rgba::TRANSPARENT);
     }
 
     #[test]

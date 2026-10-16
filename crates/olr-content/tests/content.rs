@@ -523,3 +523,26 @@ fn natural_bonuses_hold_what_the_restrictions_allow() {
     s.restrictions = "Bonus only".into();
     assert_eq!(bonus(&s), Some(vec![0]));
 }
+
+/// Every bundled skin's colorized sheet cuts a left-facing frame that is the
+/// exact mirror of the right-facing one (OLX's one-column offset dropped,
+/// spec 2026-10-16 formats §4).
+#[test]
+fn every_bundled_skin_mirrors() {
+    let Some(dir) = content_dir() else { return };
+    let content = Content::open(Path::new(&dir)).unwrap();
+    let ids = content.ids(PackKind::Skin);
+    assert!(!ids.is_empty());
+    for id in ids.iter().filter(|i| i.starts_with("olx-skin-")) {
+        let sheet = content.load_skin(id).unwrap().colorized(Rgba::rgb(200, 60, 20));
+        for f in 0..olr_content::SHEET_FRAMES {
+            let r = olr_content::skin_sprite(&sheet, f, olr_sim::Dir::Right);
+            let l = olr_content::skin_sprite(&sheet, f, olr_sim::Dir::Left);
+            for y in 0..r.height() {
+                for x in 0..r.width() {
+                    assert_eq!(l.get(x, y), r.get(r.width() - 1 - x, y), "{id} frame {f} ({x}, {y})");
+                }
+            }
+        }
+    }
+}

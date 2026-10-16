@@ -36,16 +36,16 @@ fn skin_frame_matches_olx_table() {
             // Facing right: the 20 × 18 sprite at `32 f + 4`.
             let right = skin_frame(angle, Dir::Right, walk, 21);
             assert_eq!(right, (Rect { x: sx, y: 0, w: 20, h: 18 }, false), "angle {angle} walk {walk}");
-            // Facing left: OLX's mirrored sheet at `672 - sx - 21` is the
-            // mirror of source columns `sx + 1 ..= sx + 20`.
+            // Facing left: the exact mirror of the same columns (OLX's
+            // one-column offset dropped, spec 2026-10-16 formats §4).
             let left = skin_frame(angle, Dir::Left, walk, 21);
-            assert_eq!(left, (Rect { x: sx + 1, y: 0, w: 20, h: 18 }, true), "angle {angle} walk {walk}");
+            assert_eq!(left, (Rect { x: sx, y: 0, w: 20, h: 18 }, true), "angle {angle} walk {walk}");
         }
     }
     // A sheet with fewer frames clamps to its last frame.
     assert_eq!(skin_frame(60.0, Dir::Right, 2.0, 10).0.x, 9 * 32 + 4);
-    // The last frame (20) facing left reads columns 645..665 of 672.
-    assert_eq!(skin_frame(60.0, Dir::Left, 2.0, 21).0, Rect { x: 645, y: 0, w: 20, h: 18 });
+    // The last frame (20) facing left reads columns 644..664 of 672.
+    assert_eq!(skin_frame(60.0, Dir::Left, 2.0, 21).0, Rect { x: 644, y: 0, w: 20, h: 18 });
     // Nonsense never panics.
     let _ = skin_frame(f32::NAN, Dir::Left, f32::INFINITY, 0);
 }

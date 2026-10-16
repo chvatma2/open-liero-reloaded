@@ -225,7 +225,7 @@ fn skin_preview_uses_colorization_like_the_game() {
         for angle in [-90.0, -60.0, -10.0, 0.0, 35.0, 60.0] {
             for face in [Dir::Right, Dir::Left] {
                 let (src, flip) = olr_scene::skin_frame(angle, face, walk, 21);
-                let f = (src.x - 4 - u32::from(flip)) / 32;
+                let f = (src.x - 4) / 32;
                 assert_eq!(frames.get(f, face), &drawn(&sheet, src, flip), "frame {f} {face:?}");
             }
         }

@@ -10,6 +10,11 @@ Work towards 0.2.0: new formats, level, mod and skin editors, a modern look,
 and Liero Factory Reloaded and Liero v1.0 Reloaded
 (`docs/superpowers/specs/2026-10-16-milestone-0.2-scope.md`).
 
+### Changed
+
+- Worms facing left are drawn as the exact mirror of facing right, without
+  OLX's one-pixel offset.
+
 ### Fixed
 
 - Each mod now plays with its own worm and rope physics, as in OpenLieroX.
